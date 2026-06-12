@@ -195,6 +195,37 @@ enforcement now applies to **all** graph flows. The merge phase reuses the same
 route as a reusable call site (vacuously ready — scratch runs carry no flow gates), with
 genuine flow-run merge enforcement deferred to M18.
 
+### Delivery-policy auto trigger (Designed, ADR-085)
+
+`trigger="auto_on_ready"` consumes the existing readiness contract instead of adding a new
+readiness state. A run in `Review` with an auto delivery-policy snapshot may auto-promote
+only after `assertEvidenceReady(runId, "merge")` returns ready. The promote path re-checks
+readiness immediately before any side effect, using the same current-state classifier as
+the manual promote button.
+
+If readiness is `blocked`, `failed`, `stale`, or `waiting`, the run remains in `Review`
+and the run detail page shows a "will auto-deliver when ready" banner with the blocking
+summary. The cancel action switches only the policy trigger to `manual` using a CAS update
+on `(runId, status=Review, trigger=auto_on_ready)`. A target drift, conflict, push
+rejection, or restore failure degrades the delivery policy to manual and surfaces the
+typed promotion status on the promote panel; it does not mutate readiness evidence.
+
+UI acceptance:
+
+- Run detail: policy snapshot is always visible, auto banner appears only for
+  `Review` + `auto_on_ready`, and cancel has loading/conflict/error states with EN/RU
+  copy.
+- Promote panel: manual and auto paths share the same readiness summary and typed refusal
+  reasons.
+- Empty state: runs with no policy snapshot show the project default compatibility mapping
+  only when the legacy row predates ADR-085.
+- E2E owner: `web/e2e/multi-run-cost-policy.spec.ts` covers auto banner, cancel, and
+  readiness-blocked manual degradation.
+
+Logging requirements: INFO when an auto trigger is scheduled or fired with `runId`,
+`projectId`, and non-secret policy fields; WARN when a CAS cancel misses or when auto
+delivery degrades to manual with status, command, and bounded conflict paths.
+
 ## Expectations
 
 - A blocking gate (`mode: "blocking"`) on the live `node_attempts` row MUST clear a phase

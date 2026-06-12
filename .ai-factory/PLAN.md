@@ -1,6 +1,15 @@
 # AIF Flow-Package: single-import model — Implementation Plan
 
-> **⏸ STATUS (2026-06-09): DEFERRED + EXPANDED. Do not implement this fast plan as-is.**
+> **✅ STATUS (2026-06-12): SUPERSEDED. Do not implement this fast plan.**
+> The Package-management milestone this plan deferred to is now designed and in
+> delivery: design `docs/pv/package-management.md` (ADR-088), implementation
+> plan `.ai-factory/plans/feature-package-management.md` (M33). The locked
+> decisions below were carried into that design (with `flow_packages[]` renamed
+> to `packages[]`); the AIF package itself was extracted to the external
+> `maister-plugins` repo (`packages/aif`, tag `aif/v2.0.0`). Body kept for
+> history only.
+
+> **⏸ PRIOR STATUS (2026-06-09): DEFERRED + EXPANDED. Do not implement this fast plan as-is.**
 > The user expanded scope: packages are a **first-class product surface**, not just backend wiring. This plan becomes the backend slice of a larger **"Package management" milestone** to be designed (a proper design doc) **after** the T9 dogfood validates the engine on the current 5-source wiring.
 > **Locked decisions for that milestone (2026-06-09):**
 > 1. **Two-scope model:** a package installs once at the **platform instance** (instance-wide catalog, viewable), then is **attached/enabled per project**. Mirrors the platform ACP-runner catalog + `platform|project|flow-package` capability scopes.

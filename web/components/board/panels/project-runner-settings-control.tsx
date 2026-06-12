@@ -69,7 +69,7 @@ export function ProjectRunnerSettingsControl({
 
     try {
       await patchJson(
-        `/api/projects/${encodeURIComponent(projectSlug)}/settings/runner`,
+        `/api/projects/${encodeURIComponent(projectSlug)}/settings`,
         { runnerId: nextRunnerId },
       );
       setSavedRunnerId(nextRunnerId);

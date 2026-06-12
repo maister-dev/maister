@@ -1,3 +1,8 @@
+import type {
+  DeliveryPolicy,
+  StoredDeliveryPolicy,
+} from "@/lib/runs/delivery-policy";
+
 import { sql } from "drizzle-orm";
 import {
   bigint,
@@ -122,6 +127,9 @@ export const projects = pgTable("projects", {
   maisterYamlPath: text("maister_yaml_path").notNull(),
   defaultRunnerId: text("default_runner_id"),
   promotionMode: text("promotion_mode"),
+  deliveryPolicyDefault: jsonb(
+    "delivery_policy_default",
+  ).$type<StoredDeliveryPolicy | null>(),
   taskKey: text("task_key").notNull().unique(),
   nextTaskNumber: integer("next_task_number").notNull().default(1),
   createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
@@ -398,6 +406,11 @@ export const flows = pgTable(
     versionBinding: text("version_binding", { enum: ["pinned", "latest"] })
       .notNull()
       .default("latest"),
+    // ADR-088: membership in an attached package group (null = standalone).
+    // Detach removes the group in its own transaction — no ON DELETE action.
+    packageInstallId: text("package_install_id").references(
+      () => packageInstalls.id,
+    ),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
@@ -804,7 +817,7 @@ export const agentProjectLinks = pgTable(
   }),
 );
 
-// M33 (ADR-088) rework of the dead M24 shape: real agents FK (was text
+// M34 (ADR-089) rework of the dead M24 shape: real agents FK (was text
 // agent_ref), cron fields claimed atomically by the agent_tick.dispatcher,
 // event rows consumed by the agent_triggers outbox consumer. The M24
 // scheduler_job_id bridge and desired_state ('continuous' = future Mγ) are
@@ -970,7 +983,7 @@ export const tasks = pgTable(
     number: integer("number").notNull(),
     title: text("title").notNull(),
     prompt: text("prompt").notNull(),
-    // M33 (ADR-088): NULLABLE — simple-intent tasks are created flowless and
+    // M34 (ADR-089): NULLABLE — simple-intent tasks are created flowless and
     // classify `unconfigured` until a triage verdict or the launch popover
     // fills the flow.
     flowId: text("flow_id").references(() => flows.id),
@@ -983,7 +996,7 @@ export const tasks = pgTable(
       .notNull()
       .default("Backlog"),
     attemptNumber: integer("attempt_number").notNull().default(1),
-    // M33 (ADR-088) launch-verdict columns: written by the ext triage op /
+    // M34 (ADR-089) launch-verdict columns: written by the ext triage op /
     // the card popover PATCH; runner rides the launchOverride tier at launch.
     triageStatus: text("triage_status", { enum: ["triaged"] }),
     runnerId: text("runner_id").references(() => platformAcpRunners.id, {
@@ -1108,7 +1121,7 @@ export const runs = pgTable(
     runKind: text("run_kind", { enum: ["flow", "scratch", "agent"] })
       .notNull()
       .default("flow"),
-    // M33 (ADR-088): set iff runKind='agent'. SET NULL so run history
+    // M34 (ADR-089): set iff runKind='agent'. SET NULL so run history
     // survives catalog deletes (deletes are usage-guarded for live runs).
     agentId: text("agent_id").references(() => agents.id, {
       onDelete: "set null",
@@ -1140,7 +1153,7 @@ export const runs = pgTable(
         "platformFlowDefault",
         "projectDefault",
         "platformDefault",
-        // M33 (ADR-088) standalone agent chain tiers.
+        // M34 (ADR-089) standalone agent chain tiers.
         "agentLinkOverride",
         "agentDefault",
       ],
@@ -1206,6 +1219,9 @@ export const runs = pgTable(
     resolvedCapabilitySet: jsonb(
       "resolved_capability_set",
     ).$type<ResolvedCapabilitySet>(),
+    deliveryPolicySnapshot: jsonb(
+      "delivery_policy_snapshot",
+    ).$type<DeliveryPolicy | null>(),
   },
   (t) => ({
     idxProjectStatus: index("runs_project_status_idx").on(
@@ -1220,10 +1236,55 @@ export const runs = pgTable(
     idxTask: index("runs_task_idx").on(t.taskId),
     idxKindTask: index("runs_kind_task_idx").on(t.runKind, t.taskId),
     idxRunner: index("runs_runner_idx").on(t.runnerId),
-    // M33 (ADR-088): outbox→spawn no-dup claim under at-least-once redelivery.
+    // M34 (ADR-089): outbox→spawn no-dup claim under at-least-once redelivery.
     uniqAgentTriggerEvent: uniqueIndex("runs_agent_trigger_event_uq")
       .on(t.agentId, t.triggerEventId)
       .where(sql`${t.triggerEventId} IS NOT NULL`),
+  }),
+);
+
+export const runCostRollups = pgTable(
+  "run_cost_rollups",
+  {
+    runId: text("run_id")
+      .primaryKey()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    taskId: text("task_id").references(() => tasks.id, {
+      onDelete: "set null",
+    }),
+    flowId: text("flow_id").references(() => flows.id, {
+      onDelete: "set null",
+    }),
+    inputTokens: integer("input_tokens").notNull().default(0),
+    outputTokens: integer("output_tokens").notNull().default(0),
+    cacheReadTokens: integer("cache_read_tokens").notNull().default(0),
+    cacheCreationTokens: integer("cache_creation_tokens").notNull().default(0),
+    resumeInputTokens: integer("resume_input_tokens").notNull().default(0),
+    resumeOutputTokens: integer("resume_output_tokens").notNull().default(0),
+    resumeCacheReadTokens: integer("resume_cache_read_tokens")
+      .notNull()
+      .default(0),
+    resumeCacheCreationTokens: integer("resume_cache_creation_tokens")
+      .notNull()
+      .default(0),
+    byModel: jsonb("by_model")
+      .$type<Record<string, Record<string, number>>>()
+      .notNull()
+      .default({}),
+    sourceEventCount: integer("source_event_count").notNull().default(0),
+    sourceCursor: text("source_cursor"),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    idxProjectFlow: index("run_cost_rollups_project_flow_idx").on(
+      t.projectId,
+      t.flowId,
+    ),
   }),
 );
 
@@ -1714,6 +1775,53 @@ export const nodeAttempts = pgTable(
       t.attempt,
     ),
     idxRun: index("node_attempts_run_idx").on(t.runId),
+  }),
+);
+
+export const nodeAttemptCostRollups = pgTable(
+  "node_attempt_cost_rollups",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    nodeAttemptId: text("node_attempt_id")
+      .notNull()
+      .references(() => nodeAttempts.id, { onDelete: "cascade" }),
+    nodeId: text("node_id").notNull(),
+    model: text("model").notNull(),
+    inputTokens: integer("input_tokens").notNull().default(0),
+    outputTokens: integer("output_tokens").notNull().default(0),
+    cacheReadTokens: integer("cache_read_tokens").notNull().default(0),
+    cacheCreationTokens: integer("cache_creation_tokens").notNull().default(0),
+    resumeInputTokens: integer("resume_input_tokens").notNull().default(0),
+    resumeOutputTokens: integer("resume_output_tokens").notNull().default(0),
+    resumeCacheReadTokens: integer("resume_cache_read_tokens")
+      .notNull()
+      .default(0),
+    resumeCacheCreationTokens: integer("resume_cache_creation_tokens")
+      .notNull()
+      .default(0),
+    sourceEventCount: integer("source_event_count").notNull().default(0),
+    sourceCursor: text("source_cursor"),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniqAttemptModel: unique("node_attempt_cost_rollups_attempt_model_uq").on(
+      t.nodeAttemptId,
+      t.model,
+    ),
+    idxRunAttempt: index("node_attempt_cost_rollups_run_attempt_idx").on(
+      t.runId,
+      t.nodeAttemptId,
+    ),
   }),
 );
 
@@ -2323,6 +2431,10 @@ export const capabilityImports = pgTable(
     })
       .notNull()
       .default("untrusted"),
+    // ADR-088: membership in an attached package group (null = standalone).
+    packageInstallId: text("package_install_id").references(
+      () => packageInstalls.id,
+    ),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
@@ -2334,6 +2446,102 @@ export const capabilityImports = pgTable(
     uniqProjectRefRevision: unique(
       "capability_imports_project_ref_revision_uq",
     ).on(t.projectId, t.capabilityRefId, t.resolvedRevision),
+  }),
+);
+
+// --- Package management (ADR-088, migration 0048) ---------------------------
+// Platform catalog of package monorepo sources. `discovered` caches the last
+// successful refresh ([{name, tags[]}]); failures keep the stale snapshot.
+export const packageSources = pgTable("package_sources", {
+  id: text("id").primaryKey(),
+  url: text("url").notNull().unique("package_sources_url_uq"),
+  enabled: boolean("enabled").notNull().default(true),
+  note: text("note"),
+  discovered: jsonb("discovered")
+    .$type<DiscoveredPackageEntry[]>()
+    .notNull()
+    .default([]),
+  lastCheckedAt: timestamp("last_checked_at", {
+    withTimezone: true,
+    mode: "date",
+  }),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+    .notNull()
+    .defaultNow(),
+});
+
+export type DiscoveredPackageEntry = {
+  name: string;
+  // packages/<dir> subdir in the source monorepo (may differ from name).
+  dir: string;
+  tags: string[];
+};
+
+// Immutable installed package revision (two-phase Installing → Installed).
+// `manifest` holds the parsed maister-package.yaml plus the skills/agents
+// inventory; `installed_path` is NEVER projected to clients.
+export const packageInstalls = pgTable(
+  "package_installs",
+  {
+    id: text("id").primaryKey(),
+    sourceUrl: text("source_url").notNull(),
+    name: text("name").notNull(),
+    versionLabel: text("version_label").notNull(),
+    resolvedRevision: text("resolved_revision").notNull(),
+    manifest: jsonb("manifest").notNull(),
+    manifestDigest: text("manifest_digest").notNull(),
+    installedPath: text("installed_path").notNull(),
+    packageStatus: text("package_status", {
+      enum: ["Discovered", "Installing", "Installed", "Failed", "Removed"],
+    })
+      .notNull()
+      .default("Installing"),
+    trustStatus: text("trust_status", {
+      enum: ["untrusted", "trusted", "trusted_by_policy"],
+    })
+      .notNull()
+      .default("untrusted"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniqSourceNameRevision: unique("package_installs_source_name_rev_uq").on(
+      t.sourceUrl,
+      t.name,
+      t.resolvedRevision,
+    ),
+  }),
+);
+
+// Per-project package enablement: at most one attached version of a package
+// name per project. Group membership rides flows.package_install_id +
+// capability_imports.package_install_id (one attach/detach transaction).
+export const projectPackageAttachments = pgTable(
+  "project_package_attachments",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    packageInstallId: text("package_install_id")
+      .notNull()
+      .references(() => packageInstalls.id, { onDelete: "restrict" }),
+    packageName: text("package_name").notNull(),
+    attachedAt: timestamp("attached_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniqProjectPackage: unique(
+      "project_package_attachments_project_name_uq",
+    ).on(t.projectId, t.packageName),
   }),
 );
 
@@ -2396,6 +2604,10 @@ export type AssignmentStatus = Assignment["status"];
 export type AssignmentEvent = typeof assignmentEvents.$inferSelect;
 export type CapabilityImport = typeof capabilityImports.$inferSelect;
 export type CapabilityImportInsert = typeof capabilityImports.$inferInsert;
+export type PackageSource = typeof packageSources.$inferSelect;
+export type PackageInstall = typeof packageInstalls.$inferSelect;
+export type ProjectPackageAttachment =
+  typeof projectPackageAttachments.$inferSelect;
 
 // M16 (ADR-046): project-scoped API tokens (session-managed, sha256 at rest).
 // Snake_case JS keys (matching the accounts table pattern) so that column
@@ -2416,7 +2628,7 @@ export const projectTokens = pgTable(
     owner_user_id: text("owner_user_id").references(() => users.id, {
       onDelete: "set null",
     }),
-    // M33 (ADR-088): per-launch ephemeral agent tokens carry the agent
+    // M34 (ADR-089): per-launch ephemeral agent tokens carry the agent
     // identity; CHECK pairs it with token_kind='agent'.
     agent_id: text("agent_id").references(() => agents.id, {
       onDelete: "cascade",
@@ -2766,7 +2978,7 @@ export const TASK_ACTIVITY_EVENT_KINDS = [
   "relation_added",
   "relation_removed",
   "run_launched",
-  // M33 (ADR-088/088): triage verdict / re-queue / dirty-watchdog quarantine.
+  // M34 (ADR-089/090): triage verdict / re-queue / dirty-watchdog quarantine.
   "triage_set",
   "triage_requeued",
   "agent_quarantined",

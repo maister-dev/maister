@@ -1,4 +1,4 @@
-// M33 (ADR-089 L3) e2e (c): the dirty-watchdog quarantine. A repo_read agent
+// M34 (ADR-090 L3) e2e (c): the dirty-watchdog quarantine. A repo_read agent
 // launches against a clean parent checkout; the spec dirties the repo while
 // the stub supervisor HOLDS the session stream, then releases it. The
 // terminal choke point's watchdog attributes the dirt, quarantines the agent

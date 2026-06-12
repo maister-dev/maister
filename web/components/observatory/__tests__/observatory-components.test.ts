@@ -68,6 +68,17 @@ function portfolio(): ObservatoryPortfolio {
         runCount: 2,
       },
     ],
+    cost: {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      resumeTokens: 0,
+      totalTokens: 0,
+      projectCount: 0,
+      flowCount: 0,
+      nodeCount: 0,
+    },
     topSignals: [
       {
         kind: "gate",

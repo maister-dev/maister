@@ -13,6 +13,10 @@ const MAX_TRAVERSAL_DEPTH = 8;
 export type CostRecord = {
   ts: string;
   sessionId: string;
+  projectSlug?: string;
+  runId?: string;
+  stepId?: string;
+  nodeAttemptId?: string;
   model?: string;
   input_tokens?: number;
   output_tokens?: number;
@@ -26,11 +30,21 @@ export type CostRecord = {
   resumed?: boolean;
 };
 
+export type CostAttributionContext = {
+  projectSlug?: string;
+  runId?: string;
+  stepId?: string;
+  nodeAttemptId?: string;
+};
+
 export type AttachCostOptions = {
   sessionId: string;
   runtimeRoot: string;
   projectSlug: string;
   runId: string;
+  stepId?: string;
+  nodeAttemptId?: string;
+  getContext?: () => CostAttributionContext;
   emitter: EventEmitter;
   logger: Logger;
   // M8 T13: true when the session was spawned via `--resume <id>`.
@@ -60,7 +74,14 @@ export async function attachCost(opts: AttachCostOptions): Promise<CostHandle> {
   const onEvent = (event: SessionEvent) => {
     if (event.type !== "session.line") return;
 
-    const record = extractCost(event.line, opts.sessionId);
+    const dynamicContext = opts.getContext?.() ?? {};
+    const record = extractCost(event.line, opts.sessionId, {
+      projectSlug: opts.projectSlug,
+      runId: opts.runId,
+      stepId: opts.stepId,
+      nodeAttemptId: opts.nodeAttemptId,
+      ...dynamicContext,
+    });
 
     if (!record) return;
 
@@ -70,6 +91,9 @@ export async function attachCost(opts: AttachCostOptions): Promise<CostHandle> {
     opts.logger.debug(
       {
         sessionId: opts.sessionId,
+        runId: record.runId,
+        stepId: record.stepId,
+        nodeAttemptId: record.nodeAttemptId,
         cache_creation: record.cache_creation_input_tokens,
         input: record.input_tokens,
         output: record.output_tokens,
@@ -93,6 +117,7 @@ export async function attachCost(opts: AttachCostOptions): Promise<CostHandle> {
 export function extractCost(
   line: string,
   sessionId: string,
+  context: CostAttributionContext = {},
 ): CostRecord | null {
   if (!line.includes('"usage"')) return null;
 
@@ -112,6 +137,11 @@ export function extractCost(
     ts: new Date().toISOString(),
     sessionId,
   };
+
+  if (context.projectSlug) record.projectSlug = context.projectSlug;
+  if (context.runId) record.runId = context.runId;
+  if (context.stepId) record.stepId = context.stepId;
+  if (context.nodeAttemptId) record.nodeAttemptId = context.nodeAttemptId;
 
   if (typeof usage.input_tokens === "number") {
     record.input_tokens = usage.input_tokens;

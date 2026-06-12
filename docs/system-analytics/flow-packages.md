@@ -20,6 +20,12 @@ execution. See
 [`capability-catalog.md`](capability-catalog.md) and
 [ADR-061](../decisions.md#adr-061-local-authored-capability-catalog-lifecycle).
 
+Multi-flow **package grouping** above this per-revision substrate — platform
+package sources, version discovery, `maister-package.yaml`, per-project
+attachments, package-level trust fan-out — is **(Designed)** in
+[`packages.md`](packages.md) (ADR-088); this file's revision/enablement
+mechanics are unchanged by it.
+
 ## Authored package boundary
 
 The platform `/flows` section manages both authored catalog content and installed

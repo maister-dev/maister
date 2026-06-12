@@ -86,6 +86,18 @@ describe("installFlowPlugin — boundary validation", () => {
   });
 });
 
+describe("installFlowPlugin — resolvedRevisionOverride boundary (ADR-088)", () => {
+  it.each([
+    ["non-hex", "zzz"],
+    ["unknown sentinel", "unknown"],
+  ])("rejects %s override with FLOW_INSTALL before any I/O", async (_l, override) => {
+    await expectFlowInstallError(
+      { ...baseArgs, resolvedRevisionOverride: override },
+      /Invalid resolvedRevisionOverride/,
+    );
+  });
+});
+
 describe("isLocalDirectorySource", () => {
   let workDir: string;
 

@@ -26,8 +26,10 @@ erDiagram
     RUNS ||--|| WORKSPACES : "one worktree per run"
     RUNS ||--o{ STEP_RUNS : "per-step record (legacy)"
     RUNS ||--o{ NODE_ATTEMPTS : "per-node attempt (M11a)"
+    RUNS ||--o| RUN_COST_ROLLUPS : "derived token rollup (ADR-085)"
     RUNS ||--o{ GATE_RESULTS : "per-run gates (M11a)"
     NODE_ATTEMPTS ||--o{ GATE_RESULTS : "gate verdicts (M11a)"
+    NODE_ATTEMPTS ||--o{ NODE_ATTEMPT_COST_ROLLUPS : "derived token rollups (ADR-085)"
     USERS ||--o{ NODE_ATTEMPTS : "takeover owner (M11b, SET NULL)"
     USERS ||--o{ WORKSPACES : "promotion owner (M18, nullable)"
     RUNS ||--o| SCRATCH_RUNS : "scratch metadata"
@@ -49,24 +51,24 @@ erDiagram
         integer number "ADR-078 Implemented: per-project, UNIQUE (project_id, number)"
         text title
         text prompt
-        text flow_id FK "M33: NULLABLE — unconfigured until triaged"
+        text flow_id FK "M34: NULLABLE — unconfigured until triaged"
         text status "Backlog|InFlight|Done|Abandoned"
         integer attempt_number "starts at 1"
-        text triage_status "M33: 'triaged' | NULL"
-        text runner_id FK "M33: verdict runner, SET NULL"
-        text target_branch "M33: verdict branch, nullable"
-        text promotion_mode "M33: local_merge|pull_request, nullable"
+        text triage_status "M34: 'triaged' | NULL"
+        text runner_id FK "M34: verdict runner, SET NULL"
+        text target_branch "M34: verdict branch, nullable"
+        text promotion_mode "M34: local_merge|pull_request, nullable"
         timestamp created_at
         timestamp updated_at
     }
 
     RUNS {
         text id PK
-        text run_kind "flow|scratch|agent (DEFAULT flow; agent M33)"
-        text agent_id FK "M33: agents(id) SET NULL — kind=agent only"
-        text trigger_source "M33: manual|cron|domain_event|webhook|flow"
-        bigint trigger_event_id "M33: domain_events.id claim key"
-        jsonb trigger_payload "M33: webhook/event context, <= 32 KB"
+        text run_kind "flow|scratch|agent (DEFAULT flow; agent M34)"
+        text agent_id FK "M34: agents(id) SET NULL — kind=agent only"
+        text trigger_source "M34: manual|cron|domain_event|webhook|flow"
+        bigint trigger_event_id "M34: domain_events.id claim key"
+        jsonb trigger_payload "M34: webhook/event context, <= 32 KB"
         text task_id FK "nullable for scratch"
         text project_id FK
         text flow_id FK "nullable for scratch"
@@ -86,8 +88,28 @@ erDiagram
         timestamp resume_started_at "Recover in-flight marker + reconcile grace anchor (M19)"
         text resume_target_step_id "node id retained at crash time for Recover; current_step_id is nulled on crash (M19, 0016)"
         jsonb resolved_capability_set "M27 Designed: frozen capability snapshot at launch; runner reads this, never live catalog"
+        jsonb delivery_policy_snapshot "ADR-085 Designed: resolved policy at launch"
         timestamp started_at
         timestamp ended_at
+    }
+
+    RUN_COST_ROLLUPS {
+        text run_id PK
+        text project_id FK
+        text task_id FK
+        text flow_id FK
+        integer input_tokens
+        integer output_tokens
+        integer cache_read_tokens
+        integer cache_creation_tokens
+        integer resume_input_tokens
+        integer resume_output_tokens
+        integer resume_cache_read_tokens
+        integer resume_cache_creation_tokens
+        jsonb by_model
+        integer source_event_count
+        text source_cursor
+        timestamp updated_at
     }
 
     WORKSPACES {
@@ -134,6 +156,26 @@ erDiagram
         text error_code "MaisterErrorCode literal"
         timestamp started_at
         timestamp ended_at
+    }
+
+    NODE_ATTEMPT_COST_ROLLUPS {
+        text id PK
+        text run_id FK
+        text project_id FK
+        text node_attempt_id FK
+        text node_id
+        text model
+        integer input_tokens
+        integer output_tokens
+        integer cache_read_tokens
+        integer cache_creation_tokens
+        integer resume_input_tokens
+        integer resume_output_tokens
+        integer resume_cache_read_tokens
+        integer resume_cache_creation_tokens
+        integer source_event_count
+        text source_cursor
+        timestamp updated_at
     }
 
     NODE_ATTEMPTS {
@@ -348,8 +390,8 @@ BY started_at DESC LIMIT 1`; designed run-attempt schema switches to
   scratch rows with nullable `task_id`.
 - `runs_agent_trigger_event_unique` partial UNIQUE on
   `(agent_id, trigger_event_id) WHERE trigger_event_id IS NOT NULL` —
-  **(M33)** the outbox→spawn no-dup claim: at-least-once event
-  redelivery converges to exactly one agent run (ADR-088). See
+  **(M34)** the outbox→spawn no-dup claim: at-least-once event
+  redelivery converges to exactly one agent run (ADR-089). See
   [agents-domain.md](agents-domain.md).
 - `scratch_runs_project_status_idx` on `(project_id, dialog_status)` — active
   scratch workspace lists. The primary key on `run_id` covers detail joins.

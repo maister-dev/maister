@@ -58,6 +58,35 @@ describe("extractCost", () => {
     expect(record?.cache_creation_input_tokens).toBeUndefined();
   });
 
+  it("stamps run, step, and node-attempt attribution when context is provided", () => {
+    const record = extractCost(
+      JSON.stringify({
+        message: {
+          model: "claude-sonnet-4-6",
+          usage: { input_tokens: 10, output_tokens: 20 },
+        },
+      }),
+      "s2",
+      {
+        projectSlug: "demo",
+        runId: "run-1",
+        stepId: "implement",
+        nodeAttemptId: "node-attempt-1",
+      },
+    );
+
+    expect(record).toMatchObject({
+      sessionId: "s2",
+      projectSlug: "demo",
+      runId: "run-1",
+      stepId: "implement",
+      nodeAttemptId: "node-attempt-1",
+      model: "claude-sonnet-4-6",
+      input_tokens: 10,
+      output_tokens: 20,
+    });
+  });
+
   it("returns null when usage object has no token fields", () => {
     const record = extractCost(
       JSON.stringify({ usage: { service_tier: "standard" } }),

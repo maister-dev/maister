@@ -14,6 +14,7 @@ import type {
   NodeAttemptType,
   ResolvedCapabilitySet,
 } from "@/lib/db/schema";
+import type { DeliveryPolicy } from "@/lib/runs/delivery-policy";
 import type { SettingsNodeView } from "@/lib/flows/settings-view";
 import type { HitlOption } from "@/lib/queries/hitl";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
@@ -36,6 +37,7 @@ import {
   type WorkbenchLifecycleAction,
 } from "@/lib/queries/portfolio";
 import { runnerAgentFromFields } from "@/lib/queries/runner-agent";
+import { reconcileRunCostRollups } from "@/lib/runs/cost-rollups";
 
 const {
   actorIdentities,
@@ -46,8 +48,10 @@ const {
   flows,
   gateResults,
   hitlRequests,
+  nodeAttemptCostRollups,
   nodeAttempts,
   projects,
+  runCostRollups,
   runs,
   tasks,
   users,
@@ -92,6 +96,8 @@ export interface RunDetail {
   taskNumber: number | null;
   taskRef: string | null;
   status: string;
+  startedAt: Date;
+  endedAt: Date | null;
   currentStepId: string | null;
   branch: string;
   worktreePath: string;
@@ -110,6 +116,7 @@ export interface RunDetail {
   promotionMode: string | null;
   prUrl: string | null;
   prNumber: number | null;
+  deliveryPolicySnapshot: DeliveryPolicy | null;
   pendingHitl: RunPendingHitl | null;
   // M11b (ADR-030): the user holding an active takeover claim (null unless a
   // takeover node_attempts row is open). Drives the owner-gated Return action.
@@ -166,6 +173,7 @@ export const getRunDetail = cache(async function getRunDetail(
       runId: runs.id,
       projectId: runs.projectId,
       status: runs.status,
+      startedAt: runs.startedAt,
       runKind: runs.runKind,
       currentStepId: runs.currentStepId,
       resumeTargetStepId: runs.resumeTargetStepId,
@@ -187,6 +195,7 @@ export const getRunDetail = cache(async function getRunDetail(
       promotionMode: workspaces.promotionMode,
       prUrl: workspaces.prUrl,
       prNumber: workspaces.prNumber,
+      deliveryPolicySnapshot: runs.deliveryPolicySnapshot,
       capabilityAgent: runs.capabilityAgent,
       runnerSnapshot: runs.runnerSnapshot,
       endedAt: runs.endedAt,
@@ -288,6 +297,8 @@ export const getRunDetail = cache(async function getRunDetail(
         ? `${row.projectTaskKey}-${row.taskNumber}`
         : null,
     status: row.status,
+    startedAt: row.startedAt,
+    endedAt: row.endedAt,
     runKind: row.runKind,
     currentStepId: row.currentStepId,
     branch: row.branch,
@@ -301,6 +312,7 @@ export const getRunDetail = cache(async function getRunDetail(
     promotionMode: row.promotionMode,
     prUrl: row.prUrl,
     prNumber: row.prNumber,
+    deliveryPolicySnapshot: row.deliveryPolicySnapshot ?? null,
     agent: runnerAgentFromFields({
       capabilityAgent: row.capabilityAgent,
       runnerSnapshot: row.runnerSnapshot,
@@ -400,6 +412,14 @@ export interface TimelineEntry {
   autoRetry: boolean;
   startedAt: string;
   endedAt: string | null;
+  durationMs: number | null;
+  tokens: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheCreation: number;
+    total: number;
+  };
   gates: TimelineGate[];
   handoff: TimelineHandoff | null;
 }
@@ -409,6 +429,81 @@ export interface RunTimeline {
   assignmentEvents: TimelineAssignmentEvent[];
 }
 
+export interface RunCostSummary {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  resumeTokens: number;
+  totalTokens: number;
+  byModel: Record<string, Record<string, number>>;
+}
+
+function zeroCostSummary(): RunCostSummary {
+  return {
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+    resumeTokens: 0,
+    totalTokens: 0,
+    byModel: {},
+  };
+}
+
+export async function getRunCostSummary(
+  runId: string,
+): Promise<RunCostSummary> {
+  await reconcileRunCostRollups(runId);
+
+  const rows = await db()
+    .select({
+      inputTokens: runCostRollups.inputTokens,
+      outputTokens: runCostRollups.outputTokens,
+      cacheReadTokens: runCostRollups.cacheReadTokens,
+      cacheCreationTokens: runCostRollups.cacheCreationTokens,
+      resumeInputTokens: runCostRollups.resumeInputTokens,
+      resumeOutputTokens: runCostRollups.resumeOutputTokens,
+      resumeCacheReadTokens: runCostRollups.resumeCacheReadTokens,
+      resumeCacheCreationTokens: runCostRollups.resumeCacheCreationTokens,
+      byModel: runCostRollups.byModel,
+    })
+    .from(runCostRollups)
+    .where(eq(runCostRollups.runId, runId));
+  const row = rows[0];
+
+  if (!row) return zeroCostSummary();
+
+  const resumeTokens =
+    row.resumeInputTokens +
+    row.resumeOutputTokens +
+    row.resumeCacheReadTokens +
+    row.resumeCacheCreationTokens;
+
+  return {
+    inputTokens: row.inputTokens,
+    outputTokens: row.outputTokens,
+    cacheReadTokens: row.cacheReadTokens,
+    cacheCreationTokens: row.cacheCreationTokens,
+    resumeTokens,
+    totalTokens:
+      row.inputTokens +
+      row.outputTokens +
+      row.cacheReadTokens +
+      row.cacheCreationTokens,
+    byModel: row.byModel ?? {},
+  };
+}
+
+function durationMs(row: {
+  startedAt: Date;
+  endedAt: Date | null;
+}): number | null {
+  if (!row.endedAt) return null;
+
+  return Math.max(0, row.endedAt.getTime() - row.startedAt.getTime());
+}
+
 // One ordered read model over the append-only M11a ledger: every node attempt
 // (chronological by started_at then attempt — highest-attempt-wins ordering
 // matching M11a templating), its joined gate_results flagged current-vs-stale,
@@ -416,6 +511,8 @@ export interface RunTimeline {
 // returned commits/diff/base ref). A legacy linear run with no node_attempts
 // yields an empty-but-valid timeline.
 export async function getRunTimeline(runId: string): Promise<RunTimeline> {
+  await reconcileRunCostRollups(runId);
+
   const client = db();
 
   const attemptRows = await client
@@ -476,8 +573,28 @@ export async function getRunTimeline(runId: string): Promise<RunTimeline> {
     .leftJoin(actorIdentities, eq(actorIdentities.id, assignmentEvents.actorId))
     .where(eq(assignmentEvents.runId, runId))
     .orderBy(asc(assignmentEvents.createdAt));
+  const costRows = await client
+    .select({
+      nodeAttemptId: nodeAttemptCostRollups.nodeAttemptId,
+      inputTokens: nodeAttemptCostRollups.inputTokens,
+      outputTokens: nodeAttemptCostRollups.outputTokens,
+      cacheReadTokens: nodeAttemptCostRollups.cacheReadTokens,
+      cacheCreationTokens: nodeAttemptCostRollups.cacheCreationTokens,
+    })
+    .from(nodeAttemptCostRollups)
+    .where(eq(nodeAttemptCostRollups.runId, runId));
 
   const gatesByAttempt = new Map<string, TimelineGate[]>();
+  const costByAttempt = new Map<
+    string,
+    {
+      input: number;
+      output: number;
+      cacheRead: number;
+      cacheCreation: number;
+      total: number;
+    }
+  >();
 
   for (const g of gateRows) {
     const list = gatesByAttempt.get(g.nodeAttemptId) ?? [];
@@ -494,6 +611,30 @@ export async function getRunTimeline(runId: string): Promise<RunTimeline> {
     gatesByAttempt.set(g.nodeAttemptId, list);
   }
 
+  for (const cost of costRows) {
+    const current = costByAttempt.get(cost.nodeAttemptId) ?? {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheCreation: 0,
+      total: 0,
+    };
+    const next = {
+      input: current.input + cost.inputTokens,
+      output: current.output + cost.outputTokens,
+      cacheRead: current.cacheRead + cost.cacheReadTokens,
+      cacheCreation: current.cacheCreation + cost.cacheCreationTokens,
+      total:
+        current.total +
+        cost.inputTokens +
+        cost.outputTokens +
+        cost.cacheReadTokens +
+        cost.cacheCreationTokens,
+    };
+
+    costByAttempt.set(cost.nodeAttemptId, next);
+  }
+
   const entries: TimelineEntry[] = attemptRows.map((r) => ({
     nodeAttemptId: r.id,
     nodeId: r.nodeId,
@@ -506,6 +647,14 @@ export async function getRunTimeline(runId: string): Promise<RunTimeline> {
     autoRetry: r.autoRetry ?? false,
     startedAt: r.startedAt.toISOString(),
     endedAt: r.endedAt ? r.endedAt.toISOString() : null,
+    durationMs: durationMs({ startedAt: r.startedAt, endedAt: r.endedAt }),
+    tokens: costByAttempt.get(r.id) ?? {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheCreation: 0,
+      total: 0,
+    },
     gates: gatesByAttempt.get(r.id) ?? [],
     handoff: r.ownerUserId
       ? {

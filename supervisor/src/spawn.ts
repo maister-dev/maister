@@ -296,12 +296,13 @@ export async function spawnSession(
     runId: request.runId,
     projectSlug: request.projectSlug,
     stepId: request.stepId,
+    nodeAttemptId: request.nodeAttemptId,
     status: "live",
     pid,
     startedAt: new Date().toISOString(),
     logPath,
     monotonicId: seedMonotonicId,
-    // M33 (ADR-089 L1): session-scoped read-only permission arbitration.
+    // M34 (ADR-090 L1): session-scoped read-only permission arbitration.
     readOnlySession: request.readOnlySession === true,
   };
 

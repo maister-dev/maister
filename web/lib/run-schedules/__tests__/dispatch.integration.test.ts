@@ -23,7 +23,7 @@ vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 let originalCap: string | undefined;
 
 beforeAll(async () => {
-  // The cap-full cases seed exactly 3 Running rows — pin the cap (the M33
+  // The cap-full cases seed exactly 3 Running rows — pin the cap (the M34
   // default moved to 6).
   originalCap = process.env.MAISTER_MAX_CONCURRENT_RUNS;
   process.env.MAISTER_MAX_CONCURRENT_RUNS = "3";

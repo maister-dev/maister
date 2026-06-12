@@ -4,6 +4,7 @@ import type { ReactElement } from "react";
 import { getTranslations } from "next-intl/server";
 import clsx from "clsx";
 
+import { DeliveryPolicySettingsControl } from "@/components/board/panels/delivery-policy-settings-control";
 import { FlowRunnerReconfigurationControl } from "@/components/board/panels/flow-runner-reconfiguration-control";
 import { ProjectRunnerSettingsControl } from "@/components/board/panels/project-runner-settings-control";
 
@@ -74,6 +75,13 @@ export async function SettingsPanel({
           {project.slug}
         </span>
       </div>
+      {isAdmin ? (
+        <DeliveryPolicySettingsControl
+          defaultPolicy={project.deliveryPolicyDefault ?? null}
+          projectMainBranch={project.mainBranch}
+          projectSlug={project.slug}
+        />
+      ) : null}
       {isAdmin ? (
         <ProjectRunnerSettingsControl
           defaultRunnerId={defaultRunnerId}

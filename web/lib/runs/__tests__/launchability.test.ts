@@ -3,7 +3,10 @@ import type { RelationGate } from "@/lib/runs/launchability";
 
 import { describe, expect, it } from "vitest";
 
-import { classifyTaskLaunchability } from "@/lib/runs/launchability";
+import {
+  classifyManualTaskLaunchability,
+  classifyTaskLaunchability,
+} from "@/lib/runs/launchability";
 
 // M28/T2.1 — the shared launch-gate classifier. `tasks.status` is a one-way
 // latch (nothing writes Backlog back after launch), so the latest flow run
@@ -157,7 +160,7 @@ describe("classifyTaskLaunchability — relation gate (blocked)", () => {
   });
 });
 
-// M33 (ADR-088) — a flowless simple-intent task is `unconfigured`, with
+// M34 (ADR-089) — a flowless simple-intent task is `unconfigured`, with
 // precedence target_terminal > crashed > busy > blocked > unconfigured >
 // launchable.
 describe("classifyTaskLaunchability — flowless task (unconfigured)", () => {
@@ -197,5 +200,45 @@ describe("classifyTaskLaunchability — flowless task (unconfigured)", () => {
     expect(classifyTaskLaunchability(task("Done", null), null)).toBe(
       "target_terminal",
     );
+  });
+});
+
+describe("classifyManualTaskLaunchability — ADR-085 manual relaunch allow-list", () => {
+  it.each<TaskStatus>(["Done", "Abandoned"])(
+    "task %s with no latest run is manually launchable",
+    (taskStatus) => {
+      expect(classifyManualTaskLaunchability(task(taskStatus), null)).toBe(
+        "launchable",
+      );
+    },
+  );
+
+  it.each<RunStatus>(["Done", "Review", "Failed", "Abandoned", "Crashed"])(
+    "latest run %s is manually launchable",
+    (runStatus) => {
+      expect(
+        classifyManualTaskLaunchability(task("InFlight"), run(runStatus)),
+      ).toBe("launchable");
+    },
+  );
+
+  it.each<RunStatus>([
+    "Pending",
+    "Running",
+    "NeedsInput",
+    "NeedsInputIdle",
+    "HumanWorking",
+  ])("latest active run %s stays busy for manual relaunch", (runStatus) => {
+    expect(
+      classifyManualTaskLaunchability(task("InFlight"), run(runStatus)),
+    ).toBe("busy");
+  });
+
+  it("relations still block an otherwise manual-launchable task", () => {
+    expect(
+      classifyManualTaskLaunchability(task("Done"), null, {
+        openBlockers: [{ key: "MAI", number: 7 }],
+      }),
+    ).toBe("blocked");
   });
 });

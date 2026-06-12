@@ -6,10 +6,13 @@ import { parseInstallAuthoredFlowPackageArgs } from "../../../scripts/install-au
 import { parseValidateAuthoredFlowArgs } from "../../../scripts/validate-authored-flow";
 
 describe("authored Flow package CLI args", () => {
-  it("parses validate defaults", () => {
-    expect(parseValidateAuthoredFlowArgs([])).toEqual({
-      sourceDir: "../plugins/aif",
-    });
+  it("requires validate --source-dir (no default since the aif extraction)", () => {
+    expect(() => parseValidateAuthoredFlowArgs([])).toThrow(
+      /Missing required --source-dir/,
+    );
+    expect(
+      parseValidateAuthoredFlowArgs(["--source-dir", "test-fixtures/aif-flows/dev"]),
+    ).toEqual({ sourceDir: "test-fixtures/aif-flows/dev" });
   });
 
   it("parses import draft args with optional overrides", () => {
@@ -18,7 +21,7 @@ describe("authored Flow package CLI args", () => {
         "--project",
         "demo",
         "--source-dir",
-        "../plugins/aif",
+        "test-fixtures/aif-flows/dev",
         "--slug",
         "aif",
         "--title",
@@ -26,7 +29,7 @@ describe("authored Flow package CLI args", () => {
       ]),
     ).toEqual({
       project: "demo",
-      sourceDir: "../plugins/aif",
+      sourceDir: "test-fixtures/aif-flows/dev",
       slug: "aif",
       title: "AI Factory",
     });
@@ -43,6 +46,8 @@ describe("authored Flow package CLI args", () => {
       parseImportFlowPackageDraftArgs([
         "--project",
         "demo",
+        "--source-dir",
+        "test-fixtures/aif-flows/dev",
         "--slug",
         "aif\nnodes: []",
       ]),

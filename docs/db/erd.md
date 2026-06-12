@@ -24,8 +24,12 @@ outbound-webhook tables `WEBHOOK_SUBSCRIPTIONS`, `WEBHOOK_EVENTS`,
 `PLATFORM_RUNTIME_SETTINGS.webhooks_enabled` column (ADR-077), and the
 **ADR-083 (Implemented, migration `0043`)** social-board tables `TASK_RELATIONS`,
 `TASK_COMMENTS`, `TASK_ACTIVITY`, `TASK_SUBSCRIBERS`, `INBOX_ITEMS` plus
-`PROJECTS.task_key` / `PROJECTS.next_task_number` / `TASKS.number`. For partial views by
-domain, see [`projects-domain.md`](projects-domain.md),
+`PROJECTS.task_key` / `PROJECTS.next_task_number` / `TASKS.number`, and the
+**ADR-085 (Designed, migration `0047`)** delivery-policy and cost-rollup
+projection fields/tables (`PROJECTS.delivery_policy_default`,
+`RUNS.delivery_policy_snapshot`, `RUN_COST_ROLLUPS`,
+`NODE_ATTEMPT_COST_ROLLUPS`). For partial views by domain, see
+[`projects-domain.md`](projects-domain.md),
 [`runs-domain.md`](runs-domain.md), [`hitl-domain.md`](hitl-domain.md),
 [`artifacts-domain.md`](artifacts-domain.md),
 [`assignments-domain.md`](assignments-domain.md),
@@ -49,17 +53,22 @@ erDiagram
     FLOWS ||--o{ FLOW_REVISIONS : "revisions (M10)"
     PROJECTS ||--o{ CAPABILITY_RECORDS : has
     PROJECTS ||--o{ CAPABILITY_IMPORTS : "git-pinned imports (M14)"
+    PACKAGE_SOURCES ||--o{ PACKAGE_INSTALLS : "installed from (ADR-088 Implemented)"
+    PACKAGE_INSTALLS ||--o{ PROJECT_PACKAGE_ATTACHMENTS : "attached (ADR-088 Implemented)"
+    PROJECTS ||--o{ PROJECT_PACKAGE_ATTACHMENTS : "package enablement (ADR-088 Implemented)"
+    PACKAGE_INSTALLS ||--o{ FLOWS : "group FK (ADR-088 Implemented)"
+    PACKAGE_INSTALLS ||--o{ CAPABILITY_IMPORTS : "group FK (ADR-088 Implemented)"
     PROJECTS ||--o{ AUTHORED_CAPABILITIES : "authored catalog (M25)"
     PROJECTS ||--o{ SCHEDULER_JOBS : "optional scheduler scope (M24)"
-    PROJECTS ||--o{ AGENT_SCHEDULES : "agent trigger bindings (M33)"
-    AGENTS ||--o{ AGENT_SCHEDULES : "cron + event bindings (M33)"
-    AGENTS ||--o{ AGENT_PROJECT_LINKS : "attachments (M33)"
-    PROJECTS ||--o{ AGENT_PROJECT_LINKS : "attached agents (M33)"
-    PROJECTS ||--o{ AGENTS : "project-scope binding (M33, nullable FK)"
-    PLATFORM_ACP_RUNNERS ||--o{ AGENTS : "agent default runner (M33, SET NULL)"
-    PLATFORM_ACP_RUNNERS ||--o{ AGENT_PROJECT_LINKS : "runner override (M33, SET NULL)"
-    AGENTS ||--o{ RUNS : "agent runs (M33, SET NULL)"
-    AGENTS ||--o{ PROJECT_TOKENS : "ephemeral agent tokens (M33)"
+    PROJECTS ||--o{ AGENT_SCHEDULES : "agent trigger bindings (M34)"
+    AGENTS ||--o{ AGENT_SCHEDULES : "cron + event bindings (M34)"
+    AGENTS ||--o{ AGENT_PROJECT_LINKS : "attachments (M34)"
+    PROJECTS ||--o{ AGENT_PROJECT_LINKS : "attached agents (M34)"
+    PROJECTS ||--o{ AGENTS : "project-scope binding (M34, nullable FK)"
+    PLATFORM_ACP_RUNNERS ||--o{ AGENTS : "agent default runner (M34, SET NULL)"
+    PLATFORM_ACP_RUNNERS ||--o{ AGENT_PROJECT_LINKS : "runner override (M34, SET NULL)"
+    AGENTS ||--o{ RUNS : "agent runs (M34, SET NULL)"
+    AGENTS ||--o{ PROJECT_TOKENS : "ephemeral agent tokens (M34)"
     PROJECTS ||--o{ RUN_SCHEDULES : "run schedules (M28)"
     PROJECTS ||--o{ PROJECT_FLOW_ROLES : "flow routing labels"
     PROJECTS ||--o{ ACTOR_IDENTITIES : "actor attribution"
@@ -69,17 +78,19 @@ erDiagram
 
     TASKS ||--o{ RUNS : "attempt N+1"
     FLOWS ||--o{ RUNS : "selected at launch"
-    FLOWS ||--o{ TASKS : "selected at create or triage (M33: flow_id nullable)"
-    PLATFORM_ACP_RUNNERS ||--o{ TASKS : "triage runner verdict (M33, SET NULL)"
+    FLOWS ||--o{ TASKS : "selected at create or triage (M34: flow_id nullable)"
+    PLATFORM_ACP_RUNNERS ||--o{ TASKS : "triage runner verdict (M34, SET NULL)"
     FLOWS ||--o{ PROJECT_FLOW_RUNNER_DEFAULTS : "runner default"
 
     RUNS ||--|| WORKSPACES : "one worktree per run"
     USERS ||--o{ WORKSPACES : "promotion owner (M18, nullable)"
     RUNS ||--o{ STEP_RUNS : "per-step record (legacy)"
     RUNS ||--o{ NODE_ATTEMPTS : "per-node attempt (M11a)"
+    RUNS ||--o| RUN_COST_ROLLUPS : "derived token rollup (ADR-085)"
     USERS ||--o{ NODE_ATTEMPTS : "takeover owner (M11b, SET NULL)"
     RUNS ||--o{ GATE_RESULTS : "per-run gates (M11a)"
     NODE_ATTEMPTS ||--o{ GATE_RESULTS : "gate verdicts (M11a)"
+    NODE_ATTEMPTS ||--o{ NODE_ATTEMPT_COST_ROLLUPS : "derived token rollup (ADR-085)"
     RUNS ||--o{ ARTIFACT_INSTANCES : "evidence index (M12)"
     NODE_ATTEMPTS ||--o{ ARTIFACT_INSTANCES : "attempt evidence (M12, nullable)"
     RUNS ||--o| ARTIFACT_PROJECTION_CURSORS : "projector cursor (M12)"
@@ -200,6 +211,7 @@ erDiagram
         text maister_yaml_path
         text default_runner_id "platform runner override"
         text promotion_mode "M18 0021 project-default local_merge|pull_request; override-chain source (§3.4)"
+        jsonb delivery_policy_default "ADR-085 Designed: strategy/push/trigger/targetBranch"
         text task_key UK "ADR-075 Implemented: platform-wide unique, immutable Stage 1"
         integer next_task_number "ADR-075 Implemented: allocation counter, DEFAULT 1"
         timestamp created_at
@@ -373,6 +385,34 @@ erDiagram
         timestamp updated_at
     }
 
+    PACKAGE_SOURCES {
+        text id PK "ADR-088 Implemented"
+        text url UK "git monorepo URL"
+        boolean enabled "DEFAULT true"
+        jsonb discovered "cached name+tags snapshot; DEFAULT []"
+        timestamp last_checked_at "nullable"
+    }
+
+    PACKAGE_INSTALLS {
+        text id PK "ADR-088 Implemented"
+        text source_url
+        text name "package name"
+        text version_label "raw tag or local-digest12"
+        text resolved_revision "tag SHA or content digest"
+        jsonb manifest "parsed maister-package.yaml + inventory"
+        text installed_path
+        text package_status "Installing|Installed|Failed|Removed"
+        text trust_status "untrusted|trusted|trusted_by_policy"
+    }
+
+    PROJECT_PACKAGE_ATTACHMENTS {
+        text id PK "ADR-088 Implemented"
+        text project_id FK "ON DELETE CASCADE"
+        text package_install_id FK "ON DELETE RESTRICT"
+        text package_name "denormalized; UNIQUE with project_id"
+        timestamp attached_at
+    }
+
     AUTHORED_CAPABILITIES {
         text id PK
         text project_id FK
@@ -440,27 +480,27 @@ erDiagram
     }
 
     AGENTS {
-        text id PK "M33: dir name in ~/.maister/agents/"
+        text id PK "M34: dir name in ~/.maister/agents/"
         text scope "platform|project"
         text project_id FK "NOT NULL iff scope=project; CASCADE"
         text name
         text description
         text runner_id FK "platform_acp_runners(id) SET NULL"
-        text workspace "none|repo_read|worktree (ADR-089)"
+        text workspace "none|repo_read|worktree (ADR-090)"
         text mode "session|subagent"
         jsonb triggers "subset of manual|cron|domain_event|webhook|flow"
         jsonb capability_profile "M14 shape, nullable"
         text risk_tier "read_only|standard|destructive"
         text source_path "canonical .md path"
         boolean enabled
-        timestamp quarantined_at "nullable — ADR-089 dirty-watchdog"
+        timestamp quarantined_at "nullable — ADR-090 dirty-watchdog"
         text quarantine_reason "nullable"
         timestamp created_at
         timestamp updated_at
     }
 
     AGENT_PROJECT_LINKS {
-        text id PK "M33"
+        text id PK "M34"
         text agent_id FK "agents(id) CASCADE"
         text project_id FK "projects(id) CASCADE"
         boolean enabled
@@ -470,7 +510,7 @@ erDiagram
     }
 
     AGENT_SCHEDULES {
-        text id PK "M33 rework — M24 shape was dead code"
+        text id PK "M34 rework — M24 shape was dead code"
         text agent_id FK "agents(id) CASCADE — was text agent_ref"
         text project_id FK
         text trigger_type "cron|event"
@@ -512,14 +552,14 @@ erDiagram
         integer number "ADR-075 Implemented: per-project, UNIQUE (project_id, number)"
         text title
         text prompt
-        text flow_id FK "M33: NULLABLE — unconfigured until triaged"
+        text flow_id FK "M34: NULLABLE — unconfigured until triaged"
         text status "Backlog|InFlight|Done|Abandoned"
         text stage "Backlog|Prepare"
         integer attempt_number "monotonic per task"
-        text triage_status "M33: 'triaged' | NULL"
-        text runner_id FK "M33: verdict runner, SET NULL"
-        text target_branch "M33: verdict branch, nullable"
-        text promotion_mode "M33: local_merge|pull_request, nullable"
+        text triage_status "M34: 'triaged' | NULL"
+        text runner_id FK "M34: verdict runner, SET NULL"
+        text target_branch "M34: verdict branch, nullable"
+        text promotion_mode "M34: local_merge|pull_request, nullable"
         timestamp created_at
         timestamp updated_at
     }
@@ -579,11 +619,11 @@ erDiagram
 
     RUNS {
         text id PK
-        text run_kind "flow|scratch|agent (DEFAULT flow; agent M33)"
-        text agent_id FK "M33: agents(id) SET NULL, kind=agent only"
-        text trigger_source "M33: manual|cron|domain_event|webhook|flow"
-        bigint trigger_event_id "M33: domain_events.id claim key"
-        jsonb trigger_payload "M33: webhook/event context, <= 32 KB"
+        text run_kind "flow|scratch|agent (DEFAULT flow; agent M34)"
+        text agent_id FK "M34: agents(id) SET NULL, kind=agent only"
+        text trigger_source "M34: manual|cron|domain_event|webhook|flow"
+        bigint trigger_event_id "M34: domain_events.id claim key"
+        jsonb trigger_payload "M34: webhook/event context, <= 32 KB"
         text task_id FK "nullable for scratch"
         text project_id FK
         text flow_id FK "nullable for scratch"
@@ -603,8 +643,28 @@ erDiagram
         timestamp resume_started_at "Recover in-flight marker + reconcile grace anchor (M19)"
         text resume_target_step_id "node id retained at crash time for Recover (M19, 0016)"
         jsonb resolved_capability_set "M27 Designed: frozen capability snapshot at launch (flowRevisionId,capabilities,mcps)"
+        jsonb delivery_policy_snapshot "ADR-085 Designed: resolved policy at launch"
         timestamp started_at
         timestamp ended_at
+    }
+
+    RUN_COST_ROLLUPS {
+        text run_id PK
+        text project_id FK
+        text task_id FK
+        text flow_id FK
+        integer input_tokens
+        integer output_tokens
+        integer cache_read_tokens
+        integer cache_creation_tokens
+        integer resume_input_tokens
+        integer resume_output_tokens
+        integer resume_cache_read_tokens
+        integer resume_cache_creation_tokens
+        jsonb by_model
+        integer source_event_count
+        text source_cursor
+        timestamp updated_at
     }
 
     WORKSPACES {
@@ -651,6 +711,26 @@ erDiagram
         text error_code "MaisterErrorCode literal"
         timestamp started_at
         timestamp ended_at
+    }
+
+    NODE_ATTEMPT_COST_ROLLUPS {
+        text id PK
+        text run_id FK
+        text project_id FK
+        text node_attempt_id FK
+        text node_id
+        text model
+        integer input_tokens
+        integer output_tokens
+        integer cache_read_tokens
+        integer cache_creation_tokens
+        integer resume_input_tokens
+        integer resume_output_tokens
+        integer resume_cache_read_tokens
+        integer resume_cache_creation_tokens
+        integer source_event_count
+        text source_cursor
+        timestamp updated_at
     }
 
     NODE_ATTEMPTS {
@@ -895,9 +975,9 @@ erDiagram
         text id PK "uuid"
         text project_id FK "NOT NULL -> projects(id) ON DELETE CASCADE"
         text name "NOT NULL"
-        text token_kind "NOT NULL default project — project|user|agent (agent M33)"
+        text token_kind "NOT NULL default project — project|user|agent (agent M34)"
         text owner_user_id FK "NULL -> users(id) ON DELETE SET NULL"
-        text agent_id FK "M33: NULL -> agents(id) CASCADE; agent tokens only"
+        text agent_id FK "M34: NULL -> agents(id) CASCADE; agent tokens only"
         text prefix "NOT NULL, INDEX — first 12 chars of the token string"
         text token_hash "NOT NULL — sha256_hex(fullToken); never plaintext"
         jsonb scopes "NOT NULL default [*] — enforced route scopes"
@@ -1074,12 +1154,12 @@ external-operation events) is not drawn until its migrations exist. See
 | `scheduler_jobs` | `scheduler_jobs_project_kind_idx` | `(project_id, job_kind)` | **(M24 Implemented, migration `0027`)** Project-scoped scheduler read model. |
 | `scheduler_job_runs` | `scheduler_job_runs_job_idx` | `(job_id)` | **(M24 Implemented, migration `0027`)** Job attempt history. |
 | `scheduler_job_runs` | `scheduler_job_runs_lease_idx` | `(status, lease_expires_at)` | **(M24 Implemented, migration `0027`)** Stuck-attempt reaper. |
-| `agent_schedules` | `agent_schedules_project_agent_idx` | `(project_id, agent_id)` | **(M33, migration `0048` rework)** Project agent trigger-binding lookup (was `(project_id, agent_ref)` from the dead M24 shape). |
-| `agent_schedules` | `agent_schedules_due_cron_idx` | `(trigger_type, enabled, next_fire_at)` | **(M33)** Due-cron scan for the `agent_tick.dispatcher`. |
-| `agents` | `agents_project_idx` | `(project_id)` | **(M33)** Project-scope agent lookup. |
-| `agent_project_links` | `agent_project_links_unique` | `UNIQUE (agent_id, project_id)` | **(M33)** One attachment per (agent, project). |
-| `agent_project_links` | `agent_project_links_project_idx` | `(project_id)` | **(M33)** Attached-agents-per-project reads. |
-| `runs` | `runs_agent_trigger_event_unique` | `UNIQUE (agent_id, trigger_event_id) WHERE trigger_event_id IS NOT NULL` | **(M33)** Outbox→spawn no-dup claim under at-least-once redelivery (ADR-088). |
+| `agent_schedules` | `agent_schedules_project_agent_idx` | `(project_id, agent_id)` | **(M34, migration `0049` rework)** Project agent trigger-binding lookup (was `(project_id, agent_ref)` from the dead M24 shape). |
+| `agent_schedules` | `agent_schedules_due_cron_idx` | `(trigger_type, enabled, next_fire_at)` | **(M34)** Due-cron scan for the `agent_tick.dispatcher`. |
+| `agents` | `agents_project_idx` | `(project_id)` | **(M34)** Project-scope agent lookup. |
+| `agent_project_links` | `agent_project_links_unique` | `UNIQUE (agent_id, project_id)` | **(M34)** One attachment per (agent, project). |
+| `agent_project_links` | `agent_project_links_project_idx` | `(project_id)` | **(M34)** Attached-agents-per-project reads. |
+| `runs` | `runs_agent_trigger_event_unique` | `UNIQUE (agent_id, trigger_event_id) WHERE trigger_event_id IS NOT NULL` | **(M34)** Outbox→spawn no-dup claim under at-least-once redelivery (ADR-089). |
 | `authored_capabilities` | `authored_capabilities_project_kind_slug_uq` | `(project_id, kind, slug)` UNIQUE | **(M25 Implemented, migration `0028`)** Project-local authored capability namespace. |
 | `authored_capabilities` | `authored_capabilities_project_kind_idx` | `(project_id, kind)` | **(M25 Implemented, migration `0028`)** Authored catalog list/filter. |
 | `authored_capability_revisions` | `authored_capability_revisions_capability_revision_uq` | `(capability_id, revision_number)` UNIQUE | **(M25 Implemented, migration `0028`)** Immutable revision numbering. |

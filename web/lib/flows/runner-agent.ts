@@ -63,8 +63,9 @@ export type RunAgentStepCtx = {
   projectSlug: string;
   runId: string;
   stepId: string;
+  nodeAttemptId?: string;
   worktreePath: string;
-  // M33 (ADR-088): the node's `settings.agent` catalog binding — resolved at
+  // M34 (ADR-089): the node's `settings.agent` catalog binding — resolved at
   // dispatch (session-mode prompt substitution / subagent materialization).
   agentBinding?: { id: string };
   executor: {
@@ -579,7 +580,7 @@ export async function runAgentStep(
 ): Promise<StepResult & { acpSessionId?: string; sessionFallback?: boolean }> {
   let promptTemplate = step.prompt;
 
-  // M33 (ADR-088): a catalog-agent binding substitutes the inline prompt —
+  // M34 (ADR-089): a catalog-agent binding substitutes the inline prompt —
   // the agent's .md body becomes the system block and the node prompt is
   // appended as the task block (mode=session), or the definition is
   // materialized into .claude/agents/ for Claude self-delegation
@@ -642,6 +643,7 @@ async function runNewSession(
       projectSlug: ctx.projectSlug,
       worktreePath: ctx.worktreePath,
       stepId: ctx.stepId,
+      nodeAttemptId: ctx.nodeAttemptId,
       executor: executorToSupervisorInput(ctx.executor),
       runner: ctx.runner,
       capabilityProfilePath: ctx.capabilityProfilePath,
@@ -688,6 +690,7 @@ async function runNewSession(
     try {
       promptResult = await api.sendPrompt(session.sessionId, {
         stepId: ctx.stepId,
+        nodeAttemptId: ctx.nodeAttemptId,
         prompt: resolvedPrompt,
       });
     } finally {
@@ -837,6 +840,7 @@ async function runSlashInExisting(
   try {
     promptResult = await api.sendPrompt(sessionId, {
       stepId: ctx.stepId,
+      nodeAttemptId: ctx.nodeAttemptId,
       prompt: resolvedPrompt,
     });
   } finally {

@@ -79,7 +79,7 @@ function scheduleSummary(schedules: AttachScheduleView[]): string {
     .join(" · ");
 }
 
-// M33 (ADR-088 D11): the per-project attach panel — links CRUD, runner
+// M34 (ADR-089 D11): the per-project attach panel — links CRUD, runner
 // override, cron + domain-event trigger bindings.
 export function AgentsAttachPanel({
   slug,

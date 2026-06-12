@@ -1,4 +1,4 @@
-// M33 (ADR-088) e2e (a): manual catalog launch from the task detail page.
+// M34 (ADR-089) e2e (a): manual catalog launch from the task detail page.
 // "Run agent" POSTs /api/projects/{slug}/agents/{id}/launch → an agent-kind
 // run spins up against the stub supervisor (a real /sessions round-trip:
 // createSession → prompt → SSE), the project page shows the run in the active

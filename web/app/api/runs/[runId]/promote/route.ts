@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { deliveryPolicyOverrideSchema } from "@/lib/runs/delivery-policy";
 import { promoteRun } from "@/lib/runs/promote";
 
 const log = pino({
@@ -15,7 +16,8 @@ const log = pino({
 
 const promoteBodySchema = z
   .object({
-    mode: z.enum(["local_merge", "pull_request"]),
+    mode: z.enum(["local_merge", "rebase_merge", "pull_request"]).optional(),
+    deliveryPolicyOverride: deliveryPolicyOverrideSchema.optional(),
     targetBranch: z.string().min(1).max(255).optional(),
     reviewedTargetCommit: z.string().min(7).max(64).optional(),
     allowTargetDrift: z.boolean().optional(),

@@ -39,7 +39,7 @@ export function NewTaskModal({
 
   const [title, setTitle] = useState("");
   const [prompt, setPrompt] = useState("");
-  // M33: flow is optional — "" creates a simple-intent task that the triager
+  // M34: flow is optional — "" creates a simple-intent task that the triager
   // (or a human via the card popover) configures later.
   const [flowId, setFlowId] = useState("");
 

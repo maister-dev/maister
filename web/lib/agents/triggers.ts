@@ -39,7 +39,7 @@ type LaunchFn = (
   input: Parameters<typeof launchAgentRun>[0],
 ) => Promise<LaunchAgentRunResult>;
 
-// The agent_tick.dispatcher handler (ADR-088): claim due cron rows with the
+// The agent_tick.dispatcher handler (ADR-089): claim due cron rows with the
 // M28-proven atomic UPDATE (one winner per row, one catch-up fire — the
 // claim advances next_fire_at from NOW, so missed windows never backfill),
 // then launch. The tick doubles as the sanctioned recovery sweep for agent
@@ -210,7 +210,7 @@ export function buildAgentTriggersConsumer(
 
           if (!kinds.includes(event.kind)) continue;
 
-          // Self-exclusion (ADR-088): an event actored by the matched agent
+          // Self-exclusion (ADR-089): an event actored by the matched agent
           // never re-triggers it — structural loop termination for the
           // triage Q&A loop.
           if (event.actorType === "agent" && event.actorId === row.agentId) {

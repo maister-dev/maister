@@ -332,17 +332,31 @@
       "breakpoints": true
     },
     {
+      "idx": 47,
+      "version": "7",
+      "when": 1781212800000,
+      "tag": "0047_multi_run_cost_policy",
+      "breakpoints": true
+    },
+    {
       "idx": 48,
       "version": "7",
-      "when": 1781224127751,
-      "tag": "0048_platform_agents",
+      "when": 1781224828400,
+      "tag": "0048_packages",
       "breakpoints": true
     },
     {
       "idx": 49,
       "version": "7",
+      "when": 1781225000000,
+      "tag": "0049_platform_agents",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
       "when": 1781226997351,
-      "tag": "0049_agent_activity_kinds",
+      "tag": "0050_agent_activity_kinds",
       "breakpoints": true
     }
   ]

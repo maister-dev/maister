@@ -18,7 +18,7 @@ import {
 } from "@/lib/flows/runner-agent";
 import { isMaisterError } from "@/lib/errors";
 
-// M33 (ADR-088): the agent-binding resolution is mocked at the module
+// M34 (ADR-089): the agent-binding resolution is mocked at the module
 // boundary — the resolver's own contract (registration, `flow` trigger,
 // enabled/quarantine gates, subagent materialization) is covered by
 // lib/agents/__tests__/flow-binding-floor.test.ts; here we assert the
@@ -726,7 +726,7 @@ describe("runner-agent — runSlashInExisting profile-consistency guard (M14 T4.
   });
 });
 
-describe("runner-agent — catalog-agent binding substitution (M33, ADR-088)", () => {
+describe("runner-agent — catalog-agent binding substitution (M34, ADR-089)", () => {
   it("session-mode binding sends the agent body + '## Task' + node prompt as the session prompt", async () => {
     const db = makeFakeDb();
     const api = makeApi({ events: [update(1, "ok"), exited(2)] });

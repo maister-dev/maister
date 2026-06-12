@@ -49,8 +49,8 @@ let aifFlowId: string;
 let originalHome: string | undefined;
 
 // Local test fixture (see _fixtures/aif-flow/flow.yaml) — the runner test is
-// decoupled from the real plugins/aif, which is restructured into a multi-flow
-// bundle and ultimately moves to its own repo.
+// decoupled from the real AIF package (extracted to the external
+// maister-plugins repo as a multi-flow bundle, ADR-088).
 const AIF_FIXTURE_PATH = resolve(__dirname, "_fixtures/aif-flow");
 
 const CLI_FLOW_YAML = `schemaVersion: 1

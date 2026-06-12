@@ -192,6 +192,187 @@ invariants bind it to the run machine:
    transaction keyed on the attempt token; a retry after success returns `409`
    (already `Done`), never a second promotion.
 
+### Multi-run launch overrides (Designed, ADR-085)
+
+Manual task launches are no longer limited to Backlog retry. The manual
+surface uses a positive allow-list from [`tasks.md`](tasks.md):
+`Done`, `Review`, `Failed`, `Abandoned`, and `Crashed` are launchable through
+"Run again"; active/busy states and relation blockers remain disabled with a
+visible reason.
+
+`launchRun` stays the single creation service for internal UI, task page,
+board card, and any future dispatcher. It accepts only server-validated
+overrides:
+
+- `flowId` — optional, must be an enabled Flow on the task's project. Default
+  is the task's Flow.
+- `runnerId` — optional, resolved through the existing ADR-076 runner/model
+  chain for the selected Flow. The route returns configured model and model
+  application metadata for display; secret provider fields are never returned.
+- `baseBranch` and `targetBranch` — optional, both validated against
+  server-derived branch lists. The worktree forks from the resolved
+  launch-time base commit; target is the promotion target snapshot.
+- `deliveryPolicy` — optional launch override, resolved against the project
+  default and snapshotted on the run.
+
+The branch naming summary is deterministic:
+`<project.branchPrefix>task-<taskId>/attempt-<nextAttempt>` unless a later
+ADR changes branch identity. The launch dialog displays the branch name and
+base branch before POST. Every displayed override is marked as a deviation from
+the default.
+
+Internal `POST /api/runs` and `GET /api/runs/launch-options` expose this
+contract. `POST /api/v1/ext/runs` remains v1-compatible in ADR-085: it accepts
+`taskId`, optional `runnerId`, `baseBranch`, and `targetBranch` only. It keeps
+the same `launchRun` service, token project-scope check, and audit row, but it
+does not accept `flowId` or delivery-policy override until a versioned external
+API decision adds parity.
+
+### Cost and time accounting (Designed, ADR-085)
+
+`cost.jsonl` remains the append-only source of truth. Cost records are enriched
+at the supervisor boundary with:
+
+- `runId`, `projectSlug`, `stepId`, and `nodeAttemptId`;
+- `sessionId` and optional ACP resume marker;
+- `model`;
+- token totals by kind: `input`, `output`, `cache_read`, and
+  `cache_creation`.
+
+For `new-session` nodes, the web tier sends `nodeAttemptId` when creating the
+session. For shared `slash-in-existing` sessions, every prompt call updates the
+active attribution context before the adapter turn starts. The supervisor
+either serializes prompt turns for the session or refuses concurrent prompts
+with a typed precondition failure; it never writes ambiguous node-attempt cost.
+
+Derived DB rollups are reconcilable from `cost.jsonl` and may be recomputed on
+read or updated through the existing run event path. Rollups store token/cost
+totals, not redundant duration. Run wall-clock duration is derived from
+`runs.started_at` to `coalesce(runs.ended_at, now)`. Node active duration is
+derived from `node_attempts.started_at` to `coalesce(node_attempts.ended_at,
+now)`. Resume tax is the subtotal of records where the resume marker is true,
+especially cache-creation tokens paid by checkpoint/resume.
+
+UI surfaces:
+
+- Run detail summary card: token totals by kind and model, resume-tax subtotal,
+  active time and wall-clock side by side.
+- Run timeline: per-node-attempt token and duration columns.
+- Task page: aggregate totals across every run attempt for the task.
+- Observatory: read-only cost dimension by project, Flow, and node.
+
+Live updates reuse the existing run SSE/server-refresh path. No client
+`setInterval`, filesystem polling, `fs.watch`, or `chokidar` path is allowed.
+
+### Delivery policy (Designed, ADR-085)
+
+Delivery policy resolves as:
+
+```text
+project default -> launch override -> promote-time override
+```
+
+The resolved launch snapshot is immutable for the run and is visible on run
+detail even when the project default later changes.
+
+```ts
+type DeliveryPolicy = {
+  strategy: "merge" | "rebase_merge" | "pull_request" | "ai_rebase_merge";
+  push: "never" | "on_success";
+  trigger: "manual" | "auto_on_ready";
+  targetBranch?: string;
+};
+```
+
+Compatibility:
+
+- legacy `local_merge` maps to `{ strategy: "merge", push: "never",
+  trigger: "manual" }`;
+- legacy `pull_request` maps to `{ strategy: "pull_request", push:
+  "on_success", trigger: "manual" }`;
+- scratch runs stay on legacy M18 promote semantics in this slice.
+
+`auto_on_ready` fires only when a run is in `Review` and the existing
+readiness gate returns ready/overridden. The run-detail banner states that the
+run will auto-deliver when ready and exposes a cancel action that switches only
+the run snapshot to `manual` through a CAS guarded by `status = Review` and
+`trigger = auto_on_ready`.
+
+Promotion preselects the run snapshot but allows an explicit human override.
+`merge`, `pull_request`, and `rebase_merge` share the existing promotion claim,
+readiness re-gate, target-drift token, conflict assignment, and finalize-token
+behavior. `rebase_merge` runs a rebase before the final merge and restores or
+aborts cleanly on conflict. Conflict/degradation UI shows the failing command,
+paths, and status at parity with the current merge-conflict surface.
+
+`ai_rebase_merge` is separable but runs on the same durable promotion substrate:
+the policy mode is preserved for audit/API responses, the git side effect uses
+the existing rebase-merge lane, and conflicts appear as the existing
+`merge_conflict` assignment kind in the standard inbox/needs-you surfaces unless
+a future autonomous resolver introduces additional standard HITL rows.
+
+### Phase A audit and QA matrix (Designed, ADR-085)
+
+Verified baseline for this slice:
+
+- Current latest ADR before this feature: ADR-084; this feature uses ADR-085.
+- Current latest migration: `0044_mcp_supported_agents_all_adapters`; the next
+  schema migration is `0047`.
+- Launch choke points: `web/lib/services/runs.ts`, `web/app/api/runs/route.ts`,
+  `web/app/api/v1/ext/runs/route.ts`,
+  `web/app/api/runs/launch-options/route.ts`, and
+  `web/lib/run-schedules/dispatch.ts`.
+- UI surfaces: `web/components/board/launch-popover.tsx`,
+  `web/components/board/task-card.tsx`,
+  `web/app/(app)/projects/[slug]/tasks/[number]/page.tsx`,
+  `web/app/(app)/runs/[runId]/layout.tsx`,
+  `web/components/runs/review-panel.tsx`,
+  `web/components/board/panels/settings-panel.tsx`, and Observatory pages.
+- Supervisor attribution surfaces: `supervisor/src/types.ts`,
+  `supervisor/src/http-api.ts`, `supervisor/src/cost.ts`,
+  `web/lib/supervisor-client.ts`, `web/lib/flows/runner-agent.ts`, and
+  `web/lib/flows/graph/runner-graph.ts`.
+
+Required RED tests before implementation:
+
+| Surface/behavior | Test owner |
+| --- | --- |
+| Manual launchability allow-list and disabled reasons | `web/lib/runs/__tests__/launchability.test.ts` |
+| Scheduler classifier preservation | `web/lib/run-schedules/__tests__/dispatch-decision.test.ts` and dispatch integration |
+| Internal launch route flow/policy trust boundary | `web/app/api/runs/__tests__/*` |
+| External v1 launch compatibility | `web/app/api/v1/ext/runs/__tests__/*` |
+| Launch-options DTO shape and no scratch-options dependency | `web/app/api/runs/launch-options/__tests__/route.test.ts` |
+| Delivery-policy schema/resolution/cancel | `web/lib/runs/__tests__/*` and route integration |
+| Promote policy transitions and scratch regression | `web/lib/runs/__tests__/promote-*.test.ts` |
+| Supervisor cost stamping and prompt attribution | `supervisor/src/__tests__/cost.test.ts` plus web integration |
+| Run/task/Observatory cost read models | `web/lib/queries/__tests__/*` |
+| Task card/page Run again and disabled tooltip states | `web/e2e/multi-run-cost-policy.spec.ts` with seeded Done/Review/Failed/Abandoned/Crashed/busy/blocked tasks |
+| Launch dialog flow/runner/model/branch/policy defaults and override badges | `web/e2e/multi-run-cost-policy.spec.ts`; fixture `web/e2e/_seed/multi-run-cost-policy.ts` |
+| Task run-history columns and aggregate totals | `web/e2e/multi-run-cost-policy.spec.ts` plus `web/lib/queries/__tests__/task-detail*.test.ts` |
+| Board latest-run card plus run-count badge | `web/e2e/multi-run-cost-policy.spec.ts` |
+| Run detail cost summary, policy snapshot, auto banner/cancel | `web/e2e/multi-run-cost-policy.spec.ts` plus route/query integration tests |
+| Run timeline duration/token columns | `web/e2e/multi-run-cost-policy.spec.ts` plus query integration tests |
+| Promote panel policy preselection/override/conflict/degradation | `web/e2e/multi-run-cost-policy.spec.ts` plus temp-git promote integration tests |
+| Observatory cost dimension | `web/e2e/multi-run-cost-policy.spec.ts` plus observatory rollup query tests |
+
+`AUTHED_SPEC` must match `multi-run-cost-policy.spec.ts`; if the regex remains
+allow-listed, update it in `web/playwright.config.ts` before running the e2e
+lane. A feature task is not done until its surface row above has a green
+Playwright assertion, EN/RU copy, and an integration/unit owner for its
+server-side contract.
+
+Logging requirements:
+
+- accepted launches: DEBUG with `taskId`, `runId`, `flowId`, `runnerId`,
+  policy summary, base branch, and target branch;
+- refused launches: WARN with classifier result and blocker refs, without
+  server-only paths;
+- cost ingestion: DEBUG bounded token totals and attribution ids; WARN malformed
+  or unattributable records; never raw adapter lines, prompts, or secrets;
+- delivery policy: INFO snapshot/auto-trigger/cancel; WARN degradation with
+  failing command/path/status; ERROR only for unrecoverable side-effect failure
+  with attempt id.
+
 ## Process flows
 
 ### Happy path — launch to Review, promote after Review (Implemented)

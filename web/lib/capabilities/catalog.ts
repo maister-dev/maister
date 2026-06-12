@@ -289,6 +289,8 @@ export async function upsertCapabilitiesFromConfig(
         );
       }
 
+      // CLEAR exemptions: authored projections (M25) and package-attachment
+      // records (ADR-088 — owned by attach/detach, not by config upserts).
       const scopes = refsByScope(desired);
       let disabledScopes = 0;
 
@@ -303,13 +305,13 @@ export async function upsertCapabilitiesFromConfig(
                   eq(capabilityRecords.source, source),
                   eq(capabilityRecords.kind, kind),
                   notInArray(capabilityRecords.capabilityRefId, refs),
-                  sql`coalesce(${capabilityRecords.material}->>'origin', '') <> 'authored'`,
+                  sql`coalesce(${capabilityRecords.material}->>'origin', '') not in ('authored', 'package-attachment')`,
                 )
               : and(
                   eq(capabilityRecords.projectId, args.projectId),
                   eq(capabilityRecords.source, source),
                   eq(capabilityRecords.kind, kind),
-                  sql`coalesce(${capabilityRecords.material}->>'origin', '') <> 'authored'`,
+                  sql`coalesce(${capabilityRecords.material}->>'origin', '') not in ('authored', 'package-attachment')`,
                 );
 
           await tx

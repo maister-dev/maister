@@ -21,7 +21,7 @@ const { tasks } = schemaModule as unknown as Record<string, any>;
 const ENDPOINT_TRIAGE =
   "POST /api/v1/ext/projects/[slug]/tasks/[taskId]/triage";
 
-// ADR-088 D8: set-only verdict — at least one field; the op ALWAYS stamps
+// ADR-089 D8: set-only verdict — at least one field; the op ALWAYS stamps
 // triage_status='triaged'. Every provided id is allow-list validated.
 const postBodySchema = z
   .object({

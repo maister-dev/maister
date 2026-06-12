@@ -217,12 +217,13 @@ content must be valid UTF-8 text; binary payloads are refused. Script/setup
 files are represented as package content but are never executed by authoring,
 publish, import, or export.
 
-The canonical `plugins/aif` package must become a real portable package: it
-includes `flow.yaml`, `README.md`, `setup.sh`, schemas, relevant AIF skills,
-project rules, agent definitions, and CLI/helper scripts when those are part of
-the portable experience. Managed source directories such as `.codex/`,
-`.claude/`, `.agents/`, and `.ai-factory/rules/` are source inputs; the package
-stores stable artifacts under `plugins/aif/`.
+The canonical AIF package is a real portable package, extracted to the
+external `maister-plugins` repo (`packages/aif`, ADR-088): each flow dir
+includes `flow.yaml` plus schemas; the package ships `README.md`, `setup.sh`,
+relevant AIF skills, and agent definitions under `capability/`. Managed source
+directories such as `.codex/`, `.claude/`, `.agents/`, and
+`.ai-factory/rules/` are source inputs; the package stores stable artifacts in
+that external repo.
 
 ## Validation gates
 
@@ -251,7 +252,7 @@ Invalid authored packages remain drafts and must be visibly non-runnable.
 | Admin saves malformed YAML.                              | Draft is saved only when the action supports draft save; validation shows parse/schema issues; publish/export controls stay disabled. |
 | Admin publishes `{ foo: bar }`.                          | Refused before publication because it is not a valid Flow package.                                                                    |
 | Admin exports a valid authored package.                  | A portable directory is written through temp + rename; no setup hook runs.                                                            |
-| Admin imports `plugins/aif`.                             | Draft authored package contains flow, setup, README, schemas, skills, rules, agents, and CLI/helper artifacts.                        |
+| Admin imports an AIF flow dir (`maister-plugins/packages/aif/flows/<id>`). | Draft authored package contains the flow + schema artifacts of that dir (the bundle ships separately under `capability/`).            |
 | Operator wants to launch authored content.               | They must export/install/trust/enable through the M10 package lifecycle first.                                                        |
 
 ## First-slice acceptance

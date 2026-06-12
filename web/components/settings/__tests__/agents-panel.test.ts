@@ -1,4 +1,4 @@
-// M33 (ADR-088 D11) — the /settings platform-agent catalog panel: view-only
+// M34 (ADR-089 D11) — the /settings platform-agent catalog panel: view-only
 // table, quarantine badge with the reason on hover, manual-launch affordance
 // gated on enabled+unquarantined. renderToStaticMarkup — no jsdom (repo
 // convention); next-intl/next-navigation mocked at the module boundary.
@@ -51,7 +51,7 @@ function render(agents: AgentSummaryRow[]): string {
   );
 }
 
-describe("AgentsPanel — catalog table (M33 D11)", () => {
+describe("AgentsPanel — catalog table (M34 D11)", () => {
   it("renders the row fields and the enabled state chip", () => {
     const html = render([agent()]);
 

@@ -24,6 +24,16 @@ import {
   isSchemaVersionSupported,
 } from "@/lib/flows/engine-version";
 import { compileManifest } from "@/lib/flows/graph/compile";
+import {
+  classifyManualTaskLaunchability,
+  getLatestFlowRun,
+} from "@/lib/runs/launchability";
+import {
+  resolveDeliveryPolicy,
+  type StoredDeliveryPolicy,
+} from "@/lib/runs/delivery-policy";
+import { getOpenRelationBlockers } from "@/lib/social/relations";
+import { listBranches } from "@/lib/worktree";
 
 const {
   flowRevisions,
@@ -210,37 +220,43 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
     assertRevisionLaunchable(flow, revision);
 
-    const [runtimeRows, runnerRows, projectFlowDefaultRows, remapRows] =
-      await Promise.all([
-        db
-          .select()
-          .from(platformRuntimeSettings)
-          .where(eq(platformRuntimeSettings.id, "singleton")),
-        db.select().from(platformAcpRunners),
-        db
-          .select({ runnerId: projectFlowRunnerDefaults.runnerId })
-          .from(projectFlowRunnerDefaults)
-          .where(
-            and(
-              eq(projectFlowRunnerDefaults.projectId, project.id),
-              eq(projectFlowRunnerDefaults.flowId, flow.id),
-            ),
+    const [
+      runtimeRows,
+      runnerRows,
+      projectFlowDefaultRows,
+      remapRows,
+      flowRowsForProject,
+    ] = await Promise.all([
+      db
+        .select()
+        .from(platformRuntimeSettings)
+        .where(eq(platformRuntimeSettings.id, "singleton")),
+      db.select().from(platformAcpRunners),
+      db
+        .select({ runnerId: projectFlowRunnerDefaults.runnerId })
+        .from(projectFlowRunnerDefaults)
+        .where(
+          and(
+            eq(projectFlowRunnerDefaults.projectId, project.id),
+            eq(projectFlowRunnerDefaults.flowId, flow.id),
           ),
-        db
-          .select({
-            stepId: flowRunnerRemaps.stepId,
-            sourceRunnerId: flowRunnerRemaps.sourceRunnerId,
-            mappedRunnerId: flowRunnerRemaps.mappedRunnerId,
-            status: flowRunnerRemaps.status,
-          })
-          .from(flowRunnerRemaps)
-          .where(
-            and(
-              eq(flowRunnerRemaps.projectId, project.id),
-              eq(flowRunnerRemaps.flowRevisionId, revision.id),
-            ),
+        ),
+      db
+        .select({
+          stepId: flowRunnerRemaps.stepId,
+          sourceRunnerId: flowRunnerRemaps.sourceRunnerId,
+          mappedRunnerId: flowRunnerRemaps.mappedRunnerId,
+          status: flowRunnerRemaps.status,
+        })
+        .from(flowRunnerRemaps)
+        .where(
+          and(
+            eq(flowRunnerRemaps.projectId, project.id),
+            eq(flowRunnerRemaps.flowRevisionId, revision.id),
           ),
-      ]);
+        ),
+      db.select().from(flows).where(eq(flows.projectId, project.id)),
+    ]);
     const platformRuntime = runtimeRows[0];
 
     if (!platformRuntime) {
@@ -269,6 +285,43 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       platform: { defaultRunnerId: platformRuntime.defaultRunnerId },
       runners: runnerCatalog,
     });
+    const latestFlowRun = await getLatestFlowRun(task.id, db);
+    const openBlockers =
+      (await getOpenRelationBlockers([task.id], db)).get(task.id) ?? [];
+    const launchability = classifyManualTaskLaunchability(
+      {
+        status: task.status ?? "Backlog",
+      },
+      latestFlowRun,
+      { openBlockers },
+    );
+    const branches = await listBranches(project.repoPath);
+    const deliveryPolicyDefault = resolveDeliveryPolicy({
+      projectDefault:
+        project.deliveryPolicyDefault as StoredDeliveryPolicy | null,
+      projectPromotionMode: project.promotionMode,
+      projectMainBranch: project.mainBranch ?? "main",
+    });
+    const safeRunners = runnerRows.map((runner: Record<string, any>) => ({
+      id: runner.id,
+      label: runner.id,
+      adapter: runner.adapter,
+      capabilityAgent: runner.capabilityAgent,
+      model: runner.model,
+      providerKind: runnerProviderKind(runner.provider),
+      permissionPolicy: runner.permissionPolicy,
+      sidecarId: runner.sidecarId,
+      readinessStatus: runner.readinessStatus,
+      readinessReasons: runner.readinessReasons,
+      enabled: runner.enabled,
+      pinnedModel: {
+        model: runner.model,
+        source:
+          runner.id === defaultResolution.runnerId
+            ? defaultResolution.runnerResolutionTier
+            : "runner",
+      },
+    }));
 
     return NextResponse.json({
       taskId: task.id,
@@ -276,18 +329,39 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       flowRef: flow.flowRefId,
       defaultRunnerId: defaultResolution.runnerId,
       runnerResolutionTier: defaultResolution.runnerResolutionTier,
-      runners: runnerRows.map((runner: Record<string, any>) => ({
-        id: runner.id,
-        adapter: runner.adapter,
-        capabilityAgent: runner.capabilityAgent,
-        model: runner.model,
-        providerKind: runnerProviderKind(runner.provider),
-        permissionPolicy: runner.permissionPolicy,
-        sidecarId: runner.sidecarId,
-        readinessStatus: runner.readinessStatus,
-        readinessReasons: runner.readinessReasons,
-        enabled: runner.enabled,
+      runners: safeRunners,
+      task: {
+        id: task.id,
+        projectId: project.id,
+        projectSlug: project.slug,
+        number: task.number,
+        status: task.status ?? "Backlog",
+        flowId: task.flowId,
+      },
+      launchability: {
+        launchable: launchability === "launchable",
+        reason: launchability,
+        blockers: openBlockers.map(
+          (blocker: { key: string; number: number }) => ({
+            kind: "relation",
+            label: `${blocker.key}-${blocker.number}`,
+          }),
+        ),
+      },
+      flows: flowRowsForProject.map((projectFlow: Record<string, any>) => ({
+        id: projectFlow.id,
+        refId: projectFlow.flowRefId,
+        name: projectFlow.flowRefId,
+        version: projectFlow.version ?? null,
+        enabled: projectFlow.enablementState !== "Disabled",
+        isTaskDefault: projectFlow.id === task.flowId,
       })),
+      selectedFlowId: flow.id,
+      selectedRunnerId: defaultResolution.runnerId,
+      branches,
+      defaultBaseBranch: project.mainBranch ?? null,
+      defaultTargetBranch: project.mainBranch ?? null,
+      deliveryPolicyDefault,
     });
   } catch (err) {
     return errorResponse(err);

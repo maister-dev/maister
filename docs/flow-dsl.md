@@ -419,9 +419,9 @@ distinct exhaustion signal. `retry_policy` is valid ONLY on `ai_coding` / `cli`
 [`configuration.md`](configuration.md) §M30 engine bump). Flows using none of
 these keys stay valid at any `engine_min`.
 
-## Node `agent` binding (M33 — Implemented)
+## Node `agent` binding (M34 — Implemented)
 
-**(M33 — Implemented, [ADR-088](decisions.md#adr-088-platform-agent-catalog-with-per-agent-runner-and-a-five-source-trigger-model).)**
+**(M34 — Implemented, [ADR-089](decisions.md#adr-089-platform-agent-catalog-with-per-agent-runner-and-a-five-source-trigger-model).)**
 An optional `agent: <agent-id>` on `ai_coding` node settings binds the node to
 a catalog agent (`~/.maister/agents/<id>/agent.md`) instead of relying solely
 on the inline prompt.
@@ -447,7 +447,7 @@ nodes:
   worktree's `.claude/agents/<name>.md` so the Claude session can
   self-delegate. Requires a runner whose `capability_agent` is `claude`;
   any other resolved runner → `MaisterError("EXECUTOR_UNAVAILABLE")` before
-  spawn (the partial-runner-independence boundary, ADR-088).
+  spawn (the partial-runner-independence boundary, ADR-089).
 - **Runner** — flow-bound nodes keep the existing six-tier flow resolution
   chain; the agent's own `runner` binding participates only in standalone
   agent runs.

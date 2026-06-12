@@ -42,7 +42,7 @@ let originalCap: string | undefined;
 
 beforeAll(async () => {
   // The overlap×cap case seeds exactly 3 Running rows — pin the cap (the
-  // M33 default moved to 6).
+  // M34 default moved to 6).
   originalCap = process.env.MAISTER_MAX_CONCURRENT_RUNS;
   process.env.MAISTER_MAX_CONCURRENT_RUNS = "3";
 

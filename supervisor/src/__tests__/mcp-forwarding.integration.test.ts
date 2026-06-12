@@ -172,7 +172,7 @@ describe("T4.5-C — supervisor forwards capability MCP servers to ACP adapter",
     });
   });
 
-  it("forwards literal env values, which win over same-named envKeys (M33, agent-token channel)", async () => {
+  it("forwards literal env values, which win over same-named envKeys (M34, agent-token channel)", async () => {
     if (!booted) throw new Error("not booted");
     const { url, recordPath } = booted;
 

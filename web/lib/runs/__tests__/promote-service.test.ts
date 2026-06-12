@@ -16,6 +16,8 @@ import { assertEvidenceReady } from "@/lib/flows/graph/evidence-readiness";
 import {
   branchExists,
   promoteLocalMerge,
+  promoteRebaseMerge,
+  pushBranch,
   resolveBaseCommit,
 } from "@/lib/worktree";
 
@@ -105,6 +107,8 @@ vi.mock("@/lib/webhooks/outbox", () => ({
 vi.mock("@/lib/worktree", () => ({
   branchExists: vi.fn(async () => true),
   promoteLocalMerge: vi.fn(async () => "merged00"),
+  promoteRebaseMerge: vi.fn(async () => "rebased00"),
+  pushBranch: vi.fn(async () => undefined),
   resolveBaseCommit: vi.fn(async () => "tip00000"),
   resolveBaseRef: vi.fn(async () => "base0000"),
 }));
@@ -141,6 +145,7 @@ function ctx() {
 function seedFlowRun(
   overrides: Partial<{
     status: string;
+    deliveryPolicySnapshot: Record<string, unknown> | null;
     promotionState: string;
     targetBranch: string | null;
     promotionMode: string | null;
@@ -161,6 +166,7 @@ function seedFlowRun(
     acpSessionId: "acp-1",
     currentStepId: "review-node",
     endedAt: null,
+    deliveryPolicySnapshot: overrides.deliveryPolicySnapshot ?? null,
   });
   dbState.tables.workspaces.push({
     id: "workspace-1",
@@ -249,6 +255,8 @@ beforeEach(() => {
   dbState.tables = { runs: [], scratch_runs: [], workspaces: [] };
   vi.mocked(branchExists).mockReset().mockResolvedValue(true);
   vi.mocked(promoteLocalMerge).mockReset().mockResolvedValue("merged00");
+  vi.mocked(promoteRebaseMerge).mockReset().mockResolvedValue("rebased00");
+  vi.mocked(pushBranch).mockReset().mockResolvedValue(undefined);
   vi.mocked(resolveBaseCommit).mockReset().mockResolvedValue("tip00000");
   vi.mocked(assertEvidenceReady)
     .mockReset()
@@ -539,6 +547,132 @@ describe("promoteRun — happy path (flow local_merge)", () => {
       expect.objectContaining({ targetBranch: "release" }),
     );
   });
+
+  it("pushes the target branch before Done when policy push is on_success", async () => {
+    const runId = seedFlowRun({
+      deliveryPolicySnapshot: {
+        strategy: "merge",
+        push: "on_success",
+        trigger: "manual",
+        targetBranch: "main",
+      },
+    });
+
+    const res = await callPromote(runId, {
+      reviewedTargetCommit: "tip00000",
+    });
+
+    expect(res).toMatchObject({
+      ok: true,
+      mode: "merge",
+      deliveryPolicy: { push: "on_success" },
+    });
+    expect(pushBranch).toHaveBeenCalledWith({
+      projectRepoPath: "/repos/demo",
+      remote: "origin",
+      branch: "main",
+    });
+    expect(dbState.tables.runs[0].status).toBe("Done");
+  });
+
+  it("promotes ai_rebase_merge through the rebase side-effect while preserving the response mode", async () => {
+    const runId = seedFlowRun({
+      deliveryPolicySnapshot: {
+        strategy: "ai_rebase_merge",
+        push: "never",
+        trigger: "manual",
+        targetBranch: "main",
+      },
+    });
+
+    const res = await callPromote(runId, {
+      reviewedTargetCommit: "tip00000",
+    });
+
+    expect(res).toMatchObject({
+      ok: true,
+      mode: "ai_rebase_merge",
+      commit: "rebased00",
+      pullRequestUrl: null,
+      deliveryPolicy: { strategy: "ai_rebase_merge" },
+    });
+    expect(promoteLocalMerge).not.toHaveBeenCalled();
+    expect(promoteRebaseMerge).toHaveBeenCalledWith({
+      projectRepoPath: "/repos/demo",
+      sourceBranch: "maister/flow-1",
+      targetBranch: "main",
+    });
+    expect(pushBranch).not.toHaveBeenCalled();
+    expect(dbState.tables.workspaces[0]).toMatchObject({
+      promotionMode: "rebase_merge",
+      promotionState: "done",
+    });
+  });
+
+  it("surfaces ai_rebase_merge conflicts through the standard merge-conflict assignment", async () => {
+    const runId = seedFlowRun({
+      deliveryPolicySnapshot: {
+        strategy: "ai_rebase_merge",
+        push: "never",
+        trigger: "manual",
+        targetBranch: "main",
+      },
+    });
+
+    vi.mocked(promoteRebaseMerge).mockRejectedValueOnce(
+      new MaisterError("CONFLICT", "rebase conflict"),
+    );
+
+    await expectMaisterCode(
+      callPromote(runId, {
+        reviewedTargetCommit: "tip00000",
+      }),
+      "CONFLICT",
+    );
+
+    expect(createAssignment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actionKind: "merge_conflict",
+        runId,
+        branch: "maister/flow-1",
+        ref: "main",
+      }),
+    );
+    expect(dbState.tables.runs[0].status).toBe("Review");
+    expect(dbState.tables.workspaces[0]).toMatchObject({
+      promotionMode: "rebase_merge",
+      promotionState: "failed",
+    });
+    expect(emitWebhookEventMock).not.toHaveBeenCalled();
+  });
+
+  it("promotes a Review flow run through rebase_merge", async () => {
+    const runId = seedFlowRun({ promotionMode: "rebase_merge" });
+
+    const res = await callPromote(runId, {
+      mode: "rebase_merge",
+      reviewedTargetCommit: "tip00000",
+    });
+
+    expect(res).toMatchObject({
+      ok: true,
+      mode: "rebase_merge",
+      commit: "rebased00",
+      pullRequestUrl: null,
+    });
+    expect(promoteRebaseMerge).toHaveBeenCalledWith({
+      projectRepoPath: "/repos/demo",
+      sourceBranch: "maister/flow-1",
+      targetBranch: "main",
+    });
+    expect(promoteLocalMerge).not.toHaveBeenCalled();
+    expect(dbState.tables.runs[0].status).toBe("Done");
+    expect(emitWebhookEventMock.mock.calls[0][0]).toMatchObject({
+      type: "run.promoted",
+      runId,
+      data: { mode: "rebase_merge", target: "main", pullRequestUrl: null },
+    });
+  });
 });
 
 describe("promoteRun — scratch dispatch (behavior preserved)", () => {
@@ -601,6 +735,19 @@ describe("promoteRun — scratch dispatch (behavior preserved)", () => {
     );
 
     expect(promoteLocalMerge).not.toHaveBeenCalled();
+  });
+
+  it("rejects rebase_merge for scratch runs before touching git", async () => {
+    const runId = seedScratchRun();
+
+    await expectMaisterCode(
+      callPromote(runId, { mode: "rebase_merge" }),
+      "PRECONDITION",
+    );
+
+    expect(promoteRebaseMerge).not.toHaveBeenCalled();
+    expect(promoteLocalMerge).not.toHaveBeenCalled();
+    expect(dbState.tables.workspaces[0].promotionState).toBe("none");
   });
 });
 

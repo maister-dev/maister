@@ -33,6 +33,12 @@ For the full vision, product model, architecture, and roadmap see
   derived from `project.name` (kebab-case); both `slug` and `repo_path` are
   unique across projects (one repo = one project). Collisions reject the
   registration.
+- **Package management (ADR-088)**: multi-flow **packages** from git
+  monorepos (`maister-package.yaml`; per-package tags `<name>/vX.Y.Z`) —
+  platform sources + discovery, immutable `package_installs`, per-project
+  attachments with `maister.yaml packages[]` bootstrap/write-back, package
+  trust fan-out, local versions. The AIF package lives in the external
+  `maister-plugins` repo.
 - **Flow plugin engine**: Flows are git-repo plugins pinned by tag, installed
   to `~/.maister/flows/<id>@<tag>/` system cache and symlinked per project.
   Each plugin carries a `flow.yaml` manifest with step DSL (`cli | agent |

@@ -17,7 +17,7 @@ test("task creation works and a backlog card exposes a launch control", async ({
   await page
     .locator('textarea[placeholder="What should the agent do?"]')
     .fill("Create a deterministic e2e backlog task.");
-  // M33: flow became optional (simple-intent tasks) and the modal defaults to
+  // M34: flow became optional (simple-intent tasks) and the modal defaults to
   // "no flow"; this spec asserts the one-click launch control, which only a
   // CONFIGURED task exposes — pick the project's flow explicitly.
   await page.getByLabel("Flow").selectOption({ index: 1 });

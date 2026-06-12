@@ -119,7 +119,7 @@ tags:
   - name: flow-studio
     description: M27 Flow Studio — graph editor, draft/publish, version-binding, exec-trust.
   - name: agents
-    description: M33 (Implemented) platform-agent catalog, attachments, launches, and the inbound webhook trigger (ADR-088/088).
+    description: M34 (Implemented) platform-agent catalog, attachments, launches, and the inbound webhook trigger (ADR-089/090).
   - name: mcp-management
     description: M27 MCP capability management — platform-admin and project-scoped MCP servers.
   - name: webhooks
@@ -383,7 +383,7 @@ paths:
     post:
       tags: [admin]
       summary: (M24) Create a scheduler job
-      description: Admin-only. Creates a scheduler job. Per-kind `target` shape is validated (command requires `commandKind` + url/host; flow_run requires `taskId`). `run_schedule`, `domain_event_dispatch`, and `agent_tick` are deliberately NOT creatable here — the singletons `run_schedule.dispatcher` (M28, ADR-071), `domain_event_dispatch.default` (ADR-086), and `agent_tick.dispatcher` (M33 — Implemented, ADR-088) are seeded by the tick; all three kinds are rejected at the schema.
+      description: Admin-only. Creates a scheduler job. Per-kind `target` shape is validated (command requires `commandKind` + url/host; flow_run requires `taskId`). `run_schedule`, `domain_event_dispatch`, and `agent_tick` are deliberately NOT creatable here — the singletons `run_schedule.dispatcher` (M28, ADR-071), `domain_event_dispatch.default` (ADR-086), and `agent_tick.dispatcher` (M34 — Implemented, ADR-089) are seeded by the tick; all three kinds are rejected at the schema.
       operationId: postAdminSchedulerJob
       requestBody:
         required: true
@@ -511,12 +511,12 @@ paths:
   /api/admin/agents:
     get:
       tags: [admin]
-      summary: (M33 — Implemented) List the platform agent catalog
+      summary: (M34 — Implemented) List the platform agent catalog
       description: |
         Admin-only. Returns every registered agent (both scopes) with parsed
         frontmatter columns, enabled state, and quarantine state. The `.md`
         files under `~/.maister/agents/<id>/agent.md` are the canonical
-        definitions; rows are the parsed index (ADR-088).
+        definitions; rows are the parsed index (ADR-089).
       operationId: getAdminAgents
       responses:
         "200":
@@ -534,7 +534,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
     post:
       tags: [admin]
-      summary: (M33 — Implemented) Create an agent definition
+      summary: (M34 — Implemented) Create an agent definition
       description: |
         Admin-only. Writes `~/.maister/agents/<id>/agent.md` from the body,
         then parses and registers it (write-then-parse — the file stays the
@@ -574,7 +574,7 @@ paths:
   /api/admin/agents/resync:
     post:
       tags: [admin]
-      summary: (M33 — Implemented) Re-scan the host agent catalog
+      summary: (M34 — Implemented) Re-scan the host agent catalog
       description: |
         Admin-only. Re-reads `~/.maister/agents/`, re-parses every
         `agent.md`, and re-syncs rows with SET/CLEAR symmetry (a removed
@@ -609,7 +609,7 @@ paths:
   /api/admin/agents/{agentId}:
     patch:
       tags: [admin]
-      summary: (M33 — Implemented) Update an agent definition / toggle / un-quarantine
+      summary: (M34 — Implemented) Update an agent definition / toggle / un-quarantine
       description: |
         Admin-only, one aggregating endpoint. Definition fields rewrite the
         `.md` and re-register (write-then-parse); `enabled` toggles the row;
@@ -655,7 +655,7 @@ paths:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
     delete:
       tags: [admin]
-      summary: (M33 — Implemented) Delete an agent (usage-guarded)
+      summary: (M34 — Implemented) Delete an agent (usage-guarded)
       description: |
         Admin-only. Hard-deletes the catalog row and the `.md` directory.
         Refused with `409 CONFLICT` while live (non-terminal) agent runs
@@ -726,30 +726,71 @@ paths:
     get:
       tags: [runs]
       summary: List task-run launch options
-      description: Requires project membership. Returns visible tasks, platform ACP runners, and effective defaults for the task launch form. Secret provider fields are never returned.
+      description: |
+        Requires project membership. Returns the server-derived choices for one
+        task launch dialog: enabled project flows, safe branch list, platform
+        ACP runners, ADR-076 pinned-model display data, the default runner/model
+        for the selected Flow, the project delivery-policy default, and the
+        manual launchability result/reason. Secret provider fields and server
+        filesystem paths are never returned.
       operationId: getRunLaunchOptions
       parameters:
-        - name: projectId
+        - name: taskId
           in: query
-          required: false
+          required: true
           schema: { type: string, format: uuid }
       responses:
         "200":
-          description: Launch options visible to the caller.
+          description: Launch options visible to the caller for the task.
           content:
             application/json:
-              schema:
-                type: object
-                required: [projects, runners]
-                properties:
-                  projects:
-                    type: array
-                    items: { type: object }
-                  runners:
-                    type: array
-                    items: { type: object }
+              schema: { $ref: "#/components/schemas/TaskRunLaunchOptionsResponse" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Task/project not found for the caller, or the task is relation-blocked.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/projects/{slug}/settings:
+    patch:
+      tags: [projects]
+      summary: Update aggregate project settings
+      description: |
+        Project owner/admin route. Aggregates project settings updates in one
+        transaction. ADR-085 adds `deliveryPolicyDefault` here instead of a
+        one-off policy route; legacy runner/remap routes may remain compatibility
+        wrappers. One invalid sub-section rejects the whole PATCH with no
+        partial application.
+      operationId: patchProjectSettings
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProjectSettingsPatchBody" }
+      responses:
+        "200":
+          description: Project settings updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectSettingsResponse" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Invalid runner/policy target, stale settings row, or project mismatch.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422":
+          description: Invalid aggregate settings body.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
   /api/projects/{slug}/settings/runner:
     patch:
       tags: [projects]
@@ -939,7 +980,7 @@ paths:
   /api/projects/{slug}/agents:
     get:
       tags: [projects]
-      summary: (M33 — Implemented) Attach-panel read model
+      summary: (M34 — Implemented) Attach-panel read model
       description: |
         Project membership `member`+. Returns agents attached to the project
         (link + overrides + trigger bindings) and platform agents available
@@ -969,7 +1010,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
     post:
       tags: [projects]
-      summary: (M33 — Implemented) Attach an agent to the project
+      summary: (M34 — Implemented) Attach an agent to the project
       description: |
         Project `admin`+ (`editSettings`). Creates the
         `agent_project_links` row. `agentId` must reference a registered
@@ -1015,7 +1056,7 @@ paths:
   /api/projects/{slug}/agents/{agentId}:
     patch:
       tags: [projects]
-      summary: (M33 — Implemented) Update an attachment (one aggregating endpoint)
+      summary: (M34 — Implemented) Update an attachment (one aggregating endpoint)
       description: |
         Project `admin`+. Partial body in ONE server transaction: link
         fields (`enabled`, `runnerOverrideId` — explicit `null` clears) and
@@ -1069,11 +1110,11 @@ paths:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
     delete:
       tags: [projects]
-      summary: (M33 — Implemented) Detach an agent from the project
+      summary: (M34 — Implemented) Detach an agent from the project
       description: |
         Project `admin`+. Removes the link and its trigger bindings, and
         revokes every live agent token for this (agent, project) pair
-        (ADR-088 rotation guarantee).
+        (ADR-089 rotation guarantee).
       operationId: deleteProjectAgentLink
       parameters:
         - name: slug
@@ -1096,7 +1137,7 @@ paths:
   /api/projects/{slug}/agents/{agentId}/launch:
     post:
       tags: [projects]
-      summary: (M33 — Implemented) Manually launch an agent run
+      summary: (M34 — Implemented) Manually launch an agent run
       description: |
         Project membership `member`+ (`launchRun`). Identifiers: `slug` and
         `agentId` are url-params; body `taskId` (optional task-bound context)
@@ -1148,7 +1189,7 @@ paths:
   /api/agents/{agentId}/event:
     post:
       tags: [agents]
-      summary: (M33 — Implemented) Inbound webhook trigger for an agent
+      summary: (M34 — Implemented) Inbound webhook trigger for an agent
       description: |
         Authenticated by a **bearer project token** carrying the
         `agents:trigger` scope (the only token-authenticated route outside
@@ -1321,7 +1362,7 @@ paths:
   /api/projects/{slug}/tasks/{number}:
     patch:
       tags: [projects]
-      summary: (M33 — Implemented) Update task launch-verdict fields (one aggregating endpoint)
+      summary: (M34 — Implemented) Update task launch-verdict fields (one aggregating endpoint)
       description: |
         Project membership `member`+. The board card's launch popover persists
         flow/runner/branch/policy edits here in ONE transaction before
@@ -1382,7 +1423,7 @@ paths:
   /api/projects/{slug}/tasks/{number}/send-to-triage:
     post:
       tags: [projects]
-      summary: (M33 — Implemented) Re-queue a task for triage
+      summary: (M34 — Implemented) Re-queue a task for triage
       description: |
         Project membership `member`+. In ONE transaction: sets
         `tasks.triage_status = NULL`, emits the first `task.triage_requeued`
@@ -2327,12 +2368,24 @@ paths:
   /api/runs:
     post:
       tags: [runs]
-      summary: Launch a new run for a Backlog task
+      summary: Launch a new run or rerun for a task
       description: |
         Requires an active session (`requireActiveSession` — authenticated and
         with no pending forced password change) AND project membership at
         `member` or above (`requireProjectAction("launchRun")`). The
         `projectId` is derived from the task row, never from the body.
+
+        ADR-085 broadens manual launchability: `Done`, `Review`, `Failed`,
+        `Abandoned`, and `Crashed` tasks/runs can launch a new attempt through
+        the same `launchRun` service. Actively executing states and
+        relation-blocked tasks are refused with typed disabled reasons that the
+        UI also receives from `GET /api/runs/launch-options`.
+
+        Body-controlled `flowId`, `runnerId`, branches, and
+        `deliveryPolicy` are validated against server-state for the task's
+        project. A selected Flow must be enabled for the same project; policy
+        defaults are resolved project default -> launch override and snapshotted
+        on the created run.
 
         After auth, project, Flow, and platform runner checks pass, the web tier
         calls the supervisor `GET /health` through
@@ -2377,9 +2430,11 @@ paths:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "409":
           description: |
-            Precondition failed. Examples: task not in Backlog, project
-            archived, branch / worktree path already in use, scheduler
-            cap full.
+            Precondition failed. Examples: task is busy or relation-blocked,
+            project archived, flow not enabled for this project, runner not
+            valid for the chosen Flow, branch / worktree path already in use,
+            target/base branch not in the allow-list, scheduler cap full, or
+            delivery policy target invalid.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -2405,13 +2460,10 @@ paths:
         (`PRECONDITION`). Response values are hints for the launcher;
         `POST /api/scratch-runs` revalidates every identifier from server state.
 
-        **(M18, Implemented) Board launch branch source.** The board task-launch
-        UI (the "Advanced" base/target branch selectors on `POST /api/runs`)
-        reuses this **session-authed, project-read-scoped** route as its branch
-        source — never an unauthenticated repo-metadata lookup. The board
-        consumes the `branches` + `defaultBaseBranch` subset, formalized as the
-        `BranchOptions` schema; the full launch-options DTO is a superset of
-        that shape.
+        Task launch uses `GET /api/runs/launch-options` as of ADR-085. Scratch
+        launch-options remain the scratch-workspace source and still expose the
+        reusable `branches` + `defaultBaseBranch` subset formalized as
+        `BranchOptions`.
       operationId: getScratchRunLaunchOptions
       parameters:
         - name: projectId
@@ -3076,18 +3128,21 @@ paths:
       description: |
         Requires project membership at `member` or above. Serves **both flow
         and scratch** runs (M18 — a shared promotion service dispatches on
-        `runKind`; previously scratch-only). Body controls only promotion mode,
-        optional target-branch override, the reviewed target HEAD, and the
-        drift override. Run id, workspace path, source branch, base commit, and
-        the default target branch are derived from server state.
+        `runKind`; previously scratch-only). Body controls only the explicit
+        policy override, optional target-branch override, the reviewed target
+        HEAD, and the drift override. Run id, workspace path, source branch,
+        base commit, resolved policy snapshot, and default target branch are
+        derived from server state.
 
-        Both `local_merge` and `pull_request` modes are implemented (M18).
-        `local_merge` runs `git merge --no-ff`; a textual conflict
-        aborts the merge, opens a manual-resolution assignment, and leaves the
-        run in `Review`. `pull_request` pushes the run branch and creates (or
-        idempotently updates) a provider pull/merge request — `github`→`gh`,
-        `gitlab`→`glab`, `gitea`/`gitverse`→Gitea REST API; a `generic`
-        provider is unsupported and refused `PRECONDITION`.
+        M18 compatibility modes `local_merge`, `rebase_merge`, and
+        `pull_request` map to ADR-085 delivery strategies `merge`,
+        `rebase_merge`, and `pull_request`. ADR-085 also adds optional
+        `push='on_success'`. Merge conflicts surface the same failing command
+        and path data as the current conflict UX. The separable
+        `ai_rebase_merge` strategy executes through the rebase-merge side
+        effect, preserves the resolved policy mode for audit/API responses, and
+        surfaces conflicts through the standard `merge_conflict`
+        assignment/inbox path.
 
         Promotion is gated at promote time by the M16 readiness chokepoint
         (`assertEvidenceReady(runId, "review")`) and by a target-drift guard:
@@ -3096,8 +3151,8 @@ paths:
         since review). A body omitting `reviewedTargetCommit` is refused
         `PRECONDITION` — never promoted blind.
 
-        On success both modes terminate the run at `Done` (no new run status);
-        `pull_request` additionally records `pullRequestUrl`/`prNumber`.
+        On success all strategies terminate the run at `Done` (no new run
+        status); `pull_request` additionally records `pullRequestUrl`/`prNumber`.
       operationId: promoteRun
       parameters:
         - name: runId
@@ -3124,12 +3179,13 @@ paths:
             Promotion refused (`PRECONDITION` / `CONFLICT`). `PRECONDITION`:
             run/workspace not found, removed workspace, non-`Review` terminal
             state, readiness not ready/stale, invalid/missing target branch,
-            target advanced since review without `allowTargetDrift`, PR-mode
-            preflight failure (provider CLI missing / `*_TOKEN` unset / remote
-            not configured / `generic` provider). `CONFLICT`: `local_merge`
-            textual conflict (a manual-resolution assignment is created and the
-            run stays `Review`), a concurrent promotion already in progress, or
-            a promotion superseded by a stale-claim reclaim.
+            target advanced since review without `allowTargetDrift`, invalid
+            policy override, push rejected, or PR-mode preflight failure
+            (provider CLI missing / `*_TOKEN` unset / remote not configured /
+            `generic` provider). `CONFLICT`:
+            merge/rebase textual conflict (a manual-resolution assignment is
+            created and the run stays `Review`), a concurrent promotion already
+            in progress, or a promotion superseded by a stale-claim reclaim.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -3141,6 +3197,52 @@ paths:
             promotion is idempotent on retry. Reuses the closed `MaisterError`
             union (ADR-008) — `EXECUTOR_UNAVAILABLE` is an existing member, no
             new error code.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/runs/{runId}/delivery-policy:
+    patch:
+      tags: [runs]
+      summary: Switch an auto delivery policy to manual
+      description: |
+        Requires project membership at `member` or above. Used by the run-detail
+        auto-delivery banner. No body-controlled project/workspace ids are
+        accepted; the route CAS-updates only a run in `Review` whose current
+        `deliveryPolicySnapshot.trigger` is `auto_on_ready`, changing the
+        trigger to `manual` and preserving the strategy, push, and target.
+      operationId: patchRunDeliveryPolicy
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PatchRunDeliveryPolicyBody" }
+      responses:
+        "200":
+          description: Delivery policy trigger switched to manual.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [ok, runId, deliveryPolicy]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  runId: { type: string, format: uuid }
+                  deliveryPolicy: { $ref: "#/components/schemas/DeliveryPolicy" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Run is not in Review, has no auto trigger, or was updated concurrently.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422":
+          description: Invalid action body.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -5666,6 +5768,436 @@ paths:
         "409": { $ref: "#/components/responses/Precondition" }
         "422": { $ref: "#/components/responses/Config" }
 
+  /api/admin/package-sources:
+    get:
+      tags: [flow-packages, admin]
+      summary: (ADR-088 — Implemented) List platform package sources
+      description: |
+        (ADR-088 — Implemented.) Admin-only (`requireGlobalRole("admin")`).
+        Returns the platform package-source catalog with the cached
+        `discovered` snapshot (packages × per-package tags from the last
+        refresh) and `lastCheckedAt`. Never blocks on git — a stale snapshot
+        is served as-is; freshness is the refresh endpoint's job.
+      operationId: getAdminPackageSources
+      responses:
+        "200":
+          description: Package source catalog.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sources]
+                properties:
+                  sources:
+                    type: array
+                    items: { $ref: "#/components/schemas/PackageSource" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [flow-packages, admin]
+      summary: (ADR-088 — Implemented) Add a platform package source
+      description: |
+        (ADR-088 — Implemented.) Admin-only. Creates a `package_sources` row.
+        `url` is the git monorepo URL (`packages/<name>/maister-package.yaml`
+        layout). A duplicate `url` returns 409 (`CONFLICT`), never a raw 500.
+        No discovery happens inline — call `/refresh` after creation.
+      operationId: postAdminPackageSource
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PackageSourceBody" }
+      responses:
+        "201":
+          description: Package source created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, id]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  id: { type: string }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+
+  /api/admin/package-sources/{id}:
+    patch:
+      tags: [flow-packages, admin]
+      summary: (ADR-088 — Implemented) Update a platform package source
+      description: |
+        (ADR-088 — Implemented.) Admin-only. Mutable fields: `enabled`, `note`.
+        The `url` is immutable (delete + re-add to change identity). `id` is
+        a url-param resolved to the server row (404 on miss).
+      operationId: patchAdminPackageSource
+      parameters:
+        - {
+            name: id,
+            in: path,
+            required: true,
+            schema: { type: string, minLength: 1 },
+          }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled: { type: boolean }
+                note: { type: string }
+      responses:
+        "200": { $ref: "#/components/responses/OkResult" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Config" }
+    delete:
+      tags: [flow-packages, admin]
+      summary: (ADR-088 — Implemented) Delete a platform package source
+      description: |
+        (ADR-088 — Implemented.) Admin-only. Usage-guarded hard delete: refused
+        with 409 (`CONFLICT`) while any `package_installs` row from this
+        source is attached to a project. Installed-but-unattached revisions
+        survive (GC owns them).
+      operationId: deleteAdminPackageSource
+      parameters:
+        - {
+            name: id,
+            in: path,
+            required: true,
+            schema: { type: string, minLength: 1 },
+          }
+      responses:
+        "200": { $ref: "#/components/responses/OkResult" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/admin/package-sources/{id}/refresh:
+    post:
+      tags: [flow-packages, admin]
+      summary: (ADR-088 — Implemented) Refresh package discovery for a source
+      description: |
+        (ADR-088 — Implemented.) Admin-only. Runs `git ls-remote --tags` plus a
+        shallow default-branch scan of `packages/*/maister-package.yaml`,
+        rewrites the source's `discovered` snapshot + `lastCheckedAt`. A git
+        or scan failure degrades: the stale snapshot is kept and the response
+        carries `degraded: true` (HTTP 200 — degradation is a result, not an
+        error). The same routine runs at web startup for enabled sources
+        older than `MAISTER_PACKAGE_DISCOVERY_STALE_HOURS` (default 24).
+      operationId: refreshAdminPackageSource
+      parameters:
+        - {
+            name: id,
+            in: path,
+            required: true,
+            schema: { type: string, minLength: 1 },
+          }
+      responses:
+        "200":
+          description: Refresh outcome (fresh or degraded-stale).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, degraded, packages]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  degraded:
+                    type: boolean
+                    description: True when git/scan failed and the stale snapshot was kept.
+                  packages:
+                    type: array
+                    items: { $ref: "#/components/schemas/DiscoveredPackage" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/admin/package-installs:
+    get:
+      tags: [flow-packages, admin]
+      summary: (ADR-088 — Implemented) List installed package revisions
+      description: |
+        (ADR-088 — Implemented.) Admin-only. Platform catalog of immutable
+        installed package revisions. `installed_path` is NEVER projected.
+      operationId: getAdminPackageInstalls
+      responses:
+        "200":
+          description: Installed package revisions.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [installs]
+                properties:
+                  installs:
+                    type: array
+                    items: { $ref: "#/components/schemas/PackageInstallSummary" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [flow-packages, admin]
+      summary: (ADR-088 — Implemented) Install a package revision platform-wide
+      description: |
+        (ADR-088 — Implemented.) Admin-only. Two forms: `{sourceId, name,
+        version}` installs `name@version` from a configured source (one
+        `git clone --branch <tag> --depth 1`); `{localPath, path?}` installs a
+        **local version** from an absolute host directory (admin-only body
+        field; content-digest addressed, label `local-<digest12>`). Idempotent
+        on `(source_url, name, resolved_revision)` — re-installing the same
+        revision returns the existing row. Member flow/capability sub-installs
+        inherit the package's resolved revision; `setup.sh` is NEVER executed
+        here (post-trust setup path only). Manifest failures → 422 (`CONFIG`);
+        clone/copy failures → 502 (`FLOW_INSTALL`).
+      operationId: postAdminPackageInstall
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                sourceId: { type: string, minLength: 1 }
+                name: { type: string, minLength: 1 }
+                version:
+                  type: string
+                  minLength: 1
+                  description: "Per-package tag, e.g. aif/v2.0.0 (slash allowed)."
+                localPath:
+                  type: string
+                  minLength: 1
+                  description: "Absolute host directory for a local version (mutually exclusive with sourceId)."
+                path:
+                  type: string
+                  description: "Package subdir inside localPath (e.g. packages/aif)."
+      responses:
+        "201":
+          description: Package revision installed (or already present).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, id]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  id: { type: string }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Config" }
+        "502": { $ref: "#/components/responses/FlowInstall" }
+
+  /api/projects/{slug}/packages:
+    get:
+      tags: [flow-packages, projects]
+      summary: (ADR-088 — Implemented) List package attachments of a project
+      description: |
+        (ADR-088 — Implemented.) Member-visible. Attachments with member flow
+        ids and the `updateAvailable` derivation (a newer matching tag exists
+        in the source's discovered snapshot).
+      operationId: getProjectPackages
+      parameters:
+        - {
+            name: slug,
+            in: path,
+            required: true,
+            schema: { type: string, minLength: 1 },
+          }
+      responses:
+        "200":
+          description: Project package attachments.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [attachments]
+                properties:
+                  attachments:
+                    type: array
+                    items: { $ref: "#/components/schemas/ProjectPackageAttachment" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [flow-packages, projects]
+      summary: (ADR-088 — Implemented) Attach a package install to a project
+      description: |
+        (ADR-088 — Implemented.) Admin-only (`managePackages`). One transaction
+        writes member `flows` rows + `capability_imports` + MCP/restriction
+        ingestion + the attachment + group FK links. Identifiers: `slug` =
+        url-param → project row; `packageInstallId` = body id resolved to a
+        server row (404 on miss). A manifest flow id colliding with an
+        existing standalone flow (`flows_project_ref_uq`) → 409 (`CONFLICT`),
+        no partial group. A same-`(kind, id)` MCP/restriction record already
+        provided by another attached package → 409 (`CONFLICT`) as well
+        (same-id different-kind records coexist). The `maister.yaml
+        packages[]` pin is written back AFTER commit; a write-back failure is
+        reported as `writeBack: "failed"`, never a rollback.
+      operationId: attachProjectPackage
+      parameters:
+        - {
+            name: slug,
+            in: path,
+            required: true,
+            schema: { type: string, minLength: 1 },
+          }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [packageInstallId]
+              properties:
+                packageInstallId: { type: string, minLength: 1 }
+      responses:
+        "201":
+          description: Package attached.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, attachmentId, writeBack]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  attachmentId: { type: string }
+                  writeBack: { type: string, enum: [ok, failed] }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+
+  /api/projects/{slug}/packages/{attachmentId}:
+    delete:
+      tags: [flow-packages, projects]
+      summary: (ADR-088 — Implemented) Detach a package from a project
+      description: |
+        (ADR-088 — Implemented.) Admin-only (`managePackages`). Refused with 409
+        (`PRECONDITION`) while any member revision is pinned by a non-terminal
+        run. One transaction removes the attachment, member `flows` rows, and
+        the ingested MCP/restriction records this install owns
+        (`material.packageInstallId` — a same-id record from another attached
+        package survives); member revisions stay for in-flight
+        runs and GC. Write-back removes the `packages[]` pin after commit.
+      operationId: detachProjectPackage
+      parameters:
+        - {
+            name: slug,
+            in: path,
+            required: true,
+            schema: { type: string, minLength: 1 },
+          }
+        - {
+            name: attachmentId,
+            in: path,
+            required: true,
+            schema: { type: string, minLength: 1 },
+          }
+      responses:
+        "200":
+          description: Package detached.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, writeBack]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  writeBack: { type: string, enum: [ok, failed] }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Precondition" }
+
+  /api/projects/{slug}/packages/{attachmentId}/upgrade:
+    post:
+      tags: [flow-packages, projects]
+      summary: (ADR-088 — Implemented) Upgrade an attachment to another install
+      description: |
+        (ADR-088 — Implemented.) Admin-only (`managePackages`). The target
+        `packageInstallId` MUST be an installed revision of the SAME package
+        name (mismatch → 409 `PRECONDITION`). One transaction flips the group
+        pointers; in-flight runs keep their pinned revisions. Write-back
+        rewrites the `packages[]` version pin after commit.
+      operationId: upgradeProjectPackage
+      parameters:
+        - {
+            name: slug,
+            in: path,
+            required: true,
+            schema: { type: string, minLength: 1 },
+          }
+        - {
+            name: attachmentId,
+            in: path,
+            required: true,
+            schema: { type: string, minLength: 1 },
+          }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [packageInstallId]
+              properties:
+                packageInstallId: { type: string, minLength: 1 }
+      responses:
+        "200":
+          description: Attachment upgraded.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, writeBack]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  writeBack: { type: string, enum: [ok, failed] }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Precondition" }
+        "422": { $ref: "#/components/responses/Config" }
+
+  /api/projects/{slug}/packages/{attachmentId}/trust:
+    post:
+      tags: [flow-packages, projects]
+      summary: (ADR-088 — Implemented) Trust a package revision (fan-out)
+      description: |
+        (ADR-088 — Implemented.) GLOBAL-admin-only: the fan-out crosses every
+        project attached to the install, so project-scoped `managePackages`
+        is not sufficient (403 for project admins without the global role).
+        One operator decision per package revision: the same transaction fans
+        `trust_status`/`exec_trust='trusted'` onto every member
+        `flow_revisions` + `capability_imports` row, THEN the existing
+        post-trust setup path runs pending member `setup.sh` (after-tx
+        side-effect; never at install). Setup failure marks the member
+        revision Failed and surfaces on launch as today.
+      operationId: trustProjectPackage
+      parameters:
+        - {
+            name: slug,
+            in: path,
+            required: true,
+            schema: { type: string, minLength: 1 },
+          }
+        - {
+            name: attachmentId,
+            in: path,
+            required: true,
+            schema: { type: string, minLength: 1 },
+          }
+      responses:
+        "200": { $ref: "#/components/responses/OkResult" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Precondition" }
+
   /api/projects/{slug}/flow-packages/{flowRefId}/revisions/{revisionId}/fork:
     post:
       tags: [flow-packages, flow-studio]
@@ -7735,7 +8267,7 @@ components:
     AgentSummary:
       type: object
       description: |
-        (M33 — Implemented) Catalog projection of an `agents` row — the parsed
+        (M34 — Implemented) Catalog projection of an `agents` row — the parsed
         frontmatter index plus enabled/quarantine state. Never includes
         token material or filesystem internals beyond `sourcePath`.
       required:
@@ -7762,7 +8294,7 @@ components:
     AgentDefinitionBody:
       type: object
       description: |
-        (M33 — Implemented) Create/update payload for an agent definition. The
+        (M34 — Implemented) Create/update payload for an agent definition. The
         server renders it into frontmatter + body and writes the `.md`
         (write-then-parse). `project` is required iff `scope=project`.
       required: [id, name, description, scope, workspace, mode, triggers, riskTier, prompt]
@@ -7792,7 +8324,7 @@ components:
     AttachedAgent:
       type: object
       description: |
-        (M33 — Implemented) Attach-panel row — the agent summary joined with its
+        (M34 — Implemented) Attach-panel row — the agent summary joined with its
         link and trigger bindings for this project.
       required: [agent, linkId, enabled, schedules]
       properties:
@@ -7806,7 +8338,7 @@ components:
     AgentScheduleBody:
       type: object
       description: |
-        (M33 — Implemented) One trigger binding. Cron rows require
+        (M34 — Implemented) One trigger binding. Cron rows require
         `cronExpr` + `timezone`; event rows require `eventKinds` (subset of
         the ADR-086 taxonomy).
       required: [triggerType]
@@ -7821,7 +8353,7 @@ components:
         enabled: { type: boolean, default: true }
     AgentLaunchResult:
       type: object
-      description: (M33 — Implemented) Result of an agent-run launch.
+      description: (M34 — Implemented) Result of an agent-run launch.
       required: [runId, status]
       properties:
         runId: { type: string, format: uuid }
@@ -7846,7 +8378,7 @@ components:
           description: |
             ID of a `flows` row belonging to the project identified by
             the URL `slug`. Any other flow ID returns `422 CONFIG`.
-            (M33 — Implemented) OPTIONAL: a task created without `flowId` is a
+            (M34 — Implemented) OPTIONAL: a task created without `flowId` is a
             simple-intent task; it classifies as `unconfigured` until a triage
             verdict or the launch popover fills the flow.
     TaskCommentDTO:
@@ -8099,13 +8631,93 @@ components:
             The role the caller observed in the roster. The update is a CAS:
             it only lands when the row still holds this role, else `409`
             (`CONFLICT`) on a concurrent stale-update race.
+    DeliveryPolicy:
+      type: object
+      required: [strategy, push, trigger, targetBranch]
+      additionalProperties: false
+      properties:
+        strategy:
+          type: string
+          enum: [merge, rebase_merge, pull_request, ai_rebase_merge]
+        push:
+          type: string
+          enum: [never, on_success]
+        trigger:
+          type: string
+          enum: [manual, auto_on_ready]
+        targetBranch:
+          type: string
+          nullable: true
+          minLength: 1
+          maxLength: 255
+          description: |
+            Null means the project default branch at resolution time. Non-null
+            values are server-validated against the project branch allow-list.
+    DeliveryPolicyOverride:
+      type: object
+      additionalProperties: false
+      properties:
+        strategy:
+          type: string
+          enum: [merge, rebase_merge, pull_request, ai_rebase_merge]
+        push:
+          type: string
+          enum: [never, on_success]
+        trigger:
+          type: string
+          enum: [manual, auto_on_ready]
+        targetBranch:
+          type: string
+          nullable: true
+          minLength: 1
+          maxLength: 255
+    ProjectSettingsPatchBody:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        defaultRunnerId:
+          type: string
+          nullable: true
+          description: Platform runner override; null inherits platform default.
+        deliveryPolicyDefault:
+          type: object
+          allOf: [{ $ref: "#/components/schemas/DeliveryPolicy" }]
+          nullable: true
+          description: |
+            Project default delivery policy. Null clears to the legacy
+            promotion-mode compatibility mapping.
+    ProjectSettingsResponse:
+      type: object
+      additionalProperties: false
+      required: [project]
+      properties:
+        project:
+          type: object
+          additionalProperties: false
+          required: [slug, defaultRunnerId, deliveryPolicyDefault]
+          properties:
+            slug: { type: string }
+            defaultRunnerId: { type: string, nullable: true }
+            deliveryPolicyDefault:
+              type: object
+              allOf: [{ $ref: "#/components/schemas/DeliveryPolicy" }]
+              nullable: true
     PostRunBody:
       type: object
       required: [taskId]
+      additionalProperties: false
       properties:
         taskId:
           type: string
           minLength: 1
+        flowId:
+          type: string
+          minLength: 1
+          description: |
+            Optional per-launch Flow override. The server derives the project
+            from `taskId` and refuses a Flow that is not enabled for that same
+            project. Omitted means the task's current Flow.
         runnerId:
           type: string
           minLength: 1
@@ -8128,6 +8740,12 @@ components:
             (M18, Implemented) Optional branch the run is promoted into after
             review. Server-validated against the same branch allow-list;
             unknown branch → `PRECONDITION` (409). Defaults to `baseBranch`.
+        deliveryPolicy:
+          allOf: [{ $ref: "#/components/schemas/DeliveryPolicy" }]
+          description: |
+            Optional per-launch policy override. Omitted means the project
+            default. Any field differing from the default is shown as an
+            override in the launch dialog and snapshotted on the run.
     PostRunResponse:
       type: object
       required: [runId, status]
@@ -8565,6 +9183,106 @@ components:
             The project's default branch — the base-branch default when the
             launcher leaves the advanced selector untouched. Null only when no
             project is visible/selected.
+    TaskRunLaunchOptionsResponse:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          task,
+          launchability,
+          flows,
+          selectedFlowId,
+          runners,
+          selectedRunnerId,
+          branches,
+          defaultBaseBranch,
+          defaultTargetBranch,
+          deliveryPolicyDefault,
+        ]
+      properties:
+        task:
+          type: object
+          additionalProperties: false
+          required: [id, projectId, projectSlug, number, status, flowId]
+          properties:
+            id: { type: string, format: uuid }
+            projectId: { type: string, format: uuid }
+            projectSlug: { type: string }
+            number: { type: integer, minimum: 1 }
+            status:
+              type: string
+              enum: [Backlog, InFlight, Done, Abandoned]
+            flowId: { type: string, format: uuid }
+        launchability:
+          type: object
+          additionalProperties: false
+          required: [launchable, reason]
+          properties:
+            launchable: { type: boolean }
+            reason:
+              type: string
+              enum:
+                [
+                  launchable,
+                  busy,
+                  blocked,
+                  supervisor_unavailable,
+                  runner_unavailable,
+                  project_archived,
+                ]
+            blockers:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                required: [kind, label]
+                properties:
+                  kind: { type: string }
+                  label: { type: string }
+        flows:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, refId, name, enabled, isTaskDefault]
+            properties:
+              id: { type: string, format: uuid }
+              refId: { type: string }
+              name: { type: string }
+              version: { type: string, nullable: true }
+              enabled: { type: boolean }
+              isTaskDefault: { type: boolean }
+        selectedFlowId: { type: string, format: uuid }
+        runners:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, label, model, readinessStatus, pinnedModel]
+            properties:
+              id: { type: string }
+              label: { type: string }
+              model: { type: string }
+              readinessStatus:
+                type: string
+                enum: [Unknown, Ready, NotReady]
+              pinnedModel:
+                type: object
+                nullable: true
+                additionalProperties: false
+                required: [model, source]
+                properties:
+                  model: { type: string }
+                  source:
+                    type: string
+                    enum: [runner, flow, project-default, platform-default]
+        selectedRunnerId: { type: string, nullable: true }
+        branches:
+          type: array
+          items: { type: string }
+        defaultBaseBranch: { type: string, nullable: true }
+        defaultTargetBranch: { type: string, nullable: true }
+        deliveryPolicyDefault: { $ref: "#/components/schemas/DeliveryPolicy" }
     ScratchLaunchOptionsResponse:
       type: object
       required:
@@ -9325,12 +10043,23 @@ components:
         message: { type: string }
     PromoteRunBody:
       type: object
-      required: [mode, reviewedTargetCommit]
       additionalProperties: false
       properties:
         mode:
           type: string
-          enum: [local_merge, pull_request]
+          enum: [local_merge, rebase_merge, pull_request]
+          deprecated: true
+          description: |
+            M18 compatibility alias. `local_merge` maps to
+            `deliveryPolicyOverride.strategy=merge`; `rebase_merge` and
+            `pull_request` map to the same-named strategies. New clients send
+            `deliveryPolicyOverride`.
+        deliveryPolicyOverride:
+          $ref: "#/components/schemas/DeliveryPolicyOverride"
+          description: |
+            Explicit promote-time override. Omitted means use the run snapshot.
+            The UI preselects the snapshot and marks this field as an override
+            when any value differs.
         targetBranch:
           type: string
           minLength: 1
@@ -9345,10 +10074,12 @@ components:
           description: |
             (M18, Implemented) The target-branch HEAD commit the ReviewPanel
             rendered the promote surface against (commit-sha shape).
-            **Required** — compared to the live target HEAD at claim time
+            Required by the flow promote service for manual ReviewPanel
+            promotions — compared to the live target HEAD at claim time
             (optimistic concurrency). A mismatch is refused `PRECONDITION`
             ("target advanced since review") unless `allowTargetDrift` is set;
-            a body omitting it is refused `PRECONDITION`, never promoted blind.
+            a manual flow body omitting it is refused `PRECONDITION`, never
+            promoted blind.
         allowTargetDrift:
           type: boolean
           default: false
@@ -9362,7 +10093,10 @@ components:
       required: [ok, mode]
       properties:
         ok: { type: boolean, enum: [true] }
-        mode: { type: string, enum: [local_merge, pull_request] }
+        mode:
+          type: string
+          enum: [local_merge, pull_request, merge, rebase_merge, ai_rebase_merge]
+        deliveryPolicy: { $ref: "#/components/schemas/DeliveryPolicy" }
         commit: { type: string, nullable: true }
         pullRequestUrl:
           type: string
@@ -9379,6 +10113,14 @@ components:
           description: |
             (M18, Implemented) Provider-assigned PR/MR number. Present only for
             successful `pull_request` promotions.
+    PatchRunDeliveryPolicyBody:
+      type: object
+      required: [action]
+      additionalProperties: false
+      properties:
+        action:
+          type: string
+          enum: [switch_to_manual]
     HitlResponseBody:
       type: object
       description: |
@@ -10076,6 +10818,86 @@ components:
         `stdio` — spawns a local subprocess; `command` required; gated by
         `exec_trust` of the owning revision.
         `sse` / `http` — connects to a remote endpoint; `url` required.
+
+    PackageSource:
+      type: object
+      description: |
+        (ADR-088 — Implemented) A `package_sources` row with the cached
+        discovery snapshot. Discovery failures keep the stale snapshot.
+      required: [id, url, enabled, discovered, lastCheckedAt, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        url: { type: string, description: "Git monorepo URL (packages/<name>/ layout)." }
+        enabled: { type: boolean }
+        note: { type: string, nullable: true }
+        discovered:
+          type: array
+          items: { $ref: "#/components/schemas/DiscoveredPackage" }
+        lastCheckedAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    DiscoveredPackage:
+      type: object
+      description: (ADR-088 — Implemented) One package found in a source's default branch.
+      required: [name, tags]
+      properties:
+        name: { type: string }
+        tags:
+          type: array
+          items: { type: string }
+          description: "Per-package tags (<name>/vX.Y.Z), newest first."
+
+    PackageSourceBody:
+      type: object
+      required: [url]
+      properties:
+        url: { type: string, minLength: 1 }
+        note: { type: string }
+        enabled: { type: boolean, default: true }
+
+    PackageInstallSummary:
+      type: object
+      description: |
+        (ADR-088 — Implemented) An immutable installed package revision.
+        `installed_path` is NEVER projected to clients.
+      required: [id, sourceUrl, name, versionLabel, resolvedRevision, packageStatus, trustStatus, flows]
+      properties:
+        id: { type: string }
+        sourceUrl: { type: string }
+        name: { type: string }
+        versionLabel:
+          type: string
+          description: "Raw tag (e.g. aif/v2.0.0) or local-<digest12> for local versions."
+        resolvedRevision: { type: string, description: "Tag SHA or package content digest." }
+        packageStatus:
+          type: string
+          enum: [Installing, Installed, Failed, Removed]
+        trustStatus:
+          type: string
+          enum: [untrusted, trusted, trusted_by_policy]
+        flows:
+          type: array
+          items: { type: string }
+          description: "Manifest flow ids."
+
+    ProjectPackageAttachment:
+      type: object
+      description: (ADR-088 — Implemented) A project's enablement of one package install.
+      required: [id, packageInstallId, packageName, versionLabel, attachedAt, updateAvailable, flows]
+      properties:
+        id: { type: string }
+        packageInstallId: { type: string }
+        packageName: { type: string }
+        versionLabel: { type: string }
+        attachedAt: { type: string, format: date-time }
+        updateAvailable:
+          type: boolean
+          description: "A newer matching tag exists in the source's discovered snapshot."
+        flows:
+          type: array
+          items: { type: string }
+          description: "Member flow ref ids."
 
     PlatformMcpServer:
       type: object

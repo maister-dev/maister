@@ -80,13 +80,14 @@ export type CreateSessionInput = {
   projectSlug: string;
   worktreePath: string;
   stepId: string;
+  nodeAttemptId?: string;
   executor: SupervisorExecutorInput;
   runner?: SupervisorRunnerInput;
   resumeSessionId?: string;
   capabilityProfilePath?: string;
   adapterLaunch?: SupervisorAdapterLaunchInput;
   mcpServers?: AgentMcpServer[];
-  // M33 (ADR-089 L1): session-scoped read-only — the supervisor auto-denies
+  // M34 (ADR-090 L1): session-scoped read-only — the supervisor auto-denies
   // write-class tool permission requests for the whole session. Used for
   // none/repo_read platform-agent runs.
   readOnlySession?: boolean;
@@ -111,6 +112,7 @@ export type PromptResult = {
 
 export type SendPromptInput = {
   stepId: string;
+  nodeAttemptId?: string;
   prompt: string;
   // M30 (ADR-078 L2): answer-only gate-chat turn — the supervisor
   // auto-rejects unambiguous mutating toolCall kinds while it is in flight.
@@ -122,6 +124,7 @@ export type SupervisorSessionRecord = {
   runId: string;
   projectSlug: string;
   stepId: string;
+  nodeAttemptId?: string;
   status: "live" | "exited" | "crashed";
   pid: number;
   startedAt: string;

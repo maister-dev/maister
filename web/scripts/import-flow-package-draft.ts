@@ -28,16 +28,20 @@ export function parseImportFlowPackageDraftArgs(
 ): ImportFlowPackageDraftArgs {
   const flags = parseFlagPairs(
     argv,
-    "--project <slug> [--source-dir <path>] [--slug <package-slug>] [--title <title>]",
+    "--project <slug> --source-dir <path> [--slug <package-slug>] [--title <title>]",
   );
 
   if (!flags.project) {
     throw new MaisterError("CONFIG", "Missing required --project");
   }
 
+  if (!flags["source-dir"]) {
+    throw new MaisterError("CONFIG", "Missing required --source-dir");
+  }
+
   return {
     project: flags.project,
-    sourceDir: flags["source-dir"] ?? "../plugins/aif",
+    sourceDir: flags["source-dir"],
     slug:
       flags.slug === undefined
         ? undefined

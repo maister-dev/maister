@@ -1,4 +1,4 @@
-# M33 — Platform-agent substrate (Stage 3): catalog, triggers, repo_read enforcement, social integration
+# M34 — Platform-agent substrate (Stage 3): catalog, triggers, repo_read enforcement, social integration
 
 - **Branch**: `feature/platform-agents-stage3` (off `main` @ `f34769fd`)
 - **Created**: 2026-06-12
@@ -7,11 +7,11 @@
 
 ## Progress
 
-- [x] Phase 0 — ADR-088/088 + analytics spec (commit 1)
-- [x] Phase 1 — schema + migration 0048 (commit 2)
+- [x] Phase 0 — ADR-089/090 + analytics spec (commit 1)
+- [x] Phase 1 — schema + migration 0049 (commit 2)
 - [x] Phase 2 — definition parser + registry (commit 3)
 - [x] Phase 3 — standalone launch + budgets (commit 4)
-- [x] Phase 4 — enforcement L1/L3 + quarantine (commit 5; + migration 0048 for activity kinds)
+- [x] Phase 4 — enforcement L1/L3 + quarantine (commit 5; + migration 0050 for activity kinds)
 - [x] Phase 5 — five triggers (commit 6)
 - [x] Phase 6 — ext/MCP + tokens (commit 7)
 - [x] Phase 7 — UI (commit 8)
@@ -26,16 +26,16 @@
 
 ## Roadmap Linkage
 
-- **Milestone**: `M33. Platform-agent substrate — Stage 3 (catalog, triggers, repo_read enforcement, social integration)` — NEW entry in `.ai-factory/ROADMAP.md` (added in Phase 8, mirroring how M31/M32 entries landed).
+- **Milestone**: `M34. Platform-agent substrate — Stage 3 (catalog, triggers, repo_read enforcement, social integration)` — NEW entry in `.ai-factory/ROADMAP.md` (added in Phase 8, mirroring how M31/M32 entries landed).
 - **Rationale**: third stage of the validated platform-agents staged design; Stage 1 (M31 social board) and Stage 2 (M32 outbox) are merged prerequisites on `main`.
 
 ## Verified numbering (against main HEAD f34769fd)
 
 | Artifact | Last on main | This milestone uses |
 | --- | --- | --- |
-| ADR | ADR-086 (domain-event outbox) | **ADR-088** (agent catalog + per-agent runner + trigger model), **ADR-089** (workspace axis + no-writes-outside-worktree invariant + quarantine) |
-| Migration | `0046_domain_events.sql` | **`0048_platform_agents.sql`** (single migration) |
-| Milestone | M32 | **M33** |
+| ADR | ADR-086 (domain-event outbox) | **ADR-089** (agent catalog + per-agent runner + trigger model), **ADR-090** (workspace axis + no-writes-outside-worktree invariant + quarantine) |
+| Migration | `0046_domain_events.sql` | **`0049_platform_agents.sql`** + **`0050_agent_activity_kinds.sql`** (post-R0 numbering) |
+| Milestone | M32 | **M34** |
 | Flow engine | `1.4.0` (M30) | **`1.5.0`** (new `agent:` node binding capability, per-capability floor) |
 
 Sibling-branch collision risk: none known in flight; re-verify next-free numbers immediately before merge (M30/M32 lesson).
@@ -48,10 +48,10 @@ Sibling-branch collision risk: none known in flight; re-verify next-free numbers
 
 - ALL agent definitions live in the host catalog `~/.maister/agents/<id>/agent.md` (NO `@sha` pinning — owner-editable local catalog, unlike flows). Resolved via a new `systemAgentsRoot()` helper beside `web/lib/flow-paths.ts:100` patterns. **Owner decision 2026-06-12: project-scope agents do NOT live inside the project repo** — no `<repo>/.maister/<slug>/agents/` files, no project-registration sync hook. `scope=project` is a pure binding: frontmatter `project: <slug>` (required iff `scope=project`, validated against registered projects) + `agents.project_id` + the auto-link. UI CRUD writes the `.md` into the host catalog for BOTH scopes. Repo-shipped agents remain a flow-package capability (`agent_definition`), not a catalog source.
 - Frontmatter (zod schema, extends the existing `agentFrontmatterSchema` precedent at `web/lib/flows/artifact-frontmatter.ts:154`): `name` (req), `description` (req), `scope: platform|project` (req), `project` (project slug; required iff `scope=project`), `runner` (optional runner id), `workspace: none|repo_read|worktree` (req), `mode: session|subagent` (req), `triggers: (manual|cron|domain_event|webhook|flow)[]` (req, non-empty), `capability_profile` (optional, M14 shape), `risk_tier: read_only|standard|destructive` (req). Body = base/system prompt. Unknown keys: refused (strict), NOT passthrough — this schema is ours, not Claude's.
-- Invalid definition → `MaisterError("CONFIG")` **at registration**; the row is not written/updated. Parsing NEVER executes content (no `setup.sh` analog exists for agents — state this in ADR-088; satisfies the fetch-vs-execute rule trivially).
+- Invalid definition → `MaisterError("CONFIG")` **at registration**; the row is not written/updated. Parsing NEVER executes content (no `setup.sh` analog exists for agents — state this in ADR-089; satisfies the fetch-vs-execute rule trivially).
 - **Config→DB symmetry (mandatory tests)**: re-registration syncs every parsed column. SET (field present → column = value), CLEAR (field removed → column = column default/NULL), idempotent re-set. Applies to `runner`, `capability_profile`, `triggers`, `risk_tier`.
 
-### D2. Tables (migration `0048_platform_agents.sql`, one migration)
+### D2. Tables (migration `0049_platform_agents.sql`)
 
 - **`agents`**: `id` (text PK = dir name, safe-path-segment), `scope` (`platform|project`), `project_id` (FK nullable; CHECK `(scope='project') = (project_id IS NOT NULL)`), `name`, `description`, `runner_id` (FK `platform_acp_runners`, nullable, ON DELETE SET NULL), `workspace` enum, `mode` enum, `triggers` jsonb, `capability_profile` jsonb nullable, `risk_tier` enum, `source_path` text, `quarantined_at` timestamptz nullable, `quarantine_reason` text nullable, `enabled` bool default true, timestamps. UNIQUE `(scope, project_id, id)` is implied by PK on id — **decision: PK = `id` globally unique** (platform ids and project ids share one namespace; registration refuses collisions, mirroring slug collision refusal).
 - **`agent_project_links`**: `id` PK, `agent_id` FK cascade, `project_id` FK cascade, `enabled` bool default true, `runner_override_id` FK nullable SET NULL, timestamps. UNIQUE `(agent_id, project_id)`. Project-scope agents get an auto-link to their own project at registration (uniform downstream reads).
@@ -61,7 +61,7 @@ Sibling-branch collision risk: none known in flight; re-verify next-free numbers
 - **`project_tokens` alters**: extend `token_kind` enum with `'agent'`; ADD `agent_id` FK nullable CASCADE.
 - fakeDb stubs: add every new table (M32 lesson — fakeDb stubs need new tables or unit suites crash).
 
-### D3. Runner resolution — standalone agent chain (ADR-088)
+### D3. Runner resolution — standalone agent chain (ADR-089)
 
 New `resolveAgentRunner()` in `web/lib/acp-runners/resolve.ts` beside `resolveRunner()` (:135): `launchOverride → agent_project_links.runner_override_id → agents.runner_id → projects.default_runner_id → platform default`. Reuses `assertLaunchableRunner()` (:107 — exists/enabled/ready, throws `EXECUTOR_UNAVAILABLE`, no fallback) and `snapshotRunner()` (:93) → `runs.runner_snapshot` as today. Tier labels get agent-chain values added to `runner_resolution_tier` enum (e.g. `agentLinkOverride`, `agentDefault`).
 
@@ -69,7 +69,7 @@ New `resolveAgentRunner()` in `web/lib/acp-runners/resolve.ts` beside `resolveRu
 - `mode=subagent` resolved to a runner whose `capability_agent ≠ claude` (codex can't consume `.claude/agents/*.md`) — the args' canonical example.
 - `workspace ∈ {none, repo_read}` resolved to a runner with `permission_policy = dangerously_skip_permissions` (suppresses permission requests at adapter launch → L1 auto-deny cannot exist; `supervisor/src/runner-provisioner.ts:89-99`).
 
-Flow-bound runs keep the existing 6-tier flow chain untouched; `agents.runner_id` participates ONLY in the standalone chain (documented in ADR-088).
+Flow-bound runs keep the existing 6-tier flow chain untouched; `agents.runner_id` participates ONLY in the standalone chain (documented in ADR-089).
 
 ### D4. Execution substrate: `runs.kind='agent'`, separate budget
 
@@ -81,9 +81,9 @@ Flow-bound runs keep the existing 6-tier flow chain untouched; `agents.runner_id
   - Sweeps: `web/lib/reconcile.ts` (`status='Running'` filter picks agent runs up automatically — classification must handle no-worktree kinds: worktree-missing check applies only to `workspace=worktree` runs), `web/lib/runs/keepalive-sweeper.ts` Pass 1/2 (kind-agnostic, correct as-is — verify with test), `closeTerminalRunAssignments` (kind-agnostic), GC (agent workdirs join the 7d sweep; agent ephemeral tokens revoked — see D9).
   - State guards: HITL respond guard allow-lists stay status-based (kind-agnostic) — add regression test that an agent run in `NeedsInput` (workspace=worktree only) responds normally.
   - API specs: `docs/api/web.openapi.yaml` run schemas gain `kind`, `agent_id`, `trigger_source`.
-- Launchability classifier (`web/lib/runs/launchability.ts`) is task-scoped — agent standalone runs bypass it; task-bound manual agent launches (card button) do NOT consume the task's flow-launch slot semantics: an agent run never flips `tasks.status` to `InFlight` and never bumps `attempt_number` (it is commentary/triage machinery, not a delivery attempt). Documented in ADR-088.
+- Launchability classifier (`web/lib/runs/launchability.ts`) is task-scoped — agent standalone runs bypass it; task-bound manual agent launches (card button) do NOT consume the task's flow-launch slot semantics: an agent run never flips `tasks.status` to `InFlight` and never bumps `attempt_number` (it is commentary/triage machinery, not a delivery attempt). Documented in ADR-089.
 
-### D5. Workspace axis (ADR-089)
+### D5. Workspace axis (ADR-090)
 
 | `workspace` | cwd passed to supervisor | git worktree | `workspaces` row | promote path |
 | --- | --- | --- | --- | --- |
@@ -95,12 +95,12 @@ Run artifacts (`*.log`, `run.events.jsonl`, `session.json`, `cost.jsonl`) always
 
 `repo_read` precondition: `statusPorcelain(repo_path)` (precedent `web/lib/gc/preserve.ts:60`) must be EMPTY at launch, else `PRECONDITION` — the dirty-watchdog contract is unverifiable on a dirty baseline. Concurrent `repo_read` agent runs against the same repo are allowed (read-only); a `repo_read` launch is refused while a worktree-creating launch is mid-prep only by normal git locking (no new locks).
 
-### D6. repo_read / none — 3-layer no-write enforcement (ADR-089)
+### D6. repo_read / none — 3-layer no-write enforcement (ADR-090)
 
 - **L1 (supervisor, live)**: new `readOnlySession: boolean` on `StartSessionRequest` (`supervisor/src/types.ts:151`). Session-scoped generalization of M30's per-prompt `readOnlyTurn` (`supervisor/src/http-api.ts:509-527`): the ACP permission handler auto-DENIES write-class/mutating tool-call kinds for the whole session, never creating pending-permission deferreds (no deferred-leak class: requests are answered inline with deny). Read-class requests under `permission_policy=default` are ALSO auto-approved for non-interactive agents — otherwise a headless cron agent stalls on its first Read; allow-list of read-safe kinds, deny everything else. No HITL inbox rows are ever created for `readOnlySession` sessions.
 - **L2 (M14, materialize-only)**: `materializeCapabilityProfile`/`mapProfileToAgentArtifacts` (`web/lib/capabilities/materialize.ts:222-277`) writes `.claude/settings.local.json` deny rules (write-class tools: Edit/Write/NotebookEdit/mutating Bash) + the agent's `capability_profile` mcp/skills roster into the session cwd. For `repo_read` cwd = parent repo: every materialized file is recorded in a **manifest** (reuse the `.maister-owned` marker pattern, materialize.ts:271) and **restored/removed after the run**; the dirty-watchdog diff EXCLUDES exactly the manifest paths. ADR-041 boundary unchanged: this is materialize-only best effort, NOT enforcement.
 - **L3 (dirty-watchdog, the hard layer)**: snapshot `statusPorcelain` before spawn (must be clean), re-check at every terminal transition (`web/lib/runs/state-transitions.ts` terminal choke point). **Sequencing invariant (patch 2026-06-10-23.44 lesson): the watchdog check + ephemeral-token revoke run INSIDE the terminal choke point — before/within the status-flip transaction; NO writes to the run row may be sequenced after the terminal flip.** Dirty beyond the L2 manifest → one **quarantine transaction**: `agents.quarantined_at = now()` + `quarantine_reason`, system comment (actor `{type:'system', id:null}`) on the task when `run.task_id` is set, `recordTaskActivity` entry (new `agent_quarantined` event kind), all in ONE `db.transaction` (multi-store atomicity rule). Standalone (no-task) runs: quarantine flag + catalog badge + portfolio run-row badge only — no new inbox/notification plumbing in Stage 3 (owner-confirmed). Quarantined agents are refused at every launch entry point (`PRECONDITION`); un-quarantine = explicit UI action clearing the flag.
-- **ADR-041 unchanged**: `risk_tier=destructive` → launch refused (`PRECONDITION`) until the enforcement flip lands. Stated in ADR-089.
+- **ADR-041 unchanged**: `risk_tier=destructive` → launch refused (`PRECONDITION`) until the enforcement flip lands. Stated in ADR-090.
 
 ### D7. Triggers (`runs.trigger_source`)
 
@@ -140,7 +140,7 @@ Args say "auto-issued on attach, rotated on detach"; but `project_tokens` stores
 
 ### D12. Stage-0 doc flip
 
-`docs/pv/agents-as-environment-actors.md` header → superseded-by-design pointer to ADR-088/088 + `docs/system-analytics/agents.md`, listing the three amendments: per-agent runner (frontmatter `runner` + link override, vs "no FK" in Stage-0), standalone-first (Mβ shipped before flow-binding polish), social layer (quarantine comments/activity, agent actor, triage verdict). Keep Mγ (continuous + enforce) as the remaining future stage.
+`docs/pv/agents-as-environment-actors.md` header → superseded-by-design pointer to ADR-089/090 + `docs/system-analytics/agents.md`, listing the three amendments: per-agent runner (frontmatter `runner` + link override, vs "no FK" in Stage-0), standalone-first (Mβ shipped before flow-binding polish), social layer (quarantine comments/activity, agent actor, triage verdict). Keep Mγ (continuous + enforce) as the remaining future stage.
 
 ### D13. Triage Q&A loop (owner ask, 2026-06-12)
 
@@ -167,7 +167,7 @@ Integration test (Phase 5): agent-actor comment → no self-trigger; human comme
 | MCP tools `triage_set`, `relation_*` | `docs/system-analytics/external-operations.md` (facade table) |
 | Supervisor `StartSessionRequest.readOnlySession` | `docs/api/supervisor.openapi.yaml` + `docs/supervisor.md` |
 | Scheduler job-kind admin enum change (agent_tick seeded-only) | `docs/api/web.openapi.yaml` (job-kind enums) + `docs/system-analytics/scheduler.md` |
-| New tables/columns | Drizzle migration `0048` + `docs/database-schema.md` + `docs/db/agents-domain.md` (new ERD) + `docs/db/erd.md` + `docs/db/runs-domain.md` (runs columns) |
+| New tables/columns | Drizzle migrations `0049`/`0050` + `docs/database-schema.md` + `docs/db/agents-domain.md` (new ERD) + `docs/db/erd.md` + `docs/db/runs-domain.md` (runs columns) |
 | Flow DSL `agent:` field + engine `1.5.0` | `docs/flow-dsl.md` + `web/lib/config.schema.ts` + `docs/system-analytics/flow-graph.md` (floor table) |
 | New env vars | `docs/configuration.md` env table + `.env.example` |
 | `tasks.flow_id` nullable + optional `flowId` on ext/MCP `task_create` + `unconfigured` launchability + triage verdict columns | `docs/api/external/operations.openapi.yaml` + `docs/system-analytics/tasks.md` + `docs/system-analytics/run-schedules.md` (`skipped_unconfigured`) |
@@ -195,26 +195,26 @@ Gate for EVERY phase: `pnpm --filter maister-web exec tsc --noEmit` + `pnpm --fi
 
 | # | Task | Deliverable |
 | --- | --- | --- |
-| 0.1 | **ADR-088** — Agent catalog with per-agent runner: `.md` canon + DB index split, frontmatter contract, scope/dirs, registration CONFIG refusals (incl. no-execution statement), standalone runner chain + incompatibility refusals, trigger model (5 sources, dispatcher/consumer/claim design, crash windows D7), task-bound agent runs don't touch task status/attempts, per-launch ephemeral agent tokens + actor mapping, triage verdict op | `docs/decisions.md` |
-| 0.2 | **ADR-089** — Workspace axis + no-writes-outside-worktree invariant: D5 table, repo_read clean-baseline precondition, 3-layer enforcement (L1 readOnlySession / L2 manifest-tracked materialization / L3 dirty-watchdog), quarantine transaction semantics, ADR-041 destructive gate unchanged | `docs/decisions.md` |
+| 0.1 | **ADR-089** — Agent catalog with per-agent runner: `.md` canon + DB index split, frontmatter contract, scope/dirs, registration CONFIG refusals (incl. no-execution statement), standalone runner chain + incompatibility refusals, trigger model (5 sources, dispatcher/consumer/claim design, crash windows D7), task-bound agent runs don't touch task status/attempts, per-launch ephemeral agent tokens + actor mapping, triage verdict op | `docs/decisions.md` |
+| 0.2 | **ADR-090** — Workspace axis + no-writes-outside-worktree invariant: D5 table, repo_read clean-baseline precondition, 3-layer enforcement (L1 readOnlySession / L2 manifest-tracked materialization / L3 dirty-watchdog), quarantine transaction semantics, ADR-041 destructive gate unchanged | `docs/decisions.md` |
 | 0.3 | **`docs/system-analytics/agents.md`** (new, full R5 structure): purpose, entities, agent-run state machine (reuses run FSM; no-worktree variants), process flows (registration, each of 5 triggers, quarantine, **triage Q&A loop D13**), Expectations (≤12 normative bullets: budget isolation, no-dup spawn, **self-exclusion anti-loop**, quarantine atomicity, no-run-row-writes-after-terminal, token scoping…), edge cases → error codes, linked artifacts. Status tags `(Designed)` | new file + `docs/CLAUDE.md` glossary row |
 | 0.4 | ERDs + narrative: `docs/db/agents-domain.md` (new erDiagram: agents, agent_project_links, agent_schedules, token linkage), `docs/db/erd.md` consolidated, `docs/db/runs-domain.md` (runs additions), `docs/database-schema.md` narrative | db docs |
 | 0.5 | API specs: `web.openapi.yaml` (admin agents CRUD, launch, webhook event route, run DTO fields, job-kind enum change), `external/operations.openapi.yaml` (triage, relations, scopes, token_kind agent), `supervisor.openapi.yaml` (readOnlySession) — `npx @redocly/cli lint` zero errors | api specs |
 | 0.6 | Update `scheduler.md` (agent_tick dispatcher + admin enum change), `external-operations.md` (ops/scopes/MCP tools/agent actor), `domain-events.md` (agent_triggers consumer row + `task.triage_requeued` emitter lands), `flow-dsl.md` + `flow-graph.md` (agent: binding, engine 1.5.0), `tasks.md` (simple-intent creation, verdict columns, card pre-launch editing), `configuration.md` (env), `error-taxonomy.md` (new refusal rows) | docs |
 | 0.7 | Exit checklist: every state transition + refusal row enumerated exactly as code will gate (allow-lists written as allow-lists); both ERD artifacts updated; `pnpm validate:docs` + redocly green | gate |
 
-**Commit 1**: `docs(agents): ADR-088/088 + Stage-3 analytics spec (agents.md, ERDs, API contracts)`
+**Commit 1**: `docs(agents): ADR-089/090 + Stage-3 analytics spec (agents.md, ERDs, API contracts)`
 
 ### Phase 1 — Schema + migration
 
 | # | Task | Deliverable |
 | --- | --- | --- |
 | 1.1 | Drizzle schema: all D2 tables/alters in `web/lib/db/schema.ts` + types; `runner_resolution_tier` agent values; scopes type additions (`web/types/token-scopes.ts`) | schema |
-| 1.2 | Migration `0048_platform_agents.sql` via drizzle generate (mind the `--custom` snapshot gotcha — generated, not hand-written; snapshot must advance) | migration + meta |
+| 1.2 | Migration `0049_platform_agents.sql` via drizzle generate (mind the `--custom` snapshot gotcha — generated, not hand-written; snapshot must advance) | migration + meta |
 | 1.3 | fakeDb stubs for new tables; stepwise-replay migration test extended (M31 tag-addressing precedent) | unit green |
 | 1.4 | Unit: enum CHECKs (scope↔project_id pairing, schedule-row CHECKs), partial unique index behavior (insert conflict no-op) — integration (testcontainers) | tests |
 
-**Commit 2**: `feat(agents): schema + migration 0048 (agents, links, schedules rework, runs/tasks/tokens alters)`
+**Commit 2**: `feat(agents): schema + migration 0049 (agents, links, schedules rework, runs/tasks/tokens alters)`
 
 ### Phase 2 — Definition parser + registry
 
@@ -291,10 +291,10 @@ Gate for EVERY phase: `pnpm --filter maister-web exec tsc --noEmit` + `pnpm --fi
 | # | Task | Deliverable |
 | --- | --- | --- |
 | 8.1 | E2E ×3 (playwright, seeded stub-supervisor + `fake-acp.mjs`): (a) manual catalog launch → stream visible; (b) flow-bound `agent:<id>` node runs with substituted profile; (c) repo_read agent + test-injected dirty file → quarantine + system comment + relaunch refused. New spec prefixes ADDED to `AUTHED_SPEC` (`web/playwright.config.ts:25`); kill :3100/:7788 before runs; never `--last-failed` (shared-infra trap) | e2e green |
-| 8.2 | Docs status flips `(Designed)`→`(Implemented)`; Stage-0 doc flip per D12; roadmap M33 entry + completed table; root `CLAUDE.md` "Built since baseline" + §Current Scope additions; `web/CLAUDE.md` if structure shifted | docs |
+| 8.2 | Docs status flips `(Designed)`→`(Implemented)`; Stage-0 doc flip per D12; roadmap M34 entry + completed table; root `CLAUDE.md` "Built since baseline" + §Current Scope additions; `web/CLAUDE.md` if structure shifted | docs |
 | 8.3 | Full gate: web unit+integration, supervisor unit+integration, e2e suite ×2 (flake check), tsc, scoped eslint, `pnpm validate:docs:all`, redocly on all 3 specs; re-verify ADR/migration numbering against live main before merge | gates |
 
-**Commit 9**: `docs(agents): flip to Implemented, roadmap M33, Stage-0 supersession, close-out gates`
+**Commit 9**: `docs(agents): flip to Implemented, roadmap M34, Stage-0 supersession, close-out gates`
 
 ---
 
@@ -366,10 +366,10 @@ Continuous daemons + crash-loop backoff (Mγ), ADR-041 enforcement flip + destru
   trigger-derived ref, never switching the user's checkout.
 - **Constraint (UPDATED 2026-06-12)**: `feature/package-management` has
   MERGED to main (`0282235f`, owns ADR-088 packages + migration
-  `0048_packages`) — the rework now REBASES onto it first (R0) and
+  `0048_packages`) — the rework now MERGES it in first (R0) and
   integrates its trust/ownership machinery instead of avoiding it. Keep the
-  M33 runtime substrate (launch/enforcement/triggers/tokens/budgets) intact.
-- **Numbering after R0 rebase**: M33's artifacts renumber AGAIN — agent
+  M34 runtime substrate (launch/enforcement/triggers/tokens/budgets) intact.
+- **Numbering after R0 merge**: M34's artifacts renumber AGAIN — agent
   catalog ADR-088→**ADR-089**, workspace axis ADR-089→**ADR-090**;
   migrations `0048_platform_agents`→**0049**, `0049_agent_activity_kinds`→
   **0050**; journal interleaves main's 0047+0048 rows; snapshot prevId
@@ -377,11 +377,11 @@ Continuous daemons + crash-loop backoff (Mγ), ADR-041 enforcement flip + destru
   verify `drizzle-kit generate` → no-diff after). The rework migration is
   therefore **`0051_agents_package_source.sql`**.
 - **Settings**: inherited — Testing yes, Logging standard, Docs yes,
-  Roadmap M33 (entry will be amended, not duplicated).
+  Roadmap M34 (entry will be amended, not duplicated).
 
 ## Rework progress
 
-- [ ] R0 — rebase onto main `0282235f` + renumber (ADR-089/090, migrations 0049/0050, snapshot transplant)
+- [ ] R0 — merge main `0282235f` + renumber (ADR-089/090, migrations 0049/0050, snapshot transplant)
 - [ ] R1 — schema + package registration core (migration 0051)
 - [ ] R2 — per-project resolution + trust/launch gates + attach gate
 - [ ] R3 — workspace ref (ephemeral read-only worktree at trigger ref)
@@ -408,7 +408,7 @@ with provenance. No new authored capability kind — the authored UNIT stays
 the flow package (kind `flow`); agents are files inside it (owner decision 2
 maps exactly to this).
 
-### RD2. `agents` table rework (migration `0050_agents_package_source.sql`)
+### RD2. `agents` table rework (migration `0051_agents_package_source.sql`)
 
 - DROP `scope`, `project_id` (+ the scope-pairing CHECK): availability to a
   project is now derived — the providing package is enabled in that project.
@@ -513,7 +513,7 @@ EPHEMERAL dir; L1/L2 unchanged.
 
 ### RD7. Agent capability-profile MCPs from the platform catalog
 
-M33 gap: agent sessions receive only the maister facade. Rework wires
+M34 gap: agent sessions receive only the maister facade. Rework wires
 `capability_profile.mcps` refs through the existing resolution
 (`resolveCapabilityProfile` precedence project>platform>flow-package,
 `lib/capabilities/resolver.ts:310`) + `gateStdioMcpsByExecTrust`
@@ -527,11 +527,11 @@ contract).
 
 | # | Task | Deliverable |
 | --- | --- | --- |
-| R0.1 | Rebase the 9 M33 commits onto main `0282235f`; resolve schema.ts/decisions.md/seed/journal conflicts | rebase |
-| R0.2 | Renumber: ADR-088→089, ADR-089→090 (tree-wide sweep incl. lowercase anchors); migrations 0048→0049_platform_agents, 0049→0050_agent_activity_kinds (files+snapshots+journal idx/tag, `when` untouched); snapshot prevId transplant onto main's 0048_packages snapshot; `drizzle-kit generate` no-diff check | renumber |
+| R0.1 | Merge main `0282235f` into the branch; resolve schema.ts/decisions.md/seed/journal/popover conflicts | merge |
+| R0.2 | Renumber: ADR-088→089, ADR-089→090, M33→M34 (tree-wide sweep incl. lowercase anchors); migrations 0048→0049_platform_agents, 0049→0050_agent_activity_kinds (files+snapshots+journal idx/tag, `when` untouched); snapshot prevId transplant onto main's 0048_packages snapshot; `drizzle-kit generate` no-diff check | renumber |
 | R0.3 | Full gate re-run on the rebased branch (web unit+integration, supervisor, mcp, e2e, tsc, validators) before any rework code | gates |
 
-**Commit R-0**: `chore(agents): rebase onto main (packages), renumber ADR-089/090 + migrations 0049/0050`
+**Commit R-0**: `chore(agents): merge main (multi-run + packages), renumber ADR-089/090 + migrations 0049/0050, M33→M34`
 
 ### R1 — Schema + registration core
 
@@ -588,10 +588,10 @@ contract).
 | # | Task | Deliverable |
 | --- | --- | --- |
 | R6.1 | e2e seed: agents ship inside the seeded local flow packages (`agents/*.md` in the package source dirs + registration rows); drop `MAISTER_AGENTS_ROOT` from playwright env; adapt the 3 platform-agents specs + quarantine fixture | e2e |
-| R6.2 | Docs amended IN PLACE (branch unmerged — no supersession ceremony): ADR-088 source-of-truth section, `agents.md` analytics, `agents-domain.md` ERD, `configuration.md`/`.env.example` env removal + additions, openapi (admin agents CRUD shrink, attach pre-fill), roadmap M33 entry text | docs |
+| R6.2 | Docs amended IN PLACE (branch unmerged — no supersession ceremony): ADR-089 source-of-truth section, `agents.md` analytics, `agents-domain.md` ERD, `configuration.md`/`.env.example` env removal + additions, openapi (admin agents CRUD shrink, attach pre-fill), roadmap M34 entry text | docs |
 | R6.3 | Full gates: web unit+integration, supervisor, mcp, e2e ×2, tsc ×3, scoped eslint, validate:docs:all, redocly ×3; re-verify numbering vs live main | gates |
 
-**Commit R-6**: `docs(agents): package-source rework close-out — ADR-088 amendment, e2e, gates`
+**Commit R-6**: `docs(agents): package-source rework close-out — ADR-089 amendment, e2e, gates`
 
 ## Rework decision log (owner, 2026-06-12)
 
@@ -606,4 +606,4 @@ contract).
 
 ## Unresolved questions
 
-None on the original M33 scope. Rework questions pending owner (see below).
+None on the original M34 scope. Rework questions pending owner (see below).

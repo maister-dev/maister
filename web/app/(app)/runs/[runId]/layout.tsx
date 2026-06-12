@@ -66,6 +66,7 @@ import { loadRunManifest } from "@/lib/queries/run-manifest";
 import { getRunReadiness } from "@/lib/queries/readiness";
 import {
   getRunCapabilityProfiles,
+  getRunCostSummary,
   getRunDetail,
   getRunResolvedCapabilitySet,
   getRunSettings,
@@ -77,11 +78,13 @@ import {
   resolveBaseRef,
   statusPorcelain,
 } from "@/lib/worktree";
+import { deliveryPolicyFromLegacyPromotionMode } from "@/lib/runs/delivery-policy";
 import {
   computeDirtySummary,
   type DirtySummary,
 } from "@/lib/runs/dirty-resolution";
 import { DirtyResolutionBanner } from "@/components/runs/dirty-resolution-banner";
+import { DeliveryPolicyCancelButton } from "@/components/runs/delivery-policy-cancel-button";
 import { GateChatPanel } from "@/components/runs/gate-chat-panel";
 
 type LayoutProps = {
@@ -105,14 +108,25 @@ async function buildReviewPanelData(detail: RunDetailForReview): Promise<{
   baseCommit: string | null;
   targetBranch: string | null;
   reviewedTargetCommit: string | null;
-  promotionMode: "local_merge" | "pull_request";
+  promotionMode: "merge" | "rebase_merge" | "pull_request" | "ai_rebase_merge";
+  deliveryPolicy: {
+    strategy: "merge" | "rebase_merge" | "pull_request" | "ai_rebase_merge";
+    push: "never" | "on_success";
+    trigger: "manual" | "auto_on_ready";
+    targetBranch: string;
+  };
   diff: ReviewPanelDiff;
   driftDetected: boolean;
   legacyNeedsRelaunch: boolean;
 }> {
   const targetBranch = detail.targetBranch ?? detail.projectMainBranch;
-  const promotionMode: "local_merge" | "pull_request" =
-    detail.promotionMode === "pull_request" ? "pull_request" : "local_merge";
+  const deliveryPolicy =
+    detail.deliveryPolicySnapshot ??
+    deliveryPolicyFromLegacyPromotionMode({
+      projectPromotionMode: detail.promotionMode,
+      projectMainBranch: targetBranch,
+    });
+  const promotionMode = deliveryPolicy.strategy;
 
   // The diff base: the EXACT commit the run forked from (a stable point — the
   // target branch may have advanced since), else the recorded base branch, else
@@ -138,6 +152,7 @@ async function buildReviewPanelData(detail: RunDetailForReview): Promise<{
         targetBranch: null,
         reviewedTargetCommit: null,
         promotionMode,
+        deliveryPolicy,
         diff: EMPTY_DIFF,
         driftDetected: false,
         legacyNeedsRelaunch: true,
@@ -173,6 +188,7 @@ async function buildReviewPanelData(detail: RunDetailForReview): Promise<{
     targetBranch,
     reviewedTargetCommit,
     promotionMode,
+    deliveryPolicy,
     diff,
     driftDetected: false,
     legacyNeedsRelaunch: false,
@@ -197,6 +213,22 @@ function staleSummaryText(
   }
 
   return "!";
+}
+
+function formatTokens(value: number): string {
+  return new Intl.NumberFormat("en-US").format(value);
+}
+
+function formatDuration(durationMs: number | null): string {
+  if (durationMs === null) return "-";
+  const seconds = Math.round(durationMs / 1000);
+
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.round(seconds / 60);
+
+  if (minutes < 60) return `${minutes}m`;
+
+  return `${Math.round(minutes / 60)}h`;
 }
 
 // The persistent run-detail boundary (ADR-066 / FINDING A): a nested layout
@@ -232,6 +264,7 @@ export default async function RunDetailLayout({
   const t = await getTranslations("run");
 
   const timeline = await getRunTimeline(runId);
+  const costSummary = await getRunCostSummary(runId);
   const settings = await getRunSettings(runId);
   const capabilityProfiles = await getRunCapabilityProfiles(runId);
   const resolvedSet = await getRunResolvedCapabilitySet(runId);
@@ -512,15 +545,20 @@ export default async function RunDetailLayout({
       // A derivation failure that is not a clean legacy-relaunch case (e.g. the
       // worktree is gone): fall back to the relaunch state rather than crash.
       if (isMaisterError(err)) {
+        const fallbackPolicy =
+          detail.deliveryPolicySnapshot ??
+          deliveryPolicyFromLegacyPromotionMode({
+            projectPromotionMode: detail.promotionMode,
+            projectMainBranch: detail.targetBranch ?? detail.projectMainBranch,
+          });
+
         reviewData = {
           baseBranch: detail.baseBranch,
           baseCommit: detail.baseCommit,
           targetBranch: null,
           reviewedTargetCommit: null,
-          promotionMode:
-            detail.promotionMode === "pull_request"
-              ? "pull_request"
-              : "local_merge",
+          promotionMode: fallbackPolicy.strategy,
+          deliveryPolicy: fallbackPolicy,
           diff: EMPTY_DIFF,
           driftDetected: false,
           legacyNeedsRelaunch: true,
@@ -543,6 +581,10 @@ export default async function RunDetailLayout({
     promoteAnyway: t("promoteAnyway"),
     diffTruncated: t("diffTruncated"),
     promoteTruncated: t("promoteTruncated"),
+    promotionMerge: t("promotionMerge"),
+    promotionRebaseMerge: t("promotionRebaseMerge"),
+    promotionPullRequest: t("promotionPullRequest"),
+    promotionAiRebaseMerge: t("promotionAiRebaseMerge"),
   };
 
   const timelineLabels: TimelineLabels = {
@@ -558,6 +600,8 @@ export default async function RunDetailLayout({
     assignmentLedger: t("assignmentLedger"),
     assignmentActor: t("assignmentActor"),
     assignmentSystemActor: t("assignmentSystemActor"),
+    duration: t("duration"),
+    tokenTotal: t("tokenTotal"),
     empty: t("timelineEmpty"),
     decisionLabel: (d) =>
       d === "approve"
@@ -568,6 +612,22 @@ export default async function RunDetailLayout({
             ? t("takeOver")
             : d,
   };
+  const activeDurationMs = timeline.entries.reduce<number>(
+    (sum, entry) => sum + (entry.durationMs ?? 0),
+    0,
+  );
+  const wallDurationMs = detail.endedAt
+    ? Math.max(0, detail.endedAt.getTime() - detail.startedAt.getTime())
+    : Math.max(0, Date.now() - detail.startedAt.getTime());
+  const policy = detail.deliveryPolicySnapshot;
+  const policyItems = policy
+    ? [
+        [t("policyStrategy"), policy.strategy],
+        [t("policyPush"), policy.push],
+        [t("policyTrigger"), policy.trigger],
+        [t("policyTarget"), policy.targetBranch],
+      ]
+    : [[t("policyStrategy"), t("policyLegacy")]];
 
   return (
     <div className="mx-auto max-w-[760px]">
@@ -635,6 +695,119 @@ export default async function RunDetailLayout({
           />
         </div>
       ) : null}
+
+      <section
+        className="mb-6 rounded-[14px] border border-line bg-paper p-5"
+        data-testid="run-cost-summary"
+      >
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="m-0 font-sans text-[14px] font-bold tracking-[-0.01em] text-ink">
+            {t("costSummaryTitle")}
+          </h2>
+          <span className="rounded-full border border-line bg-ivory px-2 py-[2px] font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-mute">
+            {t("liveRefresh")}
+          </span>
+        </div>
+        <div className="grid gap-px overflow-hidden rounded-lg border border-line bg-line sm:grid-cols-4">
+          {[
+            [t("inputTokens"), formatTokens(costSummary.inputTokens)],
+            [t("outputTokens"), formatTokens(costSummary.outputTokens)],
+            [t("cacheReadTokens"), formatTokens(costSummary.cacheReadTokens)],
+            [
+              t("cacheCreationTokens"),
+              formatTokens(costSummary.cacheCreationTokens),
+            ],
+          ].map(([label, value]) => (
+            <div key={label} className="bg-ivory px-3 py-2">
+              <div className="font-mono text-[9.5px] font-bold uppercase tracking-[0.08em] text-mute">
+                {label}
+              </div>
+              <div className="mt-1 font-mono text-[13px] font-semibold text-ink">
+                {value}
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="mt-3 grid gap-3 sm:grid-cols-3">
+          <div className="rounded-lg border border-line-soft bg-ivory px-3 py-2">
+            <div className="font-mono text-[9.5px] font-bold uppercase tracking-[0.08em] text-mute">
+              {t("resumeTax")}
+            </div>
+            <div className="mt-1 font-mono text-[13px] font-semibold text-ink">
+              {formatTokens(costSummary.resumeTokens)}
+            </div>
+          </div>
+          <div className="rounded-lg border border-line-soft bg-ivory px-3 py-2">
+            <div className="font-mono text-[9.5px] font-bold uppercase tracking-[0.08em] text-mute">
+              {t("activeTime")}
+            </div>
+            <div className="mt-1 font-mono text-[13px] font-semibold text-ink">
+              {formatDuration(activeDurationMs)}
+            </div>
+          </div>
+          <div className="rounded-lg border border-line-soft bg-ivory px-3 py-2">
+            <div className="font-mono text-[9.5px] font-bold uppercase tracking-[0.08em] text-mute">
+              {t("wallClock")}
+            </div>
+            <div className="mt-1 font-mono text-[13px] font-semibold text-ink">
+              {formatDuration(wallDurationMs)}
+            </div>
+          </div>
+        </div>
+        {Object.keys(costSummary.byModel).length > 0 ? (
+          <div className="mt-3 flex flex-wrap gap-2 font-mono text-[10.5px] text-mute">
+            {Object.entries(costSummary.byModel).map(([model, totals]) => (
+              <span
+                key={model}
+                className="rounded-full border border-line bg-ivory px-2 py-[2px]"
+              >
+                {model}:{" "}
+                {formatTokens(
+                  Object.values(totals).reduce((sum, value) => sum + value, 0),
+                )}
+              </span>
+            ))}
+          </div>
+        ) : null}
+      </section>
+
+      <section
+        className="mb-6 rounded-[14px] border border-line bg-paper p-5"
+        data-testid="run-delivery-policy"
+      >
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="m-0 font-sans text-[14px] font-bold tracking-[-0.01em] text-ink">
+            {t("deliveryPolicyTitle")}
+          </h2>
+          {policy?.trigger === "auto_on_ready" && detail.status === "Review" ? (
+            <DeliveryPolicyCancelButton
+              labels={{
+                cancel: t("policyCancelAuto"),
+                cancelling: t("policyCancelling"),
+                error: t("policyCancelError"),
+              }}
+              runId={detail.runId}
+            />
+          ) : null}
+        </div>
+        {policy?.trigger === "auto_on_ready" && detail.status === "Review" ? (
+          <p className="mb-3 rounded-lg border border-amber-line bg-amber-soft px-3 py-2 font-mono text-[11px] text-amber">
+            {t("policyAutoBanner")}
+          </p>
+        ) : null}
+        <dl className="grid gap-px overflow-hidden rounded-lg border border-line bg-line sm:grid-cols-4">
+          {policyItems.map(([label, value]) => (
+            <div key={label} className="bg-ivory px-3 py-2">
+              <dt className="font-mono text-[9.5px] font-bold uppercase tracking-[0.08em] text-mute">
+                {label}
+              </dt>
+              <dd className="m-0 mt-1 font-mono text-[12px] font-semibold text-ink">
+                {value}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      </section>
 
       {detail.status === "Crashed" ? (
         <section
@@ -913,6 +1086,7 @@ export default async function RunDetailLayout({
           baseBranch={reviewData.baseBranch}
           baseCommit={reviewData.baseCommit}
           canPromote={canAct}
+          deliveryPolicy={reviewData.deliveryPolicy}
           diff={reviewData.diff}
           driftDetected={reviewData.driftDetected}
           labels={reviewLabels}

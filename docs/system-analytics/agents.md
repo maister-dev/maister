@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Platform agents (**Implemented**, ADR-088/ADR-089, M33; Stage 3 of the
+Platform agents (**Implemented**, ADR-089/ADR-090, M34; Stage 3 of the
 platform-agents staged design) are first-class `.md`-defined actors — a
 triager, reviewers, monitors — registered in a host catalog, attached to
 projects, executed as ACP sessions on the existing `runs` substrate under a
@@ -244,7 +244,7 @@ flowchart TD
   incompatibility rule fires** → `MaisterError("EXECUTOR_UNAVAILABLE")`
   before spawn; no run row.
 - **Agent budget full** → run enters `Pending` with a per-kind queue
-  position; the flow pool is unaffected (ADR-088).
+  position; the flow pool is unaffected (ADR-089).
 - **Crash between claim and spawn** (cron claim committed or event run row
   inserted, process dies) → the run row is `Pending`;
   `promoteNextPending(kind='agent')` on the next `agent_tick.dispatcher`
@@ -253,7 +253,7 @@ flowchart TD
   spawn only).
 - **Human edits the parent checkout during a `repo_read` run** → possible
   false-positive quarantine (`MaisterError("PRECONDITION")` on later
-  launches); accepted per ADR-089 — reason recorded, un-quarantine is one
+  launches); accepted per ADR-090 — reason recorded, un-quarantine is one
   click, and the clean-baseline precondition keeps the window small.
 - **Agent crash with L2 files materialized in the parent checkout** → the
   manifest makes the terminal-sweep restore idempotent; files are deny-rule
@@ -268,14 +268,14 @@ flowchart TD
 
 ## Linked artifacts
 
-- **Decisions:** [ADR-088](../decisions.md#adr-088-platform-agent-catalog-with-per-agent-runner-and-a-five-source-trigger-model),
-  [ADR-089](../decisions.md#adr-089-agent-workspace-axis-with-three-layer-read-only-enforcement-and-quarantine);
+- **Decisions:** [ADR-089](../decisions.md#adr-089-platform-agent-catalog-with-per-agent-runner-and-a-five-source-trigger-model),
+  [ADR-090](../decisions.md#adr-090-agent-workspace-axis-with-three-layer-read-only-enforcement-and-quarantine);
   boundary kept from ADR-041/ADR-043 (materialize-only).
 - **Vision record:** [`../pv/agents-as-environment-actors.md`](../pv/agents-as-environment-actors.md)
-  (Stage-0 brainstorm; superseded by ADR-088/088 with three amendments).
+  (Stage-0 brainstorm; superseded by ADR-089/088 with three amendments).
 - **DB:** [`db/agents-domain.md`](../db/agents-domain.md),
   [`db/runs-domain.md`](../db/runs-domain.md),
-  [`database-schema.md`](../database-schema.md) (migration `0048`).
+  [`database-schema.md`](../database-schema.md) (migrations `0049`/`0050`).
 - **Triggers:** [`scheduler.md`](scheduler.md) (`agent_tick.dispatcher`),
   [`domain-events.md`](domain-events.md) (`agent_triggers` consumer,
   `task.triage_requeued` emitter), [`run-schedules.md`](run-schedules.md)

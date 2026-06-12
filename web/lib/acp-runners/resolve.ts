@@ -7,7 +7,7 @@ export type RunnerResolutionTier =
   | "platformFlowDefault"
   | "projectDefault"
   | "platformDefault"
-  // M33 (ADR-088): standalone agent chain tiers.
+  // M34 (ADR-089): standalone agent chain tiers.
   | "agentLinkOverride"
   | "agentDefault";
 
@@ -148,10 +148,10 @@ export type AgentRunnerResolutionInput = {
   readonly runners: readonly RunnerCatalogEntry[];
 };
 
-// M33 (ADR-088): the standalone agent chain — flow tiers do not participate.
+// M34 (ADR-089): the standalone agent chain — flow tiers do not participate.
 // Two compatibility refusals fire BEFORE spawn: subagent definitions are
 // Claude-SDK artifacts, and dangerously_skip_permissions suppresses the very
-// permission requests the ADR-089 L1 read-only layer arbitrates.
+// permission requests the ADR-090 L1 read-only layer arbitrates.
 export function resolveAgentRunner(
   input: AgentRunnerResolutionInput,
 ): RunnerResolution {
@@ -189,7 +189,7 @@ export function resolveAgentRunner(
     ) {
       throw new MaisterError(
         "EXECUTOR_UNAVAILABLE",
-        `agent runner ${runner.id} uses dangerously_skip_permissions — incompatible with the ${input.agent.workspace} workspace read-only enforcement (ADR-089 L1)`,
+        `agent runner ${runner.id} uses dangerously_skip_permissions — incompatible with the ${input.agent.workspace} workspace read-only enforcement (ADR-090 L1)`,
       );
     }
 

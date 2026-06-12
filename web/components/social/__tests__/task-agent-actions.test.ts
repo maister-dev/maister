@@ -1,4 +1,4 @@
-// M33 (ADR-088 D11/D13) — the task-detail agent actions: manual agent
+// M34 (ADR-089 D11/D13) — the task-detail agent actions: manual agent
 // launch (picker + button when manual-capable agents are attached) and the
 // always-available "Send to triage" emitter trigger.
 // renderToStaticMarkup — no jsdom (repo convention).
@@ -32,7 +32,7 @@ function render(agents: Array<{ id: string; name: string }>): string {
   );
 }
 
-describe("TaskAgentActions (M33 D11/D13)", () => {
+describe("TaskAgentActions (M34 D11/D13)", () => {
   it("renders the agent picker + run button when manual agents exist", () => {
     const html = render([{ id: "triager", name: "Triager" }]);
 

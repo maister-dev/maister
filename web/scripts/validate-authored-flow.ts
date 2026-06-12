@@ -19,8 +19,15 @@ export function parseValidateAuthoredFlowArgs(
 ): ValidateAuthoredFlowArgs {
   const flags = parseFlagPairs(argv, ["--source-dir <path>"].join(" "));
 
+  if (!flags["source-dir"]) {
+    throw new MaisterError(
+      "CONFIG",
+      "Missing required --source-dir (e.g. ../maister-plugins/packages/aif/flows/dev)",
+    );
+  }
+
   return {
-    sourceDir: flags["source-dir"] ?? "../plugins/aif",
+    sourceDir: flags["source-dir"],
   };
 }
 

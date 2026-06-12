@@ -1,33 +1,19 @@
 schemaVersion: 2
 # Dogfood registration: MAIster registers itself (T8). repo_path is the main
-# checkout (a launch does `git worktree add` off it); the flow + capability
-# sources point at the authored package in this feature worktree (installFlow
-# auto-detects file:// and copies into the ~/.maister cache, so the main branch
-# not yet carrying plugins/aif is fine). Machine-specific absolute paths — local
-# dogfood artifact, not for commit to main.
+# checkout (a launch does `git worktree add` off it). The AIF package is
+# consumed as ONE packages[] import (ADR-088) from the local maister-plugins
+# checkout — file:// for local dogfood; the production shape is the git URL
+# with the same tag. Machine-specific absolute paths — local dogfood artifact,
+# not for main.
 project:
   name: maister
   repo_path: /repos/mAIster
   main_branch: main
   branch_prefix: maister/
   default_runner: claude-code
-capability_imports:
-  - id: aif-bundle
-    source: /repos/mAIster/.claude/worktrees/peaceful-mclean-6a799f/plugins/aif/capability
-    version: local-dev
-flows:
-  - id: aif-dev
-    source: /repos/mAIster/.claude/worktrees/peaceful-mclean-6a799f/plugins/aif/flows/dev
-    version: local-dev
-  - id: aif-bugfix
-    source: /repos/mAIster/.claude/worktrees/peaceful-mclean-6a799f/plugins/aif/flows/bugfix
-    version: local-dev
-  - id: aif-evolve
-    source: /repos/mAIster/.claude/worktrees/peaceful-mclean-6a799f/plugins/aif/flows/evolve
-    version: local-dev
-  - id: aif-roadmap
-    source: /repos/mAIster/.claude/worktrees/peaceful-mclean-6a799f/plugins/aif/flows/roadmap
-    version: local-dev
-  - id: aif-init
-    source: /repos/mAIster/.claude/worktrees/peaceful-mclean-6a799f/plugins/aif/flows/init
-    version: local-dev
+packages:
+  - id: aif
+    source: /repos/maister-plugins
+    version: aif/v2.0.0
+    path: packages/aif
+flows: []

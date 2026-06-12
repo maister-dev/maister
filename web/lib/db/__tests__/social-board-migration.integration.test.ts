@@ -378,7 +378,7 @@ describe("0043 backfill (stepwise replay: <=0042, seed, apply 0043)", () => {
 
     const tags = journalTags();
     // Numeric partition: migrations AFTER 0043 may depend on the social
-    // tables 0043 creates (e.g. 0049 alters the inbox_items CHECK), so the
+    // tables 0043 creates (e.g. 0050 alters the inbox_items CHECK), so the
     // pre-seed replay applies strictly-older tags only.
     const pre0043 = tags.filter((t) => Number.parseInt(t, 10) < 43);
     const socialBoardTag = tags.find((t) => t.startsWith("0043"));

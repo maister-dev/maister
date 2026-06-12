@@ -102,7 +102,7 @@ async function runClaimedJob(
 
         return succeeded(job);
       case "agent_tick": {
-        // M33 (ADR-088): the stub finally gets its launcher — the
+        // M34 (ADR-089): the stub finally gets its launcher — the
         // agent_tick.dispatcher claims due agent_schedules cron rows and
         // recovers stranded Pending agent runs.
         const agentTickSummary = await runAgentTickJob({

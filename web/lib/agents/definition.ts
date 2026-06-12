@@ -1,4 +1,4 @@
-// Platform-agent definition parsing (ADR-088). The `.md` in the host catalog
+// Platform-agent definition parsing (ADR-089). The `.md` in the host catalog
 // is the canonical source; this module parses frontmatter + body into the
 // typed shape the registry indexes into the `agents` table. Parsing NEVER
 // executes definition content. Client-import-safe (no fs, no node:*).
@@ -40,7 +40,7 @@ const agentIdSchema = z
   );
 
 // Strict (no passthrough): this schema is MAIster's own contract, not a
-// vendor file — unknown keys are refused at registration (ADR-088).
+// vendor file — unknown keys are refused at registration (ADR-089).
 export const agentDefinitionFrontmatterSchema = z
   .object({
     name: z.string().min(1),

@@ -200,7 +200,7 @@ const M12_REVIEW_SCHEMA = {
 };
 
 // The migrated aif manifest (M12 typed artifacts) — kept in lockstep with
-// plugins/aif/flow.yaml so the run-detail settings/evidence reads resolve.
+// the AIF flow fixture so the run-detail settings/evidence reads resolve.
 const M12_MANIFEST = {
   schemaVersion: 1,
   name: "aif",
@@ -439,7 +439,7 @@ const M11C_VISIBLE_SLUG = "e2e-m11c-visible";
 const M11C_VISIBLE_BRANCH = "maister/e2e-m11c-visible";
 const M11C_VISIBLE_NODE = "implement";
 
-// --- M33 platform-agents fixtures (ADR-088) ---------------------------------
+// --- M34 platform-agents fixtures (ADR-089) ---------------------------------
 // One launchable project carrying: a Backlog task for the manual agent launch
 // (spec a), a repo_read auditor agent for the quarantine path (spec c), and a
 // SECOND task bound to a graph flow whose ai_coding node declares
@@ -4696,13 +4696,14 @@ async function seedFlowStudioArtifactsFixture(
 
   await pool.query(
     `INSERT INTO projects (id, slug, name, repo_path, main_branch, maister_yaml_path, task_key)
-     VALUES ($1, $2, $3, $4, 'main', $5, 'E' || upper(substr(md5(random()::text), 1, 8)))`,
+     VALUES ($1, $2, $3, $4, 'main', $5, $6)`,
     [
       ids.project,
       FLOW_STUDIO_ARTIFACTS_SLUG,
       "MAIster E2E Flow Studio Artifacts",
       repoPath,
       `${repoPath}/maister.yaml`,
+      "E2EFSA",
     ],
   );
   await pool.query(
@@ -4794,13 +4795,14 @@ async function seedInstalledPackageFixture(
 
   await pool.query(
     `INSERT INTO projects (id, slug, name, repo_path, main_branch, maister_yaml_path, task_key)
-     VALUES ($1, $2, $3, $4, 'main', $5, 'E' || upper(substr(md5(random()::text), 1, 8)))`,
+     VALUES ($1, $2, $3, $4, 'main', $5, $6)`,
     [
       ids.project,
       FLOW_VIEWER_SLUG,
       "MAIster E2E Flow Viewer",
       repoPath,
       `${repoPath}/maister.yaml`,
+      "E2EFVW",
     ],
   );
   await pool.query(

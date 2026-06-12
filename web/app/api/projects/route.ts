@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { AgentDefinitionCapabilityConfig } from "@/lib/config.schema";
+
 import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import path from "node:path";
@@ -9,10 +11,14 @@ import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 import { z } from "zod";
 
+import { ADAPTER_IDS } from "@/lib/acp-runners/adapter-support";
 import { requireGlobalRole } from "@/lib/authz";
 import { buildCapabilityRefIds, loadProjectConfig } from "@/lib/config";
 import { syncProjectFlowRolesFromConfig } from "@/lib/assignments/service";
 import { installAndIngestCapabilityImports } from "@/lib/capabilities/import";
+import { resolveTrust } from "@/lib/flows/trust";
+import { attachPackage, installPackageRevision } from "@/lib/packages/attach";
+import { packageVersionLabel } from "@/lib/packages/install";
 import { loadPlatformMcpCapabilitiesFromDb } from "@/lib/mcp/projection";
 import { syncFlowRunnerReconfigurationRequirements } from "@/lib/acp-runners/flow-reconfiguration";
 import { getDb } from "@/lib/db/client";
@@ -390,15 +396,104 @@ async function register(
       }
     }
 
+    // ADR-088: packages[] bootstrap — the SAME platform-install + project-
+    // attach pipeline as the UI surface (package_installs row + attachment
+    // group + FK links + mcp/restriction ingestion), so bootstrapped packages
+    // are visible on the packages tab and manageable (detach/upgrade/trust)
+    // after registration. Failures unwind via the SAME compensation below.
+    const packageCapabilityDerived: AgentDefinitionCapabilityConfig[] = [];
+
+    for (const pkg of config.packages) {
+      const installedPkg = await installPackageRevision({
+        source: pkg.source,
+        version: pkg.version,
+        path: pkg.path,
+        trustStatus: resolveTrust(pkg.source),
+        db,
+      });
+      const attached = await attachPackage({
+        projectId,
+        projectSlug: slug,
+        packageInstallId: installedPkg.id,
+        roleRefs: configuredRoleRefs,
+        db,
+      });
+
+      if (attached === null) {
+        throw new MaisterError(
+          "FLOW_INSTALL",
+          `package install ${installedPkg.id} disappeared during registration`,
+        );
+      }
+
+      const memberVersionLabel = packageVersionLabel(installedPkg.versionLabel);
+
+      for (const cap of installedPkg.manifest.spec.capabilities) {
+        packageCapabilityDerived.push({
+          id: cap.id,
+          kind: "agent_definition",
+          label: cap.id,
+          source: "flow-package",
+          version: memberVersionLabel,
+          revision: installedPkg.resolvedRevision,
+          agents: [...ADAPTER_IDS],
+          enforceability: "instructed",
+          selected_by_default: true,
+        });
+      }
+
+      log.info(
+        {
+          projectId,
+          packageId: pkg.id,
+          packageName: installedPkg.name,
+          revision: installedPkg.resolvedRevision.slice(0, 12),
+          attachmentId: attached.attachmentId,
+          flowIds: attached.memberFlows.map((f) => f.flowRowId),
+        },
+        "packages[] entry installed + attached",
+      );
+
+      for (const installed of attached.memberFlows) {
+        const missing = await syncFlowRunnerReconfigurationRequirements({
+          db,
+          projectId,
+          flowId: installed.manifest.name,
+          flowRevisionId: installed.revisionId,
+          manifest: installed.manifest,
+          platformRunnerIds,
+        });
+
+        if (missing.length > 0) {
+          await db
+            .update(flows)
+            .set({ enablementState: "Disabled", updatedAt: new Date() })
+            .where(eq(flows.id, installed.flowRowId));
+          log.warn(
+            {
+              projectId,
+              packageId: pkg.id,
+              flowRowId: installed.flowRowId,
+              missingRunnerTargets: missing.length,
+            },
+            "package flow attachment disabled until ACP runner targets are reconfigured",
+          );
+        }
+      }
+    }
+
     // Install git-pinned capability imports (clone → trust → trust-gated setup)
     // and ingest the resolved set into capability_records ALONGSIDE the
-    // capabilities block in one SET/CLEAR upsert. Lives here (not in the phase-c
-    // tx) because each import is a clone side-effect FK-ing the committed
-    // project row; a failure is compensated by the project rollback below.
+    // capabilities block in one SET/CLEAR upsert — package-derived bundle
+    // entries (ADR-088) ride the same symmetric write. Lives here (not in the
+    // phase-c tx) because each import is a clone side-effect FK-ing the
+    // committed project row; a failure is compensated by the project rollback
+    // below.
     await installAndIngestCapabilityImports({
       config,
       projectId,
       platformMcps,
+      additionalImportDerived: packageCapabilityDerived,
       db,
     });
 

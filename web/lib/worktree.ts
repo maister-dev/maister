@@ -463,6 +463,60 @@ export async function promoteLocalMerge(
   });
 }
 
+export async function promoteRebaseMerge(
+  args: PromoteLocalMergeArgs,
+): Promise<string> {
+  const repo = validate(
+    absolutePathSchema,
+    args.projectRepoPath,
+    "projectRepoPath",
+  );
+  const sourceBranch = validate(branchNameSchema, args.sourceBranch, "source");
+  const targetBranch = validate(branchNameSchema, args.targetBranch, "target");
+
+  return withRepoPromotionLock(repo, async () => {
+    const previousBranch = await currentBranch(repo);
+
+    log.info(
+      { projectRepoPath: repo, sourceBranch, targetBranch },
+      "promoteRebaseMerge acquired repo promotion lock",
+    );
+
+    try {
+      await runGit(repo, ["switch", "--", sourceBranch]);
+      await runGit(repo, ["rebase", "--", targetBranch]);
+      await runGit(repo, ["switch", "--", targetBranch]);
+      await runGit(repo, ["merge", "--ff-only", "--", sourceBranch]);
+
+      const { stdout } = await runGit(repo, ["rev-parse", "HEAD"]);
+
+      return stdout.trim();
+    } catch (err) {
+      await abortRebase(repo);
+      throw new MaisterError(
+        "CONFLICT",
+        `git rebase/merge failed: ${errorText(err) || asError(err).message}`,
+        { cause: asError(err) },
+      );
+    } finally {
+      if (previousBranch && previousBranch !== targetBranch) {
+        try {
+          await runGit(repo, ["switch", "--", previousBranch]);
+        } catch (err) {
+          log.warn(
+            {
+              projectRepoPath: repo,
+              previousBranch,
+              err: asError(err).message,
+            },
+            "failed to restore previous branch after promoteRebaseMerge",
+          );
+        }
+      }
+    }
+  });
+}
+
 export type PushBranchArgs = {
   projectRepoPath: string;
   remote: string;
@@ -783,6 +837,15 @@ async function abortMerge(repo: string): Promise<void> {
     await runGit(repo, ["merge", "--abort"]);
   } catch {
     // No merge in progress, or abort itself failed. The original merge error
+    // remains the actionable one for the caller.
+  }
+}
+
+async function abortRebase(repo: string): Promise<void> {
+  try {
+    await runGit(repo, ["rebase", "--abort"]);
+  } catch {
+    // No rebase in progress, or abort itself failed. The original rebase error
     // remains the actionable one for the caller.
   }
 }

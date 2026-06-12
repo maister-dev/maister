@@ -473,7 +473,7 @@ flows write `node_attempts` and behave identically to the pre-M11a runner.
   `end_turn`, so no ACP deferred is open and `markNodeFailed` leaks nothing) — while
   a node WITHOUT `output.result` stays byte-identical to today (`vars: {}`) and
   requires `compat.engine_min >= 1.3.0`.
-- **(M33 — Implemented, ADR-088)** An `ai_coding` node declaring `settings.agent`
+- **(M34 — Implemented, ADR-089)** An `ai_coding` node declaring `settings.agent`
   MUST require `compat.engine_min >= 1.5.0` (`CONFIG` otherwise) and MUST
   resolve the catalog agent at compile/launch (`CONFIG` when unknown or when
   the agent's `triggers` lacks `flow`); `mode=session` substitutes the agent

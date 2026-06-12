@@ -16,9 +16,9 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-// M33: owner-requested default bump 3 → 6 (env semantics unchanged).
+// M34: owner-requested default bump 3 → 6 (env semantics unchanged).
 const DEFAULT_CAP = 6;
-// M33 (ADR-088): separate budget for platform-agent runs (run_kind='agent').
+// M34 (ADR-089): separate budget for platform-agent runs (run_kind='agent').
 const DEFAULT_AGENT_CAP = 3;
 
 export type SchedulerPool = "flow" | "agent";
@@ -94,7 +94,7 @@ export function capForPool(pool: SchedulerPool): number {
 }
 
 // The one cap predicate: a run holds a scheduler slot while it is in any of
-// these statuses. Counted per pool (M33): flow/scratch and agent runs hold
+// these statuses. Counted per pool (M34): flow/scratch and agent runs hold
 // independent budgets. Takes the caller's db/tx handle so tryStartRun /
 // promoteNextPending keep counting INSIDE their advisory-lock transactions.
 export async function countLiveRuns(
@@ -255,7 +255,7 @@ export type PromoteNextPendingOptions = {
   db?: Db;
   runFlow?: (runId: string) => void;
   resumeRun?: (runId: string) => void;
-  // M33: which budget pool to promote within (default flow — every
+  // M34: which budget pool to promote within (default flow — every
   // pre-existing caller frees a flow/scratch slot).
   pool?: SchedulerPool;
   startAgentRun?: (runId: string) => void;
@@ -279,7 +279,7 @@ export async function releaseSlotOnIdle(
     "releaseSlotOnIdle — NeedsInputIdle transition freed scheduler slot",
   );
 
-  // The freed slot belongs to the idled run's own pool (M33).
+  // The freed slot belongs to the idled run's own pool (M34).
   const db = opts.db ?? getDb();
   const rows: Array<{ runKind: string }> = await db
     .select({ runKind: runs.runKind })
@@ -326,7 +326,7 @@ export async function promoteNextPending(
           );
         });
     });
-  // M33: agent-pool promotions dispatch the agent session starter — it
+  // M34: agent-pool promotions dispatch the agent session starter — it
   // resumes via acpSessionId itself, so one dispatch fn covers both paths.
   const startAgentFn =
     opts.startAgentRun ??

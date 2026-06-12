@@ -58,13 +58,14 @@ export interface BacklogCard {
   keyRef: string;
   title: string;
   prompt: string;
-  // M33: null on a flowless simple-intent task (renders the unconfigured chip).
+  // M34: null on a flowless simple-intent task (renders the unconfigured chip).
   flowRef: string | null;
   priority: CardPriority;
+  runCount: number;
   // ADR-078 D5: open relation blockers — non-empty disables Launch and
   // renders the reason chip with the blocker KEY-Ns.
   blockedBy: Array<{ key: string; number: number }>;
-  // M33 (ADR-088) launch-verdict fields — pre-fill the card's launch popover.
+  // M34 (ADR-089) launch-verdict fields — pre-fill the card's launch popover.
   flowId: string | null;
   triageStatus: "triaged" | null;
   runnerId: string | null;
@@ -76,6 +77,8 @@ export interface FlightCard {
   taskId: string;
   number: number;
   keyRef: string;
+  runCount: number;
+  runStatus: RunStatus;
   runId: string;
   branch: string;
   agent: BoardAgent;
@@ -125,6 +128,7 @@ export interface FlightCard {
   hitlOptions: HitlOption[];
   hitlSchema: unknown | null;
   criticality: "low" | "medium" | "high" | "critical" | null;
+  blockedBy: Array<{ key: string; number: number }>;
 }
 
 export interface BoardColumnData {
@@ -212,7 +216,7 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
   const now = new Date();
   const client = db();
 
-  // M33: leftJoin — a flowless simple-intent task still shows on the board
+  // M34: leftJoin — a flowless simple-intent task still shows on the board
   // (it classifies as `unconfigured` until triage fills the flow).
   const taskRows = await client
     .select({
@@ -263,6 +267,23 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
     .where(eq(projects.id, projectId));
   const projectTaskKey = projectKeyRow?.taskKey ?? "";
   const openBlockers = await getOpenRelationBlockers(taskIds, client);
+
+  const runCountRows = await client
+    .select({
+      taskId: runs.taskId,
+      runId: runs.id,
+    })
+    .from(runs)
+    .where(and(eq(runs.runKind, "flow"), inArray(runs.taskId, taskIds)));
+  const runCountByTask = new Map<string, number>();
+
+  for (const row of runCountRows) {
+    if (!row.taskId) {
+      continue;
+    }
+
+    runCountByTask.set(row.taskId, (runCountByTask.get(row.taskId) ?? 0) + 1);
+  }
 
   const runRows = await client
     .select({
@@ -474,6 +495,7 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
         prompt: task.prompt,
         flowRef: task.flowRef ?? null,
         priority: priorityFor(backlogPos),
+        runCount: runCountByTask.get(task.taskId) ?? 0,
         blockedBy: openBlockers.get(task.taskId) ?? [],
         flowId: task.flowId ?? null,
         triageStatus: (task.triageStatus ?? null) as "triaged" | null,
@@ -502,6 +524,8 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
       taskId: task.taskId,
       number: task.number,
       keyRef: `${projectTaskKey}-${task.number}`,
+      runCount: runCountByTask.get(task.taskId) ?? 0,
+      runStatus: run.status,
       runId: run.runId,
       branch: run.branch,
       agent: takeover
@@ -553,6 +577,7 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
         run.status === "Review" &&
         (readinessByRun.get(run.runId) ?? "ready") === "ready",
       prNumber: run.prNumber ?? null,
+      blockedBy: openBlockers.get(task.taskId) ?? [],
       // M17 P4: HITL fields — only for needs-status cards with a pending request.
       ...(cardStatus === "needs"
         ? (() => {

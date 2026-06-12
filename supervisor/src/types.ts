@@ -119,7 +119,7 @@ export const AdapterLaunchSchema = z
 
 // M27/T-C4: transport-tagged. stdio uses command/args/envKeys; sse/http use
 // url/headerKeys. Header/env VALUES are resolved supervisor-side from the NAME
-// keys (process.env) — never sent over the wire. Exception (M33, ADR-088):
+// keys (process.env) — never sent over the wire. Exception (M34, ADR-089):
 // `env` carries literal values for server-GENERATED secrets that exist in no
 // process.env (the per-launch ephemeral agent token injected into the MCP
 // facade) — same trust channel as executor.env/adapterLaunch.env.
@@ -170,6 +170,12 @@ export const StartSessionRequestSchema = z
       .min(1)
       .max(128)
       .regex(SAFE_PATH_SEGMENT, "stepId must match /^[A-Za-z0-9._-]+$/"),
+    nodeAttemptId: z
+      .string()
+      .min(1)
+      .max(128)
+      .regex(SAFE_PATH_SEGMENT, "nodeAttemptId must match /^[A-Za-z0-9._-]+$/")
+      .optional(),
     executor: ExecutorSchema,
     runner: RunnerLaunchSchema.optional(),
     resumeSessionId: z
@@ -184,7 +190,7 @@ export const StartSessionRequestSchema = z
     capabilityProfilePath: worktreePathSchema.optional(),
     adapterLaunch: AdapterLaunchSchema.optional(),
     mcpServers: z.array(McpServerInputSchema).max(64).optional(),
-    // M33 (ADR-089 L1): session-scoped read-only — the requestPermission
+    // M34 (ADR-090 L1): session-scoped read-only — the requestPermission
     // handler auto-denies write-class tool kinds and auto-approves the
     // read-safe allow-list for the WHOLE session. Used for none/repo_read
     // platform-agent runs (headless: no HITL inbox exists for them).
@@ -214,6 +220,12 @@ export const SendPromptRequestSchema = z.object({
     .min(1)
     .max(128)
     .regex(SAFE_PATH_SEGMENT, "stepId must match /^[A-Za-z0-9._-]+$/"),
+  nodeAttemptId: z
+    .string()
+    .min(1)
+    .max(128)
+    .regex(SAFE_PATH_SEGMENT, "nodeAttemptId must match /^[A-Za-z0-9._-]+$/")
+    .optional(),
   prompt: z.string().max(1_000_000),
   // M30 (ADR-078 L2): the prompt is an answer-only gate-chat turn — while it
   // is in flight, requestPermission auto-rejects unambiguous mutating
@@ -333,6 +345,7 @@ export type SessionRecord = {
   runId: string;
   projectSlug: string;
   stepId: string;
+  nodeAttemptId?: string;
   status: SessionStatus;
   pid: number;
   startedAt: string;
@@ -345,7 +358,7 @@ export type SessionRecord = {
   // M30 (ADR-078 L2): true while a read-only gate-chat prompt is in flight on
   // this session — drives the requestPermission auto-reject.
   readOnlyTurn?: boolean;
-  // M33 (ADR-089 L1): the whole session is read-only — every permission
+  // M34 (ADR-090 L1): the whole session is read-only — every permission
   // request is decided inline (write-class denied, read-safe approved); no
   // pending-permission deferred is ever created.
   readOnlySession?: boolean;

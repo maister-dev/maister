@@ -53,6 +53,32 @@ const EXEC_MAX_BUFFER = 4 * 1024 * 1024;
 const LOCAL_REVISION_LEN = 40;
 const SETUP_DONE_SENTINEL = ".maister-setup-done";
 
+// ADR-088: validate a package-supplied revision override at this sink's
+// invariant (40-hex) before it reaches systemCapabilityCachePath. Mirrors
+// flows.ts parseRevisionOverride.
+const CAPABILITY_REVISION_OVERRIDE = /^[0-9a-f]{40}$/;
+
+function parseCapabilityRevisionOverride(
+  override: string | undefined,
+  capabilityRefId: string,
+): string | undefined {
+  if (override === undefined) return undefined;
+
+  if (!CAPABILITY_REVISION_OVERRIDE.test(override)) {
+    throw new MaisterError(
+      "FLOW_INSTALL",
+      `Invalid resolvedRevisionOverride for capability "${capabilityRefId}": must be a 40-char hex revision`,
+    );
+  }
+
+  log.debug(
+    { capabilityRefId, override: override.slice(0, 12) },
+    "revision override applied (package sub-install)",
+  );
+
+  return override;
+}
+
 // First 40 hex chars of a simple sha256 of the source string — used as the
 // content-addressed identity for local sources that have no git history.
 async function localSourceRevision(source: string): Promise<string> {
@@ -401,6 +427,9 @@ export async function installCapabilityRevision(opts: {
   version: string;
   capabilityRefId: string;
   projectId: string;
+  // ADR-088: package sub-installs inherit the package's resolved revision
+  // (tag SHA or package content digest); see flows.ts resolvedRevisionOverride.
+  resolvedRevisionOverride?: string;
   // FIXME(any): dual drizzle-orm peer-dep variants.
   db?: any;
   signal?: AbortSignal;
@@ -409,6 +438,11 @@ export async function installCapabilityRevision(opts: {
   const db = opts.db ?? getDb();
 
   validateImportBoundary({ capabilityRefId, version, source });
+
+  const revisionOverride = parseCapabilityRevisionOverride(
+    opts.resolvedRevisionOverride,
+    capabilityRefId,
+  );
 
   let resolvedRevision: string;
   let target: string;
@@ -420,7 +454,8 @@ export async function installCapabilityRevision(opts: {
       ? source.slice("file://".length)
       : source;
 
-    resolvedRevision = await localSourceRevision(absSource);
+    resolvedRevision =
+      revisionOverride ?? (await localSourceRevision(absSource));
     target = systemCapabilityCachePath(capabilityRefId, resolvedRevision);
   } else {
     tmpDir = await mkdtemp(
@@ -429,12 +464,14 @@ export async function installCapabilityRevision(opts: {
 
     try {
       await gitClone({ source, version, target: tmpDir, signal });
-      resolvedRevision = await gitRevParseHead({
-        dir: tmpDir,
-        source,
-        version,
-        signal,
-      });
+      resolvedRevision =
+        revisionOverride ??
+        (await gitRevParseHead({
+          dir: tmpDir,
+          source,
+          version,
+          signal,
+        }));
       target = systemCapabilityCachePath(capabilityRefId, resolvedRevision);
     } catch (err) {
       await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
@@ -699,12 +736,18 @@ export async function installAndIngestCapabilityImports(opts: {
   config: MaisterYamlV2;
   projectId: string;
   platformMcps?: PlatformMcpCapability[];
+  // ADR-088: package-derived agent_definition entries (installed by
+  // installPackage) folded into the SAME SET/CLEAR upsert so config + import
+  // + package records stay one symmetric write.
+  additionalImportDerived?: AgentDefinitionCapabilityConfig[];
   // FIXME(any): dual drizzle-orm peer-dep variants.
   db?: any;
   signal?: AbortSignal;
 }): Promise<void> {
   const db = opts.db ?? getDb();
-  const importDerived: AgentDefinitionCapabilityConfig[] = [];
+  const importDerived: AgentDefinitionCapabilityConfig[] = [
+    ...(opts.additionalImportDerived ?? []),
+  ];
 
   for (const entry of opts.config.capability_imports) {
     const installed = await installCapabilityRevision({

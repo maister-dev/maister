@@ -29,7 +29,7 @@ const log = pino({
 export type CreateTaskInput = {
   title: string;
   prompt: string;
-  // M33 (ADR-088): optional — a flowless task is a simple-intent task that
+  // M34 (ADR-089): optional — a flowless task is a simple-intent task that
   // classifies as `unconfigured` until triage (or a human) fills the flow.
   flowId?: string | null;
 };
@@ -161,7 +161,7 @@ export type TaskDTO = {
   status: string;
   stage: string;
   flowId: string | null;
-  // M33 launch-verdict fields (ADR-088): triage stamps them, the board's
+  // M34 launch-verdict fields (ADR-089): triage stamps them, the board's
   // launch popover edits them pre-launch.
   triageStatus: "triaged" | null;
   runnerId: string | null;

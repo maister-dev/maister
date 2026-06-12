@@ -85,6 +85,7 @@ export async function loadProjectConfig(
     {
       path: maisterYamlPath,
       flows: cfg.flows.length,
+      packages: cfg.packages.length,
       defaultRunner: cfg.project.default_runner ?? null,
     },
     "maister.yaml loaded",
@@ -112,6 +113,24 @@ export async function loadProjectConfig(
       );
     }
     importIds.add(imp.id);
+  }
+
+  const packageIds = new Set<string>();
+
+  for (const pkg of cfg.packages) {
+    if (packageIds.has(pkg.id)) {
+      throw new MaisterError(
+        "CONFIG",
+        `Duplicate packages id "${pkg.id}" in ${maisterYamlPath}`,
+      );
+    }
+    if (flowIds.has(pkg.id) || importIds.has(pkg.id)) {
+      throw new MaisterError(
+        "CONFIG",
+        `packages id "${pkg.id}" collides with a flows[]/capability_imports[] id in ${maisterYamlPath}`,
+      );
+    }
+    packageIds.add(pkg.id);
   }
 
   validateCapabilityIds(cfg, maisterYamlPath);
@@ -557,7 +576,7 @@ const OUTPUT_ENGINE_MIN = "1.3.0";
 // engine_min >= this value.
 const POLICY_ENGINE_MIN = "1.4.0";
 
-// M33 floor (ADR-088): manifests binding a node to a catalog agent
+// M34 floor (ADR-089): manifests binding a node to a catalog agent
 // (`settings.agent`) must declare engine_min >= this value.
 const AGENT_BINDING_ENGINE_MIN = "1.5.0";
 
@@ -716,7 +735,7 @@ export function validateGraphManifest(
     );
   }
 
-  // M33 (ADR-088): the catalog-agent node binding requires the 1.5.0 floor.
+  // M34 (ADR-089): the catalog-agent node binding requires the 1.5.0 floor.
   // Manifests without `settings.agent` stay valid at any engine_min.
   if (
     declaresAgentBinding(nodes) &&

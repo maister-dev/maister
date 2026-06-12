@@ -133,6 +133,7 @@ vi.mock("@/lib/runs/pr-adapter", () => ({
 vi.mock("@/lib/worktree", () => ({
   branchExists: vi.fn(async () => true),
   promoteLocalMerge: vi.fn(async () => "merged00"),
+  promoteRebaseMerge: vi.fn(async () => "rebased00"),
   pushBranch: vi.fn(async () => undefined),
   resolveBaseCommit: vi.fn(async () => "tip00000"),
   resolveBaseRef: vi.fn(async () => "base0000"),

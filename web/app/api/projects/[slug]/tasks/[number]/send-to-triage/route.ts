@@ -40,7 +40,7 @@ function parseTaskNumber(raw: string): number | null {
     : null;
 }
 
-// M33 (ADR-088 D13): the task.triage_requeued emitter — ONE transaction
+// M34 (ADR-089 D13): the task.triage_requeued emitter — ONE transaction
 // clears the triage stamp, emits the domain event (subscribed triager agents
 // pick it up on the next dispatch tick), and records the activity entry.
 export async function POST(

@@ -33,6 +33,36 @@ const installFlowPlugin = vi.fn(
   async (_args: Record<string, unknown>): Promise<unknown> => undefined,
 );
 
+// ADR-088: packages[] orchestration is spy-tested here (the real install +
+// attach pipeline is covered by lib/packages attach tests and the
+// projects-register-packages real-fixture test); behavior swapped per test.
+const installPackageRevision = vi.fn(
+  async (_args: Record<string, unknown>): Promise<unknown> => ({
+    id: "pkg-install-1",
+    name: "pkg",
+    versionLabel: "pkg/v1.0.0",
+    resolvedRevision: "a".repeat(40),
+    reused: false,
+    manifest: {
+      spec: {
+        schemaVersion: 1,
+        name: "pkg",
+        flows: [],
+        capabilities: [],
+        mcps: [],
+        restrictions: [],
+      },
+      inventory: { skills: [], agents: [] },
+    },
+  }),
+);
+const attachPackage = vi.fn(
+  async (_args: Record<string, unknown>): Promise<unknown> => ({
+    attachmentId: "att-1",
+    memberFlows: [],
+  }),
+);
+
 // The seeded bootstrap admin (migration 0005) is the FK target for the owner
 // membership; requireGlobalRole is mocked to return it (avoids @/auth →
 // next-auth in the Vitest module graph).
@@ -72,6 +102,8 @@ const seedConfig = {
     env_profiles: [],
   },
   capability_imports: [],
+  // The real loadProjectConfig applies the zod default — the mock mirrors it.
+  packages: [],
 };
 let currentConfig: Record<string, any> = seedConfig;
 let currentManifest: Record<string, any> = baseManifest;
@@ -97,6 +129,19 @@ vi.mock("@/lib/config", () => ({
 vi.mock("@/lib/flows", () => ({
   installFlowPlugin: (...args: unknown[]) =>
     installFlowPlugin(...(args as [Record<string, unknown>])),
+}));
+
+// The route only needs the pure label helper from packages/install — mocking
+// it severs the heavy real-module graph (flows, capabilities) from this test.
+vi.mock("@/lib/packages/install", () => ({
+  packageVersionLabel: (version: string) => version.replaceAll("/", "-"),
+}));
+
+vi.mock("@/lib/packages/attach", () => ({
+  installPackageRevision: (...args: unknown[]) =>
+    installPackageRevision(...(args as [Record<string, unknown>])),
+  attachPackage: (...args: unknown[]) =>
+    attachPackage(...(args as [Record<string, unknown>])),
 }));
 
 // This saga test is about flow-install rollback, not source resolution; mock
@@ -232,6 +277,8 @@ beforeEach(async () => {
   installFlowPlugin.mockImplementation((args: Record<string, unknown>) =>
     installFlow(args),
   );
+  installPackageRevision.mockClear();
+  attachPackage.mockClear();
   currentConfig = seedConfig;
   currentManifest = baseManifest;
   await db.delete(schema.projects);
@@ -378,5 +425,109 @@ describe("POST /api/projects — flow-install failure saga (integration)", () =>
 
     expect(flowRows[0].enablementState).toBe("Enabled");
     expect(remaps).toHaveLength(0);
+  });
+});
+
+describe("POST /api/projects — packages[] bootstrap (ADR-088, integration)", () => {
+  it("installs + attaches each packages[] entry and ingests package-derived capabilities", async () => {
+    currentConfig = {
+      ...seedConfig,
+      flows: [],
+      packages: [
+        {
+          id: "aif",
+          source: "github.com/org/maister-plugins",
+          version: "aif/v2.0.0",
+          path: "packages/aif",
+        },
+      ],
+    };
+    installPackageRevision.mockResolvedValueOnce({
+      id: "aif-install-1",
+      name: "aif",
+      versionLabel: "aif/v2.0.0",
+      resolvedRevision: "b".repeat(40),
+      reused: false,
+      manifest: {
+        spec: {
+          schemaVersion: 1,
+          name: "aif",
+          flows: [],
+          capabilities: [{ id: "aif-bundle", path: "capability" }],
+          mcps: [],
+          restrictions: [],
+        },
+        inventory: { skills: [], agents: [] },
+      },
+    });
+
+    const res = await POST(request());
+
+    expect(res.status).toBe(201);
+    expect(installPackageRevision).toHaveBeenCalledTimes(1);
+    expect(installPackageRevision.mock.calls[0][0]).toMatchObject({
+      source: "github.com/org/maister-plugins",
+      version: "aif/v2.0.0",
+      path: "packages/aif",
+      trustStatus: "untrusted",
+    });
+    // Registration rides the SAME attach pipeline as the UI surface.
+    expect(attachPackage).toHaveBeenCalledTimes(1);
+    expect(attachPackage.mock.calls[0][0]).toMatchObject({
+      projectSlug: "saga-proj",
+      packageInstallId: "aif-install-1",
+    });
+
+    // The package-derived bundle entry rode the SAME SET/CLEAR ingest as
+    // config capability_imports (additionalImportDerived plumbing), built
+    // from the install manifest with the path-safe version label.
+    const records = await db
+      .select()
+      .from(schema.capabilityRecords)
+      .where(eq(schema.capabilityRecords.capabilityRefId, "aif-bundle"));
+
+    expect(records).toHaveLength(1);
+    expect(records[0].kind).toBe("agent_definition");
+    expect(records[0].source).toBe("flow-package");
+    expect(records[0].version).toBe("aif-v2.0.0");
+  });
+
+  it("rolls the whole project back when a package install fails (same compensation)", async () => {
+    currentConfig = {
+      ...seedConfig,
+      flows: [],
+      packages: [
+        {
+          id: "aif",
+          source: "github.com/org/maister-plugins",
+          version: "aif/v2.0.0",
+        },
+      ],
+    };
+    installPackageRevision.mockRejectedValueOnce(
+      new MaisterError("FLOW_INSTALL", "package clone failed"),
+    );
+
+    const res = await POST(request());
+
+    expect(res.status).toBe(502);
+    expect(await projectRows("saga-proj")).toHaveLength(0);
+
+    // Retry succeeds with the default install + attach mocks.
+    currentConfig = {
+      ...seedConfig,
+      flows: [],
+      packages: [
+        {
+          id: "aif",
+          source: "github.com/org/maister-plugins",
+          version: "aif/v2.0.0",
+        },
+      ],
+    };
+    const retry = await POST(request());
+
+    expect(retry.status).toBe(201);
+    expect(await projectRows("saga-proj")).toHaveLength(1);
   });
 });

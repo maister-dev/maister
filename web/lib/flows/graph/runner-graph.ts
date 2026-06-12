@@ -115,6 +115,7 @@ import {
   type ComposeThread,
 } from "@/lib/review-comments/serialize";
 import { promoteNextPending } from "@/lib/scheduler";
+import { deliverRunIfAutoReady } from "@/lib/runs/auto-delivery";
 import {
   isMaisterError,
   MaisterError,
@@ -522,6 +523,7 @@ async function executeNodeAction(
     adapterLaunch?: ScratchAdapterLaunch;
     mcpServers?: AgentMcpServer[];
     profileDigest?: string;
+    nodeAttemptId: string;
     // 1-based ledger attempt number of THIS visit (ADR-072 gateAttempt source).
     nodeAttemptNumber: number;
     // M26 (ADR-063): this execution's attempt number — arms the per-attempt
@@ -545,6 +547,7 @@ async function executeNodeAction(
     projectSlug: loaded.projectSlug,
     runId: loaded.run.id,
     stepId: node.id,
+    nodeAttemptId: ctx.nodeAttemptId,
     worktreePath: ctx.worktreePath,
     context,
   };
@@ -569,7 +572,7 @@ async function executeNodeAction(
         },
         {
           ...common,
-          // M33 (ADR-088): catalog-agent binding (ai_coding only).
+          // M34 (ADR-089): catalog-agent binding (ai_coding only).
           agentBinding:
             def.type === "ai_coding" &&
             (def.settings as { agent?: string } | undefined)?.agent
@@ -1728,6 +1731,7 @@ export async function runGraph(
           adapterLaunch: materialized?.adapterLaunch,
           mcpServers: materialized?.mcpServers,
           profileDigest: materialized?.plan.profileDigest,
+          nodeAttemptId,
           nodeAttemptNumber,
           attempt: nodeAttemptNumber,
           resumeSessionId: attemptResumeSessionId,
@@ -2675,6 +2679,7 @@ export async function runGraph(
       }
     });
     log2.info({}, "runGraph ended Review");
+    await deliverRunIfAutoReady(runId, db);
   }
 
   await safeProject();

@@ -133,7 +133,7 @@ async function runStatus(id: string): Promise<string> {
   return res.rows[0].status as string;
 }
 
-describe("M33 split concurrency budgets", () => {
+describe("M34 split concurrency budgets", () => {
   it("a full flow pool does not block an agent start, and vice versa", async () => {
     // Fill the flow pool (cap 2).
     await insertRun({ kind: "flow", status: "Running" });

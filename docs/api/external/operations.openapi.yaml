@@ -353,7 +353,7 @@ paths:
 
   /api/v1/ext/projects/{slug}/tasks/{taskId}/triage:
     post:
-      summary: (M33 — Implemented) Submit a triage verdict
+      summary: (M34 — Implemented) Submit a triage verdict
       description: |
         Scope `tasks:triage`. The triager's verdict op — ONE transactional
         update of the task's launch-verdict fields plus the `'triaged'`
@@ -391,7 +391,7 @@ paths:
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
   /api/v1/ext/projects/{slug}/tasks/{taskId}/relations:
     get:
-      summary: (M33 — Implemented) List a task's typed relations
+      summary: (M34 — Implemented) List a task's typed relations
       description: |
         Scope `relations:read`. Returns every relation touching the task,
         with the canonical direction resolved into a per-row `role`
@@ -417,7 +417,7 @@ paths:
         "403": { $ref: "#/components/responses/HitlForbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
     post:
-      summary: (M33 — Implemented) Add a typed relation from this task
+      summary: (M34 — Implemented) Add a typed relation from this task
       description: |
         Scope `relations:create`. Mirrors the web route: creates the
         canonical one-direction relation `(from = URL task, kind, to)`.
@@ -450,7 +450,7 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
     delete:
-      summary: (M33 — Implemented) Remove a typed relation from this task
+      summary: (M34 — Implemented) Remove a typed relation from this task
       description: |
         Scope `relations:delete`. Removes the canonical relation
         `(from = URL task, kind, to)`. Same body shape as create (mirrors
@@ -485,11 +485,17 @@ paths:
       tags: [runs]
       summary: Launch a run for a task
       description: |
-        Scope `runs:launch`. Launches a run from a `Backlog` task. Mirrors the
-        same launch contract as the session-auth `POST /api/runs` (same
-        precondition checks, executor resolution, worktree creation, and
-        scheduler claim). The `projectId` is derived from the task row;
-        `taskId` ownership is re-validated against the token's project.
+        Scope `runs:launch`. Launches a run for a task owned by the token's
+        project. ADR-085 keeps this route v1-compatible: the body accepts only
+        `taskId`, runner override, `baseBranch`, and `targetBranch`. It does
+        not accept `flowId` or `deliveryPolicy`; those richer overrides are
+        session-auth UI/API-only until a future versioned external contract.
+
+        The route still funnels through the same `launchRun` service and the
+        same server launchability classifier, executor resolution, supervisor
+        readiness gate, worktree creation, and scheduler claim. The `projectId`
+        is derived from the task row; `taskId` ownership is re-validated
+        against the token's project.
 
         Returns 202 (may be `Pending` if the global concurrency cap is full,
         or `Running` if a slot was free). Writes a `token_audit_log` row with
@@ -915,7 +921,7 @@ components:
     ExtTriageBody:
       type: object
       description: |
-        (M33 — Implemented) Triage verdict — at least one field. Every provided
+        (M34 — Implemented) Triage verdict — at least one field. Every provided
         field is allow-list validated; the op always stamps
         `triage_status='triaged'`.
       minProperties: 1
@@ -941,7 +947,7 @@ components:
     ExtRelationOpBody:
       type: object
       description: |
-        (M33 — Implemented) Relation create/remove body — mirrors the web
+        (M34 — Implemented) Relation create/remove body — mirrors the web
         route: the canonical direction is `(from = URL task, kind, to)`.
       required: [kind, toNumber]
       additionalProperties: false
@@ -959,7 +965,7 @@ components:
     ExtRelationView:
       type: object
       description: |
-        (M33 — Implemented) One relation touching the addressed task. `role`
+        (M34 — Implemented) One relation touching the addressed task. `role`
         says which end the URL task is; `other` is the opposite end.
       required: [kind, role, other]
       properties:
@@ -1236,7 +1242,7 @@ components:
           minLength: 1
           description: |
             ID of a `flows` row belonging to the project identified by the URL
-            `slug`. Any other flow ID returns 422. (M33 — Implemented) OPTIONAL:
+            `slug`. Any other flow ID returns 422. (M34 — Implemented) OPTIONAL:
             a task created without `flowId` is a simple-intent task — it
             classifies as `unconfigured` (not launchable) until a triage
             verdict (`POST .../triage`) or a human fills the flow.
@@ -1271,20 +1277,28 @@ components:
     ExtLaunchRunBody:
       type: object
       required: [taskId]
+      additionalProperties: false
       properties:
         taskId:
           type: string
           format: uuid
           description: |
-            ID of a `Backlog` task owned by the token's project. The
-            `projectId` is derived server-side from the task row; it is
-            re-validated against the token's project.
-        executorOverrideId:
+            ID of a task owned by the token's project. The `projectId` is
+            derived server-side from the task row and re-validated against the
+            token's project before launchability is evaluated.
+        runnerId:
           type: string
           minLength: 1
           description: |
-            Optional per-launch executor override. Highest priority in the
-            five-level resolution chain.
+            Optional per-launch platform ACP runner override. Highest priority
+            in the fail-closed runner resolution chain.
+        executorOverrideId:
+          type: string
+          minLength: 1
+          deprecated: true
+          description: |
+            Legacy alias for `runnerId`. New external clients should send
+            `runnerId`. The route refuses both fields when they conflict.
         baseBranch:
           type: string
           minLength: 1

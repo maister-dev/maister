@@ -112,6 +112,10 @@
 | [ADR-084](#adr-084-acp-adapter-families-for-gemini-cli-and-opencode) | ACP adapter families for Gemini CLI and OpenCode | Accepted | 2026-06-11 |
 | [ADR-085](#adr-085-mimo-code-as-a-distinct-acp-adapter-family) | MiMo Code as a distinct ACP adapter family | Accepted | 2026-06-11 |
 | [ADR-086](#adr-086-domain-event-outbox-as-the-shared-trigger-bus) | Domain-event outbox as the shared trigger bus | Accepted | 2026-06-11 |
+| [ADR-087](#adr-087-multi-run-launch-cost-accounting-and-delivery-policy-surfaces) | Multi-run launch, cost accounting, and delivery-policy surfaces | Accepted | 2026-06-11 |
+| [ADR-088](#adr-088-multi-flow-package-management) | Multi-flow package management | Accepted | 2026-06-12 |
+| [ADR-089](#adr-089-platform-agent-catalog-with-per-agent-runner-and-a-five-source-trigger-model) | Platform agent catalog with per-agent runner and a five-source trigger model | Accepted | 2026-06-12 |
+| [ADR-090](#adr-090-agent-workspace-axis-with-three-layer-read-only-enforcement-and-quarantine) | Agent workspace axis with three-layer read-only enforcement and quarantine | Accepted | 2026-06-12 |
 
 ---
 
@@ -735,7 +739,7 @@ Graceful shutdown with `MAISTER_SHUTDOWN_GRACE_MS` budget and
 ### ADR-021: Flow package lifecycle: multi-revision, trust, and compatibility
 
 **Date:** 2026-05-30
-**Status:** Accepted
+**Status:** Accepted (amended by [ADR-088](#adr-088-multi-flow-package-management): a package groups multiple flow sources under one import; the per-revision model below is unchanged)
 **Context:** ADR-010 packaged Flows as git-tag-pinned plugin bundles and M4
 shipped the loader. But the loader stores exactly one row per
 `(project_id, flow_ref_id)` (`UNIQUE` constraint) and the runner reads the
@@ -6267,7 +6271,168 @@ the M24 clock.
 
 ---
 
-### ADR-088: Platform agent catalog with per-agent runner and a five-source trigger model
+### ADR-087: Multi-run launch, cost accounting, and delivery-policy surfaces
+
+**Date:** 2026-06-11
+**Status:** Accepted
+**Context:** The task/run schema is already 1:N, but the UI still behaves like
+launch is mostly a Backlog-only action. Cost records are written to
+`cost.jsonl`, but they are not attributed to node attempts or surfaced as read
+models. Promotion mode is snapshotted as `local_merge | pull_request`, but the
+operator needs a declarative policy that flows from project default to launch
+override to promote-time override.
+
+**Decision:**
+1. Manual task launchability is split from schedule launchability. Manual
+   "Run again" is a positive allow-list over `Done`, `Review`, `Failed`,
+   `Abandoned`, and `Crashed`; busy states and relation blockers remain visible
+   disabled reasons. The scheduler keeps its conservative `target_terminal` and
+   `crashed` skip outcomes unless a later ADR explicitly changes scheduled
+   replay semantics.
+2. Task launches keep `launchRun` as the only run-creation service. Internal
+   `POST /api/runs` accepts selected Flow, runner/model, base/target branch,
+   and delivery-policy overrides after deriving the project from the task. The
+   token-auth external route remains v1-compatible unless a future API version
+   opts into the same override body.
+3. Cost attribution is exact or fail-fast: `cost.jsonl` remains the source of
+   truth, enriched with `runId`, `stepId`, `nodeAttemptId`, `sessionId`, token
+   kind totals, model, and resume marker. The web/supervisor prompt boundary
+   carries active node-attempt attribution for shared `slash-in-existing`
+   sessions; ambiguous concurrent prompt attribution is refused or serialized.
+   DB rollups are derived and reconcilable. Run and node durations derive from
+   existing `started_at`/`ended_at` columns, not redundant duration columns.
+4. Delivery policy resolves in order: project default -> launch override ->
+   promote-time override. The resolved run snapshot is immutable by later
+   project-default edits. Strategies are `merge`, `rebase_merge`,
+   `pull_request`, and separable `ai_rebase_merge`; triggers are `manual` and
+   `auto_on_ready`. `auto_on_ready` only fires after the existing readiness
+   gate and degrades to manual with the failing command/path/status surfaced.
+5. Project delivery-policy editing uses one aggregating project settings PATCH
+   route. Existing one-off settings routes may stay compatibility wrappers, but
+   the new policy editor writes through the aggregate route.
+6. Scratch promotion remains legacy M18 behavior in this slice. The shared
+   `promoteRun` service must preserve scratch semantics unless a later ADR opts
+   scratch into policy snapshots.
+7. `ai_rebase_merge` reuses the standard run event stream and standard
+   assignment/inbox surfaces. Conflict HITL uses the existing `merge_conflict`
+   assignment kind unless implementation proves a distinct user action is
+   required.
+
+**Consequences:**
+- Every acceptance criterion has a UI surface, EN/RU strings,
+  empty/disabled/error states, and Playwright coverage before the feature is
+  done.
+- Public route responses remain explicit DTO projections; server-only handles,
+  worktree paths, and raw cost payloads are not returned.
+- Observatory remains read-only. It may add cost dimensions computed from bulk
+  DB rows and derived cost rollups, but it adds no mutating route, background
+  job, or recommendation write path.
+- The schema migration for this decision is `0047`; the ADR number is ADR-087
+  after ADR-085 and ADR-086 on the rebased `main`.
+
+---
+
+### ADR-088: Multi-flow package management
+
+**Date:** 2026-06-12
+**Status:** Accepted
+**Context:** A delivery process ships as a set of flows plus the capability
+content they need (skills, agents, MCP server templates, restriction
+path-sets). Today each flow is its own `maister.yaml` source: the extracted
+AIF package costs six entries (5 `flows[]` + 1 `capability_imports[]`)
+version-pinned in lockstep, the bundle ingests as one opaque
+`agent_definition` record, packages cannot ship MCP templates or restriction
+sets, there is no update discovery, and nothing groups the parts as one unit.
+The AIF package now lives in the external `maister-plugins` monorepo
+(`packages/aif`, tag `aif/v2.0.0`). The deferred single-import plan
+(2026-06-09) locked the two-scope direction; the owner-approved design is
+`docs/pv/package-management.md`. ADR-021's per-revision install/trust model
+stays the substrate — this decision groups revisions into packages above it.
+
+**Decision:** Packages become the first-class distribution unit, sourced from
+git monorepos and managed as a platform catalog with per-project attachments.
+
+- **Package repos are git monorepos** (`packages/<name>/…`); more than one
+  repo can be configured. Versions are per-package tags `<name>/vX.Y.Z` — the
+  tag is the user-facing pin, the resolved SHA is runtime truth (ADR-021
+  semantics unchanged).
+- **`maister-package.yaml` v1** at the package root declares the contents:
+  `flows[{id, path}]`, `capabilities[{id, path}]`, `mcps[]` (server templates;
+  secret values are `env:NAME` references only), `restrictions[{id, paths[]}]`
+  (path-sets that unlock `must_not_touch` for package flows). No `version`
+  field — the git tag is the only pin. New content kinds arrive via
+  `schemaVersion` bump.
+- **`maister.yaml` gains `packages[] = {id, source, version, path?}`** —
+  declarative bootstrap at registration and the durable record for re-raising
+  a project on another instance. Registration materializes the SAME
+  `package_installs` + attachment group as the UI attach path, so
+  bootstrapped packages stay manageable. Runtime source of truth is the DB,
+  managed from the UI; every attach/detach/upgrade **writes the pin back** to
+  `maister.yaml` (comment-preserving, atomic; a write-back failure warns and
+  never rolls back the attach).
+- **Two-scope model:** `package_sources` (platform config; discovery via
+  `git ls-remote --tags` + a shallow default-branch manifest scan, refreshed
+  on demand and by a startup debounce gated by
+  `MAISTER_PACKAGE_DISCOVERY_STALE_HOURS`, default 24) → `package_installs`
+  (immutable installed package revisions in the content-addressed cache) →
+  `project_package_attachments` (per-project enablement). Existing `flows`
+  and `capability_imports` rows join a package group via nullable
+  `package_install_id` FKs; standalone flows keep working.
+- **Revision inheritance:** the package resolves ONE revision (git: tag SHA;
+  local: content digest of the package dir) and every member flow/capability
+  sub-install records that revision, so `runs.flow_revision` pinning and the
+  content-addressed cache keep their immutability contract. Sub-installs
+  receive a path-safe version label (`aif/v2.0.0` → `aif-v2.0.0`) because
+  `versionTagSchema` forbids `/`.
+- **Attach is one transaction** (member flow rows + capability rows + typed
+  ingestion + attachment + FK links), guarded against `flows_project_ref_uq`
+  collisions with standalone flows (CONFLICT) and detach-guarded against live
+  runs (PRECONDITION). Typed ingestion replaces the opaque record: manifest
+  inventory on the install row, `mcps[]` → project MCP catalog entries
+  (package-provided, removed on detach), `restrictions[]` →
+  flow-package-scoped restriction capability records. Ingested records are
+  owned per install (`material.packageInstallId`): a same-`(kind, id)` record
+  from another attached package refuses attach (CONFLICT), and detach removes
+  only the rows the install owns.
+- **Local versions are first-class:** a package installed from a local
+  directory gets a `local-<digest>` label and attaches like any version — the
+  fork-it/adapt-it/test-it loop, and the landing spot for future Studio forks.
+- **Trust:** one operator decision per package revision fans
+  `trust_status`/`exec_trust` to member rows in the same transaction;
+  the decision is gated on the GLOBAL admin role because the fan-out crosses
+  every project attached to the install (project-scoped `managePackages` is
+  not sufficient). `setup.sh` still NEVER runs at install — only through the
+  existing post-trust setup path (ADR-021/ADR-042/ADR-069 unchanged).
+
+**Consequences:**
+- Migration `0048` adds the three tables + two FK columns; package installs
+  join the M19 preserve-then-prune GC story.
+- Exactly one new env var (`MAISTER_PACKAGE_DISCOVERY_STALE_HOURS`) wired
+  through `.env.example`, compose, and the configuration docs.
+- The dogfood `maister.yaml` collapses from six lockstep entries to one
+  `packages[]` entry; per-flow `flows[]` remains supported indefinitely.
+- Write-back dirties the consuming repo's working tree by design (the file is
+  MAIster's own config there; the user commits when ready).
+- Package-shipped restriction sets unlock `must_not_touch` gates for package
+  flows (AIF `v2.1.0` follow-up in `maister-plugins`).
+- PR-back channels (repo-as-project promotion; Studio propose-upstream) ride
+  later phases — see `docs/pv/package-management.md` §8.
+
+**Alternatives Considered:**
+- **Keep per-flow sources only:** rejected — six-entry lockstep per package
+  ("config/version hell"), no grouping, no typed contents.
+- **`version` field inside `maister-package.yaml`:** rejected — duplicates
+  the tag pin and invites drift; ADR-021's "tag = user-facing pin" stands.
+- **Repo-wide tags (`vX.Y.Z` for the whole monorepo):** rejected — releasing
+  one package would bump all, and per-package change history blurs.
+- **A new scheduler job kind for discovery:** rejected — the kind registry
+  fans out across four code points for no latency need; a startup debounce +
+  manual refresh covers "при старте или по кнопке".
+- **Generalizing `capability_imports` into packages:** rejected — its
+  ingestion is deliberately opaque (one `agent_definition` row) and its local
+  revision hashes the source STRING, not content; packages need typed
+  contents and content-addressed local versions.
+### ADR-089: Platform agent catalog with per-agent runner and a five-source trigger model
 
 **Date:** 2026-06-12
 **Status:** Accepted
@@ -6296,7 +6461,7 @@ sources.
   agent-related lives inside project repos** (no repo sync hook). Frontmatter:
   `name`, `description`, `scope: platform|project`, `project` (slug, required
   iff `scope=project` — project scope is a pure binding), `runner` (optional
-  runner id), `workspace: none|repo_read|worktree` (ADR-089), `mode:
+  runner id), `workspace: none|repo_read|worktree` (ADR-090), `mode:
   session|subagent`, `triggers: (manual|cron|domain_event|webhook|flow)[]`,
   `capability_profile` (M14 shape, optional), `risk_tier:
   read_only|standard|destructive`. Unknown keys are refused (strict schema).
@@ -6321,7 +6486,7 @@ sources.
   `capability_agent ≠ claude` (`.claude/agents/*.md` is a Claude-SDK
   artifact), and `workspace ∈ {none, repo_read}` on a runner with
   `permission_policy = dangerously_skip_permissions` (suppressed permission
-  requests make ADR-089 L1 impossible). Flow-bound nodes keep the existing
+  requests make ADR-090 L1 impossible). Flow-bound nodes keep the existing
   six-tier flow chain — `agents.runner_id` participates only in the
   standalone chain.
 - **Execution substrate = `runs`, separate budget.** `run_kind` gains
@@ -6402,10 +6567,11 @@ sources.
   `agent:<id>`.
 
 **Consequences:**
-- One migration (`0048_platform_agents.sql`): `agents`,
+- One migration (`0049_platform_agents.sql`): `agents`,
   `agent_project_links`, the `agent_schedules` rework, `runs`/`tasks`/
   `project_tokens` alters, the partial unique trigger-claim index, and the
-  `unconfigured`-enabling `tasks.flow_id` NULLABLE change.
+  `unconfigured`-enabling `tasks.flow_id` NULLABLE change. A follow-up
+  (`0050_agent_activity_kinds.sql`) widens the `task_activity` kind CHECK.
 - Flow engine version bumps `1.4.0 → 1.5.0` (the `agent:` binding is
   floor-gated like `retry_policy` was in ADR-080).
 - `agent_tick` disappears from `createSchedulerJobSchema` (job-kind admin
@@ -6442,7 +6608,7 @@ sources.
 
 ---
 
-### ADR-089: Agent workspace axis with three-layer read-only enforcement and quarantine
+### ADR-090: Agent workspace axis with three-layer read-only enforcement and quarantine
 
 **Date:** 2026-06-12
 **Status:** Accepted
@@ -6485,7 +6651,7 @@ tracked materialization manifest, restored before the check).
   pending-permission deferreds are created — `readOnlySession` sessions
   never reach the HITL inbox, and no deferred can leak. Runners with
   `permission_policy = dangerously_skip_permissions` are refused for these
-  agents before spawn (ADR-088) because they suppress the very requests L1
+  agents before spawn (ADR-089) because they suppress the very requests L1
   arbitrates.
 - **L2 — M14 materialize-only deny rules (instructed, not enforced).** The
   capability materializer writes `.claude/settings.local.json` deny rules

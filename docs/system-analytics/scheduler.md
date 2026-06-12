@@ -15,15 +15,15 @@ without turning recovery sweeps into live-path polling.
   failure counters, and disable state.
 - **Scheduler job run** (`scheduler_job_runs`, Implemented, M24) — attempt ledger
   with claim token, terminal status, lease expiry, summary, and error fields.
-- **Agent trigger bindings** (`agent_schedules`, M33 — Implemented rework of the
+- **Agent trigger bindings** (`agent_schedules`, M34 — Implemented rework of the
   dead M24 bridge) — per-(agent, project) trigger rows: cron rows
   (`cron_expr` + `timezone` + `next_fire_at`, claimed atomically by the
   dispatcher below) and event rows (`event_match.kinds` consumed by the
   `agent_triggers` outbox consumer). The M24 columns `agent_ref` (text),
   `scheduler_job_id`, and `desired_state` are dropped. See
   [agents.md](agents.md).
-- **`agent_tick` dispatcher** (`agent_tick.dispatcher` job, M33 — Implemented,
-  ADR-088) — the ONE seeded `agent_tick` job (60s cadence, attempt budget
+- **`agent_tick` dispatcher** (`agent_tick.dispatcher` job, M34 — Implemented,
+  ADR-089) — the ONE seeded `agent_tick` job (60s cadence, attempt budget
   hardcoded 1 — singleton like the other dispatchers; the
   `MAISTER_MAX_CONCURRENT_AGENTS` env var is repurposed as the agent-RUN
   budget enforced at `tryStartRun`) whose handler finally gets its
@@ -143,10 +143,10 @@ flowchart TD
   `max_failures` 3; Implemented, M28), `webhook_delivery.default`
   (60-second cadence; Implemented, ADR-077), `domain_event_dispatch.default`
   (60-second cadence; Implemented, ADR-086), and `agent_tick.dispatcher`
-  (60-second cadence; M33 — Implemented, ADR-088).
+  (60-second cadence; M34 — Implemented, ADR-089).
 - Atomic claim MUST enforce per-kind budgets in SQL before an attempt is created:
   `command` uses `MAISTER_MAX_CONCURRENT_COMMANDS`; `agent_tick` is a hardcoded
-  budget of 1 (singleton dispatcher; M33 — Implemented — its former
+  budget of 1 (singleton dispatcher; M34 — Implemented — its former
   `MAISTER_MAX_CONCURRENT_AGENTS` attempt budget is repurposed as the
   agent-run budget at `tryStartRun`, see [agents.md](agents.md)); `flow_run`
   remains delegated to the existing
@@ -156,7 +156,7 @@ flowchart TD
   `domain_event_dispatch` is a hardcoded budget of 1 (singleton dispatcher;
   Implemented, ADR-086).
 - `agent_tick` MUST be the seeded `agent_tick.dispatcher` singleton only —
-  `createSchedulerJobSchema` rejects the kind (M33 — Implemented; the M24
+  `createSchedulerJobSchema` rejects the kind (M34 — Implemented; the M24
   "stub without a launcher records `Skipped`/`PRECONDITION`" seam is
   superseded by the real launcher). A claimed cron row MUST fire exactly
   once per due window (atomic `next_fire_at` claim) and a missed window
@@ -193,7 +193,7 @@ flowchart TD
 - User-facing run schedules (Implemented, M28): [`run-schedules.md`](run-schedules.md) +
   [ADR-071](../decisions.md#adr-071-user-facing-run-schedules-on-the-m24-clock).
 - Domain-event dispatcher (Implemented, ADR-086): [`domain-events.md`](domain-events.md).
-- Platform-agent triggers (M33 — Implemented, ADR-088): [`agents.md`](agents.md).
+- Platform-agent triggers (M34 — Implemented, ADR-089): [`agents.md`](agents.md).
 - Existing recovery/GC domain: [`reconciliation-gc.md`](reconciliation-gc.md).
 - Source seams: `web/app/api/cron/gc/route.ts`, `web/lib/scheduler.ts`,
   `web/lib/reconcile.ts`, `web/lib/gc/sweeper.ts`,

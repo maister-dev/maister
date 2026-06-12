@@ -18,7 +18,7 @@
 // m11b's resume path is a local `check` + a human node), so a reachable
 // `/health` that lacks more surface does not change their behavior.
 //
-// M33 (platform-agents e2e) adds a MINIMAL `/sessions` surface: POST creates
+// M34 (platform-agents e2e) adds a MINIMAL `/sessions` surface: POST creates
 // a session record file (the specs inspect what the web sent — readOnly flag,
 // mcpServers, prompts), the SSE stream emits one `session.update` and then
 // HOLDS until the spec drops a `<sessionId>.release` marker (or the backstop
@@ -130,7 +130,7 @@ export function startStubSupervisor(): Promise<Server> {
       return;
     }
 
-    // ---- M33 minimal /sessions surface (platform-agents e2e) --------------
+    // ---- M34 minimal /sessions surface (platform-agents e2e) --------------
     if (req.method === "POST" && req.url === "/sessions") {
       void readJsonBody(req).then((body) => {
         const sessionId = randomUUID();
@@ -231,7 +231,7 @@ export function startStubSupervisor(): Promise<Server> {
     );
   });
 
-  // The M33 session surface multiplies the request volume against this stub
+  // The M34 session surface multiplies the request volume against this stub
   // (createSession/prompt/stream/delete per agent run). Node's default 5s
   // keepAliveTimeout then races undici's socket reuse — an idle socket can
   // close exactly as the web reuses it, failing 1s-budget calls like

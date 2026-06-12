@@ -25,7 +25,7 @@ const log = pino({
 
 export type PromotionMode = "local_merge" | "pull_request";
 
-// M33 (ADR-088) launch-verdict patch. The ext triage op uses the set-only
+// M34 (ADR-089) launch-verdict patch. The ext triage op uses the set-only
 // shape (no nulls); the web card PATCH is SET/CLEAR symmetric (null clears).
 export type TaskVerdictPatch = {
   flowId?: string | null;
@@ -118,7 +118,7 @@ function verdictColumns(patch: TaskVerdictPatch): Record<string, unknown> {
   return set;
 }
 
-// Ext triage op (ADR-088 D8): set-only verdict fields + the 'triaged' stamp +
+// Ext triage op (ADR-089 D8): set-only verdict fields + the 'triaged' stamp +
 // a `triage_set` activity entry — caller supplies the transaction so the
 // token audit row commits or rolls back with the verdict.
 export async function applyTriageVerdict(
@@ -186,7 +186,7 @@ export async function updateTaskVerdict(
   );
 }
 
-// "Send to triage" (ADR-088 D13): the task.triage_requeued emitter that
+// "Send to triage" (ADR-089 D13): the task.triage_requeued emitter that
 // ADR-086 registered emitter-less. ONE transaction: clear the stamp, emit
 // the domain event, record the activity entry.
 export async function sendTaskToTriage(

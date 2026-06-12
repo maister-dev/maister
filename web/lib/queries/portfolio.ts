@@ -96,7 +96,7 @@ export interface PortfolioWorkspace {
   runId: string;
   runKind: RunKind;
   branch: string;
-  // M33: standalone agent-run identity — the catalog agent id and the
+  // M34: standalone agent-run identity — the catalog agent id and the
   // trigger that fired it; null on flow/scratch rows.
   agentId: string | null;
   triggerSource: string | null;
@@ -323,7 +323,7 @@ export async function getPortfolio(
       )
       .groupBy(tasks.projectId),
 
-    // M33: leftJoin — none/repo_read agent runs have NO workspaces row but
+    // M34: leftJoin — none/repo_read agent runs have NO workspaces row but
     // still belong in the active grid (the IS NULL filter passes on the
     // absent row).
     client

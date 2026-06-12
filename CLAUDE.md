@@ -411,7 +411,7 @@ Current Scope, these are **Implemented** today:
   `run.abandoned` webhook gap is closed (`source: "ttl"`).
   → `domain-events.md`
 
-- **Platform-agent substrate** (M33, ADR-088/088): `.md`-defined agents in a
+- **Platform-agent substrate** (M34, ADR-089/088): `.md`-defined agents in a
   host-only catalog (`~/.maister/agents/`, `MAISTER_AGENTS_ROOT`) parsed into
   the `agents` index; project attachments + cron/event trigger bindings;
   standalone runs as `runs.run_kind='agent'` under a separate budget
@@ -429,7 +429,7 @@ Current Scope, these are **Implemented** today:
 
 Product backlog/vision (not built): `docs/pv/improvement-roadmap.md` —
 self-improvement loop, benchmarking, project memory; agents-as-actors
-Stage 3 shipped as M33 (continuous Mγ + enforcement flip remain).
+Stage 3 shipped as M34 (continuous Mγ + enforcement flip remain).
 
 ## Phase 2 Candidates
 
@@ -440,7 +440,7 @@ judge-node/`ai_judgment` gating — were removed; some below are partially
 landed, see *Built since the original baseline*.)
 
 continuous background agents (Mγ: heartbeat daemons + crash-loop backoff —
-the M33 substrate covers catalog/triggers/one-shot runs) · Telegram ·
+the M34 substrate covers catalog/triggers/one-shot runs) · Telegram ·
 A/B benchmark runs · durable orchestration · full multi-user RBAC w/ action-
 blocking · full Kanban (Done as drag-target / WIP limits / swim-lanes) ·
 event log table · test-run UI button · GitHub Actions CI/CD · project

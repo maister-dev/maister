@@ -1,7 +1,7 @@
 # Agents as environment actors — vision / concept
 
-> **Status:** SUPERSEDED BY DESIGN (M33, 2026-06-12) — the Mα+Mβ substrate
-> shipped as **ADR-088/ADR-089** with the implemented contract in
+> **Status:** SUPERSEDED BY DESIGN (M34, 2026-06-12) — the Mα+Mβ substrate
+> shipped as **ADR-089/ADR-090** with the implemented contract in
 > [`docs/system-analytics/agents.md`](../system-analytics/agents.md). Three
 > amendments over this Stage-0 sketch:
 > **(1) per-agent runner** — frontmatter `runner` + a per-project link

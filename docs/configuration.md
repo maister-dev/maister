@@ -315,6 +315,63 @@ retroactively invalidated. **M25 authored catalog carve-out:** rows whose
 disabled by `upsertCapabilitiesFromConfig` SET/CLEAR, even though they also use
 `source='project'`.
 
+#### `packages[]` (Implemented, ADR-088)
+
+The optional `packages[]` block attaches **multi-flow packages** — one entry
+registers every flow plus the capability bundle a package ships, pinned to a
+single per-package tag. Process contract:
+[`system-analytics/packages.md`](system-analytics/packages.md).
+
+```yaml
+packages:
+  - id: aif                          # capabilityRefId shape (SAFE_PATH_SEGMENT)
+    source: github.com/org/maister-plugins   # git monorepo URL or file:///abs/dir
+    version: aif/v2.0.0              # per-package tag; "/" ALLOWED here
+    path: packages/aif               # optional subdir of the source (monorepo)
+```
+
+| Field | Rule |
+| ----- | ---- |
+| `id` | `capabilityRefIdSchema` (SAFE_PATH_SEGMENT). Unique within the file AND across `flows[]` ∪ `capability_imports[]` ∪ `packages[]` (cross-list collision → `CONFIG`). |
+| `source` | Git URL (cloned `--branch <version> --depth 1`) or a `file://`/absolute local directory (local versions / dogfood). |
+| `version` | Per-package tag, slash allowed: `/^[A-Za-z0-9._+/-]+$/`, no `..`, ≤ 128 chars. NOT `versionTagSchema` — member sub-installs receive the path-safe label (`/` → `-`); the raw tag is used only for `git clone --branch` and the package row. |
+| `path` | Optional package subdir inside the source (escape-guarded relative path; no `..`/absolute). Defaults to the source root. |
+
+Bootstrap semantics: registration runs the SAME pipeline as the UI surface —
+`installPackageRevision` (one platform `package_installs` row per resolved
+revision; every member sub-install records that revision) followed by
+`attachPackage` (attachment group + `package_install_id` FK links +
+mcp/restriction ingestion) — so a bootstrapped package appears on the
+packages tab and is manageable (detach/upgrade/trust) immediately after
+registration. The runtime source of truth is the DB (UI
+attach/detach/upgrade), and each mutation **writes the pin back** to this
+file (comment-preserving, atomic) so the project can be re-raised on another
+MAIster instance from git alone.
+
+#### `maister-package.yaml` v1 (Implemented, ADR-088)
+
+The package manifest at the package root (inside the package repo — not a
+project file). Loader: `loadMaisterPackageManifest` (`CONFIG` on any reject).
+
+```yaml
+schemaVersion: 1
+name: aif                            # MUST equal the packages[] consumer's expectations; capabilityRefId shape
+metadata: { title, summary, links, sources }   # optional package frontmatter
+flows:
+  - { id: aif-dev, path: flows/dev } # id MUST equal the flow.yaml `name` (CONFIG mismatch)
+capabilities:
+  - { id: aif-bundle, path: capability }
+mcps: []                             # MCP server templates: {id, transport: stdio|http,
+                                     #  command?/args?/url?, env: env:NAME refs ONLY, description?}
+restrictions: []                     # path-sets: {id, paths: [globs]} → ingested as
+                                     #  flow-package-scoped restriction capability records on attach
+```
+
+Rules: all `path` values are escape-guarded relative subpaths; ids unique per
+section; `mcps[].env` values MUST match `/^env:[A-Z0-9_]+$/` (secret values
+are never stored — same convention as `platform_mcp_servers`). There is NO
+`version` field — the git tag is the only pin (ADR-021 semantics).
+
 #### Authored capability catalog (Implemented, M25)
 
 Authored rules, skills, and flows are created through MAIster's DB/API surface,
@@ -942,8 +999,8 @@ Read by Next.js (`web/`) and `supervisor/` at startup:
 | `MAISTER_TEMP_PASSWORD_LENGTH` | no | `12` | Web tier. Length of admin-provisioned auto-generated one-time temp passwords (clamped to a minimum of 12). Governs GENERATED passwords only — admin-typed passwords keep the 12-character minimum. Read server-side by the web tier; never logged. |
 | `DB_URL` | yes | — | `lib/db/client.ts`; accepts `postgres://...` or `file:...` |
 | `MAISTER_DB_POOL_MAX` | no | `10` | Postgres pool size in `lib/db/client.ts` |
-| `MAISTER_MAX_CONCURRENT_RUNS` | no | `6` | Global Flow/scratch run concurrency cap (across all projects; counts `run_kind IN ('flow','scratch')`). M24 scheduler `flow_run` jobs delegate to this existing launch queue instead of consuming `command` budgets. (M33 — owner-requested default bump `3 → 6`; env semantics unchanged.) |
-| `MAISTER_MAX_CONCURRENT_AGENTS` | no | `3` | **(M33 — Implemented, ADR-088.)** Separate concurrency budget for platform-agent runs (`run_kind='agent'`) enforced at `tryStartRun` with its own `Pending` FIFO — agent runs never consume Flow slots and vice versa. Repurposed from the obsolete M24 meaning (SQL claim budget for `agent_tick` attempts — `agent_tick.dispatcher` is now a hardcoded-budget-1 singleton). |
+| `MAISTER_MAX_CONCURRENT_RUNS` | no | `6` | Global Flow/scratch run concurrency cap (across all projects; counts `run_kind IN ('flow','scratch')`). M24 scheduler `flow_run` jobs delegate to this existing launch queue instead of consuming `command` budgets. (M34 — owner-requested default bump `3 → 6`; env semantics unchanged.) |
+| `MAISTER_MAX_CONCURRENT_AGENTS` | no | `3` | **(M34 — Implemented, ADR-089.)** Separate concurrency budget for platform-agent runs (`run_kind='agent'`) enforced at `tryStartRun` with its own `Pending` FIFO — agent runs never consume Flow slots and vice versa. Repurposed from the obsolete M24 meaning (SQL claim budget for `agent_tick` attempts — `agent_tick.dispatcher` is now a hardcoded-budget-1 singleton). |
 | `MAISTER_MAX_CONCURRENT_COMMANDS` | no | `2` | **Implemented, M24.** SQL claim budget for concurrent `command` scheduler attempts; invalid or non-positive values fall back to `2` and do not reduce or override `MAISTER_MAX_CONCURRENT_RUNS`. |
 | `MAISTER_RECONCILE_SWEEP_INTERVAL_SECONDS` | no | `60` | Web: periodic reconcile sweeper interval (M19) |
 | `MAISTER_RECONCILE_GRACE_SECONDS` | no | `90` | Web: grace window before a no-live-session agent run is crashed (protects in-flight launches/recovers) (M19) |
@@ -963,6 +1020,7 @@ Read by Next.js (`web/`) and `supervisor/` at startup:
 | `MCP_PORT` | no | `3001` | **(M16 — Implemented)** MCP facade HTTP bind port for the Streamable-HTTP transport. Unused under stdio. |
 | `MAISTER_TRUSTED_FLOW_SOURCE_PREFIXES` | no | unset (empty) | M10 Flow package trust policy (ADR-021). Comma-separated source-URL prefixes that are `trusted_by_policy` (auto-enabled on install). `local`/`file://` sources are always trusted by policy; every other git source is `untrusted` until an explicit per-(project, revision) trust confirmation. Read by the web tier (`web/lib/flows/trust.ts`) at install time. |
 | `MAISTER_TRUSTED_CAPABILITY_SOURCE_PREFIXES` | no | unset (empty) | **Implemented (M14).** Comma-separated source-URL prefixes for `capability_imports[]` entries that are granted `trusted_by_policy` (auto-trusted on install, no explicit confirm required). Mirrors `MAISTER_TRUSTED_FLOW_SOURCE_PREFIXES` exactly — same prefix-match semantics, same `local`/`file://` always-trusted rule. Every other git source is `untrusted` until an operator calls `POST /api/projects/{slug}/capabilities/{capabilityRefId}/trust`. Setting `trust: explicit` on a `capability_imports[]` entry forces the confirm step even for policy-trusted sources. Read by `web/lib/capabilities/import.ts:resolveCapabilityTrust()`. See ADR-043. |
+| `MAISTER_PACKAGE_DISCOVERY_STALE_HOURS` | no | `24` | **(Implemented — ADR-088.)** Web: package-source discovery staleness window (integer hours; invalid/absent → default). At web startup, enabled `package_sources` rows with `last_checked_at` null or older than this are refreshed sequentially (fire-and-forget, per-source try/catch); the manual `/refresh` endpoint ignores the window. Wired through `.env.example`; host/service-env only — the default compose stays Postgres-only per [ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres), so this is never a container/compose var. |
 | `MAISTER_KEEPALIVE_MINUTES` | no | `30` | NeedsInput keep-alive window (minutes). Read by BOTH supervisor (pending-permission deferred timeout) AND web (sweeper expiry, activity-bump amount, useActivityPing heartbeat at half-window). Bumped by every `POST /api/runs/:runId/activity`. |
 | `MAISTER_KEEPALIVE_SWEEP_INTERVAL_SECONDS` | no | `30` | M8 keep-alive sweeper tick frequency (seconds). The singleton timer in `web/lib/runs/keepalive-sweeper.ts` calls `runSweepTick()` every interval. Lower → snappier idle transitions; higher → less DB load. |
 | `MAISTER_NEEDSINPUTIDLE_TTL_HOURS` | no | `24` | M8 NeedsInputIdle abandonment TTL (hours). Sweeper pass 2 flips `NeedsInputIdle` rows whose `checkpoint_at + ttl < now()` to `Abandoned` and closes any open `hitl_requests.respondedAt`. |
@@ -972,9 +1030,9 @@ Read by Next.js (`web/`) and `supervisor/` at startup:
 | `MAISTER_HARNESS_NEVER_FIRED_MIN` | no | `10` | **(M29 — Implemented, [ADR-073](decisions.md#adr-073-harness-adequacy--coherence-metrics-read-only-observatory-extension).)** Minimum terminal gate executions in the observatory lookback window before the never-fired heuristic may flag a declared gate ("never fired — verify gate quality or a blind spot"). Read by `web/lib/instance-config.ts:harnessNeverFiredMin()` at the query layer and passed into the pure rollup as a parameter; invalid/non-positive values fall back to the default with a one-time WARN. Host/service-env only ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)) — never a compose var. See [`system-analytics/observatory.md`](system-analytics/observatory.md). |
 | `MAISTER_PROJECTS_DIR` | no | unset | Auto-discovery root; every `maister.yaml` under this dir is registered on startup |
 | `MAISTER_REPOS_ROOT` | no | `~/.maister/repos` | Root that `POST /api/projects` clones a `repoUrl` into (ADR-025). Resolved by `web/lib/instance-config.ts:reposRoot()`; surfaced read-only on `/settings`. |
-| `MAISTER_AGENTS_ROOT` | no | `~/.maister/agents` | **(M33 — Implemented, ADR-088.)** Host agent-catalog root holding the canonical `<id>/agent.md` definitions for BOTH scopes (nothing agent-related lives in project repos). Resolved by `web/lib/agents/paths.ts:systemAgentsRoot()`. |
-| `MAISTER_MCP_FACADE_COMMAND` | no | `<repo>/mcp/node_modules/.bin/tsx` | **(M33 — Implemented, ADR-088 D9.)** Command an agent session uses to launch the maister MCP facade (its sanctioned write channel, carrying the per-launch ephemeral token via the literal `env` channel). Override for split-host topologies. |
-| `MAISTER_MCP_FACADE_ARGS` | no | `<repo>/mcp/src/main.ts --stdio` | **(M33 — Implemented, ADR-088 D9.)** Space-split args for the facade command; only read when the command default is overridden or the default args do not fit. |
+| `MAISTER_AGENTS_ROOT` | no | `~/.maister/agents` | **(M34 — Implemented, ADR-089.)** Host agent-catalog root holding the canonical `<id>/agent.md` definitions for BOTH scopes (nothing agent-related lives in project repos). Resolved by `web/lib/agents/paths.ts:systemAgentsRoot()`. |
+| `MAISTER_MCP_FACADE_COMMAND` | no | `<repo>/mcp/node_modules/.bin/tsx` | **(M34 — Implemented, ADR-089 D9.)** Command an agent session uses to launch the maister MCP facade (its sanctioned write channel, carrying the per-launch ephemeral token via the literal `env` channel). Override for split-host topologies. |
+| `MAISTER_MCP_FACADE_ARGS` | no | `<repo>/mcp/src/main.ts --stdio` | **(M34 — Implemented, ADR-089 D9.)** Space-split args for the facade command; only read when the command default is overridden or the default args do not fit. |
 | `MAISTER_WORKTREES_ROOT` | no | `~/.maister/worktrees` | Root for run worktrees (ADR-025). Resolved by `worktreesRoot()`. The deprecated `MAISTER_WORKTREE_ROOT` is accepted as a fallback. Surfaced read-only on `/settings`. |
 | `MAISTER_SUPERVISOR_URL` | no | `http://localhost:7777` | Web → supervisor HTTP+SSE base URL — see [Supervisor](supervisor.md) |
 | `MAISTER_SUPERVISOR_PORT` | no | `7777` | Supervisor bind port (read by `supervisor/src/main.ts`) |

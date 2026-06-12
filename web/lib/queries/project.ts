@@ -172,7 +172,7 @@ export async function getProjectPageData(
         .innerJoin(users, eq(users.id, projectMembers.userId))
         .where(eq(projectMembers.projectId, project.id)),
 
-      // M33: leftJoin — none/repo_read agent runs have no workspaces row but
+      // M34: leftJoin — none/repo_read agent runs have no workspaces row but
       // still belong in the active strip.
       client
         .select({

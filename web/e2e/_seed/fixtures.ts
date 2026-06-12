@@ -21,7 +21,7 @@ export type E2EProjectFixture = {
   branch?: string;
 };
 
-// M33 platform-agents fixture (ADR-088): manual launch, flow binding,
+// M34 platform-agents fixture (ADR-089): manual launch, flow binding,
 // repo_read quarantine.
 export type E2EPlatformAgentsFixture = E2EProjectFixture & {
   helperAgentId: string;

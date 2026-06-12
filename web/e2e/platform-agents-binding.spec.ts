@@ -1,4 +1,4 @@
-// M33 (ADR-088) e2e (b): flow-bound agent. The seeded graph flow's ai_coding
+// M34 (ADR-089) e2e (b): flow-bound agent. The seeded graph flow's ai_coding
 // node declares `settings.agent: e2e-helper` (engine floor 1.5.0); launching
 // the bound task from the board goes through the full launch pipeline —
 // settings-enforcement gate, runner resolution, worktree add — and queues

@@ -49,7 +49,7 @@ comment/activity/subscription/inbox substrate around tasks is owned by
   `UNIQUE(from_task_id, kind, to_task_id)`, no self-relations,
   same-project only in Stage 1 (`CONFIG` on violation). Inverse labels
   ("blocked by", "required by", "child of") are render-time only.
-- **Launch verdict** (M33 — Implemented, ADR-088) — `tasks.flow_id` becomes
+- **Launch verdict** (M34 — Implemented, ADR-089) — `tasks.flow_id` becomes
   NULLABLE (simple-intent creation: title + prompt suffice on both the web
   form and ext/MCP `task_create`) plus four verdict columns the triager or a
   human fills: `runner_id` (FK SET NULL — board Launch passes it as the
@@ -65,7 +65,7 @@ comment/activity/subscription/inbox substrate around tasks is owned by
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Backlog: create task<br/>(title + prompt; flow optional — M33)
+    [*] --> Backlog: create task<br/>(title + prompt; flow optional — M34)
     Backlog --> InFlight: Launch click<br/>(preconditions pass,<br/>run created)
     InFlight --> Backlog: latest run terminates<br/>Failed | Crashed | Abandoned
     InFlight --> Done: latest run merged<br/>(terminal)
@@ -190,8 +190,8 @@ flowchart LR
 `classifyTaskLaunchability` gains optional relation context and a
 `"blocked"` classification with precedence
 `target_terminal > crashed > busy > blocked > launchable` — relations gate
-*launching* only, they never mask an active run's state. (M33 — Implemented,
-ADR-088) a flowless task adds the `"unconfigured"` classification between
+*launching* only, they never mask an active run's state. (M34 — Implemented,
+ADR-089) a flowless task adds the `"unconfigured"` classification between
 `blocked` and `launchable` (`… > blocked > unconfigured > launchable`):
 launch is refused with `PRECONDITION` at every entry point, the schedules
 dispatcher records `skipped_unconfigured`, ext `run_launch` returns 409, and
@@ -223,6 +223,59 @@ Blocking predicate: task T is blocked iff there exists a relation
 discarded blocker cannot deadlock its dependents. `parent_of` never gates.
 No cycle detection: a mutual block makes both tasks unlaunchable until one
 relation is removed; the UI always renders blockers as removable chips.
+
+### Manual launchability v2 and "Run again" surfaces (Designed, ADR-085)
+
+Manual launchability is an operator-facing intent, separate from scheduled
+dispatch. The manual classifier returns:
+
+| Task/latest-run condition | Manual result | Required UI surface |
+| --- | --- | --- |
+| Latest run or task is `Done` | `launchable` | Task card and task page show `Run again`. |
+| Latest run is `Review` | `launchable` | Task card and task page show `Run again`; existing promote controls remain on the run detail. |
+| Latest run is `Failed` or `Abandoned` | `launchable` | Existing retry behavior plus launch dialog. |
+| Latest run is `Crashed` | `launchable` | `Run again` is allowed; recover/discard controls for the crashed run stay visible on the run surface. |
+| Latest run is `Pending`, `Running`, `NeedsInput`, `NeedsInputIdle`, or `HumanWorking` | `busy` | The action is disabled with a visible tooltip/reason, never hidden. |
+| Open relation blocker exists and no busy state wins | `blocked` | Disabled action plus blocker `KEY-N` chips. |
+| Supervisor or runner readiness is unavailable | `executor_unavailable` | Disabled or failed launch state with `EXECUTOR_UNAVAILABLE`; no worktree/run/workspace/task side effect. |
+
+Launching a terminal or review task reopens the board task to `InFlight` only
+after `launchRun` has passed auth, flow, runner, branch, readiness, relation,
+and worktree preconditions. Historical runs, workspaces, promotion artifacts,
+and the prior run detail remain immutable and linkable. Done and Abandoned are
+therefore no longer "cannot ever launch again" for the manual UI; they are
+"not part of the automatic Backlog retry loop".
+
+The launch dialog is the single manual surface for overrides:
+
+- Flow selector defaults to the task's Flow and lists enabled project Flows
+  only.
+- Runner/model selector displays the resolved runner plus ADR-076 model
+  application metadata.
+- Base and target branch fields default from project/workspace policy and
+  validate against server-derived branch lists.
+- Delivery-policy editor is prefilled from the project default.
+- Every value that differs from the default renders an override marker.
+- The summary line names the branch that will be created and the base commit
+  branch it forks from.
+
+Task history on `/projects/[slug]/tasks/[number]` shows all attempts in a
+view-only table: attempt/run link, Flow, runner/model, outcome, delivery status,
+duration, and token total. Empty state says the task has no runs yet. Error
+states render typed `MaisterError.code` copy. Every string exists in EN and RU.
+
+Board cards keep latest-run semantics, but also show a run-count badge when the
+task has more than one run so repeated attempts are recognizable without opening
+the task page.
+
+### Phase B UI and test ownership (Designed, ADR-085)
+
+| User story | UI surface(s) | Acceptance and states | Test owner |
+| --- | --- | --- | --- |
+| Rerun a terminal or review task | Task card, task page `/projects/[slug]/tasks/[number]` | Run again is visible for `Done`, `Review`, `Failed`, `Abandoned`, and `Crashed`; click opens the launch dialog; success reopens task to `InFlight`; EN/RU labels exist. | `web/e2e/multi-run-cost-policy.spec.ts`; `web/lib/runs/__tests__/launchability.test.ts` |
+| Understand why a task cannot launch | Task card, task page | Busy, relation-blocked, supervisor-unavailable, and runner-unavailable states show a disabled action with tooltip/reason; control is never hidden silently; error retry keeps the dialog state. | `web/e2e/multi-run-cost-policy.spec.ts`; launch-options route tests |
+| Choose launch overrides deliberately | Launch dialog | Flow, runner/model, base/target branch, and delivery policy defaults are prefilled; every deviation from default is marked; empty branch/flow lists render disabled explanations; invalid server response renders typed error copy; EN/RU coverage. | `web/e2e/multi-run-cost-policy.spec.ts`; `/api/runs` integration tests |
+| Recognize multiple attempts quickly | Board task card and task page history | Board preserves latest-run status placement and adds a run-count badge; task page table has empty state for no runs and columns for flow, runner/model, outcome, delivery status, duration, and token total. | `web/e2e/multi-run-cost-policy.spec.ts`; `web/lib/queries/__tests__/task-detail*.test.ts` |
 
 ### Assignment-aware board card (Planned)
 
@@ -273,13 +326,13 @@ flowchart TD
   returns to `Backlog` and Launch button re-appears.
 - `Done` is terminal for the task; Done tasks NEVER return to `Backlog`.
 - Title and prompt are non-empty at creation.
-- **(M33 — Implemented)** A task without `flow_id` MUST classify as
+- **(M34 — Implemented)** A task without `flow_id` MUST classify as
   `unconfigured` and MUST be refused launch (`PRECONDITION`) at every entry
   point until a flow is set (triage verdict, card popover PATCH, or task
   update); `triage_status` MUST be written only by the ext triage op
   (`'triaged'`) and the "Send to triage" action (NULL + the
   `task.triage_requeued` emit in ONE transaction).
-- **(M33 — Implemented)** `PATCH /api/projects/{slug}/tasks/{number}` MUST
+- **(M34 — Implemented)** `PATCH /api/projects/{slug}/tasks/{number}` MUST
   update verdict fields in ONE transaction with explicit-`null` CLEAR
   semantics, validating `flowId`/`runnerId` against server-state allow-lists.
 - **(M16 + token actor-scope support — Implemented)** External task creation
@@ -314,7 +367,7 @@ flowchart TD
 - **Empty title or prompt** → `PRECONDITION` (400).
 - **`flow_id` not registered for this project** → `PRECONDITION`.
 - **Launch attempt on a flowless (`unconfigured`) task** → `PRECONDITION`
-  (M33 — Implemented); the schedules dispatcher records `skipped_unconfigured`.
+  (M34 — Implemented); the schedules dispatcher records `skipped_unconfigured`.
 - **selected `runnerId` missing, disabled, or not ready** →
   `EXECUTOR_UNAVAILABLE`
   (503).

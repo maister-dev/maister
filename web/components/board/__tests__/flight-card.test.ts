@@ -36,6 +36,9 @@ const labels: FlightCardLabels = {
   },
   // M18 Phase 4: ready-to-promote / PR badge label.
   readyToPromote: "Ready to promote",
+  runsCount: (count: number) => `${count} runs`,
+  launch: "Run again",
+  launchUnavailable: "Unavailable",
 };
 
 function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
@@ -43,6 +46,8 @@ function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
     taskId: "task-1",
     number: 1,
     keyRef: "TST-1",
+    runCount: 1,
+    runStatus: "Running",
     runId: "run-1",
     branch: "maister/fix-thing",
     agent: "claude",
@@ -66,12 +71,15 @@ function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
     hitlOptions: [],
     hitlSchema: null,
     criticality: null,
+    blockedBy: [],
     ...over,
   };
 }
 
 function render(card: FlightCardData): string {
-  return renderToStaticMarkup(createElement(FlightCard, { card, labels }));
+  return renderToStaticMarkup(
+    createElement(FlightCard, { canAct: false, card, labels }),
+  );
 }
 
 describe("FlightCard — humanworking takeover surface (M11b)", () => {

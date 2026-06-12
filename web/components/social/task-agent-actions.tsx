@@ -21,7 +21,7 @@ export interface TaskAgentActionsProps {
   labels: TaskAgentActionsLabels;
 }
 
-// M33 (ADR-088 D11/D13): manual task-bound agent launch + the
+// M34 (ADR-089 D11/D13): manual task-bound agent launch + the
 // task.triage_requeued emitter trigger ("Send to triage").
 export function TaskAgentActions({
   slug,

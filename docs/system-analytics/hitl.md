@@ -66,6 +66,11 @@ enum | array`.
 - **Chat checkpoint** — **(M30 — Implemented, ADR-078)** the single L3 neutrality
   baseline ref `refs/maister/chat-checkpoints/<runId>/<hitlRequestId>` (bounded at 1,
   captured at the first chat turn) via the ADR-079 checkpoint machinery.
+- **Delivery-policy conflict assignment** — **(Designed, ADR-085)** an
+  `ai_rebase_merge` promotion conflict uses the existing `merge_conflict` assignment
+  action kind and the current inbox / needs-you surfaces. Agent-driven conflict
+  resolution may raise normal `permission`, `form`, or `human` HITL requests during the
+  same run; it does not introduce a new HITL kind in this slice.
 
 ## Three kinds — when to use which
 
@@ -200,6 +205,33 @@ sequenceDiagram
     Note over R: When re-execution reaches the human step again,<br/>its input-{stepId}.json is gone so HITL is re-created.
     Note over R: Reject count incremented per run/step.<br/>Exceeding maxLoops=5 raises MaisterError(CONFIG).
 ```
+
+### `ai_rebase_merge` HITL surfacing (Implemented, ADR-085)
+
+Delivery-policy promotion does not create a parallel HITL lane. When
+`strategy="ai_rebase_merge"` hits a rebase conflict, the promote service records the
+failed command, conflicted paths, and promotion attempt id, then opens the same
+`merge_conflict` assignment shape used by the current merge-conflict UX. The
+current implementation reuses the shared rebase-merge side-effect lane and the
+standard assignment/inbox contract; a future autonomous resolver may add normal
+permission/form/human HITL rows if it needs a richer interaction model.
+
+The UI acceptance for this designed slice is:
+
+- Run detail promote panel: shows the conflict/degraded state, failing command, paths,
+  and the current assignment link; empty state remains the existing no-open-HITL state.
+- Board card / inbox: shows the standard needs-you affordance for any resolver request,
+  with EN/RU labels for conflict, permission, and form states.
+- Error states: unresolved conflict, permission denial, aborted resolver, and restore
+  failure surface as typed promotion statuses, never by message-string matching.
+- E2E owner: `web/e2e/multi-run-cost-policy.spec.ts` covers the delivery-policy
+  surfaces; promote service tests pin `ai_rebase_merge` conflict-to-assignment
+  behavior.
+
+Logging requirements: INFO on resolver start/finish with `runId`, `promotionAttemptId`,
+and assignment id; WARN on unresolved conflict, denied permission, abort, or restore
+failure with bounded command/path context; no prompts, env values, or raw cost payloads in
+logs.
 
 ### Declared decisions vs raw `goto_step` (M11a — Designed)
 

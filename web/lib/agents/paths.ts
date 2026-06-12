@@ -5,7 +5,7 @@ import path from "node:path";
 
 import { assertAgentId } from "@/lib/agents/definition";
 
-// The host agent catalog (ADR-088). Owner-editable, NOT @sha-pinned —
+// The host agent catalog (ADR-089). Owner-editable, NOT @sha-pinned —
 // unlike the flow/capability caches — and never inside project repos.
 // MAISTER_AGENTS_ROOT is the ops/test override, mirroring MAISTER_REPOS_ROOT.
 export function systemAgentsRoot(): string {

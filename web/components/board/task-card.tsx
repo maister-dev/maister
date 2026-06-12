@@ -8,17 +8,15 @@ import { LaunchPopover } from "@/components/board/launch-popover";
 
 export interface TaskCardProps {
   card: BacklogCard;
-  projectId: string;
   slug: string;
   canAct: boolean;
-  flowOptions: Array<{ id: string; label: string }>;
-  runnerOptions: Array<{ id: string; label: string }>;
   launchLabel: string;
   launchDisabledLabel: string;
   launchDisabledReason?: string;
   blockedByLabel: string;
   unconfiguredLabel: string;
   triagedLabel: string;
+  runsCountLabel: (count: number) => string;
 }
 
 const PRIO_STRIPE: Record<BacklogCard["priority"], string> = {
@@ -39,19 +37,17 @@ const FLOW_CHIP: Record<string, string> = {
 
 export function TaskCard({
   card,
-  projectId,
   slug,
   canAct,
-  flowOptions,
-  runnerOptions,
   launchDisabledLabel,
   launchDisabledReason,
   launchLabel,
   blockedByLabel,
   unconfiguredLabel,
   triagedLabel,
+  runsCountLabel,
 }: TaskCardProps): ReactElement {
-  // M33: a flowless simple-intent task renders the `unconfigured` chip — the
+  // M34: a flowless simple-intent task renders the `unconfigured` chip — the
   // launch popover collects the missing fields.
   const chip = card.flowRef
     ? (FLOW_CHIP[card.flowRef] ?? "text-mute bg-ivory border-line")
@@ -86,6 +82,14 @@ export function TaskCard({
           {card.flowRef ?? unconfiguredLabel}
         </span>
       </div>
+      {card.runCount > 0 ? (
+        <span
+          className="w-fit rounded-full border border-line bg-ivory px-2 py-[2px] font-mono text-[10px] font-bold tracking-[0.04em] text-ink-2"
+          data-testid="board-runs-count"
+        >
+          {runsCountLabel(card.runCount)}
+        </span>
+      ) : null}
       <div className="font-mono text-[11px] leading-[1.45] tracking-[0.01em] text-mute">
         {card.prompt}
       </div>
@@ -115,19 +119,8 @@ export function TaskCard({
           <LaunchPopover
             disabledLabel={launchDisabledLabel}
             disabledReason={launchDisabledReason}
-            flowOptions={flowOptions}
             label={launchLabel}
-            projectId={projectId}
-            runnerOptions={runnerOptions}
-            slug={slug}
             taskId={card.taskId}
-            taskNumber={card.number}
-            verdict={{
-              flowId: card.flowId,
-              runnerId: card.runnerId,
-              targetBranch: card.targetBranch,
-              promotionMode: card.promotionMode,
-            }}
           />
         ) : null}
       </div>

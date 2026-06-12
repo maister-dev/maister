@@ -100,7 +100,7 @@ export async function verifyToken(
     tokenKind,
     ownerUserId: row.owner_user_id ?? null,
     agentId,
-    // ADR-088: agent tokens carry the agent identity into token_audit_log.
+    // ADR-089: agent tokens carry the agent identity into token_audit_log.
     actorLabel:
       tokenKind === "agent" && agentId
         ? `agent:${agentId}`
@@ -113,7 +113,7 @@ export function actorUserIdForToken(actor: TokenActor): string | null {
   return actor.tokenKind === "user" ? actor.ownerUserId : null;
 }
 
-// Token → polymorphic social actor (ADR-083/ADR-088): agent tokens act as the
+// Token → polymorphic social actor (ADR-083/ADR-089): agent tokens act as the
 // agent, user-owned tokens act as that user, ownerless project tokens act as
 // system. Shape matches lib/social/activity.ts SocialActor structurally.
 export function socialActorForToken(

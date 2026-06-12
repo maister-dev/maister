@@ -28,10 +28,21 @@ const postBodySchema = z
   .object({
     taskId: z.string().min(1),
     runnerId: z.string().min(1).optional(),
+    executorOverrideId: z.string().min(1).optional(),
     baseBranch: z.string().min(1).optional(),
     targetBranch: z.string().min(1).optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (body) =>
+      body.runnerId === undefined ||
+      body.executorOverrideId === undefined ||
+      body.runnerId === body.executorOverrideId,
+    {
+      message: "runnerId and executorOverrideId must match when both are set",
+      path: ["executorOverrideId"],
+    },
+  );
 
 export async function POST(
   req: NextRequest,
@@ -87,7 +98,7 @@ export async function POST(
         const result = await launchRun(
           {
             taskId: body.taskId,
-            runnerId: body.runnerId,
+            runnerId: body.runnerId ?? body.executorOverrideId,
             baseBranch: body.baseBranch,
             targetBranch: body.targetBranch,
           },

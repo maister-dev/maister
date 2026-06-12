@@ -44,6 +44,19 @@ const RUN_STATUS_LAUNCHABILITY = {
   Failed: "launchable",
 } as const satisfies Record<RunStatus, TaskLaunchability>;
 
+const MANUAL_RUN_STATUS_LAUNCHABILITY = {
+  Pending: "busy",
+  Running: "busy",
+  NeedsInput: "busy",
+  NeedsInputIdle: "busy",
+  HumanWorking: "busy",
+  Review: "launchable",
+  Crashed: "launchable",
+  Done: "launchable",
+  Abandoned: "launchable",
+  Failed: "launchable",
+} as const satisfies Record<RunStatus, TaskLaunchability>;
+
 export function classifyTaskLaunchability(
   task: { status: TaskStatus; flowId: string | null },
   latestRun: { status: RunStatus } | null,
@@ -61,7 +74,7 @@ export function classifyTaskLaunchability(
       : RUN_STATUS_LAUNCHABILITY[latestRun.status];
 
   // Precedence: target_terminal > crashed > busy > blocked > unconfigured >
-  // launchable (M33, ADR-088) — relations gate LAUNCHING only; they never
+  // launchable (M34, ADR-089) — relations gate LAUNCHING only; they never
   // mask an active run's state; a flowless simple-intent task is not
   // launchable until triage (or a human) fills the flow.
   if (base === "launchable") {
@@ -72,6 +85,25 @@ export function classifyTaskLaunchability(
     if (task.flowId === null) {
       return "unconfigured";
     }
+  }
+
+  return base;
+}
+
+export function classifyManualTaskLaunchability(
+  task: { status: TaskStatus },
+  latestRun: { status: RunStatus } | null,
+  relationGate?: RelationGate,
+): TaskLaunchability {
+  const base =
+    latestRun === null
+      ? task.status === "InFlight"
+        ? "busy"
+        : "launchable"
+      : MANUAL_RUN_STATUS_LAUNCHABILITY[latestRun.status];
+
+  if (base === "launchable" && (relationGate?.openBlockers.length ?? 0) > 0) {
+    return "blocked";
   }
 
   return base;

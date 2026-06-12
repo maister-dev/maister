@@ -1,9 +1,11 @@
 import type { ReactElement } from "react";
+import type { RunStatus, TaskStatus } from "@/lib/db/schema";
 
 import { getTranslations } from "next-intl/server";
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 
+import { LaunchPopover } from "@/components/board/launch-popover";
 import { type FlowGraphViewLabels } from "@/components/board/flow-graph-view";
 import { FlowGraphViewSection } from "@/components/board/flow-graph-view-section";
 import { CommentComposer } from "@/components/social/comment-composer";
@@ -21,6 +23,8 @@ import { loadRunManifest } from "@/lib/queries/run-manifest";
 import { getRunNodeStatuses } from "@/lib/queries/run-node-status";
 import { getProjectAgentsView } from "@/lib/agents/project-links";
 import { getTaskDetail } from "@/lib/queries/task-detail";
+import { classifyManualTaskLaunchability } from "@/lib/runs/launchability";
+import { getPlatformStatus } from "@/lib/supervisor-client";
 
 type PageProps = {
   params: Promise<{ slug: string; number: string }>;
@@ -36,6 +40,23 @@ function parseTaskNumber(raw: string): number | null {
 
 function formatAt(at: Date | null): string {
   return at ? at.toISOString().slice(0, 16).replace("T", " ") : "—";
+}
+
+function formatDuration(durationMs: number | null): string {
+  if (durationMs === null) return "—";
+  const seconds = Math.round(durationMs / 1000);
+
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.round(seconds / 60);
+
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.round(minutes / 60);
+
+  return `${hours}h`;
+}
+
+function formatTokens(value: number): string {
+  return new Intl.NumberFormat("en-US").format(value);
 }
 
 export default async function TaskDetailPage({
@@ -64,9 +85,29 @@ export default async function TaskDetailPage({
   if (!role) notFound();
 
   const canAct = role === "owner" || role === "admin" || role === "member";
-  const t = await getTranslations("taskDetail");
+  const [t, platformStatus] = await Promise.all([
+    getTranslations("taskDetail"),
+    getPlatformStatus(),
+  ]);
+  const manualLaunchability = classifyManualTaskLaunchability(
+    { status: detail.task.status as TaskStatus },
+    detail.latestFlowRun
+      ? { status: detail.latestFlowRun.status as RunStatus }
+      : null,
+    { openBlockers: detail.openBlockers },
+  );
+  const launchDisabledReason =
+    platformStatus.kind !== "ready"
+      ? t("launchSupervisorUnavailable")
+      : manualLaunchability === "launchable"
+        ? undefined
+        : manualLaunchability === "blocked"
+          ? `${t("launchBlocked")} ${detail.openBlockers
+              .map((b) => `${b.key}-${b.number}`)
+              .join(", ")}`
+          : t(`launchReason.${manualLaunchability}`);
 
-  // M33: attached agents with the `manual` trigger — "Run agent" candidates.
+  // M34: attached agents with the `manual` trigger — "Run agent" candidates.
   const manualAgents = canAct
     ? (await getProjectAgentsView(detail.project.id)).attached
         .filter(
@@ -213,6 +254,14 @@ export default async function TaskDetailPage({
                 taskNumber={detail.task.number}
               />
             ) : null}
+            {canAct ? (
+              <LaunchPopover
+                disabledLabel={t("runAgainUnavailable")}
+                disabledReason={launchDisabledReason}
+                label={t("runAgain")}
+                taskId={detail.task.id}
+              />
+            ) : null}
             <FollowButton
               isFollowing={detail.isFollowing}
               labels={{
@@ -281,20 +330,67 @@ export default async function TaskDetailPage({
       </section>
 
       <section className="flex flex-col gap-2">
-        <h2 className="text-[12px] font-semibold uppercase tracking-[0.08em] text-mute">
-          {t("runsTitle")}
-        </h2>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-[12px] font-semibold uppercase tracking-[0.08em] text-mute">
+            {t("runsTitle")}
+          </h2>
+          {detail.totals.runCount > 0 ? (
+            <span className="rounded-full border border-line bg-ivory px-2 py-[2px] font-mono text-[10px] font-bold tracking-[0.04em] text-ink-2">
+              {t("runsCount", { count: detail.totals.runCount })}
+            </span>
+          ) : null}
+        </div>
+        <div
+          className="grid gap-px overflow-hidden rounded-lg border border-line bg-line sm:grid-cols-5"
+          data-testid="task-run-aggregates"
+        >
+          {[
+            [t("aggregateRuns"), String(detail.totals.runCount)],
+            [t("aggregateInput"), formatTokens(detail.totals.inputTokens)],
+            [t("aggregateOutput"), formatTokens(detail.totals.outputTokens)],
+            [
+              t("aggregateCache"),
+              formatTokens(
+                detail.totals.cacheReadTokens +
+                  detail.totals.cacheCreationTokens,
+              ),
+            ],
+            [t("aggregateTokenTotal"), formatTokens(detail.totals.tokenTotal)],
+          ].map(([label, value]) => (
+            <div key={label} className="bg-paper px-3 py-2">
+              <div className="font-mono text-[9.5px] font-bold uppercase tracking-[0.08em] text-mute">
+                {label}
+              </div>
+              <div className="mt-1 font-mono text-[12px] font-semibold text-ink">
+                {value}
+              </div>
+            </div>
+          ))}
+        </div>
         {detail.runs.length === 0 ? (
           <p className="text-[13px] text-mute">{t("runsEmpty")}</p>
         ) : (
           <div className="overflow-x-auto rounded-lg border border-line">
-            <table className="w-full min-w-[560px] text-left text-[12px]">
+            <table className="w-full min-w-[860px] text-left text-[12px]">
               <thead>
                 <tr className="border-b border-line bg-ivory text-[11px] uppercase tracking-[0.08em] text-mute">
                   <th className="px-3 py-2 font-semibold">
                     {t("runsAttempt")}
                   </th>
+                  <th className="px-3 py-2 font-semibold">{t("runsFlow")}</th>
+                  <th className="px-3 py-2 font-semibold">
+                    {t("runsRunnerModel")}
+                  </th>
                   <th className="px-3 py-2 font-semibold">{t("runsStatus")}</th>
+                  <th className="px-3 py-2 font-semibold">
+                    {t("runsDelivery")}
+                  </th>
+                  <th className="px-3 py-2 font-semibold">
+                    {t("runsDuration")}
+                  </th>
+                  <th className="px-3 py-2 font-semibold">
+                    {t("runsTokenTotal")}
+                  </th>
                   <th className="px-3 py-2 font-semibold">
                     {t("runsStarted")}
                   </th>
@@ -308,7 +404,22 @@ export default async function TaskDetailPage({
                     <td className="px-3 py-2 font-mono">
                       #{detail.runs.length - index}
                     </td>
+                    <td className="px-3 py-2 font-mono">
+                      {run.flowRef ?? "—"}
+                    </td>
+                    <td className="px-3 py-2 font-mono">
+                      {run.runnerModel ?? "—"}
+                    </td>
                     <td className="px-3 py-2 font-mono">{run.status}</td>
+                    <td className="px-3 py-2 font-mono">
+                      {run.deliveryStatus ?? "—"}
+                    </td>
+                    <td className="px-3 py-2 font-mono">
+                      {formatDuration(run.durationMs)}
+                    </td>
+                    <td className="px-3 py-2 font-mono">
+                      {formatTokens(run.tokenTotal)}
+                    </td>
                     <td
                       suppressHydrationWarning
                       className="px-3 py-2 font-mono"

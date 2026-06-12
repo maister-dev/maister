@@ -106,6 +106,8 @@ vi.mock("@/lib/authz", () => ({
 vi.mock("@/lib/worktree", () => ({
   branchExists: vi.fn(async () => true),
   promoteLocalMerge: vi.fn(async () => "def5678"),
+  promoteRebaseMerge: vi.fn(async () => "rebased00"),
+  pushBranch: vi.fn(async () => undefined),
   resolveBaseCommit: vi.fn(async () => "tip00000"),
 }));
 

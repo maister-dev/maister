@@ -51,7 +51,7 @@ afterEach(() => {
 });
 
 describe("TOOL_SPECS registry", () => {
-  it("registers all 16 external tools (incl. ADR-088 triage_set + relation ops)", () => {
+  it("registers all 16 external tools (incl. ADR-089 triage_set + relation ops)", () => {
     expect(Object.keys(TOOL_SPECS).sort()).toEqual(
       [
         "comment_create",
@@ -74,7 +74,7 @@ describe("TOOL_SPECS registry", () => {
     );
   });
 
-  it("task_create no longer requires flowId (M33 simple-intent creation)", () => {
+  it("task_create no longer requires flowId (M34 simple-intent creation)", () => {
     expect(
       (TOOL_SPECS.task_create.inputSchema as { required: string[] }).required,
     ).toEqual(["slug", "title", "prompt"]);
