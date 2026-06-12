@@ -411,8 +411,25 @@ Current Scope, these are **Implemented** today:
   `run.abandoned` webhook gap is closed (`source: "ttl"`).
   → `domain-events.md`
 
+- **Platform-agent substrate** (M33, ADR-088/088): `.md`-defined agents in a
+  host-only catalog (`~/.maister/agents/`, `MAISTER_AGENTS_ROOT`) parsed into
+  the `agents` index; project attachments + cron/event trigger bindings;
+  standalone runs as `runs.run_kind='agent'` under a separate budget
+  (`MAISTER_MAX_CONCURRENT_AGENTS`, default 3; flow/scratch default raised
+  to 6) with a per-agent runner chain; workspace axis `none|repo_read|
+  worktree` with 3-layer read-only enforcement (L1 supervisor
+  `readOnlySession` inline arbitration, L2 materialized deny rules, L3
+  dirty-watchdog → one-tx quarantine; ADR-041 untouched); five triggers
+  (manual / cron singleton / domain-event consumer with self-exclusion /
+  inbound webhook / flow-node `settings.agent` binding, engine `1.5.0`);
+  per-launch ephemeral agent tokens feeding the maister MCP facade
+  (`agent:<id>` audit identity); triage verdict ops + simple-intent tasks
+  (`unconfigured` launchability) + the `task.triage_requeued` emitter;
+  catalog/attach UI + board-card launch popover. → `agents.md`
+
 Product backlog/vision (not built): `docs/pv/improvement-roadmap.md` —
-self-improvement loop, benchmarking, project memory, agents-as-actors.
+self-improvement loop, benchmarking, project memory; agents-as-actors
+Stage 3 shipped as M33 (continuous Mγ + enforcement flip remain).
 
 ## Phase 2 Candidates
 
@@ -422,7 +439,8 @@ since the original list — visual Flow designer, diff syntax highlighting,
 judge-node/`ai_judgment` gating — were removed; some below are partially
 landed, see *Built since the original baseline*.)
 
-background agents (reviewer/log/dependency) · Telegram ·
+continuous background agents (Mγ: heartbeat daemons + crash-loop backoff —
+the M33 substrate covers catalog/triggers/one-shot runs) · Telegram ·
 A/B benchmark runs · durable orchestration · full multi-user RBAC w/ action-
 blocking · full Kanban (Done as drag-target / WIP limits / swim-lanes) ·
 event log table · test-run UI button · GitHub Actions CI/CD · project

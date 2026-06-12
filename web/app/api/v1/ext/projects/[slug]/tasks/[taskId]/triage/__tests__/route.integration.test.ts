@@ -1,4 +1,4 @@
-// M33 (ADR-087 D8/D9) — ext triage op: verdict + 'triaged' stamp +
+// M33 (ADR-088 D8/D9) — ext triage op: verdict + 'triaged' stamp +
 // `triage_set` activity in ONE transaction; agent-token identity (polymorphic
 // `agent` actor + `agent:<id>` audit label); the fixed agent scope ceiling;
 // detach revocation.

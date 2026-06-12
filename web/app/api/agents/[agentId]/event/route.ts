@@ -6,7 +6,7 @@ import { launchAgentRun } from "@/lib/agents/launch";
 import { isMaisterError } from "@/lib/errors";
 import { handleExt } from "@/lib/tokens/ext-handler";
 
-// ADR-087: bounded inbound payload — stored verbatim on
+// ADR-088: bounded inbound payload — stored verbatim on
 // runs.trigger_payload and appended to the agent's prompt context.
 const MAX_PAYLOAD_BYTES = 32 * 1024;
 
@@ -26,7 +26,7 @@ function statusForCode(code: string): number {
   }
 }
 
-// The inbound webhook trigger (ADR-087) — the only token-authenticated
+// The inbound webhook trigger (ADR-088) — the only token-authenticated
 // route outside /api/v1/ext. The project derives from the TOKEN
 // (auth-context) and the agent must be attached to it; there is no
 // body-controlled project identifier.

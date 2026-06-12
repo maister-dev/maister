@@ -18,7 +18,7 @@ const log = pino({
 
 // M33: owner-requested default bump 3 → 6 (env semantics unchanged).
 const DEFAULT_CAP = 6;
-// M33 (ADR-087): separate budget for platform-agent runs (run_kind='agent').
+// M33 (ADR-088): separate budget for platform-agent runs (run_kind='agent').
 const DEFAULT_AGENT_CAP = 3;
 
 export type SchedulerPool = "flow" | "agent";

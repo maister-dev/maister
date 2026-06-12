@@ -64,7 +64,7 @@ export interface BacklogCard {
   // ADR-078 D5: open relation blockers — non-empty disables Launch and
   // renders the reason chip with the blocker KEY-Ns.
   blockedBy: Array<{ key: string; number: number }>;
-  // M33 (ADR-087) launch-verdict fields — pre-fill the card's launch popover.
+  // M33 (ADR-088) launch-verdict fields — pre-fill the card's launch popover.
   flowId: string | null;
   triageStatus: "triaged" | null;
   runnerId: string | null;

@@ -351,7 +351,13 @@ export async function getPortfolio(
         and(
           inArray(runs.projectId, projectIds),
           inArray(runs.status, [...ACTIVE_RUN_STATUSES]),
-          isNull(workspaces.removedAt),
+          // Live workspace rows as before — plus workspace-LESS rows only
+          // for agent runs (none/repo_read have no worktree by design).
+          // A bare IS NULL would also surface seeded/legacy kindless rows.
+          or(
+            and(isNotNull(workspaces.id), isNull(workspaces.removedAt)),
+            and(eq(runs.runKind, "agent"), isNull(workspaces.id)),
+          ),
         ),
       )
       .orderBy(desc(runs.startedAt)),

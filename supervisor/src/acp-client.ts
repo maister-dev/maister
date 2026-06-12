@@ -102,7 +102,7 @@ export function resolveReadOnlyAutoReject(
   );
 }
 
-// M33 (ADR-088 L1): read-safe ACP toolCall kinds auto-approved on a
+// M33 (ADR-089 L1): read-safe ACP toolCall kinds auto-approved on a
 // read-only SESSION. Everything outside this allow-list — including
 // `execute` (bash can mutate) and unknown kinds — is denied: the session is
 // headless, so every request MUST be decided inline (there is no HITL inbox
@@ -296,7 +296,7 @@ export async function createAcpConnection(
           name: o.name,
         }));
 
-      // M33 (ADR-088 L1): a read-only SESSION arbitrates every request
+      // M33 (ADR-089 L1): a read-only SESSION arbitrates every request
       // inline — read-safe kinds approved, everything else denied (the
       // session is headless; no HITL inbox exists for it). Decided BEFORE
       // the SSE emit and the pending-permission registration.

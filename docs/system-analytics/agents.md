@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Platform agents (**Designed**, ADR-087/ADR-088, M33; Stage 3 of the
+Platform agents (**Implemented**, ADR-088/ADR-089, M33; Stage 3 of the
 platform-agents staged design) are first-class `.md`-defined actors — a
 triager, reviewers, monitors — registered in a host catalog, attached to
 projects, executed as ACP sessions on the existing `runs` substrate under a
@@ -19,7 +19,7 @@ the clock ([scheduler.md](scheduler.md)), or capability enforcement
 
 ## Domain entities
 
-- **`agents`** (Designed) — parsed index over the canonical `.md` definition
+- **`agents`** (Implemented) — parsed index over the canonical `.md` definition
   at `~/.maister/agents/<id>/agent.md`: `{ id (PK, dir name), scope
   (platform|project), project_id? (NOT NULL iff scope=project), name,
   description, runner_id?, workspace (none|repo_read|worktree), mode
@@ -28,29 +28,29 @@ the clock ([scheduler.md](scheduler.md)), or capability enforcement
   quarantine_reason? }`. The `.md` is the source of truth; re-registration
   re-syncs every column (SET/CLEAR symmetric). Nothing agent-related lives
   inside project repos. See [db/agents-domain.md](../db/agents-domain.md).
-- **`agent_project_links`** (Designed) — attachment + per-project overrides:
+- **`agent_project_links`** (Implemented) — attachment + per-project overrides:
   `{ agent_id, project_id, enabled, runner_override_id? }`,
   `UNIQUE(agent_id, project_id)`. Project-scope agents are auto-linked to
   their bound project at registration.
-- **`agent_schedules`** (Designed rework of the dead M24 table) — trigger
+- **`agent_schedules`** (Implemented rework of the dead M24 table) — trigger
   bindings per (agent, project): `trigger_type='cron'` rows carry
   `cron_expr + timezone + next_fire_at + last_fired_at`;
   `trigger_type='event'` rows carry `event_match.kinds` (subset of the
   ADR-086 taxonomy). `agent_ref` (text), `scheduler_job_id`, and
   `desired_state` are dropped (`continuous` is the future Mγ stage).
-- **Agent runs** (Designed) — `runs` rows with `run_kind='agent'`, nullable
+- **Agent runs** (Implemented) — `runs` rows with `run_kind='agent'`, nullable
   `agent_id`, `trigger_source (manual|cron|domain_event|webhook|flow)`,
   `trigger_event_id?` (claim key), `trigger_payload?` (≤ 32 KB). Budgeted by
   `MAISTER_MAX_CONCURRENT_AGENTS` (default 3), separate from the
   flow/scratch pool. Task-bound agent runs never flip `tasks.status` and
   never bump `attempt_number`.
-- **Agent tokens** (Designed) — `project_tokens` rows with
+- **Agent tokens** (Implemented) — `project_tokens` rows with
   `token_kind='agent'` + `agent_id`, issued per launch with the fixed scope
   set `tasks:read, tasks:triage, comments:read, comments:create,
   relations:read, relations:create, relations:delete`, revoked at the run's
   terminal transition / link detach / GC. Token actor =
   `{ type: 'agent', id: agent_id }` (the ADR-083 pair's first writer).
-- **Triage verdict surface** (Designed) — `tasks.flow_id` nullable
+- **Triage verdict surface** (Implemented) — `tasks.flow_id` nullable
   (simple-intent creation) + verdict columns `runner_id`, `target_branch`,
   `promotion_mode`, `triage_status` (`'triaged'` | NULL); the
   `unconfigured` launchability value; the `task.triage_requeued` emitter.
@@ -60,7 +60,7 @@ the clock ([scheduler.md](scheduler.md)), or capability enforcement
 
 Agent catalog lifecycle (`agents` row; the agent-run lifecycle is the
 standard run FSM in [runs.md](runs.md) — no new run statuses). All
-transitions Designed.
+transitions Implemented.
 
 ```mermaid
 stateDiagram-v2
@@ -74,7 +74,7 @@ stateDiagram-v2
 
 ## Process flows
 
-### (a) Registration / re-sync (Designed)
+### (a) Registration / re-sync (Implemented)
 
 UI CRUD writes the `.md` into the host catalog, then parses and upserts the
 row; a re-sync re-reads the directory. Parsing never executes content.
@@ -90,7 +90,7 @@ flowchart TD
     U --> L[scope=project: auto-link agent_project_links]
 ```
 
-### (b) Standalone launch (manual / cron / domain_event / webhook share this path) (Designed)
+### (b) Standalone launch (manual / cron / domain_event / webhook share this path) (Implemented)
 
 All four standalone triggers converge on one launch service; only the entry
 and the trigger metadata differ.
@@ -111,7 +111,7 @@ sequenceDiagram
     L->>S: POST /sessions (readOnlySession for none/repo_read,<br/>mcpServers carries the facade + token env)
 ```
 
-### (c) Cron + event dispatch (Designed)
+### (c) Cron + event dispatch (Implemented)
 
 The seeded singleton `agent_tick.dispatcher` job (60 s) claims due cron rows
 atomically; the `agent_triggers` outbox consumer claims event matches by
@@ -131,7 +131,7 @@ flowchart TD
     INS -- inserted --> LB[tryStartRun trigger_source=domain_event]
 ```
 
-### (d) Triage Q&A loop (Designed)
+### (d) Triage Q&A loop (Implemented)
 
 The triager converges over several turns by asking questions as ordinary
 task comments; structural loop-termination is the self-exclusion guard.
@@ -157,7 +157,7 @@ sequenceDiagram
     H->>T: optional "Send to triage" — triage_status=NULL +<br/>task.triage_requeued emit (one tx)
 ```
 
-### (e) Flow binding (Designed)
+### (e) Flow binding (Implemented)
 
 `agent: <id>` on an `ai_coding` node (engine ≥ 1.5.0) resolves the catalog
 profile at compile/launch; execution stays inside the flow run's session —
@@ -174,7 +174,7 @@ flowchart TD
     K -- yes --> W[materialize .claude/agents/name.md into worktree]
 ```
 
-### (f) Dirty-watchdog + quarantine (Designed)
+### (f) Dirty-watchdog + quarantine (Implemented)
 
 For `none`/`repo_read` runs the no-write invariant is verified at the
 terminal transition, inside the terminal choke point.
@@ -244,7 +244,7 @@ flowchart TD
   incompatibility rule fires** → `MaisterError("EXECUTOR_UNAVAILABLE")`
   before spawn; no run row.
 - **Agent budget full** → run enters `Pending` with a per-kind queue
-  position; the flow pool is unaffected (ADR-087).
+  position; the flow pool is unaffected (ADR-088).
 - **Crash between claim and spawn** (cron claim committed or event run row
   inserted, process dies) → the run row is `Pending`;
   `promoteNextPending(kind='agent')` on the next `agent_tick.dispatcher`
@@ -253,7 +253,7 @@ flowchart TD
   spawn only).
 - **Human edits the parent checkout during a `repo_read` run** → possible
   false-positive quarantine (`MaisterError("PRECONDITION")` on later
-  launches); accepted per ADR-088 — reason recorded, un-quarantine is one
+  launches); accepted per ADR-089 — reason recorded, un-quarantine is one
   click, and the clean-baseline precondition keeps the window small.
 - **Agent crash with L2 files materialized in the parent checkout** → the
   manifest makes the terminal-sweep restore idempotent; files are deny-rule
@@ -268,14 +268,14 @@ flowchart TD
 
 ## Linked artifacts
 
-- **Decisions:** [ADR-087](../decisions.md#adr-087-platform-agent-catalog-with-per-agent-runner-and-a-five-source-trigger-model),
-  [ADR-088](../decisions.md#adr-088-agent-workspace-axis-with-three-layer-read-only-enforcement-and-quarantine);
+- **Decisions:** [ADR-088](../decisions.md#adr-088-platform-agent-catalog-with-per-agent-runner-and-a-five-source-trigger-model),
+  [ADR-089](../decisions.md#adr-089-agent-workspace-axis-with-three-layer-read-only-enforcement-and-quarantine);
   boundary kept from ADR-041/ADR-043 (materialize-only).
 - **Vision record:** [`../pv/agents-as-environment-actors.md`](../pv/agents-as-environment-actors.md)
-  (Stage-0 brainstorm; superseded by ADR-087/088 with three amendments).
+  (Stage-0 brainstorm; superseded by ADR-088/088 with three amendments).
 - **DB:** [`db/agents-domain.md`](../db/agents-domain.md),
   [`db/runs-domain.md`](../db/runs-domain.md),
-  [`database-schema.md`](../database-schema.md) (migration `0047`).
+  [`database-schema.md`](../database-schema.md) (migration `0048`).
 - **Triggers:** [`scheduler.md`](scheduler.md) (`agent_tick.dispatcher`),
   [`domain-events.md`](domain-events.md) (`agent_triggers` consumer,
   `task.triage_requeued` emitter), [`run-schedules.md`](run-schedules.md)
@@ -291,7 +291,7 @@ flowchart TD
   (`readOnlySession`).
 - **Flow binding:** [`flow-graph.md`](flow-graph.md) +
   [`../flow-dsl.md`](../flow-dsl.md) (`agent:` node field, engine `1.5.0`).
-- **Source (Designed):** `web/lib/agents/*` (`definition.ts`, `registry.ts`,
+- **Source (Implemented):** `web/lib/agents/*` (`definition.ts`, `registry.ts`,
   `launch.ts`, `dirty-watchdog.ts`, `triggers.ts`),
   `web/lib/scheduler/handlers/agent-tick.ts`,
   `web/lib/domain-events/consumers.ts` (`agent_triggers`),

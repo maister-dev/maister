@@ -301,7 +301,7 @@ export async function spawnSession(
     startedAt: new Date().toISOString(),
     logPath,
     monotonicId: seedMonotonicId,
-    // M33 (ADR-088 L1): session-scoped read-only permission arbitration.
+    // M33 (ADR-089 L1): session-scoped read-only permission arbitration.
     readOnlySession: request.readOnlySession === true,
   };
 

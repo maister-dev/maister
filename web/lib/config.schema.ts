@@ -644,7 +644,7 @@ export const aiCodingSettingsSchema = z
   .object({
     runner_type: z.literal("acp").default("acp"),
     runner: z.string().min(1).optional(),
-    // M33 (ADR-087): bind the node to a catalog agent — the agent's .md body
+    // M33 (ADR-088): bind the node to a catalog agent — the agent's .md body
     // substitutes the inline prompt (mode=session) or materializes into
     // .claude/agents/ (mode=subagent). Requires compat.engine_min >= 1.5.0.
     agent: z

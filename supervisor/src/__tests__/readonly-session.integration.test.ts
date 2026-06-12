@@ -1,4 +1,4 @@
-// M33 (ADR-088 L1): session-scoped read-only arbitration. The session is
+// M33 (ADR-089 L1): session-scoped read-only arbitration. The session is
 // headless (no HITL inbox exists for none/repo_read platform-agent runs), so
 // EVERY permission request must be decided inline: read-safe kinds approved,
 // everything else — including execute (bash) and unknown kinds — denied.
@@ -22,7 +22,7 @@ const BASE_SESSION = {
   executor: { agent: "claude", model: "claude-sonnet-4-6" },
 };
 
-describe("StartSessionRequestSchema readOnlySession (ADR-088 L1)", () => {
+describe("StartSessionRequestSchema readOnlySession (ADR-089 L1)", () => {
   it("accepts an optional readOnlySession boolean", () => {
     const r = StartSessionRequestSchema.safeParse({
       ...BASE_SESSION,

@@ -439,6 +439,40 @@ const M11C_VISIBLE_SLUG = "e2e-m11c-visible";
 const M11C_VISIBLE_BRANCH = "maister/e2e-m11c-visible";
 const M11C_VISIBLE_NODE = "implement";
 
+// --- M33 platform-agents fixtures (ADR-088) ---------------------------------
+// One launchable project carrying: a Backlog task for the manual agent launch
+// (spec a), a repo_read auditor agent for the quarantine path (spec c), and a
+// SECOND task bound to a graph flow whose ai_coding node declares
+// `settings.agent` (spec b). The stub supervisor records every prompt, so the
+// binding spec asserts the substituted system prompt by its marker line.
+const AGENTS_SLUG = "e2e-agents";
+const E2E_HELPER_AGENT = "e2e-helper";
+const E2E_AUDITOR_AGENT = "e2e-auditor";
+const AGENT_BODY_MARKER = "E2E-HELPER-SYSTEM-PROMPT-MARKER";
+
+const AGENTS_BINDING_MANIFEST = {
+  schemaVersion: 1,
+  name: "Agent Bound (e2e)",
+  compat: { engine_min: "1.5.0" },
+  nodes: [
+    {
+      id: "implement",
+      type: "ai_coding",
+      action: { prompt: "Apply the bound-agent e2e change." },
+      settings: { agent: E2E_HELPER_AGENT },
+      transitions: { success: "review" },
+    },
+    {
+      id: "review",
+      type: "human",
+      finish: {
+        human: { role: "maintainer", decisions: ["approve"] },
+      },
+      transitions: { approve: "done" },
+    },
+  ],
+};
+
 const M11C_VISIBLE_MANIFEST = {
   schemaVersion: 1,
   name: "AIF Settings Visible (e2e)",
@@ -4661,8 +4695,8 @@ async function seedFlowStudioArtifactsFixture(
   ]);
 
   await pool.query(
-    `INSERT INTO projects (id, slug, name, repo_path, main_branch, maister_yaml_path)
-     VALUES ($1, $2, $3, $4, 'main', $5)`,
+    `INSERT INTO projects (id, slug, name, repo_path, main_branch, maister_yaml_path, task_key)
+     VALUES ($1, $2, $3, $4, 'main', $5, 'E' || upper(substr(md5(random()::text), 1, 8)))`,
     [
       ids.project,
       FLOW_STUDIO_ARTIFACTS_SLUG,
@@ -4759,8 +4793,8 @@ async function seedInstalledPackageFixture(
   );
 
   await pool.query(
-    `INSERT INTO projects (id, slug, name, repo_path, main_branch, maister_yaml_path)
-     VALUES ($1, $2, $3, $4, 'main', $5)`,
+    `INSERT INTO projects (id, slug, name, repo_path, main_branch, maister_yaml_path, task_key)
+     VALUES ($1, $2, $3, $4, 'main', $5, 'E' || upper(substr(md5(random()::text), 1, 8)))`,
     [
       ids.project,
       FLOW_VIEWER_SLUG,
@@ -4821,6 +4855,219 @@ async function seedInstalledPackageFixture(
     implementNode: FLOW_VIEWER_IMPLEMENT_NODE,
     reviewNode: FLOW_VIEWER_REVIEW_NODE,
     sampleFilePath: "skills/demo/SKILL.md",
+  };
+}
+
+type PlatformAgentsFixture = ProjectFixture & {
+  helperAgentId: string;
+  auditorAgentId: string;
+  manualTaskId: string;
+  manualTaskNumber: number;
+  boundTaskId: string;
+  boundTaskNumber: number;
+  agentBodyMarker: string;
+  agentsRoot: string;
+  // The repo_read quarantine scenario gets its OWN project: the spec dirties
+  // this repo mid-run, which would flake the clean-parent-repo precondition
+  // of the flow-binding launch if they shared one.
+  quarantine: {
+    projectId: string;
+    projectSlug: string;
+    repoPath: string;
+    taskId: string;
+    taskNumber: number;
+  };
+};
+
+function writeAgentDefinition(args: {
+  agentsRoot: string;
+  id: string;
+  workspace: "none" | "repo_read" | "worktree";
+  triggers: string[];
+  body: string;
+}): string {
+  const dir = path.join(args.agentsRoot, args.id);
+
+  mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, "agent.md");
+
+  writeFileSync(
+    file,
+    `---
+name: ${args.id}
+description: e2e fixture agent
+scope: platform
+workspace: ${args.workspace}
+mode: session
+triggers:
+${args.triggers.map((t) => `  - ${t}`).join("\n")}
+risk_tier: read_only
+---
+${args.body}
+`,
+    "utf8",
+  );
+
+  return file;
+}
+
+async function seedPlatformAgentsFixture(
+  pool: Pool,
+  adminId: string,
+): Promise<PlatformAgentsFixture> {
+  const base = await seedLaunchableProjectFixture(pool, {
+    slug: AGENTS_SLUG,
+    projectName: "E2E Agents",
+    userId: adminId,
+    repoPath: path.join(RUNTIME_ROOT, "repos", AGENTS_SLUG),
+    task: {
+      title: "Manual agent launch target",
+      prompt: "Target task for the standalone agent runs.",
+      status: "Backlog",
+      stage: "Backlog",
+    },
+  });
+  const manualTaskId = base.taskId!;
+  const manualTaskNumber = Number(
+    (await pool.query(`SELECT number FROM tasks WHERE id = $1`, [manualTaskId]))
+      .rows[0].number,
+  );
+
+  // Host agent catalog (MAISTER_AGENTS_ROOT in playwright webServer env).
+  const agentsRoot = path.join(RUNTIME_ROOT, "agents");
+  const helperPath = writeAgentDefinition({
+    agentsRoot,
+    id: E2E_HELPER_AGENT,
+    workspace: "none",
+    triggers: ["manual", "flow"],
+    body: `${AGENT_BODY_MARKER}\nYou are the e2e helper agent. Reply tersely.`,
+  });
+  const auditorPath = writeAgentDefinition({
+    agentsRoot,
+    id: E2E_AUDITOR_AGENT,
+    workspace: "repo_read",
+    triggers: ["manual"],
+    body: "You audit the repository without writing anything.",
+  });
+
+  await pool.query(`DELETE FROM agents WHERE id = ANY($1::text[])`, [
+    [E2E_HELPER_AGENT, E2E_AUDITOR_AGENT],
+  ]);
+  await pool.query(
+    `INSERT INTO agents
+       (id, scope, name, description, workspace, mode, triggers, risk_tier, source_path)
+     VALUES
+       ($1, 'platform', $1, 'e2e fixture agent', 'none', 'session',
+        '["manual","flow"]'::jsonb, 'read_only', $2),
+       ($3, 'platform', $3, 'e2e fixture agent', 'repo_read', 'session',
+        '["manual"]'::jsonb, 'read_only', $4)`,
+    [E2E_HELPER_AGENT, helperPath, E2E_AUDITOR_AGENT, auditorPath],
+  );
+  // The quarantine project — the auditor (repo_read) is linked HERE only.
+  const quarantineBase = await seedLaunchableProjectFixture(pool, {
+    slug: `${AGENTS_SLUG}-quarantine`,
+    projectName: "E2E Agents Quarantine",
+    userId: adminId,
+    repoPath: path.join(RUNTIME_ROOT, "repos", `${AGENTS_SLUG}-quarantine`),
+    task: {
+      title: "Audit target",
+      prompt: "Target task for the repo_read quarantine run.",
+      status: "Backlog",
+      stage: "Backlog",
+    },
+  });
+  const quarantineTaskNumber = Number(
+    (
+      await pool.query(`SELECT number FROM tasks WHERE id = $1`, [
+        quarantineBase.taskId!,
+      ])
+    ).rows[0].number,
+  );
+
+  await pool.query(
+    `INSERT INTO agent_project_links (id, agent_id, project_id)
+     VALUES ($1, $2, $3), ($4, $5, $6)`,
+    [
+      randomUUID(),
+      E2E_HELPER_AGENT,
+      base.projectId,
+      randomUUID(),
+      E2E_AUDITOR_AGENT,
+      quarantineBase.projectId,
+    ],
+  );
+
+  // Second flow: the graph manifest carrying the ai_coding `settings.agent`
+  // binding (spec b), plus a Backlog task bound to it.
+  const boundFlowSource = path.join(
+    RUNTIME_ROOT,
+    "flows",
+    `${AGENTS_SLUG}-bound-flow`,
+  );
+
+  createLocalFlowSource(boundFlowSource);
+  const boundRevisionId = randomUUID();
+  const boundFlowId = randomUUID();
+  const boundTaskId = randomUUID();
+
+  await pool.query(
+    `INSERT INTO flow_revisions
+       (id, flow_ref_id, source, version_label, resolved_revision, manifest_digest, manifest,
+        schema_version, engine_min, installed_path, setup_status, package_status)
+     VALUES ($1, 'agent-bound', $2, 'v0.0.1', $3, $4, $5, 1, '1.5.0', $6,
+        'not_required', 'Installed')`,
+    [
+      boundRevisionId,
+      boundFlowSource,
+      randomUUID().replace(/-/g, "").padEnd(40, "0").slice(0, 40),
+      `sha256:${boundRevisionId}`,
+      JSON.stringify(AGENTS_BINDING_MANIFEST),
+      boundFlowSource,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO flows
+       (id, project_id, flow_ref_id, source, version, revision, installed_path,
+        manifest, schema_version, enabled_revision_id, enablement_state, trust_status)
+     VALUES ($1, $2, 'agent-bound', $3, 'v0.0.1', $4, $3, $5, 1, $6,
+        'Enabled', 'trusted_by_policy')`,
+    [
+      boundFlowId,
+      base.projectId,
+      boundFlowSource,
+      boundRevisionId.replace(/-/g, "").padEnd(40, "0").slice(0, 40),
+      JSON.stringify(AGENTS_BINDING_MANIFEST),
+      boundRevisionId,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO tasks (id, project_id, number, title, prompt, flow_id, status, stage)
+     VALUES ($1, $2, (SELECT COALESCE(MAX(number), 0) + 1 FROM tasks WHERE project_id = $2),
+       'Bound-agent flow target', 'Run the agent-bound flow.', $3, 'Backlog', 'Backlog')`,
+    [boundTaskId, base.projectId, boundFlowId],
+  );
+  const boundTaskNumber = Number(
+    (await pool.query(`SELECT number FROM tasks WHERE id = $1`, [boundTaskId]))
+      .rows[0].number,
+  );
+
+  return {
+    ...base,
+    helperAgentId: E2E_HELPER_AGENT,
+    auditorAgentId: E2E_AUDITOR_AGENT,
+    manualTaskId,
+    manualTaskNumber,
+    boundTaskId,
+    boundTaskNumber,
+    agentBodyMarker: AGENT_BODY_MARKER,
+    agentsRoot,
+    quarantine: {
+      projectId: quarantineBase.projectId,
+      projectSlug: quarantineBase.projectSlug,
+      repoPath: quarantineBase.repoPath,
+      taskId: quarantineBase.taskId!,
+      taskNumber: quarantineTaskNumber,
+    },
   };
 }
 
@@ -5023,6 +5270,7 @@ async function main(): Promise<void> {
       admin.id,
     );
     const flowViewer = await seedInstalledPackageFixture(pool, admin.id);
+    const platformAgents = await seedPlatformAgentsFixture(pool, admin.id);
 
     await pool.query(
       `INSERT INTO project_members (id, project_id, user_id, role)
@@ -5072,6 +5320,7 @@ async function main(): Promise<void> {
         reviewComments,
         flowStudioArtifacts,
         flowViewer,
+        platformAgents,
       },
     };
     const outDir = path.resolve("e2e/.auth");
@@ -5107,7 +5356,8 @@ async function main(): Promise<void> {
         `, flows-authoring cap ${flowsAuthoring.capId} (${FLOWS_AUTHORING_SLUG})` +
         `, review-comments ${reviewComments.runId} (${RC_SLUG})` +
         `, flow-studio-artifacts cap ${flowStudioArtifacts.capId} (${FLOW_STUDIO_ARTIFACTS_SLUG})` +
-        `, flow-viewer ref ${flowViewer.flowRefId} (${FLOW_VIEWER_SLUG})`,
+        `, flow-viewer ref ${flowViewer.flowRefId} (${FLOW_VIEWER_SLUG})` +
+        `, platform-agents ${platformAgents.helperAgentId}/${platformAgents.auditorAgentId} (${AGENTS_SLUG})`,
     );
   } finally {
     await pool.end();

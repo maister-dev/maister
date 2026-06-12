@@ -41,7 +41,7 @@ export const noopConsumer: DomainEventConsumer = {
 
 // Code-owned registry (ADR-086): future consumers (the re-pointed webhooks
 // fanout, notifiers) register here. Removing an entry leaves its cursor row
-// dormant — cleanup is deferred until pruning lands. M33 (ADR-087) adds
+// dormant — cleanup is deferred until pruning lands. M33 (ADR-088) adds
 // agent_triggers — the first real consumer: it matches event kind + project
 // against enabled agent_schedules event rows (with the self-exclusion
 // anti-loop guard) and claims spawns via the partial-unique Pending run

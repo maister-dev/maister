@@ -58,7 +58,7 @@ function assertFlowRunInvariant(input: RunKindInvariantInput): void {
   }
 }
 
-// M33 (ADR-087): agent runs carry the catalog identity instead of a flow;
+// M33 (ADR-088): agent runs carry the catalog identity instead of a flow;
 // taskId is optional (task-bound triage/commentary vs standalone monitors).
 function assertAgentRunInvariant(input: RunKindInvariantInput): void {
   if (!input.agentId) {

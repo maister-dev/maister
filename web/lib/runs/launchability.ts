@@ -61,7 +61,7 @@ export function classifyTaskLaunchability(
       : RUN_STATUS_LAUNCHABILITY[latestRun.status];
 
   // Precedence: target_terminal > crashed > busy > blocked > unconfigured >
-  // launchable (M33, ADR-087) — relations gate LAUNCHING only; they never
+  // launchable (M33, ADR-088) — relations gate LAUNCHING only; they never
   // mask an active run's state; a flowless simple-intent task is not
   // launchable until triage (or a human) fills the flow.
   if (base === "launchable") {

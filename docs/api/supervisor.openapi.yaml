@@ -861,7 +861,7 @@ components:
           type: boolean
           default: false
           description: |
-            (M33 — Designed, ADR-088 L1.) Session-scoped generalization of the
+            (M33 — Implemented, ADR-089 L1.) Session-scoped generalization of the
             per-prompt `readOnlyTurn` (ADR-078): for the whole session the ACP
             permission handler auto-DENIES write-class tool permission
             requests and auto-APPROVES an allow-list of read-safe kinds. No

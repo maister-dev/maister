@@ -140,7 +140,7 @@ export async function POST(
         );
       }
 
-      // Actor mapping (ADR-078 D12 + ADR-087): user-owned token acts as that
+      // Actor mapping (ADR-078 D12 + ADR-088): user-owned token acts as that
       // user, agent token acts as the agent (the triager's Q&A channel), an
       // ownerless project token acts as system with the token recorded in the
       // comment-activity payload.

@@ -18,6 +18,20 @@ import {
 } from "@/lib/flows/runner-agent";
 import { isMaisterError } from "@/lib/errors";
 
+// M33 (ADR-088): the agent-binding resolution is mocked at the module
+// boundary — the resolver's own contract (registration, `flow` trigger,
+// enabled/quarantine gates, subagent materialization) is covered by
+// lib/agents/__tests__/flow-binding-floor.test.ts; here we assert the
+// runner's substitution WIRING.
+const flowBindingMock = vi.hoisted(() => ({
+  resolveFlowBoundAgent: vi.fn(async () => ({
+    mode: "session" as const,
+    prompt: "E2E-HELPER-SYSTEM-PROMPT-MARKER\nYou are the bound agent.",
+  })),
+}));
+
+vi.mock("@/lib/agents/flow-binding", () => flowBindingMock);
+
 const baseFlowCtx: FlowContext = {
   task: { id: "t1", title: "T", prompt: "go", attemptNumber: 1 },
   run: { id: "run-1", attemptNumber: 1, projectSlug: "demo" },
@@ -709,5 +723,54 @@ describe("runner-agent — runSlashInExisting profile-consistency guard (M14 T4.
 
     expect(isMaisterError(caught)).toBe(true);
     expect((caught as { code?: string }).code).toBe("CONFIG");
+  });
+});
+
+describe("runner-agent — catalog-agent binding substitution (M33, ADR-088)", () => {
+  it("session-mode binding sends the agent body + '## Task' + node prompt as the session prompt", async () => {
+    const db = makeFakeDb();
+    const api = makeApi({ events: [update(1, "ok"), exited(2)] });
+
+    await runAgentStep(
+      { id: "plan", type: "agent", mode: "new-session", prompt: "go do it" },
+      makeCtx(db, { agentBinding: { id: "e2e-helper" } }),
+      api,
+    );
+
+    expect(flowBindingMock.resolveFlowBoundAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: "e2e-helper",
+        executorAgent: "claude",
+        worktreePath: "/tmp/wt",
+      }),
+    );
+
+    const prompt = (api.sendPrompt as ReturnType<typeof vi.fn>).mock.calls[0][1]
+      .prompt as string;
+
+    expect(prompt).toContain("E2E-HELPER-SYSTEM-PROMPT-MARKER");
+    expect(prompt).toContain("\n\n## Task\n\ngo do it");
+    // The agent body leads — it is the system block.
+    expect(prompt.startsWith("E2E-HELPER-SYSTEM-PROMPT-MARKER")).toBe(true);
+  });
+
+  it("an unbound step never touches the resolver and keeps the inline prompt", async () => {
+    flowBindingMock.resolveFlowBoundAgent.mockClear();
+
+    const db = makeFakeDb();
+    const api = makeApi({ events: [update(1, "ok"), exited(2)] });
+
+    await runAgentStep(
+      { id: "plan", type: "agent", mode: "new-session", prompt: "plain" },
+      makeCtx(db),
+      api,
+    );
+
+    expect(flowBindingMock.resolveFlowBoundAgent).not.toHaveBeenCalled();
+
+    const prompt = (api.sendPrompt as ReturnType<typeof vi.fn>).mock.calls[0][1]
+      .prompt as string;
+
+    expect(prompt).toBe("plain");
   });
 });

@@ -1,4 +1,4 @@
-// M33 (ADR-087 D13) — the task.triage_requeued emitter (ONE transaction:
+// M33 (ADR-088 D13) — the task.triage_requeued emitter (ONE transaction:
 // stamp NULL + domain event + activity, M32 same-tx rule) and the web
 // verdict PATCH semantics (SET/CLEAR, allow-list validation, no
 // triage_status touch).

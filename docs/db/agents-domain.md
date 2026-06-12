@@ -1,13 +1,13 @@
 # Platform agents ERD
 
-Tables for the M33 platform-agent substrate (ADR-087/ADR-088): the agent
+Tables for the M33 platform-agent substrate (ADR-088/ADR-089): the agent
 catalog index, project attachments, trigger bindings, plus the agent-shaped
 columns added to `runs`, `tasks`, and `project_tokens`. See
 [`../system-analytics/agents.md`](../system-analytics/agents.md) for process
 flows and [`../database-schema.md`](../database-schema.md) for the
 column-level narrative.
 
-> **Status: Designed.** Migration `0047_platform_agents.sql` adds `agents` +
+> **Status: Implemented.** Migration `0048_platform_agents.sql` adds `agents` +
 > `agent_project_links`, reworks the dead M24 `agent_schedules` shape in
 > place, and alters `runs` / `tasks` / `project_tokens`.
 
@@ -30,7 +30,7 @@ erDiagram
         text name "NOT NULL — frontmatter"
         text description "NOT NULL — frontmatter"
         text runner_id FK "NULL -> platform_acp_runners(id) SET NULL"
-        text workspace "none|repo_read|worktree (ADR-088)"
+        text workspace "none|repo_read|worktree (ADR-089)"
         text mode "session|subagent"
         jsonb triggers "NOT NULL — subset of manual|cron|domain_event|webhook|flow"
         jsonb capability_profile "NULL — M14 shape"
@@ -125,5 +125,5 @@ terminal history.
 - Process flows: [`../system-analytics/agents.md`](../system-analytics/agents.md).
 - Global ERD: [`erd.md`](erd.md); run columns also in [`runs-domain.md`](runs-domain.md).
 - Narrative: [`../database-schema.md`](../database-schema.md).
-- Decision records: ADR-087, ADR-088 in [`../decisions.md`](../decisions.md).
-- Source (Designed): `web/lib/db/schema.ts` (migration `0047_platform_agents.sql`).
+- Decision records: ADR-088, ADR-089 in [`../decisions.md`](../decisions.md).
+- Source (Implemented): `web/lib/db/schema.ts` (migration `0048_platform_agents.sql`).

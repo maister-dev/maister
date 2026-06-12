@@ -21,6 +21,26 @@ export type E2EProjectFixture = {
   branch?: string;
 };
 
+// M33 platform-agents fixture (ADR-088): manual launch, flow binding,
+// repo_read quarantine.
+export type E2EPlatformAgentsFixture = E2EProjectFixture & {
+  helperAgentId: string;
+  auditorAgentId: string;
+  manualTaskId: string;
+  manualTaskNumber: number;
+  boundTaskId: string;
+  boundTaskNumber: number;
+  agentBodyMarker: string;
+  agentsRoot: string;
+  quarantine: {
+    projectId: string;
+    projectSlug: string;
+    repoPath: string;
+    taskId: string;
+    taskNumber: number;
+  };
+};
+
 export type E2ERegistrationFixture = {
   repoPath: string;
   duplicateRepoPath: string;
@@ -133,6 +153,7 @@ export type E2EFixtures = {
     m16: E2EM16Fixture;
     m22: E2EM22Fixture;
     m23: E2EM23Fixture;
+    platformAgents: E2EPlatformAgentsFixture;
   };
 };
 

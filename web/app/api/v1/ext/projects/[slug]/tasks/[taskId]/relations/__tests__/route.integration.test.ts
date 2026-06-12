@@ -1,4 +1,4 @@
-// M33 (ADR-087 D8) — ext relations ops: list/add/remove mirroring the web
+// M33 (ADR-088 D8) — ext relations ops: list/add/remove mirroring the web
 // route (`toNumber` resolved strictly within the URL-param project),
 // idempotent duplicates/removals, scope enforcement, token-derived actor.
 

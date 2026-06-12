@@ -131,7 +131,7 @@ describe("filterManifestPorcelain", () => {
   });
 });
 
-describe("dirty-watchdog terminal choke point (ADR-088 L3)", () => {
+describe("dirty-watchdog terminal choke point (ADR-089 L3)", () => {
   it("dirty repo_read run → quarantine + system comment + activity, relaunch refused", async () => {
     const { taskId, runId } = await seedWorld();
 

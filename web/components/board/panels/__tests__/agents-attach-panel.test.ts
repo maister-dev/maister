@@ -1,4 +1,4 @@
-// M33 (ADR-087 D11) — the per-project attach panel: attached rows with
+// M33 (ADR-088 D11) — the per-project attach panel: attached rows with
 // schedule summaries, the attach picker for canManage admins, read-only
 // rendering otherwise. renderToStaticMarkup — no jsdom (repo convention).
 

@@ -551,7 +551,7 @@ scheduler_job_runs {
   errorCode?, errorMessage?
 }
 
-agent_schedules {                  // M33 Designed rework (migration 0047) —
+agent_schedules {                  // M33 rework (migration 0048) —
   id, projectId,                   //   the M24 shape was dead code (zero readers)
   agentId,                         // FK -> agents.id CASCADE (was text agentRef)
   triggerType: 'cron' | 'event',   // 'manual'/'continuous' dropped (Mγ later)
@@ -608,7 +608,7 @@ run_schedules {
 `(enabled, next_fire_at)` (dispatcher due-scan), and `(last_run_id)`
 (FK SET NULL + the read-time `lastRunStatus` join).
 
-## Platform agent tables (Designed — ADR-087/ADR-088, migration `0047`)
+## Platform agent tables (Designed — ADR-088/ADR-089, migration `0048`)
 
 The M33 agent catalog: `.md` definitions in the host catalog
 (`~/.maister/agents/<id>/agent.md`) parsed into an index row; attachments and
@@ -625,14 +625,14 @@ agents {
   name, description,               // frontmatter, required
   runnerId?,                       // FK -> platform_acp_runners.id SET NULL;
                                    //   tier 3 of the standalone runner chain
-  workspace: 'none' | 'repo_read' | 'worktree',   // ADR-088 axis
+  workspace: 'none' | 'repo_read' | 'worktree',   // ADR-089 axis
   mode: 'session' | 'subagent',
   triggers (jsonb),                // subset of manual|cron|domain_event|webhook|flow
   capabilityProfile? (jsonb),      // M14 shape; materialize-only (ADR-041 boundary)
   riskTier: 'read_only' | 'standard' | 'destructive',
   sourcePath,                      // canonical .md path
   enabled,                         // UI toggle
-  quarantinedAt?, quarantineReason?,  // ADR-088 dirty-watchdog flag
+  quarantinedAt?, quarantineReason?,  // ADR-089 dirty-watchdog flag
   createdAt, updatedAt
 }
 
@@ -703,21 +703,21 @@ draft updates increment `draft_version` and stale callers receive `CONFLICT`.
   id, projectId, title, prompt,
   number,                        // ADR-083 (Implemented, 0043): per-project monotonic,
                                  //   UNIQUE (project_id, number); KEY-N = task_key-number
-  flowId?,                       // FK -> flows.id; NULLABLE (M33 Designed,
-                                 //   migration 0047) — simple-intent tasks are
+  flowId?,                       // FK -> flows.id; NULLABLE (M33,
+                                 //   migration 0048) — simple-intent tasks are
                                  //   created flowless and classify `unconfigured`
                                  //   until a triage verdict or the launch popover
                                  //   fills the flow
   status: 'Backlog' | 'InFlight' | 'Done' | 'Abandoned',
   stage: 'Backlog' | 'Prepare',  // M9 board column (DEFAULT 'Backlog')
   attemptNumber,                 // monotonic per task, starts at 1
-  triageStatus?,                 // M33 Designed: 'triaged' | NULL (untriaged);
+  triageStatus?,                 // M33: 'triaged' | NULL (untriaged);
                                  //   stamped by the ext triage op, cleared by
                                  //   "Send to triage"
-  runnerId?,                     // M33 Designed: verdict runner, FK SET NULL;
+  runnerId?,                     // M33: verdict runner, FK SET NULL;
                                  //   board Launch passes it as launchOverride
-  targetBranch?,                 // M33 Designed: verdict target branch (text)
-  promotionMode?,                // M33 Designed: 'local_merge' | 'pull_request'
+  targetBranch?,                 // M33: verdict target branch (text)
+  promotionMode?,                // M33: 'local_merge' | 'pull_request'
   createdByUserId?,              // nullable FK -> users.id; user-token owner
   createdAt, updatedAt
 }
@@ -853,15 +853,15 @@ unread badge and inbox panel.
 {
   id,
   runKind: 'flow' | 'scratch'
-         | 'agent',              // M33 Designed (migration 0047); DEFAULT 'flow'
-  agentId?,                      // M33 Designed: FK -> agents.id SET NULL;
+         | 'agent',              // M33 (migration 0048); DEFAULT 'flow'
+  agentId?,                      // M33: FK -> agents.id SET NULL;
                                  //   set iff runKind='agent'
-  triggerSource?,                // M33 Designed: 'manual' | 'cron'
+  triggerSource?,                // M33: 'manual' | 'cron'
                                  //   | 'domain_event' | 'webhook' | 'flow'
-  triggerEventId?,               // M33 Designed: bigint domain_events.id —
+  triggerEventId?,               // M33: bigint domain_events.id —
                                  //   partial-UNIQUE claim key (agent_id,
                                  //   trigger_event_id) for outbox no-dup
-  triggerPayload?,               // M33 Designed: jsonb webhook/event context,
+  triggerPayload?,               // M33: jsonb webhook/event context,
                                  //   bounded <= 32 KB at the boundary
   taskId?,                       // nullable for scratch runs
   projectId,
@@ -1421,16 +1421,16 @@ rationale.
   projectId,                                // NOT NULL, FK -> projects.id, ON DELETE CASCADE
   name,                                     // NOT NULL; human-readable label
   tokenKind,                                // NOT NULL DEFAULT 'project'; 'project' | 'user'
-                                            //   | 'agent' (M33 Designed, migration 0047)
+                                            //   | 'agent' (M33, migration 0048)
   ownerUserId?,                             // nullable FK -> users.id, ON DELETE SET NULL;
                                             //   set for user-owned tokens
-  agentId?,                                 // M33 Designed: nullable FK -> agents.id,
+  agentId?,                                 // M33: nullable FK -> agents.id,
                                             //   ON DELETE CASCADE; CHECK (tokenKind='agent')
                                             //   = (agentId IS NOT NULL). Agent tokens are
                                             //   per-launch ephemeral: issued at agent-run
                                             //   spawn with a fixed scope set, revoked at
                                             //   the run's terminal transition / link
-                                            //   detach / GC (ADR-087)
+                                            //   detach / GC (ADR-088)
   prefix,                                   // NOT NULL, INDEX; first 12 chars of the full
                                             //   token string (mai_...) — lookup key
   tokenHash,                                // NOT NULL; sha256_hex(fullToken) — plaintext
@@ -2014,13 +2014,13 @@ projects
   ├── capability_imports (FK projectId, cascade)      ← M14 Implemented
   ├── project_flow_roles (FK projectId, cascade)      ← M13
   ├── actor_identities   (FK projectId, cascade)      ← M13
-  ├── agents             (FK projectId, cascade)      ← M33 Designed (project-scope rows only)
-  │     ├── agent_project_links (FK agentId, cascade)             ← M33 Designed
-  │     ├── agent_schedules     (FK agentId, cascade)             ← M33 Designed
-  │     ├── project_tokens.agent_id (FK agentId, cascade)         ← M33 Designed (ephemeral agent tokens)
+  ├── agents             (FK projectId, cascade)      ← M33 (project-scope rows only)
+  │     ├── agent_project_links (FK agentId, cascade)             ← M33
+  │     ├── agent_schedules     (FK agentId, cascade)             ← M33
+  │     ├── project_tokens.agent_id (FK agentId, cascade)         ← M33 (ephemeral agent tokens)
   │     └── runs.agent_id       (FK agentId, SET NULL — history survives catalog deletes)
-  ├── agent_project_links (FK projectId, cascade)     ← also direct, M33 Designed
-  ├── agent_schedules     (FK projectId, cascade)     ← also direct, M33 Designed rework
+  ├── agent_project_links (FK projectId, cascade)     ← also direct, M33
+  ├── agent_schedules     (FK projectId, cascade)     ← also direct, M33 rework
   ├── tasks              (FK projectId, cascade)
   │     ├── task_relations   (FK fromTaskId / toTaskId, cascade)   ← ADR-083
   │     ├── task_comments    (FK taskId,   cascade)                ← ADR-083

@@ -39,7 +39,7 @@ async function sendJson(
   }
 }
 
-// M33 (ADR-087 D11): the platform agent catalog — view-only table, edits in
+// M33 (ADR-088 D11): the platform agent catalog — view-only table, edits in
 // the modal, quarantine surfaced inline, manual launch per row.
 export function AgentsPanel({
   agents,

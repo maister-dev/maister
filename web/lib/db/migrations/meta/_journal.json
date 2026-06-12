@@ -332,17 +332,17 @@
       "breakpoints": true
     },
     {
-      "idx": 47,
+      "idx": 48,
       "version": "7",
       "when": 1781224127751,
-      "tag": "0047_platform_agents",
+      "tag": "0048_platform_agents",
       "breakpoints": true
     },
     {
-      "idx": 48,
+      "idx": 49,
       "version": "7",
       "when": 1781226997351,
-      "tag": "0048_agent_activity_kinds",
+      "tag": "0049_agent_activity_kinds",
       "breakpoints": true
     }
   ]

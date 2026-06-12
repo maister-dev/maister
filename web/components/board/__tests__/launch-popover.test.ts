@@ -87,7 +87,7 @@ describe("LaunchPopover — one-click default (M18 T1.5)", () => {
   });
 });
 
-describe("LaunchPopover — unconfigured task (M33, ADR-087 D11)", () => {
+describe("LaunchPopover — unconfigured task (M33, ADR-088 D11)", () => {
   it("replaces the one-click label with the set-up affordance when the task has no flow", () => {
     const html = render({
       verdict: {

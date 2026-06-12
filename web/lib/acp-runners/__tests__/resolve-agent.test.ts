@@ -143,7 +143,7 @@ describe("resolveAgentRunner — standalone chain precedence", () => {
   });
 });
 
-describe("resolveAgentRunner — compatibility refusals (ADR-087/088)", () => {
+describe("resolveAgentRunner — compatibility refusals (ADR-088/088)", () => {
   it("refuses a subagent-mode definition on a non-claude capability runner", () => {
     expectUnavailable(
       () =>

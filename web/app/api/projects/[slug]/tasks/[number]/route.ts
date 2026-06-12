@@ -14,7 +14,7 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-// M33 (ADR-087 D11): the board card's launch popover persists its
+// M33 (ADR-088 D11): the board card's launch popover persists its
 // flow/runner/branch/policy edits here in ONE transaction — SET/CLEAR
 // symmetric, an explicit null clears a field. Never touches triage_status.
 const patchBodySchema = z

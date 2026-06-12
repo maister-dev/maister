@@ -339,7 +339,7 @@ export async function updateAgentLink(
   );
 }
 
-// Detach (ADR-087 rotation guarantee): link + bindings removed and every
+// Detach (ADR-088 rotation guarantee): link + bindings removed and every
 // live token for the (agent, project) pair revoked, in ONE transaction.
 export async function detachAgent(
   input: { projectId: string; agentId: string },

@@ -6267,7 +6267,7 @@ the M24 clock.
 
 ---
 
-### ADR-087: Platform agent catalog with per-agent runner and a five-source trigger model
+### ADR-088: Platform agent catalog with per-agent runner and a five-source trigger model
 
 **Date:** 2026-06-12
 **Status:** Accepted
@@ -6296,7 +6296,7 @@ sources.
   agent-related lives inside project repos** (no repo sync hook). Frontmatter:
   `name`, `description`, `scope: platform|project`, `project` (slug, required
   iff `scope=project` — project scope is a pure binding), `runner` (optional
-  runner id), `workspace: none|repo_read|worktree` (ADR-088), `mode:
+  runner id), `workspace: none|repo_read|worktree` (ADR-089), `mode:
   session|subagent`, `triggers: (manual|cron|domain_event|webhook|flow)[]`,
   `capability_profile` (M14 shape, optional), `risk_tier:
   read_only|standard|destructive`. Unknown keys are refused (strict schema).
@@ -6321,7 +6321,7 @@ sources.
   `capability_agent ≠ claude` (`.claude/agents/*.md` is a Claude-SDK
   artifact), and `workspace ∈ {none, repo_read}` on a runner with
   `permission_policy = dangerously_skip_permissions` (suppressed permission
-  requests make ADR-088 L1 impossible). Flow-bound nodes keep the existing
+  requests make ADR-089 L1 impossible). Flow-bound nodes keep the existing
   six-tier flow chain — `agents.runner_id` participates only in the
   standalone chain.
 - **Execution substrate = `runs`, separate budget.** `run_kind` gains
@@ -6402,7 +6402,7 @@ sources.
   `agent:<id>`.
 
 **Consequences:**
-- One migration (`0047_platform_agents.sql`): `agents`,
+- One migration (`0048_platform_agents.sql`): `agents`,
   `agent_project_links`, the `agent_schedules` rework, `runs`/`tasks`/
   `project_tokens` alters, the partial unique trigger-claim index, and the
   `unconfigured`-enabling `tasks.flow_id` NULLABLE change.
@@ -6442,7 +6442,7 @@ sources.
 
 ---
 
-### ADR-088: Agent workspace axis with three-layer read-only enforcement and quarantine
+### ADR-089: Agent workspace axis with three-layer read-only enforcement and quarantine
 
 **Date:** 2026-06-12
 **Status:** Accepted
@@ -6485,7 +6485,7 @@ tracked materialization manifest, restored before the check).
   pending-permission deferreds are created — `readOnlySession` sessions
   never reach the HITL inbox, and no deferred can leak. Runners with
   `permission_policy = dangerously_skip_permissions` are refused for these
-  agents before spawn (ADR-087) because they suppress the very requests L1
+  agents before spawn (ADR-088) because they suppress the very requests L1
   arbitrates.
 - **L2 — M14 materialize-only deny rules (instructed, not enforced).** The
   capability materializer writes `.claude/settings.local.json` deny rules

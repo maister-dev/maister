@@ -804,7 +804,7 @@ export const agentProjectLinks = pgTable(
   }),
 );
 
-// M33 (ADR-087) rework of the dead M24 shape: real agents FK (was text
+// M33 (ADR-088) rework of the dead M24 shape: real agents FK (was text
 // agent_ref), cron fields claimed atomically by the agent_tick.dispatcher,
 // event rows consumed by the agent_triggers outbox consumer. The M24
 // scheduler_job_id bridge and desired_state ('continuous' = future Mγ) are
@@ -970,7 +970,7 @@ export const tasks = pgTable(
     number: integer("number").notNull(),
     title: text("title").notNull(),
     prompt: text("prompt").notNull(),
-    // M33 (ADR-087): NULLABLE — simple-intent tasks are created flowless and
+    // M33 (ADR-088): NULLABLE — simple-intent tasks are created flowless and
     // classify `unconfigured` until a triage verdict or the launch popover
     // fills the flow.
     flowId: text("flow_id").references(() => flows.id),
@@ -983,7 +983,7 @@ export const tasks = pgTable(
       .notNull()
       .default("Backlog"),
     attemptNumber: integer("attempt_number").notNull().default(1),
-    // M33 (ADR-087) launch-verdict columns: written by the ext triage op /
+    // M33 (ADR-088) launch-verdict columns: written by the ext triage op /
     // the card popover PATCH; runner rides the launchOverride tier at launch.
     triageStatus: text("triage_status", { enum: ["triaged"] }),
     runnerId: text("runner_id").references(() => platformAcpRunners.id, {
@@ -1108,7 +1108,7 @@ export const runs = pgTable(
     runKind: text("run_kind", { enum: ["flow", "scratch", "agent"] })
       .notNull()
       .default("flow"),
-    // M33 (ADR-087): set iff runKind='agent'. SET NULL so run history
+    // M33 (ADR-088): set iff runKind='agent'. SET NULL so run history
     // survives catalog deletes (deletes are usage-guarded for live runs).
     agentId: text("agent_id").references(() => agents.id, {
       onDelete: "set null",
@@ -1140,7 +1140,7 @@ export const runs = pgTable(
         "platformFlowDefault",
         "projectDefault",
         "platformDefault",
-        // M33 (ADR-087) standalone agent chain tiers.
+        // M33 (ADR-088) standalone agent chain tiers.
         "agentLinkOverride",
         "agentDefault",
       ],
@@ -1220,7 +1220,7 @@ export const runs = pgTable(
     idxTask: index("runs_task_idx").on(t.taskId),
     idxKindTask: index("runs_kind_task_idx").on(t.runKind, t.taskId),
     idxRunner: index("runs_runner_idx").on(t.runnerId),
-    // M33 (ADR-087): outbox→spawn no-dup claim under at-least-once redelivery.
+    // M33 (ADR-088): outbox→spawn no-dup claim under at-least-once redelivery.
     uniqAgentTriggerEvent: uniqueIndex("runs_agent_trigger_event_uq")
       .on(t.agentId, t.triggerEventId)
       .where(sql`${t.triggerEventId} IS NOT NULL`),
@@ -2416,7 +2416,7 @@ export const projectTokens = pgTable(
     owner_user_id: text("owner_user_id").references(() => users.id, {
       onDelete: "set null",
     }),
-    // M33 (ADR-087): per-launch ephemeral agent tokens carry the agent
+    // M33 (ADR-088): per-launch ephemeral agent tokens carry the agent
     // identity; CHECK pairs it with token_kind='agent'.
     agent_id: text("agent_id").references(() => agents.id, {
       onDelete: "cascade",
@@ -2766,7 +2766,7 @@ export const TASK_ACTIVITY_EVENT_KINDS = [
   "relation_added",
   "relation_removed",
   "run_launched",
-  // M33 (ADR-087/088): triage verdict / re-queue / dirty-watchdog quarantine.
+  // M33 (ADR-088/088): triage verdict / re-queue / dirty-watchdog quarantine.
   "triage_set",
   "triage_requeued",
   "agent_quarantined",

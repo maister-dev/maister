@@ -119,7 +119,7 @@ tags:
   - name: flow-studio
     description: M27 Flow Studio — graph editor, draft/publish, version-binding, exec-trust.
   - name: agents
-    description: M33 (Designed) platform-agent catalog, attachments, launches, and the inbound webhook trigger (ADR-087/088).
+    description: M33 (Implemented) platform-agent catalog, attachments, launches, and the inbound webhook trigger (ADR-088/088).
   - name: mcp-management
     description: M27 MCP capability management — platform-admin and project-scoped MCP servers.
   - name: webhooks
@@ -383,7 +383,7 @@ paths:
     post:
       tags: [admin]
       summary: (M24) Create a scheduler job
-      description: Admin-only. Creates a scheduler job. Per-kind `target` shape is validated (command requires `commandKind` + url/host; flow_run requires `taskId`). `run_schedule`, `domain_event_dispatch`, and `agent_tick` are deliberately NOT creatable here — the singletons `run_schedule.dispatcher` (M28, ADR-071), `domain_event_dispatch.default` (ADR-086), and `agent_tick.dispatcher` (M33 — Designed, ADR-087) are seeded by the tick; all three kinds are rejected at the schema.
+      description: Admin-only. Creates a scheduler job. Per-kind `target` shape is validated (command requires `commandKind` + url/host; flow_run requires `taskId`). `run_schedule`, `domain_event_dispatch`, and `agent_tick` are deliberately NOT creatable here — the singletons `run_schedule.dispatcher` (M28, ADR-071), `domain_event_dispatch.default` (ADR-086), and `agent_tick.dispatcher` (M33 — Implemented, ADR-088) are seeded by the tick; all three kinds are rejected at the schema.
       operationId: postAdminSchedulerJob
       requestBody:
         required: true
@@ -511,12 +511,12 @@ paths:
   /api/admin/agents:
     get:
       tags: [admin]
-      summary: (M33 — Designed) List the platform agent catalog
+      summary: (M33 — Implemented) List the platform agent catalog
       description: |
         Admin-only. Returns every registered agent (both scopes) with parsed
         frontmatter columns, enabled state, and quarantine state. The `.md`
         files under `~/.maister/agents/<id>/agent.md` are the canonical
-        definitions; rows are the parsed index (ADR-087).
+        definitions; rows are the parsed index (ADR-088).
       operationId: getAdminAgents
       responses:
         "200":
@@ -534,7 +534,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
     post:
       tags: [admin]
-      summary: (M33 — Designed) Create an agent definition
+      summary: (M33 — Implemented) Create an agent definition
       description: |
         Admin-only. Writes `~/.maister/agents/<id>/agent.md` from the body,
         then parses and registers it (write-then-parse — the file stays the
@@ -574,7 +574,7 @@ paths:
   /api/admin/agents/resync:
     post:
       tags: [admin]
-      summary: (M33 — Designed) Re-scan the host agent catalog
+      summary: (M33 — Implemented) Re-scan the host agent catalog
       description: |
         Admin-only. Re-reads `~/.maister/agents/`, re-parses every
         `agent.md`, and re-syncs rows with SET/CLEAR symmetry (a removed
@@ -609,7 +609,7 @@ paths:
   /api/admin/agents/{agentId}:
     patch:
       tags: [admin]
-      summary: (M33 — Designed) Update an agent definition / toggle / un-quarantine
+      summary: (M33 — Implemented) Update an agent definition / toggle / un-quarantine
       description: |
         Admin-only, one aggregating endpoint. Definition fields rewrite the
         `.md` and re-register (write-then-parse); `enabled` toggles the row;
@@ -655,7 +655,7 @@ paths:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
     delete:
       tags: [admin]
-      summary: (M33 — Designed) Delete an agent (usage-guarded)
+      summary: (M33 — Implemented) Delete an agent (usage-guarded)
       description: |
         Admin-only. Hard-deletes the catalog row and the `.md` directory.
         Refused with `409 CONFLICT` while live (non-terminal) agent runs
@@ -939,7 +939,7 @@ paths:
   /api/projects/{slug}/agents:
     get:
       tags: [projects]
-      summary: (M33 — Designed) Attach-panel read model
+      summary: (M33 — Implemented) Attach-panel read model
       description: |
         Project membership `member`+. Returns agents attached to the project
         (link + overrides + trigger bindings) and platform agents available
@@ -969,7 +969,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
     post:
       tags: [projects]
-      summary: (M33 — Designed) Attach an agent to the project
+      summary: (M33 — Implemented) Attach an agent to the project
       description: |
         Project `admin`+ (`editSettings`). Creates the
         `agent_project_links` row. `agentId` must reference a registered
@@ -1015,7 +1015,7 @@ paths:
   /api/projects/{slug}/agents/{agentId}:
     patch:
       tags: [projects]
-      summary: (M33 — Designed) Update an attachment (one aggregating endpoint)
+      summary: (M33 — Implemented) Update an attachment (one aggregating endpoint)
       description: |
         Project `admin`+. Partial body in ONE server transaction: link
         fields (`enabled`, `runnerOverrideId` — explicit `null` clears) and
@@ -1069,11 +1069,11 @@ paths:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
     delete:
       tags: [projects]
-      summary: (M33 — Designed) Detach an agent from the project
+      summary: (M33 — Implemented) Detach an agent from the project
       description: |
         Project `admin`+. Removes the link and its trigger bindings, and
         revokes every live agent token for this (agent, project) pair
-        (ADR-087 rotation guarantee).
+        (ADR-088 rotation guarantee).
       operationId: deleteProjectAgentLink
       parameters:
         - name: slug
@@ -1096,7 +1096,7 @@ paths:
   /api/projects/{slug}/agents/{agentId}/launch:
     post:
       tags: [projects]
-      summary: (M33 — Designed) Manually launch an agent run
+      summary: (M33 — Implemented) Manually launch an agent run
       description: |
         Project membership `member`+ (`launchRun`). Identifiers: `slug` and
         `agentId` are url-params; body `taskId` (optional task-bound context)
@@ -1148,7 +1148,7 @@ paths:
   /api/agents/{agentId}/event:
     post:
       tags: [agents]
-      summary: (M33 — Designed) Inbound webhook trigger for an agent
+      summary: (M33 — Implemented) Inbound webhook trigger for an agent
       description: |
         Authenticated by a **bearer project token** carrying the
         `agents:trigger` scope (the only token-authenticated route outside
@@ -1321,7 +1321,7 @@ paths:
   /api/projects/{slug}/tasks/{number}:
     patch:
       tags: [projects]
-      summary: (M33 — Designed) Update task launch-verdict fields (one aggregating endpoint)
+      summary: (M33 — Implemented) Update task launch-verdict fields (one aggregating endpoint)
       description: |
         Project membership `member`+. The board card's launch popover persists
         flow/runner/branch/policy edits here in ONE transaction before
@@ -1382,7 +1382,7 @@ paths:
   /api/projects/{slug}/tasks/{number}/send-to-triage:
     post:
       tags: [projects]
-      summary: (M33 — Designed) Re-queue a task for triage
+      summary: (M33 — Implemented) Re-queue a task for triage
       description: |
         Project membership `member`+. In ONE transaction: sets
         `tasks.triage_status = NULL`, emits the first `task.triage_requeued`
@@ -7735,7 +7735,7 @@ components:
     AgentSummary:
       type: object
       description: |
-        (M33 — Designed) Catalog projection of an `agents` row — the parsed
+        (M33 — Implemented) Catalog projection of an `agents` row — the parsed
         frontmatter index plus enabled/quarantine state. Never includes
         token material or filesystem internals beyond `sourcePath`.
       required:
@@ -7762,7 +7762,7 @@ components:
     AgentDefinitionBody:
       type: object
       description: |
-        (M33 — Designed) Create/update payload for an agent definition. The
+        (M33 — Implemented) Create/update payload for an agent definition. The
         server renders it into frontmatter + body and writes the `.md`
         (write-then-parse). `project` is required iff `scope=project`.
       required: [id, name, description, scope, workspace, mode, triggers, riskTier, prompt]
@@ -7792,7 +7792,7 @@ components:
     AttachedAgent:
       type: object
       description: |
-        (M33 — Designed) Attach-panel row — the agent summary joined with its
+        (M33 — Implemented) Attach-panel row — the agent summary joined with its
         link and trigger bindings for this project.
       required: [agent, linkId, enabled, schedules]
       properties:
@@ -7806,7 +7806,7 @@ components:
     AgentScheduleBody:
       type: object
       description: |
-        (M33 — Designed) One trigger binding. Cron rows require
+        (M33 — Implemented) One trigger binding. Cron rows require
         `cronExpr` + `timezone`; event rows require `eventKinds` (subset of
         the ADR-086 taxonomy).
       required: [triggerType]
@@ -7821,7 +7821,7 @@ components:
         enabled: { type: boolean, default: true }
     AgentLaunchResult:
       type: object
-      description: (M33 — Designed) Result of an agent-run launch.
+      description: (M33 — Implemented) Result of an agent-run launch.
       required: [runId, status]
       properties:
         runId: { type: string, format: uuid }
@@ -7846,7 +7846,7 @@ components:
           description: |
             ID of a `flows` row belonging to the project identified by
             the URL `slug`. Any other flow ID returns `422 CONFIG`.
-            (M33 — Designed) OPTIONAL: a task created without `flowId` is a
+            (M33 — Implemented) OPTIONAL: a task created without `flowId` is a
             simple-intent task; it classifies as `unconfigured` until a triage
             verdict or the launch popover fills the flow.
     TaskCommentDTO:

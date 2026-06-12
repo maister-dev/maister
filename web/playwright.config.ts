@@ -23,7 +23,7 @@ const MAISTER_CRON_TOKEN =
 const WH_E2E_SECRET = process.env.WH_E2E_SECRET ?? "whsec_e2e_0123456789abcdef";
 const AUTH_FILE = "e2e/.auth/admin.json";
 const AUTHED_SPEC =
-  /.*(m11[abc]-.*|m12-evidence-graph|m13-assignments|m15-.*|m16-.*|m17-.*|m18-.*|m19-.*|m22-.*|m23-.*|m27-.*|portfolio-board|task-launch-gating|project-registration|admin-users|project-members|review-comments|review-diff-scopes|gate-chat|social-board|scratch-launch|platform-acp-runners|model-suggestions|flows-authoring|run-schedules|flow-package-viewer|flow-studio-artifacts|outbound-webhooks)\.spec\.ts$/;
+  /.*(m11[abc]-.*|m12-evidence-graph|m13-assignments|m15-.*|m16-.*|m17-.*|m18-.*|m19-.*|m22-.*|m23-.*|m27-.*|portfolio-board|task-launch-gating|project-registration|admin-users|project-members|review-comments|review-diff-scopes|gate-chat|social-board|scratch-launch|platform-acp-runners|model-suggestions|flows-authoring|run-schedules|flow-package-viewer|flow-studio-artifacts|outbound-webhooks|platform-agents-.*)\.spec\.ts$/;
 
 export default defineConfig({
   testDir: "./e2e",
@@ -81,6 +81,11 @@ export default defineConfig({
       // button is enabled and POST /api/runs gets PAST the health check to the
       // settings-enforcement gate (which is what refuses with CONFIG 400).
       MAISTER_SUPERVISOR_URL: STUB_SUPERVISOR_URL,
+      // platform-agents-*.spec.ts (M33): the host agent catalog the seed
+      // writes the fixture agent.md definitions into. Absolute on purpose —
+      // the seed's RUNTIME_ROOT (/tmp/maister-e2e) is not the webServer's
+      // MAISTER_RUNTIME_ROOT.
+      MAISTER_AGENTS_ROOT: "/tmp/maister-e2e/agents",
       // M19 cron-gc auth gate (see e2e/m19-reconcile-gc.spec.ts). Also gates the
       // outbound-webhooks drain trigger (POST /api/cron/tick).
       MAISTER_CRON_TOKEN,

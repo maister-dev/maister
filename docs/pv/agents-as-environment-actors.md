@@ -1,6 +1,19 @@
 # Agents as environment actors — vision / concept
 
-> **Status:** Vision / Phase 2 concept — **not scheduled**, no committed timeline.
+> **Status:** SUPERSEDED BY DESIGN (M33, 2026-06-12) — the Mα+Mβ substrate
+> shipped as **ADR-088/ADR-089** with the implemented contract in
+> [`docs/system-analytics/agents.md`](../system-analytics/agents.md). Three
+> amendments over this Stage-0 sketch:
+> **(1) per-agent runner** — frontmatter `runner` + a per-project link
+> override join the resolution chain (this doc said "no FK to executors");
+> **(2) standalone-first** — the standalone triggered path (Mβ) shipped
+> together with (and ahead of the polish of) flow binding, not after it;
+> **(3) social layer** — agents are polymorphic social actors (quarantine
+> system comments, `task_activity`, triage verdict + Q&A loop over task
+> comments), which this sketch did not anticipate.
+> **Mγ (continuous + enforce) remains the future stage** — the sections
+> below stay as the Mγ vision record. Original framing kept verbatim:
+>
 > Captures a validated brainstorm (2026-06-03). Changes no ADR and supersedes
 > nothing. Proposes future ADRs only when/if this is pulled into delivery.
 > Lives outside `docs/plans/` on purpose: this is backlog/vision, not a near-term plan.

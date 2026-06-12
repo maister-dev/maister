@@ -1,4 +1,4 @@
-// M33 (ADR-087): the catalog-agent node binding (`settings.agent`) requires
+// M33 (ADR-088): the catalog-agent node binding (`settings.agent`) requires
 // compat.engine_min >= 1.5.0; manifests without the key stay valid at any
 // engine_min. Mirrors the M30 retry_policy floor test shape.
 
@@ -18,7 +18,7 @@ describe("settings.agent schema", () => {
   });
 });
 
-describe("agent-binding engine floor (ADR-087 — 1.5.0)", () => {
+describe("agent-binding engine floor (ADR-088 — 1.5.0)", () => {
   function manifest(engineMin: string, withBinding: boolean) {
     return {
       schemaVersion: 1,

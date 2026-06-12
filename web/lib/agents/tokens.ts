@@ -20,7 +20,7 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-// Per-launch ephemeral agent tokens (ADR-087): the hash-only token store
+// Per-launch ephemeral agent tokens (ADR-088): the hash-only token store
 // cannot re-surface a durable attach-time secret at later spawns, so every
 // agent run gets a fresh token, revoked at the run's terminal transition,
 // on attachment detach, and by GC. Expiry is a backstop for runs that idle
@@ -97,7 +97,7 @@ export async function revokeAgentRunTokensForRun(
     );
 }
 
-// Detach rotation guarantee (ADR-087): revoking every live token for the
+// Detach rotation guarantee (ADR-088): revoking every live token for the
 // (agent, project) pair on link removal.
 export async function revokeAgentProjectTokens(args: {
   agentId: string;

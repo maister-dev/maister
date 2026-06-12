@@ -117,7 +117,7 @@ const DEFAULT_WEBHOOK_DELIVERY_JOB_ID = "webhook_delivery.default";
 const DEFAULT_WEBHOOK_DELIVERY_CADENCE_SECONDS = 60;
 const DEFAULT_DOMAIN_EVENT_DISPATCH_JOB_ID = "domain_event_dispatch.default";
 const DEFAULT_DOMAIN_EVENT_DISPATCH_CADENCE_SECONDS = 60;
-// M33 (ADR-087): the ONE seeded agent_tick job — claims due agent_schedules
+// M33 (ADR-088): the ONE seeded agent_tick job — claims due agent_schedules
 // cron rows and recovers stranded Pending agent runs each tick.
 const DEFAULT_AGENT_TICK_JOB_ID = "agent_tick.dispatcher";
 const DEFAULT_AGENT_TICK_CADENCE_SECONDS = 60;

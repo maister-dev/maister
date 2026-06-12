@@ -24,7 +24,7 @@ beforeAll(async () => {
   db = drizzle(pool);
 
   // Full journal replay: 0027 creates the dead M24 agent_schedules shape,
-  // 0047 reworks it in place — the rework must apply on top of the old shape.
+  // 0048 reworks it in place — the rework must apply on top of the old shape.
   await migrate(db, { migrationsFolder: "./lib/db/migrations" });
 }, 180_000);
 
@@ -66,7 +66,7 @@ async function seedAgent(projectId: string | null): Promise<string> {
   return agentId;
 }
 
-describe("migration 0047 — platform agents", () => {
+describe("migration 0048 — platform agents", () => {
   it("reworked agent_schedules has the new shape and the old columns are gone", async () => {
     const cols = await pool.query<{ column_name: string }>(
       `SELECT column_name FROM information_schema.columns WHERE table_name = 'agent_schedules'`,

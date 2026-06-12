@@ -75,7 +75,7 @@ export function decideFire(input: {
   if (input.launchability === "blocked") {
     return { action: "skip", outcome: "skipped_blocked" };
   }
-  // M33 (ADR-087): a flowless simple-intent task cannot launch under any
+  // M33 (ADR-088): a flowless simple-intent task cannot launch under any
   // policy; the flag is kept — once configured, the catch-up fires.
   if (input.launchability === "unconfigured") {
     return { action: "skip", outcome: "skipped_unconfigured" };

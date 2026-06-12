@@ -157,7 +157,7 @@ describe("classifyTaskLaunchability — relation gate (blocked)", () => {
   });
 });
 
-// M33 (ADR-087) — a flowless simple-intent task is `unconfigured`, with
+// M33 (ADR-088) — a flowless simple-intent task is `unconfigured`, with
 // precedence target_terminal > crashed > busy > blocked > unconfigured >
 // launchable.
 describe("classifyTaskLaunchability — flowless task (unconfigured)", () => {

@@ -26,7 +26,7 @@ export type FlowBoundAgentResolution =
   | { mode: "session"; prompt: string }
   | { mode: "subagent"; materializedPath: string };
 
-// Resolves a node's `settings.agent` binding (ADR-087) at dispatch time.
+// Resolves a node's `settings.agent` binding (ADR-088) at dispatch time.
 // mode=session → the caller substitutes the agent's .md body as the system
 // prompt; mode=subagent → the .md is materialized into the run worktree's
 // .claude/agents/ (Claude self-delegates) and requires a claude-capability

@@ -218,7 +218,7 @@ defined as a string union in `web/lib/errors.ts`.
 > resolve it is captured as that source's `status: "error"` within a 200 response, never raised as a
 > 500. The existing live-session `ACP_PROTOCOL` (500) call site is unchanged.
 
-> **The M33 platform-agent substrate (ADR-087/088) reuses existing codes and adds none**
+> **The M33 platform-agent substrate (ADR-088/088) reuses existing codes and adds none**
 > ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror) closed union). New call
 > sites (all Designed):
 > - **`CONFIG` → HTTP 422** — invalid agent definition at registration (bad/unknown

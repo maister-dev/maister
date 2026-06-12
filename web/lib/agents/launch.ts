@@ -320,7 +320,7 @@ export async function launchAgentRun(
     }
   }
 
-  // ADR-088: a repo_read run is only verifiable against a clean baseline.
+  // ADR-089: a repo_read run is only verifiable against a clean baseline.
   if (workspace === "repo_read") {
     const porcelain = await statusPorcelain({
       worktreePath: ctx.project.repoPath,
@@ -576,7 +576,7 @@ const DOMAIN_KIND_BY_OUTCOME: Record<
   Crashed: "run.crashed",
 };
 
-// The terminal choke point for agent runs (ADR-088 sequencing rule): the
+// The terminal choke point for agent runs (ADR-089 sequencing rule): the
 // dirty-watchdog (Phase 4) and the token revoke run BEFORE/WITHIN the
 // status-flip transaction; nothing writes the run row after the flip.
 export async function finalizeAgentRun(
@@ -606,7 +606,7 @@ export async function finalizeAgentRun(
 
     if (!row) return false;
 
-    // ADR-088 L3 (terminal choke point): the dirty-watchdog runs WITHIN the
+    // ADR-089 L3 (terminal choke point): the dirty-watchdog runs WITHIN the
     // status-flip transaction — a repo_read run that left the parent
     // checkout dirty quarantines its agent atomically with the terminal
     // write. The porcelain read is read-only git; a failure here rolls the
@@ -717,7 +717,7 @@ export type AgentSupervisorApi = {
   streamSession: typeof streamSession;
 };
 
-// MCP facade injection (ADR-087 D9): the agent's sanctioned write channel —
+// MCP facade injection (ADR-088 D9): the agent's sanctioned write channel —
 // triage/comments/relations over the ext API, authenticated by the
 // per-launch ephemeral token. The token rides the literal `env` channel
 // (never logged, never streamed, never in session/update). Command
@@ -825,7 +825,7 @@ export async function startAgentSession(
   }
 
   try {
-    // ADR-088 L2 (materialize-only): instructed deny rules in the session
+    // ADR-089 L2 (materialize-only): instructed deny rules in the session
     // cwd; manifest-tracked and restored at the terminal choke point.
     if (workspace !== "worktree") {
       await materializeAgentReadOnlySettings(cwd).catch((err: unknown) => {
@@ -853,9 +853,9 @@ export async function startAgentSession(
       executor: runnerExecutorInput(snapshot),
       runner: runnerSupervisorInput({ snapshot }),
       adapterLaunch: mergeRunnerAdapterLaunch(snapshot),
-      // ADR-087 D9: the facade carries the ephemeral token to the agent.
+      // ADR-088 D9: the facade carries the ephemeral token to the agent.
       mcpServers: [agentFacadeMcpServer(issuedToken.secret)],
-      // ADR-088 L1: none/repo_read agents run the whole session read-only.
+      // ADR-089 L1: none/repo_read agents run the whole session read-only.
       readOnlySession: workspace !== "worktree",
       ...(run.acpSessionId ? { resumeSessionId: run.acpSessionId } : {}),
     });

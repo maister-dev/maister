@@ -64,7 +64,7 @@ export type RunAgentStepCtx = {
   runId: string;
   stepId: string;
   worktreePath: string;
-  // M33 (ADR-087): the node's `settings.agent` catalog binding — resolved at
+  // M33 (ADR-088): the node's `settings.agent` catalog binding — resolved at
   // dispatch (session-mode prompt substitution / subagent materialization).
   agentBinding?: { id: string };
   executor: {
@@ -579,7 +579,7 @@ export async function runAgentStep(
 ): Promise<StepResult & { acpSessionId?: string; sessionFallback?: boolean }> {
   let promptTemplate = step.prompt;
 
-  // M33 (ADR-087): a catalog-agent binding substitutes the inline prompt —
+  // M33 (ADR-088): a catalog-agent binding substitutes the inline prompt —
   // the agent's .md body becomes the system block and the node prompt is
   // appended as the task block (mode=session), or the definition is
   // materialized into .claude/agents/ for Claude self-delegation

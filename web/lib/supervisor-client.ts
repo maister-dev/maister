@@ -86,7 +86,7 @@ export type CreateSessionInput = {
   capabilityProfilePath?: string;
   adapterLaunch?: SupervisorAdapterLaunchInput;
   mcpServers?: AgentMcpServer[];
-  // M33 (ADR-088 L1): session-scoped read-only — the supervisor auto-denies
+  // M33 (ADR-089 L1): session-scoped read-only — the supervisor auto-denies
   // write-class tool permission requests for the whole session. Used for
   // none/repo_read platform-agent runs.
   readOnlySession?: boolean;

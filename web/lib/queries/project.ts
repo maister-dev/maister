@@ -4,7 +4,7 @@ import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { Project, RunKind, ScratchDialogStatus } from "@/lib/db/schema";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
-import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
@@ -198,7 +198,13 @@ export async function getProjectPageData(
           and(
             eq(runs.projectId, project.id),
             inArray(runs.status, [...ACTIVE_RUN_STATUSES]),
-            isNull(workspaces.removedAt),
+            // Live workspace rows as before — plus workspace-LESS rows only
+            // for agent runs (none/repo_read have no worktree by design).
+            // A bare IS NULL would also surface seeded/legacy kindless rows.
+            or(
+              and(isNotNull(workspaces.id), isNull(workspaces.removedAt)),
+              and(eq(runs.runKind, "agent"), isNull(workspaces.id)),
+            ),
           ),
         )
         .orderBy(desc(runs.startedAt)),

@@ -29,7 +29,7 @@ triggers, and flow-target schedules that mint a task per fire (Phase 2).
   | catchup_queued | skipped_task_busy | skipped_cap |
   skipped_target_terminal | skipped_crashed | launch_failed | dispatching`,
   plus `skipped_blocked` (Implemented, ADR-078 — task has open relation
-  blockers) and `skipped_unconfigured` (M33 — Designed, ADR-087 — the task
+  blockers) and `skipped_unconfigured` (M33 — Implemented, ADR-088 — the task
   has no flow yet; simple-intent tasks await a triage verdict or a human
   filling the launch fields).
 - **Launchability classifier** (`classifyTaskLaunchability`, Implemented, M28) —
@@ -64,7 +64,7 @@ order) is the DQ7 matrix:
 | `crashed` (latest run Crashed — owes recover/discard) | `skipped_crashed` | `skipped_crashed` (no flag) | `skipped_crashed` |
 | `busy` (active run on the task) | `skipped_task_busy` | flag + `catchup_queued` | `skipped_task_busy` — a second concurrent run per task is structurally impossible; `start_anyway` overrides only the CAP dimension |
 | `blocked` (Implemented, ADR-078 — open relation blockers) | `skipped_blocked` | `skipped_blocked` (existing flag kept — fires once unblocked) | `skipped_blocked` — relations gate launching under every policy |
-| `unconfigured` (M33 — Designed, ADR-087 — task has no flow) | `skipped_unconfigured` | `skipped_unconfigured` (existing flag kept — fires once configured) | `skipped_unconfigured` — a flowless task cannot launch under any policy |
+| `unconfigured` (M33 — Implemented, ADR-088 — task has no flow) | `skipped_unconfigured` | `skipped_unconfigured` (existing flag kept — fires once configured) | `skipped_unconfigured` — a flowless task cannot launch under any policy |
 | cap full (task launchable) | `skipped_cap` | flag + `catchup_queued` | `launchRun` → run lands `Pending` + queue position (`queued_pending`) |
 | free | launch | launch (+ clear flag) | launch |
 

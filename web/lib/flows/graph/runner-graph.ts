@@ -569,7 +569,7 @@ async function executeNodeAction(
         },
         {
           ...common,
-          // M33 (ADR-087): catalog-agent binding (ai_coding only).
+          // M33 (ADR-088): catalog-agent binding (ai_coding only).
           agentBinding:
             def.type === "ai_coding" &&
             (def.settings as { agent?: string } | undefined)?.agent

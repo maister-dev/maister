@@ -31,7 +31,7 @@ describe("decideFire (overlap policy × launchability × cap matrix)", () => {
     }
   });
 
-  it("skips flowless (unconfigured) targets under every policy, regardless of cap (M33, ADR-087)", () => {
+  it("skips flowless (unconfigured) targets under every policy, regardless of cap (M33, ADR-088)", () => {
     for (const policy of ["skip", "queue_one", "start_anyway"] as const) {
       for (const capFull of [false, true]) {
         expect(

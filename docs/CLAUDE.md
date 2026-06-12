@@ -57,7 +57,7 @@ truth). The fix is to update docs in the same PR.
 | [`db/artifacts-domain.md`](db/artifacts-domain.md) | Artifact instances + projection cursors ERD. |
 | [`db/webhooks.md`](db/webhooks.md) | Webhook subscriptions + events outbox + deliveries + attempts ERD, plus the `webhooks_enabled` settings column (ADR-077). |
 | [`db/domain-events.md`](db/domain-events.md) | Domain-event outbox ERD: `domain_events` fact log + per-consumer cursor rows (ADR-086). |
-| [`db/agents-domain.md`](db/agents-domain.md) | Platform-agent ERD: `agents` catalog index, `agent_project_links`, `agent_schedules` trigger bindings, runs/tasks/tokens alters (ADR-087/088, Designed). |
+| [`db/agents-domain.md`](db/agents-domain.md) | Platform-agent ERD: `agents` catalog index, `agent_project_links`, `agent_schedules` trigger bindings, runs/tasks/tokens alters (ADR-088/088). |
 | [`database-schema.md`](database-schema.md) | Narrative DB reference (columns, indexes, cascade chain). |
 
 ### System analysis (`system-analytics/`)
@@ -94,7 +94,7 @@ cases, process flows. One file per domain.
 | [`system-analytics/outbound-webhooks.md`](system-analytics/outbound-webhooks.md) | Outbound webhooks: transactional-outbox capture, 12-type taxonomy + envelope v1, singleton-drainer fanout/delivery, HMAC signing, retry/replay/ping, delivery FSM (ADR-077). |
 | [`system-analytics/social-board.md`](system-analytics/social-board.md) | Social board substrate (ADR-083, Implemented): task comments with expanded `KEY-N` mentions, domain-written activity, auto-subscriptions, per-recipient inbox, polymorphic actor pair. |
 | [`system-analytics/domain-events.md`](system-analytics/domain-events.md) | Domain-event outbox / shared trigger bus (ADR-086): same-transaction emission, 8-kind taxonomy v1, per-consumer cursor dispatcher with xid8 commit horizon on the M24 clock, webhooks-takeover path. |
-| [`system-analytics/agents.md`](system-analytics/agents.md) | Platform agents (ADR-087/088, Designed): `.md` catalog + per-agent runner chain, five trigger sources, workspace axis with 3-layer read-only enforcement + quarantine, triage Q&A loop, ephemeral agent tokens. |
+| [`system-analytics/agents.md`](system-analytics/agents.md) | Platform agents (ADR-088/088, Implemented): `.md` catalog + per-agent runner chain, five trigger sources, workspace axis with 3-layer read-only enforcement + quarantine, triage Q&A loop, ephemeral agent tokens. |
 
 ### Cross-cutting reference
 

@@ -1,6 +1,6 @@
-// M33 (ADR-087 D11) — the attach-panel service: attach (conflict-safe),
+// M33 (ADR-088 D11) — the attach-panel service: attach (conflict-safe),
 // one-transaction link PATCH with full schedule replacement (cron validated,
-// event kinds taxonomy-checked), detach with token revocation (the ADR-087
+// event kinds taxonomy-checked), detach with token revocation (the ADR-088
 // rotation guarantee).
 
 import { randomUUID } from "node:crypto";

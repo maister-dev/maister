@@ -85,7 +85,7 @@ export interface AgentModalProps {
   onSaved: () => void;
 }
 
-// M33 (ADR-087 D11): one create|edit modal writing the `.md` definition into
+// M33 (ADR-088 D11): one create|edit modal writing the `.md` definition into
 // the host catalog through the admin CRUD routes; the modal also owns delete
 // (usage-guarded server-side — refused while live runs exist).
 export function AgentModal({

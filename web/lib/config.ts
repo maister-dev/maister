@@ -557,7 +557,7 @@ const OUTPUT_ENGINE_MIN = "1.3.0";
 // engine_min >= this value.
 const POLICY_ENGINE_MIN = "1.4.0";
 
-// M33 floor (ADR-087): manifests binding a node to a catalog agent
+// M33 floor (ADR-088): manifests binding a node to a catalog agent
 // (`settings.agent`) must declare engine_min >= this value.
 const AGENT_BINDING_ENGINE_MIN = "1.5.0";
 
@@ -716,7 +716,7 @@ export function validateGraphManifest(
     );
   }
 
-  // M33 (ADR-087): the catalog-agent node binding requires the 1.5.0 floor.
+  // M33 (ADR-088): the catalog-agent node binding requires the 1.5.0 floor.
   // Manifests without `settings.agent` stay valid at any engine_min.
   if (
     declaresAgentBinding(nodes) &&

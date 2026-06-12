@@ -25,7 +25,7 @@ const log = pino({
 const SETTINGS_RELATIVE = ".claude/settings.local.json";
 const MARKER_RELATIVE = ".claude/settings.local.json.maister-owned";
 
-// ADR-088 L2 (materialize-only, ADR-041 boundary unchanged): instructed
+// ADR-089 L2 (materialize-only, ADR-041 boundary unchanged): instructed
 // deny rules for write-class tools. Best-effort instruction for well-behaved
 // agents; L1 (readOnlySession) and L3 (this watchdog) are the real layers.
 // The maister MCP facade is allow-listed: its tools (triage/comments/
@@ -114,7 +114,7 @@ export type DirtyWatchdogVerdict =
   | { dirty: false }
   | { dirty: true; porcelain: string };
 
-// ADR-088 L3: verify the no-write invariant for a repo_read run against the
+// ADR-089 L3: verify the no-write invariant for a repo_read run against the
 // parent checkout. The launch-time clean-baseline precondition makes any
 // remaining dirt attributable.
 export async function checkRepoReadDirt(
@@ -135,7 +135,7 @@ export async function checkRepoReadDirt(
   return { dirty: true, porcelain: meaningful };
 }
 
-// The quarantine transaction (ADR-088): agent flag + reason, plus — when the
+// The quarantine transaction (ADR-089): agent flag + reason, plus — when the
 // run is task-bound — a system comment and the agent_quarantined activity
 // entry, all in the CALLER's transaction (the terminal choke point).
 export async function quarantineAgentInTx(args: {

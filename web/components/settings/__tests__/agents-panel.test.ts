@@ -1,4 +1,4 @@
-// M33 (ADR-087 D11) — the /settings platform-agent catalog panel: view-only
+// M33 (ADR-088 D11) — the /settings platform-agent catalog panel: view-only
 // table, quarantine badge with the reason on hover, manual-launch affordance
 // gated on enabled+unquarantined. renderToStaticMarkup — no jsdom (repo
 // convention); next-intl/next-navigation mocked at the module boundary.

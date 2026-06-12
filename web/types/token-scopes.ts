@@ -19,7 +19,7 @@ export const TOKEN_SCOPES = [
   "agents:trigger",
 ] as const;
 
-// M33 (ADR-087): the fixed scope set issued to per-launch ephemeral agent
+// M33 (ADR-088): the fixed scope set issued to per-launch ephemeral agent
 // tokens — task/comment/triage/relations ops only.
 export const AGENT_TOKEN_SCOPES = [
   "tasks:read",

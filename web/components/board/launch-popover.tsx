@@ -12,7 +12,7 @@ type LaunchOptions = {
   defaultBaseBranch: string | null;
 };
 
-// M33 (ADR-087 D11) launch-verdict pre-fills — triage stamps them, the
+// M33 (ADR-088 D11) launch-verdict pre-fills — triage stamps them, the
 // popover edits them; edits persist via ONE aggregating PATCH before launch.
 export interface LaunchVerdict {
   flowId: string | null;
