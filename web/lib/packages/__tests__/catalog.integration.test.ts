@@ -113,7 +113,7 @@ describe("package source catalog (integration)", () => {
     expect(result).not.toBeNull();
     expect(result!.degraded).toBe(false);
     expect(result!.packages).toEqual([
-      { name: "aif", tags: ["aif/v2.0.0", "aif/v1.0.0"] },
+      { name: "aif", dir: "aif", tags: ["aif/v2.0.0", "aif/v1.0.0"] },
     ]);
 
     const [row] = await db
@@ -136,14 +136,16 @@ describe("package source catalog (integration)", () => {
     // Seed a stale snapshot to prove it survives the failed refresh.
     await db
       .update(schema.packageSources)
-      .set({ discovered: [{ name: "stale", tags: ["stale/v1.0.0"] }] })
+      .set({
+        discovered: [{ name: "stale", dir: "stale", tags: ["stale/v1.0.0"] }],
+      })
       .where(eq(schema.packageSources.id, id));
 
     const result = await refreshPackageSource({ id, db });
 
     expect(result!.degraded).toBe(true);
     expect(result!.packages).toEqual([
-      { name: "stale", tags: ["stale/v1.0.0"] },
+      { name: "stale", dir: "stale", tags: ["stale/v1.0.0"] },
     ]);
 
     const [row] = await db

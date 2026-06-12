@@ -2324,6 +2324,8 @@ export const packageSources = pgTable("package_sources", {
 
 export type DiscoveredPackageEntry = {
   name: string;
+  // packages/<dir> subdir in the source monorepo (may differ from name).
+  dir: string;
   tags: string[];
 };
 

@@ -59,6 +59,9 @@ const ACTIVE_RUN_STATUSES = [
 export type PackageInstallManifest = {
   spec: MaisterPackageManifest;
   inventory: { skills: string[]; agents: string[] };
+  // Install coordinate (packages[] `path` subdir) — needed by the
+  // maister.yaml write-back to reproduce the pin.
+  sourceSubpath?: string;
 };
 
 function packageCachePath(name: string, resolvedRevision: string): string {
@@ -181,6 +184,12 @@ export async function installPackageRevision(opts: {
     }
 
     const id = existing?.id ?? randomUUID();
+    // The "local" sentinel resolves to the content-digest label so local
+    // versions are self-identifying (ADR-087: local-<digest12>).
+    const versionLabel =
+      opts.version === "local"
+        ? `local-${resolved.resolvedRevision.slice(0, 12)}`
+        : opts.version;
     const cachePath = packageCachePath(name, resolved.resolvedRevision);
     const inventory = await collectInventory(
       resolved.pkgRoot,
@@ -189,6 +198,7 @@ export async function installPackageRevision(opts: {
     const manifestJson: PackageInstallManifest = {
       spec: resolved.manifest,
       inventory,
+      ...(opts.path !== undefined ? { sourceSubpath: opts.path } : {}),
     };
     const manifestDigest = createHash("sha256")
       .update(JSON.stringify(resolved.manifest))
@@ -199,7 +209,7 @@ export async function installPackageRevision(opts: {
         id,
         sourceUrl: opts.source,
         name,
-        versionLabel: opts.version,
+        versionLabel,
         resolvedRevision: resolved.resolvedRevision,
         manifest: manifestJson,
         manifestDigest,
@@ -259,7 +269,7 @@ export async function installPackageRevision(opts: {
     return {
       id,
       name,
-      versionLabel: opts.version,
+      versionLabel,
       resolvedRevision: resolved.resolvedRevision,
       reused: false,
     };

@@ -32,8 +32,8 @@ describe("parsePackageTags", () => {
 
 describe("deriveUpdateAvailable", () => {
   const discovered = [
-    { name: "aif", tags: ["aif/v2.1.0", "aif/v2.0.0"] },
-    { name: "core", tags: [] },
+    { name: "aif", dir: "aif", tags: ["aif/v2.1.0", "aif/v2.0.0"] },
+    { name: "core", dir: "core", tags: [] },
   ];
 
   it("flags an attachment older than the newest discovered tag", () => {

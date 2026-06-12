@@ -237,7 +237,7 @@ async function lsRemoteTags(
 async function scanDefaultBranchManifests(
   url: string,
   signal?: AbortSignal,
-): Promise<string[]> {
+): Promise<Array<{ name: string; dir: string }>> {
   const tmpDir = await mkdtemp(join(os.tmpdir(), "maister-pkg-discover-"));
 
   try {
@@ -259,7 +259,7 @@ async function scanDefaultBranchManifests(
       return [];
     }
 
-    const names: string[] = [];
+    const names: Array<{ name: string; dir: string }> = [];
 
     for (const entry of entries) {
       try {
@@ -267,7 +267,7 @@ async function scanDefaultBranchManifests(
           join(packagesDir, entry),
         );
 
-        names.push(manifest.name);
+        names.push({ name: manifest.name, dir: entry });
       } catch {
         log.warn(
           { url: redactUrl(url), dir: entry },
@@ -305,8 +305,8 @@ export async function refreshPackageSource(opts: {
     ]);
     const byName = parsePackageTags(tagStdout);
     const discovered: DiscoveredPackageEntry[] = manifestNames
-      .sort()
-      .map((name) => ({ name, tags: byName.get(name) ?? [] }));
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map(({ name, dir }) => ({ name, dir, tags: byName.get(name) ?? [] }));
 
     await db
       .update(packageSources)
