@@ -15,9 +15,25 @@ without turning recovery sweeps into live-path polling.
   failure counters, and disable state.
 - **Scheduler job run** (`scheduler_job_runs`, Implemented, M24) — attempt ledger
   with claim token, terminal status, lease expiry, summary, and error fields.
-- **Agent schedule** (`agent_schedules`, Implemented, M24) — narrow bridge from a
-  project-local `agent_ref` text value to a scheduler job; no FK to the authored
-  catalog in M24.
+- **Agent trigger bindings** (`agent_schedules`, M33 — Designed rework of the
+  dead M24 bridge) — per-(agent, project) trigger rows: cron rows
+  (`cron_expr` + `timezone` + `next_fire_at`, claimed atomically by the
+  dispatcher below) and event rows (`event_match.kinds` consumed by the
+  `agent_triggers` outbox consumer). The M24 columns `agent_ref` (text),
+  `scheduler_job_id`, and `desired_state` are dropped. See
+  [agents.md](agents.md).
+- **`agent_tick` dispatcher** (`agent_tick.dispatcher` job, M33 — Designed,
+  ADR-087) — the ONE seeded `agent_tick` job (60s cadence, attempt budget
+  hardcoded 1 — singleton like the other dispatchers; the
+  `MAISTER_MAX_CONCURRENT_AGENTS` env var is repurposed as the agent-RUN
+  budget enforced at `tryStartRun`) whose handler finally gets its
+  launcher: it claims due `agent_schedules` cron rows
+  (`UPDATE … SET next_fire_at = <next> WHERE id = ? AND next_fire_at <=
+  now() RETURNING` — one winner, one catch-up fire, no backfill) and fires
+  `launchAgentRun`, then runs `promoteNextPending(kind='agent')` as the
+  sanctioned recovery sweep for stranded `Pending` agent runs.
+  `createSchedulerJobSchema` now rejects `agent_tick` (seeded-singleton
+  precedent: `run_schedule`, `domain_event_dispatch`).
 - **Tick route** (`GET`/`POST /api/cron/tick`, Implemented, M24) — token-guarded
   clock entry point. It may filter by `jobKind`.
 - **GC compatibility route** (`GET`/`POST /api/cron/gc`, Implemented M19,
@@ -125,20 +141,26 @@ flowchart TD
   cadence so the recovery sweep is live after migration without hand-authored
   SQL; it MUST likewise seed `run_schedule.dispatcher` (60-second cadence,
   `max_failures` 3; Implemented, M28), `webhook_delivery.default`
-  (60-second cadence; Implemented, ADR-077), and `domain_event_dispatch.default`
-  (60-second cadence; Implemented, ADR-086).
+  (60-second cadence; Implemented, ADR-077), `domain_event_dispatch.default`
+  (60-second cadence; Implemented, ADR-086), and `agent_tick.dispatcher`
+  (60-second cadence; M33 — Designed, ADR-087).
 - Atomic claim MUST enforce per-kind budgets in SQL before an attempt is created:
-  `command` uses `MAISTER_MAX_CONCURRENT_COMMANDS`; `agent_tick` uses
-  `MAISTER_MAX_CONCURRENT_AGENTS`; `flow_run` remains delegated to the existing
+  `command` uses `MAISTER_MAX_CONCURRENT_COMMANDS`; `agent_tick` is a hardcoded
+  budget of 1 (singleton dispatcher; M33 — Designed — its former
+  `MAISTER_MAX_CONCURRENT_AGENTS` attempt budget is repurposed as the
+  agent-run budget at `tryStartRun`, see [agents.md](agents.md)); `flow_run`
+  remains delegated to the existing
   Flow run launch/concurrency path; `run_schedule` is a hardcoded budget of 1
   (serial dispatcher, like `system_sweep`; Implemented, M28); `webhook_delivery`
   is a hardcoded budget of 1 (singleton drainer; Implemented, ADR-077);
   `domain_event_dispatch` is a hardcoded budget of 1 (singleton dispatcher;
   Implemented, ADR-086).
-- `agent_tick` without a launcher MUST record terminal `Skipped` with
-  `PRECONDITION` and auto-disable after
-  `MAISTER_SCHEDULER_AGENT_TICK_MAX_FAILURES`. This is an explicit M24 dispatch
-  seam, not a hidden actor runtime.
+- `agent_tick` MUST be the seeded `agent_tick.dispatcher` singleton only —
+  `createSchedulerJobSchema` rejects the kind (M33 — Designed; the M24
+  "stub without a launcher records `Skipped`/`PRECONDITION`" seam is
+  superseded by the real launcher). A claimed cron row MUST fire exactly
+  once per due window (atomic `next_fire_at` claim) and a missed window
+  MUST fire once, never backfill.
 - Terminal attempt writes MUST be fenced by attempt status so a handler that
   returns after lease expiry cannot turn a reaped `Failed` attempt into
   `Succeeded`.
@@ -171,6 +193,7 @@ flowchart TD
 - User-facing run schedules (Implemented, M28): [`run-schedules.md`](run-schedules.md) +
   [ADR-071](../decisions.md#adr-071-user-facing-run-schedules-on-the-m24-clock).
 - Domain-event dispatcher (Implemented, ADR-086): [`domain-events.md`](domain-events.md).
+- Platform-agent triggers (M33 — Designed, ADR-087): [`agents.md`](agents.md).
 - Existing recovery/GC domain: [`reconciliation-gc.md`](reconciliation-gc.md).
 - Source seams: `web/app/api/cron/gc/route.ts`, `web/lib/scheduler.ts`,
   `web/lib/reconcile.ts`, `web/lib/gc/sweeper.ts`,

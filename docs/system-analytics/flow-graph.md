@@ -473,6 +473,16 @@ flows write `node_attempts` and behave identically to the pre-M11a runner.
   `end_turn`, so no ACP deferred is open and `markNodeFailed` leaks nothing) — while
   a node WITHOUT `output.result` stays byte-identical to today (`vars: {}`) and
   requires `compat.engine_min >= 1.3.0`.
+- **(M33 — Designed, ADR-087)** An `ai_coding` node declaring `settings.agent`
+  MUST require `compat.engine_min >= 1.5.0` (`CONFIG` otherwise) and MUST
+  resolve the catalog agent at compile/launch (`CONFIG` when unknown or when
+  the agent's `triggers` lacks `flow`); `mode=session` substitutes the agent
+  body as the system prompt with node settings winning on merge;
+  `mode=subagent` materializes `.claude/agents/<name>.md` into the worktree
+  and MUST refuse non-`claude` capability runners with
+  `EXECUTOR_UNAVAILABLE` before spawn. See
+  [`../flow-dsl.md`](../flow-dsl.md) §Node `agent` binding and
+  [`agents.md`](agents.md).
 - **(M26 — Designed)** `run.json` MUST exist per run at
   `<worktreePath>/.maister/run.json`, separate from logs (which stay at `<runDir>`),
   with `.maister/` appended to the repo's git exclude

@@ -6267,6 +6267,287 @@ the M24 clock.
 
 ---
 
+### ADR-087: Platform agent catalog with per-agent runner and a five-source trigger model
+
+**Date:** 2026-06-12
+**Status:** Accepted
+**Context:** Stage 3 of the platform-agents staged design (Stage 1 = social
+board, ADR-083/M31; Stage 2 = domain-event outbox, ADR-086/M32). The vision
+record is `docs/pv/agents-as-environment-actors.md` (2026-06-03 brainstorm);
+the committed design doc was lost and is not restored (owner decision, same as
+ADR-086) — this ADR plus `docs/system-analytics/agents.md` are the durable
+Stage-3 record. Three owner amendments over the Stage-0 vision: **per-agent
+runner** (an agent may carry its own runner binding instead of only a
+recommendation), **standalone-first** (triggered one-shot agents ship before
+flow-binding polish), and **social layer** (agents act through the ADR-083
+comment/activity substrate — the schema-ready `actor_type='agent'` and the
+emitter-less `task.triage_requeued` kind finally get writers). Prerequisites
+already on main: polymorphic actor pair, per-recipient inbox, `agent_tick`
+job-kind stub, dead `agent_schedules` table (M24, zero readers/writers),
+consumer seam on the outbox.
+
+**Decision:** An **Agent** is a first-class `.md`-defined actor (frontmatter +
+body prompt) indexed into an `agents` table, attachable to projects, executed
+as ACP sessions on the existing `runs` substrate, and triggered from five
+sources.
+
+- **Definition = `.md`, DB row = parsed index.** All definitions live in the
+  host catalog `~/.maister/agents/<id>/agent.md` — owner decision: **nothing
+  agent-related lives inside project repos** (no repo sync hook). Frontmatter:
+  `name`, `description`, `scope: platform|project`, `project` (slug, required
+  iff `scope=project` — project scope is a pure binding), `runner` (optional
+  runner id), `workspace: none|repo_read|worktree` (ADR-088), `mode:
+  session|subagent`, `triggers: (manual|cron|domain_event|webhook|flow)[]`,
+  `capability_profile` (M14 shape, optional), `risk_tier:
+  read_only|standard|destructive`. Unknown keys are refused (strict schema).
+  Invalid definition → `MaisterError("CONFIG")` **at registration**; the row
+  is not written. Registration parses only — agent definitions carry **no
+  executable hooks** (no `setup.sh` analog), so there is no fetch-then-execute
+  trust gap. Re-registration syncs every parsed column with SET/CLEAR
+  symmetry (field removed → column default). UI CRUD writes the `.md` for
+  both scopes. Flow-package `agent_definition` files stay a separate,
+  flow-bound capability — not catalog rows.
+- **Attachment = `agent_project_links`.** `{agent_id, project_id, enabled,
+  runner_override_id?}` with `UNIQUE(agent_id, project_id)`; project-scope
+  agents get an auto-link to their bound project at registration so all
+  downstream reads are link-shaped.
+- **Per-agent runner, standalone resolution chain.** For standalone agent
+  runs: `launch override → agent_project_links.runner_override_id →
+  agents.runner_id → projects.default_runner_id → platform default`, each
+  tier validated by the existing `assertLaunchableRunner` (exists + enabled +
+  ready; refusal = `EXECUTOR_UNAVAILABLE`, no silent fallback), snapshot into
+  `runs.runner_snapshot` as today. Two compatibility refusals fire **before
+  spawn** with `EXECUTOR_UNAVAILABLE`: `mode=subagent` on a runner whose
+  `capability_agent ≠ claude` (`.claude/agents/*.md` is a Claude-SDK
+  artifact), and `workspace ∈ {none, repo_read}` on a runner with
+  `permission_policy = dangerously_skip_permissions` (suppressed permission
+  requests make ADR-088 L1 impossible). Flow-bound nodes keep the existing
+  six-tier flow chain — `agents.runner_id` participates only in the
+  standalone chain.
+- **Execution substrate = `runs`, separate budget.** `run_kind` gains
+  `'agent'`; new nullable `agent_id` FK, `trigger_source`
+  (`manual|cron|domain_event|webhook|flow`), `trigger_event_id` (bigint →
+  `domain_events.id`), `trigger_payload` (jsonb, ≤ 32 KB). One SSE pipeline,
+  one HITL substrate, one reconciliation. Concurrency: new
+  `MAISTER_MAX_CONCURRENT_AGENTS` budget (default 3) counted over
+  `run_kind='agent'`; the existing pool keeps counting
+  `run_kind IN ('flow','scratch')` — two independent FIFO Pending queues and
+  per-kind slot release. (Same milestone, owner-requested:
+  `MAISTER_MAX_CONCURRENT_RUNS` default 3 → 6; semantics unchanged.)
+  Task-bound agent runs are commentary/triage machinery: they NEVER flip
+  `tasks.status`, never bump `attempt_number`, and never count as the task's
+  latest delivery run.
+- **Five trigger sources** (persisted on `runs.trigger_source`):
+  1. **manual** — `POST /api/agents/[id]/launch` (session RBAC) + catalog row
+     button + task-card/detail button (passes `task_id`).
+  2. **cron** — `agent_schedules` reworked in place (the table was dead M24
+     code): text `agent_ref` and `scheduler_job_id`/`desired_state` dropped;
+     real `agent_id` FK plus `cron_expr`/`timezone`/`next_fire_at`/
+     `last_fired_at` added; rows claimed by the M28-proven atomic UPDATE
+     (`SET next_fire_at = <next> WHERE id = ? AND next_fire_at <= now()
+     RETURNING`) from a seeded singleton **`agent_tick.dispatcher`** job
+     (60s) — the `agent_tick` stub handler finally gets its launcher.
+     `agent_tick` leaves the user-creatable admin job kinds (seeded-singleton
+     precedent: `run_schedule`, `domain_event_dispatch`). Missed ticks fire
+     once (no backfill).
+  3. **domain_event** — new `agent_triggers` consumer on the ADR-086 bus
+     (`startFrom: "now"`): matches event kind + project against enabled
+     `agent_schedules` event rows (`event_match.kinds`) joined to enabled
+     links; **self-exclusion guard** — an event whose actor IS the matched
+     agent never triggers it (the anti-loop invariant of the triage Q&A
+     loop); claim-first spawn — the `Pending` run row INSERT carries
+     `(agent_id, trigger_event_id)` under a partial UNIQUE index, so
+     at-least-once redelivery converges to exactly one run
+     (`ON CONFLICT DO NOTHING`).
+  4. **webhook** — `POST /api/agents/[id]/event`, authenticated by a project
+     token with the new `agents:trigger` scope; body → `trigger_payload`.
+  5. **flow** — `agent: <id>` on `ai_coding` node settings (engine floor
+     `1.5.0`): `mode=session` substitutes the catalog profile (agent body =
+     system prompt, node prompt = task block, capability profiles merged,
+     node settings win); `mode=subagent` materializes the `.md` into the run
+     worktree's `.claude/agents/` (Claude self-delegates). In Stage 3 the
+     binding runs inside the flow run's session — no separate run row, so
+     `trigger_source='flow'` is reserved wire vocabulary (mirrors how
+     `task.triage_requeued` landed emitter-less in ADR-086).
+- **Triage verdict + Q&A loop (social layer).** `tasks.flow_id` becomes
+  nullable (simple-intent creation: title + prompt suffice — web form and
+  ext/MCP `task_create` alike); flowless tasks classify as a new
+  `unconfigured` launchability value (board chip, `PRECONDITION` refusal at
+  `launchRun`, `skipped_unconfigured` in the schedules dispatcher, 409 on ext
+  `run_launch`). New task verdict columns: `runner_id`, `target_branch`,
+  `promotion_mode`, `triage_status` (single value `'triaged'`, NULL =
+  untriaged — no `needs_human` state; missing fields prompt the human in the
+  launch popover). New ext op `POST
+  /api/v1/ext/projects/{slug}/tasks/{taskId}/triage` (scope `tasks:triage`)
+  sets any subset of the verdict fields and always stamps
+  `triage_status='triaged'` in one transaction + `triage_set` activity. The
+  triager asks questions as ordinary task comments (agent actor, M31 fanout
+  notifies the creator); a human reply re-triggers it via
+  `task.comment_added`; a "Send to triage" action re-queues explicitly
+  (`triage_status = NULL` + the first `task.triage_requeued` emit + activity,
+  one transaction). Relations get ext ops + MCP tools
+  (`relations:read|create|delete`).
+- **Agent tokens = per-launch ephemeral.** `project_tokens.token_kind` gains
+  `'agent'` with an `agent_id` FK. A token is issued at agent-run spawn
+  (fixed scope set: `tasks:read`, `tasks:triage`, `comments:read`,
+  `comments:create`, `relations:*`), injected server-side into the session's
+  MCP-facade `mcpServers` entry (never streamed, never logged), and revoked
+  at the run's terminal transition, on link detach, and by GC. Rationale:
+  the token store is hash-only (sha256) — a durable attach-time token cannot
+  be re-read for injection at later spawns without storing plaintext;
+  per-launch issuance is strictly stronger rotation than rotate-on-detach.
+  Token-derived actor maps to `{type: 'agent', id: agent_id}` —
+  `task_comments`/`task_activity`/`task_relations` finally exercise the
+  ADR-083 `agent` actor — and `token_audit_log.actor_label` records
+  `agent:<id>`.
+
+**Consequences:**
+- One migration (`0047_platform_agents.sql`): `agents`,
+  `agent_project_links`, the `agent_schedules` rework, `runs`/`tasks`/
+  `project_tokens` alters, the partial unique trigger-claim index, and the
+  `unconfigured`-enabling `tasks.flow_id` NULLABLE change.
+- Flow engine version bumps `1.4.0 → 1.5.0` (the `agent:` binding is
+  floor-gated like `retry_policy` was in ADR-080).
+- `agent_tick` disappears from `createSchedulerJobSchema` (job-kind admin
+  enums re-sync in `web.openapi.yaml`); the seeded job count grows to 5.
+- New scopes (`tasks:triage`, `relations:read|create|delete`,
+  `agents:trigger`) and four MCP facade tools (`triage_set`, `relation_add`,
+  `relation_remove`, `relation_list`).
+- Two budgets mean a full flow pool can no longer starve monitoring agents
+  and vice versa; portfolio/read models grow a `kind` badge + trigger chip.
+- The `MAISTER_MAX_CONCURRENT_RUNS` default bump (3 → 6) fans out to
+  `.env.example`, compose, `docs/configuration.md`, root `CLAUDE.md` §4, and
+  every test asserting the old default.
+
+**Alternatives Considered:**
+- **Agents as `authored_capabilities` entries (M25 catalog):** rejected —
+  authored capabilities are content-addressed, published, immutable
+  revisions; the agent catalog is host-local, owner-editable identity with
+  live enable/quarantine state. Flow-package `agent_definition` files remain
+  the flow-bound packaging.
+- **Project-scope agent files inside the project repo
+  (`.maister/<slug>/agents/`):** rejected by owner — keeps project repos
+  free of agent artifacts; scope is a binding, not a file location.
+- **Per-schedule `scheduler_jobs` rows (the original M24 `agent_schedules`
+  shape with `scheduler_job_id`):** rejected — `scheduler_jobs` has fixed
+  `cadence_interval_seconds`, not cron; M28 already proved the dispatcher
+  pattern (one seeded job + `next_fire_at` rows + atomic claim) for
+  `run_schedules`; reusing it avoids a second cadence model.
+- **Durable attach-time agent tokens ("rotated on detach"):** rejected —
+  incompatible with the hash-only token store; would require storing
+  recoverable plaintext server-side.
+- **A separate `agent_runs` table:** rejected — Stage-0 locked decision #5
+  (reuse `runs` with a kind discriminator) holds: one SSE pipeline, one
+  reconciliation, one HITL substrate, one concurrency accounting seam.
+
+---
+
+### ADR-088: Agent workspace axis with three-layer read-only enforcement and quarantine
+
+**Date:** 2026-06-12
+**Status:** Accepted
+**Context:** Most standalone agents (triager, monitors, stats collectors)
+need project *context* but no delivery workspace — a git worktree + branch +
+promotion path per ADR-007 is waste, and a writable parent checkout is a
+hazard. ADR-041 keeps strict capability enforcement blocked (M14 is
+materialize-only), so "the agent must not write" cannot yet be enforced at
+the capability layer. Two shipped precedents provide the mechanics: the M30
+gate-chat `readOnlyTurn` (per-prompt permission auto-deny inside the ACP
+layer, ADR-078) and the GC preserve mutation sensor
+(`statusPorcelain` snapshots, ADR-063).
+
+**Decision:** Agent definitions declare a **workspace axis** —
+`none | repo_read | worktree` — and `none`/`repo_read` runs are wrapped in
+three independent no-write layers plus a quarantine consequence. The
+invariant: **an agent run may only ever mutate its own worktree; a
+`none`/`repo_read` run must leave the host byte-identical** (modulo the
+tracked materialization manifest, restored before the check).
+
+- **Workspace axis.**
+  - `none` — cwd = the run's artifacts workdir
+    (`.maister/<slug>/runs/<run-id>/work/`, plain mkdir); no git, no
+    `workspaces` row, no promotion.
+  - `repo_read` — cwd = the project's parent checkout (`repo_path`), for
+    agents that read the codebase; no worktree, no `workspaces` row, no
+    promotion. Launch precondition: `statusPorcelain(repo_path)` is EMPTY —
+    a dirty baseline makes the no-write contract unverifiable →
+    `PRECONDITION`.
+  - `worktree` — the full existing lifecycle (`addWorktree`, `workspaces`
+    row, diff/review/promotion) unchanged.
+  - Run artifacts (`*.log`, `run.events.jsonl`, `session.json`, `cost.jsonl`)
+    live under `.maister/<slug>/runs/<run-id>/` for every axis value.
+- **L1 — supervisor session-level auto-deny (live).** New
+  `readOnlySession: boolean` on the supervisor's `POST /sessions` body —
+  the session-scoped generalization of M30's per-prompt `readOnlyTurn`. The
+  ACP permission handler auto-DENIES write-class tool permission requests
+  and auto-APPROVES an allow-list of read-safe kinds for the whole session
+  (a headless cron agent must not stall on its first file read). No
+  pending-permission deferreds are created — `readOnlySession` sessions
+  never reach the HITL inbox, and no deferred can leak. Runners with
+  `permission_policy = dangerously_skip_permissions` are refused for these
+  agents before spawn (ADR-087) because they suppress the very requests L1
+  arbitrates.
+- **L2 — M14 materialize-only deny rules (instructed, not enforced).** The
+  capability materializer writes `.claude/settings.local.json` deny rules
+  for write-class tools plus the agent's `capability_profile` roster into
+  the session cwd. For `repo_read` the cwd is the user's parent checkout, so
+  every materialized file is recorded in a **manifest** (the existing
+  `.maister-owned` marker pattern) and removed/restored after the run; the
+  L3 diff excludes exactly the manifest paths. Honest-visibility rule:
+  L2 remains best-effort instruction — the ADR-041 enforcement boundary is
+  unchanged, and surfaces describing it say so.
+- **L3 — dirty-watchdog + quarantine (the hard layer).** Porcelain snapshot
+  before spawn (must be clean); re-check at the run's terminal transition,
+  INSIDE the terminal choke point — the check and the ephemeral-token
+  revoke are sequenced before/within the status-flip transaction, and no
+  run-row write may follow the terminal flip. Dirty beyond the manifest →
+  one **quarantine transaction**: `agents.quarantined_at = now()` +
+  `quarantine_reason`, a system comment on the task when the run is
+  task-bound, and an `agent_quarantined` `task_activity` entry — all in ONE
+  `db.transaction`. Quarantined agents are refused at every launch entry
+  point (`PRECONDITION`: manual, cron, domain_event, webhook, flow binding)
+  until an explicit un-quarantine action clears the flag. Taskless runs get
+  the flag + catalog/portfolio badges only (no new notification plumbing in
+  this stage).
+- **ADR-041 boundary unchanged.** `risk_tier=destructive` definitions are
+  refused at launch (`PRECONDITION`) until the enforcement flip lands;
+  read-only/standard agents ship now precisely because L1+L3 do not depend
+  on capability enforcement.
+
+**Consequences:**
+- The supervisor wire contract grows one field (`readOnlySession`) —
+  `supervisor.openapi.yaml` + `docs/supervisor.md`; the mock ACP fixture
+  must learn to emit `session.permission_request` so the auto-deny
+  round-trip is testable.
+- Concurrent `repo_read` runs against one repo are safe (read-only by
+  contract) and allowed.
+- False-positive quarantine is possible if a human edits the parent checkout
+  while a `repo_read` agent runs — accepted: the watchdog cannot attribute
+  dirt, it errs toward freezing the agent, the reason is recorded, and
+  un-quarantine is one click. The launch-time clean-baseline precondition
+  keeps the window small.
+- A `repo_read` agent crash can strand L2-materialized files in the parent
+  checkout until the terminal sweep restores them; the manifest makes the
+  restore idempotent and the files are deny-rule content, not user data.
+
+**Alternatives Considered:**
+- **OS-level sandboxing (containers/seccomp/read-only bind mounts):**
+  rejected for this stage — adapter-portable sandboxing is the Phase-2
+  plugin-trust track; the three layers are implementable today inside the
+  existing supervisor + materializer + git seams.
+- **Auto-restore (stash/reset) instead of quarantine:** rejected — silently
+  mutating the user's parent checkout to undo agent damage is worse than the
+  damage; freezing the offending agent + surfacing the diff keeps the human
+  in charge.
+- **cwd = scratch dir + repo passed as a read path:** rejected — ACP
+  adapters derive project context from cwd; a non-repo cwd degrades every
+  codebase-reading agent to explicit-path archaeology.
+- **Skip L2 (L1+L3 only):** rejected — the deny-rule materialization is one
+  function call on an existing seam and instructs well-behaved agents away
+  from denied tools before they burn permission round-trips.
+
+---
+
 ## Open questions
 
 These are tracked as TODOs against future ADRs. They are NOT decisions.

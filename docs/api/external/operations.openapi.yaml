@@ -351,6 +351,135 @@ paths:
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
 
+  /api/v1/ext/projects/{slug}/tasks/{taskId}/triage:
+    post:
+      summary: (M33 — Designed) Submit a triage verdict
+      description: |
+        Scope `tasks:triage`. The triager's verdict op — ONE transactional
+        update of the task's launch-verdict fields plus the `'triaged'`
+        stamp. At least one body field is required; every provided field is
+        validated against server state (`flowId` ∈ project flows, `runnerId`
+        ∈ enabled runner catalog, `promotionMode` ∈ enum, `targetBranch` =
+        git ref-name shape). Always sets `tasks.triage_status = 'triaged'`
+        and records a `triage_set` activity entry carrying the verdict
+        payload. Writes a `token_audit_log` row with scope `tasks:triage`;
+        agent tokens record `actor_label = agent:<id>` and the activity
+        actor is the polymorphic `agent` pair (ADR-083).
+      operationId: extTriageTask
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string } }
+        - { name: taskId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExtTriageBody" }
+      responses:
+        "200":
+          description: Verdict applied; the task is `triaged`.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, triageStatus]
+                properties:
+                  ok: { type: boolean }
+                  triageStatus: { type: string, enum: [triaged] }
+        "401": { $ref: "#/components/responses/TokenUnauthorized" }
+        "403": { $ref: "#/components/responses/HitlForbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+  /api/v1/ext/projects/{slug}/tasks/{taskId}/relations:
+    get:
+      summary: (M33 — Designed) List a task's typed relations
+      description: |
+        Scope `relations:read`. Returns every relation touching the task,
+        with the canonical direction resolved into a per-row `role`
+        (`from` = the URL task is the relation's from-end). Inverse labels
+        are render-time concerns; the wire carries the canonical kind.
+      operationId: extListTaskRelations
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string } }
+        - { name: taskId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Relations touching the task.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [relations]
+                properties:
+                  relations:
+                    type: array
+                    items: { $ref: "#/components/schemas/ExtRelationView" }
+        "401": { $ref: "#/components/responses/TokenUnauthorized" }
+        "403": { $ref: "#/components/responses/HitlForbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      summary: (M33 — Designed) Add a typed relation from this task
+      description: |
+        Scope `relations:create`. Mirrors the web route: creates the
+        canonical one-direction relation `(from = URL task, kind, to)`.
+        `toNumber` is resolved STRICTLY within the URL-param project via
+        `(project_id, number)` — cross-project reach is impossible by
+        construction. Duplicates are idempotent no-ops. The relation actor
+        is token-derived (`agent` for agent tokens).
+      operationId: extAddTaskRelation
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string } }
+        - { name: taskId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExtRelationOpBody" }
+      responses:
+        "201":
+          description: Relation created (or already existed).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, created]
+                properties:
+                  ok: { type: boolean }
+                  created: { type: boolean }
+        "401": { $ref: "#/components/responses/TokenUnauthorized" }
+        "403": { $ref: "#/components/responses/HitlForbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+    delete:
+      summary: (M33 — Designed) Remove a typed relation from this task
+      description: |
+        Scope `relations:delete`. Removes the canonical relation
+        `(from = URL task, kind, to)`. Same body shape as create (mirrors
+        the web `deleteTaskRelation`). Missing relation is an idempotent
+        no-op (`removed: false`).
+      operationId: extRemoveTaskRelation
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string } }
+        - { name: taskId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExtRelationOpBody" }
+      responses:
+        "200":
+          description: Removal outcome.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, removed]
+                properties:
+                  ok: { type: boolean }
+                  removed: { type: boolean }
+        "401": { $ref: "#/components/responses/TokenUnauthorized" }
+        "403": { $ref: "#/components/responses/HitlForbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
   /api/v1/ext/runs:
     post:
       tags: [runs]
@@ -783,6 +912,75 @@ components:
           type: string
           description: Human-readable error message.
 
+    ExtTriageBody:
+      type: object
+      description: |
+        (M33 — Designed) Triage verdict — at least one field. Every provided
+        field is allow-list validated; the op always stamps
+        `triage_status='triaged'`.
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        flowId:
+          type: string
+          minLength: 1
+          description: Flow to run the task with; must belong to the project.
+        runnerId:
+          type: string
+          minLength: 1
+          description: Verdict runner; must be an enabled catalog runner.
+        targetBranch:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: Promotion target branch (git ref-name shape).
+        promotionMode:
+          type: string
+          enum: [local_merge, pull_request]
+
+    ExtRelationOpBody:
+      type: object
+      description: |
+        (M33 — Designed) Relation create/remove body — mirrors the web
+        route: the canonical direction is `(from = URL task, kind, to)`.
+      required: [kind, toNumber]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          enum: [blocks, depends_on, parent_of]
+        toNumber:
+          type: integer
+          minimum: 1
+          description: |
+            The other task's per-project number (`KEY-N`'s N), resolved
+            strictly within the URL-param project.
+
+    ExtRelationView:
+      type: object
+      description: |
+        (M33 — Designed) One relation touching the addressed task. `role`
+        says which end the URL task is; `other` is the opposite end.
+      required: [kind, role, other]
+      properties:
+        kind:
+          type: string
+          enum: [blocks, depends_on, parent_of]
+        role:
+          type: string
+          enum: [from, to]
+        other:
+          type: object
+          required: [taskId, number, title, status]
+          properties:
+            taskId: { type: string, format: uuid }
+            number: { type: integer, minimum: 1 }
+            taskKey: { type: string }
+            title: { type: string }
+            status:
+              type: string
+              enum: [Backlog, InFlight, Done, Abandoned]
+
     ExtCreateCommentBody:
       type: object
       required: [body]
@@ -1025,7 +1223,7 @@ components:
 
     ExtCreateTaskBody:
       type: object
-      required: [title, prompt, flowId]
+      required: [title, prompt]
       properties:
         title:
           type: string
@@ -1038,7 +1236,10 @@ components:
           minLength: 1
           description: |
             ID of a `flows` row belonging to the project identified by the URL
-            `slug`. Any other flow ID returns 422.
+            `slug`. Any other flow ID returns 422. (M33 — Designed) OPTIONAL:
+            a task created without `flowId` is a simple-intent task — it
+            classifies as `unconfigured` (not launchable) until a triage
+            verdict (`POST .../triage`) or a human fills the flow.
         executorOverrideId:
           type: string
           minLength: 1

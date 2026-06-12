@@ -218,6 +218,27 @@ defined as a string union in `web/lib/errors.ts`.
 > resolve it is captured as that source's `status: "error"` within a 200 response, never raised as a
 > 500. The existing live-session `ACP_PROTOCOL` (500) call site is unchanged.
 
+> **The M33 platform-agent substrate (ADR-087/088) reuses existing codes and adds none**
+> ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror) closed union). New call
+> sites (all Designed):
+> - **`CONFIG` → HTTP 422** — invalid agent definition at registration (bad/unknown
+>   frontmatter keys, missing `project` for `scope=project`, unknown project slug); a flow
+>   node's `settings.agent` referencing an unknown catalog agent or an agent whose
+>   `triggers` lacks `flow`; `settings.agent` declared without
+>   `compat.engine_min >= 1.5.0`; invalid cron expression / timezone / event kinds on an
+>   agent trigger binding.
+> - **`EXECUTOR_UNAVAILABLE` → HTTP 503** — the standalone agent runner chain resolves to a
+>   missing/disabled/not-ready runner at any tier (no fallback); `mode=subagent` resolved to
+>   a non-`claude` capability runner; `workspace ∈ {none, repo_read}` resolved to a runner
+>   with `permission_policy=dangerously_skip_permissions`.
+> - **`PRECONDITION` → HTTP 409** — launch refusals at every agent entry point: agent
+>   disabled or quarantined (`agents.quarantined_at` set), `risk_tier=destructive` while the
+>   ADR-041 enforcement flip is blocked, the requested trigger absent from the agent's
+>   `triggers`, a dirty `repo_read` baseline (`statusPorcelain` non-empty), or launching an
+>   `unconfigured` (flowless) task.
+> - **`CONFLICT` → HTTP 409** — deleting an agent that live runs reference (usage guard);
+>   attaching an already-attached agent.
+
 ## Construction
 
 ```ts

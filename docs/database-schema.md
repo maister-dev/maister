@@ -528,7 +528,9 @@ state machine.
 scheduler_jobs {
   id, projectId?,
   jobKind: 'system_sweep' | 'command' | 'agent_tick' | 'flow_run'
-         | 'run_schedule',          // M28 (Designed) — singleton dispatcher
+         | 'run_schedule'           // M28 — singleton dispatcher
+         | 'webhook_delivery'       // ADR-077 — singleton drainer
+         | 'domain_event_dispatch', // ADR-086 — singleton dispatcher
   target,                         // jsonb; validated per jobKind
   cadenceIntervalSeconds,          // fixed-interval only in M24
   nextRunAt, lastFiredAt?,
@@ -549,16 +551,22 @@ scheduler_job_runs {
   errorCode?, errorMessage?
 }
 
-agent_schedules {
-  id, projectId,
-  agentRef,                        // typed text; no M25 FK
-  schedulerJobId,
-  triggerType,
-  desiredState?,
+agent_schedules {                  // M33 Designed rework (migration 0047) —
+  id, projectId,                   //   the M24 shape was dead code (zero readers)
+  agentId,                         // FK -> agents.id CASCADE (was text agentRef)
+  triggerType: 'cron' | 'event',   // 'manual'/'continuous' dropped (Mγ later)
+  cronExpr?, timezone?,            // cron rows: 5-field croner + IANA, NOT NULL
+  nextFireAt?, lastFiredAt?,       // cron rows: atomic-claim key
+  eventMatch?,                     // event rows: { kinds: string[] } subset of
+                                   //   the ADR-086 taxonomy, NOT NULL
   enabled,
   createdAt, updatedAt
 }
 ```
+
+Dropped by the rework: `agentRef`, `schedulerJobId` (per-schedule job bridge —
+replaced by the seeded singleton `agent_tick.dispatcher`), `desiredState`.
+See [`db/agents-domain.md`](db/agents-domain.md).
 
 `scheduler_jobs` is indexed on `(disabled_at, next_run_at)` and
 `(job_kind, next_run_at)`. `scheduler_job_runs` is indexed on
@@ -599,6 +607,52 @@ run_schedules {
 `run_schedules` is indexed on `(project_id)`, `(task_id)`,
 `(enabled, next_fire_at)` (dispatcher due-scan), and `(last_run_id)`
 (FK SET NULL + the read-time `lastRunStatus` join).
+
+## Platform agent tables (Designed — ADR-087/ADR-088, migration `0047`)
+
+The M33 agent catalog: `.md` definitions in the host catalog
+(`~/.maister/agents/<id>/agent.md`) parsed into an index row; attachments and
+per-project overrides; trigger bindings. See
+[`db/agents-domain.md`](db/agents-domain.md) for the ERD and
+[`system-analytics/agents.md`](system-analytics/agents.md) for process flows.
+
+```ts
+agents {
+  id,                              // PK; the catalog dir name (SAFE_PATH_SEGMENT)
+  scope: 'platform' | 'project',
+  projectId?,                      // FK -> projects.id CASCADE;
+                                   //   CHECK (scope='project') = (projectId IS NOT NULL)
+  name, description,               // frontmatter, required
+  runnerId?,                       // FK -> platform_acp_runners.id SET NULL;
+                                   //   tier 3 of the standalone runner chain
+  workspace: 'none' | 'repo_read' | 'worktree',   // ADR-088 axis
+  mode: 'session' | 'subagent',
+  triggers (jsonb),                // subset of manual|cron|domain_event|webhook|flow
+  capabilityProfile? (jsonb),      // M14 shape; materialize-only (ADR-041 boundary)
+  riskTier: 'read_only' | 'standard' | 'destructive',
+  sourcePath,                      // canonical .md path
+  enabled,                         // UI toggle
+  quarantinedAt?, quarantineReason?,  // ADR-088 dirty-watchdog flag
+  createdAt, updatedAt
+}
+
+agent_project_links {
+  id,                              // uuid PK
+  agentId,                         // FK -> agents.id CASCADE
+  projectId,                       // FK -> projects.id CASCADE
+  enabled,
+  runnerOverrideId?,               // FK -> platform_acp_runners.id SET NULL;
+                                   //   tier 2 of the standalone runner chain
+  createdAt, updatedAt
+  // UNIQUE (agent_id, project_id)
+}
+```
+
+The `.md` file is the canonical definition; re-registration re-syncs every
+parsed column with SET/CLEAR symmetry. Project-scope agents get an auto-link
+to their bound project. Catalog deletes are usage-guarded (refused while live
+agent runs exist). Indexed on `agents(project_id)`,
+`agent_project_links(project_id)`, plus the UNIQUE pair above.
 
 ## Authored catalog tables (Implemented, M25)
 
@@ -649,10 +703,21 @@ draft updates increment `draft_version` and stale callers receive `CONFLICT`.
   id, projectId, title, prompt,
   number,                        // ADR-083 (Implemented, 0043): per-project monotonic,
                                  //   UNIQUE (project_id, number); KEY-N = task_key-number
-  flowId,                        // FK -> flows.id
+  flowId?,                       // FK -> flows.id; NULLABLE (M33 Designed,
+                                 //   migration 0047) — simple-intent tasks are
+                                 //   created flowless and classify `unconfigured`
+                                 //   until a triage verdict or the launch popover
+                                 //   fills the flow
   status: 'Backlog' | 'InFlight' | 'Done' | 'Abandoned',
   stage: 'Backlog' | 'Prepare',  // M9 board column (DEFAULT 'Backlog')
   attemptNumber,                 // monotonic per task, starts at 1
+  triageStatus?,                 // M33 Designed: 'triaged' | NULL (untriaged);
+                                 //   stamped by the ext triage op, cleared by
+                                 //   "Send to triage"
+  runnerId?,                     // M33 Designed: verdict runner, FK SET NULL;
+                                 //   board Launch passes it as launchOverride
+  targetBranch?,                 // M33 Designed: verdict target branch (text)
+  promotionMode?,                // M33 Designed: 'local_merge' | 'pull_request'
   createdByUserId?,              // nullable FK -> users.id; user-token owner
   createdAt, updatedAt
 }
@@ -787,7 +852,17 @@ unread badge and inbox panel.
 ```ts
 {
   id,
-  runKind: 'flow' | 'scratch',   // DEFAULT 'flow'
+  runKind: 'flow' | 'scratch'
+         | 'agent',              // M33 Designed (migration 0047); DEFAULT 'flow'
+  agentId?,                      // M33 Designed: FK -> agents.id SET NULL;
+                                 //   set iff runKind='agent'
+  triggerSource?,                // M33 Designed: 'manual' | 'cron'
+                                 //   | 'domain_event' | 'webhook' | 'flow'
+  triggerEventId?,               // M33 Designed: bigint domain_events.id —
+                                 //   partial-UNIQUE claim key (agent_id,
+                                 //   trigger_event_id) for outbox no-dup
+  triggerPayload?,               // M33 Designed: jsonb webhook/event context,
+                                 //   bounded <= 32 KB at the boundary
   taskId?,                       // nullable for scratch runs
   projectId,
   flowId?,                       // nullable for scratch runs
@@ -1346,8 +1421,16 @@ rationale.
   projectId,                                // NOT NULL, FK -> projects.id, ON DELETE CASCADE
   name,                                     // NOT NULL; human-readable label
   tokenKind,                                // NOT NULL DEFAULT 'project'; 'project' | 'user'
+                                            //   | 'agent' (M33 Designed, migration 0047)
   ownerUserId?,                             // nullable FK -> users.id, ON DELETE SET NULL;
                                             //   set for user-owned tokens
+  agentId?,                                 // M33 Designed: nullable FK -> agents.id,
+                                            //   ON DELETE CASCADE; CHECK (tokenKind='agent')
+                                            //   = (agentId IS NOT NULL). Agent tokens are
+                                            //   per-launch ephemeral: issued at agent-run
+                                            //   spawn with a fixed scope set, revoked at
+                                            //   the run's terminal transition / link
+                                            //   detach / GC (ADR-087)
   prefix,                                   // NOT NULL, INDEX; first 12 chars of the full
                                             //   token string (mai_...) — lookup key
   tokenHash,                                // NOT NULL; sha256_hex(fullToken) — plaintext
@@ -1931,6 +2014,13 @@ projects
   ├── capability_imports (FK projectId, cascade)      ← M14 Implemented
   ├── project_flow_roles (FK projectId, cascade)      ← M13
   ├── actor_identities   (FK projectId, cascade)      ← M13
+  ├── agents             (FK projectId, cascade)      ← M33 Designed (project-scope rows only)
+  │     ├── agent_project_links (FK agentId, cascade)             ← M33 Designed
+  │     ├── agent_schedules     (FK agentId, cascade)             ← M33 Designed
+  │     ├── project_tokens.agent_id (FK agentId, cascade)         ← M33 Designed (ephemeral agent tokens)
+  │     └── runs.agent_id       (FK agentId, SET NULL — history survives catalog deletes)
+  ├── agent_project_links (FK projectId, cascade)     ← also direct, M33 Designed
+  ├── agent_schedules     (FK projectId, cascade)     ← also direct, M33 Designed rework
   ├── tasks              (FK projectId, cascade)
   │     ├── task_relations   (FK fromTaskId / toTaskId, cascade)   ← ADR-083
   │     ├── task_comments    (FK taskId,   cascade)                ← ADR-083

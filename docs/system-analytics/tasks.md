@@ -49,12 +49,23 @@ comment/activity/subscription/inbox substrate around tasks is owned by
   `UNIQUE(from_task_id, kind, to_task_id)`, no self-relations,
   same-project only in Stage 1 (`CONFIG` on violation). Inverse labels
   ("blocked by", "required by", "child of") are render-time only.
+- **Launch verdict** (M33 — Designed, ADR-087) — `tasks.flow_id` becomes
+  NULLABLE (simple-intent creation: title + prompt suffice on both the web
+  form and ext/MCP `task_create`) plus four verdict columns the triager or a
+  human fills: `runner_id` (FK SET NULL — board Launch passes it as the
+  `launchOverride` tier), `target_branch`, `promotion_mode`
+  (`local_merge|pull_request`), and `triage_status` (`'triaged'` | NULL =
+  untriaged; stamped by the ext triage op, cleared by "Send to triage").
+  Flowless tasks classify as **`unconfigured`** (not launchable); the
+  board card's launch popover collects and persists the missing fields via
+  `PATCH /api/projects/{slug}/tasks/{number}` (one aggregating endpoint,
+  explicit `null` clears a field) before launching.
 
 ## State machine — board axis
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Backlog: create task<br/>(title + prompt + flow)
+    [*] --> Backlog: create task<br/>(title + prompt; flow optional — M33)
     Backlog --> InFlight: Launch click<br/>(preconditions pass,<br/>run created)
     InFlight --> Backlog: latest run terminates<br/>Failed | Crashed | Abandoned
     InFlight --> Done: latest run merged<br/>(terminal)
@@ -179,7 +190,13 @@ flowchart LR
 `classifyTaskLaunchability` gains optional relation context and a
 `"blocked"` classification with precedence
 `target_terminal > crashed > busy > blocked > launchable` — relations gate
-*launching* only, they never mask an active run's state. Every consumer
+*launching* only, they never mask an active run's state. (M33 — Designed,
+ADR-087) a flowless task adds the `"unconfigured"` classification between
+`blocked` and `launchable` (`… > blocked > unconfigured > launchable`):
+launch is refused with `PRECONDITION` at every entry point, the schedules
+dispatcher records `skipped_unconfigured`, ext `run_launch` returns 409, and
+the board card swaps Launch for the popover that collects the missing
+fields. Every consumer
 threads the context: `launchRun` (single choke point for internal AND ext
 launches), the run-schedules dispatcher (skip with reason —
 [`run-schedules.md`](run-schedules.md)), and the board/portfolio read
@@ -256,6 +273,15 @@ flowchart TD
   returns to `Backlog` and Launch button re-appears.
 - `Done` is terminal for the task; Done tasks NEVER return to `Backlog`.
 - Title and prompt are non-empty at creation.
+- **(M33 — Designed)** A task without `flow_id` MUST classify as
+  `unconfigured` and MUST be refused launch (`PRECONDITION`) at every entry
+  point until a flow is set (triage verdict, card popover PATCH, or task
+  update); `triage_status` MUST be written only by the ext triage op
+  (`'triaged'`) and the "Send to triage" action (NULL + the
+  `task.triage_requeued` emit in ONE transaction).
+- **(M33 — Designed)** `PATCH /api/projects/{slug}/tasks/{number}` MUST
+  update verdict fields in ONE transaction with explicit-`null` CLEAR
+  semantics, validating `flowId`/`runnerId` against server-state allow-lists.
 - **(M16 + token actor-scope support — Implemented)** External task creation
   uses the same validation as the UI and records the API token in
   `token_audit_log`. User-owned tokens also set `tasks.created_by_user_id` to
@@ -287,6 +313,8 @@ flowchart TD
 
 - **Empty title or prompt** → `PRECONDITION` (400).
 - **`flow_id` not registered for this project** → `PRECONDITION`.
+- **Launch attempt on a flowless (`unconfigured`) task** → `PRECONDITION`
+  (M33 — Designed); the schedules dispatcher records `skipped_unconfigured`.
 - **selected `runnerId` missing, disabled, or not ready** →
   `EXECUTOR_UNAVAILABLE`
   (503).

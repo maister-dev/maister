@@ -419,6 +419,45 @@ distinct exhaustion signal. `retry_policy` is valid ONLY on `ai_coding` / `cli`
 [`configuration.md`](configuration.md) §M30 engine bump). Flows using none of
 these keys stay valid at any `engine_min`.
 
+## Node `agent` binding (M33 — Designed)
+
+**(M33 — Designed, [ADR-087](decisions.md#adr-087-platform-agent-catalog-with-per-agent-runner-and-a-five-source-trigger-model).)**
+An optional `agent: <agent-id>` on `ai_coding` node settings binds the node to
+a catalog agent (`~/.maister/agents/<id>/agent.md`) instead of relying solely
+on the inline prompt.
+
+```yaml
+nodes:
+  - id: review
+    type: ai_coding
+    action:
+      prompt: "Review the diff for {{ task.title }}"
+    settings:
+      agent: code-reviewer            # catalog agent id (SAFE_PATH_SEGMENT)
+```
+
+- **Resolution** — compile/launch-time validation: the agent must exist in the
+  catalog and its `triggers` must include `flow`, else `MaisterError("CONFIG")`.
+- **`mode: session` agents** — the catalog profile substitutes the inline
+  prompt: the agent's `.md` body becomes the system prompt, the node's
+  `action.prompt` is appended as the task block, and the agent's
+  `capability_profile` merges with node settings (node settings win on
+  collision).
+- **`mode: subagent` agents** — the `.md` is materialized into the run
+  worktree's `.claude/agents/<name>.md` so the Claude session can
+  self-delegate. Requires a runner whose `capability_agent` is `claude`;
+  any other resolved runner → `MaisterError("EXECUTOR_UNAVAILABLE")` before
+  spawn (the partial-runner-independence boundary, ADR-087).
+- **Runner** — flow-bound nodes keep the existing six-tier flow resolution
+  chain; the agent's own `runner` binding participates only in standalone
+  agent runs.
+- The binding executes inside the flow run's session — no separate agent-run
+  row is created in this stage.
+
+**Engine floor.** Declaring `settings.agent` requires
+`compat.engine_min >= 1.5.0`, else `CONFIG`; `MAISTER_ENGINE_VERSION` bumps
+`1.4.0 → 1.5.0`. Flows without the key stay valid at any `engine_min`.
+
 ## Rework `session_policy` (M30 — Implemented)
 
 **(M30 — Implemented, [ADR-081](decisions.md#adr-081-rework-session-policy-with-resume-by-default).)**

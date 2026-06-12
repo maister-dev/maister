@@ -118,6 +118,8 @@ tags:
     description: Capability import trust-confirm route (M14, Designed, ADR-042).
   - name: flow-studio
     description: M27 Flow Studio — graph editor, draft/publish, version-binding, exec-trust.
+  - name: agents
+    description: M33 (Designed) platform-agent catalog, attachments, launches, and the inbound webhook trigger (ADR-087/088).
   - name: mcp-management
     description: M27 MCP capability management — platform-admin and project-scoped MCP servers.
   - name: webhooks
@@ -381,7 +383,7 @@ paths:
     post:
       tags: [admin]
       summary: (M24) Create a scheduler job
-      description: Admin-only. Creates a scheduler job. `agent_tick` jobs default `maxFailures` from `MAISTER_SCHEDULER_AGENT_TICK_MAX_FAILURES`. Per-kind `target` shape is validated (command requires `commandKind` + url/host; flow_run requires `taskId`). `run_schedule` and `domain_event_dispatch` are deliberately NOT creatable here — the singletons `run_schedule.dispatcher` (M28, ADR-071) and `domain_event_dispatch.default` (ADR-086) are seeded by the tick; both kinds are rejected at the schema.
+      description: Admin-only. Creates a scheduler job. Per-kind `target` shape is validated (command requires `commandKind` + url/host; flow_run requires `taskId`). `run_schedule`, `domain_event_dispatch`, and `agent_tick` are deliberately NOT creatable here — the singletons `run_schedule.dispatcher` (M28, ADR-071), `domain_event_dispatch.default` (ADR-086), and `agent_tick.dispatcher` (M33 — Designed, ADR-087) are seeded by the tick; all three kinds are rejected at the schema.
       operationId: postAdminSchedulerJob
       requestBody:
         required: true
@@ -400,7 +402,6 @@ paths:
                       [
                         system_sweep,
                         command,
-                        agent_tick,
                         flow_run,
                         webhook_delivery,
                       ],
@@ -504,6 +505,178 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "409":
           description: Scheduler job not found.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/admin/agents:
+    get:
+      tags: [admin]
+      summary: (M33 — Designed) List the platform agent catalog
+      description: |
+        Admin-only. Returns every registered agent (both scopes) with parsed
+        frontmatter columns, enabled state, and quarantine state. The `.md`
+        files under `~/.maister/agents/<id>/agent.md` are the canonical
+        definitions; rows are the parsed index (ADR-087).
+      operationId: getAdminAgents
+      responses:
+        "200":
+          description: Agent catalog.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [agents]
+                properties:
+                  agents:
+                    type: array
+                    items: { $ref: "#/components/schemas/AgentSummary" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [admin]
+      summary: (M33 — Designed) Create an agent definition
+      description: |
+        Admin-only. Writes `~/.maister/agents/<id>/agent.md` from the body,
+        then parses and registers it (write-then-parse — the file stays the
+        single source). Project-scope agents (`scope=project`) must name a
+        registered project slug in `project` and are auto-linked to it.
+        Invalid frontmatter → `422 CONFIG`; id collision → `409`.
+        Registration never executes definition content.
+      operationId: postAdminAgent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AgentDefinitionBody" }
+      responses:
+        "201":
+          description: Agent registered.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, id]
+                properties:
+                  ok: { type: boolean }
+                  id: { type: string }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Agent id already exists.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422":
+          description: Invalid definition (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/admin/agents/resync:
+    post:
+      tags: [admin]
+      summary: (M33 — Designed) Re-scan the host agent catalog
+      description: |
+        Admin-only. Re-reads `~/.maister/agents/`, re-parses every
+        `agent.md`, and re-syncs rows with SET/CLEAR symmetry (a removed
+        frontmatter field resets its column). Invalid definitions are
+        reported and left untouched in the DB; rows whose directory
+        disappeared are disabled (`enabled=false`), never silently deleted.
+      operationId: postAdminAgentsResync
+      responses:
+        "200":
+          description: Re-sync summary.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, synced]
+                properties:
+                  ok: { type: boolean }
+                  synced: { type: integer }
+                  invalid:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, error]
+                      properties:
+                        id: { type: string }
+                        error: { type: string }
+                  missing:
+                    type: array
+                    items: { type: string }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/admin/agents/{agentId}:
+    patch:
+      tags: [admin]
+      summary: (M33 — Designed) Update an agent definition / toggle / un-quarantine
+      description: |
+        Admin-only, one aggregating endpoint. Definition fields rewrite the
+        `.md` and re-register (write-then-parse); `enabled` toggles the row;
+        `unquarantine: true` clears `quarantined_at` + `quarantine_reason`.
+      operationId: patchAdminAgent
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema: { type: string, pattern: "^[A-Za-z0-9._-]+$" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                definition: { $ref: "#/components/schemas/AgentDefinitionBody" }
+                enabled: { type: boolean }
+                unquarantine: { type: boolean }
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: Unknown agent.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422":
+          description: Invalid definition (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+    delete:
+      tags: [admin]
+      summary: (M33 — Designed) Delete an agent (usage-guarded)
+      description: |
+        Admin-only. Hard-deletes the catalog row and the `.md` directory.
+        Refused with `409 CONFLICT` while live (non-terminal) agent runs
+        reference the agent — mirrors the ACP-runner delete guard (ADR-065).
+      operationId: deleteAdminAgent
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema: { type: string, pattern: "^[A-Za-z0-9._-]+$" }
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: Unknown agent.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "409":
+          description: Live agent runs reference this agent (`CONFLICT`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -763,6 +936,272 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/projects/{slug}/agents:
+    get:
+      tags: [projects]
+      summary: (M33 — Designed) Attach-panel read model
+      description: |
+        Project membership `member`+. Returns agents attached to the project
+        (link + overrides + trigger bindings) and platform agents available
+        to attach. `projectId` resolves from the URL slug (server-state).
+      operationId: getProjectAgents
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+      responses:
+        "200":
+          description: Attached + available agents.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [attached, available]
+                properties:
+                  attached:
+                    type: array
+                    items: { $ref: "#/components/schemas/AttachedAgent" }
+                  available:
+                    type: array
+                    items: { $ref: "#/components/schemas/AgentSummary" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [projects]
+      summary: (M33 — Designed) Attach an agent to the project
+      description: |
+        Project `admin`+ (`editSettings`). Creates the
+        `agent_project_links` row. `agentId` must reference a registered
+        platform-scope agent (project-scope agents are auto-linked at
+        registration); `runnerOverrideId` is validated against the enabled
+        runner catalog.
+      operationId: postProjectAgentLink
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [agentId]
+              additionalProperties: false
+              properties:
+                agentId: { type: string, pattern: "^[A-Za-z0-9._-]+$" }
+                enabled: { type: boolean, default: true }
+                runnerOverrideId: { type: string, nullable: true }
+      responses:
+        "201":
+          description: Attached.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, linkId]
+                properties:
+                  ok: { type: boolean }
+                  linkId: { type: string, format: uuid }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Already attached, or unknown agent (`CONFLICT`/`PRECONDITION`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/projects/{slug}/agents/{agentId}:
+    patch:
+      tags: [projects]
+      summary: (M33 — Designed) Update an attachment (one aggregating endpoint)
+      description: |
+        Project `admin`+. Partial body in ONE server transaction: link
+        fields (`enabled`, `runnerOverrideId` — explicit `null` clears) and
+        the optional full replacement of the agent's trigger bindings for
+        this project (`schedules` — cron rows croner-validated, event rows
+        validated against the ADR-086 kind taxonomy).
+      operationId: patchProjectAgentLink
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+        - name: agentId
+          in: path
+          required: true
+          schema: { type: string, pattern: "^[A-Za-z0-9._-]+$" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                enabled: { type: boolean }
+                runnerOverrideId: { type: string, nullable: true }
+                schedules:
+                  type: array
+                  items: { $ref: "#/components/schemas/AgentScheduleBody" }
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: No attachment for this (project, agent).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422":
+          description: Invalid cron expression / timezone / event kinds (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+    delete:
+      tags: [projects]
+      summary: (M33 — Designed) Detach an agent from the project
+      description: |
+        Project `admin`+. Removes the link and its trigger bindings, and
+        revokes every live agent token for this (agent, project) pair
+        (ADR-087 rotation guarantee).
+      operationId: deleteProjectAgentLink
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+        - name: agentId
+          in: path
+          required: true
+          schema: { type: string, pattern: "^[A-Za-z0-9._-]+$" }
+      responses:
+        "204": { description: Detached. }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: No attachment for this (project, agent).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/projects/{slug}/agents/{agentId}/launch:
+    post:
+      tags: [projects]
+      summary: (M33 — Designed) Manually launch an agent run
+      description: |
+        Project membership `member`+ (`launchRun`). Identifiers: `slug` and
+        `agentId` are url-params; body `taskId` (optional task-bound context)
+        is validated to belong to the project; body `runnerId` (optional
+        launch override, tier 1 of the standalone chain) is validated against
+        the enabled runner catalog. Refusals: disabled/quarantined agent,
+        `risk_tier=destructive` (ADR-041 gate), `manual` missing from the
+        agent's `triggers`, or a dirty `repo_read` baseline → `409
+        PRECONDITION`; runner resolution/incompatibility → `503
+        EXECUTOR_UNAVAILABLE`. Over-budget runs queue as `Pending`.
+      operationId: postProjectAgentLaunch
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+        - name: agentId
+          in: path
+          required: true
+          schema: { type: string, pattern: "^[A-Za-z0-9._-]+$" }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                taskId: { type: string, format: uuid }
+                runnerId: { type: string }
+      responses:
+        "202":
+          description: Agent run created (`Running` or queued `Pending`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentLaunchResult" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Launch precondition failed (`PRECONDITION`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "503":
+          description: Runner unavailable or incompatible (`EXECUTOR_UNAVAILABLE`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/agents/{agentId}/event:
+    post:
+      tags: [agents]
+      summary: (M33 — Designed) Inbound webhook trigger for an agent
+      description: |
+        Authenticated by a **bearer project token** carrying the
+        `agents:trigger` scope (the only token-authenticated route outside
+        `/api/v1/ext`). The project is derived from the token
+        (auth-context) and validated against the agent's enabled
+        attachments — no body-controlled project identifier. The JSON body
+        (≤ 32 KB) is stored verbatim as `runs.trigger_payload` and appended
+        to the agent's prompt context. Refusals mirror the manual launch
+        (`webhook` must be in the agent's `triggers`).
+      operationId: postAgentEvent
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema: { type: string, pattern: "^[A-Za-z0-9._-]+$" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Free-form JSON payload, ≤ 32 KB serialized.
+      responses:
+        "202":
+          description: Agent run created (`Running` or queued `Pending`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentLaunchResult" }
+        "401":
+          description: Missing/invalid token.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "403":
+          description: Token lacks `agents:trigger`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "404":
+          description: Agent unknown or not attached to the token's project.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "409":
+          description: Launch precondition failed (`PRECONDITION`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "413":
+          description: Payload over 32 KB.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
   /api/projects/{slug}/files:
     get:
       tags: [projects]
@@ -876,6 +1315,104 @@ paths:
           description: |
             `flowId` not configured for this project, or a retired runner
             override field was supplied (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/projects/{slug}/tasks/{number}:
+    patch:
+      tags: [projects]
+      summary: (M33 — Designed) Update task launch-verdict fields (one aggregating endpoint)
+      description: |
+        Project membership `member`+. The board card's launch popover persists
+        flow/runner/branch/policy edits here in ONE transaction before
+        launching. Partial body, at least one field; an explicit `null`
+        CLEARS a field (SET/CLEAR symmetric). `flowId` is validated against
+        the project's flows, `runnerId` against the enabled runner catalog,
+        `targetBranch` against git ref-name shape. Does NOT touch
+        `triage_status` — that is the triager's mark (ext triage op) or the
+        send-to-triage action.
+      operationId: patchTask
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+        - name: number
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              minProperties: 1
+              properties:
+                flowId: { type: string, nullable: true }
+                runnerId: { type: string, nullable: true }
+                targetBranch: { type: string, nullable: true, maxLength: 255 }
+                promotionMode:
+                  type: string
+                  nullable: true
+                  enum: [local_merge, pull_request, null]
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: Unknown task number for this project.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422":
+          description: Unknown `flowId`/`runnerId`, bad ref name, or empty body (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/projects/{slug}/tasks/{number}/send-to-triage:
+    post:
+      tags: [projects]
+      summary: (M33 — Designed) Re-queue a task for triage
+      description: |
+        Project membership `member`+. In ONE transaction: sets
+        `tasks.triage_status = NULL`, emits the first `task.triage_requeued`
+        domain event (the kind ADR-086 registered emitter-less), and records
+        a `triage_requeued` activity entry. Subscribed triager agents pick
+        the event up on the next dispatch tick.
+      operationId: postTaskSendToTriage
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+        - name: number
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Re-queued.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: Unknown task number for this project.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -7195,9 +7732,107 @@ components:
             `origin`), `no-remote` (existing repo without an `origin` — PR
             promotion unavailable), or `initialized` (`git init` ran on a
             non-repo dir — unborn HEAD, needs a first commit before runs).
+    AgentSummary:
+      type: object
+      description: |
+        (M33 — Designed) Catalog projection of an `agents` row — the parsed
+        frontmatter index plus enabled/quarantine state. Never includes
+        token material or filesystem internals beyond `sourcePath`.
+      required:
+        [id, scope, name, description, workspace, mode, triggers, riskTier, enabled]
+      properties:
+        id: { type: string }
+        scope: { type: string, enum: [platform, project] }
+        projectId: { type: string, nullable: true }
+        name: { type: string }
+        description: { type: string }
+        runnerId: { type: string, nullable: true }
+        workspace: { type: string, enum: [none, repo_read, worktree] }
+        mode: { type: string, enum: [session, subagent] }
+        triggers:
+          type: array
+          items:
+            type: string
+            enum: [manual, cron, domain_event, webhook, flow]
+        riskTier: { type: string, enum: [read_only, standard, destructive] }
+        sourcePath: { type: string }
+        enabled: { type: boolean }
+        quarantinedAt: { type: string, format: date-time, nullable: true }
+        quarantineReason: { type: string, nullable: true }
+    AgentDefinitionBody:
+      type: object
+      description: |
+        (M33 — Designed) Create/update payload for an agent definition. The
+        server renders it into frontmatter + body and writes the `.md`
+        (write-then-parse). `project` is required iff `scope=project`.
+      required: [id, name, description, scope, workspace, mode, triggers, riskTier, prompt]
+      properties:
+        id: { type: string, pattern: "^[A-Za-z0-9._-]+$", maxLength: 128 }
+        name: { type: string, minLength: 1 }
+        description: { type: string, minLength: 1 }
+        scope: { type: string, enum: [platform, project] }
+        project:
+          type: string
+          description: Project slug; required iff `scope=project`.
+        runner: { type: string, nullable: true }
+        workspace: { type: string, enum: [none, repo_read, worktree] }
+        mode: { type: string, enum: [session, subagent] }
+        triggers:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            enum: [manual, cron, domain_event, webhook, flow]
+        capabilityProfile: { type: object, nullable: true }
+        riskTier: { type: string, enum: [read_only, standard, destructive] }
+        prompt:
+          type: string
+          minLength: 1
+          description: The `.md` body — the agent's base/system prompt.
+    AttachedAgent:
+      type: object
+      description: |
+        (M33 — Designed) Attach-panel row — the agent summary joined with its
+        link and trigger bindings for this project.
+      required: [agent, linkId, enabled, schedules]
+      properties:
+        agent: { $ref: "#/components/schemas/AgentSummary" }
+        linkId: { type: string, format: uuid }
+        enabled: { type: boolean }
+        runnerOverrideId: { type: string, nullable: true }
+        schedules:
+          type: array
+          items: { $ref: "#/components/schemas/AgentScheduleBody" }
+    AgentScheduleBody:
+      type: object
+      description: |
+        (M33 — Designed) One trigger binding. Cron rows require
+        `cronExpr` + `timezone`; event rows require `eventKinds` (subset of
+        the ADR-086 taxonomy).
+      required: [triggerType]
+      properties:
+        triggerType: { type: string, enum: [cron, event] }
+        cronExpr: { type: string, description: "5-field cron, croner-validated." }
+        timezone: { type: string, description: "IANA timezone." }
+        eventKinds:
+          type: array
+          items: { type: string }
+          description: Domain-event kinds (ADR-086 taxonomy subset).
+        enabled: { type: boolean, default: true }
+    AgentLaunchResult:
+      type: object
+      description: (M33 — Designed) Result of an agent-run launch.
+      required: [runId, status]
+      properties:
+        runId: { type: string, format: uuid }
+        status: { type: string, enum: [Running, Pending] }
+        queuePosition:
+          type: integer
+          minimum: 1
+          description: Present when queued over the agent budget.
     PostTaskBody:
       type: object
-      required: [title, prompt, flowId]
+      required: [title, prompt]
       properties:
         title:
           type: string
@@ -7211,6 +7846,9 @@ components:
           description: |
             ID of a `flows` row belonging to the project identified by
             the URL `slug`. Any other flow ID returns `422 CONFIG`.
+            (M33 — Designed) OPTIONAL: a task created without `flowId` is a
+            simple-intent task; it classifies as `unconfigured` until a triage
+            verdict or the launch popover fills the flow.
     TaskCommentDTO:
       type: object
       description: |

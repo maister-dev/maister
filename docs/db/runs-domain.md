@@ -49,16 +49,24 @@ erDiagram
         integer number "ADR-078 Implemented: per-project, UNIQUE (project_id, number)"
         text title
         text prompt
-        text flow_id FK
+        text flow_id FK "M33 Designed: NULLABLE — unconfigured until triaged"
         text status "Backlog|InFlight|Done|Abandoned"
         integer attempt_number "starts at 1"
+        text triage_status "M33 Designed: 'triaged' | NULL"
+        text runner_id FK "M33 Designed: verdict runner, SET NULL"
+        text target_branch "M33 Designed: verdict branch, nullable"
+        text promotion_mode "M33 Designed: local_merge|pull_request, nullable"
         timestamp created_at
         timestamp updated_at
     }
 
     RUNS {
         text id PK
-        text run_kind "flow|scratch (DEFAULT flow)"
+        text run_kind "flow|scratch|agent (DEFAULT flow; agent M33 Designed)"
+        text agent_id FK "M33 Designed: agents(id) SET NULL — kind=agent only"
+        text trigger_source "M33 Designed: manual|cron|domain_event|webhook|flow"
+        bigint trigger_event_id "M33 Designed: domain_events.id claim key"
+        jsonb trigger_payload "M33 Designed: webhook/event context, <= 32 KB"
         text task_id FK "nullable for scratch"
         text project_id FK
         text flow_id FK "nullable for scratch"
@@ -338,6 +346,11 @@ BY started_at DESC LIMIT 1`; designed run-attempt schema switches to
 - `runs_kind_task_idx` on `(run_kind, task_id)` — board/latest
   attempt queries that explicitly filter `run_kind = 'flow'` and exclude
   scratch rows with nullable `task_id`.
+- `runs_agent_trigger_event_unique` partial UNIQUE on
+  `(agent_id, trigger_event_id) WHERE trigger_event_id IS NOT NULL` —
+  **(M33 Designed)** the outbox→spawn no-dup claim: at-least-once event
+  redelivery converges to exactly one agent run (ADR-087). See
+  [agents-domain.md](agents-domain.md).
 - `scratch_runs_project_status_idx` on `(project_id, dialog_status)` — active
   scratch workspace lists. The primary key on `run_id` covers detail joins.
 - `scratch_messages_run_sequence_uq` on `(run_id, sequence)` UNIQUE —

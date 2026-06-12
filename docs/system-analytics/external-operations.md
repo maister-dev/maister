@@ -39,6 +39,21 @@ platform-authenticated external surface exists.
   matching `/api/v1/ext` route label; `*` remains the broad project API wildcard.
   See [`../db/integrations-domain.md`](../db/integrations-domain.md).
   (Implemented)
+- **Agent tokens** (M33 — Designed, ADR-087) — `token_kind='agent'` rows with
+  an `agent_id` FK: per-LAUNCH ephemeral credentials for platform-agent runs.
+  Issued at agent-run spawn with exactly the fixed scope set `tasks:read,
+  tasks:triage, comments:read, comments:create, relations:read,
+  relations:create, relations:delete`; injected server-side into the
+  session's MCP-facade `mcpServers` entry; revoked at the run's terminal
+  transition, on attachment detach, and by GC. Verification maps them to the
+  polymorphic actor `{type: 'agent', id: agent_id}` (ADR-083's first agent
+  writer) and `token_audit_log.actor_label` records `agent:<id>`. See
+  [agents.md](agents.md).
+- **New scopes** (M33 — Designed) — `tasks:triage` (the triage verdict op),
+  `relations:read` / `relations:create` / `relations:delete` (typed-relation
+  ops), `agents:trigger` (the inbound `POST /api/agents/{agentId}/event`
+  webhook trigger — the only token-authenticated route outside
+  `/api/v1/ext`).
 - **`token_audit_log`** — append-only audit record per `/api/v1/ext` call.
   Captures actor label, scope label, endpoint, method, result, and HTTP status
   code. See [`../db/integrations-domain.md`](../db/integrations-domain.md).
@@ -58,7 +73,10 @@ platform-authenticated external surface exists.
 - **MCP facade (`@maister/mcp`)** — standalone `mcp/` workspace package; eight
   tools, each a thin REST client of `/api/v1/ext`; zero DB or web coupling.
   (Implemented) ADR-078 adds `comment_create` / `comment_list` over the ext
-  comment routes, following the `hitl_*` idiom. (Implemented)
+  comment routes, following the `hitl_*` idiom. (Implemented) M33 (Designed,
+  ADR-087) adds `triage_set` (the triager's verdict op over
+  `POST .../tasks/{taskId}/triage`) and `relation_add` / `relation_remove` /
+  `relation_list` over the ext relation routes.
 
 ## State machine — token lifecycle
 

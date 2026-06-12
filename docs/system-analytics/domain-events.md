@@ -32,10 +32,11 @@ borrows ([scheduler.md](scheduler.md)).
 - **Kind taxonomy v1** (Implemented) — exactly 8 kinds:
   `task.created`, `task.comment_added`, `task.triage_requeued`, `run.done`,
   `run.failed`, `run.crashed`, `run.abandoned`, `gate.failed`.
-  `task.triage_requeued` is registered with **no emitter** (Designed — the
-  emitter lands with the Stage-3 triager). Extension rule: one taxonomy entry +
-  emit site(s) in the owning domain transaction + one doc row + a CHECK update
-  via migration.
+  `task.triage_requeued` was registered with no emitter; its emitter is the
+  M33 "Send to triage" action (Designed — `triage_status = NULL` + emit +
+  `triage_requeued` activity in one transaction, ADR-087). Extension rule:
+  one taxonomy entry + emit site(s) in the owning domain transaction + one
+  doc row + a CHECK update via migration.
 - **`domain_event_dispatch` job kind** (Implemented) — singleton dispatcher on
   the M24 clock (one seeded `domain_event_dispatch.default` job, cadence 60s,
   budget `domainEventDispatch: 1`, not user-creatable). See
@@ -45,6 +46,14 @@ borrows ([scheduler.md](scheduler.md)).
   entry declares `{ id, startFrom: "beginning" | "now", handle(events) }`. v1
   ships exactly one permanently-registered `noop` consumer (`startFrom: "now"`)
   as the live proof of the seam and an ops liveness signal.
+- **`agent_triggers` consumer** (M33 — Designed, ADR-087) — the first real
+  consumer (`startFrom: "now"`): matches each event's kind + project against
+  enabled `agent_schedules` event rows joined to enabled
+  `agent_project_links`, skips events actored by the matched agent itself
+  (the self-exclusion anti-loop guard), and claims each spawn by inserting
+  the `Pending` agent run under the partial UNIQUE
+  `(agent_id, trigger_event_id)` — at-least-once redelivery converges to
+  exactly one run. See [agents.md](agents.md).
 
 ## State machine
 
@@ -146,7 +155,8 @@ flowchart TD
   any future pruning MUST honor `min(cursor_event_id)` across registered
   consumers (no pruning in this stage).
 - `domain_events.kind` MUST be one of the 8 taxonomy kinds (CHECK-enforced);
-  `task.triage_requeued` MUST have no emitter until the Stage-3 triager lands.
+  `task.triage_requeued` MUST be emitted only by the M33 "Send to triage"
+  action (Designed) — no other emitter.
 - The dispatch read window MUST be exactly `id > cursor_event_id AND tx_id <
   pg_snapshot_xmin(pg_current_snapshot()) ORDER BY id LIMIT batch` — a
   late-committing lower id MUST hold back all later ids until it resolves.
@@ -199,7 +209,9 @@ flowchart TD
 - **Spec freeze:** [`../../.ai-factory/specs/domain-event-outbox.spec.md`](../../.ai-factory/specs/domain-event-outbox.spec.md).
 - **DB:** [`db/domain-events.md`](../db/domain-events.md) and
   [`database-schema.md`](../database-schema.md) — the two tables (migration
-  `0045`).
+  `0046`).
+- **First real consumer (M33 — Designed):** [`agents.md`](agents.md) — the
+  `agent_triggers` consumer and the triage Q&A loop.
 - **Background clock:** [`scheduler.md`](scheduler.md) — the
   `domain_event_dispatch` job kind, `domainEventDispatch: 1` budget, and the
   `domain_event_dispatch.default` 60s seed.
