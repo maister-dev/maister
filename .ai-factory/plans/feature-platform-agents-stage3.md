@@ -11,7 +11,7 @@
 - [x] Phase 1 — schema + migration 0047 (commit 2)
 - [x] Phase 2 — definition parser + registry (commit 3)
 - [x] Phase 3 — standalone launch + budgets (commit 4)
-- [ ] Phase 4 — enforcement L1/L3 + quarantine
+- [x] Phase 4 — enforcement L1/L3 + quarantine (commit 5; + migration 0048 for activity kinds)
 - [ ] Phase 5 — five triggers
 - [ ] Phase 6 — ext/MCP + tokens
 - [ ] Phase 7 — UI

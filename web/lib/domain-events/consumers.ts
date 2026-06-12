@@ -4,6 +4,8 @@ import type { DomainEventRow } from "@/lib/db/schema";
 
 import pino from "pino";
 
+import { agentTriggersConsumer } from "@/lib/agents/triggers";
+
 const log = pino({
   name: "domain-events-noop",
   level: process.env.LOG_LEVEL ?? "info",
@@ -37,7 +39,14 @@ export const noopConsumer: DomainEventConsumer = {
   },
 };
 
-// Code-owned registry (ADR-086): future consumers (agent-trigger dispatcher,
-// the re-pointed webhooks fanout, notifiers) register here. Removing an entry
-// leaves its cursor row dormant — cleanup is deferred until pruning lands.
-export const DOMAIN_EVENT_CONSUMERS: DomainEventConsumer[] = [noopConsumer];
+// Code-owned registry (ADR-086): future consumers (the re-pointed webhooks
+// fanout, notifiers) register here. Removing an entry leaves its cursor row
+// dormant — cleanup is deferred until pruning lands. M33 (ADR-087) adds
+// agent_triggers — the first real consumer: it matches event kind + project
+// against enabled agent_schedules event rows (with the self-exclusion
+// anti-loop guard) and claims spawns via the partial-unique Pending run
+// insert, so at-least-once redelivery converges to exactly one run.
+export const DOMAIN_EVENT_CONSUMERS: DomainEventConsumer[] = [
+  noopConsumer,
+  agentTriggersConsumer,
+];

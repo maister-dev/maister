@@ -1,0 +1,278 @@
+import type { DomainEventRow } from "@/lib/db/schema";
+
+import { randomUUID } from "node:crypto";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
+import {
+  PostgreSqlContainer,
+  type StartedPostgreSqlContainer,
+} from "@testcontainers/postgresql";
+import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
+import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { Pool } from "pg";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+
+let container: StartedPostgreSqlContainer;
+let pool: Pool;
+let db: NodePgDatabase;
+let projectId: string;
+let agentsRoot: string;
+
+let triggers: typeof import("@/lib/agents/triggers");
+let launchModule: typeof import("@/lib/agents/launch");
+
+beforeAll(async () => {
+  agentsRoot = await mkdtemp(path.join(os.tmpdir(), "maister-trig-"));
+  process.env.MAISTER_AGENTS_ROOT = agentsRoot;
+
+  container = await new PostgreSqlContainer("postgres:16-alpine")
+    .withDatabase("maister_test")
+    .withUsername("test")
+    .withPassword("test")
+    .start();
+  pool = new Pool({ connectionString: container.getConnectionUri() });
+  db = drizzle(pool);
+  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+
+  triggers = await import("@/lib/agents/triggers");
+  launchModule = await import("@/lib/agents/launch");
+}, 180_000);
+
+afterAll(async () => {
+  await pool?.end();
+  await container?.stop();
+  delete process.env.MAISTER_AGENTS_ROOT;
+});
+
+beforeEach(async () => {
+  await pool.query(`DELETE FROM "runs"`);
+  await pool.query(`DELETE FROM "agent_schedules"`);
+  await pool.query(`DELETE FROM "agents"`);
+  await pool.query(`DELETE FROM "projects"`);
+
+  projectId = randomUUID();
+  await pool.query(
+    `INSERT INTO "projects" ("id", "slug", "name", "repo_path", "main_branch", "branch_prefix", "maister_yaml_path", "task_key")
+     VALUES ($1, $2, 'P', $3, 'main', 'maister/', '/tmp/maister.yaml', $4)`,
+    [
+      projectId,
+      `p-${projectId.slice(0, 8)}`,
+      `/repos/${projectId}`,
+      `K${projectId
+        .replace(/[^0-9A-Za-z]/g, "")
+        .slice(0, 7)
+        .toUpperCase()}`,
+    ],
+  );
+
+  // The consumer tests exercise the REAL launch path (the partial-unique
+  // claim), so the runner chain must resolve: seed a ready default runner.
+  await pool.query(
+    `INSERT INTO "platform_acp_runners" ("id", "adapter", "capability_agent", "model", "provider", "readiness_status")
+     VALUES ('trig-runner', 'claude', 'claude', 'claude-sonnet-4-6', '{"kind":"anthropic"}'::jsonb, 'Ready')
+     ON CONFLICT (id) DO NOTHING`,
+  );
+  await pool.query(
+    `INSERT INTO "platform_runtime_settings" ("id", "default_runner_id")
+     VALUES ('singleton', 'trig-runner')
+     ON CONFLICT (id) DO UPDATE SET "default_runner_id" = 'trig-runner'`,
+  );
+});
+
+async function seedAgent(args: {
+  id: string;
+  triggers: string[];
+}): Promise<void> {
+  await mkdir(path.join(agentsRoot, args.id), { recursive: true });
+  await writeFile(
+    path.join(agentsRoot, args.id, "agent.md"),
+    `---
+name: ${args.id}
+description: d
+scope: platform
+workspace: none
+mode: session
+triggers:
+${args.triggers.map((t) => `  - ${t}`).join("\n")}
+risk_tier: read_only
+---
+Do the thing.
+`,
+    "utf8",
+  );
+
+  await pool.query(
+    `INSERT INTO "agents" ("id", "scope", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path")
+     VALUES ($1, 'platform', $1, 'd', 'none', 'session', $2::jsonb, 'read_only', $3)`,
+    [
+      args.id,
+      JSON.stringify(args.triggers),
+      path.join(agentsRoot, args.id, "agent.md"),
+    ],
+  );
+  await pool.query(
+    `INSERT INTO "agent_project_links" ("id", "agent_id", "project_id") VALUES ($1, $2, $3)`,
+    [randomUUID(), args.id, projectId],
+  );
+}
+
+function fakeEvent(overrides: Partial<DomainEventRow>): DomainEventRow {
+  return {
+    id: 1n as unknown as DomainEventRow["id"],
+    kind: "task.created",
+    projectId,
+    taskId: null,
+    runId: null,
+    actorType: "user",
+    actorId: randomUUID(),
+    payload: { title: "t" },
+    occurredAt: new Date(),
+    createdAt: new Date(),
+    txId: "0" as unknown as DomainEventRow["txId"],
+    ...overrides,
+  } as DomainEventRow;
+}
+
+describe("agent cron dispatcher (agent_tick.dispatcher)", () => {
+  it("claims a due row exactly once across concurrent ticks and never backfills", async () => {
+    await seedAgent({ id: "cron-agent", triggers: ["cron"] });
+
+    const past = new Date(Date.now() - 10 * 60_000);
+
+    await pool.query(
+      `INSERT INTO "agent_schedules" ("id", "agent_id", "project_id", "trigger_type", "cron_expr", "timezone", "next_fire_at")
+       VALUES ($1, 'cron-agent', $2, 'cron', '*/5 * * * *', 'UTC', $3)`,
+      [randomUUID(), projectId, past],
+    );
+
+    const launches: string[] = [];
+    const launch = async (
+      input: Parameters<typeof launchModule.launchAgentRun>[0],
+    ) => {
+      launches.push(input.agentId);
+
+      return { runId: randomUUID(), status: "Running" as const };
+    };
+
+    const [a, b] = await Promise.all([
+      triggers.dispatchDueAgentSchedules({ db, launch }),
+      triggers.dispatchDueAgentSchedules({ db, launch }),
+    ]);
+
+    // Exactly one tick wins the claim; the missed window fires once.
+    expect(a.claimed + b.claimed).toBe(1);
+    expect(launches).toEqual(["cron-agent"]);
+
+    const row = await pool.query(
+      `SELECT "next_fire_at", "last_fired_at" FROM "agent_schedules"`,
+    );
+
+    expect(new Date(row.rows[0].next_fire_at).getTime()).toBeGreaterThan(
+      Date.now() - 60_000,
+    );
+    expect(row.rows[0].last_fired_at).not.toBeNull();
+
+    // A third tick sees nothing due.
+    const c = await triggers.dispatchDueAgentSchedules({ db, launch });
+
+    expect(c.claimed).toBe(0);
+    expect(launches).toHaveLength(1);
+  });
+});
+
+describe("agent_triggers outbox consumer (ADR-086/087)", () => {
+  it("at-least-once redelivery of the same event converges to exactly one run", async () => {
+    await seedAgent({ id: "event-agent", triggers: ["domain_event"] });
+    await pool.query(
+      `INSERT INTO "agent_schedules" ("id", "agent_id", "project_id", "trigger_type", "event_match")
+       VALUES ($1, 'event-agent', $2, 'event', '{"kinds":["task.created"]}'::jsonb)`,
+      [randomUUID(), projectId],
+    );
+
+    const consumer = triggers.buildAgentTriggersConsumer({ db });
+    const event = fakeEvent({ id: 777 as unknown as DomainEventRow["id"] });
+
+    // Same window delivered twice (crash-before-advance redelivery).
+    await consumer.handle([event]);
+    await consumer.handle([event]);
+
+    const runs = await pool.query(
+      `SELECT "trigger_event_id", "status" FROM "runs" WHERE "agent_id" = 'event-agent'`,
+    );
+
+    expect(runs.rows).toHaveLength(1);
+    expect(Number(runs.rows[0].trigger_event_id)).toBe(777);
+  });
+
+  it("self-actored events never re-trigger the agent; foreign actors do", async () => {
+    await seedAgent({ id: "triager", triggers: ["domain_event"] });
+    await pool.query(
+      `INSERT INTO "agent_schedules" ("id", "agent_id", "project_id", "trigger_type", "event_match")
+       VALUES ($1, 'triager', $2, 'event', '{"kinds":["task.comment_added"]}'::jsonb)`,
+      [randomUUID(), projectId],
+    );
+
+    const consumer = triggers.buildAgentTriggersConsumer({ db });
+
+    // The triager's own comment (the question it just asked).
+    await consumer.handle([
+      fakeEvent({
+        id: 1001 as unknown as DomainEventRow["id"],
+        kind: "task.comment_added",
+        actorType: "agent",
+        actorId: "triager",
+      }),
+    ]);
+
+    let runs = await pool.query(
+      `SELECT count(*)::int AS n FROM "runs" WHERE "agent_id" = 'triager'`,
+    );
+
+    expect(runs.rows[0].n).toBe(0);
+
+    // The human's reply re-triggers it.
+    await consumer.handle([
+      fakeEvent({
+        id: 1002 as unknown as DomainEventRow["id"],
+        kind: "task.comment_added",
+        actorType: "user",
+        actorId: randomUUID(),
+      }),
+    ]);
+
+    runs = await pool.query(
+      `SELECT count(*)::int AS n FROM "runs" WHERE "agent_id" = 'triager'`,
+    );
+
+    expect(runs.rows[0].n).toBe(1);
+  });
+
+  it("kind/project mismatches and refusals never throw (idempotent contract)", async () => {
+    await seedAgent({ id: "narrow-agent", triggers: ["domain_event"] });
+    await pool.query(
+      `INSERT INTO "agent_schedules" ("id", "agent_id", "project_id", "trigger_type", "event_match")
+       VALUES ($1, 'narrow-agent', $2, 'event', '{"kinds":["run.failed"]}'::jsonb)`,
+      [randomUUID(), projectId],
+    );
+
+    const consumer = triggers.buildAgentTriggersConsumer({ db });
+
+    // Wrong kind + wrong project: both no-ops, no throw.
+    await consumer.handle([
+      fakeEvent({ id: 2001 as unknown as DomainEventRow["id"] }),
+      fakeEvent({
+        id: 2002 as unknown as DomainEventRow["id"],
+        kind: "run.failed",
+        projectId: randomUUID(),
+      }),
+    ]);
+
+    const runs = await pool.query(
+      `SELECT count(*)::int AS n FROM "runs" WHERE "agent_id" = 'narrow-agent'`,
+    );
+
+    expect(runs.rows[0].n).toBe(0);
+  });
+});

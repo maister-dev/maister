@@ -557,6 +557,22 @@ const OUTPUT_ENGINE_MIN = "1.3.0";
 // engine_min >= this value.
 const POLICY_ENGINE_MIN = "1.4.0";
 
+// M33 floor (ADR-087): manifests binding a node to a catalog agent
+// (`settings.agent`) must declare engine_min >= this value.
+const AGENT_BINDING_ENGINE_MIN = "1.5.0";
+
+// Returns true when any ai_coding node binds a catalog agent. Used to gate
+// the 1.5.0 floor.
+function declaresAgentBinding(nodes: NodeDef[]): boolean {
+  for (const n of nodes) {
+    const settings = (n as { settings?: { agent?: unknown } }).settings;
+
+    if (settings?.agent !== undefined) return true;
+  }
+
+  return false;
+}
+
 // Returns true when the manifest uses any artifact feature (produces, artifact
 // input.requires, or artifact_required gates). Used to gate the engine-min check.
 function declaresArtifacts(nodes: NodeDef[]): boolean {
@@ -697,6 +713,18 @@ export function validateGraphManifest(
     throw new MaisterError(
       "CONFIG",
       `graph flow ${flowYamlPath} is declaring mutation assertions (must_touch/must_not_touch or a mutation_report gate output) but engine_min "${engineMin}" < ${OUTPUT_ENGINE_MIN} — bump compat.engine_min to ${OUTPUT_ENGINE_MIN} (host engine is ${MAISTER_ENGINE_VERSION})`,
+    );
+  }
+
+  // M33 (ADR-087): the catalog-agent node binding requires the 1.5.0 floor.
+  // Manifests without `settings.agent` stay valid at any engine_min.
+  if (
+    declaresAgentBinding(nodes) &&
+    !semverGte(engineMin, AGENT_BINDING_ENGINE_MIN)
+  ) {
+    throw new MaisterError(
+      "CONFIG",
+      `graph flow ${flowYamlPath} is declaring a catalog-agent binding (settings.agent) but engine_min "${engineMin}" < ${AGENT_BINDING_ENGINE_MIN} — bump compat.engine_min to ${AGENT_BINDING_ENGINE_MIN} (host engine is ${MAISTER_ENGINE_VERSION})`,
     );
   }
 

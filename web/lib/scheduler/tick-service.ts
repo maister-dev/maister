@@ -101,15 +101,32 @@ async function runClaimedJob(
         });
 
         return succeeded(job);
-      case "agent_tick":
-        await runAgentTickJob({ target: job.target });
+      case "agent_tick": {
+        // M33 (ADR-087): the stub finally gets its launcher — the
+        // agent_tick.dispatcher claims due agent_schedules cron rows and
+        // recovers stranded Pending agent runs.
+        const agentTickSummary = await runAgentTickJob({
+          target: job.target,
+          launcher: async () => {
+            const { dispatchDueAgentSchedules } = await import(
+              "@/lib/agents/triggers"
+            );
+
+            return dispatchDueAgentSchedules() as Promise<
+              Record<string, unknown>
+            >;
+          },
+        });
+
         await recordJobAttemptResult({
           jobId: job.id,
           attemptId: job.attemptId,
           status: "Succeeded",
+          summary: agentTickSummary,
         });
 
         return succeeded(job);
+      }
       case "flow_run":
         await runScheduledFlowJob(job.target);
         await recordJobAttemptResult({

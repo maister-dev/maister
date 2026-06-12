@@ -64,6 +64,9 @@ export type RunAgentStepCtx = {
   runId: string;
   stepId: string;
   worktreePath: string;
+  // M33 (ADR-087): the node's `settings.agent` catalog binding — resolved at
+  // dispatch (session-mode prompt substitution / subagent materialization).
+  agentBinding?: { id: string };
   executor: {
     id: string;
     agent: CapabilityAgent;
@@ -574,8 +577,29 @@ export async function runAgentStep(
   ctx: RunAgentStepCtx,
   supervisorApi: SupervisorApi = defaultSupervisor,
 ): Promise<StepResult & { acpSessionId?: string; sessionFallback?: boolean }> {
+  let promptTemplate = step.prompt;
+
+  // M33 (ADR-087): a catalog-agent binding substitutes the inline prompt —
+  // the agent's .md body becomes the system block and the node prompt is
+  // appended as the task block (mode=session), or the definition is
+  // materialized into .claude/agents/ for Claude self-delegation
+  // (mode=subagent; the inline prompt stays the driver).
+  if (ctx.agentBinding) {
+    const { resolveFlowBoundAgent } = await import("@/lib/agents/flow-binding");
+    const bound = await resolveFlowBoundAgent({
+      agentId: ctx.agentBinding.id,
+      executorAgent: ctx.executor.agent,
+      worktreePath: ctx.worktreePath,
+      db: ctx.db,
+    });
+
+    if (bound.mode === "session") {
+      promptTemplate = `${bound.prompt}\n\n## Task\n\n${step.prompt}`;
+    }
+  }
+
   const rendered = renderStrict(
-    step.prompt,
+    promptTemplate,
     ctx.context as unknown as Record<string, unknown>,
     { traceLog: log },
   );

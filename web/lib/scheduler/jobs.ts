@@ -117,6 +117,10 @@ const DEFAULT_WEBHOOK_DELIVERY_JOB_ID = "webhook_delivery.default";
 const DEFAULT_WEBHOOK_DELIVERY_CADENCE_SECONDS = 60;
 const DEFAULT_DOMAIN_EVENT_DISPATCH_JOB_ID = "domain_event_dispatch.default";
 const DEFAULT_DOMAIN_EVENT_DISPATCH_CADENCE_SECONDS = 60;
+// M33 (ADR-087): the ONE seeded agent_tick job — claims due agent_schedules
+// cron rows and recovers stranded Pending agent runs each tick.
+const DEFAULT_AGENT_TICK_JOB_ID = "agent_tick.dispatcher";
+const DEFAULT_AGENT_TICK_CADENCE_SECONDS = 60;
 
 export function isSchedulerJobKind(value: string): value is SchedulerJobKind {
   return SCHEDULER_JOB_KINDS.includes(value as SchedulerJobKind);
@@ -266,6 +270,32 @@ export async function ensureDefaultSchedulerJobs(
       'domain_event_dispatch',
       '{}'::jsonb,
       ${DEFAULT_DOMAIN_EVENT_DISPATCH_CADENCE_SECONDS},
+      ${now},
+      3,
+      ${now},
+      ${now}
+    )
+    ON CONFLICT (id) DO NOTHING
+  `);
+
+  await db.execute(sql`
+    INSERT INTO scheduler_jobs (
+      id,
+      project_id,
+      job_kind,
+      target,
+      cadence_interval_seconds,
+      next_run_at,
+      max_failures,
+      created_at,
+      updated_at
+    )
+    VALUES (
+      ${DEFAULT_AGENT_TICK_JOB_ID},
+      NULL,
+      'agent_tick',
+      '{}'::jsonb,
+      ${DEFAULT_AGENT_TICK_CADENCE_SECONDS},
       ${now},
       3,
       ${now},

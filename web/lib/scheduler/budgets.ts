@@ -25,7 +25,10 @@ export function schedulerBudgetLimits(): SchedulerBudgetLimits {
   return {
     systemSweep: 1,
     command: positiveEnvInt("MAISTER_MAX_CONCURRENT_COMMANDS", 2),
-    agent: positiveEnvInt("MAISTER_MAX_CONCURRENT_AGENTS", 1),
+    // M33 (ADR-087): agent_tick is the seeded singleton dispatcher — one
+    // attempt at a time (run_schedule precedent). MAISTER_MAX_CONCURRENT_
+    // AGENTS is repurposed as the agent-RUN budget at tryStartRun.
+    agent: 1,
     flow: UNBOUNDED_FLOW_DISPATCH_BUDGET,
     runSchedule: 1,
     webhookDelivery: 1,

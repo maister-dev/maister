@@ -569,6 +569,12 @@ async function executeNodeAction(
         },
         {
           ...common,
+          // M33 (ADR-087): catalog-agent binding (ai_coding only).
+          agentBinding:
+            def.type === "ai_coding" &&
+            (def.settings as { agent?: string } | undefined)?.agent
+              ? { id: (def.settings as { agent: string }).agent }
+              : undefined,
           // M30 (ADR-081): rework `resume` — the dispatch carries the prior
           // attempt's session handle (runner-agent falls back to a fresh
           // session, observably, when it is unresumable).
