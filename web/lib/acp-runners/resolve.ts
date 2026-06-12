@@ -6,7 +6,10 @@ export type RunnerResolutionTier =
   | "projectFlowDefault"
   | "platformFlowDefault"
   | "projectDefault"
-  | "platformDefault";
+  | "platformDefault"
+  // M33 (ADR-087): standalone agent chain tiers.
+  | "agentLinkOverride"
+  | "agentDefault";
 
 export type RunnerCatalogEntry = {
   readonly id: string;
@@ -130,6 +133,78 @@ function assertLaunchableRunner(
   }
 
   return runner;
+}
+
+export type AgentRunnerResolutionInput = {
+  readonly launchOverrideRunnerId?: string | null;
+  readonly link: { readonly runnerOverrideId?: string | null };
+  readonly agent: {
+    readonly runnerId?: string | null;
+    readonly mode: "session" | "subagent";
+    readonly workspace: "none" | "repo_read" | "worktree";
+  };
+  readonly project: { readonly defaultRunnerId?: string | null };
+  readonly platform: { readonly defaultRunnerId: string };
+  readonly runners: readonly RunnerCatalogEntry[];
+};
+
+// M33 (ADR-087): the standalone agent chain — flow tiers do not participate.
+// Two compatibility refusals fire BEFORE spawn: subagent definitions are
+// Claude-SDK artifacts, and dangerously_skip_permissions suppresses the very
+// permission requests the ADR-088 L1 read-only layer arbitrates.
+export function resolveAgentRunner(
+  input: AgentRunnerResolutionInput,
+): RunnerResolution {
+  const candidates: readonly Candidate[] = [
+    { tier: "launchOverride", runnerId: input.launchOverrideRunnerId },
+    { tier: "agentLinkOverride", runnerId: input.link.runnerOverrideId },
+    { tier: "agentDefault", runnerId: input.agent.runnerId },
+    { tier: "projectDefault", runnerId: input.project.defaultRunnerId },
+    { tier: "platformDefault", runnerId: input.platform.defaultRunnerId },
+  ];
+  const runnerById = new Map(
+    input.runners.map((runner) => [runner.id, runner]),
+  );
+
+  for (const candidate of candidates) {
+    if (!candidate.runnerId) continue;
+    const runner = assertLaunchableRunner(
+      candidate,
+      runnerById.get(candidate.runnerId),
+    );
+
+    if (
+      input.agent.mode === "subagent" &&
+      runner.capabilityAgent !== "claude"
+    ) {
+      throw new MaisterError(
+        "EXECUTOR_UNAVAILABLE",
+        `agent runner ${runner.id} (capability ${runner.capabilityAgent}) cannot host a subagent-mode definition — .claude/agents materialization requires a claude-capability runner`,
+      );
+    }
+
+    if (
+      input.agent.workspace !== "worktree" &&
+      runner.permissionPolicy === "dangerously_skip_permissions"
+    ) {
+      throw new MaisterError(
+        "EXECUTOR_UNAVAILABLE",
+        `agent runner ${runner.id} uses dangerously_skip_permissions — incompatible with the ${input.agent.workspace} workspace read-only enforcement (ADR-088 L1)`,
+      );
+    }
+
+    return {
+      runnerId: runner.id,
+      runnerResolutionTier: candidate.tier,
+      capabilityAgent: runner.capabilityAgent,
+      runnerSnapshot: snapshotRunner(runner),
+    };
+  }
+
+  throw new MaisterError(
+    "EXECUTOR_UNAVAILABLE",
+    `no ACP runner resolved for agent (${candidates.map(formatCandidate).join(", ")})`,
+  );
 }
 
 export function resolveRunner(input: RunnerResolutionInput): RunnerResolution {

@@ -9,7 +9,7 @@
 
 - [x] Phase 0 — ADR-087/088 + analytics spec (commit 1)
 - [x] Phase 1 — schema + migration 0047 (commit 2)
-- [ ] Phase 2 — definition parser + registry
+- [x] Phase 2 — definition parser + registry (commit 3)
 - [ ] Phase 3 — standalone launch + budgets
 - [ ] Phase 4 — enforcement L1/L3 + quarantine
 - [ ] Phase 5 — five triggers

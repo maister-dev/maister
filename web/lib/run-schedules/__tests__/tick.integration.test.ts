@@ -8,7 +8,15 @@ import { eq, sql } from "drizzle-orm";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool } from "pg";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 import * as schema from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors-core";
@@ -30,7 +38,14 @@ let service: typeof import("@/lib/run-schedules/service");
 const DISPATCHER_ID = "run_schedule.dispatcher";
 const MIN = 60_000;
 
+let originalCap: string | undefined;
+
 beforeAll(async () => {
+  // The overlap×cap case seeds exactly 3 Running rows — pin the cap (the
+  // M33 default moved to 6).
+  originalCap = process.env.MAISTER_MAX_CONCURRENT_RUNS;
+  process.env.MAISTER_MAX_CONCURRENT_RUNS = "3";
+
   container = await new PostgreSqlContainer("postgres:16-alpine")
     .withDatabase("run_schedule_tick_test")
     .withUsername("test")
@@ -47,6 +62,11 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
+  if (originalCap === undefined) {
+    delete process.env.MAISTER_MAX_CONCURRENT_RUNS;
+  } else {
+    process.env.MAISTER_MAX_CONCURRENT_RUNS = originalCap;
+  }
   await pool?.end();
   await container?.stop();
 });
@@ -83,7 +103,12 @@ beforeEach(async () => {
   `);
 });
 
-type Seed = { projectId: string; flowId: string; taskId: string; userId: string };
+type Seed = {
+  projectId: string;
+  flowId: string;
+  taskId: string;
+  userId: string;
+};
 
 async function seedBase(): Promise<Seed> {
   const projectId = randomUUID();
@@ -96,7 +121,8 @@ async function seedBase(): Promise<Seed> {
     id: userId,
     email: `${userId}@test.local`,
   });
-  await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
+  await db.insert(schema.projects).values({
+    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug,
     name: "Tick Test",
@@ -113,7 +139,8 @@ async function seedBase(): Promise<Seed> {
     manifest: { schemaVersion: 1, name: "aif", nodes: [] },
     schemaVersion: 1,
   });
-  await db.insert(schema.tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
+  await db.insert(schema.tasks).values({
+    number: Math.trunc(Math.random() * 1e9) + 1,
     id: taskId,
     projectId,
     title: `task-${taskId.slice(0, 8)}`,

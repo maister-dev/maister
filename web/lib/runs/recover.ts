@@ -41,7 +41,8 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-const DEFAULT_CAP = 3;
+// M33: mirrors the scheduler's owner-requested default bump 3 → 6.
+const DEFAULT_CAP = 6;
 
 // Mirror scheduler's capFromEnv() — kept local so recover is self-contained.
 function capFromEnv(): number {
@@ -168,7 +169,14 @@ export async function resumeCrashedRun(
     const liveRows: Array<{ count: number }> = await tx
       .select({ count: count() })
       .from(runs)
-      .where(inArray(runs.status, ["Running", "NeedsInput", "HumanWorking"]));
+      .where(
+        and(
+          inArray(runs.status, ["Running", "NeedsInput", "HumanWorking"]),
+          // M33: recover gates against the flow/scratch pool only — agent
+          // runs hold their own budget and must not block a flow recover.
+          inArray(runs.runKind, ["flow", "scratch"]),
+        ),
+      );
     const liveCount = Number(liveRows[0]?.count ?? 0);
     const at = now();
 

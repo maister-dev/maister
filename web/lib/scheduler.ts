@@ -16,7 +16,22 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-const DEFAULT_CAP = 3;
+// M33: owner-requested default bump 3 → 6 (env semantics unchanged).
+const DEFAULT_CAP = 6;
+// M33 (ADR-087): separate budget for platform-agent runs (run_kind='agent').
+const DEFAULT_AGENT_CAP = 3;
+
+export type SchedulerPool = "flow" | "agent";
+
+// The flow pool covers delivery + scratch runs; agent runs never consume it.
+const POOL_RUN_KINDS: Record<SchedulerPool, string[]> = {
+  flow: ["flow", "scratch"],
+  agent: ["agent"],
+};
+
+export function poolForRunKind(runKind: string): SchedulerPool {
+  return runKind === "agent" ? "agent" : "flow";
+}
 
 // Fixed pg_advisory_xact_lock key for the global scheduler. Both
 // tryStartRun and promoteNextPending take this lock at the start of
@@ -46,29 +61,55 @@ export async function takeSchedulerLock(tx: Db): Promise<void> {
   }
 }
 
-function capFromEnv(): number {
-  const raw = process.env.MAISTER_MAX_CONCURRENT_RUNS;
-
-  if (!raw) return DEFAULT_CAP;
+function parseCapEnv(raw: string | undefined, fallback: number): number {
+  if (!raw) return fallback;
   const parsed = Number.parseInt(raw, 10);
 
-  if (!Number.isFinite(parsed) || parsed < 1) return DEFAULT_CAP;
+  if (!Number.isFinite(parsed) || parsed < 1) return fallback;
 
   return parsed;
+}
+
+function capFromEnv(): number {
+  return parseCapEnv(process.env.MAISTER_MAX_CONCURRENT_RUNS, DEFAULT_CAP);
+}
+
+function agentCapFromEnv(): number {
+  return parseCapEnv(
+    process.env.MAISTER_MAX_CONCURRENT_AGENTS,
+    DEFAULT_AGENT_CAP,
+  );
 }
 
 export function maxConcurrentRunsCap(): number {
   return capFromEnv();
 }
 
+export function maxConcurrentAgentRunsCap(): number {
+  return agentCapFromEnv();
+}
+
+export function capForPool(pool: SchedulerPool): number {
+  return pool === "agent" ? agentCapFromEnv() : capFromEnv();
+}
+
 // The one cap predicate: a run holds a scheduler slot while it is in any of
-// these statuses. Takes the caller's db/tx handle so tryStartRun /
+// these statuses. Counted per pool (M33): flow/scratch and agent runs hold
+// independent budgets. Takes the caller's db/tx handle so tryStartRun /
 // promoteNextPending keep counting INSIDE their advisory-lock transactions.
-export async function countLiveRuns(dbOrTx: Db): Promise<number> {
+export async function countLiveRuns(
+  dbOrTx: Db,
+  pool: SchedulerPool = "flow",
+): Promise<number> {
   const liveRows: Array<{ count: number }> = await dbOrTx
     .select({ count: count() })
     .from(runs)
-    .where(inArray(runs.status, ["Running", "NeedsInput", "HumanWorking"]));
+    .where(
+      and(
+        inArray(runs.status, ["Running", "NeedsInput", "HumanWorking"]),
+        inArray(runs.runKind, POOL_RUN_KINDS[pool]),
+      ),
+    );
 
   return Number(liveRows[0]?.count ?? 0);
 }
@@ -117,7 +158,12 @@ export async function assertScratchCapacityAvailableInTransaction(
   const liveRows: Array<{ count: number }> = await tx
     .select({ count: count() })
     .from(runs)
-    .where(inArray(runs.status, ["Running", "NeedsInput"]));
+    .where(
+      and(
+        inArray(runs.status, ["Running", "NeedsInput"]),
+        inArray(runs.runKind, POOL_RUN_KINDS.flow),
+      ),
+    );
 
   const liveCount = Number(liveRows[0]?.count ?? 0);
   const decision = scratchCapacityDecision(liveCount, cap);
@@ -142,14 +188,20 @@ export async function tryStartRun(
   opts: { db?: Db } = {},
 ): Promise<TryStartRunResult> {
   const db = opts.db ?? getDb();
-  const cap = capFromEnv();
 
   return db.transaction(async (tx: Db) => {
     await takeSchedulerLock(tx);
 
-    const liveCount = await countLiveRuns(tx);
+    const targetRows: Array<{ runKind: string; startedAt: Date }> = await tx
+      .select({ runKind: runs.runKind, startedAt: runs.startedAt })
+      .from(runs)
+      .where(eq(runs.id, runId));
+    const pool = poolForRunKind(targetRows[0]?.runKind ?? "flow");
+    const cap = capForPool(pool);
 
-    log.debug({ runId, liveCount, cap }, "tryStartRun cap-check");
+    const liveCount = await countLiveRuns(tx, pool);
+
+    log.debug({ runId, pool, liveCount, cap }, "tryStartRun cap-check");
 
     if (liveCount < cap) {
       const startedRows: Array<{ projectId: string }> = await tx
@@ -168,28 +220,32 @@ export async function tryStartRun(
         });
       }
 
-      log.info({ runId, liveCount, cap }, "tryStartRun → started");
+      log.info({ runId, pool, liveCount, cap }, "tryStartRun → started");
 
       return { started: true } satisfies TryStartRunResult;
     }
 
-    const targetRows: Array<{ startedAt: Date }> = await tx
-      .select({ startedAt: runs.startedAt })
-      .from(runs)
-      .where(eq(runs.id, runId));
-
     const targetStartedAt = targetRows[0]?.startedAt ?? new Date();
 
+    // Queue position is computed within the run's own pool — agent runs
+    // never queue behind flow runs and vice versa.
     const aheadRows: Array<{ count: number }> = await tx
       .select({ count: count() })
       .from(runs)
       .where(
-        and(eq(runs.status, "Pending"), lt(runs.startedAt, targetStartedAt)),
+        and(
+          eq(runs.status, "Pending"),
+          inArray(runs.runKind, POOL_RUN_KINDS[pool]),
+          lt(runs.startedAt, targetStartedAt),
+        ),
       );
 
     const queuePosition = Number(aheadRows[0]?.count ?? 0) + 1;
 
-    log.info({ runId, liveCount, cap, queuePosition }, "tryStartRun → queued");
+    log.info(
+      { runId, pool, liveCount, cap, queuePosition },
+      "tryStartRun → queued",
+    );
 
     return { started: false, queuePosition } satisfies TryStartRunResult;
   });
@@ -199,6 +255,10 @@ export type PromoteNextPendingOptions = {
   db?: Db;
   runFlow?: (runId: string) => void;
   resumeRun?: (runId: string) => void;
+  // M33: which budget pool to promote within (default flow — every
+  // pre-existing caller frees a flow/scratch slot).
+  pool?: SchedulerPool;
+  startAgentRun?: (runId: string) => void;
 };
 
 // M8 D2: NeedsInputIdle does NOT count toward the cap. When the keep-alive
@@ -219,7 +279,15 @@ export async function releaseSlotOnIdle(
     "releaseSlotOnIdle — NeedsInputIdle transition freed scheduler slot",
   );
 
-  return promoteNextPending({ db: opts.db, runFlow: opts.runFlow });
+  // The freed slot belongs to the idled run's own pool (M33).
+  const db = opts.db ?? getDb();
+  const rows: Array<{ runKind: string }> = await db
+    .select({ runKind: runs.runKind })
+    .from(runs)
+    .where(eq(runs.id, opts.runId));
+  const pool = poolForRunKind(rows[0]?.runKind ?? "flow");
+
+  return promoteNextPending({ db: opts.db, runFlow: opts.runFlow, pool });
 }
 
 export async function promoteNextPending(
@@ -227,7 +295,8 @@ export async function promoteNextPending(
 ): Promise<{ promotedRunId: string | null }> {
   const db = opts.db ?? getDb();
 
-  const cap = capFromEnv();
+  const pool: SchedulerPool = opts.pool ?? "flow";
+  const cap = capForPool(pool);
 
   // M19 Phase 3: lazy dispatch defaults so the queued-resume loop closes for
   // ALL callers (e.g. the discard route) without per-caller wiring. Dynamic
@@ -257,6 +326,20 @@ export async function promoteNextPending(
           );
         });
     });
+  // M33: agent-pool promotions dispatch the agent session starter — it
+  // resumes via acpSessionId itself, so one dispatch fn covers both paths.
+  const startAgentFn =
+    opts.startAgentRun ??
+    ((id: string) => {
+      void import("@/lib/agents/launch")
+        .then((m) => m.startAgentSession(id))
+        .catch((err: unknown) => {
+          log.error(
+            { err: (err as Error).message, promotedRunId: id },
+            "promoteNextPending default startAgentRun dispatch threw",
+          );
+        });
+    });
 
   const promoted = await db.transaction(async (tx: Db) => {
     await takeSchedulerLock(tx);
@@ -265,11 +348,11 @@ export async function promoteNextPending(
     // could have started between this terminal transition and the
     // promote call (e.g. another tryStartRun acquired the lock
     // ahead of us), and we must respect the cap globally.
-    const liveCount = await countLiveRuns(tx);
+    const liveCount = await countLiveRuns(tx, pool);
 
     if (liveCount >= cap) {
       log.debug(
-        { liveCount, cap },
+        { pool, liveCount, cap },
         "promoteNextPending → cap reached, leaving Pending in place",
       );
 
@@ -279,10 +362,23 @@ export async function promoteNextPending(
     // M19 Phase 1 (T1.B, Codex F2): fetch acp_session_id alongside the id so
     // a checkpointed Pending row (queued after an idle-resume claim) is
     // resumed via --resume rather than re-run from the start of the flow.
-    const oldest: Array<{ id: string; acpSessionId: string | null }> = await tx
-      .select({ id: runs.id, acpSessionId: runs.acpSessionId })
+    const oldest: Array<{
+      id: string;
+      acpSessionId: string | null;
+      runKind: string;
+    }> = await tx
+      .select({
+        id: runs.id,
+        acpSessionId: runs.acpSessionId,
+        runKind: runs.runKind,
+      })
       .from(runs)
-      .where(eq(runs.status, "Pending"))
+      .where(
+        and(
+          eq(runs.status, "Pending"),
+          inArray(runs.runKind, POOL_RUN_KINDS[pool]),
+        ),
+      )
       .orderBy(asc(runs.startedAt))
       .limit(1)
       .for("update", { skipLocked: true } as never);
@@ -291,7 +387,8 @@ export async function promoteNextPending(
 
     if (!target) return null;
 
-    const isResume = target.acpSessionId != null;
+    const isAgent = target.runKind === "agent";
+    const isResume = !isAgent && target.acpSessionId != null;
     const now = new Date();
 
     const promotedRows: Array<{ projectId: string }> = await tx
@@ -314,10 +411,22 @@ export async function promoteNextPending(
       data: { trigger: "queue_promote" },
     });
 
-    return { id: target.id, isResume };
+    return { id: target.id, isResume, isAgent };
   });
 
-  if (promoted && promoted.isResume) {
+  if (promoted && promoted.isAgent) {
+    log.info({ runId: promoted.id }, "[scheduler] promoting queued agent run");
+    queueMicrotask(() => {
+      try {
+        startAgentFn(promoted.id);
+      } catch (err) {
+        log.error(
+          { err: (err as Error).message, promotedRunId: promoted.id },
+          "promoteNextPending startAgentRun dispatch failed",
+        );
+      }
+    });
+  } else if (promoted && promoted.isResume) {
     log.info({ runId: promoted.id }, "[scheduler] promoting queued resume");
     queueMicrotask(() => {
       try {

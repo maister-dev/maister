@@ -20,7 +20,14 @@ let dispatch: typeof import("@/lib/run-schedules/dispatch");
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 
+let originalCap: string | undefined;
+
 beforeAll(async () => {
+  // The cap-full cases seed exactly 3 Running rows — pin the cap (the M33
+  // default moved to 6).
+  originalCap = process.env.MAISTER_MAX_CONCURRENT_RUNS;
+  process.env.MAISTER_MAX_CONCURRENT_RUNS = "3";
+
   container = await new PostgreSqlContainer("postgres:16-alpine")
     .withDatabase("run_schedule_dispatch_test")
     .withUsername("test")
@@ -35,6 +42,11 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
+  if (originalCap === undefined) {
+    delete process.env.MAISTER_MAX_CONCURRENT_RUNS;
+  } else {
+    process.env.MAISTER_MAX_CONCURRENT_RUNS = originalCap;
+  }
   await pool?.end();
   await container?.stop();
 });
@@ -64,7 +76,8 @@ async function seedBase(
     id: userId,
     email: `${userId}@test.local`,
   });
-  await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
+  await db.insert(schema.projects).values({
+    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug,
     name: "Dispatch Test",
@@ -82,7 +95,8 @@ async function seedBase(
     manifest: { schemaVersion: 1, name: "aif", nodes: [] },
     schemaVersion: 1,
   });
-  await db.insert(schema.tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
+  await db.insert(schema.tasks).values({
+    number: Math.trunc(Math.random() * 1e9) + 1,
     id: taskId,
     projectId,
     title: `task-${taskId.slice(0, 8)}`,

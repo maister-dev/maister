@@ -55,7 +55,7 @@ export async function SettingsPanel({
     {
       k: tBoard("concurrency"),
       d: tBoard("concurrencyDesc"),
-      v: process.env.MAISTER_MAX_CONCURRENT_RUNS ?? "3",
+      v: process.env.MAISTER_MAX_CONCURRENT_RUNS ?? "6",
     },
     {
       k: tBoard("branchPrefix"),
