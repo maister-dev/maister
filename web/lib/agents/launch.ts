@@ -876,6 +876,76 @@ export type AgentSupervisorApi = {
   streamSession: typeof streamSession;
 };
 
+// RD7 (ADR-089 rework): resolve the agent's declared capability_profile.mcps
+// through the platform/project catalog — same precedence resolver and the
+// same exec-trust stdio gate as flow sessions. An empty/absent declaration
+// resolves to NO catalog MCPs (the facade is the only injected server) — an
+// agent never inherits the project default MCP set implicitly.
+export async function resolveAgentProfileMcpServers(args: {
+  db: Db;
+  projectId: string;
+  capabilityProfile: Record<string, unknown> | null;
+  capabilityAgent: string;
+  execTrust: "untrusted" | "trusted";
+  runId: string;
+}): Promise<AgentMcpServer[]> {
+  const declared = Array.isArray(args.capabilityProfile?.mcps)
+    ? (args.capabilityProfile.mcps as unknown[]).filter(
+        (v): v is string => typeof v === "string" && v.length > 0,
+      )
+    : [];
+
+  if (declared.length === 0) return [];
+
+  try {
+    const [
+      { loadSelectableCapabilities, resolveCapabilityProfile },
+      { gateStdioMcpsByExecTrust, mapProfileToAgentArtifacts },
+    ] = await Promise.all([
+      import("@/lib/capabilities/resolver"),
+      import("@/lib/capabilities/agent-map"),
+    ]);
+    const catalog = await loadSelectableCapabilities(args.projectId, args.db);
+    const profile = resolveCapabilityProfile({
+      projectId: args.projectId,
+      executorAgent: args.capabilityAgent as never,
+      selectedMcpIds: declared,
+      selectedSkillIds: [],
+      selectedRuleIds: [],
+      selectedRestrictionIds: [],
+      planMode: "off",
+      catalog,
+    });
+    const mapped = mapProfileToAgentArtifacts({
+      profile,
+      agent: args.capabilityAgent as never,
+    });
+    const gated = gateStdioMcpsByExecTrust(mapped.mcpServers, args.execTrust);
+    const withheld = mapped.mcpServers.length - gated.length;
+
+    if (withheld > 0) {
+      log.warn(
+        { runId: args.runId, withheld, execTrust: args.execTrust },
+        "agent profile stdio MCPs withheld — providing package is not exec-trusted",
+      );
+    }
+
+    return gated;
+  } catch (err) {
+    // Profile resolution is additive — a broken catalog never blocks the
+    // spawn; the facade still rides along.
+    log.warn(
+      {
+        runId: args.runId,
+        err: err instanceof Error ? err.message : String(err),
+      },
+      "agent capability_profile MCP resolution failed — continuing without",
+    );
+
+    return [];
+  }
+}
+
 // MCP facade injection (ADR-089 D9): the agent's sanctioned write channel —
 // triage/comments/relations over the ext API, authenticated by the
 // per-launch ephemeral token. The token rides the literal `env` channel
@@ -1060,6 +1130,18 @@ export async function startAgentSession(
       db: _db,
     });
 
+    // RD7: the agent's capability_profile.mcps resolve through the existing
+    // platform/project catalog (precedence + exec-trust stdio gate) and ride
+    // createSession alongside the facade.
+    const profileMcpServers = await resolveAgentProfileMcpServers({
+      db: _db,
+      projectId: project.id as string,
+      capabilityProfile: effective.parsed.capabilityProfile,
+      capabilityAgent: snapshot.capabilityAgent as string,
+      execTrust: effective.execTrust,
+      runId,
+    });
+
     const session = await api.createSession({
       runId,
       projectSlug: project.slug,
@@ -1069,7 +1151,10 @@ export async function startAgentSession(
       runner: runnerSupervisorInput({ snapshot }),
       adapterLaunch: mergeRunnerAdapterLaunch(snapshot),
       // ADR-089 D9: the facade carries the ephemeral token to the agent.
-      mcpServers: [agentFacadeMcpServer(issuedToken.secret)],
+      mcpServers: [
+        ...profileMcpServers,
+        agentFacadeMcpServer(issuedToken.secret),
+      ],
       // ADR-090 L1: none/repo_read agents run the whole session read-only.
       readOnlySession: workspace !== "worktree",
       ...(run.acpSessionId ? { resumeSessionId: run.acpSessionId } : {}),

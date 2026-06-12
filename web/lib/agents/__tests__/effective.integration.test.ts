@@ -257,6 +257,67 @@ describe("resolveEffectiveAgentDefinition (RD4)", () => {
   });
 });
 
+describe("resolveAgentProfileMcpServers (RD7)", () => {
+  it("resolves declared catalog MCPs and exec-trust-gates stdio servers", async () => {
+    const p = await seedProject("eff-mcps");
+
+    await pool.query(
+      `INSERT INTO "capability_records"
+         ("id", "project_id", "capability_ref_id", "kind", "label", "source",
+          "agents", "enforceability", "selected_by_default", "selectable", "material")
+       VALUES ($1, $2, 'github', 'mcp', 'GitHub', 'platform',
+               '["claude","codex"]'::jsonb, 'enforced', true, true,
+               '{"command":"github-mcp","args":[],"envKeys":["GITHUB_TOKEN"],"config":{}}'::jsonb)`,
+      [randomUUID(), p],
+    );
+
+    const { resolveAgentProfileMcpServers } = await import(
+      "@/lib/agents/launch"
+    );
+
+    // Trusted package revision → the stdio server reaches the session.
+    const trusted = await resolveAgentProfileMcpServers({
+      db,
+      projectId: p,
+      capabilityProfile: { mcps: ["github"] },
+      capabilityAgent: "claude",
+      execTrust: "trusted",
+      runId: "run-x",
+    });
+
+    expect(trusted).toHaveLength(1);
+    expect(trusted[0]).toMatchObject({
+      transport: "stdio",
+      command: "github-mcp",
+    });
+
+    // Untrusted exec → stdio withheld ("trust → execute, never
+    // execute-then-trust").
+    const untrusted = await resolveAgentProfileMcpServers({
+      db,
+      projectId: p,
+      capabilityProfile: { mcps: ["github"] },
+      capabilityAgent: "claude",
+      execTrust: "untrusted",
+      runId: "run-x",
+    });
+
+    expect(untrusted).toHaveLength(0);
+
+    // No declaration → no catalog MCPs (never the project default set).
+    const none = await resolveAgentProfileMcpServers({
+      db,
+      projectId: p,
+      capabilityProfile: null,
+      capabilityAgent: "claude",
+      execTrust: "trusted",
+      runId: "run-x",
+    });
+
+    expect(none).toEqual([]);
+  });
+});
+
 describe("upgradePreview agents break-impact (RD4, owner decision 7)", () => {
   it("joins removed/changed agents against this project's live links and bindings", async () => {
     const p = await seedProject("eff-preview");

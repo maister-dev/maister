@@ -54,6 +54,9 @@ export type EffectiveAgentDefinition = {
   flowId: string;
   revisionId: string;
   versionLabel: string;
+  // T-B3 exec-trust axis of the pinned revision — gates stdio MCP spawn for
+  // the agent's capability_profile (RD7).
+  execTrust: "untrusted" | "trusted";
 };
 
 // ADR-089 rework (RD4): the platform `agents` row is only the catalog
@@ -114,6 +117,7 @@ export async function resolveEffectiveAgentDefinition(
       versionLabel: flowRevisions.versionLabel,
       installedPath: flowRevisions.installedPath,
       packageStatus: flowRevisions.packageStatus,
+      execTrust: flowRevisions.execTrust,
     })
     .from(flowRevisions)
     .where(eq(flowRevisions.id, effectiveRevisionId));
@@ -157,6 +161,7 @@ export async function resolveEffectiveAgentDefinition(
     flowId: flow.id as string,
     revisionId: revision.id as string,
     versionLabel: revision.versionLabel as string,
+    execTrust: (revision.execTrust ?? "untrusted") as "untrusted" | "trusted",
   };
 }
 
