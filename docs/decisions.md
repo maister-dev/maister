@@ -6452,43 +6452,81 @@ job-kind stub, dead `agent_schedules` table (M24, zero readers/writers),
 consumer seam on the outbox.
 
 **Decision:** An **Agent** is a first-class `.md`-defined actor (frontmatter +
-body prompt) indexed into an `agents` table, attachable to projects, executed
-as ACP sessions on the existing `runs` substrate, and triggered from five
-sources.
+body prompt) shipped INSIDE a flow package, projected into an `agents`
+catalog table, attachable to projects, executed as ACP sessions on the
+existing `runs` substrate, and triggered from five sources.
 
-- **Definition = `.md`, DB row = parsed index.** All definitions live in the
-  host catalog `~/.maister/agents/<id>/agent.md` — owner decision: **nothing
-  agent-related lives inside project repos** (no repo sync hook). Frontmatter:
-  `name`, `description`, `scope: platform|project`, `project` (slug, required
-  iff `scope=project` — project scope is a pure binding), `runner` (optional
-  runner id), `workspace: none|repo_read|worktree` (ADR-090), `mode:
-  session|subagent`, `triggers: (manual|cron|domain_event|webhook|flow)[]`,
-  `capability_profile` (M14 shape, optional), `risk_tier:
-  read_only|standard|destructive`. Unknown keys are refused (strict schema).
-  Invalid definition → `MaisterError("CONFIG")` **at registration**; the row
-  is not written. Registration parses only — agent definitions carry **no
-  executable hooks** (no `setup.sh` analog), so there is no fetch-then-execute
-  trust gap. Re-registration syncs every parsed column with SET/CLEAR
-  symmetry (field removed → column default). UI CRUD writes the `.md` for
-  both scopes. Flow-package `agent_definition` files stay a separate,
-  flow-bound capability — not catalog rows.
+*(Amended in-branch 2026-06-13 — the pre-merge rework per owner decisions
+1–8: the original host-catalog draft was replaced by the package-source
+model below before this ADR ever merged.)*
+
+- **Definition = `agents/<stem>.md` inside a flow package; DB row = catalog
+  projection.** Agents ride the SAME trust contour, versioning, and Studio
+  authoring/publish path as flows — no separate package type, no host
+  catalog, no settings-panel creation (Studio/git package is the one
+  creation+distribution path). The platform id is package-qualified
+  **`<flowRefId>:<stem>`** — collisions are impossible by construction; the
+  UI names the package to disambiguate. Registration scans
+  `flow_revisions.installed_path/agents/*.md` after install finalize (git
+  install, upgrade, and the authored bridge share the hook) and upserts the
+  index with provenance (`flow_ref_id`, `version_label`, `origin:
+  git|authored`) under SET/CLEAR symmetry; `resync` re-projects from the
+  NEWEST Installed revision per flow_ref and disables rows whose providing
+  package (or file within it) vanished — never silently deletes.
+  Frontmatter: `name`, `description`, `runner` (optional runner id),
+  `workspace: none|repo_read|worktree` (ADR-090), `workspace_ref` (ADR-090
+  amendment), `mode: session|subagent`, `triggers:
+  (manual|cron|domain_event|webhook|flow)[]`, `capability_profile` (M14
+  shape, optional), `risk_tier: read_only|standard|destructive`, and
+  `recommended` (`{runner?, cron?{expr,timezone}, events?[]}` — pre-fills
+  the attach panel; nothing auto-applies without Save). The pre-rework
+  `scope`/`project` keys are refused loudly (strict schema). Invalid
+  definitions are reported by the registration summary and never written;
+  registration parses only — no executable hooks, so no fetch-then-execute
+  trust gap. Studio drafts validate `agents/*.md` with the SAME parser at
+  save time (the old Claude-subagent key allowance for that path is gone).
+- **Per-project effective definition behind the flow trust gates.** The
+  catalog row is a projection carrying the platform kill-switches (enabled,
+  quarantine). What a launch in project P actually RUNS is the
+  `agents/<stem>.md` inside P's pinned revision of the providing package,
+  resolved behind the exact flow-launch gate chain (configured pin →
+  enabled-revision pointer → enablement ∈ {Enabled, UpdateAvailable} →
+  trust ≠ untrusted → revision Installed) — at launch for the guards
+  (mode/triggers/risk_tier/workspace + the runner tier) and again at spawn
+  for the prompt body. **Pin divergence** — the index advertises a trigger
+  the pinned version lacks — refuses `PRECONDITION`. Flow `agent:` bindings
+  resolve through the host run's project pin the same way. "Update the
+  agents a project uses" IS the existing package upgrade flow.
 - **Attachment = `agent_project_links`.** `{agent_id, project_id, enabled,
-  runner_override_id?}` with `UNIQUE(agent_id, project_id)`; project-scope
-  agents get an auto-link to their bound project at registration so all
-  downstream reads are link-shaped.
+  runner_override_id?}` with `UNIQUE(agent_id, project_id)`. Attaching
+  requires the providing package configured+enabled in the project
+  (`PRECONDITION` otherwise); the attach panel's available list filters by
+  the same rule and opens pre-filled from the definition's `recommended`
+  block.
+- **Upgrade break-impact (owner decision 7).** The package upgrade preview
+  gains an `agents` section — added/removed/changed (field diffs + dropped
+  triggers) JOINED against the requesting project's live attachments and
+  schedule bindings; the packages panel renders explicit "will stop working
+  here" warnings before enable.
 - **Per-agent runner, standalone resolution chain.** For standalone agent
-  runs: `launch override → agent_project_links.runner_override_id →
-  agents.runner_id → projects.default_runner_id → platform default`, each
-  tier validated by the existing `assertLaunchableRunner` (exists + enabled +
-  ready; refusal = `EXECUTOR_UNAVAILABLE`, no silent fallback), snapshot into
-  `runs.runner_snapshot` as today. Two compatibility refusals fire **before
-  spawn** with `EXECUTOR_UNAVAILABLE`: `mode=subagent` on a runner whose
-  `capability_agent ≠ claude` (`.claude/agents/*.md` is a Claude-SDK
-  artifact), and `workspace ∈ {none, repo_read}` on a runner with
-  `permission_policy = dangerously_skip_permissions` (suppressed permission
-  requests make ADR-090 L1 impossible). Flow-bound nodes keep the existing
-  six-tier flow chain — `agents.runner_id` participates only in the
-  standalone chain.
+  runs: `launch override → agent_project_links.runner_override_id → the
+  effective definition's runner → projects.default_runner_id → platform
+  default`, each tier validated by the existing `assertLaunchableRunner`
+  (exists + enabled + ready; refusal = `EXECUTOR_UNAVAILABLE`, no silent
+  fallback), snapshot into `runs.runner_snapshot` as today. Two
+  compatibility refusals fire **before spawn** with `EXECUTOR_UNAVAILABLE`:
+  `mode=subagent` on a runner whose `capability_agent ≠ claude`
+  (`.claude/agents/*.md` is a Claude-SDK artifact), and `workspace ∈ {none,
+  repo_read}` on a runner with `permission_policy =
+  dangerously_skip_permissions` (suppressed permission requests make ADR-090
+  L1 impossible). Flow-bound nodes keep the existing six-tier flow chain.
+- **Capability-profile MCPs at spawn.** The effective definition's
+  `capability_profile.mcps` refs resolve through the existing capability
+  machinery (project>platform>flow-package precedence) and the stdio
+  exec-trust gate keyed on the PROVIDING package revision's `exec_trust`;
+  gated servers ride `createSession.mcpServers` alongside the maister
+  facade. An absent declaration injects NO catalog MCPs — agents never
+  inherit the project default set implicitly.
 - **Execution substrate = `runs`, separate budget.** `run_kind` gains
   `'agent'`; new nullable `agent_id` FK, `trigger_source`
   (`manual|cron|domain_event|webhook|flow`), `trigger_event_id` (bigint →
@@ -6567,11 +6605,24 @@ sources.
   `agent:<id>`.
 
 **Consequences:**
-- One migration (`0049_platform_agents.sql`): `agents`,
-  `agent_project_links`, the `agent_schedules` rework, `runs`/`tasks`/
-  `project_tokens` alters, the partial unique trigger-claim index, and the
-  `unconfigured`-enabling `tasks.flow_id` NULLABLE change. A follow-up
-  (`0050_agent_activity_kinds.sql`) widens the `task_activity` kind CHECK.
+- Migrations: `0049_platform_agents.sql` (`agents`, `agent_project_links`,
+  the `agent_schedules` rework, `runs`/`tasks`/`project_tokens` alters, the
+  partial unique trigger-claim index, the `unconfigured`-enabling
+  `tasks.flow_id` NULLABLE change), `0050_agent_activity_kinds.sql`
+  (`task_activity` kind CHECK), and the rework's
+  `0051_agents_package_source.sql` (DROP `scope`/`project_id`, ADD
+  `flow_ref_id`/`version_label`/`origin` NOT NULL + `recommended` +
+  `workspace_ref`; pre-release reshape deletes existing rows — the catalog
+  re-registers from installed packages).
+- Admin agents API shrinks to read + kill-switches (GET list/read, PATCH
+  `enabled`/`unquarantine`); create/definition-edit/delete endpoints and the
+  settings-panel agent modal are GONE — definitions change only through
+  their providing package. The catalog panel shows `pkg@version` provenance
+  + origin instead of scope.
+- Qualified-id fan-out: the agent-id regex allows exactly one `:`
+  (admin/attach/launch routes, `settings.agent` flow bindings — no bare-stem
+  same-package sugar in v1); webhook routes URL-encode the id; subagent
+  materialization writes `.claude/agents/<stem>.md`.
 - Flow engine version bumps `1.4.0 → 1.5.0` (the `agent:` binding is
   floor-gated like `retry_policy` was in ADR-080).
 - `agent_tick` disappears from `createSchedulerJobSchema` (job-kind admin
@@ -6586,14 +6637,18 @@ sources.
   every test asserting the old default.
 
 **Alternatives Considered:**
-- **Agents as `authored_capabilities` entries (M25 catalog):** rejected —
-  authored capabilities are content-addressed, published, immutable
-  revisions; the agent catalog is host-local, owner-editable identity with
-  live enable/quarantine state. Flow-package `agent_definition` files remain
-  the flow-bound packaging.
+- **Host-local owner-editable catalog (`~/.maister/agents/`, the original
+  Stage-3 draft):** rejected in the pre-merge rework (owner decisions 1–2,
+  5–6) — a hidden host dir is not transferable between hosts, splits agent
+  trust/versioning from the package contour, and adds a second creation
+  path beside Studio. Agents are package contents with all correspondence.
+- **A separate package type for agents:** rejected — no value over flow
+  packages today; skills carry risk too, so the trust contour is required
+  either way and one package model keeps install/upgrade/trust singular.
 - **Project-scope agent files inside the project repo
   (`.maister/<slug>/agents/`):** rejected by owner — keeps project repos
-  free of agent artifacts; scope is a binding, not a file location.
+  free of agent artifacts; per-project availability is derived from the
+  project's package pin, not a file location.
 - **Per-schedule `scheduler_jobs` rows (the original M24 `agent_schedules`
   shape with `scheduler_job_id`):** rejected — `scheduler_jobs` has fixed
   `cadence_interval_seconds`, not cron; M28 already proved the dispatcher
@@ -6642,6 +6697,25 @@ tracked materialization manifest, restored before the check).
     row, diff/review/promotion) unchanged.
   - Run artifacts (`*.log`, `run.events.jsonl`, `session.json`, `cost.jsonl`)
     live under `.maister/<slug>/runs/<run-id>/` for every axis value.
+- **`workspace_ref` — ephemeral checkout at a trigger-derived ref**
+  *(amended in-branch 2026-06-13, rework owner decisions 4+8).* A
+  `repo_read` definition may add `workspace_ref: trigger | <branch>`: the
+  run then gets an EPHEMERAL detached worktree (`git worktree add
+  --detach`) at the resolved ref under `worktreesRoot()/<slug>/<runId>-ro`
+  — the user's checkout is never switched, and a tests-readiness agent
+  checks out exactly the change that triggered it. Ref resolution (v1): a
+  literal value is a branch/ref resolved against the local repo; `trigger`
+  derives from context — `run.*` domain events use the triggering run's
+  workspace branch, webhooks use the conventional payload `branch`
+  (fallback `ref`) field; manual/cron/`task.*` refuse `PRECONDITION`.
+  Unresolvable refs refuse — no auto-fetch in v1; `task.*` derivation and
+  configurable payload extraction are deferred. The clean-baseline
+  precondition is SKIPPED (a fresh checkout is clean by construction); L3
+  targets the ephemeral dir when it exists (a dirty PARENT checkout no
+  longer attributes to the agent); the dir is removed AFTER the terminal
+  status-flip transaction commits (fs cleanup never rolls back the flip;
+  crashed runs re-finalize through the same choke, which doubles as the
+  cleanup backstop). L1/L2 are unchanged (keyed off the session cwd).
 - **L1 — supervisor session-level auto-deny (live).** New
   `readOnlySession: boolean` on the supervisor's `POST /sessions` body —
   the session-scoped generalization of M30's per-prompt `readOnlyTurn`. The

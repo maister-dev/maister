@@ -654,30 +654,33 @@ run_schedules {
 `(enabled, next_fire_at)` (dispatcher due-scan), and `(last_run_id)`
 (FK SET NULL + the read-time `lastRunStatus` join).
 
-## Platform agent tables (Implemented — ADR-089/ADR-090, migrations `0049`/`0050`)
+## Platform agent tables (Implemented — ADR-089/ADR-090, migrations `0049`/`0050`/`0051`)
 
-The M34 agent catalog: `.md` definitions in the host catalog
-(`~/.maister/agents/<id>/agent.md`) parsed into an index row; attachments and
-per-project overrides; trigger bindings. See
-[`db/agents-domain.md`](db/agents-domain.md) for the ERD and
+The M34 agent catalog (package-source rework): `agents/<stem>.md` definitions
+INSIDE flow packages, projected into the index from each package's newest
+Installed revision; attachments and per-project overrides; trigger bindings.
+See [`db/agents-domain.md`](db/agents-domain.md) for the ERD and
 [`system-analytics/agents.md`](system-analytics/agents.md) for process flows.
 
 ```ts
 agents {
-  id,                              // PK; the catalog dir name (SAFE_PATH_SEGMENT)
-  scope: 'platform' | 'project',
-  projectId?,                      // FK -> projects.id CASCADE;
-                                   //   CHECK (scope='project') = (projectId IS NOT NULL)
+  id,                              // PK; package-qualified `<flowRefId>:<stem>`
+  flowRefId,                       // providing package (ADR-089 rework)
+  versionLabel,                    // newest registered revision
+  origin: 'git' | 'authored',
   name, description,               // frontmatter, required
   runnerId?,                       // FK -> platform_acp_runners.id SET NULL;
                                    //   tier 3 of the standalone runner chain
   workspace: 'none' | 'repo_read' | 'worktree',   // ADR-090 axis
+  workspaceRef?,                   // 'trigger' | branch (repo_read only)
   mode: 'session' | 'subagent',
   triggers (jsonb),                // subset of manual|cron|domain_event|webhook|flow
   capabilityProfile? (jsonb),      // M14 shape; materialize-only (ADR-041 boundary)
   riskTier: 'read_only' | 'standard' | 'destructive',
-  sourcePath,                      // canonical .md path
-  enabled,                         // UI toggle
+  recommended? (jsonb),            // {runner?, cron?{expr,timezone}, events?} —
+                                   //   attach-panel pre-fill (RD5)
+  sourcePath,                      // agents/<stem>.md in the newest revision
+  enabled,                         // platform kill-switch
   quarantinedAt?, quarantineReason?,  // ADR-090 dirty-watchdog flag
   createdAt, updatedAt
 }
@@ -694,11 +697,13 @@ agent_project_links {
 }
 ```
 
-The `.md` file is the canonical definition; re-registration re-syncs every
-parsed column with SET/CLEAR symmetry. Project-scope agents get an auto-link
-to their bound project. Catalog deletes are usage-guarded (refused while live
-agent runs exist). Indexed on `agents(project_id)`,
-`agent_project_links(project_id)`, plus the UNIQUE pair above.
+The package file is the canonical definition; registration after install
+finalize (and `resync`) re-syncs every parsed column with SET/CLEAR symmetry,
+projecting the newest Installed revision per flow_ref; rows whose providing
+package vanished are disabled, never deleted. The EFFECTIVE definition for a
+launch resolves through the project's pinned revision (RD4). Indexed on
+`agents(flow_ref_id)`, `agent_project_links(project_id)`, plus the UNIQUE
+pair above.
 
 ## Authored catalog tables (Implemented, M25)
 

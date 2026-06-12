@@ -64,7 +64,6 @@ erDiagram
     AGENTS ||--o{ AGENT_SCHEDULES : "cron + event bindings (M34)"
     AGENTS ||--o{ AGENT_PROJECT_LINKS : "attachments (M34)"
     PROJECTS ||--o{ AGENT_PROJECT_LINKS : "attached agents (M34)"
-    PROJECTS ||--o{ AGENTS : "project-scope binding (M34, nullable FK)"
     PLATFORM_ACP_RUNNERS ||--o{ AGENTS : "agent default runner (M34, SET NULL)"
     PLATFORM_ACP_RUNNERS ||--o{ AGENT_PROJECT_LINKS : "runner override (M34, SET NULL)"
     AGENTS ||--o{ RUNS : "agent runs (M34, SET NULL)"
@@ -480,18 +479,21 @@ erDiagram
     }
 
     AGENTS {
-        text id PK "M34: dir name in ~/.maister/agents/"
-        text scope "platform|project"
-        text project_id FK "NOT NULL iff scope=project; CASCADE"
+        text id PK "M34 rework: package-qualified flowRefId:stem"
+        text flow_ref_id "providing package (ADR-089 rework)"
+        text version_label "newest registered revision"
+        text origin "git|authored"
         text name
         text description
         text runner_id FK "platform_acp_runners(id) SET NULL"
         text workspace "none|repo_read|worktree (ADR-090)"
+        text workspace_ref "nullable — trigger|branch (repo_read only)"
         text mode "session|subagent"
         jsonb triggers "subset of manual|cron|domain_event|webhook|flow"
         jsonb capability_profile "M14 shape, nullable"
         text risk_tier "read_only|standard|destructive"
-        text source_path "canonical .md path"
+        jsonb recommended "nullable — attach pre-fill"
+        text source_path "agents/stem.md in the newest revision"
         boolean enabled
         timestamp quarantined_at "nullable — ADR-090 dirty-watchdog"
         text quarantine_reason "nullable"
@@ -1156,7 +1158,7 @@ external-operation events) is not drawn until its migrations exist. See
 | `scheduler_job_runs` | `scheduler_job_runs_lease_idx` | `(status, lease_expires_at)` | **(M24 Implemented, migration `0027`)** Stuck-attempt reaper. |
 | `agent_schedules` | `agent_schedules_project_agent_idx` | `(project_id, agent_id)` | **(M34, migration `0049` rework)** Project agent trigger-binding lookup (was `(project_id, agent_ref)` from the dead M24 shape). |
 | `agent_schedules` | `agent_schedules_due_cron_idx` | `(trigger_type, enabled, next_fire_at)` | **(M34)** Due-cron scan for the `agent_tick.dispatcher`. |
-| `agents` | `agents_project_idx` | `(project_id)` | **(M34)** Project-scope agent lookup. |
+| `agents` | `agents_flow_ref_idx` | `(flow_ref_id)` | **(M34, migration `0051` rework)** Providing-package lookup (registration/resync, attach available-list). |
 | `agent_project_links` | `agent_project_links_unique` | `UNIQUE (agent_id, project_id)` | **(M34)** One attachment per (agent, project). |
 | `agent_project_links` | `agent_project_links_project_idx` | `(project_id)` | **(M34)** Attached-agents-per-project reads. |
 | `runs` | `runs_agent_trigger_event_unique` | `UNIQUE (agent_id, trigger_event_id) WHERE trigger_event_id IS NOT NULL` | **(M34)** Outbox→spawn no-dup claim under at-least-once redelivery (ADR-089). |

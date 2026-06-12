@@ -386,7 +386,7 @@ Continuous daemons + crash-loop backoff (Mγ), ADR-041 enforcement flip + destru
 - [x] R2 — per-project resolution + trust/launch gates + attach gate — commit `67db0567`
 - [x] R3 — workspace ref (ephemeral read-only worktree at trigger ref) — commit `d62614f4`
 - [x] R4 — recommended bindings + UI demotion + Studio frontmatter fields — commit `dcfd8525` (UI demotion landed early in R1 `66c8d651`; Studio deep-link deferred — no authored-capability backref on agents rows)
-- [ ] R5 — capability-profile MCP materialization for agent sessions
+- [x] R5 — capability-profile MCP materialization for agent sessions — commit `5908fc84`
 - [ ] R6 — tests/e2e rework + docs amendments + gates
 
 ## Rework design decisions

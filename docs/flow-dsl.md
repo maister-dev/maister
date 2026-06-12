@@ -423,8 +423,9 @@ these keys stay valid at any `engine_min`.
 
 **(M34 — Implemented, [ADR-089](decisions.md#adr-089-platform-agent-catalog-with-per-agent-runner-and-a-five-source-trigger-model).)**
 An optional `agent: <agent-id>` on `ai_coding` node settings binds the node to
-a catalog agent (`~/.maister/agents/<id>/agent.md`) instead of relying solely
-on the inline prompt.
+a catalog agent — `agents/<stem>.md` inside a flow package, referenced by its
+package-qualified id `<flowRefId>:<stem>` (ADR-089 rework; no bare-stem
+same-package sugar in v1) — instead of relying solely on the inline prompt.
 
 ```yaml
 nodes:
@@ -433,18 +434,21 @@ nodes:
     action:
       prompt: "Review the diff for {{ task.title }}"
     settings:
-      agent: code-reviewer            # catalog agent id (SAFE_PATH_SEGMENT)
+      agent: aif:code-reviewer        # package-qualified catalog agent id
 ```
 
-- **Resolution** — compile/launch-time validation: the agent must exist in the
-  catalog and its `triggers` must include `flow`, else `MaisterError("CONFIG")`.
+- **Resolution** — the binding resolves through the HOST RUN project's pinned
+  revision of the providing package behind the flow-launch enablement+trust
+  gates (RD4); the effective definition's `triggers` must include `flow`,
+  else `MaisterError("CONFIG")`.
 - **`mode: session` agents** — the catalog profile substitutes the inline
   prompt: the agent's `.md` body becomes the system prompt, the node's
   `action.prompt` is appended as the task block, and the agent's
   `capability_profile` merges with node settings (node settings win on
   collision).
 - **`mode: subagent` agents** — the `.md` is materialized into the run
-  worktree's `.claude/agents/<name>.md` so the Claude session can
+  worktree's `.claude/agents/<stem>.md` (the file STEM — a `:` in the
+  filename is hostile to the convention) so the Claude session can
   self-delegate. Requires a runner whose `capability_agent` is `claude`;
   any other resolved runner → `MaisterError("EXECUTOR_UNAVAILABLE")` before
   spawn (the partial-runner-independence boundary, ADR-089).

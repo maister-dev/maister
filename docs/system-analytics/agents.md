@@ -4,14 +4,17 @@
 
 Platform agents (**Implemented**, ADR-089/ADR-090, M34; Stage 3 of the
 platform-agents staged design) are first-class `.md`-defined actors — a
-triager, reviewers, monitors — registered in a host catalog, attached to
-projects, executed as ACP sessions on the existing `runs` substrate under a
-separate concurrency budget, and triggered from five sources (manual, cron,
-domain event, webhook, flow binding). Boundary: this domain owns the agent
-catalog (`agents`, `agent_project_links`), trigger bindings
-(`agent_schedules` rework), the agent-run launch path (workspace axis,
-runner chain, read-only enforcement, quarantine), agent tokens, and the
-triage verdict surface on tasks. It does NOT own the run state machine
+triager, reviewers, monitors — shipped as `agents/<stem>.md` files INSIDE
+flow packages (same trust contour, versioning, and Studio authoring path),
+projected into a platform catalog under package-qualified ids
+(`<flowRefId>:<stem>`), attached to projects, executed as ACP sessions on
+the existing `runs` substrate under a separate concurrency budget, and
+triggered from five sources (manual, cron, domain event, webhook, flow
+binding). Boundary: this domain owns the agent catalog (`agents`,
+`agent_project_links`), trigger bindings (`agent_schedules` rework), the
+agent-run launch path (per-project effective-definition resolution,
+workspace axis, runner chain, read-only enforcement, quarantine), agent
+tokens, and the triage verdict surface on tasks. It does NOT own the run state machine
 ([runs.md](runs.md)), the outbox mechanics ([domain-events.md](domain-events.md)),
 the social substrate it writes through ([social-board.md](social-board.md)),
 the clock ([scheduler.md](scheduler.md)), or capability enforcement
@@ -19,19 +22,24 @@ the clock ([scheduler.md](scheduler.md)), or capability enforcement
 
 ## Domain entities
 
-- **`agents`** (Implemented) — parsed index over the canonical `.md` definition
-  at `~/.maister/agents/<id>/agent.md`: `{ id (PK, dir name), scope
-  (platform|project), project_id? (NOT NULL iff scope=project), name,
-  description, runner_id?, workspace (none|repo_read|worktree), mode
-  (session|subagent), triggers jsonb, capability_profile jsonb?, risk_tier
-  (read_only|standard|destructive), source_path, enabled, quarantined_at?,
-  quarantine_reason? }`. The `.md` is the source of truth; re-registration
-  re-syncs every column (SET/CLEAR symmetric). Nothing agent-related lives
-  inside project repos. See [db/agents-domain.md](../db/agents-domain.md).
+- **`agents`** (Implemented) — catalog projection over `agents/<stem>.md`
+  inside the providing package's NEWEST Installed revision: `{ id (PK,
+  package-qualified `<flowRefId>:<stem>`), flow_ref_id, version_label,
+  origin (git|authored), name, description, runner_id?, workspace
+  (none|repo_read|worktree), workspace_ref?, mode (session|subagent),
+  triggers jsonb, capability_profile jsonb?, risk_tier
+  (read_only|standard|destructive), recommended jsonb?, source_path,
+  enabled, quarantined_at?, quarantine_reason? }`. The package file is the
+  source of truth; registration after install finalize (and `resync`)
+  re-syncs every column (SET/CLEAR symmetric); rows whose providing package
+  vanished are disabled, never deleted. The EFFECTIVE definition for a
+  launch in project P resolves through P's pinned revision (see flow (b)).
+  See [db/agents-domain.md](../db/agents-domain.md).
 - **`agent_project_links`** (Implemented) — attachment + per-project overrides:
   `{ agent_id, project_id, enabled, runner_override_id? }`,
-  `UNIQUE(agent_id, project_id)`. Project-scope agents are auto-linked to
-  their bound project at registration.
+  `UNIQUE(agent_id, project_id)`. Attach requires the providing package
+  configured+enabled in the project; the attach panel pre-fills from the
+  definition's `recommended` block.
 - **`agent_schedules`** (Implemented rework of the dead M24 table) — trigger
   bindings per (agent, project): `trigger_type='cron'` rows carry
   `cron_expr + timezone + next_fire_at + last_fired_at`;
@@ -76,18 +84,20 @@ stateDiagram-v2
 
 ### (a) Registration / re-sync (Implemented)
 
-UI CRUD writes the `.md` into the host catalog, then parses and upserts the
-row; a re-sync re-reads the directory. Parsing never executes content.
+Definitions ship inside flow packages; the install finalize hook (git
+install, upgrade, and the authored Studio bridge share it) scans the
+revision's `agents/` dir and projects the catalog. Parsing never executes
+content; invalid files are reported, never written.
 
 ```mermaid
 flowchart TD
-    W[write or edit ~/.maister/agents/id/agent.md] --> P{frontmatter valid?<br/>strict schema, unknown keys refused}
-    P -- no --> C[MaisterError CONFIG — row NOT written]
-    P -- project scope --> PV{project slug registered?}
-    PV -- no --> C
-    PV -- yes --> U[upsert agents row — SET/CLEAR symmetric]
-    P -- platform scope --> U
-    U --> L[scope=project: auto-link agent_project_links]
+    I[flow revision reaches packageStatus=Installed] --> S[scan installed_path/agents/*.md]
+    S --> P{frontmatter valid?<br/>strict schema, scope/project keys refused}
+    P -- no --> R[reported in the registration summary — row NOT written]
+    P -- yes --> U[upsert agents row under flowRefId:stem<br/>provenance + SET/CLEAR symmetric]
+    RS[resync] --> N[newest Installed revision per flow_ref wins]
+    N --> S
+    RS --> D[rows whose providing package vanished → enabled=false]
 ```
 
 ### (b) Standalone launch (manual / cron / domain_event / webhook share this path) (Implemented)
@@ -102,13 +112,14 @@ sequenceDiagram
     participant R as runner resolver
     participant S as supervisor
     E->>L: agent_id, project_id, task_id?, trigger meta
-    L->>L: guards — enabled, not quarantined, link enabled,<br/>risk_tier != destructive, trigger in frontmatter triggers
-    L->>R: launch override → link override → agents.runner →<br/>project default → platform default
+    L->>L: kill-switches — enabled, not quarantined, link enabled
+    L->>L: resolve EFFECTIVE definition — project's pinned revision<br/>behind enablement+trust gates (pin divergence refuses)
+    L->>L: guards on the effective parse — risk_tier != destructive,<br/>mode=session, trigger declared
+    L->>R: launch override → link override → effective runner →<br/>project default → platform default
     R-->>L: snapshot or EXECUTOR_UNAVAILABLE<br/>(subagent×non-claude / repo_read×skip-permissions)
-    L->>L: workspace axis — none: mkdir workdir<br/>repo_read: clean-baseline check, cwd=repo<br/>worktree: addWorktree + workspaces row
-    L->>L: M14 materialize (manifest-tracked) + issue agent token
+    L->>L: workspace axis — none: mkdir workdir<br/>repo_read: clean baseline (or workspace_ref resolves)<br/>worktree: addWorktree + workspaces row
     L->>L: INSERT runs (kind=agent, trigger_*) + budget check
-    L->>S: POST /sessions (readOnlySession for none/repo_read,<br/>mcpServers carries the facade + token env)
+    L->>S: spawn — re-resolve effective, ephemeral -ro checkout if<br/>workspace_ref, L2 materialize, profile MCPs (exec-trust gated),<br/>POST /sessions (readOnlySession, facade + token env)
 ```
 
 ### (c) Cron + event dispatch (Implemented)
@@ -192,15 +203,24 @@ flowchart TD
 
 ## Expectations
 
-- Registration MUST refuse an invalid definition with `MaisterError("CONFIG")`
-  without writing or updating the `agents` row, and MUST never execute
-  definition content.
+- Registration MUST never write an invalid definition's row (invalid files
+  are reported in the registration summary) and MUST never execute
+  definition content; ids MUST be package-qualified `<flowRefId>:<stem>`.
 - Re-registration MUST sync every parsed frontmatter field with SET/CLEAR
-  symmetry: a removed field resets its column to the default.
+  symmetry; `resync` MUST project the newest Installed revision per
+  flow_ref and disable (never delete) rows whose providing package
+  vanished.
+- A launch in project P MUST run the definition from P's PINNED revision of
+  the providing package behind the flow-launch gates (configured pin,
+  enabled pointer, enablement allow-list, trust, revision Installed) —
+  resolved at launch for the guards and again at spawn for the prompt; pin
+  divergence (a trigger the pinned version lacks) MUST refuse
+  `PRECONDITION`. Attach MUST refuse when the package is not
+  configured+enabled in P.
 - A standalone launch MUST resolve the runner through exactly
-  `launchOverride → link override → agents.runner_id → project default →
-  platform default`, and MUST refuse `mode=subagent` on a non-`claude`
-  capability runner and `workspace ∈ {none, repo_read}` on
+  `launchOverride → link override → effective definition runner → project
+  default → platform default`, and MUST refuse `mode=subagent` on a
+  non-`claude` capability runner and `workspace ∈ {none, repo_read}` on
   `permission_policy=dangerously_skip_permissions` with
   `EXECUTOR_UNAVAILABLE` before spawn.
 - `run_kind='agent'` runs MUST be admitted only by the
@@ -217,8 +237,11 @@ flowchart TD
   now() RETURNING` with exactly one winner; a missed window fires once and
   never backfills.
 - A `repo_read` launch MUST require an empty `statusPorcelain(repo_path)`
-  baseline (`PRECONDITION` otherwise); `none`/`repo_read` runs MUST create
-  no `workspaces` row and no git worktree.
+  baseline (`PRECONDITION` otherwise) UNLESS `workspace_ref` is set — then
+  the ref MUST resolve at launch (no auto-fetch), the run gets an ephemeral
+  detached checkout at `worktreesRoot()/<slug>/<runId>-ro`, L3 targets that
+  dir, and it is removed after the terminal flip commits;
+  `none`/`repo_read` runs MUST create no `workspaces` row.
 - A `readOnlySession` session MUST auto-deny write-class permission
   requests, auto-approve only the read-safe allow-list, and MUST create no
   `hitl_requests` rows.
@@ -238,8 +261,15 @@ flowchart TD
 
 ## Edge cases
 
-- **Invalid frontmatter / unknown project slug / id collision** →
-  `MaisterError("CONFIG")` at registration; the catalog row is untouched.
+- **Invalid frontmatter (incl. the dead `scope`/`project` keys)** → reported
+  in the registration summary; the catalog row is untouched. Id collisions
+  are impossible by construction (package-qualified ids).
+- **Providing package not configured/enabled in the project, or pinned
+  version missing the agent file / the trigger** →
+  `MaisterError("PRECONDITION")` at attach/launch (RD4 gates).
+- **`workspace_ref` unresolvable (unknown branch, payload without
+  `branch`/`ref`, non-run.* event, cron/manual trigger)** →
+  `MaisterError("PRECONDITION")` at launch — no auto-fetch in v1.
 - **Runner tier resolves to missing/disabled/not-ready runner, or an
   incompatibility rule fires** → `MaisterError("EXECUTOR_UNAVAILABLE")`
   before spawn; no run row.
@@ -263,8 +293,9 @@ flowchart TD
 - **Launch attempt on an `unconfigured` (flowless) task** →
   `MaisterError("PRECONDITION")`; the run-schedules dispatcher records
   `skipped_unconfigured`; the board popover collects the missing fields.
-- **Delete agent while live runs exist** → refused (usage guard), mirroring
-  runner-catalog delete semantics.
+- **Providing package removed from the cache** → `resync` disables the
+  catalog rows (attachments and run history keep their FK anchor); there is
+  no agent delete endpoint — definitions leave through their package.
 
 ## Linked artifacts
 
@@ -272,7 +303,7 @@ flowchart TD
   [ADR-090](../decisions.md#adr-090-agent-workspace-axis-with-three-layer-read-only-enforcement-and-quarantine);
   boundary kept from ADR-041/ADR-043 (materialize-only).
 - **Vision record:** [`../pv/agents-as-environment-actors.md`](../pv/agents-as-environment-actors.md)
-  (Stage-0 brainstorm; superseded by ADR-089/088 with three amendments).
+  (Stage-0 brainstorm; superseded by ADR-089/090 with three amendments).
 - **DB:** [`db/agents-domain.md`](../db/agents-domain.md),
   [`db/runs-domain.md`](../db/runs-domain.md),
   [`database-schema.md`](../database-schema.md) (migrations `0049`/`0050`).

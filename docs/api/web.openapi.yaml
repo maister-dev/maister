@@ -513,10 +513,14 @@ paths:
       tags: [admin]
       summary: (M34 — Implemented) List the platform agent catalog
       description: |
-        Admin-only. Returns every registered agent (both scopes) with parsed
-        frontmatter columns, enabled state, and quarantine state. The `.md`
-        files under `~/.maister/agents/<id>/agent.md` are the canonical
-        definitions; rows are the parsed index (ADR-089).
+        Admin-only. Returns every registered agent with parsed frontmatter
+        columns, package provenance, enabled state, and quarantine state.
+        Definitions are `agents/<stem>.md` files INSIDE flow packages
+        (ADR-089 rework); rows are the catalog projection of each package's
+        newest Installed revision under package-qualified ids
+        (`<flowRefId>:<stem>`). There is NO create/edit/delete endpoint —
+        definitions change only through their providing package (git push +
+        upgrade, or Studio draft→publish).
       operationId: getAdminAgents
       responses:
         "200":
@@ -532,55 +536,17 @@ paths:
                     items: { $ref: "#/components/schemas/AgentSummary" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
-    post:
-      tags: [admin]
-      summary: (M34 — Implemented) Create an agent definition
-      description: |
-        Admin-only. Writes `~/.maister/agents/<id>/agent.md` from the body,
-        then parses and registers it (write-then-parse — the file stays the
-        single source). Project-scope agents (`scope=project`) must name a
-        registered project slug in `project` and are auto-linked to it.
-        Invalid frontmatter → `422 CONFIG`; id collision → `409`.
-        Registration never executes definition content.
-      operationId: postAdminAgent
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/AgentDefinitionBody" }
-      responses:
-        "201":
-          description: Agent registered.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [ok, id]
-                properties:
-                  ok: { type: boolean }
-                  id: { type: string }
-        "401": { $ref: "#/components/responses/Unauthenticated" }
-        "403": { $ref: "#/components/responses/Forbidden" }
-        "409":
-          description: Agent id already exists.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
-        "422":
-          description: Invalid definition (`CONFIG`).
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
   /api/admin/agents/resync:
     post:
       tags: [admin]
-      summary: (M34 — Implemented) Re-scan the host agent catalog
+      summary: (M34 — Implemented) Re-project the catalog from installed packages
       description: |
-        Admin-only. Re-reads `~/.maister/agents/`, re-parses every
-        `agent.md`, and re-syncs rows with SET/CLEAR symmetry (a removed
-        frontmatter field resets its column). Invalid definitions are
-        reported and left untouched in the DB; rows whose directory
-        disappeared are disabled (`enabled=false`), never silently deleted.
+        Admin-only. Re-scans `agents/*.md` in the NEWEST Installed revision
+        of every flow_ref and re-syncs rows with SET/CLEAR symmetry (a
+        removed frontmatter field resets its column). Invalid definitions
+        are reported and left untouched in the DB; rows whose providing
+        package vanished are disabled (`enabled=false`), never silently
+        deleted.
       operationId: postAdminAgentsResync
       responses:
         "200":
@@ -607,19 +573,52 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
   /api/admin/agents/{agentId}:
+    get:
+      tags: [admin]
+      summary: (M34 — Implemented) Read one agent (row + prompt body)
+      description: |
+        Admin-only. The catalog row plus the `.md` body (the prompt lives
+        only in the canonical definition file inside the installed package
+        revision). A missing/invalid file still returns the row with an
+        empty prompt; the resync surface reports the drift.
+      operationId: getAdminAgent
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema: { type: string, pattern: "^[A-Za-z0-9._-]+(?::[A-Za-z0-9._-]+)?$" }
+      responses:
+        "200":
+          description: Agent + prompt.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [agent, prompt]
+                properties:
+                  agent: { $ref: "#/components/schemas/AgentSummary" }
+                  prompt: { type: string }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: Unknown agent.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
     patch:
       tags: [admin]
-      summary: (M34 — Implemented) Update an agent definition / toggle / un-quarantine
+      summary: (M34 — Implemented) Platform kill-switches — toggle / un-quarantine
       description: |
-        Admin-only, one aggregating endpoint. Definition fields rewrite the
-        `.md` and re-register (write-then-parse); `enabled` toggles the row;
-        `unquarantine: true` clears `quarantined_at` + `quarantine_reason`.
+        Admin-only. `enabled` toggles the row; `unquarantine: true` clears
+        `quarantined_at` + `quarantine_reason`. Definition edits are NOT
+        accepted here (ADR-089 rework) — definitions change only through the
+        providing package.
       operationId: patchAdminAgent
       parameters:
         - name: agentId
           in: path
           required: true
-          schema: { type: string, pattern: "^[A-Za-z0-9._-]+$" }
+          schema: { type: string, pattern: "^[A-Za-z0-9._-]+(?::[A-Za-z0-9._-]+)?$" }
       requestBody:
         required: true
         content:
@@ -628,7 +627,6 @@ paths:
               type: object
               additionalProperties: false
               properties:
-                definition: { $ref: "#/components/schemas/AgentDefinitionBody" }
                 enabled: { type: boolean }
                 unquarantine: { type: boolean }
       responses:
@@ -649,34 +647,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "422":
-          description: Invalid definition (`CONFIG`).
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
-    delete:
-      tags: [admin]
-      summary: (M34 — Implemented) Delete an agent (usage-guarded)
-      description: |
-        Admin-only. Hard-deletes the catalog row and the `.md` directory.
-        Refused with `409 CONFLICT` while live (non-terminal) agent runs
-        reference the agent — mirrors the ACP-runner delete guard (ADR-065).
-      operationId: deleteAdminAgent
-      parameters:
-        - name: agentId
-          in: path
-          required: true
-          schema: { type: string, pattern: "^[A-Za-z0-9._-]+$" }
-      responses:
-        "204": { description: Deleted. }
-        "401": { $ref: "#/components/responses/Unauthenticated" }
-        "403": { $ref: "#/components/responses/Forbidden" }
-        "404":
-          description: Unknown agent.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
-        "409":
-          description: Live agent runs reference this agent (`CONFLICT`).
+          description: Invalid body (`CONFIG`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -731,7 +702,13 @@ paths:
         task launch dialog: enabled project flows, safe branch list, platform
         ACP runners, ADR-076 pinned-model display data, the default runner/model
         for the selected Flow, the project delivery-policy default, and the
-        manual launchability result/reason. Secret provider fields and server
+        manual launchability result/reason. M34 (ADR-089): a FLOWLESS
+        simple-intent task still returns 200 with
+        `launchability.reason='unconfigured'`, `flowId: null`, and
+        `selectedFlowId: ""` — the dialog doubles as "set up & launch"; the
+        task's triage-verdict columns pre-fill `selectedRunnerId`,
+        `defaultTargetBranch`, and the delivery-policy default
+        (`promotion_mode` → strategy). Secret provider fields and server
         filesystem paths are never returned.
       operationId: getRunLaunchOptions
       parameters:
@@ -983,8 +960,10 @@ paths:
       summary: (M34 — Implemented) Attach-panel read model
       description: |
         Project membership `member`+. Returns agents attached to the project
-        (link + overrides + trigger bindings) and platform agents available
-        to attach. `projectId` resolves from the URL slug (server-state).
+        (link + overrides + trigger bindings) and agents available to
+        attach — filtered to those whose providing package has a live
+        enabled pin in THIS project (ADR-089 rework). `projectId` resolves
+        from the URL slug (server-state).
       operationId: getProjectAgents
       parameters:
         - name: slug
@@ -1013,10 +992,13 @@ paths:
       summary: (M34 — Implemented) Attach an agent to the project
       description: |
         Project `admin`+ (`editSettings`). Creates the
-        `agent_project_links` row. `agentId` must reference a registered
-        platform-scope agent (project-scope agents are auto-linked at
-        registration); `runnerOverrideId` is validated against the enabled
-        runner catalog.
+        `agent_project_links` row. `agentId` is package-qualified
+        (`<flowRefId>:<stem>`) and its providing package must be
+        configured+enabled in this project (`409 PRECONDITION` otherwise —
+        ADR-089 rework); `runnerOverrideId` is validated against the
+        enabled runner catalog. The attach panel pre-fills the bindings
+        modal from the definition's `recommended` block; nothing applies
+        without the explicit save.
       operationId: postProjectAgentLink
       parameters:
         - name: slug
@@ -1032,7 +1014,7 @@ paths:
               required: [agentId]
               additionalProperties: false
               properties:
-                agentId: { type: string, pattern: "^[A-Za-z0-9._-]+$" }
+                agentId: { type: string, pattern: "^[A-Za-z0-9._-]+(?::[A-Za-z0-9._-]+)?$" }
                 enabled: { type: boolean, default: true }
                 runnerOverrideId: { type: string, nullable: true }
       responses:
@@ -1072,7 +1054,7 @@ paths:
         - name: agentId
           in: path
           required: true
-          schema: { type: string, pattern: "^[A-Za-z0-9._-]+$" }
+          schema: { type: string, pattern: "^[A-Za-z0-9._-]+(?::[A-Za-z0-9._-]+)?$" }
       requestBody:
         required: true
         content:
@@ -1124,7 +1106,7 @@ paths:
         - name: agentId
           in: path
           required: true
-          schema: { type: string, pattern: "^[A-Za-z0-9._-]+$" }
+          schema: { type: string, pattern: "^[A-Za-z0-9._-]+(?::[A-Za-z0-9._-]+)?$" }
       responses:
         "204": { description: Detached. }
         "401": { $ref: "#/components/responses/Unauthenticated" }
@@ -1157,7 +1139,7 @@ paths:
         - name: agentId
           in: path
           required: true
-          schema: { type: string, pattern: "^[A-Za-z0-9._-]+$" }
+          schema: { type: string, pattern: "^[A-Za-z0-9._-]+(?::[A-Za-z0-9._-]+)?$" }
       requestBody:
         required: false
         content:
@@ -1204,7 +1186,7 @@ paths:
         - name: agentId
           in: path
           required: true
-          schema: { type: string, pattern: "^[A-Za-z0-9._-]+$" }
+          schema: { type: string, pattern: "^[A-Za-z0-9._-]+(?::[A-Za-z0-9._-]+)?$" }
       requestBody:
         required: true
         content:
@@ -6316,9 +6298,11 @@ paths:
       summary: Diff the enabled revision against a candidate revision
       description: |
         M10. Admin-only. Returns a structured contract diff (steps, gates,
-        artifacts, capabilities, external ops, schema/setup changes) between the
-        project's enabled revision and `revisionId`. `revisionId` is validated
-        against the flow AND the project's declared source. Source:
+        artifacts, capabilities, external ops, schema/setup changes, and the
+        M34 `agents` break-impact section joined against this project's live
+        attachments/bindings) between the project's enabled revision and
+        `revisionId`. `revisionId` is validated against the flow AND the
+        project's declared source. Source:
         `.../flow-packages/[flowRefId]/upgrade-preview/route.ts`.
       operationId: getFlowUpgradePreview
       parameters:
@@ -8267,19 +8251,25 @@ components:
     AgentSummary:
       type: object
       description: |
-        (M34 — Implemented) Catalog projection of an `agents` row — the parsed
-        frontmatter index plus enabled/quarantine state. Never includes
+        (M34 — Implemented, ADR-089 rework) Catalog projection of an `agents`
+        row — package provenance + parsed frontmatter + enabled/quarantine
+        state. Ids are package-qualified `<flowRefId>:<stem>`. Never includes
         token material or filesystem internals beyond `sourcePath`.
       required:
-        [id, scope, name, description, workspace, mode, triggers, riskTier, enabled]
+        [id, flowRefId, versionLabel, origin, name, description, workspace, mode, triggers, riskTier, enabled]
       properties:
         id: { type: string }
-        scope: { type: string, enum: [platform, project] }
-        projectId: { type: string, nullable: true }
+        flowRefId: { type: string }
+        versionLabel: { type: string }
+        origin: { type: string, enum: [git, authored] }
         name: { type: string }
         description: { type: string }
         runnerId: { type: string, nullable: true }
         workspace: { type: string, enum: [none, repo_read, worktree] }
+        workspaceRef:
+          type: string
+          nullable: true
+          description: "`trigger` or a literal branch; repo_read only (ADR-090 amendment)."
         mode: { type: string, enum: [session, subagent] }
         triggers:
           type: array
@@ -8287,40 +8277,26 @@ components:
             type: string
             enum: [manual, cron, domain_event, webhook, flow]
         riskTier: { type: string, enum: [read_only, standard, destructive] }
+        recommended:
+          type: object
+          nullable: true
+          description: Package-recommended bindings — pre-fill the attach panel (RD5).
+          additionalProperties: false
+          properties:
+            runner: { type: string }
+            cron:
+              type: object
+              additionalProperties: false
+              properties:
+                expr: { type: string }
+                timezone: { type: string }
+            events:
+              type: array
+              items: { type: string }
         sourcePath: { type: string }
         enabled: { type: boolean }
         quarantinedAt: { type: string, format: date-time, nullable: true }
         quarantineReason: { type: string, nullable: true }
-    AgentDefinitionBody:
-      type: object
-      description: |
-        (M34 — Implemented) Create/update payload for an agent definition. The
-        server renders it into frontmatter + body and writes the `.md`
-        (write-then-parse). `project` is required iff `scope=project`.
-      required: [id, name, description, scope, workspace, mode, triggers, riskTier, prompt]
-      properties:
-        id: { type: string, pattern: "^[A-Za-z0-9._-]+$", maxLength: 128 }
-        name: { type: string, minLength: 1 }
-        description: { type: string, minLength: 1 }
-        scope: { type: string, enum: [platform, project] }
-        project:
-          type: string
-          description: Project slug; required iff `scope=project`.
-        runner: { type: string, nullable: true }
-        workspace: { type: string, enum: [none, repo_read, worktree] }
-        mode: { type: string, enum: [session, subagent] }
-        triggers:
-          type: array
-          minItems: 1
-          items:
-            type: string
-            enum: [manual, cron, domain_event, webhook, flow]
-        capabilityProfile: { type: object, nullable: true }
-        riskTier: { type: string, enum: [read_only, standard, destructive] }
-        prompt:
-          type: string
-          minLength: 1
-          description: The `.md` body — the agent's base/system prompt.
     AttachedAgent:
       type: object
       description: |
@@ -10651,6 +10627,7 @@ components:
         - artifacts
         - capabilities
         - externalOps
+        - agents
       properties:
         fromRevisionId: { type: string, format: uuid, nullable: true }
         toRevisionId: { type: string, format: uuid }
@@ -10661,6 +10638,45 @@ components:
         artifacts: { $ref: "#/components/schemas/ContractDiff" }
         capabilities: { $ref: "#/components/schemas/ContractDiff" }
         externalOps: { $ref: "#/components/schemas/ContractDiff" }
+        agents: { $ref: "#/components/schemas/AgentUpgradeImpact" }
+
+    AgentUpgradeImpact:
+      type: object
+      description: |
+        (M34 — Implemented, ADR-089 rework, owner decision 7.) Agent
+        break-impact between the enabled and candidate revisions: removed/
+        changed agents joined against the requesting project's LIVE
+        attachments (`agent_project_links`) and trigger bindings
+        (`agent_schedules`) — "what stops working" is explicit before enable.
+      required: [added, removed, changed]
+      properties:
+        added:
+          type: array
+          items: { type: string }
+        removed:
+          type: array
+          items:
+            type: object
+            required: [id, attachedHere, scheduleCount]
+            properties:
+              id: { type: string }
+              attachedHere: { type: boolean }
+              scheduleCount: { type: integer }
+        changed:
+          type: array
+          items:
+            type: object
+            required: [id, changes, droppedTriggers, attachedHere, scheduleCount]
+            properties:
+              id: { type: string }
+              changes:
+                type: array
+                items: { type: string }
+              droppedTriggers:
+                type: array
+                items: { type: string }
+              attachedHere: { type: boolean }
+              scheduleCount: { type: integer }
 
     TokenScope:
       type: string

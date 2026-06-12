@@ -411,21 +411,31 @@ Current Scope, these are **Implemented** today:
   `run.abandoned` webhook gap is closed (`source: "ttl"`).
   → `domain-events.md`
 
-- **Platform-agent substrate** (M34, ADR-089/088): `.md`-defined agents in a
-  host-only catalog (`~/.maister/agents/`, `MAISTER_AGENTS_ROOT`) parsed into
-  the `agents` index; project attachments + cron/event trigger bindings;
-  standalone runs as `runs.run_kind='agent'` under a separate budget
-  (`MAISTER_MAX_CONCURRENT_AGENTS`, default 3; flow/scratch default raised
-  to 6) with a per-agent runner chain; workspace axis `none|repo_read|
-  worktree` with 3-layer read-only enforcement (L1 supervisor
-  `readOnlySession` inline arbitration, L2 materialized deny rules, L3
-  dirty-watchdog → one-tx quarantine; ADR-041 untouched); five triggers
-  (manual / cron singleton / domain-event consumer with self-exclusion /
-  inbound webhook / flow-node `settings.agent` binding, engine `1.5.0`);
-  per-launch ephemeral agent tokens feeding the maister MCP facade
-  (`agent:<id>` audit identity); triage verdict ops + simple-intent tasks
-  (`unconfigured` launchability) + the `task.triage_requeued` emitter;
-  catalog/attach UI + board-card launch popover. → `agents.md`
+- **Platform-agent substrate** (M34, ADR-089/090): `.md`-defined agents
+  shipped INSIDE flow packages (`agents/<stem>.md`, same trust contour +
+  versioning + Studio authoring path; package-qualified ids
+  `<flowRefId>:<stem>`) projected into the `agents` catalog from each
+  package's newest Installed revision; what a launch runs is the
+  per-project EFFECTIVE definition resolved through that project's pinned
+  revision behind the flow enablement+trust gates (pin divergence refuses);
+  project attachments (require the package enabled in the project,
+  pre-filled from the definition's `recommended` bindings) + cron/event
+  trigger bindings; standalone runs as `runs.run_kind='agent'` under a
+  separate budget (`MAISTER_MAX_CONCURRENT_AGENTS`, default 3; flow/scratch
+  default raised to 6) with a per-agent runner chain; workspace axis
+  `none|repo_read|worktree` (+ `workspace_ref: trigger|branch` — ephemeral
+  detached read-only checkout at the trigger-derived ref) with 3-layer
+  read-only enforcement (L1 supervisor `readOnlySession` inline
+  arbitration, L2 materialized deny rules, L3 dirty-watchdog → one-tx
+  quarantine; ADR-041 untouched); five triggers (manual / cron singleton /
+  domain-event consumer with self-exclusion / inbound webhook / flow-node
+  `settings.agent` binding, engine `1.5.0`); per-launch ephemeral agent
+  tokens feeding the maister MCP facade (`agent:<id>` audit identity) +
+  capability-profile MCPs resolved from the platform catalog (exec-trust
+  stdio gate); triage verdict ops + simple-intent tasks (`unconfigured`
+  launchability, set-up-&-launch dialog) + the `task.triage_requeued`
+  emitter; package upgrade preview with agent break-impact warnings.
+  → `agents.md`
 
 Product backlog/vision (not built): `docs/pv/improvement-roadmap.md` —
 self-improvement loop, benchmarking, project memory; agents-as-actors
