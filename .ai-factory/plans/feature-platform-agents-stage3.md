@@ -8,7 +8,7 @@
 ## Progress
 
 - [x] Phase 0 — ADR-087/088 + analytics spec (commit 1)
-- [ ] Phase 1 — schema + migration 0047
+- [x] Phase 1 — schema + migration 0047 (commit 2)
 - [ ] Phase 2 — definition parser + registry
 - [ ] Phase 3 — standalone launch + budgets
 - [ ] Phase 4 — enforcement L1/L3 + quarantine
