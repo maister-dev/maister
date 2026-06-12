@@ -172,6 +172,42 @@ describe("T4.5-C — supervisor forwards capability MCP servers to ACP adapter",
     });
   });
 
+  it("forwards literal env values, which win over same-named envKeys (M33, agent-token channel)", async () => {
+    if (!booted) throw new Error("not booted");
+    const { url, recordPath } = booted;
+
+    const res = await createSession(url, [
+      {
+        name: "maister",
+        command: "maister-facade",
+        args: ["--stdio"],
+        envKeys: [SENTINEL_ENV_KEY],
+        env: {
+          [SENTINEL_ENV_KEY]: "literal-wins",
+          MAISTER_PROJECT_TOKEN: "tok_ephemeral",
+        },
+      },
+    ]);
+
+    expect(res.status).toBe(201);
+
+    const record = await readRecord(recordPath);
+    const maister = (record.mcpServers as Array<Record<string, unknown>>).find(
+      (s) => s.name === "maister",
+    );
+    const env = maister?.env as Array<{ name: string; value: string }>;
+
+    expect(env).toContainEqual({
+      name: SENTINEL_ENV_KEY,
+      value: "literal-wins",
+    });
+    expect(env).toContainEqual({
+      name: "MAISTER_PROJECT_TOKEN",
+      value: "tok_ephemeral",
+    });
+    expect(env.filter((e) => e.name === SENTINEL_ENV_KEY)).toHaveLength(1);
+  });
+
   it("forwards an http MCP server as type=http with url + headers resolved from process.env (M27/T-C4)", async () => {
     if (!booted) throw new Error("not booted");
     const { url, recordPath } = booted;

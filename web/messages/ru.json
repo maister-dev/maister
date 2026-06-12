@@ -53,6 +53,7 @@
       "skipped_target_terminal": "Пропущено — задача завершена",
       "skipped_crashed": "Пропущено — последний запуск упал",
       "skipped_blocked": "Пропущено — задача заблокирована связями",
+      "skipped_unconfigured": "Пропущено — у задачи не задан флоу",
       "launch_failed": "Запуск не удался",
       "dispatching": "Диспетчеризация…"
     },
@@ -65,6 +66,7 @@
       "skipped_target_terminal": "Пропущено: задача в терминальном статусе",
       "skipped_crashed": "Пропущено: последний запуск упал",
       "skipped_blocked": "Пропущено: задача заблокирована связью",
+      "skipped_unconfigured": "Пропущено: у задачи не задан флоу",
       "launch_failed": "Запуск не удался",
       "dispatching": "Диспетчеризация"
     },

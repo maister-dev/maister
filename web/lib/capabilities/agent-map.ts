@@ -14,13 +14,16 @@ const log = pino({
 
 // M27/T-C4: transport-tagged. `stdio` carries command/args/envKeys; `sse`/`http`
 // carry url/headerKeys. Header/env values are resolved supervisor-side from the
-// NAME keys — never carried here.
+// NAME keys — never carried here. Exception (M33, ADR-087): `env` carries
+// literal values for server-GENERATED secrets that exist in no process.env
+// (the per-launch ephemeral agent token injected into the MCP facade).
 export type AgentMcpServer = {
   name: string;
   transport: "stdio" | "sse" | "http";
   command?: string;
   args?: string[];
   envKeys?: string[];
+  env?: Record<string, string>;
   url?: string;
   headerKeys?: string[];
 };

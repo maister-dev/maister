@@ -8,7 +8,8 @@ export type ToolSpec = {
 
 export const TOOL_SPECS: Record<string, ToolSpec> = {
   task_create: {
-    description: "Create a new task in a project",
+    description:
+      "Create a new task in a project (flowId optional — a flowless task is a simple-intent task awaiting triage)",
     inputSchema: {
       type: "object",
       properties: {
@@ -18,7 +19,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
         flowId: { type: "string" },
         executorOverrideId: { type: "string" },
       },
-      required: ["slug", "title", "prompt", "flowId"],
+      required: ["slug", "title", "prompt"],
     },
   },
   task_list: {
@@ -155,6 +156,70 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
       required: ["slug", "taskId", "body"],
     },
   },
+  triage_set: {
+    description:
+      "Submit a triage verdict for a task (at least one of flowId/runnerId/targetBranch/promotionMode); always stamps triage_status='triaged'",
+    inputSchema: {
+      type: "object",
+      properties: {
+        slug: { type: "string" },
+        taskId: { type: "string" },
+        flowId: { type: "string" },
+        runnerId: { type: "string" },
+        targetBranch: { type: "string" },
+        promotionMode: {
+          type: "string",
+          enum: ["local_merge", "pull_request"],
+        },
+      },
+      required: ["slug", "taskId"],
+    },
+  },
+  relation_list: {
+    description: "List a task's typed relations",
+    inputSchema: {
+      type: "object",
+      properties: {
+        slug: { type: "string" },
+        taskId: { type: "string" },
+      },
+      required: ["slug", "taskId"],
+    },
+  },
+  relation_add: {
+    description:
+      "Add a typed relation from this task to another task (by per-project number)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        slug: { type: "string" },
+        taskId: { type: "string" },
+        kind: {
+          type: "string",
+          enum: ["blocks", "depends_on", "parent_of"],
+        },
+        toNumber: { type: "number" },
+      },
+      required: ["slug", "taskId", "kind", "toNumber"],
+    },
+  },
+  relation_remove: {
+    description:
+      "Remove a typed relation from this task (idempotent — missing relation is a no-op)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        slug: { type: "string" },
+        taskId: { type: "string" },
+        kind: {
+          type: "string",
+          enum: ["blocks", "depends_on", "parent_of"],
+        },
+        toNumber: { type: "number" },
+      },
+      required: ["slug", "taskId", "kind", "toNumber"],
+    },
+  },
 };
 
 type DispatchResult =
@@ -205,7 +270,7 @@ function resolveRouting(
   name: string,
   args: Record<string, unknown>,
 ): {
-  method: "GET" | "POST" | "PATCH";
+  method: "GET" | "POST" | "PATCH" | "DELETE";
   path: string;
   body?: unknown;
 } {
@@ -215,11 +280,12 @@ function resolveRouting(
         slug: string;
         title: string;
         prompt: string;
-        flowId: string;
+        flowId?: string;
         executorOverrideId?: string;
       };
-      const body: Record<string, unknown> = { title, prompt, flowId };
+      const body: Record<string, unknown> = { title, prompt };
 
+      if (flowId !== undefined) body.flowId = flowId;
       if (executorOverrideId !== undefined)
         body.executorOverrideId = executorOverrideId;
 
@@ -371,6 +437,52 @@ function resolveRouting(
         method: "POST",
         path: `/api/v1/ext/projects/${slug}/tasks/${taskId}/comments`,
         body: { body },
+      };
+    }
+    case "triage_set": {
+      const { slug, taskId, flowId, runnerId, targetBranch, promotionMode } =
+        args as {
+          slug: string;
+          taskId: string;
+          flowId?: string;
+          runnerId?: string;
+          targetBranch?: string;
+          promotionMode?: string;
+        };
+      const body: Record<string, unknown> = {};
+
+      if (flowId !== undefined) body.flowId = flowId;
+      if (runnerId !== undefined) body.runnerId = runnerId;
+      if (targetBranch !== undefined) body.targetBranch = targetBranch;
+      if (promotionMode !== undefined) body.promotionMode = promotionMode;
+
+      return {
+        method: "POST",
+        path: `/api/v1/ext/projects/${slug}/tasks/${taskId}/triage`,
+        body,
+      };
+    }
+    case "relation_list": {
+      const { slug, taskId } = args as { slug: string; taskId: string };
+
+      return {
+        method: "GET",
+        path: `/api/v1/ext/projects/${slug}/tasks/${taskId}/relations`,
+      };
+    }
+    case "relation_add":
+    case "relation_remove": {
+      const { slug, taskId, kind, toNumber } = args as {
+        slug: string;
+        taskId: string;
+        kind: string;
+        toNumber: number;
+      };
+
+      return {
+        method: name === "relation_add" ? "POST" : "DELETE",
+        path: `/api/v1/ext/projects/${slug}/tasks/${taskId}/relations`,
+        body: { kind, toNumber },
       };
     }
     default:

@@ -14,7 +14,7 @@ const { projectTokens } = schemaModule as unknown as Record<string, any>;
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
 
-export type TokenKind = "project" | "user";
+export type TokenKind = "project" | "user" | "agent";
 
 export type IssueTokenInput = {
   projectId: string;

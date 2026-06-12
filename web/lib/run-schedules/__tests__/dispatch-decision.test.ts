@@ -31,6 +31,16 @@ describe("decideFire (overlap policy × launchability × cap matrix)", () => {
     }
   });
 
+  it("skips flowless (unconfigured) targets under every policy, regardless of cap (M33, ADR-087)", () => {
+    for (const policy of ["skip", "queue_one", "start_anyway"] as const) {
+      for (const capFull of [false, true]) {
+        expect(
+          decideFire({ policy, launchability: "unconfigured", capFull }),
+        ).toEqual({ action: "skip", outcome: "skipped_unconfigured" });
+      }
+    }
+  });
+
   it("busy task: skip and start_anyway record the skip; queue_one flags a catch-up", () => {
     expect(
       decideFire({ policy: "skip", launchability: "busy", capFull: false }),

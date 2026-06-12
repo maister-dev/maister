@@ -119,7 +119,10 @@ export const AdapterLaunchSchema = z
 
 // M27/T-C4: transport-tagged. stdio uses command/args/envKeys; sse/http use
 // url/headerKeys. Header/env VALUES are resolved supervisor-side from the NAME
-// keys (process.env) — never sent over the wire.
+// keys (process.env) — never sent over the wire. Exception (M33, ADR-087):
+// `env` carries literal values for server-GENERATED secrets that exist in no
+// process.env (the per-launch ephemeral agent token injected into the MCP
+// facade) — same trust channel as executor.env/adapterLaunch.env.
 export const McpServerInputSchema = z
   .object({
     name: z.string().min(1).max(128),
@@ -127,6 +130,7 @@ export const McpServerInputSchema = z
     command: z.string().min(1).max(1024).optional(),
     args: z.array(launchArgSchema).max(64).optional(),
     envKeys: z.array(z.string().min(1).max(256)).max(64).optional(),
+    env: z.record(z.string().min(1).max(256), z.string()).optional(),
     url: z.string().url().max(2048).optional(),
     headerKeys: z.array(z.string().min(1).max(256)).max(64).optional(),
   })

@@ -17,7 +17,7 @@ import {
   httpStatusForExtCode,
   recordRequiredTokenAudit,
 } from "@/lib/tokens/ext-handler";
-import { actorUserIdForToken } from "@/lib/tokens/verify";
+import { socialActorForToken } from "@/lib/tokens/verify";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches lib/services/tasks.ts).
 const { tasks } = schemaModule as unknown as Record<string, any>;
@@ -140,51 +140,47 @@ export async function POST(
         );
       }
 
-      // Actor mapping (ADR-078 D12): a user-owned token acts as that user; an
+      // Actor mapping (ADR-078 D12 + ADR-087): user-owned token acts as that
+      // user, agent token acts as the agent (the triager's Q&A channel), an
       // ownerless project token acts as system with the token recorded in the
       // comment-activity payload.
-      const ownerUserId = actorUserIdForToken(ctx.actor);
-      const actor = ownerUserId
-        ? ({ type: "user", id: ownerUserId } as const)
-        : ({ type: "system", id: null } as const);
+      const actor = socialActorForToken(ctx.actor);
 
       try {
-        const record = await (db as TransactionalDb).transaction(
-          async (tx) => {
-            const comment = await addTaskComment(
-              {
-                taskId,
-                body: body.body,
-                actor,
-                ...(actor.type === "system"
-                  ? {
-                      activityPayloadExtra: {
-                        via: "ext",
-                        tokenId: ctx.actor.tokenId,
-                      },
-                    }
-                  : {}),
-              },
-              tx,
-            );
+        const record = await (db as TransactionalDb).transaction(async (tx) => {
+          const comment = await addTaskComment(
+            {
+              taskId,
+              body: body.body,
+              actor,
+              ...(actor.type === "system"
+                ? {
+                    activityPayloadExtra: {
+                      via: "ext",
+                      tokenId: ctx.actor.tokenId,
+                    },
+                  }
+                : {}),
+            },
+            tx,
+          );
 
-            await recordRequiredTokenAudit(
-              {
-                tokenId: ctx.actor.tokenId,
-                projectId: ctx.actor.projectId,
-                actorLabel: ctx.actor.actorLabel,
-                scopeUsed: "comments:create",
-                endpoint: ENDPOINT_COMMENTS_POST,
-                method: "POST",
-                result: "ok",
-                statusCode: 201,
-              },
-              tx,
-            );
+          await recordRequiredTokenAudit(
+            {
+              tokenId: ctx.actor.tokenId,
+              projectId: ctx.actor.projectId,
+              actorLabel: ctx.actor.actorLabel,
+              scopeUsed: "comments:create",
+              endpoint: ENDPOINT_COMMENTS_POST,
+              method: "POST",
+              result: "ok",
+              statusCode: 201,
+            },
+            tx,
+          );
 
-            return comment;
-          },
-        );
+          return comment;
+        });
         const [comment] = await toCommentDTOs([record], db);
 
         return NextResponse.json({ comment }, { status: 201 });

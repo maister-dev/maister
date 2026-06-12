@@ -51,7 +51,7 @@ afterEach(() => {
 });
 
 describe("TOOL_SPECS registry", () => {
-  it("registers all 12 external tools (incl. ADR-078 comment_list, comment_create)", () => {
+  it("registers all 16 external tools (incl. ADR-087 triage_set + relation ops)", () => {
     expect(Object.keys(TOOL_SPECS).sort()).toEqual(
       [
         "comment_create",
@@ -60,14 +60,24 @@ describe("TOOL_SPECS registry", () => {
         "hitl_list",
         "hitl_respond",
         "readiness_get",
+        "relation_add",
+        "relation_list",
+        "relation_remove",
         "run_get",
         "run_launch",
         "task_create",
         "task_get",
         "task_list",
         "task_update",
+        "triage_set",
       ].sort(),
     );
+  });
+
+  it("task_create no longer requires flowId (M33 simple-intent creation)", () => {
+    expect(
+      (TOOL_SPECS.task_create.inputSchema as { required: string[] }).required,
+    ).toEqual(["slug", "title", "prompt"]);
   });
 });
 
@@ -289,9 +299,7 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
     const { url, init } = lastRequest();
 
     expect(init.method).toBe("POST");
-    expect(url).toBe(
-      `${BASE_URL}/api/v1/ext/runs/run-1/hitl/hitl-1/respond`,
-    );
+    expect(url).toBe(`${BASE_URL}/api/v1/ext/runs/run-1/hitl/hitl-1/respond`);
     expect(headerAuth(init)).toBe(AUTH);
     // optionId omitted (undefined) — only defined keys are forwarded.
     expect(parsedBody(init)).toEqual({
@@ -354,6 +362,89 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
     );
     expect(headerAuth(init)).toBe(AUTH);
     expect(parsedBody(init)).toEqual({ body: "see MAI-7" });
+  });
+
+  it("triage_set → POST /api/v1/ext/projects/{slug}/tasks/{taskId}/triage with only provided fields", async () => {
+    mockOnce({ ok: true, triageStatus: "triaged" }, 200);
+
+    await dispatchTool({
+      name: "triage_set",
+      args: {
+        slug: "demo",
+        taskId: "task-1",
+        flowId: "bugfix",
+        promotionMode: "pull_request",
+      },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    const { url, init } = lastRequest();
+
+    expect(init.method).toBe("POST");
+    expect(url).toBe(
+      `${BASE_URL}/api/v1/ext/projects/demo/tasks/task-1/triage`,
+    );
+    expect(parsedBody(init)).toEqual({
+      flowId: "bugfix",
+      promotionMode: "pull_request",
+    });
+  });
+
+  it("relation_list → GET /api/v1/ext/projects/{slug}/tasks/{taskId}/relations", async () => {
+    mockOnce({ relations: [] }, 200);
+
+    await dispatchTool({
+      name: "relation_list",
+      args: { slug: "demo", taskId: "task-1" },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    const { url, init } = lastRequest();
+
+    expect(init.method).toBe("GET");
+    expect(url).toBe(
+      `${BASE_URL}/api/v1/ext/projects/demo/tasks/task-1/relations`,
+    );
+  });
+
+  it("relation_add → POST .../relations with {kind, toNumber}", async () => {
+    mockOnce({ ok: true, created: true }, 201);
+
+    await dispatchTool({
+      name: "relation_add",
+      args: { slug: "demo", taskId: "task-1", kind: "blocks", toNumber: 7 },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    const { url, init } = lastRequest();
+
+    expect(init.method).toBe("POST");
+    expect(url).toBe(
+      `${BASE_URL}/api/v1/ext/projects/demo/tasks/task-1/relations`,
+    );
+    expect(parsedBody(init)).toEqual({ kind: "blocks", toNumber: 7 });
+  });
+
+  it("relation_remove → DELETE .../relations with {kind, toNumber}", async () => {
+    mockOnce({ ok: true, removed: true }, 200);
+
+    await dispatchTool({
+      name: "relation_remove",
+      args: { slug: "demo", taskId: "task-1", kind: "blocks", toNumber: 7 },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    const { url, init } = lastRequest();
+
+    expect(init.method).toBe("DELETE");
+    expect(url).toBe(
+      `${BASE_URL}/api/v1/ext/projects/demo/tasks/task-1/relations`,
+    );
+    expect(parsedBody(init)).toEqual({ kind: "blocks", toNumber: 7 });
   });
 });
 

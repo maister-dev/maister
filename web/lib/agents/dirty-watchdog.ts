@@ -28,9 +28,14 @@ const MARKER_RELATIVE = ".claude/settings.local.json.maister-owned";
 // ADR-088 L2 (materialize-only, ADR-041 boundary unchanged): instructed
 // deny rules for write-class tools. Best-effort instruction for well-behaved
 // agents; L1 (readOnlySession) and L3 (this watchdog) are the real layers.
+// The maister MCP facade is allow-listed: its tools (triage/comments/
+// relations — the agent's sanctioned write channel) must never reach a
+// permission round-trip, which L1 would fail-closed deny on a headless
+// session.
 const READ_ONLY_SETTINGS = `${JSON.stringify(
   {
     permissions: {
+      allow: ["mcp__maister"],
       deny: ["Edit", "Write", "MultiEdit", "NotebookEdit", "Bash"],
     },
   },

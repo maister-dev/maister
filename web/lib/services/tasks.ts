@@ -29,7 +29,9 @@ const log = pino({
 export type CreateTaskInput = {
   title: string;
   prompt: string;
-  flowId: string;
+  // M33 (ADR-087): optional — a flowless task is a simple-intent task that
+  // classifies as `unconfigured` until triage (or a human) fills the flow.
+  flowId?: string | null;
 };
 
 export type CreateTaskContext = {
@@ -48,17 +50,21 @@ export async function createTask(
     transaction: any;
   };
 
-  // Validate flowId belongs to THIS project (body-controlled).
-  const flowRows = await _db
-    .select()
-    .from(flows)
-    .where(and(eq(flows.id, input.flowId), eq(flows.projectId, ctx.projectId)));
+  const flowId = input.flowId ?? null;
 
-  if (flowRows.length === 0) {
-    throw new MaisterError(
-      "CONFIG",
-      `flow ${input.flowId} is not configured for project`,
-    );
+  // Validate flowId belongs to THIS project (body-controlled) when provided.
+  if (flowId !== null) {
+    const flowRows = await _db
+      .select()
+      .from(flows)
+      .where(and(eq(flows.id, flowId), eq(flows.projectId, ctx.projectId)));
+
+    if (flowRows.length === 0) {
+      throw new MaisterError(
+        "CONFIG",
+        `flow ${flowId} is not configured for project`,
+      );
+    }
   }
 
   const taskId = randomUUID();
@@ -96,7 +102,7 @@ export async function createTask(
       number: allocatedNumber,
       title: input.title,
       prompt: input.prompt,
-      flowId: input.flowId,
+      flowId,
       createdByUserId: ctx.actorUserId ?? null,
       status: "Backlog",
       stage: "Backlog",
@@ -139,7 +145,7 @@ export async function createTask(
   });
 
   log.info(
-    { projectId: ctx.projectId, taskId, flowId: input.flowId, taskKey, number },
+    { projectId: ctx.projectId, taskId, flowId, taskKey, number },
     "task created",
   );
 
@@ -154,7 +160,13 @@ export type TaskDTO = {
   prompt: string;
   status: string;
   stage: string;
-  flowId: string;
+  flowId: string | null;
+  // M33 launch-verdict fields (ADR-087): triage stamps them, the board's
+  // launch popover edits them pre-launch.
+  triageStatus: "triaged" | null;
+  runnerId: string | null;
+  targetBranch: string | null;
+  promotionMode: "local_merge" | "pull_request" | null;
   latestRunId: string | null;
   attemptNumber: number;
   createdByUserId: string | null;
@@ -184,7 +196,11 @@ async function taskToDTO(row: any, db: { select: any }): Promise<TaskDTO> {
     prompt: row.prompt,
     status: row.status,
     stage: row.stage,
-    flowId: row.flowId,
+    flowId: row.flowId ?? null,
+    triageStatus: row.triageStatus ?? null,
+    runnerId: row.runnerId ?? null,
+    targetBranch: row.targetBranch ?? null,
+    promotionMode: row.promotionMode ?? null,
     latestRunId: runRows[0]?.id ?? null,
     attemptNumber: row.attemptNumber,
     createdByUserId: row.createdByUserId ?? null,

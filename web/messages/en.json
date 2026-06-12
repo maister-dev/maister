@@ -53,6 +53,7 @@
       "skipped_target_terminal": "Skipped — task terminal",
       "skipped_crashed": "Skipped — last run crashed",
       "skipped_blocked": "Skipped — blocked by relations",
+      "skipped_unconfigured": "Skipped — no flow configured",
       "launch_failed": "Launch failed",
       "dispatching": "Dispatching…"
     },
@@ -65,6 +66,7 @@
       "skipped_target_terminal": "Skipped: task is in a terminal state",
       "skipped_crashed": "Skipped: latest run crashed",
       "skipped_blocked": "Skipped: task is blocked by a relation",
+      "skipped_unconfigured": "Skipped: task has no flow configured",
       "launch_failed": "Launch failed",
       "dispatching": "Dispatching"
     },

@@ -49,7 +49,8 @@ export type FireDecision =
         | "skipped_cap"
         | "skipped_target_terminal"
         | "skipped_crashed"
-        | "skipped_blocked";
+        | "skipped_blocked"
+        | "skipped_unconfigured";
     }
   | { action: "catchup"; outcome: "catchup_queued" };
 
@@ -73,6 +74,11 @@ export function decideFire(input: {
   // an existing queue_one flag is kept (unblocking fires the catch-up).
   if (input.launchability === "blocked") {
     return { action: "skip", outcome: "skipped_blocked" };
+  }
+  // M33 (ADR-087): a flowless simple-intent task cannot launch under any
+  // policy; the flag is kept — once configured, the catch-up fires.
+  if (input.launchability === "unconfigured") {
+    return { action: "skip", outcome: "skipped_unconfigured" };
   }
   if (input.capFull) {
     if (input.policy === "skip") {
@@ -106,6 +112,7 @@ export type DispatchSummary = {
   skippedCap: number;
   skippedTerminal: number;
   skippedBlocked: number;
+  skippedUnconfigured: number;
   catchupQueued: number;
   launchFailed: number;
   truncated: boolean;
@@ -230,6 +237,7 @@ type StagedDecision =
         | "skipped_target_terminal"
         | "skipped_crashed"
         | "skipped_blocked"
+        | "skipped_unconfigured"
         | "catchup_queued";
     };
 
@@ -240,7 +248,11 @@ async function decideAndStage(
   opts: { advance: boolean; reservedSlots?: number },
 ): Promise<StagedDecision> {
   const taskRows = await tx
-    .select({ status: tasks.status, projectId: tasks.projectId })
+    .select({
+      status: tasks.status,
+      projectId: tasks.projectId,
+      flowId: tasks.flowId,
+    })
     .from(tasks)
     .where(eq(tasks.id, row.taskId));
   const task = taskRows[0]!;
@@ -426,6 +438,7 @@ export async function dispatchDueSchedules(
     skippedCap: 0,
     skippedTerminal: 0,
     skippedBlocked: 0,
+    skippedUnconfigured: 0,
     catchupQueued: 0,
     launchFailed: 0,
     truncated: false,
@@ -474,6 +487,9 @@ export async function dispatchDueSchedules(
             break;
           case "skipped_blocked":
             summary.skippedBlocked += 1;
+            break;
+          case "skipped_unconfigured":
+            summary.skippedUnconfigured += 1;
             break;
           case "catchup_queued":
             summary.catchupQueued += 1;

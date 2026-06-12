@@ -1,7 +1,7 @@
 export async function callExt(opts: {
   baseUrl: string;
   authHeader: string;
-  method: "GET" | "POST" | "PATCH";
+  method: "GET" | "POST" | "PATCH" | "DELETE";
   path: string;
   body?: unknown;
   signal?: AbortSignal;

@@ -30,6 +30,7 @@ import {
   issueAgentRunToken,
   revokeAgentRunTokensForRun,
 } from "@/lib/agents/tokens";
+import { type AgentMcpServer } from "@/lib/capabilities/agent-map";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
@@ -716,6 +717,34 @@ export type AgentSupervisorApi = {
   streamSession: typeof streamSession;
 };
 
+// MCP facade injection (ADR-087 D9): the agent's sanctioned write channel —
+// triage/comments/relations over the ext API, authenticated by the
+// per-launch ephemeral token. The token rides the literal `env` channel
+// (never logged, never streamed, never in session/update). Command
+// resolution is env-overridable for split-host topologies; the default
+// targets the monorepo facade via its workspace-local tsx.
+export function agentFacadeMcpServer(tokenSecret: string): AgentMcpServer {
+  const mcpDir = path.resolve(process.cwd(), "../mcp");
+  const command =
+    process.env.MAISTER_MCP_FACADE_COMMAND ??
+    path.join(mcpDir, "node_modules", ".bin", "tsx");
+  const args = process.env.MAISTER_MCP_FACADE_ARGS
+    ? process.env.MAISTER_MCP_FACADE_ARGS.split(" ").filter(Boolean)
+    : [path.join(mcpDir, "src", "main.ts"), "--stdio"];
+
+  return {
+    name: "maister",
+    transport: "stdio",
+    command,
+    args,
+    env: {
+      MAISTER_API_BASE_URL:
+        process.env.MAISTER_API_BASE_URL ?? "http://localhost:3000",
+      MAISTER_PROJECT_TOKEN: tokenSecret,
+    },
+  };
+}
+
 const defaultSupervisorApi: AgentSupervisorApi = {
   createSession,
   sendPrompt,
@@ -809,7 +838,7 @@ export async function startAgentSession(
 
     const prompt = await buildAgentPrompt(_db, agent, run);
 
-    await issueAgentRunToken({
+    const issuedToken = await issueAgentRunToken({
       agentId: agent.id,
       projectId: project.id,
       runId,
@@ -824,6 +853,8 @@ export async function startAgentSession(
       executor: runnerExecutorInput(snapshot),
       runner: runnerSupervisorInput({ snapshot }),
       adapterLaunch: mergeRunnerAdapterLaunch(snapshot),
+      // ADR-087 D9: the facade carries the ephemeral token to the agent.
+      mcpServers: [agentFacadeMcpServer(issuedToken.secret)],
       // ADR-088 L1: none/repo_read agents run the whole session read-only.
       readOnlySession: workspace !== "worktree",
       ...(run.acpSessionId ? { resumeSessionId: run.acpSessionId } : {}),

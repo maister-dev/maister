@@ -9,8 +9,11 @@ import { classifyTaskLaunchability } from "@/lib/runs/launchability";
 // latch (nothing writes Backlog back after launch), so the latest flow run
 // decides relaunchability; terminal task statuses alone take precedence.
 
-function task(status: TaskStatus): { status: TaskStatus } {
-  return { status };
+function task(
+  status: TaskStatus,
+  flowId: string | null = "flow-1",
+): { status: TaskStatus; flowId: string | null } {
+  return { status, flowId };
 }
 
 function run(status: RunStatus): { status: RunStatus } {
@@ -138,9 +141,9 @@ describe("classifyTaskLaunchability — relation gate (blocked)", () => {
     expect(classifyTaskLaunchability(task("Done"), null, gate)).toBe(
       "target_terminal",
     );
-    expect(
-      classifyTaskLaunchability(task("InFlight"), run("Done"), gate),
-    ).toBe("target_terminal");
+    expect(classifyTaskLaunchability(task("InFlight"), run("Done"), gate)).toBe(
+      "target_terminal",
+    );
   });
 
   it("an empty gate never blocks", () => {
@@ -151,5 +154,48 @@ describe("classifyTaskLaunchability — relation gate (blocked)", () => {
 
   it("an omitted gate keeps the original two-arg behavior", () => {
     expect(classifyTaskLaunchability(task("Backlog"), null)).toBe("launchable");
+  });
+});
+
+// M33 (ADR-087) — a flowless simple-intent task is `unconfigured`, with
+// precedence target_terminal > crashed > busy > blocked > unconfigured >
+// launchable.
+describe("classifyTaskLaunchability — flowless task (unconfigured)", () => {
+  const gate: RelationGate = { openBlockers: [{ key: "MAI", number: 7 }] };
+
+  it("otherwise-launchable Backlog task without a flow → unconfigured", () => {
+    expect(classifyTaskLaunchability(task("Backlog", null), null)).toBe(
+      "unconfigured",
+    );
+  });
+
+  it("retry-eligible flowless task (latest run Failed) → unconfigured", () => {
+    expect(
+      classifyTaskLaunchability(task("Backlog", null), run("Failed")),
+    ).toBe("unconfigured");
+  });
+
+  it("blocked wins over unconfigured", () => {
+    expect(classifyTaskLaunchability(task("Backlog", null), null, gate)).toBe(
+      "blocked",
+    );
+  });
+
+  it("busy flowless task stays busy (unconfigured never masks run state)", () => {
+    expect(
+      classifyTaskLaunchability(task("InFlight", null), run("Running")),
+    ).toBe("busy");
+  });
+
+  it("crashed flowless task stays crashed", () => {
+    expect(
+      classifyTaskLaunchability(task("InFlight", null), run("Crashed")),
+    ).toBe("crashed");
+  });
+
+  it("terminal flowless task stays target_terminal", () => {
+    expect(classifyTaskLaunchability(task("Done", null), null)).toBe(
+      "target_terminal",
+    );
   });
 });

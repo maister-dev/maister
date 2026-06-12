@@ -12,8 +12,8 @@
 - [x] Phase 2 — definition parser + registry (commit 3)
 - [x] Phase 3 — standalone launch + budgets (commit 4)
 - [x] Phase 4 — enforcement L1/L3 + quarantine (commit 5; + migration 0048 for activity kinds)
-- [ ] Phase 5 — five triggers
-- [ ] Phase 6 — ext/MCP + tokens
+- [x] Phase 5 — five triggers (commit 6)
+- [x] Phase 6 — ext/MCP + tokens (commit 7)
 - [ ] Phase 7 — UI
 - [ ] Phase 8 — e2e + close-out
 

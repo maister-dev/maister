@@ -23,7 +23,9 @@ const postBodySchema = z
   .object({
     title: z.string().min(1),
     prompt: z.string().min(1),
-    flowId: z.string().min(1),
+    // M33 (ADR-087): optional — simple-intent creation; the task classifies
+    // as `unconfigured` until triage (or a human) fills the flow.
+    flowId: z.string().min(1).optional(),
   })
   .strict();
 

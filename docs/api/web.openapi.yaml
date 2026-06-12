@@ -8251,6 +8251,8 @@ components:
         - skipped_cap
         - skipped_target_terminal
         - skipped_crashed
+        - skipped_blocked
+        - skipped_unconfigured
         - launch_failed
         - dispatching
       description: |
@@ -8306,6 +8308,8 @@ components:
             - skipped_cap
             - skipped_target_terminal
             - skipped_crashed
+            - skipped_blocked
+            - skipped_unconfigured
             - launch_failed
             - dispatching
             - null

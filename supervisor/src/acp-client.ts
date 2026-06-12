@@ -438,10 +438,17 @@ export async function createAcpConnection(
       name: s.name,
       command: s.command ?? "",
       args: s.args ?? [],
-      env: (s.envKeys ?? []).map((k) => ({
-        name: k,
-        value: process.env[k] ?? "",
-      })),
+      // Literal `env` entries (server-generated secrets, M33) win over
+      // same-named process.env lookups.
+      env: [
+        ...(s.envKeys ?? [])
+          .filter((k) => !(k in (s.env ?? {})))
+          .map((k) => ({ name: k, value: process.env[k] ?? "" })),
+        ...Object.entries(s.env ?? {}).map(([name, value]) => ({
+          name,
+          value,
+        })),
+      ],
     };
   });
 

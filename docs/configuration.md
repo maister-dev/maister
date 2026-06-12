@@ -973,6 +973,8 @@ Read by Next.js (`web/`) and `supervisor/` at startup:
 | `MAISTER_PROJECTS_DIR` | no | unset | Auto-discovery root; every `maister.yaml` under this dir is registered on startup |
 | `MAISTER_REPOS_ROOT` | no | `~/.maister/repos` | Root that `POST /api/projects` clones a `repoUrl` into (ADR-025). Resolved by `web/lib/instance-config.ts:reposRoot()`; surfaced read-only on `/settings`. |
 | `MAISTER_AGENTS_ROOT` | no | `~/.maister/agents` | **(M33 — Designed, ADR-087.)** Host agent-catalog root holding the canonical `<id>/agent.md` definitions for BOTH scopes (nothing agent-related lives in project repos). Resolved by `web/lib/agents/paths.ts:systemAgentsRoot()`. |
+| `MAISTER_MCP_FACADE_COMMAND` | no | `<repo>/mcp/node_modules/.bin/tsx` | **(M33 — Designed, ADR-087 D9.)** Command an agent session uses to launch the maister MCP facade (its sanctioned write channel, carrying the per-launch ephemeral token via the literal `env` channel). Override for split-host topologies. |
+| `MAISTER_MCP_FACADE_ARGS` | no | `<repo>/mcp/src/main.ts --stdio` | **(M33 — Designed, ADR-087 D9.)** Space-split args for the facade command; only read when the command default is overridden or the default args do not fit. |
 | `MAISTER_WORKTREES_ROOT` | no | `~/.maister/worktrees` | Root for run worktrees (ADR-025). Resolved by `worktreesRoot()`. The deprecated `MAISTER_WORKTREE_ROOT` is accepted as a fallback. Surfaced read-only on `/settings`. |
 | `MAISTER_SUPERVISOR_URL` | no | `http://localhost:7777` | Web → supervisor HTTP+SSE base URL — see [Supervisor](supervisor.md) |
 | `MAISTER_SUPERVISOR_PORT` | no | `7777` | Supervisor bind port (read by `supervisor/src/main.ts`) |

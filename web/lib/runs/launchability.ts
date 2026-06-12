@@ -18,7 +18,8 @@ export type TaskLaunchability =
   | "busy"
   | "crashed"
   | "target_terminal"
-  | "blocked";
+  | "blocked"
+  | "unconfigured";
 
 // ADR-078 D5: open relation blockers (X blocks T / T depends_on Y with the
 // counterpart in Backlog|InFlight), computed by getOpenRelationBlockers.
@@ -44,7 +45,7 @@ const RUN_STATUS_LAUNCHABILITY = {
 } as const satisfies Record<RunStatus, TaskLaunchability>;
 
 export function classifyTaskLaunchability(
-  task: { status: TaskStatus },
+  task: { status: TaskStatus; flowId: string | null },
   latestRun: { status: RunStatus } | null,
   relationGate?: RelationGate,
 ): TaskLaunchability {
@@ -59,10 +60,18 @@ export function classifyTaskLaunchability(
         : "busy"
       : RUN_STATUS_LAUNCHABILITY[latestRun.status];
 
-  // Precedence: target_terminal > crashed > busy > blocked > launchable —
-  // relations gate LAUNCHING only; they never mask an active run's state.
-  if (base === "launchable" && (relationGate?.openBlockers.length ?? 0) > 0) {
-    return "blocked";
+  // Precedence: target_terminal > crashed > busy > blocked > unconfigured >
+  // launchable (M33, ADR-087) — relations gate LAUNCHING only; they never
+  // mask an active run's state; a flowless simple-intent task is not
+  // launchable until triage (or a human) fills the flow.
+  if (base === "launchable") {
+    if ((relationGate?.openBlockers.length ?? 0) > 0) {
+      return "blocked";
+    }
+
+    if (task.flowId === null) {
+      return "unconfigured";
+    }
   }
 
   return base;

@@ -61,6 +61,7 @@ const actor: TokenActor = {
   projectId: "project-1",
   tokenKind: "project",
   ownerUserId: null,
+  agentId: null,
   actorLabel: "token:test",
   scopes: ["tasks:create"],
 };

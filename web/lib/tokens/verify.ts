@@ -39,6 +39,7 @@ export type TokenActor = {
   projectId: string;
   tokenKind: TokenKind;
   ownerUserId: string | null;
+  agentId: string | null;
   actorLabel: string;
   scopes: string[];
 };
@@ -90,18 +91,46 @@ export async function verifyToken(
     });
   }
 
+  const tokenKind: TokenKind = row.token_kind ?? "project";
+  const agentId: string | null = row.agent_id ?? null;
+
   return {
     tokenId: row.id,
     projectId: row.project_id,
-    tokenKind: row.token_kind ?? "project",
+    tokenKind,
     ownerUserId: row.owner_user_id ?? null,
-    actorLabel: `token:${row.name}`,
+    agentId,
+    // ADR-087: agent tokens carry the agent identity into token_audit_log.
+    actorLabel:
+      tokenKind === "agent" && agentId
+        ? `agent:${agentId}`
+        : `token:${row.name}`,
     scopes: (row.scopes as string[]) ?? ["*"],
   };
 }
 
 export function actorUserIdForToken(actor: TokenActor): string | null {
   return actor.tokenKind === "user" ? actor.ownerUserId : null;
+}
+
+// Token → polymorphic social actor (ADR-083/ADR-087): agent tokens act as the
+// agent, user-owned tokens act as that user, ownerless project tokens act as
+// system. Shape matches lib/social/activity.ts SocialActor structurally.
+export function socialActorForToken(
+  actor: TokenActor,
+):
+  | { type: "user"; id: string }
+  | { type: "agent"; id: string }
+  | { type: "system"; id: null } {
+  if (actor.tokenKind === "agent" && actor.agentId) {
+    return { type: "agent", id: actor.agentId };
+  }
+
+  if (actor.tokenKind === "user" && actor.ownerUserId) {
+    return { type: "user", id: actor.ownerUserId };
+  }
+
+  return { type: "system", id: null };
 }
 
 /** Map TokenAuthKind to HTTP status code. */
