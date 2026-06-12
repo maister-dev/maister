@@ -8,6 +8,7 @@ import { type FlowGraphViewLabels } from "@/components/board/flow-graph-view";
 import { FlowGraphViewSection } from "@/components/board/flow-graph-view-section";
 import { CommentComposer } from "@/components/social/comment-composer";
 import { FollowButton } from "@/components/social/follow-button";
+import { TaskAgentActions } from "@/components/social/task-agent-actions";
 import { MarkdownBody } from "@/components/social/markdown-body";
 import { RelationsEditor } from "@/components/social/relations-editor";
 import { TaskTimeline } from "@/components/social/task-timeline";
@@ -18,6 +19,7 @@ import { presentationLayout } from "@/lib/flows/graph/presentation-layout";
 import { buildGraphTopology } from "@/lib/queries/flow-graph-view";
 import { loadRunManifest } from "@/lib/queries/run-manifest";
 import { getRunNodeStatuses } from "@/lib/queries/run-node-status";
+import { getProjectAgentsView } from "@/lib/agents/project-links";
 import { getTaskDetail } from "@/lib/queries/task-detail";
 
 type PageProps = {
@@ -63,6 +65,22 @@ export default async function TaskDetailPage({
 
   const canAct = role === "owner" || role === "admin" || role === "member";
   const t = await getTranslations("taskDetail");
+
+  // M33: attached agents with the `manual` trigger — "Run agent" candidates.
+  const manualAgents = canAct
+    ? (await getProjectAgentsView(detail.project.id)).attached
+        .filter(
+          (row) =>
+            row.enabled &&
+            (row.agent.enabled as boolean) &&
+            row.agent.quarantinedAt == null &&
+            (row.agent.triggers as string[]).includes("manual"),
+        )
+        .map((row) => ({
+          id: row.agent.id as string,
+          name: row.agent.name as string,
+        }))
+    : [];
 
   // The latest flow run's graph + branch diff (only when one exists). RunDiff
   // self-loads prepared data from /api/runs/[runId]/diff client-side.
@@ -170,21 +188,42 @@ export default async function TaskDetailPage({
           <span className="rounded border border-line px-1.5 py-px uppercase tracking-[0.08em]">
             {t(`status.${detail.task.status}`)}
           </span>
+          {detail.task.triageStatus === "triaged" ? (
+            <span className="rounded border border-line bg-ivory px-1.5 py-px font-semibold uppercase tracking-[0.08em] text-accent-4">
+              {t("triaged")}
+            </span>
+          ) : null}
         </div>
         <div className="flex items-start justify-between gap-3">
           <h1 className="text-[20px] font-semibold leading-tight text-ink">
             {detail.task.title}
           </h1>
-          <FollowButton
-            isFollowing={detail.isFollowing}
-            labels={{
-              follow: t("follow"),
-              unfollow: t("unfollow"),
-              busy: t("followBusy"),
-            }}
-            slug={slug}
-            taskNumber={detail.task.number}
-          />
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {canAct ? (
+              <TaskAgentActions
+                agents={manualAgents}
+                labels={{
+                  runAgent: t("runAgent"),
+                  sendToTriage: t("sendToTriage"),
+                  busy: t("agentActionBusy"),
+                  agentPickerLabel: t("agentPickerLabel"),
+                }}
+                slug={slug}
+                taskId={detail.task.id}
+                taskNumber={detail.task.number}
+              />
+            ) : null}
+            <FollowButton
+              isFollowing={detail.isFollowing}
+              labels={{
+                follow: t("follow"),
+                unfollow: t("unfollow"),
+                busy: t("followBusy"),
+              }}
+              slug={slug}
+              taskNumber={detail.task.number}
+            />
+          </div>
         </div>
         <div className="rounded-lg border border-line-soft bg-paper p-3">
           <MarkdownBody text={detail.task.prompt} />

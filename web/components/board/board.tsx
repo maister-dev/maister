@@ -15,6 +15,9 @@ export interface BoardProps {
   slug: string;
   canAct: boolean;
   platformStatus: PlatformStatus;
+  // M33 (D11): selector options for the card launch popover.
+  flowOptions: Array<{ id: string; label: string }>;
+  runnerOptions: Array<{ id: string; label: string }>;
 }
 
 const STAGE_KEY: Record<BoardColumn, string> = {
@@ -67,6 +70,8 @@ export async function Board({
   slug,
   canAct,
   platformStatus,
+  flowOptions,
+  runnerOptions,
 }: BoardProps): Promise<ReactElement> {
   const t = await getTranslations("board");
   const tCommon = await getTranslations("common");
@@ -159,6 +164,7 @@ export async function Board({
                     blockedByLabel={t("launchBlocked")}
                     canAct={canAct}
                     card={card}
+                    flowOptions={flowOptions}
                     launchDisabledLabel={
                       card.blockedBy.length > 0 && !launchDisabledReason
                         ? t("launchBlockedShort")
@@ -174,7 +180,10 @@ export async function Board({
                     }
                     launchLabel={tCommon("launch")}
                     projectId={projectId}
+                    runnerOptions={runnerOptions}
                     slug={slug}
+                    triagedLabel={t("triaged")}
+                    unconfiguredLabel={t("unconfigured")}
                   />
                 </div>
               ))}

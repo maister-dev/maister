@@ -243,13 +243,22 @@ export async function ProjectCard({
                       {t(`workspaceAction.${ws.scratchAction}`)}
                     </span>
                   ) : null}
+                  {ws.runKind === "agent" && ws.triggerSource ? (
+                    <span className="rounded-[3px] border border-line bg-ivory px-1.5 py-px text-[9.5px] tracking-[0.02em] text-mute">
+                      {ws.triggerSource}
+                    </span>
+                  ) : null}
                   <span
                     className={clsx(
                       "rounded-[3px] border px-1.5 py-px text-[10px] tracking-[0.02em]",
                       wsAgentChip[ws.agent] ?? "border-line bg-ivory text-mute",
                     )}
                   >
-                    {ws.runKind === "scratch" ? "scratch" : ws.agent}
+                    {ws.runKind === "scratch"
+                      ? "scratch"
+                      : ws.runKind === "agent"
+                        ? "agent"
+                        : ws.agent}
                   </span>
                   {ws.readiness !== "ready" ? (
                     <span

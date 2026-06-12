@@ -96,6 +96,10 @@ export interface PortfolioWorkspace {
   runId: string;
   runKind: RunKind;
   branch: string;
+  // M33: standalone agent-run identity — the catalog agent id and the
+  // trigger that fired it; null on flow/scratch rows.
+  agentId: string | null;
+  triggerSource: string | null;
   agent: AgentRole;
   status: WorkspaceStatus;
   time: string;
@@ -319,12 +323,17 @@ export async function getPortfolio(
       )
       .groupBy(tasks.projectId),
 
+    // M33: leftJoin — none/repo_read agent runs have NO workspaces row but
+    // still belong in the active grid (the IS NULL filter passes on the
+    // absent row).
     client
       .select({
         runId: runs.id,
         projectId: runs.projectId,
         status: runs.status,
         runKind: runs.runKind,
+        agentId: runs.agentId,
+        triggerSource: runs.triggerSource,
         acpSessionId: runs.acpSessionId,
         capabilityAgent: runs.capabilityAgent,
         runnerSnapshot: runs.runnerSnapshot,
@@ -336,7 +345,7 @@ export async function getPortfolio(
         scratchDialogStatus: scratchRuns.dialogStatus,
       })
       .from(runs)
-      .innerJoin(workspaces, eq(workspaces.runId, runs.id))
+      .leftJoin(workspaces, eq(workspaces.runId, runs.id))
       .leftJoin(scratchRuns, eq(scratchRuns.runId, runs.id))
       .where(
         and(
@@ -487,7 +496,9 @@ export async function getPortfolio(
     list.push({
       runId: row.runId,
       runKind: row.runKind as RunKind,
-      branch: row.branch,
+      branch: row.branch ?? row.agentId ?? "—",
+      agentId: row.agentId ?? null,
+      triggerSource: row.triggerSource ?? null,
       agent,
       status: runStatusToWorkspace(row.status),
       time: relativeTime(row.startedAt, now),

@@ -21,6 +21,7 @@ import { RepoFilesPanel } from "@/components/board/panels/repo-files-panel";
 import { SettingsPanel } from "@/components/board/panels/settings-panel";
 import { WebhooksPanel } from "@/components/board/panels/webhooks-panel";
 import { ProjectMembersPanel } from "@/components/project/project-members-panel";
+import { AgentsAttachPanel } from "@/components/board/panels/agents-attach-panel";
 import { SchedulesPanel } from "@/components/schedules/schedules-panel";
 import { WorkbenchLifecycleActions } from "@/components/workbench/lifecycle-actions";
 import { getProjectRole, getSessionUser } from "@/lib/authz";
@@ -34,6 +35,8 @@ import {
   getProjectActivityLog,
 } from "@/lib/queries/activity";
 import { TaskActivityLog } from "@/components/board/panels/task-activity-log";
+import { getProjectAgentsView } from "@/lib/agents/project-links";
+import { DOMAIN_EVENT_KINDS } from "@/lib/domain-events/taxonomy";
 import { getProjectBySlug, getProjectPageData } from "@/lib/queries/project";
 import { listProjectMcps } from "@/lib/mcp/project-mcp-service";
 import { listProjectMembers } from "@/lib/project-members";
@@ -52,6 +55,7 @@ const VALID_TABS: readonly ProjectTab[] = [
   "integrations",
   "mcps",
   "schedules",
+  "agents",
   "members",
   "webhooks",
   "settings",
@@ -212,6 +216,7 @@ export default async function ProjectBoardPage({
                   promptLabel: tNewTask("promptLabel"),
                   promptPlaceholder: tNewTask("promptPlaceholder"),
                   flowLabel: tNewTask("flowLabel"),
+                  flowNone: tNewTask("flowNone"),
                   create: tNewTask("create"),
                   cancel: tCommon("cancel"),
                 }}
@@ -285,8 +290,15 @@ export default async function ProjectBoardPage({
             <Board
               canAct={canAct}
               data={board}
+              flowOptions={pageData.flows.map((flow) => ({
+                id: flow.id,
+                label: flow.ref,
+              }))}
               platformStatus={platformStatus}
               projectId={project.id}
+              runnerOptions={pageData.runners
+                .filter((runner) => runner.enabled)
+                .map((runner) => ({ id: runner.id, label: runner.label }))}
               slug={slug}
             />
           </BoardTools>
@@ -388,6 +400,16 @@ export default async function ProjectBoardPage({
           }))}
         />
       ) : null}
+      {tab === "agents" ? (
+        <AgentsAttachPanelLoader
+          canManage={isAdmin}
+          projectId={project.id}
+          runners={pageData.runners
+            .filter((runner) => runner.enabled)
+            .map((runner) => ({ id: runner.id, label: runner.label }))}
+          slug={slug}
+        />
+      ) : null}
       {tab === "members" ? (
         <ProjectMembersPanel
           canManage={isAdmin}
@@ -406,6 +428,53 @@ export default async function ProjectBoardPage({
         <SettingsPanel data={pageData} isAdmin={isAdmin} />
       ) : null}
     </>
+  );
+}
+
+async function AgentsAttachPanelLoader({
+  slug,
+  projectId,
+  canManage,
+  runners,
+}: {
+  slug: string;
+  projectId: string;
+  canManage: boolean;
+  runners: Array<{ id: string; label: string }>;
+}): Promise<ReactElement> {
+  const view = await getProjectAgentsView(projectId);
+
+  return (
+    <AgentsAttachPanel
+      attached={view.attached.map((row) => ({
+        linkId: row.linkId,
+        enabled: row.enabled,
+        runnerOverrideId: row.runnerOverrideId,
+        schedules: row.schedules,
+        agent: {
+          id: row.agent.id as string,
+          name: row.agent.name as string,
+          scope: row.agent.scope as "platform" | "project",
+          workspace: row.agent.workspace as string,
+          mode: row.agent.mode as string,
+          triggers: row.agent.triggers as string[],
+          riskTier: row.agent.riskTier as string,
+          enabled: row.agent.enabled as boolean,
+          quarantinedAt: row.agent.quarantinedAt
+            ? new Date(row.agent.quarantinedAt as Date).toISOString()
+            : null,
+        },
+      }))}
+      available={view.available.map((agent) => ({
+        id: agent.id as string,
+        name: agent.name as string,
+        scope: agent.scope as "platform" | "project",
+      }))}
+      canManage={canManage}
+      eventKinds={[...DOMAIN_EVENT_KINDS]}
+      runners={runners}
+      slug={slug}
+    />
   );
 }
 
@@ -451,6 +520,14 @@ function ProjectActiveWorkspaces({
                 workspace.scratchAction !== "none" ? (
                   <span className="rounded-[3px] border border-amber-line bg-amber-soft px-1.5 py-px text-[9.5px] tracking-[0.02em] text-amber">
                     {workspaceActionLabel(workspace.scratchAction)}
+                  </span>
+                ) : null}
+                {workspace.runKind === "agent" ? (
+                  <span className="rounded-[3px] border border-line bg-ivory px-1.5 py-px text-[9.5px] tracking-[0.02em] text-mute">
+                    agent
+                    {workspace.triggerSource
+                      ? ` · ${workspace.triggerSource}`
+                      : ""}
                   </span>
                 ) : null}
                 <span className="text-[10px] tracking-[0.04em] text-mute-2">

@@ -26,13 +26,27 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }),
 }));
 
-import { LaunchPopover } from "@/components/board/launch-popover";
+import {
+  LaunchPopover,
+  type LaunchPopoverProps,
+} from "@/components/board/launch-popover";
 
-function render(over: Partial<Record<string, string>> = {}): string {
+function render(over: Partial<LaunchPopoverProps> = {}): string {
   return renderToStaticMarkup(
     createElement(LaunchPopover, {
       taskId: "task-1",
       projectId: "project-1",
+      slug: "demo",
+      taskNumber: 1,
+      // M33: a configured task — flowId set keeps the one-click default.
+      verdict: {
+        flowId: "flow-1",
+        runnerId: null,
+        targetBranch: null,
+        promotionMode: null,
+      },
+      flowOptions: [{ id: "flow-1", label: "bugfix" }],
+      runnerOptions: [{ id: "runner-1", label: "runner-1" }],
       label: "launch",
       disabledLabel: "unavailable",
       ...over,
@@ -70,5 +84,24 @@ describe("LaunchPopover — one-click default (M18 T1.5)", () => {
     expect(html).toContain("unavailable");
     // Both the primary launch and the advanced toggle are disabled.
     expect(html.match(/disabled=""/g)?.length).toBe(2);
+  });
+});
+
+describe("LaunchPopover — unconfigured task (M33, ADR-087 D11)", () => {
+  it("replaces the one-click label with the set-up affordance when the task has no flow", () => {
+    const html = render({
+      verdict: {
+        flowId: null,
+        runnerId: null,
+        targetBranch: null,
+        promotionMode: null,
+      },
+    });
+
+    // The primary button reads "set up & launch" — a flowless task cannot
+    // one-click launch; the popover collects the missing fields.
+    expect(html).toContain("launch.setUp");
+    // The control itself stays enabled (it opens the advanced panel).
+    expect(html.match(/disabled=""/g)?.length ?? 0).toBe(0);
   });
 });

@@ -12,9 +12,23 @@ type LaunchOptions = {
   defaultBaseBranch: string | null;
 };
 
+// M33 (ADR-087 D11) launch-verdict pre-fills — triage stamps them, the
+// popover edits them; edits persist via ONE aggregating PATCH before launch.
+export interface LaunchVerdict {
+  flowId: string | null;
+  runnerId: string | null;
+  targetBranch: string | null;
+  promotionMode: "local_merge" | "pull_request" | null;
+}
+
 export interface LaunchPopoverProps {
   taskId: string;
   projectId: string;
+  slug: string;
+  taskNumber: number;
+  verdict: LaunchVerdict;
+  flowOptions: Array<{ id: string; label: string }>;
+  runnerOptions: Array<{ id: string; label: string }>;
   label: string;
   disabledLabel: string;
   disabledReason?: string;
@@ -23,6 +37,11 @@ export interface LaunchPopoverProps {
 export function LaunchPopover({
   taskId,
   projectId,
+  slug,
+  taskNumber,
+  verdict,
+  flowOptions,
+  runnerOptions,
   label,
   disabledLabel,
   disabledReason,
@@ -39,8 +58,14 @@ export function LaunchPopover({
   const [optionsError, setOptionsError] = useState(false);
   const [baseBranch, setBaseBranch] = useState("");
   const [targetBranch, setTargetBranch] = useState("");
+  const [flowId, setFlowId] = useState(verdict.flowId ?? "");
+  const [runnerId, setRunnerId] = useState(verdict.runnerId ?? "");
+  const [promotionMode, setPromotionMode] = useState(
+    verdict.promotionMode ?? "",
+  );
   const panelId = useId();
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const unconfigured = verdict.flowId === null;
   const disabled = busy || pending || Boolean(disabledReason);
 
   useEffect(() => {
@@ -66,7 +91,14 @@ export function LaunchPopover({
 
         setOptions(payload);
         setBaseBranch(resolvedBase);
-        setTargetBranch(resolvedBase);
+        // The verdict target branch pre-fills when it names a real branch;
+        // the launch path re-validates against the repo either way.
+        setTargetBranch(
+          verdict.targetBranch &&
+            payload.branches.includes(verdict.targetBranch)
+            ? verdict.targetBranch
+            : resolvedBase,
+        );
       })
       .catch(() => {
         if (controller.signal.aborted) return;
@@ -77,7 +109,7 @@ export function LaunchPopover({
       });
 
     return () => controller.abort();
-  }, [advancedOpen, loadingOptions, options, projectId]);
+  }, [advancedOpen, loadingOptions, options, projectId, verdict.targetBranch]);
 
   useEffect(() => {
     if (!advancedOpen) return;
@@ -101,24 +133,79 @@ export function LaunchPopover({
     };
   }, [advancedOpen]);
 
-  async function launch(branches?: {
+  // Diff vs the stored verdict — one aggregating PATCH, only changed keys,
+  // "" select values clear with explicit null (SET/CLEAR symmetric).
+  async function persistVerdict(): Promise<boolean> {
+    const patch: Record<string, string | null> = {};
+
+    if ((verdict.flowId ?? "") !== flowId) patch.flowId = flowId || null;
+    if ((verdict.runnerId ?? "") !== runnerId) {
+      patch.runnerId = runnerId || null;
+    }
+    if ((verdict.promotionMode ?? "") !== promotionMode) {
+      patch.promotionMode = promotionMode || null;
+    }
+    if (targetBranch && verdict.targetBranch !== targetBranch) {
+      patch.targetBranch = targetBranch;
+    }
+
+    if (Object.keys(patch).length === 0) return true;
+
+    const res = await fetch(`/api/projects/${slug}/tasks/${taskNumber}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+
+    if (!res.ok) {
+      const data = (await res.json().catch(() => null)) as {
+        code?: string;
+      } | null;
+
+      setError(data?.code ?? "CRASH");
+
+      return false;
+    }
+
+    return true;
+  }
+
+  async function launch(advanced?: {
     baseBranch: string;
     targetBranch: string;
   }): Promise<void> {
     if (disabledReason) return;
 
+    // A flowless task cannot launch — the popover collects the missing
+    // fields (D11: same popover, fields required).
+    if (!advanced && unconfigured) {
+      setAdvancedOpen(true);
+
+      return;
+    }
+
     setBusy(true);
     setError(null);
 
     try {
+      if (advanced) {
+        const persisted = await persistVerdict();
+
+        if (!persisted) return;
+      }
+
       const body: {
         taskId: string;
+        runnerId?: string;
         baseBranch?: string;
         targetBranch?: string;
       } = { taskId };
 
-      if (branches?.baseBranch) body.baseBranch = branches.baseBranch;
-      if (branches?.targetBranch) body.targetBranch = branches.targetBranch;
+      if (advanced) {
+        if (runnerId) body.runnerId = runnerId;
+        if (advanced.baseBranch) body.baseBranch = advanced.baseBranch;
+        if (advanced.targetBranch) body.targetBranch = advanced.targetBranch;
+      }
 
       const res = await fetch("/api/runs", {
         method: "POST",
@@ -147,6 +234,8 @@ export function LaunchPopover({
 
   const selectClass =
     "min-w-0 flex-1 rounded-md border border-line-soft bg-paper px-2 py-1.5 font-mono text-[11px] text-ink outline-none focus:border-amber";
+  const fieldLabelClass =
+    "font-mono text-[9.5px] font-bold uppercase tracking-[0.06em] text-mute";
 
   return (
     <div ref={containerRef} className="relative flex items-center gap-1">
@@ -158,11 +247,14 @@ export function LaunchPopover({
           disabled && "cursor-not-allowed opacity-60",
         )}
         disabled={disabled}
-        title={error ?? disabledReason}
+        title={
+          error ?? disabledReason ?? (unconfigured ? t("setUp") : undefined)
+        }
         type="button"
         onClick={() => void launch()}
       >
-        {error ?? (disabledReason ? disabledLabel : label)}
+        {error ??
+          (disabledReason ? disabledLabel : unconfigured ? t("setUp") : label)}
       </button>
       <button
         aria-controls={panelId}
@@ -201,9 +293,59 @@ export function LaunchPopover({
           ) : (
             <div className="flex flex-col gap-2.5">
               <label className="flex flex-col gap-1">
-                <span className="font-mono text-[9.5px] font-bold uppercase tracking-[0.06em] text-mute">
-                  {tRun("baseBranch")}
+                <span className={fieldLabelClass}>
+                  {t("flow")}
+                  {unconfigured ? " *" : ""}
                 </span>
+                <select
+                  aria-label={t("flow")}
+                  className={selectClass}
+                  value={flowId}
+                  onChange={(event) => setFlowId(event.target.value)}
+                >
+                  {unconfigured ? <option value="">—</option> : null}
+                  {flowOptions.map((flow) => (
+                    <option key={flow.id} value={flow.id}>
+                      {flow.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className={fieldLabelClass}>{t("runner")}</span>
+                <select
+                  aria-label={t("runner")}
+                  className={selectClass}
+                  value={runnerId}
+                  onChange={(event) => setRunnerId(event.target.value)}
+                >
+                  <option value="">{t("runnerDefault")}</option>
+                  {runnerOptions.map((runner) => (
+                    <option key={runner.id} value={runner.id}>
+                      {runner.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className={fieldLabelClass}>{t("promotionMode")}</span>
+                <select
+                  aria-label={t("promotionMode")}
+                  className={selectClass}
+                  value={promotionMode}
+                  onChange={(event) => setPromotionMode(event.target.value)}
+                >
+                  <option value="">{t("promotionDefault")}</option>
+                  <option value="local_merge">
+                    {t("promotionLocalMerge")}
+                  </option>
+                  <option value="pull_request">
+                    {t("promotionPullRequest")}
+                  </option>
+                </select>
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className={fieldLabelClass}>{tRun("baseBranch")}</span>
                 <select
                   aria-label={tRun("baseBranch")}
                   className={selectClass}
@@ -218,9 +360,7 @@ export function LaunchPopover({
                 </select>
               </label>
               <label className="flex flex-col gap-1">
-                <span className="font-mono text-[9.5px] font-bold uppercase tracking-[0.06em] text-mute">
-                  {tRun("targetBranch")}
-                </span>
+                <span className={fieldLabelClass}>{tRun("targetBranch")}</span>
                 <select
                   aria-label={tRun("targetBranch")}
                   className={selectClass}
@@ -237,10 +377,10 @@ export function LaunchPopover({
               <button
                 className={clsx(
                   "mt-0.5 inline-flex items-center justify-center rounded-md bg-amber px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-white transition-all hover:bg-amber-2",
-                  (busy || pending || !baseBranch) &&
+                  (busy || pending || !baseBranch || !flowId) &&
                     "cursor-not-allowed opacity-60",
                 )}
-                disabled={busy || pending || !baseBranch}
+                disabled={busy || pending || !baseBranch || !flowId}
                 type="button"
                 onClick={() => void launch({ baseBranch, targetBranch })}
               >

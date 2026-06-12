@@ -1,13 +1,16 @@
 import "server-only";
 
-import { and, desc, eq } from "drizzle-orm";
-
 import type { ActorDTO } from "@/lib/social/actors";
+
+import { and, desc, eq } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { actorDTO, resolveActorLabels } from "@/lib/social/actors";
-import { getTaskRelations, type TaskRelationView } from "@/lib/social/relations";
+import {
+  getTaskRelations,
+  type TaskRelationView,
+} from "@/lib/social/relations";
 import { resolveProjectTaskByNumber } from "@/lib/social/task-lookup";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches lib/services/tasks.ts).
@@ -35,7 +38,12 @@ export type TimelineItem =
 // activity rows are SKIPPED — the comment itself renders in their place; the
 // duplicate row exists for the Log page and analytics, not the timeline.
 export function interleaveTimeline(
-  comments: Array<{ id: string; body: string; actor: ActorDTO; createdAt: Date }>,
+  comments: Array<{
+    id: string;
+    body: string;
+    actor: ActorDTO;
+    createdAt: Date;
+  }>,
   activity: Array<{
     id: string;
     eventKind: string;
@@ -74,13 +82,19 @@ export type TaskDetailData = {
     title: string;
     prompt: string;
     status: string;
+    // M33: the triager's verdict mark (nullable 'triaged').
+    triageStatus: "triaged" | null;
   };
   keyRef: string;
   relations: TaskRelationView[];
   timeline: TimelineItem[];
   isFollowing: boolean;
   runs: TaskRunRow[];
-  latestFlowRun: { id: string; status: string; currentStepId: string | null } | null;
+  latestFlowRun: {
+    id: string;
+    status: string;
+    currentStepId: string | null;
+  } | null;
 };
 
 export async function getTaskDetail(
@@ -190,7 +204,7 @@ export async function getTaskDetail(
       id: taskId,
       number: resolved.task.number,
       title: resolved.task.title,
-      prompt: await promptOf(db, taskId),
+      ...(await taskExtrasOf(db, taskId)),
       status: resolved.task.status,
     },
     keyRef: `${resolved.project.taskKey}-${resolved.task.number}`,
@@ -199,16 +213,32 @@ export async function getTaskDetail(
     isFollowing: following.length > 0,
     runs: runRows.map(({ currentStepId: _omit, ...row }) => row),
     latestFlowRun: latest
-      ? { id: latest.id, status: latest.status, currentStepId: latest.currentStepId }
+      ? {
+          id: latest.id,
+          status: latest.status,
+          currentStepId: latest.currentStepId,
+        }
       : null,
   };
 }
 
-async function promptOf(db: { select: any }, taskId: string): Promise<string> {
+async function taskExtrasOf(
+  db: { select: any },
+  taskId: string,
+): Promise<{ prompt: string; triageStatus: "triaged" | null }> {
   const rows = (await db
-    .select({ prompt: schemaModule.tasks.prompt })
+    .select({
+      prompt: schemaModule.tasks.prompt,
+      triageStatus: schemaModule.tasks.triageStatus,
+    })
     .from(schemaModule.tasks)
-    .where(eq(schemaModule.tasks.id, taskId))) as Array<{ prompt: string }>;
+    .where(eq(schemaModule.tasks.id, taskId))) as Array<{
+    prompt: string;
+    triageStatus: "triaged" | null;
+  }>;
 
-  return rows[0]?.prompt ?? "";
+  return {
+    prompt: rows[0]?.prompt ?? "",
+    triageStatus: rows[0]?.triageStatus ?? null,
+  };
 }

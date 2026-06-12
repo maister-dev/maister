@@ -15,6 +15,7 @@ export interface NewTaskModalLabels {
   promptLabel: string;
   promptPlaceholder: string;
   flowLabel: string;
+  flowNone: string;
   create: string;
   cancel: string;
 }
@@ -38,12 +39,14 @@ export function NewTaskModal({
 
   const [title, setTitle] = useState("");
   const [prompt, setPrompt] = useState("");
-  const [flowId, setFlowId] = useState(flows[0]?.id ?? "");
+  // M33: flow is optional — "" creates a simple-intent task that the triager
+  // (or a human via the card popover) configures later.
+  const [flowId, setFlowId] = useState("");
 
   function reset(): void {
     setTitle("");
     setPrompt("");
-    setFlowId(flows[0]?.id ?? "");
+    setFlowId("");
     setError(null);
   }
 
@@ -58,7 +61,7 @@ export function NewTaskModal({
         body: JSON.stringify({
           title,
           prompt,
-          flowId,
+          ...(flowId === "" ? {} : { flowId }),
         }),
       });
 
@@ -83,11 +86,7 @@ export function NewTaskModal({
   }
 
   const disabled =
-    busy ||
-    pending ||
-    title.trim() === "" ||
-    prompt.trim() === "" ||
-    flowId === "";
+    busy || pending || title.trim() === "" || prompt.trim() === "";
 
   return (
     <>
@@ -173,6 +172,7 @@ export function NewTaskModal({
                     value={flowId}
                     onChange={(e) => setFlowId(e.target.value)}
                   >
+                    <option value="">{labels.flowNone}</option>
                     {flows.map((f) => (
                       <option key={f.id} value={f.id}>
                         {f.ref}

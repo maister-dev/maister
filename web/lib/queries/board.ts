@@ -58,11 +58,18 @@ export interface BacklogCard {
   keyRef: string;
   title: string;
   prompt: string;
-  flowRef: string;
+  // M33: null on a flowless simple-intent task (renders the unconfigured chip).
+  flowRef: string | null;
   priority: CardPriority;
   // ADR-078 D5: open relation blockers — non-empty disables Launch and
   // renders the reason chip with the blocker KEY-Ns.
   blockedBy: Array<{ key: string; number: number }>;
+  // M33 (ADR-087) launch-verdict fields — pre-fill the card's launch popover.
+  flowId: string | null;
+  triageStatus: "triaged" | null;
+  runnerId: string | null;
+  targetBranch: string | null;
+  promotionMode: "local_merge" | "pull_request" | null;
 }
 
 export interface FlightCard {
@@ -205,6 +212,8 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
   const now = new Date();
   const client = db();
 
+  // M33: leftJoin — a flowless simple-intent task still shows on the board
+  // (it classifies as `unconfigured` until triage fills the flow).
   const taskRows = await client
     .select({
       taskId: tasks.id,
@@ -215,9 +224,14 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
       stage: tasks.stage,
       createdAt: tasks.createdAt,
       flowRef: flows.flowRefId,
+      flowId: tasks.flowId,
+      triageStatus: tasks.triageStatus,
+      runnerId: tasks.runnerId,
+      targetBranch: tasks.targetBranch,
+      promotionMode: tasks.promotionMode,
     })
     .from(tasks)
-    .innerJoin(flows, eq(flows.id, tasks.flowId))
+    .leftJoin(flows, eq(flows.id, tasks.flowId))
     .where(eq(tasks.projectId, projectId))
     .orderBy(desc(tasks.createdAt));
 
@@ -458,9 +472,17 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
         keyRef: `${projectTaskKey}-${task.number}`,
         title: task.title,
         prompt: task.prompt,
-        flowRef: task.flowRef,
+        flowRef: task.flowRef ?? null,
         priority: priorityFor(backlogPos),
         blockedBy: openBlockers.get(task.taskId) ?? [],
+        flowId: task.flowId ?? null,
+        triageStatus: (task.triageStatus ?? null) as "triaged" | null,
+        runnerId: task.runnerId ?? null,
+        targetBranch: task.targetBranch ?? null,
+        promotionMode: (task.promotionMode ?? null) as
+          | "local_merge"
+          | "pull_request"
+          | null,
       });
       backlogPos += 1;
       continue;

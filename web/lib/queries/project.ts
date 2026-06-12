@@ -172,11 +172,15 @@ export async function getProjectPageData(
         .innerJoin(users, eq(users.id, projectMembers.userId))
         .where(eq(projectMembers.projectId, project.id)),
 
+      // M33: leftJoin — none/repo_read agent runs have no workspaces row but
+      // still belong in the active strip.
       client
         .select({
           runId: runs.id,
           status: runs.status,
           runKind: runs.runKind,
+          agentId: runs.agentId,
+          triggerSource: runs.triggerSource,
           acpSessionId: runs.acpSessionId,
           capabilityAgent: runs.capabilityAgent,
           runnerSnapshot: runs.runnerSnapshot,
@@ -188,7 +192,7 @@ export async function getProjectPageData(
           scratchDialogStatus: scratchRuns.dialogStatus,
         })
         .from(runs)
-        .innerJoin(workspaces, eq(workspaces.runId, runs.id))
+        .leftJoin(workspaces, eq(workspaces.runId, runs.id))
         .leftJoin(scratchRuns, eq(scratchRuns.runId, runs.id))
         .where(
           and(
@@ -268,7 +272,9 @@ export async function getProjectPageData(
   const activeWorkspaces: PortfolioWorkspace[] = activeRunRows.map((row) => ({
     runId: row.runId,
     runKind: row.runKind as RunKind,
-    branch: row.branch,
+    branch: row.branch ?? row.agentId ?? "—",
+    agentId: row.agentId ?? null,
+    triggerSource: row.triggerSource ?? null,
     agent: runnerAgentFromFields({
       capabilityAgent: row.capabilityAgent,
       runnerSnapshot: row.runnerSnapshot,

@@ -14,7 +14,7 @@
 - [x] Phase 4 — enforcement L1/L3 + quarantine (commit 5; + migration 0048 for activity kinds)
 - [x] Phase 5 — five triggers (commit 6)
 - [x] Phase 6 — ext/MCP + tokens (commit 7)
-- [ ] Phase 7 — UI
+- [x] Phase 7 — UI (commit 8)
 - [ ] Phase 8 — e2e + close-out
 
 ## Settings

@@ -11,10 +11,14 @@ export interface TaskCardProps {
   projectId: string;
   slug: string;
   canAct: boolean;
+  flowOptions: Array<{ id: string; label: string }>;
+  runnerOptions: Array<{ id: string; label: string }>;
   launchLabel: string;
   launchDisabledLabel: string;
   launchDisabledReason?: string;
   blockedByLabel: string;
+  unconfiguredLabel: string;
+  triagedLabel: string;
 }
 
 const PRIO_STRIPE: Record<BacklogCard["priority"], string> = {
@@ -38,12 +42,20 @@ export function TaskCard({
   projectId,
   slug,
   canAct,
+  flowOptions,
+  runnerOptions,
   launchDisabledLabel,
   launchDisabledReason,
   launchLabel,
   blockedByLabel,
+  unconfiguredLabel,
+  triagedLabel,
 }: TaskCardProps): ReactElement {
-  const chip = FLOW_CHIP[card.flowRef] ?? "text-mute bg-ivory border-line";
+  // M33: a flowless simple-intent task renders the `unconfigured` chip — the
+  // launch popover collects the missing fields.
+  const chip = card.flowRef
+    ? (FLOW_CHIP[card.flowRef] ?? "text-mute bg-ivory border-line")
+    : "text-danger bg-ivory border-line";
 
   return (
     <article className="group/task relative flex cursor-grab flex-col gap-2 rounded-[10px] border border-line bg-paper px-3.5 pb-3 pt-3 transition-[transform,box-shadow,border-color] hover:-translate-y-px hover:border-mute hover:shadow-[0_6px_18px_-10px_rgba(22,20,15,0.14)] active:cursor-grabbing">
@@ -71,7 +83,7 @@ export function TaskCard({
             chip,
           )}
         >
-          {card.flowRef}
+          {card.flowRef ?? unconfiguredLabel}
         </span>
       </div>
       <div className="font-mono text-[11px] leading-[1.45] tracking-[0.01em] text-mute">
@@ -92,14 +104,30 @@ export function TaskCard({
         </div>
       ) : null}
       <div className="flex items-center justify-between gap-2 border-t border-dashed border-line-soft pt-2">
-        <div className="flex items-center gap-2.5 font-mono text-[10px] tracking-[0.02em] text-mute" />
+        <div className="flex items-center gap-2.5 font-mono text-[10px] tracking-[0.02em] text-mute">
+          {card.triageStatus === "triaged" ? (
+            <span className="rounded border border-line bg-ivory px-1.5 py-px font-semibold text-accent-4">
+              {triagedLabel}
+            </span>
+          ) : null}
+        </div>
         {canAct ? (
           <LaunchPopover
             disabledLabel={launchDisabledLabel}
             disabledReason={launchDisabledReason}
+            flowOptions={flowOptions}
             label={launchLabel}
             projectId={projectId}
+            runnerOptions={runnerOptions}
+            slug={slug}
             taskId={card.taskId}
+            taskNumber={card.number}
+            verdict={{
+              flowId: card.flowId,
+              runnerId: card.runnerId,
+              targetBranch: card.targetBranch,
+              promotionMode: card.promotionMode,
+            }}
           />
         ) : null}
       </div>
