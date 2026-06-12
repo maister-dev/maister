@@ -347,6 +347,263 @@ Continuous daemons + crash-loop backoff (Mγ), ADR-041 enforcement flip + destru
   `keepAliveTimeout = 0` (socket-reuse race vs 1s-budget supervisor calls
   under the new request volume).
 
+---
+
+# REWORK — agents as flow-package contents (same branch, pre-merge)
+
+- **Decided**: 2026-06-12, owner. The host-only catalog (`~/.maister/agents/` +
+  `MAISTER_AGENTS_ROOT` + raw-file admin CRUD) was a planning MISREAD of owner
+  Q5 (which was about agent LOGS — those already live outside project repos).
+  Wrong functionality must not ship → rework in this branch before merge.
+- **Owner decisions**: (1) agents live INSIDE flow packages, no separate
+  package type; package trust contour gates registration AND launch;
+  (2) authoring/versioning like flows — Studio authors `agents/<id>.md`
+  inside authored flow packages, publish bridges to `flow_revisions`,
+  projects update consumed versions via the existing per-project package
+  pin; (3) manifest/frontmatter ships per-agent RECOMMENDED bindings
+  (schedule / event kinds / runner) — the attach panel pre-fills them;
+  (4) workspace ref configurable — ephemeral READ-ONLY worktree at a
+  trigger-derived ref, never switching the user's checkout.
+- **Constraint (UPDATED 2026-06-12)**: `feature/package-management` has
+  MERGED to main (`0282235f`, owns ADR-088 packages + migration
+  `0048_packages`) — the rework now REBASES onto it first (R0) and
+  integrates its trust/ownership machinery instead of avoiding it. Keep the
+  M33 runtime substrate (launch/enforcement/triggers/tokens/budgets) intact.
+- **Numbering after R0 rebase**: M33's artifacts renumber AGAIN — agent
+  catalog ADR-088→**ADR-089**, workspace axis ADR-089→**ADR-090**;
+  migrations `0048_platform_agents`→**0049**, `0049_agent_activity_kinds`→
+  **0050**; journal interleaves main's 0047+0048 rows; snapshot prevId
+  chain re-bases onto main's rebuilt `0048_packages` snapshot (M30 recipe;
+  verify `drizzle-kit generate` → no-diff after). The rework migration is
+  therefore **`0051_agents_package_source.sql`**.
+- **Settings**: inherited — Testing yes, Logging standard, Docs yes,
+  Roadmap M33 (entry will be amended, not duplicated).
+
+## Rework progress
+
+- [ ] R0 — rebase onto main `0282235f` + renumber (ADR-089/090, migrations 0049/0050, snapshot transplant)
+- [ ] R1 — schema + package registration core (migration 0051)
+- [ ] R2 — per-project resolution + trust/launch gates + attach gate
+- [ ] R3 — workspace ref (ephemeral read-only worktree at trigger ref)
+- [ ] R4 — recommended bindings + UI demotion + Studio frontmatter fields
+- [ ] R5 — capability-profile MCP materialization for agent sessions
+- [ ] R6 — tests/e2e rework + docs amendments + gates
+
+## Rework design decisions
+
+### RD1. Source of truth = the installed flow-package revision
+
+Discovered substrate (this is why the rework is cheap): the package format
+ALREADY carries agents — `agents/<id>.md` classifies as `agent_definition`
+(`web/lib/flows/package-authoring.ts` `classifyPackageFilePath`), gets
+frontmatter-validated at draft save (`web/lib/flows/artifact-validate.ts:100-109`,
+`agentFrontmatterSchema` at `artifact-frontmatter.ts:154`), is editable in
+Studio's `PackageFilesEditor` + `frontmatter-artifact-editor.tsx`, survives
+`export-authored-flow` / `install-authored-flow-package`, and the authored
+bridge (`lib/flows/authored-bridge.ts` → `installAuthoredFlowPackageBridge`
+`lib/flows.ts:1024`) lands it in the system cache like any git package.
+Registration therefore hangs off **installed `flow_revisions`**: scan
+`<flow_revisions.installed_path>/agents/*.md` → upsert the `agents` index
+with provenance. No new authored capability kind — the authored UNIT stays
+the flow package (kind `flow`); agents are files inside it (owner decision 2
+maps exactly to this).
+
+### RD2. `agents` table rework (migration `0050_agents_package_source.sql`)
+
+- DROP `scope`, `project_id` (+ the scope-pairing CHECK): availability to a
+  project is now derived — the providing package is enabled in that project.
+  `agent_project_links` (attach) stays the explicit opt-in, unchanged.
+- ADD provenance: `flow_ref_id` (text, NOT NULL), `version_label` (text,
+  newest registered), `origin` (`git|authored`, derived like
+  `flowOrigin` from `revision.source` absolute-path check,
+  `lib/services/runs.ts:723` precedent), `recommended` jsonb (RD5),
+  `workspace_ref` (RD6). `source_path` stays = path into the NEWEST
+  installed revision (catalog display / fallback).
+- `agents.id` = **package-qualified**: `<flowRefId>:<file-stem>` (owner
+  decision — e.g. `aif:triager`). Collisions are impossible by
+  construction: two packages shipping `triager` register as distinct
+  agents. UI disambiguates by showing the package where needed; the
+  per-project effective version comes from the project's pinned package
+  version; attachments within a project cannot cross either. Fan-out: the
+  agent-id regex (`^[A-Za-z0-9._-]+$` in admin-shared/launch routes)
+  extends to allow exactly one `:`; flow-node `settings.agent` bindings
+  reference the qualified id (v1 — no bare-stem same-package sugar);
+  webhook route `/api/agents/[agentId]/event` URL-encodes the id.
+- Frontmatter: `scope`/`project` fields REMOVED from `definition.ts`
+  (parse error if present — fail loud, the fields are dead);
+  `recommended:` + `workspace_ref:` added. `parseAgentDefinition` becomes
+  the validator invoked by `artifact-validate.ts` for `agent_definition`
+  files (replacing the thin name+description `agentFrontmatterSchema`),
+  so Studio drafts fail at save time with the real contract.
+
+### RD3. Registration + resync from revisions
+
+`registerAgentsForRevision(revisionId)` scans the installed dir and upserts
+(SET/CLEAR semantics preserved). Hook points: after `installRevision`
+finalize (`lib/flows.ts:739-751` packageStatus→Installed) — covers git
+install, upgrade, and the authored bridge (same code path). `resyncAgents`
+reworks to sweep all `Installed` flow_revisions (newest version per
+flow_ref wins the index row); agents whose providing package vanished from
+the cache → `enabled=false` + reported (replaces the missing-dir handling).
+`createAgent`/`updateAgentDefinition`/`deleteAgent` raw-file registry
+functions are REMOVED — definitions change only through packages (git push
++ upgrade, or Studio draft→publish). `~/.maister/agents/`, `paths.ts`
+`systemAgentsRoot()`, and `MAISTER_AGENTS_ROOT` are removed entirely
+(env: `.env.example` + `configuration.md` rows deleted; e2e webServer env
+cleaned).
+
+### RD4. Per-project effective version + trust/launch gates
+
+The platform `agents` row is the CATALOG projection (newest installed) and
+carries the platform kill-switches (enabled, quarantine). The EFFECTIVE
+definition for a launch in project P resolves at spawn: `agents.flow_ref_id`
+→ P's `flows` row → require `enablementState ∈ {Enabled, UpdateAvailable}`
+AND `trustStatus ≠ 'untrusted'` (exact `launchRun` precedent,
+`lib/services/runs.ts:320-331`) → `enabled_revision_id.installed_path/
+agents/<id>.md` → parse → THAT parse drives guards (triggers, workspace,
+risk_tier, mode) + the prompt body. Consequences:
+- **Attach gate**: attaching an agent to P requires the providing package
+  present+enabled in P (`PRECONDITION` otherwise); the attach panel's
+  "available" list filters by it.
+- **Pin divergence edge**: trigger dispatch matches on the INDEX row's
+  triggers; if P's pinned version lacks the trigger, the launch refuses
+  with `PRECONDITION` (dispatcher/consumer already log refusals — same
+  contract as disabled/quarantined).
+- "Update versions of used agents" = the EXISTING package upgrade flow
+  (`upgradeFlow` → `UpdateAvailable` → `enableRevision`,
+  `lib/flows/lifecycle.ts:344/207`).
+- **Upgrade break-impact (owner ask)**: the upgrade preview `ContractDiff`
+  (`lifecycle.ts:549`) gains an **agents** section — agents added/removed/
+  changed between revisions, JOINED against this project's live
+  `agent_project_links`/`agent_schedules`: a removed agent with a live
+  attachment, or a dropped trigger kind with a live schedule binding, or a
+  workspace/risk_tier change, renders as an explicit "will stop working /
+  behavior changes" warning in the packages panel before enable.
+
+### RD5. Recommended bindings ride the agent frontmatter
+
+`recommended:` block in `agents/<id>.md` frontmatter (NOT the manifest —
+self-contained, travels with the file, validated by `parseAgentDefinition`):
+`{ runner?: string, cron?: { expr: string, timezone: string },
+events?: DomainEventKind[] }`. Stored on the index row (`recommended`
+jsonb). Attach panel: selecting an agent pre-fills the attach/edit modal
+(runner override + one cron row + one event row) from it; nothing
+auto-applies without Save.
+
+### RD6. Workspace ref — ephemeral read-only worktree
+
+Frontmatter `workspace_ref: trigger | <branch-name>` (optional; only valid
+with `workspace: repo_read`). Absent → today's behavior (live parent
+checkout). Present → launch creates an EPHEMERAL DETACHED worktree
+(`git worktree add --detach`) at the resolved ref under
+`worktreesRoot()/<slug>/<runId>-ro`, points the session there, and removes
+it at the terminal choke point (+ GC sweep backstop). The user's checkout
+is NEVER switched. Ref resolution for `trigger` (v1): domain-event `run.*`
+events → the triggering run's workspace branch; **webhook** → conventional
+payload field `branch` (fallback `ref`) — the owner's tests-readiness case
+arrives as a CI webhook, so it MUST resolve; cron/manual/task.* events →
+no trigger context → `PRECONDITION` refusal unless a literal branch is
+configured. Explicitly NOT in v1 (deferred, owner-reviewed): task.*-event
+ref derivation (ambiguous which run), configurable JSONPath payload
+extraction (fixed `branch`/`ref` fields only), and auto-`git fetch` of
+refs absent from the local repo (unresolvable ref → `PRECONDITION`).
+Enforcement mapping: clean-baseline precondition SKIPPED for ephemeral
+(fresh checkout is clean by construction); L3 dirty-watchdog targets the
+EPHEMERAL dir; L1/L2 unchanged.
+
+### RD7. Agent capability-profile MCPs from the platform catalog
+
+M33 gap: agent sessions receive only the maister facade. Rework wires
+`capability_profile.mcps` refs through the existing resolution
+(`resolveCapabilityProfile` precedence project>platform>flow-package,
+`lib/capabilities/resolver.ts:310`) + `gateStdioMcpsByExecTrust`
+(`lib/capabilities/agent-map.ts:169`) into `createSession.mcpServers`
+alongside the facade. Untrusted exec ⇒ stdio MCPs filtered (existing
+contract).
+
+## Rework phases & tasks
+
+### R0 — Rebase + renumber (pre-requisite)
+
+| # | Task | Deliverable |
+| --- | --- | --- |
+| R0.1 | Rebase the 9 M33 commits onto main `0282235f`; resolve schema.ts/decisions.md/seed/journal conflicts | rebase |
+| R0.2 | Renumber: ADR-088→089, ADR-089→090 (tree-wide sweep incl. lowercase anchors); migrations 0048→0049_platform_agents, 0049→0050_agent_activity_kinds (files+snapshots+journal idx/tag, `when` untouched); snapshot prevId transplant onto main's 0048_packages snapshot; `drizzle-kit generate` no-diff check | renumber |
+| R0.3 | Full gate re-run on the rebased branch (web unit+integration, supervisor, mcp, e2e, tsc, validators) before any rework code | gates |
+
+**Commit R-0**: `chore(agents): rebase onto main (packages), renumber ADR-089/090 + migrations 0049/0050`
+
+### R1 — Schema + registration core
+
+| # | Task | Deliverable |
+| --- | --- | --- |
+| R1.1 | Schema rework per RD2 (incl. qualified-id refactor) + drizzle migration `0051_agents_package_source.sql` (paced-keypress generate; verify snapshot diff) | migration |
+| R1.2 | `definition.ts`: drop scope/project, add `recommended` + `workspace_ref` zod; `artifact-validate.ts` delegates `agent_definition` validation to `parseAgentDefinition` | parser |
+| R1.3 | `registerAgentsForRevision` + install/bridge hooks + resync-from-revisions + id-collision refusal; remove paths.ts/`MAISTER_AGENTS_ROOT`/raw-file CRUD fns | registry |
+| R1.4 | Unit+integration: registration from a real installed dir, collision refusal, vanished-package disable, SET/CLEAR re-parse on upgrade | tests |
+
+**Commit R-1**: `refactor(agents): definitions become flow-package contents — registration from installed revisions`
+
+### R2 — Per-project resolution + gates
+
+| # | Task | Deliverable |
+| --- | --- | --- |
+| R2.1 | Effective-definition resolver (RD4) used by `launchAgentRun`/`startAgentSession`/`buildAgentPrompt` + trust/enablement launch gate | launch |
+| R2.2 | Attach gate + available-list filter (package enabled in project); admin agents routes: drop create/definition-PATCH/delete, keep GET/enabled/unquarantine | routes |
+| R2.3 | Integration: trusted/untrusted launch matrix, attach refusal, pin-divergence trigger refusal, per-project version resolution (two projects, two pinned versions) | tests |
+| R2.4 | Upgrade-preview `ContractDiff` agents section + break-impact joins vs live links/schedules + packages-panel rendering (RD4) | preview |
+
+**Commit R-2**: `feat(agents): per-project effective version + package trust gates launch and attach`
+
+### R3 — Workspace ref
+
+| # | Task | Deliverable |
+| --- | --- | --- |
+| R3.1 | Ref resolution (`trigger` from run.* event payload → triggering run branch; literal branch) + ephemeral RO worktree lifecycle (create at spawn, remove at terminal, GC backstop) | launch |
+| R3.2 | Enforcement mapping: skip clean-baseline for ephemeral, point L3 watchdog at the ephemeral dir; integration tests incl. dirty-ephemeral quarantine | enforcement |
+
+**Commit R-3**: `feat(agents): workspace_ref — ephemeral read-only checkout at trigger-derived ref`
+
+### R4 — Recommended bindings + UI demotion + Studio
+
+| # | Task | Deliverable |
+| --- | --- | --- |
+| R4.1 | Attach panel pre-fill from `recommended` (modal opens pre-populated on attach) | attach UI |
+| R4.2 | Settings catalog panel: provenance column (`pkg@version`, origin chip), REMOVE add/edit modal (`agent-modal.tsx` deleted), keep enable/disable/un-quarantine/launch; "edit" affordance links to the providing authored flow in Studio when origin=authored | settings UI |
+| R4.3 | Studio `frontmatter-artifact-editor` surfaces the full agent contract fields (workspace, mode, triggers, risk_tier, runner, recommended, workspace_ref) | studio |
+| R4.4 | i18n EN+RU; renderToStaticMarkup component tests updated | i18n+tests |
+
+**Commit R-4**: `feat(agents): recommended-binding pre-fill, package provenance UI, Studio agent fields (EN+RU)`
+
+### R5 — Capability-profile MCPs
+
+| # | Task | Deliverable |
+| --- | --- | --- |
+| R5.1 | RD7 wiring in `startAgentSession` + exec-trust stdio gate + integration test (profile MCP reaches createSession.mcpServers; untrusted filters stdio) | launch |
+
+**Commit R-5**: `feat(agents): capability-profile MCPs resolved from the platform catalog at spawn`
+
+### R6 — Tests/e2e + docs + gates
+
+| # | Task | Deliverable |
+| --- | --- | --- |
+| R6.1 | e2e seed: agents ship inside the seeded local flow packages (`agents/*.md` in the package source dirs + registration rows); drop `MAISTER_AGENTS_ROOT` from playwright env; adapt the 3 platform-agents specs + quarantine fixture | e2e |
+| R6.2 | Docs amended IN PLACE (branch unmerged — no supersession ceremony): ADR-088 source-of-truth section, `agents.md` analytics, `agents-domain.md` ERD, `configuration.md`/`.env.example` env removal + additions, openapi (admin agents CRUD shrink, attach pre-fill), roadmap M33 entry text | docs |
+| R6.3 | Full gates: web unit+integration, supervisor, mcp, e2e ×2, tsc ×3, scoped eslint, validate:docs:all, redocly ×3; re-verify numbering vs live main | gates |
+
+**Commit R-6**: `docs(agents): package-source rework close-out — ADR-088 amendment, e2e, gates`
+
+## Rework decision log (owner, 2026-06-12)
+
+1. Agents inside flow packages; no separate package type; trust contour mandatory.
+2. Authoring like flows (Studio → publish → projects update versions) — maps to authored flow packages carrying `agents/*.md`; no new authored kind.
+3. Recommended bindings: pre-fill on attach — confirmed ("давай попробуем").
+4. Workspace ref configurable; main-only wrong; tests-readiness agents check out the triggering change's branch.
+5. NO collision/refusal policy — platform agent ids are package-qualified `<package>:<name>`; version always from the project-pinned package; UI shows the package to disambiguate.
+6. Settings-panel agent creation removed entirely — Studio/git package is THE single creation+distribution path ("оно должно быть одно").
+7. Upgrade preview must surface agent break-impact (what stops working: removed agents with live attachments, dropped triggers with live schedules) before enabling a new version.
+8. `workspace_ref: trigger` v1 covers run.* events AND webhooks (payload `branch`/`ref`); deferred: task.* derivation, JSONPath payload config, auto-fetch.
+
 ## Unresolved questions
 
-None — all design questions are answered; remaining choices are implementation-level.
+None on the original M33 scope. Rework questions pending owner (see below).
