@@ -8,7 +8,7 @@ import os from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { and, eq, inArray, notInArray } from "drizzle-orm";
+import { and, eq, inArray, notInArray, sql } from "drizzle-orm";
 import pino from "pino";
 
 import {
@@ -22,6 +22,7 @@ import {
   installFlowPlugin,
   installRevision,
   runRevisionSetup,
+  type InstallResult,
 } from "@/lib/flows";
 import { resolvePackageSource } from "@/lib/packages/install";
 import { redactUrl } from "@/lib/repo-source";
@@ -123,6 +124,7 @@ export type InstallPackageRevisionResult = {
   versionLabel: string;
   resolvedRevision: string;
   reused: boolean;
+  manifest: PackageInstallManifest;
 };
 
 // Platform-scope package install (ADR-087): resolve ONCE, copy the package
@@ -180,6 +182,7 @@ export async function installPackageRevision(opts: {
         versionLabel: existing.versionLabel,
         resolvedRevision: existing.resolvedRevision,
         reused: true,
+        manifest: manifestOf(existing),
       };
     }
 
@@ -272,6 +275,7 @@ export async function installPackageRevision(opts: {
       versionLabel,
       resolvedRevision: resolved.resolvedRevision,
       reused: false,
+      manifest: manifestJson,
     };
   } catch (err) {
     log.warn(
@@ -342,6 +346,46 @@ async function writeIngestionRecords(
   const manifest = manifestOf(install);
   const records = ingestionRecords(manifest, install);
 
+  if (records.length === 0) return 0;
+
+  // The upsert below targets (projectId, source, kind, capabilityRefId) —
+  // a same-(kind, id) record owned by ANOTHER attached package would be
+  // silently overwritten. Refuse instead; same-id-different-kind coexists.
+  const existing = await tx
+    .select({
+      capabilityRefId: capabilityRecords.capabilityRefId,
+      kind: capabilityRecords.kind,
+      material: capabilityRecords.material,
+    })
+    .from(capabilityRecords)
+    .where(
+      and(
+        eq(capabilityRecords.projectId, projectId),
+        eq(capabilityRecords.source, "flow-package"),
+        inArray(
+          capabilityRecords.capabilityRefId,
+          records.map((r) => r.capabilityRefId as string),
+        ),
+      ),
+    );
+  const foreign = existing.filter(
+    (row: any) =>
+      records.some(
+        (r) => r.kind === row.kind && r.capabilityRefId === row.capabilityRefId,
+      ) && row.material?.packageInstallId !== install.id,
+  );
+
+  if (foreign.length > 0) {
+    const ids = [
+      ...new Set(foreign.map((row: any) => `"${row.capabilityRefId}"`)),
+    ].join(", ");
+
+    throw new MaisterError(
+      "CONFLICT",
+      `package "${install.name}" ships mcp/restriction id(s) ${ids} already provided by another attached package`,
+    );
+  }
+
   for (const record of records) {
     await tx
       .insert(capabilityRecords)
@@ -397,15 +441,16 @@ async function deleteIngestionRecords(
 
   if (refIds.length === 0) return;
 
-  await tx
-    .delete(capabilityRecords)
-    .where(
-      and(
-        eq(capabilityRecords.projectId, projectId),
-        eq(capabilityRecords.source, "flow-package"),
-        inArray(capabilityRecords.capabilityRefId, refIds),
-      ),
-    );
+  await tx.delete(capabilityRecords).where(
+    and(
+      eq(capabilityRecords.projectId, projectId),
+      eq(capabilityRecords.source, "flow-package"),
+      inArray(capabilityRecords.capabilityRefId, refIds),
+      // Only rows THIS install wrote — a same-id record owned by another
+      // attached package must survive this package's detach/upgrade.
+      sql`${capabilityRecords.material} ->> 'packageInstallId' = ${install.id}`,
+    ),
+  );
 }
 
 // Installs the member flows + capability bundles into the PROJECT inside the
@@ -417,12 +462,13 @@ async function wireMembers(
     projectId: string;
     projectSlug: string;
     workspaceRoot?: string;
+    roleRefs?: readonly string[];
     install: any;
     signal?: AbortSignal;
   },
-): Promise<{ flowRowIds: string[]; capImportRowIds: string[] }> {
+): Promise<{ memberFlows: InstallResult[]; capImportRowIds: string[] }> {
   const manifest = manifestOf(opts.install);
-  const flowRowIds: string[] = [];
+  const memberFlows: InstallResult[] = [];
   const capImportRowIds: string[] = [];
 
   for (const flow of manifest.spec.flows) {
@@ -434,6 +480,7 @@ async function wireMembers(
         projectSlug: opts.projectSlug,
         flowId: flow.id,
         workspaceRoot: opts.workspaceRoot,
+        roleRefs: opts.roleRefs,
         resolvedRevisionOverride: opts.install.resolvedRevision,
         db: tx,
         signal: opts.signal,
@@ -441,7 +488,7 @@ async function wireMembers(
       opts.install.trustStatus,
     );
 
-    flowRowIds.push(result.flowRowId);
+    memberFlows.push(result);
   }
 
   for (const cap of manifest.spec.capabilities) {
@@ -460,6 +507,8 @@ async function wireMembers(
 
   await writeIngestionRecords(tx, opts.projectId, opts.install);
 
+  const flowRowIds = memberFlows.map((m) => m.flowRowId);
+
   if (flowRowIds.length > 0) {
     await tx
       .update(flows)
@@ -473,7 +522,7 @@ async function wireMembers(
       .where(inArray(capabilityImports.id, capImportRowIds));
   }
 
-  return { flowRowIds, capImportRowIds };
+  return { memberFlows, capImportRowIds };
 }
 
 // Post-commit side-effect: run pending bundle setup.sh per the package trust
@@ -498,7 +547,10 @@ async function runPendingCapabilitySetups(
   }
 }
 
-export type AttachResult = { attachmentId: string };
+export type AttachResult = {
+  attachmentId: string;
+  memberFlows: InstallResult[];
+};
 
 // One transaction writes the WHOLE group: member flows rows + capability
 // imports + MCP/restriction ingestion + the attachment + group FK links.
@@ -510,6 +562,7 @@ export async function attachPackage(opts: {
   projectSlug: string;
   packageInstallId: string;
   workspaceRoot?: string;
+  roleRefs?: readonly string[];
   // FIXME(any): dual drizzle-orm peer-dep variants.
   db?: any;
   signal?: AbortSignal;
@@ -532,7 +585,7 @@ export async function attachPackage(opts: {
   const manifest = manifestOf(install);
   const flowIds = manifest.spec.flows.map((f) => f.id);
 
-  const attachmentId = await db.transaction(async (tx: any) => {
+  const attached: AttachResult = await db.transaction(async (tx: any) => {
     // Pre-guard: a manifest flow id colliding with an EXISTING standalone
     // flow of this project would hit flows_project_ref_uq mid-group —
     // refuse deterministically instead (CONFLICT, no partial group).
@@ -571,15 +624,19 @@ export async function attachPackage(opts: {
       );
     }
 
-    await wireMembers(tx, {
+    const wired = await wireMembers(tx, {
       projectId: opts.projectId,
       projectSlug: opts.projectSlug,
       workspaceRoot: opts.workspaceRoot,
+      roleRefs: opts.roleRefs,
       install,
       signal: opts.signal,
     });
 
-    return inserted[0].id as string;
+    return {
+      attachmentId: inserted[0].id as string,
+      memberFlows: wired.memberFlows,
+    };
   });
 
   const capRows = await db
@@ -600,11 +657,15 @@ export async function attachPackage(opts: {
   );
 
   log.info(
-    { projectId: opts.projectId, packageInstallId: install.id, attachmentId },
+    {
+      projectId: opts.projectId,
+      packageInstallId: install.id,
+      attachmentId: attached.attachmentId,
+    },
     "package attached",
   );
 
-  return { attachmentId };
+  return attached;
 }
 
 async function loadAttachment(
@@ -769,13 +830,14 @@ export async function upgradeAttachment(opts: {
         ),
       );
 
-    const { flowRowIds } = await wireMembers(tx, {
+    const { memberFlows } = await wireMembers(tx, {
       projectId: opts.projectId,
       projectSlug: opts.projectSlug,
       workspaceRoot: opts.workspaceRoot,
       install: next,
       signal: opts.signal,
     });
+    const flowRowIds = memberFlows.map((m) => m.flowRowId);
 
     // Flows the new manifest no longer ships lose their enablement rows.
     await tx

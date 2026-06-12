@@ -7,6 +7,7 @@ import {
   PostgreSqlContainer,
   type StartedPostgreSqlContainer,
 } from "@testcontainers/postgresql";
+import { eq } from "drizzle-orm";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { NextRequest } from "next/server";
@@ -14,7 +15,9 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { parse as parseYaml } from "yaml";
 
+import { requireGlobalRole } from "@/lib/authz";
 import * as schemaModule from "@/lib/db/schema";
+import { MaisterError } from "@/lib/errors";
 
 const schema = schemaModule as unknown as Record<string, any>;
 
@@ -40,6 +43,7 @@ vi.mock("@/lib/db/client", () => ({
 let attachPOST: typeof import("@/app/api/projects/[slug]/packages/route").POST;
 let attachGET: typeof import("@/app/api/projects/[slug]/packages/route").GET;
 let detachDELETE: typeof import("@/app/api/projects/[slug]/packages/[attachmentId]/route").DELETE;
+let trustPOST: typeof import("@/app/api/projects/[slug]/packages/[attachmentId]/trust/route").POST;
 
 function jsonRequest(url: string, body?: unknown): NextRequest {
   return new NextRequest(`http://localhost${url}`, {
@@ -96,6 +100,9 @@ beforeAll(async () => {
   ));
   ({ DELETE: detachDELETE } = await import(
     "@/app/api/projects/[slug]/packages/[attachmentId]/route"
+  ));
+  ({ POST: trustPOST } = await import(
+    "@/app/api/projects/[slug]/packages/[attachmentId]/trust/route"
   ));
 }, 180_000);
 
@@ -206,5 +213,55 @@ describe("project packages routes (integration)", () => {
     );
 
     expect(parsed.packages).toEqual([]);
+  });
+
+  it("trust requires the GLOBAL admin role — project-scoped managePackages is not sufficient", async () => {
+    vi.mocked(requireGlobalRole).mockRejectedValueOnce(
+      new MaisterError("UNAUTHORIZED", "Requires global role: admin"),
+    );
+
+    const res = await trustPOST(
+      jsonRequest("/api/projects/pkg-routes/packages/any/trust", {}),
+      {
+        params: Promise.resolve({ slug: "pkg-routes", attachmentId: "any" }),
+      },
+    );
+
+    expect(res.status).toBe(403);
+    expect(requireGlobalRole).toHaveBeenCalledWith("admin");
+  });
+
+  it("trust as global admin: 200 + revision trust applied", async () => {
+    const attachRes = await attachPOST(
+      jsonRequest("/api/projects/pkg-routes/packages", {
+        packageInstallId: installId,
+      }),
+      { params: Promise.resolve({ slug: "pkg-routes" }) },
+    );
+
+    expect(attachRes.status).toBe(201);
+    const attBody = await attachRes.json();
+
+    const res = await trustPOST(
+      jsonRequest(
+        `/api/projects/pkg-routes/packages/${attBody.attachmentId}/trust`,
+        {},
+      ),
+      {
+        params: Promise.resolve({
+          slug: "pkg-routes",
+          attachmentId: attBody.attachmentId,
+        }),
+      },
+    );
+
+    expect(res.status).toBe(200);
+
+    const [install] = await db
+      .select()
+      .from(schema.packageInstalls)
+      .where(eq(schema.packageInstalls.id, installId));
+
+    expect(install.trustStatus).toBe("trusted");
   });
 });

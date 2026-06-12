@@ -127,6 +127,8 @@ export default async function ProjectBoardPage({
 
   const canAct = role === "owner" || role === "admin" || role === "member";
   const isAdmin = role === "owner" || role === "admin";
+  // Package trust fans out to every attached project — global admin only.
+  const canTrustPackages = user.role === "admin";
   const canReadRepoFiles =
     role === "owner" || role === "admin" || role === "member";
 
@@ -371,6 +373,7 @@ export default async function ProjectBoardPage({
           <ProjectPackagesSection
             attachments={await getProjectPackageAttachments(project.id)}
             availableInstalls={await getAvailablePackageInstalls()}
+            canTrust={canTrustPackages}
             isAdmin={isAdmin}
             slug={slug}
           />

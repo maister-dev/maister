@@ -11,11 +11,14 @@ import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 import { z } from "zod";
 
+import { ADAPTER_IDS } from "@/lib/acp-runners/adapter-support";
 import { requireGlobalRole } from "@/lib/authz";
 import { buildCapabilityRefIds, loadProjectConfig } from "@/lib/config";
 import { syncProjectFlowRolesFromConfig } from "@/lib/assignments/service";
 import { installAndIngestCapabilityImports } from "@/lib/capabilities/import";
-import { installPackage } from "@/lib/packages/install";
+import { resolveTrust } from "@/lib/flows/trust";
+import { attachPackage, installPackageRevision } from "@/lib/packages/attach";
+import { packageVersionLabel } from "@/lib/packages/install";
 import { loadPlatformMcpCapabilitiesFromDb } from "@/lib/mcp/projection";
 import { syncFlowRunnerReconfigurationRequirements } from "@/lib/acp-runners/flow-reconfiguration";
 import { getDb } from "@/lib/db/client";
@@ -393,37 +396,65 @@ async function register(
       }
     }
 
-    // ADR-087: packages[] bootstrap — one clone per package, every member
-    // flow/capability sub-install inherits the package's resolved revision.
-    // Registration is a one-shot bootstrap (same posture as flows[]); ongoing
-    // attach/detach sync is the P2 UI surface. Failures unwind via the SAME
-    // compensation below — no new paths.
+    // ADR-087: packages[] bootstrap — the SAME platform-install + project-
+    // attach pipeline as the UI surface (package_installs row + attachment
+    // group + FK links + mcp/restriction ingestion), so bootstrapped packages
+    // are visible on the packages tab and manageable (detach/upgrade/trust)
+    // after registration. Failures unwind via the SAME compensation below.
     const packageCapabilityDerived: AgentDefinitionCapabilityConfig[] = [];
 
     for (const pkg of config.packages) {
-      const installedPkg = await installPackage({
+      const installedPkg = await installPackageRevision({
         source: pkg.source,
         version: pkg.version,
         path: pkg.path,
+        trustStatus: resolveTrust(pkg.source),
+        db,
+      });
+      const attached = await attachPackage({
         projectId,
         projectSlug: slug,
+        packageInstallId: installedPkg.id,
         roleRefs: configuredRoleRefs,
         db,
       });
 
-      packageCapabilityDerived.push(...installedPkg.capabilityDerived);
+      if (attached === null) {
+        throw new MaisterError(
+          "FLOW_INSTALL",
+          `package install ${installedPkg.id} disappeared during registration`,
+        );
+      }
+
+      const memberVersionLabel = packageVersionLabel(installedPkg.versionLabel);
+
+      for (const cap of installedPkg.manifest.spec.capabilities) {
+        packageCapabilityDerived.push({
+          id: cap.id,
+          kind: "agent_definition",
+          label: cap.id,
+          source: "flow-package",
+          version: memberVersionLabel,
+          revision: installedPkg.resolvedRevision,
+          agents: [...ADAPTER_IDS],
+          enforceability: "instructed",
+          selected_by_default: true,
+        });
+      }
+
       log.info(
         {
           projectId,
           packageId: pkg.id,
           packageName: installedPkg.name,
           revision: installedPkg.resolvedRevision.slice(0, 12),
-          flowIds: installedPkg.flows.map((f) => f.flowRowId),
+          attachmentId: attached.attachmentId,
+          flowIds: attached.memberFlows.map((f) => f.flowRowId),
         },
-        "packages[] entry installed",
+        "packages[] entry installed + attached",
       );
 
-      for (const installed of installedPkg.flows) {
+      for (const installed of attached.memberFlows) {
         const missing = await syncFlowRunnerReconfigurationRequirements({
           db,
           projectId,

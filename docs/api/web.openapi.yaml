@@ -5494,9 +5494,11 @@ paths:
         url-param → project row; `packageInstallId` = body id resolved to a
         server row (404 on miss). A manifest flow id colliding with an
         existing standalone flow (`flows_project_ref_uq`) → 409 (`CONFLICT`),
-        no partial group. The `maister.yaml packages[]` pin is written back
-        AFTER commit; a write-back failure is reported as
-        `writeBack: "failed"`, never a rollback.
+        no partial group. A same-`(kind, id)` MCP/restriction record already
+        provided by another attached package → 409 (`CONFLICT`) as well
+        (same-id different-kind records coexist). The `maister.yaml
+        packages[]` pin is written back AFTER commit; a write-back failure is
+        reported as `writeBack: "failed"`, never a rollback.
       operationId: attachProjectPackage
       parameters:
         - {
@@ -5540,7 +5542,9 @@ paths:
         (ADR-087 — Implemented.) Admin-only (`managePackages`). Refused with 409
         (`PRECONDITION`) while any member revision is pinned by a non-terminal
         run. One transaction removes the attachment, member `flows` rows, and
-        ingested MCP/restriction records; member revisions stay for in-flight
+        the ingested MCP/restriction records this install owns
+        (`material.packageInstallId` — a same-id record from another attached
+        package survives); member revisions stay for in-flight
         runs and GC. Write-back removes the `packages[]` pin after commit.
       operationId: detachProjectPackage
       parameters:
@@ -5627,8 +5631,10 @@ paths:
       tags: [flow-packages, projects]
       summary: (ADR-087 — Implemented) Trust a package revision (fan-out)
       description: |
-        (ADR-087 — Implemented.) Admin-only (`managePackages`). One operator
-        decision per package revision: the same transaction fans
+        (ADR-087 — Implemented.) GLOBAL-admin-only: the fan-out crosses every
+        project attached to the install, so project-scoped `managePackages`
+        is not sufficient (403 for project admins without the global role).
+        One operator decision per package revision: the same transaction fans
         `trust_status`/`exec_trust='trusted'` onto every member
         `flow_revisions` + `capability_imports` row, THEN the existing
         post-trust setup path runs pending member `setup.sh` (after-tx

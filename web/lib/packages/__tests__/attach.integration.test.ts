@@ -422,3 +422,245 @@ describe("package attach lifecycle (integration)", () => {
     ]);
   });
 });
+
+async function buildMinimalPackage(
+  root: string,
+  opts: {
+    name: string;
+    flowId: string;
+    mcpId?: string;
+    restrictionId?: string;
+  },
+): Promise<void> {
+  await mkdir(join(root, `flows/${opts.flowId}`), { recursive: true });
+  await writeFile(
+    join(root, `flows/${opts.flowId}/flow.yaml`),
+    FLOW_YAML(opts.flowId),
+  );
+  const mcps = opts.mcpId
+    ? `mcps:\n  - { id: ${opts.mcpId}, transport: http, url: "https://mcp.example.com" }\n`
+    : "";
+  const restrictions = opts.restrictionId
+    ? `restrictions:\n  - { id: ${opts.restrictionId}, paths: ["docs/**"] }\n`
+    : "";
+
+  await writeFile(
+    join(root, "maister-package.yaml"),
+    `schemaVersion: 1\nname: ${opts.name}\nflows:\n  - { id: ${opts.flowId}, path: flows/${opts.flowId} }\n${mcps}${restrictions}`,
+  );
+}
+
+async function seedProject(slug: string): Promise<string> {
+  const id = randomUUID();
+
+  await db.insert(schema.projects).values({
+    taskKey: `T${randomUUID().slice(0, 8)}`.toUpperCase(),
+    id,
+    slug,
+    name: slug,
+    repoPath: join(workspaceRoot, slug),
+    maisterYamlPath: join(workspaceRoot, slug, "maister.yaml"),
+  });
+
+  return id;
+}
+
+describe("capability-record ownership across packages (integration)", () => {
+  let projectId2: string;
+  const dirs: string[] = [];
+  let installP1: string;
+  let installP2: string;
+  let installP3: string;
+  let att1: string;
+
+  async function installFixture(opts: {
+    name: string;
+    flowId: string;
+    mcpId?: string;
+    restrictionId?: string;
+  }): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), `attach-coll-${opts.name}-`));
+
+    dirs.push(dir);
+    await buildMinimalPackage(dir, opts);
+    const installed = await installPackageRevision({
+      source: dir,
+      version: `${opts.name}/v1.0.0`,
+      trustStatus: "trusted_by_policy",
+      db,
+    });
+
+    return installed.id;
+  }
+
+  beforeAll(async () => {
+    projectId2 = await seedProject("attach-coll");
+    installP1 = await installFixture({
+      name: "collpkg1",
+      flowId: "coll-flow-1",
+      mcpId: "shared-cap",
+    });
+    installP2 = await installFixture({
+      name: "collpkg2",
+      flowId: "coll-flow-2",
+      mcpId: "shared-cap",
+    });
+    installP3 = await installFixture({
+      name: "collpkg3",
+      flowId: "coll-flow-3",
+      restrictionId: "shared-cap",
+    });
+  }, 120_000);
+
+  afterAll(async () => {
+    for (const dir of dirs) await rm(dir, { recursive: true, force: true });
+  });
+
+  it("attach refuses CONFLICT when another package owns the same (kind, id) record", async () => {
+    const first = await attachPackage({
+      projectId: projectId2,
+      projectSlug: "attach-coll",
+      packageInstallId: installP1,
+      workspaceRoot,
+      db,
+    });
+
+    att1 = first!.attachmentId;
+
+    await expect(
+      attachPackage({
+        projectId: projectId2,
+        projectSlug: "attach-coll",
+        packageInstallId: installP2,
+        workspaceRoot,
+        db,
+      }),
+    ).rejects.toSatisfy(
+      (e: unknown) => isMaisterError(e) && e.code === "CONFLICT",
+    );
+
+    // First package's record untouched; the refused attach left no group.
+    const [record] = await db
+      .select()
+      .from(schema.capabilityRecords)
+      .where(
+        and(
+          eq(schema.capabilityRecords.projectId, projectId2),
+          eq(schema.capabilityRecords.capabilityRefId, "shared-cap"),
+        ),
+      );
+
+    expect(record.material.packageInstallId).toBe(installP1);
+
+    const attachments = await db
+      .select()
+      .from(schema.projectPackageAttachments)
+      .where(eq(schema.projectPackageAttachments.packageInstallId, installP2));
+
+    expect(attachments).toHaveLength(0);
+    expect(
+      await db
+        .select()
+        .from(schema.flows)
+        .where(
+          and(
+            eq(schema.flows.projectId, projectId2),
+            eq(schema.flows.flowRefId, "coll-flow-2"),
+          ),
+        ),
+    ).toHaveLength(0);
+  });
+
+  it("same id with a different kind coexists; detach removes only the owner's record", async () => {
+    const third = await attachPackage({
+      projectId: projectId2,
+      projectSlug: "attach-coll",
+      packageInstallId: installP3,
+      workspaceRoot,
+      db,
+    });
+
+    expect(third).not.toBeNull();
+
+    const records = await db
+      .select()
+      .from(schema.capabilityRecords)
+      .where(
+        and(
+          eq(schema.capabilityRecords.projectId, projectId2),
+          eq(schema.capabilityRecords.capabilityRefId, "shared-cap"),
+        ),
+      );
+
+    expect(records.map((r: any) => r.kind).sort()).toEqual([
+      "mcp",
+      "restriction",
+    ]);
+
+    // Detaching collpkg1 must NOT take collpkg3's same-id restriction along.
+    await detachPackage({ projectId: projectId2, attachmentId: att1, db });
+
+    const survivors = await db
+      .select()
+      .from(schema.capabilityRecords)
+      .where(
+        and(
+          eq(schema.capabilityRecords.projectId, projectId2),
+          eq(schema.capabilityRecords.capabilityRefId, "shared-cap"),
+        ),
+      );
+
+    expect(survivors).toHaveLength(1);
+    expect(survivors[0].kind).toBe("restriction");
+    expect(survivors[0].material.packageInstallId).toBe(installP3);
+  });
+});
+
+describe("package trust fan-out across projects (integration)", () => {
+  it("trusting a revision fans to EVERY attached project (platform-wide by design, ADR-087)", async () => {
+    const fanDir = await mkdtemp(join(tmpdir(), "attach-fan-"));
+
+    await buildMinimalPackage(fanDir, { name: "fanpkg", flowId: "fan-flow" });
+    const p1 = await seedProject("fan-p1");
+    const p2 = await seedProject("fan-p2");
+    const installed = await installPackageRevision({
+      source: fanDir,
+      version: "fanpkg/v1.0.0",
+      db,
+    });
+
+    await attachPackage({
+      projectId: p1,
+      projectSlug: "fan-p1",
+      packageInstallId: installed.id,
+      workspaceRoot,
+      db,
+    });
+    await attachPackage({
+      projectId: p2,
+      projectSlug: "fan-p2",
+      packageInstallId: installed.id,
+      workspaceRoot,
+      db,
+    });
+
+    await trustPackageRevision({ packageInstallId: installed.id, db });
+
+    for (const projectIdN of [p1, p2]) {
+      const rows = await db
+        .select()
+        .from(schema.flows)
+        .where(
+          and(
+            eq(schema.flows.projectId, projectIdN),
+            eq(schema.flows.packageInstallId, installed.id),
+          ),
+        );
+
+      expect(rows.length).toBeGreaterThan(0);
+      for (const row of rows) expect(row.trustStatus).toBe("trusted");
+    }
+
+    await rm(fanDir, { recursive: true, force: true });
+  });
+});

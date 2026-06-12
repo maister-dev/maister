@@ -6362,8 +6362,10 @@ git monorepos and managed as a platform catalog with per-project attachments.
   `schemaVersion` bump.
 - **`maister.yaml` gains `packages[] = {id, source, version, path?}`** —
   declarative bootstrap at registration and the durable record for re-raising
-  a project on another instance. Runtime source of truth is the DB, managed
-  from the UI; every attach/detach/upgrade **writes the pin back** to
+  a project on another instance. Registration materializes the SAME
+  `package_installs` + attachment group as the UI attach path, so
+  bootstrapped packages stay manageable. Runtime source of truth is the DB,
+  managed from the UI; every attach/detach/upgrade **writes the pin back** to
   `maister.yaml` (comment-preserving, atomic; a write-back failure warns and
   never rolls back the attach).
 - **Two-scope model:** `package_sources` (platform config; discovery via
@@ -6386,14 +6388,19 @@ git monorepos and managed as a platform catalog with per-project attachments.
   runs (PRECONDITION). Typed ingestion replaces the opaque record: manifest
   inventory on the install row, `mcps[]` → project MCP catalog entries
   (package-provided, removed on detach), `restrictions[]` →
-  flow-package-scoped restriction capability records.
+  flow-package-scoped restriction capability records. Ingested records are
+  owned per install (`material.packageInstallId`): a same-`(kind, id)` record
+  from another attached package refuses attach (CONFLICT), and detach removes
+  only the rows the install owns.
 - **Local versions are first-class:** a package installed from a local
   directory gets a `local-<digest>` label and attaches like any version — the
   fork-it/adapt-it/test-it loop, and the landing spot for future Studio forks.
 - **Trust:** one operator decision per package revision fans
   `trust_status`/`exec_trust` to member rows in the same transaction;
-  `setup.sh` still NEVER runs at install — only through the existing
-  post-trust setup path (ADR-021/ADR-042/ADR-069 unchanged).
+  the decision is gated on the GLOBAL admin role because the fan-out crosses
+  every project attached to the install (project-scoped `managePackages` is
+  not sufficient). `setup.sh` still NEVER runs at install — only through the
+  existing post-trust setup path (ADR-021/ADR-042/ADR-069 unchanged).
 
 **Consequences:**
 - Migration `0047` adds the three tables + two FK columns; package installs

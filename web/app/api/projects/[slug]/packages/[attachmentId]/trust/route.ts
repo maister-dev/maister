@@ -3,7 +3,7 @@ import "server-only";
 import { and, eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 
-import { authorizeManagePackages } from "../../../flow-packages/_lib";
+import { authorizePackageTrust } from "../../../flow-packages/_lib";
 
 import * as schemaModule from "@/lib/db/schema";
 import { trustPackageRevision } from "@/lib/packages/attach";
@@ -17,6 +17,8 @@ const { projectPackageAttachments } = schemaModule as unknown as Record<
 
 // (ADR-087) One operator decision per package revision: trust fans to every
 // member row in one tx, then pending setups run (post-commit side-effect).
+// The fan-out crosses every project attached to the install, so the gate is
+// GLOBAL admin — project-scoped managePackages is not sufficient.
 export async function POST(
   _req: NextRequest,
   ctx: { params: Promise<{ slug: string; attachmentId: string }> },
@@ -24,7 +26,7 @@ export async function POST(
   const { slug, attachmentId } = await ctx.params;
 
   try {
-    const { project, db } = await authorizeManagePackages(slug);
+    const { project, db } = await authorizePackageTrust(slug);
     const [att] = await db
       .select()
       .from(projectPackageAttachments)

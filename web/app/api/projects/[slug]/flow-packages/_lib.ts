@@ -4,7 +4,11 @@ import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import pino from "pino";
 
-import { requireActiveSession, requireProjectAction } from "@/lib/authz";
+import {
+  requireActiveSession,
+  requireGlobalRole,
+  requireProjectAction,
+} from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -58,14 +62,9 @@ export function errorResponse(err: unknown, slug: string): NextResponse {
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
 
-// Auth-first, then resolve the project from the URL slug (server-state, never a
-// body field), then enforce the managePackages project action. Returns the
-// trusted project row + the db handle for downstream service calls.
-export async function authorizeManagePackages(
+async function resolveProjectBySlug(
   slug: string,
 ): Promise<{ project: Record<string, any>; db: Db }> {
-  await requireActiveSession();
-
   const db = getDb() as unknown as {
     select: any;
     insert: any;
@@ -80,7 +79,32 @@ export async function authorizeManagePackages(
     throw new MaisterError("PRECONDITION", `project not found: ${slug}`);
   }
 
-  await requireProjectAction(project.id, "managePackages");
-
   return { project, db };
+}
+
+// Auth-first, then resolve the project from the URL slug (server-state, never a
+// body field), then enforce the managePackages project action. Returns the
+// trusted project row + the db handle for downstream service calls.
+export async function authorizeManagePackages(
+  slug: string,
+): Promise<{ project: Record<string, any>; db: Db }> {
+  await requireActiveSession();
+
+  const resolved = await resolveProjectBySlug(slug);
+
+  await requireProjectAction(resolved.project.id, "managePackages");
+
+  return resolved;
+}
+
+// Package trust is a PLATFORM-level decision (ADR-087: one operator decision
+// per package revision fans trust onto every project attached to the same
+// install), so the gate is the global admin role — project-scoped
+// managePackages is implied for global admins but NOT sufficient on its own.
+export async function authorizePackageTrust(
+  slug: string,
+): Promise<{ project: Record<string, any>; db: Db }> {
+  await requireGlobalRole("admin");
+
+  return resolveProjectBySlug(slug);
 }

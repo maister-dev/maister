@@ -337,12 +337,16 @@ packages:
 | `version` | Per-package tag, slash allowed: `/^[A-Za-z0-9._+/-]+$/`, no `..`, ≤ 128 chars. NOT `versionTagSchema` — member sub-installs receive the path-safe label (`/` → `-`); the raw tag is used only for `git clone --branch` and the package row. |
 | `path` | Optional package subdir inside the source (escape-guarded relative path; no `..`/absolute). Defaults to the source root. |
 
-Bootstrap semantics: registration installs each entry via `installPackage`
-(one clone per package; every member flow/capability sub-install records the
-package's resolved revision). After registration the runtime source of truth
-is the DB (UI attach/detach/upgrade), and each mutation **writes the pin back**
-to this file (comment-preserving, atomic) so the project can be re-raised on
-another MAIster instance from git alone.
+Bootstrap semantics: registration runs the SAME pipeline as the UI surface —
+`installPackageRevision` (one platform `package_installs` row per resolved
+revision; every member sub-install records that revision) followed by
+`attachPackage` (attachment group + `package_install_id` FK links +
+mcp/restriction ingestion) — so a bootstrapped package appears on the
+packages tab and is manageable (detach/upgrade/trust) immediately after
+registration. The runtime source of truth is the DB (UI
+attach/detach/upgrade), and each mutation **writes the pin back** to this
+file (comment-preserving, atomic) so the project can be re-raised on another
+MAIster instance from git alone.
 
 #### `maister-package.yaml` v1 (Implemented, ADR-087)
 

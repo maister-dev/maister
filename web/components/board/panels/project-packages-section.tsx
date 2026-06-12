@@ -14,6 +14,9 @@ import { useTranslations } from "next-intl";
 type Props = {
   slug: string;
   isAdmin: boolean;
+  // Trust fans out to every project attached to the install — global admin
+  // only (the route enforces it; this prop only hides the button).
+  canTrust: boolean;
   attachments: ProjectPackageAttachmentView[];
   availableInstalls: AvailablePackageInstallView[];
 };
@@ -51,6 +54,7 @@ async function call(
 export function ProjectPackagesSection({
   slug,
   isAdmin,
+  canTrust,
   attachments,
   availableInstalls,
 }: Props): ReactElement {
@@ -220,7 +224,7 @@ export function ProjectPackagesSection({
                     <td className="px-4 py-3 text-right">
                       {isAdmin ? (
                         <div className="inline-flex gap-2">
-                          {att.trustStatus === "untrusted" ? (
+                          {canTrust && att.trustStatus === "untrusted" ? (
                             <button
                               className="h-8 rounded-[8px] border border-line px-3 text-[12px] font-semibold text-ink hover:bg-ivory disabled:opacity-50"
                               disabled={busy === `trust:${att.id}`}

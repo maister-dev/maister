@@ -85,7 +85,9 @@ The startup path runs the same refresh for enabled sources whose
 Install is idempotent and content-addressed (one resolved revision per
 package; every member sub-install inherits it). Attach writes the project
 group in one transaction; the `maister.yaml` write-back is a post-commit
-side-effect.
+side-effect. Registration `packages[]` bootstrap drives the SAME two steps
+per entry (install revision → attach), so bootstrapped packages land in the
+same attachment model as UI-attached ones.
 
 ```mermaid
 sequenceDiagram
@@ -119,11 +121,13 @@ sequenceDiagram
 - **Upgrade**: install the newer revision beside the old one, then one
   transaction flips the group pointers; in-flight runs keep their pinned
   revisions; write-back updates the yaml pin.
-- **Trust**: one operator decision per package revision; the same transaction
-  fans `trust_status`/`exec_trust` onto every member `flow_revisions` +
-  `capability_imports` row, THEN the existing post-trust setup path runs
-  per-member `setup.sh` (never at install — fetch and execute stay physically
-  separate, ADR-021/ADR-042/ADR-069).
+- **Trust**: one operator decision per package revision, gated on the
+  **global `admin` role** — the fan-out crosses every project attached to the
+  install, so project-scoped `managePackages` is not sufficient. The same
+  transaction fans `trust_status`/`exec_trust` onto every member
+  `flow_revisions` + `capability_imports` row, THEN the existing post-trust
+  setup path runs per-member `setup.sh` (never at install — fetch and execute
+  stay physically separate, ADR-021/ADR-042/ADR-069).
 
 ### Crash windows (attach path)
 
@@ -139,14 +143,15 @@ sequenceDiagram
   resolved_revision)`; installed package revisions are immutable.
 - Attach group writes — member `flows` rows, `capability_imports`,
   MCP/restriction ingestion, `project_package_attachments`,
-  `package_install_id` FK links — MUST commit in ONE transaction.
+  `package_install_id` FK links — MUST commit in ONE transaction, on the UI
+  attach path and the registration `packages[]` bootstrap alike.
 - Attach MUST refuse with `MaisterError("CONFLICT")` when a manifest flow id
   collides with an existing standalone `flows` row of the project
   (`flows_project_ref_uq`).
 - `setup.sh` NEVER executes during package install or attach; only the
   post-trust setup path runs it, per member revision.
 - A package trust decision MUST fan `trust_status`/`exec_trust` to ALL member
-  rows in the same transaction.
+  rows in the same transaction and MUST require the global `admin` role.
 - Every member sub-install MUST record the package's resolved revision (tag
   SHA or content digest) as `flow_revisions.resolved_revision` — never the
   `"unknown"` sentinel.
@@ -160,7 +165,8 @@ sequenceDiagram
 - Per-source discovery failure MUST degrade to the cached `discovered`
   snapshot with a WARN and never block the catalog surface.
 - MCP templates and restriction records ingested on attach MUST be removed on
-  detach and recreated on re-attach (SET / CLEAR / re-SET symmetric).
+  detach only for rows the detached install owns (`material.packageInstallId`)
+  and recreated on re-attach (SET / CLEAR / re-SET symmetric).
 - `packages[].version` accepts `/` (tag form `<name>/vX.Y.Z`); member
   sub-installs receive the path-safe label (`/` → `-`) because
   `versionTagSchema` forbids slashes.
@@ -177,6 +183,9 @@ sequenceDiagram
   (stage-tagged, ADR-021 shape).
 - **Attach with colliding standalone flow id** → `MaisterError("CONFLICT")`,
   no partial group.
+- **Attach when another attached package already provides the same
+  `(kind, id)` MCP/restriction record** → `MaisterError("CONFLICT")`, no
+  partial group (same-id different-kind records coexist).
 - **Detach while a member revision is run-pinned** →
   `MaisterError("PRECONDITION")`.
 - **Source delete while installs from it are attached** →

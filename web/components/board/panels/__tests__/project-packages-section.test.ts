@@ -57,6 +57,7 @@ describe("ProjectPackagesSection", () => {
       createElement(ProjectPackagesSection, {
         slug: "demo",
         isAdmin: true,
+        canTrust: true,
         attachments: [attachment],
         availableInstalls: installs,
       }),
@@ -67,11 +68,27 @@ describe("ProjectPackagesSection", () => {
     expect(markup).toContain("/projects/demo/package-installs/att-1");
     // Upgrade target is the OTHER aif install; trust shown for untrusted.
     expect(markup).toContain("aif/v2.0.0");
-    expect(markup).toContain("trust");
+    expect(markup).toContain(">trust<");
     expect(markup).toContain("detach");
     // Attach picker offers only packages not yet attached (core, not aif).
     expect(markup).toContain("core@core/v0.1.0");
     expect(markup).not.toContain("aif@aif/v2.0.0</option>");
+  });
+
+  it("hides the trust button from project admins without the global role", () => {
+    const markup = renderToStaticMarkup(
+      createElement(ProjectPackagesSection, {
+        slug: "demo",
+        isAdmin: true,
+        canTrust: false,
+        attachments: [attachment],
+        availableInstalls: installs,
+      }),
+    );
+
+    // Trust is platform-scoped (global admin); project admins keep the rest.
+    expect(markup).not.toContain(">trust<");
+    expect(markup).toContain("detach");
   });
 
   it("hides admin controls for non-admin viewers and shows the empty state", () => {
@@ -79,6 +96,7 @@ describe("ProjectPackagesSection", () => {
       createElement(ProjectPackagesSection, {
         slug: "demo",
         isAdmin: false,
+        canTrust: false,
         attachments: [],
         availableInstalls: installs,
       }),
