@@ -337,6 +337,13 @@
       "when": 1781212800000,
       "tag": "0047_multi_run_cost_policy",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1781224828400,
+      "tag": "0048_packages",
+      "breakpoints": true
     }
   ]
 }

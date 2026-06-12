@@ -47,6 +47,7 @@ describe("capabilityImports table shape", () => {
       capabilityRefId: "my-mcp",
       source: "github.com/org/cap",
       versionTag: "v1.0.0",
+      packageInstallId: null,
       resolvedRevision: "a".repeat(40),
       manifestDigest: "sha256:abc",
       manifest: { name: "my-mcp" },

@@ -406,6 +406,11 @@ export const flows = pgTable(
     versionBinding: text("version_binding", { enum: ["pinned", "latest"] })
       .notNull()
       .default("latest"),
+    // ADR-087: membership in an attached package group (null = standalone).
+    // Detach removes the group in its own transaction — no ON DELETE action.
+    packageInstallId: text("package_install_id").references(
+      () => packageInstalls.id,
+    ),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
@@ -2275,6 +2280,10 @@ export const capabilityImports = pgTable(
     })
       .notNull()
       .default("untrusted"),
+    // ADR-087: membership in an attached package group (null = standalone).
+    packageInstallId: text("package_install_id").references(
+      () => packageInstalls.id,
+    ),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
@@ -2286,6 +2295,100 @@ export const capabilityImports = pgTable(
     uniqProjectRefRevision: unique(
       "capability_imports_project_ref_revision_uq",
     ).on(t.projectId, t.capabilityRefId, t.resolvedRevision),
+  }),
+);
+
+// --- Package management (ADR-087, migration 0047) ---------------------------
+// Platform catalog of package monorepo sources. `discovered` caches the last
+// successful refresh ([{name, tags[]}]); failures keep the stale snapshot.
+export const packageSources = pgTable("package_sources", {
+  id: text("id").primaryKey(),
+  url: text("url").notNull().unique("package_sources_url_uq"),
+  enabled: boolean("enabled").notNull().default(true),
+  note: text("note"),
+  discovered: jsonb("discovered")
+    .$type<DiscoveredPackageEntry[]>()
+    .notNull()
+    .default([]),
+  lastCheckedAt: timestamp("last_checked_at", {
+    withTimezone: true,
+    mode: "date",
+  }),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+    .notNull()
+    .defaultNow(),
+});
+
+export type DiscoveredPackageEntry = {
+  name: string;
+  tags: string[];
+};
+
+// Immutable installed package revision (two-phase Installing → Installed).
+// `manifest` holds the parsed maister-package.yaml plus the skills/agents
+// inventory; `installed_path` is NEVER projected to clients.
+export const packageInstalls = pgTable(
+  "package_installs",
+  {
+    id: text("id").primaryKey(),
+    sourceUrl: text("source_url").notNull(),
+    name: text("name").notNull(),
+    versionLabel: text("version_label").notNull(),
+    resolvedRevision: text("resolved_revision").notNull(),
+    manifest: jsonb("manifest").notNull(),
+    manifestDigest: text("manifest_digest").notNull(),
+    installedPath: text("installed_path").notNull(),
+    packageStatus: text("package_status", {
+      enum: ["Discovered", "Installing", "Installed", "Failed", "Removed"],
+    })
+      .notNull()
+      .default("Installing"),
+    trustStatus: text("trust_status", {
+      enum: ["untrusted", "trusted", "trusted_by_policy"],
+    })
+      .notNull()
+      .default("untrusted"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniqSourceNameRevision: unique("package_installs_source_name_rev_uq").on(
+      t.sourceUrl,
+      t.name,
+      t.resolvedRevision,
+    ),
+  }),
+);
+
+// Per-project package enablement: at most one attached version of a package
+// name per project. Group membership rides flows.package_install_id +
+// capability_imports.package_install_id (one attach/detach transaction).
+export const projectPackageAttachments = pgTable(
+  "project_package_attachments",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    packageInstallId: text("package_install_id")
+      .notNull()
+      .references(() => packageInstalls.id, { onDelete: "restrict" }),
+    packageName: text("package_name").notNull(),
+    attachedAt: timestamp("attached_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniqProjectPackage: unique(
+      "project_package_attachments_project_name_uq",
+    ).on(t.projectId, t.packageName),
   }),
 );
 
@@ -2348,6 +2451,10 @@ export type AssignmentStatus = Assignment["status"];
 export type AssignmentEvent = typeof assignmentEvents.$inferSelect;
 export type CapabilityImport = typeof capabilityImports.$inferSelect;
 export type CapabilityImportInsert = typeof capabilityImports.$inferInsert;
+export type PackageSource = typeof packageSources.$inferSelect;
+export type PackageInstall = typeof packageInstalls.$inferSelect;
+export type ProjectPackageAttachment =
+  typeof projectPackageAttachments.$inferSelect;
 
 // M16 (ADR-046): project-scoped API tokens (session-managed, sha256 at rest).
 // Snake_case JS keys (matching the accounts table pattern) so that column
