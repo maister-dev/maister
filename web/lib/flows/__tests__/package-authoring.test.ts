@@ -179,13 +179,12 @@ describe("authored Flow package body validation", () => {
     ]);
   });
 
-  // T7 (post-restructure): `plugins/aif` is no longer a single flat authored flow
-  // package — it is a meta-package (capability/ bundle + flows/<name>/ + config/).
-  // The canonical authored flow package is now each flow source dir; assert the
-  // shipped `flows/dev` reads + validates as a valid authored package.
+  // T7 (post-extraction): the AIF package lives in the external maister-plugins
+  // repo (ADR-087); the fixture snapshot keeps this round-trip honest. Assert
+  // the aif-dev flow dir reads + validates as a valid authored package.
   it("imports the canonical AIF dev flow as a valid authored package", async () => {
     const body = await readAuthoredFlowPackageDirectory(
-      "../plugins/aif/flows/dev",
+      "test-fixtures/aif-flows/dev",
     );
 
     expect(body.validation.status).toBe("valid");

@@ -287,7 +287,7 @@ Validate the canonical AIF package without touching the database:
 
 ```bash
 pnpm --filter maister-web validate-authored-flow \
-  --source-dir ../plugins/aif
+  --source-dir ../../maister-plugins/packages/aif/flows/dev
 ```
 
 Import it as a project-scoped authored draft:
@@ -296,7 +296,7 @@ Import it as a project-scoped authored draft:
 DB_URL=postgres://maister:maister@localhost:5432/maister \
   pnpm --filter maister-web import-flow-package-draft \
     --project maister-dev \
-    --source-dir ../plugins/aif
+    --source-dir ../../maister-plugins/packages/aif/flows/dev
 ```
 
 Export a valid authored Flow by capability id or package slug. Export writes a

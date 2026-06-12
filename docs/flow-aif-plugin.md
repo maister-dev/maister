@@ -1,127 +1,109 @@
-# `aif` Flow Plugin
+# `aif` Flow Package
 
-The `aif` plugin wraps the AI-Factory slash commands into a single
-end-to-end Flow used to dogfood MAIster against its own task board.
+The AIF package wraps the AI-Factory framework (skills, subagents, slash
+commands) into five MAIster flow graphs used to dogfood MAIster against its
+own task board.
 
-Plugin source: `plugins/aif/` in this monorepo.
+**Package source: the external `maister-plugins` repo** —
+`packages/aif/`, versioned by the per-package tag `aif/v2.0.0` (ADR-087).
+The package was extracted from this repo's former `plugins/aif/` on
+2026-06-12; a verbatim fixture snapshot of the five flow graphs remains at
+`web/test-fixtures/aif-flows/` for engine-behavior tests.
 
-## What it wraps
+## What it ships
 
-| step      | type   | mode               | prompt                                          |
-| --------- | ------ | ------------------ | ----------------------------------------------- |
-| `explore` | agent  | slash-in-existing  | `/aif-explore {{ task.prompt }}`                |
-| `plan`    | agent  | slash-in-existing  | `/aif-plan continue with the explored context`  |
-| `implement` | agent | slash-in-existing | `/aif-implement`                                |
-| `fix`     | agent  | slash-in-existing  | `/aif-fix any issues from /aif-implement`       |
-| `review`  | human  | —                  | reviewer form (`schemas/review.json`)           |
+```
+packages/aif/
+  maister-package.yaml      # package manifest (flows + capability bundle)
+  flows/{dev,bugfix,evolve,roadmap,init}/flow.yaml (+ schemas/)
+  capability/skills/aif-*/  # 27 vendored AIF skills
+  capability/agents/*.md    # 19 vendored subagents
+  config/ai-factory.config.yaml   # template for projects without one
+  setup.sh                  # inert no-op (capability materialization delivers content)
+```
 
-The form has two fields: `approved: boolean (required)` + `comments: string`.
-On reject the plan calls back to `implement` via
-`on_reject.goto_step: implement` (the loop-back is recorded in
-the HITL response; runner execution of the goto is designed).
+| flow id       | route_when |
+| ------------- | ---------- |
+| `aif-dev`     | Feature/enhancement/refactor with a clear spec (intake → plan → improve → plan_review → implement → checks → code_review → review → commit). |
+| `aif-bugfix`  | A reported bug/error to fix (fix → checks → code_review → review → commit). |
+| `aif-evolve`  | Periodic: distill fix-patches into better skills. |
+| `aif-roadmap` | Large/multi-milestone initiative needing a roadmap. |
+| `aif-init`    | One-time: project not yet AIF-initialized. |
 
-## Why slash-in-existing matters
+All five are typed-node **graphs** (engine ≥ 1.4.0 since `aif/v2.0.0`):
+`retry_policy` on every `ai_coding` node, explicit
+`defaults.session_policy: resume`, reviewer-selectable
+`workspacePolicies: [keep, rewind-to-node-checkpoint]` on the dev/bugfix fix
+loops, and `must_touch` mutation gates on the evolve/roadmap/init commit
+nodes. Interactivity is MAIster-native HITL (form intake, human review,
+permission requests) — the AIF `AskUserQuestion` tool stays disabled.
 
-All four agent steps share one supervisor session, so each slash command
-sees the prior turns' context (memory, tool state, last edits). Mixing
-`new-session` here would force each step to re-establish context from
-scratch — slower, more tokens, weaker results.
+## How a project consumes it
+
+**Today (per-flow wiring, pre-P1):** six `maister.yaml` entries — five
+`flows[]` sources + one `capability_imports[]` bundle, all pointing into a
+local checkout:
+
+```yaml
+capability_imports:
+  - id: aif-bundle
+    source: file:///…/maister-plugins/packages/aif/capability
+    version: local-dev
+flows:
+  - id: aif-dev
+    source: file:///…/maister-plugins/packages/aif/flows/dev
+    version: local-dev
+  # … ×5
+```
+
+**After P1 (`packages[]`, ADR-087):** one entry —
+
+```yaml
+packages:
+  - id: aif
+    source: github.com/<org>/maister-plugins   # or file:///…/maister-plugins
+    version: aif/v2.0.0
+    path: packages/aif
+```
+
+`installFlowPlugin()` auto-detects the source kind (local dir → `fs.cp` into
+the content-addressed cache; git URL → `git clone --branch <tag> --depth 1`).
+See [`flow-installer.md`](flow-installer.md) for the pipeline and
+[`system-analytics/packages.md`](system-analytics/packages.md) for the
+package-level lifecycle.
 
 ## `setup.sh`
 
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
+Inert no-op: prints a one-line notice and exits `0`. MAIster delivers AIF
+skills + subagents through capability materialization into the run worktree
+(repo-local copies win), so there is nothing to install at setup time —
+no `ai-factory init`, no npm.
 
-if [ -n "${MAISTER_FLOW_SKIP_SETUP:-}" ]; then
-  echo "[aif setup] MAISTER_FLOW_SKIP_SETUP set — skipping" >&2
-  exit 0
-fi
-if [ ! -t 0 ]; then
-  echo "[aif setup] non-interactive shell — skipping ai-factory init" >&2
-  exit 0
-fi
-if command -v ai-factory >/dev/null 2>&1; then
-  ai-factory init
-else
-  echo "[aif setup] ai-factory CLI not found on PATH — skipping init (plugin will still load)" >&2
-fi
-```
-
-The script runs `ai-factory init` when invoked from a TTY with the CLI on
-PATH. In CI / non-interactive contexts it skips cleanly. The integration
-test (`web/lib/flows/__tests__/runner.integration.test.ts`) installs the
-plugin in this non-interactive mode.
-
-## Source location
-
-For now `aif` lives in-repo. `installFlowPlugin()` accepts the absolute
-path (or `file://` URL) as `source`:
+## Register + launch (dev recipe)
 
 ```bash
-pnpm --filter @maister/web install-flow \
-  --project <slug> \
-  --source /abs/path/to/mAIster/plugins/aif \
-  --version local-dev \
-  --flow-id aif
-```
-
-When the plugin extracts to its own repo, flip `source` to the
-git URL and `version` to a real semver tag in `maister.yaml`:
-
-```yaml
-flows:
-  - id: aif
-    source: github.com/<org>/maister-flow-aif
-    version: v0.1.0
-```
-
-`installFlowPlugin()` auto-detects the source kind:
-
-- absolute path / `file://` URL pointing at a non-`.git` directory with
-  `flow.yaml` → `fs.cp` into the system cache.
-- absolute path inside a `.git` repo, or a `https://...` git URL → fall
-  through to `git clone --branch <version>`.
-
-The local-source path is the migration bridge: no code changes when the
-plugin moves out of the monorepo, just a `maister.yaml` flip.
-
-## Register against a project
-
-```bash
+# per-flow install (pre-P1), one flow at a time:
 pnpm install-flow \
   --project <slug> \
-  --source /abs/path/to/plugins/aif \
+  --source /abs/path/to/maister-plugins/packages/aif/flows/dev \
   --version local-dev \
-  --flow-id aif
-```
+  --flow-id aif-dev
 
-After install:
-
-- `~/.maister/flows/aif@local-dev/` holds the plugin contents.
-- `<project>/.maister/<slug>/flows/aif` is a symlink to the above.
-- `flows` row exists in the DB with `manifest` populated.
-
-## Launch a run
-
-Either the dev CLI or the Route Handler:
-
-```bash
-# Dev CLI (assumes a Pending run already exists for the task)
-pnpm run-flow --task <task-id>
-
-# OR Route Handler — creates the run, the workspace, the worktree:
+# launch through the Route Handler (creates run + workspace + worktree):
 curl -X POST http://localhost:3000/api/runs \
   -H 'content-type: application/json' \
   -d '{ "taskId": "<task-id>" }'
 ```
 
-Response (when started): `202 { runId, status: "Running" }`. The run
-proceeds through `explore → plan → implement → fix → review`, halting at
-`review` with `runs.status = "NeedsInput"`.
+`aif-dev` halts first at the `intake` form HITL, then proceeds
+plan → … → review → commit, with the commit node's `command_check` gate
+asserting a clean tree + a Conventional Commits subject.
 
 ## See also
 
-- `docs/flow-dsl.md` — full step/templating/wire reference.
+- `docs/flow-dsl.md` — graph DSL / templating / wire reference.
 - `docs/flow-installer.md` — install pipeline + local-source detection.
-- `docs/getting-started.md` — end-to-end recipe.
+- `docs/system-analytics/packages.md` — package management (ADR-087).
+- `docs/pv/package-management.md` — design + follow-up briefs.
+- The package's own `README.md` in `maister-plugins/packages/aif/` —
+  provenance + the `aif/v2.0.0` bump notes.

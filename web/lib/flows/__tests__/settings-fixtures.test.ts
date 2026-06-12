@@ -9,7 +9,7 @@ import { isMaisterError } from "@/lib/errors";
 const FIXTURES = resolve(__dirname, "_fixtures");
 const AIF_FLOW = resolve(
   __dirname,
-  "../../../../plugins/aif/flows/dev/flow.yaml",
+  "../../../test-fixtures/aif-flows/dev/flow.yaml",
 );
 
 function capabilityNodes(

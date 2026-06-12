@@ -12,7 +12,7 @@ import { validateHitlResponse } from "@/lib/flows/hitl-validate";
 const here = dirname(fileURLToPath(import.meta.url));
 const intakePath = resolve(
   here,
-  "../../../plugins/aif/flows/dev/schemas/intake.json",
+  "../../test-fixtures/aif-flows/dev/schemas/intake.json",
 );
 const intakeDoc: unknown = JSON.parse(readFileSync(intakePath, "utf8"));
 

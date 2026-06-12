@@ -24,7 +24,7 @@ import { composeReworkPayload } from "@/lib/review-comments/serialize";
 // unreferenced commentsVar means the composed review payload is silently
 // never seen by the agent (Task 18 contract).
 const here = dirname(fileURLToPath(import.meta.url));
-const FLOWS_DIR = resolve(here, "../../../../../plugins/aif/flows");
+const FLOWS_DIR = resolve(here, "../../../../test-fixtures/aif-flows");
 const ALL_FLOWS = ["bugfix", "dev", "evolve", "init", "roadmap"] as const;
 
 type AifFlow = (typeof ALL_FLOWS)[number];

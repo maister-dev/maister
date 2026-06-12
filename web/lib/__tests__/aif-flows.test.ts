@@ -6,12 +6,12 @@ import { describe, expect, it } from "vitest";
 
 import { loadFlowManifest } from "@/lib/config";
 
-// The five shipped AIF flow graphs live outside web/ (package content). Resolved
-// from the repo root. loadFlowManifest parses flowYamlV1Schema AND runs
+// The five AIF flow graphs (fixture snapshot under web/test-fixtures/ —
+// the shipped package lives in the external maister-plugins repo, ADR-087). loadFlowManifest parses flowYamlV1Schema AND runs
 // validateGraphManifest (transitions resolve, no unknown goto, bounded cycles,
 // artifact rules) — so a non-throwing load is the full regression guard (T7).
 const here = dirname(fileURLToPath(import.meta.url));
-const FLOWS_DIR = resolve(here, "../../../plugins/aif/flows");
+const FLOWS_DIR = resolve(here, "../../test-fixtures/aif-flows");
 const FLOWS = ["dev", "bugfix", "evolve", "roadmap", "init"] as const;
 
 describe("aif flow package — shipped flow graphs (T7)", () => {

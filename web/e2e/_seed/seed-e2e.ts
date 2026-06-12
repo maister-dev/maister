@@ -200,7 +200,7 @@ const M12_REVIEW_SCHEMA = {
 };
 
 // The migrated aif manifest (M12 typed artifacts) — kept in lockstep with
-// plugins/aif/flow.yaml so the run-detail settings/evidence reads resolve.
+// the AIF flow fixture so the run-detail settings/evidence reads resolve.
 const M12_MANIFEST = {
   schemaVersion: 1,
   name: "aif",

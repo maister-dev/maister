@@ -1,5 +1,5 @@
 // T7: pins the M12 declared-artifact + M15 verdict-calibration contract of the
-// bundled aif-dev flow. Loads the REAL plugins/aif/flows/dev/flow.yaml through
+// bundled aif-dev flow. Loads the aif-dev fixture (web/test-fixtures/aif-flows) through
 // the project's loader (loadFlowManifest → validateGraphManifest) and asserts the
 // shipped graph carries typed artifacts (impl-diff requiredFor review+merge,
 // a blocking artifact_required review gate) and the folded advisory calibration.
@@ -15,7 +15,7 @@ import { compileManifest } from "@/lib/flows/graph/compile";
 
 const AIF_FLOW = resolve(
   __dirname,
-  "../../../../plugins/aif/flows/dev/flow.yaml",
+  "../../../test-fixtures/aif-flows/dev/flow.yaml",
 );
 
 let manifest: FlowYamlV1;
