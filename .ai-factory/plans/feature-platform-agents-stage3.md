@@ -2,7 +2,7 @@
 
 - **Branch**: `feature/platform-agents-stage3` (off `main` @ `f34769fd`)
 - **Created**: 2026-06-12
-- **Status**: Implemented (Phases 0–8 complete; gates green)
+- **Status**: Implemented + REWORKED (Phases 0–8 and rework R0–R6 complete; gates green; package-source model per owner decisions 1–8)
 - **Design record**: the 2026-06-11 platform-agents design doc is LOST (owner: do not restore). Inputs for this plan: the /aif-plan task args (verbatim Stage-3 scope), `docs/pv/agents-as-environment-actors.md` (Stage-0 vision + locked brainstorm decisions), ADR-083/M31 (polymorphic `agent` actor, `task.triage_requeued` reserved), ADR-086/M32 (consumer seam), `.ai-factory/specs/domain-event-outbox.spec.md` (Stage-3 prep notes). The three design amendments over Stage-0: **per-agent runner**, **standalone-first**, **social layer**.
 
 ## Progress
@@ -387,7 +387,7 @@ Continuous daemons + crash-loop backoff (Mγ), ADR-041 enforcement flip + destru
 - [x] R3 — workspace ref (ephemeral read-only worktree at trigger ref) — commit `d62614f4`
 - [x] R4 — recommended bindings + UI demotion + Studio frontmatter fields — commit `dcfd8525` (UI demotion landed early in R1 `66c8d651`; Studio deep-link deferred — no authored-capability backref on agents rows)
 - [x] R5 — capability-profile MCP materialization for agent sessions — commit `5908fc84`
-- [ ] R6 — tests/e2e rework + docs amendments + gates
+- [x] R6 — tests/e2e rework + docs amendments + gates — commit `c4f741ff` (seed/e2e rework landed progressively in R1/R2; R6 = docs + full-gate close-out. Gates: tsc ×3 = 0, unit 3761/206/41, integration web 1333/1334 — the 1 red is main's observatory N+1 debt — + sup 76, e2e 90 passed with acp-runners = main debt, validators + redocly green, numbering re-verified vs live main `0282235f`)
 
 ## Rework design decisions
 
