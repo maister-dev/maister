@@ -10,7 +10,7 @@ import {
 } from "@/lib/packages/catalog";
 import { notFound, packageErrorResponse } from "@/lib/packages/http";
 
-// (ADR-087) `id` is a url-param resolved to the server row (404 on miss);
+// (ADR-088) `id` is a url-param resolved to the server row (404 on miss);
 // mutable fields: enabled, note. The url is immutable (delete + re-add).
 const patchBodySchema = z
   .object({

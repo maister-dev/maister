@@ -120,7 +120,7 @@ describe("installFlowPlugin (integration)", () => {
     expect(row.manifest.runner_profiles).toHaveProperty("claude-default");
   });
 
-  it("ADR-087: local-source install honors resolvedRevisionOverride (cache key + row revision)", async () => {
+  it("ADR-088: local-source install honors resolvedRevisionOverride (cache key + row revision)", async () => {
     const localDir = join(fixturesDir, "local-override-pkg");
 
     await mkdir(localDir, { recursive: true });

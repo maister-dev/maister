@@ -180,7 +180,7 @@ describe("authored Flow package body validation", () => {
   });
 
   // T7 (post-extraction): the AIF package lives in the external maister-plugins
-  // repo (ADR-087); the fixture snapshot keeps this round-trip honest. Assert
+  // repo (ADR-088); the fixture snapshot keeps this round-trip honest. Assert
   // the aif-dev flow dir reads + validates as a valid authored package.
   it("imports the canonical AIF dev flow as a valid authored package", async () => {
     const body = await readAuthoredFlowPackageDirectory(

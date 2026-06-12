@@ -273,7 +273,7 @@ creates the per-project symlink at
 row into the `flows` table. The Add-Project UI will replace
 this CLI for end users — it is a manual smoke-test surface only.
 
-## Install a multi-flow package (ADR-087)
+## Install a multi-flow package (ADR-088)
 
 A package (`maister-package.yaml` + flows + capability bundle) installs as
 ONE import — every member flow and the bundle share the package's resolved

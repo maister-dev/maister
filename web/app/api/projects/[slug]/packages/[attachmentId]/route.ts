@@ -16,7 +16,7 @@ const { projectPackageAttachments } = schemaModule as unknown as Record<
   any
 >;
 
-// (ADR-087) Detach: refused while member revisions are run-pinned
+// (ADR-088) Detach: refused while member revisions are run-pinned
 // (PRECONDITION → 409). Write-back removes the packages[] pin post-commit.
 export async function DELETE(
   _req: NextRequest,

@@ -67,7 +67,7 @@ export async function register(): Promise<void> {
 
   startSchedulerTimer();
 
-  // ADR-087: fire-and-forget package-discovery debounce — refresh enabled
+  // ADR-088: fire-and-forget package-discovery debounce — refresh enabled
   // package sources whose snapshot is older than
   // MAISTER_PACKAGE_DISCOVERY_STALE_HOURS (default 24). Sequential,
   // per-source try/catch; failures degrade to the cached snapshot.

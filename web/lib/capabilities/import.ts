@@ -53,7 +53,7 @@ const EXEC_MAX_BUFFER = 4 * 1024 * 1024;
 const LOCAL_REVISION_LEN = 40;
 const SETUP_DONE_SENTINEL = ".maister-setup-done";
 
-// ADR-087: validate a package-supplied revision override at this sink's
+// ADR-088: validate a package-supplied revision override at this sink's
 // invariant (40-hex) before it reaches systemCapabilityCachePath. Mirrors
 // flows.ts parseRevisionOverride.
 const CAPABILITY_REVISION_OVERRIDE = /^[0-9a-f]{40}$/;
@@ -427,7 +427,7 @@ export async function installCapabilityRevision(opts: {
   version: string;
   capabilityRefId: string;
   projectId: string;
-  // ADR-087: package sub-installs inherit the package's resolved revision
+  // ADR-088: package sub-installs inherit the package's resolved revision
   // (tag SHA or package content digest); see flows.ts resolvedRevisionOverride.
   resolvedRevisionOverride?: string;
   // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -736,7 +736,7 @@ export async function installAndIngestCapabilityImports(opts: {
   config: MaisterYamlV2;
   projectId: string;
   platformMcps?: PlatformMcpCapability[];
-  // ADR-087: package-derived agent_definition entries (installed by
+  // ADR-088: package-derived agent_definition entries (installed by
   // installPackage) folded into the SAME SET/CLEAR upsert so config + import
   // + package records stay one symmetric write.
   additionalImportDerived?: AgentDefinitionCapabilityConfig[];

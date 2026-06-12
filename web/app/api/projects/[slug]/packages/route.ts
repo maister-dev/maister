@@ -21,7 +21,7 @@ import { writeBackPackagesPin } from "@/lib/packages/yaml-writeback";
 const { packageInstalls, packageSources, projectPackageAttachments } =
   schemaModule as unknown as Record<string, any>;
 
-// (ADR-087) Project package attachments. Identifiers: `slug` = url-param →
+// (ADR-088) Project package attachments. Identifiers: `slug` = url-param →
 // project row (authorizeManagePackages); `packageInstallId` = body id
 // resolved to a server row (404 on miss). No body field ever names a
 // filesystem path.

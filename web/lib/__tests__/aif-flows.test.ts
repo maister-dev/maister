@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import { loadFlowManifest } from "@/lib/config";
 
 // The five AIF flow graphs (fixture snapshot under web/test-fixtures/ —
-// the shipped package lives in the external maister-plugins repo, ADR-087). loadFlowManifest parses flowYamlV1Schema AND runs
+// the shipped package lives in the external maister-plugins repo, ADR-088). loadFlowManifest parses flowYamlV1Schema AND runs
 // validateGraphManifest (transitions resolve, no unknown goto, bounded cycles,
 // artifact rules) — so a non-throwing load is the full regression guard (T7).
 const here = dirname(fileURLToPath(import.meta.url));

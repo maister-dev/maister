@@ -21,7 +21,7 @@ const upgradeBodySchema = z
   .object({ packageInstallId: z.string().min(1) })
   .strict();
 
-// (ADR-087) Upgrade: the target install MUST be the same package name
+// (ADR-088) Upgrade: the target install MUST be the same package name
 // (PRECONDITION → 409); in-flight runs keep their pinned revisions.
 export async function POST(
   req: NextRequest,

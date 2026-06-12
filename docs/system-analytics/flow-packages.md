@@ -23,7 +23,7 @@ execution. See
 Multi-flow **package grouping** above this per-revision substrate — platform
 package sources, version discovery, `maister-package.yaml`, per-project
 attachments, package-level trust fan-out — is **(Designed)** in
-[`packages.md`](packages.md) (ADR-087); this file's revision/enablement
+[`packages.md`](packages.md) (ADR-088); this file's revision/enablement
 mechanics are unchanged by it.
 
 ## Authored package boundary

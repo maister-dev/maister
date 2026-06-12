@@ -42,7 +42,7 @@ function asError(err: unknown): Error {
 
 // versionTagSchema (flow-paths) forbids "/" — member sub-installs receive the
 // path-safe label; the RAW tag is used only for `git clone --branch` and the
-// package row (ADR-087).
+// package row (ADR-088).
 export function packageVersionLabel(version: string): string {
   return version.replaceAll("/", "-");
 }
@@ -178,7 +178,7 @@ export type InstallPackageResult = {
   capabilityDerived: AgentDefinitionCapabilityConfig[];
 };
 
-// ADR-087: install every flow + capability bundle a package ships from ONE
+// ADR-088: install every flow + capability bundle a package ships from ONE
 // resolved source. Every member sub-install records the package's resolved
 // revision (resolvedRevisionOverride) so the group shares one immutable,
 // content-addressed identity. setup.sh of capability bundles runs through the

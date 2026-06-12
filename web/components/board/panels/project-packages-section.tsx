@@ -48,7 +48,7 @@ async function call(
   return { ok: true, writeBack: payload?.writeBack };
 }
 
-// (ADR-087) Whole-package attachments of a project: attach from the platform
+// (ADR-088) Whole-package attachments of a project: attach from the platform
 // catalog, detach/upgrade/trust per attachment. Sits ABOVE the per-flow M10
 // panel on the packages tab.
 export function ProjectPackagesSection({

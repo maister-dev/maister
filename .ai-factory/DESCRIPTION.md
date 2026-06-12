@@ -33,7 +33,7 @@ For the full vision, product model, architecture, and roadmap see
   derived from `project.name` (kebab-case); both `slug` and `repo_path` are
   unique across projects (one repo = one project). Collisions reject the
   registration.
-- **Package management (ADR-087)**: multi-flow **packages** from git
+- **Package management (ADR-088)**: multi-flow **packages** from git
   monorepos (`maister-package.yaml`; per-package tags `<name>/vX.Y.Z`) —
   platform sources + discovery, immutable `package_installs`, per-project
   attachments with `maister.yaml packages[]` bootstrap/write-back, package

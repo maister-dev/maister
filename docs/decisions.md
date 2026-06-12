@@ -113,7 +113,7 @@
 | [ADR-085](#adr-085-mimo-code-as-a-distinct-acp-adapter-family) | MiMo Code as a distinct ACP adapter family | Accepted | 2026-06-11 |
 | [ADR-086](#adr-086-domain-event-outbox-as-the-shared-trigger-bus) | Domain-event outbox as the shared trigger bus | Accepted | 2026-06-11 |
 | [ADR-087](#adr-087-multi-run-launch-cost-accounting-and-delivery-policy-surfaces) | Multi-run launch, cost accounting, and delivery-policy surfaces | Accepted | 2026-06-11 |
-| [ADR-087](#adr-087-multi-flow-package-management) | Multi-flow package management | Accepted | 2026-06-12 |
+| [ADR-088](#adr-088-multi-flow-package-management) | Multi-flow package management | Accepted | 2026-06-12 |
 
 ---
 
@@ -737,7 +737,7 @@ Graceful shutdown with `MAISTER_SHUTDOWN_GRACE_MS` budget and
 ### ADR-021: Flow package lifecycle: multi-revision, trust, and compatibility
 
 **Date:** 2026-05-30
-**Status:** Accepted (amended by [ADR-087](#adr-087-multi-flow-package-management): a package groups multiple flow sources under one import; the per-revision model below is unchanged)
+**Status:** Accepted (amended by [ADR-088](#adr-088-multi-flow-package-management): a package groups multiple flow sources under one import; the per-revision model below is unchanged)
 **Context:** ADR-010 packaged Flows as git-tag-pinned plugin bundles and M4
 shipped the loader. But the loader stores exactly one row per
 `(project_id, flow_ref_id)` (`UNIQUE` constraint) and the runner reads the
@@ -6330,7 +6330,7 @@ override to promote-time override.
 
 ---
 
-### ADR-087: Multi-flow package management
+### ADR-088: Multi-flow package management
 
 **Date:** 2026-06-12
 **Status:** Accepted
@@ -6403,7 +6403,7 @@ git monorepos and managed as a platform catalog with per-project attachments.
   existing post-trust setup path (ADR-021/ADR-042/ADR-069 unchanged).
 
 **Consequences:**
-- Migration `0047` adds the three tables + two FK columns; package installs
+- Migration `0048` adds the three tables + two FK columns; package installs
   join the M19 preserve-then-prune GC story.
 - Exactly one new env var (`MAISTER_PACKAGE_DISCOVERY_STALE_HOURS`) wired
   through `.env.example`, compose, and the configuration docs.

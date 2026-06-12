@@ -127,7 +127,7 @@ export type InstallPackageRevisionResult = {
   manifest: PackageInstallManifest;
 };
 
-// Platform-scope package install (ADR-087): resolve ONCE, copy the package
+// Platform-scope package install (ADR-088): resolve ONCE, copy the package
 // bytes into the content-addressed platform cache, record the immutable
 // `package_installs` row two-phase (Installing → Installed), and pre-install
 // the member flow revisions GLOBALLY (flow_revisions only — project wiring
@@ -188,7 +188,7 @@ export async function installPackageRevision(opts: {
 
     const id = existing?.id ?? randomUUID();
     // The "local" sentinel resolves to the content-digest label so local
-    // versions are self-identifying (ADR-087: local-<digest12>).
+    // versions are self-identifying (ADR-088: local-<digest12>).
     const versionLabel =
       opts.version === "local"
         ? `local-${resolved.resolvedRevision.slice(0, 12)}`
@@ -293,7 +293,7 @@ function manifestOf(install: any): PackageInstallManifest {
 }
 
 // Records ingested on attach carry this origin so the config SET/CLEAR sweep
-// never disables them — attach/detach own their lifecycle (ADR-087).
+// never disables them — attach/detach own their lifecycle (ADR-088).
 const ATTACHMENT_ORIGIN = "package-attachment";
 
 function ingestionRecords(

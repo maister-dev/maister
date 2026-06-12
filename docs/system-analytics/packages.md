@@ -10,7 +10,7 @@ server templates, restriction path-sets) under a single
 domain covers platform package sources, version discovery, package
 installation, per-project attachment/detach/upgrade, package-level trust, local
 versions, and the `maister.yaml packages[]` bootstrap + write-back contract
-(ADR-087). Everything below is **(Implemented)** — shipped by the
+(ADR-088). Everything below is **(Implemented)** — shipped by the
 `feature/package-management` plan (M33); per-revision install/trust mechanics stay in
 [`flow-packages.md`](flow-packages.md) and are referenced, not restated.
 
@@ -197,7 +197,7 @@ sequenceDiagram
 
 ## Linked artifacts
 
-- Decision: [`../decisions.md` ADR-087](../decisions.md#adr-087-multi-flow-package-management)
+- Decision: [`../decisions.md` ADR-088](../decisions.md#adr-088-multi-flow-package-management)
   (+ amended [ADR-021](../decisions.md#adr-021-flow-package-lifecycle-multi-revision-trust-and-compatibility)).
 - Design: `docs/pv/package-management.md` (owner-approved target picture).
 - Revision substrate: [`flow-packages.md`](flow-packages.md);

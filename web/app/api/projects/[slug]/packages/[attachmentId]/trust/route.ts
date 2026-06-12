@@ -15,7 +15,7 @@ const { projectPackageAttachments } = schemaModule as unknown as Record<
   any
 >;
 
-// (ADR-087) One operator decision per package revision: trust fans to every
+// (ADR-088) One operator decision per package revision: trust fans to every
 // member row in one tx, then pending setups run (post-commit side-effect).
 // The fan-out crosses every project attached to the install, so the gate is
 // GLOBAL admin — project-scoped managePackages is not sufficient.

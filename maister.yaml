@@ -1,7 +1,7 @@
 schemaVersion: 2
 # Dogfood registration: MAIster registers itself (T8). repo_path is the main
 # checkout (a launch does `git worktree add` off it). The AIF package is
-# consumed as ONE packages[] import (ADR-087) from the local maister-plugins
+# consumed as ONE packages[] import (ADR-088) from the local maister-plugins
 # checkout — file:// for local dogfood; the production shape is the git URL
 # with the same tag. Machine-specific absolute paths — local dogfood artifact,
 # not for main.

@@ -218,7 +218,7 @@ files are represented as package content but are never executed by authoring,
 publish, import, or export.
 
 The canonical AIF package is a real portable package, extracted to the
-external `maister-plugins` repo (`packages/aif`, ADR-087): each flow dir
+external `maister-plugins` repo (`packages/aif`, ADR-088): each flow dir
 includes `flow.yaml` plus schemas; the package ships `README.md`, `setup.sh`,
 relevant AIF skills, and agent definitions under `capability/`. Managed source
 directories such as `.codex/`, `.claude/`, `.agents/`, and

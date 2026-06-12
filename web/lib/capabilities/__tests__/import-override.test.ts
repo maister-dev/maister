@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { installCapabilityRevision } from "@/lib/capabilities/import";
 import { isMaisterError } from "@/lib/errors";
 
-// ADR-087 boundary: an invalid resolvedRevisionOverride is rejected BEFORE
+// ADR-088 boundary: an invalid resolvedRevisionOverride is rejected BEFORE
 // any fs/git/db side-effect (the dummy db object would throw if touched).
 describe("installCapabilityRevision resolvedRevisionOverride boundary", () => {
   it.each([

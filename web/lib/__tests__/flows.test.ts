@@ -86,7 +86,7 @@ describe("installFlowPlugin — boundary validation", () => {
   });
 });
 
-describe("installFlowPlugin — resolvedRevisionOverride boundary (ADR-087)", () => {
+describe("installFlowPlugin — resolvedRevisionOverride boundary (ADR-088)", () => {
   it.each([
     ["non-hex", "zzz"],
     ["unknown sentinel", "unknown"],

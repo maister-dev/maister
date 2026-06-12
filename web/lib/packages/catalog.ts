@@ -341,7 +341,7 @@ export async function refreshPackageSource(opts: {
   }
 }
 
-// --- startup debounce (ADR-087) ---------------------------------------------
+// --- startup debounce (ADR-088) ---------------------------------------------
 
 const DEFAULT_STALE_HOURS = 24;
 

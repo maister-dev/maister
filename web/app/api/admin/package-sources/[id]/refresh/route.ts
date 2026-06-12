@@ -6,7 +6,7 @@ import { requireGlobalRole } from "@/lib/authz";
 import { refreshPackageSource } from "@/lib/packages/catalog";
 import { notFound, packageErrorResponse } from "@/lib/packages/http";
 
-// (ADR-087) Discovery refresh: ls-remote tags + shallow manifest scan. A git
+// (ADR-088) Discovery refresh: ls-remote tags + shallow manifest scan. A git
 // failure is a RESULT (degraded: true, stale snapshot kept), not an error.
 export async function POST(
   _req: NextRequest,

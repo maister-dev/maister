@@ -97,7 +97,7 @@ export async function authorizeManagePackages(
   return resolved;
 }
 
-// Package trust is a PLATFORM-level decision (ADR-087: one operator decision
+// Package trust is a PLATFORM-level decision (ADR-088: one operator decision
 // per package revision fans trust onto every project attached to the same
 // install), so the gate is the global admin role — project-scoped
 // managePackages is implied for global admins but NOT sufficient on its own.

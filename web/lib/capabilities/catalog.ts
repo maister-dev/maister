@@ -290,7 +290,7 @@ export async function upsertCapabilitiesFromConfig(
       }
 
       // CLEAR exemptions: authored projections (M25) and package-attachment
-      // records (ADR-087 — owned by attach/detach, not by config upserts).
+      // records (ADR-088 — owned by attach/detach, not by config upserts).
       const scopes = refsByScope(desired);
       let disabledScopes = 0;
 

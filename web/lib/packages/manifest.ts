@@ -23,7 +23,7 @@ function asError(err: unknown): Error {
 
 export const PACKAGE_MANIFEST_FILENAME = "maister-package.yaml";
 
-// Loads + validates `<packageRoot>/maister-package.yaml` (ADR-087). Every
+// Loads + validates `<packageRoot>/maister-package.yaml` (ADR-088). Every
 // failure mode is CONFIG so callers branch on one code; the package
 // installer adds its own FLOW_INSTALL wrapping for fetch/copy failures.
 export async function loadMaisterPackageManifest(

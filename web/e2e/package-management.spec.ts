@@ -7,7 +7,7 @@ import { test, expect } from "@playwright/test";
 
 import { loadFixtures } from "./_seed/fixtures";
 
-// (ADR-087) End-to-end package management: add a platform source (local git
+// (ADR-088) End-to-end package management: add a platform source (local git
 // monorepo fixture built by THIS spec), refresh discovery, install a tag,
 // attach to a project, see member flows, detach. One serial test — the steps
 // share state and the e2e DB is shared across worktrees (no parallel reruns

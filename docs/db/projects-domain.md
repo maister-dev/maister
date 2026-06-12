@@ -87,7 +87,7 @@ erDiagram
 > Authored flow-graph node positions now live in the `flow.yaml` `presentation`
 > section, not a DB table.
 
-Package management **(Implemented, ADR-087)** groups several flows + a capability
+Package management **(Implemented, ADR-088)** groups several flows + a capability
 bundle under one platform-installed package attached per project; member
 `flows` / `capability_imports` rows join the group via nullable
 `package_install_id` FKs:
@@ -145,10 +145,10 @@ erDiagram
   as project Flow ids.
 - `project_flow_runner_defaults_project_flow_uq` on `(project_id, flow_id)` —
   one project Flow runner binding per attachment.
-- **(Implemented, ADR-087)** `package_installs` UNIQUE on
+- **(Implemented, ADR-088)** `package_installs` UNIQUE on
   `(source_url, name, resolved_revision)` — installed package revisions are
   immutable and content-addressed.
-- **(Implemented, ADR-087)** `project_package_attachments` UNIQUE on
+- **(Implemented, ADR-088)** `project_package_attachments` UNIQUE on
   `(project_id, package_name)` — at most one attached version of a package per
   project.
 
@@ -182,7 +182,7 @@ erDiagram
   default for new rows to all five adapter families; `0045` only backfills
   rows that exactly matched the previous all-adapter default.
 
-- **(Implemented, ADR-087)** `flows.package_install_id` and
+- **(Implemented, ADR-088)** `flows.package_install_id` and
   `capability_imports.package_install_id` are nullable FKs (`ON DELETE SET
   NULL` is NOT used — group removal happens through the detach transaction;
   the FK exists for grouping/joins). Standalone flows keep the column null.
@@ -190,6 +190,6 @@ erDiagram
 ## Linked artifacts
 
 - Process flows: [`../system-analytics/projects.md`](../system-analytics/projects.md),
-  [`../system-analytics/packages.md`](../system-analytics/packages.md) (Implemented, ADR-087).
+  [`../system-analytics/packages.md`](../system-analytics/packages.md) (Implemented, ADR-088).
 - Config: [`../configuration.md`](../configuration.md) §`maister.yaml v2`.
 - Source: `web/lib/db/schema.ts`.

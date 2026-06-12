@@ -198,7 +198,7 @@ export const capabilityImportEntrySchema = z.object({
   trust: z.enum(["explicit"]).optional(),
 });
 
-// --- packages[] (ADR-087): multi-flow package import entries ---------------
+// --- packages[] (ADR-088): multi-flow package import entries ---------------
 
 const isSafeRelativeSubpath = (p: string): boolean =>
   p.length > 0 &&
@@ -1026,7 +1026,7 @@ export type CliCheckSettings = z.infer<typeof cliCheckSettingsSchema>;
 export type ArtifactKind = (typeof ARTIFACT_KINDS)[number];
 export type NodeOutput = z.infer<typeof nodeOutputSchema>;
 
-// --- maister-package.yaml v1 (ADR-087) -------------------------------------
+// --- maister-package.yaml v1 (ADR-088) -------------------------------------
 // Multi-flow package manifest at the package root. Importable anywhere (no
 // server-only) — the fs-reading loader lives in web/lib/packages/manifest.ts.
 

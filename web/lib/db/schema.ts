@@ -406,7 +406,7 @@ export const flows = pgTable(
     versionBinding: text("version_binding", { enum: ["pinned", "latest"] })
       .notNull()
       .default("latest"),
-    // ADR-087: membership in an attached package group (null = standalone).
+    // ADR-088: membership in an attached package group (null = standalone).
     // Detach removes the group in its own transaction — no ON DELETE action.
     packageInstallId: text("package_install_id").references(
       () => packageInstalls.id,
@@ -2280,7 +2280,7 @@ export const capabilityImports = pgTable(
     })
       .notNull()
       .default("untrusted"),
-    // ADR-087: membership in an attached package group (null = standalone).
+    // ADR-088: membership in an attached package group (null = standalone).
     packageInstallId: text("package_install_id").references(
       () => packageInstalls.id,
     ),
@@ -2298,7 +2298,7 @@ export const capabilityImports = pgTable(
   }),
 );
 
-// --- Package management (ADR-087, migration 0047) ---------------------------
+// --- Package management (ADR-088, migration 0048) ---------------------------
 // Platform catalog of package monorepo sources. `discovered` caches the last
 // successful refresh ([{name, tags[]}]); failures keep the stale snapshot.
 export const packageSources = pgTable("package_sources", {

@@ -67,7 +67,7 @@ async function flushLogger(): Promise<void> {
   });
 }
 
-// Ops smoke CLI for ADR-087 package installs: installs every flow + bundle a
+// Ops smoke CLI for ADR-088 package installs: installs every flow + bundle a
 // package ships into a registered project, then ingests the package-derived
 // capability entries through the project's SET/CLEAR upsert (re-reading the
 // project's maister.yaml so config + import + package records stay one

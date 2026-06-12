@@ -53,11 +53,11 @@ erDiagram
     FLOWS ||--o{ FLOW_REVISIONS : "revisions (M10)"
     PROJECTS ||--o{ CAPABILITY_RECORDS : has
     PROJECTS ||--o{ CAPABILITY_IMPORTS : "git-pinned imports (M14)"
-    PACKAGE_SOURCES ||--o{ PACKAGE_INSTALLS : "installed from (ADR-087 Implemented)"
-    PACKAGE_INSTALLS ||--o{ PROJECT_PACKAGE_ATTACHMENTS : "attached (ADR-087 Implemented)"
-    PROJECTS ||--o{ PROJECT_PACKAGE_ATTACHMENTS : "package enablement (ADR-087 Implemented)"
-    PACKAGE_INSTALLS ||--o{ FLOWS : "group FK (ADR-087 Implemented)"
-    PACKAGE_INSTALLS ||--o{ CAPABILITY_IMPORTS : "group FK (ADR-087 Implemented)"
+    PACKAGE_SOURCES ||--o{ PACKAGE_INSTALLS : "installed from (ADR-088 Implemented)"
+    PACKAGE_INSTALLS ||--o{ PROJECT_PACKAGE_ATTACHMENTS : "attached (ADR-088 Implemented)"
+    PROJECTS ||--o{ PROJECT_PACKAGE_ATTACHMENTS : "package enablement (ADR-088 Implemented)"
+    PACKAGE_INSTALLS ||--o{ FLOWS : "group FK (ADR-088 Implemented)"
+    PACKAGE_INSTALLS ||--o{ CAPABILITY_IMPORTS : "group FK (ADR-088 Implemented)"
     PROJECTS ||--o{ AUTHORED_CAPABILITIES : "authored catalog (M25)"
     PROJECTS ||--o{ SCHEDULER_JOBS : "optional scheduler scope (M24)"
     PROJECTS ||--o{ AGENT_SCHEDULES : "agent schedules (M24)"
@@ -378,7 +378,7 @@ erDiagram
     }
 
     PACKAGE_SOURCES {
-        text id PK "ADR-087 Implemented"
+        text id PK "ADR-088 Implemented"
         text url UK "git monorepo URL"
         boolean enabled "DEFAULT true"
         jsonb discovered "cached name+tags snapshot; DEFAULT []"
@@ -386,7 +386,7 @@ erDiagram
     }
 
     PACKAGE_INSTALLS {
-        text id PK "ADR-087 Implemented"
+        text id PK "ADR-088 Implemented"
         text source_url
         text name "package name"
         text version_label "raw tag or local-digest12"
@@ -398,7 +398,7 @@ erDiagram
     }
 
     PROJECT_PACKAGE_ATTACHMENTS {
-        text id PK "ADR-087 Implemented"
+        text id PK "ADR-088 Implemented"
         text project_id FK "ON DELETE CASCADE"
         text package_install_id FK "ON DELETE RESTRICT"
         text package_name "denormalized; UNIQUE with project_id"

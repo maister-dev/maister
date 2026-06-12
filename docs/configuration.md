@@ -315,7 +315,7 @@ retroactively invalidated. **M25 authored catalog carve-out:** rows whose
 disabled by `upsertCapabilitiesFromConfig` SET/CLEAR, even though they also use
 `source='project'`.
 
-#### `packages[]` (Implemented, ADR-087)
+#### `packages[]` (Implemented, ADR-088)
 
 The optional `packages[]` block attaches **multi-flow packages** — one entry
 registers every flow plus the capability bundle a package ships, pinned to a
@@ -348,7 +348,7 @@ attach/detach/upgrade), and each mutation **writes the pin back** to this
 file (comment-preserving, atomic) so the project can be re-raised on another
 MAIster instance from git alone.
 
-#### `maister-package.yaml` v1 (Implemented, ADR-087)
+#### `maister-package.yaml` v1 (Implemented, ADR-088)
 
 The package manifest at the package root (inside the package repo — not a
 project file). Loader: `loadMaisterPackageManifest` (`CONFIG` on any reject).
@@ -1020,7 +1020,7 @@ Read by Next.js (`web/`) and `supervisor/` at startup:
 | `MCP_PORT` | no | `3001` | **(M16 — Implemented)** MCP facade HTTP bind port for the Streamable-HTTP transport. Unused under stdio. |
 | `MAISTER_TRUSTED_FLOW_SOURCE_PREFIXES` | no | unset (empty) | M10 Flow package trust policy (ADR-021). Comma-separated source-URL prefixes that are `trusted_by_policy` (auto-enabled on install). `local`/`file://` sources are always trusted by policy; every other git source is `untrusted` until an explicit per-(project, revision) trust confirmation. Read by the web tier (`web/lib/flows/trust.ts`) at install time. |
 | `MAISTER_TRUSTED_CAPABILITY_SOURCE_PREFIXES` | no | unset (empty) | **Implemented (M14).** Comma-separated source-URL prefixes for `capability_imports[]` entries that are granted `trusted_by_policy` (auto-trusted on install, no explicit confirm required). Mirrors `MAISTER_TRUSTED_FLOW_SOURCE_PREFIXES` exactly — same prefix-match semantics, same `local`/`file://` always-trusted rule. Every other git source is `untrusted` until an operator calls `POST /api/projects/{slug}/capabilities/{capabilityRefId}/trust`. Setting `trust: explicit` on a `capability_imports[]` entry forces the confirm step even for policy-trusted sources. Read by `web/lib/capabilities/import.ts:resolveCapabilityTrust()`. See ADR-043. |
-| `MAISTER_PACKAGE_DISCOVERY_STALE_HOURS` | no | `24` | **(Implemented — ADR-087.)** Web: package-source discovery staleness window (integer hours; invalid/absent → default). At web startup, enabled `package_sources` rows with `last_checked_at` null or older than this are refreshed sequentially (fire-and-forget, per-source try/catch); the manual `/refresh` endpoint ignores the window. Wired through `.env.example`; host/service-env only — the default compose stays Postgres-only per [ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres), so this is never a container/compose var. |
+| `MAISTER_PACKAGE_DISCOVERY_STALE_HOURS` | no | `24` | **(Implemented — ADR-088.)** Web: package-source discovery staleness window (integer hours; invalid/absent → default). At web startup, enabled `package_sources` rows with `last_checked_at` null or older than this are refreshed sequentially (fire-and-forget, per-source try/catch); the manual `/refresh` endpoint ignores the window. Wired through `.env.example`; host/service-env only — the default compose stays Postgres-only per [ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres), so this is never a container/compose var. |
 | `MAISTER_KEEPALIVE_MINUTES` | no | `30` | NeedsInput keep-alive window (minutes). Read by BOTH supervisor (pending-permission deferred timeout) AND web (sweeper expiry, activity-bump amount, useActivityPing heartbeat at half-window). Bumped by every `POST /api/runs/:runId/activity`. |
 | `MAISTER_KEEPALIVE_SWEEP_INTERVAL_SECONDS` | no | `30` | M8 keep-alive sweeper tick frequency (seconds). The singleton timer in `web/lib/runs/keepalive-sweeper.ts` calls `runSweepTick()` every interval. Lower → snappier idle transitions; higher → less DB load. |
 | `MAISTER_NEEDSINPUTIDLE_TTL_HOURS` | no | `24` | M8 NeedsInputIdle abandonment TTL (hours). Sweeper pass 2 flips `NeedsInputIdle` rows whose `checkpoint_at + ttl < now()` to `Abandoned` and closes any open `hitl_requests.respondedAt`. |

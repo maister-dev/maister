@@ -2,7 +2,7 @@
 
 > **✅ STATUS (2026-06-12): SUPERSEDED. Do not implement this fast plan.**
 > The Package-management milestone this plan deferred to is now designed and in
-> delivery: design `docs/pv/package-management.md` (ADR-087), implementation
+> delivery: design `docs/pv/package-management.md` (ADR-088), implementation
 > plan `.ai-factory/plans/feature-package-management.md` (M33). The locked
 > decisions below were carried into that design (with `flow_packages[]` renamed
 > to `packages[]`); the AIF package itself was extracted to the external

@@ -64,7 +64,7 @@ const EXEC_MAX_BUFFER = 4 * 1024 * 1024;
 // source bytes while satisfying the 40-hex revision schema (flow-paths).
 const LOCAL_REVISION_LEN = 40;
 
-// ADR-087: validate a package-supplied revision override at this sink's
+// ADR-088: validate a package-supplied revision override at this sink's
 // invariant (40-hex SHA / digest) before it can reach systemCachePath.
 function parseRevisionOverride(
   override: string | undefined,
@@ -109,7 +109,7 @@ export type InstallFlowPluginArgs = {
   // untrusted → 'untrusted'. Authored-bridge callers set this to 'untrusted'
   // to suppress setup.sh execution regardless of logic-trust (§4.2, §6.4).
   execTrustOverride?: FlowRevisionExecTrust;
-  // ADR-087: package sub-installs inherit the PACKAGE's resolved revision
+  // ADR-088: package sub-installs inherit the PACKAGE's resolved revision
   // (tag SHA or package content digest) so all members share one immutable
   // cache key and `runs.flow_revision` pinning stays content-addressed.
   // Validated against flowRevisionSchema shape before use.
@@ -186,7 +186,7 @@ function validateBoundary(args: InstallFlowPluginArgs): void {
     }
   }
 
-  // ADR-087: validate the package-supplied revision override before any
+  // ADR-088: validate the package-supplied revision override before any
   // I/O or DB access (parseRevisionOverride re-asserts inside installRevision
   // for direct callers).
   parseRevisionOverride(args.resolvedRevisionOverride, args.flowId);
@@ -1045,7 +1045,7 @@ async function installFlowPluginImpl(
 
 export async function installFlowPlugin(
   args: InstallFlowPluginArgs,
-  // ADR-087: package installs derive trust from the ORIGINAL package source
+  // ADR-088: package installs derive trust from the ORIGINAL package source
   // (file:// sub-sources are always policy-trusted and would loosen the gate
   // for git packages). Mirrors the authored-bridge override seam.
   trustStatusOverride?: TrustStatus,

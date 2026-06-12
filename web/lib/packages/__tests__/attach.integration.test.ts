@@ -617,7 +617,7 @@ describe("capability-record ownership across packages (integration)", () => {
 });
 
 describe("package trust fan-out across projects (integration)", () => {
-  it("trusting a revision fans to EVERY attached project (platform-wide by design, ADR-087)", async () => {
+  it("trusting a revision fans to EVERY attached project (platform-wide by design, ADR-088)", async () => {
     const fanDir = await mkdtemp(join(tmpdir(), "attach-fan-"));
 
     await buildMinimalPackage(fanDir, { name: "fanpkg", flowId: "fan-flow" });

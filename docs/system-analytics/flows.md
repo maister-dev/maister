@@ -8,7 +8,7 @@ a git repository with a manifest (`flow.yaml` v1), shipped CLIs, an
 optional `setup.sh`, and a step-typed YAML DSL. MAIster orchestrates
 the steps; it does NOT design Flows itself. Multi-flow **packages** that group
 several Flows + capability content under one import are **(Designed)** in
-[`packages.md`](packages.md) (ADR-087).
+[`packages.md`](packages.md) (ADR-088).
 
 ## Domain entities
 

@@ -396,7 +396,7 @@ async function register(
       }
     }
 
-    // ADR-087: packages[] bootstrap — the SAME platform-install + project-
+    // ADR-088: packages[] bootstrap — the SAME platform-install + project-
     // attach pipeline as the UI surface (package_installs row + attachment
     // group + FK links + mcp/restriction ingestion), so bootstrapped packages
     // are visible on the packages tab and manageable (detach/upgrade/trust)
@@ -485,7 +485,7 @@ async function register(
     // Install git-pinned capability imports (clone → trust → trust-gated setup)
     // and ingest the resolved set into capability_records ALONGSIDE the
     // capabilities block in one SET/CLEAR upsert — package-derived bundle
-    // entries (ADR-087) ride the same symmetric write. Lives here (not in the
+    // entries (ADR-088) ride the same symmetric write. Lives here (not in the
     // phase-c tx) because each import is a clone side-effect FK-ing the
     // committed project row; a failure is compensated by the project rollback
     // below.

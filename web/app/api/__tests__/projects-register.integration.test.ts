@@ -33,7 +33,7 @@ const installFlowPlugin = vi.fn(
   async (_args: Record<string, unknown>): Promise<unknown> => undefined,
 );
 
-// ADR-087: packages[] orchestration is spy-tested here (the real install +
+// ADR-088: packages[] orchestration is spy-tested here (the real install +
 // attach pipeline is covered by lib/packages attach tests and the
 // projects-register-packages real-fixture test); behavior swapped per test.
 const installPackageRevision = vi.fn(
@@ -428,7 +428,7 @@ describe("POST /api/projects — flow-install failure saga (integration)", () =>
   });
 });
 
-describe("POST /api/projects — packages[] bootstrap (ADR-087, integration)", () => {
+describe("POST /api/projects — packages[] bootstrap (ADR-088, integration)", () => {
   it("installs + attaches each packages[] entry and ingests package-derived capabilities", async () => {
     currentConfig = {
       ...seedConfig,

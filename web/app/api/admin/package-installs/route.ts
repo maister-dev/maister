@@ -17,7 +17,7 @@ const { packageInstalls, packageSources } = schemaModule as unknown as Record<
   any
 >;
 
-// (ADR-087) Two install forms: {sourceId, name, version} from a configured
+// (ADR-088) Two install forms: {sourceId, name, version} from a configured
 // source, or {localPath, path?} for a LOCAL VERSION (admin-only abs path —
 // the operator's own host, same trust class as registration's `path`).
 // `installed_path` is NEVER projected to clients.

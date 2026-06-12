@@ -34,7 +34,7 @@ export type AvailablePackageInstallView = {
   flows: string[];
 };
 
-// DTO projections for the project packages tab (ADR-087). `installed_path`
+// DTO projections for the project packages tab (ADR-088). `installed_path`
 // never leaves the server.
 export async function getProjectPackageAttachments(
   projectId: string,

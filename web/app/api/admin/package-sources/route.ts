@@ -10,7 +10,7 @@ import {
 } from "@/lib/packages/catalog";
 import { packageErrorResponse } from "@/lib/packages/http";
 
-// (ADR-087) Platform package-source catalog: list + create. Admin-only;
+// (ADR-088) Platform package-source catalog: list + create. Admin-only;
 // identifiers: none (list) / body url validated by zod (the source URL is
 // platform config, the same trust class as the ACP runner catalog).
 const createBodySchema = z

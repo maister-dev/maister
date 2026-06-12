@@ -14,7 +14,7 @@ import * as schemaModule from "@/lib/db/schema";
 const { packageInstalls, projectPackageAttachments, projects } =
   schemaModule as unknown as Record<string, any>;
 
-// (ADR-087) Whole-package viewer: manifest metadata, member flows (linking
+// (ADR-088) Whole-package viewer: manifest metadata, member flows (linking
 // to the per-flow viewer), inventory, MCP templates, restriction sets, trust
 // state. Pure DB read — `installed_path` never reaches the client.
 export default async function PackageInstallViewerPage(props: {

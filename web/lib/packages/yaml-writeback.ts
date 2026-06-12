@@ -25,7 +25,7 @@ export type WriteBackOp =
 
 export type WriteBackResult = "ok" | "failed";
 
-// ADR-087: after an attach/detach/upgrade transaction COMMITS, the project's
+// ADR-088: after an attach/detach/upgrade transaction COMMITS, the project's
 // `maister.yaml packages[]` pin is rewritten so the project can be re-raised
 // on another instance from git alone. Comment-preserving (yaml Document API)
 // + atomic (tmp + rename). A failure NEVER rolls back the DB operation — the

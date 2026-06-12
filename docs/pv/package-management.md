@@ -1,7 +1,7 @@
 # Package management — package repos, platform catalog, local versions
 
 > **Status:** P0–P2 SHIPPED (M33, `feature/package-management`, 2026-06-12 —
-> ADR-087, migration `0047`); P3–P6 remain follow-up planning briefs in §8.
+> ADR-088, migration `0048`); P3–P6 remain follow-up planning briefs in §8.
 > As-built deltas: file-edit gates use vacuous-presence `artifact_required`
 > on commit nodes (§6 note); the discovery staleness knob is
 > `MAISTER_PACKAGE_DISCOVERY_STALE_HOURS` (env, default 24); compose stays

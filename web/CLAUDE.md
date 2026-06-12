@@ -168,7 +168,7 @@ pnpm dev      # next dev — http://localhost:3000
 pnpm build    # next build
 pnpm start    # next start (after build)
 pnpm lint     # eslint --fix
-pnpm install-package          # ADR-087: install a multi-flow package (all flows + bundle)
+pnpm install-package          # ADR-088: install a multi-flow package (all flows + bundle)
 pnpm validate-authored-flow   # validate a portable authored Flow package dir
 pnpm import-flow-package-draft # import a package as an inert authored draft
 pnpm export-authored-flow     # export an authored Flow to a portable dir

@@ -38,7 +38,7 @@ flows:
     version: v1.0.0
 `;
 
-describe("loadProjectConfig packages[] (ADR-087)", () => {
+describe("loadProjectConfig packages[] (ADR-088)", () => {
   it("parses git + file:// package entries incl. slash-tag versions and path", async () => {
     const path = await writeFixture(
       `${BASE}packages:

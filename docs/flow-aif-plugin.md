@@ -5,7 +5,7 @@ commands) into five MAIster flow graphs used to dogfood MAIster against its
 own task board.
 
 **Package source: the external `maister-plugins` repo** —
-`packages/aif/`, versioned by the per-package tag `aif/v2.0.0` (ADR-087).
+`packages/aif/`, versioned by the per-package tag `aif/v2.0.0` (ADR-088).
 The package was extracted from this repo's former `plugins/aif/` on
 2026-06-12; a verbatim fixture snapshot of the five flow graphs remains at
 `web/test-fixtures/aif-flows/` for engine-behavior tests.
@@ -56,7 +56,7 @@ flows:
   # … ×5
 ```
 
-**After P1 (`packages[]`, ADR-087):** one entry —
+**After P1 (`packages[]`, ADR-088):** one entry —
 
 ```yaml
 packages:
@@ -103,7 +103,7 @@ asserting a clean tree + a Conventional Commits subject.
 
 - `docs/flow-dsl.md` — graph DSL / templating / wire reference.
 - `docs/flow-installer.md` — install pipeline + local-source detection.
-- `docs/system-analytics/packages.md` — package management (ADR-087).
+- `docs/system-analytics/packages.md` — package management (ADR-088).
 - `docs/pv/package-management.md` — design + follow-up briefs.
 - The package's own `README.md` in `maister-plugins/packages/aif/` —
   provenance + the `aif/v2.0.0` bump notes.
