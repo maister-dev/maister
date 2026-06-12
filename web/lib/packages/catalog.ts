@@ -340,3 +340,78 @@ export async function refreshPackageSource(opts: {
     };
   }
 }
+
+// --- startup debounce (ADR-087) ---------------------------------------------
+
+const DEFAULT_STALE_HOURS = 24;
+
+// Zod-free on purpose (single integer env): invalid/absent values fall back
+// to the default. Wired through .env.example + compose (T3.11).
+export function discoveryStaleHours(
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  const raw = env.MAISTER_PACKAGE_DISCOVERY_STALE_HOURS;
+  const parsed = raw === undefined ? NaN : Number.parseInt(raw, 10);
+
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_STALE_HOURS;
+}
+
+// Pure staleness filter (unit-tested): enabled sources never checked or
+// checked longer than the window ago.
+export function staleSourceFilter(
+  sources: ReadonlyArray<{
+    id: string;
+    enabled: boolean;
+    lastCheckedAt: Date | null;
+  }>,
+  now: Date,
+  staleHours: number,
+): string[] {
+  const cutoff = now.getTime() - staleHours * 60 * 60 * 1000;
+
+  return sources
+    .filter(
+      (s) =>
+        s.enabled &&
+        (s.lastCheckedAt === null || s.lastCheckedAt.getTime() < cutoff),
+    )
+    .map((s) => s.id);
+}
+
+// Fire-and-forget startup sweep: refresh enabled sources whose discovery is
+// stale. Sequential + per-source try/catch — a dead remote degrades that
+// source only and never blocks boot.
+export async function refreshStaleSources(opts?: {
+  db?: any;
+  now?: Date;
+}): Promise<{ refreshed: number; degraded: number }> {
+  const db = opts?.db ?? getDb();
+  const sources = await db.select().from(packageSources);
+  const staleIds = staleSourceFilter(
+    sources,
+    opts?.now ?? new Date(),
+    discoveryStaleHours(),
+  );
+
+  let refreshed = 0;
+  let degraded = 0;
+
+  for (const id of staleIds) {
+    try {
+      const result = await refreshPackageSource({ id, db });
+
+      if (result?.degraded) degraded += 1;
+      else if (result) refreshed += 1;
+    } catch (err) {
+      degraded += 1;
+      log.warn(
+        { id, err: (err as Error).message },
+        "stale-source refresh threw — continuing",
+      );
+    }
+  }
+
+  log.info({ stale: staleIds.length, refreshed, degraded }, "package discovery sweep");
+
+  return { refreshed, degraded };
+}

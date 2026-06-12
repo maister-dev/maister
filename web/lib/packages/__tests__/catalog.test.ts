@@ -80,3 +80,47 @@ describe("deriveUpdateAvailable", () => {
     ).toBe(false);
   });
 });
+
+describe("staleness filter (startup debounce)", () => {
+  const now = new Date("2026-06-12T12:00:00Z");
+  const hoursAgo = (h: number): Date =>
+    new Date(now.getTime() - h * 60 * 60 * 1000);
+
+  it("selects enabled sources never checked or past the window", async () => {
+    const { staleSourceFilter } = await import("@/lib/packages/catalog");
+
+    const ids = staleSourceFilter(
+      [
+        { id: "never", enabled: true, lastCheckedAt: null },
+        { id: "old", enabled: true, lastCheckedAt: hoursAgo(25) },
+        { id: "fresh", enabled: true, lastCheckedAt: hoursAgo(1) },
+        { id: "disabled", enabled: false, lastCheckedAt: null },
+      ],
+      now,
+      24,
+    );
+
+    expect(ids).toEqual(["never", "old"]);
+  });
+
+  it("reads the window from env with a 24h default", async () => {
+    const { discoveryStaleHours } = await import("@/lib/packages/catalog");
+
+    expect(discoveryStaleHours({} as NodeJS.ProcessEnv)).toBe(24);
+    expect(
+      discoveryStaleHours({
+        MAISTER_PACKAGE_DISCOVERY_STALE_HOURS: "6",
+      } as unknown as NodeJS.ProcessEnv),
+    ).toBe(6);
+    expect(
+      discoveryStaleHours({
+        MAISTER_PACKAGE_DISCOVERY_STALE_HOURS: "garbage",
+      } as unknown as NodeJS.ProcessEnv),
+    ).toBe(24);
+    expect(
+      discoveryStaleHours({
+        MAISTER_PACKAGE_DISCOVERY_STALE_HOURS: "-5",
+      } as unknown as NodeJS.ProcessEnv),
+    ).toBe(24);
+  });
+});

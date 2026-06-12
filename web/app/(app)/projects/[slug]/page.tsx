@@ -14,6 +14,7 @@ import { ProjectTabs } from "@/components/board/project-tabs";
 import { ActivityPanel } from "@/components/board/panels/activity-panel";
 import { DeferredPanel } from "@/components/board/panels/deferred-panel";
 import { FlowPackagesPanel } from "@/components/board/panels/flow-packages-panel";
+import { ProjectPackagesSection } from "@/components/board/panels/project-packages-section";
 import { FlowsPanel } from "@/components/board/panels/flows-panel";
 import { IntegrationsPanel } from "@/components/board/panels/integrations-panel";
 import { McpPanel } from "@/components/board/panels/mcp-panel";
@@ -27,6 +28,10 @@ import { getProjectRole, getSessionUser } from "@/lib/authz";
 import { getActivityFeed } from "@/lib/queries/activity";
 import { getBoardData } from "@/lib/queries/board";
 import { getFlowPackages } from "@/lib/queries/flow-packages";
+import {
+  getAvailablePackageInstalls,
+  getProjectPackageAttachments,
+} from "@/lib/queries/packages";
 import { getHitlInbox } from "@/lib/queries/hitl";
 import { getUnreadInboxCount } from "@/lib/queries/inbox";
 import {
@@ -362,11 +367,19 @@ export default async function ProjectBoardPage({
         />
       ) : null}
       {tab === "packages" ? (
-        <FlowPackagesPanel
-          isAdmin={isAdmin}
-          packages={await getFlowPackages(project.id)}
-          slug={slug}
-        />
+        <>
+          <ProjectPackagesSection
+            attachments={await getProjectPackageAttachments(project.id)}
+            availableInstalls={await getAvailablePackageInstalls()}
+            isAdmin={isAdmin}
+            slug={slug}
+          />
+          <FlowPackagesPanel
+            isAdmin={isAdmin}
+            packages={await getFlowPackages(project.id)}
+            slug={slug}
+          />
+        </>
       ) : null}
       {tab === "integrations" ? (
         <IntegrationsPanel
