@@ -17,10 +17,19 @@ export interface FrontmatterArtifactEditorLabels {
   bodyHeading: string;
   name: string;
   description: string;
-  tools: string;
-  model: string;
-  permissionMode: string;
-  maxTurns: string;
+  // Platform-agent contract fields (ADR-089 rework): agents/*.md inside a
+  // package IS the platform-agent definition.
+  agentWorkspace: string;
+  agentWorkspaceRef: string;
+  agentMode: string;
+  agentTriggers: string;
+  agentRiskTier: string;
+  agentRunner: string;
+  agentRecommendedHeading: string;
+  agentRecommendedRunner: string;
+  agentRecommendedCronExpr: string;
+  agentRecommendedCronTz: string;
+  agentRecommendedEvents: string;
   allowedPaths: string;
   forbiddenPaths: string;
   allowedCommands: string;
@@ -31,7 +40,13 @@ export interface FrontmatterArtifactEditorLabels {
   rawHeading: string;
 }
 
-type FieldValue = string | string[] | boolean | number | undefined;
+type FieldValue =
+  | string
+  | string[]
+  | boolean
+  | number
+  | Record<string, unknown>
+  | undefined;
 
 /**
  * Apply a single frontmatter field edit and re-serialize, mutating ONLY the
@@ -292,12 +307,35 @@ function SkillAgentFields({
   editTextKey,
   editListKey,
 }: SkillAgentFieldsProps): ReactElement {
-  // maxTurns is a YAML number — coerce the text input back to a number (or drop
-  // the key when cleared) so an edit never flattens it to a string.
-  const editMaxTurns = (next: string): void => {
-    const trimmed = next.trim();
+  // `recommended` is a nested mapping — edits rewrite the whole object and
+  // drop it entirely when every sub-field clears (CLEAR-able round-trip).
+  const recommended = (fm.recommended ?? {}) as {
+    runner?: string;
+    cron?: { expr?: string; timezone?: string };
+    events?: string[];
+  };
+  const editRecommended = (
+    patch: Partial<{
+      runner: string;
+      cronExpr: string;
+      cronTz: string;
+      events: string[];
+    }>,
+  ): void => {
+    const runner = patch.runner ?? recommended.runner ?? "";
+    const cronExpr = patch.cronExpr ?? recommended.cron?.expr ?? "";
+    const cronTz = patch.cronTz ?? recommended.cron?.timezone ?? "";
+    const events = patch.events ?? recommended.events ?? [];
 
-    editField("maxTurns", trimmed.length === 0 ? undefined : Number(trimmed));
+    const next: Record<string, unknown> = {
+      ...(runner.trim() !== "" ? { runner: runner.trim() } : {}),
+      ...(cronExpr.trim() !== "" || cronTz.trim() !== ""
+        ? { cron: { expr: cronExpr.trim(), timezone: cronTz.trim() } }
+        : {}),
+      ...(events.length > 0 ? { events } : {}),
+    };
+
+    editField("recommended", Object.keys(next).length === 0 ? undefined : next);
   };
 
   return (
@@ -316,31 +354,70 @@ function SkillAgentFields({
       />
       {kind === "agent_definition" ? (
         <>
+          <TextField
+            label={labels.agentWorkspace}
+            readOnly={readOnly}
+            value={asText(fm.workspace)}
+            onValue={editTextKey("workspace")}
+          />
+          <TextField
+            label={labels.agentWorkspaceRef}
+            readOnly={readOnly}
+            value={asText(fm.workspace_ref)}
+            onValue={editTextKey("workspace_ref")}
+          />
+          <TextField
+            label={labels.agentMode}
+            readOnly={readOnly}
+            value={asText(fm.mode)}
+            onValue={editTextKey("mode")}
+          />
           <ListField
             hint={labels.listHint}
-            label={labels.tools}
+            label={labels.agentTriggers}
             readOnly={readOnly}
-            value={listToLines(fm.tools)}
-            onValue={editListKey("tools")}
+            value={listToLines(fm.triggers)}
+            onValue={editListKey("triggers")}
           />
           <TextField
-            label={labels.model}
+            label={labels.agentRiskTier}
             readOnly={readOnly}
-            value={asText(fm.model)}
-            onValue={editTextKey("model")}
+            value={asText(fm.risk_tier)}
+            onValue={editTextKey("risk_tier")}
           />
           <TextField
-            label={labels.permissionMode}
+            label={labels.agentRunner}
             readOnly={readOnly}
-            value={asText(fm.permissionMode)}
-            onValue={editTextKey("permissionMode")}
+            value={asText(fm.runner)}
+            onValue={editTextKey("runner")}
+          />
+          <p className="m-0 font-mono text-[10.5px] leading-snug text-mute">
+            {labels.agentRecommendedHeading}
+          </p>
+          <TextField
+            label={labels.agentRecommendedRunner}
+            readOnly={readOnly}
+            value={asText(recommended.runner)}
+            onValue={(next) => editRecommended({ runner: next })}
           />
           <TextField
-            label={labels.maxTurns}
+            label={labels.agentRecommendedCronExpr}
             readOnly={readOnly}
-            type="number"
-            value={asText(fm.maxTurns)}
-            onValue={editMaxTurns}
+            value={asText(recommended.cron?.expr)}
+            onValue={(next) => editRecommended({ cronExpr: next })}
+          />
+          <TextField
+            label={labels.agentRecommendedCronTz}
+            readOnly={readOnly}
+            value={asText(recommended.cron?.timezone)}
+            onValue={(next) => editRecommended({ cronTz: next })}
+          />
+          <ListField
+            hint={labels.listHint}
+            label={labels.agentRecommendedEvents}
+            readOnly={readOnly}
+            value={listToLines(recommended.events)}
+            onValue={(next) => editRecommended({ events: linesToList(next) })}
           />
         </>
       ) : null}

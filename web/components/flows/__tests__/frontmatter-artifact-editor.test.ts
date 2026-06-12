@@ -1,6 +1,5 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { parse as parseYaml } from "yaml";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -15,10 +14,17 @@ const labels: FrontmatterArtifactEditorLabels = {
   bodyHeading: "Body",
   name: "Name",
   description: "Description",
-  tools: "Tools",
-  model: "Model",
-  permissionMode: "Permission mode",
-  maxTurns: "Max turns",
+  agentWorkspace: "Workspace",
+  agentWorkspaceRef: "Workspace ref",
+  agentMode: "Mode",
+  agentTriggers: "Triggers",
+  agentRiskTier: "Risk tier",
+  agentRunner: "Runner",
+  agentRecommendedHeading: "Recommended bindings",
+  agentRecommendedRunner: "Recommended runner",
+  agentRecommendedCronExpr: "Recommended cron expression",
+  agentRecommendedCronTz: "Recommended cron timezone",
+  agentRecommendedEvents: "Recommended event kinds",
   allowedPaths: "Allowed paths",
   forbiddenPaths: "Forbidden paths",
   allowedCommands: "Allowed commands",
@@ -43,25 +49,25 @@ allowed-tools:
 Do the thing.
 `;
 
+// ADR-089 rework: agents/*.md is the PLATFORM agent contract.
 const AGENT_CONTENT = `---
 name: reviewer
 description: Reviews a diff
-tools: Read, Grep
-model: claude-sonnet-4-6
-permissionMode: acceptEdits
-maxTurns: 12
-team: backend
----
-You are a reviewer.
-`;
-
-const AGENT_TOOLS_ARRAY_CONTENT = `---
-name: reviewer
-description: Reviews a diff
-tools:
-  - Bash
-  - Read
-maxTurns: 12
+runner: claude-default
+workspace: repo_read
+workspace_ref: trigger
+mode: session
+triggers:
+  - manual
+  - domain_event
+risk_tier: read_only
+recommended:
+  runner: claude-default
+  cron:
+    expr: "*/30 * * * *"
+    timezone: UTC
+  events:
+    - run.failed
 ---
 You are a reviewer.
 `;
@@ -135,50 +141,47 @@ describe("applyFrontmatterFieldEdit", () => {
   });
 
   it("removes a key when the next value is undefined", () => {
-    const next = applyFrontmatterFieldEdit(AGENT_CONTENT, "model", undefined);
+    const next = applyFrontmatterFieldEdit(AGENT_CONTENT, "runner", undefined);
 
-    expect(next).not.toContain("model:");
+    expect(next).not.toContain("runner: claude-default\nworkspace");
     // Sibling keys survive.
-    expect(next).toContain("permissionMode: acceptEdits");
-    expect(next).toContain("team: backend");
+    expect(next).toContain("workspace: repo_read");
+    expect(next).toContain("risk_tier: read_only");
   });
 
-  it("round-trips an array `tools` edit as a YAML sequence (F1 BLOCKER)", () => {
-    const next = applyFrontmatterFieldEdit(AGENT_TOOLS_ARRAY_CONTENT, "tools", [
-      "Bash",
-      "Read",
+  it("round-trips a `triggers` edit as a YAML sequence (F1 invariant)", () => {
+    const next = applyFrontmatterFieldEdit(AGENT_CONTENT, "triggers", [
+      "manual",
+      "cron",
     ]);
 
-    // The agent `tools` field is a YAML sequence, NOT the flattened string
-    // `tools: Bash,Read`.
-    expect(next).not.toContain("tools: Bash,Read");
-    expect(next).toContain("- Bash");
-    expect(next).toContain("- Read");
+    expect(next).not.toContain("triggers: manual,cron");
+    expect(next).toContain("- manual");
+    expect(next).toContain("- cron");
 
     const fm = splitFrontmatter(next);
 
     expect(fm.ok).toBe(true);
     if (fm.ok) {
-      expect(Array.isArray(fm.frontmatter?.tools)).toBe(true);
-      expect(fm.frontmatter?.tools).toEqual(["Bash", "Read"]);
+      expect(fm.frontmatter?.triggers).toEqual(["manual", "cron"]);
     }
   });
 
-  it("keeps `maxTurns` a YAML number across an edit (F1 BLOCKER)", () => {
-    const next = applyFrontmatterFieldEdit(
-      AGENT_TOOLS_ARRAY_CONTENT,
-      "maxTurns",
-      20,
-    );
+  it("round-trips a nested `recommended` mapping edit", () => {
+    const next = applyFrontmatterFieldEdit(AGENT_CONTENT, "recommended", {
+      runner: "codex-default",
+      events: ["run.done"],
+    });
 
-    expect(next).toContain("maxTurns: 20");
+    const fm = splitFrontmatter(next);
 
-    const parsed = parseYaml(
-      next.slice(next.indexOf("\n") + 1, next.lastIndexOf("\n---")),
-    ) as { maxTurns?: unknown };
-
-    expect(typeof parsed.maxTurns).toBe("number");
-    expect(parsed.maxTurns).toBe(20);
+    expect(fm.ok).toBe(true);
+    if (fm.ok) {
+      expect(fm.frontmatter?.recommended).toEqual({
+        runner: "codex-default",
+        events: ["run.done"],
+      });
+    }
   });
 });
 
@@ -197,12 +200,12 @@ describe("FrontmatterArtifactEditor — skill", () => {
     expect(html).toContain('value="bugfix"');
     expect(html).toContain("Fix a reported defect");
     // No agent-only field on a skill editor.
-    expect(html).not.toContain("Permission mode");
+    expect(html).not.toContain("Risk tier");
   });
 });
 
 describe("FrontmatterArtifactEditor — agent_definition", () => {
-  it("renders agent fields populated from content", () => {
+  it("renders the platform-agent contract fields populated from content", () => {
     const html = renderToStaticMarkup(
       createElement(FrontmatterArtifactEditor, {
         content: AGENT_CONTENT,
@@ -213,27 +216,18 @@ describe("FrontmatterArtifactEditor — agent_definition", () => {
     );
 
     expect(html).toContain('value="reviewer"');
-    expect(html).toContain("Permission mode");
-    expect(html).toContain('value="acceptEdits"');
-    expect(html).toContain('value="claude-sonnet-4-6"');
-    // maxTurns rendered as a number input value.
-    expect(html).toContain('value="12"');
-  });
-
-  it("renders an array `tools` as a one-per-line LIST field, not a flattened string (F1 BLOCKER)", () => {
-    const html = renderToStaticMarkup(
-      createElement(FrontmatterArtifactEditor, {
-        content: AGENT_TOOLS_ARRAY_CONTENT,
-        kind: "agent_definition",
-        labels,
-        onChange: () => {},
-      }),
-    );
-
-    // A LIST field renders the array as newline-joined textarea text, never the
-    // comma-flattened `value="Bash,Read"` a TextField would emit.
-    expect(html).not.toContain('value="Bash,Read"');
-    expect(html).toContain("Bash\nRead");
+    expect(html).toContain("Workspace");
+    expect(html).toContain('value="repo_read"');
+    expect(html).toContain('value="trigger"');
+    expect(html).toContain("Risk tier");
+    expect(html).toContain('value="read_only"');
+    // triggers render as a one-per-line LIST field.
+    expect(html).toContain("manual\ndomain_event");
+    // recommended sub-fields pre-populate.
+    expect(html).toContain("Recommended bindings");
+    expect(html).toContain('value="*/30 * * * *"');
+    expect(html).toContain('value="UTC"');
+    expect(html).toContain("run.failed");
   });
 });
 

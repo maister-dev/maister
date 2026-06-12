@@ -36,6 +36,13 @@ export type AvailableAgentRow = {
   id: string;
   name: string;
   flowRefId: string;
+  // RD5: package-recommended bindings — pre-fill the attach modal; nothing
+  // applies without Save.
+  recommended: {
+    runner?: string;
+    cron?: { expr: string; timezone: string };
+    events?: string[];
+  } | null;
 };
 
 type Props = {
@@ -96,6 +103,7 @@ export function AgentsAttachPanel({
   const [error, setError] = useState<string | null>(null);
   const [attachId, setAttachId] = useState(available[0]?.id ?? "");
   const [editing, setEditing] = useState<AttachedAgentRow | null>(null);
+  const [attaching, setAttaching] = useState<AvailableAgentRow | null>(null);
 
   const refresh = (): void => startTransition(() => router.refresh());
 
@@ -134,13 +142,11 @@ export function AgentsAttachPanel({
               className="h-9 rounded-[8px] border border-amber bg-amber px-3 text-[12px] font-semibold text-white disabled:opacity-50"
               disabled={pending !== null || attachId === ""}
               type="button"
-              onClick={() =>
-                void act("attach", () =>
-                  sendJson(`/api/projects/${slug}/agents`, "POST", {
-                    agentId: attachId,
-                  }),
-                )
-              }
+              onClick={() => {
+                const agent = available.find((a) => a.id === attachId);
+
+                if (agent) setAttaching(agent);
+              }}
             >
               {t("attach")}
             </button>
@@ -246,8 +252,64 @@ export function AgentsAttachPanel({
           onSaved={refresh}
         />
       ) : null}
+      {attaching ? (
+        <AttachEditModal
+          attachAgentId={attaching.id}
+          eventKinds={eventKinds}
+          row={rowFromAvailable(attaching)}
+          runners={runners}
+          slug={slug}
+          onClose={() => setAttaching(null)}
+          onSaved={refresh}
+        />
+      ) : null}
     </section>
   );
+}
+
+// RD5: an attach starts from the package-recommended bindings — runner
+// override + one cron row + one event row pre-fill the modal; the user's
+// Save applies them (POST attach, then the bindings PATCH).
+function rowFromAvailable(agent: AvailableAgentRow): AttachedAgentRow {
+  const rec = agent.recommended;
+
+  return {
+    linkId: "",
+    enabled: true,
+    runnerOverrideId: rec?.runner ?? null,
+    schedules: [
+      ...(rec?.cron
+        ? [
+            {
+              triggerType: "cron" as const,
+              cronExpr: rec.cron.expr,
+              timezone: rec.cron.timezone,
+              enabled: true,
+            },
+          ]
+        : []),
+      ...(rec?.events && rec.events.length > 0
+        ? [
+            {
+              triggerType: "event" as const,
+              eventKinds: rec.events,
+              enabled: true,
+            },
+          ]
+        : []),
+    ],
+    agent: {
+      id: agent.id,
+      name: agent.name,
+      flowRefId: agent.flowRefId,
+      workspace: "",
+      mode: "",
+      triggers: [],
+      riskTier: "",
+      enabled: true,
+      quarantinedAt: null,
+    },
+  };
 }
 
 type EditableSchedule = {
@@ -273,6 +335,7 @@ function AttachEditModal({
   row,
   runners,
   eventKinds,
+  attachAgentId,
   onClose,
   onSaved,
 }: {
@@ -280,6 +343,8 @@ function AttachEditModal({
   row: AttachedAgentRow;
   runners: Array<{ id: string; label: string }>;
   eventKinds: string[];
+  // Attach mode (RD5): Save POSTs the attachment first, then the bindings.
+  attachAgentId?: string;
   onClose: () => void;
   onSaved: () => void;
 }): ReactElement {
@@ -387,6 +452,14 @@ function AttachEditModal({
     setBusy(true);
     setError(null);
     try {
+      if (attachAgentId) {
+        await sendJson(`/api/projects/${slug}/agents`, "POST", {
+          agentId: attachAgentId,
+          enabled,
+          runnerOverrideId: runnerOverrideId === "" ? null : runnerOverrideId,
+        });
+      }
+
       await sendJson(`/api/projects/${slug}/agents/${row.agent.id}`, "PATCH", {
         enabled,
         runnerOverrideId: runnerOverrideId === "" ? null : runnerOverrideId,

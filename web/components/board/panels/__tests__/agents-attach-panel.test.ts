@@ -59,7 +59,14 @@ function render(over: {
       slug: "demo",
       canManage: over.canManage ?? true,
       attached: over.attached ?? [ATTACHED],
-      available: [{ id: "aif:reviewer", name: "Reviewer", flowRefId: "aif" }],
+      available: [
+        {
+          id: "aif:reviewer",
+          name: "Reviewer",
+          flowRefId: "aif",
+          recommended: null,
+        },
+      ],
       runners: [{ id: "runner-2", label: "runner-2" }],
       eventKinds: ["task.created", "task.comment_added"],
     }),

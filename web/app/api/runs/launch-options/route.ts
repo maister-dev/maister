@@ -198,27 +198,37 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
     await requireProjectAction(project.id, "launchRun");
 
-    const flowRows = await db
-      .select()
-      .from(flows)
-      .where(eq(flows.id, task.flowId));
-    const flow = flowRows[0];
+    // M34 (ADR-089): a flowless simple-intent task still gets options — the
+    // popover doubles as the "set up & launch" dialog (the flow pick PATCHes
+    // the task before the run POST).
+    const flowRows = task.flowId
+      ? await db.select().from(flows).where(eq(flows.id, task.flowId))
+      : [];
+    const flow = flowRows[0] ?? null;
 
-    if (!flow?.enabledRevisionId) {
-      throw new MaisterError("PRECONDITION", "flow has no enabled revision");
+    let revision: Record<string, any> | null = null;
+
+    if (flow) {
+      if (!flow.enabledRevisionId) {
+        throw new MaisterError("PRECONDITION", "flow has no enabled revision");
+      }
+
+      const revisionRows = await db
+        .select()
+        .from(flowRevisions)
+        .where(eq(flowRevisions.id, flow.enabledRevisionId));
+
+      revision = revisionRows[0] ?? null;
+
+      if (!revision) {
+        throw new MaisterError(
+          "PRECONDITION",
+          "enabled flow revision not found",
+        );
+      }
+
+      assertRevisionLaunchable(flow, revision);
     }
-
-    const revisionRows = await db
-      .select()
-      .from(flowRevisions)
-      .where(eq(flowRevisions.id, flow.enabledRevisionId));
-    const revision = revisionRows[0];
-
-    if (!revision) {
-      throw new MaisterError("PRECONDITION", "enabled flow revision not found");
-    }
-
-    assertRevisionLaunchable(flow, revision);
 
     const [
       runtimeRows,
@@ -232,29 +242,33 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         .from(platformRuntimeSettings)
         .where(eq(platformRuntimeSettings.id, "singleton")),
       db.select().from(platformAcpRunners),
-      db
-        .select({ runnerId: projectFlowRunnerDefaults.runnerId })
-        .from(projectFlowRunnerDefaults)
-        .where(
-          and(
-            eq(projectFlowRunnerDefaults.projectId, project.id),
-            eq(projectFlowRunnerDefaults.flowId, flow.id),
-          ),
-        ),
-      db
-        .select({
-          stepId: flowRunnerRemaps.stepId,
-          sourceRunnerId: flowRunnerRemaps.sourceRunnerId,
-          mappedRunnerId: flowRunnerRemaps.mappedRunnerId,
-          status: flowRunnerRemaps.status,
-        })
-        .from(flowRunnerRemaps)
-        .where(
-          and(
-            eq(flowRunnerRemaps.projectId, project.id),
-            eq(flowRunnerRemaps.flowRevisionId, revision.id),
-          ),
-        ),
+      flow
+        ? db
+            .select({ runnerId: projectFlowRunnerDefaults.runnerId })
+            .from(projectFlowRunnerDefaults)
+            .where(
+              and(
+                eq(projectFlowRunnerDefaults.projectId, project.id),
+                eq(projectFlowRunnerDefaults.flowId, flow.id),
+              ),
+            )
+        : Promise.resolve([]),
+      revision
+        ? db
+            .select({
+              stepId: flowRunnerRemaps.stepId,
+              sourceRunnerId: flowRunnerRemaps.sourceRunnerId,
+              mappedRunnerId: flowRunnerRemaps.mappedRunnerId,
+              status: flowRunnerRemaps.status,
+            })
+            .from(flowRunnerRemaps)
+            .where(
+              and(
+                eq(flowRunnerRemaps.projectId, project.id),
+                eq(flowRunnerRemaps.flowRevisionId, revision.id),
+              ),
+            )
+        : Promise.resolve([]),
       db.select().from(flows).where(eq(flows.projectId, project.id)),
     ]);
     const platformRuntime = runtimeRows[0];
@@ -266,21 +280,22 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       );
     }
 
-    const compiled = compileManifest(revision.manifest as FlowYamlV1);
     const runnerCatalog = runnerRows.map(runnerCatalogEntry);
     const defaultResolution = resolveRunner({
       launchOverrideRunnerId: undefined,
       step: {
-        runnerId: resolveCompiledStepTargetRunnerId({
-          compiled,
-          remaps: remapRows as FlowRunnerRemapRow[],
-          flowRefId: flow.flowRefId,
-        }),
+        runnerId: revision
+          ? resolveCompiledStepTargetRunnerId({
+              compiled: compileManifest(revision.manifest as FlowYamlV1),
+              remaps: remapRows as FlowRunnerRemapRow[],
+              flowRefId: flow.flowRefId,
+            })
+          : null,
       },
       projectFlow: {
         defaultRunnerId: projectFlowDefaultRows[0]?.runnerId ?? null,
       },
-      platformFlow: { defaultRunnerId: revision.defaultRunnerId },
+      platformFlow: { defaultRunnerId: revision?.defaultRunnerId ?? null },
       project: { defaultRunnerId: project.defaultRunnerId },
       platform: { defaultRunnerId: platformRuntime.defaultRunnerId },
       runners: runnerCatalog,
@@ -288,20 +303,42 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const latestFlowRun = await getLatestFlowRun(task.id, db);
     const openBlockers =
       (await getOpenRelationBlockers([task.id], db)).get(task.id) ?? [];
-    const launchability = classifyManualTaskLaunchability(
+    const manualLaunchability = classifyManualTaskLaunchability(
       {
         status: task.status ?? "Backlog",
       },
       latestFlowRun,
       { openBlockers },
     );
+    // M34 (ADR-089): a flowless task layers `unconfigured` over launchable —
+    // the popover's flow pick clears it (set-up & launch).
+    const launchability =
+      manualLaunchability === "launchable" && !task.flowId
+        ? "unconfigured"
+        : manualLaunchability;
     const branches = await listBranches(project.repoPath);
-    const deliveryPolicyDefault = resolveDeliveryPolicy({
+    const projectPolicy = resolveDeliveryPolicy({
       projectDefault:
         project.deliveryPolicyDefault as StoredDeliveryPolicy | null,
       projectPromotionMode: project.promotionMode,
       projectMainBranch: project.mainBranch ?? "main",
     });
+    // M34 (ADR-089): the triage verdict pre-fills the dialog — runner rides
+    // the launchOverride tier, target branch + promotion mode shape the
+    // delivery-policy default. Nothing applies without the user's confirm.
+    const verdictTargetBranch = (task.targetBranch as string | null) ?? null;
+    const deliveryPolicyDefault = {
+      ...projectPolicy,
+      ...(task.promotionMode
+        ? {
+            strategy:
+              task.promotionMode === "pull_request"
+                ? ("pull_request" as const)
+                : ("merge" as const),
+          }
+        : {}),
+      ...(verdictTargetBranch ? { targetBranch: verdictTargetBranch } : {}),
+    };
     const safeRunners = runnerRows.map((runner: Record<string, any>) => ({
       id: runner.id,
       label: runner.id,
@@ -325,8 +362,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json({
       taskId: task.id,
-      flowId: flow.id,
-      flowRef: flow.flowRefId,
+      flowId: flow?.id ?? null,
+      flowRef: flow?.flowRefId ?? null,
       defaultRunnerId: defaultResolution.runnerId,
       runnerResolutionTier: defaultResolution.runnerResolutionTier,
       runners: safeRunners,
@@ -356,11 +393,12 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         enabled: projectFlow.enablementState !== "Disabled",
         isTaskDefault: projectFlow.id === task.flowId,
       })),
-      selectedFlowId: flow.id,
-      selectedRunnerId: defaultResolution.runnerId,
+      selectedFlowId: flow?.id ?? "",
+      selectedRunnerId:
+        (task.runnerId as string | null) ?? defaultResolution.runnerId,
       branches,
       defaultBaseBranch: project.mainBranch ?? null,
-      defaultTargetBranch: project.mainBranch ?? null,
+      defaultTargetBranch: verdictTargetBranch ?? project.mainBranch ?? null,
       deliveryPolicyDefault,
     });
   } catch (err) {

@@ -477,6 +477,12 @@ async function AgentsAttachPanelLoader({
         id: agent.id as string,
         name: agent.name as string,
         flowRefId: agent.flowRefId as string,
+        recommended:
+          (agent.recommended as {
+            runner?: string;
+            cron?: { expr: string; timezone: string };
+            events?: string[];
+          } | null) ?? null,
       }))}
       canManage={canManage}
       eventKinds={[...DOMAIN_EVENT_KINDS]}

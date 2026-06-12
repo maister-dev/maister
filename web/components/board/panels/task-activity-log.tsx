@@ -1,8 +1,7 @@
 import type { ReactElement } from "react";
+import type { TaskActivityLogRow } from "@/lib/queries/activity";
 
 import Link from "next/link";
-
-import type { TaskActivityLogRow } from "@/lib/queries/activity";
 
 export interface TaskActivityLogLabels {
   title: string;
@@ -155,7 +154,10 @@ export function TaskActivityLog({
             <tbody>
               {rows.map((row) => (
                 <tr key={row.id} className="border-b border-line-soft">
-                  <td className="px-3 py-1.5 text-mute" suppressHydrationWarning>
+                  <td
+                    suppressHydrationWarning
+                    className="px-3 py-1.5 text-mute"
+                  >
                     {row.createdAt.toISOString().slice(0, 16).replace("T", " ")}
                   </td>
                   <td className="px-3 py-1.5">
@@ -193,10 +195,9 @@ export function TaskActivityLog({
             </Link>
           ) : null}
           <span>
-            {labels.pageInfo.replace("{page}", String(page)).replace(
-              "{pages}",
-              String(pages),
-            )}
+            {labels.pageInfo
+              .replace("{page}", String(page))
+              .replace("{pages}", String(pages))}
           </span>
           {page < pages ? (
             <Link className="hover:text-amber" href={pageHref(page + 1)}>

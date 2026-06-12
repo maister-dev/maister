@@ -1,8 +1,8 @@
+import type { TaskActivityLogRow } from "@/lib/queries/activity";
+
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-
-import type { TaskActivityLogRow } from "@/lib/queries/activity";
 
 import { TaskActivityLog } from "@/components/board/panels/task-activity-log";
 

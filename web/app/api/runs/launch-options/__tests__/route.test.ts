@@ -308,3 +308,135 @@ describe("GET /api/runs/launch-options runner remaps", () => {
     );
   });
 });
+
+describe("GET /api/runs/launch-options — M34 verdict pre-fill + unconfigured (ADR-089)", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    state.tasks = [{ id: "task-1", projectId: "project-1", flowId: "flow-1" }];
+    state.projects = [
+      {
+        id: "project-1",
+        slug: "demo",
+        mainBranch: "main",
+        branchPrefix: "maister/",
+        defaultRunnerId: null,
+        deliveryPolicyDefault: {
+          strategy: "merge",
+          push: "never",
+          trigger: "manual",
+          targetBranch: null,
+        },
+        archivedAt: null,
+      },
+    ];
+    state.flows = [
+      { id: "flow-1", flowRefId: "bugfix", enabledRevisionId: "revision-1" },
+    ];
+    state.flow_revisions = [
+      {
+        id: "revision-1",
+        manifest: manifest("flow-claude"),
+        packageStatus: "Installed",
+        setupStatus: "not_required",
+        schemaVersion: 1,
+        defaultRunnerId: null,
+      },
+    ];
+    state.platform_runtime_settings = [
+      { id: "singleton", defaultRunnerId: "claude-platform" },
+    ];
+    state.platform_acp_runners = [
+      {
+        id: "claude-platform",
+        adapter: "claude",
+        capabilityAgent: "claude",
+        model: "claude-sonnet-4-6",
+        provider: { kind: "anthropic" },
+        permissionPolicy: "default",
+        sidecarId: null,
+        readinessStatus: "Ready",
+        readinessReasons: [],
+        enabled: true,
+      },
+      {
+        id: "codex-ready",
+        adapter: "codex",
+        capabilityAgent: "codex",
+        model: "gpt-5",
+        provider: { kind: "openai" },
+        permissionPolicy: "default",
+        sidecarId: null,
+        readinessStatus: "Ready",
+        readinessReasons: [],
+        enabled: true,
+      },
+    ];
+    state.project_flow_runner_defaults = [];
+    state.flow_runner_remaps = [
+      {
+        stepId: "implement",
+        sourceRunnerId: "flow-claude",
+        mappedRunnerId: "claude-platform",
+        status: "Mapped",
+      },
+    ];
+    mocks.requireActiveSession.mockResolvedValue({ id: "user-1" });
+    mocks.requireProjectAction.mockResolvedValue({ role: "member" });
+    mocks.getLatestFlowRun.mockResolvedValue(null);
+    mocks.getOpenRelationBlockers.mockResolvedValue(new Map());
+    mocks.listBranches.mockResolvedValue(["main", "release"]);
+  });
+
+  it("a flowless task gets options with launchability=unconfigured and no selected flow", async () => {
+    state.tasks = [{ id: "task-1", projectId: "project-1", flowId: null }];
+
+    const res = await invoke();
+    const body = (await res.json()) as {
+      launchability?: { launchable: boolean; reason: string };
+      selectedFlowId?: string;
+      flowId?: string | null;
+      flows?: unknown[];
+    };
+
+    expect(res.status).toBe(200);
+    expect(body.launchability).toMatchObject({
+      launchable: false,
+      reason: "unconfigured",
+    });
+    expect(body.selectedFlowId).toBe("");
+    expect(body.flowId).toBeNull();
+    // The project's flows are still offered for the set-up pick.
+    expect(body.flows).toEqual([
+      expect.objectContaining({ id: "flow-1", isTaskDefault: false }),
+    ]);
+  });
+
+  it("the triage verdict pre-fills runner, target branch, and promotion mode", async () => {
+    state.tasks = [
+      {
+        id: "task-1",
+        projectId: "project-1",
+        flowId: "flow-1",
+        runnerId: "codex-ready",
+        targetBranch: "release",
+        promotionMode: "pull_request",
+      },
+    ];
+
+    const res = await invoke();
+    const body = (await res.json()) as {
+      selectedRunnerId?: string;
+      defaultTargetBranch?: string;
+      deliveryPolicyDefault?: { strategy: string; targetBranch: string };
+    };
+
+    expect(res.status).toBe(200);
+    expect(body.selectedRunnerId).toBe("codex-ready");
+    expect(body.defaultTargetBranch).toBe("release");
+    expect(body.deliveryPolicyDefault).toMatchObject({
+      strategy: "pull_request",
+      targetBranch: "release",
+    });
+  });
+});

@@ -65,6 +65,7 @@ type LaunchOptions = {
   defaultBaseBranch: string | null;
   defaultTargetBranch: string | null;
   deliveryPolicyDefault: DeliveryPolicy;
+  task: { projectSlug: string; number: number };
 };
 
 type SelectOption<T extends string> = {
@@ -253,13 +254,43 @@ export function LaunchPopover({
     [baseBranch, policyPush, policyStrategy, policyTrigger, targetBranch],
   );
 
+  // M34 (ADR-089): a flowless simple-intent task classifies `unconfigured` —
+  // the user's flow pick is the set-up step and clears the gate locally.
+  const unconfigured = options?.launchability.reason === "unconfigured";
+  const setUpReady = unconfigured && flowId !== "";
+
   async function launch(): Promise<void> {
-    if (!options?.launchability.launchable) return;
+    if (!options) return;
+    if (!options.launchability.launchable && !setUpReady) return;
 
     setBusy(true);
     setError(null);
 
     try {
+      if (unconfigured) {
+        // Owner answer #3: "Set up & launch" PATCHes the task's flow FIRST —
+        // the task stays configured for every later launch.
+        const patched = await fetch(
+          `/api/projects/${options.task.projectSlug}/tasks/${options.task.number}`,
+          {
+            method: "PATCH",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ flowId }),
+          },
+        );
+
+        if (!patched.ok) {
+          const data = (await patched.json().catch(() => null)) as {
+            code?: string;
+            message?: string;
+          } | null;
+
+          setError(data?.code ?? data?.message ?? "CRASH");
+
+          return;
+        }
+      }
+
       const res = await fetch("/api/runs", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -340,7 +371,7 @@ export function LaunchPopover({
     pending ||
     loadingOptions ||
     optionsError ||
-    !options?.launchability.launchable ||
+    !(options?.launchability.launchable || setUpReady) ||
     !flowId ||
     !baseBranch;
 
@@ -420,9 +451,11 @@ export function LaunchPopover({
               <div className="flex flex-col gap-4">
                 {!options.launchability.launchable ? (
                   <p className="rounded-[8px] border border-amber-line bg-amber-soft px-3 py-2 font-mono text-[11px] text-amber">
-                    {t("disabledReason", {
-                      reason: options.launchability.reason,
-                    })}
+                    {unconfigured
+                      ? t("unconfiguredHint")
+                      : t("disabledReason", {
+                          reason: options.launchability.reason,
+                        })}
                   </p>
                 ) : null}
 
