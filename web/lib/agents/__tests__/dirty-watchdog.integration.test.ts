@@ -12,7 +12,15 @@ import {
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool } from "pg";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+} from "vitest";
 
 import {
   filterManifestPorcelain,
@@ -237,3 +245,210 @@ async function seedWorldProjectId(): Promise<string | null> {
 
   return (res.rows[0]?.id as string) ?? null;
 }
+
+describe("workspace_ref ephemeral checkout (ADR-090 rework, RD6)", () => {
+  let worktreesTmp: string;
+  let originalWorktreesRoot: string | undefined;
+
+  beforeEach(async () => {
+    worktreesTmp = await mkdtemp(path.join(os.tmpdir(), "maister-wt-"));
+    originalWorktreesRoot = process.env.MAISTER_WORKTREES_ROOT;
+    process.env.MAISTER_WORKTREES_ROOT = worktreesTmp;
+  });
+
+  afterEach(async () => {
+    if (originalWorktreesRoot === undefined) {
+      delete process.env.MAISTER_WORKTREES_ROOT;
+    } else {
+      process.env.MAISTER_WORKTREES_ROOT = originalWorktreesRoot;
+    }
+    await rm(worktreesTmp, { recursive: true, force: true });
+  });
+
+  async function seedEphemeralRun(): Promise<{
+    runId: string;
+    slug: string;
+    ephemeralPath: string;
+  }> {
+    const { runId } = await seedWorld();
+    const slugRow = await pool.query(`SELECT "slug" FROM "projects" LIMIT 1`);
+    const slug = slugRow.rows[0].slug as string;
+    const { agentReadOnlyWorkdirPath } = await import("@/lib/agents/launch");
+    const { addDetachedWorktree } = await import("@/lib/worktree");
+    const ephemeralPath = agentReadOnlyWorkdirPath(slug, runId);
+
+    await addDetachedWorktree({
+      projectRepoPath: repoPath,
+      worktreePath: ephemeralPath,
+      committish: "main",
+    });
+
+    return { runId, slug, ephemeralPath };
+  }
+
+  it("L3 targets the ephemeral dir (dirty parent stays unattributed) and removes it after", async () => {
+    const { runId, ephemeralPath } = await seedEphemeralRun();
+
+    // Dirty the PARENT checkout: with an ephemeral session cwd this is NOT
+    // the agent's doing and must not quarantine.
+    await writeFile(path.join(repoPath, "user-edit.txt"), "human edit\n");
+
+    const result = await finalizeAgentRun(runId, "Done", { db });
+
+    expect(result.finalized).toBe(true);
+
+    const agentRow = await pool.query(
+      `SELECT "quarantined_at" FROM "agents" WHERE "id" = 'watchdog-agent'`,
+    );
+
+    expect(agentRow.rows[0].quarantined_at).toBeNull();
+    // The ephemeral checkout is gone after the terminal choke point.
+    expect(await statSafe(ephemeralPath)).toBe(false);
+  });
+
+  it("a dirty ephemeral checkout quarantines naming the -ro path, then removes it", async () => {
+    const { runId, ephemeralPath } = await seedEphemeralRun();
+
+    await writeFile(path.join(ephemeralPath, "stray.txt"), "agent wrote\n");
+
+    const result = await finalizeAgentRun(runId, "Done", { db });
+
+    expect(result.finalized).toBe(true);
+
+    const agentRow = await pool.query(
+      `SELECT "quarantined_at", "quarantine_reason" FROM "agents" WHERE "id" = 'watchdog-agent'`,
+    );
+
+    expect(agentRow.rows[0].quarantined_at).not.toBeNull();
+    expect(agentRow.rows[0].quarantine_reason).toMatch(/-ro/);
+    expect(agentRow.rows[0].quarantine_reason).toMatch(/stray\.txt/);
+    expect(await statSafe(ephemeralPath)).toBe(false);
+  });
+});
+
+describe("resolveWorkspaceRefCommittish (RD6 v1)", () => {
+  it("resolves a literal branch, webhook payload branch/ref, and run.* event branches; refuses the rest", async () => {
+    const { runId, projectId } = await (async () => {
+      const world = await seedWorld();
+
+      return { runId: world.runId, projectId: world.projectId };
+    })();
+    const { resolveWorkspaceRefCommittish } = await import(
+      "@/lib/agents/launch"
+    );
+
+    // Literal branch resolves to the commit sha.
+    const literal = await resolveWorkspaceRefCommittish(db, {
+      agentId: "test-pkg:a",
+      workspaceRef: "main",
+      repoPath,
+      trigger: { source: "manual" },
+    });
+
+    expect(literal).toMatch(/^[0-9a-f]{40}$/);
+
+    // Unresolvable literal → PRECONDITION (no auto-fetch in v1).
+    await expect(
+      resolveWorkspaceRefCommittish(db, {
+        agentId: "test-pkg:a",
+        workspaceRef: "no-such-branch",
+        repoPath,
+        trigger: { source: "manual" },
+      }),
+    ).rejects.toSatisfy(
+      (err: unknown) => isMaisterError(err) && err.code === "PRECONDITION",
+    );
+
+    // Webhook: payload `branch` wins, `ref` is the fallback, absence refuses.
+    const viaBranch = await resolveWorkspaceRefCommittish(db, {
+      agentId: "test-pkg:a",
+      workspaceRef: "trigger",
+      repoPath,
+      trigger: { source: "webhook", payload: { branch: "main" } },
+    });
+
+    expect(viaBranch).toBe(literal);
+
+    const viaRef = await resolveWorkspaceRefCommittish(db, {
+      agentId: "test-pkg:a",
+      workspaceRef: "trigger",
+      repoPath,
+      trigger: { source: "webhook", payload: { ref: "main" } },
+    });
+
+    expect(viaRef).toBe(literal);
+
+    await expect(
+      resolveWorkspaceRefCommittish(db, {
+        agentId: "test-pkg:a",
+        workspaceRef: "trigger",
+        repoPath,
+        trigger: { source: "webhook", payload: {} },
+      }),
+    ).rejects.toSatisfy(
+      (err: unknown) =>
+        isMaisterError(err) &&
+        err.code === "PRECONDITION" &&
+        /branch/.test(err.message),
+    );
+
+    // domain_event run.* → the triggering run's workspace branch.
+    await exec("git", ["-C", repoPath, "branch", "feat-x", "main"]);
+    await pool.query(
+      `INSERT INTO "workspaces" ("id", "run_id", "project_id", "branch", "worktree_path", "parent_repo_path", "base_branch", "target_branch")
+       VALUES ($1, $2, $3, 'feat-x', '/tmp/wt', $4, 'main', 'main')`,
+      [randomUUID(), runId, projectId, repoPath],
+    );
+    const eventRow = await pool.query(
+      `INSERT INTO "domain_events" ("kind", "project_id", "run_id", "actor_type", "payload", "occurred_at")
+       VALUES ('run.done', $1, $2, 'system', '{}'::jsonb, now()) RETURNING "id"`,
+      [projectId, runId],
+    );
+    const eventId = Number(eventRow.rows[0].id);
+
+    const viaEvent = await resolveWorkspaceRefCommittish(db, {
+      agentId: "test-pkg:a",
+      workspaceRef: "trigger",
+      repoPath,
+      trigger: { source: "domain_event", eventId },
+    });
+
+    expect(viaEvent).toBe(literal); // feat-x points at main's commit
+
+    // task.* events carry no derivable ref.
+    const taskEvent = await pool.query(
+      `INSERT INTO "domain_events" ("kind", "project_id", "actor_type", "payload", "occurred_at")
+       VALUES ('task.created', $1, 'system', '{}'::jsonb, now()) RETURNING "id"`,
+      [projectId],
+    );
+
+    await expect(
+      resolveWorkspaceRefCommittish(db, {
+        agentId: "test-pkg:a",
+        workspaceRef: "trigger",
+        repoPath,
+        trigger: {
+          source: "domain_event",
+          eventId: Number(taskEvent.rows[0].id),
+        },
+      }),
+    ).rejects.toSatisfy(
+      (err: unknown) =>
+        isMaisterError(err) &&
+        err.code === "PRECONDITION" &&
+        /run\.\*/.test(err.message),
+    );
+
+    // cron/manual sources have no trigger context.
+    await expect(
+      resolveWorkspaceRefCommittish(db, {
+        agentId: "test-pkg:a",
+        workspaceRef: "trigger",
+        repoPath,
+        trigger: { source: "cron" },
+      }),
+    ).rejects.toSatisfy(
+      (err: unknown) => isMaisterError(err) && err.code === "PRECONDITION",
+    );
+  });
+});

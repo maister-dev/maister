@@ -220,6 +220,64 @@ export async function addWorktree(args: AddWorktreeArgs): Promise<void> {
   }
 }
 
+export type AddDetachedWorktreeArgs = {
+  projectRepoPath: string;
+  worktreePath: string;
+  committish: string;
+};
+
+// ADR-090 rework (workspace_ref): an EPHEMERAL read-only checkout at a
+// resolved ref — detached HEAD, no branch created, never switching the
+// user's checkout. Removed at the run's terminal choke point.
+export async function addDetachedWorktree(
+  args: AddDetachedWorktreeArgs,
+): Promise<void> {
+  const repo = validate(
+    absolutePathSchema,
+    args.projectRepoPath,
+    "projectRepoPath",
+  );
+  const wt = validate(absolutePathSchema, args.worktreePath, "worktreePath");
+  const committish = validate(gitRefSchema, args.committish, "committish");
+
+  log.info(
+    { projectRepoPath: repo, worktreePath: wt, committish },
+    "addDetachedWorktree",
+  );
+
+  try {
+    const { stdout, stderr } = await runGit(repo, [
+      "worktree",
+      "add",
+      "--detach",
+      "--",
+      wt,
+      committish,
+    ]);
+
+    log.debug({ stdout, stderr }, "addDetachedWorktree done");
+  } catch (err) {
+    const stderrText = errorText(err);
+
+    if (
+      stderrText.includes("already exists") ||
+      stderrText.includes("already used by worktree")
+    ) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `worktree path already exists: ${stderrText.trim()}`,
+        { cause: asError(err) },
+      );
+    }
+
+    throw new MaisterError(
+      "CONFLICT",
+      `git worktree add --detach failed: ${stderrText || asError(err).message}`,
+      { cause: asError(err) },
+    );
+  }
+}
+
 export type ResolveBaseCommitArgs = {
   projectRepoPath: string;
   baseRef: string;

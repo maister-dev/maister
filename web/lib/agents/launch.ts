@@ -1,7 +1,7 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
-import { mkdir } from "node:fs/promises";
+import { mkdir, stat } from "node:fs/promises";
 import path from "node:path";
 
 import { and, eq, inArray } from "drizzle-orm";
@@ -50,6 +50,7 @@ import {
 } from "@/lib/supervisor-client";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import {
+  addDetachedWorktree,
   addWorktree,
   removeWorktree,
   resolveBaseCommit,
@@ -60,6 +61,7 @@ import {
 const {
   agents,
   agentProjectLinks,
+  domainEvents,
   hitlRequests,
   platformAcpRunners,
   platformRouterSidecars,
@@ -297,6 +299,111 @@ export function agentWorkdirPath(projectSlug: string, runId: string): string {
   return path.join(worktreesRoot(), projectSlug, runId);
 }
 
+// ADR-090 rework (workspace_ref): the EPHEMERAL read-only checkout for a
+// repo_read run pinned to a trigger-derived ref. Deterministic from the run
+// id — the terminal choke point derives it back without any schema state.
+export function agentReadOnlyWorkdirPath(
+  projectSlug: string,
+  runId: string,
+): string {
+  return path.join(worktreesRoot(), projectSlug, `${runId}-ro`);
+}
+
+async function pathIsDirectory(p: string): Promise<boolean> {
+  try {
+    return (await stat(p)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+// Resolve `workspace_ref` to a committish (v1, owner decision 8):
+// - a literal value is a branch/ref name resolved against the local repo;
+// - `trigger` derives from the trigger context — run.* domain events use the
+//   triggering run's workspace branch, webhooks use the conventional payload
+//   `branch` (fallback `ref`) field; every other source refuses.
+// Unresolvable refs refuse (no auto-fetch in v1).
+export async function resolveWorkspaceRefCommittish(
+  _db: Db,
+  args: {
+    agentId: string;
+    workspaceRef: string;
+    repoPath: string;
+    trigger: {
+      source: AgentTriggerSource;
+      eventId?: number | bigint | null;
+      payload?: Record<string, unknown> | null;
+    };
+  },
+): Promise<string> {
+  let ref: string;
+
+  if (args.workspaceRef !== "trigger") {
+    ref = args.workspaceRef;
+  } else if (args.trigger.source === "webhook") {
+    const payload = args.trigger.payload ?? {};
+    const fromPayload =
+      typeof payload.branch === "string" && payload.branch.length > 0
+        ? payload.branch
+        : typeof payload.ref === "string" && payload.ref.length > 0
+          ? payload.ref
+          : null;
+
+    if (!fromPayload) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `agent "${args.agentId}": workspace_ref=trigger needs a webhook payload \`branch\` (or \`ref\`) field`,
+      );
+    }
+    ref = fromPayload;
+  } else if (args.trigger.source === "domain_event") {
+    if (args.trigger.eventId == null) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `agent "${args.agentId}": workspace_ref=trigger needs the triggering domain event`,
+      );
+    }
+
+    const eventRows = await _db
+      .select({ kind: domainEvents.kind, runId: domainEvents.runId })
+      .from(domainEvents)
+      .where(eq(domainEvents.id, args.trigger.eventId));
+    const event = eventRows[0];
+
+    if (!event || !String(event.kind).startsWith("run.") || !event.runId) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `agent "${args.agentId}": workspace_ref=trigger derives a ref only from run.* events (got ${event?.kind ?? "missing event"})`,
+      );
+    }
+
+    const wsRows = await _db
+      .select({ branch: workspaces.branch })
+      .from(workspaces)
+      .where(eq(workspaces.runId, event.runId));
+    const branch = wsRows[0]?.branch as string | undefined;
+
+    if (!branch) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `agent "${args.agentId}": triggering run ${event.runId} has no workspace branch to check out`,
+      );
+    }
+    ref = branch;
+  } else {
+    throw new MaisterError(
+      "PRECONDITION",
+      `agent "${args.agentId}": workspace_ref=trigger is not derivable from a "${args.trigger.source}" launch — configure a literal branch instead`,
+    );
+  }
+
+  // PRECONDITION on an unresolvable ref — v1 never auto-fetches.
+  return resolveBaseCommit({
+    projectRepoPath: args.repoPath,
+    baseRef: ref,
+  });
+}
+
 export async function launchAgentRun(
   input: LaunchAgentRunInput,
 ): Promise<LaunchAgentRunResult> {
@@ -334,17 +441,29 @@ export async function launchAgentRun(
     }
   }
 
-  // ADR-090: a repo_read run is only verifiable against a clean baseline.
+  // ADR-090: a repo_read run against the PARENT checkout is only verifiable
+  // from a clean baseline. With workspace_ref the run gets an EPHEMERAL
+  // detached checkout instead — clean by construction, so the baseline check
+  // is skipped and the ref must resolve NOW (launch-surface PRECONDITION).
   if (workspace === "repo_read") {
-    const porcelain = await statusPorcelain({
-      worktreePath: ctx.project.repoPath,
-    });
+    if (ctx.effective.parsed.workspaceRef) {
+      await resolveWorkspaceRefCommittish(_db, {
+        agentId: input.agentId,
+        workspaceRef: ctx.effective.parsed.workspaceRef,
+        repoPath: ctx.project.repoPath,
+        trigger: input.trigger,
+      });
+    } else {
+      const porcelain = await statusPorcelain({
+        worktreePath: ctx.project.repoPath,
+      });
 
-    if (porcelain.trim() !== "") {
-      throw new MaisterError(
-        "PRECONDITION",
-        `repo_read agent launch refused: parent checkout ${ctx.project.repoPath} is dirty — commit or stash first`,
-      );
+      if (porcelain.trim() !== "") {
+        throw new MaisterError(
+          "PRECONDITION",
+          `repo_read agent launch refused: parent checkout ${ctx.project.repoPath} is dirty — commit or stash first`,
+        );
+      }
     }
   }
 
@@ -588,6 +707,12 @@ export async function finalizeAgentRun(
 ): Promise<{ finalized: boolean }> {
   const _db = opts.db ?? getDb();
 
+  // Set inside the transaction when the run used an ephemeral workspace_ref
+  // checkout — removed AFTER the commit (fs cleanup must never roll back the
+  // terminal flip; a failure leaves a stale dir the next spawn recreates).
+  let ephemeralCleanup: { repoPath: string; worktreePath: string } | null =
+    null;
+
   const finalized = await _db.transaction(async (tx: Db) => {
     const rows = await tx
       .update(runs)
@@ -621,7 +746,13 @@ export async function finalizeAgentRun(
       );
 
       if (wsCtx?.workspace === "repo_read") {
-        const verdict = await checkRepoReadDirt(wsCtx.repoPath);
+        // workspace_ref runs leave a deterministic `-ro` checkout: when it
+        // exists, the L3 target IS that ephemeral dir (the parent checkout
+        // was never the session cwd).
+        const ephemeralPath = agentReadOnlyWorkdirPath(wsCtx.slug, runId);
+        const usedEphemeral = await pathIsDirectory(ephemeralPath);
+        const l3Target = usedEphemeral ? ephemeralPath : wsCtx.repoPath;
+        const verdict = await checkRepoReadDirt(l3Target);
 
         if (verdict.dirty) {
           await quarantineAgentInTx({
@@ -630,8 +761,15 @@ export async function finalizeAgentRun(
             runId,
             projectId: row.projectId,
             taskId: row.taskId,
-            reason: `repo_read run left ${wsCtx.repoPath} dirty: ${verdict.porcelain.slice(0, 512)}`,
+            reason: `repo_read run left ${l3Target} dirty: ${verdict.porcelain.slice(0, 512)}`,
           });
+        }
+
+        if (usedEphemeral) {
+          ephemeralCleanup = {
+            repoPath: wsCtx.repoPath,
+            worktreePath: ephemeralPath,
+          };
         }
       }
     }
@@ -674,6 +812,25 @@ export async function finalizeAgentRun(
 
   if (finalized) {
     log.info({ runId, outcome, reason: opts.reason }, "agent run finalized");
+
+    if (ephemeralCleanup) {
+      const cleanup = ephemeralCleanup as {
+        repoPath: string;
+        worktreePath: string;
+      };
+
+      await removeWorktree({
+        projectRepoPath: cleanup.repoPath,
+        worktreePath: cleanup.worktreePath,
+        force: true,
+      }).catch((err: unknown) => {
+        log.warn(
+          { runId, err: err instanceof Error ? err.message : String(err) },
+          "ephemeral checkout removal failed — next spawn recreates it",
+        );
+      });
+    }
+
     await promoteNextPending({ db: _db, pool: "agent" }).catch(
       (err: unknown) => {
         log.error(
@@ -819,7 +976,45 @@ export async function startAgentSession(
   const workspace = effective.parsed.workspace;
   let cwd: string;
 
-  if (workspace === "repo_read") {
+  if (workspace === "repo_read" && effective.parsed.workspaceRef) {
+    // ADR-090 rework: ephemeral detached checkout at the trigger-derived ref
+    // — the user's checkout is never switched; removed at the terminal choke.
+    cwd = agentReadOnlyWorkdirPath(project.slug, runId);
+
+    try {
+      const committish = await resolveWorkspaceRefCommittish(_db, {
+        agentId: run.agentId as string,
+        workspaceRef: effective.parsed.workspaceRef,
+        repoPath: project.repoPath as string,
+        trigger: {
+          source: run.triggerSource as AgentTriggerSource,
+          eventId: run.triggerEventId as number | bigint | null,
+          payload: run.triggerPayload as Record<string, unknown> | null,
+        },
+      });
+
+      // A leftover from a crashed prior spawn of the SAME run is stale —
+      // recreate at the freshly resolved ref (removeWorktree no-ops when
+      // missing).
+      await removeWorktree({
+        projectRepoPath: project.repoPath as string,
+        worktreePath: cwd,
+        force: true,
+      });
+      await addDetachedWorktree({
+        projectRepoPath: project.repoPath as string,
+        worktreePath: cwd,
+        committish,
+      });
+    } catch (err) {
+      await finalizeAgentRun(runId, "Failed", {
+        db: _db,
+        reason: err instanceof Error ? err.message : String(err),
+      });
+
+      return;
+    }
+  } else if (workspace === "repo_read") {
     cwd = project.repoPath;
   } else if (workspace === "worktree") {
     const wsRows = await _db

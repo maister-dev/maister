@@ -188,13 +188,13 @@ export async function loadAgentWorkspaceContext(
   db: Db,
   agentId: string,
   projectId: string,
-): Promise<{ workspace: string; repoPath: string } | null> {
+): Promise<{ workspace: string; repoPath: string; slug: string } | null> {
   const agentRows = await db
     .select({ workspace: agents.workspace })
     .from(agents)
     .where(eq(agents.id, agentId));
   const projectRows = await db
-    .select({ repoPath: projects.repoPath })
+    .select({ repoPath: projects.repoPath, slug: projects.slug })
     .from(projects)
     .where(eq(projects.id, projectId));
 
@@ -203,5 +203,6 @@ export async function loadAgentWorkspaceContext(
   return {
     workspace: agentRows[0].workspace as string,
     repoPath: projectRows[0].repoPath as string,
+    slug: projectRows[0].slug as string,
   };
 }
