@@ -33,6 +33,19 @@ const installFlowPlugin = vi.fn(
   async (_args: Record<string, unknown>): Promise<unknown> => undefined,
 );
 
+// ADR-087: packages[] orchestration is spy-tested here (the real pipeline is
+// covered by lib/packages install tests); behavior swapped per test.
+const installPackage = vi.fn(
+  async (_args: Record<string, unknown>): Promise<unknown> => ({
+    name: "pkg",
+    resolvedRevision: "a".repeat(40),
+    versionLabel: "pkg-v1.0.0",
+    manifest: { schemaVersion: 1, name: "pkg", flows: [] },
+    flows: [],
+    capabilityDerived: [],
+  }),
+);
+
 // The seeded bootstrap admin (migration 0005) is the FK target for the owner
 // membership; requireGlobalRole is mocked to return it (avoids @/auth →
 // next-auth in the Vitest module graph).
@@ -72,6 +85,8 @@ const seedConfig = {
     env_profiles: [],
   },
   capability_imports: [],
+  // The real loadProjectConfig applies the zod default — the mock mirrors it.
+  packages: [],
 };
 let currentConfig: Record<string, any> = seedConfig;
 let currentManifest: Record<string, any> = baseManifest;
@@ -97,6 +112,11 @@ vi.mock("@/lib/config", () => ({
 vi.mock("@/lib/flows", () => ({
   installFlowPlugin: (...args: unknown[]) =>
     installFlowPlugin(...(args as [Record<string, unknown>])),
+}));
+
+vi.mock("@/lib/packages/install", () => ({
+  installPackage: (...args: unknown[]) =>
+    installPackage(...(args as [Record<string, unknown>])),
 }));
 
 // This saga test is about flow-install rollback, not source resolution; mock
@@ -378,5 +398,103 @@ describe("POST /api/projects — flow-install failure saga (integration)", () =>
 
     expect(flowRows[0].enablementState).toBe("Enabled");
     expect(remaps).toHaveLength(0);
+  });
+});
+
+describe("POST /api/projects — packages[] bootstrap (ADR-087, integration)", () => {
+  it("installs each packages[] entry and ingests package-derived capabilities", async () => {
+    currentConfig = {
+      ...seedConfig,
+      flows: [],
+      packages: [
+        {
+          id: "aif",
+          source: "github.com/org/maister-plugins",
+          version: "aif/v2.0.0",
+          path: "packages/aif",
+        },
+      ],
+    };
+    installPackage.mockResolvedValueOnce({
+      name: "aif",
+      resolvedRevision: "b".repeat(40),
+      versionLabel: "aif-v2.0.0",
+      manifest: { schemaVersion: 1, name: "aif", flows: [] },
+      flows: [],
+      capabilityDerived: [
+        {
+          id: "aif-bundle",
+          kind: "agent_definition",
+          label: "aif-bundle",
+          source: "flow-package",
+          version: "aif-v2.0.0",
+          revision: "b".repeat(40),
+          agents: ["claude", "codex", "gemini", "opencode", "mimo"],
+          enforceability: "instructed",
+          selected_by_default: true,
+        },
+      ],
+    });
+
+    const res = await POST(request());
+
+    expect(res.status).toBe(201);
+    expect(installPackage).toHaveBeenCalledTimes(1);
+    expect(installPackage.mock.calls[0][0]).toMatchObject({
+      source: "github.com/org/maister-plugins",
+      version: "aif/v2.0.0",
+      path: "packages/aif",
+      projectSlug: "saga-proj",
+    });
+
+    // The package-derived bundle entry rode the SAME SET/CLEAR ingest as
+    // config capability_imports (additionalImportDerived plumbing).
+    const records = await db
+      .select()
+      .from(schema.capabilityRecords)
+      .where(eq(schema.capabilityRecords.capabilityRefId, "aif-bundle"));
+
+    expect(records).toHaveLength(1);
+    expect(records[0].kind).toBe("agent_definition");
+    expect(records[0].source).toBe("flow-package");
+  });
+
+  it("rolls the whole project back when a package install fails (same compensation)", async () => {
+    currentConfig = {
+      ...seedConfig,
+      flows: [],
+      packages: [
+        {
+          id: "aif",
+          source: "github.com/org/maister-plugins",
+          version: "aif/v2.0.0",
+        },
+      ],
+    };
+    installPackage.mockRejectedValueOnce(
+      new MaisterError("FLOW_INSTALL", "package clone failed"),
+    );
+
+    const res = await POST(request());
+
+    expect(res.status).toBe(502);
+    expect(await projectRows("saga-proj")).toHaveLength(0);
+
+    // Retry succeeds with the default installPackage mock.
+    currentConfig = {
+      ...seedConfig,
+      flows: [],
+      packages: [
+        {
+          id: "aif",
+          source: "github.com/org/maister-plugins",
+          version: "aif/v2.0.0",
+        },
+      ],
+    };
+    const retry = await POST(request());
+
+    expect(retry.status).toBe(201);
+    expect(await projectRows("saga-proj")).toHaveLength(1);
   });
 });
