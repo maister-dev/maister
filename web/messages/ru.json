@@ -1392,6 +1392,11 @@
     "scopeHitlRespond": "Ответы HITL",
     "scopeCommentsRead": "Чтение комментариев",
     "scopeCommentsCreate": "Создание комментариев",
+    "scopeTasksTriage": "Вердикты триажа",
+    "scopeRelationsRead": "Чтение связей",
+    "scopeRelationsCreate": "Создание связей",
+    "scopeRelationsDelete": "Удаление связей",
+    "scopeAgentsTrigger": "Триггер агентов",
     "errorGeneric": "Не удалось выполнить действие. Повторите."
   },
   "gc": {

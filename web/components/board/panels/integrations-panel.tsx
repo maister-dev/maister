@@ -69,6 +69,11 @@ export interface TokenLabels {
   scopeHitlRespond: string;
   scopeCommentsRead: string;
   scopeCommentsCreate: string;
+  scopeTasksTriage: string;
+  scopeRelationsRead: string;
+  scopeRelationsCreate: string;
+  scopeRelationsDelete: string;
+  scopeAgentsTrigger: string;
   errorGeneric: string;
 }
 
@@ -121,6 +126,16 @@ function scopeLabel(labels: TokenLabels, scope: string): string {
       return labels.scopeCommentsRead;
     case "comments:create":
       return labels.scopeCommentsCreate;
+    case "tasks:triage":
+      return labels.scopeTasksTriage;
+    case "relations:read":
+      return labels.scopeRelationsRead;
+    case "relations:create":
+      return labels.scopeRelationsCreate;
+    case "relations:delete":
+      return labels.scopeRelationsDelete;
+    case "agents:trigger":
+      return labels.scopeAgentsTrigger;
     default:
       return scope;
   }
@@ -323,6 +338,11 @@ export async function IntegrationsPanel({
     scopeHitlRespond: t("scopeHitlRespond"),
     scopeCommentsRead: t("scopeCommentsRead"),
     scopeCommentsCreate: t("scopeCommentsCreate"),
+    scopeTasksTriage: t("scopeTasksTriage"),
+    scopeRelationsRead: t("scopeRelationsRead"),
+    scopeRelationsCreate: t("scopeRelationsCreate"),
+    scopeRelationsDelete: t("scopeRelationsDelete"),
+    scopeAgentsTrigger: t("scopeAgentsTrigger"),
     errorGeneric: t("errorGeneric"),
   };
 

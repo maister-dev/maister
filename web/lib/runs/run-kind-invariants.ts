@@ -10,6 +10,7 @@ export type RunKindInvariantInput = {
   flowRevisionId: string | null;
   flowVersion: string;
   flowRevision: string;
+  agentId?: string | null;
 };
 
 export type RunScratchMetadataInvariantInput = {
@@ -20,6 +21,12 @@ export type RunScratchMetadataInvariantInput = {
 export function assertRunKindInvariant(input: RunKindInvariantInput): void {
   if (input.runKind === "flow") {
     assertFlowRunInvariant(input);
+
+    return;
+  }
+
+  if (input.runKind === "agent") {
+    assertAgentRunInvariant(input);
 
     return;
   }
@@ -48,6 +55,28 @@ export function assertRunScratchMetadataInvariant(
 function assertFlowRunInvariant(input: RunKindInvariantInput): void {
   if (!input.taskId || !input.flowId) {
     throw new MaisterError("CONFIG", "flow run requires taskId and flowId");
+  }
+}
+
+// M33 (ADR-087): agent runs carry the catalog identity instead of a flow;
+// taskId is optional (task-bound triage/commentary vs standalone monitors).
+function assertAgentRunInvariant(input: RunKindInvariantInput): void {
+  if (!input.agentId) {
+    throw new MaisterError("CONFIG", "agent run requires agentId");
+  }
+
+  if (input.flowId || input.flowRevisionId) {
+    throw new MaisterError(
+      "CONFIG",
+      "agent run must not store flowId or flowRevisionId on runs",
+    );
+  }
+
+  if (input.flowVersion !== "agent" || input.flowRevision !== "manual") {
+    throw new MaisterError(
+      "CONFIG",
+      "agent run requires flowVersion=agent and flowRevision=manual",
+    );
   }
 }
 

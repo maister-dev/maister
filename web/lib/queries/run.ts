@@ -98,7 +98,7 @@ export interface RunDetail {
   agent: CapabilityAgent;
   // M18: run kind drives the Review surface — only `flow` runs at `Review` get
   // the ReviewPanel; scratch runs keep their own promote affordance.
-  runKind: "flow" | "scratch";
+  runKind: "flow" | "scratch" | "agent";
   // M18: the parent repo path + workspace branch/promotion ledger (nullable on
   // pre-M18 rows; the run-detail page derives safe fallbacks, see §3.6).
   parentRepoPath: string;

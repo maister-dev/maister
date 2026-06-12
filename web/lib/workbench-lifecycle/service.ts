@@ -78,7 +78,7 @@ export type LifecycleProject = {
 export type LifecycleRun = {
   id: string;
   projectId: string;
-  runKind: "flow" | "scratch";
+  runKind: "flow" | "scratch" | "agent";
   status: WorkbenchRunStatus;
   acpSessionId: string | null;
   currentStepId: string | null;
@@ -112,7 +112,7 @@ export type RecordArchiveInput = {
 
 export type RecordDropInput = {
   runId: string;
-  runKind: "flow" | "scratch";
+  runKind: "flow" | "scratch" | "agent";
   workspaceId: string;
   removedAt: Date;
   expectedRunStatus: WorkbenchRunStatus;

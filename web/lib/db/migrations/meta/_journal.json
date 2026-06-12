@@ -330,6 +330,13 @@
       "when": 1781207814181,
       "tag": "0046_domain_events",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1781224127751,
+      "tag": "0047_platform_agents",
+      "breakpoints": true
     }
   ]
 }

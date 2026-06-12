@@ -4,6 +4,7 @@ export const TOKEN_SCOPES = [
   "tasks:create",
   "tasks:read",
   "tasks:update",
+  "tasks:triage",
   "runs:launch",
   "runs:read",
   "readiness:read",
@@ -12,7 +13,23 @@ export const TOKEN_SCOPES = [
   "hitl:respond",
   "comments:read",
   "comments:create",
+  "relations:read",
+  "relations:create",
+  "relations:delete",
+  "agents:trigger",
 ] as const;
+
+// M33 (ADR-087): the fixed scope set issued to per-launch ephemeral agent
+// tokens — task/comment/triage/relations ops only.
+export const AGENT_TOKEN_SCOPES = [
+  "tasks:read",
+  "tasks:triage",
+  "comments:read",
+  "comments:create",
+  "relations:read",
+  "relations:create",
+  "relations:delete",
+] as const satisfies readonly (typeof TOKEN_SCOPES)[number][];
 
 export const TOKEN_SCOPE_VALUES = [TOKEN_SCOPE_ALL, ...TOKEN_SCOPES] as const;
 

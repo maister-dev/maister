@@ -25,16 +25,16 @@ erDiagram
 
     AGENTS {
         text id PK "dir name in ~/.maister/agents/; SAFE_PATH_SEGMENT"
-        text scope "platform|project CHECK"
+        text scope "platform|project"
         text project_id FK "NOT NULL iff scope=project (CHECK); CASCADE"
         text name "NOT NULL — frontmatter"
         text description "NOT NULL — frontmatter"
         text runner_id FK "NULL -> platform_acp_runners(id) SET NULL"
-        text workspace "none|repo_read|worktree CHECK (ADR-088)"
-        text mode "session|subagent CHECK"
+        text workspace "none|repo_read|worktree (ADR-088)"
+        text mode "session|subagent"
         jsonb triggers "NOT NULL — subset of manual|cron|domain_event|webhook|flow"
         jsonb capability_profile "NULL — M14 shape"
-        text risk_tier "read_only|standard|destructive CHECK"
+        text risk_tier "read_only|standard|destructive"
         text source_path "NOT NULL — canonical .md path"
         boolean enabled "NOT NULL DEFAULT true"
         timestamptz quarantined_at "NULL — dirty-watchdog flag"
@@ -57,7 +57,7 @@ erDiagram
         text id PK "uuid — reworked in place from the dead M24 shape"
         text agent_id FK "NOT NULL -> agents(id) CASCADE (was text agent_ref)"
         text project_id FK "NOT NULL -> projects(id) CASCADE"
-        text trigger_type "cron|event CHECK"
+        text trigger_type "cron|event"
         text cron_expr "cron rows: NOT NULL, 5-field croner-validated"
         text timezone "cron rows: NOT NULL, IANA"
         timestamptz next_fire_at "cron rows: NOT NULL — atomic-claim key"
@@ -78,16 +78,15 @@ future Mγ stage).
 
 | Table | Change |
 | ----- | ------ |
-| `runs` | `run_kind` CHECK gains `'agent'`; new `agent_id` (FK `agents` SET NULL), `trigger_source` (`manual\|cron\|domain_event\|webhook\|flow` CHECK, NULL), `trigger_event_id` (bigint, NULL), `trigger_payload` (jsonb, NULL). |
-| `tasks` | `flow_id` → NULLABLE; new `triage_status` (`'triaged'` CHECK, NULL), `runner_id` (FK SET NULL), `target_branch` (text NULL), `promotion_mode` (`local_merge\|pull_request` CHECK, NULL). |
-| `project_tokens` | `token_kind` CHECK gains `'agent'`; new `agent_id` (FK `agents` CASCADE, NULL; CHECK `token_kind='agent'` ⇔ `agent_id IS NOT NULL`). |
+| `runs` | `run_kind` gains `'agent'`; new `agent_id` (FK `agents` SET NULL), `trigger_source` (`manual\|cron\|domain_event\|webhook\|flow`, NULL), `trigger_event_id` (bigint, NULL), `trigger_payload` (jsonb, NULL). |
+| `tasks` | `flow_id` → NULLABLE; new `triage_status` (`'triaged'` \| NULL), `runner_id` (FK SET NULL), `target_branch` (text NULL), `promotion_mode` (`local_merge\|pull_request`, NULL). |
+| `project_tokens` | `token_kind` gains `'agent'`; new `agent_id` (FK `agents` CASCADE, NULL; CHECK `token_kind='agent'` ⇔ `agent_id IS NOT NULL`). |
 
 ## Keys and constraints
 
 | Table | Constraint | Columns | Purpose |
 | ----- | ---------- | ------- | ------- |
 | `agents` | `CHECK` | `(scope='project') = (project_id IS NOT NULL)` | Project scope is exactly a project binding. |
-| `agents` | `CHECK` | `workspace`, `mode`, `risk_tier`, `scope` | Enum allow-lists (ADR-087/088). |
 | `agent_project_links` | `UNIQUE` | `(agent_id, project_id)` | One attachment per pair. |
 | `agent_schedules` | `CHECK` | cron rows: `cron_expr/timezone/next_fire_at NOT NULL`; event rows: `event_match NOT NULL` | Row shape per `trigger_type`. |
 | `runs` | partial `UNIQUE` | `(agent_id, trigger_event_id) WHERE trigger_event_id IS NOT NULL` | Outbox→spawn no-dup claim (at-least-once redelivery converges to one run). |

@@ -1392,6 +1392,11 @@
     "scopeHitlRespond": "Respond to HITL",
     "scopeCommentsRead": "Read comments",
     "scopeCommentsCreate": "Create comments",
+    "scopeTasksTriage": "Submit triage verdicts",
+    "scopeRelationsRead": "Read relations",
+    "scopeRelationsCreate": "Create relations",
+    "scopeRelationsDelete": "Delete relations",
+    "scopeAgentsTrigger": "Trigger agents",
     "errorGeneric": "Action failed. Try again."
   },
   "gc": {

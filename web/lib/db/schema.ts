@@ -713,24 +713,128 @@ export const schedulerJobRuns = pgTable(
   }),
 );
 
-export const agentSchedules = pgTable(
-  "agent_schedules",
+export type AgentScope = "platform" | "project";
+export type AgentWorkspace = "none" | "repo_read" | "worktree";
+export type AgentMode = "session" | "subagent";
+export type AgentRiskTier = "read_only" | "standard" | "destructive";
+export type AgentTriggerKind =
+  | "manual"
+  | "cron"
+  | "domain_event"
+  | "webhook"
+  | "flow";
+
+export const agents = pgTable(
+  "agents",
   {
+    // The catalog dir name under ~/.maister/agents/ (SAFE_PATH_SEGMENT).
     id: text("id").primaryKey(),
+    scope: text("scope", { enum: ["platform", "project"] }).notNull(),
     projectId: text("project_id").references(() => projects.id, {
       onDelete: "cascade",
     }),
-    schedulerJobId: text("scheduler_job_id")
-      .notNull()
-      .references(() => schedulerJobs.id, { onDelete: "cascade" }),
-    agentRef: text("agent_ref").notNull(),
-    triggerType: text("trigger_type", {
-      enum: ["cron", "manual", "event", "continuous"],
-    }).notNull(),
-    desiredState: text("desired_state", {
-      enum: ["running", "stopped"],
+    name: text("name").notNull(),
+    description: text("description").notNull(),
+    runnerId: text("runner_id").references(() => platformAcpRunners.id, {
+      onDelete: "set null",
     }),
-    eventMatch: jsonb("event_match").$type<Record<string, unknown>>(),
+    workspace: text("workspace", {
+      enum: ["none", "repo_read", "worktree"],
+    }).notNull(),
+    mode: text("mode", { enum: ["session", "subagent"] }).notNull(),
+    triggers: jsonb("triggers").$type<AgentTriggerKind[]>().notNull(),
+    capabilityProfile:
+      jsonb("capability_profile").$type<Record<string, unknown>>(),
+    riskTier: text("risk_tier", {
+      enum: ["read_only", "standard", "destructive"],
+    }).notNull(),
+    sourcePath: text("source_path").notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    quarantinedAt: timestamp("quarantined_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    quarantineReason: text("quarantine_reason"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    idxProject: index("agents_project_idx").on(t.projectId),
+    scopeProjectCheck: check(
+      "agents_scope_project_check",
+      sql`(${t.scope} = 'project') = (${t.projectId} IS NOT NULL)`,
+    ),
+  }),
+);
+
+export const agentProjectLinks = pgTable(
+  "agent_project_links",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    agentId: text("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    enabled: boolean("enabled").notNull().default(true),
+    runnerOverrideId: text("runner_override_id").references(
+      () => platformAcpRunners.id,
+      { onDelete: "set null" },
+    ),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniqAgentProject: unique("agent_project_links_agent_project_uq").on(
+      t.agentId,
+      t.projectId,
+    ),
+    idxProject: index("agent_project_links_project_idx").on(t.projectId),
+  }),
+);
+
+// M33 (ADR-087) rework of the dead M24 shape: real agents FK (was text
+// agent_ref), cron fields claimed atomically by the agent_tick.dispatcher,
+// event rows consumed by the agent_triggers outbox consumer. The M24
+// scheduler_job_id bridge and desired_state ('continuous' = future Mγ) are
+// dropped.
+export const agentSchedules = pgTable(
+  "agent_schedules",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    agentId: text("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    triggerType: text("trigger_type", {
+      enum: ["cron", "event"],
+    }).notNull(),
+    cronExpr: text("cron_expr"),
+    timezone: text("timezone"),
+    nextFireAt: timestamp("next_fire_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    lastFiredAt: timestamp("last_fired_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    eventMatch: jsonb("event_match").$type<{ kinds: string[] }>(),
     enabled: boolean("enabled").notNull().default(true),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
@@ -742,13 +846,28 @@ export const agentSchedules = pgTable(
   (t) => ({
     idxProjectAgent: index("agent_schedules_project_agent_idx").on(
       t.projectId,
-      t.agentRef,
+      t.agentId,
     ),
-    idxSchedulerJob: index("agent_schedules_scheduler_job_idx").on(
-      t.schedulerJobId,
+    idxDueCron: index("agent_schedules_due_cron_idx").on(
+      t.triggerType,
+      t.enabled,
+      t.nextFireAt,
+    ),
+    cronShapeCheck: check(
+      "agent_schedules_cron_shape_check",
+      sql`(${t.triggerType} <> 'cron') OR (${t.cronExpr} IS NOT NULL AND ${t.timezone} IS NOT NULL AND ${t.nextFireAt} IS NOT NULL)`,
+    ),
+    eventShapeCheck: check(
+      "agent_schedules_event_shape_check",
+      sql`(${t.triggerType} <> 'event') OR (${t.eventMatch} IS NOT NULL)`,
     ),
   }),
 );
+
+export type AgentRow = typeof agents.$inferSelect;
+export type AgentInsert = typeof agents.$inferInsert;
+export type AgentProjectLinkRow = typeof agentProjectLinks.$inferSelect;
+export type AgentScheduleRow = typeof agentSchedules.$inferSelect;
 
 export type AuthoredCapabilityKind = "rule" | "skill" | "flow";
 export type AuthoredCapabilityLifecycle = "DRAFT" | "PUBLISHED" | "ARCHIVED";
@@ -851,9 +970,10 @@ export const tasks = pgTable(
     number: integer("number").notNull(),
     title: text("title").notNull(),
     prompt: text("prompt").notNull(),
-    flowId: text("flow_id")
-      .notNull()
-      .references(() => flows.id),
+    // M33 (ADR-087): NULLABLE — simple-intent tasks are created flowless and
+    // classify `unconfigured` until a triage verdict or the launch popover
+    // fills the flow.
+    flowId: text("flow_id").references(() => flows.id),
     status: text("status", {
       enum: ["Backlog", "InFlight", "Done", "Abandoned"],
     })
@@ -863,6 +983,16 @@ export const tasks = pgTable(
       .notNull()
       .default("Backlog"),
     attemptNumber: integer("attempt_number").notNull().default(1),
+    // M33 (ADR-087) launch-verdict columns: written by the ext triage op /
+    // the card popover PATCH; runner rides the launchOverride tier at launch.
+    triageStatus: text("triage_status", { enum: ["triaged"] }),
+    runnerId: text("runner_id").references(() => platformAcpRunners.id, {
+      onDelete: "set null",
+    }),
+    targetBranch: text("target_branch"),
+    promotionMode: text("promotion_mode", {
+      enum: ["local_merge", "pull_request"],
+    }),
     createdByUserId: text("created_by_user_id").references(() => users.id, {
       onDelete: "set null",
     }),
@@ -950,7 +1080,7 @@ export const flowRunnerRemaps = pgTable(
   }),
 );
 
-export type RunKind = "flow" | "scratch";
+export type RunKind = "flow" | "scratch" | "agent";
 
 // M27/T-C8 (§3.1, ADR-069): the capability set resolved at launch, frozen onto
 // the run so an edit/publish mid-run cannot mutate it. `flowOrigin` records
@@ -975,9 +1105,21 @@ export const runs = pgTable(
   "runs",
   {
     id: text("id").primaryKey(),
-    runKind: text("run_kind", { enum: ["flow", "scratch"] })
+    runKind: text("run_kind", { enum: ["flow", "scratch", "agent"] })
       .notNull()
       .default("flow"),
+    // M33 (ADR-087): set iff runKind='agent'. SET NULL so run history
+    // survives catalog deletes (deletes are usage-guarded for live runs).
+    agentId: text("agent_id").references(() => agents.id, {
+      onDelete: "set null",
+    }),
+    triggerSource: text("trigger_source", {
+      enum: ["manual", "cron", "domain_event", "webhook", "flow"],
+    }),
+    // domain_events.id claim key — partial UNIQUE (agent_id, trigger_event_id)
+    // makes at-least-once redelivery converge to exactly one run.
+    triggerEventId: bigint("trigger_event_id", { mode: "number" }),
+    triggerPayload: jsonb("trigger_payload").$type<Record<string, unknown>>(),
     taskId: text("task_id").references(() => tasks.id, {
       onDelete: "cascade",
     }),
@@ -998,6 +1140,9 @@ export const runs = pgTable(
         "platformFlowDefault",
         "projectDefault",
         "platformDefault",
+        // M33 (ADR-087) standalone agent chain tiers.
+        "agentLinkOverride",
+        "agentDefault",
       ],
     }),
     capabilityAgent: text("capability_agent", {
@@ -1075,6 +1220,10 @@ export const runs = pgTable(
     idxTask: index("runs_task_idx").on(t.taskId),
     idxKindTask: index("runs_kind_task_idx").on(t.runKind, t.taskId),
     idxRunner: index("runs_runner_idx").on(t.runnerId),
+    // M33 (ADR-087): outbox→spawn no-dup claim under at-least-once redelivery.
+    uniqAgentTriggerEvent: uniqueIndex("runs_agent_trigger_event_uq")
+      .on(t.agentId, t.triggerEventId)
+      .where(sql`${t.triggerEventId} IS NOT NULL`),
   }),
 );
 
@@ -2259,11 +2408,16 @@ export const projectTokens = pgTable(
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
-    token_kind: text("token_kind", { enum: ["project", "user"] })
+    token_kind: text("token_kind", { enum: ["project", "user", "agent"] })
       .notNull()
       .default("project"),
     owner_user_id: text("owner_user_id").references(() => users.id, {
       onDelete: "set null",
+    }),
+    // M33 (ADR-087): per-launch ephemeral agent tokens carry the agent
+    // identity; CHECK pairs it with token_kind='agent'.
+    agent_id: text("agent_id").references(() => agents.id, {
+      onDelete: "cascade",
     }),
     prefix: text("prefix").notNull(),
     token_hash: text("token_hash").notNull(),
@@ -2285,6 +2439,11 @@ export const projectTokens = pgTable(
     idxPrefix: index("project_tokens_prefix_idx").on(t.prefix),
     idxProject: index("project_tokens_project_idx").on(t.project_id),
     idxOwner: index("project_tokens_owner_idx").on(t.owner_user_id),
+    idxAgent: index("project_tokens_agent_idx").on(t.agent_id),
+    agentKindCheck: check(
+      "project_tokens_agent_kind_check",
+      sql`(${t.token_kind} = 'agent') = (${t.agent_id} IS NOT NULL)`,
+    ),
   }),
 );
 

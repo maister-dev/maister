@@ -91,6 +91,11 @@ const labels: TokenLabels = {
   scopeHitlRespond: "Respond to HITL",
   scopeCommentsRead: "Read comments",
   scopeCommentsCreate: "Create comments",
+  scopeTasksTriage: "Submit triage verdicts",
+  scopeRelationsRead: "Read relations",
+  scopeRelationsCreate: "Create relations",
+  scopeRelationsDelete: "Delete relations",
+  scopeAgentsTrigger: "Trigger agents",
   errorGeneric: "Something went wrong",
 };
 

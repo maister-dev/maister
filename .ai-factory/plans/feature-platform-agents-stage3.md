@@ -5,6 +5,18 @@
 - **Status**: Planned
 - **Design record**: the 2026-06-11 platform-agents design doc is LOST (owner: do not restore). Inputs for this plan: the /aif-plan task args (verbatim Stage-3 scope), `docs/pv/agents-as-environment-actors.md` (Stage-0 vision + locked brainstorm decisions), ADR-083/M31 (polymorphic `agent` actor, `task.triage_requeued` reserved), ADR-086/M32 (consumer seam), `.ai-factory/specs/domain-event-outbox.spec.md` (Stage-3 prep notes). The three design amendments over Stage-0: **per-agent runner**, **standalone-first**, **social layer**.
 
+## Progress
+
+- [x] Phase 0 — ADR-087/088 + analytics spec (commit 1)
+- [ ] Phase 1 — schema + migration 0047
+- [ ] Phase 2 — definition parser + registry
+- [ ] Phase 3 — standalone launch + budgets
+- [ ] Phase 4 — enforcement L1/L3 + quarantine
+- [ ] Phase 5 — five triggers
+- [ ] Phase 6 — ext/MCP + tokens
+- [ ] Phase 7 — UI
+- [ ] Phase 8 — e2e + close-out
+
 ## Settings
 
 - **Testing**: yes — TDD per repo convention; unit + integration + e2e matrix from the task args.
