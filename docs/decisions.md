@@ -113,6 +113,7 @@
 | [ADR-085](#adr-085-mimo-code-as-a-distinct-acp-adapter-family) | MiMo Code as a distinct ACP adapter family | Accepted | 2026-06-11 |
 | [ADR-086](#adr-086-domain-event-outbox-as-the-shared-trigger-bus) | Domain-event outbox as the shared trigger bus | Accepted | 2026-06-11 |
 | [ADR-087](#adr-087-multi-run-launch-cost-accounting-and-delivery-policy-surfaces) | Multi-run launch, cost accounting, and delivery-policy surfaces | Accepted | 2026-06-11 |
+| [ADR-087](#adr-087-multi-flow-package-management) | Multi-flow package management | Accepted | 2026-06-12 |
 
 ---
 
@@ -736,7 +737,7 @@ Graceful shutdown with `MAISTER_SHUTDOWN_GRACE_MS` budget and
 ### ADR-021: Flow package lifecycle: multi-revision, trust, and compatibility
 
 **Date:** 2026-05-30
-**Status:** Accepted
+**Status:** Accepted (amended by [ADR-087](#adr-087-multi-flow-package-management): a package groups multiple flow sources under one import; the per-revision model below is unchanged)
 **Context:** ADR-010 packaged Flows as git-tag-pinned plugin bundles and M4
 shipped the loader. But the loader stores exactly one row per
 `(project_id, flow_ref_id)` (`UNIQUE` constraint) and the runner reads the
@@ -6326,6 +6327,102 @@ override to promote-time override.
   job, or recommendation write path.
 - The schema migration for this decision is `0047`; the ADR number is ADR-087
   after ADR-085 and ADR-086 on the rebased `main`.
+
+---
+
+### ADR-087: Multi-flow package management
+
+**Date:** 2026-06-12
+**Status:** Accepted
+**Context:** A delivery process ships as a set of flows plus the capability
+content they need (skills, agents, MCP server templates, restriction
+path-sets). Today each flow is its own `maister.yaml` source: the extracted
+AIF package costs six entries (5 `flows[]` + 1 `capability_imports[]`)
+version-pinned in lockstep, the bundle ingests as one opaque
+`agent_definition` record, packages cannot ship MCP templates or restriction
+sets, there is no update discovery, and nothing groups the parts as one unit.
+The AIF package now lives in the external `maister-plugins` monorepo
+(`packages/aif`, tag `aif/v2.0.0`). The deferred single-import plan
+(2026-06-09) locked the two-scope direction; the owner-approved design is
+`docs/pv/package-management.md`. ADR-021's per-revision install/trust model
+stays the substrate — this decision groups revisions into packages above it.
+
+**Decision:** Packages become the first-class distribution unit, sourced from
+git monorepos and managed as a platform catalog with per-project attachments.
+
+- **Package repos are git monorepos** (`packages/<name>/…`); more than one
+  repo can be configured. Versions are per-package tags `<name>/vX.Y.Z` — the
+  tag is the user-facing pin, the resolved SHA is runtime truth (ADR-021
+  semantics unchanged).
+- **`maister-package.yaml` v1** at the package root declares the contents:
+  `flows[{id, path}]`, `capabilities[{id, path}]`, `mcps[]` (server templates;
+  secret values are `env:NAME` references only), `restrictions[{id, paths[]}]`
+  (path-sets that unlock `must_not_touch` for package flows). No `version`
+  field — the git tag is the only pin. New content kinds arrive via
+  `schemaVersion` bump.
+- **`maister.yaml` gains `packages[] = {id, source, version, path?}`** —
+  declarative bootstrap at registration and the durable record for re-raising
+  a project on another instance. Runtime source of truth is the DB, managed
+  from the UI; every attach/detach/upgrade **writes the pin back** to
+  `maister.yaml` (comment-preserving, atomic; a write-back failure warns and
+  never rolls back the attach).
+- **Two-scope model:** `package_sources` (platform config; discovery via
+  `git ls-remote --tags` + a shallow default-branch manifest scan, refreshed
+  on demand and by a startup debounce gated by
+  `MAISTER_PACKAGE_DISCOVERY_STALE_HOURS`, default 24) → `package_installs`
+  (immutable installed package revisions in the content-addressed cache) →
+  `project_package_attachments` (per-project enablement). Existing `flows`
+  and `capability_imports` rows join a package group via nullable
+  `package_install_id` FKs; standalone flows keep working.
+- **Revision inheritance:** the package resolves ONE revision (git: tag SHA;
+  local: content digest of the package dir) and every member flow/capability
+  sub-install records that revision, so `runs.flow_revision` pinning and the
+  content-addressed cache keep their immutability contract. Sub-installs
+  receive a path-safe version label (`aif/v2.0.0` → `aif-v2.0.0`) because
+  `versionTagSchema` forbids `/`.
+- **Attach is one transaction** (member flow rows + capability rows + typed
+  ingestion + attachment + FK links), guarded against `flows_project_ref_uq`
+  collisions with standalone flows (CONFLICT) and detach-guarded against live
+  runs (PRECONDITION). Typed ingestion replaces the opaque record: manifest
+  inventory on the install row, `mcps[]` → project MCP catalog entries
+  (package-provided, removed on detach), `restrictions[]` →
+  flow-package-scoped restriction capability records.
+- **Local versions are first-class:** a package installed from a local
+  directory gets a `local-<digest>` label and attaches like any version — the
+  fork-it/adapt-it/test-it loop, and the landing spot for future Studio forks.
+- **Trust:** one operator decision per package revision fans
+  `trust_status`/`exec_trust` to member rows in the same transaction;
+  `setup.sh` still NEVER runs at install — only through the existing
+  post-trust setup path (ADR-021/ADR-042/ADR-069 unchanged).
+
+**Consequences:**
+- Migration `0047` adds the three tables + two FK columns; package installs
+  join the M19 preserve-then-prune GC story.
+- Exactly one new env var (`MAISTER_PACKAGE_DISCOVERY_STALE_HOURS`) wired
+  through `.env.example`, compose, and the configuration docs.
+- The dogfood `maister.yaml` collapses from six lockstep entries to one
+  `packages[]` entry; per-flow `flows[]` remains supported indefinitely.
+- Write-back dirties the consuming repo's working tree by design (the file is
+  MAIster's own config there; the user commits when ready).
+- Package-shipped restriction sets unlock `must_not_touch` gates for package
+  flows (AIF `v2.1.0` follow-up in `maister-plugins`).
+- PR-back channels (repo-as-project promotion; Studio propose-upstream) ride
+  later phases — see `docs/pv/package-management.md` §8.
+
+**Alternatives Considered:**
+- **Keep per-flow sources only:** rejected — six-entry lockstep per package
+  ("config/version hell"), no grouping, no typed contents.
+- **`version` field inside `maister-package.yaml`:** rejected — duplicates
+  the tag pin and invites drift; ADR-021's "tag = user-facing pin" stands.
+- **Repo-wide tags (`vX.Y.Z` for the whole monorepo):** rejected — releasing
+  one package would bump all, and per-package change history blurs.
+- **A new scheduler job kind for discovery:** rejected — the kind registry
+  fans out across four code points for no latency need; a startup debounce +
+  manual refresh covers "при старте или по кнопке".
+- **Generalizing `capability_imports` into packages:** rejected — its
+  ingestion is deliberately opaque (one `agent_definition` row) and its local
+  revision hashes the source STRING, not content; packages need typed
+  contents and content-addressed local versions.
 
 ---
 

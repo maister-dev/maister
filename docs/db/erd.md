@@ -53,6 +53,11 @@ erDiagram
     FLOWS ||--o{ FLOW_REVISIONS : "revisions (M10)"
     PROJECTS ||--o{ CAPABILITY_RECORDS : has
     PROJECTS ||--o{ CAPABILITY_IMPORTS : "git-pinned imports (M14)"
+    PACKAGE_SOURCES ||--o{ PACKAGE_INSTALLS : "installed from (ADR-087 Designed)"
+    PACKAGE_INSTALLS ||--o{ PROJECT_PACKAGE_ATTACHMENTS : "attached (ADR-087 Designed)"
+    PROJECTS ||--o{ PROJECT_PACKAGE_ATTACHMENTS : "package enablement (ADR-087 Designed)"
+    PACKAGE_INSTALLS ||--o{ FLOWS : "group FK (ADR-087 Designed)"
+    PACKAGE_INSTALLS ||--o{ CAPABILITY_IMPORTS : "group FK (ADR-087 Designed)"
     PROJECTS ||--o{ AUTHORED_CAPABILITIES : "authored catalog (M25)"
     PROJECTS ||--o{ SCHEDULER_JOBS : "optional scheduler scope (M24)"
     PROJECTS ||--o{ AGENT_SCHEDULES : "agent schedules (M24)"
@@ -370,6 +375,34 @@ erDiagram
         text trust_status "untrusted|trusted|trusted_by_policy"
         timestamp created_at
         timestamp updated_at
+    }
+
+    PACKAGE_SOURCES {
+        text id PK "ADR-087 Designed"
+        text url UK "git monorepo URL"
+        boolean enabled "DEFAULT true"
+        jsonb discovered "cached name+tags snapshot; DEFAULT []"
+        timestamp last_checked_at "nullable"
+    }
+
+    PACKAGE_INSTALLS {
+        text id PK "ADR-087 Designed"
+        text source_url
+        text name "package name"
+        text version_label "raw tag or local-digest12"
+        text resolved_revision "tag SHA or content digest"
+        jsonb manifest "parsed maister-package.yaml + inventory"
+        text installed_path
+        text package_status "Installing|Installed|Failed|Removed"
+        text trust_status "untrusted|trusted|trusted_by_policy"
+    }
+
+    PROJECT_PACKAGE_ATTACHMENTS {
+        text id PK "ADR-087 Designed"
+        text project_id FK "ON DELETE CASCADE"
+        text package_install_id FK "ON DELETE RESTRICT"
+        text package_name "denormalized; UNIQUE with project_id"
+        timestamp attached_at
     }
 
     AUTHORED_CAPABILITIES {

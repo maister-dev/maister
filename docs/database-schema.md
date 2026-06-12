@@ -58,7 +58,10 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `gate_chat_messages`          | **(M30 — Implemented, migration `0041`)** Answer-only gate-chat turns at a `human`/`form` HITL pause (`role` user/agent, `seq` per pause, `mutation_reverted` L3 flag). Never resolves the HITL, never drives `→Running`. | `runs.id`, `hitl_requests.id` (cascade); `users.id` SET NULL (author) |
 | `assignments`                 | **(M13 — Implemented, migration `0018`)** Claimable work state for HITL, review, manual takeover, merge-conflict waits, and later external waits. Runtime creation and board/run-detail surfaces are wired for the implemented wait classes.                                                                               | `projects.id`, `runs.id`, optional `tasks.id`, optional `hitl_requests.id` |
 | `assignment_events`           | **(M13 — Implemented, migration `0018`)** Append-only assignment lifecycle and ownership event ledger.                                                                                                                                                                                                                     | `assignments.id`, `projects.id`, `runs.id`, optional `actor_identities.id` |
-| `capability_imports`          | **(M14 — Implemented, migration `0019`)** Git-pinned capability import ledger. Mirrors `flow_revisions`. UNIQUE `(project_id, capability_ref_id, resolved_revision)`. Two-phase install (`Installing → Installed/Failed`). Trust-gated `setup.sh`.                                                                              | `projects.id`                                                              |
+| `capability_imports`          | **(M14 — Implemented, migration `0019`)** Git-pinned capability import ledger. Mirrors `flow_revisions`. UNIQUE `(project_id, capability_ref_id, resolved_revision)`. Two-phase install (`Installing → Installed/Failed`). Trust-gated `setup.sh`. **(Designed, ADR-087)** gains nullable `package_install_id` FK.                                                                              | `projects.id`                                                              |
+| `package_sources`             | **(Designed — ADR-087, migration `0047`)** Platform package-source catalog: git monorepo URL (UNIQUE), enabled flag, cached `discovered` snapshot jsonb, `last_checked_at`.                                                                              | —                                                                          |
+| `package_installs`            | **(Designed — ADR-087, migration `0047`)** Immutable installed package revisions. UNIQUE `(source_url, name, resolved_revision)`. Manifest + content inventory jsonb; two-phase `package_status`; package-level `trust_status`.                                                                              | —                                                                          |
+| `project_package_attachments` | **(Designed — ADR-087, migration `0047`)** Per-project package enablement. UNIQUE `(project_id, package_name)`. FK to `package_installs` (restrict) + `projects` (cascade).                                                                              | `projects.id`, `package_installs.id`                                       |
 | `flow_graph_layouts`          | **(Removed — migration `0030`, ADR-064.)** Was a per-project graph-view position store (M22, migration `0024`); superseded by the authored `flow.yaml` `presentation` section. No table.                                                                                            | —                             |
 | `scheduler_jobs`              | **(M24 — Implemented, migration `0027`)** Durable fixed-interval scheduler job definitions for `system_sweep`, `command`, `agent_tick`, and `flow_run`. Atomic due-job claim advances `next_run_at` and creates one attempt.                                                                                                      | optional `projects.id`                                                     |
 | `scheduler_job_runs`          | **(M24 — Implemented, migration `0027`)** Scheduler attempt ledger with status, lease expiry, summary, and error fields. Expired `Claimed`/`Running` attempts are reaped before new claims.                                                                                                                                         | `scheduler_jobs.id`                                                        |
@@ -493,6 +496,35 @@ project-scoped.
 UNIQUE `(flowRefId, resolvedRevision)`. Two-phase install: a row is written at
 `packageStatus='Installing'` before disk side-effects, then flipped to
 `Installed` (AFTER-side marker) or `Failed`.
+
+## Package management tables (Designed — ADR-087, migration `0047`)
+
+Multi-flow package grouping above the per-revision substrate. Process contract:
+[`system-analytics/packages.md`](system-analytics/packages.md); ERD:
+[`db/projects-domain.md`](db/projects-domain.md).
+
+- **`package_sources`** — platform catalog of package monorepos: `url` (text,
+  UNIQUE), `enabled` (bool, default true), `note` (nullable), `discovered`
+  (jsonb, default `[]` — cached `[{name, tags[]}]` snapshot from the last
+  refresh), `last_checked_at` (nullable), timestamps. Discovery failures keep
+  the stale snapshot.
+- **`package_installs`** — immutable installed package revision: `source_url`,
+  `name`, `version_label` (raw tag, e.g. `aif/v2.0.0`, or `local-<digest12>`),
+  `resolved_revision` (tag SHA or package content digest), `manifest` (jsonb —
+  parsed `maister-package.yaml` plus the skills/agents inventory),
+  `manifest_digest`, `installed_path`, `package_status`
+  (`Installing|Installed|Failed|Removed`, two-phase), `trust_status`
+  (package-level decision; fan-out writes member rows), timestamps. UNIQUE
+  `(source_url, name, resolved_revision)`.
+- **`project_package_attachments`** — per-project enablement pointer:
+  `project_id` (FK cascade), `package_install_id` (FK restrict),
+  `package_name` (denormalized), `attached_at`. UNIQUE
+  `(project_id, package_name)` — one attached version of a package per
+  project.
+- **FK group links** — `flows.package_install_id` and
+  `capability_imports.package_install_id` (both nullable): membership of a row
+  in an attached package group. Attach/detach manage the group in one
+  transaction; standalone rows keep the column null.
 
 ## `capability_records`
 

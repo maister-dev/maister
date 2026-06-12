@@ -315,6 +315,59 @@ retroactively invalidated. **M25 authored catalog carve-out:** rows whose
 disabled by `upsertCapabilitiesFromConfig` SET/CLEAR, even though they also use
 `source='project'`.
 
+#### `packages[]` (Designed, ADR-087)
+
+The optional `packages[]` block attaches **multi-flow packages** — one entry
+registers every flow plus the capability bundle a package ships, pinned to a
+single per-package tag. Process contract:
+[`system-analytics/packages.md`](system-analytics/packages.md).
+
+```yaml
+packages:
+  - id: aif                          # capabilityRefId shape (SAFE_PATH_SEGMENT)
+    source: github.com/org/maister-plugins   # git monorepo URL or file:///abs/dir
+    version: aif/v2.0.0              # per-package tag; "/" ALLOWED here
+    path: packages/aif               # optional subdir of the source (monorepo)
+```
+
+| Field | Rule |
+| ----- | ---- |
+| `id` | `capabilityRefIdSchema` (SAFE_PATH_SEGMENT). Unique within the file AND across `flows[]` ∪ `capability_imports[]` ∪ `packages[]` (cross-list collision → `CONFIG`). |
+| `source` | Git URL (cloned `--branch <version> --depth 1`) or a `file://`/absolute local directory (local versions / dogfood). |
+| `version` | Per-package tag, slash allowed: `/^[A-Za-z0-9._+/-]+$/`, no `..`, ≤ 128 chars. NOT `versionTagSchema` — member sub-installs receive the path-safe label (`/` → `-`); the raw tag is used only for `git clone --branch` and the package row. |
+| `path` | Optional package subdir inside the source (escape-guarded relative path; no `..`/absolute). Defaults to the source root. |
+
+Bootstrap semantics: registration installs each entry via `installPackage`
+(one clone per package; every member flow/capability sub-install records the
+package's resolved revision). After registration the runtime source of truth
+is the DB (UI attach/detach/upgrade), and each mutation **writes the pin back**
+to this file (comment-preserving, atomic) so the project can be re-raised on
+another MAIster instance from git alone.
+
+#### `maister-package.yaml` v1 (Designed, ADR-087)
+
+The package manifest at the package root (inside the package repo — not a
+project file). Loader: `loadMaisterPackageManifest` (`CONFIG` on any reject).
+
+```yaml
+schemaVersion: 1
+name: aif                            # MUST equal the packages[] consumer's expectations; capabilityRefId shape
+metadata: { title, summary, links, sources }   # optional package frontmatter
+flows:
+  - { id: aif-dev, path: flows/dev } # id MUST equal the flow.yaml `name` (CONFIG mismatch)
+capabilities:
+  - { id: aif-bundle, path: capability }
+mcps: []                             # MCP server templates: {id, transport: stdio|http,
+                                     #  command?/args?/url?, env: env:NAME refs ONLY, description?}
+restrictions: []                     # path-sets: {id, paths: [globs]} → ingested as
+                                     #  flow-package-scoped restriction capability records on attach
+```
+
+Rules: all `path` values are escape-guarded relative subpaths; ids unique per
+section; `mcps[].env` values MUST match `/^env:[A-Z0-9_]+$/` (secret values
+are never stored — same convention as `platform_mcp_servers`). There is NO
+`version` field — the git tag is the only pin (ADR-021 semantics).
+
 #### Authored capability catalog (Implemented, M25)
 
 Authored rules, skills, and flows are created through MAIster's DB/API surface,
@@ -963,6 +1016,7 @@ Read by Next.js (`web/`) and `supervisor/` at startup:
 | `MCP_PORT` | no | `3001` | **(M16 — Implemented)** MCP facade HTTP bind port for the Streamable-HTTP transport. Unused under stdio. |
 | `MAISTER_TRUSTED_FLOW_SOURCE_PREFIXES` | no | unset (empty) | M10 Flow package trust policy (ADR-021). Comma-separated source-URL prefixes that are `trusted_by_policy` (auto-enabled on install). `local`/`file://` sources are always trusted by policy; every other git source is `untrusted` until an explicit per-(project, revision) trust confirmation. Read by the web tier (`web/lib/flows/trust.ts`) at install time. |
 | `MAISTER_TRUSTED_CAPABILITY_SOURCE_PREFIXES` | no | unset (empty) | **Implemented (M14).** Comma-separated source-URL prefixes for `capability_imports[]` entries that are granted `trusted_by_policy` (auto-trusted on install, no explicit confirm required). Mirrors `MAISTER_TRUSTED_FLOW_SOURCE_PREFIXES` exactly — same prefix-match semantics, same `local`/`file://` always-trusted rule. Every other git source is `untrusted` until an operator calls `POST /api/projects/{slug}/capabilities/{capabilityRefId}/trust`. Setting `trust: explicit` on a `capability_imports[]` entry forces the confirm step even for policy-trusted sources. Read by `web/lib/capabilities/import.ts:resolveCapabilityTrust()`. See ADR-043. |
+| `MAISTER_PACKAGE_DISCOVERY_STALE_HOURS` | no | `24` | **(Designed — ADR-087.)** Web: package-source discovery staleness window (integer hours, zod-parsed once at module load). At web startup, enabled `package_sources` rows with `last_checked_at` null or older than this are refreshed sequentially (fire-and-forget, per-source try/catch); the manual `/refresh` endpoint ignores the window. Wired through `.env.example` + the web service `environment:` block in `compose.yml`. |
 | `MAISTER_KEEPALIVE_MINUTES` | no | `30` | NeedsInput keep-alive window (minutes). Read by BOTH supervisor (pending-permission deferred timeout) AND web (sweeper expiry, activity-bump amount, useActivityPing heartbeat at half-window). Bumped by every `POST /api/runs/:runId/activity`. |
 | `MAISTER_KEEPALIVE_SWEEP_INTERVAL_SECONDS` | no | `30` | M8 keep-alive sweeper tick frequency (seconds). The singleton timer in `web/lib/runs/keepalive-sweeper.ts` calls `runSweepTick()` every interval. Lower → snappier idle transitions; higher → less DB load. |
 | `MAISTER_NEEDSINPUTIDLE_TTL_HOURS` | no | `24` | M8 NeedsInputIdle abandonment TTL (hours). Sweeper pass 2 flips `NeedsInputIdle` rows whose `checkpoint_at + ttl < now()` to `Abandoned` and closes any open `hitl_requests.respondedAt`. |

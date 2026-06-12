@@ -87,6 +87,54 @@ erDiagram
 > Authored flow-graph node positions now live in the `flow.yaml` `presentation`
 > section, not a DB table.
 
+Package management **(Designed, ADR-087)** groups several flows + a capability
+bundle under one platform-installed package attached per project; member
+`flows` / `capability_imports` rows join the group via nullable
+`package_install_id` FKs:
+
+```mermaid
+erDiagram
+    PACKAGE_SOURCES ||--o{ PACKAGE_INSTALLS : "discovered + installed from"
+    PACKAGE_INSTALLS ||--o{ PROJECT_PACKAGE_ATTACHMENTS : "attached per project"
+    PROJECTS ||--o{ PROJECT_PACKAGE_ATTACHMENTS : "enablement"
+    PACKAGE_INSTALLS ||--o{ FLOWS : "package_install_id (nullable FK)"
+    PACKAGE_INSTALLS ||--o{ CAPABILITY_IMPORTS : "package_install_id (nullable FK)"
+
+    PACKAGE_SOURCES {
+        text id PK
+        text url UK "git monorepo URL"
+        boolean enabled "DEFAULT true"
+        text note "nullable"
+        jsonb discovered "cached: [{name, tags[]}] DEFAULT []"
+        timestamp last_checked_at "nullable"
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    PACKAGE_INSTALLS {
+        text id PK
+        text source_url "git URL or file:// local dir"
+        text name "package name from maister-package.yaml"
+        text version_label "raw tag aif/v2.0.0 or local-digest12"
+        text resolved_revision "tag SHA or content digest"
+        jsonb manifest "parsed maister-package.yaml + inventory"
+        text manifest_digest
+        text installed_path
+        text package_status "Installing|Installed|Failed|Removed"
+        text trust_status "untrusted|trusted|trusted_by_policy"
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    PROJECT_PACKAGE_ATTACHMENTS {
+        text id PK
+        text project_id FK "cascade"
+        text package_install_id FK "restrict"
+        text package_name "denormalized for uniqueness"
+        timestamp attached_at
+    }
+```
+
 ## Constraints
 
 - `projects.slug` UNIQUE — kebab-case slug derivation collisions
@@ -97,6 +145,12 @@ erDiagram
   as project Flow ids.
 - `project_flow_runner_defaults_project_flow_uq` on `(project_id, flow_id)` —
   one project Flow runner binding per attachment.
+- **(Designed, ADR-087)** `package_installs` UNIQUE on
+  `(source_url, name, resolved_revision)` — installed package revisions are
+  immutable and content-addressed.
+- **(Designed, ADR-087)** `project_package_attachments` UNIQUE on
+  `(project_id, package_name)` — at most one attached version of a package per
+  project.
 
 ## Notes
 
@@ -128,8 +182,14 @@ erDiagram
   default for new rows to all five adapter families; `0045` only backfills
   rows that exactly matched the previous all-adapter default.
 
+- **(Designed, ADR-087)** `flows.package_install_id` and
+  `capability_imports.package_install_id` are nullable FKs (`ON DELETE SET
+  NULL` is NOT used — group removal happens through the detach transaction;
+  the FK exists for grouping/joins). Standalone flows keep the column null.
+
 ## Linked artifacts
 
-- Process flows: [`../system-analytics/projects.md`](../system-analytics/projects.md).
+- Process flows: [`../system-analytics/projects.md`](../system-analytics/projects.md),
+  [`../system-analytics/packages.md`](../system-analytics/packages.md) (Designed, ADR-087).
 - Config: [`../configuration.md`](../configuration.md) §`maister.yaml v2`.
 - Source: `web/lib/db/schema.ts`.

@@ -5231,6 +5231,430 @@ paths:
         "409": { $ref: "#/components/responses/Precondition" }
         "422": { $ref: "#/components/responses/Config" }
 
+  /api/admin/package-sources:
+    get:
+      tags: [flow-packages, admin]
+      summary: (ADR-087 — Designed) List platform package sources
+      description: |
+        (ADR-087 — Designed.) Admin-only (`requireGlobalRole("admin")`).
+        Returns the platform package-source catalog with the cached
+        `discovered` snapshot (packages × per-package tags from the last
+        refresh) and `lastCheckedAt`. Never blocks on git — a stale snapshot
+        is served as-is; freshness is the refresh endpoint's job.
+      operationId: getAdminPackageSources
+      responses:
+        "200":
+          description: Package source catalog.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sources]
+                properties:
+                  sources:
+                    type: array
+                    items: { $ref: "#/components/schemas/PackageSource" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [flow-packages, admin]
+      summary: (ADR-087 — Designed) Add a platform package source
+      description: |
+        (ADR-087 — Designed.) Admin-only. Creates a `package_sources` row.
+        `url` is the git monorepo URL (`packages/<name>/maister-package.yaml`
+        layout). A duplicate `url` returns 409 (`CONFLICT`), never a raw 500.
+        No discovery happens inline — call `/refresh` after creation.
+      operationId: postAdminPackageSource
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PackageSourceBody" }
+      responses:
+        "201":
+          description: Package source created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, id]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  id: { type: string }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+
+  /api/admin/package-sources/{id}:
+    patch:
+      tags: [flow-packages, admin]
+      summary: (ADR-087 — Designed) Update a platform package source
+      description: |
+        (ADR-087 — Designed.) Admin-only. Mutable fields: `enabled`, `note`.
+        The `url` is immutable (delete + re-add to change identity). `id` is
+        a url-param resolved to the server row (404 on miss).
+      operationId: patchAdminPackageSource
+      parameters:
+        - {
+            name: id,
+            in: path,
+            required: true,
+            schema: { type: string, minLength: 1 },
+          }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled: { type: boolean }
+                note: { type: string }
+      responses:
+        "200": { $ref: "#/components/responses/OkResult" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Config" }
+    delete:
+      tags: [flow-packages, admin]
+      summary: (ADR-087 — Designed) Delete a platform package source
+      description: |
+        (ADR-087 — Designed.) Admin-only. Usage-guarded hard delete: refused
+        with 409 (`CONFLICT`) while any `package_installs` row from this
+        source is attached to a project. Installed-but-unattached revisions
+        survive (GC owns them).
+      operationId: deleteAdminPackageSource
+      parameters:
+        - {
+            name: id,
+            in: path,
+            required: true,
+            schema: { type: string, minLength: 1 },
+          }
+      responses:
+        "200": { $ref: "#/components/responses/OkResult" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/admin/package-sources/{id}/refresh:
+    post:
+      tags: [flow-packages, admin]
+      summary: (ADR-087 — Designed) Refresh package discovery for a source
+      description: |
+        (ADR-087 — Designed.) Admin-only. Runs `git ls-remote --tags` plus a
+        shallow default-branch scan of `packages/*/maister-package.yaml`,
+        rewrites the source's `discovered` snapshot + `lastCheckedAt`. A git
+        or scan failure degrades: the stale snapshot is kept and the response
+        carries `degraded: true` (HTTP 200 — degradation is a result, not an
+        error). The same routine runs at web startup for enabled sources
+        older than `MAISTER_PACKAGE_DISCOVERY_STALE_HOURS` (default 24).
+      operationId: refreshAdminPackageSource
+      parameters:
+        - {
+            name: id,
+            in: path,
+            required: true,
+            schema: { type: string, minLength: 1 },
+          }
+      responses:
+        "200":
+          description: Refresh outcome (fresh or degraded-stale).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, degraded, packages]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  degraded:
+                    type: boolean
+                    description: True when git/scan failed and the stale snapshot was kept.
+                  packages:
+                    type: array
+                    items: { $ref: "#/components/schemas/DiscoveredPackage" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/admin/package-installs:
+    get:
+      tags: [flow-packages, admin]
+      summary: (ADR-087 — Designed) List installed package revisions
+      description: |
+        (ADR-087 — Designed.) Admin-only. Platform catalog of immutable
+        installed package revisions. `installed_path` is NEVER projected.
+      operationId: getAdminPackageInstalls
+      responses:
+        "200":
+          description: Installed package revisions.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [installs]
+                properties:
+                  installs:
+                    type: array
+                    items: { $ref: "#/components/schemas/PackageInstallSummary" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [flow-packages, admin]
+      summary: (ADR-087 — Designed) Install a package revision platform-wide
+      description: |
+        (ADR-087 — Designed.) Admin-only. Two forms: `{sourceId, name,
+        version}` installs `name@version` from a configured source (one
+        `git clone --branch <tag> --depth 1`); `{localPath, path?}` installs a
+        **local version** from an absolute host directory (admin-only body
+        field; content-digest addressed, label `local-<digest12>`). Idempotent
+        on `(source_url, name, resolved_revision)` — re-installing the same
+        revision returns the existing row. Member flow/capability sub-installs
+        inherit the package's resolved revision; `setup.sh` is NEVER executed
+        here (post-trust setup path only). Manifest failures → 422 (`CONFIG`);
+        clone/copy failures → 502 (`FLOW_INSTALL`).
+      operationId: postAdminPackageInstall
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                sourceId: { type: string, minLength: 1 }
+                name: { type: string, minLength: 1 }
+                version:
+                  type: string
+                  minLength: 1
+                  description: "Per-package tag, e.g. aif/v2.0.0 (slash allowed)."
+                localPath:
+                  type: string
+                  minLength: 1
+                  description: "Absolute host directory for a local version (mutually exclusive with sourceId)."
+                path:
+                  type: string
+                  description: "Package subdir inside localPath (e.g. packages/aif)."
+      responses:
+        "201":
+          description: Package revision installed (or already present).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, id]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  id: { type: string }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Config" }
+        "502": { $ref: "#/components/responses/FlowInstall" }
+
+  /api/projects/{slug}/packages:
+    get:
+      tags: [flow-packages, projects]
+      summary: (ADR-087 — Designed) List package attachments of a project
+      description: |
+        (ADR-087 — Designed.) Member-visible. Attachments with member flow
+        ids and the `updateAvailable` derivation (a newer matching tag exists
+        in the source's discovered snapshot).
+      operationId: getProjectPackages
+      parameters:
+        - {
+            name: slug,
+            in: path,
+            required: true,
+            schema: { type: string, minLength: 1 },
+          }
+      responses:
+        "200":
+          description: Project package attachments.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [attachments]
+                properties:
+                  attachments:
+                    type: array
+                    items: { $ref: "#/components/schemas/ProjectPackageAttachment" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [flow-packages, projects]
+      summary: (ADR-087 — Designed) Attach a package install to a project
+      description: |
+        (ADR-087 — Designed.) Admin-only (`managePackages`). One transaction
+        writes member `flows` rows + `capability_imports` + MCP/restriction
+        ingestion + the attachment + group FK links. Identifiers: `slug` =
+        url-param → project row; `packageInstallId` = body id resolved to a
+        server row (404 on miss). A manifest flow id colliding with an
+        existing standalone flow (`flows_project_ref_uq`) → 409 (`CONFLICT`),
+        no partial group. The `maister.yaml packages[]` pin is written back
+        AFTER commit; a write-back failure is reported as
+        `writeBack: "failed"`, never a rollback.
+      operationId: attachProjectPackage
+      parameters:
+        - {
+            name: slug,
+            in: path,
+            required: true,
+            schema: { type: string, minLength: 1 },
+          }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [packageInstallId]
+              properties:
+                packageInstallId: { type: string, minLength: 1 }
+      responses:
+        "201":
+          description: Package attached.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, attachmentId, writeBack]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  attachmentId: { type: string }
+                  writeBack: { type: string, enum: [ok, failed] }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+
+  /api/projects/{slug}/packages/{attachmentId}:
+    delete:
+      tags: [flow-packages, projects]
+      summary: (ADR-087 — Designed) Detach a package from a project
+      description: |
+        (ADR-087 — Designed.) Admin-only (`managePackages`). Refused with 409
+        (`PRECONDITION`) while any member revision is pinned by a non-terminal
+        run. One transaction removes the attachment, member `flows` rows, and
+        ingested MCP/restriction records; member revisions stay for in-flight
+        runs and GC. Write-back removes the `packages[]` pin after commit.
+      operationId: detachProjectPackage
+      parameters:
+        - {
+            name: slug,
+            in: path,
+            required: true,
+            schema: { type: string, minLength: 1 },
+          }
+        - {
+            name: attachmentId,
+            in: path,
+            required: true,
+            schema: { type: string, minLength: 1 },
+          }
+      responses:
+        "200":
+          description: Package detached.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, writeBack]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  writeBack: { type: string, enum: [ok, failed] }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Precondition" }
+
+  /api/projects/{slug}/packages/{attachmentId}/upgrade:
+    post:
+      tags: [flow-packages, projects]
+      summary: (ADR-087 — Designed) Upgrade an attachment to another install
+      description: |
+        (ADR-087 — Designed.) Admin-only (`managePackages`). The target
+        `packageInstallId` MUST be an installed revision of the SAME package
+        name (mismatch → 409 `PRECONDITION`). One transaction flips the group
+        pointers; in-flight runs keep their pinned revisions. Write-back
+        rewrites the `packages[]` version pin after commit.
+      operationId: upgradeProjectPackage
+      parameters:
+        - {
+            name: slug,
+            in: path,
+            required: true,
+            schema: { type: string, minLength: 1 },
+          }
+        - {
+            name: attachmentId,
+            in: path,
+            required: true,
+            schema: { type: string, minLength: 1 },
+          }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [packageInstallId]
+              properties:
+                packageInstallId: { type: string, minLength: 1 }
+      responses:
+        "200":
+          description: Attachment upgraded.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, writeBack]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  writeBack: { type: string, enum: [ok, failed] }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Precondition" }
+        "422": { $ref: "#/components/responses/Config" }
+
+  /api/projects/{slug}/packages/{attachmentId}/trust:
+    post:
+      tags: [flow-packages, projects]
+      summary: (ADR-087 — Designed) Trust a package revision (fan-out)
+      description: |
+        (ADR-087 — Designed.) Admin-only (`managePackages`). One operator
+        decision per package revision: the same transaction fans
+        `trust_status`/`exec_trust='trusted'` onto every member
+        `flow_revisions` + `capability_imports` row, THEN the existing
+        post-trust setup path runs pending member `setup.sh` (after-tx
+        side-effect; never at install). Setup failure marks the member
+        revision Failed and surfaces on launch as today.
+      operationId: trustProjectPackage
+      parameters:
+        - {
+            name: slug,
+            in: path,
+            required: true,
+            schema: { type: string, minLength: 1 },
+          }
+        - {
+            name: attachmentId,
+            in: path,
+            required: true,
+            schema: { type: string, minLength: 1 },
+          }
+      responses:
+        "200": { $ref: "#/components/responses/OkResult" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Precondition" }
+
   /api/projects/{slug}/flow-packages/{flowRefId}/revisions/{revisionId}/fork:
     post:
       tags: [flow-packages, flow-studio]
@@ -9746,6 +10170,86 @@ components:
         `stdio` — spawns a local subprocess; `command` required; gated by
         `exec_trust` of the owning revision.
         `sse` / `http` — connects to a remote endpoint; `url` required.
+
+    PackageSource:
+      type: object
+      description: |
+        (ADR-087 — Designed) A `package_sources` row with the cached
+        discovery snapshot. Discovery failures keep the stale snapshot.
+      required: [id, url, enabled, discovered, lastCheckedAt, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        url: { type: string, description: "Git monorepo URL (packages/<name>/ layout)." }
+        enabled: { type: boolean }
+        note: { type: string, nullable: true }
+        discovered:
+          type: array
+          items: { $ref: "#/components/schemas/DiscoveredPackage" }
+        lastCheckedAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    DiscoveredPackage:
+      type: object
+      description: (ADR-087 — Designed) One package found in a source's default branch.
+      required: [name, tags]
+      properties:
+        name: { type: string }
+        tags:
+          type: array
+          items: { type: string }
+          description: "Per-package tags (<name>/vX.Y.Z), newest first."
+
+    PackageSourceBody:
+      type: object
+      required: [url]
+      properties:
+        url: { type: string, minLength: 1 }
+        note: { type: string }
+        enabled: { type: boolean, default: true }
+
+    PackageInstallSummary:
+      type: object
+      description: |
+        (ADR-087 — Designed) An immutable installed package revision.
+        `installed_path` is NEVER projected to clients.
+      required: [id, sourceUrl, name, versionLabel, resolvedRevision, packageStatus, trustStatus, flows]
+      properties:
+        id: { type: string }
+        sourceUrl: { type: string }
+        name: { type: string }
+        versionLabel:
+          type: string
+          description: "Raw tag (e.g. aif/v2.0.0) or local-<digest12> for local versions."
+        resolvedRevision: { type: string, description: "Tag SHA or package content digest." }
+        packageStatus:
+          type: string
+          enum: [Installing, Installed, Failed, Removed]
+        trustStatus:
+          type: string
+          enum: [untrusted, trusted, trusted_by_policy]
+        flows:
+          type: array
+          items: { type: string }
+          description: "Manifest flow ids."
+
+    ProjectPackageAttachment:
+      type: object
+      description: (ADR-087 — Designed) A project's enablement of one package install.
+      required: [id, packageInstallId, packageName, versionLabel, attachedAt, updateAvailable, flows]
+      properties:
+        id: { type: string }
+        packageInstallId: { type: string }
+        packageName: { type: string }
+        versionLabel: { type: string }
+        attachedAt: { type: string, format: date-time }
+        updateAvailable:
+          type: boolean
+          description: "A newer matching tag exists in the source's discovered snapshot."
+        flows:
+          type: array
+          items: { type: string }
+          description: "Member flow ref ids."
 
     PlatformMcpServer:
       type: object

@@ -93,6 +93,7 @@ cases, process flows. One file per domain.
 | [`system-analytics/outbound-webhooks.md`](system-analytics/outbound-webhooks.md) | Outbound webhooks: transactional-outbox capture, 12-type taxonomy + envelope v1, singleton-drainer fanout/delivery, HMAC signing, retry/replay/ping, delivery FSM (ADR-077). |
 | [`system-analytics/social-board.md`](system-analytics/social-board.md) | Social board substrate (ADR-083, Implemented): task comments with expanded `KEY-N` mentions, domain-written activity, auto-subscriptions, per-recipient inbox, polymorphic actor pair. |
 | [`system-analytics/domain-events.md`](system-analytics/domain-events.md) | Domain-event outbox / shared trigger bus (ADR-086): same-transaction emission, 8-kind taxonomy v1, per-consumer cursor dispatcher with xid8 commit horizon on the M24 clock, webhooks-takeover path. |
+| [`system-analytics/packages.md`](system-analytics/packages.md) | Multi-flow package management (ADR-087, Designed): platform package sources + discovery, `maister-package.yaml`, package installs, project attachments, package-level trust, local versions, `packages[]` write-back. |
 
 ### Cross-cutting reference
 
