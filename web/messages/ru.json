@@ -875,12 +875,9 @@
     "summary": "Создаст запуск для {branch} от {base}.",
     "createRun": "Создать запуск",
     "creating": "Создание…",
-    "setUp": "Настроить и запустить",
     "runner": "Раннер",
     "runnerDefault": "Раннер по умолчанию",
     "promotionMode": "Промоушен",
-    "promotionDefault": "Политика по умолчанию",
-    "promotionLocalMerge": "Локальный merge",
     "promotionPullRequest": "Pull request"
   },
   "run": {
@@ -2024,7 +2021,7 @@
   "agents": {
     "title": "Платформенные агенты",
     "resync": "Пересканировать каталог",
-    "empty": "Агенты не зарегистрированы. Добавьте агента или пересканируйте каталог.",
+    "empty": "Агенты не привязаны. Привяжите агента из пакета или пересканируйте метаданные пакетов.",
     "colId": "ID",
     "colPackage": "Пакет",
     "colRunner": "Раннер",
@@ -2053,17 +2050,7 @@
     "loading": "Загрузка…",
     "loadError": "Не удалось загрузить определение агента.",
     "fieldId": "ID",
-    "fieldName": "Имя",
-    "fieldDescription": "Описание",
-    "fieldScope": "Скоуп",
-    "fieldProject": "Проект",
-    "fieldRunner": "Раннер",
-    "runnerInherit": "— наследовать (дефолт проекта/платформы)",
-    "fieldWorkspace": "Воркспейс",
-    "fieldMode": "Режим",
-    "fieldRisk": "Уровень риска",
-    "fieldTriggers": "Триггеры",
-    "fieldPrompt": "Промпт (тело agent.md)"
+    "fieldName": "Имя"
   },
   "agentsAttach": {
     "title": "Агенты, подключённые к проекту",

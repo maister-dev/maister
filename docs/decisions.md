@@ -6513,13 +6513,16 @@ model below before this ADR ever merged.)*
   effective definition's runner → projects.default_runner_id → platform
   default`, each tier validated by the existing `assertLaunchableRunner`
   (exists + enabled + ready; refusal = `EXECUTOR_UNAVAILABLE`, no silent
-  fallback), snapshot into `runs.runner_snapshot` as today. Two
+  fallback), snapshot into `runs.runner_snapshot` as today. Three
   compatibility refusals fire **before spawn** with `EXECUTOR_UNAVAILABLE`:
   `mode=subagent` on a runner whose `capability_agent ≠ claude`
-  (`.claude/agents/*.md` is a Claude-SDK artifact), and `workspace ∈ {none,
+  (`.claude/agents/*.md` is a Claude-SDK artifact); `workspace ∈ {none,
   repo_read}` on a runner with `permission_policy =
   dangerously_skip_permissions` (suppressed permission requests make ADR-090
-  L1 impossible). Flow-bound nodes keep the existing six-tier flow chain.
+  L1 impossible); and `workspace ∈ {none, repo_read}` on a runner whose
+  `capability_agent ≠ claude` (the L1 `readOnlySession` arbitration is
+  Claude-adapter-specific, so a non-Claude read-only agent would run
+  unenforced). Flow-bound nodes keep the existing six-tier flow chain.
 - **Capability-profile MCPs at spawn.** The effective definition's
   `capability_profile.mcps` refs resolve through the existing capability
   machinery (project>platform>flow-package precedence) and the stdio
@@ -6541,8 +6544,9 @@ model below before this ADR ever merged.)*
   `tasks.status`, never bump `attempt_number`, and never count as the task's
   latest delivery run.
 - **Five trigger sources** (persisted on `runs.trigger_source`):
-  1. **manual** — `POST /api/agents/[id]/launch` (session RBAC) + catalog row
-     button + task-card/detail button (passes `task_id`).
+  1. **manual** — `POST /api/projects/{slug}/agents/{id}/launch` (session RBAC,
+     project-scoped) + catalog row button + task-card/detail button (passes
+     `task_id`).
   2. **cron** — `agent_schedules` reworked in place (the table was dead M24
      code): text `agent_ref` and `scheduler_job_id`/`desired_state` dropped;
      real `agent_id` FK plus `cron_expr`/`timezone`/`next_fire_at`/
@@ -6563,11 +6567,18 @@ model below before this ADR ever merged.)*
      at-least-once redelivery converges to exactly one run
      (`ON CONFLICT DO NOTHING`).
   4. **webhook** — `POST /api/agents/[id]/event`, authenticated by a project
-     token with the new `agents:trigger` scope; body → `trigger_payload`.
+     token with the new `agents:trigger` scope; body → `trigger_payload`. An
+     optional `X-Maister-Trigger-Event-Id` header supplies the idempotency key
+     (`trigger_event_id`) — caller-controlled and sharing the bigint namespace
+     with `domain_events.id`; the token scopes it to its own project, so the
+     worst case is a caller deduping its own retries.
   5. **flow** — `agent: <id>` on `ai_coding` node settings (engine floor
-     `1.5.0`): `mode=session` substitutes the catalog profile (agent body =
-     system prompt, node prompt = task block, capability profiles merged,
-     node settings win); `mode=subagent` materializes the `.md` into the run
+     `1.5.0`): `mode=session` substitutes the agent body as the system prompt
+     (node prompt appended as the task block); the bound definition's
+     `capability_profile` is NOT merged into the flow node — the node's own
+     capabilities govern (capability-profile MCP resolution is wired for
+     standalone agent runs only, RD7); `mode=subagent` materializes the `.md`
+     into the run
      worktree's `.claude/agents/` (Claude self-delegates). In Stage 3 the
      binding runs inside the flow run's session — no separate run row, so
      `trigger_source='flow'` is reserved wire vocabulary (mirrors how

@@ -131,7 +131,7 @@ async function fetchPass1Candidates(db: Db): Promise<Pass1Candidate[]> {
   return rows;
 }
 
-type Pass2Candidate = { id: string };
+type Pass2Candidate = { id: string; runKind: string };
 
 async function fetchPass2Candidates(
   db: Db,
@@ -139,7 +139,7 @@ async function fetchPass2Candidates(
 ): Promise<Pass2Candidate[]> {
   const cutoff = new Date(Date.now() - ttlHours * 3600_000);
   const rows = await db
-    .select({ id: runs.id })
+    .select({ id: runs.id, runKind: runs.runKind })
     .from(runs)
     .where(
       and(
@@ -269,6 +269,32 @@ export async function runPass2(db: Db): Promise<number> {
   let abandoned = 0;
 
   await runWithConcurrency(candidates, PER_PASS_CONCURRENCY, async (row) => {
+    if (row.runKind === "agent") {
+      const { finalizeAgentRun } = await import("@/lib/agents/launch");
+      const result = await finalizeAgentRun(row.id, "Abandoned", {
+        db,
+        reason: "ttl",
+        closeOpenHitl: true,
+      });
+
+      if (!result.finalized) {
+        log.debug(
+          { runId: row.id },
+          "sweeper pass2 agent finalize mismatch — concurrent transition won",
+        );
+
+        return;
+      }
+
+      abandoned += 1;
+      log.warn(
+        { runId: row.id, ttlHours },
+        "sweeper pass2 agent NeedsInputIdle → Abandoned (TTL exceeded)",
+      );
+
+      return;
+    }
+
     // ADR-086: the status flip, the hitl close-out, and BOTH outbox emits
     // (webhook + domain) commit in ONE transaction — previously two bare
     // updates with no emit (the TTL run.abandoned webhook gap, now closed

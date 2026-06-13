@@ -77,7 +77,7 @@ stateDiagram-v2
     Disabled --> Registered: enabled = true
     Registered --> Quarantined: dirty-watchdog hit<br/>quarantined_at + reason set
     Quarantined --> Registered: explicit un-quarantine action
-    Registered --> [*]: delete (usage-guarded — refused while live runs exist)
+    Registered --> Disabled: providing package/file missing on resync
 ```
 
 ## Process flows
@@ -112,7 +112,7 @@ sequenceDiagram
     participant R as runner resolver
     participant S as supervisor
     E->>L: agent_id, project_id, task_id?, trigger meta
-    L->>L: kill-switches — enabled, not quarantined, link enabled
+    L->>L: link enabled for project, then kill-switches — enabled, not quarantined
     L->>L: resolve EFFECTIVE definition — project's pinned revision<br/>behind enablement+trust gates (pin divergence refuses)
     L->>L: guards on the effective parse — risk_tier != destructive,<br/>mode=session, trigger declared
     L->>R: launch override → link override → effective runner →<br/>project default → platform default
@@ -289,7 +289,7 @@ flowchart TD
   manifest makes the terminal-sweep restore idempotent; files are deny-rule
   content, never user data.
 - **Webhook body over 32 KB or invalid JSON** → rejected at the boundary
-  (422); no run row.
+  (413 for size, 422 for malformed JSON); no run row.
 - **Launch attempt on an `unconfigured` (flowless) task** →
   `MaisterError("PRECONDITION")`; the run-schedules dispatcher records
   `skipped_unconfigured`; the board popover collects the missing fields.
@@ -317,7 +317,8 @@ flowchart TD
   (triage + relations ops, agent tokens, MCP tools) and
   [`../api/external/operations.openapi.yaml`](../api/external/operations.openapi.yaml).
 - **HTTP:** [`../api/web.openapi.yaml`](../api/web.openapi.yaml) (admin
-  agents CRUD, launch, webhook event route, run DTO fields);
+  catalog list/read/toggle/un-quarantine/resync, launch, webhook event route,
+  run DTO fields);
   [`../api/supervisor.openapi.yaml`](../api/supervisor.openapi.yaml)
   (`readOnlySession`).
 - **Flow binding:** [`flow-graph.md`](flow-graph.md) +

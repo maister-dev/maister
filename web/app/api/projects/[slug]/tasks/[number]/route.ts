@@ -82,17 +82,6 @@ export async function PATCH(
 ): Promise<NextResponse> {
   const { slug, number } = await params;
 
-  let body: z.infer<typeof patchBodySchema>;
-
-  try {
-    body = patchBodySchema.parse(await req.json());
-  } catch (err) {
-    return errorResponse(
-      new MaisterError("CONFIG", `invalid body: ${(err as Error).message}`),
-      slug,
-    );
-  }
-
   try {
     await requireActiveSession();
 
@@ -109,6 +98,17 @@ export async function PATCH(
     }
 
     await requireProjectAction(resolved.project.id, "editTask");
+
+    let body: z.infer<typeof patchBodySchema>;
+
+    try {
+      body = patchBodySchema.parse(await req.json());
+    } catch (err) {
+      return errorResponse(
+        new MaisterError("CONFIG", `invalid body: ${(err as Error).message}`),
+        slug,
+      );
+    }
 
     await updateTaskVerdict({
       taskId: resolved.task.id,

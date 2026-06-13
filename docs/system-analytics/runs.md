@@ -502,7 +502,7 @@ flowchart TD
   at any time; **`HumanWorking` runs intentionally have no live session**
   (the human edits the worktree locally — see
   [ADR-030](../decisions.md#adr-030-manual-takeover-as-a-local-worktree-handoff-humanworking-status)).
-- Global concurrency cap = `MAISTER_MAX_CONCURRENT_RUNS` (default 3,
+- Global concurrency cap = `MAISTER_MAX_CONCURRENT_RUNS` (default 6,
   hard cap); excess runs wait as `Pending` and auto-promote when a slot
   frees. `HumanWorking` counts toward the cap exactly like
   `Running`/`NeedsInput` — a claimed worktree holds a slot.

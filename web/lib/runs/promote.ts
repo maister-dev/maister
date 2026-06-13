@@ -354,9 +354,9 @@ async function maybePushTargetBranch(args: {
   }
 }
 
-// ---- flow promotion -------------------------------------------------------
+// ---- workspace-backed flow/agent promotion -------------------------------
 
-async function promoteFlowRun(
+async function promoteWorkspaceRun(
   runId: string,
   input: PromoteRunInput,
   ctx: PromoteRunContext,
@@ -372,7 +372,7 @@ async function promoteFlowRun(
     if (run.status !== "Review") {
       throw new MaisterError(
         "PRECONDITION",
-        `flow run must be Review before promotion: ${run.status}`,
+        `${run.runKind} run must be Review before promotion: ${run.status}`,
       );
     }
 
@@ -403,23 +403,25 @@ async function promoteFlowRun(
     const resolvedMode = effectivePromotionModeFromPolicy(policy);
     const promotionMode = promotionModeForEffectiveMode(resolvedMode);
 
-    // Readiness re-gate (T2.3) — NO claim, NO git on a not-ready verdict.
-    const readiness = await assertEvidenceReady(runId, "review", tx);
+    if (run.runKind === "flow") {
+      // Readiness re-gate (T2.3) — NO claim, NO git on a not-ready verdict.
+      const readiness = await assertEvidenceReady(runId, "review", tx);
 
-    log.debug(
-      {
-        runId,
-        ready: readiness.ready,
-        reasons: readiness.reasons,
-      },
-      "promote readiness verdict",
-    );
-
-    if (!readiness.ready) {
-      throw new MaisterError(
-        "PRECONDITION",
-        `promotion blocked — evidence not ready: ${readiness.reasons.join("; ")}`,
+      log.debug(
+        {
+          runId,
+          ready: readiness.ready,
+          reasons: readiness.reasons,
+        },
+        "promote readiness verdict",
       );
+
+      if (!readiness.ready) {
+        throw new MaisterError(
+          "PRECONDITION",
+          `promotion blocked — evidence not ready: ${readiness.reasons.join("; ")}`,
+        );
+      }
     }
 
     // Target-drift gate (Codex F6, §3.7). reviewedTargetCommit is required on
@@ -681,7 +683,7 @@ async function promoteFlowRun(
         targetBranch: claim.resolvedTarget,
         deliveryPolicy: claim.policy,
       },
-      "flow run promoted to Done",
+      "workspace run promoted to Done",
     );
 
     return {
@@ -895,7 +897,7 @@ async function finalizePullRequest(args: {
         prNumber: pr.number,
         targetBranch: claim.resolvedTarget,
       },
-      "flow run promoted to Done via pull request",
+      "workspace run promoted to Done via pull request",
     );
 
     return {
@@ -1223,12 +1225,12 @@ async function promoteScratchRun(
 }
 
 /**
- * Shared promotion service over both run kinds (M18 Phase 2, ADR-058).
- * Dispatches on `runs.run_kind`. Flow runs get the readiness re-gate +
- * target-drift gate + relaxed target; scratch runs stay target-locked with the
- * M15 merge-readiness guard. Both run through the durable promotion claim (§3.2,
- * Codex F1/F5): claim CAS committed before the side-effect, finalize keyed on
- * the per-attempt `promotion_attempt_id` token.
+ * Shared promotion service over run kinds. Flow runs get the readiness re-gate
+ * + target-drift gate + relaxed target; agent worktree runs use the same
+ * workspace promotion path without flow evidence gates; scratch runs stay
+ * target-locked with the M15 merge-readiness guard. All paths run through the
+ * durable promotion claim (§3.2, Codex F1/F5): claim CAS committed before the
+ * side-effect, finalize keyed on the per-attempt `promotion_attempt_id` token.
  */
 export async function promoteRun(
   runId: string,
@@ -1243,5 +1245,5 @@ export async function promoteRun(
     return promoteScratchRun(runId, input, ctx, d);
   }
 
-  return promoteFlowRun(runId, input, ctx, d);
+  return promoteWorkspaceRun(runId, input, ctx, d);
 }

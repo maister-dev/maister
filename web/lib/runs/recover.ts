@@ -18,7 +18,7 @@ import { resolveNodeRecoverInfo } from "@/lib/flows/graph/current-node-kind";
 import { classifyRecover } from "@/lib/runs/recover-classify";
 import { scheduleResumedSessionDrive } from "@/lib/runs/resume-driver";
 import { crashRunningRun } from "@/lib/runs/state-transitions";
-import { takeSchedulerLock } from "@/lib/scheduler";
+import { maxConcurrentRunsCap, takeSchedulerLock } from "@/lib/scheduler";
 import { createSession } from "@/lib/supervisor-client";
 
 // Re-export the pure classifier from its canonical home so existing importers
@@ -40,21 +40,6 @@ const log = pino({
   name: "run-recover",
   level: process.env.LOG_LEVEL ?? "info",
 });
-
-// M34: mirrors the scheduler's owner-requested default bump 3 → 6.
-const DEFAULT_CAP = 6;
-
-// Mirror scheduler's capFromEnv() — kept local so recover is self-contained.
-function capFromEnv(): number {
-  const raw = process.env.MAISTER_MAX_CONCURRENT_RUNS;
-
-  if (!raw) return DEFAULT_CAP;
-  const parsed = Number.parseInt(raw, 10);
-
-  if (!Number.isFinite(parsed) || parsed < 1) return DEFAULT_CAP;
-
-  return parsed;
-}
 
 export function recoveredRunLaunchInput(run: {
   runnerSnapshot: Parameters<typeof runnerExecutorInput>[0] | null;
@@ -105,7 +90,7 @@ export async function resumeCrashedRun(
 ): Promise<RecoverResult> {
   const db = opts.db ?? getDb();
   const now = opts.now ?? (() => new Date());
-  const cap = capFromEnv();
+  const cap = maxConcurrentRunsCap();
 
   // Phase-1 commit outcome: either a terminal RecoverResult (no side-effect
   // needed) or the `drive` marker meaning the slot-free Crashed→Running flip

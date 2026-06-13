@@ -673,6 +673,51 @@ describe("runReconcileSweep (integration)", () => {
     expect(scheduleResumedSessionDrive).not.toHaveBeenCalled();
   }, 60_000);
 
+  it("does NOT crash a no-worktree agent run (workspace none/repo_read) whose worktreePath is null", async () => {
+    // Regression guard for reconcile.ts:483-486. A run_kind='agent' run with
+    // NO workspace row (workspace none/repo_read) carries a null worktreePath,
+    // which MUST read as worktreeExists=true — there is no worktree to lose.
+    // worktree-gone is decision step 2 (before live-session and grace), so if
+    // the `runKind === "agent"` derivation regressed, every idle no-worktree
+    // agent run would crash on every reconcile pass. Fresh startedAt → within
+    // grace → skip; the ONLY thing keeping it out of the step-2 crash is the
+    // null-worktree-is-present derivation.
+    const agentId = `recon-agent-${randomUUID().slice(0, 8)}`;
+
+    await pool.query(
+      `INSERT INTO "agents" ("id", "flow_ref_id", "version_label", "origin", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path")
+       VALUES ($1, 'recon-pkg', 'v1.0.0', 'git', 'Recon Agent', 'd', 'none', 'session', '["manual"]'::jsonb, 'read_only', '/tmp/agent.md')`,
+      [agentId],
+    );
+
+    const taskId = randomUUID();
+    const agentRunId = randomUUID();
+
+    await pool.query(
+      `INSERT INTO "tasks" ("id", "project_id", "number", "title", "prompt", "status")
+       VALUES ($1, $2, $3, 't', 'p', 'InFlight')`,
+      [taskId, projectId, Math.trunc(Math.random() * 1e9) + 1],
+    );
+    // No workspace row → worktreePath is null in the candidate set.
+    await pool.query(
+      `INSERT INTO "runs" ("id", "run_kind", "agent_id", "trigger_source", "agent_workspace", "task_id", "project_id", "flow_version", "flow_revision", "status", "acp_session_id", "current_step_id", "started_at")
+       VALUES ($1, 'agent', $2, 'manual', 'none', $3, $4, 'agent', 'manual', 'Running', 'acp-agent-noworktree', 'agent', now())`,
+      [agentRunId, agentId, taskId, projectId],
+    );
+
+    const { opts } = makeOpts({ worktreePaths: [], liveSessions: [] });
+
+    const summary = await runReconcileSweep(opts);
+
+    // The run IS evaluated (not silently excluded by the candidate query) —
+    // otherwise this guard would pass vacuously.
+    expect(summary.candidates).toBeGreaterThanOrEqual(1);
+    expect((await readRun(agentRunId)).status).toBe("Running");
+    expect(summary.crashed).toBe(0);
+
+    await pool.query(`DELETE FROM "agents" WHERE "id" = $1`, [agentId]);
+  }, 60_000);
+
   it("skips the whole tick (zeroed summary, nothing crashed) when listSessions throws", async () => {
     const orphan = await seedRun({
       status: "Running",

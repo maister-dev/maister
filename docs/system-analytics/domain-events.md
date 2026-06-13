@@ -6,8 +6,8 @@ The domain-event outbox (**Implemented**, ADR-086, M32) is MAIster's shared
 **trigger bus**: an immutable, append-only log of curated domain facts
 (`domain_events`), written from the domain layer in the SAME transaction as the
 state change, and a per-consumer cursor dispatcher running on the M24 clock.
-Multiple independent consumers — the future agent-trigger dispatcher, the
-outbound-webhooks drainer (after its later re-point), notifiers — each consume
+Multiple independent consumers — the implemented `agent_triggers` dispatcher,
+the outbound-webhooks drainer (after its later re-point), notifiers — each consume
 the same log at their own pace with at-least-once delivery and cursor catch-up
 after outages. Boundary: this domain owns the fact log, the consumer-cursor
 mechanics, and the dispatch job; it does NOT own any delivery channel (webhooks
@@ -156,7 +156,7 @@ flowchart TD
   consumers (no pruning in this stage).
 - `domain_events.kind` MUST be one of the 8 taxonomy kinds (CHECK-enforced);
   `task.triage_requeued` MUST be emitted only by the M34 "Send to triage"
-  action (Designed) — no other emitter.
+  action (Implemented) — no other emitter.
 - The dispatch read window MUST be exactly `id > cursor_event_id AND tx_id <
   pg_snapshot_xmin(pg_current_snapshot()) ORDER BY id LIMIT batch` — a
   late-committing lower id MUST hold back all later ids until it resolves.

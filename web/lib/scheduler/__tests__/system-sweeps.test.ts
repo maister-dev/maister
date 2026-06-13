@@ -5,6 +5,7 @@ const runReconcileSweepMock = vi.hoisted(() => vi.fn());
 const runWorkspaceGcSweepMock = vi.hoisted(() => vi.fn());
 const runRevisionGcSweepMock = vi.hoisted(() => vi.fn());
 const runCapabilitiesCleanupSweepMock = vi.hoisted(() => vi.fn());
+const runEphemeralAgentGcSweepMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/runs/keepalive-sweeper", () => ({
   runSweepTick: runSweepTickMock,
@@ -20,6 +21,9 @@ vi.mock("@/lib/gc/revision-gc", () => ({
 }));
 vi.mock("@/lib/capabilities/cleanup", () => ({
   runCapabilitiesCleanupSweep: runCapabilitiesCleanupSweepMock,
+}));
+vi.mock("@/lib/gc/ephemeral-agent-gc", () => ({
+  runEphemeralAgentGcSweep: runEphemeralAgentGcSweepMock,
 }));
 
 const workspaceSummary = {
@@ -46,6 +50,9 @@ describe("scheduler system sweeps", () => {
     runCapabilitiesCleanupSweepMock
       .mockReset()
       .mockResolvedValue({ failed: 0 });
+    runEphemeralAgentGcSweepMock
+      .mockReset()
+      .mockResolvedValue({ scanned: 0, removed: 0, live: 0, failed: 0 });
   });
 
   it("runGcCompatibilitySweep runs GC + capabilities but NOT keepalive/reconcile", async () => {
@@ -56,6 +63,7 @@ describe("scheduler system sweeps", () => {
     expect(runWorkspaceGcSweepMock).toHaveBeenCalledTimes(1);
     expect(runRevisionGcSweepMock).toHaveBeenCalledTimes(1);
     expect(runCapabilitiesCleanupSweepMock).toHaveBeenCalledTimes(1);
+    expect(runEphemeralAgentGcSweepMock).toHaveBeenCalledTimes(1);
     expect(runSweepTickMock).not.toHaveBeenCalled();
     expect(runReconcileSweepMock).not.toHaveBeenCalled();
     expect(summary).toEqual({
@@ -87,5 +95,6 @@ describe("scheduler system sweeps", () => {
     expect(runWorkspaceGcSweepMock).toHaveBeenCalledTimes(1);
     expect(runRevisionGcSweepMock).toHaveBeenCalledTimes(1);
     expect(runCapabilitiesCleanupSweepMock).toHaveBeenCalledTimes(1);
+    expect(runEphemeralAgentGcSweepMock).toHaveBeenCalledTimes(1);
   });
 });

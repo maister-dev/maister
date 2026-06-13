@@ -194,4 +194,37 @@ describe("resolveAgentRunner — compatibility refusals (ADR-089/088)", () => {
 
     expect(resolution.runnerId).toBe("skip-r");
   });
+
+  it("refuses read-only agent workspaces on non-claude runners", () => {
+    for (const workspace of ["none", "repo_read"] as const) {
+      expectUnavailable(
+        () =>
+          resolveAgentRunner(
+            baseInput({
+              launchOverrideRunnerId: "codex-r",
+              agent: { runnerId: null, mode: "session", workspace },
+              runners: [
+                entry("codex-r", {
+                  adapter: "codex",
+                  capabilityAgent: "codex",
+                }),
+              ],
+            }),
+          ),
+        /requires a claude-capability runner/,
+      );
+    }
+
+    const resolution = resolveAgentRunner(
+      baseInput({
+        launchOverrideRunnerId: "codex-r",
+        agent: { runnerId: null, mode: "session", workspace: "worktree" },
+        runners: [
+          entry("codex-r", { adapter: "codex", capabilityAgent: "codex" }),
+        ],
+      }),
+    );
+
+    expect(resolution.runnerId).toBe("codex-r");
+  });
 });

@@ -449,6 +449,84 @@ async function handlePermissionResponse(
   // handler (T11) will auto-deliver the stored intent against the new
   // requestId once the resumed session re-issues the permission.
   if (claim.runStatus === "NeedsInputIdle") {
+    if (runRow.runKind === "agent") {
+      const claimed = await db.transaction(async (tx: any) => {
+        const rows = await tx
+          .update(runs)
+          .set({
+            status: "Running",
+            keepaliveUntil: null,
+            checkpointAt: null,
+          })
+          .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInputIdle")))
+          .returning({ id: runs.id });
+
+        if (rows.length === 0) return false;
+        await args.recordSuccessAudit?.(tx, 202);
+
+        return true;
+      });
+
+      if (!claimed) {
+        log.info(
+          {
+            runId,
+            hitlRequestId,
+            branch: "agent-idle",
+            phase: "claim-race",
+            latencyMs: Date.now() - startedAt,
+          },
+          "concurrent agent resume in progress — returning 202",
+        );
+
+        await recordSuccessAuditInTransaction(args, 202);
+
+        return NextResponse.json(
+          {
+            ok: true,
+            runStatus: "Running",
+            state: "resume-in-progress",
+          },
+          { status: 202 },
+        );
+      }
+
+      const { startAgentSession } = await import("@/lib/agents/launch");
+
+      queueMicrotask(() => {
+        void startAgentSession(runId, { db }).catch((err: unknown) => {
+          log.error(
+            {
+              runId,
+              hitlRequestId,
+              err: err instanceof Error ? err.message : String(err),
+            },
+            "agent idle permission resume failed",
+          );
+        });
+      });
+
+      log.info(
+        {
+          runId,
+          hitlRequestId,
+          branch: "agent-idle",
+          phase: "resume-scheduled",
+          latencyMs: Date.now() - startedAt,
+        },
+        "permission stored; agent resume scheduled — auto-deliver async",
+      );
+
+      return NextResponse.json(
+        {
+          ok: true,
+          runStatus: "Running",
+          state: "resume-in-progress",
+        },
+        { status: 202 },
+      );
+    }
+
     const { resumeRun } = await import("@/lib/runs/resume");
     const { scheduleResumedSessionDrive } = await import(
       "@/lib/runs/resume-driver"

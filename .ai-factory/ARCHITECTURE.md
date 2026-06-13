@@ -50,7 +50,7 @@ context.
   ACP session keep-alive + checkpoint+resume state machine, hybrid HITL
   (ACP + artifact), supervisor↔web IPC, global concurrency scheduler.
 - **Scale:** current target, single host (multi-host capable),
-  `MAISTER_MAX_CONCURRENT_RUNS=3` (global cap).
+  `MAISTER_MAX_CONCURRENT_RUNS=6` (global cap).
 - **Key factors:**
   - ACP is the executor interface — the multi-executor pool is inherent,
     not bolted on later. The registry owns adapter launch args, provider

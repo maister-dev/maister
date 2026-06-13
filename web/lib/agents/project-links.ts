@@ -312,6 +312,17 @@ export async function updateAgentLink(
       .set(set)
       .where(eq(agentProjectLinks.id, linkRows[0].id));
 
+    // ADR-089 rotation guarantee: disabling an attachment revokes its live
+    // agent tokens in the same tx, not only detach — a disabled link blocks
+    // future launches but must not leave an in-flight token valid to its TTL.
+    if (input.patch.enabled === false) {
+      await revokeAgentProjectTokens({
+        agentId: input.agentId,
+        projectId: input.projectId,
+        db: tx,
+      });
+    }
+
     // Full replacement of this project's trigger bindings (spec contract).
     if (normalizedSchedules !== undefined) {
       await tx

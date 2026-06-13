@@ -153,7 +153,7 @@ UI branches on `code`, never on string matching. No string-matched errors.
 
 ### 4. Concurrency cap
 
-`MAISTER_MAX_CONCURRENT_RUNS=3` by default (env-configurable). Cap is **global**
+`MAISTER_MAX_CONCURRENT_RUNS=6` by default (env-configurable). Cap is **global**
 across all projects, not per-project. Runs above the cap go to `Pending` and
 auto-start when a slot frees. UI shows queue position. Hard cap (no override
 from `maister.yaml`) — keeps RAM/token spend bounded on a single host.
@@ -363,7 +363,9 @@ path, run branch, target branch, and failing command. No auto-resolve.
 - **ACP-driven HITL**, **SSE pipe-to-disk**, **typed errors**,
   **multi-executor**, **`maister.yaml` v2 + Flow plugins**, **worktree
   lifecycle**, **promotion policy** — see §1-8 above.
-- **Concurrency**: global cap = 3 (env-configurable). Queue + position badge.
+- **Concurrency**: global flow/scratch cap = 6 (env-configurable
+  `MAISTER_MAX_CONCURRENT_RUNS`); platform-agent runs use a separate cap = 3
+  (`MAISTER_MAX_CONCURRENT_AGENTS`). Queue + position badge.
 
 ## Built since the original baseline
 

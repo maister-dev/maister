@@ -8,6 +8,14 @@ const mode = process.argv.includes("--gemini-load-only")
   ? "gemini-load-only"
   : "opencode-resume";
 
+// The kind reported in the single permission request the agent emits per
+// prompt. Defaults to a write-class "edit" (the existing compatibility tests
+// rely on it); the readOnlySession wire tests override it to exercise both the
+// auto-deny (write-class) and auto-approve (read-class) L1 paths.
+const permissionKindIdx = process.argv.indexOf("--permission-kind");
+const permissionKind =
+  permissionKindIdx >= 0 ? process.argv[permissionKindIdx + 1] : "edit";
+
 function modelState(currentModelId = "observed-model") {
   return {
     availableModels: [
@@ -90,7 +98,7 @@ class CompatibilityAgent {
       sessionId: params.sessionId,
       toolCall: {
         toolCallId: "compat-tool-call",
-        kind: "edit",
+        kind: permissionKind,
         title: "compat permission",
       },
       options: [

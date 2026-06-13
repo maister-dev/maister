@@ -87,26 +87,26 @@ export async function POST(
 ): Promise<NextResponse> {
   const { runId, hitlRequestId } = await params;
 
-  let body: z.infer<typeof bodySchema>;
-
-  try {
-    body = bodySchema.parse(await req.json());
-  } catch (err) {
-    return errorResponse(
-      new MaisterError(
-        "CONFIG",
-        `invalid response body: ${(err as Error).message}`,
-      ),
-      { runId, hitlRequestId },
-    );
-  }
-
   try {
     // Auth-first: authenticate AND clear the forced-password-change gate
     // BEFORE any resource lookup, so unauthenticated or must-change callers
     // cannot probe HITL/run existence via PRECONDITION shape-leaks. Project
     // membership is enforced below, once projectId is derived from the run row.
     const sessionUser = await requireActiveSession();
+
+    let body: z.infer<typeof bodySchema>;
+
+    try {
+      body = bodySchema.parse(await req.json());
+    } catch (err) {
+      return errorResponse(
+        new MaisterError(
+          "CONFIG",
+          `invalid response body: ${(err as Error).message}`,
+        ),
+        { runId, hitlRequestId },
+      );
+    }
 
     // FIXME(any): dual drizzle-orm peer-dep variants — pg|sqlite union.
     const db = getDb() as any;

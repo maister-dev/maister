@@ -94,7 +94,7 @@ type LayoutProps = {
 
 type RunDetailForReview = Awaited<ReturnType<typeof getRunDetail>> & object;
 
-// Resolve the ReviewPanel props for a flow run at `Review`. Legacy-row safe
+// Resolve the ReviewPanel props for a workspace-backed run at `Review`. Legacy-row safe
 // (§3.6): null branch metadata is filled from project defaults / merge-base;
 // when no safe diff base can be derived the panel renders the relaunch state.
 const EMPTY_DIFF: ReviewPanelDiff = {
@@ -532,8 +532,11 @@ export default async function RunDetailLayout({
     };
   }
 
-  // M18 (T4.2): the base→run→target review surface for a flow run at `Review`.
-  const showReview = detail.status === "Review" && detail.runKind === "flow";
+  // M18/M34: the base→run→target review surface for workspace-backed runs at
+  // `Review`. Scratch keeps its conversation-specific promote affordance.
+  const showReview =
+    detail.status === "Review" &&
+    (detail.runKind === "flow" || detail.runKind === "agent");
   let reviewData: Awaited<ReturnType<typeof buildReviewPanelData>> | null =
     null;
   let reviewReadiness = null;

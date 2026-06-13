@@ -12,6 +12,7 @@ import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { cleanupRunMaterializations } from "@/lib/capabilities/cleanup";
 import { getDb } from "@/lib/db/client";
 import { isMaisterError } from "@/lib/errors";
+import { finalizeAgentRun } from "@/lib/agents/launch";
 import { runFlow } from "@/lib/flows/runner";
 import { promoteNextPending } from "@/lib/scheduler";
 import {
@@ -102,29 +103,41 @@ export async function POST(
       userId: user.id,
       label: user.name ?? user.email ?? user.id,
     });
-    const abandoned = await db.transaction(async (tx: Db) => {
-      // A HumanWorking run releases its takeover claim first (HumanWorking →
-      // NeedsInput) so the standard abandon transition fires from a known
-      // non-terminal status; the original review HITL re-opening is moot once
-      // the run is abandoned.
-      if (run.status === "HumanWorking") {
-        await releaseHumanWorking(runId, { db: tx });
-      }
+    const abandoned =
+      run.runKind === "agent"
+        ? await finalizeAgentRun(runId, "Abandoned", {
+            db,
+            reason: "user",
+            closeAssignments: {
+              kind: "user",
+              actorId: actor.id,
+              eventKind: "system_closed",
+              reason: "run abandoned",
+            },
+          }).then((result) => ({ ok: result.finalized }))
+        : await db.transaction(async (tx: Db) => {
+            // A HumanWorking run releases its takeover claim first (HumanWorking →
+            // NeedsInput) so the standard abandon transition fires from a known
+            // non-terminal status; the original review HITL re-opening is moot once
+            // the run is abandoned.
+            if (run.status === "HumanWorking") {
+              await releaseHumanWorking(runId, { db: tx });
+            }
 
-      const result = await markAbandoned(runId, { db: tx });
+            const result = await markAbandoned(runId, { db: tx });
 
-      if (result.ok) {
-        await cancelActiveAssignmentsForRun({
-          db: tx,
-          runId,
-          actorId: actor.id,
-          eventKind: "system_closed",
-          reason: "run abandoned",
-        });
-      }
+            if (result.ok) {
+              await cancelActiveAssignmentsForRun({
+                db: tx,
+                runId,
+                actorId: actor.id,
+                eventKind: "system_closed",
+                reason: "run abandoned",
+              });
+            }
 
-      return result;
-    });
+            return result;
+          });
 
     if (!abandoned.ok) {
       return NextResponse.json(
@@ -147,17 +160,19 @@ export async function POST(
       await cleanupRunMaterializations({ runId, worktreePath: wtPath, db });
     }
 
-    // A claimed/running slot just freed — promote the next queued Pending run.
-    try {
-      await promoteNextPending({
-        db,
-        runFlow: (next: string) => void runFlow(next, { db }),
-      });
-    } catch (err) {
-      log.error(
-        { runId, err: err instanceof Error ? err.message : String(err) },
-        "promoteNextPending after abandon failed (non-fatal)",
-      );
+    if (run.runKind !== "agent") {
+      // A claimed/running slot just freed — promote the next queued Pending run.
+      try {
+        await promoteNextPending({
+          db,
+          runFlow: (next: string) => void runFlow(next, { db }),
+        });
+      } catch (err) {
+        log.error(
+          { runId, err: err instanceof Error ? err.message : String(err) },
+          "promoteNextPending after abandon failed (non-fatal)",
+        );
+      }
     }
 
     log.info({ runId, from: run.status }, "run abandoned");

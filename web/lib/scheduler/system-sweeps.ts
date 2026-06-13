@@ -1,11 +1,13 @@
 import "server-only";
 
+import type { EphemeralAgentGcSummary } from "@/lib/gc/ephemeral-agent-gc";
 import type { RevisionGcSummary } from "@/lib/gc/revision-gc";
 import type { WorkspaceGcSummary } from "@/lib/gc/workspace-gc";
 
 import pino from "pino";
 
 import { runCapabilitiesCleanupSweep } from "@/lib/capabilities/cleanup";
+import { runEphemeralAgentGcSweep } from "@/lib/gc/ephemeral-agent-gc";
 import { runRevisionGcSweep } from "@/lib/gc/revision-gc";
 import { runWorkspaceGcSweep } from "@/lib/gc/workspace-gc";
 import { runReconcileSweep } from "@/lib/reconcile";
@@ -24,6 +26,7 @@ export type SystemSweepSummary = GcCompatibilitySummary & {
   workspace: WorkspaceGcSummary | null;
   revision: RevisionGcSummary | null;
   capabilities: Awaited<ReturnType<typeof runCapabilitiesCleanupSweep>> | null;
+  ephemeralAgent: EphemeralAgentGcSummary | null;
 };
 
 const log = pino({
@@ -35,6 +38,7 @@ type GcBundleResult = {
   workspace: WorkspaceGcSummary | null;
   revision: RevisionGcSummary | null;
   capabilities: SystemSweepSummary["capabilities"];
+  ephemeralAgent: EphemeralAgentGcSummary | null;
   errors: string[];
 };
 
@@ -43,6 +47,7 @@ async function runGcBundle(): Promise<GcBundleResult> {
   let workspace: WorkspaceGcSummary | null = null;
   let revision: RevisionGcSummary | null = null;
   let capabilities: SystemSweepSummary["capabilities"] = null;
+  let ephemeralAgent: EphemeralAgentGcSummary | null = null;
 
   try {
     workspace = await runWorkspaceGcSweep();
@@ -71,9 +76,23 @@ async function runGcBundle(): Promise<GcBundleResult> {
     log.error({ err: message }, "gc bundle capabilities threw");
   }
 
-  errors.push(...gcFailureMessages(workspace, revision, capabilities));
+  try {
+    ephemeralAgent = await runEphemeralAgentGcSweep();
+  } catch (err) {
+    const message = errorMessage(err);
 
-  return { workspace, revision, capabilities, errors };
+    errors.push(`ephemeral agent sweep failed: ${message}`);
+    log.error({ err: message }, "gc bundle ephemeral agent threw");
+  }
+
+  errors.push(...gcFailureMessages(workspace, revision, capabilities));
+  if (ephemeralAgent && ephemeralAgent.failed > 0) {
+    errors.push(
+      `${ephemeralAgent.failed} ephemeral -ro checkout(s) failed to remove (left for retry)`,
+    );
+  }
+
+  return { workspace, revision, capabilities, ephemeralAgent, errors };
 }
 
 export async function runSystemSweep(): Promise<SystemSweepSummary> {
@@ -109,6 +128,7 @@ export async function runSystemSweep(): Promise<SystemSweepSummary> {
     workspace: gc.workspace,
     revision: gc.revision,
     capabilities: gc.capabilities,
+    ephemeralAgent: gc.ephemeralAgent,
     worktreesPreserved: gc.workspace?.preserved ?? 0,
     worktreesRemoved: gc.workspace?.pruned ?? 0,
     revisionsRemoved: gc.revision?.deleted ?? 0,

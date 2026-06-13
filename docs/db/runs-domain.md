@@ -69,6 +69,7 @@ erDiagram
         text trigger_source "M34: manual|cron|domain_event|webhook|flow"
         bigint trigger_event_id "M34: domain_events.id claim key"
         jsonb trigger_payload "M34: webhook/event context, <= 32 KB"
+        text agent_workspace "M34: none|repo_read|worktree (migration 0052) effective-axis snapshot"
         text task_id FK "nullable for scratch"
         text project_id FK
         text flow_id FK "nullable for scratch"

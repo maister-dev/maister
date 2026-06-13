@@ -1,9 +1,11 @@
 import type { DomainEventRow } from "@/lib/db/schema";
 
+import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 
 import {
   PostgreSqlContainer,
@@ -22,6 +24,8 @@ let agentsRoot: string;
 
 let triggers: typeof import("@/lib/agents/triggers");
 let launchModule: typeof import("@/lib/agents/launch");
+
+const exec = promisify(execFile);
 
 beforeAll(async () => {
   // Definitions live wherever `agents.source_path` points (ADR-089 rework:
@@ -110,8 +114,12 @@ beforeEach(async () => {
 async function seedAgent(args: {
   id: string;
   triggers: string[];
+  workspace?: string;
+  riskTier?: string;
 }): Promise<string> {
   const qualifiedId = `test-pkg:${args.id}`;
+  const workspace = args.workspace ?? "none";
+  const riskTier = args.riskTier ?? "read_only";
 
   await mkdir(path.join(agentsRoot, "agents"), { recursive: true });
   await writeFile(
@@ -119,11 +127,11 @@ async function seedAgent(args: {
     `---
 name: ${args.id}
 description: d
-workspace: none
+workspace: ${workspace}
 mode: session
 triggers:
 ${args.triggers.map((t) => `  - ${t}`).join("\n")}
-risk_tier: read_only
+risk_tier: ${riskTier}
 ---
 Do the thing.
 `,
@@ -132,12 +140,14 @@ Do the thing.
 
   await pool.query(
     `INSERT INTO "agents" ("id", "flow_ref_id", "version_label", "origin", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path")
-     VALUES ($1, 'test-pkg', 'v1.0.0', 'git', $2, 'd', 'none', 'session', $3::jsonb, 'read_only', $4)`,
+     VALUES ($1, 'test-pkg', 'v1.0.0', 'git', $2, 'd', $5, 'session', $3::jsonb, $6, $4)`,
     [
       qualifiedId,
       args.id,
       JSON.stringify(args.triggers),
       path.join(agentsRoot, "agents", `${args.id}.md`),
+      workspace,
+      riskTier,
     ],
   );
   await pool.query(
@@ -352,5 +362,80 @@ describe("agent_triggers outbox consumer (ADR-086/087)", () => {
     );
 
     expect(runs.rows[0].n).toBe(0);
+  });
+});
+
+describe("agent launch refusals (ADR-090)", () => {
+  it("refuses a risk_tier=destructive agent (PRECONDITION, ADR-041 gate)", async () => {
+    const agentId = await seedAgent({
+      id: "destroyer",
+      triggers: ["manual"],
+      riskTier: "destructive",
+    });
+
+    let err: { code?: string; message?: string } | null = null;
+
+    try {
+      await launchModule.launchAgentRun({
+        agentId,
+        projectId,
+        trigger: { source: "manual" },
+        db,
+      });
+    } catch (e) {
+      err = e as { code?: string; message?: string };
+    }
+
+    expect(err).not.toBeNull();
+    expect(err?.code).toBe("PRECONDITION");
+    expect(String(err?.message)).toMatch(/destructive/);
+  });
+
+  it("refuses a repo_read launch when the parent checkout is dirty", async () => {
+    const repo = await mkdtemp(path.join(os.tmpdir(), "maister-baseline-"));
+
+    await exec("git", ["-C", repo, "init", "-q", "-b", "main"]);
+    await writeFile(path.join(repo, "README.md"), "hi\n");
+    await exec("git", ["-C", repo, "add", "-A"]);
+    await exec("git", [
+      "-C",
+      repo,
+      "-c",
+      "user.email=t@t",
+      "-c",
+      "user.name=t",
+      "commit",
+      "-qm",
+      "init",
+    ]);
+    // Leave an uncommitted file so the baseline is dirty.
+    await writeFile(path.join(repo, "stray.txt"), "uncommitted\n");
+    await pool.query(`UPDATE "projects" SET "repo_path" = $1 WHERE "id" = $2`, [
+      repo,
+      projectId,
+    ]);
+
+    const agentId = await seedAgent({
+      id: "reader",
+      triggers: ["manual"],
+      workspace: "repo_read",
+    });
+
+    let err: { code?: string; message?: string } | null = null;
+
+    try {
+      await launchModule.launchAgentRun({
+        agentId,
+        projectId,
+        trigger: { source: "manual" },
+        db,
+      });
+    } catch (e) {
+      err = e as { code?: string; message?: string };
+    }
+
+    expect(err).not.toBeNull();
+    expect(err?.code).toBe("PRECONDITION");
+    expect(String(err?.message)).toMatch(/dirty/);
   });
 });

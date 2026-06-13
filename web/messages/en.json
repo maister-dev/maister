@@ -875,12 +875,9 @@
     "summary": "Creates a run for {branch} from {base}.",
     "createRun": "Create run",
     "creating": "Creating…",
-    "setUp": "Set up & launch",
     "runner": "Runner",
     "runnerDefault": "Default runner",
     "promotionMode": "Promotion",
-    "promotionDefault": "Default policy",
-    "promotionLocalMerge": "Local merge",
     "promotionPullRequest": "Pull request"
   },
   "run": {
@@ -2024,7 +2021,7 @@
   "agents": {
     "title": "Platform agents",
     "resync": "Re-sync catalog",
-    "empty": "No agents registered. Add one or re-sync the host catalog.",
+    "empty": "No agents attached. Attach a package-provided agent or re-sync package metadata.",
     "colId": "ID",
     "colPackage": "Package",
     "colRunner": "Runner",
@@ -2053,17 +2050,7 @@
     "loading": "Loading…",
     "loadError": "Could not load the agent definition.",
     "fieldId": "ID",
-    "fieldName": "Name",
-    "fieldDescription": "Description",
-    "fieldScope": "Scope",
-    "fieldProject": "Project",
-    "fieldRunner": "Runner",
-    "runnerInherit": "— inherit (project/platform default)",
-    "fieldWorkspace": "Workspace",
-    "fieldMode": "Mode",
-    "fieldRisk": "Risk tier",
-    "fieldTriggers": "Triggers",
-    "fieldPrompt": "Prompt (agent.md body)"
+    "fieldName": "Name"
   },
   "agentsAttach": {
     "title": "Agents attached to this project",

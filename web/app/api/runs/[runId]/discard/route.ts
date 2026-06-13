@@ -6,6 +6,7 @@ import pino from "pino";
 
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { systemCloseActiveAssignmentsForRun } from "@/lib/assignments/service";
+import { finalizeAgentRun } from "@/lib/agents/launch";
 import { getDb } from "@/lib/db/client";
 import { isMaisterError } from "@/lib/errors";
 import { markAbandoned } from "@/lib/runs/state-transitions";
@@ -90,24 +91,38 @@ export async function POST(
     // Discard = terminal abandon. markAbandoned stamps workspaces
     // .scheduled_removal_at in the SAME tx (GC countdown); NO synchronous
     // worktree removal here.
-    const res = await markAbandoned(runId, { db });
+    const res =
+      run.runKind === "agent"
+        ? await finalizeAgentRun(runId, "Abandoned", {
+            db,
+            reason: "discard",
+            closeAssignments: {
+              kind: "system",
+              reason: "run discarded",
+            },
+          }).then((result) => ({ ok: result.finalized }))
+        : await markAbandoned(runId, { db });
 
     if (res.ok) {
-      await systemCloseActiveAssignmentsForRun({
-        db,
-        runId,
-        reason: "run discarded",
-      });
+      if (run.runKind !== "agent") {
+        await systemCloseActiveAssignmentsForRun({
+          db,
+          runId,
+          reason: "run discarded",
+        });
+      }
 
-      // The just-abandoned run freed a slot — promote the oldest Pending. Lazy
-      // scheduler defaults resume/launch the promoted run.
-      try {
-        await promoteNextPending({ db });
-      } catch (err) {
-        log.error(
-          { runId, err: err instanceof Error ? err.message : String(err) },
-          "promoteNextPending after discard failed (non-fatal)",
-        );
+      if (run.runKind !== "agent") {
+        // The just-abandoned run freed a slot — promote the oldest Pending. Lazy
+        // scheduler defaults resume/launch the promoted run.
+        try {
+          await promoteNextPending({ db });
+        } catch (err) {
+          log.error(
+            { runId, err: err instanceof Error ? err.message : String(err) },
+            "promoteNextPending after discard failed (non-fatal)",
+          );
+        }
       }
 
       log.info({ runId, from: run.status }, "run discarded");

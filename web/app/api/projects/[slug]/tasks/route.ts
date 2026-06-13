@@ -71,24 +71,11 @@ export async function POST(
 ): Promise<NextResponse> {
   const { slug } = await params;
 
-  let body: z.infer<typeof postBodySchema>;
-
-  try {
-    body = postBodySchema.parse(await req.json());
-  } catch (err) {
-    return errorResponse(
-      new MaisterError(
-        "CONFIG",
-        `invalid POST body: ${(err as Error).message}`,
-      ),
-      slug,
-    );
-  }
-
   try {
     // Auth-first: authenticate AND clear the forced-password-change gate
-    // BEFORE resolving the URL slug, so unauthenticated or must-change callers
-    // cannot probe project existence. Project membership is enforced below.
+    // BEFORE parsing the body or resolving the URL slug, so unauthenticated or
+    // must-change callers cannot probe project existence or drive body parsing.
+    // Project membership is enforced below.
     const user = await requireActiveSession();
 
     const db = getDb() as unknown as { select: any; insert: any };
@@ -106,6 +93,18 @@ export async function POST(
     }
 
     await requireProjectAction(project.id, "createTask");
+
+    // Parse the body only after authz. Wrap a zod failure as CONFIG (422).
+    let body: z.infer<typeof postBodySchema>;
+
+    try {
+      body = postBodySchema.parse(await req.json());
+    } catch (err) {
+      throw new MaisterError(
+        "CONFIG",
+        `invalid POST body: ${(err as Error).message}`,
+      );
+    }
 
     const { taskId, number, taskKey } = await createTask(
       {

@@ -193,6 +193,16 @@ export function resolveAgentRunner(
       );
     }
 
+    if (
+      input.agent.workspace !== "worktree" &&
+      runner.capabilityAgent !== "claude"
+    ) {
+      throw new MaisterError(
+        "EXECUTOR_UNAVAILABLE",
+        `agent runner ${runner.id} (capability ${runner.capabilityAgent}) cannot host a ${input.agent.workspace} agent — read-only enforcement requires a claude-capability runner`,
+      );
+    }
+
     return {
       runnerId: runner.id,
       runnerResolutionTier: candidate.tier,

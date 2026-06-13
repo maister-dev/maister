@@ -65,7 +65,7 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `flow_graph_layouts`          | **(Removed — migration `0030`, ADR-064.)** Was a per-project graph-view position store (M22, migration `0024`); superseded by the authored `flow.yaml` `presentation` section. No table.                                                                                            | —                             |
 | `scheduler_jobs`              | **(M24 — Implemented, migration `0027`)** Durable fixed-interval scheduler job definitions for `system_sweep`, `command`, `agent_tick`, and `flow_run`. Atomic due-job claim advances `next_run_at` and creates one attempt.                                                                                                      | optional `projects.id`                                                     |
 | `scheduler_job_runs`          | **(M24 — Implemented, migration `0027`)** Scheduler attempt ledger with status, lease expiry, summary, and error fields. Expired `Claimed`/`Running` attempts are reaped before new claims.                                                                                                                                         | `scheduler_jobs.id`                                                        |
-| `agent_schedules`             | **(M24 — Implemented, migration `0027`)** Narrow scheduler bridge for project-local agent refs. `agent_ref` is typed text in M24 and has no FK to authored catalog rows.                                                                                                                                                             | `projects.id`, `scheduler_jobs.id`                                         |
+| `agent_schedules`             | **(M24 table, reworked M34 — Implemented, migration `0049`)** Per-agent cron/event trigger bindings. The dead M24 `agent_ref`/`scheduler_jobs.id`/`desired_state` columns were dropped; now a real `agent_id` FK plus `trigger_type` (`cron\|event`), `cron_expr`/`timezone`/`next_fire_at` (cron rows) and `event_match` jsonb (event rows). Fired by the seeded `agent_tick.dispatcher` and the `agent_triggers` domain-event consumer.                                                                                                                                                             | `projects.id`, `agents.id`                                         |
 | `run_schedules`               | **(M28 — Implemented, migration `0038`)** User-facing cron schedules: 5-field `cron_expr` + IANA `timezone`, overlap policy (`skip\|queue_one\|start_anyway`), precomputed `next_fire_at`, non-stacking `queue_one_pending` catch-up flag, last-fire feedback. Fired by the seeded `run_schedule.dispatcher` job (ADR-071).            | `projects.id`, `tasks.id`, optional `platform_acp_runners.id`, `runs.id`, `users.id` |
 | `authored_capabilities`       | **(M25 — Implemented, migration `0028`)** Project-local authored rule/skill/flow identity with draft/published pointers and archive state. UNIQUE `(project_id, kind, slug)`.                                                                                                                                                         | `projects.id`                                                              |
 | `authored_capability_revisions` | **(M25 — Implemented, migration `0028`)** Draft/Published/Archived revision snapshots with `draft_version`, canonical content hash, body, manifest, and immutable published revisions.                                                                                                                                                | `authored_capabilities.id`                                                 |
@@ -914,6 +914,11 @@ unread badge and inbox panel.
                                  //   trigger_event_id) for outbox no-dup
   triggerPayload?,               // M34: jsonb webhook/event context,
                                  //   bounded <= 32 KB at the boundary
+  agentWorkspace?,               // M34 (migration 0052): 'none' | 'repo_read'
+                                 //   | 'worktree' — snapshot of the run's
+                                 //   effective workspace axis at spawn;
+                                 //   terminal L3 enforcement gates off this,
+                                 //   not the mutable catalog index
   taskId?,                       // nullable for scratch runs
   projectId,
   flowId?,                       // nullable for scratch runs
@@ -2132,13 +2137,11 @@ projects
   ├── capability_imports (FK projectId, cascade)      ← M14 Implemented
   ├── project_flow_roles (FK projectId, cascade)      ← M13
   ├── actor_identities   (FK projectId, cascade)      ← M13
-  ├── agents             (FK projectId, cascade)      ← M34 (project-scope rows only)
-  │     ├── agent_project_links (FK agentId, cascade)             ← M34
-  │     ├── agent_schedules     (FK agentId, cascade)             ← M34
-  │     ├── project_tokens.agent_id (FK agentId, cascade)         ← M34 (ephemeral agent tokens)
-  │     └── runs.agent_id       (FK agentId, SET NULL — history survives catalog deletes)
-  ├── agent_project_links (FK projectId, cascade)     ← also direct, M34
-  ├── agent_schedules     (FK projectId, cascade)     ← also direct, M34 rework
+  ├── agent_project_links (FK projectId, cascade)     ← M34 project attachments for package-owned agents
+  │     └── agents             (FK via agentId; package-owned catalog rows)
+  ├── agent_schedules     (FK projectId, cascade)     ← M34 schedules for attached agents
+  ├── project_tokens.agent_id (FK agentId, cascade)   ← M34 ephemeral agent tokens
+  ├── runs.agent_id       (FK agentId, SET NULL)      ← history survives catalog deletes
   ├── tasks              (FK projectId, cascade)
   │     ├── task_relations   (FK fromTaskId / toTaskId, cascade)   ← ADR-083
   │     ├── task_comments    (FK taskId,   cascade)                ← ADR-083

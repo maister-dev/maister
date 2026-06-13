@@ -16,6 +16,7 @@ import { requireGlobalRole } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { decodeRouteParam } from "@/lib/route-params";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { agents } = schemaModule as unknown as Record<string, any>;
@@ -56,8 +57,7 @@ export async function GET(
     await requireGlobalRole("admin");
 
     const { agentId: rawAgentId } = await ctx.params;
-    // Qualified ids carry a `:`; route params arrive URL-encoded.
-    const agentId = decodeURIComponent(rawAgentId);
+    const agentId = decodeRouteParam(rawAgentId, "agentId");
     const db = getDb() as unknown as { select: any };
     const rows = await db.select().from(agents).where(eq(agents.id, agentId));
     const row = rows[0];
@@ -94,7 +94,20 @@ export async function PATCH(
     await requireGlobalRole("admin");
 
     const { agentId: rawAgentId } = await ctx.params;
-    const agentId = decodeURIComponent(rawAgentId);
+    const agentId = decodeRouteParam(rawAgentId, "agentId");
+    const db = getDb() as unknown as { select: any };
+    const rows = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(eq(agents.id, agentId));
+
+    if (!rows[0]) {
+      return NextResponse.json(
+        { code: "PRECONDITION", message: `agent not found: ${agentId}` },
+        { status: 404 },
+      );
+    }
+
     const parsed = patchBodySchema.safeParse(await parseJson(req));
 
     if (!parsed.success) {

@@ -42,7 +42,6 @@ import {
   rankSignals,
   type SignalCluster,
 } from "@/lib/queries/observatory-signals";
-import { reconcileProjectScopeCostRollups } from "@/lib/runs/cost-rollups";
 
 const {
   artifactInstances,
@@ -248,8 +247,6 @@ async function getCostSummary(
 
   const projectIds = projectScope.map((project) => project.id);
 
-  await reconcileProjectScopeCostRollups(projectIds, { client });
-
   const runCostConditions: SQL[] = [
     inArray(runCostRollups.projectId, projectIds),
   ];
@@ -318,6 +315,15 @@ async function getCostSummary(
   );
 
   for (const row of nodeRows) nodesWithCost.add(row.nodeId);
+
+  log.debug(
+    {
+      projectCount: projectScope.length,
+      runCostRowCount: runRows.length,
+      nodeCostRowCount: nodeRows.length,
+    },
+    "[FIX:observatory-cost-read] cost summary read from stored rollups",
+  );
 
   return {
     ...totals,

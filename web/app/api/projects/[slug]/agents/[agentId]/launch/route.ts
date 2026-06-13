@@ -10,6 +10,7 @@ import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { decodeRouteParam } from "@/lib/route-params";
 
 const { projects } = schemaModule as unknown as Record<string, any>;
 
@@ -26,12 +27,13 @@ export async function POST(
   req: NextRequest,
   { params }: RouteParams,
 ): Promise<NextResponse> {
-  const { slug, agentId } = await params;
+  const { slug, agentId: rawAgentId } = await params;
 
   try {
     // Authz-first: authenticate before resolving the slug; project
     // membership is enforced right after the minimal project lookup.
     await requireActiveSession();
+    const agentId = decodeRouteParam(rawAgentId, "agentId");
 
     const db = getDb() as unknown as { select: any };
     const projectRows = await db

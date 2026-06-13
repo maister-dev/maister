@@ -218,11 +218,12 @@ defined as a string union in `web/lib/errors.ts`.
 > resolve it is captured as that source's `status: "error"` within a 200 response, never raised as a
 > 500. The existing live-session `ACP_PROTOCOL` (500) call site is unchanged.
 
-> **The M34 platform-agent substrate (ADR-089/088) reuses existing codes and adds none**
+> **The M34 platform-agent substrate (ADR-089/090) reuses existing codes and adds none**
 > ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror) closed union). New call
-> sites (all Designed):
+> sites (all Implemented):
 > - **`CONFIG` → HTTP 422** — invalid agent definition at registration (bad/unknown
->   frontmatter keys, missing `project` for `scope=project`, unknown project slug); a flow
+>   frontmatter keys — the removed `scope`/`project` fields now fail loudly — or a
+>   `workspace_ref` without `workspace: repo_read`); a flow
 >   node's `settings.agent` referencing an unknown catalog agent or an agent whose
 >   `triggers` lacks `flow`; `settings.agent` declared without
 >   `compat.engine_min >= 1.5.0`; invalid cron expression / timezone / event kinds on an
@@ -234,10 +235,13 @@ defined as a string union in `web/lib/errors.ts`.
 > - **`PRECONDITION` → HTTP 409** — launch refusals at every agent entry point: agent
 >   disabled or quarantined (`agents.quarantined_at` set), `risk_tier=destructive` while the
 >   ADR-041 enforcement flip is blocked, the requested trigger absent from the agent's
->   `triggers`, a dirty `repo_read` baseline (`statusPorcelain` non-empty), or launching an
+>   `triggers`, the project's pinned package revision lacking the agent or the requested
+>   trigger (pin divergence), an unresolvable `workspace_ref` (no trigger-derived ref and no
+>   literal branch), a dirty `repo_read` baseline (`statusPorcelain` non-empty), attaching an
+>   agent whose providing package is not enabled in the project, or launching an
 >   `unconfigured` (flowless) task.
-> - **`CONFLICT` → HTTP 409** — deleting an agent that live runs reference (usage guard);
->   attaching an already-attached agent.
+> - **`CONFLICT` → HTTP 409** — attaching an already-attached agent
+>   (`agent_project_links` uniqueness).
 
 ## Construction
 

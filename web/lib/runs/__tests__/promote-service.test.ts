@@ -241,6 +241,44 @@ function seedScratchRun(): string {
   return runId;
 }
 
+function seedAgentRun(): string {
+  const runId = "run-agent-promote";
+
+  dbState.tables.runs.push({
+    id: runId,
+    runKind: "agent",
+    projectId: "project-1",
+    taskId: null,
+    status: "Review",
+    agentId: "pkg:agent",
+    acpSessionId: "acp-agent",
+    currentStepId: "agent",
+    endedAt: null,
+    deliveryPolicySnapshot: null,
+  });
+  dbState.tables.workspaces.push({
+    id: "workspace-agent",
+    runId,
+    projectId: "project-1",
+    branch: "maister/agent-pkg-agent-12345678",
+    worktreePath: "/wt/agent-demo",
+    parentRepoPath: "/repos/demo",
+    removedAt: null,
+    baseBranch: "main",
+    baseCommit: "abc1234",
+    targetBranch: "main",
+    promotionMode: "local_merge",
+    promotionState: "none",
+    promotionAttemptId: null,
+    promotionClaimedAt: null,
+    promotionOwnerUserId: null,
+    promotedAt: null,
+    scheduledRemovalAt: null,
+  });
+
+  return runId;
+}
+
 async function callPromote(runId: string, input: Record<string, unknown>) {
   const { promoteRun } = await import("../promote");
 
@@ -748,6 +786,42 @@ describe("promoteRun — scratch dispatch (behavior preserved)", () => {
     expect(promoteRebaseMerge).not.toHaveBeenCalled();
     expect(promoteLocalMerge).not.toHaveBeenCalled();
     expect(dbState.tables.workspaces[0].promotionState).toBe("none");
+  });
+});
+
+describe("promoteRun — agent worktree dispatch", () => {
+  it("promotes a Review agent run through the workspace merge path", async () => {
+    const runId = seedAgentRun();
+
+    const res = await callPromote(runId, {
+      deliveryPolicyOverride: {
+        strategy: "merge",
+        push: "never",
+        trigger: "manual",
+        targetBranch: "main",
+      },
+      targetBranch: "main",
+      reviewedTargetCommit: "tip00000",
+    });
+
+    expect(res).toMatchObject({
+      ok: true,
+      mode: "merge",
+      commit: "merged00",
+      pullRequestUrl: null,
+    });
+    expect(assertEvidenceReady).not.toHaveBeenCalled();
+    expect(promoteLocalMerge).toHaveBeenCalledWith({
+      projectRepoPath: "/repos/demo",
+      sourceBranch: "maister/agent-pkg-agent-12345678",
+      targetBranch: "main",
+    });
+    expect(dbState.tables.runs[0]).toMatchObject({
+      status: "Done",
+      acpSessionId: null,
+      currentStepId: null,
+    });
+    expect(dbState.tables.workspaces[0].promotionState).toBe("done");
   });
 });
 

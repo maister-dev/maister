@@ -167,6 +167,7 @@ const runFlowSpy = vi.fn(async (_runId: string): Promise<void> => undefined);
 // dependencies. Tests override these per-case.
 const resumeRunSpy = vi.fn();
 const scheduleResumedSessionDriveSpy = vi.fn();
+const startAgentSessionSpy = vi.fn();
 
 vi.mock("@/lib/db/client", () => ({
   getDb: () => fakeDb,
@@ -188,6 +189,11 @@ vi.mock("@/lib/runs/resume", () => ({
 vi.mock("@/lib/runs/resume-driver", () => ({
   scheduleResumedSessionDrive: (...args: unknown[]) =>
     scheduleResumedSessionDriveSpy(...(args as unknown[])),
+}));
+
+vi.mock("@/lib/agents/launch", () => ({
+  startAgentSession: (...args: unknown[]) =>
+    startAgentSessionSpy(...(args as unknown[])),
 }));
 
 // Stub the authz boundary so the route's RBAC check passes without pulling
@@ -229,6 +235,8 @@ beforeEach(async () => {
   resumeRunSpy.mockReset();
   scheduleResumedSessionDriveSpy.mockReset();
   scheduleResumedSessionDriveSpy.mockImplementation(() => "drive-id");
+  startAgentSessionSpy.mockReset();
+  startAgentSessionSpy.mockResolvedValue(undefined);
 });
 
 afterEach(async () => {
@@ -242,7 +250,7 @@ function seedPermissionRow(
     respondedAt: Date | null;
     options: Array<{ optionId: string }>;
     response: Row | null;
-    runKind: "flow" | "scratch";
+    runKind: "flow" | "scratch" | "agent";
     scratchDialogStatus: string;
   }> = {},
 ): { runId: string; hitlRequestId: string } {
@@ -1069,6 +1077,25 @@ describe("HITL respond route — NeedsInputIdle branch", () => {
     expect(scheduleResumedSessionDriveSpy).not.toHaveBeenCalled();
   });
 
+  it("agent NeedsInputIdle response resumes through startAgentSession, not flow resumeRun", async () => {
+    const { runId, hitlRequestId } = seedPermissionRow({
+      runKind: "agent",
+      runStatus: "NeedsInputIdle",
+    });
+
+    const res = await invokePost(runId, hitlRequestId, { optionId: "allow" });
+
+    expect(res.status).toBe(202);
+    expect(resumeRunSpy).not.toHaveBeenCalled();
+    expect(scheduleResumedSessionDriveSpy).not.toHaveBeenCalled();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(startAgentSessionSpy).toHaveBeenCalledWith(runId, {
+      db: expect.any(Object),
+    });
+    expect(dbState.tables.runs[0].status).toBe("Running");
+    expect(dbState.tables.hitl_requests[0].respondedAt).toBeNull();
+  });
+
   it("[FIX-PASS2-F1] same-payload retry after resume started: noop-idempotent + NeedsInput + supervisor 404 → 202 (NOT Failed)", async () => {
     // Scenario: original /respond was for NeedsInputIdle; resumeRun
     // moved status to NeedsInput; driver is delivering against a fresh
@@ -1143,6 +1170,21 @@ describe("HITL respond route — auth-first ordering", () => {
     expect(res.status).toBe(403);
     expect((await res.json()).code).toBe("PASSWORD_CHANGE_REQUIRED");
     // No write happened — the handler never reached the claim transaction.
+    expect(dbState.updates).toHaveLength(0);
+  });
+
+  it("runs requireActiveSession before invalid body validation", async () => {
+    vi.mocked(requireActiveSession).mockRejectedValueOnce(
+      new MaisterError(
+        "PASSWORD_CHANGE_REQUIRED",
+        "Password change required before any action",
+      ),
+    );
+
+    const res = await invokePost("ghost-run", "ghost-hitl", "not-an-object");
+
+    expect(res.status).toBe(403);
+    expect((await res.json()).code).toBe("PASSWORD_CHANGE_REQUIRED");
     expect(dbState.updates).toHaveLength(0);
   });
 });

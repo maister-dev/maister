@@ -10,6 +10,7 @@ import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { decodeRouteParam } from "@/lib/route-params";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { projects } = schemaModule as unknown as Record<string, any>;
@@ -66,10 +67,11 @@ export async function PATCH(
   req: NextRequest,
   { params }: RouteParams,
 ): Promise<NextResponse> {
-  const { slug, agentId } = await params;
+  const { slug, agentId: rawAgentId } = await params;
 
   try {
     await requireActiveSession();
+    const agentId = decodeRouteParam(rawAgentId, "agentId");
 
     const project = await resolveProject(slug);
 
@@ -106,10 +108,11 @@ export async function DELETE(
   _req: NextRequest,
   { params }: RouteParams,
 ): Promise<NextResponse> {
-  const { slug, agentId } = await params;
+  const { slug, agentId: rawAgentId } = await params;
 
   try {
     await requireActiveSession();
+    const agentId = decodeRouteParam(rawAgentId, "agentId");
 
     const project = await resolveProject(slug);
 

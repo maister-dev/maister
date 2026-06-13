@@ -1143,6 +1143,13 @@ export const runs = pgTable(
     // makes at-least-once redelivery converge to exactly one run.
     triggerEventId: bigint("trigger_event_id", { mode: "number" }),
     triggerPayload: jsonb("trigger_payload").$type<Record<string, unknown>>(),
+    // M34 (ADR-090): the workspace axis the run ACTUALLY launched with,
+    // snapshotted from the project's pinned (effective) definition at insert.
+    // Terminal L3 enforcement reads this, NOT the agents catalog index (which
+    // projects the newest revision and can diverge from a project's pin).
+    agentWorkspace: text("agent_workspace", {
+      enum: ["none", "repo_read", "worktree"],
+    }),
     taskId: text("task_id").references(() => tasks.id, {
       onDelete: "cascade",
     }),

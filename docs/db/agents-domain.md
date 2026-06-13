@@ -83,7 +83,7 @@ future Mγ stage).
 
 | Table | Change |
 | ----- | ------ |
-| `runs` | `run_kind` gains `'agent'`; new `agent_id` (FK `agents` SET NULL), `trigger_source` (`manual\|cron\|domain_event\|webhook\|flow`, NULL), `trigger_event_id` (bigint, NULL), `trigger_payload` (jsonb, NULL). |
+| `runs` | `run_kind` gains `'agent'`; new `agent_id` (FK `agents` SET NULL), `trigger_source` (`manual\|cron\|domain_event\|webhook\|flow`, NULL), `trigger_event_id` (bigint, NULL), `trigger_payload` (jsonb, NULL), `agent_workspace` (`none\|repo_read\|worktree`, NULL; migration `0052`) — snapshot of the run's effective workspace axis at spawn; terminal L3 enforcement gates off this, not the mutable catalog index. |
 | `tasks` | `flow_id` → NULLABLE; new `triage_status` (`'triaged'` \| NULL), `runner_id` (FK SET NULL), `target_branch` (text NULL), `promotion_mode` (`local_merge\|pull_request`, NULL). |
 | `project_tokens` | `token_kind` gains `'agent'`; new `agent_id` (FK `agents` CASCADE, NULL; CHECK `token_kind='agent'` ⇔ `agent_id IS NOT NULL`). |
 
@@ -119,9 +119,10 @@ projects
   └── agent_schedules      (FK project_id, ON DELETE CASCADE)
 ```
 
-Catalog deletes are usage-guarded at the route layer (refused while live
-agent runs exist), so the `runs.agent_id` SET NULL only ever detaches
-terminal history.
+There is no admin delete endpoint for package-sourced agents; definitions
+leave through their providing package, and `resync` disables missing catalog
+rows instead of deleting them. The `ON DELETE` actions remain FK backstops for
+future/admin maintenance paths and preserve terminal run history.
 
 ## Linked artifacts
 

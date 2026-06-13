@@ -2,8 +2,14 @@ import "server-only";
 
 import { NextRequest, NextResponse } from "next/server";
 
-import { launchAgentRun } from "@/lib/agents/launch";
+import {
+  hidesAgentExistenceForLaunch,
+  isAgentLaunchError,
+  launchAgentRun,
+  publicAgentLaunchMessage,
+} from "@/lib/agents/launch";
 import { isMaisterError } from "@/lib/errors";
+import { decodeRouteParam } from "@/lib/route-params";
 import { handleExt } from "@/lib/tokens/ext-handler";
 
 // ADR-089: bounded inbound payload — stored verbatim on
@@ -26,6 +32,35 @@ function statusForCode(code: string): number {
   }
 }
 
+function hasOversizedContentLength(req: NextRequest): boolean {
+  const raw = req.headers.get("content-length");
+
+  if (raw === null) return false;
+
+  const bytes = Number.parseInt(raw, 10);
+
+  return Number.isInteger(bytes) && bytes > MAX_PAYLOAD_BYTES;
+}
+
+function parseTriggerEventId(req: NextRequest): number | null {
+  const raw = req.headers.get("x-maister-trigger-event-id");
+
+  if (raw === null || raw.trim() === "") return null;
+
+  const trimmed = raw.trim();
+  const parsed = Number.parseInt(trimmed, 10);
+
+  if (
+    !Number.isSafeInteger(parsed) ||
+    parsed < 1 ||
+    String(parsed) !== trimmed
+  ) {
+    throw new Error("X-Maister-Trigger-Event-Id must be a positive integer");
+  }
+
+  return parsed;
+}
+
 // The inbound webhook trigger (ADR-089) — the only token-authenticated
 // route outside /api/v1/ext. The project derives from the TOKEN
 // (auth-context) and the agent must be attached to it; there is no
@@ -34,7 +69,7 @@ export async function POST(
   req: NextRequest,
   { params }: RouteParams,
 ): Promise<NextResponse> {
-  const { agentId } = await params;
+  const { agentId: rawAgentId } = await params;
 
   return handleExt(
     req,
@@ -44,6 +79,27 @@ export async function POST(
       method: "POST",
     },
     async (ctx) => {
+      let agentId: string;
+
+      try {
+        agentId = decodeRouteParam(rawAgentId, "agentId");
+      } catch (err) {
+        if (isMaisterError(err)) {
+          return NextResponse.json(
+            { code: err.code, message: err.message },
+            { status: statusForCode(err.code) },
+          );
+        }
+        throw err;
+      }
+
+      if (hasOversizedContentLength(req)) {
+        return NextResponse.json(
+          { code: "CONFIG", message: "payload exceeds 32 KB" },
+          { status: 413 },
+        );
+      }
+
       const raw = await req.text();
 
       if (Buffer.byteLength(raw, "utf8") > MAX_PAYLOAD_BYTES) {
@@ -83,10 +139,28 @@ export async function POST(
       }
 
       try {
+        let triggerEventId: number | null;
+
+        try {
+          triggerEventId = parseTriggerEventId(req);
+        } catch (err) {
+          return NextResponse.json(
+            {
+              code: "CONFIG",
+              message: err instanceof Error ? err.message : String(err),
+            },
+            { status: 422 },
+          );
+        }
+
         const result = await launchAgentRun({
           agentId,
           projectId: ctx.actor.projectId,
-          trigger: { source: "webhook", payload },
+          trigger: {
+            source: "webhook",
+            eventId: triggerEventId,
+            payload,
+          },
         });
 
         if ("deduped" in result) {
@@ -108,12 +182,7 @@ export async function POST(
         );
       } catch (err) {
         if (isMaisterError(err)) {
-          // Existence-hide: an unknown/unattached agent reads as 404 to the
-          // token holder, mirroring the ext cross-project convention.
-          if (
-            err.code === "PRECONDITION" &&
-            /is not registered|not attached/.test(err.message)
-          ) {
+          if (hidesAgentExistenceForLaunch(err)) {
             return NextResponse.json(
               { code: "PRECONDITION", message: "agent not found" },
               { status: 404 },
@@ -121,7 +190,12 @@ export async function POST(
           }
 
           return NextResponse.json(
-            { code: err.code, message: err.message },
+            {
+              code: err.code,
+              message: isAgentLaunchError(err)
+                ? publicAgentLaunchMessage(err)
+                : err.message,
+            },
             { status: statusForCode(err.code) },
           );
         }

@@ -260,6 +260,97 @@ describe("adapter compatibility fixtures", () => {
     expect(resumed.acpSessionId).toBe("existing-mimo-session");
   });
 
+  async function driveReadOnlyPrompt(permissionKind: string): Promise<{
+    events: SessionEvent[];
+    result: Awaited<ReturnType<typeof sendPromptOnConnection>>;
+    pendingPermissions: ReturnType<typeof createPendingPermissions>;
+    sessionId: string;
+  }> {
+    const pendingPermissions = createPendingPermissions({ timeoutMs: 5_000 });
+    const child = spawnFixture(["--permission-kind", permissionKind]);
+    const emitter = new EventEmitter();
+    const events = eventCollector(emitter);
+    const record: SessionRecord = {
+      ...recordFor("opencode"),
+      readOnlySession: true,
+    };
+    const connection = await createAcpConnection({
+      stdin: child.stdin,
+      stdoutSource: child.stdout,
+      sessionId: record.sessionId,
+      worktreePath: process.cwd(),
+      record,
+      emitter,
+      logger,
+      adapter: "opencode",
+      pendingPermissions,
+      runner: runnerFor("opencode"),
+    });
+
+    const result = await sendPromptOnConnection(
+      connection.connection,
+      {
+        adapter: "opencode",
+        acpSessionId: connection.acpSessionId,
+        stepId: "step-1",
+        prompt: "request permission",
+      },
+      logger,
+    );
+
+    return { events, result, pendingPermissions, sessionId: record.sessionId };
+  }
+
+  describe("readOnlySession L1 wire arbitration (ADR-090)", () => {
+    it("auto-DENIES a write-class (edit) permission inline — no HITL event, no pending deferred", async () => {
+      const { events, result, pendingPermissions, sessionId } =
+        await driveReadOnlyPrompt("edit");
+
+      // The prompt completes without a human in the loop.
+      expect(result).toMatchObject({ stopReason: "end_turn" });
+      // The permission was answered inline — it never surfaced to the HITL
+      // layer and never registered a deferred (no leak class).
+      expect(events).not.toContainEqual(
+        expect.objectContaining({ type: "session.permission_request" }),
+      );
+      expect(pendingPermissions.size(sessionId)).toBe(0);
+      // The adapter observed the deny outcome (the reject_once option).
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "session.update",
+          update: expect.objectContaining({
+            sessionUpdate: "agent_message_chunk",
+            content: expect.objectContaining({
+              text: "permission selected:deny",
+            }),
+          }),
+        }),
+      );
+    });
+
+    it("auto-APPROVES a read-class permission inline — a headless agent never stalls on its first Read", async () => {
+      const { events, result, pendingPermissions, sessionId } =
+        await driveReadOnlyPrompt("read");
+
+      expect(result).toMatchObject({ stopReason: "end_turn" });
+      expect(events).not.toContainEqual(
+        expect.objectContaining({ type: "session.permission_request" }),
+      );
+      expect(pendingPermissions.size(sessionId)).toBe(0);
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "session.update",
+          update: expect.objectContaining({
+            sessionUpdate: "agent_message_chunk",
+            content: expect.objectContaining({
+              text: "permission selected:allow",
+            }),
+          }),
+        }),
+      );
+    });
+  });
+
   it("refuses Gemini loadSession-only resume without falling back to newSession", async () => {
     const child = spawnFixture(["--gemini-load-only"]);
     const emitter = new EventEmitter();

@@ -316,6 +316,29 @@ describe("resolveAgentProfileMcpServers (RD7)", () => {
 
     expect(none).toEqual([]);
   });
+
+  it("fails closed when a declared catalog MCP cannot resolve", async () => {
+    const p = await seedProject("eff-mcps-missing");
+    const { resolveAgentProfileMcpServers } = await import(
+      "@/lib/agents/launch"
+    );
+
+    await expect(
+      resolveAgentProfileMcpServers({
+        db,
+        projectId: p,
+        capabilityProfile: { mcps: ["missing-github"] },
+        capabilityAgent: "claude",
+        execTrust: "trusted",
+        runId: "run-x",
+      }),
+    ).rejects.toSatisfy(
+      (err: unknown) =>
+        isMaisterError(err) &&
+        err.code === "CONFIG" &&
+        /Unknown or unavailable mcp/.test(err.message),
+    );
+  });
 });
 
 describe("upgradePreview agents break-impact (RD4, owner decision 7)", () => {

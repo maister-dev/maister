@@ -96,7 +96,7 @@ For the full vision, product model, architecture, and roadmap see
 - **Diff view + merge**: raw `git diff` rendered as `<pre>`,
   `git merge --no-ff` on the parent's `main_branch`.
   Conflicts abort and surface "Conflict — resolve manually" in UI.
-- **Concurrency cap**: `MAISTER_MAX_CONCURRENT_RUNS=3`
+- **Concurrency cap**: `MAISTER_MAX_CONCURRENT_RUNS=6`
   (env-configurable, global across projects). Runs above the cap go to
   `Pending`; UI shows queue position; auto-promote on slot free.
 - **Typed error taxonomy**: `MaisterError` with discriminated `code`

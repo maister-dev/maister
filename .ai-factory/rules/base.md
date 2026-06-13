@@ -75,7 +75,7 @@
   resolves through supervisor deferreds; form/human HITL resumes through
   durable input artifacts.
 - No `chokidar`, no `fs.watch`, no polling for state transitions.
-- Default concurrency cap: `MAISTER_MAX_CONCURRENT_RUNS=3` (env-configurable,
+- Default concurrency cap: `MAISTER_MAX_CONCURRENT_RUNS=6` (env-configurable,
   **global** across all projects, not per-project). Runs above the cap go to
   `Pending` and auto-start on slot free. UI shows queue position.
 

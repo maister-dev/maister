@@ -228,7 +228,127 @@ describe("dirty-watchdog terminal choke point (ADR-090 L3)", () => {
 
     await rm(repoPath, { recursive: true, force: true });
   });
+
+  it("clean worktree run → Review, not Done, so promotion remains explicit", async () => {
+    const { runId, projectId } = await seedWorld();
+
+    await pool.query(
+      `UPDATE "agents" SET "workspace" = 'worktree' WHERE "id" = 'watchdog-agent'`,
+    );
+    await pool.query(
+      `INSERT INTO "workspaces" ("id", "run_id", "project_id", "branch", "worktree_path", "parent_repo_path", "base_branch", "base_commit", "target_branch")
+       VALUES ($1, $2, $3, 'maister/agent-watchdog-agent-12345678', $4, $5, 'main', 'base0000', 'main')`,
+      [randomUUID(), runId, projectId, `/tmp/${runId}-agent-wt`, repoPath],
+    );
+
+    const result = await finalizeAgentRun(runId, "Done", { db });
+
+    expect(result).toMatchObject({ finalized: true, status: "Review" });
+
+    const run = await pool.query(
+      `SELECT "status" FROM "runs" WHERE "id" = $1`,
+      [runId],
+    );
+
+    expect(run.rows[0].status).toBe("Review");
+
+    const webhookRows = await pool.query(
+      `SELECT "type" FROM "webhook_events" WHERE "run_id" = $1 ORDER BY "created_at"`,
+      [runId],
+    );
+
+    expect(webhookRows.rows.map((row) => row.type)).toEqual(["run.review"]);
+
+    const domainRows = await pool.query(
+      `SELECT "kind" FROM "domain_events" WHERE "run_id" = $1`,
+      [runId],
+    );
+
+    expect(domainRows.rows).toHaveLength(0);
+  });
+
+  it("gates L3 on the run's persisted agent_workspace, not the drifted catalog index", async () => {
+    // The run actually launched as repo_read (project pin), but the catalog
+    // INDEX (newest revision projection) has since drifted to 'worktree'.
+    // Reading the index would silently skip L3; the run column must win.
+    const { taskId, runId } = await seedWorld();
+
+    await pool.query(
+      `UPDATE "runs" SET "agent_workspace" = 'repo_read' WHERE "id" = $1`,
+      [runId],
+    );
+    await pool.query(
+      `UPDATE "agents" SET "workspace" = 'worktree' WHERE "id" = 'watchdog-agent'`,
+    );
+
+    await writeFile(path.join(repoPath, "stray.txt"), "agent wrote this\n");
+
+    const result = await finalizeAgentRun(runId, "Done", { db });
+
+    expect(result.finalized).toBe(true);
+
+    const agentRow = await pool.query(
+      `SELECT "quarantined_at", "quarantine_reason" FROM "agents" WHERE "id" = 'watchdog-agent'`,
+    );
+
+    // Quarantined despite the index saying 'worktree' — finalize honored the
+    // run's recorded workspace axis.
+    expect(agentRow.rows[0].quarantined_at).not.toBeNull();
+    expect(agentRow.rows[0].quarantine_reason).toMatch(/stray\.txt/);
+
+    const activity = await pool.query(
+      `SELECT "event_kind" FROM "task_activity" WHERE "task_id" = $1 AND "event_kind" = 'agent_quarantined'`,
+      [taskId],
+    );
+
+    expect(activity.rows).toHaveLength(1);
+  });
+
+  it("abandoned repo_read run still revokes tokens and restores L2 materialization", async () => {
+    const { runId } = await seedWorld();
+
+    await materializeAgentReadOnlySettings(repoPath);
+    await expect(issueTokenForRun(runId)).resolves.toMatchObject({
+      tokenId: expect.any(String),
+    });
+
+    const finalizeAbandoned = finalizeAgentRun as (
+      id: string,
+      outcome: "Abandoned",
+      opts: { db: typeof db },
+    ) => Promise<{ finalized: boolean }>;
+    const result = await finalizeAbandoned(runId, "Abandoned", { db });
+
+    expect(result.finalized).toBe(true);
+
+    const liveTokens = await pool.query(
+      `SELECT count(*)::int AS n FROM "project_tokens" WHERE "name" = $1 AND "revoked_at" IS NULL`,
+      [`agent-run:${runId}`],
+    );
+
+    expect(liveTokens.rows[0].n).toBe(0);
+    expect(
+      await statSafe(path.join(repoPath, ".claude/settings.local.json")),
+    ).toBe(false);
+  });
 });
+
+async function issueTokenForRun(
+  runId: string,
+): Promise<{ tokenId: string; secret: string }> {
+  const row = await pool.query(
+    `SELECT "project_id" FROM "runs" WHERE "id" = $1`,
+    [runId],
+  );
+  const { issueAgentRunToken } = await import("@/lib/agents/tokens");
+
+  return issueAgentRunToken({
+    agentId: "watchdog-agent",
+    projectId: row.rows[0].project_id as string,
+    runId,
+    db,
+  });
+}
 
 async function statSafe(p: string): Promise<boolean> {
   try {

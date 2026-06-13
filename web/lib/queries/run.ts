@@ -102,8 +102,8 @@ export interface RunDetail {
   branch: string;
   worktreePath: string;
   agent: CapabilityAgent;
-  // M18: run kind drives the Review surface — only `flow` runs at `Review` get
-  // the ReviewPanel; scratch runs keep their own promote affordance.
+  // Run kind drives the Review surface: flow and worktree-agent runs use the
+  // ReviewPanel; scratch runs keep their own promote affordance.
   runKind: "flow" | "scratch" | "agent";
   // M18: the parent repo path + workspace branch/promotion ledger (nullable on
   // pre-M18 rows; the run-detail page derives safe fallbacks, see §3.6).
@@ -175,6 +175,7 @@ export const getRunDetail = cache(async function getRunDetail(
       status: runs.status,
       startedAt: runs.startedAt,
       runKind: runs.runKind,
+      agentId: runs.agentId,
       currentStepId: runs.currentStepId,
       resumeTargetStepId: runs.resumeTargetStepId,
       acpSessionId: runs.acpSessionId,
@@ -205,12 +206,16 @@ export const getRunDetail = cache(async function getRunDetail(
     })
     .from(runs)
     .innerJoin(projects, eq(projects.id, runs.projectId))
-    .innerJoin(workspaces, eq(workspaces.runId, runs.id))
+    .leftJoin(workspaces, eq(workspaces.runId, runs.id))
     .leftJoin(tasks, eq(tasks.id, runs.taskId))
     .where(eq(runs.id, runId));
   const row = rows[0];
 
   if (!row) return null;
+
+  const branch = row.branch ?? row.agentId ?? row.projectMainBranch;
+  const worktreePath = row.worktreePath ?? row.projectRepoPath;
+  const parentRepoPath = row.parentRepoPath ?? row.projectRepoPath;
 
   // Recoverability classifies the RECOVER TARGET node: the retained
   // resume_target_step_id (set at crash time), falling back to current_step_id
@@ -301,9 +306,9 @@ export const getRunDetail = cache(async function getRunDetail(
     endedAt: row.endedAt,
     runKind: row.runKind,
     currentStepId: row.currentStepId,
-    branch: row.branch,
-    worktreePath: row.worktreePath,
-    parentRepoPath: row.parentRepoPath,
+    branch,
+    worktreePath,
+    parentRepoPath,
     projectMainBranch: row.projectMainBranch,
     projectRepoPath: row.projectRepoPath,
     baseBranch: row.baseBranch,

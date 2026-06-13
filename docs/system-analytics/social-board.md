@@ -7,9 +7,11 @@ per-project identity (`KEY-N`) and a social substrate around it: markdown
 comments with task mentions, domain-written activity, auto-subscriptions,
 and a per-recipient inbox. All four social tables
 (`task_comments`, `task_activity`, `task_subscribers`, `inbox_items`)
-carry a polymorphic actor model (`user | agent | system`); Stage 1 writes
-only `user`/`system` actors — `agent` is schema-supported for the later
-platform-agents stages and never written today. Task numbering, typed
+carry a polymorphic actor model (`user | agent | system`); Stage 1 wrote
+only `user`/`system` actors — the `agent` actor goes live with the
+platform-agent substrate (M34/ADR-089), written by per-launch ephemeral
+agent tokens through `socialActorForToken` (`web/lib/tokens/verify.ts`).
+Task numbering, typed
 relations, and the `"blocked"` launchability gate are documented in
 [`tasks.md`](tasks.md); this file owns the comment/activity/subscription/
 inbox substrate. (Implemented)
@@ -31,9 +33,11 @@ inbox substrate. (Implemented)
   Stage 1).
 - **Activity event** — `task_activity` append-only row with
   `event_kind ∈ {task_created, comment_added, task_mentioned,
-  relation_added, relation_removed, run_launched}` and a jsonb `payload`.
-  Written only by the domain layer (`web/lib/social/*` via
-  `recordTaskActivity` plus the named service write-sites).
+  relation_added, relation_removed, run_launched, triage_set,
+  triage_requeued, agent_quarantined}` and a jsonb `payload` (the last
+  three added by M34 platform agents). Written only by the domain layer
+  (`web/lib/social/*` via `recordTaskActivity` plus the named service
+  write-sites).
 - **Subscriber** — `task_subscribers` row: `(task_id, subscriber_type,
   subscriber_id, reason)` with `reason ∈ {creator, commenter, mentioned,
   manual}` and `subscriber_type ∈ {user, agent}` (`system` never
@@ -159,12 +163,15 @@ project-scoped). See [`hitl.md`](hitl.md) for the HITL half.
   write-site) inside the same transaction as its triggering domain write;
   route handlers MUST NOT insert activity directly. (Implemented)
 - `task_activity.event_kind` MUST be one of `task_created | comment_added |
-  task_mentioned | relation_added | relation_removed | run_launched`;
+  task_mentioned | relation_added | relation_removed | run_launched |
+  triage_set | triage_requeued | agent_quarantined`;
   `run_finished` joins only when a `setRunStatus` choke point exists
   (Phase 2). (Implemented)
 - Every social-table row MUST satisfy `actor_type ∈ {user, agent, system}`
-  and `(actor_type = 'system') = (actor_id IS NULL)`; Stage 1 MUST NOT
-  write `actor_type = 'agent'` or `recipient_type = 'agent'` rows. (Implemented)
+  and `(actor_type = 'system') = (actor_id IS NULL)`; Stage 1 wrote only
+  `user`/`system`, while M34 platform agents write `actor_type = 'agent'`
+  rows via per-launch ephemeral agent tokens (`socialActorForToken`).
+  (Implemented)
 - `addTaskComment` MUST run resolution, comment insert, activity writes,
   subscription upserts, and inbox fanout in exactly ONE `db.transaction`,
   with no external side-effect inside it. (Implemented)

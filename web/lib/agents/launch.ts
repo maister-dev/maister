@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, stat } from "node:fs/promises";
 import path from "node:path";
 
-import { and, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import pino from "pino";
 
 import {
@@ -33,17 +33,22 @@ import {
   issueAgentRunToken,
   revokeAgentRunTokensForRun,
 } from "@/lib/agents/tokens";
+import {
+  cancelActiveAssignmentsForRun,
+  systemCloseActiveAssignmentsForRun,
+} from "@/lib/assignments/service";
 import { type AgentMcpServer } from "@/lib/capabilities/agent-map";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
-import { MaisterError } from "@/lib/errors";
-import { worktreesRoot } from "@/lib/instance-config";
+import { MaisterError, type MaisterErrorCode } from "@/lib/errors";
+import { gcAgeDays, worktreesRoot } from "@/lib/instance-config";
 import { nextKeepaliveAt } from "@/lib/runs/keepalive-config";
 import { assertRunKindInvariant } from "@/lib/runs/run-kind-invariants";
 import { promoteNextPending, tryStartRun } from "@/lib/scheduler";
 import {
   createSession,
+  deliverPermission,
   sendPrompt,
   streamSession,
   type SupervisorEvent,
@@ -68,6 +73,7 @@ const {
   platformRuntimeSettings,
   projects,
   runs,
+  taskComments,
   tasks,
   workspaces,
 } = schemaModule as unknown as Record<string, any>;
@@ -78,6 +84,8 @@ const log = pino({
   name: "agents-launch",
   level: process.env.LOG_LEVEL ?? "info",
 });
+
+const COMMENT_THREAD_TAIL_LIMIT = 6;
 
 export type AgentTriggerSource =
   | "manual"
@@ -103,6 +111,51 @@ export type LaunchAgentRunResult =
   | { runId: string; status: "Running" | "Pending"; queuePosition?: number }
   | { deduped: true; triggerEventId: number };
 
+export type AgentLaunchErrorKind =
+  | "not_registered"
+  | "not_attached"
+  | "disabled"
+  | "quarantined"
+  | "destructive"
+  | "subagent"
+  | "trigger_missing"
+  | "project_missing"
+  | "task_mismatch";
+
+export class AgentLaunchError extends MaisterError {
+  readonly kind: AgentLaunchErrorKind;
+
+  constructor(
+    kind: AgentLaunchErrorKind,
+    code: MaisterErrorCode,
+    message: string,
+  ) {
+    super(code, message);
+    this.name = "AgentLaunchError";
+    this.kind = kind;
+    Object.setPrototypeOf(this, AgentLaunchError.prototype);
+  }
+}
+
+export function isAgentLaunchError(err: unknown): err is AgentLaunchError {
+  return err instanceof AgentLaunchError;
+}
+
+export function hidesAgentExistenceForLaunch(err: unknown): boolean {
+  return (
+    isAgentLaunchError(err) &&
+    (err.kind === "not_registered" || err.kind === "not_attached")
+  );
+}
+
+export function publicAgentLaunchMessage(err: AgentLaunchError): string {
+  if (err.kind === "quarantined") {
+    return "agent is quarantined; admin review required";
+  }
+
+  return err.message;
+}
+
 type LoadedAgentContext = {
   agent: Record<string, any>;
   // ADR-089 rework (RD4): the definition the launch actually runs — resolved
@@ -110,6 +163,14 @@ type LoadedAgentContext = {
   effective: EffectiveAgentDefinition;
   link: Record<string, any>;
   project: Record<string, any>;
+};
+
+type TaskCommentPromptRow = {
+  id: string;
+  body: string;
+  actorType: "user" | "agent" | "system";
+  actorId: string | null;
+  createdAt: Date;
 };
 
 function runnerCatalogEntry(
@@ -154,54 +215,10 @@ async function loadAgentContext(
   const agent = agentRows[0];
 
   if (!agent) {
-    throw new MaisterError(
+    throw new AgentLaunchError(
+      "not_registered",
       "PRECONDITION",
       `agent "${input.agentId}" is not registered`,
-    );
-  }
-
-  if (!agent.enabled) {
-    throw new MaisterError(
-      "PRECONDITION",
-      `agent "${input.agentId}" is disabled`,
-    );
-  }
-
-  if (agent.quarantinedAt) {
-    throw new MaisterError(
-      "PRECONDITION",
-      `agent "${input.agentId}" is quarantined (${agent.quarantineReason ?? "no reason recorded"}); un-quarantine it before launching`,
-    );
-  }
-
-  // ADR-089 rework (RD4): everything below the platform kill-switches guards
-  // against the EFFECTIVE definition — the agents/<stem>.md inside THIS
-  // project's pinned package revision (enablement+trust gated). A pinned
-  // version that lacks the trigger (pin divergence) refuses here even though
-  // the index row advertised it to the dispatcher.
-  const effective = await resolveEffectiveAgentDefinition(
-    { agentId: input.agentId, projectId: input.projectId },
-    _db,
-  );
-
-  if (effective.parsed.riskTier === "destructive") {
-    throw new MaisterError(
-      "PRECONDITION",
-      `agent "${input.agentId}" is risk_tier=destructive — gated until capability enforcement lands (ADR-041)`,
-    );
-  }
-
-  if (effective.parsed.mode !== "session") {
-    throw new MaisterError(
-      "PRECONDITION",
-      `agent "${input.agentId}" is mode=subagent — flow-bound only, not launchable standalone`,
-    );
-  }
-
-  if (!effective.parsed.triggers.includes(input.trigger.source)) {
-    throw new MaisterError(
-      "PRECONDITION",
-      `agent "${input.agentId}" does not declare the "${input.trigger.source}" trigger`,
     );
   }
 
@@ -217,9 +234,60 @@ async function loadAgentContext(
   const link = linkRows[0];
 
   if (!link || !link.enabled) {
-    throw new MaisterError(
+    throw new AgentLaunchError(
+      "not_attached",
       "PRECONDITION",
       `agent "${input.agentId}" is not attached (enabled) to project ${input.projectId}`,
+    );
+  }
+
+  if (!agent.enabled) {
+    throw new AgentLaunchError(
+      "disabled",
+      "PRECONDITION",
+      `agent "${input.agentId}" is disabled`,
+    );
+  }
+
+  if (agent.quarantinedAt) {
+    throw new AgentLaunchError(
+      "quarantined",
+      "PRECONDITION",
+      `agent "${input.agentId}" is quarantined; un-quarantine it before launching`,
+    );
+  }
+
+  // ADR-089 rework (RD4): everything below the platform kill-switches guards
+  // against the EFFECTIVE definition — the agents/<stem>.md inside THIS
+  // project's pinned package revision (enablement+trust gated). A pinned
+  // version that lacks the trigger (pin divergence) refuses here even though
+  // the index row advertised it to the dispatcher.
+  const effective = await resolveEffectiveAgentDefinition(
+    { agentId: input.agentId, projectId: input.projectId },
+    _db,
+  );
+
+  if (effective.parsed.riskTier === "destructive") {
+    throw new AgentLaunchError(
+      "destructive",
+      "PRECONDITION",
+      `agent "${input.agentId}" is risk_tier=destructive — gated until capability enforcement lands (ADR-041)`,
+    );
+  }
+
+  if (effective.parsed.mode !== "session") {
+    throw new AgentLaunchError(
+      "subagent",
+      "PRECONDITION",
+      `agent "${input.agentId}" is mode=subagent — flow-bound only, not launchable standalone`,
+    );
+  }
+
+  if (!effective.parsed.triggers.includes(input.trigger.source)) {
+    throw new AgentLaunchError(
+      "trigger_missing",
+      "PRECONDITION",
+      `agent "${input.agentId}" does not declare the "${input.trigger.source}" trigger`,
     );
   }
 
@@ -230,7 +298,8 @@ async function loadAgentContext(
   const project = projectRows[0];
 
   if (!project || project.archivedAt) {
-    throw new MaisterError(
+    throw new AgentLaunchError(
+      "project_missing",
       "PRECONDITION",
       `project ${input.projectId} is missing or archived`,
     );
@@ -245,7 +314,8 @@ async function loadAgentContext(
       );
 
     if (!taskRows[0]) {
-      throw new MaisterError(
+      throw new AgentLaunchError(
+        "task_mismatch",
         "PRECONDITION",
         `task ${input.taskId} is not in project ${input.projectId}`,
       );
@@ -297,6 +367,20 @@ async function resolveRunnerForAgent(
 
 export function agentWorkdirPath(projectSlug: string, runId: string): string {
   return path.join(worktreesRoot(), projectSlug, runId);
+}
+
+function branchSafeSegment(value: string): string {
+  return value.replace(/[^A-Za-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+export function agentWorktreeBranchName(input: {
+  prefix: string;
+  agentId: string;
+  runId: string;
+}): string {
+  const safeAgentId = branchSafeSegment(input.agentId);
+
+  return `${input.prefix}agent-${safeAgentId}-${input.runId.slice(0, 8)}`;
 }
 
 // ADR-090 rework (workspace_ref): the EPHEMERAL read-only checkout for a
@@ -472,7 +556,11 @@ export async function launchAgentRun(
   let baseCommit: string | null = null;
 
   if (workspace === "worktree") {
-    branch = `${ctx.project.branchPrefix ?? "maister/"}agent-${input.agentId}-${runId.slice(0, 8)}`;
+    branch = agentWorktreeBranchName({
+      prefix: ctx.project.branchPrefix ?? "maister/",
+      agentId: input.agentId,
+      runId,
+    });
     worktreePath = agentWorkdirPath(ctx.project.slug, runId);
     baseCommit = await resolveBaseCommit({
       projectRepoPath: ctx.project.repoPath,
@@ -493,6 +581,7 @@ export async function launchAgentRun(
     triggerSource: input.trigger.source,
     triggerEventId: input.trigger.eventId ?? null,
     triggerPayload: input.trigger.payload ?? null,
+    agentWorkspace: workspace,
     taskId: input.taskId ?? null,
     projectId: input.projectId,
     flowId: null,
@@ -635,6 +724,150 @@ function triggerContextBlock(run: Record<string, any>): string {
   }
 }
 
+function domainEventKind(run: Record<string, any>): string | null {
+  const triggerPayload = run.triggerPayload;
+
+  if (
+    triggerPayload === null ||
+    typeof triggerPayload !== "object" ||
+    Array.isArray(triggerPayload)
+  ) {
+    return null;
+  }
+
+  const kind = (triggerPayload as Record<string, unknown>).kind;
+
+  return typeof kind === "string" ? kind : null;
+}
+
+function domainEventPayload(run: Record<string, any>): Record<string, unknown> {
+  const triggerPayload = run.triggerPayload;
+
+  if (
+    triggerPayload === null ||
+    typeof triggerPayload !== "object" ||
+    Array.isArray(triggerPayload)
+  ) {
+    return {};
+  }
+
+  const payload = (triggerPayload as Record<string, unknown>).payload;
+
+  if (
+    payload === null ||
+    typeof payload !== "object" ||
+    Array.isArray(payload)
+  ) {
+    return {};
+  }
+
+  return payload as Record<string, unknown>;
+}
+
+function commentActorLabel(row: TaskCommentPromptRow): string {
+  return row.actorId ? `${row.actorType}:${row.actorId}` : row.actorType;
+}
+
+function sortCommentsAscending(
+  rows: TaskCommentPromptRow[],
+): TaskCommentPromptRow[] {
+  return [...rows].sort((left, right) => {
+    const byDate = left.createdAt.getTime() - right.createdAt.getTime();
+
+    return byDate === 0 ? left.id.localeCompare(right.id) : byDate;
+  });
+}
+
+function formatCommentForPrompt(row: TaskCommentPromptRow): string {
+  return [
+    `- ${row.createdAt.toISOString()} ${commentActorLabel(row)} (${row.id})`,
+    ...row.body.split("\n").map((line) => `  ${line}`),
+  ].join("\n");
+}
+
+async function taskCommentTriggerContextBlock(
+  _db: Db,
+  run: Record<string, any>,
+): Promise<string> {
+  if (
+    run.triggerSource !== "domain_event" ||
+    domainEventKind(run) !== "task.comment_added"
+  ) {
+    return "";
+  }
+
+  if (!run.taskId || typeof run.taskId !== "string") {
+    throw new MaisterError(
+      "PRECONDITION",
+      `task.comment_added agent run ${run.id ?? "unknown"} has no task_id`,
+    );
+  }
+
+  const payload = domainEventPayload(run);
+  const commentId = payload.commentId;
+
+  if (typeof commentId !== "string" || commentId.length === 0) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `task.comment_added agent run ${run.id ?? "unknown"} has no commentId payload`,
+    );
+  }
+
+  const triggerRows = (await _db
+    .select({
+      id: taskComments.id,
+      body: taskComments.body,
+      actorType: taskComments.actorType,
+      actorId: taskComments.actorId,
+      createdAt: taskComments.createdAt,
+    })
+    .from(taskComments)
+    .where(
+      and(eq(taskComments.taskId, run.taskId), eq(taskComments.id, commentId)),
+    )
+    .limit(1)) as TaskCommentPromptRow[];
+  const triggerComment = triggerRows[0];
+
+  if (!triggerComment) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `task.comment_added agent run ${run.id ?? "unknown"} references missing comment ${commentId}`,
+    );
+  }
+
+  const recentRows = (await _db
+    .select({
+      id: taskComments.id,
+      body: taskComments.body,
+      actorType: taskComments.actorType,
+      actorId: taskComments.actorId,
+      createdAt: taskComments.createdAt,
+    })
+    .from(taskComments)
+    .where(eq(taskComments.taskId, run.taskId))
+    .orderBy(desc(taskComments.createdAt), desc(taskComments.id))
+    .limit(COMMENT_THREAD_TAIL_LIMIT)) as TaskCommentPromptRow[];
+  const recentThread = sortCommentsAscending(recentRows);
+
+  log.debug(
+    {
+      runId: run.id ?? null,
+      taskId: run.taskId,
+      commentId,
+      recentThreadCount: recentThread.length,
+    },
+    "[FIX:agent-comment-context] task.comment_added prompt context loaded",
+  );
+
+  return [
+    "## Triggering comment",
+    formatCommentForPrompt(triggerComment),
+    "",
+    `## Recent task thread (last ${COMMENT_THREAD_TAIL_LIMIT})`,
+    ...recentThread.map(formatCommentForPrompt),
+  ].join("\n");
+}
+
 async function taskContextBlock(
   _db: Db,
   run: Record<string, any>,
@@ -673,29 +906,75 @@ export async function buildAgentPrompt(
 ): Promise<string> {
   const sections = [parsed.prompt.trim()];
   const taskBlock = await taskContextBlock(_db, run);
+  const commentTriggerBlock = await taskCommentTriggerContextBlock(_db, run);
 
   if (taskBlock) sections.push(taskBlock);
+  if (commentTriggerBlock) sections.push(commentTriggerBlock);
   sections.push(triggerContextBlock(run));
 
   return sections.join("\n\n");
 }
 
-type AgentTerminalOutcome = "Done" | "Failed" | "Crashed";
+type AgentTerminalOutcome = "Done" | "Failed" | "Crashed" | "Abandoned";
+type AgentFinalStatus = AgentTerminalOutcome | "Review";
+
+type AgentAssignmentClose =
+  | {
+      kind: "user";
+      actorId: string;
+      eventKind?: "cancelled" | "superseded" | "system_closed";
+      reason?: string;
+    }
+  | {
+      kind: "system";
+      reason: string;
+    };
+
+type AgentFinalizeOptions = {
+  db?: Db;
+  reason?: string;
+  closeOpenHitl?: boolean;
+  closeAssignments?: AgentAssignmentClose;
+};
 
 const TERMINAL_CAS_SOURCE: Record<AgentTerminalOutcome, string[]> = {
   Done: ["Running", "NeedsInput"],
   Failed: ["Running", "NeedsInput"],
   Crashed: ["Running", "NeedsInput"],
+  Abandoned: [
+    "Pending",
+    "Running",
+    "NeedsInput",
+    "NeedsInputIdle",
+    "Review",
+    "Crashed",
+  ],
 };
 
 const DOMAIN_KIND_BY_OUTCOME: Record<
   AgentTerminalOutcome,
-  "run.done" | "run.failed" | "run.crashed"
+  "run.done" | "run.failed" | "run.crashed" | "run.abandoned"
 > = {
   Done: "run.done",
   Failed: "run.failed",
   Crashed: "run.crashed",
+  Abandoned: "run.abandoned",
 };
+
+const WEBHOOK_TYPE_BY_STATUS: Record<
+  AgentFinalStatus,
+  "run.review" | "run.done" | "run.failed" | "run.crashed" | "run.abandoned"
+> = {
+  Review: "run.review",
+  Done: "run.done",
+  Failed: "run.failed",
+  Crashed: "run.crashed",
+  Abandoned: "run.abandoned",
+};
+
+function finalStatusForCleanAgentExit(hasWorkspace: boolean): AgentFinalStatus {
+  return hasWorkspace ? "Review" : "Done";
+}
 
 // The terminal choke point for agent runs (ADR-090 sequencing rule): the
 // dirty-watchdog (Phase 4) and the token revoke run BEFORE/WITHIN the
@@ -703,8 +982,8 @@ const DOMAIN_KIND_BY_OUTCOME: Record<
 export async function finalizeAgentRun(
   runId: string,
   outcome: AgentTerminalOutcome,
-  opts: { db?: Db; reason?: string } = {},
-): Promise<{ finalized: boolean }> {
+  opts: AgentFinalizeOptions = {},
+): Promise<{ finalized: boolean; status?: AgentFinalStatus }> {
   const _db = opts.db ?? getDb();
 
   // Set inside the transaction when the run used an ephemeral workspace_ref
@@ -713,10 +992,28 @@ export async function finalizeAgentRun(
   let ephemeralCleanup: { repoPath: string; worktreePath: string } | null =
     null;
 
-  const finalized = await _db.transaction(async (tx: Db) => {
+  const finalizeResult = await _db.transaction(async (tx: Db) => {
+    const workspaceRows =
+      outcome === "Done"
+        ? await tx
+            .select({ id: workspaces.id })
+            .from(workspaces)
+            .where(eq(workspaces.runId, runId))
+        : [];
+    const status =
+      outcome === "Done"
+        ? finalStatusForCleanAgentExit(workspaceRows.length > 0)
+        : outcome;
+    const endedAt = new Date();
+
     const rows = await tx
       .update(runs)
-      .set({ status: outcome, endedAt: new Date() })
+      .set({
+        status,
+        endedAt,
+        acpSessionId: null,
+        currentStepId: null,
+      })
       .where(
         and(
           eq(runs.id, runId),
@@ -728,10 +1025,22 @@ export async function finalizeAgentRun(
         projectId: runs.projectId,
         taskId: runs.taskId,
         agentId: runs.agentId,
+        agentWorkspace: runs.agentWorkspace,
       });
     const row = rows[0];
 
     if (!row) return false;
+
+    if (status === "Abandoned") {
+      const scheduledRemovalAt = new Date(
+        endedAt.getTime() + gcAgeDays() * 86_400_000,
+      );
+
+      await tx
+        .update(workspaces)
+        .set({ scheduledRemovalAt })
+        .where(eq(workspaces.runId, runId));
+    }
 
     // ADR-090 L3 (terminal choke point): the dirty-watchdog runs WITHIN the
     // status-flip transaction — a repo_read run that left the parent
@@ -744,8 +1053,14 @@ export async function finalizeAgentRun(
         row.agentId,
         row.projectId,
       );
+      // Gate on the workspace the run ACTUALLY launched with (persisted at
+      // insert from the project's effective pin), NOT the catalog index — the
+      // index projects the newest revision and can diverge from the pin,
+      // which would silently skip L3 and leak the ephemeral checkout. Fall
+      // back to the index only for rows that predate agent_workspace.
+      const ranAs = row.agentWorkspace ?? wsCtx?.workspace;
 
-      if (wsCtx?.workspace === "repo_read") {
+      if (wsCtx && ranAs === "repo_read") {
         // workspace_ref runs leave a deterministic `-ro` checkout: when it
         // exists, the L3 target IS that ephemeral dir (the parent checkout
         // was never the session cwd).
@@ -776,42 +1091,69 @@ export async function finalizeAgentRun(
 
     await revokeAgentRunTokensForRun(runId, tx);
 
+    if (opts.closeOpenHitl) {
+      await tx
+        .update(hitlRequests)
+        .set({ respondedAt: endedAt })
+        .where(
+          and(eq(hitlRequests.runId, runId), isNull(hitlRequests.respondedAt)),
+        );
+    }
+
+    if (opts.closeAssignments?.kind === "user") {
+      await cancelActiveAssignmentsForRun({
+        db: tx,
+        runId,
+        actorId: opts.closeAssignments.actorId,
+        eventKind: opts.closeAssignments.eventKind,
+        reason: opts.closeAssignments.reason,
+      });
+    } else if (opts.closeAssignments?.kind === "system") {
+      await systemCloseActiveAssignmentsForRun({
+        db: tx,
+        runId,
+        reason: opts.closeAssignments.reason,
+      });
+    }
+
     await emitWebhookEvent({
       db: tx,
-      type:
-        outcome === "Done"
-          ? "run.done"
-          : outcome === "Failed"
-            ? "run.failed"
-            : "run.crashed",
+      type: WEBHOOK_TYPE_BY_STATUS[status],
       projectId: row.projectId,
       runId,
       data: {
         kind: "agent",
         agentId: row.agentId,
-        ...(opts.reason ? { reason: opts.reason } : {}),
-      },
-    });
-    await emitDomainEvent({
-      db: tx,
-      kind: DOMAIN_KIND_BY_OUTCOME[outcome],
-      projectId: row.projectId,
-      taskId: row.taskId,
-      runId,
-      actor: { type: "agent", id: row.agentId },
-      payload: {
-        runKind: "agent",
-        agentId: row.agentId,
-        status: outcome,
-        ...(opts.reason ? { reason: opts.reason } : {}),
+        ...(status === "Review" ? { source: "agent" } : {}),
+        ...(opts.reason && status !== "Review" ? { reason: opts.reason } : {}),
       },
     });
 
-    return true;
+    if (status !== "Review") {
+      await emitDomainEvent({
+        db: tx,
+        kind: DOMAIN_KIND_BY_OUTCOME[outcome],
+        projectId: row.projectId,
+        taskId: row.taskId,
+        runId,
+        actor: { type: "agent", id: row.agentId },
+        payload: {
+          runKind: "agent",
+          agentId: row.agentId,
+          status,
+          ...(opts.reason ? { reason: opts.reason } : {}),
+        },
+      });
+    }
+
+    return { finalized: true as const, status };
   });
 
-  if (finalized) {
-    log.info({ runId, outcome, reason: opts.reason }, "agent run finalized");
+  if (finalizeResult !== false) {
+    log.info(
+      { runId, outcome, status: finalizeResult.status, reason: opts.reason },
+      "agent run finalized",
+    );
 
     if (ephemeralCleanup) {
       const cleanup = ephemeralCleanup as {
@@ -841,7 +1183,7 @@ export async function finalizeAgentRun(
     );
   }
 
-  return { finalized };
+  return finalizeResult !== false ? finalizeResult : { finalized: false };
 }
 
 async function recordAgentPermissionRequest(args: {
@@ -872,6 +1214,7 @@ async function recordAgentPermissionRequest(args: {
 
 export type AgentSupervisorApi = {
   createSession: typeof createSession;
+  deliverPermission: typeof deliverPermission;
   sendPrompt: typeof sendPrompt;
   streamSession: typeof streamSession;
 };
@@ -897,53 +1240,39 @@ export async function resolveAgentProfileMcpServers(args: {
 
   if (declared.length === 0) return [];
 
-  try {
-    const [
-      { loadSelectableCapabilities, resolveCapabilityProfile },
-      { gateStdioMcpsByExecTrust, mapProfileToAgentArtifacts },
-    ] = await Promise.all([
-      import("@/lib/capabilities/resolver"),
-      import("@/lib/capabilities/agent-map"),
-    ]);
-    const catalog = await loadSelectableCapabilities(args.projectId, args.db);
-    const profile = resolveCapabilityProfile({
-      projectId: args.projectId,
-      executorAgent: args.capabilityAgent as never,
-      selectedMcpIds: declared,
-      selectedSkillIds: [],
-      selectedRuleIds: [],
-      selectedRestrictionIds: [],
-      planMode: "off",
-      catalog,
-    });
-    const mapped = mapProfileToAgentArtifacts({
-      profile,
-      agent: args.capabilityAgent as never,
-    });
-    const gated = gateStdioMcpsByExecTrust(mapped.mcpServers, args.execTrust);
-    const withheld = mapped.mcpServers.length - gated.length;
+  const [
+    { loadSelectableCapabilities, resolveCapabilityProfile },
+    { gateStdioMcpsByExecTrust, mapProfileToAgentArtifacts },
+  ] = await Promise.all([
+    import("@/lib/capabilities/resolver"),
+    import("@/lib/capabilities/agent-map"),
+  ]);
+  const catalog = await loadSelectableCapabilities(args.projectId, args.db);
+  const profile = resolveCapabilityProfile({
+    projectId: args.projectId,
+    executorAgent: args.capabilityAgent as never,
+    selectedMcpIds: declared,
+    selectedSkillIds: [],
+    selectedRuleIds: [],
+    selectedRestrictionIds: [],
+    planMode: "off",
+    catalog,
+  });
+  const mapped = mapProfileToAgentArtifacts({
+    profile,
+    agent: args.capabilityAgent as never,
+  });
+  const gated = gateStdioMcpsByExecTrust(mapped.mcpServers, args.execTrust);
+  const withheld = mapped.mcpServers.length - gated.length;
 
-    if (withheld > 0) {
-      log.warn(
-        { runId: args.runId, withheld, execTrust: args.execTrust },
-        "agent profile stdio MCPs withheld — providing package is not exec-trusted",
-      );
-    }
-
-    return gated;
-  } catch (err) {
-    // Profile resolution is additive — a broken catalog never blocks the
-    // spawn; the facade still rides along.
+  if (withheld > 0) {
     log.warn(
-      {
-        runId: args.runId,
-        err: err instanceof Error ? err.message : String(err),
-      },
-      "agent capability_profile MCP resolution failed — continuing without",
+      { runId: args.runId, withheld, execTrust: args.execTrust },
+      "agent profile stdio MCPs withheld — providing package is not exec-trusted",
     );
-
-    return [];
   }
+
+  return gated;
 }
 
 // MCP facade injection (ADR-089 D9): the agent's sanctioned write channel —
@@ -976,6 +1305,7 @@ export function agentFacadeMcpServer(tokenSecret: string): AgentMcpServer {
 
 const defaultSupervisorApi: AgentSupervisorApi = {
   createSession,
+  deliverPermission,
   sendPrompt,
   streamSession,
 };
@@ -1215,6 +1545,18 @@ export async function consumeAgentSession(args: {
         break;
       }
       case "session.permission_request": {
+        const autoDelivered = await tryAutoDeliverAgentPermission({
+          db: args.db,
+          api: args.api,
+          runId: args.runId,
+          sessionId: args.sessionId,
+          event,
+        });
+
+        if (autoDelivered) {
+          sawPermissionRequest = false;
+          break;
+        }
         sawPermissionRequest = true;
         await recordAgentPermissionRequest({
           db: args.db,
@@ -1266,4 +1608,107 @@ export async function consumeAgentSession(args: {
     { runId: args.runId, sessionId: args.sessionId },
     "agent session stream ended without a terminal event",
   );
+}
+
+type StoredAgentPermissionIntent = {
+  id: string;
+  optionId: string;
+  originalRequestId: string | null;
+};
+
+async function findStoredAgentPermissionIntent(
+  db: Db,
+  runId: string,
+): Promise<StoredAgentPermissionIntent | null> {
+  const rows = await db
+    .select()
+    .from(hitlRequests)
+    .where(
+      and(
+        eq(hitlRequests.runId, runId),
+        eq(hitlRequests.stepId, "agent"),
+        eq(hitlRequests.kind, "permission"),
+        isNull(hitlRequests.respondedAt),
+      ),
+    );
+
+  for (const row of rows) {
+    const optionId = (row.response as { optionId?: unknown } | null)?.optionId;
+
+    if (typeof optionId !== "string" || optionId.length === 0) continue;
+
+    return {
+      id: row.id as string,
+      optionId,
+      originalRequestId:
+        (row.schema as { requestId?: string } | null)?.requestId ?? null,
+    };
+  }
+
+  return null;
+}
+
+async function tryAutoDeliverAgentPermission(args: {
+  db: Db;
+  api: AgentSupervisorApi;
+  runId: string;
+  sessionId: string;
+  event: Extract<SupervisorEvent, { type: "session.permission_request" }>;
+}): Promise<boolean> {
+  const intent = await findStoredAgentPermissionIntent(args.db, args.runId);
+
+  if (!intent) return false;
+
+  await args.api.deliverPermission(
+    args.sessionId,
+    args.event.requestId,
+    intent.optionId,
+  );
+
+  await args.db.transaction(async (tx: Db) => {
+    const stamped = await tx
+      .update(hitlRequests)
+      .set({
+        respondedAt: new Date(),
+        response: {
+          optionId: intent.optionId,
+          _audit: {
+            originalRequestId: intent.originalRequestId,
+            reissuedRequestId: args.event.requestId,
+            deliveredViaAgentResume: true,
+          },
+        },
+      })
+      .where(
+        and(eq(hitlRequests.id, intent.id), isNull(hitlRequests.respondedAt)),
+      )
+      .returning({ id: hitlRequests.id });
+
+    if (stamped.length === 0) return;
+
+    const projectRows = await tx
+      .select({ projectId: runs.projectId })
+      .from(runs)
+      .where(eq(runs.id, args.runId));
+
+    await emitWebhookEvent({
+      db: tx,
+      type: "hitl.responded",
+      projectId: projectRows[0].projectId,
+      runId: args.runId,
+      data: { hitlRequestId: intent.id, kind: "permission", via: "auto" },
+    });
+  });
+
+  log.info(
+    {
+      runId: args.runId,
+      originalRequestId: intent.originalRequestId,
+      reissuedRequestId: args.event.requestId,
+      optionId: intent.optionId,
+    },
+    "agent permission stored intent auto-delivered on resumed session",
+  );
+
+  return true;
 }

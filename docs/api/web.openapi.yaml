@@ -7,9 +7,9 @@ info:
     by the MAIster UI and (in M7+) by any process that wants to drive HITL
     or stream run events without bypassing the web tier's trust boundary.
 
-    **Milestone status: M10 (+ M14 Designed routes).**
+    **Milestone status: M34 Platform Agents Stage 3, with earlier routes retained.**
 
-    Routes shipped to date (plus routes Designed for M14, tagged inline):
+    Routes shipped to date:
 
     - `POST /api/projects/{slug}/flow-packages/install` and the
       `{flowRefId}/enable|disable|upgrade|rollback|trust`,
@@ -1163,6 +1163,11 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422":
+          description: Invalid body or route parameter encoding (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "503":
           description: Runner unavailable or incompatible (`EXECUTOR_UNAVAILABLE`).
           content:
@@ -1187,6 +1192,11 @@ paths:
           in: path
           required: true
           schema: { type: string, pattern: "^[A-Za-z0-9._-]+(?::[A-Za-z0-9._-]+)?$" }
+        - name: X-Maister-Trigger-Event-Id
+          in: header
+          required: false
+          description: Optional positive integer idempotency key. When present, redelivery converges through the run claim key `(agent_id, trigger_event_id)`.
+          schema: { type: integer, minimum: 1 }
       requestBody:
         required: true
         content:
@@ -1216,12 +1226,22 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "409":
-          description: Launch precondition failed (`PRECONDITION`).
+          description: Launch precondition failed or trigger already claimed (`PRECONDITION`/`CONFLICT`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "413":
           description: Payload over 32 KB.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422":
+          description: Invalid JSON, route parameter encoding, or trigger id header (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "503":
+          description: Runner unavailable or incompatible (`EXECUTOR_UNAVAILABLE`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }

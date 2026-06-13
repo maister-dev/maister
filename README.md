@@ -65,7 +65,7 @@ contract and [Architecture](docs/architecture.md) for the boundary rules.
   `git merge --no-ff`; conflicts abort to manual resolve.
 - **Crash recovery** — startup reconciles the `runs` table against
   `git worktree list` per project; orphaned `Running` rows become `Crashed`.
-- **Concurrency** — global cap `MAISTER_MAX_CONCURRENT_RUNS=3` across all
+- **Concurrency** — global cap `MAISTER_MAX_CONCURRENT_RUNS=6` across all
   projects; runs above the cap queue with a position badge.
 - **Typed errors** — `MaisterError` with a discriminated `code`; UI branches
   on `code`, never on string matching.
