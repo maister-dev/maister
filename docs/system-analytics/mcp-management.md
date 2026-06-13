@@ -143,6 +143,29 @@ sequenceDiagram
     note over R: on session end: cleanup scoped node dir
 ```
 
+### Platform MCP readiness (computed on write — WI-2, this branch)
+
+`platform_mcp_servers.readiness_status` / `readiness_reasons` describe whether a
+declared server is actually launch-ready. **Today the columns exist but are
+never computed** — every row reads `Unknown`. WI-2 closes that gap by computing
+readiness on every write, mirroring the platform ACP-runner readiness path
+([acp-runners.md](acp-runners.md), `web/lib/acp-runners/readiness.ts`).
+
+`evaluateMcpReadiness(row, diagnostics)` (`web/lib/mcp/readiness.ts`) derives the
+status from the row's transport config × the supervisor `/diagnostics` env
+references (`checkSupervisorDiagnostics`):
+
+- `stdio` — `command` present, else `NotReady` "missing command".
+- `sse` / `http` — `url` present, else `NotReady` "missing url".
+- every referenced `env_keys` / `header_keys` name present in diagnostics
+  `envRefs`, else `NotReady` "env ref missing: NAME".
+- all satisfied → `Ready`; diagnostics unavailable → `Unknown` with a reason.
+
+It is invoked from the two write routes only — `POST /api/admin/mcp-servers` and
+`PATCH /api/admin/mcp-servers/{id}` — so stored readiness is recomputed on every
+create/edit. `DELETE` does not recompute (the row is gone). The evaluator runs
+no side-effect and reads only `env:NAME` names — never a secret value.
+
 ## Expectations
 
 The following normative bullets are copied verbatim from SDD §7.2 (Implemented):
@@ -157,6 +180,18 @@ The following normative bullets are copied verbatim from SDD §7.2 (Implemented)
 8. Materialization MUST reuse M14 (`materialize.ts`/`agent-map.ts`/supervisor wire) — no parallel materialization path.
 9. Flow-package MCP declarations MUST honor config SET/CLEAR/re-SET symmetry (declared→required; removed→not required; re-added→required).
 10. Codex MCP support MUST be either materialized (if `codex-acp` supports it) OR explicitly documented as a gap (no silent degrade).
+
+This branch adds the readiness-on-write contract (the readiness columns were
+recorded but never computed before WI-2):
+
+- **(WI-2 — this branch)** Platform MCP `readiness_status` / `readiness_reasons`
+  MUST be recomputed by `evaluateMcpReadiness(row, diagnostics)` on every
+  `POST /api/admin/mcp-servers` and `PATCH /api/admin/mcp-servers/{id}` write,
+  and MUST NOT be recomputed on `DELETE`. A `stdio` row missing `command`, an
+  `sse`/`http` row missing `url`, or any `env_keys`/`header_keys` name absent
+  from supervisor `/diagnostics` `envRefs` MUST yield `NotReady` with a
+  per-cause reason; diagnostics unavailable MUST yield `Unknown` with a reason;
+  the evaluator MUST NOT read or store any secret value (only `env:NAME` names).
 
 ## Edge cases
 

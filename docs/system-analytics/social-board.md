@@ -147,14 +147,16 @@ recipient pair, event kind, source_ref]
     Ins --> Badge[Unread count feeds Needs you badge]
 ```
 
-### Reading the inbox (Implemented)
+### Reading the inbox (Implemented; unified `/inbox` — WI-1, this branch)
 
-`GET` surfaces (portfolio panel + board section) list items for the session
-user. `PATCH /api/inbox/[itemId]/read` and `POST /api/inbox/read-all`
-mutate only rows whose recipient equals the session user; other users'
-items answer 404. The "Needs you (N)" badge equals pending HITL count +
-unread inbox count in both scopes (portfolio = cross-project, board =
-project-scoped). See [`hitl.md`](hitl.md) for the HITL half.
+`GET` surfaces list items for the session user. Today the social inbox renders
+on the portfolio home (`InboxPanel`) and the project board section; WI-1 adds a
+dedicated cross-project `/inbox` page that reuses the same `getInboxItems` query
+and collapses the home blocks into a compact summary card. `PATCH
+/api/inbox/[itemId]/read` and `POST /api/inbox/read-all` mutate only rows whose
+recipient equals the session user; other users' items answer 404. The "Needs
+you (N)" badge is the single canonical `needsYou` count (see Expectations); see
+[`hitl.md`](hitl.md) for the HITL half.
 
 ## Expectations
 
@@ -187,8 +189,17 @@ project-scoped). See [`hitl.md`](hitl.md) for the HITL half.
   `comment_added` and `task_mentioned` in Stage 1. (Implemented)
 - Inbox read mutations MUST be recipient-owned: a session user can mark
   only their own items; foreign `itemId`s answer 404. (Implemented)
-- The "Needs you (N)" badge MUST equal pending HITL + unread inbox in both
-  the portfolio (cross-project) and project board scopes. (Implemented)
+- The "Needs you (N)" badge is one canonical number `needsYou =
+  pendingHitlCount + unreadInboxCount`, where `pendingHitlCount` is the
+  respondable cross-project HITL count from `getCrossProjectHitlInbox(userId,
+  role)` and `unreadInboxCount = getUnreadInboxCount(userId)`. Every surface
+  that shows it MUST read this one count: the rail Inbox badge
+  (`app/(app)/layout.tsx`), the portfolio `totalNeeds`
+  (`lib/queries/portfolio.ts`), the project board header, and the `/inbox`
+  page. RBAC scoping is preserved (admin = all visible projects, member = own).
+  **(WI-1 — this branch unifies all four surfaces on one count; before it the
+  home `totalNeeds` counted HITL only and the rail badge counted needs/waiting
+  workspaces.)**
 - Comment markdown MUST render through the shared remark-only wrapper
   (no `rehype-raw`): raw HTML in a body renders as text, never as markup.
   (Implemented)

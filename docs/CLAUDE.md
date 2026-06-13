@@ -97,6 +97,24 @@ cases, process flows. One file per domain.
 | [`system-analytics/packages.md`](system-analytics/packages.md) | Multi-flow package management (ADR-088, Implemented): platform package sources + discovery, `maister-package.yaml`, package installs, project attachments, package-level trust, local versions, `packages[]` write-back. |
 | [`system-analytics/agents.md`](system-analytics/agents.md) | Platform agents (ADR-089/090, Implemented): `.md` catalog + per-agent runner chain, five trigger sources, workspace axis with 3-layer read-only enforcement + quarantine, triage Q&A loop, ephemeral agent tokens. |
 
+### Screen reference (`screens/`)
+
+Screenshot-free reference of the user-facing screens and shared chrome — one
+file per screen / block / chrome element. Describes the **surface** (layout,
+roles, navigation, states); links to `system-analytics/*` for behavior (R7).
+See [`screens/README.md`](screens/README.md) for the index, global nav/IA map,
+per-doc template, and the classification rule.
+
+| File | What it answers |
+| ---- | ---------------- |
+| [`screens/README.md`](screens/README.md) | Screens index, global nav/IA map, per-doc template, classification rule. |
+| [`screens/chrome/left-rail.md`](screens/chrome/left-rail.md) | Left rail: nav sections, runners readiness, active workspaces, launch, Needs-you badge. |
+| [`screens/chrome/status-bar.md`](screens/chrome/status-bar.md) | Footer status bar: single-source supervisor status. |
+| [`screens/chrome/top-nav.md`](screens/chrome/top-nav.md) | Top nav: breadcrumb, locale/theme/user menu. |
+| [`screens/chrome/launch-dialog.md`](screens/chrome/launch-dialog.md) | Launch dialog: scratch/launch popover, Cmd/Ctrl+K. |
+| [`screens/inbox.md`](screens/inbox.md) | Unified `/inbox` screen (needs-you HITL + mentions). |
+| [`screens/mcps.md`](screens/mcps.md) | Platform MCP catalog `/mcps` (admin). |
+
 ### Cross-cutting reference
 
 | File | What it answers |
@@ -281,6 +299,11 @@ this for the initial bulk migration.
    number). Do not rewrite history; supersede if needed.
 4. **New ERD** → add a Mermaid `erDiagram` to the relevant `db/*.md`.
    Update the consolidated `db/erd.md`.
+5. **New screen** → add a file under `screens/` following the per-doc template
+   in [`screens/README.md`](screens/README.md) (one file per screen / block /
+   chrome element; flat plus `chrome/` until an area reaches ≥ 3 files). Add a
+   row to the screen-reference glossary above and link the screen's behavior
+   doc under `system-analytics/` rather than restating it (R7).
 
 ## Anti-patterns
 

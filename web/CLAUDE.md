@@ -135,6 +135,12 @@ app/
             page.tsx  # Task creation (/projects/[slug]/tasks/new)
 ```
 
+> **Screen reference.** Each user-facing screen and the shared chrome are
+> documented screenshot-free under [`../docs/screens/`](../docs/screens/) — see
+> [`../docs/screens/README.md`](../docs/screens/README.md) for the IA map,
+> per-doc template, and index. Update the matching `screens/*` doc when you
+> change a screen.
+
 ### Scope note
 
 Auth.js/NextAuth, project RBAC, the 6-column board design, and the
