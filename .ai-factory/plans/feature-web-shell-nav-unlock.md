@@ -68,7 +68,7 @@ Six work items, **`web/` only** — no `supervisor/` changes, no DB migration (M
 <!-- Commit checkpoint: tasks 10-11 -->
 
 ### Phase 5 — Verify & finalize
-- [ ] Task 12: Final gates (`pnpm typecheck`, scoped eslint, `pnpm test:unit && pnpm test:integration`, e2e, `pnpm validate:docs`); update `web/CLAUDE.md` M9-deferral + nav notes; confirm no deployment touchpoints. (depends on 11)
+- [x] Task 12: Final gates (`pnpm typecheck`, scoped eslint, `pnpm test:unit && pnpm test:integration`, e2e, `pnpm validate:docs`); update `web/CLAUDE.md` M9-deferral + nav notes; confirm no deployment touchpoints. (depends on 11)
 <!-- Commit checkpoint: task 12 -->
 
 ## Per-WI acceptance

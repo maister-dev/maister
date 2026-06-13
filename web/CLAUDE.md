@@ -150,8 +150,12 @@ part of this milestone.
 
 **Known M9 deferrals (do not implement without explicit instruction):**
 
-- PRs and MCPs board tabs exist in the UI as placeholders; there is no
-  backend for them.
+- The PRs board tab exists in the UI as a placeholder; there is no backend
+  for it. (The MCPs board tab is the real M27 project MCP catalog; the
+  platform MCP catalog is now reachable at admin `/mcps`, and the Inbox nav
+  now reaches a real `/inbox` — both unlocked by the web-shell nav-unlock
+  work, which also moved supervisor status to the footer only and added a
+  Cmd/Ctrl+K launch shortcut + a runners-readiness rail block.)
 - The `projects` table now has `repo_url` and `provider` columns
   (ADR-025). It still does not have `lang`, `description`, `tags`, or
   `mcps` columns — those design ideas remain omitted from the schema
@@ -283,9 +287,12 @@ add`, supervisor `POST /sessions` — body carries `taskId` and optional
 - `GET /api/cron/gc` (Abandoned/Done worktrees + checkpointed sessions >7d,
   all projects)
 
-Nav items in `config/site.ts`: **Portfolio** (`/`), **Projects**
-(`/projects`), **Settings** (`/settings`). Project switcher in the navbar
-links to the current project's board.
+Primary nav is the role-driven left rail (`components/chrome/left-rail.tsx`):
+**Projects** (`/`), **Inbox** (`/inbox`), **Flows** (`/flows`), **Agents**
+(`/agents`, M34 — disabled), plus an admin-only block (**MCPs** `/mcps`,
+**Users**, **Scheduler**, **Settings**). Supervisor status lives once in the
+footer status bar. The `config/site.ts` `navItems` are template leftovers, not
+the live nav.
 
 Server-side modules (add as needed, names suggested — not yet present):
 

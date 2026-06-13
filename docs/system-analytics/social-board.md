@@ -147,7 +147,7 @@ recipient pair, event kind, source_ref]
     Ins --> Badge[Unread count feeds Needs you badge]
 ```
 
-### Reading the inbox (Implemented; unified `/inbox` — WI-1, this branch)
+### Reading the inbox (Implemented; unified `/inbox` — WI-1)
 
 `GET` surfaces list items for the session user. Today the social inbox renders
 on the portfolio home (`InboxPanel`) and the project board section; WI-1 adds a
@@ -197,7 +197,7 @@ you (N)" badge is the single canonical `needsYou` count (see Expectations); see
   (`app/(app)/layout.tsx`), the portfolio `totalNeeds`
   (`lib/queries/portfolio.ts`), the project board header, and the `/inbox`
   page. RBAC scoping is preserved (admin = all visible projects, member = own).
-  **(WI-1 — this branch unifies all four surfaces on one count; before it the
+  **(WI-1 — Implemented: all four surfaces read this one count; before it the
   home `totalNeeds` counted HITL only and the rail badge counted needs/waiting
   workspaces.)**
 - Comment markdown MUST render through the shared remark-only wrapper

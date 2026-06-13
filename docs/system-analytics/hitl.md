@@ -461,8 +461,8 @@ inside the block so the operator can respond without navigating to the
 run page. Access is RBAC-scoped: members see only their own projects;
 admins see all.
 
-**(WI-1 — this branch)** A dedicated cross-project `/inbox` page becomes the
-primary working surface: it reuses the same `getCrossProjectHitlInbox` query and
+**(WI-1 — Implemented)** A dedicated cross-project `/inbox` page is the primary
+working surface: it reuses the same `getCrossProjectHitlInbox` query and
 inline respond component (`HitlInboxBlock` + `InboxRespond`) plus the social
 inbox, while the portfolio home collapses both blocks into one compact "Needs
 you (N)" summary card that links to `/inbox`. The numeric badge follows the
@@ -750,7 +750,7 @@ fields:
   mirrors `runFlow`'s normal-path pattern at
   `web/lib/flows/runner.ts:586`. Failed status-guard (race lost) is
   detected via `{ok: false}` and skipped, so no double-promotion.
-- **(WI-1 — this branch)** The respondable cross-project HITL set surfaces on the
+- **(WI-1 — Implemented)** The respondable cross-project HITL set surfaces on the
   dedicated `/inbox` page (inline respond preserved) in addition to the compact
   home summary; the "Needs you (N)" count is the canonical `needsYou` owned by
   [`social-board.md`](social-board.md) (`pendingHitlCount` = the

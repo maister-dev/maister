@@ -143,12 +143,12 @@ sequenceDiagram
     note over R: on session end: cleanup scoped node dir
 ```
 
-### Platform MCP readiness (computed on write — WI-2, this branch)
+### Platform MCP readiness (computed on write — WI-2, Implemented)
 
 `platform_mcp_servers.readiness_status` / `readiness_reasons` describe whether a
-declared server is actually launch-ready. **Today the columns exist but are
-never computed** — every row reads `Unknown`. WI-2 closes that gap by computing
-readiness on every write, mirroring the platform ACP-runner readiness path
+declared server is actually launch-ready. The columns existed but were **never
+computed before WI-2** (every row read `Unknown`). WI-2 computes readiness on
+every write, mirroring the platform ACP-runner readiness path
 ([acp-runners.md](acp-runners.md), `web/lib/acp-runners/readiness.ts`).
 
 `evaluateMcpReadiness(row, diagnostics)` (`web/lib/mcp/readiness.ts`) derives the
@@ -184,7 +184,7 @@ The following normative bullets are copied verbatim from SDD §7.2 (Implemented)
 This branch adds the readiness-on-write contract (the readiness columns were
 recorded but never computed before WI-2):
 
-- **(WI-2 — this branch)** Platform MCP `readiness_status` / `readiness_reasons`
+- **(WI-2 — Implemented)** Platform MCP `readiness_status` / `readiness_reasons`
   MUST be recomputed by `evaluateMcpReadiness(row, diagnostics)` on every
   `POST /api/admin/mcp-servers` and `PATCH /api/admin/mcp-servers/{id}` write,
   and MUST NOT be recomputed on `DELETE`. A `stdio` row missing `command`, an
