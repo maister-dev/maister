@@ -11,6 +11,7 @@ import { getLocale, getTranslations } from "next-intl/server";
 import Link from "next/link";
 import clsx from "clsx";
 
+import { LaunchHotkeyHint } from "@/components/chrome/launch-hotkey-hint";
 import { ScratchLaunchPopover } from "@/components/chrome/scratch-launch-popover";
 import { WorkbenchLifecycleActions } from "@/components/workbench/lifecycle-actions";
 
@@ -484,11 +485,7 @@ export async function LeftRail({
         <ScratchLaunchPopover
           hint={tPortfolio("launchHint")}
           label={tPortfolio("launchRun")}
-          shortcut={
-            <kbd className="rounded bg-white/[0.18] px-1.5 py-[3px] font-mono text-[10px] font-semibold tracking-[0.04em]">
-              Cmd L
-            </kbd>
-          }
+          shortcut={<LaunchHotkeyHint />}
           title={tPortfolio("launchRun")}
           variant="primary"
         />

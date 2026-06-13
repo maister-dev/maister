@@ -45,6 +45,43 @@ export function ScratchLaunchPopover({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [open]);
 
+  // Global Cmd/Ctrl+K opens the primary (portfolio) launcher. K is reliably
+  // overridable where L often is not (FF binds Ctrl/Cmd+L to the address bar).
+  // Only the primary instance listens so the per-project icon popovers do not
+  // all open at once. Never fires while typing or when another modal is open.
+  useEffect(() => {
+    if (variant !== "primary") return undefined;
+
+    function onHotkey(event: KeyboardEvent): void {
+      if (
+        !(event.metaKey || event.ctrlKey) ||
+        event.key.toLowerCase() !== "k"
+      ) {
+        return;
+      }
+      if (disabled) return;
+
+      const target = event.target as HTMLElement | null;
+
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      if (document.querySelector('[aria-modal="true"]')) return;
+
+      event.preventDefault();
+      setOpen(true);
+    }
+
+    window.addEventListener("keydown", onHotkey);
+
+    return () => window.removeEventListener("keydown", onHotkey);
+  }, [variant, disabled]);
+
   const buttonClass =
     variant === "icon"
       ? "inline-flex h-5 w-5 items-center justify-center rounded-md text-[13px] font-semibold text-mute hover:bg-ivory hover:text-amber"

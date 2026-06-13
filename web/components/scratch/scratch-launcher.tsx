@@ -103,7 +103,7 @@ const commandBand = "bg-[color-mix(in_oklab,var(--ivory)_55%,var(--paper))]";
 const detailShell =
   "rounded-lg border border-line-soft bg-[color-mix(in_oklab,var(--ivory)_34%,var(--paper))]";
 const iconButton =
-  "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-line-soft bg-[color-mix(in_oklab,var(--paper)_82%,var(--ink)_8%)] text-mute transition hover:border-amber hover:text-amber";
+  "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-line bg-ivory text-mute shadow-[0_1px_0_color-mix(in_oklab,var(--paper)_60%,transparent)_inset] transition hover:border-amber hover:bg-paper hover:text-amber";
 const contextPill =
   "inline-flex h-8 min-w-0 items-center gap-2 rounded-full border border-transparent bg-transparent px-2.5 text-[13px] font-medium text-mute transition hover:border-line-soft hover:bg-paper hover:text-ink";
 const invisibleSelect =
@@ -582,7 +582,7 @@ export function ScratchLauncher({
           />
         </div>
 
-        <div className="mx-4 flex min-h-[280px] flex-col rounded-[18px] border border-line-soft bg-[color-mix(in_oklab,var(--paper)_86%,var(--ink)_8%)] p-3 shadow-inner">
+        <div className="mx-4 flex min-h-[280px] flex-col rounded-[18px] border border-line-soft bg-paper-warm p-3">
           {files.length > 0 ||
           attachments.length > 0 ||
           linkedIssueUrl.trim() ? (
@@ -719,7 +719,7 @@ export function ScratchLauncher({
 
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <label className="relative inline-flex h-9 min-w-[134px] max-w-[260px] items-center gap-2 rounded-full border border-line-soft bg-paper px-3 text-[13px] font-semibold text-ink">
+              <label className="relative inline-flex h-9 min-w-[134px] max-w-[260px] items-center gap-2 rounded-full border border-line bg-ivory px-3 text-[13px] font-semibold text-ink shadow-[0_1px_0_color-mix(in_oklab,var(--paper)_60%,transparent)_inset] transition hover:bg-paper">
                 {selectedRunner ? (
                   <AgentMark agent={selectedRunner.capabilityAgent} />
                 ) : null}
@@ -747,7 +747,7 @@ export function ScratchLauncher({
                   ))}
                 </select>
               </label>
-              <label className="relative inline-flex h-9 min-w-[120px] items-center justify-center rounded-full border border-line-soft bg-paper px-3 font-mono text-[12px] font-semibold text-mute">
+              <label className="relative inline-flex h-9 min-w-[120px] items-center justify-center rounded-full border border-line bg-ivory px-3 font-mono text-[12px] font-semibold text-mute shadow-[0_1px_0_color-mix(in_oklab,var(--paper)_60%,transparent)_inset] transition hover:bg-paper">
                 <span className="truncate">{workMode}</span>
                 <select
                   aria-label={t("workMode")}
@@ -805,7 +805,7 @@ export function ScratchLauncher({
               >
                 +
               </button>
-              <label className="relative inline-flex h-9 min-w-[84px] items-center justify-center rounded-full border border-line-soft bg-paper px-3 font-mono text-[13px] font-semibold text-ink">
+              <label className="relative inline-flex h-9 min-w-[84px] items-center justify-center rounded-full border border-line bg-ivory px-3 font-mono text-[13px] font-semibold text-ink shadow-[0_1px_0_color-mix(in_oklab,var(--paper)_60%,transparent)_inset] transition hover:bg-paper">
                 <span>{reasoningEffort}</span>
                 <select
                   aria-label={t("reasoningEffort")}

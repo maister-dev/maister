@@ -379,7 +379,7 @@
     "noneActive": "none active",
     "scaffold": "Scaffold from template",
     "importLocal": "Import from local",
-    "esTip1": "⌘L launches a run once the supervisor is ready.",
+    "esTip1": "⌘K launches a run once the supervisor is ready.",
     "esTip2": "Each run lives in its own worktree — diff and merge with proof.",
     "esTip3": "Active runs stay pinned to the rail, always one click away.",
     "workspaceAction": {

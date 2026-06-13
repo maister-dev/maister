@@ -63,8 +63,8 @@ Six work items, **`web/` only** — no `supervisor/` changes, no DB migration (M
 <!-- Commit checkpoint: tasks 8-9 -->
 
 ### Phase 4 — Launch UX (WI-4 + WI-5)
-- [ ] Task 10: Restyle `scratch-launcher.tsx` (field → `bg-paper-warm`, drop `shadow-inner`; controls subtly raised); verify light+dark. (depends on 9)
-- [ ] Task 11: Cmd/Ctrl+K global hook (preventDefault, open portfolio launcher, skip while typing/modal-open) + update `<kbd>` label; seeded e2e; write `docs/screens/chrome/launch-dialog.md`. (depends on 10)
+- [x] Task 10: Restyle `scratch-launcher.tsx` (field → `bg-paper-warm`, drop `shadow-inner`; controls subtly raised); verify light+dark. (depends on 9)
+- [x] Task 11: Cmd/Ctrl+K global hook (preventDefault, open portfolio launcher, skip while typing/modal-open) + update `<kbd>` label; seeded e2e; write `docs/screens/chrome/launch-dialog.md`. (depends on 10)
 <!-- Commit checkpoint: tasks 10-11 -->
 
 ### Phase 5 — Verify & finalize

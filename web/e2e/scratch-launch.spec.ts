@@ -90,3 +90,26 @@ test("scratch launch controls render, while capacity guard fails without durable
   expect(afterScratchRuns).toBe(beforeScratchRuns);
   expect(afterWorkspaces).toBe(beforeWorkspaces);
 });
+
+// WI-5: the global Cmd/Ctrl+K shortcut opens the primary launch dialog.
+test("Cmd/Ctrl+K opens the primary launch dialog", async ({ page }) => {
+  const mod = process.platform === "darwin" ? "Meta" : "Control";
+
+  await page.goto("/");
+
+  // Open + close via the button first: a successful click proves the primary
+  // launcher is hydrated, so its global keydown listener is attached before we
+  // exercise the shortcut (otherwise the key press can race hydration).
+  const launchButton = page.getByRole("button", { name: "Launch run" });
+
+  await launchButton.click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+
+  await page.keyboard.press(`${mod}+KeyK`);
+  await expect(page.getByRole("dialog")).toBeVisible();
+
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+});
