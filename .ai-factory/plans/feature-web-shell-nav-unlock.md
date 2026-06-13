@@ -47,8 +47,8 @@ Six work items, **`web/` only** — no `supervisor/` changes, no DB migration (M
 <!-- Commit checkpoint: tasks 1-2 -->
 
 ### Phase 1 — Runners readiness + supervisor de-dup (WI-3)
-- [ ] Task 3: Shared adapter-readiness summary helper (`lib/acp-runners/readiness-summary.ts`) from `/diagnostics` × `platform_acp_runners`; add diagnostics+runners fetch to `app/(app)/layout.tsx`; unit-tested. (depends on 1, 2)
-- [ ] Task 4: Rewrite rail block → "Runners readiness" (green/amber/hidden + tooltips; drop supervisor pill + cursor/aider); remove top-nav `PlatformStatusDot` usage + import (`top-nav.tsx:9,39`) but KEEP the component (login side-panel uses it); drop the now-unused `PlatformStatusPill` import in `left-rail.tsx`; EN+RU; fill `docs/screens/chrome/{left-rail,status-bar,top-nav}.md`. (depends on 3)
+- [x] Task 3: Shared adapter-readiness summary helper (`lib/acp-runners/readiness-summary.ts`) from `/diagnostics` × `platform_acp_runners`; add diagnostics+runners fetch to `app/(app)/layout.tsx`; unit-tested. (depends on 1, 2)
+- [x] Task 4: Rewrite rail block → "Runners readiness" (green/amber/hidden + tooltips; drop supervisor pill + cursor/aider); remove top-nav `PlatformStatusDot` usage + import (`top-nav.tsx:9,39`) but KEEP the component (login side-panel uses it); drop the now-unused `PlatformStatusPill` import in `left-rail.tsx`; EN+RU; fill `docs/screens/chrome/{left-rail,status-bar,top-nav}.md`. (depends on 3)
 <!-- Commit checkpoint: tasks 3-4 -->
 
 ### Phase 2 — Unified Inbox (WI-1) + badge fan-out

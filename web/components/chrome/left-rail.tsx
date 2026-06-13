@@ -1,3 +1,7 @@
+import type {
+  AdapterReadinessCause,
+  AdapterReadinessSummary,
+} from "@/lib/acp-runners/readiness-summary";
 import type { GlobalRole } from "@/lib/db/schema";
 import type { RailWorkspaceGroup } from "@/lib/queries/portfolio";
 import type { PlatformStatus } from "@/types/platform-status";
@@ -7,7 +11,6 @@ import { getLocale, getTranslations } from "next-intl/server";
 import Link from "next/link";
 import clsx from "clsx";
 
-import { PlatformStatusPill } from "@/components/chrome/platform-status";
 import { ScratchLaunchPopover } from "@/components/chrome/scratch-launch-popover";
 import { WorkbenchLifecycleActions } from "@/components/workbench/lifecycle-actions";
 
@@ -51,8 +54,20 @@ export interface LeftRailProps {
   workspaceGroups?: RailWorkspaceGroup[];
   inboxCount?: number;
   platformStatus: PlatformStatus;
+  runnersReadiness?: readonly AdapterReadinessSummary[];
   userRole?: GlobalRole;
 }
+
+// Maps a readiness verdict cause to its `portfolio` i18n key for the rail
+// chip tooltip. `binary_unavailable` adapters are hidden, never labelled.
+const runnerCauseLabelKey: Record<AdapterReadinessCause, string> = {
+  ready: "runnerReady",
+  no_runner: "runnerNoRunner",
+  all_disabled: "runnerAllDisabled",
+  not_ready: "runnerNotReady",
+  diagnostics_unavailable: "runnerDiagnosticsUnavailable",
+  binary_unavailable: "runnerNotReady",
+};
 
 const navIcon = "h-3.5 w-3.5 shrink-0 text-mute";
 const navIconActive = "h-3.5 w-3.5 shrink-0 text-ink";
@@ -129,6 +144,7 @@ export async function LeftRail({
   workspaceGroups = [],
   inboxCount = 0,
   platformStatus,
+  runnersReadiness = [],
   userRole,
 }: LeftRailProps): Promise<ReactElement> {
   const tNav = await getTranslations("nav");
@@ -140,6 +156,9 @@ export async function LeftRail({
     workspaceGroups.length > 0
       ? workspaceGroups.reduce((sum, group) => sum + group.activeCount, 0)
       : workspaces.length;
+  const visibleAdapters = runnersReadiness.filter(
+    (item) => item.state !== "hidden",
+  );
 
   // `ready: false` sections are documented M9 deferrals (no route yet). They
   // render as non-navigating "coming soon" items so they never 404 — matching
@@ -424,27 +443,32 @@ export async function LeftRail({
 
       <div className="flex flex-col gap-1.5 px-0.5 pb-0.5">
         <div className="font-mono text-[9.5px] font-semibold uppercase tracking-[0.12em] text-mute">
-          {tPortfolio("platformStatus")}
+          {tPortfolio("runnersReadiness")}
         </div>
         <div className="flex flex-wrap gap-1 font-mono text-[10.5px] tracking-[0.02em]">
-          <PlatformStatusPill
-            className="rounded-full border border-line bg-ivory py-[3px] pl-[7px] pr-2"
-            labels={{
-              ready: tPortfolio("supervisorReady"),
-              unavailable: tPortfolio("supervisorUnavailable"),
-            }}
-            status={platformStatus}
-          />
-          {["cursor", "aider"].map((agent) => (
-            <span
-              key={agent}
-              className="inline-flex items-center gap-1.5 rounded-full border border-line bg-ivory py-[3px] pl-[7px] pr-2 font-mono text-[10.5px] tracking-[0.02em] text-mute"
-              title="Coming soon"
-            >
-              <span className="h-[5px] w-[5px] rounded-full bg-mute-2" />
-              {agent}
-            </span>
-          ))}
+          {visibleAdapters.length > 0 ? (
+            visibleAdapters.map((adapter) => {
+              const label = tPortfolio(runnerCauseLabelKey[adapter.cause]);
+
+              return (
+                <span
+                  key={adapter.adapter}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-line bg-ivory py-[3px] pl-[7px] pr-2 font-mono text-[10.5px] tracking-[0.02em] text-mute"
+                  title={adapter.detail ? `${label}: ${adapter.detail}` : label}
+                >
+                  <span
+                    className={clsx(
+                      "h-[5px] w-[5px] rounded-full",
+                      adapter.state === "green" ? "bg-accent-4" : "bg-amber",
+                    )}
+                  />
+                  {adapter.adapter}
+                </span>
+              );
+            })
+          ) : (
+            <span className="text-mute-2">{tPortfolio("runnersNone")}</span>
+          )}
         </div>
       </div>
 

@@ -1,7 +1,8 @@
 # Left rail
 
 - **Type:** chrome (persistent shell, every `(app)` screen).
-- **Status:** Planned (this branch — WI-3 runners readiness, WI-1 inbox badge).
+- **Status:** Implemented (WI-3 runners readiness). The Inbox badge count is
+  unified by WI-1 — see [`../inbox.md`](../inbox.md).
 - **Source:** `web/components/chrome/left-rail.tsx`, fed by
   `web/app/(app)/layout.tsx`.
 
@@ -11,6 +12,85 @@ When I am working across projects, I want one rail that shows where I can go,
 what is running right now, whether my runner adapters are healthy, and a way to
 launch — so I can navigate and start work without leaving the current screen.
 
-> Layout & regions, States, Data & APIs, i18n, and Linked artifacts are filled
-> when WI-3 (runners readiness) and WI-1 (inbox badge) land. See
-> [`../README.md`](../README.md) for the template.
+## Roles & capabilities
+
+| Role | Sees | Notes |
+| --- | --- | --- |
+| Global viewer / member | Projects, Inbox, Flows nav; active workspaces; runners readiness; launch | `Agents` renders disabled ("coming soon"); `MCPs` / `Users` / `Scheduler` / `Settings` are hidden |
+| Global admin | All of the above plus `MCPs`, `Users`, `Scheduler`, `Settings` | Hidden nav is convenience only; each route re-checks `requireGlobalRole("admin")` |
+
+The hidden admin nav is never the authorization boundary — the route enforces it.
+
+## Navigation
+
+The rail is the primary navigation spine. Entry points / exits:
+
+- **Section nav** → `/` (portfolio), `/inbox` ([`../inbox.md`](../inbox.md)),
+  `/flows`, `/mcps` ([`../mcps.md`](../mcps.md), admin), `/admin/users`,
+  `/admin/scheduler`, `/settings`.
+- **Active workspaces** → each row links to its run/workbench (`/runs/[id]`).
+- **Launch** → opens the [launch dialog](launch-dialog.md).
+
+See [`../README.md`](../README.md) for the global IA map.
+
+## Layout & regions
+
+Top to bottom:
+
+1. **Section nav** — Projects, Inbox (badge), Flows, Agents (disabled), then the
+   admin block (MCPs, Users, Scheduler, Settings). The Inbox badge shows the
+   canonical `needsYou` count (WI-1; see [`../inbox.md`](../inbox.md)).
+2. **Active workspaces** — per-project groups of live runs with a status-tone
+   dot, TTL/archived badges, and per-run workbench-lifecycle actions (M27).
+3. **Runners readiness** (WI-3) — one chip per available adapter; supervisor
+   status is **not** here (it lives once in the footer,
+   [`status-bar.md`](status-bar.md)).
+4. **Launch** — primary launch button + hint, with a Cmd/Ctrl+K shortcut
+   ([`launch-dialog.md`](launch-dialog.md)).
+
+## States
+
+Per-adapter readiness verdict (WI-3), from
+`summarizeAdapterReadiness`:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Hidden: adapter binary unavailable
+    [*] --> Amber: binary available, no Ready runner
+    [*] --> Green: binary available, an enabled runner is Ready
+    Amber --> Green: a runner becomes Ready
+    Green --> Amber: runners removed or NotReady
+    note right of Amber
+      tooltip cause — no runner configured, all disabled,
+      not ready (first reason), or diagnostics unavailable
+    end note
+```
+
+## Data & APIs
+
+- `getRailWorkspaceGroups(userId, role)` — active workspaces, RBAC-scoped.
+- `summarizeAdapterReadiness({ runners, diagnostics })`
+  (`lib/acp-runners/readiness-summary.ts`) over `checkSupervisorDiagnostics()`
+  `/diagnostics` × `platform_acp_runners` rows (`loadRunnerReadinessRows`).
+  Stored `readiness_status` is recomputed on each runner write; live
+  availability gates visibility.
+- Inbox badge count — see [`../inbox.md`](../inbox.md) and
+  [`../../system-analytics/social-board.md`](../../system-analytics/social-board.md).
+
+## i18n
+
+`nav` (section labels, `comingSoon`), `portfolio` (`runnersReadiness`,
+`runnerReady` / `runnerNoRunner` / `runnerAllDisabled` / `runnerNotReady` /
+`runnerDiagnosticsUnavailable` / `runnersNone`, launch + active-workspace
+labels), `gc` (TTL badges).
+
+## Linked artifacts
+
+- ADR: [ADR-065](../../decisions.md#adr-065) — platform ACP runner catalog +
+  readiness recompute.
+- Behavior: [`../../system-analytics/acp-runners.md`](../../system-analytics/acp-runners.md),
+  [`../../system-analytics/social-board.md`](../../system-analytics/social-board.md)
+  (Needs-you badge).
+- Source: `web/components/chrome/left-rail.tsx`, `web/app/(app)/layout.tsx`,
+  `web/lib/acp-runners/readiness-summary.ts`,
+  `web/lib/acp-runners/runner-readiness-rows.ts`.

@@ -5,9 +5,14 @@ import { redirect } from "next/navigation";
 import { LeftRail } from "@/components/chrome/left-rail";
 import { StatusBar } from "@/components/chrome/status-bar";
 import { TopNav } from "@/components/chrome/top-nav";
+import { summarizeAdapterReadiness } from "@/lib/acp-runners/readiness-summary";
+import { loadRunnerReadinessRows } from "@/lib/acp-runners/runner-readiness-rows";
 import { getSessionUser } from "@/lib/authz";
 import { getRailWorkspaceGroups } from "@/lib/queries/portfolio";
-import { getPlatformStatus } from "@/lib/supervisor-client";
+import {
+  checkSupervisorDiagnostics,
+  getPlatformStatus,
+} from "@/lib/supervisor-client";
 
 function initialsOf(name: string | null, email: string | null): string {
   const source = (name ?? email ?? "?").trim();
@@ -35,10 +40,20 @@ export default async function AppLayout({
     redirect("/change-password");
   }
 
-  const [railWorkspaceGroups, platformStatus] = await Promise.all([
-    sessionUser ? getRailWorkspaceGroups(sessionUser.id, sessionUser.role) : [],
-    getPlatformStatus(),
-  ]);
+  const [railWorkspaceGroups, platformStatus, diagnostics, runnerRows] =
+    await Promise.all([
+      sessionUser
+        ? getRailWorkspaceGroups(sessionUser.id, sessionUser.role)
+        : [],
+      getPlatformStatus(),
+      checkSupervisorDiagnostics(),
+      loadRunnerReadinessRows(),
+    ]);
+
+  const runnersReadiness = summarizeAdapterReadiness({
+    runners: runnerRows,
+    diagnostics,
+  });
 
   const navUser = sessionUser
     ? {
@@ -63,11 +78,7 @@ export default async function AppLayout({
 
   return (
     <div className="flex min-h-screen flex-col bg-paper-warm pb-14">
-      <TopNav
-        crumb={<NavCrumb />}
-        platformStatus={platformStatus}
-        user={navUser}
-      />
+      <TopNav crumb={<NavCrumb />} user={navUser} />
 
       <div
         data-shell
@@ -78,6 +89,7 @@ export default async function AppLayout({
           activeSection="projects"
           inboxCount={inboxCount}
           platformStatus={platformStatus}
+          runnersReadiness={runnersReadiness}
           userRole={sessionUser?.role}
           workspaceGroups={railWorkspaceGroups}
         />
