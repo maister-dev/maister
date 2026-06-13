@@ -501,6 +501,42 @@ nodes:
 
 Engine floor `>= 1.4.0` (shared with `retry_policy`; see above).
 
+## Flow `requirements` (ADR-091 — Implemented)
+
+A flow may declare host/runtime preconditions that are probed at launch, BEFORE
+any worktree or ACP session is created. This is how a CLI-driven package (e.g.
+`openspec`, which shells out to the `openspec` binary from `cli` nodes) declares
+the external tool it needs:
+
+```yaml
+requirements:
+  - name: "openspec CLI present"
+    probe: "command -v openspec"
+    hint: "run the os-init flow, or: npm i -g @fission-ai/openspec@1.4.1"
+  - name: "node >= 20"
+    probe: "node -e \"process.exit(+process.versions.node.split('.')[0] >= 20 ? 0 : 1)\""
+```
+
+- Each `probe` runs with `bash -c` in the **project repo** (10s timeout). A
+  non-zero exit or a timeout marks the requirement unmet.
+- If any are unmet, the launch is refused with a single `PRECONDITION` listing
+  every failure and its `hint` — no worktree, session, or token spend.
+- **Check-only.** MAIster never auto-installs; remediation is the package's
+  `setup.sh` or an init-style flow's job (gated by `exec_trust`). The `hint`
+  points the operator at it.
+- A probe is general — it covers a binary (`command -v`), a version
+  (`node -e ...`), network reachability, or project state (`test -d openspec`).
+- **Per-flow**, not package-wide: an installer flow that provisions the
+  dependency omits the requirement it satisfies, avoiding a chicken-and-egg
+  block.
+- Additive + launch-checked (the runner/engine never read it at compile) →
+  **no `compat.engine_min` floor**.
+
+Fields: `name` (required), `probe` (required shell command), `hint` (optional
+remediation string). Probes run with runner authority, like `command_check`
+gates — only trusted flows reach this path. See
+[ADR-091](decisions.md#adr-091-flow-requirements-launch-precondition).
+
 ## Gate execution (M11a — Implemented)
 
 > **Status (M11a).** Gate execution is **Implemented** in M11a (per

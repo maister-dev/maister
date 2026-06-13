@@ -34,6 +34,7 @@ import {
   isEngineCompatible,
   isSchemaVersionSupported,
 } from "@/lib/flows/engine-version";
+import { checkFlowRequirements } from "@/lib/flows/requirements-check";
 import {
   buildResolvedCapabilitySet,
   firstAgentUnsupportedRequiredMcp,
@@ -401,6 +402,16 @@ export async function launchRun(
       );
     }
   }
+
+  // ADR-091: launch-time host/runtime requirements (e.g. an external CLI the
+  // flow shells out to). Probed in the project repo BEFORE any worktree/session
+  // exists — a missing binary fails clean as PRECONDITION here, not late
+  // mid-run after token spend. Check-only: MAIster never auto-installs (trust);
+  // each requirement's `hint` carries the remediation. No-op when none declared.
+  await checkFlowRequirements(
+    (revision.manifest as FlowYamlV1).requirements,
+    project.repoPath,
+  );
 
   const compiled = compileManifest(revision.manifest as FlowYamlV1);
   const runtimeRows = await _db

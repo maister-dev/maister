@@ -116,6 +116,7 @@
 | [ADR-088](#adr-088-multi-flow-package-management) | Multi-flow package management | Accepted | 2026-06-12 |
 | [ADR-089](#adr-089-platform-agent-catalog-with-per-agent-runner-and-a-five-source-trigger-model) | Platform agent catalog with per-agent runner and a five-source trigger model | Accepted | 2026-06-12 |
 | [ADR-090](#adr-090-agent-workspace-axis-with-three-layer-read-only-enforcement-and-quarantine) | Agent workspace axis with three-layer read-only enforcement and quarantine | Accepted | 2026-06-12 |
+| [ADR-091](#adr-091-flow-requirements-launch-precondition) | Flow requirements launch precondition | Accepted | 2026-06-13 |
 
 ---
 
@@ -6811,6 +6812,61 @@ These are tracked as TODOs against future ADRs. They are NOT decisions.
   is artifact-only; revisit if the standard ACP surface grows.
 - **Cost / time / regex guard *enforcement* (kill-on-cap).** Today it's
   metric-only. Revisit when Phase 2 data shows guard breaches are real.
+
+---
+
+### ADR-091: Flow requirements launch precondition
+
+**Date:** 2026-06-13
+**Status:** Accepted
+**Context:** Flow packages had no way to declare external host/runtime
+dependencies — an external CLI a node shells out to, a Node version, network
+egress, or required project state. The vendored `aif` / `superpowers` packages
+bundle everything they need, but a CLI-driven package such as `openspec` drives
+the `openspec` binary (via `cli` nodes) and needs that binary present on the
+host. A missing dependency surfaced only at `cli`/agent runtime as a failed
+command — after worktree creation, ACP session spawn, and token spend — instead
+of as a clean launch refusal. The only declarable external dependency was an MCP
+server (`mcps[]`); there was no general precondition, and OpenSpec ships no MCP.
+
+**Decision:** Add an optional per-flow `requirements: [{ name, probe, hint? }]`
+block to `flow.yaml`. Each `probe` is a shell command run (`bash -c`, in the
+project repo, 10s timeout) during the `launchRun` precondition, BEFORE any
+worktree/session is created. A non-zero exit or timeout refuses the launch with
+one `PRECONDITION` listing every unmet requirement and its `hint`. It is
+**check-only** — MAIster never auto-installs; provisioning stays the package's
+job (`setup.sh` or an init-style flow such as OpenSpec's `os-init`, gated by
+`exec_trust`). The block is additive and launch-checked (never read at compile),
+so it carries **no `compat.engine_min` floor**. Placement is **per-flow**, not
+package-wide, so an installer flow that provisions a dependency can omit the
+requirement it satisfies — avoiding a chicken-and-egg block.
+
+**Consequences:**
+- External-CLI packages become first-class: a missing binary / wrong Node /
+  absent project state fails fast and clearly, before any spend.
+- One general mechanism (a shell probe) covers binaries, version checks,
+  network reachability, and project state (`test -d openspec`) — no brittle
+  per-kind parsing.
+- Probes run with runner authority, like `command_check` gates and `cli` nodes;
+  only trusted flows reach this path (`trustStatus` is gated earlier), so no new
+  trust surface.
+- Check-only: MAIster does not remediate; a missing dependency still needs
+  operator / `setup.sh` action — the `hint` guides it.
+- A probe is arbitrary shell; a hanging probe is bounded by the 10s timeout but
+  still adds launch latency proportional to the number of probes.
+
+**Alternatives Considered:**
+- **Structured `{ binary, minVersion }` schema:** less general (no
+  project-state / network / composite checks) and needs per-tool version-output
+  parsing. A shell probe subsumes it.
+- **Package-wide `requirements` in `maister-package.yaml`:** blocks an installer
+  flow meant to satisfy the requirement (chicken-and-egg). Per-flow avoids it; a
+  package-wide layer can be added later if a real need appears.
+- **Auto-install on a missing requirement:** turns the launch path into an
+  arbitrary-code installer — the `exec_trust` sandboxing concern (Phase 2).
+  Kept check-only; installation stays in `setup.sh` / an init flow.
+- **MCP-only (`mcps[]`):** only covers tools that ship an MCP server; OpenSpec
+  ships none. A general probe is required.
 
 ---
 

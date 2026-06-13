@@ -913,6 +913,22 @@ export const flowMetadataSchema = z
   })
   .strict();
 
+// ADR-091: a launch-time host/runtime requirement. `probe` is a shell command
+// run (bash -c, in the project repo) BEFORE any worktree/session is created; a
+// non-zero exit (or timeout) refuses the launch with PRECONDITION. `hint` is
+// surfaced as remediation. Additive + launch-checked (never read at compile) →
+// no engine floor. Probes run with runner authority, like command_check gates,
+// so only trusted flows reach this path (trustStatus is gated earlier).
+export const flowRequirementSchema = z
+  .object({
+    name: z.string().min(1),
+    probe: z.string().min(1),
+    hint: z.string().min(1).optional(),
+  })
+  .strict();
+
+export type FlowRequirement = z.infer<typeof flowRequirementSchema>;
+
 export const flowYamlV1Schema = z
   .object({
     schemaVersion: z.literal(1),
@@ -954,6 +970,10 @@ export const flowYamlV1Schema = z
     nodes: z.array(nodeSchema).min(1).optional(),
     // Additive presentation metadata (ADR-064); runner/engine never reads it.
     presentation: flowPresentationSchema.optional(),
+    // ADR-091: launch-time host/runtime requirements (e.g. an external CLI the
+    // flow shells out to). Probed before worktree/session creation; additive +
+    // launch-checked (never read at compile) → no engine floor.
+    requirements: z.array(flowRequirementSchema).optional(),
   })
   .refine((d) => (d.steps ? 1 : 0) + (d.nodes ? 1 : 0) === 1, {
     message: "flow manifest must declare exactly one of steps[] or nodes[]",
