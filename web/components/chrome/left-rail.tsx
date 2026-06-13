@@ -173,12 +173,17 @@ export async function LeftRail({
     { id: "inbox", label: tNav("inbox"), href: "/inbox", ready: true },
     { id: "flows", label: tNav("flows"), href: "/flows", ready: true },
     { id: "agents", label: tNav("agents"), href: "/agents", ready: false },
-    { id: "mcps", label: tNav("mcps"), href: "/mcps", ready: false },
   ];
 
   // User management is admin-only and access-controlled at the route too; the
   // hidden nav item is convenience, never the authorization boundary.
   if (userRole === "admin") {
+    sections.push({
+      id: "mcps",
+      label: tNav("mcps"),
+      href: "/mcps",
+      ready: true,
+    });
     sections.push({
       id: "users",
       label: tNav("users"),

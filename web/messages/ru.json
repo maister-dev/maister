@@ -335,6 +335,11 @@
     "subtitle": "{count} задач ждут вас по всем проектам.",
     "empty": "Сейчас вас ничего не ждёт."
   },
+  "mcps": {
+    "eyebrow": "Платформа · админ",
+    "title": "MCP-серверы",
+    "subtitle": "Хостовые серверы Model Context Protocol и их вычисленная готовность."
+  },
   "portfolio": {
     "eyebrow": "Рабочая область · {projects} проектов",
     "heading": "Проекты.",

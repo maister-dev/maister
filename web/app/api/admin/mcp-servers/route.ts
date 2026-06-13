@@ -10,6 +10,8 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { buildCreateBody, validateMcpServerDraft } from "@/lib/mcp/mcp-form";
+import { evaluateMcpReadiness } from "@/lib/mcp/readiness";
+import { checkSupervisorDiagnostics } from "@/lib/supervisor-client";
 
 const { platformMcpServers } = schemaModule as unknown as Record<string, any>;
 
@@ -133,6 +135,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     }
 
     const values = buildCreateBody(parsed.data);
+    const diagnostics = await checkSupervisorDiagnostics();
+    const readiness = evaluateMcpReadiness(values, diagnostics);
     const db = getDb() as any;
 
     // Race-safe create: rely on the id primary key, not a read-then-write
@@ -140,7 +144,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     // returning() yields the typed 409, never a raw 23505 -> 500.
     const inserted = await db
       .insert(platformMcpServers)
-      .values(values)
+      .values({
+        ...values,
+        readinessStatus: readiness.status,
+        readinessReasons: readiness.reasons,
+      })
       .onConflictDoNothing()
       .returning({ id: platformMcpServers.id });
 

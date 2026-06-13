@@ -15,7 +15,9 @@ import {
   validateMcpServerDraft,
   type McpServerDraft,
 } from "@/lib/mcp/mcp-form";
+import { evaluateMcpReadiness } from "@/lib/mcp/readiness";
 import { loadMcpUsageReferences } from "@/lib/mcp/usage";
+import { checkSupervisorDiagnostics } from "@/lib/supervisor-client";
 
 const { platformMcpServers } = schemaModule as unknown as Record<string, any>;
 
@@ -174,9 +176,18 @@ export async function PATCH(
       }
     }
 
+    const fields = buildMcpServerFields(nextDraft);
+    const diagnostics = await checkSupervisorDiagnostics();
+    const readiness = evaluateMcpReadiness(fields, diagnostics);
+
     await db
       .update(platformMcpServers)
-      .set({ ...buildMcpServerFields(nextDraft), updatedAt: new Date() })
+      .set({
+        ...fields,
+        readinessStatus: readiness.status,
+        readinessReasons: readiness.reasons,
+        updatedAt: new Date(),
+      })
       .where(eq(platformMcpServers.id, id));
 
     log.debug({ id }, "platform MCP server updated");

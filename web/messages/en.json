@@ -335,6 +335,11 @@
     "subtitle": "{count} things waiting on you across all projects.",
     "empty": "Nothing is waiting on you right now."
   },
+  "mcps": {
+    "eyebrow": "Platform · admin",
+    "title": "MCP servers",
+    "subtitle": "Host-wide Model Context Protocol servers and their computed readiness."
+  },
   "portfolio": {
     "eyebrow": "Working pane · {projects} projects",
     "heading": "Projects.",

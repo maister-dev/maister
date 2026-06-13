@@ -58,8 +58,8 @@ Six work items, **`web/` only** — no `supervisor/` changes, no DB migration (M
 <!-- Commit checkpoint: tasks 5-7 -->
 
 ### Phase 3 — MCP page (WI-2) + readiness evaluator
-- [ ] Task 8: `lib/mcp/readiness.ts evaluateMcpReadiness(row, diagnostics)` (mirror `evaluateRunnerReadiness`; check `env_keys`/`header_keys` against diagnostics `envRefs`); wire into POST + PATCH `/api/admin/mcp-servers[/:id]` (DELETE excluded — row gone); OpenAPI already documents the fields (confirm-only); unit-tested. (depends on 7)
-- [ ] Task 9: Admin `/mcps` page (reuse `McpServersPanel` + `McpServerModal` + readiness column); move `mcps` nav into admin block `ready:true`; EN+RU; seeded e2e; write `docs/screens/mcps.md`. (depends on 8)
+- [x] Task 8: `lib/mcp/readiness.ts evaluateMcpReadiness(row, diagnostics)` (mirror `evaluateRunnerReadiness`; check `env_keys`/`header_keys` against diagnostics `envRefs`); wire into POST + PATCH `/api/admin/mcp-servers[/:id]` (DELETE excluded — row gone); OpenAPI already documents the fields (confirm-only); unit-tested. (depends on 7)
+- [x] Task 9: Admin `/mcps` page (reuse `McpServersPanel` + `McpServerModal` + readiness column); move `mcps` nav into admin block `ready:true`; EN+RU; seeded e2e; write `docs/screens/mcps.md`. (depends on 8)
 <!-- Commit checkpoint: tasks 8-9 -->
 
 ### Phase 4 — Launch UX (WI-4 + WI-5)

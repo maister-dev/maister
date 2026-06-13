@@ -35,6 +35,21 @@ vi.mock("@/lib/authz", () => ({
     mustChangePassword: false,
   })),
 }));
+// Deterministic supervisor diagnostics so the route's readiness recompute is
+// testable without a live supervisor: GITHUB_TOKEN present, others absent.
+vi.mock("@/lib/supervisor-client", () => ({
+  checkSupervisorDiagnostics: vi.fn(async () => ({
+    kind: "ready",
+    diagnostics: {
+      status: "ready",
+      version: "1.0.0",
+      checkedAt: "2026-06-13T00:00:00.000Z",
+      adapters: [],
+      sidecars: [],
+      envRefs: [{ name: "GITHUB_TOKEN", present: true }],
+    },
+  })),
+}));
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:16-alpine")
@@ -217,5 +232,48 @@ describe("admin MCP server CRUD (real postgres)", () => {
 
     expect(rows).toHaveLength(1);
     expect((rows[0] as { enabled: boolean }).enabled).toBe(true);
+  });
+
+  it("recomputes readiness on every write (POST sets Ready, PATCH flips to NotReady)", async () => {
+    const { POST } = await import("../route");
+    const { PATCH } = await import("../[id]/route");
+    const id = `ready-${randomUUID().slice(0, 8)}`;
+
+    await POST(
+      postRequest({
+        id,
+        transport: "stdio",
+        command: "github-mcp",
+        envKeys: ["env:GITHUB_TOKEN"],
+      }),
+    );
+
+    let rows = await db
+      .select()
+      .from(platformMcpServers)
+      .where(eq(platformMcpServers.id, id));
+
+    expect((rows[0] as { readinessStatus: string }).readinessStatus).toBe(
+      "Ready",
+    );
+    expect(
+      (rows[0] as { readinessReasons: string[] }).readinessReasons,
+    ).toEqual([]);
+
+    await PATCH(patchRequest({ envKeys: ["env:MISSING_TOKEN"] }), {
+      params: Promise.resolve({ id }),
+    });
+
+    rows = await db
+      .select()
+      .from(platformMcpServers)
+      .where(eq(platformMcpServers.id, id));
+
+    expect((rows[0] as { readinessStatus: string }).readinessStatus).toBe(
+      "NotReady",
+    );
+    expect(
+      (rows[0] as { readinessReasons: string[] }).readinessReasons,
+    ).toContain("env ref missing: MISSING_TOKEN");
   });
 });
