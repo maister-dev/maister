@@ -170,7 +170,7 @@ export async function LeftRail({
     ready: boolean;
   }[] = [
     { id: "projects", label: tNav("projects"), href: "/", ready: true },
-    { id: "inbox", label: tNav("inbox"), href: "/inbox", ready: false },
+    { id: "inbox", label: tNav("inbox"), href: "/inbox", ready: true },
     { id: "flows", label: tNav("flows"), href: "/flows", ready: true },
     { id: "agents", label: tNav("agents"), href: "/agents", ready: false },
     { id: "mcps", label: tNav("mcps"), href: "/mcps", ready: false },
@@ -225,7 +225,10 @@ export async function LeftRail({
               </svg>
               <span>{section.label}</span>
               {showBadge ? (
-                <span className="ml-auto rounded-full bg-amber px-1.5 py-px font-mono text-[9.5px] font-bold tracking-[0.02em] text-white">
+                <span
+                  className="ml-auto rounded-full bg-amber px-1.5 py-px font-mono text-[9.5px] font-bold tracking-[0.02em] text-white"
+                  data-testid="inbox-nav-badge"
+                >
                   {inboxCount}
                 </span>
               ) : null}

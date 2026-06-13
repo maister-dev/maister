@@ -329,6 +329,12 @@
   "footer": {
     "motto": "Ship Happens."
   },
+  "inbox": {
+    "eyebrow": "По всем проектам",
+    "title": "Входящие",
+    "subtitle": "{count} задач ждут вас по всем проектам.",
+    "empty": "Сейчас вас ничего не ждёт."
+  },
   "portfolio": {
     "eyebrow": "Рабочая область · {projects} проектов",
     "heading": "Проекты.",

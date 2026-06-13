@@ -6,13 +6,11 @@ import Link from "next/link";
 import { LiveTicker } from "@/components/chrome/live-ticker";
 import { DensityToggle } from "@/components/portfolio/density-toggle";
 import { EmptyState } from "@/components/portfolio/empty-state";
-import { HitlInboxBlock } from "@/components/portfolio/hitl-inbox-block";
-import { InboxPanel } from "@/components/portfolio/inbox-panel";
-import { InboxRespond } from "@/components/portfolio/inbox-respond";
+import { NeedsYouSummary } from "@/components/portfolio/needs-you-summary";
 import { NewProjectTile } from "@/components/portfolio/new-project-tile";
 import { ProjectCard } from "@/components/portfolio/project-card";
 import { requireSession } from "@/lib/authz";
-import { getInboxItems, getUnreadInboxCount } from "@/lib/queries/inbox";
+import { getUnreadInboxCount } from "@/lib/queries/inbox";
 import {
   getCrossProjectHitlInbox,
   getPortfolio,
@@ -22,12 +20,12 @@ export default async function PortfolioPage(): Promise<ReactElement> {
   const user = await requireSession();
   const t = await getTranslations("portfolio");
 
-  const [portfolio, inbox, inboxItems, unreadInbox] = await Promise.all([
+  const [portfolio, inbox, unreadInbox] = await Promise.all([
     getPortfolio(user.id, user.role),
     getCrossProjectHitlInbox(user.id, user.role),
-    getInboxItems(user.id, user.role),
     getUnreadInboxCount(user.id, user.role),
   ]);
+  const needsYou = inbox.count + unreadInbox;
   const isEmpty = portfolio.projects.length === 0;
 
   return (
@@ -44,7 +42,7 @@ export default async function PortfolioPage(): Promise<ReactElement> {
             {t("subheading", {
               projects: portfolio.projects.length,
               workspaces: portfolio.totalActiveWorkspaces,
-              needs: portfolio.totalNeeds,
+              needs: needsYou,
             })}
           </div>
         </div>
@@ -74,52 +72,21 @@ export default async function PortfolioPage(): Promise<ReactElement> {
             {t.rich("ticker", {
               projects: portfolio.projects.length,
               workspaces: portfolio.totalActiveWorkspaces,
-              needs: portfolio.totalNeeds,
+              needs: needsYou,
               b: (chunks) => (
                 <b className="font-semibold text-ink-2">{chunks}</b>
               ),
             })}
           </LiveTicker>
 
-          {inbox.count > 0 ? (
-            <HitlInboxBlock
-              count={inbox.count}
-              items={inbox.items}
+          {needsYou > 0 ? (
+            <NeedsYouSummary
+              count={needsYou}
+              href="/inbox"
+              items={inbox.items.slice(0, 3)}
               labels={{
-                title: t("inboxTitle", { count: inbox.count }),
-                empty: t("inboxEmpty"),
-                ariaLabel: t("inboxAriaLabel"),
-                countAriaLabel: t("inboxCountAriaLabel", {
-                  count: inbox.count,
-                }),
-              }}
-              renderRespond={(item) => (
-                <InboxRespond
-                  criticality={item.criticality}
-                  hitlRequestId={item.hitlRequestId}
-                  kind={item.kind}
-                  options={item.options}
-                  runId={item.runId}
-                  schema={item.schema}
-                />
-              )}
-            />
-          ) : null}
-
-          {unreadInbox > 0 ? (
-            <InboxPanel
-              count={unreadInbox}
-              items={inboxItems}
-              labels={{
-                title: t("notifTitle"),
-                ariaLabel: t("notifAriaLabel"),
-                readAll: t("notifReadAll"),
-                readAllBusy: t("notifReadAllBusy"),
-                empty: t("notifEmpty"),
-                eventKind: {
-                  comment_added: t("notifKind.commentAdded"),
-                  task_mentioned: t("notifKind.taskMentioned"),
-                },
+                title: t("inboxTitle", { count: needsYou }),
+                seeAll: t("seeAll"),
               }}
             />
           ) : null}

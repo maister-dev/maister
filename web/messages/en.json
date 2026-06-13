@@ -329,6 +329,12 @@
   "footer": {
     "motto": "Ship Happens."
   },
+  "inbox": {
+    "eyebrow": "Across all projects",
+    "title": "Inbox",
+    "subtitle": "{count} things waiting on you across all projects.",
+    "empty": "Nothing is waiting on you right now."
+  },
   "portfolio": {
     "eyebrow": "Working pane · {projects} projects",
     "heading": "Projects.",

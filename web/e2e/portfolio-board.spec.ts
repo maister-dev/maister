@@ -22,6 +22,9 @@ test("portfolio and project board expose seeded acceptance work", async ({
   await expect(
     page.getByRole("link", { name: /acceptance-needs-input/ }).first(),
   ).toBeVisible();
+  // WI-1: home collapses the cross-project HITL + social inbox into one compact
+  // "Needs you" summary card (the full surfaces moved to /inbox).
+  await expect(page.getByTestId("needs-you-summary")).toBeVisible();
 
   await page.goto(`/projects/${fx.projectSlug}`);
 

@@ -152,7 +152,6 @@ export interface PortfolioProject {
 export interface Portfolio {
   projects: PortfolioProject[];
   totalActiveWorkspaces: number;
-  totalNeeds: number;
 }
 
 export function relativeTime(from: Date, now: Date): string {
@@ -284,7 +283,7 @@ export async function getPortfolio(
           .orderBy(projects.createdAt);
 
   if (visibleProjects.length === 0) {
-    return { projects: [], totalActiveWorkspaces: 0, totalNeeds: 0 };
+    return { projects: [], totalActiveWorkspaces: 0 };
   }
 
   const projectIds = visibleProjects.map((p) => p.id);
@@ -584,7 +583,6 @@ export async function getPortfolio(
   }
 
   let totalActiveWorkspaces = 0;
-  let totalNeeds = 0;
 
   const enriched: PortfolioProject[] = visibleProjects.map((p, idx) => {
     const members = membersByProject.get(p.id) ?? [];
@@ -603,7 +601,6 @@ export async function getPortfolio(
     const pendingHitlCount = needCountByProject.get(p.id) ?? 0;
 
     totalActiveWorkspaces += activeWorkspaces.length;
-    totalNeeds += pendingHitlCount;
 
     return {
       id: p.id,
@@ -630,7 +627,6 @@ export async function getPortfolio(
   return {
     projects: enriched,
     totalActiveWorkspaces,
-    totalNeeds,
   };
 }
 

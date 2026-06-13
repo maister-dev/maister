@@ -52,9 +52,9 @@ Six work items, **`web/` only** — no `supervisor/` changes, no DB migration (M
 <!-- Commit checkpoint: tasks 3-4 -->
 
 ### Phase 2 — Unified Inbox (WI-1) + badge fan-out
-- [ ] Task 5: `/inbox` page REUSING `HitlInboxBlock` + `InboxPanel` (don't rebuild — see decision) for HITL respond + unread mentions/comments; enable nav `ready:true`; EN+RU. (depends on 4)
-- [ ] Task 6: Canonical `needsYou` = `getCrossProjectHitlInbox(...).count` + `getUnreadInboxCount`. ADD both to `layout.tsx`'s `Promise.all` and REPLACE the `statusTone` badge derivation (`layout.tsx:55-62`); align `totalNeeds` (`portfolio.ts:589`) to the same count; board `:198` already matches. Home `/` → compact "Needs you" summary card (the only new component) replacing the two blocks (now hosted on `/inbox`); update `e2e/portfolio-board.spec.ts` home assertions. (depends on 5)
-- [ ] Task 7: Unit (needsYou helper) + seeded e2e (nav→/inbox, HITL respond, badge parity = rail == board == portfolio show the SAME count; new spec must match the playwright `AUTHED_SPEC` regex); add EN+RU keys together (`i18n-parity.test.ts` enforces parity; messages are NOT typechecked, so a missing key fails only at test time); write `docs/screens/inbox.md`. Phase GREEN gate. (depends on 6)
+- [x] Task 5: `/inbox` page REUSING `HitlInboxBlock` + `InboxPanel` (don't rebuild — see decision) for HITL respond + unread mentions/comments; enable nav `ready:true`; EN+RU. (depends on 4)
+- [x] Task 6: Canonical `needsYou` = `getCrossProjectHitlInbox(...).count` + `getUnreadInboxCount`. ADD both to `layout.tsx`'s `Promise.all` and REPLACE the `statusTone` badge derivation (`layout.tsx:55-62`); align `totalNeeds` (`portfolio.ts:589`) to the same count; board `:198` already matches. Home `/` → compact "Needs you" summary card (the only new component) replacing the two blocks (now hosted on `/inbox`); update `e2e/portfolio-board.spec.ts` home assertions. (depends on 5)
+- [x] Task 7: Unit (needsYou helper) + seeded e2e (nav→/inbox, HITL respond, badge parity = rail == board == portfolio show the SAME count; new spec must match the playwright `AUTHED_SPEC` regex); add EN+RU keys together (`i18n-parity.test.ts` enforces parity; messages are NOT typechecked, so a missing key fails only at test time); write `docs/screens/inbox.md`. Phase GREEN gate. (depends on 6)
 <!-- Commit checkpoint: tasks 5-7 -->
 
 ### Phase 3 — MCP page (WI-2) + readiness evaluator

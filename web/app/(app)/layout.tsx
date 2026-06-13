@@ -8,6 +8,7 @@ import { TopNav } from "@/components/chrome/top-nav";
 import { summarizeAdapterReadiness } from "@/lib/acp-runners/readiness-summary";
 import { loadRunnerReadinessRows } from "@/lib/acp-runners/runner-readiness-rows";
 import { getSessionUser } from "@/lib/authz";
+import { getNeedsYouCount } from "@/lib/queries/needs-you";
 import { getRailWorkspaceGroups } from "@/lib/queries/portfolio";
 import {
   checkSupervisorDiagnostics,
@@ -40,15 +41,19 @@ export default async function AppLayout({
     redirect("/change-password");
   }
 
-  const [railWorkspaceGroups, platformStatus, diagnostics, runnerRows] =
-    await Promise.all([
-      sessionUser
-        ? getRailWorkspaceGroups(sessionUser.id, sessionUser.role)
-        : [],
-      getPlatformStatus(),
-      checkSupervisorDiagnostics(),
-      loadRunnerReadinessRows(),
-    ]);
+  const [
+    railWorkspaceGroups,
+    platformStatus,
+    diagnostics,
+    runnerRows,
+    needsYou,
+  ] = await Promise.all([
+    sessionUser ? getRailWorkspaceGroups(sessionUser.id, sessionUser.role) : [],
+    getPlatformStatus(),
+    checkSupervisorDiagnostics(),
+    loadRunnerReadinessRows(),
+    sessionUser ? getNeedsYouCount(sessionUser.id, sessionUser.role) : 0,
+  ]);
 
   const runnersReadiness = summarizeAdapterReadiness({
     runners: runnerRows,
@@ -67,15 +72,6 @@ export default async function AppLayout({
       }
     : undefined;
 
-  const inboxCount = railWorkspaceGroups.reduce(
-    (sum, group) =>
-      sum +
-      group.workspaces.filter(
-        (ws) => ws.statusTone === "needs" || ws.statusTone === "waiting",
-      ).length,
-    0,
-  );
-
   return (
     <div className="flex min-h-screen flex-col bg-paper-warm pb-14">
       <TopNav crumb={<NavCrumb />} user={navUser} />
@@ -87,7 +83,7 @@ export default async function AppLayout({
       >
         <LeftRail
           activeSection="projects"
-          inboxCount={inboxCount}
+          inboxCount={needsYou}
           platformStatus={platformStatus}
           runnersReadiness={runnersReadiness}
           userRole={sessionUser?.role}

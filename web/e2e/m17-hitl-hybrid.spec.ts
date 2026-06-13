@@ -8,15 +8,13 @@ import { loadFixtures } from "./_seed/fixtures";
 test.describe.configure({ mode: "serial" });
 
 test.describe("M17 HITL hybrid-surface: cross-project inbox + inline response", () => {
-  test("portfolio home shows cross-project HITL inbox with pending count badge", async ({
+  test("inbox page shows cross-project HITL inbox with pending count badge", async ({
     page,
   }) => {
-    await page.goto("/");
+    await page.goto("/inbox");
 
-    // Portfolio home is visible
-    await expect(
-      page.getByRole("heading", { name: /Projects/i }),
-    ).toBeVisible();
+    // Unified inbox page is visible (WI-1 moved the cross-project block here)
+    await expect(page.getByRole("heading", { name: /Inbox/i })).toBeVisible();
 
     // Cross-project inbox block appears
     const inboxSection = page.getByTestId("cross-project-hitl-inbox");
@@ -37,7 +35,7 @@ test.describe("M17 HITL hybrid-surface: cross-project inbox + inline response", 
   test("inbox lists both projects with their HITL metadata", async ({
     page,
   }) => {
-    await page.goto("/");
+    await page.goto("/inbox");
 
     const inboxSection = page.getByTestId("cross-project-hitl-inbox");
 
@@ -111,7 +109,7 @@ test.describe("M17 HITL hybrid-surface: cross-project inbox + inline response", 
   test("HITL inbox blocks are styled with criticality-driven visual hierarchy", async ({
     page,
   }) => {
-    await page.goto("/");
+    await page.goto("/inbox");
 
     const inboxSection = page.getByTestId("cross-project-hitl-inbox");
 
@@ -175,7 +173,7 @@ test.describe("M17 HITL hybrid-surface: cross-project inbox + inline response", 
     await page.waitForLoadState("networkidle");
 
     // Verify we can navigate back to the inbox and the count reflects the change
-    await page.goto("/");
+    await page.goto("/inbox");
     const inboxSection = page.getByTestId("cross-project-hitl-inbox");
 
     // The inbox should still be visible; the count updates via SSE/refresh
