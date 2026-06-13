@@ -325,7 +325,9 @@ export default async function ProjectBoardPage({
                 apply: tLog("apply"),
                 pagePrev: tLog("pagePrev"),
                 pageNext: tLog("pageNext"),
-                pageInfo: tLog("pageInfo"),
+                // Raw template: TaskActivityLog interpolates {page}/{pages}
+                // client-side, so the server must not format it eagerly.
+                pageInfo: tLog.raw("pageInfo"),
                 formerUser: tLog("formerUser"),
                 system: tLog("system"),
                 eventKind: {
