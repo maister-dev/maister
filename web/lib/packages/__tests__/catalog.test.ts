@@ -124,3 +124,62 @@ describe("staleness filter (startup debounce)", () => {
     ).toBe(24);
   });
 });
+
+describe("defaultPackageSourceUrls (default-source env parse)", () => {
+  it("returns the built-in default list when the env is unset", async () => {
+    const { defaultPackageSourceUrls, DEFAULT_PACKAGE_SOURCE_URLS } =
+      await import("@/lib/packages/catalog");
+
+    expect(defaultPackageSourceUrls({} as NodeJS.ProcessEnv)).toEqual(
+      DEFAULT_PACKAGE_SOURCE_URLS,
+    );
+  });
+
+  it("parses a CSV list and trims surrounding whitespace", async () => {
+    const { defaultPackageSourceUrls } = await import("@/lib/packages/catalog");
+
+    expect(
+      defaultPackageSourceUrls({
+        MAISTER_DEFAULT_PACKAGE_SOURCES:
+          " https://a.example/x , https://b.example/y ",
+      } as unknown as NodeJS.ProcessEnv),
+    ).toEqual(["https://a.example/x", "https://b.example/y"]);
+  });
+
+  it("de-duplicates repeated urls", async () => {
+    const { defaultPackageSourceUrls } = await import("@/lib/packages/catalog");
+
+    expect(
+      defaultPackageSourceUrls({
+        MAISTER_DEFAULT_PACKAGE_SOURCES:
+          "https://a.example/x,https://a.example/x",
+      } as unknown as NodeJS.ProcessEnv),
+    ).toEqual(["https://a.example/x"]);
+  });
+
+  it("treats an empty or whitespace-only value as opt-out", async () => {
+    const { defaultPackageSourceUrls } = await import("@/lib/packages/catalog");
+
+    expect(
+      defaultPackageSourceUrls({
+        MAISTER_DEFAULT_PACKAGE_SOURCES: "",
+      } as unknown as NodeJS.ProcessEnv),
+    ).toEqual([]);
+    expect(
+      defaultPackageSourceUrls({
+        MAISTER_DEFAULT_PACKAGE_SOURCES: "   ",
+      } as unknown as NodeJS.ProcessEnv),
+    ).toEqual([]);
+  });
+
+  it("drops blank entries among valid ones", async () => {
+    const { defaultPackageSourceUrls } = await import("@/lib/packages/catalog");
+
+    expect(
+      defaultPackageSourceUrls({
+        MAISTER_DEFAULT_PACKAGE_SOURCES:
+          "https://a.example/x,,  ,https://b.example/y",
+      } as unknown as NodeJS.ProcessEnv),
+    ).toEqual(["https://a.example/x", "https://b.example/y"]);
+  });
+});

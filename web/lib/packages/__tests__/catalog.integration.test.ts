@@ -13,13 +13,14 @@ import { eq } from "drizzle-orm";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool } from "pg";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import {
   createPackageSource,
   deletePackageSource,
+  ensureDefaultPackageSources,
   refreshPackageSource,
   updatePackageSource,
 } from "@/lib/packages/catalog";
@@ -200,5 +201,71 @@ describe("package source catalog (integration)", () => {
       .delete(schema.projectPackageAttachments)
       .where(eq(schema.projectPackageAttachments.packageInstallId, installId));
     expect((await deletePackageSource({ id, db })).deleted).toBe(true);
+  });
+});
+
+describe("ensureDefaultPackageSources (default-source ensure)", () => {
+  const urls = [
+    "https://github.com/test-ensure/alpha",
+    "https://github.com/test-ensure/beta",
+  ];
+  const soloUrl = "https://github.com/test-ensure/gamma";
+
+  async function rowsFor(targetUrls: string[]) {
+    const all = await db.select().from(schema.packageSources);
+
+    return all.filter((r) => targetUrls.includes(r.url));
+  }
+
+  afterEach(async () => {
+    for (const url of [...urls, soloUrl]) {
+      await db
+        .delete(schema.packageSources)
+        .where(eq(schema.packageSources.url, url));
+    }
+  });
+
+  it("inserts each url enabled with a null note on an empty table", async () => {
+    const result = await ensureDefaultPackageSources({ db, urls });
+
+    expect(result).toEqual({ created: 2, skipped: 0 });
+
+    const rows = await rowsFor(urls);
+
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      expect(row.enabled).toBe(true);
+      expect(row.note).toBeNull();
+    }
+  });
+
+  it("is idempotent: a second call skips, no duplicates, no throw", async () => {
+    await ensureDefaultPackageSources({ db, urls });
+    const second = await ensureDefaultPackageSources({ db, urls });
+
+    expect(second).toEqual({ created: 0, skipped: 2 });
+    expect(await rowsFor(urls)).toHaveLength(2);
+  });
+
+  it("never re-enables an admin-disabled default row", async () => {
+    await ensureDefaultPackageSources({ db, urls: [soloUrl] });
+    const [seeded] = await rowsFor([soloUrl]);
+
+    await updatePackageSource({ id: seeded.id, enabled: false, db });
+
+    const result = await ensureDefaultPackageSources({ db, urls: [soloUrl] });
+
+    expect(result).toEqual({ created: 0, skipped: 1 });
+
+    const [row] = await rowsFor([soloUrl]);
+
+    expect(row.enabled).toBe(false);
+  });
+
+  it("ensures nothing when the url list is empty (opt-out)", async () => {
+    const result = await ensureDefaultPackageSources({ db, urls: [] });
+
+    expect(result).toEqual({ created: 0, skipped: 0 });
+    expect(await rowsFor(urls)).toHaveLength(0);
   });
 });
