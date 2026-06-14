@@ -828,6 +828,8 @@
     "pkgSourceUrl": "Git monorepo URL",
     "pkgSourceNote": "Note",
     "pkgSourceEnabled": "Enabled",
+    "pkgSourceBuiltIn": "Built-in",
+    "pkgSourceBuiltInHint": "Preinstalled default source (MAISTER_DEFAULT_PACKAGE_SOURCES). You can still disable or delete it.",
     "pkgSourceDeleteConfirm": "Delete this source? Attached installs block deletion.",
     "pkgSourcesEmpty": "No package sources configured. Add a maister-plugins style git monorepo to discover packages.",
     "pkgColUrl": "Source",

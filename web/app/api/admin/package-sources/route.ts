@@ -6,6 +6,7 @@ import { z } from "zod";
 import { requireGlobalRole } from "@/lib/authz";
 import {
   createPackageSource,
+  defaultPackageSourceUrls,
   listPackageSources,
 } from "@/lib/packages/catalog";
 import { packageErrorResponse } from "@/lib/packages/http";
@@ -21,7 +22,10 @@ const createBodySchema = z
   })
   .strict();
 
-function sourceDto(row: Record<string, unknown>): Record<string, unknown> {
+function sourceDto(
+  row: Record<string, unknown>,
+  builtInUrls: Set<string>,
+): Record<string, unknown> {
   return {
     id: row.id,
     url: row.url,
@@ -29,6 +33,7 @@ function sourceDto(row: Record<string, unknown>): Record<string, unknown> {
     note: row.note ?? null,
     discovered: row.discovered ?? [],
     lastCheckedAt: row.lastCheckedAt ?? null,
+    builtIn: builtInUrls.has(row.url as string),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -38,8 +43,11 @@ export async function GET(): Promise<NextResponse> {
   try {
     await requireGlobalRole("admin");
     const sources = await listPackageSources();
+    const builtInUrls = new Set(defaultPackageSourceUrls());
 
-    return NextResponse.json({ sources: sources.map(sourceDto) });
+    return NextResponse.json({
+      sources: sources.map((row) => sourceDto(row, builtInUrls)),
+    });
   } catch (err) {
     return packageErrorResponse(err, "admin/package-sources GET");
   }

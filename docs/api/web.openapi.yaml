@@ -10860,7 +10860,7 @@ components:
       description: |
         (ADR-088 — Implemented) A `package_sources` row with the cached
         discovery snapshot. Discovery failures keep the stale snapshot.
-      required: [id, url, enabled, discovered, lastCheckedAt, createdAt, updatedAt]
+      required: [id, url, enabled, discovered, lastCheckedAt, builtIn, createdAt, updatedAt]
       properties:
         id: { type: string }
         url: { type: string, description: "Git monorepo URL (packages/<name>/ layout)." }
@@ -10870,6 +10870,12 @@ components:
           type: array
           items: { $ref: "#/components/schemas/DiscoveredPackage" }
         lastCheckedAt: { type: string, format: date-time, nullable: true }
+        builtIn:
+          type: boolean
+          description: >-
+            True when the source URL is a built-in default (member of
+            MAISTER_DEFAULT_PACKAGE_SOURCES, ensured at boot). Surfaced as the
+            localized "Built-in" badge; does not block disable/delete.
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
 

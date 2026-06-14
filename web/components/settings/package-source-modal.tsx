@@ -12,6 +12,7 @@ export interface PackageSourceRow {
   note: string | null;
   discovered: Array<{ name: string; dir: string; tags: string[] }>;
   lastCheckedAt: string | null;
+  builtIn: boolean;
 }
 
 export interface PackageSourceModalProps {

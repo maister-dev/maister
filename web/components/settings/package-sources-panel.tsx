@@ -144,6 +144,14 @@ export function PackageSourcesPanel({
                 <tr key={source.id} className="border-b border-line/60">
                   <td className="break-all px-4 py-3 font-mono text-[12.5px] text-ink">
                     {source.url}
+                    {source.builtIn ? (
+                      <span
+                        className="ml-2 inline-block rounded-full border border-line bg-ivory px-2 py-0.5 align-middle font-mono text-[10px] uppercase tracking-[0.08em] text-mute"
+                        title={t("pkgSourceBuiltInHint")}
+                      >
+                        {t("pkgSourceBuiltIn")}
+                      </span>
+                    ) : null}
                     {source.note ? (
                       <span className="block text-[11px] text-mute">
                         {source.note}

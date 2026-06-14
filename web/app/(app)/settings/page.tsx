@@ -29,6 +29,7 @@ import {
   reposRoot,
   worktreesRoot,
 } from "@/lib/instance-config";
+import { defaultPackageSourceUrls } from "@/lib/packages/catalog";
 import { checkSupervisorDiagnostics } from "@/lib/supervisor-client";
 
 export async function generateMetadata(): Promise<Metadata> {
@@ -176,6 +177,8 @@ async function loadPlatformRuntimeView() {
     db.select().from(projects),
   ]);
 
+  const builtInUrls = new Set(defaultPackageSourceUrls());
+
   return {
     adapters: getAdapterSupport(),
     defaultRunnerId: settingsRows[0]?.defaultRunnerId ?? null,
@@ -214,6 +217,7 @@ async function loadPlatformRuntimeView() {
       note: s.note ?? null,
       discovered: s.discovered ?? [],
       lastCheckedAt: s.lastCheckedAt ? s.lastCheckedAt.toISOString() : null,
+      builtIn: builtInUrls.has(s.url),
     })),
     packageInstalls: pkgInstalls.map((i: any) => ({
       id: i.id,

@@ -828,6 +828,8 @@
     "pkgSourceUrl": "URL git-монорепозитория",
     "pkgSourceNote": "Заметка",
     "pkgSourceEnabled": "Включён",
+    "pkgSourceBuiltIn": "Встроенный",
+    "pkgSourceBuiltInHint": "Предустановленный источник по умолчанию (MAISTER_DEFAULT_PACKAGE_SOURCES). Его можно отключить или удалить.",
     "pkgSourceDeleteConfirm": "Удалить источник? Подключённые установки блокируют удаление.",
     "pkgSourcesEmpty": "Источники пакетов не настроены. Добавьте git-монорепозиторий в стиле maister-plugins, чтобы обнаружить пакеты.",
     "pkgColUrl": "Источник",

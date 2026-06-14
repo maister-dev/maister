@@ -26,6 +26,7 @@ const source: PackageSourceRow = {
     { name: "core", dir: "core", tags: [] },
   ],
   lastCheckedAt: "2026-06-12T10:00:00.000Z",
+  builtIn: true,
 };
 
 const install: PackageInstallRow = {
@@ -50,6 +51,7 @@ describe("PackageSourcesPanel", () => {
 
     expect(markup).toContain("pkgSourcesTitle");
     expect(markup).toContain("github.com/org/maister-plugins");
+    expect(markup).toContain("pkgSourceBuiltIn");
     expect(markup).toContain("pkgRefresh");
     expect(markup).toContain("pkgCatalogTitle");
     // Installed tag renders as installed (disabled), not an install action.
@@ -71,5 +73,24 @@ describe("PackageSourcesPanel", () => {
     expect(markup).toContain("pkgSourcesEmpty");
     expect(markup).toContain("pkgInstallsEmpty");
     expect(markup).not.toContain("pkgCatalogTitle");
+  });
+
+  it("shows the Built-in badge only for builtIn sources", () => {
+    const external: PackageSourceRow = {
+      ...source,
+      id: "src-external",
+      url: "github.com/acme/other-plugins",
+      builtIn: false,
+    };
+    const markup = renderToStaticMarkup(
+      createElement(PackageSourcesPanel, {
+        sources: [source, external],
+        installs: [],
+      }),
+    );
+
+    // The hint token is unique (the label "pkgSourceBuiltIn" is also a prefix
+    // of it), so count the hint to assert exactly one badge rendered.
+    expect(markup.match(/pkgSourceBuiltInHint/g) ?? []).toHaveLength(1);
   });
 });
