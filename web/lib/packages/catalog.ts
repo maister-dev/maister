@@ -11,6 +11,7 @@ import { promisify } from "node:util";
 
 import { eq } from "drizzle-orm";
 import pino from "pino";
+import { z } from "zod";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -354,6 +355,78 @@ export function discoveryStaleHours(
   const parsed = raw === undefined ? NaN : Number.parseInt(raw, 10);
 
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_STALE_HOURS;
+}
+
+// Built-in default package source(s) preinstalled on boot (ADR-088). A
+// monorepo like maister-plugins is ONE source — discovery scans packages/*
+// inside it and surfaces every package it ships.
+export const DEFAULT_PACKAGE_SOURCE_URLS = [
+  "https://github.com/kanischev/maister-plugins",
+];
+
+const sourceUrlSchema = z.string().min(1).max(512);
+
+// Comma-separated env list of default package-source URLs, mirroring
+// trustedPrefixes() in lib/flows/trust.ts:
+//   unset           -> the built-in default list
+//   set (any value) -> parsed list; "" / whitespace => empty (operator opt-out)
+// Entries are trimmed, blanks dropped, and de-duplicated.
+export function defaultPackageSourceUrls(
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  const raw = env.MAISTER_DEFAULT_PACKAGE_SOURCES;
+
+  if (raw === undefined) return [...DEFAULT_PACKAGE_SOURCE_URLS];
+
+  return [
+    ...new Set(
+      raw
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter(Boolean),
+    ),
+  ];
+}
+
+// Insert-only, idempotent boot-time ensure of the default package-source
+// row(s). NEVER re-enables or edits an existing row (onConflictDoNothing on the
+// `url` unique index) — an admin who disabled/edited a default source is
+// honored. Distinct from createPackageSource(): an existing url is the SKIP
+// path, never a CONFLICT throw. Invalid urls are dropped with a redacted WARN.
+export async function ensureDefaultPackageSources(opts?: {
+  db?: any;
+  urls?: string[];
+}): Promise<{ created: number; skipped: number }> {
+  const db = opts?.db ?? getDb();
+  const urls = opts?.urls ?? defaultPackageSourceUrls();
+
+  let created = 0;
+  let skipped = 0;
+
+  for (const url of urls) {
+    if (!sourceUrlSchema.safeParse(url).success) {
+      log.warn(
+        { url: redactUrl(url) },
+        "default package source url invalid — skipped",
+      );
+      continue;
+    }
+
+    log.debug({ url: redactUrl(url) }, "ensuring default package source");
+
+    const inserted = await db
+      .insert(packageSources)
+      .values({ id: randomUUID(), url, note: null, enabled: true })
+      .onConflictDoNothing()
+      .returning({ id: packageSources.id });
+
+    if (inserted.length > 0) created += 1;
+    else skipped += 1;
+  }
+
+  log.info({ created, skipped }, "default package sources ensured");
+
+  return { created, skipped };
 }
 
 // Pure staleness filter (unit-tested): enabled sources never checked or

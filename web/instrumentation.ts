@@ -67,12 +67,18 @@ export async function register(): Promise<void> {
 
   startSchedulerTimer();
 
-  // ADR-088: fire-and-forget package-discovery debounce — refresh enabled
-  // package sources whose snapshot is older than
-  // MAISTER_PACKAGE_DISCOVERY_STALE_HOURS (default 24). Sequential,
+  // ADR-088: fire-and-forget package bootstrap — first ensure the env-driven
+  // default package source row(s) exist (insert-only, idempotent, honors admin
+  // disable; MAISTER_DEFAULT_PACKAGE_SOURCES), then refresh enabled sources
+  // whose snapshot is older than MAISTER_PACKAGE_DISCOVERY_STALE_HOURS
+  // (default 24). Ensuring before the sweep lets freshly-seeded rows
+  // (lastCheckedAt === null) be picked up on the same boot. Sequential,
   // per-source try/catch; failures degrade to the cached snapshot.
   void import("@/lib/packages/catalog")
-    .then(({ refreshStaleSources }) => refreshStaleSources())
+    .then(async ({ ensureDefaultPackageSources, refreshStaleSources }) => {
+      await ensureDefaultPackageSources();
+      await refreshStaleSources();
+    })
     .catch((err) => {
       // eslint-disable-next-line no-console
       console.error(
