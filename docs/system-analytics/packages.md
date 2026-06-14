@@ -18,6 +18,12 @@ versions, and the `maister.yaml packages[]` bootstrap + write-back contract
 
 - **Package source** — a configured git monorepo URL (`package_sources` row,
   platform scope): enabled flag, cached `discovered` snapshot, `last_checked_at`.
+- **Default package source** — a `package_sources` row ensured at web boot from
+  `MAISTER_DEFAULT_PACKAGE_SOURCES` (unset → the built-in maister-plugins github
+  repo; see [`../configuration.md`](../configuration.md)). Insert-only and
+  idempotent; an admin disable/delete of a default row is honored on later boots.
+  Carries a localized "Built-in" badge in `/settings` (URL exact-match against
+  the env list; `note` stays null — no DB text).
 - **Discovered package** — a `packages/<name>/maister-package.yaml` found in a
   source's default branch, plus its `<name>/vX.Y.Z` tags (cached jsonb on the
   source row; not separately persisted).
@@ -76,9 +82,12 @@ sequenceDiagram
     end
 ```
 
-The startup path runs the same refresh for enabled sources whose
+The startup path first ensures the env-driven default source row(s)
+(`MAISTER_DEFAULT_PACKAGE_SOURCES`, insert-only and idempotent — see
+Expectations), then runs the same refresh for enabled sources whose
 `last_checked_at` is null or older than `MAISTER_PACKAGE_DISCOVERY_STALE_HOURS`
-(default 24), sequentially, fire-and-forget.
+(default 24), sequentially, fire-and-forget. Freshly-seeded default rows (null
+`last_checked_at`) are therefore swept on the same boot.
 
 ### Install + attach
 
@@ -164,6 +173,11 @@ sequenceDiagram
   revisions (ADR-021 pinning contract unchanged).
 - Per-source discovery failure MUST degrade to the cached `discovered`
   snapshot with a WARN and never block the catalog surface.
+- The web-boot default-source ensure MUST insert each
+  `MAISTER_DEFAULT_PACKAGE_SOURCES` URL (unset → the built-in default) as a
+  `package_sources` row only when absent (insert-only on the `url` unique
+  index), MUST NEVER re-enable or edit an existing row, and MUST ensure nothing
+  when the value is empty (opt-out); a seeded row's `note` MUST be null.
 - MCP templates and restriction records ingested on attach MUST be removed on
   detach only for rows the detached install owns (`material.packageInstallId`)
   and recreated on re-attach (SET / CLEAR / re-SET symmetric).
