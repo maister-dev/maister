@@ -401,6 +401,38 @@
     "notifKind": {
       "commentAdded": "комментарий",
       "taskMentioned": "упоминание"
+    },
+    "railStatus": {
+      "Running": "Выполняется",
+      "WaitingForUser": "Ожидает вас",
+      "HumanWorking": "Работает человек",
+      "NeedsInput": "Нужен ввод",
+      "NeedsInputIdle": "Нужен ввод · ожидание",
+      "Review": "На проверке",
+      "Crashed": "Сбой",
+      "Abandoned": "Заброшено",
+      "Done": "Готово"
+    },
+    "runnerField": {
+      "agent": "Агент",
+      "model": "Модель",
+      "adapter": "Адаптер",
+      "provider": "Провайдер",
+      "sidecar": "Сайдкар"
+    },
+    "chip": {
+      "flowAria": "Флоу {flow}",
+      "issueAria": "Открыть задачу {key}",
+      "runnerAria": "Раннер {runner}"
+    },
+    "rename": {
+      "action": "Переименовать",
+      "title": "Переименовать рабочую область",
+      "placeholder": "Название рабочей области",
+      "confirm": "Сохранить",
+      "busy": "Сохранение…",
+      "cancel": "Отмена",
+      "error": "Не удалось переименовать"
     }
   },
   "observatory": {
@@ -1578,6 +1610,13 @@
       "drop": "Удалить",
       "snapshotCommit": "Коммит",
       "exportBranch": "Экспорт"
+    },
+    "tooltip": {
+      "stop": "Остановить запуск",
+      "archive": "Архивировать рабочую область",
+      "drop": "Удалить рабочую область",
+      "snapshotCommit": "Зафиксировать снимок рабочего дерева",
+      "exportBranch": "Отправить ветку в удалённый репозиторий"
     },
     "defaultCommitMessage": "maister: export {runId}",
     "busy": "{action}…",

@@ -401,6 +401,38 @@
     "notifKind": {
       "commentAdded": "comment",
       "taskMentioned": "mention"
+    },
+    "railStatus": {
+      "Running": "Running",
+      "WaitingForUser": "Waiting for you",
+      "HumanWorking": "Human working",
+      "NeedsInput": "Needs input",
+      "NeedsInputIdle": "Needs input · idle",
+      "Review": "Review",
+      "Crashed": "Crashed",
+      "Abandoned": "Abandoned",
+      "Done": "Done"
+    },
+    "runnerField": {
+      "agent": "Agent",
+      "model": "Model",
+      "adapter": "Adapter",
+      "provider": "Provider",
+      "sidecar": "Sidecar"
+    },
+    "chip": {
+      "flowAria": "Flow {flow}",
+      "issueAria": "Open task {key}",
+      "runnerAria": "Runner {runner}"
+    },
+    "rename": {
+      "action": "Rename",
+      "title": "Rename workspace",
+      "placeholder": "Workspace name",
+      "confirm": "Save",
+      "busy": "Saving…",
+      "cancel": "Cancel",
+      "error": "Rename failed"
     }
   },
   "observatory": {
@@ -1578,6 +1610,13 @@
       "drop": "Drop",
       "snapshotCommit": "Commit",
       "exportBranch": "Export"
+    },
+    "tooltip": {
+      "stop": "Stop the run",
+      "archive": "Archive the workspace",
+      "drop": "Drop the workspace",
+      "snapshotCommit": "Commit a snapshot of the working tree",
+      "exportBranch": "Push branch to remote"
     },
     "defaultCommitMessage": "maister: export {runId}",
     "busy": "{action}…",

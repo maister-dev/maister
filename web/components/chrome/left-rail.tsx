@@ -1,3 +1,4 @@
+import type { ActiveWorkspaceRowLabels } from "@/components/chrome/active-workspace-row";
 import type {
   AdapterReadinessCause,
   AdapterReadinessSummary,
@@ -11,9 +12,9 @@ import { getLocale, getTranslations } from "next-intl/server";
 import Link from "next/link";
 import clsx from "clsx";
 
+import { ActiveWorkspaceRow } from "@/components/chrome/active-workspace-row";
 import { LaunchHotkeyHint } from "@/components/chrome/launch-hotkey-hint";
 import { ScratchLaunchPopover } from "@/components/chrome/scratch-launch-popover";
-import { WorkbenchLifecycleActions } from "@/components/workbench/lifecycle-actions";
 
 // Coarse relative-time copy for the GC removal countdown. Picks the largest unit
 // (days → hours → minutes) and uses Intl.RelativeTimeFormat so EN/RU phrasing
@@ -127,17 +128,14 @@ const dotByStatus: Record<WorkspaceStatus, string> = {
   done: "bg-accent-4 opacity-[0.55]",
 };
 
-const dotByTone: Record<
-  RailWorkspaceGroup["workspaces"][number]["statusTone"],
-  string
-> = {
-  running: "bg-accent-4 animate-[pulse-dot_2.2s_ease-out_infinite]",
-  waiting: "bg-amber",
-  needs: "bg-amber",
-  human: "bg-ink-2",
-  review: "bg-accent-2",
-  crashed: "bg-danger",
-};
+// Run states that surface a status word inline next to the name (the rest keep
+// the word in the dot's title/aria-label only). Mirrors the design tone table.
+const ATTENTION_LABELS = new Set([
+  "NeedsInput",
+  "NeedsInputIdle",
+  "Review",
+  "Crashed",
+]);
 
 export async function LeftRail({
   activeSection = "projects",
@@ -160,6 +158,70 @@ export async function LeftRail({
   const visibleAdapters = runnersReadiness.filter(
     (item) => item.state !== "hidden",
   );
+
+  function buildLabels(
+    ws: RailWorkspaceGroup["workspaces"][number],
+  ): ActiveWorkspaceRowLabels {
+    const rd = ws.runnerDetail;
+    const issueLabel =
+      ws.taskKey && ws.taskNumber !== null
+        ? `${ws.taskKey}-${ws.taskNumber}`
+        : null;
+    const runnerTooltip = rd
+      ? [
+          `${tPortfolio("runnerField.agent")}: ${rd.agent}`,
+          `${tPortfolio("runnerField.model")}: ${rd.model}`,
+          `${tPortfolio("runnerField.adapter")}: ${rd.adapter}`,
+          `${tPortfolio("runnerField.provider")}: ${rd.provider}`,
+          ...(rd.sidecar
+            ? [`${tPortfolio("runnerField.sidecar")}: ${rd.sidecar}`]
+            : []),
+        ].join(" · ")
+      : null;
+    const ttlActive = ws.ttlState === "active";
+
+    return {
+      statusWord: tPortfolio(`railStatus.${ws.statusLabel}`),
+      attention: ATTENTION_LABELS.has(ws.statusLabel),
+      flowLabel: ws.flowRefLabel,
+      flowTooltip: ws.flowRefLabel
+        ? ws.flowVersion
+          ? `${ws.flowRefLabel} · ${ws.flowVersion}`
+          : ws.flowRefLabel
+        : null,
+      flowAria: ws.flowRefLabel
+        ? tPortfolio("chip.flowAria", { flow: ws.flowRefLabel })
+        : null,
+      runnerLabel: rd ? rd.model : null,
+      runnerTooltip,
+      runnerAria: rd
+        ? tPortfolio("chip.runnerAria", { runner: rd.model })
+        : null,
+      issueLabel,
+      issueAria: issueLabel
+        ? tPortfolio("chip.issueAria", { key: issueLabel })
+        : null,
+      ttlTone: ttlActive ? null : ws.ttlState === "due" ? "due" : "warning",
+      ttlLabel: ttlActive
+        ? null
+        : ws.ttlState === "due"
+          ? tGc("ttl.due")
+          : tGc("ttl.warning"),
+      ttlCountdown:
+        !ttlActive && ws.effectiveRemovalAt
+          ? countdownText(locale, ws.effectiveRemovalAt, nowMs)
+          : null,
+      archivedLabel: ws.archived ? tGc("archived") : null,
+      rename: {
+        action: tPortfolio("rename.action"),
+        placeholder: tPortfolio("rename.placeholder"),
+        confirm: tPortfolio("rename.confirm"),
+        cancel: tPortfolio("rename.cancel"),
+        busy: tPortfolio("rename.busy"),
+        error: tPortfolio("rename.error"),
+      },
+    };
+  }
 
   // `ready: false` sections are documented M9 deferrals (no route yet). They
   // render as non-navigating "coming soon" items so they never 404 — matching
@@ -309,95 +371,7 @@ export async function LeftRail({
                 <ul className="flex list-none flex-col gap-0.5">
                   {group.workspaces.map((ws) => (
                     <li key={ws.runId}>
-                      <Link
-                        className="relative grid cursor-pointer grid-cols-[12px_1fr_auto] items-center gap-2 rounded-lg px-2.5 py-2 transition-colors hover:bg-ivory"
-                        href={ws.href}
-                        title={`Open ${ws.name} · ${ws.executorLabel}`}
-                      >
-                        <span
-                          className={clsx(
-                            "h-2 w-2 rounded-full",
-                            dotByTone[ws.statusTone],
-                          )}
-                        />
-                        <div className="flex min-w-0 flex-col gap-px">
-                          <code className="truncate font-mono text-[11.5px] font-semibold tracking-[-0.005em] text-ink">
-                            {ws.name}
-                          </code>
-                          <span className="truncate font-mono text-[10px] tracking-[0.02em] text-mute">
-                            {ws.statusLabel} · {ws.runKind} · {ws.executorLabel}
-                            {ws.launchedBy ? ` · ${ws.launchedBy}` : ""}
-                          </span>
-                        </div>
-                        <span
-                          className={clsx(
-                            "font-mono text-[10px] tracking-[0.04em]",
-                            ws.statusTone === "needs" ||
-                              ws.statusTone === "waiting"
-                              ? "font-semibold text-amber"
-                              : "text-mute-2",
-                          )}
-                        >
-                          {ws.time}
-                        </span>
-                      </Link>
-                      {ws.ttlState !== "active" || ws.archived ? (
-                        <div className="mb-1 flex flex-wrap items-center gap-1 px-2.5">
-                          {ws.ttlState !== "active" ? (
-                            <span
-                              className={clsx(
-                                "inline-flex items-center gap-1 rounded-full border px-1.5 py-px font-mono text-[9px] font-bold uppercase tracking-[0.06em]",
-                                ws.ttlState === "due"
-                                  ? "border-red-300 bg-red-50 text-red-600 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-400"
-                                  : "border-amber-line bg-amber-soft text-amber",
-                              )}
-                              data-testid="ttl-badge"
-                              data-ttl-state={ws.ttlState}
-                            >
-                              <span
-                                className={clsx(
-                                  "h-[5px] w-[5px] rounded-full",
-                                  ws.ttlState === "due"
-                                    ? "bg-red-500"
-                                    : "bg-amber",
-                                )}
-                              />
-                              {ws.ttlState === "due"
-                                ? tGc("ttl.due")
-                                : tGc("ttl.warning")}
-                              {ws.effectiveRemovalAt ? (
-                                <span
-                                  suppressHydrationWarning
-                                  className="font-normal normal-case tracking-normal"
-                                >
-                                  ·{" "}
-                                  {countdownText(
-                                    locale,
-                                    ws.effectiveRemovalAt,
-                                    nowMs,
-                                  )}
-                                </span>
-                              ) : null}
-                            </span>
-                          ) : null}
-                          {ws.archived ? (
-                            <span
-                              className="inline-flex items-center rounded-full border border-line bg-ivory px-1.5 py-px font-mono text-[9px] font-bold uppercase tracking-[0.06em] text-mute"
-                              data-testid="ttl-archived"
-                            >
-                              {tGc("archived")}
-                            </span>
-                          ) : null}
-                        </div>
-                      ) : null}
-                      {ws.lifecycleActions.length > 0 ? (
-                        <WorkbenchLifecycleActions
-                          actions={ws.lifecycleActions}
-                          className="mb-1 px-2.5"
-                          runId={ws.runId}
-                          runKind={ws.runKind}
-                        />
-                      ) : null}
+                      <ActiveWorkspaceRow labels={buildLabels(ws)} row={ws} />
                     </li>
                   ))}
                 </ul>
