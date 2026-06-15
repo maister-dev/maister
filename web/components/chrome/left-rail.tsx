@@ -14,6 +14,7 @@ import clsx from "clsx";
 
 import { ActiveWorkspaceRow } from "@/components/chrome/active-workspace-row";
 import { LaunchHotkeyHint } from "@/components/chrome/launch-hotkey-hint";
+import { RailCollapse } from "@/components/chrome/rail-collapse";
 import { ScratchLaunchPopover } from "@/components/chrome/scratch-launch-popover";
 
 // Coarse relative-time copy for the GC removal countdown. Picks the largest unit
@@ -268,9 +269,9 @@ export async function LeftRail({
   }
 
   return (
-    <aside
-      aria-label="Sections & active workspaces"
-      className="sticky top-[60px] z-[100] hidden h-[calc(100vh-60px-56px)] flex-col gap-3.5 self-start overflow-x-hidden border-r border-line bg-paper px-3.5 pb-0 pt-3.5 md:flex"
+    <RailCollapse
+      collapseLabel={tNav("collapseRail")}
+      expandLabel={tNav("expandRail")}
     >
       <nav
         aria-label="Sections"
@@ -469,6 +470,6 @@ export async function LeftRail({
             : tPortfolio("launchUnavailableHint")}
         </div>
       </div>
-    </aside>
+    </RailCollapse>
   );
 }

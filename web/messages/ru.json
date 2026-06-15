@@ -120,7 +120,9 @@
     "members": "Участники",
     "webhooks": "Вебхуки",
     "crumbProjects": "~/projects",
-    "comingSoon": "Скоро"
+    "comingSoon": "Скоро",
+    "collapseRail": "Свернуть панель",
+    "expandRail": "Развернуть панель"
   },
   "studio": {
     "title": "Студия",

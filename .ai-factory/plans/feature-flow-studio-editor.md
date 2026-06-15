@@ -78,7 +78,7 @@ No new request-derived locators. The editor route `/flows/{projectSlug}/{capId}`
   - Test: a unit test on the edge-style function (outcome → `{ animated/dashed, strokeColor }`).
   - Verify: vitest green; manual: rework edge renders dashed/amber.
 
-- [ ] **T1.3 — Hideable app rail.**
+- [x] **T1.3 — Hideable app rail.**
   - Files — Modify: `web/components/chrome/left-rail.tsx` (+ the app layout that sizes it).
   - Do: add a collapsed state (persisted to `localStorage`, default expanded) + a toggle button; collapsed shows icons-only (or hidden) so the editor canvas gets width. No collapse machinery exists today — add `useState` + an effect to read/write `localStorage`, and a width/`hidden` class switch.
   - Logging: `console.debug("[leftRail] toggle", { collapsed })`.
