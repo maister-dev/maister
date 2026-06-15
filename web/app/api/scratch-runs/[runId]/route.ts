@@ -29,7 +29,7 @@ const log = pino({
 
 type RouteParams = { params: Promise<{ runId: string }> };
 // FIXME(any): route tests use a minimal drizzle-like fake DB.
-type Db = { select: any };
+type Db = { select: any; update: any };
 type ScratchWorkspaceRow = {
   id?: string;
   branch: string;
@@ -100,7 +100,7 @@ function errorResponse(err: unknown): NextResponse {
   }
   const message = err instanceof Error ? err.message : String(err);
 
-  log.error({ err: message }, "GET /api/scratch-runs/[runId] error");
+  log.error({ err: message }, "/api/scratch-runs/[runId] error");
 
   return NextResponse.json(
     { code: "CRASH", message: "internal error" },
@@ -334,6 +334,51 @@ export async function GET(
           }
         : null,
     });
+  } catch (err) {
+    return errorResponse(err);
+  }
+}
+
+export async function PATCH(
+  req: Request,
+  { params }: RouteParams,
+): Promise<NextResponse> {
+  const { runId } = await params;
+
+  try {
+    await requireActiveSession();
+
+    const db = getDb() as unknown as Db;
+    // projectId is server-state (resolved from the run row), never a body
+    // field. loadScratchRun also enforces the scratch-only guard: a missing
+    // or non-scratch run throws PRECONDITION (409).
+    const { run } = await loadScratchRun(db, runId);
+    const projectId = run.projectId as string;
+
+    await requireProjectAction(projectId, "renameScratchRun");
+
+    // name is body-controlled: validated for shape only (trimmed, 1..200,
+    // non-empty) and written through a parameterized UPDATE — never used as a
+    // path component or interpolated into SQL.
+    const body = (await req.json().catch(() => ({}))) as { name?: unknown };
+
+    if (typeof body.name !== "string") {
+      throw new MaisterError("CONFIG", "name is required");
+    }
+    const name = body.name.trim();
+
+    if (name.length < 1 || name.length > 200) {
+      throw new MaisterError("CONFIG", "name must be 1 to 200 characters");
+    }
+
+    await db
+      .update(scratchRuns)
+      .set({ name })
+      .where(eq(scratchRuns.runId, runId));
+
+    log.info({ runId, projectId }, "scratch run renamed");
+
+    return NextResponse.json({ ok: true, name });
   } catch (err) {
     return errorResponse(err);
   }

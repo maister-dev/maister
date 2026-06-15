@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import {
   hitlRequests as hitlRequestsTable,
   runs as runsTable,
@@ -9,6 +10,7 @@ import {
   scratchRuns as scratchRunsTable,
   workspaces as workspacesTable,
 } from "@/lib/db/schema";
+import { MaisterError } from "@/lib/errors";
 
 type Row = Record<string, unknown>;
 type Tables = {
@@ -50,6 +52,15 @@ const fakeDb = {
   select: () => ({
     from: (table: unknown) => ({
       where: async () => dbState.tables[tableOf(table)],
+    }),
+  }),
+  update: (table: unknown) => ({
+    set: (values: Row) => ({
+      where: async () => {
+        for (const row of dbState.tables[tableOf(table)]) {
+          Object.assign(row, values);
+        }
+      },
     }),
   }),
 };
@@ -248,5 +259,133 @@ describe("GET /api/scratch-runs/[runId]", () => {
         ".maister/demo/runs/scratch-get-run/uploads/launch/notes.txt",
     });
     expect(body.attachments[0]).not.toHaveProperty("storagePath");
+  });
+});
+
+describe("PATCH /api/scratch-runs/[runId]", () => {
+  beforeEach(() => {
+    vi.mocked(requireActiveSession).mockClear();
+    vi.mocked(requireProjectAction).mockClear();
+  });
+
+  function seedScratchForRename(name = "Old name"): string {
+    const runId = "scratch-patch-run";
+
+    dbState.tables.runs = [
+      { id: runId, projectId: "project-1", runKind: "scratch", status: "Running" },
+    ];
+    dbState.tables.scratch_runs = [{ runId, name, dialogStatus: "Running" }];
+
+    return runId;
+  }
+
+  async function patch(
+    runId: string,
+    body: unknown,
+  ): Promise<{ status: number; json: { ok?: boolean; name?: string; code?: string } }> {
+    const { PATCH } = await import("../route");
+    const res = await PATCH(
+      new Request(`http://localhost/${runId}`, {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      }),
+      { params: Promise.resolve({ runId }) },
+    );
+
+    return { status: res.status, json: await res.json() };
+  }
+
+  it("renames a scratch run, persists the trimmed name, and gates on the project action", async () => {
+    const runId = seedScratchForRename("Old");
+
+    const res = await patch(runId, { name: "  New name  " });
+
+    expect(res.status).toBe(200);
+    expect(res.json).toEqual({ ok: true, name: "New name" });
+    expect(dbState.tables.scratch_runs[0].name).toBe("New name");
+    expect(vi.mocked(requireProjectAction)).toHaveBeenCalledWith(
+      "project-1",
+      "renameScratchRun",
+    );
+  });
+
+  it("rejects an empty (whitespace-only) name with CONFIG 400 and does not write", async () => {
+    const runId = seedScratchForRename("Old");
+
+    const res = await patch(runId, { name: "   " });
+
+    expect(res.status).toBe(400);
+    expect(res.json.code).toBe("CONFIG");
+    expect(dbState.tables.scratch_runs[0].name).toBe("Old");
+  });
+
+  it("rejects a name longer than 200 characters with CONFIG 400", async () => {
+    const runId = seedScratchForRename("Old");
+
+    const res = await patch(runId, { name: "x".repeat(201) });
+
+    expect(res.status).toBe(400);
+    expect(res.json.code).toBe("CONFIG");
+    expect(dbState.tables.scratch_runs[0].name).toBe("Old");
+  });
+
+  it("rejects a missing name field with CONFIG 400", async () => {
+    const runId = seedScratchForRename("Old");
+
+    const res = await patch(runId, {});
+
+    expect(res.status).toBe(400);
+    expect(res.json.code).toBe("CONFIG");
+  });
+
+  it("returns PRECONDITION 409 for a non-scratch run", async () => {
+    const runId = "flow-run";
+
+    dbState.tables.runs = [
+      { id: runId, projectId: "project-1", runKind: "flow", status: "Running" },
+    ];
+    dbState.tables.scratch_runs = [];
+
+    const res = await patch(runId, { name: "Nope" });
+
+    expect(res.status).toBe(409);
+    expect(res.json.code).toBe("PRECONDITION");
+  });
+
+  it("returns PRECONDITION 409 for a missing run", async () => {
+    dbState.tables.runs = [];
+    dbState.tables.scratch_runs = [];
+
+    const res = await patch("ghost", { name: "Nope" });
+
+    expect(res.status).toBe(409);
+    expect(res.json.code).toBe("PRECONDITION");
+  });
+
+  it("returns UNAUTHORIZED 403 for a viewer and does not write", async () => {
+    const runId = seedScratchForRename("Old");
+
+    vi.mocked(requireProjectAction).mockRejectedValueOnce(
+      new MaisterError("UNAUTHORIZED", "denied"),
+    );
+
+    const res = await patch(runId, { name: "New" });
+
+    expect(res.status).toBe(403);
+    expect(res.json.code).toBe("UNAUTHORIZED");
+    expect(dbState.tables.scratch_runs[0].name).toBe("Old");
+  });
+
+  it("returns UNAUTHENTICATED 401 with no session", async () => {
+    const runId = seedScratchForRename("Old");
+
+    vi.mocked(requireActiveSession).mockRejectedValueOnce(
+      new MaisterError("UNAUTHENTICATED", "sign in"),
+    );
+
+    const res = await patch(runId, { name: "New" });
+
+    expect(res.status).toBe(401);
+    expect(res.json.code).toBe("UNAUTHENTICATED");
   });
 });

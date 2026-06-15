@@ -49,6 +49,7 @@ export const PROJECT_ACTION_MIN = {
   readRepoFiles: "member",
   launchRun: "member",
   operateScratchRun: "member",
+  renameScratchRun: "member",
   promoteRun: "member",
   recoverRun: "member",
   createTask: "member",

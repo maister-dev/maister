@@ -36,7 +36,8 @@ info:
       project membership at `member` or above (`launchRun`).
     - Scratch runs (Implemented) — `GET /api/scratch-runs/launch-options`,
       `POST /api/scratch-runs`, `GET /api/scratch-runs/{runId}`,
-      `POST /api/scratch-runs/{runId}/messages`, `stop`, `recover`, and
+      `POST /api/scratch-runs/{runId}/messages`,
+      `PATCH /api/scratch-runs/{runId}` (rename), `stop`, `recover`, and
       `discard`.
       These routes start and operate manual coding-agent dialog workspaces
       outside the task board while reusing the supervisor and run event stream.
@@ -2577,6 +2578,56 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ScratchRunDetail" }
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Scratch run not found or not scratch (`PRECONDITION`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+    patch:
+      tags: [scratch-runs]
+      summary: Implemented — rename a scratch run
+      description: |
+        Requires project membership at `member` or above (`renameScratchRun`).
+        `runId` comes from the URL; the project is derived from server state
+        (the run row), never the body. The body carries only the new `name`
+        (trimmed, 1..200 chars). Flow / agent runs are renamed by editing their
+        task, not here.
+      operationId: renameScratchRun
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              additionalProperties: false
+              properties:
+                name: { type: string, minLength: 1, maxLength: 200 }
+      responses:
+        "200":
+          description: Scratch run renamed; echoes the stored (trimmed) name.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, name]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  name: { type: string }
+        "400":
+          description: Missing, empty, or over-long name (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
