@@ -39,6 +39,7 @@ import FlowGraphView, {
 
 type FlowNodeBodyProps = {
   label: string;
+  nodeType?: string;
   displayLabel?: string;
   nodeTypeLabel?: string;
   nodeRole?: string;
@@ -106,6 +107,54 @@ describe("FlowNodeBody — node status rendering", () => {
 
     expect(html).toContain('data-node-status="Succeeded"');
     expect(html).toContain("chip--success");
+  });
+});
+
+describe("FlowNodeBody — node type icon chip (T1.1)", () => {
+  it("renders the colored type icon chip coexisting with the run-status chip", () => {
+    const html = render({
+      label: "implement",
+      nodeType: "ai_coding",
+      status: "Running",
+      isCurrent: false,
+      rollup: "none",
+      labels: baseLabels,
+    });
+
+    // Additive type accent: the icon chip is present, painted with the
+    // ai_coding forest token...
+    expect(html).toContain('data-testid="node-type-icon"');
+    expect(html).toContain('data-node-type="ai_coding"');
+    expect(html).toContain("var(--accent-3)");
+    // ...AND the run-status chip is unchanged (composition, not replacement).
+    expect(html).toContain("chip--accent");
+    expect(html).toContain('data-node-status="Running"');
+  });
+
+  it("falls back to a neutral dot token for an unknown node type", () => {
+    const html = render({
+      label: "plan",
+      nodeType: "mystery",
+      status: "Pending",
+      isCurrent: false,
+      rollup: "none",
+      labels: baseLabels,
+    });
+
+    expect(html).toContain('data-node-type="mystery"');
+    expect(html).toContain("var(--mute)");
+  });
+
+  it("omits the icon chip entirely when no node type is provided", () => {
+    const html = render({
+      label: "plan",
+      status: "Pending",
+      isCurrent: false,
+      rollup: "none",
+      labels: baseLabels,
+    });
+
+    expect(html).not.toContain('data-testid="node-type-icon"');
   });
 });
 

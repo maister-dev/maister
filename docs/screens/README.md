@@ -117,6 +117,7 @@ flowchart TD
 | [`inbox.md`](inbox.md) | Unified inbox | `/inbox` | Implemented (WI-1) |
 | [`mcps.md`](mcps.md) | Platform MCP catalog (admin) | `/mcps` | Implemented (WI-2) |
 | [`studio/README.md`](studio/README.md) | Flow Studio redesign (area design: overview · sources · packages · package detail · editor · local workspace) | `/studio/*` | Implemented (Phase A: overview · sources · packages · detail); B/C Planned |
+| [`studio/editor.md`](studio/editor.md) | Flow editor (3-pane canvas + properties + drawers, node visual scheme) | `/flows/{projectSlug}/{capId}` | Implemented (Phase B) |
 | [`runs/flow-run.md`](runs/flow-run.md) | Flow run detail | `/runs/{runId}` | Planned rework |
 | [`runs/scratch-run.md`](runs/scratch-run.md) | Scratch run detail | `/scratch-runs/{runId}` | Planned rework |
 | [`runs/run-inspector.md`](runs/run-inspector.md) | Run inspector block | shared | Planned |

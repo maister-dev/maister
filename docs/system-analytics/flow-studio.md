@@ -346,9 +346,9 @@ artifacts still FORKS; the first SAVE surfaces the blocks.
 
 > **Status: Phase A — IA & surfacing (Implemented).** Surface SSOT: [`../screens/studio/README.md`](../screens/studio/README.md).
 > SDD spec: [`../../.ai-factory/specs/feature-flow-studio-redesign.md`](../../.ai-factory/specs/feature-flow-studio-redesign.md).
-> Decision: [ADR-092](../decisions.md#adr-092). The editor redesign (Phase B) and
-> the editable-local-package backend (Phase C) are **(Designed)** here and ship as
-> their own plans.
+> Decision: [ADR-092](../decisions.md#adr-092). The editor redesign (Phase B) is
+> now **(Implemented)** — see §"Editor redesign (Phase B)" below; the
+> editable-local-package backend (Phase C) is **(Designed)** and ships as its own plan.
 
 The redesign unifies the scattered catalog surfaces (the `/flows` landing, admin
 `/settings` sources, board `?tab=packages`, and the
@@ -400,17 +400,77 @@ Standalone artifact kinds (`agent`/`mcp`, beyond today's `rule|skill|flow`) beco
 files in the working dir. This whole layer is **(Designed)** — built in Phase C;
 git write-back to an upstream source is **(Phase 2)**.
 
-### Node visual language (Designed; Phase B)
+### Editor redesign (Phase B) — Implemented
 
-Phase A's package detail ships header + bill-of-materials (grouped by kind) +
-versions + gated nav actions; the embedded read-only canvas is deferred to Phase B
-(the per-project `/projects/{slug}/packages/{flowRefId}` viewer keeps the graph +
-fork meanwhile, as both are project-scoped). The Heym-style node-visual scheme
-(colored icon chips per node/gate type,
-named-outcome handles, dashed amber rework edges) is **(Designed)** and lands in
-Phase B on the shared node renderer — canonical scheme in
-[`../screens/studio/README.md`](../screens/studio/README.md) §"Node visual
-language".
+> **Status: Implemented (Phase B).** Spec:
+> [`../../.ai-factory/specs/feature-flow-studio-editor.md`](../../.ai-factory/specs/feature-flow-studio-editor.md).
+> Surface: [`../screens/studio/editor.md`](../screens/studio/editor.md). The
+> storage-agnostic editor redesign over the **unchanged** draft/publish/trust
+> backend — **no migration, no new HTTP/SSE route, no new `MaisterError` code, no
+> new env**. It restyles the shared node renderer, restructures the editor page
+> into a 3-pane layout, and adds a load/save seam Phase C plugs into. The
+> embedded read-only canvas on the Phase-A package detail
+> (`/studio/packages/{ref}`) is its read-only twin and also lands in Phase B; the
+> per-project `/projects/{slug}/packages/{flowRefId}` viewer keeps the graph +
+> fork meanwhile (both project-scoped).
+
+**3-pane layout.** A compact **top bar** (identity · lifecycle · validation chip
+from the pure `validateEditorManifest` · readiness · Save draft · Publish · drawer
+toggles) + a dominant full-height **canvas** (palette, color-coded node cards,
+named-outcome handles, MiniMap) + a collapsible right **properties panel**
+(`NodeSideForm` grouped under Identity · Behavior · Runner · Gates · Transitions ·
+Presentation). The Graph/YAML/Diff tabs become top-bar **drawers** (`[YAML]`
+CodeEditor, `[Diff]` FlowDraftDiffText, `[Files]` the existing — not redesigned —
+`PackageFilesEditor`); the canvas stays mounted while a drawer is open and the
+400 ms YAML↔canvas reseed is preserved. The app rail is **hideable** (persisted
+toggle, see [`../screens/chrome/left-rail.md`](../screens/chrome/left-rail.md)).
+
+**Load/save seam.** Save/publish stay **server actions** with the
+`expectedDraftVersion` CAS + progressive enhancement, made **injectable**
+(`saveAction`/`publishAction` props, default = `updateAuthoredFlowAction` /
+`publishAuthoredFlowAction`) so Phase C passes a local-package-targeting action —
+never converted to a client `onSave` callback (that drops the CAS).
+
+**Editor route stays `/flows/{projectSlug}/{capId}` in Phase B.** The IA-split
+table's `/studio/edit/{...}` row is the **Phase C** relocation (when the editor
+addresses local-package artifacts), not Phase B.
+
+#### Node visual language (canonical; implemented in `web/lib/flows/node-visuals.ts`)
+
+This is the **as-implemented canonical** scheme — it refines the design SSOT's
+role/hue table ([`../screens/studio/README.md`](../screens/studio/README.md)
+§"Node visual language", cited by R7) with concrete icons + forest tokens. The
+design names hues as *roles*; the live palette is a muted forest green +
+`attention` (warm amber) + `danger` — so the roles **collapse onto existing
+`var(--*)` tokens** (muted, not rainbow). The **icon shape is the primary type
+signal**; the chip renders the icon via `style={{ color: var(--<token>) }}`
+(`stroke="currentColor"`). It lands on the **shared** `FlowNodeBody`, so the
+editor canvas, the Phase-A read-only preview, AND the run-workbench graph inherit
+it; the run-status chip (`colorForNodeStatus`) is unchanged and **composes** with
+the additive type accent.
+
+| Node type | Icon | Color token | design role |
+| --- | --- | --- | --- |
+| `ai_coding` | bot | `--accent-3` | teal |
+| `judge` | gavel | `--accent-2` | violet |
+| `cli` | terminal `>_` | `--mute` | slate |
+| `check` | shield-check | `--attention` | amber |
+| `human` | person | `--amber` | magenta |
+
+| Gate kind | Icon | Color token | design role |
+| --- | --- | --- | --- |
+| `command_check` | `>_` | `--mute` | slate |
+| `skill_check` | puzzle | `--good` | green |
+| `ai_judgment` | gavel | `--accent-2` | violet |
+| `artifact_required` | file | `--accent-3` | blue |
+| `external_check` | link | `--accent-4` | cyan |
+| `human_review` | person | `--amber` | magenta |
+
+- Blocking gate → **solid** chip; advisory → **outline** chip.
+- Default outcome edge → solid; **rework / back-edge → dashed + amber** with the
+  outcome label drawn on the edge.
+- Run/preview status keeps the existing `FlowGraphView` coloring; the static
+  editor canvas has no status ring.
 
 ## Linked artifacts
 

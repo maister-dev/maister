@@ -78,7 +78,7 @@ export default async function AppLayout({
 
       <div
         data-shell
-        className="grid min-h-[calc(100vh-60px-56px)] grid-cols-1 md:grid-cols-[260px_1fr]"
+        className="grid min-h-[calc(100vh-60px-56px)] grid-cols-1 md:grid-cols-[auto_1fr]"
         data-density="comfy"
       >
         <LeftRail

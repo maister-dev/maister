@@ -116,6 +116,7 @@ per-doc template, and the classification rule.
 | [`screens/inbox.md`](screens/inbox.md) | Unified `/inbox` screen (needs-you HITL + mentions). |
 | [`screens/mcps.md`](screens/mcps.md) | Platform MCP catalog `/mcps` (admin). |
 | [`screens/studio/README.md`](screens/studio/README.md) | Flow Studio redesign area (overview · sources · packages · package detail · editor · local workspace), `/studio/*`. |
+| [`screens/studio/editor.md`](screens/studio/editor.md) | Flow editor surface (Phase B): 3-pane canvas + properties panel + top-bar drawers, node visual scheme, hideable rail. |
 
 ### Cross-cutting reference
 

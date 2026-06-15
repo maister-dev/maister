@@ -26,6 +26,7 @@ import {
   Background,
   Controls,
   Handle,
+  MiniMap,
   Position,
   ReactFlow,
   useEdgesState,
@@ -69,6 +70,7 @@ export type FlowGraphEditorLabels = FlowEditorToolbarLabels & {
   nodeForm: NodeSideFormLabels;
   validation: EditorValidationSummaryLabels;
   edgeModal: EdgeConnectModalLabels;
+  toggleProperties: string;
 };
 
 export interface FlowGraphEditorProps {
@@ -194,6 +196,7 @@ function makeEditorNodeView(
           label={d.label}
           labels={labels}
           nodeRole={d.nodeRole}
+          nodeType={d.nodeType}
           nodeTypeLabel={d.nodeTypeLabel}
           presentationColor={d.presentationColor}
           presentationHeight={d.presentationHeight}
@@ -262,19 +265,54 @@ function editorCanvasNode(
   };
 }
 
+// Outcomes that loop the graph BACKWARD (rework/takeover/reject) read as dashed +
+// amber; forward outcomes (success/failure/…) stay solid. Mirrors the read-only
+// `edgeAnimated`/`edgeClassName` roles, keyed off the editor's free-text outcome.
+const BACK_EDGE_OUTCOMES = new Set(["rework", "takeover", "reject"]);
+
+export function isBackEdgeOutcome(outcome: string): boolean {
+  return BACK_EDGE_OUTCOMES.has(outcome.trim().toLowerCase());
+}
+
+export type EditorEdgeStyle = {
+  animated: boolean;
+  style: { stroke: string; strokeDasharray?: string };
+};
+
+// Pure edge-style map (T1.2): outcome → { animated, stroke[, dash] }. Back-edges
+// animate + dash in the warm `--attention` amber; forward edges are a solid muted
+// stroke. Tested directly (no canvas render needed).
+export function editorEdgeStyle(outcome: string): EditorEdgeStyle {
+  if (isBackEdgeOutcome(outcome)) {
+    return {
+      animated: true,
+      style: { stroke: "var(--attention)", strokeDasharray: "6 4" },
+    };
+  }
+
+  return { animated: false, style: { stroke: "var(--mute-2)" } };
+}
+
 // Convert the read-only view's custom `flowEdge`-typed edges to default edges
-// carrying the outcome as a visible label (no custom edge type registered).
+// carrying the outcome as a visible label + the outcome-derived style (T1.2).
 function toEditorEdges(edges: Edge[]): Edge[] {
   return edges.map((e) => {
     const data = e.data as
       | { displayLabel?: string; outcome?: string }
       | undefined;
+    const outcome = data?.outcome ?? "";
+    const { animated, style } = editorEdgeStyle(outcome);
 
     return {
       id: e.id,
       source: e.source,
       target: e.target,
       label: data?.displayLabel ?? data?.outcome ?? "",
+      animated,
+      style,
+      ...(isBackEdgeOutcome(outcome)
+        ? { labelStyle: { fill: "var(--attention)" } }
+        : {}),
     };
   });
 }
@@ -287,8 +325,22 @@ function upsertEdge(
 ): Edge[] {
   const id = `${source}:${outcome}`;
   const without = edges.filter((e) => e.id !== id);
+  const { animated, style } = editorEdgeStyle(outcome);
 
-  return [...without, { id, source, target, label: outcome }];
+  return [
+    ...without,
+    {
+      id,
+      source,
+      target,
+      label: outcome,
+      animated,
+      style,
+      ...(isBackEdgeOutcome(outcome)
+        ? { labelStyle: { fill: "var(--attention)" } }
+        : {}),
+    },
+  ];
 }
 
 function bumpDeclaredGate(node: Node): Node {
@@ -321,6 +373,7 @@ export default function FlowGraphEditor({
     toEditorEdges(seeded.edges),
   );
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [manifest, setManifest] = useState<FlowYamlV1>(initialManifest);
   const [pendingConnection, setPendingConnection] = useState<{
     source: string;
@@ -349,6 +402,10 @@ export default function FlowGraphEditor({
 
   const select = useCallback(
     (id: string | null): void => {
+      if (process.env.NODE_ENV !== "production") {
+        // eslint-disable-next-line no-console
+        console.debug("[flowEditor] select", { nodeId: id });
+      }
       setSelectedNodeId(id);
       onSelectNode?.(id);
     },
@@ -414,6 +471,11 @@ export default function FlowGraphEditor({
       if (pendingConnection === null) return;
 
       const { source, target } = pendingConnection;
+
+      if (process.env.NODE_ENV !== "production") {
+        // eslint-disable-next-line no-console
+        console.debug("[flowEditor] connect", { source, target, outcome });
+      }
 
       applyManifest(
         (m) => setTransition(m, source, outcome, target),
@@ -525,9 +587,9 @@ export default function FlowGraphEditor({
   const validation = validateEditorManifest(manifest);
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
+    <div className="flex h-full min-h-0" data-testid="flow-graph-editor-shell">
       <div
-        className="overflow-hidden rounded-[10px] border border-line bg-paper"
+        className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-r border-line bg-paper"
         data-testid="flow-graph-editor"
       >
         <FlowEditorToolbar
@@ -537,7 +599,7 @@ export default function FlowGraphEditor({
           onAddNode={handleAddNode}
           onRemoveNode={handleRemoveNode}
         />
-        <div className="h-[440px] w-full">
+        <div className="min-h-0 w-full flex-1">
           <ReactFlow
             fitView
             nodesConnectable
@@ -552,32 +614,61 @@ export default function FlowGraphEditor({
             onPaneClick={() => select(null)}
           >
             <Background />
+            <MiniMap />
             <Controls showInteractive={false} />
           </ReactFlow>
         </div>
       </div>
-      <aside className="grid gap-3" data-testid="flow-graph-editor-sidebar">
-        <EditorValidationSummary
-          labels={labels.validation}
-          result={validation}
-          onSelectNode={select}
-        />
-        <NodeSideForm
-          labels={labels.nodeForm}
-          node={selectedNode}
-          presentation={
-            selectedPresentation
-              ? {
-                  width: selectedPresentation.width,
-                  height: selectedPresentation.height,
-                  color: selectedPresentation.color,
-                }
-              : undefined
-          }
-          onChange={handleNodeFormChange}
-          onPresentationChange={handlePresentationChange}
-        />
-      </aside>
+      {sidebarOpen ? (
+        <aside
+          className="flex w-[340px] shrink-0 flex-col gap-3 overflow-y-auto bg-paper p-3"
+          data-testid="flow-graph-editor-sidebar"
+        >
+          <div className="flex items-center justify-end">
+            <button
+              aria-label={labels.toggleProperties}
+              className="rounded-md border border-line px-2 py-1 font-mono text-[11px] text-mute hover:bg-ivory hover:text-ink"
+              data-testid="flow-properties-toggle"
+              title={labels.toggleProperties}
+              type="button"
+              onClick={() => setSidebarOpen(false)}
+            >
+              ›
+            </button>
+          </div>
+          <EditorValidationSummary
+            labels={labels.validation}
+            result={validation}
+            onSelectNode={select}
+          />
+          <NodeSideForm
+            labels={labels.nodeForm}
+            node={selectedNode}
+            presentation={
+              selectedPresentation
+                ? {
+                    width: selectedPresentation.width,
+                    height: selectedPresentation.height,
+                    color: selectedPresentation.color,
+                  }
+                : undefined
+            }
+            onChange={handleNodeFormChange}
+            onPresentationChange={handlePresentationChange}
+          />
+        </aside>
+      ) : (
+        <button
+          aria-label={labels.toggleProperties}
+          className="flex w-8 shrink-0 items-start justify-center border-l border-line bg-paper pt-3 font-mono text-[11px] text-mute hover:bg-ivory hover:text-ink"
+          data-testid="flow-properties-toggle"
+          title={labels.toggleProperties}
+          type="button"
+          onClick={() => setSidebarOpen(true)}
+        >
+          ‹
+        </button>
+      )}
       {pendingConnection ? (
         <EdgeConnectModal
           duplicate={outcomeExistsForSource(

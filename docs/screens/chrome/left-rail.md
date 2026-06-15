@@ -16,7 +16,7 @@ launch — so I can navigate and start work without leaving the current screen.
 
 | Role | Sees | Notes |
 | --- | --- | --- |
-| Global viewer / member | Projects, Inbox, Flows nav; active workspaces; runners readiness; launch | `Agents` renders disabled ("coming soon"); `MCPs` / `Users` / `Scheduler` / `Settings` are hidden |
+| Global viewer / member | Projects, Inbox, Studio nav; active workspaces; runners readiness; launch | `Agents` renders disabled ("coming soon"); `MCPs` / `Users` / `Scheduler` / `Settings` are hidden |
 | Global admin | All of the above plus `MCPs`, `Users`, `Scheduler`, `Settings` | Hidden nav is convenience only; each route re-checks `requireGlobalRole("admin")` |
 
 The hidden admin nav is never the authorization boundary — the route enforces it.
@@ -26,8 +26,9 @@ The hidden admin nav is never the authorization boundary — the route enforces 
 The rail is the primary navigation spine. Entry points / exits:
 
 - **Section nav** → `/` (portfolio), `/inbox` ([`../inbox.md`](../inbox.md)),
-  `/flows`, `/mcps` ([`../mcps.md`](../mcps.md), admin), `/admin/users`,
-  `/admin/scheduler`, `/settings`.
+  `/studio` ([`../studio/README.md`](../studio/README.md)), `/mcps`
+  ([`../mcps.md`](../mcps.md), admin), `/admin/users`, `/admin/scheduler`,
+  `/settings`.
 - **Active workspaces** → each row links to its run/workbench (`/runs/[id]`).
 - **Launch** → opens the [launch dialog](launch-dialog.md).
 
@@ -37,7 +38,7 @@ See [`../README.md`](../README.md) for the global IA map.
 
 Top to bottom:
 
-1. **Section nav** — Projects, Inbox (badge), Flows, Agents (disabled), then the
+1. **Section nav** — Projects, Inbox (badge), Studio, Agents (disabled), then the
    admin block (MCPs, Users, Scheduler, Settings). The Inbox badge shows the
    canonical `needsYou` count (WI-1; see [`../inbox.md`](../inbox.md)).
 2. **Active workspaces** — per-project groups of live runs. The block's surface
@@ -50,6 +51,17 @@ Top to bottom:
    [`status-bar.md`](status-bar.md)).
 4. **Launch** — primary launch button + hint, with a Cmd/Ctrl+K shortcut
    ([`launch-dialog.md`](launch-dialog.md)).
+
+### Collapse / hide (Implemented — Phase B)
+
+The rail is **collapsible** so wide canvases (the Flow editor,
+[`../studio/editor.md`](../studio/editor.md)) can claim near-full width. A toggle
+button switches between **expanded** (nav labels + active-workspaces + readiness +
+launch) and **collapsed** (icons-only/hidden). The choice persists to
+`localStorage` (default **expanded**); it is restored after hydration (a brief
+expanded flash on a collapsed reload is accepted — no inline script, matching the
+script-free theme convention). The toggle is a small client island; the rail's
+data fetch stays in the async Server Component.
 
 ## States
 

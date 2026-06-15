@@ -120,7 +120,9 @@
     "members": "Members",
     "webhooks": "Webhooks",
     "crumbProjects": "~/projects",
-    "comingSoon": "Coming soon"
+    "comingSoon": "Coming soon",
+    "collapseRail": "Collapse sidebar",
+    "expandRail": "Expand sidebar"
   },
   "studio": {
     "title": "Studio",
@@ -1906,6 +1908,25 @@
       "saveError": "Save failed",
       "syncError": "YAML is invalid — the canvas keeps the last valid graph until the YAML parses."
     },
+    "topBar": {
+      "save": "Save draft",
+      "publish": "Publish local",
+      "valid": "Valid",
+      "issues": "$count issues",
+      "ready": "Ready",
+      "notReady": "Not ready",
+      "draft": "Draft",
+      "published": "Published",
+      "titleLabel": "Flow title"
+    },
+    "drawer": {
+      "graph": "Graph",
+      "files": "Files",
+      "yaml": "YAML",
+      "diff": "Diff",
+      "close": "Close"
+    },
+    "toggleProperties": "Toggle properties",
     "artifacts": {
       "frontmatterHeading": "Frontmatter",
       "bodyHeading": "Body",

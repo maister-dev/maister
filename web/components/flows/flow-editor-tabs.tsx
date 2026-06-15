@@ -1,6 +1,10 @@
 "use client";
 
 import type { FlowGraphEditorLabels } from "@/components/flows/flow-graph-editor";
+import type {
+  EditorDrawerKind,
+  EditorTopBarLabels,
+} from "@/components/flows/editor/editor-top-bar";
 import type { FlowYamlV1 } from "@/lib/config.schema";
 import type { FlowLayout } from "@/lib/flows/graph/presentation-layout";
 import type { GraphTopology } from "@/lib/flows/graph/topology";
@@ -11,8 +15,10 @@ import dynamic from "next/dynamic";
 import { stringify as stringifyYaml } from "yaml";
 
 import { CodeEditor } from "@/components/flows/code-editor";
+import { EditorTopBar } from "@/components/flows/editor/editor-top-bar";
 import { FlowDraftDiffText } from "@/components/flows/flow-draft-diff";
 import { syncYamlToCanvas } from "@/lib/flows/editor/yaml-sync";
+import { validateEditorManifest } from "@/lib/flows/editor/validation";
 
 const YAML_SYNC_DEBOUNCE_MS = 400;
 
@@ -24,54 +30,84 @@ const FlowGraphEditor = dynamic(
 );
 
 export type FlowEditorTabsLabels = {
-  graphTab: string;
-  yamlTab: string;
-  diffTab: string;
   diffEmpty: string;
   syncError: string;
+  topBar: EditorTopBarLabels;
   editor: FlowGraphEditorLabels;
 };
 
-type Tab = "graph" | "yaml" | "diff";
+type ServerFormAction = (formData: FormData) => void | Promise<void>;
 
 /**
- * M27/T-A8 + T3.3: the editing surface inside the authored-flow form, the SINGLE
- * owner of the manifest state (spec §4.5). A single `flowYaml` value drives all
- * tabs and is carried by the hidden `name="flowYaml"` input so the existing
- * `updateAuthoredFlowAction` save path is reused unchanged.
+ * Phase B (T1.4–T1.6): the editor shell. A 3-pane layout — compact top bar +
+ * dominant always-on canvas + overlay drawers (YAML / Diff / Files) — over the
+ * UNCHANGED draft/publish backend. It is the SINGLE owner of the manifest state:
+ * a single `flowYaml` value drives the canvas seed and is carried by the hidden
+ * `name="flowYaml"` input so the existing save server action is reused verbatim.
  *
- * Live YAML↔canvas sync: a debounced effect parses the `yaml` buffer; a valid,
- * structurally-different manifest re-seeds the canvas (`seedKey` remount), a
- * parse/validate error keeps the last-good graph + shows an inline banner, and a
- * manifest equal to what the canvas last serialized is a no-op. Canvas edits
- * serialize back into the SAME `yaml` state; that write is recorded as the
- * canvas's current manifest so the ensuing debounced parse diffs equal → no
- * reseed (loop guard — both the wiring record AND the reducer's idempotent diff
- * close the canvas→serialize→reseed cycle).
+ * Load/save seam (spec §3.3): save/publish stay SERVER ACTIONS with the
+ * `expectedDraftVersion` CAS + progressive enhancement, injected as
+ * `saveAction`/`publishAction` (default = the authored-flow actions) so Phase C
+ * can target a local package without rebuilding this shell.
+ *
+ * Live YAML↔canvas sync (preserved): a debounced effect parses the `yaml` buffer;
+ * a valid, structurally-different manifest re-seeds the canvas (`seedKey`
+ * remount), a parse/validate error keeps the last-good graph + an inline banner,
+ * and a manifest equal to what the canvas last serialized is a no-op. Leaving the
+ * YAML drawer flushes the pending sync FIRST so the canvas reflects the latest
+ * edits without a mid-interaction remount.
  */
 export function FlowEditorTabs({
+  projectSlug,
+  capId,
+  draftVersion,
+  identity,
+  lifecycleLabel,
+  initialTitle,
+  canManage,
+  hasDraft,
+  readinessReady,
   initialYaml,
   initialManifest,
   topology,
   layout,
-  draftVersion,
   diff,
   labels,
-  disabled,
   canvasAvailable,
+  saveAction,
+  publishAction,
+  filesDrawer,
 }: {
+  projectSlug: string;
+  capId: string;
+  draftVersion: number;
+  identity: { project: string; slug: string; kind: string };
+  lifecycleLabel: string;
+  initialTitle: string;
+  canManage: boolean;
+  hasDraft: boolean;
+  readinessReady: boolean;
   initialYaml: string;
   initialManifest: FlowYamlV1 | null;
   topology: GraphTopology | null;
   layout: FlowLayout | null;
-  draftVersion: number;
   diff: string;
   labels: FlowEditorTabsLabels;
-  disabled: boolean;
   canvasAvailable: boolean;
+  saveAction: ServerFormAction;
+  publishAction: ServerFormAction;
+  filesDrawer: ReactNode;
 }): ReactElement {
   const [yaml, setYaml] = useState(initialYaml);
-  const [tab, setTab] = useState<Tab>(canvasAvailable ? "graph" : "yaml");
+  const [title, setTitle] = useState(initialTitle);
+  // No canvas to fall back on (manifest does not compile) → open the YAML drawer
+  // up front so the draft is still editable on load.
+  const [openDrawer, setOpenDrawer] = useState<EditorDrawerKind | null>(
+    canvasAvailable ? null : "yaml",
+  );
+  const [liveManifest, setLiveManifest] = useState<FlowYamlV1 | null>(
+    initialManifest,
+  );
 
   // The live seed for FlowGraphEditor. Starts at the server-compiled
   // manifest/topology/layout; a yaml-driven reseed swaps all three. `seedKey`
@@ -95,9 +131,6 @@ export function FlowEditorTabs({
   // debounce that follows sees equality and does not bounce the canvas.
   const canvasManifestRef = useRef<FlowYamlV1 | null>(initialManifest);
 
-  // Apply the current yaml buffer to the canvas seed: reseed on a structurally
-  // different manifest, keep last-good + flag the banner on a parse/validate
-  // error, no-op when the manifest equals what the canvas last serialized.
   const runYamlSync = useCallback(() => {
     const decision = syncYamlToCanvas(yaml, canvasManifestRef.current);
 
@@ -108,6 +141,8 @@ export function FlowEditorTabs({
     }
 
     if (decision.kind === "error") {
+      // eslint-disable-next-line no-console
+      console.warn("[flowEditor] yaml parse error");
       setSyncError(true);
 
       return;
@@ -120,65 +155,89 @@ export function FlowEditorTabs({
       layout: decision.layout,
     });
     setSeedKey((k) => k + 1);
+    setLiveManifest(decision.manifest);
     setSyncError(false);
   }, [yaml]);
 
+  // Sync yaml → canvas ONLY while the YAML drawer is open: there the user edits
+  // the manifest text and the canvas (behind the drawer) must follow. When the
+  // canvas is the active surface, IT is authoritative (canvas → yaml via
+  // handleCanvasChange), so a debounced reseed here would spuriously remount the
+  // canvas — dropping in-flight canvas state like an open connect modal. Pending
+  // edits are flushed on drawer close (see `changeDrawer`).
   useEffect(() => {
+    if (openDrawer !== "yaml") return;
+
     const handle = setTimeout(runYamlSync, YAML_SYNC_DEBOUNCE_MS);
 
     return () => clearTimeout(handle);
-  }, [runYamlSync]);
+  }, [runYamlSync, openDrawer]);
 
-  // Entering the graph tab flushes the pending yaml→canvas sync FIRST, so the
-  // canvas mounts with the latest edits and the still-pending debounce becomes a
-  // no-op — no mid-interaction remount on a quick tab switch (Reviewer M2).
-  const selectTab = (next: Tab): void => {
-    if (next === "graph") runYamlSync();
-    setTab(next);
+  // Leaving the YAML drawer flushes the pending yaml→canvas sync FIRST, so the
+  // canvas shows the latest edits and the still-pending debounce becomes a no-op.
+  const changeDrawer = (next: EditorDrawerKind | null): void => {
+    if (openDrawer === "yaml" && next !== "yaml") runYamlSync();
+    // eslint-disable-next-line no-console
+    console.debug("[flowEditor] drawer", { open: next });
+    setOpenDrawer(next);
   };
 
   const handleCanvasChange = ({ manifest }: { manifest: FlowYamlV1 }): void => {
     canvasManifestRef.current = manifest;
+    setLiveManifest(manifest);
     setYaml(stringifyYaml(manifest));
   };
 
   const canvasReady = canvasAvailable && seed !== null;
+  const validation = liveManifest
+    ? (() => {
+        const r = validateEditorManifest(liveManifest);
+
+        return { ok: r.ok, issueCount: r.issues.length };
+      })()
+    : null;
 
   return (
-    <div className="grid gap-3" data-testid="flow-editor-tabs">
+    <form
+      action={saveAction}
+      className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-line bg-paper"
+      data-testid="flow-editor-tabs"
+      onSubmit={() => {
+        // eslint-disable-next-line no-console
+        console.debug("[flowEditor] submit", {
+          capId,
+          expectedDraftVersion: draftVersion,
+        });
+      }}
+    >
+      <input name="projectSlug" type="hidden" value={projectSlug} />
+      <input name="capId" type="hidden" value={capId} />
+      <input name="expectedDraftVersion" type="hidden" value={draftVersion} />
       <input name="flowYaml" type="hidden" value={yaml} />
 
-      <div className="flex flex-wrap gap-1.5">
-        {canvasAvailable ? (
-          <TabButton
-            active={tab === "graph"}
-            testid="flow-tab-graph"
-            onClick={() => selectTab("graph")}
-          >
-            {labels.graphTab}
-          </TabButton>
-        ) : null}
-        <TabButton
-          active={tab === "yaml"}
-          testid="flow-tab-yaml"
-          onClick={() => selectTab("yaml")}
-        >
-          {labels.yamlTab}
-        </TabButton>
-        {canvasAvailable ? (
-          <TabButton
-            active={tab === "diff"}
-            testid="flow-tab-diff"
-            onClick={() => selectTab("diff")}
-          >
-            {labels.diffTab}
-          </TabButton>
-        ) : null}
-      </div>
+      <EditorTopBar
+        canManage={canManage}
+        hasDraft={hasDraft}
+        kind={identity.kind}
+        labels={labels.topBar}
+        lifecycleLabel={lifecycleLabel}
+        openDrawer={openDrawer}
+        project={identity.project}
+        publishAction={publishAction}
+        publishDisabled={!readinessReady}
+        readinessReady={readinessReady}
+        title={title}
+        validation={validation}
+        onCloseDrawers={() => changeDrawer(null)}
+        onTitleChange={setTitle}
+        onToggleDrawer={(kind) =>
+          changeDrawer(openDrawer === kind ? null : kind)
+        }
+      />
 
       {syncError ? (
         <p
-          className="rounded-md border border-danger-line bg-danger-soft px-3 py-2 font-mono text-[11px] text-danger"
+          className="border-b border-danger-line bg-danger-soft px-3 py-2 font-mono text-[11px] text-danger"
           data-testid="flow-yaml-sync-error"
           role="alert"
         >
@@ -186,60 +245,119 @@ export function FlowEditorTabs({
         </p>
       ) : null}
 
-      {tab === "graph" && canvasReady && seed ? (
-        <FlowGraphEditor
-          key={seedKey}
-          draftVersion={draftVersion}
-          initialManifest={seed.manifest}
-          labels={labels.editor}
-          layout={seed.layout}
-          topology={seed.topology}
-          onChange={handleCanvasChange}
-        />
-      ) : null}
-
-      {tab === "yaml" ? (
-        <div data-testid="flow-yaml-editor">
-          <CodeEditor
-            ariaLabel="flow.yaml"
-            kind="flow"
-            readOnly={disabled}
-            value={yaml}
-            onChange={setYaml}
-          />
+      <div className="relative min-h-0 flex-1">
+        <div
+          className="absolute inset-0 overflow-hidden"
+          data-testid="flow-canvas-pane"
+        >
+          {canvasReady && seed ? (
+            <FlowGraphEditor
+              key={seedKey}
+              draftVersion={draftVersion}
+              initialManifest={seed.manifest}
+              labels={labels.editor}
+              layout={seed.layout}
+              topology={seed.topology}
+              onChange={handleCanvasChange}
+            />
+          ) : (
+            <div className="flex h-full items-center justify-center px-6 text-center font-mono text-[11px] text-mute">
+              {labels.editor.graph.empty || "Open the YAML drawer to edit."}
+            </div>
+          )}
         </div>
-      ) : null}
 
-      {tab === "diff" ? (
-        <FlowDraftDiffText diff={diff} emptyLabel={labels.diffEmpty} />
-      ) : null}
+        {openDrawer === "yaml" ? (
+          <EditorDrawer
+            title={labels.topBar.yaml}
+            onClose={() => changeDrawer(null)}
+          >
+            <div data-testid="flow-yaml-editor">
+              <CodeEditor
+                ariaLabel="flow.yaml"
+                kind="flow"
+                readOnly={!canManage}
+                value={yaml}
+                onChange={setYaml}
+              />
+            </div>
+          </EditorDrawer>
+        ) : null}
+
+        {openDrawer === "diff" ? (
+          <EditorDrawer
+            title={labels.topBar.diff}
+            onClose={() => changeDrawer(null)}
+          >
+            <FlowDraftDiffText diff={diff} emptyLabel={labels.diffEmpty} />
+          </EditorDrawer>
+        ) : null}
+
+        {/* Files: PackageFilesEditor stays MOUNTED (its hidden packageFilesJson
+            input must submit with the save form regardless of drawer state);
+            only its visibility toggles. */}
+        <div
+          className={
+            openDrawer === "files"
+              ? "absolute inset-y-0 right-0 z-10 flex w-full max-w-[640px] flex-col border-l border-line bg-paper shadow-lg"
+              : "hidden"
+          }
+          data-testid="flow-files-drawer"
+        >
+          {openDrawer === "files" ? (
+            <DrawerHeader
+              title={labels.topBar.files}
+              onClose={() => changeDrawer(null)}
+            />
+          ) : null}
+          <div className="min-h-0 flex-1 overflow-auto p-3">{filesDrawer}</div>
+        </div>
+      </div>
+    </form>
+  );
+}
+
+function DrawerHeader({
+  title,
+  onClose,
+}: {
+  title: string;
+  onClose: () => void;
+}): ReactElement {
+  return (
+    <div className="flex shrink-0 items-center justify-between border-b border-line px-3 py-2">
+      <span className="font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-mute">
+        {title}
+      </span>
+      <button
+        aria-label="close"
+        className="rounded-md border border-line px-2 py-1 font-mono text-[10px] text-ink-2 hover:bg-ivory"
+        data-testid="drawer-close"
+        type="button"
+        onClick={onClose}
+      >
+        ✕
+      </button>
     </div>
   );
 }
 
-function TabButton({
-  active,
-  testid,
-  onClick,
+function EditorDrawer({
+  title,
+  onClose,
   children,
 }: {
-  active: boolean;
-  testid: string;
-  onClick: () => void;
+  title: string;
+  onClose: () => void;
   children: ReactNode;
 }): ReactElement {
   return (
-    <button
-      className={
-        active
-          ? "rounded-md border border-amber-line bg-amber-soft px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-amber"
-          : "rounded-md border border-line bg-paper px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-ink-2 hover:bg-ivory"
-      }
-      data-testid={testid}
-      type="button"
-      onClick={onClick}
+    <div
+      className="absolute inset-y-0 right-0 z-10 flex w-full max-w-[640px] flex-col border-l border-line bg-paper shadow-lg"
+      data-testid="editor-drawer"
     >
-      {children}
-    </button>
+      <DrawerHeader title={title} onClose={onClose} />
+      <div className="min-h-0 flex-1 overflow-auto p-3">{children}</div>
+    </div>
   );
 }
