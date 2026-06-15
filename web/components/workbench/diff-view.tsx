@@ -9,7 +9,7 @@ import {
   DiffView as GitDiffView,
   SplitSide,
 } from "@git-diff-view/react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { OutdatedThreadsSection } from "@/components/workbench/outdated-threads";
@@ -21,6 +21,7 @@ import {
   type ReviewThread,
   type ReviewThreadActions,
 } from "@/components/workbench/review-thread-card";
+import { buildRunDiffFileHref, buildRunHref } from "@/lib/runs/run-query-state";
 import { useTheme } from "@/lib/theme";
 
 import "@git-diff-view/react/styles/diff-view.css";
@@ -57,6 +58,7 @@ export type DiffViewMode = "split" | "unified";
 
 export interface DiffViewLabels {
   empty: string;
+  bodyUnavailable: string;
   added: string;
   removed: string;
   viewMode: string;
@@ -213,6 +215,7 @@ export interface DiffViewProps {
   // a partial prefix. Surfaces a blocking banner so a partial diff is never read
   // as the whole change.
   truncated?: boolean;
+  renderUnavailable?: boolean;
   // Review mode (ADR-071): inline threads render on the diff via extendData,
   // the add-widget composer opens on line click (canComment), and outdated
   // threads list in a collapsible section below the diff. Absent → the
@@ -243,6 +246,7 @@ export function DiffView({
   labels,
   mode,
   truncated = false,
+  renderUnavailable = false,
   review,
 }: DiffViewProps): ReactElement {
   const { resolvedTheme } = useTheme();
@@ -253,18 +257,37 @@ export function DiffView({
     mode ?? parseDiffView(searchParams?.get("diffview") ?? null);
 
   const setViewMode = (next: DiffViewMode): void => {
-    const params = new URLSearchParams(searchParams ?? undefined);
-
-    params.set("diffview", next);
-    router.push(`${pathname}?${params.toString()}`, { scroll: false });
+    router.push(
+      buildRunHref(pathname, searchParams?.toString() ?? "", {
+        diffview: next,
+      }),
+      { scroll: false },
+    );
   };
 
-  const [selected, setSelected] = useState<string | null>(
-    perFile[0]?.path ?? null,
-  );
+  const requestedDiffFile = searchParams?.get("diffFile") ?? null;
+  const initialSelected =
+    perFile.find((file) => file.path === requestedDiffFile)?.path ??
+    perFile[0]?.path ??
+    null;
+  const [selected, setSelected] = useState<string | null>(initialSelected);
 
   const activePath = selected ?? perFile[0]?.path ?? null;
   const active = perFile.find((f) => f.path === activePath) ?? null;
+
+  useEffect(() => {
+    if (!requestedDiffFile) return;
+    if (!perFile.some((file) => file.path === requestedDiffFile)) return;
+    setSelected(requestedDiffFile);
+  }, [requestedDiffFile, perFile]);
+
+  const selectDiffFile = (path: string): void => {
+    setSelected(path);
+    router.push(
+      buildRunDiffFileHref(pathname, searchParams?.toString() ?? "", path),
+      { scroll: false },
+    );
+  };
 
   const diffFile = useMemo(() => {
     if (!active) return null;
@@ -381,7 +404,7 @@ export function DiffView({
               removed: labels.removed,
             }}
             selectedPath={activePath}
-            onSelect={setSelected}
+            onSelect={selectDiffFile}
           />
         </div>
         <div className="min-w-0 overflow-auto rounded-[10px] border border-line bg-paper">
@@ -423,6 +446,13 @@ export function DiffView({
               diffViewWrap={false}
               {...reviewDiffProps}
             />
+          ) : renderUnavailable && files.length > 0 ? (
+            <p
+              className="p-4 text-center font-mono text-[11px] leading-[1.5] text-mute"
+              data-testid="diff-view-body-unavailable"
+            >
+              {labels.bodyUnavailable}
+            </p>
           ) : (
             <p
               className="p-4 text-center font-mono text-[11px] text-mute"

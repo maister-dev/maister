@@ -64,11 +64,13 @@ test("review HITL: off-list decision is rejected, then a UI rework request is ac
 
   await expect(rework).toBeVisible();
 
-  // The review gate co-locates the run diff with the decision controls (option
-  // 2 — embedded diff), so the reviewer inspects the changes without leaving the
-  // gate. The panel renders for any `human` review gate; its inner diff content
-  // depends on worktree state (this fixture has none), so assert the panel only.
-  await expect(page.locator('[data-testid="hitl-gate-diff"]')).toBeVisible();
+  // The workbench diff is the single canonical diff surface; the request panel
+  // owns the decision controls only.
+  await page.getByRole("tab", { name: "Diff" }).click();
+  await page.waitForURL(/[?&]wb=diff/);
+  await expect(
+    page.locator('[data-testid="run-workbench"] [data-testid="run-diff"]'),
+  ).toBeVisible();
 
   // (3) Clicking "Request rework" posts the decision + comments to the respond
   // route. Intercept that POST and assert the server validated + accepted it

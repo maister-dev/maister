@@ -12,7 +12,8 @@
 //
 // Asserted, deterministic, supervisor-independent outcomes:
 //   1. seeded state renders — loop chip + unresolved/outdated counts on the
-//      gate panel, inline threads on their anchored diff lines, the outdated
+//      gate panel, inline threads on their anchored diff lines in the workbench
+//      diff, the outdated
 //      thread in the collapsible Outdated section, and the approve soft-warn
 //      while open threads exist (approve itself stays enabled — never blocked);
 //   2. a NEW root comment lands through the diff add-widget composer
@@ -106,9 +107,15 @@ test("review gate: seeded threads render; add root + reply; resolve; rework deci
 
   await expect(rework).toBeEnabled();
 
-  // (1) The gate co-locates the diff; the seeded inline threads render on
+  // (1) The workbench diff is the canonical review diff; the seeded inline
+  // threads render on
   // their anchored lines (extendData stacks), tagged with visit 1.
-  const gateDiff = page.locator('[data-testid="hitl-gate-diff"]');
+  await page.getByRole("tab", { name: "Diff" }).click();
+  await page.waitForURL(/[?&]wb=diff/);
+
+  const gateDiff = page.locator(
+    '[data-testid="run-workbench"] [data-testid="run-diff"]',
+  );
 
   await expect(gateDiff).toBeVisible();
   const diffView = gateDiff.locator('[data-testid="diff-view"]');

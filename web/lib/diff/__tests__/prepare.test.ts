@@ -29,7 +29,11 @@
 
 import { describe, expect, it } from "vitest";
 
-import { prepareDiff } from "@/lib/diff/prepare";
+import {
+  filterDiffByPath,
+  prepareDiff,
+  prepareDiffSummary,
+} from "@/lib/diff/prepare";
 
 // A realistic 2-file unified diff:
 //   src/a.ts — modified: 2 additions, 1 deletion
@@ -96,6 +100,17 @@ describe("prepareDiff — files summary (counts / status / repo-relative path)",
       "b.ts",
       "src/a.ts",
     ]);
+  });
+});
+
+describe("filterDiffByPath — reviewable section filtering", () => {
+  it("removes whole unified-diff sections by repo-relative path", () => {
+    const filtered = filterDiffByPath(TWO_FILE_DIFF, (path) => path !== "b.ts");
+    const summary = prepareDiffSummary(filtered);
+
+    expect(summary.files.map((file) => file.path)).toEqual(["src/a.ts"]);
+    expect(filtered).toContain("diff --git a/src/a.ts b/src/a.ts");
+    expect(filtered).not.toContain("diff --git a/b.ts b/b.ts");
   });
 });
 

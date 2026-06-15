@@ -25,6 +25,25 @@ domain projects state onto it.
     form input.
   - `input-<stepId>.json` — atomic-written response payload.
 
+## Run detail UI hierarchy (Planned M35)
+
+The run detail screen does not add run statuses or mutate the run state
+machine. It projects the existing run, workspace, graph, evidence, timeline,
+diff, and lifecycle read models into three stable regions:
+
+- **Non-scratch Flow runs** land on Flow results and selected-node outputs.
+  The graph/list, current node, gates, artifacts, HITL context, token/cost
+  contribution, and review entry point are the primary page center.
+- **Standalone agent runs** without a pinned Flow manifest land on an agent
+  activity/result center. They still expose evidence, timeline, diff, branch,
+  and lifecycle actions, but they do not fabricate Flow nodes.
+- **Secondary workbench** tabs are Files, Diff, Evidence, and Timeline. Files
+  remain `readRepoFiles`; Diff remains run-scoped and uses the existing
+  `readBoard`/`readScratchRun` gates.
+- **Right inspector** is shared by Flow, agent, and scratch runs. It summarizes
+  change size, branch/worktree facts, run status, Flow/session mini-map, and
+  server-derived action availability.
+
 ## State machine — execution axis
 
 ```mermaid
@@ -409,7 +428,7 @@ sequenceDiagram
     SV-->>W: SSE session.exited
     W->>DB: runs.status=Review
     U->>W: GET /api/runs/[id]/diff
-    W-->>U: raw git diff
+    W-->>U: prepared run diff DTO
     U->>W: POST /api/runs/[id]/promote
     W->>DB: verify required gates current/pass/overridden
     alt mode = local_merge

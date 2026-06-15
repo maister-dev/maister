@@ -3,27 +3,39 @@ import type { ReactElement } from "react";
 import Link from "next/link";
 import clsx from "clsx";
 
-export type WorkbenchTab = "files" | "diff" | "graph";
+import {
+  buildRunHref,
+  type RunSearchParamsInput,
+} from "@/lib/runs/run-query-state";
+
+export type WorkbenchTab = "files" | "diff" | "evidence" | "timeline";
 
 export interface WorkbenchTabsLabels {
   files: string;
   diff: string;
-  graph: string;
+  evidence: string;
+  timeline: string;
 }
 
 export interface WorkbenchTabsProps {
   runId: string;
   active: WorkbenchTab;
   labels: WorkbenchTabsLabels;
+  pathname?: string;
+  searchParams?: RunSearchParamsInput;
 }
 
-const TABS: readonly WorkbenchTab[] = ["files", "diff", "graph"];
+const TABS: readonly WorkbenchTab[] = ["timeline", "diff", "files", "evidence"];
 
 export function WorkbenchTabs({
   runId,
   active,
   labels,
+  pathname,
+  searchParams,
 }: WorkbenchTabsProps): ReactElement {
+  const hrefPath = pathname ?? `/runs/${runId}`;
+
   return (
     <div
       className="mb-[18px] inline-flex gap-0.5 rounded-full border border-line bg-ivory p-[3px]"
@@ -42,7 +54,7 @@ export function WorkbenchTabs({
                 ? "bg-paper text-ink shadow-[var(--shadow-sm)]"
                 : "text-mute hover:text-ink",
             )}
-            href={`/runs/${runId}?wb=${tab}`}
+            href={buildRunHref(hrefPath, searchParams, { wb: tab })}
             role="tab"
           >
             {labels[tab]}

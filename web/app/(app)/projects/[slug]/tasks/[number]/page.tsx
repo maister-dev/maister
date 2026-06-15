@@ -194,6 +194,7 @@ export default async function TaskDetailPage({
     empty: tWorkbench("diff.empty"),
     error: tWorkbench("diff.error"),
     changedFiles: tWorkbench("diff.changedFiles"),
+    bodyUnavailable: tWorkbench("diff.bodyUnavailable"),
     added: tWorkbench("diff.added"),
     removed: tWorkbench("diff.removed"),
     viewMode: tWorkbench("diff.viewMode"),

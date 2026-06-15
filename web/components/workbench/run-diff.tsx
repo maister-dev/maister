@@ -3,7 +3,7 @@
 import type { ReactElement } from "react";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import {
   ChangedFilesList,
@@ -16,6 +16,7 @@ import {
   type ReviewThread,
   type RunDiffFile,
 } from "@/components/workbench/diff-view";
+import { buildRunHref } from "@/lib/runs/run-query-state";
 
 export { ChangedFilesList };
 export type { RunDiffFile };
@@ -25,6 +26,7 @@ export interface RunDiffLabels {
   empty: string;
   error: string;
   changedFiles: string;
+  bodyUnavailable: string;
   added: string;
   removed: string;
   viewMode: string;
@@ -89,6 +91,7 @@ type DiffState =
       files: RunDiffFile[];
       perFile: PreparedFile[];
       truncated: boolean;
+      renderUnavailable: boolean;
     };
 
 export type ReviewMutation =
@@ -99,6 +102,17 @@ export type ReviewMutation =
   | { kind: "delete"; commentId: string };
 
 const JSON_HEADERS = { "content-type": "application/json" } as const;
+
+export function diffScopeOrDefault(raw: string | null): DiffScope {
+  return DIFF_SCOPES.includes(raw as DiffScope) ? (raw as DiffScope) : "run";
+}
+
+export function reviewEnabledForScope(
+  review: RunDiffReviewContext | undefined,
+  scope: DiffScope,
+): review is RunDiffReviewContext {
+  return review !== undefined && scope === "run";
+}
 
 // Maps a mutation onto the ADR-071 route family: POST collection for
 // root/reply, PATCH item for edit/status, DELETE item. Anchor fields are
@@ -314,13 +328,23 @@ export default function RunDiff({
   scopeSwitcher,
 }: RunDiffProps): ReactElement {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const requestedScope = diffScopeOrDefault(searchParams.get("scope"));
   const [state, setState] = useState<DiffState>({ kind: "loading" });
-  const [scope, setScope] = useState<DiffScope>("run");
+  const [scope, setScope] = useState<DiffScope>(requestedScope);
   const [scopes, setScopes] = useState<DiffScopeAvailability | null>(null);
   const [threads, setThreads] = useState<ReviewThread[] | null>(null);
   const [reviewBusy, setReviewBusy] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
-  const hasReview = review !== undefined;
+  const activeReview = reviewEnabledForScope(review, scope)
+    ? review
+    : undefined;
+  const hasReview = activeReview !== undefined;
+
+  useEffect(() => {
+    setScope(requestedScope);
+  }, [requestedScope]);
 
   useEffect(() => {
     let cancelled = false;
@@ -339,6 +363,7 @@ export default function RunDiff({
           files?: RunDiffFile[];
           perFile?: PreparedFile[];
           truncated?: boolean;
+          renderUnavailableReason?: string | null;
           scopes?: DiffScopeAvailability;
         };
 
@@ -349,6 +374,7 @@ export default function RunDiff({
             files: body.files ?? [],
             perFile: body.perFile ?? [],
             truncated: body.truncated ?? false,
+            renderUnavailable: typeof body.renderUnavailableReason === "string",
           });
         }
       } catch {
@@ -396,13 +422,24 @@ export default function RunDiff({
   const diffReview = useMemo(
     () =>
       buildDiffViewReview({
-        context: review,
+        context: activeReview,
         threads,
         busy: reviewBusy,
         mutate,
       }),
-    [review, threads, reviewBusy, mutate],
+    [activeReview, threads, reviewBusy, mutate],
   );
+
+  const setScopeAndUrl = (nextScope: DiffScope): void => {
+    setScope(nextScope);
+    router.push(
+      buildRunHref(pathname, searchParams.toString(), {
+        wb: "diff",
+        scope: nextScope,
+      }),
+      { scroll: false },
+    );
+  };
 
   if (state.kind === "loading") {
     return (
@@ -438,8 +475,11 @@ export default function RunDiff({
 
   return (
     <div data-testid="run-diff">
-      {review ? (
-        <ReviewActionAlert label={review.labels.error} message={reviewError} />
+      {hasReview ? (
+        <ReviewActionAlert
+          label={activeReview.labels.error}
+          message={reviewError}
+        />
       ) : null}
       {scopeSwitcher ? (
         <div
@@ -466,7 +506,7 @@ export default function RunDiff({
                 disabled={disabled}
                 title={disabled ? availability?.reason : undefined}
                 type="button"
-                onClick={() => setScope(s)}
+                onClick={() => setScopeAndUrl(s)}
               >
                 {scopeLabel(s)}
               </button>
@@ -481,6 +521,7 @@ export default function RunDiff({
         files={state.files}
         labels={{
           empty: labels.empty,
+          bodyUnavailable: labels.bodyUnavailable,
           added: labels.added,
           removed: labels.removed,
           viewMode: labels.viewMode,
@@ -489,7 +530,8 @@ export default function RunDiff({
           truncated: labels.truncated,
         }}
         perFile={state.perFile}
-        review={diffReview}
+        renderUnavailable={state.renderUnavailable}
+        review={hasReview ? diffReview : undefined}
         truncated={state.truncated}
       />
     </div>

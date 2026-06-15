@@ -141,6 +141,7 @@ Full manifest reference: [Configuration](docs/configuration.md).
 | [Architecture](docs/architecture.md) | C4 views, component map, data flows |
 | [Decisions](docs/decisions.md) | ADRs and locked technical choices |
 | [System Analytics](docs/system-analytics/README.md) | Domain state machines and process flows |
+| [Screens Reference](docs/screens/README.md) | User-facing screens and shared chrome |
 | [Database ERDs](docs/db/README.md) | Mermaid ERDs by domain |
 | [API: Web](docs/api/web.openapi.yaml) | Web Route Handler contract |
 | [API: Supervisor](docs/api/supervisor.openapi.yaml) | Supervisor HTTP contract |

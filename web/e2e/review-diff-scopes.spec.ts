@@ -74,10 +74,11 @@ test("scope toggle: uncommitted loads the working-tree diff; sha-less scopes deg
 
   await uncommitted.click();
   await diffResponse;
+  await expect(page).toHaveURL(/[?&]scope=uncommitted(?:&|$)/);
 
   await expect(
     page
-      .locator('[data-testid="hitl-gate-diff"]')
+      .locator('[data-testid="run-workbench"] [data-testid="run-diff"]')
       .getByText("dirty-e2e.txt")
       .first(),
   ).toBeVisible();

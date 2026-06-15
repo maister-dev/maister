@@ -9,11 +9,13 @@
 // current node, checks Succeeded + a PASSED gate, review Pending).
 //
 // Asserted, deterministic, supervisor-independent outcomes:
-//   1. graph    — /runs/<id> (default ?wb=graph) renders the flow-graph view;
+//   1. graph    — /runs/<id> renders the Flow result as the primary surface;
 //      the `plan` node reflects its seeded Succeeded status; the current node
 //      (`implement`) carries data-current="true"; node role labels, declared
 //      gate summaries, runtime gate summaries, and rework edge labels are
 //      visible for the seeded graph.
+//   1b. shell   — the right inspector toggles, and the workbench exposes
+//      Files|Diff|Evidence|Timeline tabs below the primary Flow result.
 //   2. layout   — GET /graph returns the authored layout from the flow.yaml
 //      presentation section (ADR-064); the removed PUT /graph/layout is 404.
 //   3. files    — ?wb=files lists tracked files; expanding `src` reveals its
@@ -80,10 +82,16 @@ test("flow-graph view renders node statuses and the current-node emphasis", asyn
 }) => {
   const fx = loadM22Fixture();
 
-  // Default ?wb=graph: the flow-graph view mounts. React Flow renders nodes
+  // Default run view: the Flow result is primary. React Flow renders nodes
   // inside the fitView viewport; the 4-node graph fits entirely.
   await page.goto(`/runs/${fx.runId}`);
 
+  await expect(
+    page.locator('[data-testid="run-primary-result"]'),
+  ).toBeVisible();
+  await expect(
+    page.locator('[data-testid="flow-run-selected-node"]'),
+  ).toContainText("Implement");
   await expect(page.locator('[data-testid="flow-graph-view"]')).toBeVisible();
 
   // The `plan` node reflects its seeded Succeeded node_attempt status.
@@ -124,6 +132,43 @@ test("flow-graph view renders node statuses and the current-node emphasis", asyn
       hasText: "Rework",
     }),
   ).toBeVisible();
+});
+
+test("run shell inspector toggles and workbench exposes evidence and timeline tabs", async ({
+  page,
+}) => {
+  const fx = loadM22Fixture();
+
+  await page.goto(`/runs/${fx.runId}`);
+
+  await expect(page.locator('[data-testid="run-shell"]')).toBeVisible();
+  await expect(
+    page.locator('[data-testid="run-shell-inspector"]'),
+  ).toBeVisible();
+  await expect(page.locator('[data-testid="run-inspector"]')).toBeVisible();
+
+  await page.getByRole("button", { name: "Close inspector" }).click();
+  await expect(page.locator('[data-testid="run-shell-inspector"]')).toHaveCount(
+    0,
+  );
+
+  await page.getByRole("button", { name: "Open inspector" }).click();
+  await expect(
+    page.locator('[data-testid="run-shell-inspector"]'),
+  ).toBeVisible();
+
+  await expect(page.getByRole("tab", { name: "Files" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Diff" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Evidence" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Timeline" })).toBeVisible();
+
+  await page.getByRole("tab", { name: "Evidence" }).click();
+  await page.waitForURL(/[?&]wb=evidence/);
+  await expect(page.locator('[data-testid="evidence-graph"]')).toBeVisible();
+
+  await page.getByRole("tab", { name: "Timeline" }).click();
+  await page.waitForURL(/[?&]wb=timeline/);
+  await expect(page.getByRole("heading", { name: "Timeline" })).toBeVisible();
 });
 
 test("GET /graph returns the authored layout from the flow manifest, and there is no runtime layout store", async ({

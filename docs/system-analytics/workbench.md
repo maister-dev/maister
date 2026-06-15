@@ -18,17 +18,24 @@
 > `readBoard` gate are unchanged. (The authored-Flow CodeMirror editor slice
 > remains Designed.)
 
+> **M35 target hierarchy (Planned).** The run detail rework keeps the workbench
+> read-only but changes its tabs to **Timeline, Diff, Files, Evidence**. The
+> Flow graph becomes the non-scratch run landing surface or a fullscreen view,
+> and scratch runs move from a dialog-owned raw diff to the same shared Diff tab.
+
 ## Purpose
 
-The **workbench** domain is M22's run-inspection surface: it makes a run's
-execution legible without leaving the control plane. Its boundary is
-**read-only** — it visualizes the compiled flow graph and colors nodes by live
-status (Track A), browses the run/project's **git-tracked** files (Track B), and
-renders the base→branch diff for any run state (Track C). Node positions are
-**authored in the `flow.yaml` `presentation` section** (ADR-064) and read at
-render; the view owns **no write** — it never edits node logic or layout (the
-graph *editor* is Wave-3), never mutates run state, and never reads
-untracked/working-copy files.
+The **workbench** domain is M22's run-inspection surface and M35's shared
+secondary run inspector: it makes a run's files, diff, evidence, and timeline
+legible without leaving the control plane. Its boundary is **read-only** — it
+visualizes the compiled flow graph and colors nodes by live status in the
+non-scratch run landing surface (Track A), browses the run/project's
+**git-tracked** files (Track B), and renders the selected run-diff scope,
+including dirty worktree inspection when explicitly requested (Track C). Node
+positions are **authored in the `flow.yaml`
+`presentation` section** (ADR-064) and read at render; the view owns **no
+write** — it never edits node logic or layout, never mutates run state, and
+never reads untracked/working-copy files through the Files source browser.
 The execution model it visualizes is [`flow-graph.md`](flow-graph.md); the run
 state machine is [`runs.md`](runs.md); the worktree it reads is
 [`workspaces.md`](workspaces.md). Lifecycle actions that stop, archive, drop,
@@ -164,13 +171,13 @@ flowchart TD
     Blob -- binary --> FBin["file-binary page state (RSC)"]
 ```
 
-### Flow-run diff render (Track C)
+### Run diff render (Track C)
 
-Flow runs render through `@git-diff-view/react` (Implemented, ADR-066); the scratch
-diff (`scratch-dialog`) stays a raw `pre` and is out of this slice's scope.
-At an open review gate the same diff surface additionally hosts line-anchored
-review-comment threads (composer, inline thread cards, collapsible Outdated
-list — Implemented, ADR-072); see
+Flow runs render through `@git-diff-view/react` (Implemented, ADR-066). The M35
+target upgrades scratch runs to the same prepared diff DTO and renderer instead
+of the dialog-owned raw `pre`. At an open review gate the same diff surface
+additionally hosts line-anchored review-comment threads (composer, inline thread
+cards, collapsible Outdated list — Implemented, ADR-072); see
 [`review-comments.md`](review-comments.md).
 
 ```mermaid
@@ -179,9 +186,9 @@ flowchart LR
     Diff --> Kind{"run_kind?"}
     Kind -- scratch --> SB["scratch base, readScratchRun"]
     Kind -- flow --> FB["base = workspaces.base_commit ?? resolveBaseRef, readBoard"]
-    SB --> SRange["diffRunWorkspace base..branch"]
+    SB --> SRange["diffRunWorkspace base..branch + prepared files/perFile DTO"]
     FB --> FRange["diffRunWorkspace base..branch + diffNameStatus (per-file +/- server-side)"]
-    SRange --> SPre["raw pre in scratch-dialog (unchanged)"]
+    SRange --> SDV["shared git-diff-view renderer (M35 target)"]
     FRange --> DV["git-diff-view split/inline via ?diffview=; collapsible hunks; server-built Shiki bundle (Implemented, ADR-066)"]
 ```
 
@@ -227,8 +234,9 @@ flowchart LR
   (`viewer`) for flow runs / `readScratchRun` for scratch runs; it adds NO new
   `runs.status` value and reuses the M18 diff response shape plus a `files` summary.
   Flow runs render split/inline via `@git-diff-view/react` (`?diffview=`) with
-  per-file `additions`/`deletions` computed server-side (Implemented, ADR-066); the
-  scratch diff stays a raw `pre`.
+  per-file `additions`/`deletions` computed server-side (Implemented, ADR-066).
+  The M35 scratch rework preserves the raw `diff` string for migration but adds
+  the same prepared `files`/`perFile` shape so scratch uses the shared Diff tab.
 - An oversized diff (over the `EXEC_MAX_BUFFER` 4 MiB bound) degrades to a bounded
   prefix carrying `truncated: true` on the `…/diff` response and the review-panel
   diff DTO — the diff readers (`diffRange`, `diffRunWorkspace`) NEVER throw on

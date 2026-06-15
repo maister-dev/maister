@@ -4,6 +4,7 @@ const withNextIntl = createNextIntlPlugin("./i18n/request.ts");
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  serverExternalPackages: ["better-sqlite3", "pg"],
   turbopack: {
     resolveAlias: {
       // FINDING G (ADR-066): replace git-diff-view's lowlight/highlight.js

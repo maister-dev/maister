@@ -40,6 +40,7 @@ import {
 
 const DIFF_LABELS = {
   empty: "L.empty",
+  bodyUnavailable: "L.bodyUnavailable",
   added: "L.added",
   removed: "L.removed",
   viewMode: "L.viewMode",
@@ -173,6 +174,13 @@ describe("DiffView — review mode off (regression pin)", () => {
 
     expect(html).not.toContain("review-");
     expect(html).not.toContain("outdated");
+  });
+
+  it("renders the body-unavailable message when only file summary is available", () => {
+    const html = render({ renderUnavailable: true });
+
+    expect(html).toContain('data-testid="diff-view-body-unavailable"');
+    expect(html).toContain("L.bodyUnavailable");
   });
 
   it("renders the same chrome when review mode is on but has no threads", () => {

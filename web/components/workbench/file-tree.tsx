@@ -5,6 +5,8 @@ import type { ReactElement } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
+import { buildRunFileHref } from "@/lib/runs/run-query-state";
+
 export type FileTreeEntry = { name: string; type: "file" | "dir" };
 
 export interface FileTreeLabels {
@@ -214,11 +216,10 @@ export default function FileTree({
       // `?file=` soft-nav — the tree keeps stable React identity in the
       // persistent layout.
       if (entry.type === "file") {
-        const params = new URLSearchParams(searchParams);
-
-        params.set("wb", "files");
-        params.set("file", fullPath);
-        router.push(`${pathname}?${params.toString()}`, { scroll: false });
+        router.push(
+          buildRunFileHref(pathname, searchParams.toString(), fullPath),
+          { scroll: false },
+        );
 
         return;
       }

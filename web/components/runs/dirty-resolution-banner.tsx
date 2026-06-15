@@ -18,6 +18,7 @@ export interface DirtySummaryView {
 export interface DirtyResolutionLabels {
   title: string;
   summary: string; // expects {staged} {unstaged} {untracked} already interpolated by caller
+  viewDiff: string;
   commit: string;
   discard: string;
   discardConfirm: string;
@@ -32,6 +33,7 @@ export function DirtyResolutionBanner(props: {
   canAct: boolean;
   dirty: DirtySummaryView;
   dirtyResolution: "commit" | "discard" | "proceed" | null;
+  diffHref?: string;
   labels: DirtyResolutionLabels;
 }) {
   const router = useRouter();
@@ -72,10 +74,15 @@ export function DirtyResolutionBanner(props: {
   if (props.dirtyResolution === "proceed") {
     return (
       <div
-        className="mb-4 rounded-md border border-amber-line bg-paper px-3 py-2 font-mono text-[11px] text-amber"
+        className="mb-4 flex flex-wrap items-center gap-2 rounded-md border border-amber-line bg-paper px-3 py-2 font-mono text-[11px] text-amber"
         data-testid="dirty-proceed-badge"
       >
-        {props.labels.recordedBadge}
+        <span>{props.labels.recordedBadge}</span>
+        {props.diffHref ? (
+          <a className="text-ink hover:underline" href={props.diffHref}>
+            {props.labels.viewDiff}
+          </a>
+        ) : null}
       </div>
     );
   }
@@ -95,6 +102,14 @@ export function DirtyResolutionBanner(props: {
       <p className="mb-2 font-mono text-[11px] text-mute">
         {props.labels.summary}
       </p>
+      {props.diffHref ? (
+        <a
+          className="mb-3 inline-flex font-mono text-[11px] font-semibold text-ink hover:underline"
+          href={props.diffHref}
+        >
+          {props.labels.viewDiff}
+        </a>
+      ) : null}
       <ul className="mb-3 max-h-[120px] overflow-auto font-mono text-[11px] text-ink-2">
         {props.dirty.files.slice(0, 20).map((f) => (
           <li key={f.path}>

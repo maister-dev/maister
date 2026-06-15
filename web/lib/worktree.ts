@@ -1239,17 +1239,17 @@ export type WorkingTreeDiffResult = DiffResult & {
   nameStatus: Array<{ path: string; status: string }>;
 };
 
-export async function diffWorkingTree(
+async function withIntentToAddTempIndex<T>(
   worktreePath: string,
-): Promise<WorkingTreeDiffResult> {
-  const wt = validate(absolutePathSchema, worktreePath, "worktreePath");
+  fn: (env: NodeJS.ProcessEnv) => Promise<T>,
+): Promise<T> {
   const tmpDir = await fsMkdtemp(path.join(osTmpdir(), "maister-wtdiff-"));
   const tmpIndex = path.join(tmpDir, "index");
 
   try {
     const { stdout: indexPathRaw } = await execFileAsync(
       "git",
-      ["-C", wt, "rev-parse", "--git-path", "index"],
+      ["-C", worktreePath, "rev-parse", "--git-path", "index"],
       {
         signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
         maxBuffer: EXEC_MAX_BUFFER,
@@ -1257,7 +1257,7 @@ export async function diffWorkingTree(
     );
     const realIndex = path.isAbsolute(indexPathRaw.trim())
       ? indexPathRaw.trim()
-      : path.join(wt, indexPathRaw.trim());
+      : path.join(worktreePath, indexPathRaw.trim());
 
     try {
       await fsCopyFile(realIndex, tmpIndex);
@@ -1267,12 +1267,24 @@ export async function diffWorkingTree(
 
     const env: NodeJS.ProcessEnv = { ...process.env, GIT_INDEX_FILE: tmpIndex };
 
-    await execFileAsync("git", ["-C", wt, "add", "-N", "."], {
+    await execFileAsync("git", ["-C", worktreePath, "add", "-N", "."], {
       signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
       maxBuffer: EXEC_MAX_BUFFER,
       env,
     });
 
+    return await fn(env);
+  } finally {
+    await fsRm(tmpDir, { recursive: true, force: true });
+  }
+}
+
+export async function diffWorkingTree(
+  worktreePath: string,
+): Promise<WorkingTreeDiffResult> {
+  const wt = validate(absolutePathSchema, worktreePath, "worktreePath");
+
+  return await withIntentToAddTempIndex(wt, async (env) => {
     const diffArgs = ["diff", "--no-color", "--end-of-options", "HEAD"];
     let text: string;
     let truncated = false;
@@ -1324,28 +1336,22 @@ export async function diffWorkingTree(
         env,
       },
     );
-    const nameStatus = nameStatusRaw
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line) => {
-        const fields = line.split("\t");
-
-        return {
-          status: (fields[0] ?? "").charAt(0),
-          path: fields[fields.length - 1] ?? "",
-        };
-      });
+    const nameStatus = parseNameStatusOutput(nameStatusRaw);
 
     return { text, truncated, nameStatus };
-  } finally {
-    await fsRm(tmpDir, { recursive: true, force: true });
-  }
+  });
 }
 
 export interface DiffFileEntry {
   path: string;
   status: string;
+  oldPath?: string;
+}
+
+export interface DiffChangeStatEntry extends DiffFileEntry {
+  additions: number;
+  deletions: number;
+  binary: boolean;
 }
 
 export type DiffNameStatusArgs = {
@@ -1353,6 +1359,134 @@ export type DiffNameStatusArgs = {
   baseRef: string;
   branch: string;
 };
+
+function parseNameStatusLine(line: string): DiffFileEntry {
+  const parts = line.split("\t");
+  const status = (parts[0] ?? "").charAt(0);
+  const filePath = parts.length >= 3 ? parts[parts.length - 1] : parts[1];
+  const oldPath = parts.length >= 3 ? parts[1] : undefined;
+
+  if (!filePath) {
+    throw new MaisterError(
+      "CONFLICT",
+      `git diff --name-status returned an invalid row: ${JSON.stringify(line)}`,
+    );
+  }
+
+  return oldPath
+    ? { path: filePath, status, oldPath }
+    : { path: filePath, status };
+}
+
+function parseNameStatusOutput(stdout: string): DiffFileEntry[] {
+  return stdout
+    .split("\n")
+    .filter((line) => line.length > 0)
+    .map(parseNameStatusLine);
+}
+
+type ParsedNumstatEntry = {
+  path: string;
+  oldPath?: string;
+  additions: number;
+  deletions: number;
+  binary: boolean;
+};
+
+function parseNumstatCount(raw: string, line: string): number {
+  if (raw === "-") return 0;
+
+  const parsed = Number.parseInt(raw, 10);
+
+  if (Number.isNaN(parsed)) {
+    throw new MaisterError(
+      "CONFLICT",
+      `git diff --numstat returned an invalid count: ${JSON.stringify(line)}`,
+    );
+  }
+
+  return parsed;
+}
+
+function parseNumstatPath(
+  raw: string,
+): Pick<ParsedNumstatEntry, "path" | "oldPath"> {
+  const braceRename = raw.match(/^(.*)\{(.+) => (.+)\}(.*)$/);
+
+  if (braceRename) {
+    const [, prefix, oldName, newName, suffix] = braceRename;
+    const oldPath = `${prefix}${oldName}${suffix}`;
+    const filePath = `${prefix}${newName}${suffix}`;
+
+    return { path: filePath, oldPath };
+  }
+
+  const arrow = " => ";
+
+  if (raw.includes(arrow)) {
+    const [oldPath, ...rest] = raw.split(arrow);
+    const filePath = rest.join(arrow);
+
+    return { path: filePath, oldPath };
+  }
+
+  return { path: raw };
+}
+
+function parseNumstatLine(line: string): ParsedNumstatEntry {
+  const parts = line.split("\t");
+  const additionsRaw = parts[0];
+  const deletionsRaw = parts[1];
+  const pathRaw = parts.slice(2).join("\t");
+
+  if (!additionsRaw || !deletionsRaw || !pathRaw) {
+    throw new MaisterError(
+      "CONFLICT",
+      `git diff --numstat returned an invalid row: ${JSON.stringify(line)}`,
+    );
+  }
+
+  const binary = additionsRaw === "-" || deletionsRaw === "-";
+  const pathInfo = parseNumstatPath(pathRaw);
+
+  return {
+    ...pathInfo,
+    additions: parseNumstatCount(additionsRaw, line),
+    deletions: parseNumstatCount(deletionsRaw, line),
+    binary,
+  };
+}
+
+function parseNumstatOutput(stdout: string): Map<string, ParsedNumstatEntry> {
+  const entries = new Map<string, ParsedNumstatEntry>();
+
+  for (const line of stdout.split("\n").filter((row) => row.length > 0)) {
+    const entry = parseNumstatLine(line);
+
+    entries.set(entry.path, entry);
+    if (entry.oldPath) entries.set(entry.oldPath, entry);
+  }
+
+  return entries;
+}
+
+function combineNameStatusWithNumstat(
+  nameStatus: DiffFileEntry[],
+  numstatByPath: Map<string, ParsedNumstatEntry>,
+): DiffChangeStatEntry[] {
+  return nameStatus.map((entry) => {
+    const stats =
+      numstatByPath.get(entry.path) ??
+      (entry.oldPath ? numstatByPath.get(entry.oldPath) : undefined);
+
+    return {
+      ...entry,
+      additions: stats?.additions ?? 0,
+      deletions: stats?.deletions ?? 0,
+      binary: stats?.binary ?? false,
+    };
+  });
+}
 
 // M22 Phase 5 (T5.1): the changed-files summary for the workbench diff. 2-dot
 // (`base..branch`) to match diffRunWorkspace's literal stored-base -> branch tree
@@ -1378,16 +1512,7 @@ export async function diffNameStatus(
       `${base}..${br}`,
     ]);
 
-    return stdout
-      .split("\n")
-      .filter((line) => line.length > 0)
-      .map((line): DiffFileEntry => {
-        const parts = line.split("\t");
-        const status = parts[0].charAt(0);
-        const filePath = parts.length >= 3 ? parts[parts.length - 1] : parts[1];
-
-        return { path: filePath, status };
-      });
+    return parseNameStatusOutput(stdout);
   } catch (err) {
     const e = err as NodeJS.ErrnoException & { stderr?: string };
 
@@ -1397,6 +1522,108 @@ export async function diffNameStatus(
       { cause: asError(err) },
     );
   }
+}
+
+export async function diffChangeStats(
+  args: DiffNameStatusArgs,
+): Promise<DiffChangeStatEntry[]> {
+  const wt = validate(absolutePathSchema, args.worktreePath, "worktreePath");
+  const base = validate(gitRefSchema, args.baseRef, "baseRef");
+  const br = validate(branchNameSchema, args.branch, "branch");
+
+  log.debug({ worktreePath: wt, baseRef: base, branch: br }, "diffChangeStats");
+
+  try {
+    const [nameStatus, { stdout: numstatRaw }] = await Promise.all([
+      diffNameStatus({ worktreePath: wt, baseRef: base, branch: br }),
+      runGit(wt, [
+        "diff",
+        "--numstat",
+        "--no-color",
+        "--find-renames",
+        "--end-of-options",
+        `${base}..${br}`,
+      ]),
+    ]);
+
+    return combineNameStatusWithNumstat(
+      nameStatus,
+      parseNumstatOutput(numstatRaw),
+    );
+  } catch (err) {
+    if (err instanceof MaisterError) throw err;
+    const e = err as NodeJS.ErrnoException & { stderr?: string };
+
+    throw new MaisterError(
+      "CONFLICT",
+      `git diff --numstat ${base}..${br} failed: ${(e.stderr ?? e.message).toString().trim()}`,
+      { cause: asError(err) },
+    );
+  }
+}
+
+export async function diffWorkingTreeChangeStats(
+  worktreePath: string,
+): Promise<DiffChangeStatEntry[]> {
+  const wt = validate(absolutePathSchema, worktreePath, "worktreePath");
+
+  log.debug({ worktreePath: wt }, "diffWorkingTreeChangeStats");
+
+  return await withIntentToAddTempIndex(wt, async (env) => {
+    try {
+      const [nameStatusResult, numstatResult] = await Promise.all([
+        execFileAsync(
+          "git",
+          [
+            "-C",
+            wt,
+            "diff",
+            "--name-status",
+            "--no-color",
+            "--end-of-options",
+            "HEAD",
+          ],
+          {
+            signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
+            maxBuffer: EXEC_MAX_BUFFER,
+            env,
+          },
+        ),
+        execFileAsync(
+          "git",
+          [
+            "-C",
+            wt,
+            "diff",
+            "--numstat",
+            "--no-color",
+            "--find-renames",
+            "--end-of-options",
+            "HEAD",
+          ],
+          {
+            signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
+            maxBuffer: EXEC_MAX_BUFFER,
+            env,
+          },
+        ),
+      ]);
+
+      return combineNameStatusWithNumstat(
+        parseNameStatusOutput(nameStatusResult.stdout),
+        parseNumstatOutput(numstatResult.stdout),
+      );
+    } catch (err) {
+      if (err instanceof MaisterError) throw err;
+      const e = err as NodeJS.ErrnoException & { stderr?: string };
+
+      throw new MaisterError(
+        "CONFLICT",
+        `git diff --numstat HEAD failed: ${(e.stderr ?? e.message).toString().trim()}`,
+        { cause: asError(err) },
+      );
+    }
+  });
 }
 
 export type WorktreeStatusArgs = {

@@ -274,6 +274,7 @@ export function ReviewPanel({
           files={diff.files}
           labels={{
             empty: tWorkbench("diff.empty"),
+            bodyUnavailable: tWorkbench("diff.bodyUnavailable"),
             added: tWorkbench("diff.added"),
             removed: tWorkbench("diff.removed"),
             viewMode: tWorkbench("diff.viewMode"),

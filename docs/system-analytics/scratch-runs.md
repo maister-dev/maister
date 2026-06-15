@@ -68,6 +68,23 @@ the same web, database, supervisor, and worktree contracts as Flow runs.
   stopped scratch drop goes through the shared preserve-first run workbench
   drop route.
 
+## Scratch detail UI hierarchy (Planned M35)
+
+The scratch detail rework keeps the conversation as the primary surface and
+adds the same run shell, inspector, and secondary workbench used by
+workspace-backed Flow and agent runs:
+
+- **Conversation center** owns the transcript, composer, permission/HITL cards,
+  recover prompt, attachments, and latest tool activity.
+- **Right inspector** shows scratch run facts, branch/worktree context, change
+  size, Session summary, capability profile, and server-derived lifecycle or
+  delivery actions.
+- **Workbench tabs** provide Files, Diff, Evidence, and Timeline without
+  replacing the conversation as the landing view.
+- **Diff** uses `GET /api/runs/{runId}/diff` and the shared prepared diff
+  renderer once the scratch route exposes `files`/`perFile`, while preserving
+  the raw `diff` string during migration.
+
 ## State machine
 
 Scratch dialog status lives on `scratch_runs.dialog_status`; shared lifecycle
@@ -233,7 +250,7 @@ sequenceDiagram
         W->>DB: Set Review
         UI->>W: GET /api/runs/{runId}/diff
         W->>FS: git diff base...scratch branch
-        W-->>UI: Raw diff without uploaded files
+        W-->>UI: Shared diff DTO without uploaded files
     else promote or discard
         U->>UI: Promote or discard
         UI->>W: POST promote or discard route
@@ -298,6 +315,11 @@ secret material.
 - Stopped/terminal scratch detail MUST render workbench lifecycle actions from
   [`workbench-lifecycle.md`](workbench-lifecycle.md) and keep scratch messages,
   recover, diff, and promote controls adjacent.
+- Scratch detail MUST keep the transcript and composer as the landing surface;
+  Files, Diff, Evidence, and Timeline are secondary workbench tabs.
+- Scratch Diff MUST use the shared run diff renderer after the route returns the
+  prepared `files`/`perFile` shape; uploaded artifacts remain outside the git
+  diff because they are stored under the run artifact tree.
 
 ## Edge cases
 

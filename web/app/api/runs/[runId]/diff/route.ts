@@ -7,8 +7,17 @@ import pino from "pino";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
-import { prepareDiff } from "@/lib/diff/prepare";
+import {
+  filterDiffByPath,
+  prepareDiff,
+  prepareDiffSummary,
+  type DiffPrepResult,
+} from "@/lib/diff/prepare";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import {
+  filterReviewableChangeEntries,
+  isReviewableChangePath,
+} from "@/lib/runs/reviewable-changes";
 import {
   diffNameStatus,
   diffRange,
@@ -117,6 +126,46 @@ type ScopeAvailability = Record<
   DiffScope,
   { available: boolean; reason?: string }
 >;
+
+type PreparedDiffResult =
+  | { prepared: DiffPrepResult; renderUnavailableReason: null }
+  | { prepared: DiffPrepResult; renderUnavailableReason: "prepare-failed" };
+
+async function prepareDiffForResponse(input: {
+  runId: string;
+  scope: DiffScope;
+  diff: string;
+  truncated: boolean;
+}): Promise<PreparedDiffResult> {
+  try {
+    return {
+      prepared: await prepareDiff(input.diff, input.truncated),
+      renderUnavailableReason: null,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const summary = prepareDiffSummary(input.diff, input.truncated);
+
+    log.warn(
+      {
+        runId: input.runId,
+        scope: input.scope,
+        err: message,
+        fileCount: summary.files.length,
+      },
+      "diff render preparation failed",
+    );
+
+    return {
+      prepared: {
+        files: summary.files,
+        perFile: [],
+        truncated: summary.truncated,
+      },
+      renderUnavailableReason: "prepare-failed",
+    };
+  }
+}
 
 function parseScope(req: Request): DiffScope {
   const raw = new URL(req.url).searchParams.get("scope") ?? "run";
@@ -297,9 +346,9 @@ export async function GET(
       base = await headCommit({ worktreePath: workspace.worktreePath });
       const wtDiff = await diffWorkingTree(workspace.worktreePath);
 
-      diff = wtDiff.text;
+      diff = filterDiffByPath(wtDiff.text, isReviewableChangePath);
       truncated = wtDiff.truncated;
-      nameStatus = wtDiff.nameStatus;
+      nameStatus = filterReviewableChangeEntries(wtDiff.nameStatus);
     } else {
       if (scope === "since-last-review") {
         base = priorReviewTipSha as string;
@@ -337,7 +386,12 @@ export async function GET(
       });
     }
 
-    const prepared = await prepareDiff(diff, truncated);
+    const { prepared, renderUnavailableReason } = await prepareDiffForResponse({
+      runId,
+      scope,
+      diff,
+      truncated,
+    });
     const countsByPath = new Map(prepared.files.map((f) => [f.path, f]));
     const files = nameStatus.map((entry) => {
       const counts = countsByPath.get(entry.path);
@@ -364,6 +418,7 @@ export async function GET(
       truncated: prepared.truncated,
       files,
       perFile: prepared.perFile,
+      renderUnavailableReason,
     });
   } catch (err) {
     return errorResponse(err, runId);

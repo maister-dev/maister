@@ -34,6 +34,11 @@ docs/screens/
     status-bar.md    # footer supervisor status (single source)
     top-nav.md       # breadcrumb + locale/theme/user menu
     launch-dialog.md # scratch/launch popover + Cmd/Ctrl+K
+  runs/              # run detail area (flow, scratch, shared blocks)
+    flow-run.md      # /runs/:runId flow/agent run landing surface
+    scratch-run.md   # /scratch-runs/:runId conversation-first surface
+    run-inspector.md # shared right sidebar for run info + actions
+    workbench.md     # shared Files/Diff/Evidence/Timeline workbench
   inbox.md           # /inbox
   mcps.md            # /mcps (admin)
 ```
@@ -90,8 +95,14 @@ flowchart TD
     Rail --> Settings["Settings /settings — admin"]
 
     Portfolio --> Board["Project board /projects/SLUG"]
-    Board --> Run["Run detail /runs/ID"]
-    Launch --> Run
+    Board --> FlowRun["Flow run detail /runs/ID"]
+    Rail --> ScratchRows["Active scratch workspaces"]
+    Launch --> ScratchRun["Scratch run detail /scratch-runs/ID"]
+    ScratchRows --> ScratchRun
+    FlowRun --- RunInspector["runs/run-inspector - overview, changes, flow/session, actions"]
+    ScratchRun --- RunInspector
+    FlowRun --> Workbench["runs/workbench - files, diff, evidence, timeline"]
+    ScratchRun --> Workbench
 ```
 
 ## Index
@@ -106,6 +117,10 @@ flowchart TD
 | [`inbox.md`](inbox.md) | Unified inbox | `/inbox` | Implemented (WI-1) |
 | [`mcps.md`](mcps.md) | Platform MCP catalog (admin) | `/mcps` | Implemented (WI-2) |
 | [`studio/README.md`](studio/README.md) | Flow Studio redesign (area design: overview · sources · packages · package detail · editor · local workspace) | `/studio/*` | Implemented (Phase A: overview · sources · packages · detail); B/C Planned |
+| [`runs/flow-run.md`](runs/flow-run.md) | Flow run detail | `/runs/{runId}` | Planned rework |
+| [`runs/scratch-run.md`](runs/scratch-run.md) | Scratch run detail | `/scratch-runs/{runId}` | Planned rework |
+| [`runs/run-inspector.md`](runs/run-inspector.md) | Run inspector block | shared | Planned |
+| [`runs/workbench.md`](runs/workbench.md) | Run workbench block | shared | Planned rework |
 
 Going forward, **each screen work-item updates its screens doc** in the same
 phase that ships the screen. New screens add a row here and a file following the

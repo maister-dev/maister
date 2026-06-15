@@ -108,6 +108,37 @@ function parseSection(section: string): ParsedSection {
   return { section, path, status, additions, deletions };
 }
 
+function summarizeSections(sections: ParsedSection[]): DiffFileSummary[] {
+  return sections.map((s) => ({
+    path: s.path,
+    status: s.status,
+    additions: s.additions,
+    deletions: s.deletions,
+  }));
+}
+
+export function filterDiffByPath(
+  rawDiff: string,
+  includePath: (path: string) => boolean,
+): string {
+  const sections = splitSections(rawDiff)
+    .map(parseSection)
+    .filter((section) => includePath(section.path))
+    .map((section) => section.section);
+
+  return sections.length > 0 ? `${sections.join("\n")}\n` : "";
+}
+
+export function prepareDiffSummary(
+  rawDiff: string,
+  truncated = false,
+): Pick<DiffPrepResult, "files" | "truncated"> {
+  return {
+    files: summarizeSections(splitSections(rawDiff).map(parseSection)),
+    truncated,
+  };
+}
+
 function buildBundle(
   parsed: ParsedSection,
   fileLang: string,
@@ -157,12 +188,7 @@ export async function prepareDiff(
 
   await preloadDiffLangs([...new Set(langByPath.values())]);
 
-  const files: DiffFileSummary[] = sections.map((s) => ({
-    path: s.path,
-    status: s.status,
-    additions: s.additions,
-    deletions: s.deletions,
-  }));
+  const files = summarizeSections(sections);
 
   const perFile: PreparedFile[] = sections.map((s) => {
     const fileLang = langByPath.get(s.path) ?? "plaintext";

@@ -48,8 +48,10 @@ vi.mock("next/navigation", () => ({
 import RunDiff, {
   buildDiffViewReview,
   ChangedFilesList,
+  diffScopeOrDefault,
   executeReviewMutation,
   loadReviewThreads,
+  reviewEnabledForScope,
   ReviewActionAlert,
   reviewMutationRequest,
   type ReviewMutation,
@@ -136,6 +138,7 @@ const RUN_DIFF_LABELS: RunDiffLabels = {
   empty: "workbench.diff.empty",
   error: "workbench.diff.error",
   changedFiles: "workbench.diff.changedFiles",
+  bodyUnavailable: "workbench.diff.bodyUnavailable",
   added: "L.added",
   removed: "L.removed",
   viewMode: "L.viewMode",
@@ -241,6 +244,27 @@ describe("RunDiff — optional review prop (ADR-072)", () => {
 
     expect(without).toContain('data-testid="run-diff-loading"');
     expect(withReview).toBe(without);
+  });
+});
+
+describe("diffScopeOrDefault", () => {
+  it("accepts the uncommitted deep-link scope", () => {
+    expect(diffScopeOrDefault("uncommitted")).toBe("uncommitted");
+  });
+
+  it("falls back to the run scope for invalid input", () => {
+    expect(diffScopeOrDefault("unknown")).toBe("run");
+  });
+});
+
+describe("reviewEnabledForScope", () => {
+  it("enables inline review only on the canonical run diff", () => {
+    expect(reviewEnabledForScope(reviewContext(), "run")).toBe(true);
+    expect(reviewEnabledForScope(reviewContext(), "uncommitted")).toBe(false);
+    expect(reviewEnabledForScope(reviewContext(), "since-last-review")).toBe(
+      false,
+    );
+    expect(reviewEnabledForScope(undefined, "run")).toBe(false);
   });
 });
 

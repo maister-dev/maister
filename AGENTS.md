@@ -151,6 +151,7 @@ on a different host than the web tier.
 | Architecture | `docs/architecture.md` | Current system architecture, C4 diagrams, data flows |
 | Decisions | `docs/decisions.md` | ADRs and locked technical decisions |
 | System Analytics | `docs/system-analytics/` | Domain flows for projects, runs, HITL, executors, Flow DSL |
+| Screens Reference | `docs/screens/README.md` | User-facing screens and shared chrome |
 | API Contracts | `docs/api/` | Web/supervisor OpenAPI and SSE AsyncAPI contracts |
 | README (web) | `web/README.md` | HeroUI template README — replace when something to say |
 

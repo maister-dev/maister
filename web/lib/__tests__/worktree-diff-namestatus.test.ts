@@ -16,6 +16,9 @@
 //           status = first char of the status token (A/M/D/R/C)
 //           path   = for a rename/copy line (3 tab-fields `R100\told\tnew`)
 //                    the NEW path (last field), else the single path field.
+//     export async function diffChangeStats(args):
+//       - use git `--numstat` + `--name-status` for lightweight per-file counts
+//         without preparing the rendered diff.
 //
 // Built against a REAL temp git repo via the worktree-range / worktree-tree
 // harness so the parse is exercised over actual git output, not a mock.
@@ -29,7 +32,12 @@ import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { MaisterError } from "@/lib/errors";
-import { diffNameStatus, diffRunWorkspace } from "@/lib/worktree";
+import {
+  diffChangeStats,
+  diffNameStatus,
+  diffRunWorkspace,
+  diffWorkingTreeChangeStats,
+} from "@/lib/worktree";
 
 const execFileAsync = promisify(execFile);
 
@@ -77,6 +85,8 @@ describe("diffNameStatus against a real temp git repo", () => {
     await rm(join(repo, "drop.txt"));
     // RENAME old-name.txt -> new-name.txt (git records it via `git mv`).
     await git(repo, "mv", "old-name.txt", "new-name.txt");
+    // ADD a binary file so numstat reports `- -`.
+    await writeFile(join(repo, "binary.bin"), new Uint8Array([0, 1, 2, 3]));
 
     await git(repo, "add", "-A");
     await git(repo, "commit", "-q", "-m", "add/modify/delete/rename");
@@ -157,6 +167,167 @@ describe("diffNameStatus against a real temp git repo", () => {
         branch: "../evil",
       }),
     ).rejects.toBeInstanceOf(MaisterError);
+  });
+});
+
+describe("diffChangeStats against a real temp git repo", () => {
+  let repo: string;
+  let baseSha: string;
+
+  beforeAll(async () => {
+    repo = await mkdtemp(join(tmpdir(), "worktree-changestats-"));
+
+    await git(repo, "init", "-q", "-b", "main");
+    await git(repo, "config", "user.email", "test@maister.local");
+    await git(repo, "config", "user.name", "Test");
+    await git(repo, "config", "commit.gpgsign", "false");
+    await git(repo, "config", "diff.renames", "true");
+
+    await writeFile(join(repo, "keep.txt"), "original keep\n");
+    await writeFile(join(repo, "drop.txt"), "doomed\n");
+    await writeFile(
+      join(repo, "old-name.txt"),
+      "stable content for rename detection\n",
+    );
+    await git(repo, "add", "-A");
+    await git(repo, "commit", "-q", "-m", "base commit");
+    baseSha = (await git(repo, "rev-parse", "HEAD")).trim();
+
+    await git(repo, "checkout", "-q", "-b", "feature");
+    await writeFile(join(repo, "added.txt"), "new file\n");
+    await writeFile(join(repo, "keep.txt"), "modified keep\n");
+    await rm(join(repo, "drop.txt"));
+    await git(repo, "mv", "old-name.txt", "new-name.txt");
+    await writeFile(join(repo, "binary.bin"), new Uint8Array([0, 1, 2, 3]));
+    await git(repo, "add", "-A");
+    await git(repo, "commit", "-q", "-m", "add/modify/delete/rename/binary");
+  });
+
+  afterAll(async () => {
+    await rm(repo, { recursive: true, force: true });
+  });
+
+  it("reports additions and deletions without preparing a rendered diff", async () => {
+    const entries = await diffChangeStats({
+      worktreePath: repo,
+      baseRef: baseSha,
+      branch: "feature",
+    });
+
+    expect(entries.find((e) => e.path === "added.txt")).toMatchObject({
+      status: "A",
+      additions: 1,
+      deletions: 0,
+      binary: false,
+    });
+    expect(entries.find((e) => e.path === "keep.txt")).toMatchObject({
+      status: "M",
+      additions: 1,
+      deletions: 1,
+      binary: false,
+    });
+    expect(entries.find((e) => e.path === "drop.txt")).toMatchObject({
+      status: "D",
+      additions: 0,
+      deletions: 1,
+      binary: false,
+    });
+  });
+
+  it("reports rename-only files with the new path and zero textual counts", async () => {
+    const entries = await diffChangeStats({
+      worktreePath: repo,
+      baseRef: baseSha,
+      branch: "feature",
+    });
+    const renamed = entries.find((e) => e.status === "R");
+
+    expect(renamed).toMatchObject({
+      path: "new-name.txt",
+      oldPath: "old-name.txt",
+      additions: 0,
+      deletions: 0,
+      binary: false,
+    });
+  });
+
+  it("marks binary file changes without inventing line counts", async () => {
+    const entries = await diffChangeStats({
+      worktreePath: repo,
+      baseRef: baseSha,
+      branch: "feature",
+    });
+
+    expect(entries.find((e) => e.path === "binary.bin")).toMatchObject({
+      status: "A",
+      additions: 0,
+      deletions: 0,
+      binary: true,
+    });
+  });
+
+  it("returns an empty list for an empty branch diff", async () => {
+    await expect(
+      diffChangeStats({
+        worktreePath: repo,
+        baseRef: baseSha,
+        branch: "main",
+      }),
+    ).resolves.toEqual([]);
+  });
+});
+
+describe("diffWorkingTreeChangeStats against a dirty worktree", () => {
+  let repo: string;
+  let statusBefore: string;
+
+  beforeAll(async () => {
+    repo = await mkdtemp(join(tmpdir(), "worktree-dirty-changestats-"));
+
+    await git(repo, "init", "-q", "-b", "main");
+    await git(repo, "config", "user.email", "test@maister.local");
+    await git(repo, "config", "user.name", "Test");
+    await git(repo, "config", "commit.gpgsign", "false");
+    await writeFile(join(repo, "tracked.txt"), "before\n");
+    await git(repo, "add", "-A");
+    await git(repo, "commit", "-q", "-m", "base commit");
+
+    await writeFile(join(repo, "tracked.txt"), "after\n");
+    await writeFile(join(repo, "untracked.txt"), "fresh\n");
+    statusBefore = await git(
+      repo,
+      "status",
+      "--porcelain=v1",
+      "--untracked-files=all",
+    );
+  });
+
+  afterAll(async () => {
+    await rm(repo, { recursive: true, force: true });
+  });
+
+  it("summarizes tracked and untracked changes without mutating the real index", async () => {
+    const entries = await diffWorkingTreeChangeStats(repo);
+    const statusAfter = await git(
+      repo,
+      "status",
+      "--porcelain=v1",
+      "--untracked-files=all",
+    );
+
+    expect(statusAfter).toBe(statusBefore);
+    expect(entries.find((e) => e.path === "tracked.txt")).toMatchObject({
+      status: "M",
+      additions: 1,
+      deletions: 1,
+      binary: false,
+    });
+    expect(entries.find((e) => e.path === "untracked.txt")).toMatchObject({
+      status: "A",
+      additions: 1,
+      deletions: 0,
+      binary: false,
+    });
   });
 });
 
