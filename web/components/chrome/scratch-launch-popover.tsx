@@ -13,7 +13,7 @@ export interface ScratchLaunchPopoverProps {
   label: string;
   title: string;
   projectId?: string | null;
-  variant: "icon" | "primary";
+  variant: "icon" | "primary" | "rail";
   hint?: string;
   disabled?: boolean;
   shortcut?: ReactNode;
@@ -83,9 +83,11 @@ export function ScratchLaunchPopover({
   }, [variant, disabled]);
 
   const buttonClass =
-    variant === "icon"
-      ? "inline-flex h-5 w-5 items-center justify-center rounded-md text-[13px] font-semibold text-mute hover:bg-ivory hover:text-amber"
-      : "flex w-full cursor-pointer items-center gap-2.5 rounded-[10px] bg-amber px-3 py-[11px] pl-3.5 font-sans text-[13.5px] font-semibold tracking-[-0.005em] text-white shadow-[0_8px_24px_-10px_var(--amber),0_1px_0_rgba(255,255,255,0.18)_inset] transition-[transform,box-shadow,background] hover:-translate-y-px hover:bg-amber-2";
+    variant === "primary"
+      ? "flex w-full cursor-pointer items-center gap-2.5 rounded-[10px] bg-amber px-3 py-[11px] pl-3.5 font-sans text-[13.5px] font-semibold tracking-[-0.005em] text-white shadow-[0_8px_24px_-10px_var(--amber),0_1px_0_rgba(255,255,255,0.18)_inset] transition-[transform,box-shadow,background] hover:-translate-y-px hover:bg-amber-2"
+      : variant === "rail"
+        ? "inline-flex h-9 w-9 items-center justify-center rounded-[10px] bg-amber font-mono text-[18px] font-bold leading-none text-white shadow-[0_8px_24px_-12px_var(--amber),0_1px_0_rgba(255,255,255,0.18)_inset] transition-[transform,box-shadow,background] hover:-translate-y-px hover:bg-amber-2"
+        : "inline-flex h-5 w-5 items-center justify-center rounded-md text-[13px] font-semibold text-mute hover:bg-ivory hover:text-amber";
 
   return (
     <>
@@ -100,9 +102,7 @@ export function ScratchLaunchPopover({
         type="button"
         onClick={() => setOpen(true)}
       >
-        {variant === "icon" ? (
-          "+"
-        ) : (
+        {variant === "primary" ? (
           <>
             <span className="inline-flex h-[22px] w-[22px] items-center justify-center rounded-[7px] bg-white/20 font-mono text-[14px] font-bold leading-none">
               +
@@ -110,6 +110,8 @@ export function ScratchLaunchPopover({
             <span className="flex-1 text-left">{label}</span>
             {shortcut}
           </>
+        ) : (
+          "+"
         )}
       </button>
 

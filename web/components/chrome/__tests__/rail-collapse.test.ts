@@ -15,6 +15,11 @@ function render(collapsed: boolean): string {
       RailCollapseView,
       {
         collapsed,
+        collapsedChildren: createElement(
+          "span",
+          { "data-testid": "rail-compact-child" },
+          "Compact projects",
+        ),
         onToggle: () => {},
         collapseLabel: "Collapse sidebar",
         expandLabel: "Expand sidebar",
@@ -38,10 +43,12 @@ describe("RailCollapseView — collapse toggle (T1.3)", () => {
     expect(html).toContain("Projects");
   });
 
-  it("hides the rail content (nav labels) when collapsed", () => {
+  it("shows compact rail content when collapsed", () => {
     const html = render(true);
 
     expect(html).toContain('data-collapsed="true"');
+    expect(html).toContain('data-testid="rail-collapsed-content"');
+    expect(html).toContain("Compact projects");
     expect(html).not.toContain('data-testid="rail-content"');
     expect(html).not.toContain("Projects");
   });

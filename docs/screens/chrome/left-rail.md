@@ -57,11 +57,14 @@ Top to bottom:
 The rail is **collapsible** so wide canvases (the Flow editor,
 [`../studio/editor.md`](../studio/editor.md)) can claim near-full width. A toggle
 button switches between **expanded** (nav labels + active-workspaces + readiness +
-launch) and **collapsed** (icons-only/hidden). The choice persists to
-`localStorage` (default **expanded**); it is restored after hydration (a brief
-expanded flash on a collapsed reload is accepted — no inline script, matching the
-script-free theme convention). The toggle is a small client island; the rail's
-data fetch stays in the async Server Component.
+launch) and **collapsed** (icon rail). Collapsed mode keeps all top-level
+destination icons visible; the active-workspaces and runners-readiness regions
+open as right-side flyout menus from their icons, and launch remains available
+as the compact `+` control. The choice persists to `localStorage` (default
+**expanded**); it is restored after hydration (a brief expanded flash on a
+collapsed reload is accepted — no inline script, matching the script-free theme
+convention). The toggle is a small client island; the rail's data fetch stays in
+the async Server Component.
 
 ## States
 

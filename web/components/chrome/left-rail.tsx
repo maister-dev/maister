@@ -61,6 +61,13 @@ export interface LeftRailProps {
   userRole?: GlobalRole;
 }
 
+type RailSection = {
+  id: string;
+  label: string;
+  href: string;
+  ready: boolean;
+};
+
 // Maps a readiness verdict cause to its `portfolio` i18n key for the rail
 // chip tooltip. `binary_unavailable` adapters are hidden, never labelled.
 const runnerCauseLabelKey: Record<AdapterReadinessCause, string> = {
@@ -120,7 +127,90 @@ const sectionIcons: Record<string, ReactNode> = {
       <path d="M8 4.6V8l2.4 1.5" />
     </>
   ),
+  workspaces: (
+    <>
+      <rect height="9" rx="1.8" width="11" x="2.5" y="3.5" />
+      <path d="M5 6.2h6M5 8.4h4" />
+    </>
+  ),
+  runners: (
+    <>
+      <rect height="8" rx="2" width="10" x="3" y="4" />
+      <path d="M6 4V2M10 4V2M6.5 8h3M5 12v2M11 12v2" />
+    </>
+  ),
 };
+
+function RailSectionIcon({
+  active = false,
+  className,
+  id,
+}: {
+  active?: boolean;
+  className?: string;
+  id: string;
+}): ReactElement {
+  return (
+    <svg
+      aria-hidden="true"
+      className={className ?? (active ? navIconActive : navIcon)}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      viewBox="0 0 16 16"
+    >
+      {sectionIcons[id]}
+    </svg>
+  );
+}
+
+function CollapsedRailBadge({ value }: { value: number }): ReactElement {
+  return (
+    <span className="absolute -right-0.5 -top-0.5 min-w-4 rounded-full bg-amber px-1 py-px text-center font-mono text-[9px] font-bold leading-none text-white">
+      {value}
+    </span>
+  );
+}
+
+function CollapsedRailFlyout({
+  badge,
+  children,
+  icon,
+  label,
+}: {
+  badge?: number;
+  children: ReactNode;
+  icon: ReactNode;
+  label: string;
+}): ReactElement {
+  return (
+    <details className="group relative">
+      <summary
+        aria-label={label}
+        className="relative flex h-9 w-9 cursor-pointer list-none items-center justify-center rounded-[10px] border border-line bg-paper text-mute transition-colors hover:border-mute hover:bg-ivory hover:text-ink group-open:border-amber-line group-open:bg-amber-soft group-open:text-amber [&::-webkit-details-marker]:hidden"
+        title={label}
+      >
+        <svg
+          aria-hidden="true"
+          className="h-3.5 w-3.5"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          viewBox="0 0 16 16"
+        >
+          {icon}
+        </svg>
+        {badge && badge > 0 ? <CollapsedRailBadge value={badge} /> : null}
+      </summary>
+      <div className="absolute left-[calc(100%+8px)] top-0 z-[130] max-h-[min(520px,calc(100vh-96px))] w-[340px] overflow-y-auto rounded-[14px] border border-line bg-paper p-3 shadow-[var(--shadow-lg)]">
+        <div className="mb-2 border-b border-line pb-2 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-mute">
+          {label}
+        </div>
+        {children}
+      </div>
+    </details>
+  );
+}
 
 const dotByStatus: Record<WorkspaceStatus, string> = {
   running: "bg-accent-4 animate-[pulse-dot_2.2s_ease-out_infinite]",
@@ -227,12 +317,7 @@ export async function LeftRail({
   // `ready: false` sections are documented M9 deferrals (no route yet). They
   // render as non-navigating "coming soon" items so they never 404 — matching
   // the cursor/aider "coming soon" agent-chip precedent below.
-  const sections: {
-    id: string;
-    label: string;
-    href: string;
-    ready: boolean;
-  }[] = [
+  const sections: RailSection[] = [
     { id: "projects", label: tNav("projects"), href: "/", ready: true },
     { id: "inbox", label: tNav("inbox"), href: "/inbox", ready: true },
     { id: "studio", label: tNav("studio"), href: "/studio", ready: true },
@@ -268,9 +353,195 @@ export async function LeftRail({
     });
   }
 
+  const collapsedContent = (
+    <>
+      <nav
+        aria-label="Sections"
+        className="flex shrink-0 flex-col items-center gap-1 border-b border-line pb-2"
+      >
+        {sections.map((section) => {
+          const isActive = section.id === activeSection;
+          const showBadge = section.id === "inbox" && inboxCount > 0;
+
+          if (!section.ready) {
+            return (
+              <span
+                key={section.id}
+                aria-disabled="true"
+                aria-label={section.label}
+                className="relative inline-flex h-9 w-9 cursor-default items-center justify-center rounded-[10px] text-mute opacity-60"
+                title={`${section.label} · ${tNav("comingSoon")}`}
+              >
+                <RailSectionIcon id={section.id} />
+                <span className="sr-only">{section.label}</span>
+              </span>
+            );
+          }
+
+          return (
+            <Link
+              key={section.id}
+              aria-current={isActive ? "page" : undefined}
+              aria-label={section.label}
+              className={clsx(
+                "relative inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-[10px] transition-colors",
+                "hover:bg-ivory hover:text-ink",
+                isActive ? "bg-ivory text-ink" : "text-ink-2",
+              )}
+              href={section.href}
+              title={section.label}
+            >
+              <RailSectionIcon active={isActive} id={section.id} />
+              <span className="sr-only">{section.label}</span>
+              {showBadge ? <CollapsedRailBadge value={inboxCount} /> : null}
+            </Link>
+          );
+        })}
+      </nav>
+
+      <div className="flex shrink-0 flex-col items-center gap-1 border-b border-line pb-2">
+        <CollapsedRailFlyout
+          badge={activeCount}
+          icon={sectionIcons.workspaces}
+          label={tPortfolio("activeWorkspaces")}
+        >
+          {workspaceGroups.length > 0 ? (
+            <div className="flex flex-col gap-2">
+              {workspaceGroups.map((group) => (
+                <section
+                  key={group.projectId}
+                  className="flex flex-col gap-0.5"
+                >
+                  <div className="flex items-center gap-1.5 px-1 py-1">
+                    <span className="min-w-0 flex-1 truncate text-[11px] font-semibold text-ink-2">
+                      {group.projectName}
+                    </span>
+                    <span className="rounded-full bg-ivory px-1.5 py-px font-mono text-[9.5px] text-mute">
+                      {group.activeCount}
+                    </span>
+                    <ScratchLaunchPopover
+                      hint={group.projectName}
+                      label="+"
+                      projectId={group.projectId}
+                      title={tPortfolio("startScratchInProject", {
+                        project: group.projectName,
+                      })}
+                      variant="icon"
+                    />
+                  </div>
+                  <ul className="flex list-none flex-col gap-0.5">
+                    {group.workspaces.map((ws) => (
+                      <li key={ws.runId}>
+                        <ActiveWorkspaceRow labels={buildLabels(ws)} row={ws} />
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              ))}
+            </div>
+          ) : workspaces.length > 0 ? (
+            <ul className="flex list-none flex-col gap-0.5">
+              {workspaces.map((ws) => (
+                <li key={`${ws.name}-${ws.meta}`}>
+                  <Link
+                    className={clsx(
+                      "relative grid cursor-pointer grid-cols-[12px_1fr_auto] items-center gap-2 rounded-lg px-2.5 py-2 transition-colors",
+                      ws.current ? "bg-amber-soft" : "hover:bg-ivory",
+                    )}
+                    href={ws.href ?? "#"}
+                    title={`Open ${ws.name} · ${ws.meta}`}
+                  >
+                    {ws.current ? (
+                      <span className="absolute inset-y-2 left-0 w-0.5 rounded-sm bg-amber" />
+                    ) : null}
+                    <span
+                      className={clsx(
+                        "h-2 w-2 rounded-full",
+                        dotByStatus[ws.status],
+                      )}
+                    />
+                    <div className="flex min-w-0 flex-col gap-px">
+                      <code className="truncate font-mono text-[11.5px] font-semibold tracking-[-0.005em] text-ink">
+                        {ws.name}
+                      </code>
+                      <span className="truncate font-mono text-[10px] tracking-[0.02em] text-mute">
+                        {ws.meta}
+                      </span>
+                    </div>
+                    <span
+                      className={clsx(
+                        "font-mono text-[10px] tracking-[0.04em]",
+                        ws.status === "needs"
+                          ? "font-semibold text-amber"
+                          : "text-mute-2",
+                      )}
+                    >
+                      {ws.time}
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="m-0 px-1 py-2 font-mono text-[11px] text-mute-2">
+              {tPortfolio("noneActive")}
+            </p>
+          )}
+        </CollapsedRailFlyout>
+
+        <CollapsedRailFlyout
+          badge={visibleAdapters.length}
+          icon={sectionIcons.runners}
+          label={tPortfolio("runnersReadiness")}
+        >
+          <div className="flex flex-col gap-1 font-mono text-[10.5px] tracking-[0.02em]">
+            {visibleAdapters.length > 0 ? (
+              visibleAdapters.map((adapter) => {
+                const label = tPortfolio(runnerCauseLabelKey[adapter.cause]);
+
+                return (
+                  <span
+                    key={adapter.adapter}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-ivory px-2 py-1.5 text-mute"
+                    title={
+                      adapter.detail ? `${label}: ${adapter.detail}` : label
+                    }
+                  >
+                    <span
+                      className={clsx(
+                        "h-[5px] w-[5px] rounded-full",
+                        adapter.state === "green" ? "bg-accent-4" : "bg-amber",
+                      )}
+                    />
+                    <span className="font-semibold text-ink-2">
+                      {adapter.adapter}
+                    </span>
+                    <span className="min-w-0 truncate">{label}</span>
+                  </span>
+                );
+              })
+            ) : (
+              <span className="text-mute-2">{tPortfolio("runnersNone")}</span>
+            )}
+          </div>
+        </CollapsedRailFlyout>
+      </div>
+
+      <div className="mt-auto flex shrink-0 flex-col items-center gap-2 pb-4">
+        <ScratchLaunchPopover
+          hint={tPortfolio("launchHint")}
+          label="+"
+          title={tPortfolio("launchRun")}
+          variant="rail"
+        />
+      </div>
+    </>
+  );
+
   return (
     <RailCollapse
       collapseLabel={tNav("collapseRail")}
+      collapsedChildren={collapsedContent}
       expandLabel={tNav("expandRail")}
     >
       <nav

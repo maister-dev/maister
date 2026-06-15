@@ -7,28 +7,27 @@ import clsx from "clsx";
 
 const STORAGE_KEY = "maister:rail-collapsed";
 
-// Pure presentational shell (exported for tests): the `<aside>` + the collapse
-// toggle. Expanded → full 260px rail with its content; collapsed → a 48px strip
-// with only the toggle (content unmounted) so the canvas-heavy editor gets width.
-// The layout's `auto` rail column follows the aside's own width — no global CSS.
 export function RailCollapseView({
   collapsed,
   onToggle,
   collapseLabel,
   expandLabel,
+  collapsedChildren,
   children,
 }: {
   collapsed: boolean;
   onToggle: () => void;
   collapseLabel: string;
   expandLabel: string;
+  collapsedChildren?: ReactNode;
   children?: ReactNode;
 }): ReactElement {
   return (
     <aside
       aria-label="Sections & active workspaces"
       className={clsx(
-        "sticky top-[60px] z-[100] hidden h-[calc(100vh-60px-56px)] flex-col self-start overflow-x-hidden border-r border-line bg-paper pb-0 pt-2.5 md:flex",
+        "sticky top-[60px] z-[100] hidden h-[calc(100vh-60px-56px)] flex-col self-start border-r border-line bg-paper pb-0 pt-2.5 md:flex",
+        collapsed ? "overflow-visible" : "overflow-x-hidden",
         collapsed ? "w-12 px-1.5" : "w-[260px] px-3.5",
       )}
       data-collapsed={collapsed ? "true" : "false"}
@@ -67,7 +66,14 @@ export function RailCollapseView({
           </svg>
         </button>
       </div>
-      {collapsed ? null : (
+      {collapsed ? (
+        <div
+          className="mt-2.5 flex min-h-0 flex-1 flex-col items-center gap-2"
+          data-testid="rail-collapsed-content"
+        >
+          {collapsedChildren}
+        </div>
+      ) : (
         <div
           className="mt-2.5 flex min-h-0 flex-1 flex-col gap-3.5"
           data-testid="rail-content"
@@ -84,10 +90,12 @@ export function RailCollapseView({
 // accepted — no inline script, matching the script-free theme convention).
 export function RailCollapse({
   collapseLabel,
+  collapsedChildren,
   expandLabel,
   children,
 }: {
   collapseLabel: string;
+  collapsedChildren?: ReactNode;
   expandLabel: string;
   children: ReactNode;
 }): ReactElement {
@@ -120,6 +128,7 @@ export function RailCollapse({
     <RailCollapseView
       collapseLabel={collapseLabel}
       collapsed={collapsed}
+      collapsedChildren={collapsedChildren}
       expandLabel={expandLabel}
       onToggle={toggle}
     >
