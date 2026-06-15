@@ -63,7 +63,7 @@ No new request-derived locators. The editor route `/flows/{projectSlug}/{capId}`
 
 ### Phase 1 — Editor redesign (storage-agnostic; over existing editor backend)
 
-- [ ] **T1.1 — Node visual scheme on the shared renderer.**
+- [x] **T1.1 — Node visual scheme on the shared renderer.**
   - Files — Create: `web/lib/flows/node-visuals.ts`, `web/lib/flows/node-visuals.test.ts`; Modify: `web/components/board/flow-graph-view.tsx` (`FlowNodeBody`).
   - Do: a pure map `nodeVisual(type)` → `{ iconName, colorToken }` for `ai_coding|judge|cli|check|human` and `gateVisual(kind)` for the 6 gate kinds, per the scheme in `editor.md` (use the app's existing icon set — confirm the import source via `grep -rn "from \"lucide\|@heroicons\|icons\"" web/components | head`). Render a **colored icon chip** as the node's identity in `FlowNodeBody`, **coexisting** with the existing run-status chip (`colorForNodeStatus`, unchanged) and the author `presentationColor` border. This component is shared → the read-only preview (Phase A) + run workbench inherit it.
   - **New coverage (not migration):** `FlowNodeBody` has no test today — ADD the render test below and confirm the vitest include globs `components/board/**`; keep the status-chip / current-node-ring rendering intact (the type accent is additive).
@@ -71,7 +71,7 @@ No new request-derived locators. The editor route `/flows/{projectSlug}/{capId}`
   - Test: `web/lib/flows/node-visuals.test.ts` asserts each type/kind → expected token; a `FlowNodeBody` render test asserts the type icon + the status chip both appear.
   - Verify: `pnpm --filter maister-web exec vitest run lib/flows/node-visuals components/board` green.
 
-- [ ] **T1.2 — Named-outcome handles + dashed rework edges.**
+- [x] **T1.2 — Named-outcome handles + dashed rework edges.**
   - Files — Modify: `web/components/flows/flow-graph-editor.tsx` (`toEditorEdges`, the `flowNode` handle render via `makeEditorNodeView`), and the edge style.
   - Do: label each source handle / edge by its transition `outcome` (success/failure/rework/takeover); style **rework / back-edges** dashed + amber, default outcomes solid — matching the Heym labeled-handle look. Keep `handleConnect`→`setTransition` intact (no second edge store). **Editor-scoped:** handles change only in `makeEditorNodeView`; the read-only `makeFlowNodeView` keeps simple handles.
   - Logging: `console.debug("[flowEditor] connect", { source, target, outcome })` on confirmConnection.

@@ -33,6 +33,7 @@ import {
   toFlowGraphView,
   type FlowLayoutOverride,
 } from "@/lib/board/flow-graph-view-layout";
+import { nodeVisual } from "@/lib/flows/node-visuals";
 import { useRunStream } from "@/lib/use-run-stream";
 
 import "@xyflow/react/dist/style.css";
@@ -67,6 +68,9 @@ export interface FlowGraphViewProps {
 
 interface FlowNodeBodyProps {
   label: string;
+  // Typed node kind (ai_coding | judge | cli | check | human) → the colored
+  // identity icon chip (T1.1). Absent/unknown → a neutral dot, never a throw.
+  nodeType?: string;
   displayLabel?: string;
   nodeTypeLabel?: string;
   nodeRole?: string;
@@ -158,11 +162,92 @@ export function FlowEdgeLabel({
   );
 }
 
+// Inline SVG glyphs keyed by `node-visuals.ts` `iconName` (no icon library —
+// matches the chrome left-rail convention). Stroked via `currentColor`, which the
+// chip sets to the type's forest token.
+const NODE_ICON_PATHS: Record<string, ReactElement> = {
+  bot: (
+    <>
+      <rect height="7" rx="2" width="10" x="3" y="5.5" />
+      <path d="M8 5.5V2.9" />
+      <circle cx="8" cy="2.3" r="0.7" />
+      <path d="M6 8.6v1.4M10 8.6v1.4" />
+    </>
+  ),
+  gavel: (
+    <>
+      <path d="M4 12.5h5.5" />
+      <path d="M6.2 10.7 10.4 6.5" />
+      <rect
+        height="2.8"
+        rx="0.5"
+        transform="rotate(45 10.6 5.6)"
+        width="4.2"
+        x="8.5"
+        y="4.2"
+      />
+    </>
+  ),
+  terminal: (
+    <>
+      <path d="M3.6 5 6.4 7.8 3.6 10.6" />
+      <path d="M7.9 11h4.6" />
+    </>
+  ),
+  shield: (
+    <>
+      <path d="M8 2.4 13 4.3v3.6c0 3-2.2 4.9-5 5.7-2.8-.8-5-2.7-5-5.7V4.3z" />
+      <path d="M5.9 7.9 7.3 9.4 10.2 6.3" />
+    </>
+  ),
+  person: (
+    <>
+      <circle cx="8" cy="5.4" r="2.3" />
+      <path d="M3.6 13c0-2.5 2-4.3 4.4-4.3s4.4 1.8 4.4 4.3" />
+    </>
+  ),
+  puzzle: (
+    <path d="M3.6 4.3h2.9a1.3 1.3 0 0 1 2.6 0h2.9v2.9a1.3 1.3 0 0 1 0 2.6v2.3h-8.4v-2.3a1.3 1.3 0 0 0 0-2.6z" />
+  ),
+  file: (
+    <>
+      <path d="M4.6 2.5h4.1l3 3v8h-7.1z" />
+      <path d="M8.6 2.5V5.6h3" />
+    </>
+  ),
+  link: (
+    <>
+      <path d="M6.6 9.4 9.4 6.6" />
+      <path d="M7.3 5.2 8.7 3.8a2.4 2.4 0 0 1 3.4 3.4L10.6 8.6" />
+      <path d="M8.7 10.8 7.3 12.2a2.4 2.4 0 0 1-3.4-3.4L5.4 7.4" />
+    </>
+  ),
+  dot: <circle cx="8" cy="8" r="3" />,
+};
+
+function NodeTypeIcon({ name }: { name: string }): ReactElement {
+  return (
+    <svg
+      aria-hidden="true"
+      className="h-3.5 w-3.5"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="1.4"
+      viewBox="0 0 16 16"
+    >
+      {NODE_ICON_PATHS[name] ?? NODE_ICON_PATHS.dot}
+    </svg>
+  );
+}
+
 // Presentational node body — no <Handle>, so it renders under
 // renderToStaticMarkup without a ReactFlow provider. The data attributes are
 // the test/e2e contract surface.
 export function FlowNodeBody({
   label,
+  nodeType,
   displayLabel,
   nodeTypeLabel,
   nodeRole,
@@ -213,15 +298,28 @@ export function FlowNodeBody({
         style={hasBoxStyle ? boxStyle : undefined}
       >
         <div className="flex min-w-0 items-start justify-between gap-2">
-          <div className="min-w-0">
-            <p className="truncate text-[12px] font-medium leading-4 text-forest-text-primary">
-              {displayLabel ?? label}
-            </p>
-            {nodeTypeLabel ? (
-              <p className="truncate text-[10px] leading-3 text-forest-text-secondary">
-                {nodeTypeLabel}
-              </p>
+          <div className="flex min-w-0 items-start gap-1.5">
+            {nodeType ? (
+              <span
+                className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[5px] border border-line bg-ivory"
+                data-node-type={nodeType}
+                data-testid="node-type-icon"
+                style={{ color: `var(--${nodeVisual(nodeType).colorToken})` }}
+                title={nodeTypeLabel}
+              >
+                <NodeTypeIcon name={nodeVisual(nodeType).iconName} />
+              </span>
             ) : null}
+            <div className="min-w-0">
+              <p className="truncate text-[12px] font-medium leading-4 text-forest-text-primary">
+                {displayLabel ?? label}
+              </p>
+              {nodeTypeLabel ? (
+                <p className="truncate text-[10px] leading-3 text-forest-text-secondary">
+                  {nodeTypeLabel}
+                </p>
+              ) : null}
+            </div>
           </div>
           {presentationOnly ? null : (
             <Chip
@@ -271,6 +369,7 @@ export function FlowNodeBody({
 
 type FlowNodeRenderData = {
   label: string;
+  nodeType?: string;
   displayLabel?: string;
   nodeTypeLabel?: string;
   nodeRole?: string;
@@ -306,6 +405,7 @@ function makeFlowNodeView(
           label={d.label}
           labels={labels}
           nodeRole={d.nodeRole}
+          nodeType={d.nodeType}
           nodeTypeLabel={
             d.nodeRole
               ? (labels.role?.[d.nodeRole] ?? d.nodeTypeLabel)

@@ -194,6 +194,7 @@ function makeEditorNodeView(
           label={d.label}
           labels={labels}
           nodeRole={d.nodeRole}
+          nodeType={d.nodeType}
           nodeTypeLabel={d.nodeTypeLabel}
           presentationColor={d.presentationColor}
           presentationHeight={d.presentationHeight}
@@ -262,19 +263,54 @@ function editorCanvasNode(
   };
 }
 
+// Outcomes that loop the graph BACKWARD (rework/takeover/reject) read as dashed +
+// amber; forward outcomes (success/failure/…) stay solid. Mirrors the read-only
+// `edgeAnimated`/`edgeClassName` roles, keyed off the editor's free-text outcome.
+const BACK_EDGE_OUTCOMES = new Set(["rework", "takeover", "reject"]);
+
+export function isBackEdgeOutcome(outcome: string): boolean {
+  return BACK_EDGE_OUTCOMES.has(outcome.trim().toLowerCase());
+}
+
+export type EditorEdgeStyle = {
+  animated: boolean;
+  style: { stroke: string; strokeDasharray?: string };
+};
+
+// Pure edge-style map (T1.2): outcome → { animated, stroke[, dash] }. Back-edges
+// animate + dash in the warm `--attention` amber; forward edges are a solid muted
+// stroke. Tested directly (no canvas render needed).
+export function editorEdgeStyle(outcome: string): EditorEdgeStyle {
+  if (isBackEdgeOutcome(outcome)) {
+    return {
+      animated: true,
+      style: { stroke: "var(--attention)", strokeDasharray: "6 4" },
+    };
+  }
+
+  return { animated: false, style: { stroke: "var(--mute-2)" } };
+}
+
 // Convert the read-only view's custom `flowEdge`-typed edges to default edges
-// carrying the outcome as a visible label (no custom edge type registered).
+// carrying the outcome as a visible label + the outcome-derived style (T1.2).
 function toEditorEdges(edges: Edge[]): Edge[] {
   return edges.map((e) => {
     const data = e.data as
       | { displayLabel?: string; outcome?: string }
       | undefined;
+    const outcome = data?.outcome ?? "";
+    const { animated, style } = editorEdgeStyle(outcome);
 
     return {
       id: e.id,
       source: e.source,
       target: e.target,
       label: data?.displayLabel ?? data?.outcome ?? "",
+      animated,
+      style,
+      ...(isBackEdgeOutcome(outcome)
+        ? { labelStyle: { fill: "var(--attention)" } }
+        : {}),
     };
   });
 }
@@ -287,8 +323,22 @@ function upsertEdge(
 ): Edge[] {
   const id = `${source}:${outcome}`;
   const without = edges.filter((e) => e.id !== id);
+  const { animated, style } = editorEdgeStyle(outcome);
 
-  return [...without, { id, source, target, label: outcome }];
+  return [
+    ...without,
+    {
+      id,
+      source,
+      target,
+      label: outcome,
+      animated,
+      style,
+      ...(isBackEdgeOutcome(outcome)
+        ? { labelStyle: { fill: "var(--attention)" } }
+        : {}),
+    },
+  ];
 }
 
 function bumpDeclaredGate(node: Node): Node {
@@ -414,6 +464,11 @@ export default function FlowGraphEditor({
       if (pendingConnection === null) return;
 
       const { source, target } = pendingConnection;
+
+      if (process.env.NODE_ENV !== "production") {
+        // eslint-disable-next-line no-console
+        console.debug("[flowEditor] connect", { source, target, outcome });
+      }
 
       applyManifest(
         (m) => setTransition(m, source, outcome, target),
