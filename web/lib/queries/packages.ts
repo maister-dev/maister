@@ -197,3 +197,37 @@ export async function loadPackageSourcesView(): Promise<{
     })),
   };
 }
+
+export type PackageBom = {
+  flows: { id: string }[];
+  agents: { id: string }[];
+  skills: { id: string }[];
+  mcps: { id: string }[];
+  rules: { id: string }[];
+};
+
+// Bill-of-materials (artifact ids grouped by kind) for one package install,
+// derived from the stored manifest + inventory. Rules are not inventoried
+// (see getStudioPackageInstalls) so they come back empty until Phase C.
+export async function getStudioPackageBom(
+  installId: string,
+): Promise<PackageBom | null> {
+  const db = getDb() as any;
+  const rows = await db
+    .select()
+    .from(packageInstalls)
+    .where(eq(packageInstalls.id, installId));
+  const install = rows[0];
+
+  if (!install) return null;
+
+  const manifest = install.manifest as PackageInstallManifest | undefined;
+
+  return {
+    flows: (manifest?.spec.flows ?? []).map((f) => ({ id: f.id })),
+    agents: (manifest?.inventory.agents ?? []).map((id) => ({ id })),
+    skills: (manifest?.inventory.skills ?? []).map((id) => ({ id })),
+    mcps: (manifest?.spec.mcps ?? []).map((m) => ({ id: m.id })),
+    rules: [],
+  };
+}

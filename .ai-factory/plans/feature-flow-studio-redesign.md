@@ -130,13 +130,13 @@ No `body-controlled` cross-resource identifiers are added (all Phase A routes ar
   - Logging: `console.info("[studio.sources] admin view", { viewerId })` (admin access is worth INFO).
   - Verify: renders for admin; member → UNAUTHORIZED. Mirror the `/mcps` admin-gating test if one exists.
 
-- [ ] **T1.6 — Packages list `/studio/packages`.** (origin A6)
+- [x] **T1.6 — Packages list `/studio/packages`.** (origin A6)
   - Files — Create: `web/components/studio/packages-list.tsx`, `web/components/studio/packages-list.test.tsx`, `web/app/(app)/studio/packages/page.tsx`.
   - Do: one row per `PackageGroup` (name · source · newest version · trust · member-kind chips · attached count · Local badge) linking `/studio/packages/${encodeURIComponent(g.name)}`; client filter wrapper, server-renderable rows for the jsdom-free test path.
   - Logging: page load DEBUG `{ groupCount }`.
   - Verify: `pnpm --filter maister-web exec vitest run components/studio/packages-list.test.tsx` green.
 
-- [ ] **T1.7 — Package detail `/studio/packages/[ref]`.** (origin A7)
+- [x] **T1.7 — Package detail `/studio/packages/[ref]`.** (origin A7)
   - Files — Create: `web/components/studio/package-detail.tsx`, `web/components/studio/package-detail.test.tsx`, `web/app/(app)/studio/packages/[ref]/page.tsx`.
   - Do: header + BoM grouped by kind + **read-only preview** reusing the static `FlowGraphView` (`flow-graph-view-section`, no `runContext`) with a flow selector when >1 flow + actions (Attach→board deep-link, Trust when `canTrust`=global-admin, Versions+upgrade, Fork via existing `package-fork-button`). Gate management actions on `canManage`.
   - **Identifier:** decode `ref` (`url-param`), resolve via `loadStudioPackages` (server-state); cross-source name collision → disambiguation list; `ref` is NEVER an fs path.
