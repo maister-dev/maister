@@ -100,20 +100,20 @@ No `body-controlled` cross-resource identifiers are added (all Phase A routes ar
 
 > For each task: the exact failing-test → impl → commit code is in the origin plan `docs/plans/2026-06-15-flow-studio-redesign.md` (cited task IDs). This plan adds the logging + identifier + runner requirements. All tests run in the web Vitest project; commands run from repo root.
 
-- [ ] **T1.1 — Studio route group + nav rename.** (origin A1)
+- [x] **T1.1 — Studio route group + nav rename.** (origin A1)
   - Files — Create: `web/app/(app)/studio/page.tsx` (stub); Modify: `web/components/chrome/left-rail.tsx`, `web/messages/en.json`, `web/messages/ru.json`.
   - Do: add `nav.studio` (EN "Studio" / RU "Студия"); repoint the Flows rail item to `/studio`; keep the `/flows` route file in place (legacy, unlinked). Add the `studio` i18n namespace shell.
   - **Assertion migration (in-scope):** run the grep from "Test-integrity" and migrate any rail test asserting the Flows label/href.
   - Logging: `console.debug("[studio.overview] load", { viewerId, packageCount })` on the server page load; keep DEBUG-level, no secrets.
   - Verify: `/studio` renders; `pnpm --filter maister-web exec eslint app/\(app\)/studio components/chrome/left-rail.tsx` clean; touched rail tests green.
 
-- [ ] **T1.2 — Package-grouping shaper (TDD).** (origin A2)
+- [x] **T1.2 — Package-grouping shaper (TDD).** (origin A2)
   - Files — Create: `web/lib/studio/group-packages.ts`, `web/lib/studio/group-packages.test.ts`.
   - Do: pure `groupPackages({installs, attachments})` → `PackageGroup[]` (group by `(sourceUrl,name)`, newest-first versions, member-kind counts, `isLocal`, `needsTrust`, `attachedProjectCount`). Use the exact code in origin A2.
   - Logging: none (pure function — logging a pure shaper is noise; the caller logs).
   - Verify: `pnpm --filter maister-web exec vitest run lib/studio/group-packages.test.ts` → 3 green. Confirm the file is globbed: `pnpm --filter maister-web exec vitest list lib/studio`.
 
-- [ ] **T1.3 — Studio server loader.** (origin A3)
+- [x] **T1.3 — Studio server loader.** (origin A3)
   - Files — Create: `web/lib/studio/load.ts` (wraps `getAvailablePackageInstalls` + cross-project `getProjectPackageAttachments`; resolve real module paths via the Step-1 grep in origin A3).
   - Logging: `console.debug("[studio.load] grouped", { installCount, attachmentCount, groupCount })`; `console.error("[studio.load] read failed", { err })` on a read throw (then rethrow — do NOT swallow).
   - Verify: `pnpm --filter maister-web exec tsc --noEmit` clean for `lib/studio/load.ts`.

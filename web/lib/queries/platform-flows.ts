@@ -147,6 +147,18 @@ export async function getPlatformFlows(args: {
   );
 }
 
+// Viewer-visible projects (admin → all non-archived; member → projects they
+// belong to), each tagged with `canManageCatalog`. Shared by Studio surfaces
+// that gather cross-project package attachments and gate manage actions.
+export async function getAccessibleProjects(
+  userId: string,
+  userRole: GlobalRole,
+): Promise<PlatformFlowProject[]> {
+  const db = getDb() as unknown as QueryDb;
+
+  return listAccessibleProjects(db, { userId, userRole });
+}
+
 const DEFAULT_PLATFORM_FLOW_FILTERS: PlatformFlowFilters = {
   project: "all",
   status: "all",

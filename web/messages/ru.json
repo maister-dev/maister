@@ -103,6 +103,7 @@
     "projects": "Проекты",
     "inbox": "Инбокс",
     "flows": "Флоу",
+    "studio": "Студия",
     "repo": "Репозиторий",
     "agents": "Агенты",
     "mcps": "MCP",
@@ -120,6 +121,9 @@
     "webhooks": "Вебхуки",
     "crumbProjects": "~/projects",
     "comingSoon": "Скоро"
+  },
+  "studio": {
+    "title": "Студия"
   },
   "flows": {
     "eyebrow": "Рабочая область пакетов",

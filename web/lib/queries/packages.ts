@@ -111,3 +111,52 @@ export async function getAvailablePackageInstalls(): Promise<
     };
   });
 }
+
+export type StudioPackageInstallView = {
+  id: string;
+  name: string;
+  sourceUrl: string;
+  versionLabel: string;
+  trustStatus: string;
+  counts: {
+    flows: number;
+    skills: number;
+    agents: number;
+    mcps: number;
+    rules: number;
+  };
+};
+
+// Studio-scoped projection of installed packages: carries `sourceUrl` (for
+// package grouping + the Local badge) and per-kind member counts derived from
+// the stored manifest — fields the project-packages-tab DTO does not expose.
+export async function getStudioPackageInstalls(): Promise<
+  StudioPackageInstallView[]
+> {
+  const db = getDb() as any;
+  const installs = await db
+    .select()
+    .from(packageInstalls)
+    .where(eq(packageInstalls.packageStatus, "Installed"));
+
+  return installs.map((install: any) => {
+    const manifest = install.manifest as PackageInstallManifest | undefined;
+
+    return {
+      id: install.id,
+      name: install.name,
+      sourceUrl: install.sourceUrl,
+      versionLabel: install.versionLabel,
+      trustStatus: install.trustStatus,
+      counts: {
+        flows: manifest?.spec.flows.length ?? 0,
+        skills: manifest?.inventory.skills.length ?? 0,
+        agents: manifest?.inventory.agents.length ?? 0,
+        mcps: manifest?.spec.mcps.length ?? 0,
+        // Rules live inside capability bundles and are not inventoried in the
+        // manifest (only skills/agents are); a real count needs Phase C disk reads.
+        rules: 0,
+      },
+    };
+  });
+}

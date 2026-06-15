@@ -103,6 +103,7 @@
     "projects": "Projects",
     "inbox": "Inbox",
     "flows": "Flows",
+    "studio": "Studio",
     "repo": "Repo",
     "agents": "Agents",
     "mcps": "MCPs",
@@ -120,6 +121,9 @@
     "webhooks": "Webhooks",
     "crumbProjects": "~/projects",
     "comingSoon": "Coming soon"
+  },
+  "studio": {
+    "title": "Studio"
   },
   "flows": {
     "eyebrow": "Platform package workbench",

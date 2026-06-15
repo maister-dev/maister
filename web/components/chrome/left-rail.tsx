@@ -84,7 +84,7 @@ const sectionIcons: Record<string, ReactNode> = {
     </>
   ),
   inbox: <path d="M2 4h12M2 8h12M2 12h7" />,
-  flows: <path d="M3 3 L13 3 L9 8 L13 13 L3 13 L7 8 Z" />,
+  studio: <path d="M3 3 L13 3 L9 8 L13 13 L3 13 L7 8 Z" />,
   agents: (
     <>
       <circle cx="8" cy="5" r="2.6" />
@@ -234,7 +234,7 @@ export async function LeftRail({
   }[] = [
     { id: "projects", label: tNav("projects"), href: "/", ready: true },
     { id: "inbox", label: tNav("inbox"), href: "/inbox", ready: true },
-    { id: "flows", label: tNav("flows"), href: "/flows", ready: true },
+    { id: "studio", label: tNav("studio"), href: "/studio", ready: true },
     { id: "agents", label: tNav("agents"), href: "/agents", ready: false },
   ];
 
