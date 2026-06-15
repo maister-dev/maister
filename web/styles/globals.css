@@ -42,6 +42,9 @@
   --good-soft: #e6f1ea;
   --danger: #b94a48;
   --danger-soft: #f4dddd;
+  /* warm amber — the only warm accent besides --danger; encodes
+     human-attention run states (NeedsInput / NeedsInputIdle). */
+  --attention: #b7791f;
 
   --shadow-sm: 0 1px 0 rgba(22, 20, 15, 0.04), 0 1px 2px rgba(22, 20, 15, 0.04);
   --shadow-md: 0 8px 24px -12px rgba(22, 20, 15, 0.12),
@@ -100,6 +103,7 @@
   --good-soft: #14241a;
   --danger: #f07f7a;
   --danger-soft: #2b1717;
+  --attention: #e0a458;
 
   --shadow-sm: 0 1px 0 rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-md: 0 8px 24px -12px rgba(0, 0, 0, 0.6),
@@ -140,6 +144,7 @@
   --color-good-soft: var(--good-soft);
   --color-danger: var(--danger);
   --color-danger-soft: var(--danger-soft);
+  --color-attention: var(--attention);
 
   --font-sans: var(--sans);
   --font-mono: var(--mono);

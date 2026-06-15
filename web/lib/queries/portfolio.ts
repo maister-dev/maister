@@ -21,6 +21,7 @@ import {
   isNotNull,
   isNull,
   or,
+  sql,
 } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
@@ -648,6 +649,18 @@ export type RailWorkspaceTone =
 
 export type RailTtlState = "active" | "warning" | "due";
 
+// Runner detail for the rail row's runner info chip tooltip
+// (agent · model · adapter · provider · sidecar). Parsed null-safe from
+// runs.runner_snapshot — a missing snapshot yields null and the chip hides.
+// Never carries the snapshot id, argv, or secret refs.
+export interface RailRunnerDetail {
+  agent: string;
+  model: string;
+  adapter: string;
+  provider: string;
+  sidecar: string | null;
+}
+
 export interface RailWorkspaceRow {
   runId: string;
   runKind: RunKind;
@@ -668,6 +681,16 @@ export interface RailWorkspaceRow {
   archived: boolean;
   pruned: boolean;
   lifecycleActions: WorkbenchLifecycleAction[];
+  // Active-workspaces redesign: ticket-derived identity + linked flow/issue
+  // chips + runner tooltip. All null-safe: no task hides the issue chip and
+  // falls the name back to the branch, no flow hides the flow chip, no runner
+  // snapshot hides the runner chip.
+  flowRefLabel: string | null;
+  flowVersion: string | null;
+  taskKey: string | null;
+  taskNumber: number | null;
+  issueHref: string | null;
+  runnerDetail: RailRunnerDetail | null;
 }
 
 export interface RailWorkspaceGroup {
@@ -752,6 +775,21 @@ function creatorDisplay(
   return row.name ?? row.email ?? null;
 }
 
+// Ticket-derived display name for flow / agent runs: `KEY-N title`, or `KEY-N`
+// when the task has no title. Returns null when the run resolves no task (the
+// caller then falls the name back to the branch).
+function ticketName(
+  taskKey: string,
+  taskNumber: number | null,
+  title: string | null,
+): string | null {
+  if (taskNumber === null) return null;
+
+  const key = `${taskKey}-${taskNumber}`;
+
+  return title ? `${key} ${title}` : key;
+}
+
 export async function getRailWorkspaceGroups(
   userId: string,
   globalRole: GlobalRole,
@@ -766,6 +804,7 @@ export async function getRailWorkspaceGroups(
       projectId: projects.id,
       slug: projects.slug,
       projectName: projects.name,
+      taskKey: projects.taskKey,
       capabilityAgent: runs.capabilityAgent,
       runnerSnapshot: runs.runnerSnapshot,
       status: runs.status,
@@ -774,6 +813,10 @@ export async function getRailWorkspaceGroups(
       startedAt: runs.startedAt,
       endedAt: runs.endedAt,
       runId: runs.id,
+      flowVersion: runs.flowVersion,
+      flowRefId: flows.flowRefId,
+      taskNumber: tasks.number,
+      taskTitle: tasks.title,
       scratchName: scratchRuns.name,
       scratchDialogStatus: scratchRuns.dialogStatus,
       scratchCreatedByUserId: scratchRuns.createdByUserId,
@@ -784,7 +827,14 @@ export async function getRailWorkspaceGroups(
     .from(runs)
     .innerJoin(projects, eq(projects.id, runs.projectId))
     .innerJoin(workspaces, eq(workspaces.runId, runs.id))
-    .leftJoin(scratchRuns, eq(scratchRuns.runId, runs.id));
+    .leftJoin(scratchRuns, eq(scratchRuns.runId, runs.id))
+    // The run's task is runs.task_id (flow/agent) or scratch_runs.linked_task_id
+    // (scratch) — coalesce so exactly one task row can match (single FK each side).
+    .leftJoin(
+      tasks,
+      eq(tasks.id, sql`coalesce(${runs.taskId}, ${scratchRuns.linkedTaskId})`),
+    )
+    .leftJoin(flows, eq(flows.id, runs.flowId));
 
   // Rail = active workspaces PLUS terminal (Abandoned/Done) workspaces still on
   // disk that carry a GC removal deadline, so the TTL countdown badge surfaces
@@ -852,10 +902,21 @@ export async function getRailWorkspaceGroups(
       warningDays,
     });
     const creatorId = row.createdByUserId ?? row.scratchCreatedByUserId;
+    const ticket = ticketName(row.taskKey, row.taskNumber, row.taskTitle);
+    const hasTask = row.taskNumber !== null;
+    const runnerDetail: RailRunnerDetail | null = row.runnerSnapshot
+      ? {
+          agent: row.runnerSnapshot.capabilityAgent,
+          model: row.runnerSnapshot.model,
+          adapter: row.runnerSnapshot.adapter,
+          provider: row.runnerSnapshot.providerKind,
+          sidecar: row.runnerSnapshot.sidecarId ?? null,
+        }
+      : null;
     const workspace: RailWorkspaceRow = {
       runId: row.runId,
       runKind: row.runKind as RunKind,
-      name: row.scratchName ?? row.branch,
+      name: row.scratchName ?? ticket ?? row.branch,
       branch: row.branch,
       executorLabel: executorDisplay(row),
       launchedBy: creatorDisplay(
@@ -881,6 +942,14 @@ export async function getRailWorkspaceGroups(
         removedAt: row.removedAt,
         archivedBranch: row.archivedBranch,
       }),
+      flowRefLabel: row.flowRefId ?? null,
+      flowVersion: row.flowRefId !== null ? row.flowVersion : null,
+      taskKey: hasTask ? row.taskKey : null,
+      taskNumber: row.taskNumber,
+      issueHref: hasTask
+        ? `/projects/${row.slug}/tasks/${row.taskNumber}`
+        : null,
+      runnerDetail,
     };
     const group =
       groups.get(row.projectId) ??

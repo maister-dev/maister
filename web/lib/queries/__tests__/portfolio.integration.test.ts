@@ -1105,4 +1105,223 @@ describe("portfolio queries (integration)", () => {
       expect(ws).toBeUndefined();
     });
   });
+
+  // Active-workspaces redesign (T1.2): the rail row now carries ticket-derived
+  // names, linked flow/issue chips, and a null-safe runner detail. These cases
+  // exercise the new tasks/flows joins and the null-safe fallbacks.
+  describe("rail workspace redesign (T1.2)", () => {
+    async function railRow(user: string, project: string, runId: string) {
+      const groups = await getRailWorkspaceGroups(user, "member");
+      const group = groups.find((g) => g.projectId === project);
+
+      return group?.workspaces.find((w) => w.runId === runId);
+    }
+
+    it("flow run surfaces flowRefLabel, ticket-derived name, and KEY-N issue link", async () => {
+      const user = await createUser(`rail-flow-${randomUUID().slice(0, 8)}@test.com`);
+      const project = await createProject("Rail Flow Project");
+      const flow = await createFlow(project);
+      const executor = await createExecutor(project);
+
+      await addProjectMember(user, project, "member");
+
+      const taskId = await createTask(project, flow, "Fix the thing");
+      const runId = randomUUID();
+
+      await db.insert(schema.runs).values({
+        id: runId,
+        taskId,
+        projectId: project,
+        flowId: flow,
+        runKind: "flow",
+        runnerId: executor,
+        capabilityAgent: "claude",
+        runnerSnapshot: testRunnerSnapshot(executor),
+        status: "Running",
+        flowVersion: "v1.0.0",
+        startedAt: new Date(),
+      });
+      await db.insert(schema.workspaces).values({
+        id: randomUUID(),
+        runId,
+        projectId: project,
+        branch: "maister/fix",
+        worktreePath: `/wt/${runId}`,
+        parentRepoPath: `/repos/${project}`,
+      });
+
+      const [proj] = await db
+        .select()
+        .from(schema.projects)
+        .where(eq(schema.projects.id, project));
+      const [task] = await db
+        .select()
+        .from(schema.tasks)
+        .where(eq(schema.tasks.id, taskId));
+
+      const row = await railRow(user, project, runId);
+
+      expect(row).toBeDefined();
+      expect(row?.flowRefLabel).toBe(`flow-${flow.slice(0, 8)}`);
+      expect(row?.flowVersion).toBe("v1.0.0");
+      expect(row?.taskKey).toBe(proj.taskKey);
+      expect(row?.taskNumber).toBe(task.number);
+      expect(row?.name).toBe(`${proj.taskKey}-${task.number} Fix the thing`);
+      expect(row?.issueHref).toBe(`/projects/${proj.slug}/tasks/${task.number}`);
+    });
+
+    it("runnerDetail is parsed null-safe from the runner snapshot", async () => {
+      const user = await createUser(
+        `rail-runner-${randomUUID().slice(0, 8)}@test.com`,
+      );
+      const project = await createProject("Rail Runner Project");
+      const flow = await createFlow(project);
+      const executor = await createExecutor(project);
+
+      await addProjectMember(user, project, "member");
+
+      const taskId = await createTask(project, flow, "Runner Task");
+      const runId = randomUUID();
+
+      await db.insert(schema.runs).values({
+        id: runId,
+        taskId,
+        projectId: project,
+        flowId: flow,
+        runKind: "flow",
+        runnerId: executor,
+        capabilityAgent: "claude",
+        runnerSnapshot: testRunnerSnapshot(executor),
+        status: "Running",
+        flowVersion: "v1.0.0",
+        startedAt: new Date(),
+      });
+      await db.insert(schema.workspaces).values({
+        id: randomUUID(),
+        runId,
+        projectId: project,
+        branch: "maister/runner",
+        worktreePath: `/wt/${runId}`,
+        parentRepoPath: `/repos/${project}`,
+      });
+
+      const row = await railRow(user, project, runId);
+
+      expect(row?.runnerDetail).toEqual({
+        agent: "claude",
+        model: "claude-sonnet-4-6",
+        adapter: "claude",
+        provider: "anthropic",
+        sidecar: null,
+      });
+    });
+
+    it("scratch run linked to a task surfaces the KEY-N issue link; scratch name wins; no flow chip", async () => {
+      const user = await createUser(
+        `rail-scratch-${randomUUID().slice(0, 8)}@test.com`,
+      );
+      const project = await createProject("Rail Scratch Linked");
+      const flow = await createFlow(project);
+      const executor = await createExecutor(project);
+
+      await addProjectMember(user, project, "member");
+
+      const taskId = await createTask(project, flow, "Linked Task");
+      const runId = randomUUID();
+
+      await db.insert(schema.runs).values({
+        id: runId,
+        runKind: "scratch",
+        projectId: project,
+        runnerId: executor,
+        capabilityAgent: "claude",
+        runnerSnapshot: testRunnerSnapshot(executor),
+        status: "Running",
+        flowVersion: "scratch",
+        flowRevision: "manual",
+        startedAt: new Date(),
+      });
+      await db.insert(schema.workspaces).values({
+        id: randomUUID(),
+        runId,
+        projectId: project,
+        branch: "maister/scratch/linked",
+        worktreePath: `/wt/${runId}`,
+        parentRepoPath: `/repos/${project}`,
+      });
+      await db.insert(schema.scratchRuns).values({
+        runId,
+        projectId: project,
+        name: "My scratch",
+        initialPrompt: "Investigate",
+        baseBranch: "main",
+        baseCommit: "abc123",
+        dialogStatus: "Running",
+        createdByUserId: user,
+        linkedTaskId: taskId,
+      });
+
+      const [proj] = await db
+        .select()
+        .from(schema.projects)
+        .where(eq(schema.projects.id, project));
+      const [task] = await db
+        .select()
+        .from(schema.tasks)
+        .where(eq(schema.tasks.id, taskId));
+
+      const row = await railRow(user, project, runId);
+
+      expect(row?.issueHref).toBe(`/projects/${proj.slug}/tasks/${task.number}`);
+      expect(row?.taskNumber).toBe(task.number);
+      // The editable scratch name takes precedence over the ticket-derived name.
+      expect(row?.name).toBe("My scratch");
+      // A scratch run has no flow → the flow chip hides.
+      expect(row?.flowRefLabel).toBeNull();
+      expect(row?.flowVersion).toBeNull();
+    });
+
+    it("agent run with no task and no flow leaves every chip field null and falls back to the branch", async () => {
+      const user = await createUser(
+        `rail-agent-${randomUUID().slice(0, 8)}@test.com`,
+      );
+      const project = await createProject("Rail Agent Project");
+      const executor = await createExecutor(project);
+
+      await addProjectMember(user, project, "member");
+
+      const runId = randomUUID();
+
+      await db.insert(schema.runs).values({
+        id: runId,
+        runKind: "agent",
+        projectId: project,
+        runnerId: executor,
+        capabilityAgent: "claude",
+        runnerSnapshot: testRunnerSnapshot(executor),
+        status: "Running",
+        flowVersion: "agent",
+        startedAt: new Date(),
+      });
+      await db.insert(schema.workspaces).values({
+        id: randomUUID(),
+        runId,
+        projectId: project,
+        branch: "maister/agent-branch",
+        worktreePath: `/wt/${runId}`,
+        parentRepoPath: `/repos/${project}`,
+      });
+
+      const row = await railRow(user, project, runId);
+
+      expect(row).toBeDefined();
+      expect(row?.flowRefLabel).toBeNull();
+      expect(row?.flowVersion).toBeNull();
+      expect(row?.taskKey).toBeNull();
+      expect(row?.taskNumber).toBeNull();
+      expect(row?.issueHref).toBeNull();
+      expect(row?.name).toBe("maister/agent-branch");
+      expect(row?.runnerDetail).not.toBeNull();
+    });
+  });
 });
