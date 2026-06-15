@@ -317,6 +317,16 @@ describe("PATCH /api/scratch-runs/[runId]", () => {
     );
   });
 
+  it("ignores unknown body properties and renames on the trimmed name", async () => {
+    const runId = seedScratchForRename("Old");
+
+    const res = await patch(runId, { name: "  Kept  ", bogus: "x", id: 7 });
+
+    expect(res.status).toBe(200);
+    expect(res.json).toEqual({ ok: true, name: "Kept" });
+    expect(dbState.tables.scratch_runs[0].name).toBe("Kept");
+  });
+
   it("rejects an empty (whitespace-only) name with CONFIG 400 and does not write", async () => {
     const runId = seedScratchForRename("Old");
 

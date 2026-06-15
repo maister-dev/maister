@@ -2609,9 +2609,18 @@ paths:
             schema:
               type: object
               required: [name]
-              additionalProperties: false
               properties:
-                name: { type: string, minLength: 1, maxLength: 200 }
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+                  pattern: "\\S"
+                  description: >-
+                    New scratch-run name. The server trims surrounding
+                    whitespace before validating; the trimmed value must be
+                    1..200 characters and contain at least one non-whitespace
+                    character (a blank or whitespace-only name is rejected with
+                    `CONFIG`/400). Unknown properties in the body are ignored.
       responses:
         "200":
           description: Scratch run renamed; echoes the stored (trimmed) name.
