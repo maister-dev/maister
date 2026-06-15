@@ -58,8 +58,8 @@ test("package source → discovery → install → attach → detach round-trip"
   const projectSlug = fixtures.board.projectSlug;
   const repo = buildPackageRepo();
 
-  // 1. Add the source on /settings.
-  await page.goto("/settings");
+  // 1. Add the source on /studio/sources (Sources relocated from /settings).
+  await page.goto("/studio/sources");
   await expect(
     page.getByRole("heading", { name: "Package sources" }),
   ).toBeVisible();

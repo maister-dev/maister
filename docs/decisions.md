@@ -6939,9 +6939,11 @@ Git write-back to an upstream source stays **Phase 2**.
   the usability win early with zero rework.
 - **Keep the four surfaces, just polish `/flows`:** rejected — does not fix the
   flow≠package conflation, the missing unified home, or the flow-only authoring.
-- **Redirect/delete `/flows` immediately:** deferred — `/flows` stays a legacy
-  unlinked route until Studio reaches parity (redirect-vs-delete and timing are an
-  open question).
+- **Redirect/delete `/flows` immediately:** the **landing** is deleted on Phase A
+  completion (owner decision — no critical installs/users yet); the editor
+  sub-routes (`/flows/{slug}/{capId}`, `/flows/new`) stay until Phase B relocates
+  them to `/studio/edit`. The Sources panel is likewise removed from `/settings`
+  (now only at `/studio/sources`).
 
 ---
 

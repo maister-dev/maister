@@ -371,9 +371,11 @@ turns the flow-flat install list into a package-grouped view.
 | `/studio/edit/{...}` | Big-canvas artifact editor redesign | B | Designed |
 | `/studio/local` | Local / virtual package | C | Designed |
 
-The rail's **Flows** item becomes **Studio** (`/studio`); the `/flows` route stays
-as a legacy unlinked page until parity. Studio is member-level for anyone with
-`manageCatalog` on ≥1 project; **Sources** stays global-admin-gated.
+The rail's **Flows** item becomes **Studio** (`/studio`); the `/flows` **landing is
+removed** (the editor sub-routes `/flows/{slug}/{capId}` + `/flows/new` stay until
+Phase B moves them to `/studio/edit`). Studio is member-level for anyone with
+`manageCatalog` on ≥1 project; **Sources** stays global-admin-gated and is
+**removed from `/settings`** (now only at `/studio/sources`).
 
 ### Config vs content split
 

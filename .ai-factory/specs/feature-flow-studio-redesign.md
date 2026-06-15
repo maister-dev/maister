@@ -47,6 +47,14 @@
 >   by-name attachments), not `flow-packages-panel` (flow-ref-keyed). Studio reads
 >   use a new `getStudioPackageInstalls` projection (`sourceUrl` + per-kind counts;
 >   `rules` not inventoried → 0) since the existing DTO is too thin.
+> - **2026-06-15 (owner follow-ups on the open questions):** §9.1 / §9.4 — the
+>   `/flows` **landing** is deleted (the editor sub-routes `/flows/{slug}/{capId}`
+>   + `/flows/new` stay until Phase B relocates them to `/studio/edit`), and the
+>   Sources panel is **removed from `/settings`** (now only at `/studio/sources`).
+>   Owner accepted the authored-draft browse-home gap until Phase C (`/studio/local`)
+>   — no critical installs/users yet. Open questions resolved: editor route → in
+>   Studio (`/studio/edit`, Phase B); `ref` = name (sufficient for now); milestone →
+>   link to M27.
 
 ---
 
@@ -258,8 +266,9 @@ so the absence is intentional, not an omission.
 ## 9. Expectations (normative, testable)
 
 1. The rail's primary catalog item MUST link `/studio` and read its label from
-   `nav.studio` (EN "Studio" / RU "Студия"); the `/flows` route file MUST remain
-   in place (legacy, unlinked) until parity.
+   `nav.studio` (EN "Studio" / RU "Студия"). The `/flows` **landing** is removed
+   (amendment log); the editor sub-routes (`/flows/{slug}/{capId}`, `/flows/new`)
+   remain until Phase B.
 2. `groupPackages` MUST group installs by `(sourceUrl, name)`, order each group's
    `versions` newest-first, count member artifacts by kind from the newest
    install's `manifest`, set `isLocal` for `file:`/`local-*` sources, set
@@ -270,8 +279,8 @@ so the absence is intentional, not an omission.
    a needs-attention list of `needsTrust` groups; it MUST NOT render the old
    two-column flow dump.
 4. `/studio/sources` MUST enforce `requireGlobalRole("admin")` as the route authz
-   boundary; a member MUST receive `UNAUTHORIZED`. The `/settings` Sources panel
-   MUST stay intact (dedup is a noted follow-up, not a deletion in Phase A).
+   boundary; a member MUST receive `UNAUTHORIZED`. The Sources panel is **removed
+   from `/settings`** (relocated — now only at `/studio/sources`; amendment log).
 5. `/studio/packages` MUST render exactly one row per `PackageGroup` (name ·
    source · newest version · trust · member-kind chips · attached count · `Local`
    badge) linking `/studio/packages/${encodeURIComponent(name)}`.

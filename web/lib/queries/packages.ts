@@ -9,7 +9,10 @@ import { eq, inArray } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
-import { deriveUpdateAvailable } from "@/lib/packages/catalog";
+import {
+  defaultPackageSourceUrls,
+  deriveUpdateAvailable,
+} from "@/lib/packages/catalog";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { packageInstalls, packageSources, projectPackageAttachments } =
@@ -171,6 +174,7 @@ export async function loadPackageSourcesView(): Promise<{
   installs: PackageInstallRow[];
 }> {
   const db = getDb() as any;
+  const builtInUrls = new Set(defaultPackageSourceUrls());
   const [pkgSources, pkgInstalls] = await Promise.all([
     db.select().from(packageSources),
     db.select().from(packageInstalls),
@@ -184,6 +188,7 @@ export async function loadPackageSourcesView(): Promise<{
       note: s.note ?? null,
       discovered: s.discovered ?? [],
       lastCheckedAt: s.lastCheckedAt ? s.lastCheckedAt.toISOString() : null,
+      builtIn: builtInUrls.has(s.url),
     })),
     installs: pkgInstalls.map((i: any) => ({
       id: i.id,

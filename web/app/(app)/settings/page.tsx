@@ -8,7 +8,6 @@ import { AcpRunnersPanel } from "@/components/settings/acp-runners-panel";
 import { AgentsPanel } from "@/components/settings/agents-panel";
 import { AdapterSupportPanel } from "@/components/settings/adapter-support-panel";
 import { McpServersPanel } from "@/components/settings/mcp-servers-panel";
-import { PackageSourcesPanel } from "@/components/settings/package-sources-panel";
 import { RouterSidecarsPanel } from "@/components/settings/router-sidecars-panel";
 import { WebhooksPanel } from "@/components/settings/webhooks-panel";
 import { platformRunnerPresetRows } from "@/lib/acp-runners/presets";
@@ -16,8 +15,6 @@ import { getAdapterSupport } from "@/lib/acp-runners/schema";
 import { getDb } from "@/lib/db/client";
 import {
   agents,
-  packageInstalls,
-  packageSources,
   platformAcpRunners,
   platformMcpServers,
   platformRouterSidecars,
@@ -29,7 +26,6 @@ import {
   reposRoot,
   worktreesRoot,
 } from "@/lib/instance-config";
-import { defaultPackageSourceUrls } from "@/lib/packages/catalog";
 import { checkSupervisorDiagnostics } from "@/lib/supervisor-client";
 
 export async function generateMetadata(): Promise<Metadata> {
@@ -136,10 +132,6 @@ export default async function SettingsPage(): Promise<ReactElement> {
               />
               <RouterSidecarsPanel sidecars={runtime.sidecars} />
               <McpServersPanel servers={runtime.mcpServers} />
-              <PackageSourcesPanel
-                installs={runtime.packageInstalls}
-                sources={runtime.packageSources}
-              />
               <WebhooksPanel />
             </div>
           ) : null}
@@ -157,27 +149,15 @@ export default async function SettingsPage(): Promise<ReactElement> {
 
 async function loadPlatformRuntimeView() {
   const db = getDb() as any;
-  const [
-    runners,
-    sidecars,
-    settingsRows,
-    mcpServers,
-    pkgSources,
-    pkgInstalls,
-    agentRows,
-    projectRows,
-  ] = await Promise.all([
-    db.select().from(platformAcpRunners),
-    db.select().from(platformRouterSidecars),
-    db.select().from(platformRuntimeSettings),
-    db.select().from(platformMcpServers),
-    db.select().from(packageSources),
-    db.select().from(packageInstalls),
-    db.select().from(agents),
-    db.select().from(projects),
-  ]);
-
-  const builtInUrls = new Set(defaultPackageSourceUrls());
+  const [runners, sidecars, settingsRows, mcpServers, agentRows, projectRows] =
+    await Promise.all([
+      db.select().from(platformAcpRunners),
+      db.select().from(platformRouterSidecars),
+      db.select().from(platformRuntimeSettings),
+      db.select().from(platformMcpServers),
+      db.select().from(agents),
+      db.select().from(projects),
+    ]);
 
   return {
     adapters: getAdapterSupport(),
@@ -209,25 +189,5 @@ async function loadPlatformRuntimeView() {
     projects: projectRows
       .filter((row: any) => !row.archivedAt)
       .map((row: any) => ({ id: row.id, slug: row.slug, name: row.name })),
-    // DTO projection for the client panel — installed_path stays server-side.
-    packageSources: pkgSources.map((s: any) => ({
-      id: s.id,
-      url: s.url,
-      enabled: s.enabled,
-      note: s.note ?? null,
-      discovered: s.discovered ?? [],
-      lastCheckedAt: s.lastCheckedAt ? s.lastCheckedAt.toISOString() : null,
-      builtIn: builtInUrls.has(s.url),
-    })),
-    packageInstalls: pkgInstalls.map((i: any) => ({
-      id: i.id,
-      sourceUrl: i.sourceUrl,
-      name: i.name,
-      versionLabel: i.versionLabel,
-      resolvedRevision: i.resolvedRevision,
-      packageStatus: i.packageStatus,
-      trustStatus: i.trustStatus,
-      flows: (i.manifest?.spec?.flows ?? []).map((f: any) => f.id),
-    })),
   };
 }

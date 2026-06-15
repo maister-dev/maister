@@ -39,17 +39,6 @@ describe("platform Flows page contracts", () => {
     getPlatformFlowsMock.mockResolvedValue(platformFlowsView());
   });
 
-  it("shows create affordance for a project manageCatalog user without global admin", async () => {
-    const { default: FlowsPage } = await import("../page");
-
-    const html = renderToStaticMarkup(
-      await FlowsPage({ searchParams: Promise.resolve({}) }),
-    );
-
-    expect(html).toContain("New Flow");
-    expect(html).toContain("/flows/new");
-  });
-
   it("allows a global member with project manageCatalog access to open the new page", async () => {
     const { default: NewFlowPage } = await import("../new/page");
 
@@ -58,23 +47,6 @@ describe("platform Flows page contracts", () => {
     expect(redirectMock).not.toHaveBeenCalled();
     expect(html).toContain("Demo Project");
     expect(html).toContain("Create draft");
-  });
-
-  it("renders translated lifecycle, enablement, trust, and setup labels", async () => {
-    const { default: FlowsPage } = await import("../page");
-
-    const html = renderToStaticMarkup(
-      await FlowsPage({ searchParams: Promise.resolve({}) }),
-    );
-
-    expect(html).toContain("Draft");
-    expect(html).toContain("Installed");
-    expect(html).toContain("Installing");
-    expect(html).toContain("Trusted by policy");
-    expect(html).not.toContain(">DRAFT<");
-    expect(html).not.toContain(">trusted_by_policy<");
-    expect(html).not.toContain("enablement.Installed");
-    expect(html).not.toContain("packageStatus.Installing");
   });
 
   it("defines EN and RU labels for every visible Flow state enum", () => {

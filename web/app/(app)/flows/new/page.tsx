@@ -46,7 +46,7 @@ export default async function NewFlowPage({
       <header className="mb-7">
         <Link
           className="mb-4 inline-flex font-mono text-[11px] font-semibold uppercase tracking-[0.08em] text-mute hover:text-ink"
-          href="/flows"
+          href="/studio"
         >
           {t("backToFlows")}
         </Link>
@@ -113,7 +113,7 @@ export default async function NewFlowPage({
         <div className="mt-5 flex items-center justify-end gap-2">
           <Link
             className="rounded-md border border-line px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-ink-2 hover:bg-ivory"
-            href="/flows"
+            href="/studio"
           >
             {t("cancel")}
           </Link>
