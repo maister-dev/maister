@@ -346,9 +346,9 @@ artifacts still FORKS; the first SAVE surfaces the blocks.
 
 > **Status: Phase A — IA & surfacing (Implemented).** Surface SSOT: [`../screens/studio/README.md`](../screens/studio/README.md).
 > SDD spec: [`../../.ai-factory/specs/feature-flow-studio-redesign.md`](../../.ai-factory/specs/feature-flow-studio-redesign.md).
-> Decision: [ADR-092](../decisions.md#adr-092). The editor redesign (Phase B) and
-> the editable-local-package backend (Phase C) are **(Designed)** here and ship as
-> their own plans.
+> Decision: [ADR-092](../decisions.md#adr-092). The editor redesign (Phase B) is
+> now **(Implemented)** — see §"Editor redesign (Phase B)" below; the
+> editable-local-package backend (Phase C) is **(Designed)** and ships as its own plan.
 
 The redesign unifies the scattered catalog surfaces (the `/flows` landing, admin
 `/settings` sources, board `?tab=packages`, and the
