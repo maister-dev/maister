@@ -342,8 +342,78 @@ artifacts still FORKS; the first SAVE surfaces the blocks.
 | `?file=` traversal/symlink/NUL/abs/leading-`-` | rejected pre-fs | not-found state (no throw) |
 | Compile failure of stored `manifest` | yaml-only fallback | n/a (no 500) |
 
+## Studio redesign (Phase A IA + editable-local-package direction)
+
+> **Status: Phase A — IA & surfacing (Designed at this commit; Implemented on the
+> Phase A merge).** Surface SSOT: [`../screens/studio/README.md`](../screens/studio/README.md).
+> SDD spec: [`../../.ai-factory/specs/feature-flow-studio-redesign.md`](../../.ai-factory/specs/feature-flow-studio-redesign.md).
+> Decision: [ADR-092](../decisions.md#adr-092). The editor redesign (Phase B) and
+> the editable-local-package backend (Phase C) are **(Designed)** here and ship as
+> their own plans.
+
+The redesign unifies the scattered catalog surfaces (the `/flows` landing, admin
+`/settings` sources, board `?tab=packages`, and the
+`/projects/{slug}/packages/{flowRefId}` viewer) into one **Studio** section walking
+sources → packages → artifacts → authoring. Phase A surfaces the IA over the
+existing backend — **no migration, no new HTTP/SSE route, no new `MaisterError`
+code**: every read reuses `getAvailablePackageInstalls` /
+`getProjectPackageAttachments` / `getFlowPackageDetail` and the existing
+`PackageSourcesPanel` + static `FlowGraphView`, and a pure `groupPackages` shaper
+turns the flow-flat install list into a package-grouped view.
+
+### IA & status split
+
+| Route | Surface | Phase | Status |
+| --- | --- | --- | --- |
+| `/studio` | Overview (at-a-glance + area cards + needs-attention) | A | Designed → Implemented on merge |
+| `/studio/sources` | Sources (relocated `PackageSourcesPanel`, admin) | A | Designed → Implemented on merge |
+| `/studio/packages` | Packages list grouped by package | A | Designed → Implemented on merge |
+| `/studio/packages/{ref}` | Package detail (BoM · read-only preview · versions · attach · fork) | A | Designed → Implemented on merge |
+| `/studio/edit/{...}` | Big-canvas artifact editor redesign | B | Designed |
+| `/studio/local` | Local / virtual package | C | Designed |
+
+The rail's **Flows** item becomes **Studio** (`/studio`); the `/flows` route stays
+as a legacy unlinked page until parity. Studio is member-level for anyone with
+`manageCatalog` on ≥1 project; **Sources** stays global-admin-gated.
+
+### Config vs content split
+
+*Project context* keeps package **configuration** (attach/detach/upgrade/trust/
+enable/version-or-strategy) — it stays on the board `?tab=packages`. *Studio* owns
+**content** (the designer + every artifact editor). They are joined by a project
+filter in Studio and an "Open in Studio" deep-link from each attached package
+(board → `/studio/packages/{ref}`). See [`packages.md`](packages.md) for the
+install/attach/trust lifecycle and [`agents.md`](agents.md) for the agent kinds
+Studio will eventually author (R7 — not restated here).
+
+### Editable local package — the spine (Designed; Phase C)
+
+A local-source install already produces an immutable `local-<digest>` revision
+(ADR-088). The redesign adds the *editable* layer above it — **Variant B**: a
+`local_packages` table whose row points at a mutable working directory; the
+file/graph editors edit files in it, and **cut version** runs the existing
+installer over the dir → a `local-<digest>` `package_installs` revision that
+projects attach. The "virtual package" is the default local package for loose
+artifacts; **move-to-package** relocates artifacts between local packages.
+Standalone artifact kinds (`agent`/`mcp`, beyond today's `rule|skill|flow`) become
+files in the working dir. This whole layer is **(Designed)** — built in Phase C;
+git write-back to an upstream source is **(Phase 2)**.
+
+### Node visual language (Designed; Phase B)
+
+Phase A's package-detail preview reuses the **current** `FlowGraphView` rendering.
+The Heym-style node-visual scheme (colored icon chips per node/gate type,
+named-outcome handles, dashed amber rework edges) is **(Designed)** and lands in
+Phase B on the shared node renderer — canonical scheme in
+[`../screens/studio/README.md`](../screens/studio/README.md) §"Node visual
+language".
+
 ## Linked artifacts
 
+- **Studio redesign (Phase A — Designed→Implemented on merge):**
+  [`../screens/studio/README.md`](../screens/studio/README.md) (surface SSOT),
+  [`../../.ai-factory/specs/feature-flow-studio-redesign.md`](../../.ai-factory/specs/feature-flow-studio-redesign.md) (SDD spec),
+  [ADR-092](../decisions.md#adr-092) (unified-Studio IA + editable-local-package direction).
 - **SDD (FROZEN SSOT):** [`.ai-factory/specs/feature-m27-flow-studio-stage-1.md`](../../.ai-factory/specs/feature-m27-flow-studio-stage-1.md)
 - **SDD Phase 2 (FROZEN SSOT, Implemented):** [`.ai-factory/specs/feature-flow-studio-phase2-viewing-editing.md`](../../.ai-factory/specs/feature-flow-studio-phase2-viewing-editing.md) — viewer/fork/artifact-editor contracts.
 - **ADRs (Accepted):**

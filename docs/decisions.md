@@ -117,6 +117,7 @@
 | [ADR-089](#adr-089-platform-agent-catalog-with-per-agent-runner-and-a-five-source-trigger-model) | Platform agent catalog with per-agent runner and a five-source trigger model | Accepted | 2026-06-12 |
 | [ADR-090](#adr-090-agent-workspace-axis-with-three-layer-read-only-enforcement-and-quarantine) | Agent workspace axis with three-layer read-only enforcement and quarantine | Accepted | 2026-06-12 |
 | [ADR-091](#adr-091-flow-requirements-launch-precondition) | Flow requirements launch precondition | Accepted | 2026-06-13 |
+| [ADR-092](#adr-092-flow-studio-redesign--unified-studio-ia--editable-local-package-model) | Flow Studio redesign — unified Studio IA + editable-local-package model | Accepted | 2026-06-15 |
 
 ---
 
@@ -6867,6 +6868,80 @@ requirement it satisfies — avoiding a chicken-and-egg block.
   Kept check-only; installation stays in `setup.sh` / an init flow.
 - **MCP-only (`mcps[]`):** only covers tools that ship an MCP server; OpenSpec
   ships none. A general probe is required.
+
+---
+
+### ADR-092: Flow Studio redesign — unified Studio IA + editable-local-package model
+
+**Date:** 2026-06-15
+**Status:** Accepted
+**Context:** Flow/package authoring and management are scattered across four
+surfaces: the `/flows` landing (an unbalanced two-column drafts|installed grid),
+admin `/settings` (git sources + discovery + install), the project board
+`?tab=packages` (attach/detach/upgrade/trust), and the
+`/projects/{slug}/packages/{flowRefId}` viewer (ADR-075). The landing conflates
+*flows* with *packages* — "Installed packages (6)" actually lists five flows from
+one `aif` package plus one `bugfix` flow — and there is no unified home, no
+package-grouped view, and no instance-level place to author a standalone artifact.
+Only `kind=flow` has a create form + editor (ADR-067/068/069/070); skills, agents,
+and MCP-templates are editable solely as files bundled inside a flow. A
+local-source install already mints an immutable `local-<digest>` revision
+(ADR-088), but there is no *editable* layer above it.
+
+**Decision:** Adopt a unified **Studio** section (`/studio/*`) as the single IA for
+sources → packages → artifacts → authoring, and adopt the **editable local
+package** as the editing spine. Sequence the work **A → B → C**, each its own plan:
+
+- **Phase A (Accepted, built now):** the Studio shell + surfacing over the
+  *existing* backend — overview, sources (the relocated `PackageSourcesPanel`,
+  admin), a packages list **grouped by package**, and a merged package-detail (BoM
+  + read-only preview reusing the static `FlowGraphView`, ADR-075) with
+  attach/trust/versions/fork. No migration, no new HTTP/SSE route, no new
+  `MaisterError` code. The board `?tab=packages` config surface stays put
+  (config-vs-content split) and gains an "Open in Studio" deep-link.
+- **Phase B (Designed):** the storage-agnostic big-canvas editor redesign behind a
+  load/save seam — node visual scheme, named-outcome handles, properties panel,
+  top-bar drawers, hideable rail; drag-move persists to `presentation` (ADR-064).
+- **Phase C (Designed):** the editable-local-package backend — **Variant B**: a
+  `local_packages` table whose row points at a mutable working directory; "cut
+  version" runs the existing installer over the dir → a `local-<digest>`
+  `package_installs` revision; standalone artifact kinds (`agent`/`mcp` beyond
+  `rule|skill|flow`); move-to-package; the editor's package-coupled half (Files
+  drawer, cross-artifact reference pickers, "new artifact", cut-version). Plus
+  `/studio/local`.
+
+Git write-back to an upstream source stays **Phase 2**.
+
+**Consequences:**
+- One IA replaces four scattered surfaces; packages are presented as packages
+  (grouped), not flattened to flows — directly fixing the landing's conflation.
+- Phase A ships pure frontend value (no migration) and is the read-only twin the
+  Phase B editor and Phase C local-package backend build on, so nothing is rebuilt:
+  the package-detail preview is the read-only form of the Phase B canvas.
+- Config (board) and content (Studio) stay separated, joined only by a deep-link
+  and a project filter — the board's attach/trust contract is untouched.
+- Variant B keeps platform scope clean: an editable local package *is* "a local
+  source dir you cut versions from", symmetric with the existing git-package →
+  install → attach pipeline, instead of invasively re-scoping the project-keyed
+  `authored_capabilities` drafts table.
+- `ref = name` is sufficient for Phase A; cross-source name collisions render a
+  disambiguation list. A durable `base64url(source::name)` encoding can land later
+  if collisions bite.
+
+**Alternatives Considered:**
+- **Extend `authored_capabilities` for editable local packages:** rejected —
+  invasively re-scopes a project-keyed drafts table to a platform-level package
+  concept; Variant B (a working dir + the existing installer) is symmetric with
+  the git-package pipeline and matches the file-based editors.
+- **Redesign the editor in one pass (no A/B/C split):** rejected — the editor's
+  package-coupled half (Files drawer, cross-artifact pickers, cut-version) needs
+  the Phase C local-package backend; the split ships the storage-agnostic ~90% of
+  the usability win early with zero rework.
+- **Keep the four surfaces, just polish `/flows`:** rejected — does not fix the
+  flow≠package conflation, the missing unified home, or the flow-only authoring.
+- **Redirect/delete `/flows` immediately:** deferred — `/flows` stays a legacy
+  unlinked route until Studio reaches parity (redirect-vs-delete and timing are an
+  open question).
 
 ---
 
