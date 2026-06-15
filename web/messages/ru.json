@@ -1841,6 +1841,25 @@
       "saveError": "Ошибка сохранения",
       "syncError": "YAML некорректен — холст сохраняет последний валидный граф, пока YAML не разберётся."
     },
+    "topBar": {
+      "save": "Сохранить черновик",
+      "publish": "Опубликовать локально",
+      "valid": "Корректно",
+      "issues": "проблем: $count",
+      "ready": "Готово",
+      "notReady": "Не готово",
+      "draft": "Черновик",
+      "published": "Опубликовано",
+      "titleLabel": "Название флоу"
+    },
+    "drawer": {
+      "graph": "Граф",
+      "files": "Файлы",
+      "yaml": "YAML",
+      "diff": "Дифф",
+      "close": "Закрыть"
+    },
+    "toggleProperties": "Панель свойств",
     "artifacts": {
       "frontmatterHeading": "Фронтматтер",
       "bodyHeading": "Тело",

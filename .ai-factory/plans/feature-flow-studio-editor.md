@@ -85,21 +85,21 @@ No new request-derived locators. The editor route `/flows/{projectSlug}/{capId}`
   - Test: `web/components/chrome/left-rail.test.tsx` — `renderToStaticMarkup` collapsed vs expanded asserts the nav labels hide/show + the toggle button present.
   - Verify: vitest green; rail collapses and persists across reload.
 
-- [ ] **T1.4 — Editor top bar + load/save seam.**
+- [x] **T1.4 — Editor top bar + load/save seam.**
   - Files — Modify: `web/app/(app)/flows/[projectSlug]/[capId]/page.tsx`, `web/components/flows/flow-editor-tabs.tsx`; Create: `web/components/flows/editor/editor-top-bar.tsx`.
   - Do: collapse the page header + the right-sidebar InfoPanels into a **compact top bar**: identity (project · cap · kind) · lifecycle chip (Draft/Published) · validation chip (computed in the top-bar owner `FlowEditorTabs` via the **pure** `validateEditorManifest` on the owned manifest — not by reaching into `FlowGraphEditor`) · readiness chip (from the page's existing server-computed InfoPanel props) · **Save draft** · **Publish** · drawer toggles `[Files][YAML][Diff]`. **Seam (preserve the contract):** save/publish stay **server actions** with `formData.expectedDraftVersion` **CAS** + progressive enhancement; make the action **injectable** (`saveAction`/`publishAction` props on `FlowEditorTabs`, default = `updateAuthoredFlowAction`/`publishAuthoredFlowAction`) so Phase C passes a local-package-targeting server action — do NOT convert to a client `onSave` callback (that drops CAS). Keep the `yaml` single-state ownership + 400ms reseed.
   - Logging: `console.debug("[flowEditor] submit", { capId, expectedDraftVersion })` before invoking the server action; keep the existing `console.warn("[flowEditor] yaml parse error")` on reseed `"error"`.
   - Test: `editor-top-bar.test.tsx` asserts chips + Save/Publish gated on `canManage` + drawer-toggle buttons.
   - Verify: vitest green; Save still persists via the existing action.
 
-- [ ] **T1.5 — 3-pane canvas + right properties panel.**
+- [x] **T1.5 — 3-pane canvas + right properties panel.**
   - Files — Modify: `web/components/flows/flow-graph-editor.tsx` (its internal 2-col grid → canvas-center + right pane), `web/components/flows/node-form/node-side-form.tsx` (group its sections under headings: Identity · Behavior · Runner · Gates · Transitions · Presentation — node-intrinsic only; it already lives in the editor's right sidebar).
   - Do: `FlowGraphEditor` **already** renders canvas + a 340px right sidebar (`NodeSideForm` + `EditorValidationSummary`) — so this is NOT a move. Make that existing canvas+sidebar the **full-height dominant** layout: a full-height page shell (canvas fills viewport-minus-chrome), remove the fixed `h-[440px]`, make the right sidebar **collapsible** (~320–360px), and group `NodeSideForm`'s sections under the headings above (field logic unchanged). Keep the `FlowEditorToolbar` palette (Add node ×5 / Add gate ×6 / Remove); **add a `<MiniMap>`** (from the project's ReactFlow pkg — confirm import) + keep `<Controls>` (zoom/fit). The outer page two-column (form / InfoPanels) is removed — InfoPanels → top bar (T1.4).
   - Logging: `console.debug("[flowEditor] select", { nodeId })` on node select (reuse existing `onSelectNode`).
   - Test: render the editor shell asserts canvas region + right pane + properties sections present; node-select shows the form.
   - Verify: vitest green; selecting a node opens its grouped properties; drag persists x/y (existing `moveNode`).
 
-- [ ] **T1.6 — Drawers (YAML / Diff / Files).**
+- [x] **T1.6 — Drawers (YAML / Diff / Files).**
   - Files — Modify: `web/components/flows/flow-editor-tabs.tsx` (tabs → top-bar-driven drawers).
   - Do: replace the Graph/YAML/Diff **tabs** with the canvas always-on + **toggled drawers**: `[YAML]` opens `code-editor.tsx` (the existing YAML editor, same reseed wiring), `[Diff]` opens the existing diff view, `[Files]` opens the **existing** `package-files-editor.tsx` re-homed as a drawer (NOT redesigned — that's C). Drawers are side/bottom overlays, not primary real estate. **Preserve** the 400ms YAML↔canvas reseed and the "flush pending sync" logic (currently on graph-tab entry → now on YAML-drawer open/close), keeping the canvas mounted while a drawer is open, so edits aren't lost across toggles.
   - Logging: `console.debug("[flowEditor] drawer", { open })`.

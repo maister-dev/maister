@@ -26,6 +26,7 @@ import {
   Background,
   Controls,
   Handle,
+  MiniMap,
   Position,
   ReactFlow,
   useEdgesState,
@@ -69,6 +70,7 @@ export type FlowGraphEditorLabels = FlowEditorToolbarLabels & {
   nodeForm: NodeSideFormLabels;
   validation: EditorValidationSummaryLabels;
   edgeModal: EdgeConnectModalLabels;
+  toggleProperties: string;
 };
 
 export interface FlowGraphEditorProps {
@@ -371,6 +373,7 @@ export default function FlowGraphEditor({
     toEditorEdges(seeded.edges),
   );
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [manifest, setManifest] = useState<FlowYamlV1>(initialManifest);
   const [pendingConnection, setPendingConnection] = useState<{
     source: string;
@@ -399,6 +402,10 @@ export default function FlowGraphEditor({
 
   const select = useCallback(
     (id: string | null): void => {
+      if (process.env.NODE_ENV !== "production") {
+        // eslint-disable-next-line no-console
+        console.debug("[flowEditor] select", { nodeId: id });
+      }
       setSelectedNodeId(id);
       onSelectNode?.(id);
     },
@@ -580,9 +587,9 @@ export default function FlowGraphEditor({
   const validation = validateEditorManifest(manifest);
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
+    <div className="flex h-full min-h-0" data-testid="flow-graph-editor-shell">
       <div
-        className="overflow-hidden rounded-[10px] border border-line bg-paper"
+        className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-r border-line bg-paper"
         data-testid="flow-graph-editor"
       >
         <FlowEditorToolbar
@@ -592,7 +599,7 @@ export default function FlowGraphEditor({
           onAddNode={handleAddNode}
           onRemoveNode={handleRemoveNode}
         />
-        <div className="h-[440px] w-full">
+        <div className="min-h-0 w-full flex-1">
           <ReactFlow
             fitView
             nodesConnectable
@@ -607,32 +614,61 @@ export default function FlowGraphEditor({
             onPaneClick={() => select(null)}
           >
             <Background />
+            <MiniMap pannable zoomable />
             <Controls showInteractive={false} />
           </ReactFlow>
         </div>
       </div>
-      <aside className="grid gap-3" data-testid="flow-graph-editor-sidebar">
-        <EditorValidationSummary
-          labels={labels.validation}
-          result={validation}
-          onSelectNode={select}
-        />
-        <NodeSideForm
-          labels={labels.nodeForm}
-          node={selectedNode}
-          presentation={
-            selectedPresentation
-              ? {
-                  width: selectedPresentation.width,
-                  height: selectedPresentation.height,
-                  color: selectedPresentation.color,
-                }
-              : undefined
-          }
-          onChange={handleNodeFormChange}
-          onPresentationChange={handlePresentationChange}
-        />
-      </aside>
+      {sidebarOpen ? (
+        <aside
+          className="flex w-[340px] shrink-0 flex-col gap-3 overflow-y-auto bg-paper p-3"
+          data-testid="flow-graph-editor-sidebar"
+        >
+          <div className="flex items-center justify-end">
+            <button
+              aria-label={labels.toggleProperties}
+              className="rounded-md border border-line px-2 py-1 font-mono text-[11px] text-mute hover:bg-ivory hover:text-ink"
+              data-testid="flow-properties-toggle"
+              title={labels.toggleProperties}
+              type="button"
+              onClick={() => setSidebarOpen(false)}
+            >
+              ›
+            </button>
+          </div>
+          <EditorValidationSummary
+            labels={labels.validation}
+            result={validation}
+            onSelectNode={select}
+          />
+          <NodeSideForm
+            labels={labels.nodeForm}
+            node={selectedNode}
+            presentation={
+              selectedPresentation
+                ? {
+                    width: selectedPresentation.width,
+                    height: selectedPresentation.height,
+                    color: selectedPresentation.color,
+                  }
+                : undefined
+            }
+            onChange={handleNodeFormChange}
+            onPresentationChange={handlePresentationChange}
+          />
+        </aside>
+      ) : (
+        <button
+          aria-label={labels.toggleProperties}
+          className="flex w-8 shrink-0 items-start justify-center border-l border-line bg-paper pt-3 font-mono text-[11px] text-mute hover:bg-ivory hover:text-ink"
+          data-testid="flow-properties-toggle"
+          title={labels.toggleProperties}
+          type="button"
+          onClick={() => setSidebarOpen(true)}
+        >
+          ‹
+        </button>
+      )}
       {pendingConnection ? (
         <EdgeConnectModal
           duplicate={outcomeExistsForSource(
