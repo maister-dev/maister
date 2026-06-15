@@ -106,7 +106,7 @@ No new request-derived locators. The editor route `/flows/{projectSlug}/{capId}`
   - Test: toggling `[YAML]` shows the code editor; `[Files]` shows the files editor; closing returns to canvas.
   - Verify: vitest + manual; YAML↔canvas reseed still works through the drawer.
 
-- [ ] **T1.7 — i18n + e2e + preview reuse check.**
+- [x] **T1.7 — i18n + e2e + preview reuse check.**
   - Files — Modify: `web/messages/{en,ru}.json` (extend the existing `flowEditor` namespace: top-bar labels, drawer labels, rail toggle, node/gate visual labels), `web/playwright.config.ts` (`AUTHED_SPEC` += `flow-editor`); Create: `web/e2e/flow-editor.spec.ts`.
   - Do: e2e as a seeded admin — open a flow draft → top bar chips render → select a node → right properties populate → drag a node → Save → reload persists position → toggle `[YAML]` drawer → collapse the rail. Confirm the **Phase-A package-detail preview** (`/studio/packages/{ref}`) now renders nodes with the new icons/colors (shared component) and stays read-only; and smoke-check the **run-detail workbench** graph renders with the new node visuals (status chip + type accent compose).
   - Logging: confirm RU JSON parses (`node -e "JSON.parse(require('fs').readFileSync('web/messages/ru.json'))"`).
@@ -114,8 +114,8 @@ No new request-derived locators. The editor route `/flows/{projectSlug}/{capId}`
 
 ### Phase 2 — As-built docs sync + gates
 
-- [ ] **T2.1 — Flip docs to Implemented.** Update `docs/screens/studio/editor.md`, `docs/screens/chrome/left-rail.md`, and the `flow-studio.md` editor section status tags Designed → Implemented; confirm the node-visual table matches `node-visuals.ts`. `pnpm validate:docs:all` green.
-- [ ] **T2.2 — Full gate + docs checkpoint.** Run `pnpm --filter maister-web exec vitest run lib/flows/node-visuals components/flows components/chrome components/board` (green); `pnpm --filter maister-web exec eslint app/\(app\)/flows components/flows components/chrome/left-rail.tsx components/board/flow-graph-view.tsx` (clean, **scoped — never the no-path `lint`**); `playwright test flow-editor.spec.ts` (green); `pnpm validate:docs:all` (green). Mandatory `/aif-docs` checkpoint. Commit 5.
+- [x] **T2.1 — Flip docs to Implemented.** Update `docs/screens/studio/editor.md`, `docs/screens/chrome/left-rail.md`, and the `flow-studio.md` editor section status tags Designed → Implemented; confirm the node-visual table matches `node-visuals.ts`. `pnpm validate:docs:all` green.
+- [x] **T2.2 — Full gate + docs checkpoint.** Run `pnpm --filter maister-web exec vitest run lib/flows/node-visuals components/flows components/chrome components/board` (green); `pnpm --filter maister-web exec eslint app/\(app\)/flows components/flows components/chrome/left-rail.tsx components/board/flow-graph-view.tsx` (clean, **scoped — never the no-path `lint`**); `playwright test flow-editor.spec.ts` (green); `pnpm validate:docs:all` (green). Mandatory `/aif-docs` checkpoint. Commit 5.
 
 ---
 

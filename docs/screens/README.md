@@ -106,7 +106,7 @@ flowchart TD
 | [`inbox.md`](inbox.md) | Unified inbox | `/inbox` | Implemented (WI-1) |
 | [`mcps.md`](mcps.md) | Platform MCP catalog (admin) | `/mcps` | Implemented (WI-2) |
 | [`studio/README.md`](studio/README.md) | Flow Studio redesign (area design: overview · sources · packages · package detail · editor · local workspace) | `/studio/*` | Implemented (Phase A: overview · sources · packages · detail); B/C Planned |
-| [`studio/editor.md`](studio/editor.md) | Flow editor (3-pane canvas + properties + drawers, node visual scheme) | `/flows/{projectSlug}/{capId}` | Designed (Phase B) |
+| [`studio/editor.md`](studio/editor.md) | Flow editor (3-pane canvas + properties + drawers, node visual scheme) | `/flows/{projectSlug}/{capId}` | Implemented (Phase B) |
 
 Going forward, **each screen work-item updates its screens doc** in the same
 phase that ships the screen. New screens add a row here and a file following the

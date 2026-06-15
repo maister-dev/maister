@@ -52,7 +52,7 @@ Top to bottom:
 4. **Launch** — primary launch button + hint, with a Cmd/Ctrl+K shortcut
    ([`launch-dialog.md`](launch-dialog.md)).
 
-### Collapse / hide (Designed — Phase B)
+### Collapse / hide (Implemented — Phase B)
 
 The rail is **collapsible** so wide canvases (the Flow editor,
 [`../studio/editor.md`](../studio/editor.md)) can claim near-full width. A toggle

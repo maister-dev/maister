@@ -100,7 +100,11 @@ export function FlowEditorTabs({
 }): ReactElement {
   const [yaml, setYaml] = useState(initialYaml);
   const [title, setTitle] = useState(initialTitle);
-  const [openDrawer, setOpenDrawer] = useState<EditorDrawerKind | null>(null);
+  // No canvas to fall back on (manifest does not compile) → open the YAML drawer
+  // up front so the draft is still editable on load.
+  const [openDrawer, setOpenDrawer] = useState<EditorDrawerKind | null>(
+    canvasAvailable ? null : "yaml",
+  );
   const [liveManifest, setLiveManifest] = useState<FlowYamlV1 | null>(
     initialManifest,
   );
@@ -155,11 +159,19 @@ export function FlowEditorTabs({
     setSyncError(false);
   }, [yaml]);
 
+  // Sync yaml → canvas ONLY while the YAML drawer is open: there the user edits
+  // the manifest text and the canvas (behind the drawer) must follow. When the
+  // canvas is the active surface, IT is authoritative (canvas → yaml via
+  // handleCanvasChange), so a debounced reseed here would spuriously remount the
+  // canvas — dropping in-flight canvas state like an open connect modal. Pending
+  // edits are flushed on drawer close (see `changeDrawer`).
   useEffect(() => {
+    if (openDrawer !== "yaml") return;
+
     const handle = setTimeout(runYamlSync, YAML_SYNC_DEBOUNCE_MS);
 
     return () => clearTimeout(handle);
-  }, [runYamlSync]);
+  }, [runYamlSync, openDrawer]);
 
   // Leaving the YAML drawer flushes the pending yaml→canvas sync FIRST, so the
   // canvas shows the latest edits and the still-pending debounce becomes a no-op.

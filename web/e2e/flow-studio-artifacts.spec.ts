@@ -51,17 +51,28 @@ async function openEditor(
 ): Promise<string> {
   await page.goto(`/flows/${fx.projectSlug}/${fx.capId}`);
 
-  // The editor mounts the CodeMirror buffer seeded from the draft body.
-  await expect(
-    page.locator('[data-testid="code-editor"] .cm-content').first(),
-  ).toBeVisible();
+  // Phase B: the editor shell mounts (top bar + canvas + drawers). The package
+  // files live in the [Files] drawer now (opened per file op below).
+  await expect(page.getByTestId("flow-editor-tabs")).toBeVisible();
 
   return page.url();
+}
+
+// Ensure the [Files] drawer is open (the package-files tree + artifact editors
+// live there in Phase B; it is closed by default on each load).
+async function ensureFilesDrawer(page: Page): Promise<void> {
+  const drawer = page.getByTestId("flow-files-drawer");
+
+  if (!(await drawer.isVisible())) {
+    await page.getByTestId("flow-tab-files").click();
+    await expect(drawer).toBeVisible();
+  }
 }
 
 // Open a bundle file in the package-files file tree by its leaf name. The tree
 // renders each file as a <button> whose accessible text is the path leaf.
 async function openPackageFile(page: Page, leafName: string): Promise<void> {
+  await ensureFilesDrawer(page);
   await page.getByRole("button", { name: leafName, exact: true }).click();
 }
 

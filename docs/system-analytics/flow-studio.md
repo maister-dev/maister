@@ -400,9 +400,9 @@ Standalone artifact kinds (`agent`/`mcp`, beyond today's `rule|skill|flow`) beco
 files in the working dir. This whole layer is **(Designed)** — built in Phase C;
 git write-back to an upstream source is **(Phase 2)**.
 
-### Editor redesign (Phase B) — Designed
+### Editor redesign (Phase B) — Implemented
 
-> **Status: Designed (Phase B).** Spec:
+> **Status: Implemented (Phase B).** Spec:
 > [`../../.ai-factory/specs/feature-flow-studio-editor.md`](../../.ai-factory/specs/feature-flow-studio-editor.md).
 > Surface: [`../screens/studio/editor.md`](../screens/studio/editor.md). The
 > storage-agnostic editor redesign over the **unchanged** draft/publish/trust

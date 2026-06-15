@@ -3,8 +3,9 @@
 - **Type:** screen (artifact editor).
 - **Route(s):** `/flows/{projectSlug}/{capId}` (Phase B keeps the existing route;
   relocation to `/studio/edit/{...}` is **Phase C**).
-- **Status:** Designed (Phase B). Supersedes the tabs-in-a-form editor; the
-  read-only twin is the package-detail preview (`/studio/packages/{ref}`, Phase B).
+- **Status:** Implemented (Phase B). Supersedes the tabs-in-a-form editor; the
+  read-only twin is the shared `FlowGraphView` (per-project package viewer + run
+  workbench), which inherits the node visual scheme.
 - **Source:** `web/app/(app)/flows/[projectSlug]/[capId]/page.tsx`,
   `web/components/flows/flow-editor-tabs.tsx`,
   `web/components/flows/editor/editor-top-bar.tsx`,

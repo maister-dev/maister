@@ -614,7 +614,7 @@ export default function FlowGraphEditor({
             onPaneClick={() => select(null)}
           >
             <Background />
-            <MiniMap pannable zoomable />
+            <MiniMap />
             <Controls showInteractive={false} />
           </ReactFlow>
         </div>

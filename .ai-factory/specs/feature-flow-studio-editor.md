@@ -326,8 +326,10 @@ does not exist → would be a dead test, skill-context "no dead tests"). The e2e
 
 ## 11. Implementation status
 
-At Phase-0 HEAD all §1 deliverables are **(Designed)**; they flip to
-**(Implemented)** on Phase B merge (T2.1 flips the doc tags). Phase C (the
+All §1 deliverables are **(Implemented)** (Phase B): the node/gate visual scheme
+on the shared `FlowNodeBody`, named-outcome + dashed-amber rework edges, the
+3-pane layout (top bar + canvas + collapsible properties), the YAML/Diff/Files
+drawers, the hideable rail, and the injectable load/save seam. Phase C (the
 package-coupled editor half + `/studio/edit` route + `local_packages` backend) and
 git write-back stay **(Designed)** / **(Phase 2)**.
 
