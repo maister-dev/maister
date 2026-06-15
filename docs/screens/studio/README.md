@@ -3,7 +3,8 @@
 - **Type:** area design doc + index (one IA area: the Studio).
 - **Routes:** `/studio`, `/studio/sources`, `/studio/packages`,
   `/studio/packages/{ref}`, `/studio/edit/{...}`, `/studio/local`.
-- **Status:** **Planned** redesign. Supersedes the current `/flows`
+- **Status:** **Phase A Implemented** (overview · sources · packages · package
+  detail); **Phase B/C Planned** (editor · local workspace). Supersedes the current `/flows`
   (`web/app/(app)/flows/page.tsx`) and consolidates package management that is
   today scattered across admin `/settings`, the project board `?tab=packages`,
   and the `/projects/{slug}/packages/{flowRefId}` viewer.
@@ -132,7 +133,7 @@ palette (muted, not rainbow); these are roles, not hex.
 
 ## Surfaces
 
-### 1. Studio overview — `/studio` (Planned)
+### 1. Studio overview — `/studio` (Implemented — Phase A)
 
 - **JTBD:** "When I open the Studio, I want one place that shows my sources,
   packages, and local artifacts so I can jump to whatever I'm reworking."
@@ -145,7 +146,7 @@ palette (muted, not rainbow); these are roles, not hex.
 - **Data:** read of `package_sources`, `package_installs`,
   `project_package_attachments`, local packages, authored drafts.
 
-### 2. Sources — `/studio/sources` (Implemented panel, relocated)
+### 2. Sources — `/studio/sources` (Implemented — Phase A; relocated panel)
 
 - **JTBD:** "When I administer the instance, I want to register git monorepo
   sources, discover their packages, and install one by tag."
@@ -159,7 +160,7 @@ palette (muted, not rainbow); these are roles, not hex.
   `GET/POST /api/admin/package-installs` — unchanged from
   [`packages.md`](../../system-analytics/packages.md).
 
-### 3. Packages — `/studio/packages` (Planned; reuses install data)
+### 3. Packages — `/studio/packages` (Implemented — Phase A; reuses install data)
 
 - **JTBD:** "When I manage packages, I want every package the instance knows —
   installed (git + local) **grouped by package, not flattened to flows** — so I
@@ -171,7 +172,7 @@ palette (muted, not rainbow); these are roles, not hex.
 - **Data:** `GET /api/admin/package-installs` + per-project attachment joins;
   local packages from the new local-package store.
 
-### 4. Package detail — `/studio/packages/{ref}` (merges two existing screens)
+### 4. Package detail — `/studio/packages/{ref}` (Implemented — Phase A; merges two existing screens)
 
 - **JTBD:** "When I open a package, I want its full bill-of-materials, a
   read-only preview of any flow, its versions and trust, where it's attached,
@@ -181,8 +182,12 @@ palette (muted, not rainbow); these are roles, not hex.
   - **Bill-of-materials:** artifacts grouped by kind (flows · agents · skills ·
     MCP templates · rules · restrictions) — each row opens the relevant editor
     (read-only for installed, editable for local).
-  - **Flow preview:** the **big read-only canvas** (same component as the editor,
-    `runContext` absent) + a YAML/files drawer — replacing the cramped viewer.
+  - **Flow preview (Phase B):** the **big read-only canvas** (same component as
+    the editor, `runContext` absent) + a YAML/files drawer. **Phase A** ships the
+    detail as header + bill-of-materials (grouped by kind) + versions + actions;
+    the embedded canvas and inline fork are project-scoped and land with the
+    editor redesign (Phase B) — until then the per-project
+    `/projects/{slug}/packages/{flowRefId}` viewer keeps the full graph/fork.
   - **Lifecycle actions:** **Attach to project** (deep-links to board config),
     **Trust** (admin), **Versions** (list + upgrade), **Fork to local / Rework**
     (immutable git package → local editable copy; local package → edit in place).

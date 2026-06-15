@@ -143,18 +143,18 @@ No `body-controlled` cross-resource identifiers are added (all Phase A routes ar
   - Logging: `console.debug("[studio.packageDetail] resolve", { ref, matched: groups.length })`; `console.warn("[studio.packageDetail] ambiguous ref", { ref, count })` when >1 match.
   - Verify: `pnpm --filter maister-web exec vitest run components/studio/package-detail.test.tsx` → 2 green (BoM render + Trust hidden for non-admin).
 
-- [ ] **T1.8 — Board deep-link + i18n + e2e.** (origin A8)
+- [x] **T1.8 — Board deep-link + i18n + e2e.** (origin A8)
   - Files — Modify: `web/components/board/panels/flow-packages-panel.tsx` (per-package "Open in Studio" → `/studio/packages/{name}`), `web/messages/{en,ru}.json` (fill the `studio` namespace, both locales), `web/playwright.config.ts` (add `studio` to `AUTHED_SPEC`); Create: `web/e2e/studio.spec.ts`.
   - Logging: none (UI link); confirm RU JSON parses (`node -e "JSON.parse(require('fs').readFileSync('web/messages/ru.json'))"`).
   - Verify: `lsof -ti :3100,:7788 | xargs kill -9 2>/dev/null; pnpm --filter maister-web exec playwright test studio.spec.ts` green (shared e2e infra — kill ports first).
 
 ### Phase 2 — As-built docs sync + gates
 
-- [ ] **T2.1 — Flip surface docs to Implemented.**
+- [x] **T2.1 — Flip surface docs to Implemented.**
   - Files — Modify: `docs/screens/studio/README.md` status `Planned`→`Implemented (Phase A)` for the shipped surfaces (overview/sources/packages/package-detail); B/C stay Planned. Add the per-screen template files for the shipped screens if splitting now, else update the index row in `docs/screens/README.md` + the glossary in `docs/CLAUDE.md`. Update `docs/system-analytics/flow-studio.md` status tags to match HEAD.
   - Verify: `pnpm validate:docs:all` green.
 
-- [ ] **T2.2 — Full gate + docs checkpoint.**
+- [x] **T2.2 — Full gate + docs checkpoint.**
   - Run: `pnpm --filter maister-web exec vitest run lib/studio components/studio` (green); `pnpm --filter maister-web exec eslint app/\(app\)/studio components/studio components/chrome/left-rail.tsx components/board/panels/flow-packages-panel.tsx` (clean, **scoped — never the no-path `lint` script**); `playwright test studio.spec.ts` (green); `pnpm validate:docs:all` (green). Mandatory `/aif-docs` checkpoint (Docs: yes). Commit 5.
 
 ---

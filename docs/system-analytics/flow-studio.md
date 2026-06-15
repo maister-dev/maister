@@ -344,8 +344,7 @@ artifacts still FORKS; the first SAVE surfaces the blocks.
 
 ## Studio redesign (Phase A IA + editable-local-package direction)
 
-> **Status: Phase A — IA & surfacing (Designed at this commit; Implemented on the
-> Phase A merge).** Surface SSOT: [`../screens/studio/README.md`](../screens/studio/README.md).
+> **Status: Phase A — IA & surfacing (Implemented).** Surface SSOT: [`../screens/studio/README.md`](../screens/studio/README.md).
 > SDD spec: [`../../.ai-factory/specs/feature-flow-studio-redesign.md`](../../.ai-factory/specs/feature-flow-studio-redesign.md).
 > Decision: [ADR-092](../decisions.md#adr-092). The editor redesign (Phase B) and
 > the editable-local-package backend (Phase C) are **(Designed)** here and ship as
@@ -365,10 +364,10 @@ turns the flow-flat install list into a package-grouped view.
 
 | Route | Surface | Phase | Status |
 | --- | --- | --- | --- |
-| `/studio` | Overview (at-a-glance + area cards + needs-attention) | A | Designed → Implemented on merge |
-| `/studio/sources` | Sources (relocated `PackageSourcesPanel`, admin) | A | Designed → Implemented on merge |
-| `/studio/packages` | Packages list grouped by package | A | Designed → Implemented on merge |
-| `/studio/packages/{ref}` | Package detail (BoM · read-only preview · versions · attach · fork) | A | Designed → Implemented on merge |
+| `/studio` | Overview (at-a-glance + area cards + needs-attention) | A | Implemented |
+| `/studio/sources` | Sources (relocated `PackageSourcesPanel`, admin) | A | Implemented |
+| `/studio/packages` | Packages list grouped by package | A | Implemented |
+| `/studio/packages/{ref}` | Package detail (BoM · read-only preview · versions · attach · fork) | A | Implemented |
 | `/studio/edit/{...}` | Big-canvas artifact editor redesign | B | Designed |
 | `/studio/local` | Local / virtual package | C | Designed |
 
@@ -401,8 +400,11 @@ git write-back to an upstream source is **(Phase 2)**.
 
 ### Node visual language (Designed; Phase B)
 
-Phase A's package-detail preview reuses the **current** `FlowGraphView` rendering.
-The Heym-style node-visual scheme (colored icon chips per node/gate type,
+Phase A's package detail ships header + bill-of-materials (grouped by kind) +
+versions + gated nav actions; the embedded read-only canvas is deferred to Phase B
+(the per-project `/projects/{slug}/packages/{flowRefId}` viewer keeps the graph +
+fork meanwhile, as both are project-scoped). The Heym-style node-visual scheme
+(colored icon chips per node/gate type,
 named-outcome handles, dashed amber rework edges) is **(Designed)** and lands in
 Phase B on the shared node renderer — canonical scheme in
 [`../screens/studio/README.md`](../screens/studio/README.md) §"Node visual

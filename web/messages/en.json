@@ -162,7 +162,8 @@
     "versionsTitle": "Versions",
     "backToPackages": "Back to packages",
     "ambiguousTitle": "Multiple packages share this name",
-    "ambiguousHint": "Pick the source you mean."
+    "ambiguousHint": "Pick the source you mean.",
+    "openInStudio": "Open in Studio"
   },
   "flows": {
     "eyebrow": "Platform package workbench",

@@ -59,6 +59,7 @@ export function ProjectPackagesSection({
   availableInstalls,
 }: Props): ReactElement {
   const t = useTranslations("packages");
+  const tStudio = useTranslations("studio");
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [busy, setBusy] = useState<string | null>(null);
@@ -222,38 +223,46 @@ export function ProjectPackagesSection({
                       {att.flows.join(", ")}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      {isAdmin ? (
-                        <div className="inline-flex gap-2">
-                          {canTrust && att.trustStatus === "untrusted" ? (
+                      <div className="inline-flex items-center gap-2">
+                        <Link
+                          className="inline-flex h-8 items-center rounded-[8px] border border-line px-3 text-[12px] font-semibold text-ink hover:bg-ivory"
+                          href={`/studio/packages/${encodeURIComponent(att.packageName)}`}
+                        >
+                          {tStudio("openInStudio")}
+                        </Link>
+                        {isAdmin ? (
+                          <div className="inline-flex gap-2">
+                            {canTrust && att.trustStatus === "untrusted" ? (
+                              <button
+                                className="h-8 rounded-[8px] border border-line px-3 text-[12px] font-semibold text-ink hover:bg-ivory disabled:opacity-50"
+                                disabled={busy === `trust:${att.id}`}
+                                type="button"
+                                onClick={() => trust(att)}
+                              >
+                                {t("trust")}
+                              </button>
+                            ) : null}
+                            {upgradeTarget ? (
+                              <button
+                                className="h-8 rounded-[8px] border border-line px-3 text-[12px] font-semibold text-ink hover:bg-ivory disabled:opacity-50"
+                                disabled={busy === `upgrade:${att.id}`}
+                                type="button"
+                                onClick={() => upgrade(att)}
+                              >
+                                {t("upgrade")} → {upgradeTarget.versionLabel}
+                              </button>
+                            ) : null}
                             <button
-                              className="h-8 rounded-[8px] border border-line px-3 text-[12px] font-semibold text-ink hover:bg-ivory disabled:opacity-50"
-                              disabled={busy === `trust:${att.id}`}
+                              className="h-8 rounded-[8px] border border-red-500/40 px-3 text-[12px] font-semibold text-red-600 hover:bg-red-500/10 disabled:opacity-50"
+                              disabled={busy === `detach:${att.id}`}
                               type="button"
-                              onClick={() => trust(att)}
+                              onClick={() => detach(att.id)}
                             >
-                              {t("trust")}
+                              {t("detach")}
                             </button>
-                          ) : null}
-                          {upgradeTarget ? (
-                            <button
-                              className="h-8 rounded-[8px] border border-line px-3 text-[12px] font-semibold text-ink hover:bg-ivory disabled:opacity-50"
-                              disabled={busy === `upgrade:${att.id}`}
-                              type="button"
-                              onClick={() => upgrade(att)}
-                            >
-                              {t("upgrade")} → {upgradeTarget.versionLabel}
-                            </button>
-                          ) : null}
-                          <button
-                            className="h-8 rounded-[8px] border border-red-500/40 px-3 text-[12px] font-semibold text-red-600 hover:bg-red-500/10 disabled:opacity-50"
-                            disabled={busy === `detach:${att.id}`}
-                            type="button"
-                            onClick={() => detach(att.id)}
-                          >
-                            {t("detach")}
-                          </button>
-                        </div>
-                      ) : null}
+                          </div>
+                        ) : null}
+                      </div>
                     </td>
                   </tr>
                 );

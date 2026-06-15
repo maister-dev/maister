@@ -162,7 +162,8 @@
     "versionsTitle": "Версии",
     "backToPackages": "Назад к пакетам",
     "ambiguousTitle": "Несколько пакетов с таким именем",
-    "ambiguousHint": "Выберите нужный источник."
+    "ambiguousHint": "Выберите нужный источник.",
+    "openInStudio": "Открыть в Студии"
   },
   "flows": {
     "eyebrow": "Рабочая область пакетов",

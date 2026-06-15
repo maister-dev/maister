@@ -36,7 +36,17 @@
 > Phase-1 grep steps (T1.2 Step 1, T1.5 Step 1) before they are relied on.
 >
 > **Amendment log:**
-> - (none yet)
+> - **2026-06-15 (Phase A completion):** §4 / §6 / Expectation 9.6 — the embedded
+>   read-only `FlowGraphView` preview and inline fork on the package-detail surface
+>   are project-scoped (need a compiled flow revision + `projectSlug`/`revisionId`)
+>   and are deferred to **Phase B** (the editor redesign). Phase A ships the detail
+>   as header + bill-of-materials (grouped by kind) + versions + gated nav actions
+>   (Attach → board, Trust → `/studio/sources`); the per-project
+>   `/projects/{slug}/packages/{flowRefId}` viewer retains the full graph/fork. The
+>   board "Open in Studio" deep-link lives on `project-packages-section` (ADR-088
+>   by-name attachments), not `flow-packages-panel` (flow-ref-keyed). Studio reads
+>   use a new `getStudioPackageInstalls` projection (`sourceUrl` + per-kind counts;
+>   `rules` not inventoried → 0) since the existing DTO is too thin.
 
 ---
 
@@ -266,10 +276,10 @@ so the absence is intentional, not an omission.
    source · newest version · trust · member-kind chips · attached count · `Local`
    badge) linking `/studio/packages/${encodeURIComponent(name)}`.
 6. `/studio/packages/[ref]` MUST decode `ref`, resolve it against the
-   server-state group set by `name`, render a BoM grouped by kind + a read-only
-   `FlowGraphView` preview (NO `runContext`) + actions, and MUST NEVER use `ref`
-   as a filesystem path; a cross-source name collision MUST render a
-   disambiguation list.
+   server-state group set by `name`, render a BoM grouped by kind + versions +
+   gated actions, and MUST NEVER use `ref` as a filesystem path; a cross-source
+   name collision MUST render a disambiguation list. (The embedded read-only
+   `FlowGraphView` preview + inline fork are deferred to Phase B — amendment log.)
 7. Management actions (Trust, Fork/Rework) MUST be gated: Trust visible only to
    global admin (`canTrust`); manage actions only with `canManage`
    (any-project `manageCatalog`).
@@ -318,10 +328,12 @@ e2e under `web/e2e/`, registered in `AUTHED_SPEC`. Prove each new file with
 ## 12. Implementation status
 
 All Phase A pieces (§4 routes overview/sources/packages/package-detail, §3.2
-shaper, §9 expectations): **(Designed)** at Phase-0 HEAD → **(Implemented)** on
-Phase A merge. §6 node-visual scheme, `/studio/edit`, `/studio/local`,
-editable-local-package backend, standalone artifact kinds, move-to-package:
-**(Designed)** (Phase B/C). Git write-back: **(Phase 2)**.
+shaper, §9 expectations) are **(Implemented)**. The package-detail **embedded
+read-only preview + inline fork** are project-scoped and deferred to **Phase B**
+(amendment log) — Phase A ships header + BoM + versions + gated nav actions. §6
+node-visual scheme, `/studio/edit`, `/studio/local`, editable-local-package
+backend, standalone artifact kinds, move-to-package: **(Designed)** (Phase B/C).
+Git write-back: **(Phase 2)**.
 
 **Cross-cutting compliance ledger (project aif-plan skill-context):**
 HTTP identifiers labeled (§5 — all GET page reads, one `url-param` `ref` resolved

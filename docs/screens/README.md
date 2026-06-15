@@ -105,7 +105,7 @@ flowchart TD
 | [`chrome/launch-dialog.md`](chrome/launch-dialog.md) | Launch dialog (scratch/launch popover + Cmd/Ctrl+K) | shell | Implemented (WI-4/WI-5) |
 | [`inbox.md`](inbox.md) | Unified inbox | `/inbox` | Implemented (WI-1) |
 | [`mcps.md`](mcps.md) | Platform MCP catalog (admin) | `/mcps` | Implemented (WI-2) |
-| [`studio/README.md`](studio/README.md) | Flow Studio redesign (area design: overview · sources · packages · package detail · editor · local workspace) | `/studio/*` | Planned |
+| [`studio/README.md`](studio/README.md) | Flow Studio redesign (area design: overview · sources · packages · package detail · editor · local workspace) | `/studio/*` | Implemented (Phase A: overview · sources · packages · detail); B/C Planned |
 
 Going forward, **each screen work-item updates its screens doc** in the same
 phase that ships the screen. New screens add a row here and a file following the
