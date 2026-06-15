@@ -123,7 +123,19 @@
     "comingSoon": "Coming soon"
   },
   "studio": {
-    "title": "Studio"
+    "title": "Studio",
+    "eyebrow": "Flow Studio",
+    "subtitle": "Sources, packages, and local artifacts in one place.",
+    "packagesTitle": "Packages",
+    "packagesSub": "Installed and local packages, grouped by package.",
+    "localTitle": "Local",
+    "localSub": "Author standalone flows, agents, skills, and rules.",
+    "sourcesTitle": "Sources",
+    "sourcesSub": "Register git sources and install packages by tag.",
+    "artifacts": "Artifacts",
+    "needsAttention": "Needs attention",
+    "needsAttentionEmpty": "Nothing needs attention.",
+    "needsTrust": "Needs trust"
   },
   "flows": {
     "eyebrow": "Platform package workbench",

@@ -118,13 +118,13 @@ No `body-controlled` cross-resource identifiers are added (all Phase A routes ar
   - Logging: `console.debug("[studio.load] grouped", { installCount, attachmentCount, groupCount })`; `console.error("[studio.load] read failed", { err })` on a read throw (then rethrow — do NOT swallow).
   - Verify: `pnpm --filter maister-web exec tsc --noEmit` clean for `lib/studio/load.ts`.
 
-- [ ] **T1.4 — Studio overview page.** (origin A4)
+- [x] **T1.4 — Studio overview page.** (origin A4)
   - Files — Create: `web/components/studio/overview-cards.tsx`, `web/components/studio/overview-cards.test.tsx`; Modify: `web/app/(app)/studio/page.tsx`.
   - Do: count strip + area cards (`/studio/packages`, `/studio/local`, and `/studio/sources` only when `isAdmin`) + needs-attention list (untrusted installs). Resolve `isAdmin` with the same auth helper `/flows` uses.
   - Logging: page load DEBUG (from T1.1) now carries real counts.
   - Verify: `pnpm --filter maister-web exec vitest run components/studio/overview-cards.test.tsx` → 2 green.
 
-- [ ] **T1.5 — Sources at `/studio/sources` (admin).** (origin A5)
+- [x] **T1.5 — Sources at `/studio/sources` (admin).** (origin A5)
   - Files — Create: `web/app/(app)/studio/sources/page.tsx` (mount the existing `PackageSourcesPanel`; reuse the settings loader's package slice).
   - **Identifier:** `requireGlobalRole("admin")` is the route authz boundary (auth-context). Leave the `/settings` panel intact (dedup is a noted follow-up, not a deletion).
   - Logging: `console.info("[studio.sources] admin view", { viewerId })` (admin access is worth INFO).

@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { PackageInstallRow } from "@/components/settings/package-sources-panel";
+import type { PackageSourceRow } from "@/components/settings/package-source-modal";
 import type { DiscoveredPackageEntry } from "@/lib/db/schema";
 import type { PackageInstallManifest } from "@/lib/packages/attach";
 
@@ -159,4 +161,39 @@ export async function getStudioPackageInstalls(): Promise<
       },
     };
   });
+}
+
+// Props for the platform `PackageSourcesPanel`, shared by the admin `/settings`
+// page and the Studio Sources surface. Mirrors the `/settings` package slice;
+// `installed_path` never leaves the server.
+export async function loadPackageSourcesView(): Promise<{
+  sources: PackageSourceRow[];
+  installs: PackageInstallRow[];
+}> {
+  const db = getDb() as any;
+  const [pkgSources, pkgInstalls] = await Promise.all([
+    db.select().from(packageSources),
+    db.select().from(packageInstalls),
+  ]);
+
+  return {
+    sources: pkgSources.map((s: any) => ({
+      id: s.id,
+      url: s.url,
+      enabled: s.enabled,
+      note: s.note ?? null,
+      discovered: s.discovered ?? [],
+      lastCheckedAt: s.lastCheckedAt ? s.lastCheckedAt.toISOString() : null,
+    })),
+    installs: pkgInstalls.map((i: any) => ({
+      id: i.id,
+      sourceUrl: i.sourceUrl,
+      name: i.name,
+      versionLabel: i.versionLabel,
+      resolvedRevision: i.resolvedRevision,
+      packageStatus: i.packageStatus,
+      trustStatus: i.trustStatus,
+      flows: (i.manifest?.spec?.flows ?? []).map((f: any) => f.id),
+    })),
+  };
 }

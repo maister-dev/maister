@@ -3,21 +3,21 @@ import type { ReactElement } from "react";
 
 import { getTranslations } from "next-intl/server";
 
-import { OverviewCards } from "@/components/studio/overview-cards";
-import { requireSession } from "@/lib/authz";
-import { loadStudioPackages } from "@/lib/studio/load";
+import { PackageSourcesPanel } from "@/components/settings/package-sources-panel";
+import { requireGlobalRole } from "@/lib/authz";
+import { loadPackageSourcesView } from "@/lib/queries/packages";
 
 export async function generateMetadata(): Promise<Metadata> {
   const t = await getTranslations("studio");
 
-  return { title: t("title") };
+  return { title: t("sourcesTitle") };
 }
 
-export default async function StudioOverviewPage(): Promise<ReactElement> {
-  const user = await requireSession();
+export default async function StudioSourcesPage(): Promise<ReactElement> {
+  await requireGlobalRole("admin");
+
   const t = await getTranslations("studio");
-  const groups = await loadStudioPackages(user.id, user.role);
-  const isAdmin = user.role === "admin";
+  const { sources, installs } = await loadPackageSourcesView();
 
   return (
     <div className="w-full">
@@ -26,14 +26,16 @@ export default async function StudioOverviewPage(): Promise<ReactElement> {
           {t("eyebrow")}
         </div>
         <h1 className="m-0 text-[28px] font-semibold leading-[1.1] tracking-[-0.022em] text-ink">
-          {t("title")}
+          {t("sourcesTitle")}
         </h1>
         <p className="mt-1.5 max-w-[56ch] text-[13.5px] leading-[1.5] text-mute">
-          {t("subtitle")}
+          {t("sourcesSub")}
         </p>
       </header>
 
-      <OverviewCards groups={groups} isAdmin={isAdmin} />
+      <div className="rounded-[16px] border border-line bg-paper p-7 shadow-[0_1px_0_color-mix(in_oklab,var(--paper)_60%,transparent)_inset,0_12px_32px_-16px_rgba(0,0,0,0.12)]">
+        <PackageSourcesPanel installs={installs} sources={sources} />
+      </div>
     </div>
   );
 }
