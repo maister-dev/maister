@@ -84,8 +84,8 @@ merged detail). #4 is the Phase B/C direction recorded here as **(Designed)**.
 
 - **Phase B — editor redesign** (the big-canvas Heym-style editor: node visual
   scheme, named-outcome handles, properties panel, top-bar drawers, hideable
-  rail). Phase A's read-only preview reuses the **current** `FlowGraphView`
-  rendering — NOT the new node-visual scheme (§6 is (Designed)).
+  rail). Phase A ships a placeholder for the preview; the embedded `FlowGraphView`
+  and the new node-visual scheme (§6, (Designed)) both land in Phase B.
 - **Phase C — editable local packages (Variant B)** + standalone artifact kinds +
   move-to-package + cut-version. NEW backend (`local_packages` table + working
   dir); not touched in Phase A.
@@ -104,8 +104,8 @@ Phase A is frontend-over-existing-reads. Every backend read and panel below is
 | Attachments read (per project) | `web/lib/queries/packages.ts` `getProjectPackageAttachments(projectId)` (`:39`) | gathered across visible projects → `attachedProjectCount` |
 | Package detail read | `web/lib/queries/flow-packages.ts` `getFlowPackageDetail(...)` (`:317`) | (optional) richer BoM on package detail; manifest BoM is derived at the page |
 | Sources admin panel | `web/components/settings/package-sources-panel.tsx` `PackageSourcesPanel` (mounted in `app/(app)/settings/page.tsx`) | mounted unchanged at `/studio/sources` (admin); `/settings` copy left intact |
-| Static graph preview | `web/components/board/flow-graph-view.tsx` `FlowGraphView` (run-coupled via `runContext?`; static when absent) + `flow-graph-view-section.tsx` | read-only preview on package detail (NO `runContext`) |
-| Fork action | `web/components/flows/package-fork-button.tsx` | "Fork to local / Rework" on installed package detail |
+| Static graph preview | `web/components/board/flow-graph-view.tsx` `FlowGraphView` (run-coupled via `runContext?`; static when absent) + `flow-graph-view-section.tsx` | read-only preview is **Phase B**; Phase A ships a "coming soon" placeholder |
+| Fork action | `web/components/flows/package-fork-button.tsx` | inline fork is **Phase B**; Phase A shows a non-interactive "rework" hint (the per-project package viewer keeps fork meanwhile) |
 | Auth | `web/lib/authz.ts` `requireSession`, `requireGlobalRole("admin")`, project `manageCatalog` | overview/packages/detail = member with `manageCatalog` on ≥1 project; sources = global admin |
 | Page chrome | `/flows` + `/mcps` page-bar pattern (eyebrow + `<h1>`) | reused for every `/studio/*` page header |
 | Board config panel | `web/components/board/panels/flow-packages-panel.tsx` | gains an "Open in Studio" deep-link (config stays on the board) |
@@ -166,7 +166,7 @@ stays global-admin-gated.
 | `/studio` | Overview (at-a-glance + area cards + needs-attention) | member | A | (Designed→Implemented) |
 | `/studio/sources` | Sources + discovery + install (relocated `PackageSourcesPanel`) | admin | A | (Designed→Implemented) |
 | `/studio/packages` | Packages list, grouped by package | member | A | (Designed→Implemented) |
-| `/studio/packages/{ref}` | Package detail (BoM · read-only preview · versions · attach · fork) | member | A | (Designed→Implemented) |
+| `/studio/packages/{ref}` | Package detail (BoM · versions · attach/trust nav; read-only preview + inline fork are **Phase B**) | member | A | (Designed→Implemented) |
 | `/studio/edit/{...}` | Artifact editor (big-canvas redesign) | member | **B** | (Designed) |
 | `/studio/local` | Local / virtual package | member | **C** | (Designed) |
 
@@ -205,9 +205,9 @@ collisions bite.
 
 ## 6. Node visual language (icons + colors) — **(Designed; implemented in Phase B)**
 
-Recorded here as frozen direction; Phase A's preview uses the **current**
-`FlowGraphView` rendering, so this scheme is **(Designed)**, not Implemented in
-Phase A. Canonical copy lives in the design SSOT
+Recorded here as frozen direction; Phase A ships a placeholder for the preview
+(the embedded `FlowGraphView` is deferred to Phase B), so this scheme is
+**(Designed)**, not Implemented in Phase A. Canonical copy lives in the design SSOT
 ([`docs/screens/studio/README.md`](../../docs/screens/studio/README.md)
 §"Node visual language") and (on Phase B) in `flow-studio.md`. Hues bind to the
 existing dark/green token palette (roles, not hex).
@@ -327,7 +327,7 @@ e2e under `web/e2e/`, registered in `AUTHED_SPEC`. Prove each new file with
 | 9.2 | group by (sourceUrl,name); newest-first; counts; isLocal; needsTrust; attachedProjectCount | unit · `lib/studio/group-packages.test.ts` (3) |
 | 9.3 | overview counts + needs-attention; Sources card admin-only | unit · `components/studio/overview-cards.test.tsx` (2) |
 | 9.5 | one row per package + detail link + Local badge | unit · `components/studio/packages-list.test.tsx` |
-| 9.6 / 9.7 | BoM by kind + fork action; Trust hidden for non-admin | unit · `components/studio/package-detail.test.tsx` (2) |
+| 9.6 / 9.7 | BoM by kind + "rework" affordance (inline fork is **Phase B**); Trust hidden for non-admin | unit · `components/studio/package-detail.test.tsx` (2) |
 | 9.1 / 9.8 / nav-path | rail→/studio; overview count; packages→aif; detail BoM; sources admin | e2e · `web/e2e/studio.spec.ts` |
 | 9.4 | `/studio/sources` admin gating | (mirror the `/mcps` admin-gating test if present) |
 | 9.9 | EN/RU `studio` + `nav.studio` parity | i18n parity test (kept green) |
@@ -357,12 +357,12 @@ touchpoints = none (§8); contract surfaces → spec files (§7); test integrity
 ## 13. Phasing & sequencing (A → B → C)
 
 - **Phase A — Studio shell & surfacing** (this spec). Unified home · sources ·
-  packages-grouped · package-detail with read-only preview. Over existing
-  backend; no migration. Fixes defects #1–#3.
+  packages-grouped · package-detail (BoM + versions; the read-only preview is a
+  Phase B placeholder). Over existing backend; no migration. Fixes defects #1–#3.
 - **Phase B — Editor usability** (own plan): the storage-agnostic big-canvas
   editor redesign behind a small load/save seam — node visual scheme (§6),
   named-outcome handles, dashed rework edges, properties panel, top-bar drawers,
-  hideable rail. The read-only twin is Phase A's package-detail preview.
+  hideable rail. Its read-only twin is the package-detail preview (also Phase B).
 - **Phase C — Editable local packages (Variant B)** (own plan; NEW backend): a
   `local_packages` table pointing at a mutable working dir; "cut version" runs the
   existing installer → `local-<digest>` `package_installs`; standalone artifact
