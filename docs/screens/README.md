@@ -30,6 +30,7 @@ docs/screens/
   README.md          # this file — index + IA map + template + classification rule
   chrome/            # cross-cutting shell present on every screen
     left-rail.md     # nav sections + runners-readiness + launch button + Needs-you badge
+    active-workspaces.md # per-project live-run rows inside the rail (block)
     status-bar.md    # footer supervisor status (single source)
     top-nav.md       # breadcrumb + locale/theme/user menu
     launch-dialog.md # scratch/launch popover + Cmd/Ctrl+K
@@ -98,6 +99,7 @@ flowchart TD
 | Doc | Screen / chrome | Route | Status |
 | --- | --- | --- | --- |
 | [`chrome/left-rail.md`](chrome/left-rail.md) | Left rail (nav + workspaces + runners readiness + launch) | shell | Implemented (WI-3); Inbox badge WI-1 |
+| [`chrome/active-workspaces.md`](chrome/active-workspaces.md) | Active-workspaces block (per-project live-run rows in the rail) | shell | Implemented (grouping/TTL/actions); compact-row redesign Designed |
 | [`chrome/status-bar.md`](chrome/status-bar.md) | Footer status bar (supervisor, single source) | shell | Implemented (WI-3) |
 | [`chrome/top-nav.md`](chrome/top-nav.md) | Top nav (breadcrumb, locale, theme, user) | shell | Implemented (WI-3) |
 | [`chrome/launch-dialog.md`](chrome/launch-dialog.md) | Launch dialog (scratch/launch popover + Cmd/Ctrl+K) | shell | Implemented (WI-4/WI-5) |

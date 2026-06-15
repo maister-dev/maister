@@ -69,7 +69,8 @@ describe("portfolio queries (integration)", () => {
     const id = randomUUID();
     const slug = `proj-${id.slice(0, 8)}`;
 
-    await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
+    await db.insert(schema.projects).values({
+      taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
       id,
       slug,
       name,
@@ -87,7 +88,8 @@ describe("portfolio queries (integration)", () => {
   ): Promise<string> {
     const id = randomUUID();
 
-    await db.insert(schema.tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
+    await db.insert(schema.tasks).values({
+      number: Math.trunc(Math.random() * 1e9) + 1,
       id,
       projectId,
       title,
@@ -1118,7 +1120,9 @@ describe("portfolio queries (integration)", () => {
     }
 
     it("flow run surfaces flowRefLabel, ticket-derived name, and KEY-N issue link", async () => {
-      const user = await createUser(`rail-flow-${randomUUID().slice(0, 8)}@test.com`);
+      const user = await createUser(
+        `rail-flow-${randomUUID().slice(0, 8)}@test.com`,
+      );
       const project = await createProject("Rail Flow Project");
       const flow = await createFlow(project);
       const executor = await createExecutor(project);
@@ -1167,7 +1171,9 @@ describe("portfolio queries (integration)", () => {
       expect(row?.taskKey).toBe(proj.taskKey);
       expect(row?.taskNumber).toBe(task.number);
       expect(row?.name).toBe(`${proj.taskKey}-${task.number} Fix the thing`);
-      expect(row?.issueHref).toBe(`/projects/${proj.slug}/tasks/${task.number}`);
+      expect(row?.issueHref).toBe(
+        `/projects/${proj.slug}/tasks/${task.number}`,
+      );
     });
 
     it("runnerDetail is parsed null-safe from the runner snapshot", async () => {
@@ -1272,7 +1278,9 @@ describe("portfolio queries (integration)", () => {
 
       const row = await railRow(user, project, runId);
 
-      expect(row?.issueHref).toBe(`/projects/${proj.slug}/tasks/${task.number}`);
+      expect(row?.issueHref).toBe(
+        `/projects/${proj.slug}/tasks/${task.number}`,
+      );
       expect(row?.taskNumber).toBe(task.number);
       // The editable scratch name takes precedence over the ticket-derived name.
       expect(row?.name).toBe("My scratch");

@@ -40,8 +40,11 @@ Top to bottom:
 1. **Section nav** — Projects, Inbox (badge), Flows, Agents (disabled), then the
    admin block (MCPs, Users, Scheduler, Settings). The Inbox badge shows the
    canonical `needsYou` count (WI-1; see [`../inbox.md`](../inbox.md)).
-2. **Active workspaces** — per-project groups of live runs with a status-tone
-   dot, TTL/archived badges, and per-run workbench-lifecycle actions (M27).
+2. **Active workspaces** — per-project groups of live runs. The block's surface
+   (compact rows, single colour-coded state dot, ticket-derived names + scratch
+   rename, linked flow/issue chips, runner info chip, hover/focus icon actions,
+   TTL/archived badges) is documented in
+   [`active-workspaces.md`](active-workspaces.md).
 3. **Runners readiness** (WI-3) — one chip per available adapter; supervisor
    status is **not** here (it lives once in the footer,
    [`status-bar.md`](status-bar.md)).

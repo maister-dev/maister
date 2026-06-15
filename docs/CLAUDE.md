@@ -109,6 +109,7 @@ per-doc template, and the classification rule.
 | ---- | ---------------- |
 | [`screens/README.md`](screens/README.md) | Screens index, global nav/IA map, per-doc template, classification rule. |
 | [`screens/chrome/left-rail.md`](screens/chrome/left-rail.md) | Left rail: nav sections, runners readiness, active workspaces, launch, Needs-you badge. |
+| [`screens/chrome/active-workspaces.md`](screens/chrome/active-workspaces.md) | Active-workspaces block: compact live-run rows, state dot, flow/issue/runner chips, hover icon actions, scratch rename. |
 | [`screens/chrome/status-bar.md`](screens/chrome/status-bar.md) | Footer status bar: single-source supervisor status. |
 | [`screens/chrome/top-nav.md`](screens/chrome/top-nav.md) | Top nav: breadcrumb, locale/theme/user menu. |
 | [`screens/chrome/launch-dialog.md`](screens/chrome/launch-dialog.md) | Launch dialog: scratch/launch popover, Cmd/Ctrl+K. |

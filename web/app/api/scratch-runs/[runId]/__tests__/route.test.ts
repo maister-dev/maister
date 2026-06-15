@@ -272,7 +272,12 @@ describe("PATCH /api/scratch-runs/[runId]", () => {
     const runId = "scratch-patch-run";
 
     dbState.tables.runs = [
-      { id: runId, projectId: "project-1", runKind: "scratch", status: "Running" },
+      {
+        id: runId,
+        projectId: "project-1",
+        runKind: "scratch",
+        status: "Running",
+      },
     ];
     dbState.tables.scratch_runs = [{ runId, name, dialogStatus: "Running" }];
 
@@ -282,7 +287,10 @@ describe("PATCH /api/scratch-runs/[runId]", () => {
   async function patch(
     runId: string,
     body: unknown,
-  ): Promise<{ status: number; json: { ok?: boolean; name?: string; code?: string } }> {
+  ): Promise<{
+    status: number;
+    json: { ok?: boolean; name?: string; code?: string };
+  }> {
     const { PATCH } = await import("../route");
     const res = await PATCH(
       new Request(`http://localhost/${runId}`, {
