@@ -11,6 +11,7 @@ import {
   NODE_WIDTH,
   layoutGraph,
 } from "@/lib/board/evidence-graph-layout";
+import { edgeOutcomeStyle } from "@/lib/flows/edge-style";
 
 export type FlowChipColor =
   | "default"
@@ -144,6 +145,7 @@ export function toFlowGraphView(
       target: e.target,
       type: "flowEdge",
       data: data as unknown as Record<string, unknown>,
+      style: edgeOutcomeStyle(e.edgeRole).style,
       ...(edgeAnimated(e.edgeRole) ? { animated: true } : {}),
       ...(className ? { className } : {}),
     };

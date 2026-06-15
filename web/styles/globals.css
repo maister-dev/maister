@@ -46,6 +46,24 @@
      human-attention run states (NeedsInput / NeedsInputIdle). */
   --attention: #b7791f;
 
+  /* Flow-canvas type palette — brand-neutral accents so node types / gate kinds
+     read distinctly on the graph (not part of the forest brand chrome). */
+  --cv-green: #2f7d4e;
+  --cv-green-soft: #dbeede;
+  --cv-violet: #5a4ba0;
+  --cv-violet-soft: #e7e3f7;
+  --cv-gray: #5f6760;
+  --cv-gray-soft: #e9ebe8;
+  --cv-amber: #9a6b15;
+  --cv-amber-soft: #f6e9cf;
+  --cv-blue: #2f6bb0;
+  --cv-blue-soft: #dde9f7;
+  --cv-teal: #1d8f74;
+  --cv-teal-soft: #d8efe7;
+  --cv-rose: #b04f7d;
+  --cv-rose-soft: #f7dde9;
+  --edge-success: #4f7d5e;
+
   --shadow-sm: 0 1px 0 rgba(22, 20, 15, 0.04), 0 1px 2px rgba(22, 20, 15, 0.04);
   --shadow-md: 0 8px 24px -12px rgba(22, 20, 15, 0.12),
     0 2px 6px -2px rgba(22, 20, 15, 0.06);
@@ -104,6 +122,22 @@
   --danger: #f07f7a;
   --danger-soft: #2b1717;
   --attention: #e0a458;
+
+  --cv-green: #8fd6a3;
+  --cv-green-soft: #1c3a2a;
+  --cv-violet: #b4a6e6;
+  --cv-violet-soft: #2a2542;
+  --cv-gray: #b3b8b2;
+  --cv-gray-soft: #1e2320;
+  --cv-amber: #d8b25f;
+  --cv-amber-soft: #2a2310;
+  --cv-blue: #85b3e6;
+  --cv-blue-soft: #19293d;
+  --cv-teal: #5fc2a8;
+  --cv-teal-soft: #13231e;
+  --cv-rose: #e0a0bf;
+  --cv-rose-soft: #251622;
+  --edge-success: #6b8f74;
 
   --shadow-sm: 0 1px 0 rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-md: 0 8px 24px -12px rgba(0, 0, 0, 0.6),

@@ -439,36 +439,45 @@ addresses local-package artifacts), not Phase B.
 
 This is the **as-implemented canonical** scheme — it refines the design SSOT's
 role/hue table ([`../screens/studio/README.md`](../screens/studio/README.md)
-§"Node visual language", cited by R7) with concrete icons + forest tokens. The
-design names hues as *roles*; the live palette is a muted forest green +
-`attention` (warm amber) + `danger` — so the roles **collapse onto existing
-`var(--*)` tokens** (muted, not rainbow). The **icon shape is the primary type
-signal**; the chip renders the icon via `style={{ color: var(--<token>) }}`
-(`stroke="currentColor"`). It lands on the **shared** `FlowNodeBody`, so the
-editor canvas, the Phase-A read-only preview, AND the run-workbench graph inherit
-it; the run-status chip (`colorForNodeStatus`) is unchanged and **composes** with
-the additive type accent.
+§"Node visual language", cited by R7) with concrete icons + tokens. A
+**dedicated, brand-neutral canvas palette** (`--cv-*` in `styles/globals.css`,
+light + dark) gives each node type and gate kind a **distinct muted hue** so the
+graph reads at a glance — separate from the forest brand chrome. On the shared
+`FlowNodeBody` the type hue paints the **icon** (`style={{ color: var(--cv-*) }}`,
+`stroke="currentColor"`), a **soft icon-chip background** (`var(--cv-*-soft)`),
+and a **tinted card border + faint wash** (`color-mix` toward the hue) — unless an
+author `presentationColor` (ADR-064) overrides the border. It lands on the
+**shared** `FlowNodeBody`, so the editor canvas, the read-only package preview
+(now rendered, not a placeholder), AND the run-workbench graph inherit it; the
+run-status chip (`colorForNodeStatus`) is unchanged and **composes** with the
+additive type accent.
 
-| Node type | Icon | Color token | design role |
+| Node type | Icon | Color token | hue |
 | --- | --- | --- | --- |
-| `ai_coding` | bot | `--accent-3` | teal |
-| `judge` | gavel | `--accent-2` | violet |
-| `cli` | terminal `>_` | `--mute` | slate |
-| `check` | shield-check | `--attention` | amber |
-| `human` | person | `--amber` | magenta |
+| `ai_coding` | bot | `--cv-green` | green |
+| `judge` | gavel | `--cv-violet` | violet |
+| `cli` | terminal `>_` | `--cv-gray` | neutral gray |
+| `check` | shield-check | `--cv-amber` | amber |
+| `human` | person | `--cv-blue` | blue |
 
-| Gate kind | Icon | Color token | design role |
+| Gate kind | Icon | Color token | hue |
 | --- | --- | --- | --- |
-| `command_check` | `>_` | `--mute` | slate |
-| `skill_check` | puzzle | `--good` | green |
-| `ai_judgment` | gavel | `--accent-2` | violet |
-| `artifact_required` | file | `--accent-3` | blue |
-| `external_check` | link | `--accent-4` | cyan |
-| `human_review` | person | `--amber` | magenta |
+| `command_check` | `>_` | `--cv-gray` | gray |
+| `skill_check` | puzzle | `--cv-teal` | teal |
+| `ai_judgment` | gavel | `--cv-violet` | violet |
+| `artifact_required` | file | `--cv-amber` | amber |
+| `external_check` | link | `--cv-blue` | blue |
+| `human_review` | person | `--cv-rose` | rose |
+
+Gate kinds carry their hue as a colored dot + label in the node side-form gate
+list (`gate-form.tsx`).
 
 - Blocking gate → **solid** chip; advisory → **outline** chip.
-- Default outcome edge → solid; **rework / back-edge → dashed + amber** with the
-  outcome label drawn on the edge.
+- Edge styling is shared (`lib/flows/edge-style.ts`, used by both the read-only
+  viewer and the editor): forward / success → **solid green-gray**
+  (`--edge-success`); failure → **solid red** (`--danger`); **rework / takeover /
+  reject back-edge → dashed + animated amber** (`--attention`) with the outcome
+  label on the edge.
 - Run/preview status keeps the existing `FlowGraphView` coloring; the static
   editor canvas has no status ring.
 

@@ -3,6 +3,8 @@
 import type { GateKind } from "@/lib/flows/editor/editor-state";
 import type { ReactElement } from "react";
 
+import { gateVisual } from "@/lib/flows/node-visuals";
+
 export type GateDraft = {
   id: string;
   kind: GateKind;
@@ -57,8 +59,17 @@ export function GateForm({
       data-testid={`gate-form-${gate.id}`}
     >
       <div className="flex items-center justify-between gap-2">
-        <span className="font-mono text-[11px] font-bold text-ink">
-          {gate.id} · {labels.kind[gate.kind]}
+        <span className="flex items-center gap-1.5 font-mono text-[11px] font-bold text-ink">
+          <span
+            aria-hidden="true"
+            className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+            data-testid={`gate-kind-dot-${gate.kind}`}
+            style={{ background: `var(--${gateVisual(gate.kind).colorToken})` }}
+          />
+          {gate.id} ·{" "}
+          <span style={{ color: `var(--${gateVisual(gate.kind).colorToken})` }}>
+            {labels.kind[gate.kind]}
+          </span>
         </span>
         <button
           className="rounded-md border border-line px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-ink-2 hover:bg-paper"

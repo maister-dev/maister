@@ -17,11 +17,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import {
-  FlowEditorToolbar,
-  editorEdgeStyle,
-  isBackEdgeOutcome,
-} from "@/components/flows/flow-graph-editor";
+import { FlowEditorToolbar } from "@/components/flows/flow-graph-editor";
 import { GATE_KINDS, NODE_TYPES } from "@/lib/flows/editor/node-form";
 
 type ToolbarProps = Parameters<typeof FlowEditorToolbar>[0];
@@ -83,35 +79,6 @@ describe("FlowEditorToolbar — edit affordances", () => {
     }
     expect(html).toContain("Command check");
     expect(html).toContain("Human review");
-  });
-});
-
-describe("editorEdgeStyle — outcome-derived edge styling (T1.2)", () => {
-  it("renders back-edge outcomes dashed + animated + amber", () => {
-    for (const outcome of ["rework", "takeover", "reject"]) {
-      const s = editorEdgeStyle(outcome);
-
-      expect(s.animated).toBe(true);
-      expect(s.style.strokeDasharray).toBeDefined();
-      expect(s.style.stroke).toContain("attention");
-    }
-  });
-
-  it("renders forward outcomes solid (no dash, not animated)", () => {
-    for (const outcome of ["success", "failure", "custom_exit", ""]) {
-      const s = editorEdgeStyle(outcome);
-
-      expect(s.animated).toBe(false);
-      expect(s.style.strokeDasharray).toBeUndefined();
-      expect(s.style.stroke).toContain("mute-2");
-    }
-  });
-
-  it("classifies back-edges case-insensitively and trimmed", () => {
-    expect(isBackEdgeOutcome(" Rework ")).toBe(true);
-    expect(isBackEdgeOutcome("TAKEOVER")).toBe(true);
-    expect(isBackEdgeOutcome("success")).toBe(false);
-    expect(isBackEdgeOutcome("approve")).toBe(false);
   });
 });
 

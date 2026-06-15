@@ -229,7 +229,7 @@ function NodeTypeIcon({ name }: { name: string }): ReactElement {
   return (
     <svg
       aria-hidden="true"
-      className="h-3.5 w-3.5"
+      className="h-4 w-4"
       fill="none"
       stroke="currentColor"
       strokeLinecap="round"
@@ -267,16 +267,26 @@ export function FlowNodeBody({
   const runtimeGateCount = runtimeGateSummary?.total ?? 0;
   const blockingGateCount = runtimeGateSummary?.blockingTotal ?? 0;
 
+  const typeVisual = nodeType ? nodeVisual(nodeType) : null;
+
   const boxStyle: {
     width?: number;
     height?: number;
     borderColor?: string;
+    background?: string;
   } = {};
 
   if (typeof presentationWidth === "number") boxStyle.width = presentationWidth;
   if (typeof presentationHeight === "number")
     boxStyle.height = presentationHeight;
-  if (presentationColor) boxStyle.borderColor = presentationColor;
+  // Author presentationColor (ADR-064) wins the border; otherwise tint the border
+  // and a faint wash with the node-type hue so the card itself reads its type.
+  if (presentationColor) {
+    boxStyle.borderColor = presentationColor;
+  } else if (typeVisual) {
+    boxStyle.borderColor = `color-mix(in srgb, var(--${typeVisual.colorToken}) 45%, var(--line))`;
+    boxStyle.background = `color-mix(in srgb, var(--${typeVisual.colorToken}) 9%, var(--paper))`;
+  }
   const hasBoxStyle = Object.keys(boxStyle).length > 0;
 
   return (
@@ -299,15 +309,19 @@ export function FlowNodeBody({
       >
         <div className="flex min-w-0 items-start justify-between gap-2">
           <div className="flex min-w-0 items-start gap-1.5">
-            {nodeType ? (
+            {typeVisual ? (
               <span
-                className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[5px] border border-line bg-ivory"
+                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[6px] border"
                 data-node-type={nodeType}
                 data-testid="node-type-icon"
-                style={{ color: `var(--${nodeVisual(nodeType).colorToken})` }}
+                style={{
+                  color: `var(--${typeVisual.colorToken})`,
+                  background: `var(--${typeVisual.colorToken}-soft)`,
+                  borderColor: `color-mix(in srgb, var(--${typeVisual.colorToken}) 40%, transparent)`,
+                }}
                 title={nodeTypeLabel}
               >
-                <NodeTypeIcon name={nodeVisual(nodeType).iconName} />
+                <NodeTypeIcon name={typeVisual.iconName} />
               </span>
             ) : null}
             <div className="min-w-0">
@@ -315,7 +329,14 @@ export function FlowNodeBody({
                 {displayLabel ?? label}
               </p>
               {nodeTypeLabel ? (
-                <p className="truncate text-[10px] leading-3 text-forest-text-secondary">
+                <p
+                  className="truncate text-[10px] font-medium leading-3 text-forest-text-secondary"
+                  style={
+                    typeVisual
+                      ? { color: `var(--${typeVisual.colorToken})` }
+                      : undefined
+                  }
+                >
                   {nodeTypeLabel}
                 </p>
               ) : null}

@@ -6,11 +6,11 @@ import { gateVisual, nodeVisual } from "@/lib/flows/node-visuals";
 describe("nodeVisual", () => {
   it("maps every NodeType to a stable icon + forest token", () => {
     const expected: Record<string, { iconName: string; colorToken: string }> = {
-      ai_coding: { iconName: "bot", colorToken: "accent-3" },
-      judge: { iconName: "gavel", colorToken: "accent-2" },
-      cli: { iconName: "terminal", colorToken: "mute" },
-      check: { iconName: "shield", colorToken: "attention" },
-      human: { iconName: "person", colorToken: "amber" },
+      ai_coding: { iconName: "bot", colorToken: "cv-green" },
+      judge: { iconName: "gavel", colorToken: "cv-violet" },
+      cli: { iconName: "terminal", colorToken: "cv-gray" },
+      check: { iconName: "shield", colorToken: "cv-amber" },
+      human: { iconName: "person", colorToken: "cv-blue" },
     };
 
     for (const type of NODE_TYPES) {
@@ -27,21 +27,21 @@ describe("nodeVisual", () => {
   it("falls back to a neutral dot for an unknown/absent type", () => {
     expect(nodeVisual("other")).toEqual({
       iconName: "dot",
-      colorToken: "mute",
+      colorToken: "cv-gray",
     });
-    expect(nodeVisual("")).toEqual({ iconName: "dot", colorToken: "mute" });
+    expect(nodeVisual("")).toEqual({ iconName: "dot", colorToken: "cv-gray" });
   });
 });
 
 describe("gateVisual", () => {
   it("maps every GateKind to a stable icon + forest token", () => {
     const expected: Record<string, { iconName: string; colorToken: string }> = {
-      command_check: { iconName: "terminal", colorToken: "mute" },
-      skill_check: { iconName: "puzzle", colorToken: "good" },
-      ai_judgment: { iconName: "gavel", colorToken: "accent-2" },
-      artifact_required: { iconName: "file", colorToken: "accent-3" },
-      external_check: { iconName: "link", colorToken: "accent-4" },
-      human_review: { iconName: "person", colorToken: "amber" },
+      command_check: { iconName: "terminal", colorToken: "cv-gray" },
+      skill_check: { iconName: "puzzle", colorToken: "cv-teal" },
+      ai_judgment: { iconName: "gavel", colorToken: "cv-violet" },
+      artifact_required: { iconName: "file", colorToken: "cv-amber" },
+      external_check: { iconName: "link", colorToken: "cv-blue" },
+      human_review: { iconName: "person", colorToken: "cv-rose" },
     };
 
     for (const kind of GATE_KINDS) {
@@ -56,6 +56,9 @@ describe("gateVisual", () => {
   });
 
   it("falls back to a neutral dot for an unknown kind", () => {
-    expect(gateVisual("nope")).toEqual({ iconName: "dot", colorToken: "mute" });
+    expect(gateVisual("nope")).toEqual({
+      iconName: "dot",
+      colorToken: "cv-gray",
+    });
   });
 });

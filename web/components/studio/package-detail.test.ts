@@ -35,6 +35,8 @@ describe("PackageDetail", () => {
         pkg: pkg as never,
         canManage: true,
         canTrust: false,
+        flowGraphs: [],
+        graphLabels: {} as never,
       }),
     );
 
@@ -49,9 +51,29 @@ describe("PackageDetail", () => {
         pkg: pkg as never,
         canManage: true,
         canTrust: false,
+        flowGraphs: [],
+        graphLabels: {} as never,
       }),
     );
 
     expect(html).not.toMatch(/\bTrust\b/);
+  });
+
+  it("renders a titled preview region per compiled flow (no empty note)", () => {
+    const html = renderToStaticMarkup(
+      createElement(PackageDetail, {
+        pkg: pkg as never,
+        canManage: true,
+        canTrust: false,
+        flowGraphs: [
+          { flowId: "aif-dev", topology: { nodes: [], edges: [] }, layout: {} },
+        ] as never,
+        graphLabels: {} as never,
+      }),
+    );
+
+    expect(html).toContain('data-testid="package-preview"');
+    expect(html).toContain("aif-dev");
+    expect(html).not.toContain("previewEmpty");
   });
 });

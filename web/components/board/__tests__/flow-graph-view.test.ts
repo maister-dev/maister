@@ -122,10 +122,11 @@ describe("FlowNodeBody — node type icon chip (T1.1)", () => {
     });
 
     // Additive type accent: the icon chip is present, painted with the
-    // ai_coding forest token...
+    // ai_coding canvas hue (icon fg + soft chip background)...
     expect(html).toContain('data-testid="node-type-icon"');
     expect(html).toContain('data-node-type="ai_coding"');
-    expect(html).toContain("var(--accent-3)");
+    expect(html).toContain("var(--cv-green)");
+    expect(html).toContain("var(--cv-green-soft)");
     // ...AND the run-status chip is unchanged (composition, not replacement).
     expect(html).toContain("chip--accent");
     expect(html).toContain('data-node-status="Running"');
@@ -142,7 +143,7 @@ describe("FlowNodeBody — node type icon chip (T1.1)", () => {
     });
 
     expect(html).toContain('data-node-type="mystery"');
-    expect(html).toContain("var(--mute)");
+    expect(html).toContain("var(--cv-gray)");
   });
 
   it("omits the icon chip entirely when no node type is provided", () => {

@@ -41,6 +41,7 @@ import {
 } from "@/components/flows/edge-connect-modal";
 import { NodeSideForm } from "@/components/flows/node-form/node-side-form";
 import { toFlowGraphView } from "@/lib/board/flow-graph-view-layout";
+import { edgeOutcomeStyle, isBackEdgeOutcome } from "@/lib/flows/edge-style";
 import {
   addGate,
   addNode,
@@ -265,34 +266,6 @@ function editorCanvasNode(
   };
 }
 
-// Outcomes that loop the graph BACKWARD (rework/takeover/reject) read as dashed +
-// amber; forward outcomes (success/failure/…) stay solid. Mirrors the read-only
-// `edgeAnimated`/`edgeClassName` roles, keyed off the editor's free-text outcome.
-const BACK_EDGE_OUTCOMES = new Set(["rework", "takeover", "reject"]);
-
-export function isBackEdgeOutcome(outcome: string): boolean {
-  return BACK_EDGE_OUTCOMES.has(outcome.trim().toLowerCase());
-}
-
-export type EditorEdgeStyle = {
-  animated: boolean;
-  style: { stroke: string; strokeDasharray?: string };
-};
-
-// Pure edge-style map (T1.2): outcome → { animated, stroke[, dash] }. Back-edges
-// animate + dash in the warm `--attention` amber; forward edges are a solid muted
-// stroke. Tested directly (no canvas render needed).
-export function editorEdgeStyle(outcome: string): EditorEdgeStyle {
-  if (isBackEdgeOutcome(outcome)) {
-    return {
-      animated: true,
-      style: { stroke: "var(--attention)", strokeDasharray: "6 4" },
-    };
-  }
-
-  return { animated: false, style: { stroke: "var(--mute-2)" } };
-}
-
 // Convert the read-only view's custom `flowEdge`-typed edges to default edges
 // carrying the outcome as a visible label + the outcome-derived style (T1.2).
 function toEditorEdges(edges: Edge[]): Edge[] {
@@ -301,7 +274,7 @@ function toEditorEdges(edges: Edge[]): Edge[] {
       | { displayLabel?: string; outcome?: string }
       | undefined;
     const outcome = data?.outcome ?? "";
-    const { animated, style } = editorEdgeStyle(outcome);
+    const { animated, style } = edgeOutcomeStyle(outcome);
 
     return {
       id: e.id,
@@ -325,7 +298,7 @@ function upsertEdge(
 ): Edge[] {
   const id = `${source}:${outcome}`;
   const without = edges.filter((e) => e.id !== id);
-  const { animated, style } = editorEdgeStyle(outcome);
+  const { animated, style } = edgeOutcomeStyle(outcome);
 
   return [
     ...without,

@@ -4,15 +4,23 @@ import type { PackageInstallRow } from "@/components/settings/package-sources-pa
 import type { PackageSourceRow } from "@/components/settings/package-source-modal";
 import type { DiscoveredPackageEntry } from "@/lib/db/schema";
 import type { PackageInstallManifest } from "@/lib/packages/attach";
+import type { FlowLayout } from "@/lib/flows/graph/presentation-layout";
+import type { GraphTopology } from "@/lib/queries/flow-graph-view";
+
+import { join } from "node:path";
 
 import { eq, inArray } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
+import { loadFlowManifest } from "@/lib/config";
+import { compileManifest } from "@/lib/flows/graph/compile";
+import { presentationLayout } from "@/lib/flows/graph/presentation-layout";
 import {
   defaultPackageSourceUrls,
   deriveUpdateAvailable,
 } from "@/lib/packages/catalog";
+import { buildGraphTopology } from "@/lib/queries/flow-graph-view";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { packageInstalls, packageSources, projectPackageAttachments } =
@@ -235,4 +243,49 @@ export async function getStudioPackageBom(
     mcps: (manifest?.spec.mcps ?? []).map((m) => ({ id: m.id })),
     rules: [],
   };
+}
+
+export type StudioFlowGraph = {
+  flowId: string;
+  topology: GraphTopology;
+  layout: FlowLayout;
+};
+
+// Read-only graph per member flow of an installed package, for the Studio package
+// preview. Each flow.yaml is read from the package's on-disk install path
+// (server-controlled `installedPath` + a validated package-relative `path` — no
+// user input, no traversal) and compiled. A flow missing on disk or failing to
+// parse/compile is omitted — a best-effort preview that never throws.
+export async function getStudioPackageFlowGraphs(
+  installId: string,
+): Promise<StudioFlowGraph[]> {
+  const db = getDb() as any;
+  const rows = await db
+    .select()
+    .from(packageInstalls)
+    .where(eq(packageInstalls.id, installId));
+  const install = rows[0];
+
+  if (!install) return [];
+
+  const manifest = install.manifest as PackageInstallManifest | undefined;
+  const graphs: StudioFlowGraph[] = [];
+
+  for (const flow of manifest?.spec.flows ?? []) {
+    try {
+      const parsed = await loadFlowManifest(
+        join(install.installedPath, flow.path, "flow.yaml"),
+      );
+
+      graphs.push({
+        flowId: flow.id,
+        topology: buildGraphTopology(compileManifest(parsed)),
+        layout: presentationLayout(parsed),
+      });
+    } catch {
+      // Missing/invalid flow.yaml on disk → omit from the preview, never throw.
+    }
+  }
+
+  return graphs;
 }

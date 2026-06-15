@@ -68,8 +68,8 @@ hideable app rail ([`../chrome/left-rail.md`](../chrome/left-rail.md)):
 
 ### Node visual language
 
-Each node/gate carries a colored icon chip; the canonical scheme (icon + color
-role → forest token) lives in
+Each node/gate carries a colored icon chip + a type-tinted card; the canonical
+scheme (icon + hue → `--cv-*` canvas-palette token) lives in
 [`../../system-analytics/flow-studio.md`](../../system-analytics/flow-studio.md)
 §"Node visual language" and is implemented in `web/lib/flows/node-visuals.ts`. The
 icon shape is the primary type signal; the status chip (run/preview only) composes

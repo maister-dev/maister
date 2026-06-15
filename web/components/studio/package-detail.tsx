@@ -1,10 +1,13 @@
 "use client";
 
-import type { PackageBom } from "@/lib/queries/packages";
+import type { FlowGraphViewLabels } from "@/components/board/flow-graph-view";
+import type { PackageBom, StudioFlowGraph } from "@/lib/queries/packages";
 import type { PackageVersion } from "@/lib/studio/group-packages";
 
 import Link from "next/link";
 import { useTranslations } from "next-intl";
+
+import { FlowGraphViewSection } from "@/components/board/flow-graph-view-section";
 
 export type PackageDetailView = {
   name: string;
@@ -26,10 +29,14 @@ export function PackageDetail({
   pkg,
   canManage,
   canTrust,
+  flowGraphs,
+  graphLabels,
 }: {
   pkg: PackageDetailView;
   canManage: boolean;
   canTrust: boolean;
+  flowGraphs: StudioFlowGraph[];
+  graphLabels: FlowGraphViewLabels;
 }) {
   const t = useTranslations("studio");
   const newest = pkg.versions[0];
@@ -80,13 +87,30 @@ export function PackageDetail({
         </div>
       </div>
 
-      <section className="flex flex-col gap-2">
+      <section className="flex flex-col gap-3" data-testid="package-preview">
         <h3 className="font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-mute">
           {t("previewTitle")}
         </h3>
-        <p className="rounded-[14px] border border-dashed border-line bg-paper px-5 py-8 text-center text-[12.5px] text-mute">
-          {t("previewComingSoon")}
-        </p>
+        {flowGraphs.length > 0 ? (
+          flowGraphs.map((graph) => (
+            <div key={graph.flowId} className="flex flex-col gap-1.5">
+              <div className="font-mono text-[11px] text-ink-2">
+                {graph.flowId}
+              </div>
+              <div className="h-[340px] overflow-hidden rounded-[14px] border border-line bg-paper">
+                <FlowGraphViewSection
+                  labels={graphLabels}
+                  layout={graph.layout}
+                  topology={graph.topology}
+                />
+              </div>
+            </div>
+          ))
+        ) : (
+          <p className="rounded-[14px] border border-dashed border-line bg-paper px-5 py-8 text-center text-[12.5px] text-mute">
+            {t("previewEmpty")}
+          </p>
+        )}
       </section>
 
       <section className="flex flex-col gap-3">

@@ -158,7 +158,7 @@
     "rework": "Rework",
     "reworkHint": "Local rework lands with the editor redesign.",
     "previewTitle": "Preview",
-    "previewComingSoon": "The visual flow preview lands with the editor redesign.",
+    "previewEmpty": "No compilable flows to preview in this package.",
     "bomTitle": "Bill of materials",
     "bomEmpty": "No artifacts.",
     "versionsTitle": "Versions",

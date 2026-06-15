@@ -1,3 +1,4 @@
+import type { FlowGraphViewLabels } from "@/components/board/flow-graph-view";
 import type { Metadata } from "next";
 import type { ReactElement } from "react";
 
@@ -7,9 +8,57 @@ import Link from "next/link";
 
 import { PackageDetail } from "@/components/studio/package-detail";
 import { requireSession } from "@/lib/authz";
-import { getStudioPackageBom } from "@/lib/queries/packages";
+import {
+  getStudioPackageBom,
+  getStudioPackageFlowGraphs,
+} from "@/lib/queries/packages";
 import { getAccessibleProjects } from "@/lib/queries/platform-flows";
 import { loadStudioPackages } from "@/lib/studio/load";
+
+// Read-only flow-graph labels for the package preview: reuse the `workbench.graph.*`
+// namespace (the static viewer never overlays run status, so the node-status map is
+// supplied only for parity with the run-coupled view). Mirrors the per-project
+// package viewer's label builder.
+function buildGraphLabels(
+  t: Awaited<ReturnType<typeof getTranslations>>,
+): FlowGraphViewLabels {
+  return {
+    title: t("graph.title"),
+    empty: t("graph.empty"),
+    currentNode: t("graph.currentNode"),
+    declaredGateSummary: t("graph.declaredGateSummary"),
+    gateSummary: t("graph.gateSummary"),
+    blockingGateSummary: t("graph.blockingGateSummary"),
+    node: {
+      Pending: t("graph.node.Pending"),
+      Running: t("graph.node.Running"),
+      Succeeded: t("graph.node.Succeeded"),
+      Failed: t("graph.node.Failed"),
+      NeedsInput: t("graph.node.NeedsInput"),
+      Reworked: t("graph.node.Reworked"),
+      Stale: t("graph.node.Stale"),
+    },
+    role: {
+      agent: t("graph.role.agent"),
+      command: t("graph.role.command"),
+      check: t("graph.role.check"),
+      judge: t("graph.role.judge"),
+      human: t("graph.role.human"),
+      form: t("graph.role.form"),
+      terminal: t("graph.role.terminal"),
+      other: t("graph.role.other"),
+    },
+    edge: {
+      success: t("graph.edge.success"),
+      default: t("graph.edge.default"),
+      rework: t("graph.edge.rework"),
+      reject: t("graph.edge.reject"),
+      takeover: t("graph.edge.takeover"),
+      approve: t("graph.edge.approve"),
+      other: t("graph.edge.other"),
+    },
+  };
+}
 
 type PageProps = { params: Promise<{ ref: string }> };
 
@@ -76,9 +125,16 @@ export default async function StudioPackageDetailPage({
   const projects = await getAccessibleProjects(user.id, user.role);
   const canManage = projects.some((project) => project.canManageCatalog);
   const canTrust = user.role === "admin";
-  const bom = (await getStudioPackageBom(
-    group.versions[0]?.installId ?? "",
-  )) ?? { flows: [], agents: [], skills: [], mcps: [], rules: [] };
+  const installId = group.versions[0]?.installId ?? "";
+  const bom = (await getStudioPackageBom(installId)) ?? {
+    flows: [],
+    agents: [],
+    skills: [],
+    mcps: [],
+    rules: [],
+  };
+  const flowGraphs = await getStudioPackageFlowGraphs(installId);
+  const graphLabels = buildGraphLabels(await getTranslations("workbench"));
 
   return (
     <div className="w-full">
@@ -86,6 +142,8 @@ export default async function StudioPackageDetailPage({
       <PackageDetail
         canManage={canManage}
         canTrust={canTrust}
+        flowGraphs={flowGraphs}
+        graphLabels={graphLabels}
         pkg={{
           name: group.name,
           sourceUrl: group.sourceUrl,
