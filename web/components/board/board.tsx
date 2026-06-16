@@ -91,6 +91,9 @@ export async function Board({
     runsCount: (count: number) => t("runsCount", { count }),
     launch: t("runAgain"),
     launchUnavailable: t("launchUnavailable"),
+    unconfigured: t("unconfigured"),
+    needsAttention: t("needsAttention"),
+    openRun: t("openRun"),
   };
   const launchDisabledReason =
     platformStatus.kind === "ready"
@@ -213,6 +216,7 @@ export async function Board({
                     card={card}
                     labels={flightLabels}
                     launchDisabledReason={flightLaunchDisabledReason(card)}
+                    slug={slug}
                   />
                 </div>
               ))}

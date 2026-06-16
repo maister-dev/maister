@@ -732,6 +732,8 @@
     "launchBlocked": "Blocked by",
     "launchBlockedShort": "blocked",
     "triaged": "triaged",
+    "needsAttention": "Needs you",
+    "openRun": "Open run",
     "unconfigured": "no flow"
   },
   "hitl": {
@@ -1014,6 +1016,8 @@
     "flowCenterOutdatedThreads": "outdated",
     "flowCenterOptions": "options",
     "flowCenterTokens": "Tokens",
+    "flowCenterPrompt": "Prompt",
+    "flowCenterPromptCopy": "Copy",
     "flowCenterNoGraph": "No Flow graph for this run.",
     "flowCenterNoNode": "No node selected.",
     "headerBranch": "Branch",
@@ -1023,6 +1027,7 @@
     "headerChangedFilesUnit": "files",
     "headerOpenInspector": "Open inspector",
     "headerCloseInspector": "Close inspector",
+    "headerTask": "Task",
     "inspectorOverview": "Overview",
     "inspectorChanges": "Changes",
     "inspectorFlow": "Flow",

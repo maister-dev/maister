@@ -25,7 +25,7 @@ const PRIO_STRIPE: Record<BacklogCard["priority"], string> = {
   low: "bg-mute-2 opacity-40",
 };
 
-const FLOW_CHIP: Record<string, string> = {
+export const FLOW_CHIP: Record<string, string> = {
   bugfix: "text-amber bg-amber-soft border-amber-line",
   "spec-clarify":
     "text-accent-2 bg-accent-2-soft border-[color-mix(in_oklab,var(--accent-2)_30%,var(--line))]",

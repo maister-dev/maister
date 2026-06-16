@@ -732,6 +732,8 @@
     "launchBlocked": "Заблокирована:",
     "launchBlockedShort": "заблокирована",
     "triaged": "триаж пройден",
+    "needsAttention": "Нужен ответ",
+    "openRun": "Открыть запуск",
     "unconfigured": "без флоу"
   },
   "hitl": {
@@ -1014,6 +1016,8 @@
     "flowCenterOutdatedThreads": "устарело",
     "flowCenterOptions": "варианта",
     "flowCenterTokens": "Токены",
+    "flowCenterPrompt": "Промпт",
+    "flowCenterPromptCopy": "Копировать",
     "flowCenterNoGraph": "Для этого запуска нет графа Flow.",
     "flowCenterNoNode": "Нода не выбрана.",
     "headerBranch": "Ветка",
@@ -1023,6 +1027,7 @@
     "headerChangedFilesUnit": "файлов",
     "headerOpenInspector": "Открыть инспектор",
     "headerCloseInspector": "Скрыть инспектор",
+    "headerTask": "Задача",
     "inspectorOverview": "Обзор",
     "inspectorChanges": "Изменения",
     "inspectorFlow": "Flow",

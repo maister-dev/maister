@@ -4,15 +4,13 @@ import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { BoardColumn, CrashAction } from "@/lib/board";
 import type { RunStatus, StepRun } from "@/lib/db/schema";
 import type { ReadinessState } from "@/lib/flows/graph/readiness-core";
-import type { HitlOption } from "@/lib/queries/hitl";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
-import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 
 import { crashActionFor, deriveStage } from "@/lib/board";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
-import { extractOptions } from "@/lib/queries/hitl";
 import {
   lifecycleActionsForWorkspace,
   type WorkbenchLifecycleAction,
@@ -23,7 +21,6 @@ import { getOpenRelationBlockers } from "@/lib/social/relations";
 
 const {
   flows,
-  hitlRequests,
   nodeAttempts,
   projects,
   runs,
@@ -77,18 +74,17 @@ export interface FlightCard {
   taskId: string;
   number: number;
   keyRef: string;
+  title: string;
+  // null on a flowless simple-intent task.
+  flowRef: string | null;
   runCount: number;
   runStatus: RunStatus;
   runId: string;
-  branch: string;
   agent: BoardAgent;
   status: CardStatus;
   stepLabel: string;
-  stepBody: string;
   spine: SpineSegment[];
   time: string;
-  plus: number | null;
-  minus: number | null;
   // M11a: the latest run has at least one Reworked node attempt (review-driven
   // rework loop in flight). Minimal hint; the full timeline is M11b.
   reworking: boolean;
@@ -120,14 +116,6 @@ export interface FlightCard {
   // M18 (T4.4): the pre-seeded PR number for a `pull_request`-mode run (display
   // only); null when no PR has been recorded.
   prNumber: number | null;
-  // M17 P4: HITL fields, populated only for NeedsInput/NeedsInputIdle cards
-  // with a pending (respondedAt IS NULL) hitl_requests row. All null/[] on
-  // every non-needs card or when no pending request exists.
-  hitlRequestId: string | null;
-  hitlKind: "permission" | "form" | "human" | null;
-  hitlOptions: HitlOption[];
-  hitlSchema: unknown | null;
-  criticality: "low" | "medium" | "high" | "critical" | null;
   blockedBy: Array<{ key: string; number: number }>;
 }
 
@@ -296,7 +284,6 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
       capabilityAgent: runs.capabilityAgent,
       runnerSnapshot: runs.runnerSnapshot,
       workspaceId: workspaces.id,
-      branch: workspaces.branch,
       archivedBranch: workspaces.archivedBranch,
       removedAt: workspaces.removedAt,
       prNumber: workspaces.prNumber,
@@ -381,59 +368,6 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
   // contributes "blocked" (never "stale"); the "stale" state comes only from a
   // blocking gate with status="stale".
   const readinessByRun = await computeReadinessByRun(client, latestRunIds);
-
-  // M17 P4: bulk HITL query — one query for all NeedsInput/NeedsInputIdle
-  // latest runs. Map by runId. Never N+1 and never leaks acp/supervisor handles.
-  const hitlByRun = new Map<
-    string,
-    {
-      hitlRequestId: string;
-      hitlKind: "permission" | "form" | "human";
-      hitlSchema: unknown | null;
-      hitlOptions: HitlOption[];
-      criticality: "low" | "medium" | "high" | "critical" | null;
-    }
-  >();
-
-  const needsRunIds: string[] = [];
-
-  for (const row of latestRunByTask.values()) {
-    if (row.status === "NeedsInput" || row.status === "NeedsInputIdle") {
-      needsRunIds.push(row.runId);
-    }
-  }
-
-  if (needsRunIds.length > 0) {
-    const hitlRows = await client
-      .select({
-        id: hitlRequests.id,
-        runId: hitlRequests.runId,
-        kind: hitlRequests.kind,
-        rawSchema: hitlRequests.schema,
-        criticality: hitlRequests.criticality,
-      })
-      .from(hitlRequests)
-      .where(
-        and(
-          inArray(hitlRequests.runId, needsRunIds),
-          isNull(hitlRequests.respondedAt),
-        ),
-      )
-      .orderBy(asc(hitlRequests.createdAt));
-
-    for (const row of hitlRows) {
-      if (hitlByRun.has(row.runId)) continue;
-      hitlByRun.set(row.runId, {
-        hitlRequestId: row.id,
-        hitlKind: row.kind,
-        // Permission schemas carry supervisor-internal handles — never expose to
-        // the browser (mirrors the ext-API DTO guard). Options suffice for the UI.
-        hitlSchema: row.kind === "permission" ? null : (row.rawSchema ?? null),
-        hitlOptions: extractOptions(row.kind, row.rawSchema),
-        criticality: row.criticality ?? null,
-      });
-    }
-  }
 
   // M11b (ADR-030): the active takeover claim per latest run — owner + the
   // claim time (the takeover node_attempts.started_at). Drives the
@@ -524,10 +458,11 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
       taskId: task.taskId,
       number: task.number,
       keyRef: `${projectTaskKey}-${task.number}`,
+      title: task.title,
+      flowRef: task.flowRef ?? null,
       runCount: runCountByTask.get(task.taskId) ?? 0,
       runStatus: run.status,
       runId: run.runId,
-      branch: run.branch,
       agent: takeover
         ? "dev"
         : runnerAgentFromFields({
@@ -537,7 +472,6 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
           }),
       status: cardStatus,
       stepLabel: current?.stepId ?? run.status.toLowerCase(),
-      stepBody: current?.stepType ? `${current.stepType} step` : task.title,
       spine: buildSpine(steps),
       // Elapsed: a takeover card counts from the claim time; a done card from
       // its end time; everything else from the run start.
@@ -546,8 +480,6 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
         : cardStatus === "done" && run.endedAt
           ? relativeTime(run.endedAt, now)
           : relativeTime(run.startedAt, now),
-      plus: null,
-      minus: null,
       reworking: cardStatus !== "done" && reworkingRunIds.has(run.runId),
       owner: takeover?.owner ?? null,
       refused: refusedRunIds.has(run.runId),
@@ -578,26 +510,6 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
         (readinessByRun.get(run.runId) ?? "ready") === "ready",
       prNumber: run.prNumber ?? null,
       blockedBy: openBlockers.get(task.taskId) ?? [],
-      // M17 P4: HITL fields — only for needs-status cards with a pending request.
-      ...(cardStatus === "needs"
-        ? (() => {
-            const hitl = hitlByRun.get(run.runId) ?? null;
-
-            return {
-              hitlRequestId: hitl?.hitlRequestId ?? null,
-              hitlKind: hitl?.hitlKind ?? null,
-              hitlOptions: hitl?.hitlOptions ?? [],
-              hitlSchema: hitl?.hitlSchema ?? null,
-              criticality: hitl?.criticality ?? null,
-            };
-          })()
-        : {
-            hitlRequestId: null,
-            hitlKind: null,
-            hitlOptions: [],
-            hitlSchema: null,
-            criticality: null,
-          }),
     });
 
     if (
