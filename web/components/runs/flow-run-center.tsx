@@ -43,6 +43,8 @@ export interface FlowRunCenterLabels {
   outdatedThreads: string;
   options: string;
   tokens: string;
+  prompt: string;
+  promptCopy: string;
   noGraph: string;
   noNode: string;
 }
@@ -166,6 +168,40 @@ function FlagBadges({
   );
 }
 
+function AttemptPrompt({
+  text,
+  labels,
+}: {
+  text: string;
+  labels: FlowRunCenterLabels;
+}): ReactElement {
+  return (
+    <details
+      className="group rounded-[7px] border border-line bg-paper"
+      data-testid="flow-run-attempt-prompt"
+    >
+      <summary className="flex cursor-pointer select-none items-center gap-1 px-2.5 py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-mute hover:text-ink">
+        <span className="transition-transform group-open:rotate-90">›</span>
+        {labels.prompt}
+      </summary>
+      <div className="border-t border-line">
+        <div className="flex justify-end px-2 pt-1.5">
+          <button
+            className="rounded border border-line bg-ivory px-1.5 py-px font-mono text-[10px] font-semibold text-mute hover:text-ink"
+            type="button"
+            onClick={() => void navigator.clipboard?.writeText(text)}
+          >
+            {labels.promptCopy}
+          </button>
+        </div>
+        <pre className="max-h-[320px] overflow-auto whitespace-pre-wrap break-words px-2.5 pb-2 pt-1 font-mono text-[11px] leading-[1.5] text-ink">
+          {text}
+        </pre>
+      </div>
+    </details>
+  );
+}
+
 function AttemptRows({
   attempts,
   labels,
@@ -179,11 +215,18 @@ function AttemptRows({
     <ResultSection testId="flow-run-node-attempts" title={labels.attempts}>
       <CompactRows>
         {attempts.map((attempt) => (
-          <CompactRow
+          <div
             key={`${attempt.attempt}:${attempt.startedAt}`}
-            meta={`${attempt.status} | ${attempt.tokenTotal} ${labels.tokens}`}
-            title={`${labels.attempt} ${attempt.attempt}`}
-          />
+            className="grid gap-1"
+          >
+            <CompactRow
+              meta={`${attempt.status} | ${attempt.tokenTotal} ${labels.tokens}`}
+              title={`${labels.attempt} ${attempt.attempt}`}
+            />
+            {attempt.resolvedPrompt ? (
+              <AttemptPrompt labels={labels} text={attempt.resolvedPrompt} />
+            ) : null}
+          </div>
         ))}
       </CompactRows>
     </ResultSection>

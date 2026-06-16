@@ -15,6 +15,9 @@ export interface FlowNodeAttemptResult {
   endedAt: string | null;
   durationMs: number | null;
   tokenTotal: number;
+  // The resolved prompt captured for this attempt (migration 0053). Null for
+  // cli/check/human nodes and for attempts that ran before the column shipped.
+  resolvedPrompt: string | null;
 }
 
 export interface FlowNodeGateResult {
@@ -84,6 +87,7 @@ function attemptDto(entry: FlowResultTimelineEntryDto): FlowNodeAttemptResult {
     endedAt: entry.endedAt,
     durationMs: entry.durationMs,
     tokenTotal: entry.tokens.total,
+    resolvedPrompt: entry.resolvedPrompt,
   };
 }
 

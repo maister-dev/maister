@@ -95,6 +95,12 @@ export interface RunDetail {
   // ADR-078: KEY-N back-reference to the launching task (null for scratch).
   taskNumber: number | null;
   taskRef: string | null;
+  // ADR-078: task identity for the run-detail header (null for scratch runs).
+  taskTitle: string | null;
+  taskPrompt: string | null;
+  // The flow ref id (e.g. "bugfix") for the run-detail header eyebrow; null for
+  // scratch/agent runs with no flow.
+  flowRef: string | null;
   status: string;
   startedAt: Date;
   endedAt: Date | null;
@@ -184,6 +190,9 @@ export const getRunDetail = cache(async function getRunDetail(
       projectSlug: projects.slug,
       projectTaskKey: projects.taskKey,
       taskNumber: tasks.number,
+      taskTitle: tasks.title,
+      taskPrompt: tasks.prompt,
+      flowRef: flows.flowRefId,
       projectMainBranch: projects.mainBranch,
       projectRepoPath: projects.repoPath,
       workspaceId: workspaces.id,
@@ -208,6 +217,7 @@ export const getRunDetail = cache(async function getRunDetail(
     .innerJoin(projects, eq(projects.id, runs.projectId))
     .leftJoin(workspaces, eq(workspaces.runId, runs.id))
     .leftJoin(tasks, eq(tasks.id, runs.taskId))
+    .leftJoin(flows, eq(flows.id, runs.flowId))
     .where(eq(runs.id, runId));
   const row = rows[0];
 
@@ -301,6 +311,9 @@ export const getRunDetail = cache(async function getRunDetail(
       row.taskNumber !== null
         ? `${row.projectTaskKey}-${row.taskNumber}`
         : null,
+    taskTitle: row.taskTitle,
+    taskPrompt: row.taskPrompt,
+    flowRef: row.flowRef,
     status: row.status,
     startedAt: row.startedAt,
     endedAt: row.endedAt,
@@ -413,6 +426,9 @@ export interface TimelineEntry {
   decision: string | null;
   reworkFromNode: string | null;
   acpSessionId: string | null;
+  // The resolved (Mustache-rendered) prompt captured for this attempt at
+  // dispatch (migration 0053). Null for cli/check/human nodes and pre-0053 runs.
+  resolvedPrompt: string | null;
   // M30 (ADR-080): true when this attempt was auto-scheduled by retry_policy.
   autoRetry: boolean;
   startedAt: string;
@@ -531,6 +547,7 @@ export async function getRunTimeline(runId: string): Promise<RunTimeline> {
       autoRetry: nodeAttempts.autoRetry,
       reworkFromNode: nodeAttempts.reworkFromNode,
       acpSessionId: nodeAttempts.acpSessionId,
+      resolvedPrompt: nodeAttempts.resolvedPrompt,
       ownerUserId: nodeAttempts.ownerUserId,
       baseRef: nodeAttempts.baseRef,
       returnedCommits: nodeAttempts.returnedCommits,
@@ -649,6 +666,7 @@ export async function getRunTimeline(runId: string): Promise<RunTimeline> {
     decision: r.decision,
     reworkFromNode: r.reworkFromNode,
     acpSessionId: r.acpSessionId,
+    resolvedPrompt: r.resolvedPrompt,
     autoRetry: r.autoRetry ?? false,
     startedAt: r.startedAt.toISOString(),
     endedAt: r.endedAt ? r.endedAt.toISOString() : null,

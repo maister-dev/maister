@@ -281,6 +281,7 @@ function timelineEntry(entry: TimelineEntry): FlowResultTimelineEntryDto {
     tokens: entry.tokens,
     gates: entry.gates,
     handoff: entry.handoff,
+    resolvedPrompt: entry.resolvedPrompt,
   };
 }
 

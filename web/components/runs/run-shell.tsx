@@ -16,6 +16,8 @@ export type RunShellLabels = RunHeaderLabels;
 export interface RunShellProps {
   title: string;
   subtitle?: string;
+  keyRef?: string | null;
+  taskPrompt?: string | null;
   status: string;
   branch?: string | null;
   targetBranch?: string | null;
@@ -29,6 +31,8 @@ export interface RunShellProps {
 export function RunShell({
   title,
   subtitle,
+  keyRef,
+  taskPrompt,
   status,
   branch,
   targetBranch,
@@ -50,10 +54,12 @@ export function RunShell({
         branch={branch}
         changeSummary={changeSummary}
         inspectorOpen={inspectorOpen}
+        keyRef={keyRef}
         labels={labels}
         status={status}
         subtitle={subtitle}
         targetBranch={targetBranch}
+        taskPrompt={taskPrompt}
         title={title}
         onToggleInspector={() => setInspectorOpen((open) => !open)}
       />

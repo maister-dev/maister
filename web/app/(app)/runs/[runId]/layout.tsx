@@ -716,6 +716,8 @@ export default async function RunDetailLayout({
     outdatedThreads: t("flowCenterOutdatedThreads"),
     options: t("flowCenterOptions"),
     tokens: t("flowCenterTokens"),
+    prompt: t("flowCenterPrompt"),
+    promptCopy: t("flowCenterPromptCopy"),
     noGraph: t("flowCenterNoGraph"),
     noNode: t("flowCenterNoNode"),
   };
@@ -815,6 +817,7 @@ export default async function RunDetailLayout({
     changedFiles: t("headerChangedFilesUnit"),
     openInspector: t("headerOpenInspector"),
     closeInspector: t("headerCloseInspector"),
+    task: t("headerTask"),
   };
   const inspectorLabels: RunInspectorLabels = {
     overview: t("inspectorOverview"),
@@ -1013,11 +1016,13 @@ export default async function RunDetailLayout({
       : []),
     ...visiblePolicyActions,
   ];
-  const shellTitle =
-    detail.taskRef && detail.taskNumber !== null
-      ? `${detail.taskRef} ${detail.branch}`
-      : detail.branch;
-  const shellSubtitle = `${t("eyebrow")} / ${detail.projectSlug}`;
+  const currentNodeLabel =
+    flowGraphData?.topology.nodes.find((n) => n.id === detail.currentStepId)
+      ?.displayLabel ?? null;
+  const shellTitle = detail.taskTitle ?? detail.taskRef ?? detail.branch;
+  const shellSubtitle = detail.flowRef
+    ? `${detail.flowRef}${currentNodeLabel ? ` › ${currentNodeLabel}` : ""}`
+    : `${t("eyebrow")} / ${detail.projectSlug}`;
 
   return (
     <RunShell
@@ -1036,10 +1041,12 @@ export default async function RunDetailLayout({
           search={changeSummary?.dirty ? "scope=uncommitted" : ""}
         />
       }
+      keyRef={detail.taskRef}
       labels={shellLabels}
       status={detail.status}
       subtitle={shellSubtitle}
       targetBranch={detail.targetBranch}
+      taskPrompt={detail.taskPrompt}
       title={shellTitle}
     >
       <div className="grid gap-5">

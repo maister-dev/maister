@@ -2,6 +2,8 @@ import type { ReactElement } from "react";
 
 import clsx from "clsx";
 
+import { MarkdownBody } from "@/components/social/markdown-body";
+
 export interface RunHeaderChangeSummary {
   fileCount: number;
   additions: number;
@@ -17,11 +19,18 @@ export interface RunHeaderLabels {
   changedFiles: string;
   openInspector: string;
   closeInspector: string;
+  // The collapsible "Task" disclosure summary (task prompt block).
+  task: string;
 }
 
 export interface RunHeaderProps {
   title: string;
+  // Eyebrow above the title: `flow › current node` for flow runs.
   subtitle?: string;
+  // KEY-N reference chip beside the status badge (null for scratch runs).
+  keyRef?: string | null;
+  // The launching task's prompt, rendered as a collapsible Markdown block.
+  taskPrompt?: string | null;
   status: string;
   branch?: string | null;
   targetBranch?: string | null;
@@ -58,6 +67,8 @@ function statusTone(status: string): string {
 export function RunHeader({
   title,
   subtitle,
+  keyRef,
+  taskPrompt,
   status,
   branch,
   targetBranch,
@@ -74,6 +85,14 @@ export function RunHeader({
       data-testid="run-header"
     >
       <div className="min-w-0">
+        {subtitle ? (
+          <p
+            className="mb-1 truncate font-mono text-[11px] uppercase tracking-[0.06em] text-mute"
+            data-testid="run-header-eyebrow"
+          >
+            {subtitle}
+          </p>
+        ) : null}
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <span
             className={clsx(
@@ -84,6 +103,14 @@ export function RunHeader({
           >
             {status}
           </span>
+          {keyRef ? (
+            <span
+              className="rounded border border-line bg-ivory px-1.5 py-px font-mono text-[11px] font-bold tracking-[0.04em] text-ink-2"
+              data-testid="run-header-keyref"
+            >
+              {keyRef}
+            </span>
+          ) : null}
           {branch ? (
             <span
               className="min-w-0 truncate font-mono text-[11px] text-mute"
@@ -97,10 +124,21 @@ export function RunHeader({
         <h1 className="m-0 truncate font-sans text-[22px] font-bold leading-tight text-ink md:text-[26px]">
           {title}
         </h1>
-        {subtitle ? (
-          <p className="mt-1 max-w-[760px] text-[13px] leading-5 text-mute">
-            {subtitle}
-          </p>
+        {taskPrompt ? (
+          <details
+            className="group mt-2 max-w-[760px]"
+            data-testid="run-header-task"
+          >
+            <summary className="inline-flex cursor-pointer select-none items-center gap-1 font-mono text-[11px] font-semibold uppercase tracking-[0.06em] text-mute hover:text-ink">
+              <span className="transition-transform group-open:rotate-90">
+                ›
+              </span>
+              {labels.task}
+            </summary>
+            <div className="mt-2">
+              <MarkdownBody text={taskPrompt} />
+            </div>
+          </details>
         ) : null}
       </div>
       <div className="flex shrink-0 items-center gap-2">
