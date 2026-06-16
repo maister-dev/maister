@@ -9,7 +9,7 @@
   (`PATCH /api/scratch-runs/{runId}`), linked flow/issue chips, the non-linking
   runner info chip, the per-project grouping, RBAC scoping, TTL/archived badges,
   and per-run workbench-lifecycle actions (M27). Repeated UI glyphs use packaged
-  Heroicons instead of local one-off SVG paths. **Designed (row-actions
+  Heroicons instead of local one-off SVG paths. **Implemented (row-actions
   redesign):** the fixed-height row (no hover jump), the reserved right slot that
   keeps the name always clickable, the inline `Stop` (live only) beside a single
   `⋯` overflow that opens a modal **action-sheet**, the live combined `Stop &

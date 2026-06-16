@@ -18,12 +18,12 @@ supervisor session and finalize the run by its kind — a flow run rests in
 `Review`, an agent run is finalized to `Abandoned` (terminal) through its own
 agent-termination path — leaving the worktree present for inspection, archive,
 or drop instead of treating the operator stop as a crash.
-**(Designed — runKind-dispatched stop.)**
+**(Implemented — runKind-dispatched stop.)**
 
 When an operator already knows a live flow or scratch run should be preserved or
 discarded, MAIster should offer one-click **Stop & archive** and **Stop & drop**
 that stop the run and then run the worktree op, instead of forcing a stop, a
-wait for `Review`, then a separate second click. **(Designed.)**
+wait for `Review`, then a separate second click. **(Implemented.)**
 
 When an operator archives or drops a workbench, MAIster must preserve recoverable
 work before any prune. Archive records the preserved ref and keeps the worktree;
@@ -50,13 +50,13 @@ the run in its current review/terminal state.
   dispatches on `runs.run_kind` (allow-listed `flow | scratch | agent`); the
   scratch detail surface keeps the dedicated `POST /api/scratch-runs/{runId}/stop`
   route, which now delegates to the same shared scratch-stop primitive.
-  **(Designed — generalized dispatch; flow stop is Implemented.)**
+  **(Implemented — runKind-dispatched stop.)**
 - **Stop & archive** — one combined action for a live flow or scratch run: stop
-  first, then **Archive** the parked worktree. **(Designed.)**
+  first, then **Archive** the parked worktree. **(Implemented.)**
 - **Stop & drop** — one combined action: stop first, then **Drop** the worktree.
   For flow runs this is `POST /api/runs/{runId}/stop-drop`; for scratch runs it
   reuses the existing single-transaction `POST /api/scratch-runs/{runId}/discard`
-  (stop session + remove worktree → `Abandoned`). **(Designed.)**
+  (stop session + remove worktree → `Abandoned`). **(Implemented.)**
 - **Archive** — call `preserveWorktree`, record `workspaces.archived_branch` and
   `archived_at`, and leave the worktree on disk.
 - **Drop** — call `preserveWorktree`, remove the owned worktree with
@@ -96,7 +96,7 @@ and routes, gated by handoff metadata and lifecycle claims. The combined
 they compose the existing `stop` (live) and `archive`/`drop` (parked) actions
 server-side so the operator clicks once.
 
-## Combined stop + worktree ops (Designed)
+## Combined stop + worktree ops
 
 `Stop & archive` and `Stop & drop` exist because the bare `stop` action lands a
 run in a parked state (`Review` for flow/scratch with a worktree) from which the
@@ -137,8 +137,8 @@ row exposes only the plain (terminating) `Stop`.
 | Route                                    | Purpose                                                           | Trusted identifiers                                                                         |
 | ---------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
 | `POST /api/runs/{runId}/stop`            | Stop a live workbench, dispatched on `run_kind` (flow → `Review`, scratch → `Review`/`Abandoned`, agent → `Abandoned`) | `runId` is URL-param; `run_kind`, project, ACP session, and workspace metadata are DB state |
-| `POST /api/runs/{runId}/stop-archive`    | Stop then archive a live flow or scratch run (Designed)           | `runId` is URL-param; body empty; project, session, and paths are DB state                  |
-| `POST /api/runs/{runId}/stop-drop`       | Stop then drop a live flow run (Designed); scratch reuses `/discard` | `runId` is URL-param; body empty; project, session, and paths are DB state                  |
+| `POST /api/runs/{runId}/stop-archive`    | Stop then archive a live flow or scratch run (Implemented)           | `runId` is URL-param; body empty; project, session, and paths are DB state                  |
+| `POST /api/runs/{runId}/stop-drop`       | Stop then drop a live flow run (Implemented); scratch reuses `/discard` | `runId` is URL-param; body empty; project, session, and paths are DB state                  |
 | `POST /api/runs/{runId}/archive`         | Preserve worktree into `maister/archive/{runId}`                  | branch, paths, base ref, and project are DB state                                           |
 | `POST /api/runs/{runId}/drop`            | Preserve then remove an owned worktree                            | worktree path and allowed root are server state                                             |
 | `POST /api/runs/{runId}/export-branch`   | Push the run branch; optional force-with-lease retry              | remote and force are body-controlled; branch and paths are DB state                         |
@@ -180,11 +180,11 @@ leave the claim retryable; non-transient failures finalize as `failed`.
   agent path MUST call `deleteSession` to kill the live supervisor session —
   `finalizeAgentRun` only flips status and nulls `acp_session_id`, it never
   deletes the session — and finalizing frees the agent pool slot through the
-  `MAISTER_MAX_CONCURRENT_AGENTS` promotion contract. (Designed.)
+  `MAISTER_MAX_CONCURRENT_AGENTS` promotion contract. (Implemented.)
 - `Stop & archive` / `Stop & drop` commit the stop (parked status) before the
   worktree op; a worktree-op failure leaves the run in `Review`, retryable
   through the plain `Archive`/`Drop` action — never partially committed. Scratch
-  `Stop & drop` reuses `/discard`. (Designed.)
+  `Stop & drop` reuses `/discard`. (Implemented.)
 - Archive/drop refuse live write states instead of racing the agent.
 - Preserve failure returns `409 CONFLICT` and no archive/drop mutation happens.
 - Drop removes only a path under `worktreesRoot()` through `removeOwnedWorktree`.
@@ -222,11 +222,11 @@ leave the claim retryable; non-transient failures finalize as `failed`.
 - `POST /api/runs/{runId}/stop` terminates a live `runKind=agent` run — kills the
   live supervisor session via `deleteSession` and finalizes it to `Abandoned`
   through `finalizeAgentRun` — instead of raising the old flow-only
-  `PRECONDITION`. (Designed.)
+  `PRECONDITION`. (Implemented.)
 - `POST /api/runs/{runId}/stop-archive` (flow + scratch) and
   `POST /api/runs/{runId}/stop-drop` (flow) stop first, then run the worktree op,
   returning the worktree-op result; a worktree-op failure leaves the run in
-  `Review`. Scratch `Stop & drop` reuses `/discard`. (Designed.)
+  `Review`. Scratch `Stop & drop` reuses `/discard`. (Implemented.)
 - `POST /api/runs/{runId}/export-branch` refuses dirty work without explicit
   snapshot consent, pushes the server-owned run branch, returns `pushedRef`, and
   exposes a force-with-lease retry only for non-fast-forward conflicts.

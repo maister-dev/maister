@@ -150,7 +150,7 @@ test("a running rail row renders the colour-coded state dot", async ({
   await expect(row.locator('[data-status-tone="running"]')).toBeVisible();
 });
 
-test("hovering a row reveals the icon actions and hides the timestamp", async ({
+test("hovering a live row reveals the inline Stop + ⋯ overflow and hides the timestamp", async ({
   page,
 }) => {
   await page.goto("/");
@@ -163,23 +163,101 @@ test("hovering a row reveals the icon actions and hides the timestamp", async ({
 
   await row.hover();
 
-  // Hover: the scratch rename pencil + lifecycle icon actions surface, time hides.
-  await expect(row.getByTestId("rename-pencil")).toBeVisible();
-  await expect(row.getByTestId("workbench-lifecycle-actions")).toBeVisible();
+  // Hover: the inline Stop (live) + the ⋯ overflow surface; time hides. There is
+  // no inline rename pencil any more — rename lives inside the ⋯ action-sheet.
+  await expect(row.getByTestId("rail-stop")).toBeVisible();
+  await expect(row.getByTestId("rail-menu-trigger")).toBeVisible();
+  await expect(row.getByTestId("rename-pencil")).toHaveCount(0);
   await expect(row.getByTestId("row-time")).toBeHidden();
 });
 
-test("renaming a scratch run round-trips and persists", async ({ page }) => {
+test("the ⋯ overflow opens the live action-sheet", async ({ page }) => {
   await page.goto("/");
 
   const row = scratchRow(page);
 
   await expect(row).toBeVisible();
   await row.hover();
-  await row.getByTestId("rename-pencil").click();
+  await row.getByTestId("rail-menu-trigger").click();
 
-  // Once rename mode starts the name becomes an input VALUE (no longer matchable
-  // text), so resolve the input/save at page level rather than via the row.
+  // The action-sheet is a modal overlay; resolve its items at page level.
+  await expect(page.getByTestId("rail-action-sheet")).toBeVisible();
+  await expect(page.getByTestId("menu-open")).toBeVisible();
+  await expect(page.getByTestId("menu-rename")).toBeVisible();
+  await expect(page.getByTestId("menu-stopArchive")).toBeVisible();
+  await expect(page.getByTestId("menu-stopDrop")).toBeVisible();
+});
+
+test("a row keeps a stable height between rest and hover (no jump)", async ({
+  page,
+}) => {
+  await page.goto("/");
+
+  const row = scratchRow(page);
+
+  await expect(row).toBeVisible();
+
+  const rest = await row.boundingBox();
+
+  await row.hover();
+  await expect(row.getByTestId("rail-menu-trigger")).toBeVisible();
+
+  const hovered = await row.boundingBox();
+
+  expect(rest).not.toBeNull();
+  expect(hovered).not.toBeNull();
+  expect(Math.round(hovered!.height)).toBe(Math.round(rest!.height));
+});
+
+test("the run name link stays reachable while the row is hovered", async ({
+  page,
+}) => {
+  await page.goto("/");
+
+  const row = scratchRow(page);
+
+  await expect(row).toBeVisible();
+
+  const nameLink = row.getByRole("link", { name: "Scratch to rename" });
+
+  await expect(nameLink).toBeVisible();
+
+  await row.hover();
+
+  // The reserved right slot never covers the name link.
+  await expect(nameLink).toBeVisible();
+  await expect(nameLink).toHaveAttribute("href", /\/(runs|scratch-runs)\//);
+});
+
+test("the KEY-N issue chip navigates to the task detail", async ({ page }) => {
+  await page.goto("/");
+
+  const flowRow = page
+    .getByTestId("active-workspace-row")
+    .filter({ hasText: `${TASK_KEY}-1` });
+
+  await expect(flowRow).toBeVisible();
+  await flowRow.getByTestId("issue-chip").click();
+
+  // The chip is a link to the task-detail route, so the destination URL is the
+  // navigation contract under test. (The detail page's run/diff panels need a
+  // real worktree, which this synthetic rail-only seed deliberately omits.)
+  await expect(page).toHaveURL(new RegExp(`/projects/${SLUG}/tasks/1$`));
+});
+
+test("renaming a scratch run through the ⋯ modal round-trips and persists", async ({
+  page,
+}) => {
+  await page.goto("/");
+
+  const row = scratchRow(page);
+
+  await expect(row).toBeVisible();
+  await row.hover();
+  await row.getByTestId("rail-menu-trigger").click();
+  await page.getByTestId("menu-rename").click();
+
+  // The rename modal is a page-level overlay; the name is now an input VALUE.
   const input = page.getByTestId("rename-input");
 
   await expect(input).toBeVisible();
@@ -208,20 +286,4 @@ test("renaming a scratch run round-trips and persists", async ({ page }) => {
       .getByTestId("active-workspace-row")
       .filter({ hasText: "Renamed by e2e" }),
   ).toBeVisible();
-});
-
-test("the KEY-N issue chip navigates to the task detail", async ({ page }) => {
-  await page.goto("/");
-
-  const flowRow = page
-    .getByTestId("active-workspace-row")
-    .filter({ hasText: `${TASK_KEY}-1` });
-
-  await expect(flowRow).toBeVisible();
-  await flowRow.getByTestId("issue-chip").click();
-
-  // The chip is a link to the task-detail route, so the destination URL is the
-  // navigation contract under test. (The detail page's run/diff panels need a
-  // real worktree, which this synthetic rail-only seed deliberately omits.)
-  await expect(page).toHaveURL(new RegExp(`/projects/${SLUG}/tasks/1$`));
 });
