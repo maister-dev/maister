@@ -253,7 +253,7 @@ supervisor binary is expected.
   state matrix over
   `Running`, `NeedsInput`, `HumanWorking`, `Review`, `Crashed`, `Done`,
   `Abandoned`, and scratch `WaitingForUser`.
-- [ ] **Phase 1 exit.** `pnpm --filter maister-web lint`,
+- [x] **Phase 1 exit.** `pnpm --filter maister-web lint`,
   `pnpm --filter maister-web typecheck`, and
   `pnpm --filter maister-web test` are green. If T1.2 adds a route,
   `docs/api/web.openapi.yaml` is updated in the same commit.
@@ -432,25 +432,25 @@ supervisor binary is expected.
 
 ### Phase 6 - i18n, responsive QA, docs finalization
 
-- [ ] **T6.1 - EN/RU labels.** Add `runInspector` keys and update `run`,
+- [x] **T6.1 - EN/RU labels.** Add `runInspector` keys and update `run`,
   `scratch`, `workbench`, `evidence`, and lifecycle labels. Keep EN/RU parity.
   Logging: n/a. Tests: `pnpm --filter maister-web test:unit --
   lib/__tests__/i18n-parity.test.ts`.
-- [ ] **T6.2 - E2E fixture and auth wiring audit.** Ensure every new or
+- [x] **T6.2 - E2E fixture and auth wiring audit.** Ensure every new or
   renamed Playwright spec is included by `AUTHED_SPEC` in
   `web/playwright.config.ts`, and seed fixtures in
   `web/e2e/_seed/seed-e2e.ts` cover Flow, scratch detail, Markdown/Mermaid
   preview, and shared Diff. Logging: n/a. Tests: run the targeted e2e commands
   below and confirm the authed storage state is used.
-- [ ] **T6.3 - Responsive and accessibility pass.** Verify desktop two-column,
+- [x] **T6.3 - Responsive and accessibility pass.** Verify desktop two-column,
   narrow desktop, tablet, and mobile. Inspector becomes a sheet on mobile,
   composer remains reachable, graph/fullscreen does not overlap text, tabs fit,
   and long paths truncate. Logging: n/a. Tests: Playwright screenshot/locator
   checks for desktop and mobile viewports.
-- [ ] **T6.4 - Final docs flip.** Mark screen docs and system analytics text as
+- [x] **T6.4 - Final docs flip.** Mark screen docs and system analytics text as
   implemented where the code has landed. Update README docs index only if new
   docs paths were added. Logging: docs-only. Verify: `pnpm validate:docs`.
-- [ ] **T6.5 - Full verification.** Run:
+- [x] **T6.5 - Full verification.** Run:
   `pnpm --filter maister-web lint`,
   `pnpm --filter maister-web typecheck`,
   `pnpm --filter maister-web test`,
