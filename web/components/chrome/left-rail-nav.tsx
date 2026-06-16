@@ -1,8 +1,18 @@
 "use client";
 
 import type { RailSectionId } from "@/components/chrome/left-rail-route";
-import type { ReactElement, ReactNode } from "react";
+import type { ComponentType, ReactElement, SVGProps } from "react";
 
+import {
+  ClockIcon,
+  Cog6ToothIcon,
+  CpuChipIcon,
+  InboxIcon,
+  PuzzlePieceIcon,
+  Squares2X2Icon,
+  UsersIcon,
+  WrenchScrewdriverIcon,
+} from "@heroicons/react/24/outline";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import clsx from "clsx";
@@ -27,51 +37,17 @@ export interface LeftRailNavProps {
 const navIcon = "h-3.5 w-3.5 shrink-0 text-mute";
 const navIconActive = "h-3.5 w-3.5 shrink-0 text-ink";
 
-const sectionIcons: Record<RailSectionId, ReactNode> = {
-  projects: (
-    <>
-      <rect height="5" rx="1" width="5" x="2" y="2" />
-      <rect height="5" rx="1" width="5" x="9" y="2" />
-      <rect height="5" rx="1" width="5" x="2" y="9" />
-      <rect height="5" rx="1" width="5" x="9" y="9" />
-    </>
-  ),
-  inbox: <path d="M2 4h12M2 8h12M2 12h7" />,
-  studio: <path d="M3 3 L13 3 L9 8 L13 13 L3 13 L7 8 Z" />,
-  agents: (
-    <>
-      <circle cx="8" cy="5" r="2.6" />
-      <path d="M2.4 14c0-3 2.5-5.4 5.6-5.4S13.6 11 13.6 14" />
-    </>
-  ),
-  mcps: (
-    <>
-      <circle cx="4" cy="4" r="1.6" />
-      <circle cx="12" cy="4" r="1.6" />
-      <circle cx="4" cy="12" r="1.6" />
-      <circle cx="12" cy="12" r="1.6" />
-      <path d="M4 5.6V10.4M12 5.6V10.4M5.6 4H10.4M5.6 12H10.4" />
-    </>
-  ),
-  users: (
-    <>
-      <circle cx="6" cy="6" r="2.4" />
-      <path d="M1.5 13.4c0-2.4 2-4.2 4.5-4.2s4.5 1.8 4.5 4.2" />
-      <path d="M10.8 5.3a2.2 2.2 0 0 1 0 4.1M14.5 13.4c0-1.8-1-3.2-2.6-3.8" />
-    </>
-  ),
-  scheduler: (
-    <>
-      <circle cx="8" cy="8" r="6" />
-      <path d="M8 4.6V8l2.4 1.5" />
-    </>
-  ),
-  settings: (
-    <>
-      <path d="M6.9 1.7h2.2l.36 1.55c.38.13.74.32 1.07.57l1.5-.48 1.1 1.9-1.15 1.05c.04.23.06.47.06.71s-.02.48-.06.71l1.15 1.05-1.1 1.9-1.5-.48c-.33.25-.69.44-1.07.57L9.1 14.3H6.9l-.36-1.55a4.5 4.5 0 0 1-1.07-.57l-1.5.48-1.1-1.9 1.15-1.05A4.08 4.08 0 0 1 3.96 8c0-.24.02-.48.06-.71L2.87 6.24l1.1-1.9 1.5.48c.33-.25.69-.44 1.07-.57L6.9 1.7z" />
-      <circle cx="8" cy="8" r="2.05" />
-    </>
-  ),
+type HeroIcon = ComponentType<SVGProps<SVGSVGElement>>;
+
+const sectionIcons: Record<RailSectionId, HeroIcon> = {
+  projects: Squares2X2Icon,
+  inbox: InboxIcon,
+  studio: WrenchScrewdriverIcon,
+  agents: CpuChipIcon,
+  mcps: PuzzlePieceIcon,
+  users: UsersIcon,
+  scheduler: ClockIcon,
+  settings: Cog6ToothIcon,
 };
 
 function RailSectionIcon({
@@ -83,19 +59,14 @@ function RailSectionIcon({
   className?: string;
   id: RailSectionId;
 }): ReactElement {
+  const Icon = sectionIcons[id];
+
   return (
-    <svg
+    <Icon
       aria-hidden="true"
       className={className ?? (active ? navIconActive : navIcon)}
-      fill="none"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth="1.6"
-      viewBox="0 0 16 16"
-    >
-      {sectionIcons[id]}
-    </svg>
+      data-testid={`rail-icon-${id}`}
+    />
   );
 }
 

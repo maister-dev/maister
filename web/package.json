@@ -42,6 +42,7 @@
     "@dagrejs/dagre": "3.0.0",
     "@git-diff-view/core": "0.1.5",
     "@git-diff-view/react": "0.1.5",
+    "@heroicons/react": "2.2.0",
     "@heroui/react": "3.0.4",
     "@heroui/styles": "3.0.4",
     "@lezer/highlight": "1.2.3",

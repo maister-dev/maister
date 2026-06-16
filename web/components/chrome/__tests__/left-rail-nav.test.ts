@@ -62,4 +62,15 @@ describe("LeftRail navigation", () => {
     expect(linkTag(html, "settings")).toContain('aria-current="page"');
     expect(linkTag(html, "projects")).not.toContain('aria-current="page"');
   });
+
+  it("uses packaged Heroicons for rail section icons", () => {
+    const html = renderActive("settings");
+
+    for (const section of sections) {
+      expect(html).toContain(`data-testid="rail-icon-${section.id}"`);
+    }
+
+    expect(html).toContain('viewBox="0 0 24 24"');
+    expect(html).not.toContain("M6.9 1.7h2.2");
+  });
 });
