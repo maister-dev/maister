@@ -1,12 +1,15 @@
 "use client";
 
 import type { AdapterId } from "@/lib/acp-runners/adapter-support";
+import type { ProjectCapabilityCatalogEntry } from "@/lib/capabilities/project-catalog";
 import type { ReactElement } from "react";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { useRouter, useSearchParams } from "next/navigation";
 import clsx from "clsx";
+
+import { CapabilityComposer } from "@/components/capabilities/capability-composer";
 
 type AttachmentKind = "issue_url" | "file_path" | "text_note";
 type WorkMode = "auto" | "plan_first" | "manual_approval";
@@ -423,6 +426,37 @@ export function ScratchLauncher({
     () => options?.runners.find((runner) => runner.id === runnerId) ?? null,
     [options?.runners, runnerId],
   );
+  // FR-D: static capability catalog for the composer's autocomplete, per the
+  // selected runner (re-fetched on project/runner switch — FR-D10).
+  const composerAgent: AdapterId = selectedRunner?.capabilityAgent ?? "claude";
+  const [capabilityCatalog, setCapabilityCatalog] = useState<
+    ProjectCapabilityCatalogEntry[]
+  >([]);
+
+  useEffect(() => {
+    const slug = selectedProject?.slug;
+
+    if (!slug) {
+      setCapabilityCatalog([]);
+
+      return;
+    }
+    const ctrl = new AbortController();
+
+    fetch(
+      `/api/projects/${encodeURIComponent(slug)}/capability-catalog?agent=${encodeURIComponent(composerAgent)}`,
+      { signal: ctrl.signal },
+    )
+      .then((res) => (res.ok ? res.json() : { capabilities: [] }))
+      .then((payload: { capabilities?: ProjectCapabilityCatalogEntry[] }) =>
+        setCapabilityCatalog(payload.capabilities ?? []),
+      )
+      .catch(() => {
+        if (!ctrl.signal.aborted) setCapabilityCatalog([]);
+      });
+
+    return () => ctrl.abort();
+  }, [selectedProject?.slug, composerAgent]);
   const contextCount =
     files.length + attachments.length + (linkedIssueUrl.trim() ? 1 : 0);
   const capabilityCount = selectedCount(
@@ -709,12 +743,18 @@ export function ScratchLauncher({
             </div>
           ) : null}
 
-          <textarea
-            aria-label={t("prompt")}
-            className="min-h-[180px] flex-1 resize-y bg-transparent text-[20px] leading-[1.45] text-ink outline-none placeholder:text-mute"
-            placeholder={t("promptPlaceholder")}
+          <CapabilityComposer
+            agent={composerAgent}
+            ariaLabel={t("prompt")}
+            catalog={capabilityCatalog}
+            className="min-h-[180px] flex-1 text-[20px] leading-[1.45] text-ink"
+            labels={{
+              placeholder: t("promptPlaceholder"),
+              unsupportedBadge: t("composerUnsupported"),
+            }}
+            testId="scratch-composer"
             value={prompt}
-            onChange={(event) => setPrompt(event.target.value)}
+            onChange={setPrompt}
           />
 
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2">

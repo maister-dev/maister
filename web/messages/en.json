@@ -594,6 +594,7 @@
     "branchNamePlaceholder": "branch name",
     "prompt": "What do you want to do?",
     "promptPlaceholder": "Describe the change, investigation, or experiment.",
+    "composerUnsupported": "not on this runner",
     "planMode": "Start in plan-first mode",
     "workMode": "Work mode",
     "reasoningEffort": "Reasoning effort",

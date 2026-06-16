@@ -594,6 +594,7 @@
     "branchNamePlaceholder": "имя ветки",
     "prompt": "Что нужно сделать?",
     "promptPlaceholder": "Опишите изменение, исследование или эксперимент.",
+    "composerUnsupported": "недоступно на этом раннере",
     "planMode": "Начать в режиме plan-first",
     "workMode": "Режим работы",
     "reasoningEffort": "Усилие рассуждений",

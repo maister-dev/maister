@@ -486,3 +486,84 @@ input:-webkit-autofill:active {
   text-align: right;
   user-select: none;
 }
+
+/* Unified capability composer (TipTap) — FR-D */
+.capability-composer {
+  position: relative;
+  display: flex;
+}
+.capability-composer__editor {
+  flex: 1;
+  min-height: inherit;
+  outline: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.capability-composer__editor p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: var(--mute);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+.capability-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2em;
+  padding: 0 0.45em;
+  border-radius: 9999px;
+  border: 1px solid color-mix(in oklab, var(--cv-green, var(--line)) 55%, transparent);
+  background: color-mix(in oklab, var(--cv-green, var(--line)) 12%, transparent);
+  font-size: 0.85em;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.capability-chip__sigil {
+  opacity: 0.7;
+}
+.capability-chip--unsupported {
+  border-color: color-mix(in oklab, var(--cv-rose, crimson) 60%, transparent);
+  background: color-mix(in oklab, var(--cv-rose, crimson) 12%, transparent);
+}
+.capability-chip__badge {
+  margin-left: 0.25em;
+  font-weight: 800;
+  color: var(--cv-rose, crimson);
+}
+.capability-composer__popup {
+  margin: 0;
+  padding: 0.25rem;
+  list-style: none;
+  min-width: 16rem;
+  max-height: 18rem;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 0.6rem;
+  background: var(--ivory);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+.capability-composer__item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  padding: 0.35rem 0.5rem;
+  border-radius: 0.4rem;
+  text-align: left;
+}
+.capability-composer__item.is-selected,
+.capability-composer__item:hover {
+  background: var(--paper);
+}
+.capability-composer__item-name {
+  font-weight: 600;
+  color: var(--ink);
+}
+.capability-composer__item-desc {
+  font-size: 0.8em;
+  color: var(--mute);
+}
+.capability-composer__item-badge {
+  font-size: 0.75em;
+  color: var(--cv-rose, crimson);
+}

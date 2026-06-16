@@ -5399,6 +5399,18 @@ async function main(): Promise<void> {
       repoPath: path.join(RUNTIME_ROOT, "repos", SCRATCH_SLUG),
       defaultRunnerId: CODEX_RUNNER_ID,
     });
+
+    // FR-D: a project skill so the launcher's CapabilityComposer autocomplete
+    // has a `/`-triggerable entry (scratch-composer.spec).
+    await pool.query(
+      `INSERT INTO capability_records
+         (id, project_id, capability_ref_id, kind, label, source, agents, material)
+       SELECT $1, p.id, 'aif-plan', 'skill', 'AIF Plan', 'flow-package',
+         '["claude","codex"]'::jsonb,
+         '{"description":"Plan a feature","argHint":"<feature>"}'::jsonb
+       FROM projects p WHERE p.slug = $2`,
+      [randomUUID(), SCRATCH_SLUG],
+    );
     const liveCcr = await seedLaunchableProjectFixture(pool, {
       slug: LIVE_CCR_SLUG,
       projectName: "E2E Live CCR",
