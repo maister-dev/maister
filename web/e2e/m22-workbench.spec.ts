@@ -252,15 +252,18 @@ test("file-tree opens a file into the Shiki code-view and flags the oversized bl
   await expect(page.locator('[data-testid="file-too-large"]')).toBeVisible();
 });
 
-test("?file= cold deep-link renders the code-view; traversal + .git are hidden", async ({
+test("?file= cold deep-link renders the file pane; traversal + .git are hidden", async ({
   page,
 }) => {
   const fx = loadM22Fixture();
 
-  // Cold deep-link straight to a tracked file → the server pane renders the
-  // code-view directly (no client fetch round-trip).
+  // Cold deep-link straight to a tracked Markdown file → the server pane renders
+  // the rich Markdown view directly (no client fetch round-trip). A `.md` file
+  // routes to MarkdownRichView, not the Shiki code-view.
   await page.goto(`/runs/${fx.runId}?wb=files&file=README.md`);
-  await expect(page.locator('[data-testid="code-view"]')).toBeVisible();
+  await expect(
+    page.locator('[data-testid="markdown-rich-view"]'),
+  ).toBeVisible();
 
   // A `..` traversal is rejected by repoRelPathSchema BEFORE any read → the
   // not-found state, never the code-view and never the rejected path.
@@ -304,14 +307,17 @@ test("an expanded dir survives a ?file= soft-nav (FINDING B tree state)", async 
     page.locator('[data-testid="file-tree-entry"]', { hasText: "app.ts" }),
   ).toBeVisible();
 
-  // Open README.md from the (still-rendered) tree → the pane re-reads it.
+  // Open README.md from the (still-rendered) tree → the pane re-reads it as the
+  // rich Markdown view (a .md file routes to MarkdownRichView).
   await page
     .locator('[data-testid="file-tree-entry"][data-entry-type="file"]', {
       hasText: "README.md",
     })
     .click();
   await page.waitForURL(/[?&]file=README\.md/);
-  await expect(page.locator('[data-testid="code-view"]')).toBeVisible();
+  await expect(
+    page.locator('[data-testid="markdown-rich-view"]'),
+  ).toBeVisible();
   // `src` is STILL expanded after the second soft-nav (app.ts still listed).
   await expect(
     page.locator('[data-testid="file-tree-entry"]', { hasText: "app.ts" }),
