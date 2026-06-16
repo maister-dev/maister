@@ -103,9 +103,10 @@ Rationale: This feature completes M14's materialization contract by generalizing
 <!-- Commit checkpoint: Phase 3 -->
 
 ### Phase 4 — A: capture + expose ACP availableCommands (scratch-only)
-- [ ] **T4.1 (RED)** Failing tests for: capturing `available_commands_update` (latest-wins per session); fan-out — `transcript.ts`/`artifact-projector.ts` still behave with the event now captured; `GET /api/runs/{runId}/commands` returns `[{name,description,hint?}]`; SSE `lastEventId` reconnect unaffected (FR-A1…A3).
-- [ ] **T4.2 (GREEN)** Stop discarding the event; persist latest snapshot (session.json / stream state); expose via the run stream payload and/or `GET …/commands`. Identifiers: `runId` url-param, session via server-state. Logging: DEBUG `{sessionId, commandCount, runner}`.
-- [ ] **T4.3** Fan-out audit: update EVERY `sessionUpdate` consumer; add the route to `web.openapi.yaml` (already drafted in T0.3 — confirm code matches spec).
+- [x] **T4.1 (RED)** Failing tests for: capturing `available_commands_update` (latest-wins per session); fan-out — `transcript.ts`/`artifact-projector.ts` still behave with the event now captured; `GET /api/runs/{runId}/commands` returns `[{name,description,hint?}]`; SSE `lastEventId` reconnect unaffected (FR-A1…A3).
+- [x] **T4.2 (GREEN)** Stop discarding the event; persist latest snapshot (session.json / stream state); expose via the run stream payload and/or `GET …/commands`. Identifiers: `runId` url-param, session via server-state. Logging: DEBUG `{sessionId, commandCount, runner}`.
+- [x] **T4.3** Fan-out audit: update EVERY `sessionUpdate` consumer; add the route to `web.openapi.yaml` (already drafted in T0.3 — confirm code matches spec).
+  > NOTE: capture is read-on-demand from the durable `run.events.jsonl` (the "run stream state" FR-A1 permits) — latest-wins, no migration, no new write. transcript.ts + artifact-projector.ts already correctly SKIP `available_commands_update` (not a transcript/artifact unit); existing tests assert this, so the fan-out audit confirmed no consumer change is needed. `GET …/commands` matches the Phase-0 web.openapi route.
 <!-- Commit checkpoint: Phase 4 -->
 
 ### Phase 5 — D: unified token-aware composer
