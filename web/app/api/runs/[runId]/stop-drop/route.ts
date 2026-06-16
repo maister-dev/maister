@@ -7,7 +7,7 @@ import {
   type RouteParams,
 } from "../workbench-lifecycle/route-utils";
 
-import { stopWorkbenchRun } from "@/lib/workbench-lifecycle/service";
+import { stopThenDrop } from "@/lib/workbench-lifecycle/service";
 
 export async function POST(
   _req: Request,
@@ -16,8 +16,11 @@ export async function POST(
   const { runId } = await params;
 
   try {
-    return NextResponse.json(await stopWorkbenchRun(runId));
+    return NextResponse.json(await stopThenDrop(runId));
   } catch (err) {
-    return errorResponse(err, { runId, route: "POST /api/runs/[runId]/stop" });
+    return errorResponse(err, {
+      runId,
+      route: "POST /api/runs/[runId]/stop-drop",
+    });
   }
 }

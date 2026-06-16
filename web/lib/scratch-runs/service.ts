@@ -67,9 +67,15 @@ import {
 import {
   assertScratchCanAcceptUserMessage,
   dialogStatusAfterPromptCompletion,
+  dialogStatusAfterSupervisorStop,
+  isTerminalScratchDialogStatus,
   runStatusForDialogStatus,
 } from "@/lib/scratch-runs/state";
-import { checkSupervisorHealth, createSession } from "@/lib/supervisor-client";
+import {
+  checkSupervisorHealth,
+  createSession,
+  deleteSession,
+} from "@/lib/supervisor-client";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import {
@@ -1274,4 +1280,131 @@ export async function sendScratchUserMessage(args: {
     );
     throw err;
   }
+}
+
+export type StopScratchWorkbenchResult = {
+  runId: string;
+  dialogStatus: ScratchDialogStatus;
+  runStatus: RunStatus;
+  supervisorStopped: boolean;
+  workspaceActive: boolean;
+};
+
+async function deleteScratchSupervisorSessionIfLive(
+  sessionId: string,
+  runId: string,
+): Promise<boolean> {
+  try {
+    await deleteSession(sessionId);
+
+    return true;
+  } catch (err) {
+    if (
+      isMaisterError(err) &&
+      (err.code === "PRECONDITION" || err.code === "ACP_PROTOCOL") &&
+      /unknown session|not found|404/i.test(err.message)
+    ) {
+      log.info(
+        { runId, sessionId },
+        "scratch stop treated missing supervisor session as already stopped",
+      );
+
+      return false;
+    }
+
+    throw err;
+  }
+}
+
+// Stop a live scratch run: kill its supervisor session and land the run in
+// Review (when it still has a worktree) or Abandoned. The caller authorizes;
+// this primitive is shared by the scratch stop route and the combined
+// workbench stop+archive op. Terminal runs are an idempotent no-op.
+export async function stopScratchWorkbench(
+  runId: string,
+  opts: { db?: Db } = {},
+): Promise<StopScratchWorkbenchResult> {
+  const db = opts.db ?? getDb();
+
+  const runRows = await db.select().from(runs).where(eq(runs.id, runId));
+  const run = runRows[0];
+
+  if (!run) {
+    throw new MaisterError("PRECONDITION", `run not found: ${runId}`);
+  }
+  if (run.runKind !== "scratch") {
+    throw new MaisterError("PRECONDITION", `run is not scratch: ${runId}`);
+  }
+
+  const [scratchRows, workspaceRows] = await Promise.all([
+    db.select().from(scratchRuns).where(eq(scratchRuns.runId, runId)),
+    db.select().from(workspaces).where(eq(workspaces.runId, runId)),
+  ]);
+  const scratch = scratchRows[0];
+
+  if (!scratch) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `scratch metadata not found: ${runId}`,
+    );
+  }
+  const workspace = workspaceRows[0] ?? null;
+
+  if (isTerminalScratchDialogStatus(scratch.dialogStatus)) {
+    log.info(
+      { runId, dialogStatus: scratch.dialogStatus },
+      "scratch stop skipped terminal run",
+    );
+
+    return {
+      runId,
+      dialogStatus: scratch.dialogStatus,
+      runStatus: run.status,
+      supervisorStopped: false,
+      workspaceActive: Boolean(workspace && !workspace.removedAt),
+    };
+  }
+
+  const workspaceActive = Boolean(workspace && !workspace.removedAt);
+  const nextDialogStatus = dialogStatusAfterSupervisorStop({
+    hasWorkspace: workspaceActive,
+  });
+  const nextRunStatus = runStatusForDialogStatus(nextDialogStatus);
+  const now = new Date();
+  let supervisorStopped = false;
+
+  if (scratch.supervisorSessionId) {
+    supervisorStopped = await deleteScratchSupervisorSessionIfLive(
+      scratch.supervisorSessionId,
+      runId,
+    );
+  }
+
+  await db.transaction(async (tx: Db) => {
+    await tx
+      .update(scratchRuns)
+      .set({
+        dialogStatus: nextDialogStatus,
+        supervisorSessionId: null,
+        updatedAt: now,
+      })
+      .where(eq(scratchRuns.runId, runId));
+    await tx
+      .update(runs)
+      .set({
+        status: nextRunStatus,
+        acpSessionId: null,
+        currentStepId: null,
+        endedAt: now,
+      })
+      .where(eq(runs.id, runId));
+  });
+
+  return {
+    runId,
+    dialogStatus: nextDialogStatus,
+    runStatus: nextRunStatus,
+    supervisorStopped,
+    workspaceActive,
+  };
 }

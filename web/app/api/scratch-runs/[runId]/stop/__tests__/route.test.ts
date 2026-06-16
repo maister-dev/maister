@@ -73,7 +73,40 @@ vi.mock("@/lib/authz", () => ({
 }));
 
 vi.mock("@/lib/supervisor-client", () => ({
+  checkSupervisorHealth: vi.fn(),
+  createSession: vi.fn(),
   deleteSession: vi.fn(async () => undefined),
+  sendPrompt: vi.fn(),
+}));
+
+// The route now delegates to stopScratchWorkbench (scratch-runs/service), which
+// statically pulls a wide module graph; stub the modules it imports at eval so
+// the unit env can load the real primitive under test (mirrors the scratch
+// launch route test).
+vi.mock("@/lib/scheduler", () => ({
+  assertScratchCapacityAvailable: vi.fn(),
+  assertScratchCapacityAvailableInTransaction: vi.fn(),
+}));
+vi.mock("@/lib/instance-config", () => ({
+  runtimeRoot: vi.fn(),
+  worktreesRoot: vi.fn(),
+}));
+vi.mock("@/lib/worktree", () => ({
+  addWorktree: vi.fn(),
+  branchExists: vi.fn(),
+  removeBranch: vi.fn(),
+  removeWorktree: vi.fn(),
+  resolveBaseCommit: vi.fn(),
+}));
+vi.mock("@/lib/capabilities/resolver", () => ({
+  loadSelectableCapabilities: vi.fn(),
+  resolveCapabilityProfile: vi.fn(),
+}));
+vi.mock("@/lib/capabilities/materialize", () => ({
+  materializeCapabilityProfile: vi.fn(),
+}));
+vi.mock("@/lib/scratch-runs/events", () => ({
+  sendScratchPromptAndProjectEvents: vi.fn(),
 }));
 
 function seedScratchRun(

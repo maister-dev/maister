@@ -6,6 +6,9 @@ import {
   dropWorkbench,
   exportWorkbenchBranch,
   stopFlowWorkbench,
+  stopThenArchive,
+  stopThenDrop,
+  stopWorkbenchRun,
   type LifecycleContext,
   type WorkbenchLifecycleDeps,
 } from "@/lib/workbench-lifecycle/service";
@@ -406,5 +409,112 @@ describe("workbench lifecycle service", () => {
       ok: true,
       runStatus: "Review",
     });
+  });
+
+  it("stopWorkbenchRun parks a live flow run in Review", async () => {
+    const d = deps(context({ run: { ...context().run, status: "Running" } }));
+
+    const result = await stopWorkbenchRun("run-1", { deps: d });
+
+    expect(d.markStoppedAndCloseAssignments).toHaveBeenCalled();
+    expect(result).toMatchObject({ ok: true, runStatus: "Review" });
+  });
+
+  it("stopWorkbenchRun refuses an unsupported run kind", async () => {
+    const d = deps(
+      context({
+        run: {
+          ...context().run,
+          runKind: "mystery" as never,
+          status: "Running",
+        },
+      }),
+    );
+
+    await expect(stopWorkbenchRun("run-1", { deps: d })).rejects.toMatchObject({
+      code: "PRECONDITION",
+    });
+    expect(d.markStoppedAndCloseAssignments).not.toHaveBeenCalled();
+  });
+
+  it("stopThenArchive stops a live flow run then archives the parked worktree", async () => {
+    const running = context({ run: { ...context().run, status: "Running" } });
+    const review = context({ run: { ...context().run, status: "Review" } });
+    const d = deps(running);
+
+    vi.mocked(d.loadContext)
+      .mockResolvedValueOnce(running)
+      .mockResolvedValueOnce(review);
+
+    const result = await stopThenArchive("run-1", { deps: d });
+
+    expect(d.markStoppedAndCloseAssignments).toHaveBeenCalled();
+    expect(d.preserveWorktree).toHaveBeenCalled();
+    expect(result).toMatchObject({
+      ok: true,
+      archivedBranch: "maister/archive/run-1",
+      supervisorStopped: false,
+    });
+  });
+
+  it("stopThenArchive leaves the run parked in Review when the archive step fails", async () => {
+    const running = context({ run: { ...context().run, status: "Running" } });
+    const review = context({ run: { ...context().run, status: "Review" } });
+    const d = deps(running);
+
+    vi.mocked(d.loadContext)
+      .mockResolvedValueOnce(running)
+      .mockResolvedValueOnce(review);
+    vi.mocked(d.claimLifecycleOperation).mockRejectedValueOnce(
+      new MaisterError("CONFLICT", "already claimed"),
+    );
+
+    await expect(stopThenArchive("run-1", { deps: d })).rejects.toMatchObject({
+      code: "CONFLICT",
+    });
+    expect(d.markStoppedAndCloseAssignments).toHaveBeenCalled();
+  });
+
+  it("stopThenArchive refuses agent runs", async () => {
+    const d = deps(
+      context({
+        run: { ...context().run, runKind: "agent", status: "Running" },
+      }),
+    );
+
+    await expect(stopThenArchive("run-1", { deps: d })).rejects.toMatchObject({
+      code: "PRECONDITION",
+    });
+    expect(d.markStoppedAndCloseAssignments).not.toHaveBeenCalled();
+  });
+
+  it("stopThenDrop stops a live flow run then drops the worktree", async () => {
+    const running = context({ run: { ...context().run, status: "Running" } });
+    const review = context({ run: { ...context().run, status: "Review" } });
+    const d = deps(running);
+
+    vi.mocked(d.loadContext)
+      .mockResolvedValueOnce(running)
+      .mockResolvedValueOnce(review);
+
+    const result = await stopThenDrop("run-1", { deps: d });
+
+    expect(d.markStoppedAndCloseAssignments).toHaveBeenCalled();
+    expect(d.removeOwnedWorktree).toHaveBeenCalled();
+    expect(d.recordDrop).toHaveBeenCalled();
+    expect(result).toMatchObject({ ok: true, workspaceRemoved: true });
+  });
+
+  it("stopThenDrop refuses scratch runs (they reuse /discard)", async () => {
+    const d = deps(
+      context({
+        run: { ...context().run, runKind: "scratch", status: "Running" },
+      }),
+    );
+
+    await expect(stopThenDrop("run-1", { deps: d })).rejects.toMatchObject({
+      code: "PRECONDITION",
+    });
+    expect(d.markStoppedAndCloseAssignments).not.toHaveBeenCalled();
   });
 });

@@ -5,6 +5,9 @@ import * as lifecycleService from "@/lib/workbench-lifecycle/service";
 
 vi.mock("@/lib/workbench-lifecycle/service", () => ({
   stopFlowWorkbench: vi.fn(),
+  stopWorkbenchRun: vi.fn(),
+  stopThenArchive: vi.fn(),
+  stopThenDrop: vi.fn(),
   archiveWorkbench: vi.fn(),
   dropWorkbench: vi.fn(),
   exportWorkbenchBranch: vi.fn(),
@@ -29,8 +32,8 @@ describe("workbench lifecycle route wrappers", () => {
     vi.resetAllMocks();
   });
 
-  it("POST /api/runs/[runId]/stop delegates to stopFlowWorkbench", async () => {
-    vi.mocked(lifecycleService.stopFlowWorkbench).mockResolvedValueOnce({
+  it("POST /api/runs/[runId]/stop delegates to stopWorkbenchRun", async () => {
+    vi.mocked(lifecycleService.stopWorkbenchRun).mockResolvedValueOnce({
       ok: true,
       runId: "run-1",
       runStatus: "Review",
@@ -48,7 +51,56 @@ describe("workbench lifecycle route wrappers", () => {
       runStatus: "Review",
       supervisorStopped: true,
     });
-    expect(lifecycleService.stopFlowWorkbench).toHaveBeenCalledWith("run-1");
+    expect(lifecycleService.stopWorkbenchRun).toHaveBeenCalledWith("run-1");
+  });
+
+  it("POST /api/runs/[runId]/stop-archive delegates to stopThenArchive", async () => {
+    vi.mocked(lifecycleService.stopThenArchive).mockResolvedValueOnce({
+      ok: true,
+      runId: "run-1",
+      archived: true,
+      archivedBranch: "maister/archive/run-1",
+      snapshotted: true,
+      supervisorStopped: true,
+    });
+
+    const { POST } = await import("@/app/api/runs/[runId]/stop-archive/route");
+    const res = await POST(postRequest(), {
+      params: Promise.resolve({ runId: "run-1" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await json(res)).toMatchObject({
+      ok: true,
+      archivedBranch: "maister/archive/run-1",
+      supervisorStopped: true,
+    });
+    expect(lifecycleService.stopThenArchive).toHaveBeenCalledWith("run-1");
+  });
+
+  it("POST /api/runs/[runId]/stop-drop delegates to stopThenDrop", async () => {
+    vi.mocked(lifecycleService.stopThenDrop).mockResolvedValueOnce({
+      ok: true,
+      runId: "run-1",
+      runStatus: "Abandoned",
+      workspaceRemoved: true,
+      archivedBranch: "maister/archive/run-1",
+      supervisorStopped: true,
+    });
+
+    const { POST } = await import("@/app/api/runs/[runId]/stop-drop/route");
+    const res = await POST(postRequest(), {
+      params: Promise.resolve({ runId: "run-1" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await json(res)).toMatchObject({
+      ok: true,
+      runStatus: "Abandoned",
+      workspaceRemoved: true,
+      supervisorStopped: true,
+    });
+    expect(lifecycleService.stopThenDrop).toHaveBeenCalledWith("run-1");
   });
 
   it("POST /api/runs/[runId]/archive delegates to archiveWorkbench", async () => {

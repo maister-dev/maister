@@ -231,6 +231,21 @@ export type StopFlowWorkbenchResult = {
   supervisorStopped: boolean;
 };
 
+export type StopWorkbenchRunResult = {
+  ok: true;
+  runId: string;
+  runStatus: "Review" | "Abandoned";
+  supervisorStopped: boolean;
+};
+
+export type StopThenArchiveResult = ArchiveWorkbenchResult & {
+  supervisorStopped: boolean;
+};
+
+export type StopThenDropResult = DropWorkbenchResult & {
+  supervisorStopped: boolean;
+};
+
 export type HandoffMetadataResult = {
   ok: true;
   runId: string;
@@ -520,6 +535,15 @@ export async function archiveWorkbench(
   const ctx = await deps.loadContext(runId);
 
   await deps.authorize(ctx.run.projectId, "recoverRun");
+
+  return archiveWorkbenchForCtx(runId, ctx, deps);
+}
+
+async function archiveWorkbenchForCtx(
+  runId: string,
+  ctx: LifecycleContext,
+  deps: WorkbenchLifecycleDeps,
+): Promise<ArchiveWorkbenchResult> {
   requireActionAllowed(ctx, "archive");
 
   const workspace = requireWorkspace(ctx);
@@ -870,6 +894,15 @@ export async function dropWorkbench(
   const ctx = await deps.loadContext(runId);
 
   await deps.authorize(ctx.run.projectId, "recoverRun");
+
+  return dropWorkbenchForCtx(runId, ctx, deps);
+}
+
+async function dropWorkbenchForCtx(
+  runId: string,
+  ctx: LifecycleContext,
+  deps: WorkbenchLifecycleDeps,
+): Promise<DropWorkbenchResult> {
   requireActionAllowed(ctx, "drop");
 
   const workspace = requireWorkspace(ctx);
@@ -1049,25 +1082,39 @@ export async function stopFlowWorkbench(
     );
   }
 
+  return stopFlowAfterAuth(runId, ctx, deps);
+}
+
+async function stopLiveSupervisorSession(
+  ctx: LifecycleContext,
+  deps: WorkbenchLifecycleDeps,
+): Promise<boolean> {
+  if (!ctx.run.acpSessionId) return false;
+
+  const sessions = await deps.listSessions();
+  const live = sessions.find(
+    (session) =>
+      session.status === "live" &&
+      session.acpSessionId === ctx.run.acpSessionId,
+  );
+
+  if (!live) return false;
+
+  await deps.deleteSession(live.sessionId);
+
+  return true;
+}
+
+async function stopFlowAfterAuth(
+  runId: string,
+  ctx: LifecycleContext,
+  deps: WorkbenchLifecycleDeps,
+): Promise<StopFlowWorkbenchResult> {
   if (!isEnabled(ctx, "stop")) {
     requireActionAllowed(ctx, "stop");
   }
 
-  let supervisorStopped = false;
-
-  if (ctx.run.acpSessionId) {
-    const sessions = await deps.listSessions();
-    const live = sessions.find(
-      (session) =>
-        session.status === "live" &&
-        session.acpSessionId === ctx.run.acpSessionId,
-    );
-
-    if (live) {
-      await deps.deleteSession(live.sessionId);
-      supervisorStopped = true;
-    }
-  }
+  const supervisorStopped = await stopLiveSupervisorSession(ctx, deps);
 
   await deps.markStoppedAndCloseAssignments({
     runId,
@@ -1089,6 +1136,153 @@ export async function stopFlowWorkbench(
   }
 
   return { ok: true, runId, runStatus: "Review", supervisorStopped };
+}
+
+async function stopAgentAfterAuth(
+  runId: string,
+  ctx: LifecycleContext,
+  deps: WorkbenchLifecycleDeps,
+): Promise<StopWorkbenchRunResult> {
+  if (!isEnabled(ctx, "stop")) {
+    requireActionAllowed(ctx, "stop");
+  }
+
+  // Imported lazily so this module's eval graph stays free of next-auth (pulled
+  // transitively via authz) — the unit suite loads the real service module.
+  const { finalizeAgentRun } = await import("@/lib/agents/launch");
+  const { cleanupRunMaterializations } = await import(
+    "@/lib/capabilities/cleanup"
+  );
+
+  // finalizeAgentRun flips status + nulls acpSessionId + frees the agent pool
+  // slot, but it does NOT delete the supervisor session — kill it here.
+  const supervisorStopped = await stopLiveSupervisorSession(ctx, deps);
+
+  await finalizeAgentRun(runId, "Abandoned", {
+    reason: "operator",
+    closeAssignments: { kind: "system", reason: "run stopped by operator" },
+  });
+
+  if (ctx.workspace && ctx.workspace.removedAt === null) {
+    await cleanupRunMaterializations({
+      runId,
+      worktreePath: ctx.workspace.worktreePath,
+      db: db(),
+    });
+  }
+
+  return { ok: true, runId, runStatus: "Abandoned", supervisorStopped };
+}
+
+async function stopRunByKind(
+  runId: string,
+  ctx: LifecycleContext,
+  deps: WorkbenchLifecycleDeps,
+): Promise<StopWorkbenchRunResult> {
+  switch (ctx.run.runKind) {
+    case "flow": {
+      const result = await stopFlowAfterAuth(runId, ctx, deps);
+
+      return {
+        ok: true,
+        runId,
+        runStatus: result.runStatus,
+        supervisorStopped: result.supervisorStopped,
+      };
+    }
+    case "scratch": {
+      const { stopScratchWorkbench } = await import(
+        "@/lib/scratch-runs/service"
+      );
+      const result = await stopScratchWorkbench(runId);
+
+      return {
+        ok: true,
+        runId,
+        runStatus: result.runStatus === "Review" ? "Review" : "Abandoned",
+        supervisorStopped: result.supervisorStopped,
+      };
+    }
+    case "agent":
+      return stopAgentAfterAuth(runId, ctx, deps);
+    default:
+      throw new MaisterError(
+        "PRECONDITION",
+        `cannot stop run of kind ${ctx.run.runKind}: ${runId}`,
+      );
+  }
+}
+
+// POST /api/runs/{runId}/stop — generalized stop dispatched on run kind.
+export async function stopWorkbenchRun(
+  runId: string,
+  options?: WorkbenchLifecycleOptions,
+): Promise<StopWorkbenchRunResult> {
+  const deps = depsFromOptions(options);
+
+  await deps.requireActiveSession();
+
+  const ctx = await deps.loadContext(runId);
+
+  await deps.authorize(ctx.run.projectId, "recoverRun");
+
+  return stopRunByKind(runId, ctx, deps);
+}
+
+// POST /api/runs/{runId}/stop-archive — flow + scratch. Stop commits the parked
+// status first; an archive failure leaves the run in Review, retryable.
+export async function stopThenArchive(
+  runId: string,
+  options?: WorkbenchLifecycleOptions,
+): Promise<StopThenArchiveResult> {
+  const deps = depsFromOptions(options);
+
+  await deps.requireActiveSession();
+
+  const ctx = await deps.loadContext(runId);
+
+  await deps.authorize(ctx.run.projectId, "recoverRun");
+
+  if (ctx.run.runKind !== "flow" && ctx.run.runKind !== "scratch") {
+    throw new MaisterError(
+      "PRECONDITION",
+      `stop-archive supports flow and scratch runs only: ${runId}`,
+    );
+  }
+
+  const stop = await stopRunByKind(runId, ctx, deps);
+  const parkedCtx = await deps.loadContext(runId);
+  const archive = await archiveWorkbenchForCtx(runId, parkedCtx, deps);
+
+  return { ...archive, supervisorStopped: stop.supervisorStopped };
+}
+
+// POST /api/runs/{runId}/stop-drop — flow only. Scratch Stop & drop reuses the
+// scratch /discard route.
+export async function stopThenDrop(
+  runId: string,
+  options?: WorkbenchLifecycleOptions,
+): Promise<StopThenDropResult> {
+  const deps = depsFromOptions(options);
+
+  await deps.requireActiveSession();
+
+  const ctx = await deps.loadContext(runId);
+
+  await deps.authorize(ctx.run.projectId, "recoverRun");
+
+  if (ctx.run.runKind !== "flow") {
+    throw new MaisterError(
+      "PRECONDITION",
+      `stop-drop supports flow runs only: ${runId}`,
+    );
+  }
+
+  const stop = await stopFlowAfterAuth(runId, ctx, deps);
+  const parkedCtx = await deps.loadContext(runId);
+  const drop = await dropWorkbenchForCtx(runId, parkedCtx, deps);
+
+  return { ...drop, supervisorStopped: stop.supervisorStopped };
 }
 
 function defaultWorkbenchLifecycleDeps(): WorkbenchLifecycleDeps {
