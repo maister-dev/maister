@@ -7,6 +7,8 @@ import type {
 
 import pino from "pino";
 
+import { capabilitySurfaceFor } from "@/lib/acp-runners/adapter-support";
+
 const log = pino({
   name: "capabilities",
   level: process.env.LOG_LEVEL ?? "info",
@@ -103,12 +105,13 @@ export function mapProfileToAgentArtifacts(
   args: MapProfileToAgentArtifactsArgs,
 ): AgentMaterialization {
   const supported: CapabilityProfileEntry[] = args.profile.supported;
-  // M27/T-C4: MCP servers materialize for ACP agents through the
-  // session/new mcpServers param. Only the
-  // Claude-adapter-specific surfaces are gated to claude: `.claude/settings.
-  // local.json` (permissions) and on-disk skill files. Non-Claude skills are
-  // invoked through adapter-specific native mechanisms, not this MCP scope.
+  // M27/T-C4: MCP servers materialize for ACP agents through the session/new
+  // mcpServers param. `.claude/settings.local.json` (permissions/model) stays
+  // claude-specific. Skill FILES (FR-C2) now materialize for every adapter whose
+  // materialization target supports skills — written to the per-adapter location
+  // by adapter-home.ts; this array is the metadata of what was selected.
   const isClaude = args.agent === "claude";
+  const supportsSkills = capabilitySurfaceFor(args.agent).skills;
 
   const allow = isClaude && args.tools?.length ? [...args.tools] : undefined;
   const defaultMode =
@@ -141,7 +144,7 @@ export function mapProfileToAgentArtifacts(
       mcpServers.push(
         mcpServerFromMaterial(entry.capabilityRefId, entry.material),
       );
-    } else if (entry.kind === "skill" && isClaude) {
+    } else if (entry.kind === "skill" && supportsSkills) {
       skills.push({ refId: entry.capabilityRefId, material: entry.material });
     }
   }

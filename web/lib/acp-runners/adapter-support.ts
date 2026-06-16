@@ -54,6 +54,19 @@ export type CapabilitySurface = {
   readonly skillSigil: "/" | "$";
 };
 
+// Per-adapter materialization target (acp-runners.md §"Per-adapter
+// materialization target", FR-C1/T0.4). `cwd-dir` writes a worktree-relative
+// dir the agent auto-discovers from cwd (claude `.claude/`); `home-redirect`
+// writes a per-session dir and points the agent at it via `redirectEnv` on
+// spawn. Frozen 2026-06-16 vs the installed CLIs.
+export type AdapterMaterialization = {
+  readonly mode: "cwd-dir" | "home-redirect";
+  /** cwd-relative subdir (cwd-dir) or per-session subdir name (home-redirect). */
+  readonly dir: string;
+  /** env var the spawn sets to relocate the agent's home (home-redirect only). */
+  readonly redirectEnv?: string;
+};
+
 export type AdapterSupport = {
   readonly id: AdapterId;
   readonly capabilityAgent: AdapterId;
@@ -66,6 +79,7 @@ export type AdapterSupport = {
   readonly mcpTransports: readonly AdapterMcpTransport[];
   readonly fsPolicy: AdapterFsPolicy;
   readonly capabilitySurface: CapabilitySurface;
+  readonly materialization: AdapterMaterialization;
 };
 
 export const ADAPTER_SUPPORT = [
@@ -81,6 +95,7 @@ export const ADAPTER_SUPPORT = [
     mcpTransports: ["stdio", "sse", "http"],
     fsPolicy: "none",
     capabilitySurface: { skills: true, subagents: true, skillSigil: "/" },
+    materialization: { mode: "cwd-dir", dir: ".claude" },
   },
   {
     id: "codex",
@@ -94,6 +109,11 @@ export const ADAPTER_SUPPORT = [
     mcpTransports: ["stdio", "sse", "http"],
     fsPolicy: "none",
     capabilitySurface: { skills: true, subagents: false, skillSigil: "$" },
+    materialization: {
+      mode: "home-redirect",
+      dir: "codex-home",
+      redirectEnv: "CODEX_HOME",
+    },
   },
   {
     id: "gemini",
@@ -107,6 +127,11 @@ export const ADAPTER_SUPPORT = [
     mcpTransports: ["stdio", "sse", "http"],
     fsPolicy: "none",
     capabilitySurface: { skills: true, subagents: false, skillSigil: "/" },
+    materialization: {
+      mode: "home-redirect",
+      dir: "gemini-home",
+      redirectEnv: "GEMINI_CLI_HOME",
+    },
   },
   {
     id: "opencode",
@@ -120,6 +145,11 @@ export const ADAPTER_SUPPORT = [
     mcpTransports: ["stdio", "sse", "http"],
     fsPolicy: "none",
     capabilitySurface: { skills: true, subagents: false, skillSigil: "/" },
+    materialization: {
+      mode: "home-redirect",
+      dir: "opencode-home",
+      redirectEnv: "OPENCODE_CONFIG_DIR",
+    },
   },
   {
     id: "mimo",
@@ -133,6 +163,11 @@ export const ADAPTER_SUPPORT = [
     mcpTransports: ["stdio", "sse", "http"],
     fsPolicy: "none",
     capabilitySurface: { skills: true, subagents: false, skillSigil: "/" },
+    materialization: {
+      mode: "home-redirect",
+      dir: "mimo-home",
+      redirectEnv: "XDG_CONFIG_HOME",
+    },
   },
 ] as const satisfies readonly AdapterSupport[];
 

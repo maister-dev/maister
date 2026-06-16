@@ -283,7 +283,7 @@ describe("mapProfileToAgentArtifacts", () => {
     expect("env" in result).toBe(false);
   });
 
-  it("materializes mcpServers for codex (MCP via ACP) but no settings.local.json or skills (assertion 7) — M27/T-C4", () => {
+  it("materializes mcpServers + skills for codex (FR-C2) but no claude settings.local.json", () => {
     const result = mapProfileToAgentArtifacts({
       profile: codexProfile(),
       agent: "codex",
@@ -293,12 +293,13 @@ describe("mapProfileToAgentArtifacts", () => {
 
     // codex-acp consumes MCP via ACP session/new — materialized for codex now.
     expect(result.mcpServers.map((s) => s.name)).toContain("github");
-    // settings.local.json (permissions) is Claude-only; codex skills use `$`.
+    // settings.local.json (permissions) is Claude-only.
     expect(result.settingsLocal).toBeNull();
-    expect(result.skills).toEqual([]);
+    // FR-C2: codex skills ARE now materialized (written to CODEX_HOME/skills).
+    expect(result.skills.map((s) => s.refId)).toContain("aif-implement");
   });
 
-  it("materializes MiMo mcpServers without Claude settings or skill files", () => {
+  it("materializes MiMo mcpServers + skills without Claude settings.local.json", () => {
     const result = mapProfileToAgentArtifacts({
       profile: mimoProfile(),
       agent: "mimo",
@@ -309,7 +310,8 @@ describe("mapProfileToAgentArtifacts", () => {
 
     expect(result.mcpServers.map((s) => s.name)).toContain("github");
     expect(result.settingsLocal).toBeNull();
-    expect(result.skills).toEqual([]);
+    // FR-C2: skills materialize for every skill-supporting adapter.
+    expect(result.skills.map((s) => s.refId)).toContain("aif-implement");
 
     const serialized = JSON.stringify(result);
 

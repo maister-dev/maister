@@ -32,6 +32,7 @@ import {
   runnerExecutorInput,
   runnerSupervisorInput,
 } from "@/lib/acp-runners/spawn-intent";
+import { materializeAdapterCapabilityHome } from "@/lib/capabilities/adapter-home";
 import { materializeCapabilityProfile } from "@/lib/capabilities/materialize";
 import {
   loadSelectableCapabilities,
@@ -91,6 +92,7 @@ import {
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const {
+  capabilityImports,
   platformAcpRunners,
   platformRouterSidecars,
   platformRuntimeSettings,
@@ -696,11 +698,16 @@ export async function launchScratchRun(args: {
 
   const catalog = await loadSelectableCapabilities(project.id, db);
   const policy = scratchPolicy(args.body);
+  // FR-C3: scratch materializes a BROAD skill set (all project skills; the
+  // resolver filters to runner-supported). MCP stays selected/defaults.
+  const broadSkillIds = catalog
+    .filter((record) => record.kind === "skill")
+    .map((record) => record.capabilityRefId);
   const profile = resolveCapabilityProfile({
     projectId: project.id,
     executorAgent: executor.agent,
     selectedMcpIds: args.body.capabilities?.mcpIds,
-    selectedSkillIds: args.body.capabilities?.skillIds,
+    selectedSkillIds: broadSkillIds,
     selectedRuleIds: args.body.capabilities?.ruleIds,
     selectedAgentDefinitionIds: args.body.capabilities?.agentDefinitionIds,
     selectedRestrictionIds: args.body.capabilities?.restrictionIds,
@@ -774,6 +781,9 @@ export async function launchScratchRun(args: {
   worktreeCreated = true;
 
   let materialized: Awaited<ReturnType<typeof materializeCapabilityProfile>>;
+  // FR-C2/C3: per-adapter capability home env (e.g. codex CODEX_HOME), merged
+  // into the session adapterLaunch below. Empty for claude (cwd `.claude/`).
+  let adapterHomeEnv: Record<string, string> = {};
 
   try {
     materialized = await materializeCapabilityProfile({
@@ -789,6 +799,26 @@ export async function launchScratchRun(args: {
       reasoningEffort: policy.reasoningEffort,
       profile,
     });
+
+    // FR-C2/C3: materialize the broad bundle skills (+ subagents for claude)
+    // into the per-adapter target and capture the runner home redirect env.
+    const installedImports: Array<{ installedPath: string }> = await db
+      .select({ installedPath: capabilityImports.installedPath })
+      .from(capabilityImports)
+      .where(
+        and(
+          eq(capabilityImports.projectId, project.id),
+          eq(capabilityImports.packageStatus, "Installed"),
+        ),
+      );
+    const adapterHome = await materializeAdapterCapabilityHome({
+      agent: executor.agent,
+      worktreePath,
+      runId,
+      installedPaths: installedImports.map((imp) => imp.installedPath),
+    });
+
+    adapterHomeEnv = adapterHome.env;
     uploadedAttachments = await storeUploadedFiles({
       runId,
       messageId,
@@ -946,10 +976,13 @@ export async function launchScratchRun(args: {
         snapshot: runnerResolution.runnerSnapshot,
       }),
       capabilityProfilePath: materialized.profilePath,
-      adapterLaunch: mergeRunnerAdapterLaunch(
-        runnerResolution.runnerSnapshot,
-        materialized.adapterLaunch,
-      ),
+      adapterLaunch: mergeRunnerAdapterLaunch(runnerResolution.runnerSnapshot, {
+        ...materialized.adapterLaunch,
+        env: {
+          ...(materialized.adapterLaunch.env ?? {}),
+          ...adapterHomeEnv,
+        },
+      }),
       mcpServers: materialized.mcpServers,
     });
 

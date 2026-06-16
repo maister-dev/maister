@@ -152,6 +152,12 @@ vi.mock("@/lib/capabilities/resolver", () => ({
 vi.mock("@/lib/capabilities/materialize", () => ({
   materializeCapabilityProfile: mocks.materializeCapabilityProfile,
 }));
+vi.mock("@/lib/capabilities/adapter-home", () => ({
+  materializeAdapterCapabilityHome: vi.fn(async () => ({
+    env: {},
+    materializedRoots: [],
+  })),
+}));
 vi.mock("@/lib/scratch-runs/events", () => ({
   sendScratchPromptAndProjectEvents: mocks.sendScratchPromptAndProjectEvents,
   normalizeScratchPrompt: (prompt: string) => prompt,

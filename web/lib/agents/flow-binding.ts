@@ -1,12 +1,11 @@
 import "server-only";
 
-import { mkdir, readFile } from "node:fs/promises";
-import path from "node:path";
+import { readFile } from "node:fs/promises";
 
 import { eq } from "drizzle-orm";
 import pino from "pino";
 
-import { atomicWriteText } from "@/lib/atomic";
+import { materializeSubagentDefinition } from "@/lib/capabilities/adapter-home";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
@@ -107,14 +106,13 @@ export async function resolveFlowBoundAgent(args: {
       );
     }
 
-    const targetDir = path.join(args.worktreePath, ".claude", "agents");
-    // Materialize under the file STEM — a `:` in the filename is hostile to
-    // the .claude/agents convention; the subagent NAME comes from frontmatter.
-    const stem = args.agentId.split(":").pop() ?? args.agentId;
-    const targetPath = path.join(targetDir, `${stem}.md`);
+    // FR-C4: shared materialize step (also used for scratch broad materialization).
+    const targetPath = await materializeSubagentDefinition({
+      worktreePath: args.worktreePath,
+      agentId: args.agentId,
+      source,
+    });
 
-    await mkdir(targetDir, { recursive: true });
-    await atomicWriteText(targetPath, source);
     log.info(
       { agentId: args.agentId, targetPath },
       "subagent definition materialized into the worktree",
