@@ -356,14 +356,14 @@ supervisor binary is expected.
 
 ### Phase 4 - Workbench Files/Diff/Evidence/Timeline
 
-- [ ] **T4.1 - Change workbench tabs to Timeline, Diff, Files, Evidence.**
+- [x] **T4.1 - Change workbench tabs to Timeline, Diff, Files, Evidence.**
   Update `WorkbenchTab`, `WorkbenchTabs`, `WorkbenchPanel`, query parsing, and
   labels. Keep all mounted where necessary so file-tree expansion and diff
   selection survive tab changes. Graph moves to `FlowRunCenter` and fullscreen
   graph. Logging: none client-side. Tests: tab parsing/defaults, hidden-not-
   unmounted behavior, old `wb=graph` gracefully redirects or falls back to the
   Flow result.
-- [ ] **T4.2 - Add file preview/source mode.** Add a file header with copy/open
+- [x] **T4.2 - Add file preview/source mode.** Add a file header with copy/open
   controls, file-type icon/status, and a `Preview | Source` segmented control
   (`?fileView=preview|source`). Source reuses `CodeView`. Preview supports
   Markdown/GFM, Mermaid code fences, anchors, copy buttons for code blocks, and
@@ -375,25 +375,25 @@ supervisor binary is expected.
   Tests: preview-kind helper, Markdown render, Mermaid block success/error,
   highlighted code fence, source fallback for non-previewable files, copy button
   markup.
-- [ ] **T4.3 - Add file-type icons and grouped changed files.** Use
+- [x] **T4.3 - Add file-type icons and grouped changed files.** Use
   `lucide-react` icons for buttons/controls and keep file-type mapping pure and
   deterministic by extension/status. Diff changed files should group by
   directory, display status icons, additions/deletions, comments, and selected
   state driven by
   `?diffFile=`, not `?file=`. Logging: none client-side. Tests: icon/status
   mapping, directory grouping, and diff-selected-file query parsing.
-- [ ] **T4.4 - Move Evidence and Timeline into workbench panes.** Reuse
+- [x] **T4.4 - Move Evidence and Timeline into workbench panes.** Reuse
   `EvidenceGraphSection` and `RunTimeline` without duplicating their data
   loaders. Evidence explains readiness; Timeline keeps chronological ledger and
   token/cost chunks. Logging: existing artifact/payload routes keep logging.
   Tests: workbench renders empty and non-empty evidence/timeline panes.
-- [ ] **T4.5 - Workbench e2e.** Extend `m22-workbench.spec.ts`: Files opens
+- [x] **T4.5 - Workbench e2e.** Extend `m22-workbench.spec.ts`: Files opens
   source and preview, Markdown Mermaid renders, Diff split/unified and scope
   still work, Evidence and Timeline are tabs, Graph is no longer a workbench tab
   but Flow fullscreen is reachable. Logging: e2e fixture includes a Markdown
   file with one Mermaid diagram and code fence. If a new spec is created, update
   `AUTHED_SPEC`. Verify targeted e2e.
-- [ ] **Phase 4 exit.** Lint, typecheck, unit/integration tests, targeted e2e,
+- [x] **Phase 4 exit.** Lint, typecheck, unit/integration tests, targeted e2e,
   and `pnpm validate:docs` are green.
 
 ### Phase 5 - Inspector actions and branch flow polish
