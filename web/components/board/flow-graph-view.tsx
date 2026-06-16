@@ -153,7 +153,7 @@ export function FlowEdgeLabel({
 }: FlowEdgeLabelProps): ReactElement {
   return (
     <span
-      className="rounded bg-paper px-1.5 py-0.5 text-[10px] leading-none text-forest-text-secondary shadow-sm"
+      className="rounded border border-line bg-ivory px-1.5 py-0.5 text-[10px] font-medium leading-none text-ink-2 shadow-sm"
       data-edge-role={edgeRole}
       data-testid="flow-edge-label"
     >
@@ -268,38 +268,36 @@ export function FlowNodeBody({
   const blockingGateCount = runtimeGateSummary?.blockingTotal ?? 0;
 
   const typeVisual = nodeType ? nodeVisual(nodeType) : null;
+  // Heym-style accent: a neutral elevated card carries the type hue in a TOP BAR +
+  // the icon + a soft colored glow (the "colored shadow") — not a full border. The
+  // author `presentationColor` (ADR-064) overrides the accent hue when set. The
+  // current node glows brighter; others get a subtle colored lift off the canvas.
+  const accent =
+    presentationColor ??
+    (typeVisual ? `var(--${typeVisual.colorToken})` : "var(--line)");
+  const accented = Boolean(presentationColor || typeVisual);
 
-  const boxStyle: {
+  const cardStyle: {
     width?: number;
     height?: number;
     borderColor?: string;
-    borderWidth?: number;
-    background?: string;
-  } = {};
+    boxShadow?: string;
+  } = { borderColor: accent };
 
-  if (typeof presentationWidth === "number") boxStyle.width = presentationWidth;
+  if (typeof presentationWidth === "number")
+    cardStyle.width = presentationWidth;
   if (typeof presentationHeight === "number")
-    boxStyle.height = presentationHeight;
-  // Author presentationColor (ADR-064) wins the border; otherwise the node-type hue
-  // paints a bold 2px border + a wash so the card reads its type — strong enough to
-  // stay legible on the near-black dark surface, not a faint tint that washes out.
-  if (presentationColor) {
-    boxStyle.borderColor = presentationColor;
-  } else if (typeVisual) {
-    boxStyle.borderColor = `var(--${typeVisual.colorToken})`;
-    boxStyle.borderWidth = 2;
-    boxStyle.background = `color-mix(in srgb, var(--${typeVisual.colorToken}) 14%, var(--paper))`;
+    cardStyle.height = presentationHeight;
+  if (accented) {
+    cardStyle.boxShadow = isCurrent
+      ? `0 0 0 1.5px ${accent}, 0 10px 30px -6px color-mix(in srgb, ${accent} 75%, transparent)`
+      : `0 6px 18px -10px color-mix(in srgb, ${accent} 55%, transparent)`;
   }
-  const hasBoxStyle = Object.keys(boxStyle).length > 0;
 
   return (
     <div
       aria-current={isCurrent ? "step" : undefined}
-      className={
-        isCurrent
-          ? "relative rounded-[10px] ring-2 ring-amber ring-offset-1"
-          : "relative"
-      }
+      className="relative"
       data-current={presentationOnly ? undefined : isCurrent ? "true" : "false"}
       data-node-role={nodeRole}
       data-node-status={presentationOnly ? undefined : status}
@@ -307,80 +305,78 @@ export function FlowNodeBody({
       title={isCurrent ? labels.currentNode : undefined}
     >
       <div
-        className="flex h-[60px] w-[180px] flex-col justify-between rounded-[8px] border border-line bg-paper px-2 py-1.5"
-        style={hasBoxStyle ? boxStyle : undefined}
+        className="w-[200px] overflow-hidden rounded-[11px] border bg-ivory"
+        style={cardStyle}
       >
-        <div className="flex min-w-0 items-start justify-between gap-2">
-          <div className="flex min-w-0 items-start gap-1.5">
-            {typeVisual ? (
-              <span
-                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[6px] border"
-                data-node-type={nodeType}
-                data-testid="node-type-icon"
-                style={{
-                  color: `var(--${typeVisual.colorToken})`,
-                  background: `var(--${typeVisual.colorToken}-soft)`,
-                  borderColor: `var(--${typeVisual.colorToken})`,
-                }}
-                title={nodeTypeLabel}
-              >
-                <NodeTypeIcon name={typeVisual.iconName} />
-              </span>
-            ) : null}
-            <div className="min-w-0">
-              <p className="truncate text-[12px] font-medium leading-4 text-forest-text-primary">
-                {displayLabel ?? label}
-              </p>
-              {nodeTypeLabel ? (
-                <p
-                  className="truncate text-[10px] font-medium leading-3 text-forest-text-secondary"
-                  style={
-                    typeVisual
-                      ? { color: `var(--${typeVisual.colorToken})` }
-                      : undefined
-                  }
+        <div
+          aria-hidden="true"
+          data-testid="node-type-bar"
+          style={{ height: 4, background: accent }}
+        />
+        <div className="flex flex-col gap-1 px-3 py-2.5">
+          <div className="flex items-center justify-between gap-2">
+            <span className="flex min-w-0 items-center gap-1.5">
+              {typeVisual ? (
+                <span
+                  className="flex shrink-0 items-center"
+                  data-node-type={nodeType}
+                  data-testid="node-type-icon"
+                  style={{ color: `var(--${typeVisual.colorToken})` }}
+                  title={nodeTypeLabel}
                 >
+                  <NodeTypeIcon name={typeVisual.iconName} />
+                </span>
+              ) : null}
+              {nodeTypeLabel ? (
+                <span className="truncate text-[9.5px] font-semibold uppercase tracking-[0.12em] text-mute">
                   {nodeTypeLabel}
-                </p>
+                </span>
+              ) : null}
+            </span>
+            {presentationOnly ? null : (
+              <Chip
+                color={colorForNodeStatus(status, isCurrent)}
+                size="sm"
+                variant="soft"
+              >
+                <span className="font-mono text-[10px]" title={statusLabel}>
+                  {statusLabel ?? status}
+                </span>
+              </Chip>
+            )}
+          </div>
+          <p className="truncate text-[13.5px] font-semibold leading-tight text-ink">
+            {displayLabel ?? label}
+          </p>
+          {declaredCount > 0 ||
+          runtimeGateCount > 0 ||
+          blockingGateCount > 0 ? (
+            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 overflow-hidden text-[10px] leading-tight text-ink-2">
+              {declaredCount > 0 ? (
+                <span
+                  className="max-w-full truncate"
+                  data-testid="declared-gate-summary"
+                >
+                  {formatCount(labels.declaredGateSummary, declaredCount)}
+                </span>
+              ) : null}
+              {runtimeGateCount > 0 ? (
+                <span
+                  className="max-w-full truncate"
+                  data-testid="runtime-gate-summary"
+                >
+                  {formatCount(labels.gateSummary, runtimeGateCount)}
+                </span>
+              ) : null}
+              {blockingGateCount > 0 ? (
+                <span
+                  className="max-w-full truncate"
+                  data-testid="blocking-gate-summary"
+                >
+                  {formatCount(labels.blockingGateSummary, blockingGateCount)}
+                </span>
               ) : null}
             </div>
-          </div>
-          {presentationOnly ? null : (
-            <Chip
-              color={colorForNodeStatus(status, isCurrent)}
-              size="sm"
-              variant="soft"
-            >
-              <span className="font-mono text-[10px]" title={statusLabel}>
-                {statusLabel ?? status}
-              </span>
-            </Chip>
-          )}
-        </div>
-        <div className="flex min-w-0 flex-wrap items-center gap-x-1 gap-y-0.5 overflow-hidden text-[10px] leading-3 text-forest-text-secondary">
-          {declaredCount > 0 ? (
-            <span
-              className="max-w-full truncate"
-              data-testid="declared-gate-summary"
-            >
-              {formatCount(labels.declaredGateSummary, declaredCount)}
-            </span>
-          ) : null}
-          {runtimeGateCount > 0 ? (
-            <span
-              className="max-w-full truncate"
-              data-testid="runtime-gate-summary"
-            >
-              {formatCount(labels.gateSummary, runtimeGateCount)}
-            </span>
-          ) : null}
-          {blockingGateCount > 0 ? (
-            <span
-              className="max-w-full truncate"
-              data-testid="blocking-gate-summary"
-            >
-              {formatCount(labels.blockingGateSummary, blockingGateCount)}
-            </span>
           ) : null}
         </div>
       </div>
@@ -476,10 +472,16 @@ function makeFlowEdgeView(
     const d = data as FlowEdgeLabelData | undefined;
     const edgeRole = d?.edgeRole ?? "other";
     const label = resolveFlowEdgeLabel(labels, d, id);
+    const dotColor =
+      typeof style?.stroke === "string" ? style.stroke : "var(--edge-success)";
 
     return (
       <>
         <BaseEdge id={id} markerEnd={markerEnd} path={edgePath} style={style} />
+        {/* Flowing particle along the edge (Heym-style motion); static under SSR. */}
+        <circle data-testid="flow-edge-dot" fill={dotColor} r="2.6">
+          <animateMotion dur="2.6s" path={edgePath} repeatCount="indefinite" />
+        </circle>
         <EdgeLabelRenderer>
           <div
             className="nodrag nopan absolute"

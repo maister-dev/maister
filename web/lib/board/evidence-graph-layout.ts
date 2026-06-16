@@ -7,8 +7,8 @@ import type { Edge, Node } from "@xyflow/react";
 
 import dagre from "@dagrejs/dagre";
 
-export const NODE_WIDTH = 180;
-export const NODE_HEIGHT = 60;
+export const NODE_WIDTH = 200;
+export const NODE_HEIGHT = 76;
 
 // Minimal structural label shape consumed by the pure label helpers. The
 // component's EvidenceGraphLabels is a superset of this.
