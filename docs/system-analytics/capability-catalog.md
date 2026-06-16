@@ -46,6 +46,82 @@ Capability-resolution logs use structured fields: `projectId`, `runnerId`,
 They never log capability bodies, env values, headers, or generated native
 settings files.
 
+## Composer read model: catalog enrichment + `getProjectCapabilityCatalog` (Designed — capability composer, FR-B)
+
+The unified capability composer (scratch start, running scratch chat, AI-coding
+node prompts) needs a **pure DB read** of the skills/subagents available for a
+given project and runner, with human-readable metadata for the typeahead. This
+domain owns that read model. Wire-form expansion and the raw-text matcher are
+**not** restated here — they are the normalizer's job
+([flow-settings.md](flow-settings.md) §FROZEN SPEC); the per-adapter placement
+that decides which agent supports a surface is the runner registry's job
+([acp-runners.md](acp-runners.md) §Per-adapter materialization target).
+
+### Install-time enrichment (Designed — FR-B1)
+
+The install/projection pass that writes `capability_records` (kind=skill) parses
+each `SKILL.md` frontmatter and stores two fields into the **existing**
+`material` jsonb alongside the current paths — **no migration** (dedicated
+columns only if a later access pattern justifies them):
+
+- **`description`** — from the `description` frontmatter key.
+- **`argHint`** — from the `argument-hint` frontmatter key.
+
+The `agents` table already carries `name` / `description` / `mode`, so subagent
+metadata needs no enrichment pass.
+
+Config-state symmetry MUST hold, matching the §Config resync authored carve-out
+discipline: frontmatter present at install → stored; the same key absent on a
+later reinstall → **cleared** (not stale-retained); re-setting an unchanged value
+is **idempotent**. Enrichment writes `description`/`argHint` only; it never
+touches `selectable`, trust, `material.origin`, or the path entries.
+
+### Aggregator `getProjectCapabilityCatalog(projectId, capabilityAgent)` (Designed — FR-B2/FR-B3)
+
+A new read aggregator returns one unified list across the two backing surfaces,
+filtered to the project's **enabled + trusted** packages:
+
+```ts
+{
+  kind: "skill" | "subagent";
+  refId: string;          // capability_records id (skill) / agents id (subagent)
+  slug: string;
+  displayName: string;
+  description: string;
+  argHint?: string;       // skills only, from FR-B1
+  canonicalToken: string; // @skill:<slug> | @agent:<slug> (storage layer)
+  surfaceForm: string;    // wire layer for capabilityAgent (see normalizer)
+  supported: boolean;     // honored by capabilityAgent
+}
+```
+
+Sources, unioned:
+
+- **skills** — `capability_records` with kind=skill (enriched per FR-B1).
+- **subagents** — `agents` rows with `mode='subagent'`, enumerated via
+  `getProjectAgentsView` ([project-links.ts](../../web/lib/agents/project-links.ts)).
+
+**Runner filter + surface-form computation (FR-B3):**
+
+- A **skill** is `supported` iff the per-adapter materialization-target map marks
+  the runner as skill-capable; its `surfaceForm` is `/<slug>` (claude) ·
+  `$<slug>` (codex).
+- A **subagent** is `supported` **iff `capabilityAgent = claude`**; its
+  `surfaceForm` is `@<name>`. Every non-claude runner result **excludes
+  subagents** entirely (they are never emitted as unsupported rows for codex).
+- The `surfaceForm` / `supported` derivation is the same `surfaceForm(kind, slug,
+  agent)` table the normalizer reads ([flow-settings.md](flow-settings.md)
+  §FROZEN SPEC), itself sourced from the adapter `supports` descriptor
+  ([acp-runners.md](acp-runners.md) §Per-adapter materialization target) — not a
+  claude/codex constant duplicated here.
+
+Switching the `capabilityAgent` argument flips the surface forms **and** subagent
+inclusion **with no other change** to the membership set: the same enabled+trusted
+project capabilities are listed, only the wire forms re-derive and subagents drop
+out for non-claude runners. This read backs the composer's intent-entry
+autocomplete and its instant runner-switch re-filter
+([scratch-runs.md](scratch-runs.md) §Intent entry).
+
 ## State machine
 
 ```mermaid
@@ -299,6 +375,14 @@ state renders through message keys. Raw enum strings are not user-facing copy.
   authored/imported capability records are accepted only when their `agents[]`
   values are in the code-owned agent union, and launch resolution must refuse
   required capabilities unsupported by the selected adapter. (Designed, ADR-084)
+- The install/projection pass MUST store `material.description` / `material.argHint`
+  from `SKILL.md` frontmatter when present and **clear** them when the key is
+  absent on reinstall, with no migration; re-running it on unchanged frontmatter
+  MUST be idempotent. (Designed, FR-B1)
+- `getProjectCapabilityCatalog` MUST return only enabled+trusted, runner-supported
+  capabilities; a non-claude `capabilityAgent` MUST exclude `mode='subagent'`
+  rows, and flipping `capabilityAgent` MUST change only `surfaceForm`/`supported`
+  and subagent inclusion, never the underlying membership set. (Designed, FR-B2/FR-B3)
 
 ## Authored flow → executable bridge (Designed, M27)
 

@@ -72,6 +72,55 @@ The admin UI may let operators create disabled Gemini/OpenCode/MiMo runners befo
 all smoke gates pass, but it must not allow them as platform default or launch
 targets until readiness is `Ready`.
 
+## Per-adapter materialization target (Designed — capability composer, FR-C1/T0.4)
+
+Each adapter family declares **how** MAIster places a run's materialized
+capabilities (skills, subagents, MCP, config) so the spawned agent discovers
+them. The descriptor lives on the supervisor adapter registry
+(`supervisor/src/adapter-registry.ts`) and is read **table-driven** by the
+web-side materializer (`web/lib/capabilities/agent-map.ts`) and the cross-runner
+token normalizer (FR-E2 — surface forms derive from `supports`, not a
+claude/codex constant). Shape:
+
+```ts
+materialization: {
+  mode: "cwd-dir" | "home-redirect";
+  dir: string;            // cwd-relative subdir (cwd-dir) or the redirected home (home-redirect)
+  redirectEnv?: string;   // env var the spawn sets to relocate the home (home-redirect only)
+  supports: { skills: boolean; subagents: boolean; mcp: boolean; config: boolean };
+}
+```
+
+Frozen 2026-06-16 against the locally-installed CLIs (claude 2.1.170, codex
+0.125.0, gemini 0.46.0, opencode 1.16.2, mimo 0.1.0). The redirect env and
+`supports` set are verified from each CLI's `--help`/subcommands and bundle env
+reads; the precise skill-write **subpath** per agent is proven by the
+per-adapter smoke in T3.5 and tagged accordingly.
+
+| Adapter | mode | dir / redirect env | layout | skills / subagents / mcp / config |
+| --- | --- | --- | --- | --- |
+| `claude` | `cwd-dir` | worktree `.claude/` (no redirect env) | `skills/<slug>/SKILL.md`, `agents/<stem>.md`, `settings.local.json` | ✓ / ✓ / ✓ / ✓ |
+| `codex` | `home-redirect` | `CODEX_HOME` → per-session composed dir | `skills/<slug>/`, symlinked global `auth.json`+`config.toml`, MCP in `config.toml` | ✓ / ✗ / ✓ / ✓ |
+| `gemini` | `home-redirect` | `GEMINI_CLI_HOME` → `.gemini` | `settings.json` (MCP), `GEMINI.md` (context); skills via `gemini skills install --scope project` *(T3.5)* | ✓ / ✗ / ✓ / ✓ |
+| `opencode` | `home-redirect` | `OPENCODE_CONFIG_DIR` | `opencode.jsonc` (config+MCP), `agent/`; reads Claude-Code `.claude/skills` unless `OPENCODE_DISABLE_CLAUDE_CODE_SKILLS` *(T3.5)* | ✓ / ✗ / ✓ / ✓ |
+| `mimo` | `home-redirect` | `XDG_CONFIG_HOME`/`XDG_DATA_HOME` → `mimocode` | opencode-shaped; skills via `OPENCODE_SKILLS` / claude-compat *(T3.5)* | ✓ / ✗ / ✓ / ✓ |
+
+Notes:
+
+- **codex** does NOT auto-read cwd `.codex/skills` yet (openai/codex#21907) → it
+  MUST use `home-redirect` with a **composed** `CODEX_HOME`: symlink the global
+  `auth.json`/`config.toml` + per-skill symlinks of `~/.codex/skills/*`, then
+  materialize the project `skills/` (**project wins on name collision**). Flip to
+  `cwd-dir` when #21907 lands.
+- **Subagents stay claude-only** in this contract (FR-B3/FR-C4/D5): only `claude`
+  has `subagents: true`. Empirically `opencode`/`mimo` expose a native `agent`
+  surface (subagent-equivalent) and read Claude-Code `.claude/skills`; mapping
+  MAIster subagents/skills onto them is recorded for a **future** widening and is
+  NOT part of this contract — current scope materializes their MCP + (for
+  skills, T3.5-verified) claude-compat skills only.
+- A capability surface an agent genuinely lacks → that capability is delivered
+  MCP-only or skipped with a run-time **WARN** (FR-E5), never a hard `CONFIG`.
+
 ## State machine
 
 A runner row's observable lifecycle. `readiness_status` is recomputed

@@ -2707,6 +2707,46 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
 
+  /api/scratch-runs/{runId}/commands:
+    get:
+      tags: [scratch-runs]
+      summary: Designed — live availableCommands snapshot for a scratch run (FR-A2)
+      description: |
+        (Designed — capability composer, FR-A1…A3) Returns the latest ACP
+        `available_commands_update` snapshot captured for the run's live session
+        (last-write-wins), for the running-scratch composer's autocomplete.
+        Requires project membership at `viewer` or above. `runId` is the URL
+        param; the supervisor session is resolved from server state (the run
+        row / registry) — no body, no body-controlled cross-resource id.
+        Scratch-only: flow nodes are non-interactive (static-catalog autocomplete).
+      operationId: getScratchRunCommands
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Latest availableCommands snapshot (possibly empty before the session emits one).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [commands]
+                properties:
+                  commands:
+                    type: array
+                    items: { $ref: "#/components/schemas/AvailableCommand" }
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Scratch run not found or not scratch (`PRECONDITION`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
   /api/scratch-runs/{runId}/stop:
     post:
       tags: [scratch-runs]
@@ -9828,6 +9868,52 @@ components:
           type: array
           maxItems: 20
           items: { $ref: "#/components/schemas/ScratchAttachmentInput" }
+        contentBlocks:
+          type: array
+          maxItems: 64
+          description: >-
+            (Designed — capability composer, FR-D5) Optional structured ACP
+            content blocks assembled by the composer (a `text` block plus
+            `resource_link`/`resource` blocks for @file mentions and
+            attachments). When present the server forwards the assembled blocks
+            verbatim to the supervisor (verbatim-forward invariant); `content`
+            stays the plain-text transcript body / fallback. Skill/agent chips
+            are NOT blocks — they normalize to wire text inside the `text` block
+            (FR-E). `resource`/`resource_link` URIs MUST be confined to the run
+            worktree server-side before becoming ACP blocks.
+          items: { $ref: "#/components/schemas/PromptContentBlock" }
+    PromptContentBlock:
+      description: |
+        (Designed — capability composer, FR-D4/D5) One ACP prompt content block,
+        mirroring the ACP content-block union the supervisor forwards verbatim:
+        a `text` block, or a file reference as `resource_link` (URI only) or
+        `resource` (embedded contents).
+      type: object
+      required: [type]
+      additionalProperties: true
+      properties:
+        type: { type: string, enum: [text, resource_link, resource] }
+        text: { type: string, description: "Present for a text block." }
+        uri:
+          type: string
+          description: >-
+            Present for `resource_link`/`resource`; a worktree-confined path/URI
+            (server validates confinement, reusing the artifacts payload
+            confinement pattern).
+        name: { type: string, description: Optional display name for a resource link. }
+        mimeType: { type: string }
+    AvailableCommand:
+      description: |
+        (Designed — capability composer, FR-A2) One entry of the live ACP
+        `available_commands_update` snapshot, exposed scratch-only. Names are
+        as-emitted by the adapter (codex bakes `$`; claude bare / `mcp:`); the
+        composer maps them to canonical refs via the catalog.
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        description: { type: string, nullable: true }
+        hint: { type: string, nullable: true, description: From the ACP `input.hint`. }
     ScratchMessageMultipartBody:
       type: object
       required: [payload]

@@ -294,6 +294,44 @@ Concretely:
 
 This behavior is enforced inside `resolveCapabilityProfile` (`web/lib/capabilities/resolver.ts`) and tested in `resolver-precedence.test.ts` (see SDD M27 §9 test matrix). No duplicate capability record reaches materialization for the same `(kind, refId)`.
 
+## Per-adapter materialization, generalized (Designed — capability composer, FR-C)
+
+Today materialization is **claude-only**: `mapProfileToAgentArtifacts`
+(`web/lib/capabilities/agent-map.ts`) writes skills + `settings.local.json` into
+the worktree `.claude/`; codex gets MCP servers but **no skills**, and subagent
+`.md` files are written only for flow-bound nodes (not scratch). The capability
+composer generalizes this to **all five adapter families** via a per-adapter
+**materialization-target descriptor** on the supervisor adapter registry
+(`{ mode, dir, redirectEnv?, supports }`). The frozen table — modes, redirect env
+vars, and `supports` set per adapter — lives in [acp-runners.md](acp-runners.md),
+§"Per-adapter materialization target"; this section states only what changes in
+*this* domain.
+
+- **codex skills are now written (FR-C2).** codex uses `home-redirect`: spawn sets
+  `CODEX_HOME` to a per-session **composed** dir — symlink the global `auth.json`
+  + `config.toml` and per-skill symlinks of `~/.codex/skills/*` (restores
+  global+project parity with claude), then materialize the project `skills/`
+  (**project wins on name collision**). codex does not auto-read cwd `.codex/skills`
+  yet (openai/codex#21907); flip to `cwd-dir` when it lands. Secrets stay
+  server-side — `CODEX_HOME` content is run-dir-scoped, never streamed to the
+  browser.
+- **Subagent `.md` materialization is shared (FR-C4).** The `.claude/agents/<stem>.md`
+  write is extracted from `resolveFlowBoundAgent`
+  ([flow-binding.ts](../../web/lib/agents/flow-binding.ts)) into the shared
+  materialize step ([materialize.ts](../../web/lib/capabilities/materialize.ts))
+  and invoked for scratch. It runs only where the target's `supports.subagents`
+  is true (currently **claude**); other adapters omit subagents → advisory-only
+  (FR-E5), never a hard `CONFIG`. See [agents.md](agents.md).
+- **Scratch policy = broad (FR-C3).** For scratch runs, materialize **all**
+  enabled+trusted+runner-supported skills + subagents as **files** (lazy-loaded
+  by the agent — do NOT inline instructions into the prompt); **MCP stays
+  selected/defaults** (each stdio MCP is a process). Flow runs keep their existing
+  per-node selection unchanged.
+- **Materialization is verbatim of files only** — the cross-runner wire-form
+  rewriting happens web-side in the normalizer (FR-E,
+  [flow-settings.md](flow-settings.md)); the supervisor still forwards the
+  assembled prompt unchanged.
+
 ## Expectations
 
 These are the steady-state invariants the M14 code MUST satisfy (Designed (M14) —

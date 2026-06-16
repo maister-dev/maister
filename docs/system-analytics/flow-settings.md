@@ -212,6 +212,57 @@ verdict `refused`.)
 The error message names the offending node id + class + resolved agent + the
 `declared`/`capability` pair. **No new error code** (ADR-008 closed union).
 
+## FROZEN SPEC — capability-token normalizer & matcher (Designed — capability composer, FR-E)
+
+The composer authors capabilities as **canonical tokens**; the normalizer expands
+them to each runner's **wire form** in the templating pass (nodes) and at scratch
+send. **Web-side only — the supervisor forwards the assembled prompt verbatim**
+(verified ground truth §1). Surface forms are read **table-driven** from the
+adapter registry's materialization descriptor (`supports`,
+[acp-runners.md](acp-runners.md)) — NOT a claude/codex constant.
+
+**Canonical grammar (storage layer, portable):**
+
+- `@skill:<slug>` — a project skill (`capabilityRecords`, kind=skill).
+- `@agent:<slug>` — a coder subagent (`agents`, mode=subagent; claude-only).
+- `<slug>` matches `^[a-z0-9][a-z0-9._-]*$`. Anything else is not a token.
+
+**Surface forms (wire layer) — `surfaceForm(kind, slug, agent)`:**
+
+| Entity | claude | codex | gemini / opencode / mimo |
+| --- | --- | --- | --- |
+| skill | `/<slug>` (bare name; `/` added client-side) | `$<slug>` (`$` baked into the ACP name) | `/<slug>` *(T3.5)* |
+| subagent | `@<name>` | — unsupported → advisory (FR-E5) | — unsupported → advisory (FR-E5) |
+| MCP command | `mcp:<server>` | built-in `/mcp` | per live `availableCommands` |
+
+`normalizeCapabilityTokens(content, agent, catalog)` replaces each canonical token
+(or composer chip) with `surfaceForm(kind, slug, agent)` **iff** the catalog marks
+it `supported` for `agent`; an unsupported reference is left as its display text
+and raises a run-time **WARN** (FR-E5) — no hard `CONFIG`, no silent rewrite.
+
+**Matcher truth table — promote raw text `tok` to a canonical ref:**
+
+| Input | Catalog state | Result |
+| --- | --- | --- |
+| `/<slug>` / `$<slug>` / `@<slug>` | `slug` ∈ catalog (exact) | promote → canonical ref for that kind |
+| `/<slug>` **and** `$<slug>` (either sigil) | same `slug` ∈ catalog | promote → **same** ref (sigil-agnostic) |
+| `/usr/bin`, `$HOME`, `$PATH`, `/foo/bar` | not an exact catalog slug | **literal** (never promoted) |
+| `/<unknown>` | `unknown` ∉ catalog | **literal** (reaches the agent verbatim) |
+| any token inside an inline-code span or fenced block | (any) | **suppressed** (never promoted) |
+
+Matcher rules (stated once): a candidate is `sigil + slug` that is
+**boundary-anchored** (preceded by start/whitespace/`(`; followed by
+end/whitespace/punctuation), whose slug **exactly** equals a catalog entry's
+`slug`, and is **not** inside a `` ` `` span or ` ``` ` fence. Non-matches are
+never deleted or mangled. **Send/compile is the correctness backstop** — it
+normalizes any un-chipified pasted token; chips are an enhancement, not a
+correctness requirement (D6).
+
+**Call sites (FR-E4):** load (chipify a node prompt), paste (promote, undoable),
+blur/save (safety net), send/compile (backstop). Node prompts store the canonical
+grammar in `flow.yaml` (a string); the composer serializes chips → canonical
+string on change.
+
 ## Process flows
 
 ### Launch precondition order (`POST /api/runs`)

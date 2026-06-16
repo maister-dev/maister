@@ -532,6 +532,76 @@ flowchart TD
 > it would false-positive on a session-less `command_check` gate running after the
 > return. See [`manual-takeover.md`](manual-takeover.md).
 
+### Live availableCommands capture (Designed — FR-A1…A3)
+
+The ACP `available_commands_update` event is currently **discarded** as
+transcript noise (`web/lib/scratch-runs/transcript.ts`,
+`web/lib/projector/artifact-projector.ts`). This feature **(Designed)** stops
+discarding it and instead persists the **latest snapshot per session**
+(last-write-wins) in run stream state (e.g. `session.json`). The snapshot is the
+authoritative, runner-correct command list once a session is live — it includes
+the agent's native/global commands, which the static catalog cannot know.
+
+Snapshot element shape is the ACP `AvailableCommand`:
+`{ name, description, input?: { hint } }`. **Names are persisted and exposed
+exactly as emitted** — `codex-acp` bakes `$` into the `name`, `claude-agent-acp`
+emits bare names (plus an `mcp:` prefix for MCP commands). The
+**verbatim-forward invariant holds**: the supervisor does **no** rewriting; the
+web composer maps emitted names to canonical capability refs via the catalog
+(see [`capability-catalog.md`](capability-catalog.md)).
+
+The snapshot is exposed **scratch-only** via
+`GET /api/scratch-runs/[runId]/commands` → `[{ name, description, hint? }]`. Flow
+nodes are non-interactive, so the node composer stays static-catalog-only and
+does not consume this stream.
+
+```mermaid
+sequenceDiagram
+    participant A as Adapter
+    participant SV as Supervisor
+    participant W as Web tier
+    participant FS as Filesystem
+    actor U as Composer
+
+    A-->>SV: available_commands_update (verbatim names)
+    SV-->>W: append run.events.jsonl (no rewrite)
+    W->>FS: persist latest snapshot per session (last-write-wins)
+    U->>W: GET /api/scratch-runs/[runId]/commands
+    W-->>U: [{ name, description, hint? }] as emitted
+```
+
+Two invariants bind this to the existing run stream:
+
+1. **Reconnect is unaffected.** SSE `lastEventId` replay over
+   `run.events.jsonl` still works; persisting the snapshot adds run stream state
+   and does not change the monotonic event sequence.
+2. **Fan-out is preserved.** The event must **no longer surface as transcript
+   noise**, and every other `sessionUpdate` consumer must keep working with the
+   event now captured (fan-out audit across both former discard sites).
+
+### Launch progress streaming (Designed — FR-F1/F2)
+
+`launchScratchRun` (and flow launch) **(Designed)** emit staged SSE progress so
+the composer can render a live loader instead of freezing on a blocking POST
+(decision D9). The stages are server-provided labels:
+
+```mermaid
+stateDiagram-v2
+    [*] --> precondition
+    precondition --> worktree_created
+    worktree_created --> materializing
+    materializing --> spawning: materializing(<adapter>)
+    spawning --> session_ready
+    session_ready --> [*]
+```
+
+Failure on any stage surfaces a typed `MaisterError` code (the same taxonomy the
+launch choke points already raise — `PRECONDITION`, `SPAWN`,
+`EXECUTOR_UNAVAILABLE`, …) rather than a bare string. The durable intent
+(workspace + run row) is written **before** any side-effect, and **every**
+failure path — including cancel mid-launch — GCs the worktree/session so no
+orphan worktree or live ACP session is left behind.
+
 ## Expectations
 
 - `runs.status` values exactly match the enum in `web/lib/db/schema.ts`;
@@ -586,6 +656,17 @@ flowchart TD
   so the per-run event sequence stays strictly increasing across
   sessions. The bridge never replays from in-memory ring state on
   the web side.
+- **(Designed, FR-A1…A3)** The supervisor MUST persist the **latest**
+  `available_commands_update` snapshot per session (last-write-wins) and
+  forward command names **verbatim** (no `$`/`/`/`mcp:` rewriting); the
+  event MUST NOT surface as transcript noise, SSE `lastEventId` reconnect
+  MUST still work, and the snapshot is exposed scratch-only via
+  `GET /api/scratch-runs/[runId]/commands`.
+- **(Designed, FR-F1/F2)** A launch (`launchScratchRun` and flow launch)
+  MUST emit staged SSE progress
+  (`precondition → worktree_created → materializing → spawning →
+  session_ready`), surface failures as a typed `MaisterError` code, and
+  leave NO orphan worktree/session on any failure or cancel-mid-launch path.
 - **(Implemented)** HITL response surface
   (`POST /api/runs/[runId]/hitl/[hitlRequestId]/respond`) does NOT
   flip `runs.status` to `Running` itself; the runner is the sole

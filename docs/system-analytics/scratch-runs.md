@@ -262,6 +262,61 @@ sequenceDiagram
 Discard removes the worktree but does not delete uploaded run artifacts in V1.
 Uploaded artifact retention is part of future typed artifact/blob-store policy.
 
+## Capability composer lifecycle (Designed — FR-A/C/D/F)
+
+The unified capability composer replaces the scratch prompt `<textarea>` with a
+token-aware editor and threads a single autocomplete contract through three
+phases. The cross-runner token grammar (`@skill:<slug>` / `@agent:<slug>`), the
+per-adapter materialization-target table, and the normalizer/matcher truth table
+are frozen elsewhere and are **not** restated here: see
+[acp-runners.md](acp-runners.md) (materialization targets per adapter) and
+[flow-settings.md](flow-settings.md) (canonical-token normalizer + raw-text
+matcher).
+
+### Three-phase autocomplete source (Designed)
+
+```mermaid
+stateDiagram-v2
+    [*] --> IntentEntry: composer opened (no session)
+    IntentEntry --> IntentEntry: runner switch (re-filter + chip re-normalize)
+    IntentEntry --> Submit: send prompt
+    Submit --> Running: session_ready
+    Running --> Running: available_commands_update (latest wins)
+    Running --> [*]: stop / promote / discard
+```
+
+- **Intent entry (no session) (Designed).** Autocomplete is the **static
+  enriched catalog** from `getProjectCapabilityCatalog`, filtered to the
+  project's enabled+trusted packages and to the chosen runner's support. A
+  runner switch during entry is an **instant client-side re-filter plus chip
+  re-normalization** to the new runner's wire form — **no materialization, no
+  spawn** happens during entry (D1, D10). Native/global agent commands are not
+  shown yet because no session exists.
+- **Submit (Designed).** Materialization runs for the **final** chosen runner
+  (broad policy below) and the supervisor session is spawned. Launch progress
+  streams over SSE as staged steps `precondition → worktree_created →
+  materializing(<adapter>) → spawning → session_ready`, so the composer renders
+  a live loader instead of freezing; cancel mid-launch GCs the worktree/session
+  (D9, FR-F1/FR-F2).
+- **Running (Designed).** Autocomplete switches to the live ACP
+  `available_commands_update` snapshot (latest-wins per session — the feature
+  stops discarding this event) **unioned with static subagents** (claude-only;
+  subagents never appear in the `availableCommands` stream). The snapshot is
+  exposed scratch-only via `GET /api/scratch-runs/[runId]/commands`, returning
+  `[{ name, description, hint? }]` (FR-A2). Names are surfaced **as emitted**
+  (codex `$x`, claude bare / `mcp:`); the composer maps them to canonical refs
+  through the catalog.
+
+### Scratch materialization policy (Designed — broad)
+
+Scratch materialization is **broad**, unlike per-node Flow selection (which is
+unchanged): on submit, MAIster materializes **all** enabled+trusted+runner-
+supported **skills + subagents** as **files** for the final runner (per the
+adapter materialization target in [acp-runners.md](acp-runners.md)). Skill and
+subagent files are **lazy-loaded by the agent** — MAIster materializes the files
+and does **not** dump their instructions into the prompt. **MCP stays
+selected/defaults** because each stdio MCP is a live process (D7, FR-C3).
+
 ## Structured logs
 
 Scratch implementation logs are structured application logs, not user-visible
@@ -340,6 +395,7 @@ secret material.
 | Permission deferred times out | `HITL_TIMEOUT`; scratch transitions to `Crashed` with error metadata. |
 | Promote merge conflict | `409 CONFLICT`; run remains `Review` and the worktree stays available. |
 | Shared lifecycle drop from scratch detail | Preserve first, remove only a MAIster-owned worktree, set `removed_at`, and mark non-`Done` runs/dialog metadata `Abandoned`. |
+| Composer launch canceled mid-stream (Designed — FR-F2) | Cancel during `materializing`/`spawning` GCs the worktree and any partial session; no orphan worktree/session remains and a typed `MaisterError` code surfaces. |
 
 ## Acceptance Criteria
 

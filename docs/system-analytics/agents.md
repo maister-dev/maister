@@ -201,6 +201,51 @@ flowchart TD
     QT --> REF[every later launch refused PRECONDITION<br/>until explicit un-quarantine]
 ```
 
+### (g) Subagent materialization for scratch (Designed — FR-C4)
+
+Today subagent `.md` materialization happens **only** for flow-bound
+`subagent` nodes: flow (e) calls `resolveFlowBoundAgent`
+([flow-binding.ts](../../web/lib/agents/flow-binding.ts)) which writes the
+single bound `.claude/agents/<stem>.md` into the worktree at launch. The
+Unified Capability Composer (Designed, FR-C4) **extracts** that
+`.claude/agents/<stem>.md` writing out of flow-binding into the shared
+materialize step ([materialize.ts](../../web/lib/capabilities/materialize.ts))
+and invokes it for **scratch** runs too — so a claude scratch session
+surfaces the project's coder subagents as `@<name>` references in the
+composer alongside skills.
+
+```mermaid
+flowchart TD
+    SUB[scratch launch — final pinned runner] --> T{adapter materialization-target<br/>supports.subagents?}
+    T -- claude only --> MAT[materialize step writes<br/>.claude/agents/&lt;stem&gt;.md for every<br/>enabled+trusted subagent — getProjectAgentsView]
+    T -- codex / others --> OMIT[no subagent files written<br/>references stay advisory-only on this runner]
+    MAT --> BROAD[broad scratch policy:<br/>subagents alongside skills — see capabilities.md]
+```
+
+Designed contract:
+
+- **Claude-only by descriptor.** Subagents materialize only where the
+  adapter's materialization-target `supports.subagents` is true — currently
+  **only `claude`**. codex and the other adapters omit subagent files, so a
+  subagent reference is **advisory-only** on those runners: the composer shows
+  a non-universality badge and the run-time path emits a WARN and proceeds
+  (FR-E5). NO hard `CONFIG`.
+- **Source set.** The materialized claude subagents are the project's
+  enabled+trusted `agents` rows with `mode='subagent'`, enumerated via
+  `getProjectAgentsView` ([project-links.ts](../../web/lib/agents/project-links.ts)),
+  written as `.claude/agents/<stem>.md` files (lazy-loaded by the agent — files,
+  not prompt-dumped).
+- **Broad scratch policy.** Scratch materialization includes all
+  enabled+trusted subagents (claude) **alongside** skills; the skill side and
+  the per-runner surface-form split are owned by
+  [capabilities.md](capabilities.md) and [acp-runners.md](acp-runners.md) — not
+  restated here.
+- **Crash window.** Materialization is part of the staged launch; if a launch
+  is cancelled or fails after the materialize step but before
+  `session_ready`, the written subagent (and skill) files are cleaned up with
+  the worktree/session so no orphaned `.claude/agents/*.md` survives a failed
+  scratch launch.
+
 ## Expectations
 
 - Registration MUST never write an invalid definition's row (invalid files

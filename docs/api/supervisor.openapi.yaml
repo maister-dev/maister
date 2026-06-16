@@ -972,6 +972,27 @@ components:
           description: |
             Rendered Mustache prompt for the step. Sent verbatim as the
             ACP `prompt` parameter; the supervisor does not re-template.
+        contentBlocks:
+          type: array
+          maxItems: 64
+          description: |
+            (Designed — capability composer, FR-D5) Optional pre-assembled ACP
+            content blocks (a `text` block plus `resource_link`/`resource`
+            blocks). When present the supervisor forwards them **verbatim** as
+            the ACP `prompt` content array — it does NOT re-template or rewrite;
+            `prompt` stays the plain-text equivalent/fallback. The web tier has
+            already normalized capability tokens to wire form (FR-E) and confined
+            resource URIs to the run worktree before this call.
+          items:
+            type: object
+            required: [type]
+            additionalProperties: true
+            properties:
+              type: { type: string, enum: [text, resource_link, resource] }
+              text: { type: string }
+              uri: { type: string }
+              name: { type: string }
+              mimeType: { type: string }
     SendPromptStopReason:
       type: string
       enum: [end_turn, max_tokens, max_turn_requests, refusal]

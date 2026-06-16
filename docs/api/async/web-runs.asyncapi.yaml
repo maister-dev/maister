@@ -41,6 +41,14 @@ info:
     synthetic timeout event below; scratch-specific dialog state is read from
     `GET /api/scratch-runs/{runId}` after an SSE wake-up. v1 does not add a
     second browser SSE endpoint and does not emit scratch-specific SSE payloads.
+
+    **(Designed — capability composer, FR-A/F):** this changes with the unified
+    composer, still on this **same** route (no second endpoint). The
+    `session.update` carrying ACP `available_commands_update` is now captured
+    (latest-wins) instead of discarded and surfaced to the running-scratch
+    composer via `GET /api/scratch-runs/{runId}/commands`; and
+    `ScratchLaunchProgress` synthetic events (below) stream staged launch
+    progress. Both are scratch-only.
   contact:
     name: MAIster maintainers
     url: https://github.com/your-org/mAIster
@@ -87,6 +95,7 @@ channels:
           - $ref: "#/components/messages/SessionCrashed"
           - $ref: "#/components/messages/SessionStreamTimeout"
           - $ref: "#/components/messages/SessionChatTurn"
+          - $ref: "#/components/messages/ScratchLaunchProgress"
 components:
   messages:
     SessionLine:
@@ -97,6 +106,13 @@ components:
     SessionUpdate:
       name: session.update
       title: ACP session/update parameter
+      summary: |
+        (Designed — capability composer, FR-A1…A3) The `available_commands_update`
+        sub-kind is now captured (latest-wins per session) instead of discarded;
+        its snapshot is surfaced scratch-only via
+        `GET /api/scratch-runs/{runId}/commands` as `[{ name, description, hint? }]`.
+        Reconnect via `Last-Event-ID` is unaffected; unknown-`sessionUpdate`
+        consumers still ignore it.
       contentType: application/json
       payload: { $ref: "#/components/schemas/EventBase" }
     SessionPermissionRequest:
@@ -134,6 +150,18 @@ components:
         documented in `supervisor-sse.asyncapi.yaml`.
       contentType: application/json
       payload: { $ref: "#/components/schemas/EventBase" }
+    ScratchLaunchProgress:
+      name: scratch.launch_progress
+      title: Synthetic scratch launch-progress stage (Designed — capability composer, FR-F1)
+      summary: |
+        (Designed — FR-F1/F2) Emitted during `launchScratchRun` (and flow launch)
+        so the composer renders a live loader through the stages
+        `precondition → worktree_created → materializing(<adapter>) → spawning →
+        session_ready`. Synthetic (web/supervisor-sourced, like
+        `session.stream_timeout`); a `failed` stage carries the typed
+        `MaisterError` code, and cancel mid-launch GCs the worktree/session.
+      contentType: application/json
+      payload: { $ref: "#/components/schemas/ScratchLaunchProgressEvent" }
   schemas:
     EventBase:
       type: object
@@ -169,3 +197,31 @@ components:
         reason:
           type: string
           description: Human-readable cause (e.g. "no events within keepalive window").
+    ScratchLaunchProgressEvent:
+      type: object
+      required: [type, stage]
+      description: |
+        (Designed — capability composer, FR-F1/F2) Synthetic scratch
+        launch-progress payload. Not persisted in `run.events.jsonl`; emitted
+        with `data: <json>\n\n` like the timeout event.
+      properties:
+        type:
+          type: string
+          const: scratch.launch_progress
+        stage:
+          type: string
+          enum:
+            - precondition
+            - worktree_created
+            - materializing
+            - spawning
+            - session_ready
+            - failed
+        adapter:
+          type: string
+          description: Present on `materializing` — the adapter family being materialized.
+        errorCode:
+          type: string
+          description: >-
+            Present on `failed` — a `MaisterError` code (e.g. PRECONDITION,
+            SPAWN, CONFIG, EXECUTOR_UNAVAILABLE).

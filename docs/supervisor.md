@@ -701,7 +701,13 @@ The response includes the negotiated ACP session id:
 { "stepId": "plan", "prompt": "..." }
 ```
 Body validated by `SendPromptRequestSchema` (`stepId` must match
-`^[A-Za-z0-9._-]+$`, `prompt ≤ 1 MB`). Response:
+`^[A-Za-z0-9._-]+$`, `prompt ≤ 1 MB`). **(Designed — capability composer, FR-D5)**
+the body MAY also carry an optional `contentBlocks` array (ACP `text` +
+`resource_link`/`resource` blocks). When present the supervisor forwards them
+**verbatim** as the ACP `prompt` content array — it never re-templates or
+rewrites; capability-token normalization and worktree path-confinement of
+resource URIs are already done web-side. `prompt` stays the plain-text
+equivalent. Response:
 ```json
 { "stopReason": "end_turn", "meta": null }
 ```
