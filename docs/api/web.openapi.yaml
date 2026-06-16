@@ -48,7 +48,11 @@ info:
       `archive`, `drop`, and `export-branch`, plus `handoff-metadata`,
       `snapshot-commit`, and `handoff-branch` for local continuation. Scratch
       runs use the shared archive/export/drop service from Review state and the
-      scratch-specific stop route while live.
+      scratch-specific stop route while live. The combined
+      `POST /api/runs/{runId}/stop-archive` and `stop-drop` (Designed) stop a
+      live run then run the worktree op in one call, and `stop` is generalized
+      to dispatch on run kind (flow → Review, scratch → Review/Abandoned,
+      agent → Abandoned).
     - `POST /api/runs/{runId}/hitl/{hitlRequestId}/respond` (M7) — durable
       HITL response surface. Permission-only flows resolve a supervisor
       deferred via the supervisor's `POST /sessions/{id}/input` and use a
@@ -4643,17 +4647,28 @@ paths:
   /api/runs/{runId}/stop:
     post:
       tags: [runs]
-      summary: Implemented — stop a live flow workbench to Review
+      summary: Stop a live run, dispatched on run kind (flow Implemented; scratch + agent Designed)
       description: |
-        Stops a live flow run without deleting its worktree. The route resolves
-        the live supervisor session from server-side `runs.acp_session_id` via
-        `listSessions()`, calls `deleteSession(sessionId)` when found, clears
-        live ACP/current-step handles, closes active assignments, and sets
-        `runs.status = Review`.
+        Stops a live run without deleting its worktree, dispatching on
+        `runs.run_kind` (allow-listed `flow | scratch | agent`; an unknown kind
+        is refused with `PRECONDITION`). In every kind the route resolves the
+        live supervisor session from server-side `runs.acp_session_id` via
+        `listSessions()` and calls `deleteSession(sessionId)` when found, then
+        clears live ACP/current-step handles.
+
+        - **flow** (Implemented) → `runs.status = Review`, active assignments
+          closed.
+        - **scratch** (Designed) → `Review` when the run still has a live
+          worktree, otherwise `Abandoned` (shared scratch-stop primitive; the
+          dedicated `POST /api/scratch-runs/{runId}/stop` route delegates to the
+          same primitive).
+        - **agent** (Designed) → finalized to `Abandoned` via `finalizeAgentRun`
+          (which also frees the agent pool slot); the route MUST `deleteSession`
+          because `finalizeAgentRun` does not.
 
         Requires project membership at `member` or above
-        (`requireProjectAction("recoverRun")`). Body is empty; project id,
-        workspace, and session handles are server-derived.
+        (`requireProjectAction("recoverRun")`). Body is empty; run kind, project
+        id, workspace, and session handles are server-derived.
       operationId: stopRunWorkbench
       parameters:
         - name: runId
@@ -4662,7 +4677,7 @@ paths:
           schema: { type: string, format: uuid }
       responses:
         "200":
-          description: Run is parked in Review.
+          description: Run is parked (`Review`) or terminated (`Abandoned`).
           content:
             application/json:
               schema:
@@ -4671,17 +4686,116 @@ paths:
                 properties:
                   ok: { type: boolean, enum: [true] }
                   runId: { type: string }
-                  runStatus: { type: string, enum: [Review] }
+                  runStatus: { type: string, enum: [Review, Abandoned] }
                   supervisorStopped: { type: boolean }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409":
-          description: Run is not in a stoppable live state.
+          description: Run is not in a stoppable live state, or run kind is unsupported.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "503":
           description: Supervisor delete/list failed transiently.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/runs/{runId}/stop-archive:
+    post:
+      tags: [runs]
+      summary: Designed — stop a live flow or scratch run, then archive
+      description: |
+        Combined live action: stop the run (commits a parked status first —
+        `Review` for flow, `Review` for scratch with a live worktree), then run
+        `archiveWorkbench` (preserve the worktree, record
+        `workspaces.archived_branch` / `archived_at`, leave it on disk). Returns
+        the archive result plus `supervisorStopped` from the stop step.
+
+        Flow and scratch only. The stop commit is durable before the archive, so
+        an archive failure leaves the run in `Review`, retryable through the
+        plain `archive` route — no extra idempotency marker. Body is empty; run
+        kind, project, session, and paths are server-derived. Requires
+        `requireProjectAction("recoverRun")` (authorized once for the combined
+        operation).
+      operationId: stopArchiveRunWorkbench
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Run stopped and worktree preserved.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, runId, archived, archivedBranch, snapshotted, supervisorStopped]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  runId: { type: string }
+                  archived: { type: boolean }
+                  archivedBranch: { type: string, nullable: true }
+                  snapshotted: { type: boolean }
+                  supervisorStopped: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Not stoppable, unsupported run kind, or preserve failure (run left in `Review`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "503":
+          description: Supervisor delete/list failed transiently (run unchanged).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/runs/{runId}/stop-drop:
+    post:
+      tags: [runs]
+      summary: Designed — stop a live flow run, then drop
+      description: |
+        Combined live action for flow runs: stop the run (commits `Review`
+        first), then run `dropWorkbench` (preserve, remove the owned worktree,
+        record `removed_at`, mark the run `Abandoned`). Returns the drop result
+        plus `supervisorStopped`.
+
+        Flow only — scratch `Stop & drop` reuses the single-transaction
+        `POST /api/scratch-runs/{runId}/discard` instead. The stop commit is
+        durable before the drop, so a drop failure leaves the run in `Review`,
+        retryable through the plain `drop` route. Body is empty; run kind,
+        project, session, and paths are server-derived. Requires
+        `requireProjectAction("recoverRun")` (authorized once).
+      operationId: stopDropRunWorkbench
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Run stopped and worktree removed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, runId, runStatus, workspaceRemoved, archivedBranch, supervisorStopped]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  runId: { type: string }
+                  runStatus: { type: string, enum: [Abandoned] }
+                  workspaceRemoved: { type: boolean, enum: [true] }
+                  archivedBranch: { type: string, nullable: true }
+                  supervisorStopped: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Not stoppable, unsupported run kind, preserve failure, or stale run-status CAS (run left in `Review`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "503":
+          description: Supervisor delete/list failed transiently (run unchanged).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
