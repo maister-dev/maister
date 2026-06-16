@@ -1738,14 +1738,22 @@
       "archive": "Archive",
       "drop": "Drop",
       "snapshotCommit": "Commit",
-      "exportBranch": "Export"
+      "exportBranch": "Export",
+      "open": "Open run",
+      "rename": "Rename",
+      "stopArchive": "Stop & archive",
+      "stopDrop": "Stop & drop"
     },
     "tooltip": {
       "stop": "Stop the run",
       "archive": "Archive the workspace",
       "drop": "Drop the workspace",
       "snapshotCommit": "Commit a snapshot of the working tree",
-      "exportBranch": "Push branch to remote"
+      "exportBranch": "Push branch to remote",
+      "menu": "Run actions"
+    },
+    "menu": {
+      "footerNote": "snapshot · push · handoff → in run card"
     },
     "defaultCommitMessage": "maister: export {runId}",
     "busy": "{action}…",
@@ -1773,12 +1781,17 @@
         "archive": "Archive workbench",
         "drop": "Drop workbench",
         "snapshotCommit": "Snapshot commit",
-        "exportBranch": "Export branch"
+        "exportBranch": "Export branch",
+        "menu": "Run actions",
+        "stopArchive": "Stop & archive",
+        "stopDrop": "Stop & drop"
       },
       "body": {
         "stop": "Stop the run and keep its worktree for review.",
         "archive": "Preserve recoverable work into an archive ref and keep the worktree on disk.",
-        "drop": "Preserve recoverable work, then remove only the MAIster-owned worktree."
+        "drop": "Preserve recoverable work, then remove only the MAIster-owned worktree.",
+        "stopArchive": "Stop the run, then preserve its worktree into an archive ref.",
+        "stopDrop": "Stop the run, then preserve recoverable work and remove the worktree."
       }
     }
   },

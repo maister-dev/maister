@@ -222,14 +222,6 @@ export async function LeftRail({
           ? countdownText(locale, ws.effectiveRemovalAt, nowMs)
           : null,
       archivedLabel: ws.archived ? tGc("archived") : null,
-      rename: {
-        action: tPortfolio("rename.action"),
-        placeholder: tPortfolio("rename.placeholder"),
-        confirm: tPortfolio("rename.confirm"),
-        cancel: tPortfolio("rename.cancel"),
-        busy: tPortfolio("rename.busy"),
-        error: tPortfolio("rename.error"),
-      },
     };
   }
 

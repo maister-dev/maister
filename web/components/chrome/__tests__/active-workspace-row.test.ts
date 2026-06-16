@@ -68,14 +68,6 @@ function baseLabels(
     ttlLabel: null,
     ttlCountdown: null,
     archivedLabel: null,
-    rename: {
-      action: "Rename",
-      placeholder: "Workspace name",
-      confirm: "Save",
-      cancel: "Cancel",
-      busy: "Saving…",
-      error: "Rename failed",
-    },
     ...over,
   };
 }
@@ -121,20 +113,26 @@ describe("ActiveWorkspaceRow", () => {
     expect(html).toContain('data-testid="status-word"');
   });
 
-  it("renders the rename pencil only for scratch runs", () => {
-    const flow = render(baseRow({ runKind: "flow" }), baseLabels());
+  it("shows an inline Stop while live plus the ⋯ overflow, and no inline rename pencil", () => {
+    const live = render(baseRow({ lifecycleActions: ["stop"] }), baseLabels());
 
-    expect(flow).not.toContain('data-testid="rename-pencil"');
-    expect(flow).not.toContain('data-testid="rename-pencil-icon"');
+    expect(live).toContain('data-testid="rail-stop"');
+    expect(live).toContain('data-testid="rail-menu-trigger"');
+    // The inline rename pencil is gone — rename moved into the ⋯ action-sheet.
+    expect(live).not.toContain('data-testid="rename-pencil"');
+    expect(live).not.toContain('data-testid="rename-pencil-icon"');
 
-    const scratch = render(
-      baseRow({ runKind: "scratch", href: "/scratch-runs/run-1" }),
+    const terminal = render(
+      baseRow({
+        statusTone: "review",
+        lifecycleActions: ["archive", "drop", "exportBranch"],
+      }),
       baseLabels(),
     );
 
-    expect(scratch).toContain('data-testid="rename-pencil"');
-    expect(scratch).toContain('data-testid="rename-pencil-icon"');
-    expect(scratch).toContain('viewBox="0 0 24 24"');
+    // Terminal rows expose only the overflow (no inline Stop).
+    expect(terminal).not.toContain('data-testid="rail-stop"');
+    expect(terminal).toContain('data-testid="rail-menu-trigger"');
   });
 
   it("renders the flow, runner, and issue chips when present", () => {
@@ -178,9 +176,10 @@ describe("ActiveWorkspaceRow", () => {
     expect(html).not.toContain('data-testid="runner-chip"');
   });
 
-  it("renders the lifecycle icon actions for the run's available actions", () => {
-    const html = render(baseRow({ lifecycleActions: ["stop"] }), baseLabels());
+  it("always renders the menu surface so Open run stays reachable", () => {
+    const html = render(baseRow({ lifecycleActions: [] }), baseLabels());
 
     expect(html).toContain('data-testid="workbench-lifecycle-actions"');
+    expect(html).toContain('data-testid="rail-menu-trigger"');
   });
 });

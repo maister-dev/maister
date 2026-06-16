@@ -15,7 +15,7 @@ export interface WorkbenchLifecycleActionsProps {
   runKind: RunKind;
   actions: WorkbenchLifecycleActionId[];
   className?: string;
-  variant?: "compact" | "detail" | "icon" | "menu";
+  variant?: "compact" | "detail" | "menu";
   // Rail `menu` variant extras: the run link for "Open run", the linked-task
   // KEY-N chip in the sheet/rename header, and the current name seeding rename.
   runHref?: string;
@@ -101,32 +101,6 @@ const ACTION_PATH: Record<WorkbenchLifecycleActionId, string> = {
   archive: "archive",
   drop: "drop",
   exportBranch: "export-branch",
-};
-
-// Glyphs for the compact `icon` variant — one per UI action, rendered inside a
-// 16×16 stroke svg. The accessible name comes from the `tooltip.*` key, so the
-// svg itself is aria-hidden.
-const actionIcons: Record<
-  WorkbenchLifecycleActionId | "snapshotCommit",
-  ReactNode
-> = {
-  stop: <rect height="8" rx="1" width="8" x="4" y="4" />,
-  archive: (
-    <>
-      <rect height="3" rx="1" width="11" x="2.5" y="3" />
-      <path d="M3.5 6v6.5h9V6M6.5 9h3" />
-    </>
-  ),
-  drop: (
-    <path d="M3 4h10M6.5 4V2.5h3V4M4.5 4l.6 9h5.8l.6-9M6.5 6.5v4M9.5 6.5v4" />
-  ),
-  snapshotCommit: (
-    <>
-      <circle cx="8" cy="8" r="2.4" />
-      <path d="M8 2v3.6M8 10.4V14" />
-    </>
-  ),
-  exportBranch: <path d="M8 11V3M5 6l3-3 3 3M3.5 13h9" />,
 };
 
 const buttonBase =
@@ -365,6 +339,8 @@ export function WorkbenchLifecycleActions({
   runLabel,
 }: WorkbenchLifecycleActionsProps): ReactElement | null {
   const t = useTranslations("workbenchLifecycle");
+  // The rename modal reuses the existing portfolio.rename copy.
+  const tp = useTranslations("portfolio");
   const router = useRouter();
   const [dialogAction, setDialogAction] = useState<UiActionId | null>(null);
   const [busyAction, setBusyAction] = useState<UiActionId | null>(null);
@@ -687,45 +663,25 @@ export function WorkbenchLifecycleActions({
       ) : null}
       {displayActions.map((action) => {
         const label = t(`action.${action}`);
-        const tooltip = variant === "icon" ? t(`tooltip.${action}`) : undefined;
 
         return (
           <button
             key={action}
-            aria-label={tooltip}
             className={clsx(
               buttonBase,
-              variant === "icon"
-                ? "h-[26px] w-[26px] justify-center p-0"
-                : variant === "detail"
-                  ? "px-3 py-1.5 text-[10.5px]"
-                  : "px-2 py-1 text-[9.5px]",
+              variant === "detail"
+                ? "px-3 py-1.5 text-[10.5px]"
+                : "px-2 py-1 text-[9.5px]",
               action === "drop"
                 ? "border-amber-line bg-amber-soft text-amber hover:bg-ivory"
                 : "border-line bg-paper text-mute hover:border-mute hover:text-ink-2",
               busyAction === action && "opacity-60",
             )}
             disabled={busyAction !== null}
-            title={tooltip}
             type="button"
             onClick={() => openDialog(action)}
           >
-            {variant === "icon" ? (
-              <svg
-                aria-hidden="true"
-                className="h-3.5 w-3.5"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.4"
-                viewBox="0 0 16 16"
-              >
-                {actionIcons[action]}
-              </svg>
-            ) : busyAction === action ? (
-              t("busy", { action: label })
-            ) : (
-              label
-            )}
+            {busyAction === action ? t("busy", { action: label }) : label}
           </button>
         );
       })}
@@ -775,7 +731,7 @@ export function WorkbenchLifecycleActions({
                   type="button"
                   onClick={() => void submitRename()}
                 >
-                  {t("dialog.save")}
+                  {tp("rename.confirm")}
                 </button>
               ) : null}
               {dialogAction === "snapshotCommit" ? (
@@ -835,7 +791,11 @@ export function WorkbenchLifecycleActions({
               ) : null}
             </>
           }
-          title={t(`dialog.title.${dialogAction}`)}
+          title={
+            dialogAction === "rename"
+              ? tp("rename.title")
+              : t(`dialog.title.${dialogAction}`)
+          }
           onClose={closeDialog}
         >
           <div className="flex flex-col gap-3 text-[12px] leading-[1.45] text-ink-2">
@@ -900,14 +860,14 @@ export function WorkbenchLifecycleActions({
                 ) : null}
                 <label className="flex flex-col gap-1">
                   <span className="font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-mute">
-                    {t("rename.label")}
+                    {tp("rename.placeholder")}
                   </span>
                   <input
                     ref={renameInputRef}
                     className={inputClass}
                     data-testid="rename-input"
                     maxLength={200}
-                    placeholder={t("rename.placeholder")}
+                    placeholder={tp("rename.placeholder")}
                     value={renameValue}
                     onChange={(event) => setRenameValue(event.target.value)}
                     onKeyDown={(event) => {

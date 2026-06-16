@@ -6,13 +6,7 @@ import type {
 } from "@/lib/queries/portfolio";
 import type { ReactElement, ReactNode } from "react";
 
-import {
-  CpuChipIcon,
-  PencilIcon,
-  WrenchScrewdriverIcon,
-} from "@heroicons/react/24/outline";
-import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { CpuChipIcon, WrenchScrewdriverIcon } from "@heroicons/react/24/outline";
 import Link from "next/link";
 import clsx from "clsx";
 
@@ -49,14 +43,6 @@ export interface ActiveWorkspaceRowLabels {
   ttlLabel: string | null;
   ttlCountdown: string | null;
   archivedLabel: string | null;
-  rename: {
-    action: string;
-    placeholder: string;
-    confirm: string;
-    cancel: string;
-    busy: string;
-    error: string;
-  };
 }
 
 function FlowIcon(): ReactElement {
@@ -79,16 +65,6 @@ function RunnerIcon(): ReactElement {
   );
 }
 
-function RenamePencilIcon(): ReactElement {
-  return (
-    <PencilIcon
-      aria-hidden="true"
-      className="h-3.5 w-3.5"
-      data-testid="rename-pencil-icon"
-    />
-  );
-}
-
 interface ViewProps {
   tone: RailWorkspaceTone;
   name: string;
@@ -96,14 +72,12 @@ interface ViewProps {
   time: string;
   issueHref: string | null;
   labels: ActiveWorkspaceRowLabels;
-  nameSlot?: ReactNode;
-  renameButton?: ReactNode;
   actions?: ReactNode;
 }
 
 // Pure presentational row — NO hooks. Two-line compact layout from preformatted
-// props. The name link, KEY-N link, rename pencil, and lifecycle icon buttons
-// are siblings of one another (never nested interactive elements).
+// props. Line 1 has a fixed min-height and a reserved right slot so swapping the
+// resting time for the hover actions never moves the row or the name link.
 export function ActiveWorkspaceRowView({
   tone,
   name,
@@ -111,8 +85,6 @@ export function ActiveWorkspaceRowView({
   time,
   issueHref,
   labels,
-  nameSlot,
-  renameButton,
   actions,
 }: ViewProps): ReactElement {
   return (
@@ -120,7 +92,7 @@ export function ActiveWorkspaceRowView({
       className="group relative flex flex-col gap-1 rounded-lg px-2.5 py-2 transition-colors hover:bg-ivory focus-within:bg-ivory"
       data-testid="active-workspace-row"
     >
-      <div className="flex items-center gap-2">
+      <div className="flex min-h-[26px] items-center gap-2">
         <span
           aria-label={labels.statusWord}
           className={clsx("h-2 w-2 shrink-0 rounded-full", dotByTone[tone])}
@@ -128,14 +100,12 @@ export function ActiveWorkspaceRowView({
           role="img"
           title={labels.statusWord}
         />
-        {nameSlot ?? (
-          <Link
-            className="min-w-0 flex-1 truncate font-mono text-[11.5px] font-semibold tracking-[-0.005em] text-ink hover:text-amber"
-            href={runHref}
-          >
-            {name}
-          </Link>
-        )}
+        <Link
+          className="min-w-0 flex-1 truncate font-mono text-[11.5px] font-semibold tracking-[-0.005em] text-ink hover:text-amber"
+          href={runHref}
+        >
+          {name}
+        </Link>
         {labels.attention ? (
           <span
             className="shrink-0 font-mono text-[10px] font-semibold tracking-[0.02em] text-attention"
@@ -144,17 +114,18 @@ export function ActiveWorkspaceRowView({
             {labels.statusWord}
           </span>
         ) : null}
-        <div className="flex shrink-0 items-center gap-1">
+        <div className="flex min-w-[76px] shrink-0 items-center justify-end gap-1">
           <span
             className="font-mono text-[10px] tracking-[0.04em] text-mute-2 group-hover:hidden group-focus-within:hidden"
             data-testid="row-time"
           >
             {time}
           </span>
-          <div className="hidden items-center gap-1 group-hover:flex group-focus-within:flex">
-            {renameButton}
-            {actions}
-          </div>
+          {actions ? (
+            <div className="hidden items-center gap-1 group-hover:flex group-focus-within:flex">
+              {actions}
+            </div>
+          ) : null}
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-1 pl-4">
@@ -231,8 +202,9 @@ export function ActiveWorkspaceRowView({
   );
 }
 
-// Thin client wrapper: owns the scratch rename input (PATCH → router.refresh)
-// and supplies the lifecycle icon-action cluster as a slot to the pure view.
+// Thin client wrapper: supplies the lifecycle `menu` action-sheet (inline Stop +
+// ⋯ overflow, with scratch rename inside the sheet) to the pure view. The menu
+// always offers "Open run", so it renders for every row.
 export function ActiveWorkspaceRow({
   row,
   labels,
@@ -240,150 +212,26 @@ export function ActiveWorkspaceRow({
   row: RailWorkspaceRow;
   labels: ActiveWorkspaceRowLabels;
 }): ReactElement {
-  const router = useRouter();
-  const [renaming, setRenaming] = useState(false);
-  const [value, setValue] = useState(row.name);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  // Focus the rename field when it opens — focus follows the explicit pencil
-  // click (so jsx-a11y/no-autofocus stays satisfied), never on page load.
-  useEffect(() => {
-    if (renaming) inputRef.current?.focus();
-  }, [renaming]);
-
-  const canRename = row.runKind === "scratch";
-
-  async function submit(): Promise<void> {
-    const trimmed = value.trim();
-
-    if (trimmed.length < 1 || trimmed.length > 200) {
-      setError(labels.rename.error);
-
-      return;
-    }
-    setBusy(true);
-    setError(null);
-
-    try {
-      const res = await fetch(`/api/scratch-runs/${row.runId}`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name: trimmed }),
-      });
-
-      if (!res.ok) {
-        setError(labels.rename.error);
-
-        return;
-      }
-
-      setRenaming(false);
-      router.refresh();
-    } catch {
-      setError(labels.rename.error);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function cancel(): void {
-    setRenaming(false);
-    setValue(row.name);
-    setError(null);
-  }
-
-  const nameSlot = renaming ? (
-    <span className="flex min-w-0 flex-1 items-center gap-1">
-      <input
-        ref={inputRef}
-        aria-label={labels.rename.placeholder}
-        className="min-w-0 flex-1 rounded-md border border-line bg-paper px-1.5 py-0.5 font-mono text-[11.5px] text-ink outline-none focus:border-amber"
-        data-testid="rename-input"
-        disabled={busy}
-        placeholder={labels.rename.placeholder}
-        value={value}
-        onChange={(event) => setValue(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") {
-            event.preventDefault();
-            void submit();
-          }
-          if (event.key === "Escape") {
-            event.preventDefault();
-            cancel();
-          }
-        }}
-      />
-      <button
-        className="inline-flex h-[26px] items-center rounded-md border border-amber bg-amber px-2 font-mono text-[9.5px] font-bold uppercase tracking-[0.06em] text-white hover:bg-amber-2 disabled:opacity-60"
-        data-testid="rename-save"
-        disabled={busy}
-        type="button"
-        onClick={() => void submit()}
-      >
-        {busy ? labels.rename.busy : labels.rename.confirm}
-      </button>
-      <button
-        className="inline-flex h-[26px] items-center rounded-md border border-line bg-paper px-2 font-mono text-[9.5px] font-bold uppercase tracking-[0.06em] text-mute hover:border-mute hover:text-ink-2 disabled:opacity-60"
-        disabled={busy}
-        type="button"
-        onClick={cancel}
-      >
-        {labels.rename.cancel}
-      </button>
-    </span>
-  ) : undefined;
-
-  const renameButton =
-    canRename && !renaming ? (
-      <button
-        aria-label={labels.rename.action}
-        className="inline-flex h-[26px] w-[26px] items-center justify-center rounded-md border border-line bg-paper text-mute hover:border-mute hover:text-ink-2"
-        data-testid="rename-pencil"
-        title={labels.rename.action}
-        type="button"
-        onClick={() => {
-          setValue(row.name);
-          setRenaming(true);
-        }}
-      >
-        <RenamePencilIcon />
-      </button>
-    ) : undefined;
-
-  const actions =
-    row.lifecycleActions.length > 0 ? (
-      <WorkbenchLifecycleActions
-        actions={row.lifecycleActions}
-        runId={row.runId}
-        runKind={row.runKind}
-        variant="icon"
-      />
-    ) : undefined;
-
   return (
-    <>
-      <ActiveWorkspaceRowView
-        actions={actions}
-        issueHref={row.issueHref}
-        labels={labels}
-        name={row.name}
-        nameSlot={nameSlot}
-        renameButton={renameButton}
-        runHref={row.href}
-        time={row.time}
-        tone={row.statusTone}
-      />
-      {error ? (
-        <p
-          className="px-2.5 pb-1 font-mono text-[9.5px] font-semibold text-attention"
-          role="alert"
-        >
-          {error}
-        </p>
-      ) : null}
-    </>
+    <ActiveWorkspaceRowView
+      actions={
+        <WorkbenchLifecycleActions
+          actions={row.lifecycleActions}
+          runHref={row.href}
+          runId={row.runId}
+          runKind={row.runKind}
+          runLabel={row.name}
+          taskKey={row.taskKey}
+          taskNumber={row.taskNumber}
+          variant="menu"
+        />
+      }
+      issueHref={row.issueHref}
+      labels={labels}
+      name={row.name}
+      runHref={row.href}
+      time={row.time}
+      tone={row.statusTone}
+    />
   );
 }
