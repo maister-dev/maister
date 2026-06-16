@@ -1754,6 +1754,10 @@ export const nodeAttempts = pgTable(
     // retry_policy after a retryable failure (vs user/rework initiated).
     autoRetry: boolean("auto_retry").notNull().default(false),
     stdout: text("stdout"),
+    // The final Mustache-resolved prompt sent to an ai_coding/judge node,
+    // captured at dispatch (migration 0053). Null for cli/check/human nodes and
+    // for attempts created before the column shipped.
+    resolvedPrompt: text("resolved_prompt"),
     vars: jsonb("vars").$type<Record<string, unknown>>().notNull().default({}),
     exitCode: integer("exit_code"),
     errorCode: text("error_code"),

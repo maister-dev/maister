@@ -19,7 +19,7 @@ import {
   systemCloseActiveAssignmentsForRun,
 } from "@/lib/assignments/service";
 import { getDb } from "@/lib/db/client";
-import { hitlRequests, runs } from "@/lib/db/schema";
+import { hitlRequests, nodeAttempts, runs } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { markCheckpointedFromExit } from "@/lib/runs/state-transitions";
 import {
@@ -619,6 +619,35 @@ export async function runAgentStep(
     },
     "agent step start",
   );
+
+  // Capture the resolved prompt for this attempt before dispatch so it stays
+  // visible even if the step later crashes or stalls. Best-effort: audit data,
+  // a failed write must never block dispatch.
+  if (ctx.nodeAttemptId) {
+    try {
+      await (ctx.db ?? getDb())
+        .update(nodeAttempts)
+        .set({ resolvedPrompt })
+        .where(eq(nodeAttempts.id, ctx.nodeAttemptId));
+      log.debug(
+        {
+          runId: ctx.runId,
+          nodeAttemptId: ctx.nodeAttemptId,
+          promptLen: resolvedPrompt.length,
+        },
+        "resolved_prompt persisted",
+      );
+    } catch (err) {
+      log.warn(
+        {
+          runId: ctx.runId,
+          nodeAttemptId: ctx.nodeAttemptId,
+          err: (err as Error).message,
+        },
+        "[runner-agent] resolved_prompt persist failed",
+      );
+    }
+  }
 
   if (step.mode === "new-session") {
     return runNewSession(step, ctx, supervisorApi, resolvedPrompt);
