@@ -144,6 +144,9 @@ const RUN_DIFF_LABELS: RunDiffLabels = {
   displayMode: "L.displayMode",
   rich: "L.rich",
   raw: "L.raw",
+  showFiles: "L.showFiles",
+  hideFiles: "L.hideFiles",
+  refresh: "L.refresh",
   viewMode: "L.viewMode",
   split: "L.split",
   unified: "L.unified",
@@ -519,7 +522,7 @@ describe("buildDiffViewReview — DiffView review object assembly", () => {
     expect(review).toBeUndefined();
   });
 
-  it("returns undefined until threads have landed (failed GET degrades to the bare diff)", () => {
+  it("keeps root commenting available while existing threads are still loading", () => {
     const review = buildDiffViewReview({
       context: reviewContext(),
       threads: null,
@@ -527,7 +530,9 @@ describe("buildDiffViewReview — DiffView review object assembly", () => {
       mutate: vi.fn<(mutation: ReviewMutation) => Promise<void>>(),
     });
 
-    expect(review).toBeUndefined();
+    expect(review).toBeDefined();
+    expect(review?.threads).toEqual([]);
+    expect(review?.canComment).toBe(true);
   });
 
   it("passes threads, identity, permission, busy and labels through", () => {

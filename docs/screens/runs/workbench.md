@@ -60,6 +60,7 @@ contract:
 | `diffFile=<repo-relative-path>` | Diff | Selected changed file in the Diff tab. This must not trigger source-file reads. |
 | `diffview=split\|unified` | Diff | Diff renderer mode. |
 | `diffbody=rich\|raw` | Diff | Diff body mode: syntax-rendered per-file view or raw unified patch text. |
+| `diffFiles=shown\|hidden` | Diff | Changed-file rail visibility. The default is `shown`; hiding the rail keeps the selected file body visible. |
 | `scope=run\|since-last-review\|last-node\|uncommitted` | Diff / inspector | Diff and change-summary scope. |
 | `node=<node-id>` | Flow result | Selected Flow node for non-scratch Flow runs. Ignored by standalone agent runs. |
 | `inspector=<state>` | Run shell | Inspector open/collapsed or selected inspector tab, depending on implementation detail. |
@@ -90,12 +91,15 @@ The workbench has a stable tab bar and preserves selection state across tabs.
    crashes, recoveries, promotions, token/cost chunks, and returned human work.
 2. **Diff** - a code-review-style pane with a fixed-height scroll frame:
    changed-file rail on the left, selected file body on the right, sticky
-   controls, additions / deletions, raw/rich body toggle, split/unified toggle
-   for rich mode, scope toggle, truncation banner, dirty-state banner, inline
-   review comments on the canonical run scope, outdated thread section, and
-   selected-file persistence. The current implementation shows one selected
-   file at a time; grouped/collapsible multi-file sections are a later
-   refinement.
+   icon controls, additions / deletions, rich/raw body toggle, split/unified
+   toggle for rich mode, show/hide file-rail control, refresh control on live
+   run diffs, scope toggle, truncation banner, dirty-state banner, inline review
+   comments on the canonical run scope, outdated thread section, and
+   selected-file persistence. Comment composition is available as soon as the
+   server-provided review context allows it; loading existing threads may show a
+   warning but must not remove the root-comment affordance. The current
+   implementation shows one selected file at a time; grouped/collapsible
+   multi-file sections are a later refinement.
 3. **Files** - git-tracked file tree, search/filter, file-type icons, selected
    file header, copy/open controls, and `Preview / Source` toggle where a
    preview exists. Markdown preview supports GFM, Mermaid, syntax-highlighted

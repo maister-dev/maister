@@ -14,6 +14,7 @@ export const RUN_DIFF_SCOPES = [
   "uncommitted",
 ] as const;
 export const RUN_DIFF_BODY_MODES = ["rich", "raw"] as const;
+export const RUN_DIFF_FILE_TREE_MODES = ["shown", "hidden"] as const;
 export const RUN_INSPECTOR_STATES = ["open", "closed"] as const;
 export const RUN_FLOW_STATES = ["fullscreen"] as const;
 
@@ -22,6 +23,7 @@ export type RunFileView = (typeof RUN_FILE_VIEWS)[number];
 export type RunDiffView = (typeof RUN_DIFF_VIEWS)[number];
 export type RunDiffScope = (typeof RUN_DIFF_SCOPES)[number];
 export type RunDiffBodyMode = (typeof RUN_DIFF_BODY_MODES)[number];
+export type RunDiffFileTreeMode = (typeof RUN_DIFF_FILE_TREE_MODES)[number];
 export type RunInspectorState = (typeof RUN_INSPECTOR_STATES)[number];
 export type RunFlowState = (typeof RUN_FLOW_STATES)[number];
 
@@ -32,6 +34,7 @@ export interface RunQueryState {
   diffFile: string | null;
   diffView: RunDiffView;
   diffBody: RunDiffBodyMode;
+  diffFiles: RunDiffFileTreeMode;
   scope: RunDiffScope;
   node: string | null;
   inspector: RunInspectorState | null;
@@ -53,6 +56,7 @@ export interface RunQueryPatch {
   diffFile?: string | null;
   diffview?: RunDiffView | null;
   diffbody?: RunDiffBodyMode | null;
+  diffFiles?: RunDiffFileTreeMode | null;
   scope?: RunDiffScope | null;
   node?: string | null;
   inspector?: RunInspectorState | null;
@@ -118,6 +122,11 @@ export function parseRunQueryState(input: RunSearchParamsInput): RunQueryState {
       RUN_DIFF_BODY_MODES,
       "rich",
     ),
+    diffFiles: enumOrDefault(
+      params.get("diffFiles"),
+      RUN_DIFF_FILE_TREE_MODES,
+      "shown",
+    ),
     scope: enumOrDefault(params.get("scope"), RUN_DIFF_SCOPES, "run"),
     node: params.get("node"),
     inspector: enumOrNull(params.get("inspector"), RUN_INSPECTOR_STATES),
@@ -151,6 +160,7 @@ export function buildRunSearchParams(
   setOptionalParam(params, "diffFile", patch.diffFile);
   setOptionalParam(params, "diffview", patch.diffview);
   setOptionalParam(params, "diffbody", patch.diffbody);
+  setOptionalParam(params, "diffFiles", patch.diffFiles);
   setOptionalParam(params, "scope", patch.scope);
   setOptionalParam(params, "node", patch.node);
   setOptionalParam(params, "inspector", patch.inspector);

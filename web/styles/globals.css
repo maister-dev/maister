@@ -453,6 +453,11 @@ input:-webkit-autofill:active {
   color: var(--shiki-dark);
 }
 
+[data-review-can-comment="true"] .diff-line:hover .diff-add-widget-wrapper,
+[data-review-can-comment="true"] .diff-add-widget-wrapper:focus-within {
+  visibility: visible;
+}
+
 .shiki {
   margin: 0;
   padding: 12px 14px;

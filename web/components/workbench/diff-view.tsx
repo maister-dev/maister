@@ -25,6 +25,7 @@ import {
   buildRunDiffFileHref,
   buildRunHref,
   type RunDiffBodyMode,
+  type RunDiffFileTreeMode,
 } from "@/lib/runs/run-query-state";
 import { useTheme } from "@/lib/theme";
 
@@ -60,6 +61,7 @@ export type PreparedFile = {
 
 export type DiffViewMode = "split" | "unified";
 export type DiffBodyMode = RunDiffBodyMode;
+export type DiffFileTreeMode = RunDiffFileTreeMode;
 
 export interface DiffViewLabels {
   empty: string;
@@ -69,6 +71,9 @@ export interface DiffViewLabels {
   displayMode: string;
   rich: string;
   raw: string;
+  showFiles: string;
+  hideFiles: string;
+  refresh: string;
   viewMode: string;
   split: string;
   unified: string;
@@ -221,9 +226,11 @@ export interface DiffViewProps {
   mode?: DiffViewMode;
   // Optional explicit override; otherwise resolved from `?diffbody=`.
   bodyMode?: DiffBodyMode;
+  fileTreeMode?: DiffFileTreeMode;
   // Raw unified patch text for the workbench raw/rich body toggle. Surfaces
   // that only have prepared bundles omit it and render the rich body only.
   rawDiff?: string;
+  onRefresh?: () => void;
   // The producing diff was cut at the 4 MiB buffer bound: `files`/`perFile` are
   // a partial prefix. Surfaces a blocking banner so a partial diff is never read
   // as the whole change.
@@ -244,13 +251,172 @@ function parseDiffBody(raw: string | null): DiffBodyMode {
   return raw === "raw" ? "raw" : "rich";
 }
 
-function toggleButtonClass(active: boolean): string {
+function parseDiffFileTree(raw: string | null): DiffFileTreeMode {
+  return raw === "hidden" ? "hidden" : "shown";
+}
+
+function toolbarButtonClass(active: boolean): string {
   return [
-    "rounded-[6px] px-2 py-1 font-mono text-[11px] text-ink-2 hover:bg-ivory",
-    active ? "bg-ivory font-semibold text-ink" : "",
+    "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] border border-transparent text-ink-2 hover:bg-ivory hover:text-ink focus-visible:border-ink focus-visible:outline-none",
+    active ? "border-line bg-ivory text-ink" : "",
   ]
     .filter(Boolean)
     .join(" ");
+}
+
+type ToolbarIconButtonProps = {
+  label: string;
+  testId: string;
+  icon: ReactElement;
+  pressed?: boolean;
+  onClick: () => void;
+};
+
+function ToolbarIconButton({
+  label,
+  testId,
+  icon,
+  pressed,
+  onClick,
+}: ToolbarIconButtonProps): ReactElement {
+  return (
+    <button
+      aria-label={label}
+      aria-pressed={pressed}
+      className={toolbarButtonClass(pressed === true)}
+      data-testid={testId}
+      title={label}
+      type="button"
+      onClick={onClick}
+    >
+      {icon}
+    </button>
+  );
+}
+
+function RichDiffIcon(): ReactElement {
+  return (
+    <svg
+      aria-hidden="true"
+      className="h-3.5 w-3.5"
+      fill="none"
+      viewBox="0 0 16 16"
+    >
+      <path
+        d="M3 3.5h10M3 6.5h6M3 9.5h10M3 12.5h7"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="1.6"
+      />
+    </svg>
+  );
+}
+
+function RawDiffIcon(): ReactElement {
+  return (
+    <svg
+      aria-hidden="true"
+      className="h-3.5 w-3.5"
+      fill="none"
+      viewBox="0 0 16 16"
+    >
+      <path
+        d="m6 4-4 4 4 4M10 4l4 4-4 4"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.6"
+      />
+    </svg>
+  );
+}
+
+function SplitDiffIcon(): ReactElement {
+  return (
+    <svg
+      aria-hidden="true"
+      className="h-3.5 w-3.5"
+      fill="none"
+      viewBox="0 0 16 16"
+    >
+      <path
+        d="M2.75 3.25h10.5v9.5H2.75zM8 3.25v9.5"
+        stroke="currentColor"
+        strokeLinejoin="round"
+        strokeWidth="1.4"
+      />
+    </svg>
+  );
+}
+
+function UnifiedDiffIcon(): ReactElement {
+  return (
+    <svg
+      aria-hidden="true"
+      className="h-3.5 w-3.5"
+      fill="none"
+      viewBox="0 0 16 16"
+    >
+      <path
+        d="M3 3.25h10v9.5H3zM5 6h6M5 8h6M5 10h4"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.4"
+      />
+    </svg>
+  );
+}
+
+function FileTreeIcon({ hidden }: { hidden: boolean }): ReactElement {
+  return (
+    <svg
+      aria-hidden="true"
+      className="h-3.5 w-3.5"
+      fill="none"
+      viewBox="0 0 16 16"
+    >
+      <path
+        d="M3 3.25h4.25L8.5 4.75H13v8H3z"
+        stroke="currentColor"
+        strokeLinejoin="round"
+        strokeWidth="1.35"
+      />
+      <path
+        d="M5 7h6M5 9h4M5 11h5"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="1.2"
+      />
+      {hidden ? (
+        <path
+          d="M3 13 13 3"
+          stroke="currentColor"
+          strokeLinecap="round"
+          strokeWidth="1.5"
+        />
+      ) : null}
+    </svg>
+  );
+}
+
+function RefreshIcon(): ReactElement {
+  return (
+    <svg
+      aria-hidden="true"
+      className="h-3.5 w-3.5"
+      fill="none"
+      viewBox="0 0 16 16"
+    >
+      <path
+        d="M12.5 5.25A5 5 0 1 0 13 9M12.5 5.25V2.75M12.5 5.25H10"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.5"
+      />
+    </svg>
+  );
 }
 
 // The committed run-branch diff, rendered by git-diff-view. The per-file syntax
@@ -272,7 +438,9 @@ export function DiffView({
   labels,
   mode,
   bodyMode,
+  fileTreeMode,
   rawDiff,
+  onRefresh,
   truncated = false,
   renderUnavailable = false,
   review,
@@ -287,6 +455,9 @@ export function DiffView({
   const diffBodyMode: DiffBodyMode = rawDiffAvailable
     ? (bodyMode ?? parseDiffBody(searchParams?.get("diffbody") ?? null))
     : "rich";
+  const diffFileTreeMode: DiffFileTreeMode =
+    fileTreeMode ?? parseDiffFileTree(searchParams?.get("diffFiles") ?? null);
+  const fileTreeVisible = diffFileTreeMode === "shown";
 
   const setViewMode = (next: DiffViewMode): void => {
     router.push(
@@ -301,6 +472,15 @@ export function DiffView({
     router.push(
       buildRunHref(pathname, searchParams?.toString() ?? "", {
         diffbody: next,
+      }),
+      { scroll: false },
+    );
+  };
+
+  const setFileTreeMode = (next: DiffFileTreeMode): void => {
+    router.push(
+      buildRunHref(pathname, searchParams?.toString() ?? "", {
+        diffFiles: next,
       }),
       { scroll: false },
     );
@@ -432,28 +612,39 @@ export function DiffView({
         </p>
       ) : null}
       <div
-        className="grid min-h-[520px] max-h-[calc(100vh-260px)] grid-cols-1 overflow-hidden rounded-[10px] border border-line bg-paper md:grid-cols-[minmax(220px,320px)_minmax(0,1fr)]"
+        className={[
+          "grid min-h-[520px] max-h-[calc(100vh-260px)] grid-cols-1 overflow-hidden rounded-[10px] border border-line bg-paper",
+          fileTreeVisible
+            ? "md:grid-cols-[minmax(220px,320px)_minmax(0,1fr)]"
+            : "md:grid-cols-1",
+        ].join(" ")}
         data-diff-body-mode={diffBodyMode}
+        data-diff-file-tree-mode={diffFileTreeMode}
         data-diff-mode={viewMode}
+        data-review-can-comment={
+          review?.canComment && activePath !== null ? "true" : undefined
+        }
         data-testid="diff-view"
       >
-        <aside
-          className="min-h-0 overflow-hidden border-b border-line bg-paper md:border-b-0 md:border-r"
-          data-testid="diff-view-file-list"
-        >
-          <div className="h-full min-h-0 overflow-auto p-1.5">
-            <ChangedFilesList
-              files={files}
-              labels={{
-                empty: labels.empty,
-                added: labels.added,
-                removed: labels.removed,
-              }}
-              selectedPath={activePath}
-              onSelect={selectDiffFile}
-            />
-          </div>
-        </aside>
+        {fileTreeVisible ? (
+          <aside
+            className="min-h-0 overflow-hidden border-b border-line bg-paper md:border-b-0 md:border-r"
+            data-testid="diff-view-file-list"
+          >
+            <div className="h-full min-h-0 overflow-auto p-1.5">
+              <ChangedFilesList
+                files={files}
+                labels={{
+                  empty: labels.empty,
+                  added: labels.added,
+                  removed: labels.removed,
+                }}
+                selectedPath={activePath}
+                onSelect={selectDiffFile}
+              />
+            </div>
+          </aside>
+        ) : null}
         <section className="flex min-h-0 min-w-0 flex-col overflow-hidden">
           <div
             className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-2 border-b border-line bg-paper/95 px-2 py-1.5 backdrop-blur"
@@ -475,24 +666,20 @@ export function DiffView({
                   className="flex gap-1"
                   role="group"
                 >
-                  <button
-                    aria-pressed={diffBodyMode === "rich"}
-                    className={toggleButtonClass(diffBodyMode === "rich")}
-                    data-testid="diff-view-body-rich"
-                    type="button"
+                  <ToolbarIconButton
+                    icon={<RichDiffIcon />}
+                    label={labels.rich}
+                    pressed={diffBodyMode === "rich"}
+                    testId="diff-view-body-rich"
                     onClick={() => setBodyMode("rich")}
-                  >
-                    {labels.rich}
-                  </button>
-                  <button
-                    aria-pressed={diffBodyMode === "raw"}
-                    className={toggleButtonClass(diffBodyMode === "raw")}
-                    data-testid="diff-view-body-raw"
-                    type="button"
+                  />
+                  <ToolbarIconButton
+                    icon={<RawDiffIcon />}
+                    label={labels.raw}
+                    pressed={diffBodyMode === "raw"}
+                    testId="diff-view-body-raw"
                     onClick={() => setBodyMode("raw")}
-                  >
-                    {labels.raw}
-                  </button>
+                  />
                 </div>
               ) : null}
               {diffBodyMode === "rich" ? (
@@ -501,25 +688,38 @@ export function DiffView({
                   className="flex gap-1"
                   role="group"
                 >
-                  <button
-                    aria-pressed={viewMode === "split"}
-                    className={toggleButtonClass(viewMode === "split")}
-                    data-testid="diff-view-mode-split"
-                    type="button"
+                  <ToolbarIconButton
+                    icon={<SplitDiffIcon />}
+                    label={labels.split}
+                    pressed={viewMode === "split"}
+                    testId="diff-view-mode-split"
                     onClick={() => setViewMode("split")}
-                  >
-                    {labels.split}
-                  </button>
-                  <button
-                    aria-pressed={viewMode === "unified"}
-                    className={toggleButtonClass(viewMode === "unified")}
-                    data-testid="diff-view-mode-unified"
-                    type="button"
+                  />
+                  <ToolbarIconButton
+                    icon={<UnifiedDiffIcon />}
+                    label={labels.unified}
+                    pressed={viewMode === "unified"}
+                    testId="diff-view-mode-unified"
                     onClick={() => setViewMode("unified")}
-                  >
-                    {labels.unified}
-                  </button>
+                  />
                 </div>
+              ) : null}
+              <ToolbarIconButton
+                icon={<FileTreeIcon hidden={fileTreeVisible} />}
+                label={fileTreeVisible ? labels.hideFiles : labels.showFiles}
+                pressed={!fileTreeVisible}
+                testId="diff-view-files-toggle"
+                onClick={() =>
+                  setFileTreeMode(fileTreeVisible ? "hidden" : "shown")
+                }
+              />
+              {onRefresh ? (
+                <ToolbarIconButton
+                  icon={<RefreshIcon />}
+                  label={labels.refresh}
+                  testId="diff-view-refresh"
+                  onClick={onRefresh}
+                />
               ) : null}
             </div>
           </div>

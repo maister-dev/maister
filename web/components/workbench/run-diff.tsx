@@ -32,6 +32,9 @@ export interface RunDiffLabels {
   displayMode: string;
   rich: string;
   raw: string;
+  showFiles: string;
+  hideFiles: string;
+  refresh: string;
   viewMode: string;
   split: string;
   unified: string;
@@ -274,9 +277,9 @@ export async function executeReviewMutation(
   }
 }
 
-// Review mode reaches DiffView only when the server context AND the first
-// successful threads fetch are both present — a failed GET degrades to the
-// bare diff instead of blanking it.
+// Review mode reaches DiffView as soon as the server context says the user may
+// review. Existing threads are best-effort; root commenting must not disappear
+// while that GET is still pending or degraded.
 export function buildDiffViewReview(args: {
   context: RunDiffReviewContext | undefined;
   threads: ReviewThread[] | null;
@@ -285,10 +288,10 @@ export function buildDiffViewReview(args: {
 }): DiffViewReview | undefined {
   const { context, threads, busy, mutate } = args;
 
-  if (!context || threads === null) return undefined;
+  if (!context) return undefined;
 
   return {
-    threads,
+    threads: threads ?? [],
     currentUserId: context.currentUserId,
     canComment: context.canComment,
     busy,
@@ -337,6 +340,7 @@ export default function RunDiff({
   const requestedScope = diffScopeOrDefault(searchParams.get("scope"));
   const [state, setState] = useState<DiffState>({ kind: "loading" });
   const [scope, setScope] = useState<DiffScope>(requestedScope);
+  const [refreshNonce, setRefreshNonce] = useState(0);
   const [scopes, setScopes] = useState<DiffScopeAvailability | null>(null);
   const [threads, setThreads] = useState<ReviewThread[] | null>(null);
   const [reviewBusy, setReviewBusy] = useState(false);
@@ -393,7 +397,7 @@ export default function RunDiff({
     return () => {
       cancelled = true;
     };
-  }, [runId, scope]);
+  }, [runId, scope, refreshNonce]);
 
   // Sibling effect → the threads GET runs in parallel with the diff GET and
   // never blocks the diff render; review mode appears when threads land.
@@ -402,14 +406,18 @@ export default function RunDiff({
 
     void loadReviewThreads(runId, hasReview, (result) => {
       if (cancelled) return;
-      if ("threads" in result) setThreads(result.threads);
-      else setReviewError(result.error);
+      if ("threads" in result) {
+        setThreads(result.threads);
+        setReviewError(null);
+      } else {
+        setReviewError(result.error);
+      }
     });
 
     return () => {
       cancelled = true;
     };
-  }, [runId, hasReview]);
+  }, [runId, hasReview, refreshNonce]);
 
   const mutate = useCallback(
     (mutation: ReviewMutation): Promise<void> =>
@@ -445,6 +453,11 @@ export default function RunDiff({
       }),
       { scroll: false },
     );
+  };
+
+  const refreshDiff = (): void => {
+    setRefreshNonce((value) => value + 1);
+    router.refresh();
   };
 
   if (state.kind === "loading") {
@@ -533,6 +546,9 @@ export default function RunDiff({
           displayMode: labels.displayMode,
           rich: labels.rich,
           raw: labels.raw,
+          showFiles: labels.showFiles,
+          hideFiles: labels.hideFiles,
+          refresh: labels.refresh,
           viewMode: labels.viewMode,
           split: labels.split,
           unified: labels.unified,
@@ -543,6 +559,7 @@ export default function RunDiff({
         renderUnavailable={state.renderUnavailable}
         review={hasReview ? diffReview : undefined}
         truncated={state.truncated}
+        onRefresh={refreshDiff}
       />
     </div>
   );
