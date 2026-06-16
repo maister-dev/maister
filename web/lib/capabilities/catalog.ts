@@ -23,6 +23,15 @@ import pino from "pino";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { getProjectAgentsView } from "@/lib/agents/project-links";
+import { loadSelectableCapabilities } from "@/lib/capabilities/resolver";
+import {
+  type CapabilityAgentsMask,
+  type ProjectCapabilityCatalogEntry,
+  skillCatalogEntry,
+  subagentCatalogEntry,
+} from "@/lib/capabilities/project-catalog";
+import { splitFrontmatter } from "@/lib/flows/artifact-frontmatter";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { capabilityRecords } = schemaModule as unknown as Record<string, any>;
@@ -60,6 +69,33 @@ function redactedEnv(env: Record<string, string> | undefined): string[] {
   return Object.keys(env ?? {}).sort();
 }
 
+// FR-B1: capture a skill's `description` + `argument-hint` from its SKILL.md
+// frontmatter into material. Rebuilt wholesale per upsert, so dropping the
+// frontmatter on reinstall clears these (SET/CLEAR symmetry).
+function skillFrontmatterMaterial(content: string | null | undefined): {
+  description?: string;
+  argHint?: string;
+} {
+  if (!content) return {};
+
+  const split = splitFrontmatter(content);
+
+  if (!split.ok || !split.frontmatter) return {};
+
+  const out: { description?: string; argHint?: string } = {};
+  const description = split.frontmatter.description;
+  const argHint = split.frontmatter["argument-hint"];
+
+  if (typeof description === "string" && description.trim().length > 0) {
+    out.description = description;
+  }
+  if (typeof argHint === "string" && argHint.trim().length > 0) {
+    out.argHint = argHint;
+  }
+
+  return out;
+}
+
 function baseMaterial(c: ProjectCapabilityConfig): CapabilityMaterial {
   switch (c.kind) {
     case "mcp":
@@ -81,6 +117,7 @@ function baseMaterial(c: ProjectCapabilityConfig): CapabilityMaterial {
         url: c.url ?? null,
         path: c.path ?? null,
         hasContent: !!c.content,
+        ...skillFrontmatterMaterial(c.content),
       };
     case "rule":
       return { path: c.path ?? null, hasContent: !!c.content };
@@ -378,4 +415,76 @@ async function assertConfigDoesNotOverwriteAuthoredRecord(
       `config capability ${record.source}/${record.kind}/${record.capabilityRefId} would overwrite authored capability projection ${existing.id}`,
     );
   }
+}
+
+/**
+ * Unified composer read model (FR-B2/B3): a project's selectable skills (each
+ * with its per-runner wire form + install-captured description/argHint) plus
+ * claude-only coder subagents. Switching `capabilityAgent` flips skill surface
+ * forms and toggles subagent inclusion with NO other change. The per-entry
+ * mapping is pure (project-catalog.ts); this loads from the DB.
+ */
+export async function getProjectCapabilityCatalog(
+  projectId: string,
+  capabilityAgent: CapabilityAgent,
+  db: any = getDb(),
+): Promise<ProjectCapabilityCatalogEntry[]> {
+  const records = await loadSelectableCapabilities(projectId, db);
+  const skills = records
+    .filter((r) => r.kind === "skill")
+    .map((r) =>
+      skillCatalogEntry(
+        {
+          refId: r.capabilityRefId,
+          label: r.label,
+          agents: r.agents as CapabilityAgentsMask,
+          material: r.material,
+        },
+        capabilityAgent,
+      ),
+    );
+
+  const entries: ProjectCapabilityCatalogEntry[] = [...skills];
+
+  // Subagents are claude-only (FR-B3): excluded entirely for other runners.
+  if (capabilityAgent === "claude") {
+    const { attached } = await getProjectAgentsView(projectId, db);
+
+    for (const view of attached) {
+      const row = view.agent as Record<string, unknown>;
+
+      if (row.mode !== "subagent" || !view.enabled) continue;
+
+      entries.push(
+        subagentCatalogEntry({
+          refId: String(row.id),
+          slug: subagentSlug(row),
+          displayName: String(row.name ?? row.id),
+          description:
+            typeof row.description === "string" ? row.description : null,
+        }),
+      );
+    }
+  }
+
+  log.debug(
+    {
+      projectId,
+      runner: capabilityAgent,
+      skillCount: skills.length,
+      subagentCount: entries.length - skills.length,
+    },
+    "getProjectCapabilityCatalog",
+  );
+
+  return entries;
+}
+
+// Coder subagents are invoked as `@<stem>` where stem is the `.md` filename
+// (e.g. `agents/reviewer.md` → `@reviewer`); fall back to name/id.
+function subagentSlug(row: Record<string, unknown>): string {
+  const sourcePath = typeof row.sourcePath === "string" ? row.sourcePath : "";
+  const stem = sourcePath.split("/").at(-1)?.replace(/\.md$/i, "") ?? "";
+
+  return stem || String(row.name ?? row.id);
 }

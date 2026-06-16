@@ -88,9 +88,9 @@ Rationale: This feature completes M14's materialization contract by generalizing
 <!-- Commit checkpoint: Phase 1 -->
 
 ### Phase 2 — B: install-time catalog enrichment + project+runner query
-- [ ] **T2.1 (RED)** Failing tests (web unit + integration via testcontainers — name both lanes) for: install/projection capturing `material.description`/`material.argHint` from `SKILL.md` frontmatter; `getProjectCapabilityCatalog(projectId, capabilityAgent)` returns project-connected, runner-supported caps with descriptions; codex excludes subagents, claude includes them; surface forms correct (FR-B1/B2/B3).
-- [ ] **T2.2 (GREEN)** Enrich the projection that writes `capabilityRecords` (`web/lib/capabilities/catalog.ts` + package install) to parse + store frontmatter into `material` (NO migration). Config-state symmetry (Rule): SET present → stored; CLEAR (frontmatter removed on reinstall) → cleared; idempotent re-set — all three tested.
-- [ ] **T2.3 (GREEN)** Implement `getProjectCapabilityCatalog` (skills from `capabilityRecords`, subagents from `agents` via `getProjectAgentsView`, enabled+trusted filter, runner mask + surface form). Logging: DEBUG `{projectId, runner, skillCount, subagentCount}`.
+- [x] **T2.1 (RED)** Failing tests (web unit + integration via testcontainers — name both lanes) for: install/projection capturing `material.description`/`material.argHint` from `SKILL.md` frontmatter; `getProjectCapabilityCatalog(projectId, capabilityAgent)` returns project-connected, runner-supported caps with descriptions; codex excludes subagents, claude includes them; surface forms correct (FR-B1/B2/B3).
+- [x] **T2.2 (GREEN)** Enrich the projection that writes `capabilityRecords` (`web/lib/capabilities/catalog.ts` + package install) to parse + store frontmatter into `material` (NO migration). Config-state symmetry (Rule): SET present → stored; CLEAR (frontmatter removed on reinstall) → cleared; idempotent re-set — all three tested.
+- [x] **T2.3 (GREEN)** Implement `getProjectCapabilityCatalog` (skills from `capabilityRecords`, subagents from `agents` via `getProjectAgentsView`, enabled+trusted filter, runner mask + surface form). Logging: DEBUG `{projectId, runner, skillCount, subagentCount}`.
 <!-- Commit checkpoint: Phase 2 -->
 
 ### Phase 3 — C: per-adapter materialization (ALL 5 adapters) + scratch broad policy + subagents
