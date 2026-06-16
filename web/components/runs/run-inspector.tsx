@@ -1,14 +1,60 @@
 "use client";
 
-import type { ReactElement } from "react";
+import type { ComponentType, ReactElement } from "react";
 
 import { useState } from "react";
+import {
+  ArchiveBoxIcon,
+  ArrowPathIcon,
+  ArrowRightCircleIcon,
+  ArrowsRightLeftIcon,
+  ArrowUpTrayIcon,
+  CameraIcon,
+  ChatBubbleLeftRightIcon,
+  ChevronRightIcon,
+  DocumentTextIcon,
+  EyeIcon,
+  RocketLaunchIcon,
+  StopIcon,
+  TrashIcon,
+} from "@heroicons/react/24/outline";
 import clsx from "clsx";
 
 import {
   buildRunDiffFileHref,
   buildRunFileHref,
 } from "@/lib/runs/run-query-state";
+
+type InspectorIcon = ComponentType<{ className?: string }>;
+
+const ACTION_ICONS: Record<string, InspectorIcon> = {
+  stop: StopIcon,
+  recover: ArrowPathIcon,
+  snapshotCommit: CameraIcon,
+  exportBranch: ArrowUpTrayIcon,
+  handoffBranch: ArrowRightCircleIcon,
+  promote: RocketLaunchIcon,
+  promotePullRequest: ArrowsRightLeftIcon,
+  archive: ArchiveBoxIcon,
+  drop: TrashIcon,
+  discard: TrashIcon,
+  reviewChanges: EyeIcon,
+  viewUncommittedDiff: DocumentTextIcon,
+  openPendingInput: ChatBubbleLeftRightIcon,
+  openAgentChat: ChatBubbleLeftRightIcon,
+};
+
+// Cleanup actions that destroy or detach work — rendered in a separate,
+// danger-toned group below the divider (T5.1).
+const DANGER_ACTIONS: ReadonlySet<string> = new Set([
+  "drop",
+  "discard",
+  "archive",
+]);
+
+function actionIcon(id: string): InspectorIcon {
+  return ACTION_ICONS[id] ?? ChevronRightIcon;
+}
 
 export type RunInspectorTab = "overview" | "changes" | "flow" | "actions";
 
@@ -109,6 +155,66 @@ function summaryText(summary: RunInspectorChangeSummary | null): string {
   return `${summary.fileCount} files | +${summary.additions} -${summary.deletions}`;
 }
 
+function InspectorActionItem({
+  action,
+  labels,
+  danger = false,
+}: {
+  action: RunInspectorAction;
+  labels: RunInspectorLabels;
+  danger?: boolean;
+}): ReactElement {
+  const Icon = actionIcon(action.id);
+
+  return (
+    <li
+      className={clsx(
+        "flex items-start gap-2 rounded-[6px] border bg-paper p-2",
+        danger ? "border-red-200" : "border-line",
+      )}
+      data-disabled={action.disabled ? "true" : "false"}
+      data-testid="run-inspector-action"
+    >
+      <Icon
+        className={clsx(
+          "mt-0.5 h-3.5 w-3.5 shrink-0",
+          danger ? "text-red-600" : "text-mute",
+        )}
+      />
+      <div className="min-w-0">
+        {action.href && !action.disabled ? (
+          <a
+            className={clsx(
+              "text-[13px] font-semibold hover:underline",
+              danger ? "text-red-700" : "text-ink",
+            )}
+            href={action.href}
+          >
+            {action.label}
+          </a>
+        ) : (
+          <span
+            className={clsx(
+              "text-[13px] font-semibold",
+              danger ? "text-red-700" : "text-ink",
+            )}
+          >
+            {action.label}
+          </span>
+        )}
+        {action.description ? (
+          <p className="m-0 mt-1 text-[12px] text-mute">{action.description}</p>
+        ) : null}
+        {action.disabled ? (
+          <p className="m-0 mt-1 font-mono text-[10px] text-mute">
+            {action.disabledReason ?? labels.disabled}
+          </p>
+        ) : null}
+      </div>
+    </li>
+  );
+}
+
 export function RunInspector({
   runId,
   labels,
@@ -122,6 +228,12 @@ export function RunInspector({
 }: RunInspectorProps): ReactElement {
   const [activeTab, setActiveTab] = useState<RunInspectorTab>("overview");
   const changeText = summaryText(changeSummary);
+  const dangerActions = actions.filter((action) =>
+    DANGER_ACTIONS.has(action.id),
+  );
+  const normalActions = actions.filter(
+    (action) => !DANGER_ACTIONS.has(action.id),
+  );
 
   return (
     <section
@@ -304,38 +416,29 @@ export function RunInspector({
 
       <div hidden={activeTab !== "actions"} role="tabpanel">
         <ul className="m-0 flex list-none flex-col gap-2 p-0">
-          {actions.map((action) => (
-            <li
+          {normalActions.map((action) => (
+            <InspectorActionItem
               key={action.id}
-              className="rounded-[6px] border border-line bg-paper p-2"
-              data-disabled={action.disabled ? "true" : "false"}
-              data-testid="run-inspector-action"
-            >
-              {action.href && !action.disabled ? (
-                <a
-                  className="text-[13px] font-semibold text-ink hover:underline"
-                  href={action.href}
-                >
-                  {action.label}
-                </a>
-              ) : (
-                <span className="text-[13px] font-semibold text-ink">
-                  {action.label}
-                </span>
-              )}
-              {action.description ? (
-                <p className="m-0 mt-1 text-[12px] text-mute">
-                  {action.description}
-                </p>
-              ) : null}
-              {action.disabled ? (
-                <p className="m-0 mt-1 font-mono text-[10px] text-mute">
-                  {action.disabledReason ?? labels.disabled}
-                </p>
-              ) : null}
-            </li>
+              action={action}
+              labels={labels}
+            />
           ))}
         </ul>
+        {dangerActions.length > 0 ? (
+          <ul
+            className="m-0 mt-2 flex list-none flex-col gap-2 border-t border-dashed border-line p-0 pt-2"
+            data-testid="run-inspector-danger-actions"
+          >
+            {dangerActions.map((action) => (
+              <InspectorActionItem
+                key={action.id}
+                danger
+                action={action}
+                labels={labels}
+              />
+            ))}
+          </ul>
+        ) : null}
       </div>
     </section>
   );

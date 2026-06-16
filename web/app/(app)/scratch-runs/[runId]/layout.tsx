@@ -22,6 +22,10 @@ import { getProjectRole, getSessionUser } from "@/lib/authz";
 import { isMaisterError } from "@/lib/errors";
 import { getRunDetail } from "@/lib/queries/run";
 import { getRunChangeSummary } from "@/lib/runs/change-summary";
+import {
+  buildScratchSessionFlowSummary,
+  getScratchSessionSummary,
+} from "@/lib/scratch-runs/session-summary";
 
 type LayoutProps = {
   children: ReactNode;
@@ -82,6 +86,15 @@ export default async function ScratchRunDetailLayout({
 
     changeSummary = unavailableChangeSummary(t("inspectorUnavailable"));
   }
+
+  const session = await getScratchSessionSummary(detail.runId);
+  const sessionSummary = session
+    ? buildScratchSessionFlowSummary(session, {
+        title: t("inspectorSessionTitle"),
+        dialog: t("inspectorSessionDialog"),
+        capabilities: t("capabilityTitle"),
+      })
+    : null;
 
   const shellLabels: RunShellLabels = {
     branch: t("headerBranch"),
@@ -144,7 +157,14 @@ export default async function ScratchRunDetailLayout({
     { label: t("headerBranch"), value: detail.branch },
     { label: t("baseBranch"), value: detail.baseBranch ?? "-" },
     { label: t("targetBranch"), value: detail.targetBranch ?? "-" },
-    { label: t("inspectorWorktree"), value: detail.worktreePath },
+    {
+      label: t("inspectorWorktree"),
+      value: detail.pruned
+        ? `${detail.worktreePath} (${t("inspectorWorktreeRemoved")})`
+        : detail.archived
+          ? `${detail.worktreePath} (${t("inspectorWorktreeArchived")})`
+          : detail.worktreePath,
+    },
   ];
   const inspectorActions: RunInspectorAction[] = [
     {
@@ -168,7 +188,7 @@ export default async function ScratchRunDetailLayout({
             changeScope="run"
             changeSummary={changeSummary}
             facts={inspectorFacts}
-            flowSummary={null}
+            flowSummary={sessionSummary}
             labels={inspectorLabels}
             pathname={`/scratch-runs/${detail.runId}`}
             runId={detail.runId}

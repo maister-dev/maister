@@ -833,6 +833,28 @@ export default async function RunDetailLayout({
     { label: t("flowCenterStatus"), value: detail.status },
     { label: t("agentCenterRunner"), value: detail.agent },
     { label: t("inspectorRunKind"), value: detail.runKind },
+    { label: t("headerBranch"), value: detail.branch },
+    { label: t("baseBranch"), value: detail.baseBranch ?? "-" },
+    { label: t("targetBranch"), value: detail.targetBranch ?? "-" },
+    {
+      label: t("inspectorWorktree"),
+      value: detail.pruned
+        ? `${detail.worktreePath} (${t("inspectorWorktreeRemoved")})`
+        : detail.archived
+          ? `${detail.worktreePath} (${t("inspectorWorktreeArchived")})`
+          : detail.worktreePath,
+    },
+    ...(detail.prNumber !== null || detail.prUrl
+      ? [
+          {
+            label: t("prLink"),
+            value:
+              detail.prNumber !== null
+                ? `#${detail.prNumber}`
+                : (detail.prUrl ?? "-"),
+          },
+        ]
+      : []),
     {
       label: t("costSummaryTitle"),
       value: formatTokens(costSummary.totalTokens),

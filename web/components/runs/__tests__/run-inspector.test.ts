@@ -176,4 +176,23 @@ describe("RunInspector", () => {
     expect(staleHtml).toContain('data-testid="run-inspector-stale"');
     expect(staleHtml).toContain("May be stale");
   });
+
+  it("separates high-risk cleanup actions into a danger group", () => {
+    const html = renderToStaticMarkup(
+      createElement(RunInspector, {
+        runId: "run-1",
+        labels: LABELS,
+        facts: [],
+        changeSummary: null,
+        actions: [
+          { id: "promote", label: "Promote" },
+          { id: "drop", label: "Discard" },
+        ],
+      }),
+    );
+
+    expect(html).toContain('data-testid="run-inspector-danger-actions"');
+    // Both the normal (promote) and danger (drop) actions render as items.
+    expect(html.split('data-testid="run-inspector-action"').length - 1).toBe(2);
+  });
 });
