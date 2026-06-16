@@ -26,9 +26,10 @@ account actions (change password, sign out); admin destinations live in the
 ## Layout & regions
 
 Left: logo + a breadcrumb (`~/projects` and the active crumb). Right: language
-switch, theme switch, and the user menu. After WI-3 the breadcrumb no longer
-carries a supervisor status dot — supervisor status is shown once in the footer
-([`status-bar.md`](status-bar.md)).
+switch, theme switch, and the user menu. The theme switch uses packaged
+Heroicons: a sun for light mode and a moon for dark mode. After WI-3 the
+breadcrumb no longer carries a supervisor status dot — supervisor status is
+shown once in the footer ([`status-bar.md`](status-bar.md)).
 
 ## States
 
@@ -49,6 +50,7 @@ the session resolved in the layout.
 - Behavior: [`../../system-analytics/identity-access.md`](../../system-analytics/identity-access.md)
   (sessions, account menu).
 - Source: `web/components/chrome/top-nav.tsx`,
+  `web/components/chrome/theme-switch.tsx`,
   `web/components/chrome/user-menu.tsx`,
   `web/components/chrome/platform-status.tsx` (`PlatformStatusDot`, still used by
   the login side panel).

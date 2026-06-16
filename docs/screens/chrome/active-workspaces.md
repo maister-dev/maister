@@ -8,7 +8,8 @@
   states use the warm `--attention` token), ticket-derived names + scratch
   rename (`PATCH /api/scratch-runs/{runId}`), linked flow/issue chips, the
   non-linking runner info chip, and the hover/focus icon actions that replace
-  the timestamp. Builds on the earlier per-project grouping, RBAC scoping,
+  the timestamp. Repeated UI glyphs use packaged Heroicons instead of local
+  one-off SVG paths. Builds on the earlier per-project grouping, RBAC scoping,
   TTL/archived badges, and per-run workbench-lifecycle actions (M27).
 - **Source:** `web/components/chrome/left-rail.tsx` (rail host) +
   `web/components/chrome/active-workspace-row.tsx` (the extracted client row,
@@ -91,9 +92,9 @@ A row is two lines:
      buttons are focusable siblings of the row link (never nested inside the
      anchor), so keyboard users reach them and the row stays a single link
      target.
-2. **Line 2 — meta chips.** A non-linking **flow** info chip (icon + flow name;
+2. **Line 2 — meta chips.** A non-linking **flow** info chip (Heroicon + flow name;
    tooltip carries the `flow_ref_id` + pinned version), a non-linking **runner**
-   info chip (icon + `runner-ref`; tooltip carries
+   info chip (Heroicon + `runner-ref`; tooltip carries
    `agent · model · adapter · provider · sidecars`), and a linked **issue**
    `KEY-N` chip (only when the run resolves a task). TTL warning/due and archived
    badges render here when the GC projection or archive flag is set.

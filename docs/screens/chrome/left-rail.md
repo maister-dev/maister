@@ -2,8 +2,11 @@
 
 - **Type:** chrome (persistent shell, every `(app)` screen).
 - **Status:** Implemented (WI-3 runners readiness). The Inbox badge count is
-  unified by WI-1 — see [`../inbox.md`](../inbox.md).
-- **Source:** `web/components/chrome/left-rail.tsx`, fed by
+  unified by WI-1 — see [`../inbox.md`](../inbox.md). The section nav is
+  route-aware and uses packaged Heroicons for destination and flyout icons.
+- **Source:** `web/components/chrome/left-rail.tsx`,
+  `web/components/chrome/left-rail-nav.tsx`,
+  `web/components/chrome/left-rail-route.ts`, fed by
   `web/app/(app)/layout.tsx`.
 
 ## JTBD
@@ -28,7 +31,9 @@ The rail is the primary navigation spine. Entry points / exits:
 - **Section nav** → `/` (portfolio), `/inbox` ([`../inbox.md`](../inbox.md)),
   `/studio` ([`../studio/README.md`](../studio/README.md)), `/mcps`
   ([`../mcps.md`](../mcps.md), admin), `/admin/users`, `/admin/scheduler`,
-  `/settings`.
+  `/settings`. The active section is resolved from the current pathname, so
+  `/settings` selects Settings, `/inbox` selects Inbox, and `/runs/*` /
+  `/scratch-runs/*` stay under Projects.
 - **Active workspaces** → each row links to its run/workbench (`/runs/[id]`).
 - **Launch** → opens the [launch dialog](launch-dialog.md).
 - **Collapsed rail** → section icons keep direct navigation; active workspaces
@@ -42,7 +47,9 @@ Expanded mode, top to bottom:
 
 1. **Section nav** — Projects, Inbox (badge), Studio, Agents (disabled), then the
    admin block (MCPs, Users, Scheduler, Settings). The Inbox badge shows the
-   canonical `needsYou` count (WI-1; see [`../inbox.md`](../inbox.md)).
+   canonical `needsYou` count (WI-1; see [`../inbox.md`](../inbox.md)). Section
+   icons come from `@heroicons/react`; Settings uses the gear icon and the
+   collapsed/expanded states share the same route-derived active marker.
 2. **Active workspaces** — per-project groups of live runs. The block's surface
    (compact rows, single colour-coded state dot, ticket-derived names + scratch
    rename, linked flow/issue chips, runner info chip, hover/focus icon actions,
@@ -71,8 +78,8 @@ the async Server Component.
 Collapsed mode order:
 
 1. **Section icon stack** — Projects, Inbox (badge), Studio, Agents (disabled),
-   then the admin icons when allowed. These icons are the same destinations as
-   expanded mode, not a separate compact menu.
+   then the admin icons when allowed. These packaged icons are the same
+   destinations as expanded mode, not a separate compact menu.
 2. **Active workspaces flyout** — one icon opens the same per-project live-run
    groups documented in [`active-workspaces.md`](active-workspaces.md). The rail
    itself shows only the affordance and count, not duplicate narrow text rows.
@@ -102,6 +109,9 @@ stateDiagram-v2
 ## Data & APIs
 
 - `getRailWorkspaceGroups(userId, role)` — active workspaces, RBAC-scoped.
+- `railSectionForPathname(pathname)` — maps app routes to the active rail
+  section (`/settings` → Settings, `/inbox` → Inbox, run detail routes →
+  Projects).
 - `summarizeAdapterReadiness({ runners, diagnostics })`
   (`lib/acp-runners/readiness-summary.ts`) over `checkSupervisorDiagnostics()`
   `/diagnostics` × `platform_acp_runners` rows (`loadRunnerReadinessRows`).
@@ -124,6 +134,8 @@ labels), `gc` (TTL badges).
 - Behavior: [`../../system-analytics/acp-runners.md`](../../system-analytics/acp-runners.md),
   [`../../system-analytics/social-board.md`](../../system-analytics/social-board.md)
   (Needs-you badge).
-- Source: `web/components/chrome/left-rail.tsx`, `web/app/(app)/layout.tsx`,
+- Source: `web/components/chrome/left-rail.tsx`,
+  `web/components/chrome/left-rail-nav.tsx`,
+  `web/components/chrome/left-rail-route.ts`, `web/app/(app)/layout.tsx`,
   `web/lib/acp-runners/readiness-summary.ts`,
   `web/lib/acp-runners/runner-readiness-rows.ts`.
