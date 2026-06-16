@@ -245,6 +245,9 @@ test("file-tree opens a file into the Shiki code-view and flags the oversized bl
   // Server highlight actually ran: ≥1 token span carries a Shiki CSS variable.
   await expect(codeView.locator('[style*="--shiki"]').first()).toBeVisible();
 
+  // T4.2: a non-empty text file gets a copy-to-clipboard control in the header.
+  await expect(page.locator('[data-testid="file-copy-button"]')).toBeVisible();
+
   // Open the oversized tracked blob → the too-large marker (413 → too-large).
   await page
     .locator('[data-testid="file-tree-entry"]', { hasText: fx.oversizedFile })

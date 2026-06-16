@@ -8,6 +8,7 @@ import {
   CodeView,
   type CodeViewLabels,
 } from "@/components/workbench/code-view";
+import { FilePaneShell } from "@/components/workbench/file-pane-shell";
 import { requireProjectAction } from "@/lib/authz";
 import { workbenchMaxFileBytes } from "@/lib/instance-config";
 import { getRunDetail } from "@/lib/queries/run";
@@ -90,6 +91,26 @@ export async function renderRunFilePane({
     path: file,
     maxBytes: workbenchMaxFileBytes(),
   });
+
+  // Non-empty text gets a copy-to-clipboard header over the viewer (the viewer
+  // itself dispatches Markdown -> rich, else -> Shiki source). Binary, empty,
+  // too-large, and not-found states have nothing to copy.
+  if (blob.kind === "text" && blob.content !== "") {
+    const viewer = await CodeView({ blob, labels, path: file });
+
+    return (
+      <FilePaneShell
+        content={blob.content}
+        labels={{
+          copy: tWorkbench("files.copy"),
+          copied: tWorkbench("files.copied"),
+        }}
+        path={file}
+      >
+        {viewer}
+      </FilePaneShell>
+    );
+  }
 
   return CodeView({ blob, labels, path: file });
 }

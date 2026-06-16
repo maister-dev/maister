@@ -1315,7 +1315,9 @@
       "notFound": "File not found",
       "loading": "Loading…",
       "forbidden": "You do not have access to repository files",
-      "treeLabel": "Repository file tree"
+      "treeLabel": "Repository file tree",
+      "copy": "Copy",
+      "copied": "Copied"
     },
     "diff": {
       "title": "Diff",
