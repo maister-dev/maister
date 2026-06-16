@@ -10,6 +10,7 @@ import {
   PackageSourceModal,
   type PackageSourceRow,
 } from "@/components/settings/package-source-modal";
+import { PanelSection } from "@/components/settings/panel-section";
 
 export type { PackageSourceRow };
 
@@ -100,11 +101,8 @@ export function PackageSourcesPanel({
   );
 
   return (
-    <section className="mt-6 border-t border-line pt-6">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <h3 className="m-0 font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute">
-          {t("pkgSourcesTitle")}
-        </h3>
+    <PanelSection
+      actions={
         <button
           className="h-10 rounded-[8px] border border-amber bg-amber px-4 text-[13px] font-semibold text-white hover:bg-amber-2"
           type="button"
@@ -112,8 +110,9 @@ export function PackageSourcesPanel({
         >
           {t("pkgSourceAdd")}
         </button>
-      </div>
-
+      }
+      title={t("pkgSourcesTitle")}
+    >
       {notice ? (
         <p
           className="mb-3 rounded-[8px] border border-amber/40 bg-amber/10 px-3 py-2 text-[12px] text-ink"
@@ -333,6 +332,6 @@ export function PackageSourcesPanel({
           }}
         />
       ) : null}
-    </section>
+    </PanelSection>
   );
 }

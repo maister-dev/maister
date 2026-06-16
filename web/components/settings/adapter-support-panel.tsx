@@ -4,6 +4,8 @@ import type { SupervisorDiagnosticsStatus } from "@/lib/supervisor-client";
 
 import { getTranslations } from "next-intl/server";
 
+import { PanelSection } from "@/components/settings/panel-section";
+
 type Runner = {
   id: string;
   adapter: AdapterId;
@@ -28,10 +30,7 @@ export async function AdapterSupportPanel({
   );
 
   return (
-    <section className="mt-6 border-t border-line pt-6">
-      <div className="mb-3 font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute">
-        {t("adapterSupport")}
-      </div>
+    <PanelSection title={t("adapterSupport")}>
       <div className="grid gap-2">
         {adapters.map((adapter) => {
           const usedBy = runners
@@ -95,6 +94,6 @@ export async function AdapterSupportPanel({
           );
         })}
       </div>
-    </section>
+    </PanelSection>
   );
 }

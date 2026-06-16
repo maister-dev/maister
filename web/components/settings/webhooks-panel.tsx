@@ -10,7 +10,7 @@ import { WebhooksPanelInner } from "@/components/webhooks/webhooks-panel-inner";
 // `/api/admin/webhooks` base inside the shared inner panel.
 export function WebhooksPanel(): ReactElement {
   return (
-    <div className="mt-6 border-t border-line pt-6">
+    <div className="mt-8 first:mt-0">
       <WebhooksPanelInner
         canWrite
         apiBase="/api/admin/webhooks"

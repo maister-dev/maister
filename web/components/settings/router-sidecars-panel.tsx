@@ -5,6 +5,8 @@ import type { ReactElement } from "react";
 import { useState } from "react";
 import { useTranslations } from "next-intl";
 
+import { PanelSection } from "@/components/settings/panel-section";
+
 type Sidecar = {
   id: string;
   kind: "ccr";
@@ -179,10 +181,7 @@ export function RouterSidecarsPanel({ sidecars }: Props): ReactElement {
   }
 
   return (
-    <section className="mt-6 border-t border-line pt-6">
-      <div className="mb-3 font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute">
-        {t("routerSidecars")}
-      </div>
+    <PanelSection title={t("routerSidecars")}>
       <div className="mb-3 grid gap-2 rounded-[8px] border border-line bg-canvas p-3">
         <div className="grid gap-2 md:grid-cols-2">
           <input
@@ -313,6 +312,6 @@ export function RouterSidecarsPanel({ sidecars }: Props): ReactElement {
           </article>
         ))}
       </div>
-    </section>
+    </PanelSection>
   );
 }

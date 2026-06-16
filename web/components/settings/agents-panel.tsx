@@ -6,6 +6,8 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
+import { PanelSection } from "@/components/settings/panel-section";
+
 // ADR-089 rework: rows are a projection of installed flow packages — there
 // is no create/edit surface here; definitions change through their package.
 export type AgentSummaryRow = {
@@ -114,26 +116,23 @@ export function AgentsPanel({ agents, projects }: Props): ReactElement {
   }
 
   return (
-    <section className="mt-6 border-t border-line pt-6">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <h3 className="m-0 font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute">
-          {t("title")}
-        </h3>
-        <div className="flex items-center gap-2">
-          <button
-            className="h-10 rounded-[8px] border border-line px-4 text-[13px] font-semibold text-ink disabled:opacity-50"
-            disabled={pending !== null}
-            type="button"
-            onClick={() =>
-              void act("resync", () =>
-                sendJson("/api/admin/agents/resync", "POST"),
-              )
-            }
-          >
-            {t("resync")}
-          </button>
-        </div>
-      </div>
+    <PanelSection
+      actions={
+        <button
+          className="h-10 rounded-[8px] border border-line px-4 text-[13px] font-semibold text-ink disabled:opacity-50"
+          disabled={pending !== null}
+          type="button"
+          onClick={() =>
+            void act("resync", () =>
+              sendJson("/api/admin/agents/resync", "POST"),
+            )
+          }
+        >
+          {t("resync")}
+        </button>
+      }
+      title={t("title")}
+    >
       {error ? (
         <p
           className="m-0 mb-3 text-[12px] leading-[1.45] text-red-700"
@@ -301,6 +300,6 @@ export function AgentsPanel({ agents, projects }: Props): ReactElement {
           </tbody>
         </table>
       </div>
-    </section>
+    </PanelSection>
   );
 }
