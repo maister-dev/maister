@@ -398,7 +398,7 @@ supervisor binary is expected.
 
 ### Phase 5 - Inspector actions and branch flow polish
 
-- [ ] **T5.1 - Implement action groups in the inspector.** Use the DTO from
+- [x] **T5.1 - Implement action groups in the inspector.** Use the DTO from
   T1.6 to render action shortcuts with icons, disabled reasons, confirmation
   dialogs, and result summaries. High-risk cleanup actions stay visually
   separated. Delivery actions either navigate to the Review changes flow or
@@ -407,25 +407,25 @@ supervisor binary is expected.
   surfaces the returned `MaisterError` code/message without string matching.
   Tests: each action group renders enabled/disabled states and calls the correct
   endpoint or Review CTA.
-- [ ] **T5.2 - Branch and worktree run info.** Show branch, base branch/commit,
+- [x] **T5.2 - Branch and worktree run info.** Show branch, base branch/commit,
   target branch, worktree removed/archived state, handoff/export metadata, PR
   URL/number, and local snapshot commit results when available. Logging:
   metadata fetch failures are `warn` with `runId`, not blocking the rest of the
   inspector. Tests: summary rows for active, review, exported, PR-created,
   removed, and archived workspaces.
-- [ ] **T5.3 - Flow/session mini-map.** For Flow runs, show a compact node map
+- [x] **T5.3 - Flow/session mini-map.** For Flow runs, show a compact node map
   with current/completed/failed/stale nodes and fullscreen action. For scratch
   runs, show Session: dialog status, context usage, attachments, selected
   capabilities, and latest tool activity. Logging: no client logging. Tests:
   flow mini-map status rollup and scratch session summary.
-- [ ] **T5.4 - Inspector live refresh.** Subscribe to existing run SSE while a
+- [x] **T5.4 - Inspector live refresh.** Subscribe to existing run SSE while a
   run is live and refresh only lightweight inspector data: change summary,
   node/session status, and action availability. Debounce refreshes; skip
   subscription for terminal runs. Logging: route/read-model logs only; client
   errors render local stale-state badges. Reuse the existing `useRunStream`
   pattern and graph-status refresh behavior; do not add timer polling. Tests:
   debounce helper, terminal no-subscribe branch, and stale-state badge.
-- [ ] **Phase 5 exit.** All existing lifecycle route tests remain green:
+- [x] **Phase 5 exit.** All existing lifecycle route tests remain green:
   `web/lib/workbench-lifecycle/__tests__/*`,
   `web/app/api/runs/[runId]/workbench-lifecycle/__tests__/routes.test.ts`,
   promote/recover/stop/drop/archive/export/handoff route tests.
