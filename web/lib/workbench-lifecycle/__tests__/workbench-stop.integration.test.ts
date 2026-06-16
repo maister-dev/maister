@@ -17,10 +17,16 @@ import {
   vi,
 } from "vitest";
 
+import type {
+  LifecycleContext,
+  WorkbenchLifecycleDeps,
+} from "@/lib/workbench-lifecycle/service";
+
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
 let db: NodePgDatabase;
 let stopWorkbenchRun: typeof import("@/lib/workbench-lifecycle/service").stopWorkbenchRun;
+let stopThenArchive: typeof import("@/lib/workbench-lifecycle/service").stopThenArchive;
 let stopScratchWorkbench: typeof import("@/lib/scratch-runs/service").stopScratchWorkbench;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
@@ -47,7 +53,9 @@ beforeAll(async () => {
 
   await migrate(db, { migrationsFolder: "./lib/db/migrations" });
 
-  ({ stopWorkbenchRun } = await import("@/lib/workbench-lifecycle/service"));
+  ({ stopWorkbenchRun, stopThenArchive } = await import(
+    "@/lib/workbench-lifecycle/service"
+  ));
   ({ stopScratchWorkbench } = await import("@/lib/scratch-runs/service"));
 }, 180_000);
 
@@ -240,5 +248,116 @@ describe("workbench stop — scratch runs", () => {
     );
 
     expect(run.rows[0].status).toBe("Abandoned");
+  });
+
+  it("stops then archives a live scratch run with a worktree (combined op)", async () => {
+    const { runId } = await seedScratchRun({ hasWorkspace: true });
+
+    // The scratch stop + the post-stop reload run against the real container DB;
+    // the git/claim ops are injected spies because the seeded /tmp paths are not
+    // real repos. This proves the scratch composition end-to-end: stop parks the
+    // run to Review (real DB) and the archive half then dispatches on it.
+    const loadContext = vi.fn(
+      async (rid: string): Promise<LifecycleContext> => {
+        const runRows = await pool.query(
+          `SELECT "id","project_id","run_kind","status","acp_session_id","current_step_id" FROM "runs" WHERE "id" = $1`,
+          [rid],
+        );
+        const run = runRows.rows[0];
+        const projRows = await pool.query(
+          `SELECT "id","main_branch" FROM "projects" WHERE "id" = $1`,
+          [run.project_id],
+        );
+        const wsRows = await pool.query(
+          `SELECT "id","run_id","project_id","branch","worktree_path","parent_repo_path","removed_at","archived_branch","archived_at","base_branch","base_commit" FROM "workspaces" WHERE "run_id" = $1`,
+          [rid],
+        );
+        const proj = projRows.rows[0];
+        const ws = wsRows.rows[0] ?? null;
+
+        return {
+          project: { id: proj.id, mainBranch: proj.main_branch },
+          run: {
+            id: run.id,
+            projectId: run.project_id,
+            runKind: run.run_kind,
+            status: run.status,
+            acpSessionId: run.acp_session_id,
+            currentStepId: run.current_step_id,
+          },
+          workspace: ws
+            ? {
+                id: ws.id,
+                runId: ws.run_id,
+                projectId: ws.project_id,
+                branch: ws.branch,
+                worktreePath: ws.worktree_path,
+                parentRepoPath: ws.parent_repo_path,
+                removedAt: ws.removed_at,
+                archivedBranch: ws.archived_branch,
+                archivedAt: ws.archived_at,
+                baseBranch: ws.base_branch,
+                baseCommit: ws.base_commit,
+              }
+            : null,
+        };
+      },
+    );
+    const deps: WorkbenchLifecycleDeps = {
+      requireActiveSession: vi.fn(async () => undefined),
+      loadContext,
+      authorize: vi.fn(async () => undefined),
+      listSessions: vi.fn(async () => []),
+      deleteSession: vi.fn(async () => undefined),
+      markStoppedAndCloseAssignments: vi.fn(async () => undefined),
+      promoteNextPending: vi.fn(async () => undefined),
+      preserveWorktree: vi.fn(async () => ({
+        ok: true,
+        archivedBranch: "maister/archive/scratch",
+        archivedAt: new Date("2026-06-16T08:00:00.000Z"),
+        snapshotted: true,
+      })),
+      recordArchive: vi.fn(async () => undefined),
+      recordDrop: vi.fn(async () => undefined),
+      removeOwnedWorktree: vi.fn(async () => undefined),
+      worktreesRoot: vi.fn(() => "/tmp/maister/worktrees"),
+      statusPorcelain: vi.fn(async () => ""),
+      snapshotDirtyWorktree: vi.fn(async () => false),
+      pushBranch: vi.fn(async () => undefined),
+      claimLifecycleOperation: vi.fn(async () => ({
+        attemptId: "scratch-archive-attempt",
+      })),
+      finalizeLifecycleOperation: vi.fn(async () => undefined),
+      listRemotes: vi.fn(async () => ["origin"]),
+      headCommit: vi.fn(async () => "abc1234"),
+      localBranchHead: vi.fn(async () => null),
+      remoteBranchHead: vi.fn(async () => null),
+      createBranchAtHead: vi.fn(async () => undefined),
+    };
+
+    const result = await stopThenArchive(runId, { deps });
+
+    expect(result).toMatchObject({
+      ok: true,
+      archivedBranch: "maister/archive/scratch",
+      supervisorStopped: false,
+    });
+    expect(deps.preserveWorktree).toHaveBeenCalled();
+    expect(deps.recordArchive).toHaveBeenCalledTimes(1);
+    expect(deps.claimLifecycleOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ operation: "archive" }),
+    );
+
+    const run = await pool.query(
+      `SELECT "status" FROM "runs" WHERE "id" = $1`,
+      [runId],
+    );
+    const scratch = await pool.query(
+      `SELECT "dialog_status" FROM "scratch_runs" WHERE "run_id" = $1`,
+      [runId],
+    );
+
+    expect(run.rows[0].status).toBe("Review");
+    expect(scratch.rows[0].dialog_status).toBe("Review");
   });
 });

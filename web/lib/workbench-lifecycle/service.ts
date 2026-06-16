@@ -1158,10 +1158,17 @@ async function stopAgentAfterAuth(
   // slot, but it does NOT delete the supervisor session — kill it here.
   const supervisorStopped = await stopLiveSupervisorSession(ctx, deps);
 
-  await finalizeAgentRun(runId, "Abandoned", {
+  const finalize = await finalizeAgentRun(runId, "Abandoned", {
     reason: "operator",
     closeAssignments: { kind: "system", reason: "run stopped by operator" },
   });
+
+  if (!finalize.finalized) {
+    // The run reached a terminal status between auth and finalize (a lost CAS
+    // race); the stop still reports ok because the outcome is identical, but
+    // surface the no-op so operators can see this call was not the finalizer.
+    log.info({ runId }, "agent stop finalize was a no-op (run already terminal)");
+  }
 
   if (ctx.workspace && ctx.workspace.removedAt === null) {
     await cleanupRunMaterializations({
