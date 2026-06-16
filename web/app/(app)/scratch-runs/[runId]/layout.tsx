@@ -101,6 +101,7 @@ export default async function ScratchRunDetailLayout({
     changes: t("headerChanges"),
     changesUnavailable: t("headerChangesUnavailable"),
     changedFiles: t("headerChangedFilesUnit"),
+    task: t("headerTask"),
     openInspector: t("headerOpenInspector"),
     closeInspector: t("headerCloseInspector"),
   };
