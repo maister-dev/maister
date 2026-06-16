@@ -31,12 +31,14 @@ The rail is the primary navigation spine. Entry points / exits:
   `/settings`.
 - **Active workspaces** → each row links to its run/workbench (`/runs/[id]`).
 - **Launch** → opens the [launch dialog](launch-dialog.md).
+- **Collapsed rail** → section icons keep direct navigation; active workspaces
+  and runners readiness open right-side flyouts from their rail icons.
 
 See [`../README.md`](../README.md) for the global IA map.
 
 ## Layout & regions
 
-Top to bottom:
+Expanded mode, top to bottom:
 
 1. **Section nav** — Projects, Inbox (badge), Studio, Agents (disabled), then the
    admin block (MCPs, Users, Scheduler, Settings). The Inbox badge shows the
@@ -52,7 +54,7 @@ Top to bottom:
 4. **Launch** — primary launch button + hint, with a Cmd/Ctrl+K shortcut
    ([`launch-dialog.md`](launch-dialog.md)).
 
-### Collapse / hide (Implemented — Phase B)
+### Collapse / icon rail (Implemented — Phase B)
 
 The rail is **collapsible** so wide canvases (the Flow editor,
 [`../studio/editor.md`](../studio/editor.md)) can claim near-full width. A toggle
@@ -65,6 +67,19 @@ as the compact `+` control. The choice persists to `localStorage` (default
 collapsed reload is accepted — no inline script, matching the script-free theme
 convention). The toggle is a small client island; the rail's data fetch stays in
 the async Server Component.
+
+Collapsed mode order:
+
+1. **Section icon stack** — Projects, Inbox (badge), Studio, Agents (disabled),
+   then the admin icons when allowed. These icons are the same destinations as
+   expanded mode, not a separate compact menu.
+2. **Active workspaces flyout** — one icon opens the same per-project live-run
+   groups documented in [`active-workspaces.md`](active-workspaces.md). The rail
+   itself shows only the affordance and count, not duplicate narrow text rows.
+3. **Runners readiness flyout** — one icon opens the same adapter readiness rows
+   as expanded mode.
+4. **Compact launch** — the `+` control opens the existing
+   [`launch-dialog.md`](launch-dialog.md).
 
 ## States
 

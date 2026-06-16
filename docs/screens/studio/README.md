@@ -217,9 +217,9 @@ twin (region 4) is the read-only variant of the same canvas.
   actions (**Save draft**, **Publish / Cut version**) · toggles **[Files]
   [YAML] [Diff]** that open as side/bottom **drawers**, not primary tabs.
 - **Left:** collapsible **Files** drawer (the artifact's bundled files / package
-  artifacts); the **global app rail also collapses** (chrome change in
-  [`../chrome/left-rail.md`](../chrome/left-rail.md)) so the canvas can go
-  near-full-width.
+  artifacts); the **global app rail collapses to an icon rail with flyouts**
+  (chrome change in [`../chrome/left-rail.md`](../chrome/left-rail.md)) so the
+  canvas can go near-full-width without losing navigation.
 - **Center:** the **big canvas** — palette (add node/gate), connect, **drag-move
   (persisted to `presentation`, ADR-064)**, zoom/fit/minimap, color-coded node
   cards with icons + named-outcome handles + dashed rework edges.

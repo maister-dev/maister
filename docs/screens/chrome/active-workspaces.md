@@ -70,6 +70,9 @@ flowchart TD
 
 The block is a stack of per-project groups, each with a header
 (`project name` · active count · `+` scratch launch) followed by its run rows.
+In the expanded rail the block is inline; in the collapsed rail the same block is
+hosted inside the Active workspaces flyout, without duplicating narrow text rows
+in the icon rail.
 A row is two lines:
 
 1. **Line 1 — identity + slot.** A single **state dot** (the only state

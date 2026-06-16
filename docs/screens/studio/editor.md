@@ -49,7 +49,7 @@ flowchart LR
 ## Layout & regions
 
 A 3-pane shell (top bar + canvas + right properties), with toggled drawers and a
-hideable app rail ([`../chrome/left-rail.md`](../chrome/left-rail.md)):
+collapsible app rail ([`../chrome/left-rail.md`](../chrome/left-rail.md)):
 
 1. **Top bar (compact)** — identity (project · cap · kind) · lifecycle chip
    (Draft/Published) · validation chip (valid / N issues, from the pure
