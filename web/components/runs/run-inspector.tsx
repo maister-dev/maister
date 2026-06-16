@@ -71,6 +71,7 @@ export interface RunInspectorLabels {
   viewSource: string;
   binary: string;
   disabled: string;
+  stale: string;
 }
 
 export interface RunInspectorProps {
@@ -82,6 +83,9 @@ export interface RunInspectorProps {
   actions: RunInspectorAction[];
   pathname?: string;
   search?: string;
+  // T5.4: the live wrapper sets this when a change-summary re-fetch failed; the
+  // changes tab then shows a "may be stale" badge over the last good snapshot.
+  stale?: boolean;
 }
 
 const TABS: readonly RunInspectorTab[] = [
@@ -114,6 +118,7 @@ export function RunInspector({
   actions,
   pathname = `/runs/${runId}`,
   search = "",
+  stale = false,
 }: RunInspectorProps): ReactElement {
   const [activeTab, setActiveTab] = useState<RunInspectorTab>("overview");
   const changeText = summaryText(changeSummary);
@@ -167,6 +172,15 @@ export function RunInspector({
       </div>
 
       <div hidden={activeTab !== "changes"} role="tabpanel">
+        {stale ? (
+          <p
+            className="mb-2 rounded-[6px] border border-amber-line bg-amber-soft px-2 py-1 font-mono text-[10px] text-amber"
+            data-testid="run-inspector-stale"
+            role="status"
+          >
+            {labels.stale}
+          </p>
+        ) : null}
         {!changeSummary || changeSummary.unavailable ? (
           <p
             className="rounded-[6px] border border-line bg-paper p-3 text-[12px] text-mute"

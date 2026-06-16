@@ -37,8 +37,8 @@ import {
   FlowRunCenter,
   type FlowRunCenterLabels,
 } from "@/components/runs/flow-run-center";
+import { LiveRunInspector } from "@/components/runs/live-run-inspector";
 import {
-  RunInspector,
   type RunInspectorAction,
   type RunInspectorChangeSummary,
   type RunInspectorFlowSummary,
@@ -827,6 +827,7 @@ export default async function RunDetailLayout({
     viewSource: t("inspectorViewSource"),
     binary: t("inspectorBinary"),
     disabled: t("inspectorDisabled"),
+    stale: t("inspectorStale"),
   };
   const inspectorFacts = [
     { label: t("flowCenterStatus"), value: detail.status },
@@ -1001,13 +1002,15 @@ export default async function RunDetailLayout({
       branch={detail.branch}
       changeSummary={changeSummary}
       inspector={
-        <RunInspector
+        <LiveRunInspector
           actions={inspectorActions}
+          changeScope={inspectorChangeScope}
           changeSummary={changeSummary}
           facts={inspectorFacts}
           flowSummary={flowSummary}
           labels={inspectorLabels}
           runId={detail.runId}
+          runStatus={detail.status}
           search={changeSummary?.dirty ? "scope=uncommitted" : ""}
         />
       }

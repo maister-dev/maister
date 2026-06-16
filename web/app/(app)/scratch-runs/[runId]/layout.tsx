@@ -3,8 +3,8 @@ import type { ReactElement, ReactNode } from "react";
 import { getTranslations } from "next-intl/server";
 import { notFound, redirect } from "next/navigation";
 
+import { LiveRunInspector } from "@/components/runs/live-run-inspector";
 import {
-  RunInspector,
   type RunInspectorAction,
   type RunInspectorChangeSummary,
   type RunInspectorLabels,
@@ -102,6 +102,7 @@ export default async function ScratchRunDetailLayout({
     viewSource: t("inspectorViewSource"),
     binary: t("inspectorBinary"),
     disabled: t("inspectorDisabled"),
+    stale: t("inspectorStale"),
   };
   const workbenchTabLabels: WorkbenchTabsLabels = {
     files: tWorkbench("tab.files"),
@@ -162,14 +163,16 @@ export default async function ScratchRunDetailLayout({
       changeSummary={changeSummary}
       inspector={
         <div className="flex flex-col gap-3">
-          <RunInspector
+          <LiveRunInspector
             actions={inspectorActions}
+            changeScope="run"
             changeSummary={changeSummary}
             facts={inspectorFacts}
             flowSummary={null}
             labels={inspectorLabels}
             pathname={`/scratch-runs/${detail.runId}`}
             runId={detail.runId}
+            runStatus={detail.status}
           />
           <ScratchInspectorActions
             lifecycleActions={detail.lifecycleActions}

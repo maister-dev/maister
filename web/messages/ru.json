@@ -1028,6 +1028,7 @@
     "inspectorViewSource": "Открыть файл",
     "inspectorBinary": "Бинарный",
     "inspectorDisabled": "Сейчас недоступно",
+    "inspectorStale": "Возможно, устарело",
     "inspectorRunKind": "Тип запуска",
     "inspectorWorktree": "Worktree",
     "inspectorFlowSubtitle": "{count, plural, one {# нода} few {# ноды} many {# нод} other {# ноды}}",

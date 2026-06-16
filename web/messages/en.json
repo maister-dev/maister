@@ -1028,6 +1028,7 @@
     "inspectorViewSource": "View source",
     "inspectorBinary": "Binary",
     "inspectorDisabled": "Unavailable now",
+    "inspectorStale": "May be stale",
     "inspectorRunKind": "Run kind",
     "inspectorWorktree": "Worktree",
     "inspectorFlowSubtitle": "{count, plural, one {# node} other {# nodes}}",

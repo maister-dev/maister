@@ -18,6 +18,7 @@ const LABELS: RunInspectorLabels = {
   viewSource: "View source",
   binary: "Binary",
   disabled: "Disabled",
+  stale: "May be stale",
 };
 
 function renderInspector(): string {
@@ -154,5 +155,25 @@ describe("RunInspector", () => {
     expect(html).toContain("1.2k tokens");
     expect(html).toContain('data-disabled="true"');
     expect(html).toContain("Review first");
+  });
+
+  it("shows the stale badge only when a live refresh has failed", () => {
+    expect(renderInspector()).not.toContain(
+      'data-testid="run-inspector-stale"',
+    );
+
+    const staleHtml = renderToStaticMarkup(
+      createElement(RunInspector, {
+        runId: "run-1",
+        labels: LABELS,
+        facts: [],
+        changeSummary: null,
+        actions: [],
+        stale: true,
+      }),
+    );
+
+    expect(staleHtml).toContain('data-testid="run-inspector-stale"');
+    expect(staleHtml).toContain("May be stale");
   });
 });
