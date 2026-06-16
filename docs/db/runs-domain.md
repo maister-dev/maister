@@ -201,6 +201,7 @@ erDiagram
         jsonb materialization_plan "M14 0019 Implemented: resolved profile snapshot + cleanup substate"
         text acp_session_id
         text stdout "truncated to 1 MiB"
+        text resolved_prompt "0053 captured resolved agent prompt; nullable, pre-0053 rows null"
         jsonb vars "DEFAULT {}"
         integer exit_code
         text error_code "MaisterErrorCode literal"

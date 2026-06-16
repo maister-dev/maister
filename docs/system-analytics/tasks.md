@@ -82,6 +82,14 @@ NeedsInput | NeedsInputIdle | HumanWorking | Review | Crashed`.
 - Planned assignment-aware board cards show the latest active assignment:
   role, assignee or unclaimed state, elapsed time, action kind, branch/ref when
   relevant, and stale-evidence summary.
+- **(Implemented)** The in-flight flight card is **identity-first and compact**:
+  row 1 is `KEY-N` (linking to the task page) + task title + time + flow chip +
+  agent; row 2 (non-done) is a slim progress spine + current node label. The
+  worktree branch and the inline HITL form are **not** on the card — a `needs`
+  card shows a needs-attention badge and the response is given on the run page
+  (diff visible) or in the HITL Inbox. Click-anywhere opens the run via a
+  stretched-link overlay; the `KEY-N` link and lifecycle/launch buttons stay
+  independently clickable above it.
 - "Latest run" on the card today is `runs ORDER BY started_at DESC
 LIMIT 1 WHERE task_id = ?`. Once `runs.attempt_number`
   lands this becomes `MAX(attempt_number) WHERE task_id = ?`.

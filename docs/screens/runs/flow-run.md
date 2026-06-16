@@ -77,12 +77,18 @@ The page uses a full-width two-column run shell on desktop, with a minimum
 1000px work surface and a 380px right inspector. Narrow/mobile presentation is
 still a later responsive pass.
 
-1. **Run header** - breadcrumb, task ref, run status, Flow name, executor,
-   branch, current node, and compact `+/-` change size.
+1. **Run header** - the **task title** as the H1, a `KEY-N` chip beside the run
+   status, an eyebrow reading `Flow › current node`, the worktree branch on its
+   own line, the executor, compact `+/-` change size, and a collapsible **Task**
+   block rendering the task prompt (Markdown). This replaces the prior
+   `"<KEY-N> <branch>"` heading so the page answers "what is this run about".
 2. **Main result** - the default center for non-scratch runs. Flow runs combine
    a readable graph or node list with a selected-node result panel. The selected
    node shows status, attempts, duration, token/cost contribution, produced
-   artifacts, gate verdicts, HITL prompt/response, and logs where relevant.
+   artifacts, gate verdicts, HITL prompt/response, the **resolved agent prompt**
+   per attempt (collapsible; a manifest-template fallback is shown for runs
+   captured before `node_attempts.resolved_prompt` shipped), and logs where
+   relevant.
    Standalone agent runs instead show session status, latest activity, evidence,
    and review or diff entry points.
 3. **Review entry point** - when the selected node is a review or human gate,
@@ -130,15 +136,17 @@ The landing focus follows state:
 
 ## Data & APIs
 
-- `getRunDetail(runId)` supplies run, project, branch, workspace, HITL, and
-  lifecycle metadata.
+- `getRunDetail(runId)` supplies run, project, branch, workspace, HITL,
+  lifecycle metadata, and the **task title + prompt**, **flow ref**, and
+  **current node label** that feed the task-first header.
 - `loadRunManifest(runId)`, `compileManifest`, `buildGraphTopology`, and
   `presentationLayout` build the Flow topology when a pinned manifest exists.
   Agent runs without a manifest use an agent result DTO instead of Flow
   topology.
 - `getRunNodeStatuses(runId)` plus `GET /api/runs/{runId}/graph-status` keep
   node colors current via SSE-triggered refetch.
-- `getRunTimeline(runId)`, `buildEvidenceGraph(runId)`,
+- `getRunTimeline(runId)` (each `TimelineEntry` now carries the per-attempt
+  `resolvedPrompt`), `buildEvidenceGraph(runId)`,
   `getRunReadiness(runId, projectId)`, `getRunCostSummary(runId)`,
   `getRunSettings(runId)`, and capability profile queries feed the selected
   node result and inspector summaries.
