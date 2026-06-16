@@ -122,7 +122,7 @@ export function FlightCard({
       {/* Whole-card stretched link → run. Sits above static content (so a click
           anywhere opens the run) but below the z-10 interactive children. */}
       <Link
-        aria-label={labels.openRun}
+        aria-label={`${labels.openRun}: ${card.title}`}
         className="absolute inset-0 z-0"
         data-testid="flight-card-open"
         href={`/runs/${card.runId}`}
@@ -251,7 +251,7 @@ export function FlightCard({
       </div>
 
       {isHumanWorking ? (
-        <div className="relative z-10 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[11px] leading-[1.4] tracking-[0.005em] text-ink-2">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[11px] leading-[1.4] tracking-[0.005em] text-ink-2">
           <span className="font-semibold text-accent-3">
             {labels.claimedBy}
           </span>

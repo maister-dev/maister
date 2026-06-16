@@ -289,9 +289,12 @@ Each `ai_coding` / `judge` node computes a final Mustache-resolved prompt at
 dispatch. The graph runner eagerly persists it to `node_attempts.resolved_prompt`
 (migration `0053`, nullable) in `runAgentStep`, immediately after the prompt is
 resolved and BEFORE the agent turn is dispatched, so the prompt is recoverable
-even if the attempt later crashes or stalls. The write is per-attempt: a rework
-loop records its own row's prompt. It is best-effort — a failed `UPDATE` logs a
-`WARN` and never blocks dispatch (the prompt is audit data, not control flow).
+even if the attempt later crashes or stalls. The write is per-attempt and
+write-once (guarded `WHERE resolved_prompt IS NULL`): a rework loop records its
+own row's prompt, and a `NeedsInput` resume that re-enters the node preserves the
+first dispatch's prompt rather than overwriting it. It is best-effort — a failed
+`UPDATE` logs a `WARN` and never blocks dispatch (the prompt is audit data, not
+control flow).
 
 UI surface: the run timeline exposes a collapsible **Prompt** disclosure per
 node-attempt (monospace + copy). For runs created before `0053`,

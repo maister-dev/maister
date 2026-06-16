@@ -625,17 +625,28 @@ export async function runAgentStep(
   // a failed write must never block dispatch.
   if (ctx.nodeAttemptId) {
     try {
-      await (ctx.db ?? getDb())
+      // Write-once per attempt: a NeedsInput resume can re-enter the node with
+      // the same nodeAttemptId; preserve the first dispatch's prompt instead of
+      // overwriting it with a resume-lifted variant.
+      const landed = await (ctx.db ?? getDb())
         .update(nodeAttempts)
         .set({ resolvedPrompt })
-        .where(eq(nodeAttempts.id, ctx.nodeAttemptId));
+        .where(
+          and(
+            eq(nodeAttempts.id, ctx.nodeAttemptId),
+            isNull(nodeAttempts.resolvedPrompt),
+          ),
+        )
+        .returning({ id: nodeAttempts.id });
+
       log.debug(
         {
           runId: ctx.runId,
           nodeAttemptId: ctx.nodeAttemptId,
           promptLen: resolvedPrompt.length,
+          landed: landed.length > 0,
         },
-        "resolved_prompt persisted",
+        "resolved_prompt persist",
       );
     } catch (err) {
       log.warn(
