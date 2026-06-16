@@ -1218,7 +1218,7 @@ export default async function RunDetailLayout({
                           result: t("chatToolResult"),
                           copy: t("chatCopy"),
                           copied: t("chatCopied"),
-                          toolCount: t("chatToolCount"),
+                          toolCount: "{name} ×{count}",
                         },
                       }}
                       runId={detail.runId}
