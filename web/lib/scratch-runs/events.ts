@@ -28,6 +28,8 @@ import {
 } from "@/lib/supervisor-client";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
+import { type AdapterId } from "@/lib/acp-runners/adapter-support";
+import { normalizeCapabilityTokens } from "@/lib/capabilities/token-normalizer";
 
 const { hitlRequests, runs, scratchMessages, scratchRuns } =
   schemaModule as unknown as Record<string, any>;
@@ -36,6 +38,30 @@ const log = pino({
   name: "scratch-events",
   level: process.env.LOG_LEVEL ?? "info",
 });
+
+/**
+ * Normalize canonical capability tokens in a scratch prompt to the run's runner
+ * wire form (FR-E2). Web-side only — the supervisor forwards the result
+ * verbatim. A capability the runner cannot honor is degraded + WARNed (FR-E5),
+ * never a hard fail. No-op on token-free text (verbatim-forward).
+ */
+export function normalizeScratchPrompt(
+  rawPrompt: string,
+  agent: AdapterId | string | null | undefined,
+  meta: { runId: string },
+): string {
+  const resolved = (agent ?? "claude") as AdapterId;
+  const { text, warnings } = normalizeCapabilityTokens(rawPrompt, resolved);
+
+  if (warnings.length > 0) {
+    log.warn(
+      { runId: meta.runId, agent: resolved, warnings },
+      "[capability-tokens] referenced capability not available on runner — proceeding",
+    );
+  }
+
+  return text;
+}
 
 type DbClientLike = any;
 

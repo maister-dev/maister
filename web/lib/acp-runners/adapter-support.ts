@@ -41,6 +41,19 @@ export type AdapterResumeStrategy =
 export type AdapterFsPolicy = "none";
 export type AdapterMcpTransport = "stdio" | "sse" | "http";
 
+// Capability-token surface forms, frozen 2026-06-16 vs the installed CLIs
+// (acp-runners.md §"Per-adapter materialization target" / flow-settings.md
+// FROZEN SPEC). The cross-runner normalizer (token-normalizer.ts) reads these
+// table-driven — never a claude/codex constant.
+export type CapabilitySurface = {
+  /** Does the adapter surface project skills at all (materialized/discovered)? */
+  readonly skills: boolean;
+  /** Does the adapter honor coder subagents (the `@name` wire form)? */
+  readonly subagents: boolean;
+  /** Wire sigil a skill is invoked with in a prompt for this adapter. */
+  readonly skillSigil: "/" | "$";
+};
+
 export type AdapterSupport = {
   readonly id: AdapterId;
   readonly capabilityAgent: AdapterId;
@@ -52,6 +65,7 @@ export type AdapterSupport = {
   readonly resumeStrategy: AdapterResumeStrategy;
   readonly mcpTransports: readonly AdapterMcpTransport[];
   readonly fsPolicy: AdapterFsPolicy;
+  readonly capabilitySurface: CapabilitySurface;
 };
 
 export const ADAPTER_SUPPORT = [
@@ -66,6 +80,7 @@ export const ADAPTER_SUPPORT = [
     resumeStrategy: "session_resume",
     mcpTransports: ["stdio", "sse", "http"],
     fsPolicy: "none",
+    capabilitySurface: { skills: true, subagents: true, skillSigil: "/" },
   },
   {
     id: "codex",
@@ -78,6 +93,7 @@ export const ADAPTER_SUPPORT = [
     resumeStrategy: "session_resume",
     mcpTransports: ["stdio", "sse", "http"],
     fsPolicy: "none",
+    capabilitySurface: { skills: true, subagents: false, skillSigil: "$" },
   },
   {
     id: "gemini",
@@ -90,6 +106,7 @@ export const ADAPTER_SUPPORT = [
     resumeStrategy: "load_session_pending_smoke",
     mcpTransports: ["stdio", "sse", "http"],
     fsPolicy: "none",
+    capabilitySurface: { skills: true, subagents: false, skillSigil: "/" },
   },
   {
     id: "opencode",
@@ -102,6 +119,7 @@ export const ADAPTER_SUPPORT = [
     resumeStrategy: "session_resume_pending_smoke",
     mcpTransports: ["stdio", "sse", "http"],
     fsPolicy: "none",
+    capabilitySurface: { skills: true, subagents: false, skillSigil: "/" },
   },
   {
     id: "mimo",
@@ -114,6 +132,7 @@ export const ADAPTER_SUPPORT = [
     resumeStrategy: "session_resume_pending_smoke",
     mcpTransports: ["stdio", "sse", "http"],
     fsPolicy: "none",
+    capabilitySurface: { skills: true, subagents: false, skillSigil: "/" },
   },
 ] as const satisfies readonly AdapterSupport[];
 
@@ -137,4 +156,17 @@ export function permissionPoliciesForAdapter(
   adapter: AdapterId,
 ): readonly PermissionPolicy[] {
   return getAdapterSupportById(adapter)?.permissionPolicies ?? [];
+}
+
+const DEFAULT_CAPABILITY_SURFACE: CapabilitySurface = {
+  skills: true,
+  subagents: false,
+  skillSigil: "/",
+};
+
+export function capabilitySurfaceFor(agent: string): CapabilitySurface {
+  return (
+    getAdapterSupportById(agent)?.capabilitySurface ??
+    DEFAULT_CAPABILITY_SURFACE
+  );
 }

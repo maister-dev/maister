@@ -118,6 +118,7 @@ vi.mock("@/lib/scratch-runs/events", () => ({
   sendScratchPromptAndProjectEvents: vi.fn(async () => ({
     stopReason: "end_turn",
   })),
+  normalizeScratchPrompt: (prompt: string) => prompt,
 }));
 
 function emptyTables(): Tables {

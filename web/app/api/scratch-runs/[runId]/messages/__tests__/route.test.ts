@@ -127,6 +127,7 @@ vi.mock("@/lib/instance-config", () => ({
 }));
 vi.mock("@/lib/scratch-runs/events", () => ({
   sendScratchPromptAndProjectEvents: mocks.sendScratchPromptAndProjectEvents,
+  normalizeScratchPrompt: (prompt: string) => prompt,
 }));
 
 let POST: (

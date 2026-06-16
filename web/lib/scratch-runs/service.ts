@@ -51,7 +51,10 @@ import {
   uploadedFileMetadata,
   validateScratchAttachments,
 } from "@/lib/scratch-runs/attachments";
-import { sendScratchPromptAndProjectEvents } from "@/lib/scratch-runs/events";
+import {
+  normalizeScratchPrompt,
+  sendScratchPromptAndProjectEvents,
+} from "@/lib/scratch-runs/events";
 import {
   decoratePromptForPlanMode,
   deriveScratchBranchName,
@@ -1009,8 +1012,10 @@ export async function launchScratchRun(args: {
       runId,
       sessionId: session.sessionId,
       stepId: scratchStepId(),
-      prompt: [prompt, ...attachmentPromptLines(uploadedAttachments)].join(
-        "\n",
+      prompt: normalizeScratchPrompt(
+        [prompt, ...attachmentPromptLines(uploadedAttachments)].join("\n"),
+        executor.agent,
+        { runId },
       ),
     });
     const dialogStatus = await completeScratchPromptTurn({ db, runId });
@@ -1214,6 +1219,7 @@ async function appendScratchUserMessage(args: {
       messageId,
       sequence,
       supervisorSessionId: scratch.supervisorSessionId as string,
+      capabilityAgent: run.capabilityAgent,
       uploadedAttachments,
     };
   });
@@ -1237,10 +1243,14 @@ export async function sendScratchUserMessage(args: {
       runId: args.runId,
       sessionId: appended.supervisorSessionId,
       stepId: scratchStepId(),
-      prompt: [
-        args.body.content,
-        ...attachmentPromptLines(appended.uploadedAttachments),
-      ].join("\n"),
+      prompt: normalizeScratchPrompt(
+        [
+          args.body.content,
+          ...attachmentPromptLines(appended.uploadedAttachments),
+        ].join("\n"),
+        appended.capabilityAgent,
+        { runId: args.runId },
+      ),
     });
     const dialogStatus = await completeScratchPromptTurn({
       db,

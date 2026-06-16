@@ -20,7 +20,10 @@ import {
   classifyScratchRecovery,
   liveScratchSupervisorSessionIds,
 } from "@/lib/scratch-runs/recovery";
-import { sendScratchPromptAndProjectEvents } from "@/lib/scratch-runs/events";
+import {
+  normalizeScratchPrompt,
+  sendScratchPromptAndProjectEvents,
+} from "@/lib/scratch-runs/events";
 import { scratchStepId } from "@/lib/scratch-runs/launch";
 import {
   completeScratchPromptTurn,
@@ -345,7 +348,7 @@ export async function POST(
         runId,
         sessionId: session.sessionId,
         stepId: scratchStepId(),
-        prompt: body.prompt,
+        prompt: normalizeScratchPrompt(body.prompt, executor.agent, { runId }),
       });
 
       const dialogStatus = await completeScratchPromptTurn({ db, runId });

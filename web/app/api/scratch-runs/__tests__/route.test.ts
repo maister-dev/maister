@@ -154,6 +154,7 @@ vi.mock("@/lib/capabilities/materialize", () => ({
 }));
 vi.mock("@/lib/scratch-runs/events", () => ({
   sendScratchPromptAndProjectEvents: mocks.sendScratchPromptAndProjectEvents,
+  normalizeScratchPrompt: (prompt: string) => prompt,
 }));
 
 let POST: (req: NextRequest) => Promise<Response>;

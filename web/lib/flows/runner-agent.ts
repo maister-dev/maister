@@ -13,6 +13,7 @@ import pino from "pino";
 
 import { renderStrict } from "./templating";
 
+import { normalizeCapabilityTokens } from "@/lib/capabilities/token-normalizer";
 import {
   completeHitlAssignmentFromCurrentActor,
   createHitlAssignmentForRun,
@@ -605,9 +606,26 @@ export async function runAgentStep(
     ctx.context as unknown as Record<string, unknown>,
     { traceLog: log },
   );
+  // Cross-runner capability-token normalization is web-side only (FR-E2); the
+  // supervisor still forwards the assembled prompt verbatim. A capability the
+  // resolved runner cannot honor → WARN + proceed (FR-E5), never a hard fail.
+  const normalized = normalizeCapabilityTokens(rendered, ctx.executor.agent);
+
+  if (normalized.warnings.length > 0) {
+    log.warn(
+      {
+        runId: ctx.runId,
+        stepId: ctx.stepId,
+        agent: ctx.executor.agent,
+        warnings: normalized.warnings,
+      },
+      "[capability-tokens] referenced capability not available on runner — proceeding",
+    );
+  }
+
   const resolvedPrompt = ctx.resumeSessionId
-    ? RESUME_READONLY_LIFT + rendered
-    : rendered;
+    ? RESUME_READONLY_LIFT + normalized.text
+    : normalized.text;
 
   log.info(
     {
