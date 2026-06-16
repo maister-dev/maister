@@ -110,6 +110,7 @@ function entry(over: Partial<TimelineEntry>): TimelineEntry {
     status: "Succeeded",
     decision: null,
     reworkFromNode: null,
+    resolvedPrompt: null,
     acpSessionId: "session-internal",
     autoRetry: false,
     startedAt: "2026-06-15T09:00:00.000Z",

@@ -102,12 +102,12 @@ test("manual takeover loop: claim → board → commit → return → diff → s
   await page.goto(`/projects/${fx.projectSlug}`);
 
   // Scope to the board section: the HITL inbox also links to this run, so use
-  // the `data-board` wrapper to pick the flight card unambiguously. Since the
-  // ADR-087 launch action the claimed card is a <div> container (interactive
-  // children), so locate it by testid + branch and assert the View run link.
+  // the `data-board` wrapper to pick the flight card unambiguously. The compact
+  // card no longer renders the worktree branch, so locate it by the run link
+  // the stretched overlay wraps.
   const card = page
     .locator('[data-board] [data-testid="flight-card"]')
-    .filter({ hasText: fx.branch });
+    .filter({ has: page.locator(`a[href="/runs/${fx.runId}"]`) });
 
   await expect(card).toBeVisible();
   await expect(
@@ -115,9 +115,8 @@ test("manual takeover loop: claim → board → commit → return → diff → s
   ).toBeVisible();
   await expect(card.getByText("claimed by")).toBeVisible(); // owner label
   await expect(card.getByText("E2E Admin")).toBeVisible(); // owner name
-  await expect(
-    card.getByText(fx.branch, { exact: true }).first(),
-  ).toBeVisible(); // branch
+  // The compact card no longer renders the worktree branch anywhere.
+  await expect(card.getByText(fx.branch, { exact: true })).toHaveCount(0);
   await expect(card.getByText("Return", { exact: false })).toBeVisible(); // pending Return action
   // Visual distinction: the humanworking card carries the accent-3 stripe
   // (a claimed-takeover surface, not a normal running task).

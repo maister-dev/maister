@@ -46,6 +46,8 @@ const LABELS: FlowRunCenterLabels = {
   outdatedThreads: "outdated",
   options: "options",
   tokens: "Tokens",
+  prompt: "Prompt",
+  promptCopy: "Copy",
   noGraph: "No graph",
   noNode: "No node",
 };
@@ -134,6 +136,7 @@ function entry(over: Partial<TimelineEntry>): TimelineEntry {
     status: "Running",
     decision: null,
     reworkFromNode: null,
+    resolvedPrompt: null,
     acpSessionId: "internal",
     autoRetry: false,
     startedAt: "2026-06-15T09:00:00.000Z",
@@ -233,6 +236,38 @@ describe("FlowRunCenter", () => {
     expect(selectFlowRunNode(result, null)?.id).toBe("implement");
     expect(render()).toContain("IMPLEMENT");
     expect(render()).toContain("Current");
+  });
+
+  it("renders the per-attempt resolved prompt disclosure for the selected node", () => {
+    query = new URLSearchParams();
+    const html = render({
+      timeline: {
+        entries: [
+          entry({ nodeId: "plan" }),
+          entry({
+            nodeId: "implement",
+            resolvedPrompt: "Run the failing test, then fix it.",
+          }),
+        ],
+        assignmentEvents: [],
+      },
+    });
+
+    expect(html).toContain('data-testid="flow-run-attempt-prompt"');
+    expect(html).toContain("Run the failing test, then fix it.");
+    expect(html).toContain("Prompt");
+  });
+
+  it("omits the prompt disclosure when no resolved prompt was captured", () => {
+    query = new URLSearchParams();
+    const html = render({
+      timeline: {
+        entries: [entry({ nodeId: "implement", resolvedPrompt: null })],
+        assignmentEvents: [],
+      },
+    });
+
+    expect(html).not.toContain('data-testid="flow-run-attempt-prompt"');
   });
 
   it("selects the node from ?node=", () => {

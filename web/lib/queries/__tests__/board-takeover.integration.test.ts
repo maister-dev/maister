@@ -155,8 +155,6 @@ describe("getBoardData — HumanWorking takeover surface (integration)", () => {
     expect(card?.status).toBe("humanworking");
     // Owner = users.name ?? users.email.
     expect(card?.owner).toBe("Reviewer Rae");
-    // Branch surfaced.
-    expect(card?.branch).toBe("maister/takeover-1");
     // Elapsed derived from the takeover node_attempts.started_at (not the run
     // startedAt) — ~12 minutes.
     expect(card?.time).toBe("12m");

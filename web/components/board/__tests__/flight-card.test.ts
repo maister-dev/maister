@@ -39,6 +39,9 @@ const labels: FlightCardLabels = {
   runsCount: (count: number) => `${count} runs`,
   launch: "Run again",
   launchUnavailable: "Unavailable",
+  unconfigured: "no flow",
+  needsAttention: "Needs you",
+  openRun: "Open run",
 };
 
 function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
@@ -46,18 +49,16 @@ function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
     taskId: "task-1",
     number: 1,
     keyRef: "TST-1",
+    title: "Fix the thing",
+    flowRef: "bugfix",
     runCount: 1,
     runStatus: "Running",
     runId: "run-1",
-    branch: "maister/fix-thing",
     agent: "claude",
     status: "running",
     stepLabel: "implement",
-    stepBody: "implement step",
     spine: Array.from({ length: 7 }, () => ({ state: "todo" as const })),
     time: "3m",
-    plus: null,
-    minus: null,
     reworking: false,
     owner: null,
     refused: false,
@@ -66,11 +67,6 @@ function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
     readiness: "ready",
     readyToPromote: false,
     prNumber: null,
-    hitlRequestId: null,
-    hitlKind: null,
-    hitlOptions: [],
-    hitlSchema: null,
-    criticality: null,
     blockedBy: [],
     ...over,
   };
@@ -78,27 +74,26 @@ function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
 
 function render(card: FlightCardData): string {
   return renderToStaticMarkup(
-    createElement(FlightCard, { canAct: false, card, labels }),
+    createElement(FlightCard, { canAct: false, card, labels, slug: "proj" }),
   );
 }
 
 describe("FlightCard — humanworking takeover surface (M11b)", () => {
-  it("renders owner, elapsed, branch, and a Return action for a humanworking card", () => {
+  it("renders owner, elapsed, and a Return action for a humanworking card (no branch)", () => {
     const html = render(
       baseCard({
         status: "humanworking",
         agent: "dev",
         owner: "Reviewer Rae",
         time: "12m",
-        branch: "maister/takeover-branch",
       }),
     );
 
     // Owner is shown via the "claimed by <owner>" badge.
     expect(html).toContain("claimed by");
     expect(html).toContain("Reviewer Rae");
-    // Branch is rendered.
-    expect(html).toContain("maister/takeover-branch");
+    // The compact card no longer renders the worktree branch anywhere.
+    expect(html).not.toContain("maister/");
     // Elapsed time since the claim is rendered.
     expect(html).toContain("12m");
     // A pending-Return affordance is present.
@@ -135,8 +130,8 @@ describe("FlightCard — humanworking takeover surface (M11b)", () => {
     // Needs cards do not show the takeover surface.
     expect(html).not.toContain("claimed by");
     expect(html).not.toContain("Return");
-    // The needs step body still renders.
-    expect(html).toContain("implement step");
+    // The current node label still renders on row 2.
+    expect(html).toContain("implement");
   });
 });
 
@@ -354,5 +349,51 @@ describe("FlightCard — ready-to-promote / PR badge (M18 Phase 4)", () => {
     expect(html).not.toContain("Ready to promote");
     expect(html).not.toContain("PR #4242");
     expect(html).not.toContain("↗");
+  });
+});
+
+describe("FlightCard — compact identity-first contract", () => {
+  it("links KEY-N to the task page and stretches a link to the run", () => {
+    const html = render(baseCard());
+
+    // KEY-N anchors to the task detail page (render prop slug = "proj").
+    expect(html).toContain('href="/projects/proj/tasks/1"');
+    // The whole card is a stretched link to the run.
+    expect(html).toContain('data-testid="flight-card-open"');
+    expect(html).toContain('href="/runs/run-1"');
+  });
+
+  it("shows task identity (KEY-N + title + flow) instead of the branch", () => {
+    const html = render(
+      baseCard({ title: "Make timeout configurable", flowRef: "bugfix" }),
+    );
+
+    expect(html).toContain("TST-1");
+    expect(html).toContain("Make timeout configurable");
+    expect(html).toContain("bugfix");
+    // The worktree branch is never rendered on the compact card.
+    expect(html).not.toContain("maister/");
+  });
+
+  it("renders no inline HITL form and no vestigial diff block", () => {
+    const html = render(baseCard({ status: "needs" }));
+
+    expect(html).not.toContain("<textarea");
+    expect(html).not.toContain('data-testid="flight-card-hitl"');
+    // The old `+X / −Y` diff block is gone.
+    expect(html).not.toMatch(/\+\d+\s*\/\s*−\d+/);
+  });
+
+  it("flags a needs card with a needs-attention badge, not a form", () => {
+    const html = render(baseCard({ status: "needs" }));
+
+    expect(html).toContain('data-testid="flight-card-needs"');
+    expect(html).toContain("Needs you");
+  });
+
+  it("uses a <div> container (no outer anchor wrapping the card)", () => {
+    const html = render(baseCard());
+
+    expect(html).toMatch(/^<div [^>]*data-testid="flight-card"/);
   });
 });

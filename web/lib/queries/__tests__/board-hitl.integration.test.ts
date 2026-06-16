@@ -57,7 +57,8 @@ afterAll(async () => {
 });
 
 async function seedProject(id: string): Promise<void> {
-  await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
+  await db.insert(schema.projects).values({
+    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id,
     slug: id,
     name: id,
@@ -95,7 +96,8 @@ async function seedTask(
   projectId: string,
   flowId: string,
 ): Promise<void> {
-  await db.insert(schema.tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
+  await db.insert(schema.tasks).values({
+    number: Math.trunc(Math.random() * 1e9) + 1,
     id,
     projectId,
     title: `Task ${id}`,
@@ -167,7 +169,11 @@ async function seedHitlRequest(
   ]);
 }
 
-describe("getBoardData — HITL-enhanced FlightCard DTO (M17 P4)", () => {
+// The inline HITL form on the board flight card was removed: a NeedsInput card
+// now flags attention via its `status` alone, and the HITL response happens on
+// the run page (diff visible) or the HITL Inbox. The card DTO carries no
+// per-card HITL fields, so supervisor-internal handles cannot leak through it.
+describe("getBoardData — NeedsInput flight card (inline HITL projection removed)", () => {
   beforeEach(async () => {
     // Clear all tables between tests.
     await db.delete(schema.hitlRequests);
@@ -179,7 +185,7 @@ describe("getBoardData — HITL-enhanced FlightCard DTO (M17 P4)", () => {
     await db.delete(schema.projects);
   });
 
-  it("populates hitlRequestId, hitlKind, hitlSchema, criticality on a NeedsInput flight card with a pending HITL", async () => {
+  it("flags a NeedsInput card via status only — no HITL fields, no supervisor-handle leak", async () => {
     await seedProject("proj-1");
     await seedExecutor("ex-1", "proj-1");
     await seedFlow("fl-1", "proj-1", "bugfix");
@@ -187,9 +193,8 @@ describe("getBoardData — HITL-enhanced FlightCard DTO (M17 P4)", () => {
     await seedRun("run-1", "task-1", "proj-1", "fl-1", "ex-1", "NeedsInput");
     await seedWorkspace("run-1", "proj-1");
 
-    // A real permission schema carries supervisor-internal handles
-    // (requestId / supervisorSessionId / toolCall) alongside the options.
-    const permissionSchema = {
+    // A pending permission request carries supervisor-internal handles.
+    await seedHitlRequest("hitl-1", "run-1", "permission", "high", {
       requestId: "req-secret-xyz",
       supervisorSessionId: "sup-sess-secret-42",
       toolCall: { name: "bash" },
@@ -197,15 +202,7 @@ describe("getBoardData — HITL-enhanced FlightCard DTO (M17 P4)", () => {
         { optionId: "allow", label: "Allow" },
         { optionId: "deny", label: "Deny" },
       ],
-    };
-
-    await seedHitlRequest(
-      "hitl-1",
-      "run-1",
-      "permission",
-      "high",
-      permissionSchema,
-    );
+    });
 
     const data = await getBoardData("proj-1");
     const card = data.columns.InProduction.flight.find(
@@ -213,273 +210,22 @@ describe("getBoardData — HITL-enhanced FlightCard DTO (M17 P4)", () => {
     );
 
     expect(card).toBeDefined();
-    expect(card?.hitlRequestId).toBe("hitl-1");
-    expect(card?.hitlKind).toBe("permission");
-    expect(card?.criticality).toBe("high");
-    // SECURITY: permission schemas carry supervisor-internal handles and MUST
-    // NOT cross to the browser. The card exposes options only; hitlSchema=null.
-    expect(card?.hitlSchema).toBeNull();
+    // The needs-attention signal is the card status — no per-card HITL fields.
+    expect(card?.status).toBe("needs");
+    expect(card).not.toHaveProperty("hitlRequestId");
+    expect(card).not.toHaveProperty("hitlKind");
+    expect(card).not.toHaveProperty("hitlOptions");
+    expect(card).not.toHaveProperty("hitlSchema");
+    expect(card).not.toHaveProperty("criticality");
+    // SECURITY: supervisor-internal handles never cross to the browser DTO.
     expect(JSON.stringify(card)).not.toContain("sup-sess-secret-42");
     expect(JSON.stringify(card)).not.toContain("req-secret-xyz");
-    expect(card?.hitlOptions).toHaveLength(2);
-    expect(card?.hitlOptions[0]).toEqual({
-      optionId: "allow",
-      label: "Allow",
-    });
-    expect(card?.hitlOptions[1]).toEqual({
-      optionId: "deny",
-      label: "Deny",
-    });
   });
 
-  it("populates hitlSchema on a form HITL with the full schema", async () => {
-    await seedProject("proj-2");
-    await seedExecutor("ex-2", "proj-2");
-    await seedFlow("fl-2", "proj-2", "form-flow");
-    await seedTask("task-2", "proj-2", "fl-2");
-    await seedRun("run-2", "task-2", "proj-2", "fl-2", "ex-2", "NeedsInput");
-    await seedWorkspace("run-2", "proj-2");
-
-    const formSchema = {
-      type: "object",
-      properties: {
-        name: { type: "string" },
-        age: { type: "number" },
-      },
-      required: ["name"],
-    };
-
-    await seedHitlRequest("hitl-2", "run-2", "form", "medium", formSchema);
-
-    const data = await getBoardData("proj-2");
-    const card = data.columns.InProduction.flight.find(
-      (c) => c.runId === "run-2",
-    );
-
-    expect(card?.hitlSchema).toEqual(formSchema);
-    expect(card?.hitlKind).toBe("form");
-  });
-
-  it("sets hitlRequestId/hitlKind/hitlSchema to null on a NeedsInput run WITHOUT a pending HITL", async () => {
-    await seedProject("proj-3");
-    await seedExecutor("ex-3", "proj-3");
-    await seedFlow("fl-3", "proj-3", "test-flow");
-    await seedTask("task-3", "proj-3", "fl-3");
-    await seedRun("run-3", "task-3", "proj-3", "fl-3", "ex-3", "NeedsInput");
-    await seedWorkspace("run-3", "proj-3");
-
-    // No HITL request is created.
-
-    const data = await getBoardData("proj-3");
-    const card = data.columns.InProduction.flight.find(
-      (c) => c.runId === "run-3",
-    );
-
-    expect(card?.hitlRequestId).toBeNull();
-    expect(card?.hitlKind).toBeNull();
-    expect(card?.hitlSchema).toBeNull();
-    expect(card?.criticality).toBeNull();
-    expect(card?.hitlOptions).toEqual([]);
-  });
-
-  it("filters out answered HITLs (respondedAt is not null)", async () => {
-    await seedProject("proj-4");
-    await seedExecutor("ex-4", "proj-4");
-    await seedFlow("fl-4", "proj-4", "answered-flow");
-    await seedTask("task-4", "proj-4", "fl-4");
-    await seedRun("run-4", "task-4", "proj-4", "fl-4", "ex-4", "NeedsInput");
-    await seedWorkspace("run-4", "proj-4");
-
-    // Create an answered HITL (respondedAt set).
-    await seedHitlRequest(
-      "hitl-4",
-      "run-4",
-      "permission",
-      "low",
-      { options: [] },
-      new Date(),
-    );
-
-    const data = await getBoardData("proj-4");
-    const card = data.columns.InProduction.flight.find(
-      (c) => c.runId === "run-4",
-    );
-
-    // The answered HITL should not be present in the card.
-    expect(card?.hitlRequestId).toBeNull();
-    expect(card?.hitlKind).toBeNull();
-  });
-
-  it("does NOT leak acp_session_id or supervisor internal handles into the DTO", async () => {
-    await seedProject("proj-5");
-    await seedExecutor("ex-5", "proj-5");
-    await seedFlow("fl-5", "proj-5", "checkpoint-flow");
-    await seedTask("task-5", "proj-5", "fl-5");
-    await seedRun(
-      "run-5",
-      "task-5",
-      "proj-5",
-      "fl-5",
-      "ex-5",
-      "NeedsInput",
-      "acp-session-12345",
-    );
-    await seedWorkspace("run-5", "proj-5");
-    await seedHitlRequest("hitl-5", "run-5", "permission", null, {
-      options: [],
-    });
-
-    const data = await getBoardData("proj-5");
-    const card = data.columns.InProduction.flight.find(
-      (c) => c.runId === "run-5",
-    );
-
-    // The card's DTO should NOT include acp_session_id, supervisor IDs,
-    // worktree paths, or any internal handles.
-    expect(card).toBeDefined();
-
-    // Serialize the card to JSON and ensure no acp/session/supervisor/worktree
-    // keys are present.
-    const json = JSON.stringify(card);
-
-    expect(json).not.toContain("acp");
-    expect(json).not.toContain("session");
-    expect(json).not.toContain("supervisor");
-    expect(json).not.toContain("worktree");
-  });
-
-  it("handles multiple pending HITLs per run (bulk join without N+1)", async () => {
-    // Seed a scenario where multiple runs have HITLs — test that a single
-    // query (or a minimal batch) populates the data without N+1 queries.
-    await seedProject("proj-6");
-    await seedExecutor("ex-6", "proj-6");
-    await seedFlow("fl-6", "proj-6", "multi-flow");
-    await seedTask("task-6a", "proj-6", "fl-6");
-    await seedTask("task-6b", "proj-6", "fl-6");
-    await seedRun("run-6a", "task-6a", "proj-6", "fl-6", "ex-6", "NeedsInput");
-    await seedRun("run-6b", "task-6b", "proj-6", "fl-6", "ex-6", "NeedsInput");
-    await seedWorkspace("run-6a", "proj-6");
-    await seedWorkspace("run-6b", "proj-6");
-
-    // Each run gets a HITL.
-    await seedHitlRequest("hitl-6a", "run-6a", "form", "critical", {
-      type: "object",
-    });
-    await seedHitlRequest("hitl-6b", "run-6b", "permission", "medium", {
-      options: [],
-    });
-
-    const data = await getBoardData("proj-6");
-
-    const card6a = data.columns.InProduction.flight.find(
-      (c) => c.runId === "run-6a",
-    );
-    const card6b = data.columns.InProduction.flight.find(
-      (c) => c.runId === "run-6b",
-    );
-
-    expect(card6a?.hitlRequestId).toBe("hitl-6a");
-    expect(card6a?.criticality).toBe("critical");
-    expect(card6b?.hitlRequestId).toBe("hitl-6b");
-    expect(card6b?.criticality).toBe("medium");
-  });
-
-  it("sets hitlOptions to empty array when no options are present", async () => {
-    await seedProject("proj-7");
-    await seedExecutor("ex-7", "proj-7");
-    await seedFlow("fl-7", "proj-7", "no-options-flow");
-    await seedTask("task-7", "proj-7", "fl-7");
-    await seedRun("run-7", "task-7", "proj-7", "fl-7", "ex-7", "NeedsInput");
-    await seedWorkspace("run-7", "proj-7");
-
-    // A form HITL with no options.
-    await seedHitlRequest("hitl-7", "run-7", "form", null, { type: "object" });
-
-    const data = await getBoardData("proj-7");
-    const card = data.columns.InProduction.flight.find(
-      (c) => c.runId === "run-7",
-    );
-
-    expect(card?.hitlOptions).toEqual([]);
-  });
-
-  it("returns null HITL fields on non-NeedsInput status cards", async () => {
-    await seedProject("proj-8");
-    await seedExecutor("ex-8", "proj-8");
-    await seedFlow("fl-8", "proj-8", "running-flow");
-    await seedTask("task-8", "proj-8", "fl-8");
-    // A Running run (not NeedsInput).
-    await seedRun("run-8", "task-8", "proj-8", "fl-8", "ex-8", "Running");
-    await seedWorkspace("run-8", "proj-8");
-
-    // Even if we seed a HITL for this run, it should not be visible because
-    // the run status is not NeedsInput/NeedsInputIdle.
-    await seedHitlRequest("hitl-8", "run-8", "permission", null, {
-      options: [],
-    });
-
-    const data = await getBoardData("proj-8");
-    const card = data.columns.InProduction.flight.find(
-      (c) => c.runId === "run-8",
-    );
-
-    // The card should exist, but HITL fields should be null (not filtered
-    // by the bulk query since it's not NeedsInput).
-    expect(card?.runId).toBe("run-8");
-    expect(card?.status).toBe("running");
-    // HITL fields should be null because the bulk join only includes NeedsInput/NeedsInputIdle.
-    expect(card?.hitlRequestId).toBeNull();
-    expect(card?.hitlKind).toBeNull();
-  });
-
-  it("correctly maps permission options from the schema", async () => {
-    await seedProject("proj-9");
-    await seedExecutor("ex-9", "proj-9");
-    await seedFlow("fl-9", "proj-9", "perm-flow");
-    await seedTask("task-9", "proj-9", "fl-9");
-    await seedRun("run-9", "task-9", "proj-9", "fl-9", "ex-9", "NeedsInput");
-    await seedWorkspace("run-9", "proj-9");
-
-    const permissionSchema = {
-      options: [
-        { optionId: "approve-minor", label: "Approve (minor)" },
-        { optionId: "approve-major", label: "Approve (major)" },
-        { optionId: "request-review", label: "Request external review" },
-      ],
-    };
-
-    await seedHitlRequest(
-      "hitl-9",
-      "run-9",
-      "permission",
-      "critical",
-      permissionSchema,
-    );
-
-    const data = await getBoardData("proj-9");
-    const card = data.columns.InProduction.flight.find(
-      (c) => c.runId === "run-9",
-    );
-
-    expect(card?.hitlOptions).toHaveLength(3);
-    expect(card?.hitlOptions[0]).toEqual({
-      optionId: "approve-minor",
-      label: "Approve (minor)",
-    });
-    expect(card?.hitlOptions[1]).toEqual({
-      optionId: "approve-major",
-      label: "Approve (major)",
-    });
-    expect(card?.hitlOptions[2]).toEqual({
-      optionId: "request-review",
-      label: "Request external review",
-    });
-  });
-
-  // C2 regression: the run-detail loader is a third reader of the permission
-  // schema (alongside the board card and the cross-project inbox). It MUST
-  // redact the supervisor-internal handles too, or they serialize into the
-  // run-detail RSC payload and reach the browser.
+  // C2 regression: the run-detail loader is a reader of the permission schema
+  // (alongside the cross-project inbox). It MUST redact the supervisor-internal
+  // handles too, or they serialize into the run-detail RSC payload and reach
+  // the browser.
   it("getRunDetail redacts the permission schema (supervisor handles never reach the browser)", async () => {
     await seedProject("proj-rd");
     await seedExecutor("ex-rd", "proj-rd");
@@ -522,5 +268,10 @@ describe("getBoardData — HITL-enhanced FlightCard DTO (M17 P4)", () => {
     expect(JSON.stringify(detail)).not.toContain("sup-sess-secret-rd");
     expect(JSON.stringify(detail)).not.toContain("req-secret-rd");
     expect(detail?.pendingHitl?.options).toHaveLength(2);
+
+    // T3.1: the run-detail header data carries task identity + flow ref.
+    expect(detail?.taskTitle).toBe("Task task-rd");
+    expect(detail?.taskPrompt).toBe("Do something");
+    expect(detail?.flowRef).toBe("bugfix");
   });
 });

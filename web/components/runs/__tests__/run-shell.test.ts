@@ -13,6 +13,7 @@ const LABELS: RunHeaderLabels = {
   branch: "Branch",
   changes: "Changes",
   changesUnavailable: "Unavailable",
+  task: "Task",
   changedFiles: "files",
   openInspector: "Open inspector",
   closeInspector: "Close inspector",

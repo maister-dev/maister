@@ -88,6 +88,7 @@ function makeFakeDb(
   opts: {
     insertFails?: boolean;
     priorIntent?: Record<string, unknown> | null;
+    resolvedPromptUpdateFails?: boolean;
   } = {},
 ): InsertSpy & {
   insert: (...args: unknown[]) => unknown;
@@ -138,19 +139,25 @@ function makeFakeDb(
     };
   };
   const updateChain = () => ({
-    set: (vals: Record<string, unknown>) => ({
-      where: (..._args: unknown[]) => {
-        state.updates.push({ set: vals });
-        // Thenable that also exposes .returning() so callers that
-        // either `await db.update(t).set(...).where(...)` or
-        // `db.update(t).set(...).where(...).returning(...)` both work.
-        const result: any = Promise.resolve([{ id: "x" }]);
+    set: (vals: Record<string, unknown>) => {
+      if (opts.resolvedPromptUpdateFails && "resolvedPrompt" in vals) {
+        throw new Error("simulated resolved_prompt UPDATE failure");
+      }
 
-        result.returning = async () => [{ id: "x" }];
+      return {
+        where: (..._args: unknown[]) => {
+          state.updates.push({ set: vals });
+          // Thenable that also exposes .returning() so callers that
+          // either `await db.update(t).set(...).where(...)` or
+          // `db.update(t).set(...).where(...).returning(...)` both work.
+          const result: any = Promise.resolve([{ id: "x" }]);
 
-        return result;
-      },
-    }),
+          result.returning = async () => [{ id: "x" }];
+
+          return result;
+        },
+      };
+    },
   });
   // M8 T11: tryAutoDeliverStoredIntent reads hitl_requests for a prior
   // stored intent. Tests without `priorIntent` get an empty result so
@@ -772,5 +779,60 @@ describe("runner-agent — catalog-agent binding substitution (M34, ADR-089)", (
       .prompt as string;
 
     expect(prompt).toBe("plain");
+  });
+});
+
+describe("runner-agent — resolved_prompt capture (migration 0053)", () => {
+  it("eagerly persists the resolved prompt to node_attempts before dispatch", async () => {
+    const db = makeFakeDb();
+    const api = makeApi({ events: [update(1, "ok"), exited(2)] });
+
+    const result = await runAgentStep(
+      {
+        id: "plan",
+        type: "agent",
+        mode: "new-session",
+        prompt: "implement {{ task.prompt }}",
+      },
+      makeCtx(db, { nodeAttemptId: "na-1" }),
+      api,
+    );
+
+    const promptUpdate = db.updates.find((u) => "resolvedPrompt" in u.set);
+
+    expect(promptUpdate).toBeDefined();
+    // {{ task.prompt }} resolves to the FlowContext task prompt ("go").
+    expect(promptUpdate?.set.resolvedPrompt).toBe("implement go");
+    expect(api.sendPrompt).toHaveBeenCalled();
+    expect(result.ok).toBe(true);
+  });
+
+  it("a failed resolved_prompt write is swallowed and the step still dispatches", async () => {
+    const db = makeFakeDb({ resolvedPromptUpdateFails: true });
+    const api = makeApi({ events: [update(1, "ok"), exited(2)] });
+
+    const result = await runAgentStep(
+      { id: "plan", type: "agent", mode: "new-session", prompt: "go" },
+      makeCtx(db, { nodeAttemptId: "na-2" }),
+      api,
+    );
+
+    // Best-effort: the throw never blocks dispatch (the agent turn ran).
+    expect(api.sendPrompt).toHaveBeenCalled();
+    expect(result.ok).toBe(true);
+    expect(db.updates.find((u) => "resolvedPrompt" in u.set)).toBeUndefined();
+  });
+
+  it("skips the write when the step has no nodeAttemptId", async () => {
+    const db = makeFakeDb();
+    const api = makeApi({ events: [update(1, "ok"), exited(2)] });
+
+    await runAgentStep(
+      { id: "plan", type: "agent", mode: "new-session", prompt: "go" },
+      makeCtx(db),
+      api,
+    );
+
+    expect(db.updates.find((u) => "resolvedPrompt" in u.set)).toBeUndefined();
   });
 });

@@ -50,6 +50,7 @@ function entry(over: Partial<TimelineEntry> = {}): TimelineEntry {
     status: "Running",
     decision: null,
     reworkFromNode: null,
+    resolvedPrompt: null,
     acpSessionId: "internal-session",
     autoRetry: false,
     startedAt: "2026-06-15T09:00:00.000Z",

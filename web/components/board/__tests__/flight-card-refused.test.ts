@@ -45,6 +45,9 @@ const labels: FlightCardLabels = {
   runsCount: (count: number) => `${count} runs`,
   launch: "Run again",
   launchUnavailable: "Unavailable",
+  unconfigured: "no flow",
+  needsAttention: "Needs you",
+  openRun: "Open run",
 } as FlightCardLabels;
 
 function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
@@ -52,21 +55,19 @@ function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
     taskId: "task-1",
     number: 1,
     keyRef: "TST-1",
+    title: "Fix the thing",
+    flowRef: "bugfix",
     runCount: 1,
     runStatus: "Running",
     runId: "run-1",
-    branch: "maister/fix-thing",
     agent: "claude",
     status: "running",
     stepLabel: "implement",
-    stepBody: "implement step",
     spine: Array.from({ length: 7 }, () => ({ state: "todo" as const })),
     time: "3m",
-    plus: null,
-    minus: null,
     reworking: false,
     owner: null,
-    // M11c Phase 4.3 — new field, RED until the implementor adds it.
+    // M11c Phase 4.3 — refused indicator under test.
     refused: true,
     // T15 (M15): unified readiness state — "ready" so the badge stays hidden,
     // keeping this suite focused on the refused indicator.
@@ -76,11 +77,6 @@ function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
     readyToPromote: false,
     prNumber: null,
     crashAction: null,
-    hitlRequestId: null,
-    hitlKind: null,
-    hitlOptions: [],
-    hitlSchema: null,
-    criticality: null,
     blockedBy: [],
     ...over,
   } as FlightCardData;
@@ -88,7 +84,7 @@ function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
 
 function render(card: FlightCardData): string {
   return renderToStaticMarkup(
-    createElement(FlightCard, { canAct: false, card, labels }),
+    createElement(FlightCard, { canAct: false, card, labels, slug: "proj" }),
   );
 }
 
