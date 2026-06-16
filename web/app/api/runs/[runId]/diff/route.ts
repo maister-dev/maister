@@ -285,14 +285,42 @@ export async function GET(
         baseCommit: scratch.baseCommit,
         branch: workspace.branch,
       });
+      // M35 (T3.3): scratch diffs now ride the prepared `files`/`perFile` shape
+      // the shared <RunDiff> consumes, while keeping the raw `diff` string for
+      // backward compatibility. Scratch has a single `run` scope (workspace
+      // base -> branch) — the flow multi-scope base resolution does not apply.
+      // The name-status runs in the parent repo, the same tree as the diff.
+      const nameStatus = await diffNameStatus({
+        worktreePath: workspace.parentRepoPath,
+        baseRef: scratch.baseCommit,
+        branch: workspace.branch,
+      });
+      const { prepared, renderUnavailableReason } =
+        await prepareDiffForResponse({ runId, scope: "run", diff, truncated });
+      const countsByPath = new Map(prepared.files.map((f) => [f.path, f]));
+      const files = nameStatus.map((entry) => {
+        const counts = countsByPath.get(entry.path);
+
+        return {
+          path: entry.path,
+          status: entry.status,
+          additions: counts?.additions ?? 0,
+          deletions: counts?.deletions ?? 0,
+        };
+      });
 
       return NextResponse.json({
         runId,
+        scope: "run",
+        scopes: { run: { available: true } },
         baseCommit: scratch.baseCommit,
         sourceBranch: workspace.branch,
         targetBranch,
         diff,
-        truncated,
+        truncated: prepared.truncated,
+        files,
+        perFile: prepared.perFile,
+        renderUnavailableReason,
       });
     }
 

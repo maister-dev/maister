@@ -305,27 +305,27 @@ supervisor binary is expected.
   seed should not require real supervisor network. Verify with
   `pnpm --filter maister-web test:e2e -- e2e/m22-workbench.spec.ts
   e2e/review-comments.spec.ts`.
-- [ ] **Phase 2 exit.** Lint, typecheck, unit/integration tests, and targeted
+- [x] **Phase 2 exit.** Lint, typecheck, unit/integration tests, and targeted
   e2e are green. No layout query change may re-run graph/diff heavy loaders
   beyond the existing persistent-layout boundary.
 
 ### Phase 3 - Scratch run on the shared shell
 
-- [ ] **T3.1 - Add a persistent scratch run layout.** Convert
+- [x] **T3.1 - Add a persistent scratch run layout.** Convert
   `/scratch-runs/[runId]` to the same shape as `/runs/[runId]`: a persistent
   layout renders the conversation center, inspector, and workbench; the page
   child handles the `?file=` server pane. Extract the existing run file pane so
   both routes reuse the same `readRepoFiles` and `repoRelPathSchema` path.
   Logging: server file pane keeps invalid-path `warn` with `runId`/`projectId`
   only. Tests: server component/read helper tests for scratch file read auth.
-- [ ] **T3.2 - Split `ScratchDialog` into conversation parts.** Extract
+- [x] **T3.2 - Split `ScratchDialog` into conversation parts.** Extract
   `ScratchConversation`, `ScratchComposer`, `ScratchPermissionPanel`, and pure
   status helpers from `web/components/scratch/scratch-dialog.tsx`. Preserve the
   current SSE-triggered detail refresh, message upload behavior, quick replies,
   recover prompt behavior, and HITL response routes. Logging: no client
   console; route errors remain visible in the conversation. Tests: migrate
   existing scratch dialog/transcript assertions to the smaller components.
-- [ ] **T3.3 - Upgrade scratch diff to the prepared DTO shape.** Update the
+- [x] **T3.3 - Upgrade scratch diff to the prepared DTO shape.** Update the
   scratch branch of `GET /api/runs/{runId}/diff` so it returns the prepared
   `files`, `perFile`, `scope`, and `scopes` shape consumed by `RunDiff`, while
   preserving the raw `diff` string during the UI migration. Keep
@@ -334,14 +334,14 @@ supervisor binary is expected.
   logging with `runId`, `projectId`, `scope`, and no file contents. Tests:
   scratch auth gate, prepared files/perFile shape, empty diff, binary/truncated
   diff, and backward-compatible raw `diff`.
-- [ ] **T3.4 - Remove the scratch-owned sidebar and raw diff path.** Replace
+- [x] **T3.4 - Remove the scratch-owned sidebar and raw diff path.** Replace
   `loadDiff()` and the local raw `<pre>` diff section with the shared workbench
   Diff tab and inspector change list. Promotion/action buttons move to the
   inspector action group and continue to call existing routes. Logging: none
   client-side. Tests: scratch detail no longer renders raw diff; Diff tab
   renders `RunDiff` for scratch; action URLs preserve scratch-vs-run route
   selection.
-- [ ] **T3.5 - Scratch detail e2e.** Extend `scratch-launch.spec.ts` or add a
+- [x] **T3.5 - Scratch detail e2e.** Extend `scratch-launch.spec.ts` or add a
   new authed spec: launched scratch opens conversation, composer is primary,
   inspector toggles, WaitingForUser enables composer, Review shows change size
   and actions, Diff tab uses shared diff renderer, Files tab can read tracked
@@ -350,7 +350,7 @@ supervisor binary is expected.
   `AUTHED_SPEC` in `web/playwright.config.ts`. Logging: seeded fixture should
   use the existing stub supervisor. Verify with
   `pnpm --filter maister-web test:e2e -- e2e/scratch-launch.spec.ts`.
-- [ ] **Phase 3 exit.** Lint, typecheck, `pnpm --filter maister-web test`, and
+- [x] **Phase 3 exit.** Lint, typecheck, `pnpm --filter maister-web test`, and
   targeted scratch e2e are green. Scratch launch, messages, recover, HITL, stop,
   discard, and promote route tests remain green.
 

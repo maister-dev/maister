@@ -4147,6 +4147,122 @@ function runnerSnapshotJson(
   });
 }
 
+// --- Scratch detail fixture (M35 T3.5) -------------------------------------
+// A scratch run on the shared run shell: WaitingForUser (composer enabled), a
+// committed branch diff (change size + Diff tab), tracked files (Files tab),
+// and a short transcript (conversation center). Reuses provisionM22Repo for the
+// real parent repo (README.md + src/app.ts + a committed run-branch change).
+const SCRATCH_DETAIL_SLUG = "e2e-scratch-detail";
+const SCRATCH_DETAIL_BRANCH = "maister/e2e-scratch-detail";
+
+type ScratchDetailFixtureRecord = {
+  projectSlug: string;
+  repoPath: string;
+  scratchRunId: string;
+  branch: string;
+};
+
+async function seedScratchDetailFixture(
+  pool: Pool,
+  userId: string,
+): Promise<ScratchDetailFixtureRecord> {
+  const ids = {
+    project: randomUUID(),
+    runner: randomUUID(),
+    run: randomUUID(),
+    workspace: randomUUID(),
+    member: randomUUID(),
+  };
+  const repoPath = `/tmp/maister-e2e/${ids.project}`;
+  const worktreePath = `${repoPath}/.worktrees/e2e-scratch-detail`;
+
+  await pool.query(`DELETE FROM projects WHERE slug = $1`, [
+    SCRATCH_DETAIL_SLUG,
+  ]);
+
+  mkdirSync(path.dirname(repoPath), { recursive: true });
+  const { baseCommit } = await provisionM22Repo(
+    repoPath,
+    worktreePath,
+    SCRATCH_DETAIL_BRANCH,
+    "big.txt",
+  );
+
+  await pool.query(
+    `INSERT INTO projects (id, slug, name, repo_path, main_branch, maister_yaml_path, task_key)
+     VALUES ($1, $2, $3, $4, 'main', $5, 'E' || upper(substr(md5(random()::text), 1, 8)))`,
+    [
+      ids.project,
+      SCRATCH_DETAIL_SLUG,
+      "MAIster E2E Scratch Detail",
+      repoPath,
+      `${repoPath}/maister.yaml`,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO platform_acp_runners
+       (id, adapter, capability_agent, model, provider, permission_policy,
+        readiness_status, readiness_reasons, enabled)
+     VALUES ($1, 'claude', 'claude', 'claude-sonnet-4-6',
+        '{"kind":"anthropic"}'::jsonb, 'default', 'Ready', '[]'::jsonb, true)
+     ON CONFLICT (id) DO NOTHING`,
+    [ids.runner],
+  );
+  await pool.query(
+    `INSERT INTO project_members (id, project_id, user_id, role)
+     VALUES ($1, $2, $3, 'owner')`,
+    [ids.member, ids.project, userId],
+  );
+  // run.status mirrors runStatusForDialogStatus("WaitingForUser") = "Running".
+  // Pure scratch runs carry no task or flow (flow_id null).
+  await pool.query(
+    `INSERT INTO runs (id, run_kind, project_id, runner_id, capability_agent, runner_snapshot, status, flow_version, created_by_user_id, started_at)
+     VALUES ($1, 'scratch', $2, $3, 'claude', $4::jsonb, 'Running', 'scratch', $5, now())`,
+    [ids.run, ids.project, ids.runner, runnerSnapshotJson(ids.runner), userId],
+  );
+  await pool.query(
+    `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path, base_branch, base_commit, target_branch)
+     VALUES ($1, $2, $3, $4, $5, $6, 'main', $7, 'main')`,
+    [
+      ids.workspace,
+      ids.run,
+      ids.project,
+      SCRATCH_DETAIL_BRANCH,
+      worktreePath,
+      repoPath,
+      baseCommit,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO scratch_runs
+       (run_id, project_id, name, initial_prompt, work_mode, reasoning_effort,
+        plan_mode, base_branch, base_commit, target_branch, dialog_status,
+        created_by_user_id)
+     VALUES ($1, $2, 'Scratch detail fixture', 'Edit the README.', 'auto', 'high',
+        'off', 'main', $3, 'main', 'WaitingForUser', $4)`,
+    [ids.run, ids.project, baseCommit, userId],
+  );
+  const messages: Array<[number, "user" | "assistant", string]> = [
+    [1, "user", "Please tweak the README."],
+    [2, "assistant", "Done — updated README.md. Anything else?"],
+  ];
+
+  for (const [sequence, role, content] of messages) {
+    await pool.query(
+      `INSERT INTO scratch_messages (id, run_id, sequence, role, content)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [randomUUID(), ids.run, sequence, role, content],
+    );
+  }
+
+  return {
+    projectSlug: SCRATCH_DETAIL_SLUG,
+    repoPath,
+    scratchRunId: ids.run,
+    branch: SCRATCH_DETAIL_BRANCH,
+  };
+}
+
 type M23FixtureRecord = {
   projectId: string;
   projectSlug: string;
@@ -5306,6 +5422,7 @@ async function main(): Promise<void> {
     const m18 = await seedM18Fixture(pool, admin.id);
     const m27 = await seedM27Fixture(pool, admin.id);
     const m22 = await seedM22Fixture(pool, admin.id, m22Viewer);
+    const scratchDetail = await seedScratchDetailFixture(pool, admin.id);
     const m23 = await seedM23Fixture(pool, admin.id);
     const m27Editor = await seedM27FlowEditorFixture(pool, admin.id);
     const flowsAuthoring = await seedFlowsAuthoringFixture(pool, admin.id);
@@ -5359,6 +5476,7 @@ async function main(): Promise<void> {
         m18,
         m27,
         m22,
+        scratchDetail,
         m23,
         m27Editor,
         flowsAuthoring,
@@ -5397,6 +5515,7 @@ async function main(): Promise<void> {
         `, m18 merge ${m18.mergeRunId} conflict ${m18.conflictRunId} pr ${m18.prRunId} (${M18_SLUG})` +
         `, m27 flow ${m27.flowRunId} scratch ${m27.scratchRunId} (${M27_SLUG})` +
         `, m22 run ${m22.runId} (${M22_SLUG})` +
+        `, scratch-detail ${scratchDetail.scratchRunId} (${SCRATCH_DETAIL_SLUG})` +
         `, m23 project ${m23.projectSlug}` +
         `, flows-authoring cap ${flowsAuthoring.capId} (${FLOWS_AUTHORING_SLUG})` +
         `, review-comments ${reviewComments.runId} (${RC_SLUG})` +

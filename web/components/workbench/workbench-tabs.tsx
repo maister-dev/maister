@@ -23,9 +23,17 @@ export interface WorkbenchTabsProps {
   labels: WorkbenchTabsLabels;
   pathname?: string;
   searchParams?: RunSearchParamsInput;
+  // Restrict the rendered tab set (default: all four). Scratch runs surface
+  // only Files + Diff — they have no flow timeline or evidence graph.
+  tabs?: readonly WorkbenchTab[];
 }
 
-const TABS: readonly WorkbenchTab[] = ["timeline", "diff", "files", "evidence"];
+export const WORKBENCH_TABS: readonly WorkbenchTab[] = [
+  "timeline",
+  "diff",
+  "files",
+  "evidence",
+];
 
 export function WorkbenchTabs({
   runId,
@@ -33,6 +41,7 @@ export function WorkbenchTabs({
   labels,
   pathname,
   searchParams,
+  tabs = WORKBENCH_TABS,
 }: WorkbenchTabsProps): ReactElement {
   const hrefPath = pathname ?? `/runs/${runId}`;
 
@@ -41,7 +50,7 @@ export function WorkbenchTabs({
       className="mb-[18px] inline-flex gap-0.5 rounded-full border border-line bg-ivory p-[3px]"
       role="tablist"
     >
-      {TABS.map((tab) => {
+      {tabs.map((tab) => {
         const isActive = tab === active;
 
         return (

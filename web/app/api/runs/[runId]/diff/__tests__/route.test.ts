@@ -248,7 +248,7 @@ beforeEach(() => {
   });
 });
 
-describe("GET /api/runs/[runId]/diff — scratch (unchanged)", () => {
+describe("GET /api/runs/[runId]/diff — scratch (prepared shape, M35 T3.3)", () => {
   it("returns the server-derived scratch branch diff", async () => {
     const runId = seedScratchRun({ targetBranch: "release" });
 
@@ -281,15 +281,75 @@ describe("GET /api/runs/[runId]/diff — scratch (unchanged)", () => {
     );
   });
 
-  it("does not include a files summary in scratch diff responses", async () => {
+  it("includes a prepared files/perFile summary in scratch diff responses", async () => {
     const runId = seedScratchRun();
 
     const res = await invokeGet(runId);
-    const body = (await res.json()) as { files?: unknown };
+    const body = (await res.json()) as {
+      files?: {
+        path: string;
+        status: string;
+        additions: number;
+        deletions: number;
+      }[];
+      perFile?: unknown[];
+      scope?: string;
+      diff?: string;
+    };
 
     expect(res.status).toBe(200);
-    expect(body.files).toBeUndefined();
-    expect(diffNameStatus).not.toHaveBeenCalled();
+    // The shared <RunDiff> consumes files/perFile; scratch now provides them
+    // (computed over the parent repo, same tree as the raw diff).
+    expect(body.files).toEqual([
+      { path: "file.txt", status: "M", additions: 0, deletions: 0 },
+    ]);
+    expect(Array.isArray(body.perFile)).toBe(true);
+    expect(body.scope).toBe("run");
+    expect(diffNameStatus).toHaveBeenCalledWith({
+      worktreePath: "/repos/demo",
+      baseRef: "abc1234",
+      branch: "scratch/demo",
+    });
+    // The raw diff string is preserved for backward compatibility.
+    expect(body.diff).toContain("diff --git");
+  });
+
+  it("returns an empty files list for an empty scratch diff", async () => {
+    const runId = seedScratchRun();
+
+    vi.mocked(diffRunWorkspace).mockResolvedValueOnce({
+      text: "",
+      truncated: false,
+    });
+    vi.mocked(diffNameStatus).mockResolvedValueOnce([]);
+
+    const res = await invokeGet(runId);
+    const body = (await res.json()) as {
+      files?: unknown[];
+      perFile?: unknown[];
+      diff?: string;
+    };
+
+    expect(res.status).toBe(200);
+    expect(body.files).toEqual([]);
+    expect(body.perFile).toEqual([]);
+    expect(body.diff).toBe("");
+  });
+
+  it("propagates truncated:true for an oversized scratch diff", async () => {
+    const runId = seedScratchRun();
+
+    vi.mocked(diffRunWorkspace).mockResolvedValueOnce({
+      text: "diff --git a/file.txt b/file.txt\n+partial\n",
+      truncated: true,
+    });
+
+    const res = await invokeGet(runId);
+    const body = (await res.json()) as { truncated?: boolean; diff?: string };
+
+    expect(res.status).toBe(200);
+    expect(body.truncated).toBe(true);
+    expect(body.diff).toContain("diff --git");
   });
 
   it("does not include upload artifact storage paths in scratch diff responses", async () => {
