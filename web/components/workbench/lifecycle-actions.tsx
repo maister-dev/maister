@@ -4,6 +4,7 @@ import type { RunKind } from "@/lib/db/schema";
 import type { WorkbenchLifecycleActionId } from "@/lib/workbench-lifecycle/policy";
 import type { ReactElement, ReactNode } from "react";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
@@ -14,10 +15,25 @@ export interface WorkbenchLifecycleActionsProps {
   runKind: RunKind;
   actions: WorkbenchLifecycleActionId[];
   className?: string;
-  variant?: "compact" | "detail" | "icon";
+  variant?: "compact" | "detail" | "icon" | "menu";
+  // Rail `menu` variant extras: the run link for "Open run", the linked-task
+  // KEY-N chip in the sheet/rename header, and the current name seeding rename.
+  runHref?: string;
+  taskKey?: string | null;
+  taskNumber?: number | null;
+  runLabel?: string;
 }
 
-type UiActionId = WorkbenchLifecycleActionId | "snapshotCommit";
+type UiActionId =
+  | WorkbenchLifecycleActionId
+  | "snapshotCommit"
+  | "open"
+  | "rename"
+  | "stopArchive"
+  | "stopDrop"
+  | "menu";
+
+type CombinedActionId = "stopArchive" | "stopDrop";
 
 type HandoffMetadata = {
   ok: true;
@@ -90,7 +106,10 @@ const ACTION_PATH: Record<WorkbenchLifecycleActionId, string> = {
 // Glyphs for the compact `icon` variant — one per UI action, rendered inside a
 // 16×16 stroke svg. The accessible name comes from the `tooltip.*` key, so the
 // svg itself is aria-hidden.
-const actionIcons: Record<UiActionId, ReactNode> = {
+const actionIcons: Record<
+  WorkbenchLifecycleActionId | "snapshotCommit",
+  ReactNode
+> = {
   stop: <rect height="8" rx="1" width="8" x="4" y="4" />,
   archive: (
     <>
@@ -139,19 +158,57 @@ function isValidRemoteName(value: string): boolean {
 function endpointFor(input: {
   runId: string;
   runKind: RunKind;
-  action: WorkbenchLifecycleActionId;
+  action: WorkbenchLifecycleActionId | CombinedActionId;
 }): string {
   if (input.action === "stop" && input.runKind === "scratch") {
     return `/api/scratch-runs/${input.runId}/stop`;
   }
 
+  if (input.action === "stopArchive") {
+    return `/api/runs/${input.runId}/stop-archive`;
+  }
+
+  if (input.action === "stopDrop") {
+    // Scratch Stop & drop reuses the single-transaction discard route.
+    return input.runKind === "scratch"
+      ? `/api/scratch-runs/${input.runId}/discard`
+      : `/api/runs/${input.runId}/stop-drop`;
+  }
+
   return `/api/runs/${input.runId}/${ACTION_PATH[input.action]}`;
 }
 
-function renderActions(actions: WorkbenchLifecycleActionId[]): UiActionId[] {
+function renderActions(
+  actions: WorkbenchLifecycleActionId[],
+): (WorkbenchLifecycleActionId | "snapshotCommit")[] {
   return actions.flatMap((action) =>
     action === "exportBranch" ? ["snapshotCommit", "exportBranch"] : [action],
   );
+}
+
+// Rail `menu` variant: the ordered action-sheet items per run state. Plain Stop
+// is the inline primary (never listed here); snapshot/push/handoff stay in the
+// run card. Combined Stop & * are flow + scratch only (agent out of scope).
+function railMenuItems(
+  actions: WorkbenchLifecycleActionId[],
+  runKind: RunKind,
+): UiActionId[] {
+  const items: UiActionId[] = ["open"];
+
+  if (runKind === "scratch") items.push("rename");
+
+  if (actions.includes("stop")) {
+    if (runKind === "flow" || runKind === "scratch") {
+      items.push("stopArchive", "stopDrop");
+    }
+
+    return items;
+  }
+
+  if (actions.includes("archive")) items.push("archive");
+  if (actions.includes("drop")) items.push("drop");
+
+  return items;
 }
 
 async function readJson<T>(res: Response): Promise<T | null> {
@@ -302,6 +359,10 @@ export function WorkbenchLifecycleActions({
   actions,
   className,
   variant = "compact",
+  runHref,
+  taskKey,
+  taskNumber,
+  runLabel,
 }: WorkbenchLifecycleActionsProps): ReactElement | null {
   const t = useTranslations("workbenchLifecycle");
   const router = useRouter();
@@ -319,8 +380,18 @@ export function WorkbenchLifecycleActions({
     `maister/handoff/${runId}`,
   );
   const [result, setResult] = useState<ActionResult | null>(null);
+  const [renameValue, setRenameValue] = useState(runLabel ?? "");
+  const renameInputRef = useRef<HTMLInputElement>(null);
 
-  if (actions.length === 0) return null;
+  // Focus the rename field when its panel opens — follows the explicit menu
+  // click, never on load, so jsx-a11y/no-autofocus stays satisfied.
+  useEffect(() => {
+    if (dialogAction === "rename") renameInputRef.current?.focus();
+  }, [dialogAction]);
+
+  // The `menu` variant always offers at least "Open run", so it renders even
+  // with no lifecycle actions; other variants hide when there is nothing to do.
+  if (variant !== "menu" && actions.length === 0) return null;
 
   async function loadMetadata(): Promise<void> {
     setErrorState(null);
@@ -366,7 +437,9 @@ export function WorkbenchLifecycleActions({
     setResult(null);
   }
 
-  async function postAction(action: WorkbenchLifecycleActionId): Promise<void> {
+  async function postAction(
+    action: WorkbenchLifecycleActionId | CombinedActionId,
+  ): Promise<void> {
     setBusyAction(action);
     setErrorState(null);
 
@@ -381,6 +454,47 @@ export function WorkbenchLifecycleActions({
         const body = await readJson<LifecycleErrorBody>(res);
 
         setErrorState(errorStateFromBody(body));
+
+        return;
+      }
+
+      setDialogAction(null);
+      router.refresh();
+    } catch {
+      setErrorState(networkErrorState());
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function submitRename(): Promise<void> {
+    const trimmed = renameValue.trim();
+
+    if (trimmed.length < 1 || trimmed.length > 200) {
+      setErrorState({
+        code: "PRECONDITION",
+        message: null,
+        retryHint: null,
+        pushRejected: null,
+        canForce: false,
+      });
+
+      return;
+    }
+    setBusyAction("rename");
+    setErrorState(null);
+
+    try {
+      const res = await fetch(`/api/scratch-runs/${runId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: trimmed }),
+      });
+
+      if (!res.ok) {
+        setErrorState(
+          errorStateFromBody(await readJson<LifecycleErrorBody>(res)),
+        );
 
         return;
       }
@@ -509,7 +623,8 @@ export function WorkbenchLifecycleActions({
     }
   }
 
-  const displayActions = renderActions(actions);
+  const displayActions = variant === "menu" ? [] : renderActions(actions);
+  const menuItems = railMenuItems(actions, runKind);
   const error = compactErrorText(t, errorState);
   const handoffBranchValid = isValidHandoffBranch(handoffBranch);
   const remoteValid = isValidRemoteName(remote);
@@ -526,6 +641,50 @@ export function WorkbenchLifecycleActions({
       )}
       data-testid="workbench-lifecycle-actions"
     >
+      {variant === "menu" ? (
+        <>
+          {actions.includes("stop") ? (
+            <button
+              className={clsx(
+                buttonBase,
+                "h-[26px] border-line bg-paper px-2 text-[9.5px] text-mute hover:border-mute hover:text-ink-2",
+                busyAction === "stop" && "opacity-60",
+              )}
+              data-testid="rail-stop"
+              disabled={busyAction !== null}
+              type="button"
+              onClick={() => openDialog("stop")}
+            >
+              {busyAction === "stop"
+                ? t("busy", { action: t("action.stop") })
+                : t("action.stop")}
+            </button>
+          ) : null}
+          <button
+            aria-label={t("tooltip.menu")}
+            className={clsx(
+              buttonBase,
+              "h-[26px] w-[26px] justify-center border-line bg-paper p-0 text-mute hover:border-mute hover:text-ink-2",
+            )}
+            data-testid="rail-menu-trigger"
+            disabled={busyAction !== null}
+            title={t("tooltip.menu")}
+            type="button"
+            onClick={() => openDialog("menu")}
+          >
+            <svg
+              aria-hidden="true"
+              className="h-3.5 w-3.5"
+              fill="currentColor"
+              viewBox="0 0 16 16"
+            >
+              <circle cx="3" cy="8" r="1.3" />
+              <circle cx="8" cy="8" r="1.3" />
+              <circle cx="13" cy="8" r="1.3" />
+            </svg>
+          </button>
+        </>
+      ) : null}
       {displayActions.map((action) => {
         const label = t(`action.${action}`);
         const tooltip = variant === "icon" ? t(`tooltip.${action}`) : undefined;
@@ -594,19 +753,29 @@ export function WorkbenchLifecycleActions({
               </button>
               {dialogAction === "stop" ||
               dialogAction === "archive" ||
-              dialogAction === "drop" ? (
+              dialogAction === "drop" ||
+              dialogAction === "stopArchive" ||
+              dialogAction === "stopDrop" ? (
                 <button
-                  className={clsx(
-                    "rounded-md border px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-white disabled:opacity-60",
-                    dialogAction === "drop"
-                      ? "border-amber bg-amber hover:bg-amber-2"
-                      : "border-amber bg-amber hover:bg-amber-2",
-                  )}
+                  className="rounded-md border border-amber bg-amber px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-white hover:bg-amber-2 disabled:opacity-60"
                   disabled={busyAction !== null}
                   type="button"
                   onClick={() => void postAction(dialogAction)}
                 >
                   {t("dialog.confirm")}
+                </button>
+              ) : null}
+              {dialogAction === "rename" ? (
+                <button
+                  className="rounded-md border border-amber bg-amber px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-white hover:bg-amber-2 disabled:opacity-60"
+                  data-testid="rename-save"
+                  disabled={
+                    busyAction !== null || renameValue.trim().length === 0
+                  }
+                  type="button"
+                  onClick={() => void submitRename()}
+                >
+                  {t("dialog.save")}
                 </button>
               ) : null}
               {dialogAction === "snapshotCommit" ? (
@@ -672,8 +841,84 @@ export function WorkbenchLifecycleActions({
           <div className="flex flex-col gap-3 text-[12px] leading-[1.45] text-ink-2">
             {dialogAction === "stop" ||
             dialogAction === "archive" ||
-            dialogAction === "drop" ? (
+            dialogAction === "drop" ||
+            dialogAction === "stopArchive" ||
+            dialogAction === "stopDrop" ? (
               <p>{t(`dialog.body.${dialogAction}`)}</p>
+            ) : null}
+            {dialogAction === "menu" ? (
+              <div
+                className="flex flex-col gap-1"
+                data-testid="rail-action-sheet"
+              >
+                {taskKey && taskNumber !== null ? (
+                  <span className="mb-1 inline-flex w-fit items-center rounded-full border border-line bg-ivory px-1.5 py-px font-mono text-[9.5px] text-mute">
+                    {taskKey}-{taskNumber}
+                  </span>
+                ) : null}
+                {menuItems.map((item) =>
+                  item === "open" ? (
+                    <Link
+                      key={item}
+                      className="rounded-md border border-line bg-paper px-3 py-2 text-left font-mono text-[11px] font-semibold uppercase tracking-[0.04em] text-ink-2 hover:border-mute hover:text-ink"
+                      data-testid="menu-open"
+                      href={runHref ?? "#"}
+                    >
+                      {t("action.open")}
+                    </Link>
+                  ) : (
+                    <button
+                      key={item}
+                      className={clsx(
+                        "rounded-md border px-3 py-2 text-left font-mono text-[11px] font-semibold uppercase tracking-[0.04em]",
+                        item === "drop" || item === "stopDrop"
+                          ? "border-amber-line bg-amber-soft text-amber hover:bg-ivory"
+                          : "border-line bg-paper text-ink-2 hover:border-mute hover:text-ink",
+                      )}
+                      data-testid={`menu-${item}`}
+                      type="button"
+                      onClick={() => {
+                        if (item === "rename") setRenameValue(runLabel ?? "");
+                        openDialog(item);
+                      }}
+                    >
+                      {t(`action.${item}`)}
+                    </button>
+                  ),
+                )}
+                <p className="mt-1 font-mono text-[9px] text-mute-2">
+                  {t("menu.footerNote")}
+                </p>
+              </div>
+            ) : null}
+            {dialogAction === "rename" ? (
+              <>
+                {taskKey && taskNumber !== null ? (
+                  <span className="inline-flex w-fit items-center rounded-full border border-line bg-ivory px-1.5 py-px font-mono text-[9.5px] text-mute">
+                    {taskKey}-{taskNumber}
+                  </span>
+                ) : null}
+                <label className="flex flex-col gap-1">
+                  <span className="font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-mute">
+                    {t("rename.label")}
+                  </span>
+                  <input
+                    ref={renameInputRef}
+                    className={inputClass}
+                    data-testid="rename-input"
+                    maxLength={200}
+                    placeholder={t("rename.placeholder")}
+                    value={renameValue}
+                    onChange={(event) => setRenameValue(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        void submitRename();
+                      }
+                    }}
+                  />
+                </label>
+              </>
             ) : null}
             {dialogAction === "snapshotCommit" ? (
               <>

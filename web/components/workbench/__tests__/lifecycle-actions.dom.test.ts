@@ -22,6 +22,11 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: refreshMock }),
 }));
 
+vi.mock("next/link", () => ({
+  default: (props: Record<string, unknown>) =>
+    createElement("a", props as never),
+}));
+
 import { WorkbenchLifecycleActions } from "@/components/workbench/lifecycle-actions";
 
 type Rendered = {
@@ -394,6 +399,153 @@ describe("WorkbenchLifecycleActions dialogs", () => {
 
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
       "git -C /repo fetch backup maister/handoff/run-1",
+    );
+  });
+});
+
+type MenuProps = Parameters<typeof WorkbenchLifecycleActions>[0];
+
+function renderMenu(over: Partial<MenuProps> = {}): Rendered {
+  const container = document.createElement("div");
+  const root = createRoot(container);
+
+  document.body.appendChild(container);
+  roots.push(root);
+
+  act(() => {
+    root.render(
+      createElement(WorkbenchLifecycleActions, {
+        runId: "run-1",
+        runKind: "scratch",
+        actions: ["stop"],
+        variant: "menu",
+        runHref: "/scratch-runs/run-1",
+        taskKey: "KEY",
+        taskNumber: 7,
+        runLabel: "old name",
+        ...over,
+      }),
+    );
+  });
+
+  return { container, root };
+}
+
+function byTestId(container: ParentNode, id: string): HTMLElement {
+  const el = container.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+
+  if (!el) throw new Error(`testid not found: ${id}`);
+
+  return el;
+}
+
+describe("WorkbenchLifecycleActions rail menu", () => {
+  it("shows inline Stop and a live action-sheet (open, rename, stop & archive, stop & drop)", async () => {
+    const { container } = renderMenu({ runKind: "scratch", actions: ["stop"] });
+
+    expect(container.querySelector('[data-testid="rail-stop"]')).not.toBeNull();
+
+    await click(byTestId(container, "rail-menu-trigger"));
+
+    const sheet = byTestId(container, "rail-action-sheet");
+
+    expect(sheet.querySelector('[data-testid="menu-open"]')).not.toBeNull();
+    expect(sheet.querySelector('[data-testid="menu-rename"]')).not.toBeNull();
+    expect(
+      sheet.querySelector('[data-testid="menu-stopArchive"]'),
+    ).not.toBeNull();
+    expect(sheet.querySelector('[data-testid="menu-stopDrop"]')).not.toBeNull();
+    // Plain Stop is the inline primary, never duplicated in the sheet.
+    expect(sheet.querySelector('[data-testid="menu-stop"]')).toBeNull();
+  });
+
+  it("shows a terminal action-sheet (open, archive, drop) with no inline Stop", async () => {
+    const { container } = renderMenu({
+      runKind: "flow",
+      actions: ["archive", "drop", "exportBranch"],
+    });
+
+    expect(container.querySelector('[data-testid="rail-stop"]')).toBeNull();
+
+    await click(byTestId(container, "rail-menu-trigger"));
+
+    const sheet = byTestId(container, "rail-action-sheet");
+
+    expect(sheet.querySelector('[data-testid="menu-open"]')).not.toBeNull();
+    expect(sheet.querySelector('[data-testid="menu-archive"]')).not.toBeNull();
+    expect(sheet.querySelector('[data-testid="menu-drop"]')).not.toBeNull();
+    // flow runs are not renamed here; snapshot/push stay in the run card.
+    expect(sheet.querySelector('[data-testid="menu-rename"]')).toBeNull();
+    expect(sheet.querySelector('[data-testid="menu-exportBranch"]')).toBeNull();
+  });
+
+  it("stop & archive posts to the combined flow endpoint", async () => {
+    const fetchMock = vi.fn<FetchLike>(async () =>
+      jsonResponse({
+        ok: true,
+        runId: "run-1",
+        archived: true,
+        archivedBranch: null,
+        snapshotted: false,
+        supervisorStopped: true,
+      }),
+    );
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { container } = renderMenu({ runKind: "flow", actions: ["stop"] });
+
+    await click(byTestId(container, "rail-menu-trigger"));
+    await click(byTestId(container, "menu-stopArchive"));
+    await click(findButton(container, "workbenchLifecycle.dialog.confirm"));
+    await flushPromises();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/runs/run-1/stop-archive",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("scratch stop & drop reuses the discard endpoint", async () => {
+    const fetchMock = vi.fn<FetchLike>(async () => jsonResponse({ ok: true }));
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { container } = renderMenu({ runKind: "scratch", actions: ["stop"] });
+
+    await click(byTestId(container, "rail-menu-trigger"));
+    await click(byTestId(container, "menu-stopDrop"));
+    await click(findButton(container, "workbenchLifecycle.dialog.confirm"));
+    await flushPromises();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/scratch-runs/run-1/discard",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("rename posts the new name to the scratch rename endpoint", async () => {
+    const fetchMock = vi.fn<FetchLike>(async () => jsonResponse({ ok: true }));
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { container } = renderMenu({ runKind: "scratch", actions: ["stop"] });
+
+    await click(byTestId(container, "rail-menu-trigger"));
+    await click(byTestId(container, "menu-rename"));
+    await changeInput(
+      byTestId(container, "rename-input") as HTMLInputElement,
+      "new name",
+    );
+    await click(byTestId(container, "rename-save"));
+    await flushPromises();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/scratch-runs/run-1",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ name: "new name" }),
+      }),
     );
   });
 });
