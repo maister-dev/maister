@@ -140,3 +140,21 @@ Rationale: This feature completes M14's materialization contract by generalizing
 - **codex materialization:** per-session `CODEX_HOME` composed dir (symlink global auth/config + per-skill symlinks of `~/.codex/skills/*` + project `skills/`, project wins). Flip to cwd-`.codex` on openai/codex#21907.
 - **unsupported-on-runner:** advisory — composer shows non-universality (no block); run-time WARN + proceed (no hard `CONFIG`).
 - **composer editor:** TipTap (ProseMirror), core + `extension-mention` (MIT).
+
+## Next-up & design refinements (2026-06-17 — owner-confirmed, RESUME HERE)
+
+State: Phases 0–4 + Phase 5 (composer wired into the scratch LAUNCHER, **e2e-verified**) + T3.5 in-env smoke = **8 commits, green, UNMERGED** (`12739d23`→`ce71a32f`). Web unit 4010 · tsc 0 · composer e2e 4/4. The items below **supersede** the original task text where they conflict.
+
+**Three distinct autocomplete sources — by context (do NOT conflate):**
+1. **Studio — editing a flow node prompt** → scan the **package's OWN `skills/`+`agents/` folders** (portable / self-contained; a node must only reference caps the package SHIPS, else the flow breaks when installed elsewhere). NOT `getProjectCapabilityCatalog` (project-scoped) and NOT live ACP. New source `getPackageCapabilityCatalog(installedPath, agent)` — reuse `collectInventory`'s folder-scan (`lib/packages/attach.ts:92-118`) + `splitFrontmatter` + the pure `skillCatalogEntry`/`subagentCatalogEntry` (`project-catalog.ts`). `getProjectCapabilityCatalog` STAYS the scratch-launcher source only.
+2. **Scratch launcher (pre-launch entry)** → `getProjectCapabilityCatalog` (project + chosen runner). DONE (`scratch-launcher.tsx`).
+3. **Running scratch chat** → live ACP `available_commands_update` (`GET /api/scratch-runs/[runId]/commands`, Phase 4 built) ∪ static subagents; map live wire-form names → canonical via the static catalog for chips.
+
+**Corrected next-step order (RESUME):**
+1. **Studio node-prompt composer** using the package-scan source (#1) **+ wire the matcher backstop** (raw paste `/x` → `@skill:x` → wire) at the node-render + scratch-send sites. ⚠ Currently only the *normalizer* (canonical→wire) is wired; the *matcher* (`token-matcher.ts`, built + unit-tested) is **NOT** wired, so raw pasted tokens aren't promoted (codex would get `/x` not `$x`). This is the runner-portability win for packaged flows.
+2. **Running-scratch composer** → wire into `scratch-dialog.tsx` using live ACP commands ∪ subagents (add `detail.{projectSlug,capabilityAgent}` to the `GET /api/scratch-runs/[runId]` payload).
+3. **T5.4** content-block `@file`/attachment send-path + worktree path-confinement (4 files: messages route → supervisor-client → supervisor schema → acp-client) + `@file` source in the composer.
+4. **Phase 6** (launch progress SSE + composer loader), **Phase 7** (reconciliation + suite-green + `configuration.md` CODEX_HOME doc).
+5. **gemini/opencode/mimo skill-PLACEMENT fix** (smoke 2026-06-17: gemini ignores `<GEMINI_CLI_HOME>/skills` — discovers from builtin + `~/.agents/skills` + project-scope; opencode/mimo claude-compat `.claude/skills` candidate). The redirect ENV is correct; only the skill subpath is wrong. Without this, flows on gemini/opencode materialize no skills.
+
+**Node-composer nuances:** agent for wire-form/validity badge = node `settings.runner` → its `flow.yaml` `runner_profile.capability_agent` (fallback the flow's default profile); the **stored prompt stays canonical**. Offer **skills + subagents only** (subagent claude-only → warn on non-claude); native commands (`/compact`) and MCP (`mcp:server`) are NOT prompt artifacts (native = typed raw; MCP = node settings). Keep **package-only** (no platform/global caps — portability).
