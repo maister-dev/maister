@@ -4,6 +4,13 @@ import type { RunKind } from "@/lib/db/schema";
 import type { WorkbenchLifecycleActionId } from "@/lib/workbench-lifecycle/policy";
 import type { CSSProperties, ReactElement, ReactNode } from "react";
 
+import {
+  ArchiveBoxArrowDownIcon,
+  ArchiveBoxIcon,
+  ArrowTopRightOnSquareIcon,
+  PencilSquareIcon,
+  TrashIcon,
+} from "@heroicons/react/24/outline";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -35,6 +42,16 @@ type UiActionId =
   | "menu";
 
 type CombinedActionId = "stopArchive" | "stopDrop";
+
+// Small leading glyph per rail-menu item.
+const MENU_ICON: Partial<Record<UiActionId, typeof TrashIcon>> = {
+  open: ArrowTopRightOnSquareIcon,
+  rename: PencilSquareIcon,
+  stopArchive: ArchiveBoxArrowDownIcon,
+  archive: ArchiveBoxIcon,
+  stopDrop: TrashIcon,
+  drop: TrashIcon,
+};
 
 type HandoffMetadata = {
   ok: true;
@@ -220,6 +237,7 @@ function DialogShell({
   footer,
   onClose,
   anchorRect,
+  bare = false,
 }: {
   title: string;
   cancel: string;
@@ -227,6 +245,7 @@ function DialogShell({
   footer: ReactNode;
   onClose: () => void;
   anchorRect?: DOMRect | null;
+  bare?: boolean;
 }): ReactElement | null {
   const dialogRef = useRef<HTMLDivElement>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
@@ -295,29 +314,37 @@ function DialogShell({
   const dialogBox = (
     <div
       ref={dialogRef}
-      aria-labelledby="workbench-lifecycle-dialog-title"
-      aria-modal={anchored ? undefined : "true"}
+      aria-labelledby={bare ? undefined : "workbench-lifecycle-dialog-title"}
+      aria-modal={anchored || bare ? undefined : "true"}
       className={clsx(
         "z-10 flex flex-col overflow-hidden rounded-lg border border-line bg-paper shadow-2xl",
         anchored
-          ? "fixed max-h-[70vh] w-64"
+          ? bare
+            ? "fixed max-h-[70vh] w-56"
+            : "fixed max-h-[70vh] w-64"
           : "relative max-h-[86vh] w-full max-w-[520px]",
       )}
-      role="dialog"
+      role={bare ? "menu" : "dialog"}
       style={anchored ? anchoredPopoverStyle(anchorRect) : undefined}
     >
-      <div className="border-b border-line px-4 py-3">
-        <h2
-          className="font-mono text-[13px] font-bold uppercase tracking-[0.08em] text-ink"
-          id="workbench-lifecycle-dialog-title"
-        >
-          {title}
-        </h2>
-      </div>
-      <div className="flex-1 overflow-auto px-4 py-4">{children}</div>
-      <div className="flex flex-wrap justify-end gap-2 border-t border-line px-4 py-3">
-        {footer}
-      </div>
+      {bare ? (
+        <div className="flex-1 overflow-auto py-1">{children}</div>
+      ) : (
+        <>
+          <div className="border-b border-line px-4 py-3">
+            <h2
+              className="font-mono text-[13px] font-bold uppercase tracking-[0.08em] text-ink"
+              id="workbench-lifecycle-dialog-title"
+            >
+              {title}
+            </h2>
+          </div>
+          <div className="flex-1 overflow-auto px-4 py-4">{children}</div>
+          <div className="flex flex-wrap justify-end gap-2 border-t border-line px-4 py-3">
+            {footer}
+          </div>
+        </>
+      )}
     </div>
   );
 
@@ -759,7 +786,8 @@ export function WorkbenchLifecycleActions({
       ) : null}
       {dialogAction ? (
         <DialogShell
-          anchorRect={variant === "menu" ? menuAnchorRect : null}
+          anchorRect={dialogAction === "menu" ? menuAnchorRect : null}
+          bare={dialogAction === "menu"}
           cancel={t("dialog.cancel")}
           footer={
             <>
@@ -871,48 +899,45 @@ export function WorkbenchLifecycleActions({
               <p>{t(`dialog.body.${dialogAction}`)}</p>
             ) : null}
             {dialogAction === "menu" ? (
-              <div
-                className="flex flex-col gap-1"
-                data-testid="rail-action-sheet"
-              >
-                {taskKey && taskNumber !== null ? (
-                  <span className="mb-1 inline-flex w-fit items-center rounded-full border border-line bg-ivory px-1.5 py-px font-mono text-[9.5px] text-mute">
-                    {taskKey}-{taskNumber}
-                  </span>
-                ) : null}
-                {menuItems.map((item) =>
-                  item === "open" ? (
+              <div className="flex flex-col" data-testid="rail-action-sheet">
+                {menuItems.map((item) => {
+                  const Icon = MENU_ICON[item];
+                  const danger = item === "drop" || item === "stopDrop";
+                  const itemClass = clsx(
+                    "flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left font-mono text-[11px]",
+                    danger
+                      ? "text-amber hover:bg-amber-soft"
+                      : "text-ink-2 hover:bg-ivory hover:text-ink",
+                  );
+
+                  return item === "open" ? (
                     <Link
                       key={item}
-                      className="rounded-md border border-line bg-paper px-3 py-2 text-left font-mono text-[11px] font-semibold uppercase tracking-[0.04em] text-ink-2 hover:border-mute hover:text-ink"
+                      className={itemClass}
                       data-testid="menu-open"
                       href={runHref ?? "#"}
+                      role="menuitem"
                     >
+                      {Icon ? <Icon className="h-3.5 w-3.5 shrink-0" /> : null}
                       {t("action.open")}
                     </Link>
                   ) : (
                     <button
                       key={item}
-                      className={clsx(
-                        "rounded-md border px-3 py-2 text-left font-mono text-[11px] font-semibold uppercase tracking-[0.04em]",
-                        item === "drop" || item === "stopDrop"
-                          ? "border-amber-line bg-amber-soft text-amber hover:bg-ivory"
-                          : "border-line bg-paper text-ink-2 hover:border-mute hover:text-ink",
-                      )}
+                      className={itemClass}
                       data-testid={`menu-${item}`}
+                      role="menuitem"
                       type="button"
                       onClick={() => {
                         if (item === "rename") setRenameValue(runLabel ?? "");
                         openDialog(item);
                       }}
                     >
+                      {Icon ? <Icon className="h-3.5 w-3.5 shrink-0" /> : null}
                       {t(`action.${item}`)}
                     </button>
-                  ),
-                )}
-                <p className="mt-1 font-mono text-[9px] text-mute-2">
-                  {t("menu.footerNote")}
-                </p>
+                  );
+                })}
               </div>
             ) : null}
             {dialogAction === "rename" ? (

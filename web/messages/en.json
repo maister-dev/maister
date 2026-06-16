@@ -1764,9 +1764,6 @@
       "exportBranch": "Push branch to remote",
       "menu": "Run actions"
     },
-    "menu": {
-      "footerNote": "snapshot · push · handoff → in run card"
-    },
     "defaultCommitMessage": "maister: export {runId}",
     "busy": "{action}…",
     "errorWithCode": "Action failed: {code}",

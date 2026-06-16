@@ -1764,9 +1764,6 @@
       "exportBranch": "Отправить ветку в удалённый репозиторий",
       "menu": "Действия прогона"
     },
-    "menu": {
-      "footerNote": "снимок · push · передача → в карточке прогона"
-    },
     "defaultCommitMessage": "maister: export {runId}",
     "busy": "{action}…",
     "errorWithCode": "Действие не выполнено: {code}",
