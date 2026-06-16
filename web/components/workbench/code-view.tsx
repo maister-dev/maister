@@ -5,6 +5,10 @@ import type { ReactElement } from "react";
 
 import pino from "pino";
 
+import {
+  isMarkdownRichPath,
+  MarkdownRichView,
+} from "@/components/workbench/markdown-rich-view";
 import { highlightToHtml, langFromPath } from "@/lib/highlight/shiki";
 
 const log = pino({
@@ -41,6 +45,10 @@ export async function CodeView({
             {labels.empty}
           </div>
         );
+      }
+
+      if (path && isMarkdownRichPath(path)) {
+        return <MarkdownRichView path={path} source={blob.content} />;
       }
 
       const lang = langFromPath(path ?? "");

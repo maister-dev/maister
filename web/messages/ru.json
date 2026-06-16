@@ -1225,7 +1225,14 @@
     "chatIdleCostWarning": "Сессия в простое — первый вопрос перезапустит её (~$0.28 cache-creation токенов).",
     "chatRevertNotice": "Агент попытался изменить рабочую копию во время ответа — изменение автоматически откатано.",
     "chatAgentLabel": "Агент",
-    "chatError": "Ошибка чата"
+    "chatError": "Ошибка чата",
+    "chatThinking": "Размышления",
+    "chatRawEvent": "Сырое событие",
+    "chatToolInput": "Ввод",
+    "chatToolResult": "Результат",
+    "chatCopy": "копировать",
+    "chatCopied": "скопировано",
+    "chatToolCount": "{name} ×{count}"
   },
   "evidence": {
     "title": "Граф свидетельств",

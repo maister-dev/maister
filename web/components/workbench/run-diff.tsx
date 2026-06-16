@@ -74,6 +74,8 @@ export type DiffScopeAvailability = Partial<
   Record<DiffScope, { available: boolean; reason?: string }>
 >;
 
+export type ReviewCommentScope = Extract<DiffScope, "run" | "uncommitted">;
+
 export interface RunDiffScopeLabels {
   label: string;
   run: string;
@@ -120,7 +122,22 @@ export function reviewEnabledForScope(
   review: RunDiffReviewContext | undefined,
   scope: DiffScope,
 ): review is RunDiffReviewContext {
-  return review !== undefined && scope === "run";
+  return review !== undefined && reviewCommentScopeForDiffScope(scope) !== null;
+}
+
+export function reviewCommentScopeForDiffScope(
+  scope: DiffScope,
+): ReviewCommentScope | null {
+  return scope === "run" || scope === "uncommitted" ? scope : null;
+}
+
+function reviewCommentsCollectionUrl(
+  runId: string,
+  scope: ReviewCommentScope,
+): string {
+  const query = scope === "run" ? "" : `?scope=${scope}`;
+
+  return `/api/runs/${runId}/review-comments${query}`;
 }
 
 // Maps a mutation onto the ADR-071 route family: POST collection for
@@ -129,8 +146,10 @@ export function reviewEnabledForScope(
 export function reviewMutationRequest(
   runId: string,
   mutation: ReviewMutation,
+  scope: ReviewCommentScope = "run",
 ): { url: string; init: RequestInit } {
-  const collection = `/api/runs/${runId}/review-comments`;
+  const collection = reviewCommentsCollectionUrl(runId, scope);
+  const itemCollection = `/api/runs/${runId}/review-comments`;
 
   switch (mutation.kind) {
     case "createRoot":
@@ -161,7 +180,7 @@ export function reviewMutationRequest(
       };
     case "edit":
       return {
-        url: `${collection}/${mutation.commentId}`,
+        url: `${itemCollection}/${mutation.commentId}`,
         init: {
           method: "PATCH",
           headers: JSON_HEADERS,
@@ -170,7 +189,7 @@ export function reviewMutationRequest(
       };
     case "setStatus":
       return {
-        url: `${collection}/${mutation.commentId}`,
+        url: `${itemCollection}/${mutation.commentId}`,
         init: {
           method: "PATCH",
           headers: JSON_HEADERS,
@@ -179,7 +198,7 @@ export function reviewMutationRequest(
       };
     case "delete":
       return {
-        url: `${collection}/${mutation.commentId}`,
+        url: `${itemCollection}/${mutation.commentId}`,
         init: { method: "DELETE" },
       };
   }
@@ -209,8 +228,9 @@ function errorMessageOf(err: unknown): string {
 
 export async function fetchReviewThreads(
   runId: string,
+  scope: ReviewCommentScope = "run",
 ): Promise<ReviewThread[]> {
-  const res = await fetch(`/api/runs/${runId}/review-comments`);
+  const res = await fetch(reviewCommentsCollectionUrl(runId, scope));
 
   if (!res.ok) throw new Error(await readErrorMessage(res));
 
@@ -229,11 +249,12 @@ export async function loadReviewThreads(
   runId: string,
   enabled: boolean,
   apply: (result: ReviewThreadsResult) => void,
+  scope: ReviewCommentScope = "run",
 ): Promise<void> {
   if (!enabled) return;
 
   try {
-    apply({ threads: await fetchReviewThreads(runId) });
+    apply({ threads: await fetchReviewThreads(runId, scope) });
   } catch (err) {
     apply({ error: errorMessageOf(err) });
   }
@@ -255,17 +276,18 @@ export async function executeReviewMutation(
   runId: string,
   mutation: ReviewMutation,
   effects: ReviewMutationEffects,
+  scope: ReviewCommentScope = "run",
 ): Promise<void> {
   effects.setBusy(true);
 
   try {
-    const { url, init } = reviewMutationRequest(runId, mutation);
+    const { url, init } = reviewMutationRequest(runId, mutation, scope);
     const res = await fetch(url, init);
 
     if (!res.ok) throw new Error(await readErrorMessage(res));
 
     try {
-      effects.setThreads(await fetchReviewThreads(runId));
+      effects.setThreads(await fetchReviewThreads(runId, scope));
       effects.setError(null);
     } catch (refetchErr) {
       effects.setError(errorMessageOf(refetchErr));
@@ -347,6 +369,7 @@ export default function RunDiff({
   const [threads, setThreads] = useState<ReviewThread[] | null>(null);
   const [reviewBusy, setReviewBusy] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
+  const reviewScope = reviewCommentScopeForDiffScope(scope);
   const activeReview = reviewEnabledForScope(review, scope)
     ? review
     : undefined;
@@ -404,30 +427,51 @@ export default function RunDiff({
   useEffect(() => {
     let cancelled = false;
 
-    void loadReviewThreads(runId, hasReview, (result) => {
-      if (cancelled) return;
-      if ("threads" in result) {
-        setThreads(result.threads);
-        setReviewError(null);
-      } else {
-        setReviewError(result.error);
-      }
-    });
+    if (!hasReview || reviewScope === null) {
+      setThreads(null);
+      setReviewError(null);
+
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setThreads(null);
+
+    void loadReviewThreads(
+      runId,
+      true,
+      (result) => {
+        if (cancelled) return;
+        if ("threads" in result) {
+          setThreads(result.threads);
+          setReviewError(null);
+        } else {
+          setReviewError(result.error);
+        }
+      },
+      reviewScope,
+    );
 
     return () => {
       cancelled = true;
     };
-  }, [runId, hasReview, refreshNonce]);
+  }, [runId, hasReview, reviewScope, refreshNonce]);
 
   const mutate = useCallback(
     (mutation: ReviewMutation): Promise<void> =>
-      executeReviewMutation(runId, mutation, {
-        setBusy: setReviewBusy,
-        setThreads,
-        setError: setReviewError,
-        refresh: () => router.refresh(),
-      }),
-    [runId, router],
+      executeReviewMutation(
+        runId,
+        mutation,
+        {
+          setBusy: setReviewBusy,
+          setThreads,
+          setError: setReviewError,
+          refresh: () => router.refresh(),
+        },
+        reviewScope ?? "run",
+      ),
+    [runId, router, reviewScope],
   );
 
   // Memoized so the DiffViewReview object (and its onReply / onEdit /

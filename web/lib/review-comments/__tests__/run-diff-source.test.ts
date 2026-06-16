@@ -20,13 +20,19 @@
 // from anchor.test.ts / the route tests: mock the git source, never the
 // parser).
 
+import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { ReviewComment } from "@/lib/review-comments/service";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { prepareDiff } from "@/lib/diff/prepare";
-import { diffRunWorkspace, resolveBaseRef } from "@/lib/worktree";
 import {
+  diffRunWorkspace,
+  diffWorkingTree,
+  resolveBaseRef,
+} from "@/lib/worktree";
+import {
+  computeReviewDiff,
   getReviewGateThreadCounts,
   placementOf,
   summarizeReviewThreads,
@@ -65,6 +71,7 @@ const fakeDb = {
 vi.mock("@/lib/db/client", () => ({ getDb: () => fakeDb }));
 vi.mock("@/lib/worktree", () => ({
   diffRunWorkspace: vi.fn(),
+  diffWorkingTree: vi.fn(),
   resolveBaseRef: vi.fn(),
 }));
 vi.mock("@/lib/review-comments/service", () => ({
@@ -93,6 +100,17 @@ const FIXTURE_DIFF = withFinalNewline([
   "-const removed = 2;",
   "+const added = 2;",
   " const tail = 3;",
+]);
+
+const UNTRACKED_DIFF = withFinalNewline([
+  "diff --git a/docs/new.md b/docs/new.md",
+  "new file mode 100644",
+  "index 0000000..1111111",
+  "--- /dev/null",
+  "+++ b/docs/new.md",
+  "@@ -0,0 +1,2 @@",
+  "+# Draft",
+  "+body",
 ]);
 
 let seq = 0;
@@ -143,6 +161,38 @@ beforeEach(() => {
     },
   ];
   dbState.projects = [{ id: "p-1", mainBranch: "main" }];
+  vi.mocked(diffWorkingTree).mockResolvedValue({
+    text: UNTRACKED_DIFF,
+    truncated: false,
+    nameStatus: [{ path: "docs/new.md", status: "A" }],
+  });
+});
+
+// ---------------------------------------------------------------------------
+// computeReviewDiff — scoped diff source for inline review comments
+// ---------------------------------------------------------------------------
+
+describe("computeReviewDiff", () => {
+  it("uses the working-tree diff for uncommitted review anchors", async () => {
+    const prepared = await computeReviewDiff(
+      fakeDb as unknown as NodePgDatabase,
+      { id: "run-1", projectId: "p-1" },
+      "uncommitted",
+    );
+
+    expect(
+      placementOf(
+        prepared,
+        rootRow({
+          filePath: "docs/new.md",
+          line: 1,
+          lineContent: "# Draft",
+        }),
+      ),
+    ).toBe("inline");
+    expect(diffWorkingTree).toHaveBeenCalledWith("/tmp/wt");
+    expect(diffRunWorkspace).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------

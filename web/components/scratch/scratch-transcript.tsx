@@ -332,12 +332,14 @@ export function ScratchTranscript({
   labels,
   running = false,
   userLabel,
+  assistantLabel,
   renderAttachments,
 }: {
   messages: TranscriptMessage[];
   labels: TranscriptLabels;
   running?: boolean;
   userLabel?: string | null;
+  assistantLabel?: string | null;
   renderAttachments?: (messageId: string) => ReactElement | null;
 }): ReactElement {
   const blocks = useMemo<TranscriptBlock[]>(() => {
@@ -435,7 +437,11 @@ export function ScratchTranscript({
             )}
           >
             <div className="mb-1 flex items-center justify-between gap-3 font-mono text-[10px] uppercase tracking-[0.08em] text-mute">
-              <span>{isUser ? (userLabel ?? message.role) : message.role}</span>
+              <span>
+                {isUser
+                  ? (userLabel ?? message.role)
+                  : (assistantLabel ?? message.role)}
+              </span>
               <div className="flex items-center gap-2">
                 {!isUser ? (
                   <CopyButton labels={labels} text={parsed.text} />

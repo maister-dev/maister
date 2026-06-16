@@ -1225,7 +1225,14 @@
     "chatIdleCostWarning": "The session is idle — the first question respawns it (~$0.28 of cache-creation tokens).",
     "chatRevertNotice": "The agent attempted a workspace change during this answer — it was reverted automatically.",
     "chatAgentLabel": "Agent",
-    "chatError": "Chat failed"
+    "chatError": "Chat failed",
+    "chatThinking": "Thinking",
+    "chatRawEvent": "Raw event",
+    "chatToolInput": "Input",
+    "chatToolResult": "Result",
+    "chatCopy": "copy",
+    "chatCopied": "copied",
+    "chatToolCount": "{name} ×{count}"
   },
   "evidence": {
     "title": "Evidence graph",

@@ -13,11 +13,16 @@ import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import { projects, workspaces } from "@/lib/db/schema";
-import { prepareDiff } from "@/lib/diff/prepare";
+import { filterDiffByPath, prepareDiff } from "@/lib/diff/prepare";
 import { MaisterError } from "@/lib/errors";
 import { computePlacement } from "@/lib/review-comments/anchor";
 import { listThreads } from "@/lib/review-comments/service";
-import { diffRunWorkspace, resolveBaseRef } from "@/lib/worktree";
+import { isReviewableChangePath } from "@/lib/runs/reviewable-changes";
+import {
+  diffRunWorkspace,
+  diffWorkingTree,
+  resolveBaseRef,
+} from "@/lib/worktree";
 
 // ADR-072: the server-recomputed run diff + placement summary shared by the
 // review-comment routes and the run-detail layout's gate panel (Task 13 —
@@ -40,13 +45,31 @@ export interface RunDiffSourceRef {
   projectId: string;
 }
 
-// The same diff source the review view renders (diffRunWorkspace +
-// prepareDiff over the committed base..branch range) — computed at most ONCE
-// per request.
-export async function computeRunDiff(
+type WorkspaceRow = typeof workspaces.$inferSelect;
+type ProjectRow = typeof projects.$inferSelect;
+
+interface ReviewDiffRows {
+  workspace: WorkspaceRow;
+  project: ProjectRow;
+}
+
+export const REVIEW_COMMENT_SCOPES = ["run", "uncommitted"] as const;
+
+export type ReviewCommentScope = (typeof REVIEW_COMMENT_SCOPES)[number];
+
+export function reviewCommentScopeOrDefault(
+  raw: string | null,
+): ReviewCommentScope {
+  if (raw === null || raw === "run") return "run";
+  if (raw === "uncommitted") return "uncommitted";
+
+  throw new MaisterError("CONFIG", `unsupported review-comment scope: ${raw}`);
+}
+
+async function loadReviewDiffRows(
   dbh: NodePgDatabase,
   run: RunDiffSourceRef,
-): Promise<DiffPrepResult> {
+): Promise<ReviewDiffRows> {
   const [workspaceRows, projectRows] = await Promise.all([
     dbh.select().from(workspaces).where(eq(workspaces.runId, run.id)),
     dbh.select().from(projects).where(eq(projects.id, run.projectId)),
@@ -67,6 +90,18 @@ export async function computeRunDiff(
     throw new MaisterError("PRECONDITION", `project not found: ${run.id}`);
   }
 
+  return { workspace, project };
+}
+
+// The same diff source the review view renders (diffRunWorkspace +
+// prepareDiff over the committed base..branch range) — computed at most ONCE
+// per request.
+export async function computeRunDiff(
+  dbh: NodePgDatabase,
+  run: RunDiffSourceRef,
+): Promise<DiffPrepResult> {
+  const { workspace, project } = await loadReviewDiffRows(dbh, run);
+
   const base =
     workspace.baseCommit ??
     (await resolveBaseRef({
@@ -81,6 +116,27 @@ export async function computeRunDiff(
   });
 
   return prepareDiff(text, truncated);
+}
+
+async function computeUncommittedReviewDiff(
+  dbh: NodePgDatabase,
+  run: RunDiffSourceRef,
+): Promise<DiffPrepResult> {
+  const { workspace } = await loadReviewDiffRows(dbh, run);
+  const { text, truncated } = await diffWorkingTree(workspace.worktreePath);
+  const reviewableDiff = filterDiffByPath(text, isReviewableChangePath);
+
+  return prepareDiff(reviewableDiff, truncated);
+}
+
+export function computeReviewDiff(
+  dbh: NodePgDatabase,
+  run: RunDiffSourceRef,
+  scope: ReviewCommentScope,
+): Promise<DiffPrepResult> {
+  if (scope === "run") return computeRunDiff(dbh, run);
+
+  return computeUncommittedReviewDiff(dbh, run);
 }
 
 // Roots carry all anchor fields (DB CHECK); the null guard only keeps the

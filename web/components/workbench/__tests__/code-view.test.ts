@@ -120,6 +120,25 @@ describe("CodeView — text state (highlighted)", () => {
   });
 });
 
+describe("CodeView — rich target renderers", () => {
+  it("renders markdown as a target rich view with mermaid blocks", async () => {
+    const content = [
+      "# Active workspaces",
+      "",
+      "```mermaid",
+      "graph TD",
+      "  A-->B",
+      "```",
+    ].join("\n");
+    const html = await render({ kind: "text", content }, "docs/screen.md");
+
+    expect(html).toContain('data-testid="markdown-rich-view"');
+    expect(html).toContain("<h1>Active workspaces</h1>");
+    expect(html).toContain('data-testid="mermaid-diagram"');
+    expect(html).not.toContain('data-testid="code-view"');
+  });
+});
+
 describe("CodeView — empty text (content: '')", () => {
   const html = (): Promise<string> =>
     render({ kind: "text", content: "" }, "empty.ts");

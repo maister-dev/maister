@@ -278,9 +278,9 @@ describe("diffScopeOrDefault", () => {
 });
 
 describe("reviewEnabledForScope", () => {
-  it("enables inline review only on the canonical run diff", () => {
+  it("enables inline review on reviewable run and uncommitted diffs", () => {
     expect(reviewEnabledForScope(reviewContext(), "run")).toBe(true);
-    expect(reviewEnabledForScope(reviewContext(), "uncommitted")).toBe(false);
+    expect(reviewEnabledForScope(reviewContext(), "uncommitted")).toBe(true);
     expect(reviewEnabledForScope(reviewContext(), "since-last-review")).toBe(
       false,
     );
@@ -313,6 +313,22 @@ describe("loadReviewThreads — threads-effect body", () => {
     await loadReviewThreads("run-1", true, apply);
 
     expect(fetchMock).toHaveBeenCalledWith("/api/runs/run-1/review-comments");
+    expect(apply).toHaveBeenCalledWith({ threads });
+  });
+
+  it("keeps the active review-comment scope on uncommitted refetches", async () => {
+    const threads = [thread("c-1")];
+    const fetchMock = vi.fn<FetchLike>(async () => jsonResponse({ threads }));
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const apply = vi.fn();
+
+    await loadReviewThreads("run-1", true, apply, "uncommitted");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/runs/run-1/review-comments?scope=uncommitted",
+    );
     expect(apply).toHaveBeenCalledWith({ threads });
   });
 
@@ -364,6 +380,21 @@ describe("reviewMutationRequest — ADR-072 route family mapping", () => {
       line: 14,
       body: "Anchored remark.",
     });
+  });
+
+  it("maps scoped createRoot to the uncommitted review-comments collection", () => {
+    const { url, init } = reviewMutationRequest(
+      "run-1",
+      {
+        kind: "createRoot",
+        anchor: { filePath: "src/a.ts", side: "new", line: 14 },
+        body: "Anchored remark.",
+      },
+      "uncommitted",
+    );
+
+    expect(url).toBe("/api/runs/run-1/review-comments?scope=uncommitted");
+    expect(init.method).toBe("POST");
   });
 
   it("maps reply to POST collection with {parentId, body}", () => {
@@ -448,6 +479,36 @@ describe("executeReviewMutation — refetch + refresh on success, reject on fail
     expect(effects.setThreads).toHaveBeenCalledWith(refetched);
     expect(effects.setError).toHaveBeenCalledWith(null);
     expect(effects.refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the active review-comment scope on successful uncommitted mutations", async () => {
+    const refetched = [thread("c-root")];
+    const calls: Array<{ url: string; method: string }> = [];
+    const fetchMock = vi.fn<FetchLike>(async (input, init) => {
+      calls.push({ url: String(input), method: init?.method ?? "GET" });
+
+      return calls.length === 1
+        ? jsonResponse({ comment: comment("c-new") }, { status: 201 })
+        : jsonResponse({ threads: refetched });
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const effects = makeEffects();
+
+    await executeReviewMutation("run-1", MUTATION, effects, "uncommitted");
+
+    expect(calls).toEqual([
+      {
+        url: "/api/runs/run-1/review-comments?scope=uncommitted",
+        method: "POST",
+      },
+      {
+        url: "/api/runs/run-1/review-comments?scope=uncommitted",
+        method: "GET",
+      },
+    ]);
+    expect(effects.setThreads).toHaveBeenCalledWith(refetched);
   });
 
   it("holds busy for exactly the in-flight window", async () => {

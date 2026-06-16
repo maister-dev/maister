@@ -1,6 +1,14 @@
 "use client";
 
+import type { ReactElement } from "react";
+
 import { useEffect, useRef, useState } from "react";
+
+import {
+  ScratchTranscript,
+  type TranscriptLabels,
+  type TranscriptMessage,
+} from "@/components/scratch/scratch-transcript";
 
 // M30 (ADR-078): answer-only gate-chat at a human/form HITL pause. Chat never
 // resolves the gate; an unavailable state renders an explanatory empty state
@@ -17,15 +25,17 @@ export interface GateChatLabels {
   revertNotice: string;
   agentLabel: string;
   error: string;
+  transcript: TranscriptLabels;
 }
 
-interface ChatMessage {
+export interface ChatMessage {
   id: string;
   role: "user" | "agent";
   authorLabel: string;
   body: string;
   seq: number;
   mutationReverted: boolean;
+  createdAt: string;
 }
 
 interface ChatState {
@@ -34,12 +44,59 @@ interface ChatState {
   messages: ChatMessage[];
 }
 
+function toTranscriptMessage(message: ChatMessage): TranscriptMessage {
+  return {
+    id: message.id,
+    role: message.role === "agent" ? "assistant" : "user",
+    content: message.body,
+    createdAt: message.createdAt,
+  };
+}
+
+export function GateChatTranscript({
+  messages,
+  labels,
+  running = false,
+}: {
+  messages: ChatMessage[];
+  labels: GateChatLabels;
+  running?: boolean;
+}): ReactElement {
+  const userLabel =
+    messages.find((message) => message.role === "user")?.authorLabel ?? null;
+  const revertedByMessageId = new Set(
+    messages
+      .filter((message) => message.mutationReverted)
+      .map((message) => message.id),
+  );
+
+  return (
+    <ScratchTranscript
+      assistantLabel={labels.agentLabel}
+      labels={labels.transcript}
+      messages={messages.map(toTranscriptMessage)}
+      running={running}
+      userLabel={userLabel}
+      renderAttachments={(messageId) =>
+        revertedByMessageId.has(messageId) ? (
+          <div
+            className="mt-2 rounded-md border border-amber-line bg-paper px-2 py-1 font-mono text-[10px] text-amber"
+            data-testid="gate-chat-revert-notice"
+          >
+            {labels.revertNotice}
+          </div>
+        ) : null
+      }
+    />
+  );
+}
+
 export function GateChatPanel(props: {
   runId: string;
   hitlRequestId: string;
   canAct: boolean;
   labels: GateChatLabels;
-}) {
+}): ReactElement {
   const [state, setState] = useState<ChatState>({
     availability: null,
     idleResumeCost: false,
@@ -164,27 +221,14 @@ export function GateChatPanel(props: {
       {state.messages.length > 0 ? (
         <div
           ref={listRef}
-          className="mb-3 max-h-[260px] overflow-auto rounded-md border border-line bg-ivory p-2"
+          className="mb-3 max-h-[320px] overflow-auto rounded-md border border-line bg-ivory"
           data-testid="gate-chat-transcript"
         >
-          {state.messages.map((m) => (
-            <div key={m.id} className="mb-2">
-              <div className="font-mono text-[10px] font-semibold text-mute">
-                {m.role === "agent" ? props.labels.agentLabel : m.authorLabel}
-              </div>
-              <div className="whitespace-pre-wrap text-[12.5px] leading-[1.45] text-ink">
-                {m.body}
-              </div>
-              {m.mutationReverted ? (
-                <div
-                  className="mt-1 rounded-md border border-amber-line bg-paper px-2 py-1 font-mono text-[10px] text-amber"
-                  data-testid="gate-chat-revert-notice"
-                >
-                  {props.labels.revertNotice}
-                </div>
-              ) : null}
-            </div>
-          ))}
+          <GateChatTranscript
+            labels={props.labels}
+            messages={state.messages}
+            running={busy}
+          />
         </div>
       ) : null}
       {props.canAct ? (

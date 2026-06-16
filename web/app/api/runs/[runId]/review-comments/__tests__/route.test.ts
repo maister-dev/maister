@@ -15,7 +15,11 @@ import {
   createRoot,
   listThreads,
 } from "@/lib/review-comments/service";
-import { diffRunWorkspace, resolveBaseRef } from "@/lib/worktree";
+import {
+  diffRunWorkspace,
+  diffWorkingTree,
+  resolveBaseRef,
+} from "@/lib/worktree";
 
 // Task 9 (TDD, ADR-072): GET + POST /api/runs/[runId]/review-comments.
 //   - GET: readBoard (viewer), NOT status-gated; one listThreads + at most one
@@ -75,6 +79,7 @@ vi.mock("@/lib/authz", () => ({
 
 vi.mock("@/lib/worktree", () => ({
   diffRunWorkspace: vi.fn(),
+  diffWorkingTree: vi.fn(),
   resolveBaseRef: vi.fn(),
 }));
 
@@ -103,6 +108,17 @@ const FIXTURE_DIFF = withFinalNewline([
   "-const removed = 2;",
   "+const added = 2;",
   " const tail = 3;",
+]);
+
+const UNTRACKED_DIFF = withFinalNewline([
+  "diff --git a/docs/new.md b/docs/new.md",
+  "new file mode 100644",
+  "index 0000000..1111111",
+  "--- /dev/null",
+  "+++ b/docs/new.md",
+  "@@ -0,0 +1,2 @@",
+  "+# Draft",
+  "+body",
 ]);
 
 const RUN_ID = "run-rc";
@@ -206,10 +222,16 @@ function seedRun(
   return RUN_ID;
 }
 
-async function invokeGet(runId: string) {
+function reviewCommentsUrl(runId: string, query = ""): string {
+  const suffix = query.length > 0 ? `?${query}` : "";
+
+  return `http://localhost/api/runs/${runId}/review-comments${suffix}`;
+}
+
+async function invokeGet(runId: string, query = "") {
   const { GET } = await import("../route");
   const req = new NextRequest(
-    new Request(`http://localhost/api/runs/${runId}/review-comments`, {
+    new Request(reviewCommentsUrl(runId, query), {
       method: "GET",
     }),
   );
@@ -217,10 +239,10 @@ async function invokeGet(runId: string) {
   return GET(req, { params: Promise.resolve({ runId }) });
 }
 
-async function invokePost(runId: string, body: unknown) {
+async function invokePost(runId: string, body: unknown, query = "") {
   const { POST } = await import("../route");
   const req = new NextRequest(
-    new Request(`http://localhost/api/runs/${runId}/review-comments`, {
+    new Request(reviewCommentsUrl(runId, query), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
@@ -252,6 +274,12 @@ beforeEach(() => {
   vi.mocked(diffRunWorkspace).mockResolvedValue({
     text: FIXTURE_DIFF,
     truncated: false,
+  });
+  vi.mocked(diffWorkingTree).mockReset();
+  vi.mocked(diffWorkingTree).mockResolvedValue({
+    text: UNTRACKED_DIFF,
+    truncated: false,
+    nameStatus: [{ path: "docs/new.md", status: "A" }],
   });
   vi.mocked(resolveBaseRef).mockReset();
   vi.mocked(resolveBaseRef).mockResolvedValue(
@@ -479,6 +507,28 @@ describe("GET /api/runs/[runId]/review-comments — threads + placement", () => 
       branch: "maister/feature-x",
     });
   });
+
+  it("uses the working-tree diff for uncommitted placement, including untracked files", async () => {
+    seedRun();
+    vi.mocked(listThreads).mockResolvedValueOnce([
+      {
+        root: commentRow({
+          filePath: "docs/new.md",
+          line: 1,
+          lineContent: "# Draft",
+        }),
+        replies: [],
+      },
+    ]);
+
+    const res = await invokeGet(RUN_ID, "scope=uncommitted");
+    const body = (await res.json()) as { threads: { placement: string }[] };
+
+    expect(res.status).toBe(200);
+    expect(body.threads.map((t) => t.placement)).toEqual(["inline"]);
+    expect(diffWorkingTree).toHaveBeenCalledWith("/repos/demo/.maister/wt-1");
+    expect(diffRunWorkspace).not.toHaveBeenCalled();
+  });
 });
 
 describe("POST /api/runs/[runId]/review-comments — root comments", () => {
@@ -539,6 +589,37 @@ describe("POST /api/runs/[runId]/review-comments — root comments", () => {
       },
     });
     expect(Object.keys(body.comment).sort()).toEqual(COMMENT_DTO_KEYS);
+  });
+
+  it("201: validates an uncommitted root anchor against the working-tree diff, including untracked additions", async () => {
+    seedRun();
+
+    const res = await invokePost(
+      RUN_ID,
+      {
+        filePath: "docs/new.md",
+        side: "new",
+        line: 1,
+        body: "comment on untracked",
+      },
+      "scope=uncommitted",
+    );
+
+    expect(res.status).toBe(201);
+    expect(diffWorkingTree).toHaveBeenCalledWith("/repos/demo/.maister/wt-1");
+    expect(diffRunWorkspace).not.toHaveBeenCalled();
+    expect(createRoot).toHaveBeenCalledTimes(1);
+
+    const [, , calledRunId, input] = vi.mocked(createRoot).mock.calls[0];
+
+    expect(calledRunId).toBe(RUN_ID);
+    expect(input).toEqual({
+      filePath: "docs/new.md",
+      side: "new",
+      line: 1,
+      lineContent: "# Draft",
+      body: "comment on untracked",
+    });
   });
 
   it("returns 401 when unauthenticated", async () => {

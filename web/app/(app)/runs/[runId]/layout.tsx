@@ -1211,6 +1211,16 @@ export default async function RunDetailLayout({
                         revertNotice: t("chatRevertNotice"),
                         agentLabel: t("chatAgentLabel"),
                         error: t("chatError"),
+                        transcript: {
+                          thinking: t("chatThinking"),
+                          rawEvent: t("chatRawEvent"),
+                          input: t("chatToolInput"),
+                          result: t("chatToolResult"),
+                          copy: t("chatCopy"),
+                          copied: t("chatCopied"),
+                          toolCount: (name, count) =>
+                            t("chatToolCount", { name, count }),
+                        },
                       }}
                       runId={detail.runId}
                     />

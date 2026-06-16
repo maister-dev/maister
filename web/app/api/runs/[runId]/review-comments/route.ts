@@ -15,8 +15,9 @@ import { isMaisterError, MaisterError } from "@/lib/errors";
 import { extractAnchorContent } from "@/lib/review-comments/anchor";
 import { httpStatusForCode, toCommentDto } from "@/lib/review-comments/dto";
 import {
-  computeRunDiff,
+  computeReviewDiff,
   placementOf,
+  reviewCommentScopeOrDefault,
 } from "@/lib/review-comments/run-diff-source";
 import {
   createReply,
@@ -102,12 +103,16 @@ async function loadRun(
 }
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: RouteParams,
 ): Promise<NextResponse> {
   const { runId } = await params;
 
   try {
+    const scope = reviewCommentScopeOrDefault(
+      req.nextUrl.searchParams.get("scope"),
+    );
+
     await requireActiveSession();
 
     const dbh = db();
@@ -132,7 +137,7 @@ export async function GET(
     let prepared: DiffPrepResult | null = null;
 
     try {
-      prepared = await computeRunDiff(dbh, run);
+      prepared = await computeReviewDiff(dbh, run, scope);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
 
@@ -175,6 +180,10 @@ export async function POST(
   }
 
   try {
+    const scope = reviewCommentScopeOrDefault(
+      req.nextUrl.searchParams.get("scope"),
+    );
+
     // Auth-first: authenticate before any resource lookup so unauthenticated
     // callers cannot probe run existence; project membership is enforced once
     // projectId is derived from the run row.
@@ -206,7 +215,7 @@ export async function POST(
       );
     }
 
-    const prepared = await computeRunDiff(dbh, run);
+    const prepared = await computeReviewDiff(dbh, run, scope);
     const extraction = extractAnchorContent(prepared, {
       filePath: body.filePath,
       side: body.side,
