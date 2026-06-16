@@ -42,7 +42,7 @@ export function RunShell({
 
   return (
     <section
-      className="mx-auto flex w-full max-w-[1500px] flex-col gap-5 px-4 py-5 md:px-6"
+      className="flex w-full min-w-[1000px] max-w-none flex-col gap-5 px-2 py-5 md:px-3"
       data-inspector-open={inspectorOpen ? "true" : "false"}
       data-testid="run-shell"
     >
@@ -61,7 +61,7 @@ export function RunShell({
         className={clsx(
           "grid grid-cols-1 gap-4",
           inspectorOpen
-            ? "xl:grid-cols-[minmax(0,1fr)_320px]"
+            ? "xl:grid-cols-[minmax(0,1fr)_380px]"
             : "xl:grid-cols-1",
         )}
         data-testid="run-shell-body"

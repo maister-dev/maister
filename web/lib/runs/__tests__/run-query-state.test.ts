@@ -11,7 +11,7 @@ import {
 describe("run-query-state", () => {
   it("parses valid query state", () => {
     const state = parseRunQueryState(
-      "wb=diff&diffFile=src%2Fa.ts&diffview=unified&scope=last-node&node=n1&inspector=closed&flow=fullscreen",
+      "wb=diff&diffFile=src%2Fa.ts&diffview=unified&diffbody=raw&scope=last-node&node=n1&inspector=closed&flow=fullscreen",
     );
 
     expect(state).toEqual({
@@ -20,6 +20,7 @@ describe("run-query-state", () => {
       fileView: "preview",
       diffFile: "src/a.ts",
       diffView: "unified",
+      diffBody: "raw",
       scope: "last-node",
       node: "n1",
       inspector: "closed",
@@ -37,6 +38,7 @@ describe("run-query-state", () => {
       file: "README.md",
       fileView: "preview",
       diffView: "split",
+      diffBody: "rich",
       scope: "run",
       inspector: null,
     });
@@ -48,6 +50,14 @@ describe("run-query-state", () => {
     });
 
     expect(params.toString()).toBe("node=review&scope=uncommitted&wb=timeline");
+  });
+
+  it("patches the diff body mode", () => {
+    const href = buildRunHref("/runs/run-1", "wb=diff&diffbody=rich", {
+      diffbody: "raw",
+    });
+
+    expect(href).toBe("/runs/run-1?wb=diff&diffbody=raw");
   });
 
   it("uses file only for the Files pane", () => {

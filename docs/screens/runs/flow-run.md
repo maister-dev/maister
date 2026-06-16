@@ -3,8 +3,8 @@
 - **Type:** screen.
 - **Route:** `/runs/{runId}` for `flow` and `agent` workspace-backed runs
   (session-required).
-- **Status:** Planned rework. Current source exists, but the landing hierarchy
-  should change.
+- **Status:** Implemented, with ongoing refinement of the workbench and
+  inspector hierarchy.
 - **Source:** current route `web/app/(app)/runs/[runId]/layout.tsx` and
   `web/app/(app)/runs/[runId]/page.tsx`; target components should reuse
   `web/components/board/flow-graph-view-section.tsx`,
@@ -73,7 +73,9 @@ flowchart TD
 
 ## Layout & regions
 
-The page uses a two-column run shell on desktop and a stacked shell on mobile:
+The page uses a full-width two-column run shell on desktop, with a minimum
+1000px work surface and a 380px right inspector. Narrow/mobile presentation is
+still a later responsive pass.
 
 1. **Run header** - breadcrumb, task ref, run status, Flow name, executor,
    branch, current node, and compact `+/-` change size.

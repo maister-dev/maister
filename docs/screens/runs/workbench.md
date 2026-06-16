@@ -2,8 +2,8 @@
 
 - **Type:** block.
 - **Routes:** shared by `/runs/{runId}` and `/scratch-runs/{runId}`.
-- **Status:** Planned rework of the current workbench. Existing implementation
-  has Files, Diff, and Graph tabs on flow run detail.
+- **Status:** Implemented for flow/agent run detail, with planned follow-up for
+  richer file grouping and preview depth.
 - **Source:** current components
   `web/components/workbench/workbench-panel.tsx`,
   `web/components/workbench/workbench-tabs.tsx`,
@@ -59,6 +59,7 @@ contract:
 | `fileView=preview\|source` | Files | Preview/source mode for the selected file. |
 | `diffFile=<repo-relative-path>` | Diff | Selected changed file in the Diff tab. This must not trigger source-file reads. |
 | `diffview=split\|unified` | Diff | Diff renderer mode. |
+| `diffbody=rich\|raw` | Diff | Diff body mode: syntax-rendered per-file view or raw unified patch text. |
 | `scope=run\|since-last-review\|last-node\|uncommitted` | Diff / inspector | Diff and change-summary scope. |
 | `node=<node-id>` | Flow result | Selected Flow node for non-scratch Flow runs. Ignored by standalone agent runs. |
 | `inspector=<state>` | Run shell | Inspector open/collapsed or selected inspector tab, depending on implementation detail. |
@@ -87,12 +88,14 @@ The workbench has a stable tab bar and preserves selection state across tabs.
 
 1. **Timeline** - chronological run ledger: node attempts, assignments, HITL,
    crashes, recoveries, promotions, token/cost chunks, and returned human work.
-2. **Diff** - changed-file list, directory grouping, status icons, additions /
-   deletions, split/unified toggle, scope toggle, truncation banner, dirty-state
-   banner, inline review comments on the canonical run scope, outdated thread
-   section, copy/open controls, and selected-file persistence. The diff view
-   should become the default workbench tab when a user explicitly enters review,
-   but flow runs still land on the Flow result page.
+2. **Diff** - a code-review-style pane with a fixed-height scroll frame:
+   changed-file rail on the left, selected file body on the right, sticky
+   controls, additions / deletions, raw/rich body toggle, split/unified toggle
+   for rich mode, scope toggle, truncation banner, dirty-state banner, inline
+   review comments on the canonical run scope, outdated thread section, and
+   selected-file persistence. The current implementation shows one selected
+   file at a time; grouped/collapsible multi-file sections are a later
+   refinement.
 3. **Files** - git-tracked file tree, search/filter, file-type icons, selected
    file header, copy/open controls, and `Preview / Source` toggle where a
    preview exists. Markdown preview supports GFM, Mermaid, syntax-highlighted

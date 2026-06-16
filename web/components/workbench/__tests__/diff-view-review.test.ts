@@ -43,6 +43,9 @@ const DIFF_LABELS = {
   bodyUnavailable: "L.bodyUnavailable",
   added: "L.added",
   removed: "L.removed",
+  displayMode: "L.displayMode",
+  rich: "L.rich",
+  raw: "L.raw",
   viewMode: "L.viewMode",
   split: "L.split",
   unified: "L.unified",
@@ -71,7 +74,7 @@ const REVIEW_LABELS: ReviewCommentsLabels = {
 // (files list + empty perFile + mode "split", dark theme fallback). The
 // review-off path must keep producing exactly this markup.
 const CAPTURED_REVIEW_OFF_MARKUP =
-  '<div class="flex flex-col gap-2" data-testid="diff-view-wrap"><div class="grid grid-cols-1 gap-3 md:grid-cols-[minmax(200px,280px)_1fr]" data-diff-mode="split" data-testid="diff-view"><div class="overflow-auto rounded-[10px] border border-line bg-paper p-1.5"><ul class="m-0 flex list-none flex-col gap-0.5 p-0"><li><button class="flex w-full items-center gap-2 rounded-[6px] px-2 py-1 text-left font-mono text-[11px] text-ink-2 hover:bg-ivory aria-[current]:bg-ivory" data-status="M" data-testid="changed-file" type="button"><span class="w-3 shrink-0 text-center font-bold text-mute">M</span><span class="grow truncate">src/a.ts</span><span aria-label="L.added" class="shrink-0 font-semibold text-[#1a7f37] dark:text-[#3fb950]" data-testid="changed-file-additions">+4</span><span aria-label="L.removed" class="shrink-0 font-semibold text-[#cf222e] dark:text-[#f85149]" data-testid="changed-file-deletions">−2</span></button></li></ul></div><div class="min-w-0 overflow-auto rounded-[10px] border border-line bg-paper"><div aria-label="L.viewMode" class="flex justify-end gap-1 border-b border-line p-1.5" role="group"><button aria-pressed="true" class="rounded-[6px] px-2 py-1 font-mono text-[11px] text-ink-2 hover:bg-ivory aria-[pressed=true]:bg-ivory aria-[pressed=true]:font-semibold" data-testid="diff-view-mode-split" type="button">L.split</button><button aria-pressed="false" class="rounded-[6px] px-2 py-1 font-mono text-[11px] text-ink-2 hover:bg-ivory aria-[pressed=true]:bg-ivory aria-[pressed=true]:font-semibold" data-testid="diff-view-mode-unified" type="button">L.unified</button></div><p class="p-4 text-center font-mono text-[11px] text-mute" data-testid="diff-view-empty">L.empty</p></div></div></div>';
+  '<div class="flex flex-col gap-2" data-testid="diff-view-wrap"><div class="grid min-h-[520px] max-h-[calc(100vh-260px)] grid-cols-1 overflow-hidden rounded-[10px] border border-line bg-paper md:grid-cols-[minmax(220px,320px)_minmax(0,1fr)]" data-diff-body-mode="rich" data-diff-mode="split" data-testid="diff-view"><aside class="min-h-0 overflow-hidden border-b border-line bg-paper md:border-b-0 md:border-r" data-testid="diff-view-file-list"><div class="h-full min-h-0 overflow-auto p-1.5"><ul class="m-0 flex list-none flex-col gap-0.5 p-0"><li><button class="flex w-full items-center gap-2 rounded-[6px] px-2 py-1 text-left font-mono text-[11px] text-ink-2 hover:bg-ivory aria-[current]:bg-ivory" data-status="M" data-testid="changed-file" type="button"><span class="w-3 shrink-0 text-center font-bold text-mute">M</span><span class="grow truncate">src/a.ts</span><span aria-label="L.added" class="shrink-0 font-semibold text-[#1a7f37] dark:text-[#3fb950]" data-testid="changed-file-additions">+4</span><span aria-label="L.removed" class="shrink-0 font-semibold text-[#cf222e] dark:text-[#f85149]" data-testid="changed-file-deletions">−2</span></button></li></ul></div></aside><section class="flex min-h-0 min-w-0 flex-col overflow-hidden"><div class="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-2 border-b border-line bg-paper/95 px-2 py-1.5 backdrop-blur" data-testid="diff-view-toolbar"><span class="font-mono text-[11px] font-semibold text-mute">L.empty</span><div class="flex flex-wrap items-center gap-1"><div aria-label="L.viewMode" class="flex gap-1" role="group"><button aria-pressed="true" class="rounded-[6px] px-2 py-1 font-mono text-[11px] text-ink-2 hover:bg-ivory bg-ivory font-semibold text-ink" data-testid="diff-view-mode-split" type="button">L.split</button><button aria-pressed="false" class="rounded-[6px] px-2 py-1 font-mono text-[11px] text-ink-2 hover:bg-ivory" data-testid="diff-view-mode-unified" type="button">L.unified</button></div></div></div><div class="min-h-0 flex-1 overflow-auto" data-testid="diff-view-rich"><p class="p-4 text-center font-mono text-[11px] text-mute" data-testid="diff-view-empty">L.empty</p></div></section></div></div>';
 
 // A real parseable section for `src/a.ts` (new side lines 1-2, old side
 // lines 1-2) so GitDiffView renders actual rows. Mirrors how
@@ -181,6 +184,26 @@ describe("DiffView — review mode off (regression pin)", () => {
 
     expect(html).toContain('data-testid="diff-view-body-unavailable"');
     expect(html).toContain("L.bodyUnavailable");
+  });
+
+  it("renders code-review chrome with independent scrolling regions", () => {
+    const html = render({ rawDiff: DIFF_SECTION });
+
+    expect(html).toContain('data-testid="diff-view-toolbar"');
+    expect(html).toContain('data-testid="diff-view-file-list"');
+    expect(html).toContain('data-testid="diff-view-rich"');
+    expect(html).toContain("max-h-[calc(100vh-260px)]");
+  });
+
+  it("can render the raw patch body instead of the rich diff", () => {
+    const html = render({
+      rawDiff: DIFF_SECTION,
+      bodyMode: "raw",
+    });
+
+    expect(html).toContain('data-testid="diff-view-raw"');
+    expect(html).toContain("diff --git a/src/a.ts b/src/a.ts");
+    expect(html).not.toContain('data-testid="diff-view-rich"');
   });
 
   it("renders the same chrome when review mode is on but has no threads", () => {

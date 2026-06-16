@@ -2,8 +2,10 @@
 
 - **Type:** block.
 - **Routes:** shared by `/runs/{runId}` and `/scratch-runs/{runId}`.
-- **Status:** Planned.
-- **Source:** planned shared component. Current related sources:
+- **Status:** Implemented for `/runs/{runId}` as the run shell sidebar.
+- **Source:** current shared component and related sources:
+  `web/components/runs/run-shell.tsx`,
+  `web/components/runs/run-inspector.tsx`,
   `web/components/workbench/lifecycle-actions.tsx`,
   `web/components/board/flow-graph-view-section.tsx`,
   `web/components/board/run-timeline.tsx`,
@@ -13,8 +15,8 @@
 ## JTBD
 
 When I inspect any run, I want a right sidebar that answers four questions:
-what changed, where is the branch, what is happening in the run, and what action
-can I take next.
+what changed, what is happening in the run, what operational context matters,
+and what action can I take next.
 
 When I read a conversation, Flow result, file, or diff, I want those answers
 nearby without shrinking the main pane into a small review widget.
@@ -59,12 +61,16 @@ flowchart TD
 
 ## Layout & regions
 
-The inspector uses tabbed sections inside a fixed-width sidebar on desktop and a
-sheet on mobile.
+The inspector uses tabbed sections inside a wider fixed sidebar on desktop
+(380px in the current run shell) and a sheet on mobile when the mobile shell is
+implemented. The run header owns branch and target-branch context; the
+inspector must not repeat branch/worktree facts already visible there.
 
-1. **Overview** - run kind, status, project, task or scratch name, executor,
-   branch, worktree path, base branch/commit, target branch, started/ended time,
-   active time, wall-clock duration, and token/cost summary.
+1. **Overview** - run kind, status, executor, token/cost summary, active time,
+   wall-clock duration, delivery policy, settings count, capability count, and
+   resolved capability-set count. Branch, target branch, base branch, and
+   worktree path stay in the header or dedicated action dialogs instead of being
+   duplicated here.
 2. **Changes** - total additions/deletions, file count, dirty-state badge, scope
    selector summary, directory-grouped changed files, file status icons, comment
    badges, and generated/large/truncated indicators where available.

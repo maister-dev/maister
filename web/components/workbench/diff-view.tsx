@@ -21,7 +21,11 @@ import {
   type ReviewThread,
   type ReviewThreadActions,
 } from "@/components/workbench/review-thread-card";
-import { buildRunDiffFileHref, buildRunHref } from "@/lib/runs/run-query-state";
+import {
+  buildRunDiffFileHref,
+  buildRunHref,
+  type RunDiffBodyMode,
+} from "@/lib/runs/run-query-state";
 import { useTheme } from "@/lib/theme";
 
 import "@git-diff-view/react/styles/diff-view.css";
@@ -55,12 +59,16 @@ export type PreparedFile = {
 };
 
 export type DiffViewMode = "split" | "unified";
+export type DiffBodyMode = RunDiffBodyMode;
 
 export interface DiffViewLabels {
   empty: string;
   bodyUnavailable: string;
   added: string;
   removed: string;
+  displayMode: string;
+  rich: string;
+  raw: string;
   viewMode: string;
   split: string;
   unified: string;
@@ -211,6 +219,11 @@ export interface DiffViewProps {
   labels: DiffViewLabels;
   // Optional explicit override; otherwise resolved from `?diffview=`.
   mode?: DiffViewMode;
+  // Optional explicit override; otherwise resolved from `?diffbody=`.
+  bodyMode?: DiffBodyMode;
+  // Raw unified patch text for the workbench raw/rich body toggle. Surfaces
+  // that only have prepared bundles omit it and render the rich body only.
+  rawDiff?: string;
   // The producing diff was cut at the 4 MiB buffer bound: `files`/`perFile` are
   // a partial prefix. Surfaces a blocking banner so a partial diff is never read
   // as the whole change.
@@ -225,6 +238,19 @@ export interface DiffViewProps {
 
 function parseDiffView(raw: string | null): DiffViewMode {
   return raw === "unified" ? "unified" : "split";
+}
+
+function parseDiffBody(raw: string | null): DiffBodyMode {
+  return raw === "raw" ? "raw" : "rich";
+}
+
+function toggleButtonClass(active: boolean): string {
+  return [
+    "rounded-[6px] px-2 py-1 font-mono text-[11px] text-ink-2 hover:bg-ivory",
+    active ? "bg-ivory font-semibold text-ink" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 // The committed run-branch diff, rendered by git-diff-view. The per-file syntax
@@ -245,6 +271,8 @@ export function DiffView({
   perFile,
   labels,
   mode,
+  bodyMode,
+  rawDiff,
   truncated = false,
   renderUnavailable = false,
   review,
@@ -255,11 +283,24 @@ export function DiffView({
   const searchParams = useSearchParams();
   const viewMode: DiffViewMode =
     mode ?? parseDiffView(searchParams?.get("diffview") ?? null);
+  const rawDiffAvailable = rawDiff !== undefined;
+  const diffBodyMode: DiffBodyMode = rawDiffAvailable
+    ? (bodyMode ?? parseDiffBody(searchParams?.get("diffbody") ?? null))
+    : "rich";
 
   const setViewMode = (next: DiffViewMode): void => {
     router.push(
       buildRunHref(pathname, searchParams?.toString() ?? "", {
         diffview: next,
+      }),
+      { scroll: false },
+    );
+  };
+
+  const setBodyMode = (next: DiffBodyMode): void => {
+    router.push(
+      buildRunHref(pathname, searchParams?.toString() ?? "", {
+        diffbody: next,
       }),
       { scroll: false },
     );
@@ -391,77 +432,141 @@ export function DiffView({
         </p>
       ) : null}
       <div
-        className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(200px,280px)_1fr]"
+        className="grid min-h-[520px] max-h-[calc(100vh-260px)] grid-cols-1 overflow-hidden rounded-[10px] border border-line bg-paper md:grid-cols-[minmax(220px,320px)_minmax(0,1fr)]"
+        data-diff-body-mode={diffBodyMode}
         data-diff-mode={viewMode}
         data-testid="diff-view"
       >
-        <div className="overflow-auto rounded-[10px] border border-line bg-paper p-1.5">
-          <ChangedFilesList
-            files={files}
-            labels={{
-              empty: labels.empty,
-              added: labels.added,
-              removed: labels.removed,
-            }}
-            selectedPath={activePath}
-            onSelect={selectDiffFile}
-          />
-        </div>
-        <div className="min-w-0 overflow-auto rounded-[10px] border border-line bg-paper">
-          <div
-            aria-label={labels.viewMode}
-            className="flex justify-end gap-1 border-b border-line p-1.5"
-            role="group"
-          >
-            <button
-              aria-pressed={viewMode === "split"}
-              className="rounded-[6px] px-2 py-1 font-mono text-[11px] text-ink-2 hover:bg-ivory aria-[pressed=true]:bg-ivory aria-[pressed=true]:font-semibold"
-              data-testid="diff-view-mode-split"
-              type="button"
-              onClick={() => setViewMode("split")}
-            >
-              {labels.split}
-            </button>
-            <button
-              aria-pressed={viewMode === "unified"}
-              className="rounded-[6px] px-2 py-1 font-mono text-[11px] text-ink-2 hover:bg-ivory aria-[pressed=true]:bg-ivory aria-[pressed=true]:font-semibold"
-              data-testid="diff-view-mode-unified"
-              type="button"
-              onClick={() => setViewMode("unified")}
-            >
-              {labels.unified}
-            </button>
-          </div>
-          {diffFile ? (
-            // `key={diffTheme}` remounts git-diff-view on theme toggle so the
-            // wrapper's `data-theme` chrome re-applies. The remount re-hydrates
-            // from the full bundle (no re-highlight); the syntax tokens recolor
-            // instantly via the `--shiki-*` CSS vars regardless.
-            <GitDiffView<ReviewThread[]>
-              key={diffTheme}
-              diffFile={diffFile}
-              diffViewHighlight={true}
-              diffViewMode={diffViewMode}
-              diffViewTheme={diffTheme}
-              diffViewWrap={false}
-              {...reviewDiffProps}
+        <aside
+          className="min-h-0 overflow-hidden border-b border-line bg-paper md:border-b-0 md:border-r"
+          data-testid="diff-view-file-list"
+        >
+          <div className="h-full min-h-0 overflow-auto p-1.5">
+            <ChangedFilesList
+              files={files}
+              labels={{
+                empty: labels.empty,
+                added: labels.added,
+                removed: labels.removed,
+              }}
+              selectedPath={activePath}
+              onSelect={selectDiffFile}
             />
-          ) : renderUnavailable && files.length > 0 ? (
-            <p
-              className="p-4 text-center font-mono text-[11px] leading-[1.5] text-mute"
-              data-testid="diff-view-body-unavailable"
+          </div>
+        </aside>
+        <section className="flex min-h-0 min-w-0 flex-col overflow-hidden">
+          <div
+            className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-2 border-b border-line bg-paper/95 px-2 py-1.5 backdrop-blur"
+            data-testid="diff-view-toolbar"
+          >
+            {activePath ? (
+              <span className="min-w-0 truncate font-mono text-[11px] font-semibold text-ink">
+                {activePath}
+              </span>
+            ) : (
+              <span className="font-mono text-[11px] font-semibold text-mute">
+                {labels.empty}
+              </span>
+            )}
+            <div className="flex flex-wrap items-center gap-1">
+              {rawDiffAvailable ? (
+                <div
+                  aria-label={labels.displayMode}
+                  className="flex gap-1"
+                  role="group"
+                >
+                  <button
+                    aria-pressed={diffBodyMode === "rich"}
+                    className={toggleButtonClass(diffBodyMode === "rich")}
+                    data-testid="diff-view-body-rich"
+                    type="button"
+                    onClick={() => setBodyMode("rich")}
+                  >
+                    {labels.rich}
+                  </button>
+                  <button
+                    aria-pressed={diffBodyMode === "raw"}
+                    className={toggleButtonClass(diffBodyMode === "raw")}
+                    data-testid="diff-view-body-raw"
+                    type="button"
+                    onClick={() => setBodyMode("raw")}
+                  >
+                    {labels.raw}
+                  </button>
+                </div>
+              ) : null}
+              {diffBodyMode === "rich" ? (
+                <div
+                  aria-label={labels.viewMode}
+                  className="flex gap-1"
+                  role="group"
+                >
+                  <button
+                    aria-pressed={viewMode === "split"}
+                    className={toggleButtonClass(viewMode === "split")}
+                    data-testid="diff-view-mode-split"
+                    type="button"
+                    onClick={() => setViewMode("split")}
+                  >
+                    {labels.split}
+                  </button>
+                  <button
+                    aria-pressed={viewMode === "unified"}
+                    className={toggleButtonClass(viewMode === "unified")}
+                    data-testid="diff-view-mode-unified"
+                    type="button"
+                    onClick={() => setViewMode("unified")}
+                  >
+                    {labels.unified}
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          </div>
+          {diffBodyMode === "raw" && rawDiffAvailable ? (
+            <pre
+              className="m-0 min-h-0 flex-1 overflow-auto whitespace-pre p-4 font-mono text-[11px] leading-[1.5] text-ink-2"
+              data-testid="diff-view-raw"
             >
-              {labels.bodyUnavailable}
-            </p>
+              {rawDiff}
+            </pre>
           ) : (
-            <p
-              className="p-4 text-center font-mono text-[11px] text-mute"
-              data-testid="diff-view-empty"
+            <div
+              className="min-h-0 flex-1 overflow-auto"
+              data-testid="diff-view-rich"
             >
-              {labels.empty}
-            </p>
+              {diffFile ? (
+                // `key={diffTheme}` remounts git-diff-view on theme toggle so the
+                // wrapper's `data-theme` chrome re-applies. The remount re-hydrates
+                // from the full bundle (no re-highlight); the syntax tokens recolor
+                // instantly via the `--shiki-*` CSS vars regardless.
+                <GitDiffView<ReviewThread[]>
+                  key={diffTheme}
+                  diffFile={diffFile}
+                  diffViewHighlight={true}
+                  diffViewMode={diffViewMode}
+                  diffViewTheme={diffTheme}
+                  diffViewWrap={false}
+                  {...reviewDiffProps}
+                />
+              ) : renderUnavailable && files.length > 0 ? (
+                <p
+                  className="p-4 text-center font-mono text-[11px] leading-[1.5] text-mute"
+                  data-testid="diff-view-body-unavailable"
+                >
+                  {labels.bodyUnavailable}
+                </p>
+              ) : (
+                <p
+                  className="p-4 text-center font-mono text-[11px] text-mute"
+                  data-testid="diff-view-empty"
+                >
+                  {labels.empty}
+                </p>
+              )}
+            </div>
           )}
-        </div>
+        </section>
       </div>
       {review ? (
         <OutdatedThreadsSection

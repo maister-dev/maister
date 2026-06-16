@@ -13,6 +13,7 @@ export const RUN_DIFF_SCOPES = [
   "last-node",
   "uncommitted",
 ] as const;
+export const RUN_DIFF_BODY_MODES = ["rich", "raw"] as const;
 export const RUN_INSPECTOR_STATES = ["open", "closed"] as const;
 export const RUN_FLOW_STATES = ["fullscreen"] as const;
 
@@ -20,6 +21,7 @@ export type RunWorkbenchTab = (typeof RUN_WORKBENCH_TABS)[number];
 export type RunFileView = (typeof RUN_FILE_VIEWS)[number];
 export type RunDiffView = (typeof RUN_DIFF_VIEWS)[number];
 export type RunDiffScope = (typeof RUN_DIFF_SCOPES)[number];
+export type RunDiffBodyMode = (typeof RUN_DIFF_BODY_MODES)[number];
 export type RunInspectorState = (typeof RUN_INSPECTOR_STATES)[number];
 export type RunFlowState = (typeof RUN_FLOW_STATES)[number];
 
@@ -29,6 +31,7 @@ export interface RunQueryState {
   fileView: RunFileView;
   diffFile: string | null;
   diffView: RunDiffView;
+  diffBody: RunDiffBodyMode;
   scope: RunDiffScope;
   node: string | null;
   inspector: RunInspectorState | null;
@@ -49,6 +52,7 @@ export interface RunQueryPatch {
   fileView?: RunFileView | null;
   diffFile?: string | null;
   diffview?: RunDiffView | null;
+  diffbody?: RunDiffBodyMode | null;
   scope?: RunDiffScope | null;
   node?: string | null;
   inspector?: RunInspectorState | null;
@@ -109,6 +113,11 @@ export function parseRunQueryState(input: RunSearchParamsInput): RunQueryState {
     fileView: enumOrDefault(params.get("fileView"), RUN_FILE_VIEWS, "preview"),
     diffFile: params.get("diffFile"),
     diffView: enumOrDefault(params.get("diffview"), RUN_DIFF_VIEWS, "split"),
+    diffBody: enumOrDefault(
+      params.get("diffbody"),
+      RUN_DIFF_BODY_MODES,
+      "rich",
+    ),
     scope: enumOrDefault(params.get("scope"), RUN_DIFF_SCOPES, "run"),
     node: params.get("node"),
     inspector: enumOrNull(params.get("inspector"), RUN_INSPECTOR_STATES),
@@ -141,6 +150,7 @@ export function buildRunSearchParams(
   setOptionalParam(params, "fileView", patch.fileView);
   setOptionalParam(params, "diffFile", patch.diffFile);
   setOptionalParam(params, "diffview", patch.diffview);
+  setOptionalParam(params, "diffbody", patch.diffbody);
   setOptionalParam(params, "scope", patch.scope);
   setOptionalParam(params, "node", patch.node);
   setOptionalParam(params, "inspector", patch.inspector);
