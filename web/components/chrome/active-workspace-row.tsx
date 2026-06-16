@@ -6,6 +6,11 @@ import type {
 } from "@/lib/queries/portfolio";
 import type { ReactElement, ReactNode } from "react";
 
+import {
+  CpuChipIcon,
+  PencilIcon,
+  WrenchScrewdriverIcon,
+} from "@heroicons/react/24/outline";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
@@ -56,47 +61,31 @@ export interface ActiveWorkspaceRowLabels {
 
 function FlowIcon(): ReactElement {
   return (
-    <svg
+    <WrenchScrewdriverIcon
       aria-hidden="true"
       className="h-2.5 w-2.5 shrink-0"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.6"
-      viewBox="0 0 16 16"
-    >
-      <path d="M3 3 L13 3 L9 8 L13 13 L3 13 L7 8 Z" />
-    </svg>
+      data-testid="flow-chip-icon"
+    />
   );
 }
 
 function RunnerIcon(): ReactElement {
   return (
-    <svg
+    <CpuChipIcon
       aria-hidden="true"
       className="h-2.5 w-2.5 shrink-0"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.6"
-      viewBox="0 0 16 16"
-    >
-      <rect height="8" rx="2" width="10" x="3" y="4" />
-      <path d="M6 4V2M10 4V2M6.5 8h3" />
-    </svg>
+      data-testid="runner-chip-icon"
+    />
   );
 }
 
-function PencilIcon(): ReactElement {
+function RenamePencilIcon(): ReactElement {
   return (
-    <svg
+    <PencilIcon
       aria-hidden="true"
       className="h-3.5 w-3.5"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.4"
-      viewBox="0 0 16 16"
-    >
-      <path d="M10.5 2.5l3 3L6 13H3v-3z" />
-    </svg>
+      data-testid="rename-pencil-icon"
+    />
   );
 }
 
@@ -360,7 +349,7 @@ export function ActiveWorkspaceRow({
           setRenaming(true);
         }}
       >
-        <PencilIcon />
+        <RenamePencilIcon />
       </button>
     ) : undefined;
 

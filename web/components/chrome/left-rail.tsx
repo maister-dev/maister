@@ -8,8 +8,9 @@ import type {
 import type { GlobalRole } from "@/lib/db/schema";
 import type { RailWorkspaceGroup } from "@/lib/queries/portfolio";
 import type { PlatformStatus } from "@/types/platform-status";
-import type { ReactElement, ReactNode } from "react";
+import type { ComponentType, ReactElement, ReactNode, SVGProps } from "react";
 
+import { CpuChipIcon, WindowIcon } from "@heroicons/react/24/outline";
 import { getLocale, getTranslations } from "next-intl/server";
 import Link from "next/link";
 import clsx from "clsx";
@@ -75,19 +76,11 @@ const runnerCauseLabelKey: Record<AdapterReadinessCause, string> = {
   binary_unavailable: "runnerNotReady",
 };
 
-const flyoutIcons: Record<"runners" | "workspaces", ReactNode> = {
-  workspaces: (
-    <>
-      <rect height="9" rx="1.8" width="11" x="2.5" y="3.5" />
-      <path d="M5 6.2h6M5 8.4h4" />
-    </>
-  ),
-  runners: (
-    <>
-      <rect height="8" rx="2" width="10" x="3" y="4" />
-      <path d="M6 4V2M10 4V2M6.5 8h3M5 12v2M11 12v2" />
-    </>
-  ),
+type FlyoutIcon = ComponentType<SVGProps<SVGSVGElement>>;
+
+const flyoutIcons: Record<"runners" | "workspaces", FlyoutIcon> = {
+  workspaces: WindowIcon,
+  runners: CpuChipIcon,
 };
 
 function CollapsedRailBadge({ value }: { value: number }): ReactElement {
@@ -102,13 +95,17 @@ function CollapsedRailFlyout({
   badge,
   children,
   icon,
+  iconTestId,
   label,
 }: {
   badge?: number;
   children: ReactNode;
-  icon: ReactNode;
+  icon: FlyoutIcon;
+  iconTestId: string;
   label: string;
 }): ReactElement {
+  const Icon = icon;
+
   return (
     <details className="group relative">
       <summary
@@ -116,16 +113,11 @@ function CollapsedRailFlyout({
         className="relative flex h-9 w-9 cursor-pointer list-none items-center justify-center rounded-[10px] border border-line bg-paper text-mute transition-colors hover:border-mute hover:bg-ivory hover:text-ink group-open:border-amber-line group-open:bg-amber-soft group-open:text-amber [&::-webkit-details-marker]:hidden"
         title={label}
       >
-        <svg
+        <Icon
           aria-hidden="true"
           className="h-3.5 w-3.5"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.6"
-          viewBox="0 0 16 16"
-        >
-          {icon}
-        </svg>
+          data-testid={iconTestId}
+        />
         {badge && badge > 0 ? <CollapsedRailBadge value={badge} /> : null}
       </summary>
       <div className="absolute left-[calc(100%+8px)] top-0 z-[130] max-h-[min(520px,calc(100vh-96px))] w-[340px] overflow-y-auto rounded-[14px] border border-line bg-paper p-3 shadow-[var(--shadow-lg)]">
@@ -293,6 +285,7 @@ export async function LeftRail({
         <CollapsedRailFlyout
           badge={activeCount}
           icon={flyoutIcons.workspaces}
+          iconTestId="rail-flyout-icon-workspaces"
           label={tPortfolio("activeWorkspaces")}
         >
           {workspaceGroups.length > 0 ? (
@@ -382,6 +375,7 @@ export async function LeftRail({
         <CollapsedRailFlyout
           badge={visibleAdapters.length}
           icon={flyoutIcons.runners}
+          iconTestId="rail-flyout-icon-runners"
           label={tPortfolio("runnersReadiness")}
         >
           <div className="flex flex-col gap-1 font-mono text-[10.5px] tracking-[0.02em]">

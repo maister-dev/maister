@@ -33,6 +33,8 @@ describe("RailCollapseView — collapse toggle (T1.3)", () => {
   it("renders the toggle button in both states", () => {
     expect(render(false)).toContain('data-testid="rail-collapse-toggle"');
     expect(render(true)).toContain('data-testid="rail-collapse-toggle"');
+    expect(render(false)).toContain('data-testid="rail-collapse-icon"');
+    expect(render(false)).toContain('viewBox="0 0 24 24"');
   });
 
   it("shows the rail content (nav labels) when expanded", () => {

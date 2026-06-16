@@ -125,6 +125,7 @@ describe("ActiveWorkspaceRow", () => {
     const flow = render(baseRow({ runKind: "flow" }), baseLabels());
 
     expect(flow).not.toContain('data-testid="rename-pencil"');
+    expect(flow).not.toContain('data-testid="rename-pencil-icon"');
 
     const scratch = render(
       baseRow({ runKind: "scratch", href: "/scratch-runs/run-1" }),
@@ -132,14 +133,19 @@ describe("ActiveWorkspaceRow", () => {
     );
 
     expect(scratch).toContain('data-testid="rename-pencil"');
+    expect(scratch).toContain('data-testid="rename-pencil-icon"');
+    expect(scratch).toContain('viewBox="0 0 24 24"');
   });
 
   it("renders the flow, runner, and issue chips when present", () => {
     const html = render(baseRow(), baseLabels());
 
     expect(html).toContain('data-testid="flow-chip"');
+    expect(html).toContain('data-testid="flow-chip-icon"');
     expect(html).toContain('data-testid="runner-chip"');
+    expect(html).toContain('data-testid="runner-chip-icon"');
     expect(html).toContain('data-testid="issue-chip"');
+    expect(html).toContain('viewBox="0 0 24 24"');
     expect(html).toContain("KEY-1");
   });
 

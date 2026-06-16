@@ -2,6 +2,10 @@
 
 import type { ReactElement, ReactNode } from "react";
 
+import {
+  ChevronLeftIcon,
+  ChevronRightIcon,
+} from "@heroicons/react/24/outline";
 import { useEffect, useState } from "react";
 import clsx from "clsx";
 
@@ -22,6 +26,8 @@ export function RailCollapseView({
   collapsedChildren?: ReactNode;
   children?: ReactNode;
 }): ReactElement {
+  const ToggleIcon = collapsed ? ChevronRightIcon : ChevronLeftIcon;
+
   return (
     <aside
       aria-label="Sections & active workspaces"
@@ -48,22 +54,11 @@ export function RailCollapseView({
           type="button"
           onClick={onToggle}
         >
-          <svg
+          <ToggleIcon
             aria-hidden="true"
             className="h-3.5 w-3.5"
-            fill="none"
-            stroke="currentColor"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth="1.6"
-            viewBox="0 0 16 16"
-          >
-            {collapsed ? (
-              <path d="M6 4l4 4-4 4" />
-            ) : (
-              <path d="M10 4l-4 4 4 4" />
-            )}
-          </svg>
+            data-testid="rail-collapse-icon"
+          />
         </button>
       </div>
       {collapsed ? (
