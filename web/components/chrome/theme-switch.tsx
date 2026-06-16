@@ -18,6 +18,43 @@ export interface ThemeSwitchProps {
   className?: string;
 }
 
+export type ThemeMode = "dark" | "light";
+
+export function ThemeModeIcon({ theme }: { theme: ThemeMode }): ReactElement {
+  if (theme === "light") {
+    return (
+      <svg
+        aria-hidden="true"
+        data-testid="theme-icon-light"
+        fill="none"
+        height="13"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.5"
+        viewBox="0 0 16 16"
+        width="13"
+      >
+        <circle cx="8" cy="8" r="2.7" />
+        <path d="M8 2v1.5M8 12.5V14M14 8h-1.5M3.5 8H2M12.24 3.76l-1.06 1.06M4.82 11.18l-1.06 1.06M12.24 12.24l-1.06-1.06M4.82 4.82L3.76 3.76" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg
+      aria-hidden="true"
+      data-testid="theme-icon-dark"
+      fill="currentColor"
+      height="13"
+      viewBox="0 0 16 16"
+      width="13"
+    >
+      <path d="M6.2 1.6A6.4 6.4 0 1 0 14.4 9.8 5 5 0 0 1 6.2 1.6z" />
+    </svg>
+  );
+}
+
 export function ThemeSwitch({ className }: ThemeSwitchProps): ReactElement {
   const [isMounted, setIsMounted] = useState(false);
   const { resolvedTheme, setTheme } = useTheme();
@@ -48,27 +85,7 @@ export function ThemeSwitch({ className }: ThemeSwitchProps): ReactElement {
       type="button"
       onClick={handleToggle}
     >
-      {isLight ? (
-        <svg
-          aria-hidden="true"
-          fill="currentColor"
-          height="13"
-          viewBox="0 0 16 16"
-          width="13"
-        >
-          <path d="M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM8 2v1.5M8 12.5V14M14 8h-1.5M3.5 8H2M12.24 3.76l-1.06 1.06M4.82 11.18l-1.06 1.06M12.24 12.24l-1.06-1.06M4.82 4.82L3.76 3.76" />
-        </svg>
-      ) : (
-        <svg
-          aria-hidden="true"
-          fill="currentColor"
-          height="13"
-          viewBox="0 0 16 16"
-          width="13"
-        >
-          <path d="M6.2 1.6A6.4 6.4 0 1 0 14.4 9.8 5 5 0 0 1 6.2 1.6z" />
-        </svg>
-      )}
+      <ThemeModeIcon theme={isLight ? "light" : "dark"} />
       <span>{isLight ? "Light" : "Dark"}</span>
     </button>
   );

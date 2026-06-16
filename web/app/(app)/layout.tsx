@@ -82,7 +82,6 @@ export default async function AppLayout({
         data-density="comfy"
       >
         <LeftRail
-          activeSection="projects"
           inboxCount={needsYou}
           platformStatus={platformStatus}
           runnersReadiness={runnersReadiness}
