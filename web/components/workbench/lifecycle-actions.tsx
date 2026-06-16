@@ -2,11 +2,12 @@
 
 import type { RunKind } from "@/lib/db/schema";
 import type { WorkbenchLifecycleActionId } from "@/lib/workbench-lifecycle/policy";
-import type { ReactElement, ReactNode } from "react";
+import type { CSSProperties, ReactElement, ReactNode } from "react";
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
 
@@ -189,22 +190,48 @@ async function readJson<T>(res: Response): Promise<T | null> {
   return (await res.json().catch(() => null)) as T | null;
 }
 
+// Anchored-popover position from the trigger's rect: clamped horizontally to the
+// viewport; opens upward when there is not enough room below.
+function anchoredPopoverStyle(rect: DOMRect): CSSProperties {
+  const width = 256; // matches w-64
+  const margin = 8;
+  const left = Math.max(
+    margin,
+    Math.min(rect.left, window.innerWidth - width - margin),
+  );
+  const spaceBelow = window.innerHeight - rect.bottom;
+
+  if (spaceBelow < 280 && rect.top > spaceBelow) {
+    return { left, bottom: window.innerHeight - rect.top + 4 };
+  }
+
+  return { left, top: rect.bottom + 4 };
+}
+
+// Shared lifecycle dialog. `detail`/`compact` variants render a centered modal;
+// the rail `menu` variant passes `anchorRect` to render a small popover anchored
+// to the `⋯` trigger. Either way it portals to <body> so it escapes the rail's
+// `overflow-y-auto` clip AND the row's `focus-within` group (otherwise opening it
+// keeps the row visually "selected" and covers the run link).
 function DialogShell({
   title,
   cancel,
   children,
   footer,
   onClose,
+  anchorRect,
 }: {
   title: string;
   cancel: string;
   children: ReactNode;
   footer: ReactNode;
   onClose: () => void;
-}): ReactElement {
+  anchorRect?: DOMRect | null;
+}): ReactElement | null {
   const dialogRef = useRef<HTMLDivElement>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
   const onCloseRef = useRef(onClose);
+  const anchored = anchorRect != null;
 
   onCloseRef.current = onClose;
 
@@ -222,9 +249,11 @@ function DialogShell({
 
     focusable()[0]?.focus();
 
+    // A small anchored popover must not lock page scroll; only the centered
+    // modal does.
     const previousOverflow = document.body.style.overflow;
 
-    document.body.style.overflow = "hidden";
+    if (!anchored) document.body.style.overflow = "hidden";
 
     function onKeyDown(event: KeyboardEvent): void {
       if (event.key === "Escape") {
@@ -256,41 +285,67 @@ function DialogShell({
 
     return () => {
       document.removeEventListener("keydown", onKeyDown);
-      document.body.style.overflow = previousOverflow;
+      if (!anchored) document.body.style.overflow = previousOverflow;
       restoreFocusRef.current?.focus();
     };
-  }, []);
+  }, [anchored]);
 
-  return (
-    <div className="fixed inset-0 z-[220] flex items-center justify-center p-4">
-      <button
-        aria-label={cancel}
-        className="absolute inset-0 cursor-default bg-[rgba(22,20,15,0.48)] backdrop-blur-sm"
-        tabIndex={-1}
-        type="button"
-        onClick={onClose}
-      />
-      <div
-        ref={dialogRef}
-        aria-labelledby="workbench-lifecycle-dialog-title"
-        aria-modal="true"
-        className="relative z-10 flex max-h-[86vh] w-full max-w-[520px] flex-col overflow-hidden rounded-lg border border-line bg-paper shadow-2xl"
-        role="dialog"
-      >
-        <div className="border-b border-line px-4 py-3">
-          <h2
-            className="font-mono text-[13px] font-bold uppercase tracking-[0.08em] text-ink"
-            id="workbench-lifecycle-dialog-title"
-          >
-            {title}
-          </h2>
-        </div>
-        <div className="flex-1 overflow-auto px-4 py-4">{children}</div>
-        <div className="flex flex-wrap justify-end gap-2 border-t border-line px-4 py-3">
-          {footer}
-        </div>
+  if (typeof document === "undefined") return null;
+
+  const dialogBox = (
+    <div
+      ref={dialogRef}
+      aria-labelledby="workbench-lifecycle-dialog-title"
+      aria-modal={anchored ? undefined : "true"}
+      className={clsx(
+        "z-10 flex flex-col overflow-hidden rounded-lg border border-line bg-paper shadow-2xl",
+        anchored
+          ? "fixed max-h-[70vh] w-64"
+          : "relative max-h-[86vh] w-full max-w-[520px]",
+      )}
+      role="dialog"
+      style={anchored ? anchoredPopoverStyle(anchorRect) : undefined}
+    >
+      <div className="border-b border-line px-4 py-3">
+        <h2
+          className="font-mono text-[13px] font-bold uppercase tracking-[0.08em] text-ink"
+          id="workbench-lifecycle-dialog-title"
+        >
+          {title}
+        </h2>
+      </div>
+      <div className="flex-1 overflow-auto px-4 py-4">{children}</div>
+      <div className="flex flex-wrap justify-end gap-2 border-t border-line px-4 py-3">
+        {footer}
       </div>
     </div>
+  );
+
+  return createPortal(
+    anchored ? (
+      <div className="fixed inset-0 z-[220]">
+        <button
+          aria-label={cancel}
+          className="absolute inset-0 cursor-default"
+          tabIndex={-1}
+          type="button"
+          onClick={onClose}
+        />
+        {dialogBox}
+      </div>
+    ) : (
+      <div className="fixed inset-0 z-[220] flex items-center justify-center p-4">
+        <button
+          aria-label={cancel}
+          className="absolute inset-0 cursor-default bg-[rgba(22,20,15,0.48)] backdrop-blur-sm"
+          tabIndex={-1}
+          type="button"
+          onClick={onClose}
+        />
+        {dialogBox}
+      </div>
+    ),
+    document.body,
   );
 }
 
@@ -358,6 +413,10 @@ export function WorkbenchLifecycleActions({
   const [result, setResult] = useState<ActionResult | null>(null);
   const [renameValue, setRenameValue] = useState(runLabel ?? "");
   const renameInputRef = useRef<HTMLInputElement>(null);
+  // `menu` variant: the `⋯` trigger lives inside the row's `focus-within` group,
+  // so the dialog is portaled out and anchored to this container's rect.
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [menuAnchorRect, setMenuAnchorRect] = useState<DOMRect | null>(null);
 
   // Focus the rename field when its panel opens — follows the explicit menu
   // click, never on load, so jsx-a11y/no-autofocus stays satisfied.
@@ -396,6 +455,9 @@ export function WorkbenchLifecycleActions({
   }
 
   function openDialog(action: UiActionId): void {
+    if (variant === "menu" && containerRef.current) {
+      setMenuAnchorRect(containerRef.current.getBoundingClientRect());
+    }
     setDialogAction(action);
     setErrorState(null);
     setResult(null);
@@ -610,6 +672,7 @@ export function WorkbenchLifecycleActions({
 
   return (
     <div
+      ref={containerRef}
       className={clsx(
         "flex flex-wrap items-center gap-1.5",
         variant === "detail" && "gap-2",
@@ -696,6 +759,7 @@ export function WorkbenchLifecycleActions({
       ) : null}
       {dialogAction ? (
         <DialogShell
+          anchorRect={variant === "menu" ? menuAnchorRect : null}
           cancel={t("dialog.cancel")}
           footer={
             <>

@@ -23,6 +23,17 @@ const dotByTone: Record<RailWorkspaceTone, string> = {
   crashed: "bg-danger",
 };
 
+// Status tooltip above the dot (shown on row hover), tinted to the dot's tone —
+// the dot colour + this tooltip replace the old inline status word.
+const tooltipByTone: Record<RailWorkspaceTone, string> = {
+  running: "border-accent-4 text-accent-4",
+  waiting: "border-attention text-attention",
+  needs: "border-attention text-attention",
+  human: "border-ink-2 text-ink-2",
+  review: "border-accent-2 text-accent-2",
+  crashed: "border-danger text-danger",
+};
+
 const chipClass =
   "inline-flex max-w-[11rem] items-center gap-1 rounded-full border border-line bg-ivory px-1.5 py-px font-mono text-[9.5px] text-mute";
 
@@ -93,27 +104,30 @@ export function ActiveWorkspaceRowView({
       data-testid="active-workspace-row"
     >
       <div className="flex min-h-[26px] items-center gap-2">
-        <span
-          aria-label={labels.statusWord}
-          className={clsx("h-2 w-2 shrink-0 rounded-full", dotByTone[tone])}
-          data-status-tone={tone}
-          role="img"
-          title={labels.statusWord}
-        />
+        <span className="relative flex shrink-0">
+          <span
+            aria-label={labels.statusWord}
+            className={clsx("h-2 w-2 rounded-full", dotByTone[tone])}
+            data-status-tone={tone}
+            role="img"
+          />
+          <span
+            aria-hidden="true"
+            className={clsx(
+              "pointer-events-none absolute bottom-full left-0 z-30 mb-1.5 hidden whitespace-nowrap rounded-md border bg-paper px-1.5 py-0.5 font-mono text-[9.5px] font-semibold shadow-sm group-hover:block",
+              tooltipByTone[tone],
+            )}
+            data-testid="status-tooltip"
+          >
+            {labels.statusWord}
+          </span>
+        </span>
         <Link
           className="min-w-0 flex-1 truncate font-mono text-[11.5px] font-semibold tracking-[-0.005em] text-ink hover:text-amber"
           href={runHref}
         >
           {name}
         </Link>
-        {labels.attention ? (
-          <span
-            className="shrink-0 font-mono text-[10px] font-semibold tracking-[0.02em] text-attention"
-            data-testid="status-word"
-          >
-            {labels.statusWord}
-          </span>
-        ) : null}
         <div className="flex min-w-[76px] shrink-0 items-center justify-end gap-1">
           <span
             className="font-mono text-[10px] tracking-[0.04em] text-mute-2 group-hover:hidden group-focus-within:hidden"

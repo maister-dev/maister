@@ -185,20 +185,20 @@ afterEach(() => {
 
 describe("WorkbenchLifecycleActions dialogs", () => {
   it("opens and closes an in-app confirmation dialog with focus restored", async () => {
-    const { container } = renderActions(["archive"]);
+    renderActions(["archive"]);
     const archiveButton = findButton(
-      container,
+      document.body,
       "workbenchLifecycle.action.archive",
     );
 
     archiveButton.focus();
     await click(archiveButton);
 
-    expect(container.querySelector('[role="dialog"]')).not.toBeNull();
+    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull();
 
-    await click(findButton(container, "workbenchLifecycle.dialog.cancel"));
+    await click(findButton(document.body, "workbenchLifecycle.dialog.cancel"));
 
-    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
     expect(document.activeElement).toBe(archiveButton);
   });
 
@@ -207,16 +207,16 @@ describe("WorkbenchLifecycleActions dialogs", () => {
 
     vi.stubGlobal("fetch", fetchMock);
 
-    const { container } = renderActions(["exportBranch"]);
+    renderActions(["exportBranch"]);
 
     await click(
-      findButton(container, "workbenchLifecycle.action.snapshotCommit"),
+      findButton(document.body, "workbenchLifecycle.action.snapshotCommit"),
     );
     await flushPromises();
-    await changeInput(findTextarea(container), "");
+    await changeInput(findTextarea(document.body), "");
 
     const commitButton = findButton(
-      container,
+      document.body,
       "workbenchLifecycle.dialog.commit",
     );
 
@@ -229,15 +229,15 @@ describe("WorkbenchLifecycleActions dialogs", () => {
 
     vi.stubGlobal("fetch", fetchMock);
 
-    const { container } = renderActions(["exportBranch"]);
+    renderActions(["exportBranch"]);
 
     await click(
-      findButton(container, "workbenchLifecycle.action.snapshotCommit"),
+      findButton(document.body, "workbenchLifecycle.action.snapshotCommit"),
     );
     await flushPromises();
 
     expect(
-      findButton(container, "workbenchLifecycle.dialog.commit").disabled,
+      findButton(document.body, "workbenchLifecycle.dialog.commit").disabled,
     ).toBe(true);
   });
 
@@ -287,19 +287,19 @@ describe("WorkbenchLifecycleActions dialogs", () => {
 
     vi.stubGlobal("fetch", fetchMock);
 
-    const { container } = renderActions(["exportBranch"]);
+    renderActions(["exportBranch"]);
 
     await click(
-      findButton(container, "workbenchLifecycle.action.exportBranch"),
+      findButton(document.body, "workbenchLifecycle.action.exportBranch"),
     );
     await flushPromises();
-    await click(findButton(container, "workbenchLifecycle.dialog.push"));
+    await click(findButton(document.body, "workbenchLifecycle.dialog.push"));
     await flushPromises();
 
-    expect(textOf(container)).toContain("remote branch has newer commits");
-    expect(textOf(container)).toContain("Review the remote branch");
+    expect(textOf(document.body)).toContain("remote branch has newer commits");
+    expect(textOf(document.body)).toContain("Review the remote branch");
 
-    await click(findButton(container, "workbenchLifecycle.dialog.forcePush"));
+    await click(findButton(document.body, "workbenchLifecycle.dialog.forcePush"));
     await flushPromises();
 
     expect(exportBodies).toEqual([
@@ -316,7 +316,7 @@ describe("WorkbenchLifecycleActions dialogs", () => {
         force: true,
       },
     ]);
-    expect(textOf(container)).toContain("origin/maister/run-1");
+    expect(textOf(document.body)).toContain("origin/maister/run-1");
     expect(refreshMock).toHaveBeenCalled();
   });
 
@@ -361,41 +361,41 @@ describe("WorkbenchLifecycleActions dialogs", () => {
 
     vi.stubGlobal("fetch", fetchMock);
 
-    const { container } = renderActions(["exportBranch"]);
+    renderActions(["exportBranch"]);
 
     await click(
-      findButton(container, "workbenchLifecycle.action.exportBranch"),
+      findButton(document.body, "workbenchLifecycle.action.exportBranch"),
     );
     await flushPromises();
-    await changeInput(findSelect(container), "backup");
-    await changeInput(findInput(container), "bad..branch");
+    await changeInput(findSelect(document.body), "backup");
+    await changeInput(findInput(document.body), "bad..branch");
 
     expect(
-      findButton(container, "workbenchLifecycle.dialog.handoff").disabled,
+      findButton(document.body, "workbenchLifecycle.dialog.handoff").disabled,
     ).toBe(true);
-    expect(textOf(container)).toContain(
+    expect(textOf(document.body)).toContain(
       "workbenchLifecycle.dialog.invalidBranch",
     );
 
-    await changeInput(findInput(container), "maister/handoff/run-1");
-    await click(findButton(container, "workbenchLifecycle.dialog.handoff"));
+    await changeInput(findInput(document.body), "maister/handoff/run-1");
+    await click(findButton(document.body, "workbenchLifecycle.dialog.handoff"));
     await flushPromises();
 
-    expect(textOf(container)).toContain("workbenchLifecycle.errorWithCode");
-    expect(textOf(container)).toContain("CONFLICT");
+    expect(textOf(document.body)).toContain("workbenchLifecycle.errorWithCode");
+    expect(textOf(document.body)).toContain("CONFLICT");
 
-    await click(findButton(container, "workbenchLifecycle.dialog.handoff"));
+    await click(findButton(document.body, "workbenchLifecycle.dialog.handoff"));
     await flushPromises();
 
     expect(lastHandoffBody).toMatchObject({
       remote: "backup",
       handoffBranch: "maister/handoff/run-1",
     });
-    expect(textOf(container)).toContain(
+    expect(textOf(document.body)).toContain(
       "git -C /repo switch --track backup/maister/handoff/run-1",
     );
 
-    await click(findButton(container, "workbenchLifecycle.dialog.copy"));
+    await click(findButton(document.body, "workbenchLifecycle.dialog.copy"));
 
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
       "git -C /repo fetch backup maister/handoff/run-1",
@@ -441,13 +441,13 @@ function byTestId(container: ParentNode, id: string): HTMLElement {
 
 describe("WorkbenchLifecycleActions rail menu", () => {
   it("shows inline Stop and a live action-sheet (open, rename, stop & archive, stop & drop)", async () => {
-    const { container } = renderMenu({ runKind: "scratch", actions: ["stop"] });
+    renderMenu({ runKind: "scratch", actions: ["stop"] });
 
-    expect(container.querySelector('[data-testid="rail-stop"]')).not.toBeNull();
+    expect(document.body.querySelector('[data-testid="rail-stop"]')).not.toBeNull();
 
-    await click(byTestId(container, "rail-menu-trigger"));
+    await click(byTestId(document.body, "rail-menu-trigger"));
 
-    const sheet = byTestId(container, "rail-action-sheet");
+    const sheet = byTestId(document.body, "rail-action-sheet");
 
     expect(sheet.querySelector('[data-testid="menu-open"]')).not.toBeNull();
     expect(sheet.querySelector('[data-testid="menu-rename"]')).not.toBeNull();
@@ -460,16 +460,16 @@ describe("WorkbenchLifecycleActions rail menu", () => {
   });
 
   it("shows a terminal action-sheet (open, archive, drop) with no inline Stop", async () => {
-    const { container } = renderMenu({
+    renderMenu({
       runKind: "flow",
       actions: ["archive", "drop", "exportBranch"],
     });
 
-    expect(container.querySelector('[data-testid="rail-stop"]')).toBeNull();
+    expect(document.body.querySelector('[data-testid="rail-stop"]')).toBeNull();
 
-    await click(byTestId(container, "rail-menu-trigger"));
+    await click(byTestId(document.body, "rail-menu-trigger"));
 
-    const sheet = byTestId(container, "rail-action-sheet");
+    const sheet = byTestId(document.body, "rail-action-sheet");
 
     expect(sheet.querySelector('[data-testid="menu-open"]')).not.toBeNull();
     expect(sheet.querySelector('[data-testid="menu-archive"]')).not.toBeNull();
@@ -493,11 +493,11 @@ describe("WorkbenchLifecycleActions rail menu", () => {
 
     vi.stubGlobal("fetch", fetchMock);
 
-    const { container } = renderMenu({ runKind: "flow", actions: ["stop"] });
+    renderMenu({ runKind: "flow", actions: ["stop"] });
 
-    await click(byTestId(container, "rail-menu-trigger"));
-    await click(byTestId(container, "menu-stopArchive"));
-    await click(findButton(container, "workbenchLifecycle.dialog.confirm"));
+    await click(byTestId(document.body, "rail-menu-trigger"));
+    await click(byTestId(document.body, "menu-stopArchive"));
+    await click(findButton(document.body, "workbenchLifecycle.dialog.confirm"));
     await flushPromises();
 
     expect(fetchMock).toHaveBeenCalledWith(
@@ -511,11 +511,11 @@ describe("WorkbenchLifecycleActions rail menu", () => {
 
     vi.stubGlobal("fetch", fetchMock);
 
-    const { container } = renderMenu({ runKind: "scratch", actions: ["stop"] });
+    renderMenu({ runKind: "scratch", actions: ["stop"] });
 
-    await click(byTestId(container, "rail-menu-trigger"));
-    await click(byTestId(container, "menu-stopDrop"));
-    await click(findButton(container, "workbenchLifecycle.dialog.confirm"));
+    await click(byTestId(document.body, "rail-menu-trigger"));
+    await click(byTestId(document.body, "menu-stopDrop"));
+    await click(findButton(document.body, "workbenchLifecycle.dialog.confirm"));
     await flushPromises();
 
     expect(fetchMock).toHaveBeenCalledWith(
@@ -529,15 +529,15 @@ describe("WorkbenchLifecycleActions rail menu", () => {
 
     vi.stubGlobal("fetch", fetchMock);
 
-    const { container } = renderMenu({ runKind: "scratch", actions: ["stop"] });
+    renderMenu({ runKind: "scratch", actions: ["stop"] });
 
-    await click(byTestId(container, "rail-menu-trigger"));
-    await click(byTestId(container, "menu-rename"));
+    await click(byTestId(document.body, "rail-menu-trigger"));
+    await click(byTestId(document.body, "menu-rename"));
     await changeInput(
-      byTestId(container, "rename-input") as HTMLInputElement,
+      byTestId(document.body, "rename-input") as HTMLInputElement,
       "new name",
     );
-    await click(byTestId(container, "rename-save"));
+    await click(byTestId(document.body, "rename-save"));
     await flushPromises();
 
     expect(fetchMock).toHaveBeenCalledWith(

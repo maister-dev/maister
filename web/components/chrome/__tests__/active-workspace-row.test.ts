@@ -90,19 +90,22 @@ describe("ActiveWorkspaceRow", () => {
     expect(html).not.toContain('data-testid="status-word"');
   });
 
-  it("an attention state shows the inline status word on the warm attention tone", () => {
+  it("an attention state uses the warm attention dot tone with a tone-tinted status tooltip", () => {
     const html = render(
       baseRow({ statusLabel: "NeedsInput", statusTone: "needs" }),
       baseLabels({ statusWord: "Needs input", attention: true }),
     );
 
-    expect(html).toContain('data-testid="status-word"');
-    expect(html).toContain("Needs input");
     expect(html).toContain('data-status-tone="needs"');
     expect(html).toContain("bg-attention");
+    // No inline status word — the status lives in the dot tooltip (tone-tinted).
+    expect(html).not.toContain('data-testid="status-word"');
+    expect(html).toContain('data-testid="status-tooltip"');
+    expect(html).toContain("Needs input");
+    expect(html).toContain("text-attention");
   });
 
-  it("a crashed row uses the danger dot tone and surfaces the word", () => {
+  it("a crashed row uses the danger dot tone with a danger-tinted status tooltip", () => {
     const html = render(
       baseRow({ statusLabel: "Crashed", statusTone: "crashed" }),
       baseLabels({ statusWord: "Crashed", attention: true }),
@@ -110,7 +113,9 @@ describe("ActiveWorkspaceRow", () => {
 
     expect(html).toContain('data-status-tone="crashed"');
     expect(html).toContain("bg-danger");
-    expect(html).toContain('data-testid="status-word"');
+    expect(html).not.toContain('data-testid="status-word"');
+    expect(html).toContain('data-testid="status-tooltip"');
+    expect(html).toContain("text-danger");
   });
 
   it("shows an inline Stop while live plus the ⋯ overflow, and no inline rename pencil", () => {
