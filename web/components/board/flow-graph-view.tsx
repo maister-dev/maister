@@ -273,19 +273,22 @@ export function FlowNodeBody({
     width?: number;
     height?: number;
     borderColor?: string;
+    borderWidth?: number;
     background?: string;
   } = {};
 
   if (typeof presentationWidth === "number") boxStyle.width = presentationWidth;
   if (typeof presentationHeight === "number")
     boxStyle.height = presentationHeight;
-  // Author presentationColor (ADR-064) wins the border; otherwise tint the border
-  // and a faint wash with the node-type hue so the card itself reads its type.
+  // Author presentationColor (ADR-064) wins the border; otherwise the node-type hue
+  // paints a bold 2px border + a wash so the card reads its type — strong enough to
+  // stay legible on the near-black dark surface, not a faint tint that washes out.
   if (presentationColor) {
     boxStyle.borderColor = presentationColor;
   } else if (typeVisual) {
-    boxStyle.borderColor = `color-mix(in srgb, var(--${typeVisual.colorToken}) 45%, var(--line))`;
-    boxStyle.background = `color-mix(in srgb, var(--${typeVisual.colorToken}) 9%, var(--paper))`;
+    boxStyle.borderColor = `var(--${typeVisual.colorToken})`;
+    boxStyle.borderWidth = 2;
+    boxStyle.background = `color-mix(in srgb, var(--${typeVisual.colorToken}) 14%, var(--paper))`;
   }
   const hasBoxStyle = Object.keys(boxStyle).length > 0;
 
@@ -317,7 +320,7 @@ export function FlowNodeBody({
                 style={{
                   color: `var(--${typeVisual.colorToken})`,
                   background: `var(--${typeVisual.colorToken}-soft)`,
-                  borderColor: `color-mix(in srgb, var(--${typeVisual.colorToken}) 40%, transparent)`,
+                  borderColor: `var(--${typeVisual.colorToken})`,
                 }}
                 title={nodeTypeLabel}
               >

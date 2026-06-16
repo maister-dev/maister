@@ -445,8 +445,9 @@ light + dark) gives each node type and gate kind a **distinct muted hue** so the
 graph reads at a glance — separate from the forest brand chrome. On the shared
 `FlowNodeBody` the type hue paints the **icon** (`style={{ color: var(--cv-*) }}`,
 `stroke="currentColor"`), a **soft icon-chip background** (`var(--cv-*-soft)`),
-and a **tinted card border + faint wash** (`color-mix` toward the hue) — unless an
-author `presentationColor` (ADR-064) overrides the border. It lands on the
+and a **bold 2px hue border + a wash** (`color-mix` toward the hue) — strong enough
+to read on the near-black dark surface, not a faint tint — unless an author
+`presentationColor` (ADR-064) overrides the border. It lands on the
 **shared** `FlowNodeBody`, so the editor canvas, the read-only package preview
 (now rendered, not a placeholder), AND the run-workbench graph inherit it; the
 run-status chip (`colorForNodeStatus`) is unchanged and **composes** with the
