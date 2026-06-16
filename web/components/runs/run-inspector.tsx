@@ -170,7 +170,7 @@ function InspectorActionItem({
     <li
       className={clsx(
         "flex items-start gap-2 rounded-[6px] border bg-paper p-2",
-        danger ? "border-red-200" : "border-line",
+        danger ? "border-[#d9534f]/40" : "border-line",
       )}
       data-disabled={action.disabled ? "true" : "false"}
       data-testid="run-inspector-action"
@@ -178,7 +178,7 @@ function InspectorActionItem({
       <Icon
         className={clsx(
           "mt-0.5 h-3.5 w-3.5 shrink-0",
-          danger ? "text-red-600" : "text-mute",
+          danger ? "text-[#d9534f]" : "text-mute",
         )}
       />
       <div className="min-w-0">
@@ -186,7 +186,7 @@ function InspectorActionItem({
           <a
             className={clsx(
               "text-[13px] font-semibold hover:underline",
-              danger ? "text-red-700" : "text-ink",
+              danger ? "text-[#d9534f]" : "text-ink",
             )}
             href={action.href}
           >
@@ -196,7 +196,7 @@ function InspectorActionItem({
           <span
             className={clsx(
               "text-[13px] font-semibold",
-              danger ? "text-red-700" : "text-ink",
+              danger ? "text-[#d9534f]" : "text-ink",
             )}
           >
             {action.label}

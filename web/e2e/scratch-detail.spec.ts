@@ -94,11 +94,26 @@ test("scratch workbench exposes the shared Diff renderer and a readable file tre
   await expect(page.locator('[data-testid="run-diff"]')).toBeVisible();
   await expect(page.locator('[data-testid="diff-view"]')).toBeVisible();
 
-  // Files tab → the tracked file tree; a member can open a file into code-view.
+  // Files tab → the tracked file tree; a member can open a file into the pane.
   await page.getByRole("tab", { name: "Files" }).click();
   await page.waitForURL(/[?&]wb=files/);
   await expect(page.locator('[data-testid="file-tree"]')).toBeVisible();
   await expect(
     page.locator('[data-testid="file-tree-entry"]', { hasText: "README.md" }),
+  ).toBeVisible();
+
+  // Open the tracked Markdown file → the shared file pane renders the rich
+  // Markdown view inside the copy-to-clipboard header (M35 T4.2), reusing the
+  // same readRepoFiles + repoRelPathSchema path as flow runs.
+  await page
+    .locator('[data-testid="file-tree-entry"][data-entry-type="file"]', {
+      hasText: "README.md",
+    })
+    .click();
+  await page.waitForURL(/[?&]file=README\.md/);
+  await expect(page.locator('[data-testid="file-pane-shell"]')).toBeVisible();
+  await expect(page.locator('[data-testid="file-copy-button"]')).toBeVisible();
+  await expect(
+    page.locator('[data-testid="markdown-rich-view"]'),
   ).toBeVisible();
 });

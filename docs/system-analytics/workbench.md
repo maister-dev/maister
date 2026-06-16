@@ -18,10 +18,14 @@
 > `readBoard` gate are unchanged. (The authored-Flow CodeMirror editor slice
 > remains Designed.)
 
-> **M35 target hierarchy (Planned).** The run detail rework keeps the workbench
-> read-only but changes its tabs to **Timeline, Diff, Files, Evidence**. The
-> Flow graph becomes the non-scratch run landing surface or a fullscreen view,
-> and scratch runs move from a dialog-owned raw diff to the same shared Diff tab.
+> **M35 run detail rework (Implemented).** The workbench stays read-only and now
+> renders on the shared run shell for both flow/agent and **scratch** runs.
+> Scratch runs surface only the **Files** + **Diff** tabs (no flow timeline or
+> evidence graph) and moved from a dialog-owned raw `<pre>` diff to the same
+> prepared `RunDiff` renderer — the `/diff` scratch branch returns the same
+> `files`/`perFile`/`scope`/`scopes` shape as flow runs (T3.3). A non-empty text
+> file opened in the Files pane gets a copy-to-clipboard control, and Markdown
+> files render the rich (Mermaid-aware) preview instead of the Shiki source (T4.2).
 
 ## Purpose
 

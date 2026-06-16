@@ -81,17 +81,11 @@ export function ScratchComposer({
       return;
     }
 
-    const attachments = composerAttachments
-      .map((attachment) => ({
-        kind: attachment.kind,
-        label: attachment.label,
-        value: attachment.value.trim(),
-      }))
-      .filter((attachment) => attachment.value.length > 0);
-
+    // Attachment normalization (trim, label-coalesce, drop empties) lives once
+    // in the conversation's sendMessage; the composer passes its raw draft.
     const sent = await onSend({
       content: trimmed,
-      attachments,
+      attachments: composerAttachments,
       files: composerFiles,
     });
 
@@ -126,6 +120,7 @@ export function ScratchComposer({
       ) : null}
       <textarea
         ref={composerRef}
+        aria-label={t("composerMessageAria")}
         className={clsx(inputBase, "min-h-[110px] resize-y")}
         data-testid="scratch-composer-input"
         disabled={!canCompose(status)}
@@ -147,6 +142,7 @@ export function ScratchComposer({
               className="grid gap-2 md:grid-cols-[120px_1fr_1.5fr_auto]"
             >
               <select
+                aria-label={t("composerKindAria")}
                 className={inputBase}
                 value={attachment.kind}
                 onChange={(event) =>
@@ -166,6 +162,7 @@ export function ScratchComposer({
                 </option>
               </select>
               <input
+                aria-label={t("attachmentLabel")}
                 className={inputBase}
                 placeholder={t("attachmentLabel")}
                 value={attachment.label}
@@ -176,6 +173,7 @@ export function ScratchComposer({
                 }
               />
               <input
+                aria-label={t("attachmentValue")}
                 className={inputBase}
                 placeholder={t("attachmentValue")}
                 value={attachment.value}
@@ -203,6 +201,7 @@ export function ScratchComposer({
       <div className="mt-2">
         <input
           multiple
+          aria-label={t("composerFilesAria")}
           className={inputBase}
           disabled={!canSend(status)}
           type="file"

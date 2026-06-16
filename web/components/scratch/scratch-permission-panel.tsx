@@ -75,6 +75,7 @@ export function ScratchPermissionPanel({
       ) : (
         <div className="flex flex-col gap-2">
           <textarea
+            aria-label={t("permissionResponseAria")}
             className={clsx(inputBase, "min-h-[120px]")}
             value={hitlJson}
             onChange={(event) => setHitlJson(event.target.value)}

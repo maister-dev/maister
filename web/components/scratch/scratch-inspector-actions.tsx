@@ -4,6 +4,7 @@ import type { WorkbenchLifecycleActionId } from "@/lib/workbench-lifecycle/polic
 import type { ReactElement } from "react";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
 import { WorkbenchLifecycleActions } from "@/components/workbench/lifecycle-actions";
@@ -25,12 +26,15 @@ export function ScratchInspectorActions({
   promoteTargetBranch,
 }: ScratchInspectorActionsProps): ReactElement {
   const t = useTranslations("scratch");
+  const router = useRouter();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
 
   async function promote(): Promise<void> {
     setPending(true);
     setError(null);
+    setDone(false);
 
     try {
       const response = await fetch(`/api/runs/${runId}/promote`, {
@@ -44,7 +48,14 @@ export function ScratchInspectorActions({
 
       if (!response.ok) {
         setError(errorText(await response.json().catch(() => null)));
+
+        return;
       }
+      // A web-tier merge emits no ACP session/update, so the live conversation
+      // SSE won't refresh on its own — re-fetch the server layout to reflect the
+      // promoted state (status fact, lifecycle actions) and confirm to the user.
+      setDone(true);
+      router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -78,6 +89,11 @@ export function ScratchInspectorActions({
       {error ? (
         <p className="font-mono text-[10.5px] text-[#d9534f]" role="alert">
           {error}
+        </p>
+      ) : null}
+      {done && !error ? (
+        <p className="font-mono text-[10.5px] text-accent-4" role="status">
+          {t("promoted")}
         </p>
       ) : null}
     </section>

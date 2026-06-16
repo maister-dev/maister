@@ -2866,7 +2866,8 @@ paths:
         branch = `workspaces.branch`, gated `readBoard` (project `viewer` — the diff
         is run-scoped, matching the M18 review panel; run state is NOT restricted to
         `Review`). **Scratch runs:** base metadata comes from `scratch_runs`, gated
-        `readScratchRun`.
+        `readScratchRun`; the response carries the same prepared
+        `files`/`perFile`/`scope`/`scopes` shape as flow runs (M35, T3.3).
       operationId: getRunDiff
       parameters:
         - name: runId
@@ -10208,9 +10209,33 @@ components:
         binary: { type: boolean }
     RunDiffResponse:
       type: object
-      required: [runId, baseCommit, sourceBranch, targetBranch, diff, truncated]
+      required:
+        [runId, scope, scopes, baseCommit, sourceBranch, targetBranch, diff, truncated]
       properties:
         runId: { type: string, format: uuid }
+        scope:
+          type: string
+          enum: [run, since-last-review, last-node, uncommitted]
+          description: |
+            (M30 — Implemented, ADR-082) The effective diff scope for this
+            response (the validated `scope` query value; default `run`). Scratch
+            runs always report `run` — their single workspace base→branch scope.
+        scopes:
+          type: object
+          required: [run]
+          properties:
+            run: { $ref: "#/components/schemas/RunChangeSummaryScopeAvailability" }
+            since-last-review:
+              { $ref: "#/components/schemas/RunChangeSummaryScopeAvailability" }
+            last-node:
+              { $ref: "#/components/schemas/RunChangeSummaryScopeAvailability" }
+            uncommitted:
+              { $ref: "#/components/schemas/RunChangeSummaryScopeAvailability" }
+          description: |
+            (M30 — Implemented, ADR-082) Per-scope availability map shared with
+            `GET /api/runs/{runId}/change-summary`. Flow runs report all four
+            scopes (unavailable ones disabled with a `reason`); scratch runs
+            report only `{ run: { available: true } }`.
         baseCommit: { type: string }
         sourceBranch: { type: string }
         targetBranch: { type: string }
@@ -10229,7 +10254,8 @@ components:
           type: array
           description: |
             (M22) Changed-files summary from `git diff --name-status base..branch`,
-            rendered beside the diff in the workbench. Present for flow runs.
+            rendered beside the diff in the workbench. Present for flow and
+            scratch runs (M35, T3.3 — scratch joined the prepared shape).
             (Implemented, ADR-066) Each entry additionally carries per-file
             `additions`/`deletions` line counts computed server-side.
           items: { $ref: "#/components/schemas/DiffFileEntry" }
@@ -10240,9 +10266,9 @@ components:
             renderer (`@git-diff-view/react`): the file's repo-relative `path`,
             resolved `fileLang`, and a server-built `bundle` (Shiki-highlighted
             `DiffFile.getBundle()` output) hydrated on the client with no
-            client-side highlighting. Present for flow runs. The `bundle` shape
-            is the library's serialization detail and is not specified field by
-            field here.
+            client-side highlighting. Present for flow and scratch runs (M35,
+            T3.3). The `bundle` shape is the library's serialization detail and
+            is not specified field by field here.
           items:
             type: object
             required: [path, fileLang, bundle]
@@ -10250,6 +10276,15 @@ components:
               path: { type: string }
               fileLang: { type: string }
               bundle: { type: object }
+        renderUnavailableReason:
+          type: string
+          nullable: true
+          description: |
+            (Implemented, ADR-066) `null` on the normal path; the string
+            `prepare-failed` when highlighted-diff preparation threw and the
+            response fell back to a name-status-only `files` summary with an
+            empty `perFile` (the raw `diff` is still returned). The client then
+            renders the raw diff instead of the rich view.
     DiffFileEntry:
       type: object
       required: [path, status]
