@@ -4,7 +4,8 @@
 //
 //   1. status !== "Running"          -> {skip, "not-running"}   (allow-list)
 //   2. !worktreeExists               -> {crash, "worktree-gone"}
-//   3. liveSession                   -> {reattach, "live-session"}
+//   3. liveSession                   -> flow: {reattach, "live-session"};
+//                                       scratch: {skip, "live-scratch-session"}
 //   4. no live session, by node kind (scratch behaves as an agent node):
 //      - cli                         -> {crash, "cli-not-retry-safe"}
 //      - agent (ai_coding / scratch): grace anchor = MORE RECENT of
@@ -381,11 +382,22 @@ describe("classifyRunReconcile — scratch runs behave as an agent node", () => 
     ).toEqual({ action: "skip", reason: "grace-window" });
   });
 
-  it("scratch + live session → reattach / live-session", () => {
+  it("scratch + live session → skip / live-scratch-session (NOT reattach)", () => {
+    // A live `Running` scratch dialog has finished a turn and is waiting for the
+    // next user message — it must NOT be driven by the resume driver (whose
+    // continuation prompt + permission replay only fit flow HITL recovery).
+    // Reattaching here falsely crashes it (`resume-prompt-no-permission`).
     expect(
       classifyRunReconcile(
         input({ runKind: "scratch", currentNodeKind: null, liveSession: true }),
       ),
+    ).toEqual({ action: "skip", reason: "live-scratch-session" });
+  });
+
+  it("flow + live session still → reattach / live-session (regression guard)", () => {
+    // The scratch carve-out must NOT regress flow HITL-recovery reattach.
+    expect(
+      classifyRunReconcile(input({ runKind: "flow", liveSession: true })),
     ).toEqual({ action: "reattach", reason: "live-session" });
   });
 

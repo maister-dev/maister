@@ -479,6 +479,36 @@ describe("runReconcileSweep (integration)", () => {
     expect(runFlow).not.toHaveBeenCalled();
   }, 60_000);
 
+  it("does NOT reattach/crash a live Running scratch dialog — leaves it Running, no resume driver", async () => {
+    // Regression: a freshly-launched scratch run answers its first prompt
+    // (end_turn) and its supervisor session stays live waiting for the next
+    // user message. A reconcile tick must NOT drive it through the resume
+    // driver (continuation prompt + permission replay only fit flow HITL
+    // recovery) — doing so falsely crashed it with resume-prompt-no-permission.
+    const scratch = await seedRun({
+      status: "Running",
+      runKind: "scratch",
+      currentStepId: "dialog",
+      acpSessionId: "acp-scratch-live",
+    });
+
+    await seedWorkspace(scratch, "/worktrees/scratch");
+
+    const { opts, scheduleResumedSessionDrive, runFlow } = makeOpts({
+      worktreePaths: ["/worktrees/scratch"],
+      liveSessions: [liveRecord(scratch, "acp-scratch-live")],
+    });
+
+    const summary = await runReconcileSweep(opts);
+
+    expect((await readRun(scratch)).status).toBe("Running");
+    expect(summary.reattached).toBe(0);
+    expect(summary.crashed).toBe(0);
+    expect(summary.skipped).toBeGreaterThanOrEqual(1);
+    expect(scheduleResumedSessionDrive).not.toHaveBeenCalled();
+    expect(runFlow).not.toHaveBeenCalled();
+  }, 60_000);
+
   it("skips an in-flight recover within grace (resumeStartedAt = now) — not crashed", async () => {
     const recovering = await seedRun({
       status: "Running",
