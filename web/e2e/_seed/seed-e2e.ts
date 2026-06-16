@@ -3959,7 +3959,7 @@ async function provisionM22Repo(
   ]);
   writeFileSync(
     path.join(worktreePath, "README.md"),
-    "# M22 workbench fixture\n\nworkbench diff change\n",
+    "# M22 workbench fixture\n\nworkbench diff change\n\n```mermaid\ngraph TD; A-->B;\n```\n",
     "utf8",
   );
   await execFileAsync("git", ["-C", worktreePath, "add", "README.md"]);

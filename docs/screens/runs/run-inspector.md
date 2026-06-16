@@ -138,9 +138,10 @@ Disabled actions display one-line reasons:
 
 ## i18n
 
-Planned namespace: `runInspector`. Existing labels can reuse `run`,
-`workbench`, `scratch`, `readiness`, and lifecycle action keys until the shared
-block gets its own namespace.
+The inspector reuses the `run` namespace (status, branch/base/target/worktree
+facts, action labels, `inspectorStale`, `inspectorSession*`) plus `workbench`,
+`scratch`, `readiness`, and lifecycle action keys; no dedicated `runInspector`
+namespace was needed.
 
 ## Linked artifacts
 

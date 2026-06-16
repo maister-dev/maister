@@ -2,8 +2,8 @@
 
 - **Type:** block.
 - **Routes:** shared by `/runs/{runId}` and `/scratch-runs/{runId}`.
-- **Status:** Implemented for flow/agent run detail, with planned follow-up for
-  richer file grouping and preview depth.
+- **Status:** Implemented for flow/agent and scratch run detail: Markdown
+  (+Mermaid) preview, directory-grouped changed files, and a file copy control.
 - **Source:** current components
   `web/components/workbench/workbench-panel.tsx`,
   `web/components/workbench/workbench-tabs.tsx`,

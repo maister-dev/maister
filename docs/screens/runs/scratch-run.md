@@ -2,11 +2,14 @@
 
 - **Type:** screen.
 - **Route:** `/scratch-runs/{runId}` (session-required).
-- **Status:** Planned rework. Current source already centers the conversation;
-  the target adds the shared inspector and workbench hierarchy.
-- **Source:** current route `web/app/(app)/scratch-runs/[runId]/page.tsx`,
-  `web/components/scratch/scratch-dialog.tsx`, and
-  `web/components/scratch/scratch-transcript.tsx`; target surface should reuse
+- **Status:** Implemented. Scratch run detail is on the shared run shell: the
+  conversation center plus the shared inspector and Files/Diff workbench.
+- **Source:** persistent layout `web/app/(app)/scratch-runs/[runId]/layout.tsx`
+  with the `?file=` pane `web/app/(app)/scratch-runs/[runId]/page.tsx`;
+  conversation components `web/components/scratch/scratch-conversation.tsx`,
+  `web/components/scratch/scratch-composer.tsx`,
+  `web/components/scratch/scratch-permission-panel.tsx`, and
+  `web/components/scratch/scratch-transcript.tsx`; shared chrome per
   [`run-inspector.md`](run-inspector.md) and [`workbench.md`](workbench.md).
 
 ## JTBD

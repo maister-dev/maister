@@ -267,6 +267,8 @@ test("?file= cold deep-link renders the file pane; traversal + .git are hidden",
   await expect(
     page.locator('[data-testid="markdown-rich-view"]'),
   ).toBeVisible();
+  // The README's ```mermaid fence renders the client Mermaid diagram (T6.2).
+  await expect(page.locator('[data-testid="mermaid-diagram"]')).toBeVisible();
 
   // A `..` traversal is rejected by repoRelPathSchema BEFORE any read → the
   // not-found state, never the code-view and never the rejected path.
