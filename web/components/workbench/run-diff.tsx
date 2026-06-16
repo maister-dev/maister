@@ -32,6 +32,9 @@ export interface RunDiffLabels {
   displayMode: string;
   rich: string;
   raw: string;
+  filterFiles: string;
+  filterFilesPlaceholder: string;
+  filterNoMatches: string;
   showFiles: string;
   hideFiles: string;
   refresh: string;
@@ -96,7 +99,6 @@ type DiffState =
       kind: "ready";
       files: RunDiffFile[];
       perFile: PreparedFile[];
-      rawDiff: string;
       truncated: boolean;
       renderUnavailable: boolean;
     };
@@ -370,7 +372,6 @@ export default function RunDiff({
         const body = (await res.json()) as {
           files?: RunDiffFile[];
           perFile?: PreparedFile[];
-          diff?: string;
           truncated?: boolean;
           renderUnavailableReason?: string | null;
           scopes?: DiffScopeAvailability;
@@ -382,7 +383,6 @@ export default function RunDiff({
             kind: "ready",
             files: body.files ?? [],
             perFile: body.perFile ?? [],
-            rawDiff: body.diff ?? "",
             truncated: body.truncated ?? false,
             renderUnavailable: typeof body.renderUnavailableReason === "string",
           });
@@ -546,6 +546,9 @@ export default function RunDiff({
           displayMode: labels.displayMode,
           rich: labels.rich,
           raw: labels.raw,
+          filterFiles: labels.filterFiles,
+          filterFilesPlaceholder: labels.filterFilesPlaceholder,
+          filterNoMatches: labels.filterNoMatches,
           showFiles: labels.showFiles,
           hideFiles: labels.hideFiles,
           refresh: labels.refresh,
@@ -555,7 +558,6 @@ export default function RunDiff({
           truncated: labels.truncated,
         }}
         perFile={state.perFile}
-        rawDiff={state.rawDiff}
         renderUnavailable={state.renderUnavailable}
         review={hasReview ? diffReview : undefined}
         truncated={state.truncated}

@@ -71,6 +71,9 @@ export interface DiffViewLabels {
   displayMode: string;
   rich: string;
   raw: string;
+  filterFiles: string;
+  filterFilesPlaceholder: string;
+  filterNoMatches: string;
   showFiles: string;
   hideFiles: string;
   refresh: string;
@@ -96,17 +99,250 @@ export type ChangedFileEntry = {
   deletions?: number;
 };
 
+type ChangedFileTreeNode =
+  | {
+      kind: "dir";
+      name: string;
+      path: string;
+      children: ChangedFileTreeNode[];
+    }
+  | {
+      kind: "file";
+      name: string;
+      path: string;
+      file: ChangedFileEntry;
+    };
+
 export interface ChangedFilesListProps {
   files: ChangedFileEntry[];
-  labels: { empty: string; added?: string; removed?: string };
+  labels: {
+    empty: string;
+    filterFiles?: string;
+    filterFilesPlaceholder?: string;
+    filterNoMatches?: string;
+    added?: string;
+    removed?: string;
+  };
+  filter?: string;
   selectedPath?: string | null;
+  onFilterChange?: (value: string) => void;
   onSelect?: (path: string) => void;
+}
+
+function splitRepoPath(path: string): string[] {
+  return path.split("/").filter((segment) => segment.length > 0);
+}
+
+function sortTreeNodes(nodes: ChangedFileTreeNode[]): ChangedFileTreeNode[] {
+  return [...nodes]
+    .sort((a, b) => {
+      if (a.kind !== b.kind) return a.kind === "dir" ? -1 : 1;
+
+      return a.name.localeCompare(b.name);
+    })
+    .map((node) =>
+      node.kind === "dir"
+        ? { ...node, children: sortTreeNodes(node.children) }
+        : node,
+    );
+}
+
+function findDirNode(
+  nodes: ChangedFileTreeNode[],
+  name: string,
+  path: string,
+): ChangedFileTreeNode | null {
+  return (
+    nodes.find(
+      (node) => node.kind === "dir" && node.name === name && node.path === path,
+    ) ?? null
+  );
+}
+
+export function buildChangedFileTree(
+  files: ChangedFileEntry[],
+): ChangedFileTreeNode[] {
+  const root: ChangedFileTreeNode[] = [];
+  const sortedFiles = [...files].sort((a, b) => a.path.localeCompare(b.path));
+
+  for (const file of sortedFiles) {
+    const segments = splitRepoPath(file.path);
+    let children = root;
+    let currentPath = "";
+
+    for (const [index, segment] of segments.entries()) {
+      currentPath = currentPath ? `${currentPath}/${segment}` : segment;
+
+      if (index === segments.length - 1) {
+        children.push({
+          kind: "file",
+          name: segment,
+          path: file.path,
+          file,
+        });
+
+        continue;
+      }
+
+      const existing = findDirNode(children, segment, currentPath);
+
+      if (existing?.kind === "dir") {
+        children = existing.children;
+
+        continue;
+      }
+
+      const nextDir: ChangedFileTreeNode = {
+        kind: "dir",
+        name: segment,
+        path: currentPath,
+        children: [],
+      };
+
+      children.push(nextDir);
+      children = nextDir.children;
+    }
+  }
+
+  return sortTreeNodes(root);
+}
+
+export function filterChangedFilesByName(
+  files: ChangedFileEntry[],
+  filter: string,
+): ChangedFileEntry[] {
+  const needle = filter.trim().toLocaleLowerCase();
+
+  if (needle.length === 0) return files;
+
+  return files.filter((file) => file.path.toLocaleLowerCase().includes(needle));
+}
+
+function DirTreeIcon(): ReactElement {
+  return (
+    <svg
+      aria-hidden="true"
+      className="h-3 w-3 shrink-0 text-mute"
+      fill="none"
+      viewBox="0 0 16 16"
+    >
+      <path
+        d="M2 4.5h4l1.25 1.25H14v6.75H2z"
+        stroke="currentColor"
+        strokeLinejoin="round"
+        strokeWidth="1.3"
+      />
+    </svg>
+  );
+}
+
+function FileTreeLeafIcon(): ReactElement {
+  return (
+    <svg
+      aria-hidden="true"
+      className="h-3 w-3 shrink-0 text-mute"
+      fill="none"
+      viewBox="0 0 16 16"
+    >
+      <path
+        d="M4 2.5h5l3 3V13.5H4zM9 2.5V6h3"
+        stroke="currentColor"
+        strokeLinejoin="round"
+        strokeWidth="1.25"
+      />
+    </svg>
+  );
+}
+
+function ChangedFileTree({
+  nodes,
+  labels,
+  selectedPath,
+  depth = 0,
+  onSelect,
+}: {
+  nodes: ChangedFileTreeNode[];
+  labels: { added?: string; removed?: string };
+  selectedPath: string | null;
+  depth?: number;
+  onSelect?: (path: string) => void;
+}): ReactElement {
+  return (
+    <ul
+      className="m-0 flex list-none flex-col gap-0.5 p-0"
+      role={depth === 0 ? "tree" : "group"}
+    >
+      {nodes.map((node) => (
+        <li key={node.path} role="none">
+          {node.kind === "dir" ? (
+            <>
+              <div
+                aria-expanded="true"
+                aria-selected="false"
+                className="flex items-center gap-1.5 rounded-[6px] py-1 pr-2 font-mono text-[11px] font-semibold text-mute"
+                data-testid="changed-file-dir"
+                role="treeitem"
+                style={{ paddingLeft: `${8 + depth * 14}px` }}
+                title={node.path}
+              >
+                <DirTreeIcon />
+                <span className="truncate">{node.name}</span>
+              </div>
+              <ChangedFileTree
+                depth={depth + 1}
+                labels={labels}
+                nodes={node.children}
+                selectedPath={selectedPath}
+                onSelect={onSelect}
+              />
+            </>
+          ) : (
+            <button
+              aria-current={node.path === selectedPath ? "true" : undefined}
+              aria-selected={node.path === selectedPath}
+              className="flex w-full items-center gap-1.5 rounded-[6px] py-1 pr-2 text-left font-mono text-[11px] text-ink-2 hover:bg-ivory aria-[current]:bg-ivory"
+              data-selected={node.path === selectedPath ? "true" : undefined}
+              data-status={node.file.status}
+              data-testid="changed-file"
+              role="treeitem"
+              style={{ paddingLeft: `${8 + depth * 14}px` }}
+              title={node.path}
+              type="button"
+              onClick={() => onSelect?.(node.path)}
+            >
+              <span className="w-3 shrink-0 text-center font-bold text-mute">
+                {node.file.status}
+              </span>
+              <FileTreeLeafIcon />
+              <span className="min-w-0 grow truncate">{node.name}</span>
+              <span
+                aria-label={labels.added}
+                className="shrink-0 font-semibold text-[#1a7f37] dark:text-[#3fb950]"
+                data-testid="changed-file-additions"
+              >
+                +{node.file.additions ?? 0}
+              </span>
+              <span
+                aria-label={labels.removed}
+                className="shrink-0 font-semibold text-[#cf222e] dark:text-[#f85149]"
+                data-testid="changed-file-deletions"
+              >
+                −{node.file.deletions ?? 0}
+              </span>
+            </button>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 export function ChangedFilesList({
   files,
   labels,
+  filter = "",
   selectedPath = null,
+  onFilterChange,
   onSelect,
 }: ChangedFilesListProps): ReactElement {
   if (files.length === 0) {
@@ -120,41 +356,37 @@ export function ChangedFilesList({
     );
   }
 
+  const filteredFiles = filterChangedFilesByName(files, filter);
+  const tree = buildChangedFileTree(filteredFiles);
+
   return (
-    <ul className="m-0 flex list-none flex-col gap-0.5 p-0">
-      {files.map((file) => (
-        <li key={`${file.status}-${file.path}`}>
-          <button
-            aria-current={file.path === selectedPath ? "true" : undefined}
-            className="flex w-full items-center gap-2 rounded-[6px] px-2 py-1 text-left font-mono text-[11px] text-ink-2 hover:bg-ivory aria-[current]:bg-ivory"
-            data-selected={file.path === selectedPath ? "true" : undefined}
-            data-status={file.status}
-            data-testid="changed-file"
-            type="button"
-            onClick={() => onSelect?.(file.path)}
-          >
-            <span className="w-3 shrink-0 text-center font-bold text-mute">
-              {file.status}
-            </span>
-            <span className="grow truncate">{file.path}</span>
-            <span
-              aria-label={labels.added}
-              className="shrink-0 font-semibold text-[#1a7f37] dark:text-[#3fb950]"
-              data-testid="changed-file-additions"
-            >
-              +{file.additions ?? 0}
-            </span>
-            <span
-              aria-label={labels.removed}
-              className="shrink-0 font-semibold text-[#cf222e] dark:text-[#f85149]"
-              data-testid="changed-file-deletions"
-            >
-              −{file.deletions ?? 0}
-            </span>
-          </button>
-        </li>
-      ))}
-    </ul>
+    <div className="flex min-h-0 flex-col gap-1.5">
+      <input
+        aria-label={labels.filterFiles}
+        className="h-7 w-full rounded-[6px] border border-line bg-ivory px-2 font-mono text-[11px] text-ink outline-none placeholder:text-mute focus:border-ink"
+        data-testid="changed-files-filter"
+        placeholder={labels.filterFilesPlaceholder}
+        readOnly={onFilterChange === undefined}
+        type="search"
+        value={filter}
+        onChange={(event) => onFilterChange?.(event.target.value)}
+      />
+      {filteredFiles.length === 0 ? (
+        <p
+          className="p-4 text-center font-mono text-[11px] text-mute"
+          data-testid="changed-files-filter-empty"
+        >
+          {labels.filterNoMatches ?? labels.empty}
+        </p>
+      ) : (
+        <ChangedFileTree
+          labels={{ added: labels.added, removed: labels.removed }}
+          nodes={tree}
+          selectedPath={selectedPath}
+          onSelect={onSelect}
+        />
+      )}
+    </div>
   );
 }
 
@@ -227,8 +459,8 @@ export interface DiffViewProps {
   // Optional explicit override; otherwise resolved from `?diffbody=`.
   bodyMode?: DiffBodyMode;
   fileTreeMode?: DiffFileTreeMode;
-  // Raw unified patch text for the workbench raw/rich body toggle. Surfaces
-  // that only have prepared bundles omit it and render the rich body only.
+  // Deprecated transport compatibility: the API still returns unified diff text
+  // for preparation, but the client never renders it as a user-facing raw mode.
   rawDiff?: string;
   onRefresh?: () => void;
   // The producing diff was cut at the 4 MiB buffer bound: `files`/`perFile` are
@@ -439,7 +671,6 @@ export function DiffView({
   mode,
   bodyMode,
   fileTreeMode,
-  rawDiff,
   onRefresh,
   truncated = false,
   renderUnavailable = false,
@@ -451,13 +682,12 @@ export function DiffView({
   const searchParams = useSearchParams();
   const viewMode: DiffViewMode =
     mode ?? parseDiffView(searchParams?.get("diffview") ?? null);
-  const rawDiffAvailable = rawDiff !== undefined;
-  const diffBodyMode: DiffBodyMode = rawDiffAvailable
-    ? (bodyMode ?? parseDiffBody(searchParams?.get("diffbody") ?? null))
-    : "rich";
+  const diffBodyMode: DiffBodyMode =
+    bodyMode ?? parseDiffBody(searchParams?.get("diffbody") ?? null);
   const diffFileTreeMode: DiffFileTreeMode =
     fileTreeMode ?? parseDiffFileTree(searchParams?.get("diffFiles") ?? null);
   const fileTreeVisible = diffFileTreeMode === "shown";
+  const [fileFilter, setFileFilter] = useState("");
 
   const setViewMode = (next: DiffViewMode): void => {
     router.push(
@@ -526,6 +756,9 @@ export function DiffView({
     viewMode === "unified" ? DiffModeEnum.Unified : DiffModeEnum.Split;
   const diffTheme: "light" | "dark" =
     resolvedTheme === "light" ? "light" : "dark";
+  const diffViewHighlight = diffBodyMode === "rich";
+  const nextBodyMode: DiffBodyMode = diffBodyMode === "rich" ? "raw" : "rich";
+  const nextViewMode: DiffViewMode = viewMode === "split" ? "unified" : "split";
 
   const reviewExtendData = useMemo(
     () => (review ? buildReviewExtendData(review.threads, activePath) : null),
@@ -634,12 +867,17 @@ export function DiffView({
             <div className="h-full min-h-0 overflow-auto p-1.5">
               <ChangedFilesList
                 files={files}
+                filter={fileFilter}
                 labels={{
                   empty: labels.empty,
+                  filterFiles: labels.filterFiles,
+                  filterFilesPlaceholder: labels.filterFilesPlaceholder,
+                  filterNoMatches: labels.filterNoMatches,
                   added: labels.added,
                   removed: labels.removed,
                 }}
                 selectedPath={activePath}
+                onFilterChange={setFileFilter}
                 onSelect={selectDiffFile}
               />
             </div>
@@ -660,50 +898,30 @@ export function DiffView({
               </span>
             )}
             <div className="flex flex-wrap items-center gap-1">
-              {rawDiffAvailable ? (
-                <div
-                  aria-label={labels.displayMode}
-                  className="flex gap-1"
-                  role="group"
-                >
-                  <ToolbarIconButton
-                    icon={<RichDiffIcon />}
-                    label={labels.rich}
-                    pressed={diffBodyMode === "rich"}
-                    testId="diff-view-body-rich"
-                    onClick={() => setBodyMode("rich")}
-                  />
-                  <ToolbarIconButton
-                    icon={<RawDiffIcon />}
-                    label={labels.raw}
-                    pressed={diffBodyMode === "raw"}
-                    testId="diff-view-body-raw"
-                    onClick={() => setBodyMode("raw")}
-                  />
-                </div>
-              ) : null}
-              {diffBodyMode === "rich" ? (
-                <div
-                  aria-label={labels.viewMode}
-                  className="flex gap-1"
-                  role="group"
-                >
-                  <ToolbarIconButton
-                    icon={<SplitDiffIcon />}
-                    label={labels.split}
-                    pressed={viewMode === "split"}
-                    testId="diff-view-mode-split"
-                    onClick={() => setViewMode("split")}
-                  />
-                  <ToolbarIconButton
-                    icon={<UnifiedDiffIcon />}
-                    label={labels.unified}
-                    pressed={viewMode === "unified"}
-                    testId="diff-view-mode-unified"
-                    onClick={() => setViewMode("unified")}
-                  />
-                </div>
-              ) : null}
+              <ToolbarIconButton
+                icon={
+                  nextBodyMode === "raw" ? <RawDiffIcon /> : <RichDiffIcon />
+                }
+                label={nextBodyMode === "raw" ? labels.raw : labels.rich}
+                pressed={diffBodyMode === "raw"}
+                testId="diff-view-body-toggle"
+                onClick={() => setBodyMode(nextBodyMode)}
+              />
+              <ToolbarIconButton
+                icon={
+                  nextViewMode === "unified" ? (
+                    <UnifiedDiffIcon />
+                  ) : (
+                    <SplitDiffIcon />
+                  )
+                }
+                label={
+                  nextViewMode === "unified" ? labels.unified : labels.split
+                }
+                pressed={viewMode === "unified"}
+                testId="diff-view-layout-toggle"
+                onClick={() => setViewMode(nextViewMode)}
+              />
               <ToolbarIconButton
                 icon={<FileTreeIcon hidden={fileTreeVisible} />}
                 label={fileTreeVisible ? labels.hideFiles : labels.showFiles}
@@ -723,49 +941,39 @@ export function DiffView({
               ) : null}
             </div>
           </div>
-          {diffBodyMode === "raw" && rawDiffAvailable ? (
-            <pre
-              className="m-0 min-h-0 flex-1 overflow-auto whitespace-pre p-4 font-mono text-[11px] leading-[1.5] text-ink-2"
-              data-testid="diff-view-raw"
-            >
-              {rawDiff}
-            </pre>
-          ) : (
-            <div
-              className="min-h-0 flex-1 overflow-auto"
-              data-testid="diff-view-rich"
-            >
-              {diffFile ? (
-                // `key={diffTheme}` remounts git-diff-view on theme toggle so the
-                // wrapper's `data-theme` chrome re-applies. The remount re-hydrates
-                // from the full bundle (no re-highlight); the syntax tokens recolor
-                // instantly via the `--shiki-*` CSS vars regardless.
-                <GitDiffView<ReviewThread[]>
-                  key={diffTheme}
-                  diffFile={diffFile}
-                  diffViewHighlight={true}
-                  diffViewMode={diffViewMode}
-                  diffViewTheme={diffTheme}
-                  diffViewWrap={false}
-                  {...reviewDiffProps}
-                />
-              ) : renderUnavailable && files.length > 0 ? (
-                <p
-                  className="p-4 text-center font-mono text-[11px] leading-[1.5] text-mute"
-                  data-testid="diff-view-body-unavailable"
-                >
-                  {labels.bodyUnavailable}
-                </p>
-              ) : (
-                <p
-                  className="p-4 text-center font-mono text-[11px] text-mute"
-                  data-testid="diff-view-empty"
-                >
-                  {labels.empty}
-                </p>
-              )}
-            </div>
-          )}
+          <div
+            className="min-h-0 flex-1 overflow-auto"
+            data-testid="diff-view-rich"
+          >
+            {diffFile ? (
+              // `key` remounts git-diff-view on theme/body-mode toggle so the
+              // wrapper chrome and highlight mode re-apply without fetching or
+              // re-preparing the diff. The full bundle already carries syntax.
+              <GitDiffView<ReviewThread[]>
+                key={`${diffTheme}-${diffBodyMode}`}
+                diffFile={diffFile}
+                diffViewHighlight={diffViewHighlight}
+                diffViewMode={diffViewMode}
+                diffViewTheme={diffTheme}
+                diffViewWrap={false}
+                {...reviewDiffProps}
+              />
+            ) : renderUnavailable && files.length > 0 ? (
+              <p
+                className="p-4 text-center font-mono text-[11px] leading-[1.5] text-mute"
+                data-testid="diff-view-body-unavailable"
+              >
+                {labels.bodyUnavailable}
+              </p>
+            ) : (
+              <p
+                className="p-4 text-center font-mono text-[11px] text-mute"
+                data-testid="diff-view-empty"
+              >
+                {labels.empty}
+              </p>
+            )}
+          </div>
         </section>
       </div>
       {review ? (

@@ -68,7 +68,12 @@ type DiffFileEntry = {
   deletions?: number;
 };
 
-const LABELS = { empty: "workbench.diff.empty" };
+const LABELS = {
+  empty: "workbench.diff.empty",
+  filterFiles: "workbench.diff.filterFiles",
+  filterFilesPlaceholder: "workbench.diff.filterFilesPlaceholder",
+  filterNoMatches: "workbench.diff.filterNoMatches",
+};
 
 // Distinctive double-digit counts chosen to avoid colliding with the digits in
 // the component's Tailwind class strings (e.g. `text-[11px]`, `w-3`), so the
@@ -97,6 +102,12 @@ describe("ChangedFilesList — seeded changed-files rendering (M22 T5.4 → ADR-
     for (const file of SEED) {
       expect(html).toContain(file.path);
     }
+  });
+
+  it("renders nested root-relative directories for changed files", () => {
+    expect(html).toContain('data-testid="changed-file-dir"');
+    expect(html).toContain("src");
+    expect(html).toContain("a.ts");
   });
 
   it("renders the modify entry with data-status='M'", () => {
@@ -144,6 +155,9 @@ const RUN_DIFF_LABELS: RunDiffLabels = {
   displayMode: "L.displayMode",
   rich: "L.rich",
   raw: "L.raw",
+  filterFiles: "L.filterFiles",
+  filterFilesPlaceholder: "L.filterFilesPlaceholder",
+  filterNoMatches: "L.filterNoMatches",
   showFiles: "L.showFiles",
   hideFiles: "L.hideFiles",
   refresh: "L.refresh",

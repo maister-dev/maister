@@ -46,6 +46,9 @@ const DIFF_LABELS = {
   displayMode: "L.displayMode",
   rich: "L.rich",
   raw: "L.raw",
+  filterFiles: "L.filterFiles",
+  filterFilesPlaceholder: "L.filterFilesPlaceholder",
+  filterNoMatches: "L.filterNoMatches",
   showFiles: "L.showFiles",
   hideFiles: "L.hideFiles",
   refresh: "L.refresh",
@@ -175,8 +178,7 @@ describe("DiffView — review mode off (regression pin)", () => {
     expect(html).toContain('data-diff-file-tree-mode="shown"');
     expect(html).toContain('data-testid="diff-view-file-list"');
     expect(html).toContain('data-testid="diff-view-toolbar"');
-    expect(html).toContain('data-testid="diff-view-mode-split"');
-    expect(html).toContain('data-testid="diff-view-mode-unified"');
+    expect(html).toContain('data-testid="diff-view-layout-toggle"');
     expect(html).toContain('data-testid="diff-view-files-toggle"');
     expect(html).not.toContain("data-review-can-comment");
   });
@@ -204,20 +206,20 @@ describe("DiffView — review mode off (regression pin)", () => {
     expect(html).toContain("max-h-[calc(100vh-260px)]");
   });
 
-  it("renders toolbar modes as icon-only buttons with accessible names", () => {
+  it("renders toolbar modes as single icon toggle buttons with accessible names", () => {
     const html = render({
       rawDiff: DIFF_SECTION,
       onRefresh: vi.fn(),
     });
 
-    expect(html).toContain('data-testid="diff-view-body-rich"');
-    expect(html).toContain('aria-label="L.rich"');
-    expect(html).toContain('data-testid="diff-view-body-raw"');
+    expect(html).toContain('data-testid="diff-view-body-toggle"');
     expect(html).toContain('aria-label="L.raw"');
-    expect(html).toContain('data-testid="diff-view-mode-split"');
-    expect(html).toContain('aria-label="L.split"');
-    expect(html).toContain('data-testid="diff-view-mode-unified"');
+    expect(html).not.toContain('data-testid="diff-view-body-rich"');
+    expect(html).not.toContain('data-testid="diff-view-body-raw"');
+    expect(html).toContain('data-testid="diff-view-layout-toggle"');
     expect(html).toContain('aria-label="L.unified"');
+    expect(html).not.toContain('data-testid="diff-view-mode-split"');
+    expect(html).not.toContain('data-testid="diff-view-mode-unified"');
     expect(html).toContain('data-testid="diff-view-files-toggle"');
     expect(html).toContain('aria-label="L.hideFiles"');
     expect(html).toContain('data-testid="diff-view-refresh"');
@@ -226,6 +228,28 @@ describe("DiffView — review mode off (regression pin)", () => {
     expect(html).not.toContain(">L.raw<");
     expect(html).not.toContain(">L.split<");
     expect(html).not.toContain(">L.unified<");
+  });
+
+  it("renders a root-relative changed-file tree with an in-place filter", () => {
+    const html = render({
+      files: [
+        { path: "src/a.ts", status: "M", additions: 4, deletions: 2 },
+        {
+          path: "docs/screens/runs/workbench.md",
+          status: "M",
+          additions: 1,
+          deletions: 0,
+        },
+      ],
+    });
+
+    expect(html).toContain('data-testid="changed-files-filter"');
+    expect(html).toContain('aria-label="L.filterFiles"');
+    expect(html).toContain('placeholder="L.filterFilesPlaceholder"');
+    expect(html).toContain('data-testid="changed-file-dir"');
+    expect(html).toContain("src");
+    expect(html).toContain("docs");
+    expect(html).toContain("workbench.md");
   });
 
   it("can hide the file tree while keeping the selected file body visible", () => {
@@ -240,15 +264,18 @@ describe("DiffView — review mode off (regression pin)", () => {
     expect(html).toContain("src/a.ts");
   });
 
-  it("can render the raw patch body instead of the rich diff", () => {
+  it("keeps raw mode inside the per-file renderer instead of dumping a patch pre", () => {
     const html = render({
       rawDiff: DIFF_SECTION,
       bodyMode: "raw",
+      perFile: [makePreparedFile()],
     });
 
-    expect(html).toContain('data-testid="diff-view-raw"');
-    expect(html).toContain("diff --git a/src/a.ts b/src/a.ts");
-    expect(html).not.toContain('data-testid="diff-view-rich"');
+    expect(html).toContain('data-diff-body-mode="raw"');
+    expect(html).toContain('data-testid="diff-view-rich"');
+    expect(html).toContain('data-testid="diff-view-layout-toggle"');
+    expect(html).not.toContain('data-testid="diff-view-raw"');
+    expect(html).not.toContain("diff --git a/src/a.ts b/src/a.ts");
   });
 
   it("renders the same chrome when review mode is on but has no threads", () => {

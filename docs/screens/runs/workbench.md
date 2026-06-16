@@ -59,8 +59,8 @@ contract:
 | `fileView=preview\|source` | Files | Preview/source mode for the selected file. |
 | `diffFile=<repo-relative-path>` | Diff | Selected changed file in the Diff tab. This must not trigger source-file reads. |
 | `diffview=split\|unified` | Diff | Diff renderer mode. |
-| `diffbody=rich\|raw` | Diff | Diff body mode: syntax-rendered per-file view or raw unified patch text. |
-| `diffFiles=shown\|hidden` | Diff | Changed-file rail visibility. The default is `shown`; hiding the rail keeps the selected file body visible. |
+| `diffbody=rich\|raw` | Diff | Selected-file rendering mode inside the per-file diff: rich rendered/highlighted view or raw source view. It must not replace the file renderer with a raw unified patch dump. |
+| `diffFiles=shown\|hidden` | Diff | Changed-file tree visibility. The tree is rooted at project-relative paths and includes an in-place file-name filter. The default is `shown`; hiding the tree keeps the selected file body visible. |
 | `scope=run\|since-last-review\|last-node\|uncommitted` | Diff / inspector | Diff and change-summary scope. |
 | `node=<node-id>` | Flow result | Selected Flow node for non-scratch Flow runs. Ignored by standalone agent runs. |
 | `inspector=<state>` | Run shell | Inspector open/collapsed or selected inspector tab, depending on implementation detail. |
