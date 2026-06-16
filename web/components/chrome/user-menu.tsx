@@ -4,6 +4,7 @@ import type { ReactElement } from "react";
 import Link from "next/link";
 import { getTranslations } from "next-intl/server";
 
+import { AutoCloseDetails } from "@/components/chrome/auto-close-details";
 import { signOutUser } from "@/app/(app)/account/actions";
 
 export interface NavUser {
@@ -21,7 +22,7 @@ export async function UserMenu({ user }: UserMenuProps): Promise<ReactElement> {
   const t = await getTranslations("accountMenu");
 
   return (
-    <details className="group relative">
+    <AutoCloseDetails className="group relative">
       <summary className="inline-flex cursor-pointer list-none items-center gap-2 rounded-full border border-line bg-paper py-1.5 pl-1.5 pr-3 font-mono text-[11px] tracking-[0.04em] text-ink-2 transition-colors hover:border-mute group-open:border-amber-line group-open:bg-amber-soft [&::-webkit-details-marker]:hidden">
         <span className="inline-flex h-[22px] w-[22px] items-center justify-center rounded-full border border-amber-line bg-amber-soft text-[10.5px] font-bold text-amber">
           {user.initials}
@@ -62,7 +63,7 @@ export async function UserMenu({ user }: UserMenuProps): Promise<ReactElement> {
           </button>
         </form>
       </div>
-    </details>
+    </AutoCloseDetails>
   );
 }
 

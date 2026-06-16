@@ -16,6 +16,7 @@ import Link from "next/link";
 import clsx from "clsx";
 
 import { ActiveWorkspaceRow } from "@/components/chrome/active-workspace-row";
+import { AutoCloseDetails } from "@/components/chrome/auto-close-details";
 import { LaunchHotkeyHint } from "@/components/chrome/launch-hotkey-hint";
 import { LeftRailNav } from "@/components/chrome/left-rail-nav";
 import { RailCollapse } from "@/components/chrome/rail-collapse";
@@ -107,7 +108,7 @@ function CollapsedRailFlyout({
   const Icon = icon;
 
   return (
-    <details className="group relative">
+    <AutoCloseDetails className="group relative">
       <summary
         aria-label={label}
         className="relative flex h-9 w-9 cursor-pointer list-none items-center justify-center rounded-[10px] border border-line bg-paper text-mute transition-colors hover:border-mute hover:bg-ivory hover:text-ink group-open:border-amber-line group-open:bg-amber-soft group-open:text-amber [&::-webkit-details-marker]:hidden"
@@ -126,7 +127,7 @@ function CollapsedRailFlyout({
         </div>
         {children}
       </div>
-    </details>
+    </AutoCloseDetails>
   );
 }
 
