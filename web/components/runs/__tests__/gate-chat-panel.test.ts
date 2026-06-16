@@ -25,7 +25,7 @@ const labels: GateChatLabels = {
     result: "Result",
     copy: "copy",
     copied: "copied",
-    toolCount: (name, count) => `${name} x${count}`,
+    toolCount: "{name} x{count}",
   },
 };
 

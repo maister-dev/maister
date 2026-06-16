@@ -15,6 +15,10 @@ import {
 // (DD2); the first idle question surfaces the ~$0.28 respawn cost; a turn the
 // L3 sensor reverted carries a notice.
 
+type GateChatTranscriptLabels = Omit<TranscriptLabels, "toolCount"> & {
+  toolCount: string;
+};
+
 export interface GateChatLabels {
   title: string;
   placeholder: string;
@@ -25,7 +29,7 @@ export interface GateChatLabels {
   revertNotice: string;
   agentLabel: string;
   error: string;
-  transcript: TranscriptLabels;
+  transcript: GateChatTranscriptLabels;
 }
 
 export interface ChatMessage {
@@ -53,6 +57,14 @@ function toTranscriptMessage(message: ChatMessage): TranscriptMessage {
   };
 }
 
+function formatToolCount(
+  template: string,
+  name: string,
+  count: number,
+): string {
+  return template.replace("{name}", name).replace("{count}", String(count));
+}
+
 export function GateChatTranscript({
   messages,
   labels,
@@ -64,6 +76,11 @@ export function GateChatTranscript({
 }): ReactElement {
   const userLabel =
     messages.find((message) => message.role === "user")?.authorLabel ?? null;
+  const transcriptLabels: TranscriptLabels = {
+    ...labels.transcript,
+    toolCount: (name, count) =>
+      formatToolCount(labels.transcript.toolCount, name, count),
+  };
   const revertedByMessageId = new Set(
     messages
       .filter((message) => message.mutationReverted)
@@ -73,7 +90,7 @@ export function GateChatTranscript({
   return (
     <ScratchTranscript
       assistantLabel={labels.agentLabel}
-      labels={labels.transcript}
+      labels={transcriptLabels}
       messages={messages.map(toTranscriptMessage)}
       running={running}
       userLabel={userLabel}
