@@ -214,6 +214,29 @@ export const StartSessionRequestSchema = z
     }
   });
 
+// T5.4: structured ACP prompt content blocks. The web tier assembles these
+// (text + worktree-confined resource_link/resource) and the supervisor forwards
+// them VERBATIM (verbatim-forward invariant). Validation here is shape-only;
+// `.passthrough()` preserves the ACP-optional fields (annotations, mimeType,
+// _meta, …) the supervisor must not strip. A `text` literal discriminates the
+// union, so the closed set rejects unknown block types.
+const PromptContentBlockSchema = z.union([
+  z.object({ type: z.literal("text"), text: z.string() }).passthrough(),
+  z
+    .object({
+      type: z.literal("resource_link"),
+      uri: z.string().min(1),
+      name: z.string().min(1),
+    })
+    .passthrough(),
+  z
+    .object({
+      type: z.literal("resource"),
+      resource: z.object({ uri: z.string().min(1) }).passthrough(),
+    })
+    .passthrough(),
+]);
+
 export const SendPromptRequestSchema = z.object({
   stepId: z
     .string()
@@ -227,6 +250,7 @@ export const SendPromptRequestSchema = z.object({
     .regex(SAFE_PATH_SEGMENT, "nodeAttemptId must match /^[A-Za-z0-9._-]+$/")
     .optional(),
   prompt: z.string().max(1_000_000),
+  contentBlocks: z.array(PromptContentBlockSchema).max(64).optional(),
   // M30 (ADR-078 L2): the prompt is an answer-only gate-chat turn — while it
   // is in flight, requestPermission auto-rejects unambiguous mutating
   // toolCall kinds BEFORE any SSE emit / pending-permission registration.

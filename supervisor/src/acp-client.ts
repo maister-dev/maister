@@ -658,14 +658,23 @@ export async function sendPromptOnConnection(
     acpSessionId: string;
     stepId: string;
     prompt: string;
+    contentBlocks?: acp.ContentBlock[];
   },
   logger: Logger,
 ): Promise<acp.PromptResponse> {
+  // T5.4: forward the web tier's assembled content blocks verbatim; otherwise
+  // wrap the plain string into a single text block (verbatim-forward).
+  const prompt: acp.ContentBlock[] =
+    args.contentBlocks && args.contentBlocks.length > 0
+      ? args.contentBlocks
+      : [{ type: "text", text: args.prompt }];
+
   logger.info(
     {
       acpSessionId: args.acpSessionId,
       stepId: args.stepId,
       len: args.prompt.length,
+      blocks: prompt.length,
     },
     "acp prompt-sent",
   );
@@ -678,7 +687,7 @@ export async function sendPromptOnConnection(
     run: () =>
       conn.prompt({
         sessionId: args.acpSessionId,
-        prompt: [{ type: "text", text: args.prompt }],
+        prompt,
       }),
   });
 

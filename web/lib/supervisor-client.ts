@@ -110,10 +110,25 @@ export type PromptResult = {
   meta?: unknown;
 };
 
+// T5.4: structured ACP prompt content the web tier assembles (text + a
+// worktree-confined file reference). Mirrors the ACP ContentBlock fields the
+// web emits; the supervisor validates + forwards verbatim. `prompt` stays the
+// string fallback (and the human-readable transcript record).
+export type PromptContentBlock =
+  | { type: "text"; text: string }
+  | {
+      type: "resource_link";
+      uri: string;
+      name: string;
+      mimeType?: string;
+      description?: string;
+    };
+
 export type SendPromptInput = {
   stepId: string;
   nodeAttemptId?: string;
   prompt: string;
+  contentBlocks?: PromptContentBlock[];
   // M30 (ADR-078 L2): answer-only gate-chat turn — the supervisor
   // auto-rejects unambiguous mutating toolCall kinds while it is in flight.
   readOnlyTurn?: boolean;

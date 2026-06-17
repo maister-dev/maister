@@ -23,6 +23,7 @@ import {
   cancelPermission,
   sendPrompt,
   streamSession,
+  type PromptContentBlock,
   type PromptResult,
   type SupervisorEvent,
 } from "@/lib/supervisor-client";
@@ -610,6 +611,7 @@ export async function sendScratchPromptAndProjectEvents(args: {
   sessionId: string;
   stepId: string;
   prompt: string;
+  contentBlocks?: PromptContentBlock[];
   db?: DbClientLike;
   api?: ScratchSupervisorApi;
 }): Promise<PromptResult> {
@@ -629,6 +631,7 @@ export async function sendScratchPromptAndProjectEvents(args: {
     promptResult = await api.sendPrompt(args.sessionId, {
       stepId: args.stepId,
       prompt: args.prompt,
+      contentBlocks: args.contentBlocks,
     });
   } finally {
     consumer.abort.abort();

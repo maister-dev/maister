@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import type * as acp from "@agentclientprotocol/sdk";
 import type { Logger } from "pino";
 import type { SessionRegistry, RegistryEntry } from "./registry";
 
@@ -537,6 +538,9 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
           acpSessionId: entry.acpSessionId,
           stepId: body.stepId,
           prompt: body.prompt,
+          // Validated by SendPromptRequestSchema; cast to the SDK block type at
+          // this trust boundary for verbatim forward (T5.4).
+          contentBlocks: body.contentBlocks as acp.ContentBlock[] | undefined,
         },
         logger,
       );

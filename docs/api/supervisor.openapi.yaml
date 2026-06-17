@@ -976,9 +976,10 @@ components:
           type: array
           maxItems: 64
           description: |
-            (Designed — capability composer, FR-D5) Optional pre-assembled ACP
-            content blocks (a `text` block plus `resource_link`/`resource`
-            blocks). When present the supervisor forwards them **verbatim** as
+            (Implemented, T5.4 — capability composer, FR-D5) Optional
+            pre-assembled ACP content blocks (a `text` block plus
+            `resource_link`/`resource` blocks). When present the supervisor
+            forwards them **verbatim** as
             the ACP `prompt` content array — it does NOT re-template or rewrite;
             `prompt` stays the plain-text equivalent/fallback. The web tier has
             already normalized capability tokens to wire form (FR-E) and confined

@@ -5,9 +5,11 @@ import type {
   ScratchUploadedFileInput,
   StoredScratchAttachment,
 } from "@/lib/scratch-runs/types";
+import type { PromptContentBlock } from "@/lib/supervisor-client";
 
 import { createHash } from "node:crypto";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { MaisterError } from "@/lib/errors";
 
@@ -167,4 +169,40 @@ export function metadataAttachmentRow(
     sha256: null,
     storagePath: null,
   };
+}
+
+// T5.4 (B): turn a scratch message's file attachments into ACP `resource_link`
+// content blocks (a leading `text` block carries the user prompt). Uploaded
+// files reference their server-generated `storagePath` (confined to the runtime
+// root); `file_path` attachments reference their already-worktree/repo-confined
+// absolute `value`. Both paths are absolute, so `pathToFileURL` yields a valid
+// `file://` URI. Non-file kinds (`issue_url`, `text_note`) are transcript-only
+// and never become resource blocks. Returns `undefined` when there is no file
+// attachment, so the caller keeps the plain-string send path.
+export function scratchPromptContentBlocks(
+  text: string,
+  attachments: readonly StoredScratchAttachment[],
+): PromptContentBlock[] | undefined {
+  const links: PromptContentBlock[] = [];
+
+  for (const attachment of attachments) {
+    if (attachment.kind === "uploaded_file" && attachment.storagePath) {
+      links.push({
+        type: "resource_link",
+        uri: pathToFileURL(attachment.storagePath).href,
+        name: attachment.fileName ?? attachment.label ?? "file",
+        ...(attachment.mimeType ? { mimeType: attachment.mimeType } : {}),
+      });
+    } else if (attachment.kind === "file_path") {
+      links.push({
+        type: "resource_link",
+        uri: pathToFileURL(attachment.value).href,
+        name: attachment.label ?? path.basename(attachment.value),
+      });
+    }
+  }
+
+  if (links.length === 0) return undefined;
+
+  return [{ type: "text", text }, ...links];
 }

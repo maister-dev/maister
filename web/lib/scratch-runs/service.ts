@@ -49,6 +49,7 @@ import {
 import { atomicWriteBuffer } from "@/lib/atomic";
 import {
   metadataAttachmentRow,
+  scratchPromptContentBlocks,
   uploadedFileMetadata,
   validateScratchAttachments,
 } from "@/lib/scratch-runs/attachments";
@@ -474,21 +475,6 @@ async function storeUploadedFiles(args: {
   }
 
   return attachments;
-}
-
-function attachmentPromptLines(
-  attachments: readonly ReturnType<typeof uploadedFileMetadata>[],
-): string[] {
-  if (attachments.length === 0) return [];
-
-  return [
-    "",
-    "Uploaded files for this message:",
-    ...attachments.map(
-      (attachment) =>
-        `- ${attachment.fileName} (${attachment.mimeType}, ${attachment.byteSize} bytes, sha256 ${attachment.sha256}): ${attachment.value}; local path ${attachment.storagePath}`,
-    ),
-  ];
 }
 
 function downgradeNotes(
@@ -1041,15 +1027,18 @@ export async function launchScratchRun(args: {
       });
     }
 
+    const launchPrompt = normalizeScratchPrompt(prompt, executor.agent, {
+      runId,
+    });
     const promptResult = await sendScratchPromptAndProjectEvents({
       runId,
       sessionId: session.sessionId,
       stepId: scratchStepId(),
-      prompt: normalizeScratchPrompt(
-        [prompt, ...attachmentPromptLines(uploadedAttachments)].join("\n"),
-        executor.agent,
-        { runId },
-      ),
+      prompt: launchPrompt,
+      contentBlocks: scratchPromptContentBlocks(launchPrompt, [
+        ...validatedAttachments.map(metadataAttachmentRow),
+        ...uploadedAttachments,
+      ]),
     });
     const dialogStatus = await completeScratchPromptTurn({ db, runId });
 
@@ -1254,6 +1243,7 @@ async function appendScratchUserMessage(args: {
       supervisorSessionId: scratch.supervisorSessionId as string,
       capabilityAgent: run.capabilityAgent,
       uploadedAttachments,
+      metadataAttachments,
     };
   });
 }
@@ -1272,18 +1262,20 @@ export async function sendScratchUserMessage(args: {
   });
 
   try {
+    const messagePrompt = normalizeScratchPrompt(
+      args.body.content,
+      appended.capabilityAgent,
+      { runId: args.runId },
+    );
     const promptResult = await sendScratchPromptAndProjectEvents({
       runId: args.runId,
       sessionId: appended.supervisorSessionId,
       stepId: scratchStepId(),
-      prompt: normalizeScratchPrompt(
-        [
-          args.body.content,
-          ...attachmentPromptLines(appended.uploadedAttachments),
-        ].join("\n"),
-        appended.capabilityAgent,
-        { runId: args.runId },
-      ),
+      prompt: messagePrompt,
+      contentBlocks: scratchPromptContentBlocks(messagePrompt, [
+        ...appended.metadataAttachments,
+        ...appended.uploadedAttachments,
+      ]),
     });
     const dialogStatus = await completeScratchPromptTurn({
       db,

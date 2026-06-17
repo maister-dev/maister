@@ -495,6 +495,52 @@ describe("SendPromptRequestSchema", () => {
       expect(result.error.issues[0].path).toEqual(["nodeAttemptId"]);
     }
   });
+
+  it("accepts and retains an optional structured content block array (T5.4 A)", () => {
+    const result = SendPromptRequestSchema.safeParse({
+      stepId: "scratch-dialog",
+      prompt: "review these",
+      contentBlocks: [
+        { type: "text", text: "review these" },
+        {
+          type: "resource_link",
+          uri: "file:///repos/x/notes.txt",
+          name: "notes.txt",
+          mimeType: "text/plain",
+        },
+      ],
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.contentBlocks).toHaveLength(2);
+      expect(result.data.contentBlocks?.[1]).toMatchObject({
+        type: "resource_link",
+        uri: "file:///repos/x/notes.txt",
+        name: "notes.txt",
+      });
+    }
+  });
+
+  it("rejects a content block with an unknown type", () => {
+    const result = SendPromptRequestSchema.safeParse({
+      stepId: "plan",
+      prompt: "go",
+      contentBlocks: [{ type: "bogus", text: "x" }],
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a resource_link content block missing the uri", () => {
+    const result = SendPromptRequestSchema.safeParse({
+      stepId: "plan",
+      prompt: "go",
+      contentBlocks: [{ type: "resource_link", name: "notes.txt" }],
+    });
+
+    expect(result.success).toBe(false);
+  });
 });
 
 describe("SupervisorError", () => {

@@ -257,9 +257,19 @@ describe("POST /api/scratch-runs/[runId]/messages", () => {
       mimeType: "text/plain",
       byteSize: 5,
     });
+    // T5.4 B: uploaded files now ride as ACP resource_link content blocks
+    // (a leading text block carries the prompt), not inline prompt text lines.
     expect(mocks.sendScratchPromptAndProjectEvents).toHaveBeenCalledWith(
       expect.objectContaining({
-        prompt: expect.stringContaining("Uploaded files for this message:"),
+        prompt: "Continue with file",
+        contentBlocks: expect.arrayContaining([
+          { type: "text", text: "Continue with file" },
+          expect.objectContaining({
+            type: "resource_link",
+            name: "notes.txt",
+            mimeType: "text/plain",
+          }),
+        ]),
       }),
     );
   });
