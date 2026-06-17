@@ -31,6 +31,41 @@ export function segmentsToCanonical(segments: ComposerSegment[]): string {
 }
 
 /**
+ * Split a flat segment list into paragraph groups at `\n` inside text segments.
+ * The TipTap doc is paragraph-per-line (Enter inserts a new `paragraph` node,
+ * not a `\n` character), so a multiline prompt MUST map to one group per line or
+ * the paragraph boundaries are lost on serialize. Chips stay inline in the
+ * current group. Always returns at least one (possibly empty) group.
+ */
+export function segmentsToParagraphs(
+  segments: ComposerSegment[],
+): ComposerSegment[][] {
+  const paragraphs: ComposerSegment[][] = [[]];
+
+  for (const seg of segments) {
+    if (seg.type !== "text") {
+      paragraphs[paragraphs.length - 1].push(seg);
+      continue;
+    }
+
+    const lines = seg.text.split("\n");
+
+    lines.forEach((line, index) => {
+      if (index > 0) paragraphs.push([]);
+      if (line)
+        paragraphs[paragraphs.length - 1].push({ type: "text", text: line });
+    });
+  }
+
+  return paragraphs;
+}
+
+/** Join paragraph groups back to the canonical string (paragraph boundary → `\n`). */
+export function paragraphsToCanonical(paragraphs: ComposerSegment[][]): string {
+  return paragraphs.map(segmentsToCanonical).join("\n");
+}
+
+/**
  * Canonical-token string → segments. Canonical `@skill:`/`@agent:` tokens become
  * chips; everything else is verbatim text (raw `/x`/`$x` promotion is the
  * matcher's job, FR-E3 — not done here). Adjacent text is coalesced.

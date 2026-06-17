@@ -24,12 +24,19 @@ export type RunningLiveCommand = {
  * never appear in the stream.
  *
  * Live command names arrive AS-EMITTED (codex bakes `$`, claude emits bare or a
- * `mcp:` prefix). Each `/`·`$` command maps to a skill chip: the sigil is
- * stripped to the canonical slug, `surfaceForm` is recomputed table-driven for
- * the (fixed) running runner, and the chip serializes to `@skill:<slug>` so the
- * existing send-time normalizer round-trips it back to the runner's wire form.
- * `mcp:` commands are MCP built-ins, not capability chips, and are skipped. A
- * live command is supported by definition — it is present in the live session.
+ * `mcp:` prefix). Each `/`·`$` command that matches a PROJECT SKILL (present in
+ * the static catalog) maps to a skill chip: the sigil is stripped to the
+ * canonical slug, `surfaceForm` is recomputed table-driven for the (fixed)
+ * running runner, and the chip serializes to `@skill:<slug>` so the existing
+ * send-time normalizer round-trips it back to the runner's wire form.
+ *
+ * `mcp:` commands are MCP built-ins, and a live command with NO static match is
+ * a native/built-in command (claude `/compact`, codex `/status`) — neither is a
+ * capability chip (D8: native = typed raw). Chipifying a built-in would re-derive
+ * its wire form via the skill sigil and CORRUPT it on codex (`/status` → the
+ * skill form `$status`); excluding it keeps it typeable as literal text the agent
+ * resolves natively. A chipped live command is supported by definition — it is a
+ * known project skill present in the live session.
  */
 export function buildRunningCommandCatalog(
   live: RunningLiveCommand[],
@@ -50,17 +57,23 @@ export function buildRunningCommandCatalog(
     const slug = cmd.name.replace(/^[/$]/, "");
 
     if (!SLUG_PATTERN.test(slug) || seen.has(slug)) continue;
-    seen.add(slug);
 
+    // A live command with no static match is a native/built-in (not a project
+    // skill) → not a chip: it stays typeable as raw text. This is also the
+    // codex correctness guard — re-sigiling a built-in `/status` would emit the
+    // wrong `$status` skill form (see the function doc).
     const fromStatic = staticSkillBySlug.get(slug);
+
+    if (!fromStatic) continue;
+    seen.add(slug);
 
     skills.push({
       kind: "skill",
-      refId: fromStatic?.refId ?? slug,
+      refId: fromStatic.refId,
       slug,
-      displayName: fromStatic?.displayName ?? slug,
-      description: cmd.description ?? fromStatic?.description ?? null,
-      argHint: cmd.hint ?? fromStatic?.argHint ?? null,
+      displayName: fromStatic.displayName,
+      description: cmd.description ?? fromStatic.description ?? null,
+      argHint: cmd.hint ?? fromStatic.argHint ?? null,
       canonicalToken: `@skill:${slug}`,
       surfaceForm: surfaceFormForSkill(slug, agent),
       supported: true,

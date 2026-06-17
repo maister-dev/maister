@@ -616,6 +616,7 @@
     "capabilitiesHint": "selected into run",
     "mcps": "MCPs",
     "skills": "Skills",
+    "skillsAllIncluded": "All project skills are always available — no selection needed.",
     "rules": "Rules",
     "agentPacks": "Agent packs",
     "restrictions": "Restrictions",

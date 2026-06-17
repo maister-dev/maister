@@ -271,11 +271,17 @@ function CapabilityGroup({
   options,
   selectedIds,
   onToggle,
+  readOnly,
+  note,
 }: {
   label: string;
   options: CapabilityOption[];
-  selectedIds: string[];
-  onToggle: (id: string) => void;
+  selectedIds?: string[];
+  onToggle?: (id: string) => void;
+  // readOnly: the selection is not user-controlled (scratch skills are always
+  // broad, FR-C3) — every option is shown as included and cannot be toggled.
+  readOnly?: boolean;
+  note?: string;
 }): ReactElement | null {
   if (options.length === 0) return null;
 
@@ -284,18 +290,28 @@ function CapabilityGroup({
       <summary className={summaryButton}>
         <span>{label}</span>
         <span className="rounded-full bg-ivory px-2 py-0.5 text-[10px] text-mute">
-          {selectedIds.length}/{options.length}
+          {readOnly
+            ? options.length
+            : `${selectedIds?.length ?? 0}/${options.length}`}
         </span>
       </summary>
       <div className="border-t border-line-soft p-1.5">
+        {note ? (
+          <p className="px-1.5 pb-1 font-mono text-[10px] leading-snug text-mute">
+            {note}
+          </p>
+        ) : null}
         {options.map((option) => (
           <label key={option.id} className={checkboxLine}>
             <input
               aria-label={option.label}
-              checked={selectedIds.includes(option.id)}
+              checked={
+                readOnly ? true : (selectedIds?.includes(option.id) ?? false)
+              }
               className="mt-0.5 accent-amber"
+              disabled={readOnly}
               type="checkbox"
-              onChange={() => onToggle(option.id)}
+              onChange={() => onToggle?.(option.id)}
             />
             <span className="min-w-0 flex-1">
               <span className="block truncate font-semibold text-ink">
@@ -342,7 +358,6 @@ export function ScratchLauncher({
     () => new Map(),
   );
   const [mcpIds, setMcpIds] = useState<string[]>([]);
-  const [skillIds, setSkillIds] = useState<string[]>([]);
   const [ruleIds, setRuleIds] = useState<string[]>([]);
   const [agentDefinitionIds, setAgentDefinitionIds] = useState<string[]>([]);
   const [restrictionIds, setRestrictionIds] = useState<string[]>([]);
@@ -388,7 +403,6 @@ export function ScratchLauncher({
             ? payload.capabilities.defaultSelectedMcpIds
             : selectedDefaults(payload.capabilities.mcps),
         );
-        setSkillIds(selectedDefaults(payload.capabilities.skills));
         setRuleIds(selectedDefaults(payload.capabilities.rules));
         setAgentDefinitionIds(
           selectedDefaults(payload.capabilities.agentDefinitions),
@@ -463,9 +477,10 @@ export function ScratchLauncher({
   }, [selectedProject?.slug, composerAgent]);
   const contextCount =
     files.length + attachments.length + (linkedIssueUrl.trim() ? 1 : 0);
+  // skills are excluded: scratch always materializes all of them (broad,
+  // FR-C3), so they are not a user-selected capability to count here.
   const capabilityCount = selectedCount(
     mcpIds,
-    skillIds,
     ruleIds,
     agentDefinitionIds,
     restrictionIds,
@@ -537,8 +552,9 @@ export function ScratchLauncher({
         prompt: prompt.trim(),
         attachments: cleanedAttachments,
         capabilities: {
+          // skillIds omitted: scratch materializes ALL project skills (broad,
+          // FR-C3); a submitted selection is ignored, so we do not send one.
           mcpIds,
-          skillIds,
           ruleIds,
           agentDefinitionIds,
           restrictionIds,
@@ -985,10 +1001,10 @@ export function ScratchLauncher({
             onToggle={(id) => setMcpIds((current) => toggleId(current, id))}
           />
           <CapabilityGroup
+            readOnly
             label={t("skills")}
+            note={t("skillsAllIncluded")}
             options={options?.capabilities.skills ?? []}
-            selectedIds={skillIds}
-            onToggle={(id) => setSkillIds((current) => toggleId(current, id))}
           />
           <CapabilityGroup
             label={t("rules")}

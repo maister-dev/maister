@@ -315,7 +315,7 @@ stateDiagram-v2
   (codex `$x`, claude bare / `mcp:`); the composer maps them to canonical refs
   through the catalog.
 
-### Scratch materialization policy (Designed — broad)
+### Scratch materialization policy (Implemented — broad)
 
 Scratch materialization is **broad**, unlike per-node Flow selection (which is
 unchanged): on submit, MAIster materializes **all** enabled+trusted+runner-
@@ -324,6 +324,11 @@ adapter materialization target in [acp-runners.md](acp-runners.md)). Skill and
 subagent files are **lazy-loaded by the agent** — MAIster materializes the files
 and does **not** dump their instructions into the prompt. **MCP stays
 selected/defaults** because each stdio MCP is a live process (D7, FR-C3).
+
+Because skills are always broad, the launch UI presents them as **read-only
+"all included"** (no skill scoping). A submitted `capabilities.skillIds` is
+**ignored** — not validated and not honored — and the launcher does not send
+one. MCP/rules/restrictions/agent-definition selections are still honored.
 
 ## Structured logs
 

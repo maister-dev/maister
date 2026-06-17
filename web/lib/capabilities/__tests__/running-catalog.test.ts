@@ -62,23 +62,35 @@ describe("buildRunningCommandCatalog — live ∪ subagents (FR-A3 / source #3)"
     expect(skill?.canonicalToken).toBe("@skill:aif-plan");
   });
 
-  it("includes a live command with no static match (native/global) as a skill chip", () => {
+  it("excludes a native/built-in live command with no static match (D8: typed raw, not a chip)", () => {
     const out = buildRunningCommandCatalog(
       [{ name: "compact", description: "Compact the context", hint: null }],
       staticCatalog,
       "claude",
     );
-    const cmd = out.find((e) => e.slug === "compact");
 
-    expect(cmd).toMatchObject({
-      kind: "skill",
-      slug: "compact",
-      displayName: "compact",
-      description: "Compact the context",
-      canonicalToken: "@skill:compact",
-      surfaceForm: "/compact",
-      supported: true,
-    });
+    expect(out.some((e) => e.slug === "compact")).toBe(false);
+  });
+
+  it("never re-sigils a codex `/`-built-in into the wrong `$` skill form (regression)", () => {
+    // codex emits skills as `$slug` but native built-ins as `/status`. A built-in
+    // is not a project skill → it must NOT become a chip; chipifying it would
+    // serialize `@skill:status` → `$status`, which codex does not recognize.
+    const out = buildRunningCommandCatalog(
+      [
+        { name: "/status", description: "Session status", hint: null },
+        { name: "$aif-plan", description: null, hint: null },
+      ],
+      staticCatalog,
+      "codex",
+    );
+
+    expect(out.some((e) => e.slug === "status")).toBe(false);
+    expect(out.some((e) => e.surfaceForm === "$status")).toBe(false);
+    // the real project skill still surfaces with the correct codex wire form
+    expect(out.find((e) => e.slug === "aif-plan")?.surfaceForm).toBe(
+      "$aif-plan",
+    );
   });
 
   it("prefers the live description/hint over the static catalog values", () => {
@@ -104,17 +116,17 @@ describe("buildRunningCommandCatalog — live ∪ subagents (FR-A3 / source #3)"
     expect(out.some((e) => e.kind === "skill")).toBe(false);
   });
 
-  it("dedupes the same slug arriving via both sigils", () => {
+  it("dedupes the same project skill arriving via both sigils", () => {
     const out = buildRunningCommandCatalog(
       [
-        { name: "$review", description: null, hint: null },
-        { name: "review", description: null, hint: null },
+        { name: "$aif-plan", description: null, hint: null },
+        { name: "aif-plan", description: null, hint: null },
       ],
       staticCatalog,
       "codex",
     );
 
-    expect(out.filter((e) => e.slug === "review")).toHaveLength(1);
+    expect(out.filter((e) => e.slug === "aif-plan")).toHaveLength(1);
   });
 
   it("unions the static subagents (claude-only, never in the live stream)", () => {

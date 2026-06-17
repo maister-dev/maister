@@ -616,6 +616,7 @@
     "capabilitiesHint": "попадут в запуск",
     "mcps": "MCP",
     "skills": "Навыки",
+    "skillsAllIncluded": "Все навыки проекта всегда доступны — выбор не нужен.",
     "rules": "Правила",
     "agentPacks": "Паки агентов",
     "restrictions": "Ограничения",

@@ -4,7 +4,9 @@ import {
   type ComposerSegment,
   canonicalToSegments,
   chipToCanonical,
+  paragraphsToCanonical,
   segmentsToCanonical,
+  segmentsToParagraphs,
 } from "@/lib/capabilities/composer-serialize";
 
 describe("composer-serialize (FR-D / FR-E1)", () => {
@@ -60,5 +62,42 @@ describe("composer-serialize (FR-D / FR-E1)", () => {
   it("empty string → no segments", () => {
     expect(canonicalToSegments("")).toEqual([]);
     expect(segmentsToCanonical([])).toBe("");
+  });
+
+  it("segmentsToParagraphs splits text on newlines into per-line groups", () => {
+    expect(
+      segmentsToParagraphs(canonicalToSegments("line one\nline two")),
+    ).toEqual([
+      [{ type: "text", text: "line one" }],
+      [{ type: "text", text: "line two" }],
+    ]);
+  });
+
+  it("keeps a chip inline within its paragraph and splits around it", () => {
+    expect(
+      segmentsToParagraphs(canonicalToSegments("run @skill:x\nthen done")),
+    ).toEqual([
+      [
+        { type: "text", text: "run " },
+        { type: "chip", kind: "skill", slug: "x" },
+      ],
+      [{ type: "text", text: "then done" }],
+    ]);
+  });
+
+  it("round-trips a MULTILINE prompt with chips (regression: newlines were dropped)", () => {
+    const value = "first line @skill:plan\nsecond line\nthird @agent:reviewer";
+
+    expect(
+      paragraphsToCanonical(segmentsToParagraphs(canonicalToSegments(value))),
+    ).toBe(value);
+  });
+
+  it("preserves blank lines (empty paragraphs) in the round-trip", () => {
+    const value = "a\n\nb";
+
+    expect(
+      paragraphsToCanonical(segmentsToParagraphs(canonicalToSegments(value))),
+    ).toBe(value);
   });
 });

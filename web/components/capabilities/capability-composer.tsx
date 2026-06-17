@@ -22,6 +22,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   canonicalToSegments,
   chipToCanonical,
+  segmentsToParagraphs,
   type ComposerSegment,
 } from "@/lib/capabilities/composer-serialize";
 import { surfaceFormForSkill } from "@/lib/capabilities/token-normalizer";
@@ -300,37 +301,47 @@ function segmentsToDoc(
   agent: AdapterId,
   catalog: ProjectCapabilityCatalogEntry[],
 ): Record<string, unknown> {
-  const content = segments
-    .map((seg) => {
-      if (seg.type === "text") {
-        return seg.text ? { type: "text", text: seg.text } : null;
-      }
-      const chip = lookupChip(seg.kind, seg.slug, agent, catalog);
+  // One paragraph node per line (the doc has no HardBreak extension), so a
+  // multiline prompt keeps its line breaks instead of collapsing to one line.
+  const content = segmentsToParagraphs(segments).map((group) => ({
+    type: "paragraph",
+    content: group
+      .map((seg) => {
+        if (seg.type === "text") {
+          return seg.text ? { type: "text", text: seg.text } : null;
+        }
+        const chip = lookupChip(seg.kind, seg.slug, agent, catalog);
 
-      return { type: "capabilityChip", attrs: chip };
-    })
-    .filter(Boolean);
+        return { type: "capabilityChip", attrs: chip };
+      })
+      .filter(Boolean),
+  }));
 
-  return {
-    type: "doc",
-    content: [{ type: "paragraph", content }],
-  };
+  return { type: "doc", content };
 }
 
 function docToCanonical(editor: Editor): string {
-  const parts: string[] = [];
+  // Serialize each top-level block (paragraph) on its own, then join with `\n` —
+  // a paragraph boundary IS a newline in the prompt. Joining the inline nodes
+  // flat would drop every line break the user typed or pasted.
+  const blocks: string[] = [];
 
-  editor.state.doc.descendants((node) => {
-    if (node.type.name === "text") {
-      parts.push(node.text ?? "");
-    } else if (node.type.name === "capabilityChip") {
-      const attrs = node.attrs as ChipAttrs;
+  editor.state.doc.forEach((block) => {
+    const parts: string[] = [];
 
-      parts.push(chipToCanonical(attrs.kind, attrs.slug));
-    }
+    block.descendants((node) => {
+      if (node.type.name === "text") {
+        parts.push(node.text ?? "");
+      } else if (node.type.name === "capabilityChip") {
+        const attrs = node.attrs as ChipAttrs;
+
+        parts.push(chipToCanonical(attrs.kind, attrs.slug));
+      }
+    });
+    blocks.push(parts.join(""));
   });
 
-  return parts.join("");
+  return blocks.join("\n");
 }
 
 // --- component ---------------------------------------------------------------

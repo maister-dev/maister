@@ -1287,6 +1287,51 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /api/projects/{slug}/capability-catalog:
+    get:
+      tags: [projects]
+      summary: Implemented — unified composer capability catalog (skills ∪ claude-only subagents) (FR-B2)
+      description: |
+        (Implemented — capability composer, FR-B2/B3) Returns the project's
+        enabled+trusted skills — each with its install-captured
+        `description`/`argHint` and the per-runner `surfaceForm` — plus claude-only
+        coder subagents, for the unified composer's static autocomplete. Requires
+        the `readBoard` action (project `viewer`); the project is resolved from
+        `slug` (server-state) and 404s when missing/archived. `?agent=` selects the
+        runner whose surface forms + subagent inclusion are computed; an unknown
+        value falls back to `claude`. Switching `?agent=` flips skill surface forms
+        and subagent inclusion with no other change.
+      operationId: getProjectCapabilityCatalog
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - name: agent
+          in: query
+          required: false
+          description: Capability runner id (claude/codex/gemini/opencode/mimo). Unknown → claude.
+          schema: { type: string, default: claude }
+      responses:
+        "200":
+          description: The project+runner capability catalog (possibly empty).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [capabilities]
+                properties:
+                  capabilities:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ProjectCapabilityCatalogEntry"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /api/projects/{slug}/tasks:
     post:
       tags: [projects]
@@ -9787,6 +9832,13 @@ components:
         skillIds:
           type: array
           items: { type: string, minLength: 1 }
+          description: |
+            IGNORED for scratch launch: scratch materializes ALL
+            enabled+trusted+runner-supported project skills (broad policy, D7 /
+            FR-C3), so a submitted skill selection has no effect and is not
+            validated. The launch UI presents skills as read-only "all included".
+            The "unknown/cross-project id → 400 CONFIG" rule above does NOT apply
+            to `skillIds`.
         ruleIds:
           type: array
           items: { type: string, minLength: 1 }
@@ -9957,6 +10009,37 @@ components:
         name: { type: string }
         description: { type: string, nullable: true }
         hint: { type: string, nullable: true, description: From the ACP `input.hint`. }
+    ProjectCapabilityCatalogEntry:
+      description: |
+        (Implemented — capability composer, FR-B2/B3) One entry of the unified
+        composer autocomplete catalog: a project skill or a claude-only coder
+        subagent. `canonicalToken` is the portable storage form (`@skill:<slug>` /
+        `@agent:<slug>`); `surfaceForm` is the runner-specific wire form (`/slug`,
+        `$slug`, `@name`); `supported` is false (advisory) when the capability is
+        not available on the requested runner.
+      type: object
+      required:
+        [
+          kind,
+          refId,
+          slug,
+          displayName,
+          description,
+          argHint,
+          canonicalToken,
+          surfaceForm,
+          supported,
+        ]
+      properties:
+        kind: { type: string, enum: [skill, subagent] }
+        refId: { type: string }
+        slug: { type: string }
+        displayName: { type: string }
+        description: { type: string, nullable: true }
+        argHint: { type: string, nullable: true }
+        canonicalToken: { type: string }
+        surfaceForm: { type: string }
+        supported: { type: boolean }
     ScratchMessageMultipartBody:
       type: object
       required: [payload]

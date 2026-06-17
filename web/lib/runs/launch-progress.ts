@@ -80,21 +80,29 @@ export async function readLaunchStream<T>(
 
       buffer = buffer.slice(boundary + 2);
       if (block.startsWith("data:")) {
-        const frame = JSON.parse(
-          block.slice(block.indexOf("data:") + 5).trim(),
-        ) as {
-          type?: string;
-          stage?: LaunchStage;
-          result?: T;
-          code?: string;
-          message?: string;
-        };
+        let frame:
+          | {
+              type?: string;
+              stage?: LaunchStage;
+              result?: T;
+              code?: string;
+              message?: string;
+            }
+          | undefined;
 
-        if (frame.type === "scratch.launch_progress" && frame.stage) {
+        try {
+          frame = JSON.parse(block.slice(block.indexOf("data:") + 5).trim());
+        } catch {
+          // Skip a malformed/partial frame and keep reading the stream rather
+          // than aborting the whole launch read on one bad line.
+          frame = undefined;
+        }
+
+        if (frame?.type === "scratch.launch_progress" && frame.stage) {
           onStage(frame.stage);
-        } else if (frame.type === "scratch.launch_result") {
+        } else if (frame?.type === "scratch.launch_result") {
           result = frame.result;
-        } else if (frame.type === "error") {
+        } else if (frame?.type === "error") {
           error = { code: frame.code, message: frame.message };
         }
       }
