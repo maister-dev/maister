@@ -2,6 +2,7 @@
 
 import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { ProjectCapabilityCatalogEntry } from "@/lib/capabilities/project-catalog";
+import type { LaunchStage } from "@/lib/runs/launch-progress";
 import type { ReactElement } from "react";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -10,6 +11,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import clsx from "clsx";
 
 import { CapabilityComposer } from "@/components/capabilities/capability-composer";
+import { readLaunchStream } from "@/lib/runs/launch-progress";
 
 type AttachmentKind = "issue_url" | "file_path" | "text_note";
 type WorkMode = "auto" | "plan_first" | "manual_approval";
@@ -344,6 +346,8 @@ export function ScratchLauncher({
   const [ruleIds, setRuleIds] = useState<string[]>([]);
   const [agentDefinitionIds, setAgentDefinitionIds] = useState<string[]>([]);
   const [restrictionIds, setRestrictionIds] = useState<string[]>([]);
+  const [launchStage, setLaunchStage] = useState<LaunchStage | null>(null);
+  const launchAbortRef = useRef<AbortController | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -555,27 +559,60 @@ export function ScratchLauncher({
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(launchPayload),
             };
-      const response = await fetch("/api/scratch-runs", requestInit);
+      const controller = new AbortController();
 
-      if (response.status !== 201 && response.status !== 202) {
+      launchAbortRef.current = controller;
+      setLaunchStage("precondition");
+
+      const response = await fetch("/api/scratch-runs", {
+        ...requestInit,
+        signal: controller.signal,
+      });
+
+      // A pre-stream precondition failure short-circuits to a JSON error with
+      // its HTTP status; only the staged launch is `text/event-stream`.
+      if (
+        !(response.headers.get("content-type") ?? "").includes(
+          "text/event-stream",
+        )
+      ) {
         setError(errorText(await response.json().catch(() => null)));
 
         return;
       }
 
-      const responsePayload = (await response.json()) as ScratchLaunchResponse;
+      const streamed = await readLaunchStream<ScratchLaunchResponse>(
+        response,
+        setLaunchStage,
+      );
+
+      if (streamed.error) {
+        setError(errorText(streamed.error));
+
+        return;
+      }
+      if (!streamed.result) {
+        setError(t("launchInterrupted"));
+
+        return;
+      }
 
       if (onLaunched) {
-        onLaunched(responsePayload);
+        onLaunched(streamed.result);
       } else {
         router.push(
-          responsePayload.dialogUrl ?? `/scratch-runs/${responsePayload.runId}`,
+          streamed.result.dialogUrl ?? `/scratch-runs/${streamed.result.runId}`,
         );
       }
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      // A user cancel (abort) GCs server-side; surface nothing.
+      if (!launchAbortRef.current?.signal.aborted) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
     } finally {
+      launchAbortRef.current = null;
+      setLaunchStage(null);
       setPending(false);
     }
   }
@@ -977,6 +1014,33 @@ export function ScratchLauncher({
           />
         </div>
       </details>
+
+      {launchStage ? (
+        <div
+          aria-live="polite"
+          className="flex items-center justify-between gap-3 rounded-lg border border-line bg-paper px-3 py-2 font-mono text-[12px] text-ink-2"
+          role="status"
+        >
+          <span>
+            {
+              {
+                precondition: t("launchStage.precondition"),
+                worktree_created: t("launchStage.worktree_created"),
+                materializing: t("launchStage.materializing"),
+                spawning: t("launchStage.spawning"),
+                session_ready: t("launchStage.session_ready"),
+              }[launchStage]
+            }
+          </span>
+          <button
+            className="rounded-full border border-line bg-ivory px-3 py-1 text-[11px] font-semibold text-mute transition hover:border-amber hover:text-amber"
+            type="button"
+            onClick={() => launchAbortRef.current?.abort()}
+          >
+            {t("cancel")}
+          </button>
+        </div>
+      ) : null}
 
       {error ? (
         <div className="rounded-lg border border-[#d9534f]/40 bg-[#d9534f]/10 px-3 py-2 text-[12px] leading-[1.5] text-[#d9534f]">

@@ -193,6 +193,19 @@ flowchart LR
     UI --> NextLaunch[Next Launch click<br/>attempt_number = max + 1]
 ```
 
+### Launch progress streaming (Implemented, FR-F1/F2, T6.3)
+
+`POST /api/runs` is content-negotiated. A board client sending
+`Accept: text/event-stream` receives staged progress on the response
+(`precondition → worktree_created → materializing(<adapter>)` — flow launch has
+no synchronous session spawn, so the `spawning`/`session_ready` stages are
+scratch-only) then a terminal `scratch.launch_result` frame, and the Launch
+button shows a live stage label. Every other caller (programmatic, the
+run-schedules dispatcher) gets the unchanged JSON 202. Preconditions throw
+before the stream opens → JSON error with the HTTP status; cancelling mid-launch
+(client disconnect) GCs the worktree pre-commit. The streaming seam is shared
+with scratch — see [`scratch-runs.md`](scratch-runs.md) and `web.openapi.yaml`.
+
 ### Relations gate launching (Implemented, ADR-078)
 
 `classifyTaskLaunchability` gains optional relation context and a

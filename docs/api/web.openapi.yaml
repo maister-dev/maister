@@ -2401,6 +2401,16 @@ paths:
         times out, returns non-200, or returns a malformed body, this route
         fails with `503 EXECUTOR_UNAVAILABLE` before creating a git worktree,
         run row, workspace row, or task status transition.
+
+        Implemented (FR-F1/F2, T6.3): content-negotiated. A board client that
+        sends `Accept: text/event-stream` receives the staged launch progress on
+        this response (`scratch.launch_progress` frames in order `precondition →
+        worktree_created → materializing(<adapter>)` — flow launch has NO
+        synchronous session spawn, so `spawning`/`session_ready` are scratch-only
+        — then a terminal `scratch.launch_result` frame wrapping
+        `PostRunResponse`, or an `error` frame on post-open failure). Every other
+        caller gets the unchanged JSON 202. Preconditions throw BEFORE the stream
+        opens either way → JSON error with the HTTP status below.
       operationId: postRun
       requestBody:
         required: true
@@ -2408,8 +2418,21 @@ paths:
           application/json:
             schema: { $ref: "#/components/schemas/PostRunBody" }
       responses:
+        "200":
+          description: |
+            Staged launch-progress stream (`text/event-stream`), returned only
+            when the request `Accept`s it. Emits `scratch.launch_progress` frames
+            then a terminal `scratch.launch_result` frame wrapping
+            `PostRunResponse`, or an `error` frame carrying a `MaisterError` code.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: >-
+                  SSE frames, one per `data: <json>\n\n` line (no `id:` —
+                  not durable). See the operation description for the frame union.
         "202":
-          description: Run accepted. May be Pending (queued) or Running.
+          description: Run accepted (JSON path). May be Pending (queued) or Running.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/PostRunResponse" }
@@ -2525,6 +2548,18 @@ paths:
         stored under the run artifact tree, never in the git worktree; accepted
         upload count/bytes are INFO logged, and rejected uploads are WARN
         logged without file contents.
+
+        Implemented (FR-F1/F2, sub-plan 2026-06-17, Option 2): once the
+        no-side-effect gates pass, the launch streams staged progress on its OWN
+        `text/event-stream` response — `data: {"type":"scratch.launch_progress",
+        "stage":…,"adapter"?}` frames in order `precondition → worktree_created
+        → materializing(<adapter>) → spawning → session_ready`, then a terminal
+        `data: {"type":"scratch.launch_result","result":<ScratchRunResponse>}`
+        frame. A failure AFTER the stream opens is a
+        `data: {"type":"error","code":<MaisterError>,"message"}` frame; a client
+        disconnect cancels the launch and GCs the worktree/session. Frames carry
+        no `id:` line (not durable). The gate failures BELOW stay JSON errors
+        with their HTTP status because they precede the stream.
       operationId: postScratchRun
       requestBody:
         required: true
@@ -2534,11 +2569,19 @@ paths:
           multipart/form-data:
             schema: { $ref: "#/components/schemas/ScratchRunMultipartBody" }
       responses:
-        "201":
-          description: Scratch run created and initial prompt dispatched.
+        "200":
+          description: |
+            Staged launch-progress stream (`text/event-stream`). Emits
+            `scratch.launch_progress` frames then a terminal
+            `scratch.launch_result` frame wrapping `ScratchRunResponse`, or an
+            `error` frame carrying a `MaisterError` code on post-open failure.
           content:
-            application/json:
-              schema: { $ref: "#/components/schemas/ScratchRunResponse" }
+            text/event-stream:
+              schema:
+                type: string
+                description: >-
+                  SSE frames, one per `data: <json>\n\n` line (no `id:` —
+                  not durable). See the operation description for the frame union.
         "400":
           description: Malformed JSON, multipart payload, or schema (`CONFIG`).
           content:

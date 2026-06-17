@@ -156,16 +156,21 @@ sequenceDiagram
         W-->>UI: 503 EXECUTOR_UNAVAILABLE
     end
     W->>DB: Pre-check shared scratch capacity
+    W-->>UI: event-stream opens, frame precondition
     W->>FS: Resolve base branch and scratch branch
     W->>FS: git worktree add -b branch base
+    W-->>UI: frame worktree_created
+    W-->>UI: frame materializing(adapter)
     W->>FS: Store launch uploads under run artifacts
     W->>FS: Materialize profile.json and instructions.md
     W->>DB: Re-check cap and insert run, workspace, scratch rows, messages, attachments, profile
+    W-->>UI: frame spawning
     W->>SV: POST /sessions with executor profile and adapterLaunch.env
     SV-->>W: 201 session handles
     W->>DB: Store supervisor and ACP session handles
+    W-->>UI: frame session_ready
     W->>SV: POST /sessions/{sessionId}/prompt
-    W-->>UI: 201 scratch run response
+    W-->>UI: frame launch_result (ScratchRunResponse)
 ```
 
 If `branchName` is omitted or blank, the web tier derives the existing generated
@@ -292,12 +297,15 @@ stateDiagram-v2
   re-normalization** to the new runner's wire form — **no materialization, no
   spawn** happens during entry (D1, D10). Native/global agent commands are not
   shown yet because no session exists.
-- **Submit (Designed).** Materialization runs for the **final** chosen runner
+- **Submit (Implemented).** Materialization runs for the **final** chosen runner
   (broad policy below) and the supervisor session is spawned. Launch progress
-  streams over SSE as staged steps `precondition → worktree_created →
-  materializing(<adapter>) → spawning → session_ready`, so the composer renders
-  a live loader instead of freezing; cancel mid-launch GCs the worktree/session
-  (D9, FR-F1/FR-F2).
+  streams on the launch POST's OWN `text/event-stream` response (NOT the run
+  SSE — the run row and its stream do not exist until launch finishes; sub-plan
+  2026-06-17, Option 2) as staged frames `precondition → worktree_created →
+  materializing(<adapter>) → spawning → session_ready`, then a terminal
+  `scratch.launch_result` frame; the launcher renders a live loader instead of
+  freezing, and cancelling (client disconnect) GCs the worktree/session
+  pre-commit or marks the run Crashed post-commit (D9, FR-F1/FR-F2).
 - **Running (Designed).** Autocomplete switches to the live ACP
   `available_commands_update` snapshot (latest-wins per session — the feature
   stops discarding this event) **unioned with static subagents** (claude-only;

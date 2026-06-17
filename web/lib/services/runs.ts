@@ -45,6 +45,10 @@ import { resolveEffectiveFlowRevision } from "@/lib/flows/lifecycle";
 import { runFlow } from "@/lib/flows/runner";
 import { worktreesRoot } from "@/lib/instance-config";
 import {
+  launchProgress,
+  type LaunchProgressEvent,
+} from "@/lib/runs/launch-progress";
+import {
   classifyManualTaskLaunchability,
   getLatestFlowRun,
 } from "@/lib/runs/launchability";
@@ -223,11 +227,24 @@ export type LaunchRunContext = {
   recordSuccessAudit?: (db: Db) => Promise<void>;
 };
 
-export async function launchRun(
+// Phase 6 (FR-F1/F2, T6.3): the staged flow launch. Mirrors the scratch seam —
+// every precondition runs up to the first `yield "precondition"`, so the route
+// can drive ONE `.next()` and map a head-check failure to a JSON error BEFORE
+// committing to `text/event-stream`. Flow launch has NO synchronous session
+// spawn (the engine runs `runFlow` in the background), so it emits only
+// `precondition → worktree_created → materializing(<adapter>)` and then returns
+// the terminal `{runId, status, queuePosition?}`. `opts.signal` aborts at the
+// materialize boundary → the existing worktree compensation (pre-commit GC).
+export async function* launchRunStaged(
   input: LaunchRunInput,
   ctx: LaunchRunContext,
   db?: Db,
-): Promise<{ runId: string; status: string; queuePosition?: number }> {
+  opts: { signal?: AbortSignal } = {},
+): AsyncGenerator<
+  LaunchProgressEvent,
+  { runId: string; status: string; queuePosition?: number },
+  void
+> {
   // FIXME(any): dual drizzle-orm peer-dep variants — pg|sqlite union.
   const _db = (db ?? getDb()) as unknown as {
     select: any;
@@ -723,6 +740,10 @@ export async function launchRun(
     "POST /api/runs branch targeting resolved",
   );
 
+  // Every precondition has passed; the route turns this first yield into the
+  // signal to start streaming (a throw above here is still a JSON error).
+  yield launchProgress("precondition");
+
   // Create the worktree BEFORE the DB transaction so a git failure
   // (branch already exists, dirty parent repo, missing path) does
   // NOT leave the task stuck in InFlight with an orphan run/workspace
@@ -734,6 +755,7 @@ export async function launchRun(
     worktreePath,
     startPoint: baseCommit,
   });
+  yield launchProgress("worktree_created");
 
   // M27/T-C8 (§7.1.8): freeze the resolved capability set onto the run so an
   // edit/publish mid-run cannot mutate it. flowOrigin: authored installs use a
@@ -775,6 +797,9 @@ export async function launchRun(
   );
 
   try {
+    // Cancel here (pre-commit) compensates the worktree via this catch.
+    opts.signal?.throwIfAborted();
+    yield launchProgress("materializing", capabilityAgent);
     // Deliver AIF capability bundles into the fresh worktree's .claude/ and
     // write the per-run .ai-factory/config.yaml git-ownership override. Gated
     // on >=1 Installed import so non-AIF projects never get a stray config.
@@ -889,6 +914,21 @@ export async function launchRun(
   }
 
   return { runId, status: "Pending", queuePosition: startResult.queuePosition };
+}
+
+// Back-compat drain: non-streaming callers (the non-SSE route path, scheduler
+// fires, tests) get a Promise with the same behavior they relied on before T6.3.
+export async function launchRun(
+  input: LaunchRunInput,
+  ctx: LaunchRunContext,
+  db?: Db,
+): Promise<{ runId: string; status: string; queuePosition?: number }> {
+  const gen = launchRunStaged(input, ctx, db);
+  let step = await gen.next();
+
+  while (!step.done) step = await gen.next();
+
+  return step.value;
 }
 
 export type RunDTO = {

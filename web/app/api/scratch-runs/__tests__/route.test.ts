@@ -315,15 +315,39 @@ function multipartLaunchRequest(args: {
   }) as NextRequest;
 }
 
+function cancelableLaunchRequest(controller: AbortController): NextRequest {
+  return new Request("http://x/api/scratch-runs", {
+    method: "POST",
+    body: JSON.stringify(launchPayload()),
+    signal: controller.signal,
+  }) as NextRequest;
+}
+
+function parseSseFrames(text: string): Array<Record<string, unknown>> {
+  return text
+    .split("\n\n")
+    .map((block) => block.trim())
+    .filter((block) => block.startsWith("data:"))
+    .map(
+      (block) =>
+        JSON.parse(block.slice(block.indexOf("data:") + 5).trim()) as Record<
+          string,
+          unknown
+        >,
+    );
+}
+
 describe("POST /api/scratch-runs", () => {
   it("launches a scratch supervisor session with persisted run rows", async () => {
     const res = await POST(launchRequest());
-    const body = (await res.json()) as {
+    const frames = parseSseFrames(await res.text());
+    const body = (frames.find((f) => f.type === "scratch.launch_result")
+      ?.result ?? {}) as {
       runId?: string;
       status?: { dialogStatus?: string };
     };
 
-    expect(res.status).toBe(201);
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
     expect(body.runId).toBeTruthy();
     expect(body.status?.dialogStatus).toBe("WaitingForUser");
     expect(mocks.addWorktree).toHaveBeenCalledWith(
@@ -367,7 +391,9 @@ describe("POST /api/scratch-runs", () => {
 
   it("prepares a scratch supervisor session without sending an empty initial prompt", async () => {
     const res = await POST(launchRequest({ prompt: "" }));
-    const body = (await res.json()) as {
+    const frames = parseSseFrames(await res.text());
+    const body = (frames.find((f) => f.type === "scratch.launch_result")
+      ?.result ?? {}) as {
       runId?: string;
       status?: { dialogStatus?: string };
     };
@@ -379,7 +405,7 @@ describe("POST /api/scratch-runs", () => {
     );
     const userMessageRow = insertedRows.find((row) => row.role === "user");
 
-    expect(res.status).toBe(201);
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
     expect(body.runId).toBeTruthy();
     expect(body.status?.dialogStatus).toBe("WaitingForUser");
     expect(mocks.createSession).toHaveBeenCalledWith(
@@ -407,12 +433,14 @@ describe("POST /api/scratch-runs", () => {
 
   it("treats an empty branch name as the generated scratch branch fallback", async () => {
     const res = await POST(launchRequest({ branchName: "" }));
-    const body = (await res.json()) as { runId?: string };
+    const frames = parseSseFrames(await res.text());
+    const body = (frames.find((f) => f.type === "scratch.launch_result")
+      ?.result ?? {}) as { runId?: string };
     const addArgs = mocks.addWorktree.mock.calls[0]?.[0] as
       | { branch?: string }
       | undefined;
 
-    expect(res.status).toBe(201);
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
     expect(body.runId).toBeTruthy();
     expect(addArgs?.branch).toMatch(/^maister\/demo\/scratch\/[0-9a-f-]+$/);
     expect(addArgs?.branch).not.toBe("maister/demo/scratch/test");
@@ -429,7 +457,9 @@ describe("POST /api/scratch-runs", () => {
         files: [file],
       }),
     );
-    const body = (await res.json()) as { runId?: string };
+    const frames = parseSseFrames(await res.text());
+    const body = (frames.find((f) => f.type === "scratch.launch_result")
+      ?.result ?? {}) as { runId?: string };
     const attachmentInsert = state.inserts.find((call) => {
       if (!Array.isArray(call.values)) return false;
 
@@ -442,7 +472,7 @@ describe("POST /api/scratch-runs", () => {
       : [];
     const uploaded = rows.find((row) => row.kind === "uploaded_file");
 
-    expect(res.status).toBe(201);
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
     expect(body.runId).toBeTruthy();
     expect(uploaded).toMatchObject({
       kind: "uploaded_file",
@@ -513,30 +543,6 @@ describe("POST /api/scratch-runs", () => {
     expect(state.inserts).toHaveLength(0);
   });
 
-  it("removes the worktree when capability materialization fails", async () => {
-    mocks.materializeCapabilityProfile.mockRejectedValueOnce(
-      new Error("materialize failed"),
-    );
-
-    const res = await POST(launchRequest());
-    const body = (await res.json()) as { code?: string };
-
-    expect(res.status).toBe(500);
-    expect(body.code).toBe("CRASH");
-    expect(mocks.addWorktree).toHaveBeenCalledTimes(1);
-    expect(mocks.removeWorktree).toHaveBeenCalledWith(
-      expect.objectContaining({
-        projectRepoPath: "/repo/demo",
-        force: true,
-      }),
-    );
-    expect(mocks.removeBranch).toHaveBeenCalledWith({
-      projectRepoPath: "/repo/demo",
-      branch: "maister/demo/scratch/test",
-    });
-    expect(mocks.createSession).not.toHaveBeenCalled();
-  });
-
   it("removes the worktree when the transactional capacity recheck loses the race", async () => {
     const { MaisterError } = (await import("@/lib/errors")) as {
       MaisterError: typeof RuntimeMaisterError;
@@ -546,11 +552,16 @@ describe("POST /api/scratch-runs", () => {
       new MaisterError("CONFLICT", "scratch run capacity is full"),
     );
 
+    // The in-transaction recheck fires AFTER worktree_created → it is an
+    // in-stream error frame + compensation, not a pre-stream JSON 409.
     const res = await POST(launchRequest());
-    const body = (await res.json()) as { code?: string };
+    const frames = parseSseFrames(await res.text());
 
-    expect(res.status).toBe(409);
-    expect(body.code).toBe("CONFLICT");
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+    expect(frames.find((f) => f.type === "error")).toMatchObject({
+      type: "error",
+      code: "CONFLICT",
+    });
     expect(mocks.addWorktree).toHaveBeenCalledTimes(1);
     expect(mocks.removeWorktree).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -564,5 +575,104 @@ describe("POST /api/scratch-runs", () => {
     });
     expect(mocks.createSession).not.toHaveBeenCalled();
     expect(state.inserts).toHaveLength(0);
+  });
+
+  // ── Phase 6 (FR-F1/F2): streaming-POST launch progress ──────────────────
+  it("streams ordered launch-progress SSE frames then a result frame", async () => {
+    const res = await POST(launchRequest());
+
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+
+    const frames = parseSseFrames(await res.text());
+    const stages = frames
+      .filter((f) => f.type === "scratch.launch_progress")
+      .map((f) => f.stage);
+
+    expect(stages).toEqual([
+      "precondition",
+      "worktree_created",
+      "materializing",
+      "spawning",
+      "session_ready",
+    ]);
+    expect(frames.find((f) => f.stage === "materializing")?.adapter).toBe(
+      "codex",
+    );
+
+    const result = frames.find((f) => f.type === "scratch.launch_result");
+
+    expect(
+      (result?.result as { runId?: string } | undefined)?.runId,
+    ).toBeTruthy();
+    expect(mocks.createSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("surfaces a typed in-stream error frame and compensates when materialization fails after worktree", async () => {
+    mocks.materializeCapabilityProfile.mockRejectedValueOnce(
+      new Error("materialize failed"),
+    );
+
+    const res = await POST(launchRequest());
+
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+
+    const frames = parseSseFrames(await res.text());
+
+    expect(frames.map((f) => f.stage)).toContain("worktree_created");
+    expect(frames.find((f) => f.type === "error")).toMatchObject({
+      type: "error",
+      code: "CRASH",
+    });
+    expect(mocks.removeWorktree).toHaveBeenCalledWith(
+      expect.objectContaining({ projectRepoPath: "/repo/demo", force: true }),
+    );
+    expect(mocks.removeBranch).toHaveBeenCalledWith({
+      projectRepoPath: "/repo/demo",
+      branch: "maister/demo/scratch/test",
+    });
+    expect(mocks.createSession).not.toHaveBeenCalled();
+  });
+
+  it("compensates worktree + branch on client cancel after worktree creation, before spawn", async () => {
+    const controller = new AbortController();
+
+    // Abort the launch the instant the worktree is created — the execute path
+    // must detect the abort at the next stage boundary and GC, not spawn.
+    mocks.addWorktree.mockImplementationOnce(async () => {
+      controller.abort();
+    });
+
+    // Drain the stream so the background start() loop (and its server-side
+    // compensation) completes before we assert.
+    const res = await POST(cancelableLaunchRequest(controller));
+
+    await res.text();
+
+    expect(mocks.addWorktree).toHaveBeenCalledTimes(1);
+    expect(mocks.materializeCapabilityProfile).not.toHaveBeenCalled();
+    expect(mocks.createSession).not.toHaveBeenCalled();
+    expect(mocks.removeWorktree).toHaveBeenCalledWith(
+      expect.objectContaining({ projectRepoPath: "/repo/demo", force: true }),
+    );
+    expect(mocks.removeBranch).toHaveBeenCalledWith({
+      projectRepoPath: "/repo/demo",
+      branch: "maister/demo/scratch/test",
+    });
+  });
+
+  it("keeps pre-stream precondition rejections as JSON with an HTTP status", async () => {
+    mocks.checkSupervisorHealth.mockResolvedValue({
+      kind: "unavailable",
+      reason: "down",
+      message: "no daemon",
+    });
+
+    const res = await POST(launchRequest());
+    const body = (await res.json()) as { code?: string };
+
+    expect(res.headers.get("content-type")).toContain("application/json");
+    expect(res.status).toBe(503);
+    expect(body.code).toBe("EXECUTOR_UNAVAILABLE");
+    expect(mocks.addWorktree).not.toHaveBeenCalled();
   });
 });

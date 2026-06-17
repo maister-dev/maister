@@ -1,6 +1,7 @@
 "use client";
 
 import type { Key, ReactElement } from "react";
+import type { LaunchStage } from "@/lib/runs/launch-progress";
 
 import { Button, ListBox, Select } from "@heroui/react";
 import { useRouter } from "next/navigation";
@@ -14,6 +15,8 @@ import {
 } from "react";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
+
+import { readLaunchStream } from "@/lib/runs/launch-progress";
 
 type DeliveryPolicyStrategy =
   | "merge"
@@ -168,6 +171,7 @@ export function LaunchPopover({
   const [pending, startTransition] = useTransition();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [launchStage, setLaunchStage] = useState<LaunchStage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [options, setOptions] = useState<LaunchOptions | null>(null);
   const [loadingOptions, setLoadingOptions] = useState(false);
@@ -291,9 +295,14 @@ export function LaunchPopover({
         }
       }
 
+      setLaunchStage("precondition");
+
       const res = await fetch("/api/runs", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          accept: "text/event-stream",
+        },
         body: JSON.stringify({
           taskId,
           flowId,
@@ -304,7 +313,10 @@ export function LaunchPopover({
         }),
       });
 
-      if (!res.ok) {
+      // A pre-stream precondition failure stays a JSON error with its status.
+      if (
+        !(res.headers.get("content-type") ?? "").includes("text/event-stream")
+      ) {
         const data = (await res.json().catch(() => null)) as {
           code?: string;
           message?: string;
@@ -315,11 +327,28 @@ export function LaunchPopover({
         return;
       }
 
+      const streamed = await readLaunchStream<{
+        runId: string;
+        status: string;
+      }>(res, setLaunchStage);
+
+      if (streamed.error) {
+        setError(streamed.error.code ?? streamed.error.message ?? "CRASH");
+
+        return;
+      }
+      if (!streamed.result) {
+        setError("CRASH");
+
+        return;
+      }
+
       setOpen(false);
       startTransition(() => router.refresh());
     } catch {
       setError("EXECUTOR_UNAVAILABLE");
     } finally {
+      setLaunchStage(null);
       setBusy(false);
     }
   }
@@ -611,7 +640,17 @@ export function LaunchPopover({
                     variant="primary"
                     onClick={() => void launch()}
                   >
-                    {busy || pending ? t("creating") : t("createRun")}
+                    {busy || pending
+                      ? launchStage
+                        ? {
+                            precondition: t("launchStage.precondition"),
+                            worktree_created: t("launchStage.worktree_created"),
+                            materializing: t("launchStage.materializing"),
+                            spawning: t("launchStage.spawning"),
+                            session_ready: t("launchStage.session_ready"),
+                          }[launchStage]
+                        : t("creating")
+                      : t("createRun")}
                   </Button>
                 </div>
               </div>

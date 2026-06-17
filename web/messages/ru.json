@@ -621,6 +621,14 @@
     "restrictions": "Ограничения",
     "launch": "Запустить черновой run",
     "launching": "Запуск…",
+    "launchInterrupted": "Запуск прерван до готовности сессии.",
+    "launchStage": {
+      "precondition": "Проверяем предусловия…",
+      "worktree_created": "Воркспейс создан…",
+      "materializing": "Материализуем возможности…",
+      "spawning": "Запускаем агента…",
+      "session_ready": "Сессия готова…"
+    },
     "noWorkspace": "нет воркспейса",
     "noMessages": "Сообщений пока нет.",
     "messagePlaceholder": "Продолжите диалог с кодинг-агентом.",
@@ -978,6 +986,13 @@
     "summary": "Создаст запуск для {branch} от {base}.",
     "createRun": "Создать запуск",
     "creating": "Создание…",
+    "launchStage": {
+      "precondition": "Проверка…",
+      "worktree_created": "Воркспейс…",
+      "materializing": "Материализация…",
+      "spawning": "Запуск…",
+      "session_ready": "Готово…"
+    },
     "runner": "Раннер",
     "runnerDefault": "Раннер по умолчанию",
     "promotionMode": "Промоушен",

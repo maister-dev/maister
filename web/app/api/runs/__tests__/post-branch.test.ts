@@ -9,11 +9,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   launchRun: vi.fn(),
+  launchRunStaged: vi.fn(),
   requireActiveSession: vi.fn(),
   requireProjectAction: vi.fn(),
 }));
 
-vi.mock("@/lib/services/runs", () => ({ launchRun: mocks.launchRun }));
+vi.mock("@/lib/services/runs", () => ({
+  launchRun: mocks.launchRun,
+  launchRunStaged: mocks.launchRunStaged,
+}));
 vi.mock("@/lib/authz", () => ({
   requireActiveSession: mocks.requireActiveSession,
   requireProjectAction: mocks.requireProjectAction,
@@ -27,6 +31,31 @@ function request(body: Record<string, unknown>): NextRequest {
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   }) as NextRequest;
+}
+
+function streamRequest(body: Record<string, unknown>): NextRequest {
+  return new Request("http://x/api/runs", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "text/event-stream",
+    },
+    body: JSON.stringify(body),
+  }) as NextRequest;
+}
+
+function parseSseFrames(text: string): Array<Record<string, unknown>> {
+  return text
+    .split("\n\n")
+    .map((block) => block.trim())
+    .filter((block) => block.startsWith("data:"))
+    .map(
+      (block) =>
+        JSON.parse(block.slice(block.indexOf("data:") + 5).trim()) as Record<
+          string,
+          unknown
+        >,
+    );
 }
 
 beforeEach(async () => {
@@ -113,5 +142,63 @@ describe("POST /api/runs — ADR-085 flow and delivery-policy overrides", () => 
       flowId: "flow-2",
       deliveryPolicy,
     });
+  });
+});
+
+describe("POST /api/runs — T6.3 content-negotiated launch progress", () => {
+  it("streams ordered launch-progress frames + a result frame on Accept text/event-stream", async () => {
+    mocks.launchRunStaged.mockImplementation(async function* () {
+      yield { type: "scratch.launch_progress", stage: "precondition" };
+      yield { type: "scratch.launch_progress", stage: "worktree_created" };
+      yield {
+        type: "scratch.launch_progress",
+        stage: "materializing",
+        adapter: "codex",
+      };
+
+      return { runId: "run-1", status: "Running" };
+    });
+
+    const res = await POST(streamRequest({ taskId: "task-1" }));
+
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+
+    const frames = parseSseFrames(await res.text());
+
+    expect(
+      frames
+        .filter((f) => f.type === "scratch.launch_progress")
+        .map((f) => f.stage),
+    ).toEqual(["precondition", "worktree_created", "materializing"]);
+
+    const result = frames.find((f) => f.type === "scratch.launch_result");
+
+    expect(result?.result).toMatchObject({ runId: "run-1", status: "Running" });
+    expect(mocks.launchRun).not.toHaveBeenCalled();
+  });
+
+  it("keeps a pre-stream precondition failure as a JSON error with its status", async () => {
+    // Dynamic import so the MaisterError class matches the route's instance
+    // after vi.resetModules() re-imported the route in beforeEach.
+    const { MaisterError } = await import("@/lib/errors");
+
+    mocks.launchRunStaged.mockImplementation(async function* () {
+      throw new MaisterError("PRECONDITION", "task is not launchable");
+    });
+
+    const res = await POST(streamRequest({ taskId: "task-1" }));
+    const body = (await res.json()) as { code?: string };
+
+    expect(res.headers.get("content-type")).toContain("application/json");
+    expect(res.status).toBe(409);
+    expect(body.code).toBe("PRECONDITION");
+  });
+
+  it("uses the JSON 202 path (not the generator) without the SSE Accept header", async () => {
+    const res = await POST(request({ taskId: "task-1" }));
+
+    expect(res.status).toBe(202);
+    expect(mocks.launchRun).toHaveBeenCalledTimes(1);
+    expect(mocks.launchRunStaged).not.toHaveBeenCalled();
   });
 });

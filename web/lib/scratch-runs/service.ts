@@ -66,6 +66,10 @@ import {
   workModeToPlanMode,
 } from "@/lib/scratch-runs/launch";
 import {
+  launchProgress,
+  type LaunchProgressEvent,
+} from "@/lib/runs/launch-progress";
+import {
   nextScratchMessageSequence,
   userScratchMessageDraft,
 } from "@/lib/scratch-runs/messages";
@@ -664,11 +668,21 @@ export async function completeScratchPromptTurn(args: {
   });
 }
 
-export async function launchScratchRun(args: {
-  body: ScratchLaunchInput;
-  uploadedFiles?: readonly ScratchUploadedFileInput[];
-  userId: string;
-}): Promise<ScratchRunResponse> {
+// Phase 6 (FR-F1/F2): the staged launch. Runs every precondition up to the
+// first `yield "precondition"`, so the route can drive ONE `.next()` and turn
+// a head-check failure into a JSON error (status preserved) BEFORE committing
+// to a `text/event-stream` response. Once past `precondition`, each side-effect
+// boundary yields a progress event and the final `return` is the result frame.
+// `opts.signal` is checked at each side-effect boundary so a client cancel GCs
+// the worktree (pre-commit) or marks the run Crashed (post-commit) — no orphan.
+export async function* launchScratchRunStaged(
+  args: {
+    body: ScratchLaunchInput;
+    uploadedFiles?: readonly ScratchUploadedFileInput[];
+    userId: string;
+  },
+  opts: { signal?: AbortSignal } = {},
+): AsyncGenerator<LaunchProgressEvent, ScratchRunResponse, void> {
   const db = getDb() as Db;
   const project = await loadProject(db, args.body.projectId);
 
@@ -758,6 +772,10 @@ export async function launchScratchRun(args: {
   let worktreeCreated = false;
   let uploadedAttachments: ReturnType<typeof uploadedFileMetadata>[] = [];
 
+  // Every precondition has passed; the route turns this first yield into the
+  // signal to start streaming (a throw above here is still a JSON error).
+  yield launchProgress("precondition");
+
   await addWorktree({
     projectRepoPath: project.repoPath,
     branch,
@@ -765,6 +783,7 @@ export async function launchScratchRun(args: {
     startPoint: args.body.baseBranch,
   });
   worktreeCreated = true;
+  yield launchProgress("worktree_created");
 
   let materialized: Awaited<ReturnType<typeof materializeCapabilityProfile>>;
   // FR-C2/C3: per-adapter capability home env (e.g. codex CODEX_HOME), merged
@@ -772,6 +791,9 @@ export async function launchScratchRun(args: {
   let adapterHomeEnv: Record<string, string> = {};
 
   try {
+    // Cancel here (pre-commit) compensates the worktree+branch via this catch.
+    opts.signal?.throwIfAborted();
+    yield launchProgress("materializing", executor.agent);
     materialized = await materializeCapabilityProfile({
       runId,
       worktreePath,
@@ -952,6 +974,10 @@ export async function launchScratchRun(args: {
   }
 
   try {
+    // Cancel here (post-commit) marks the run Crashed via this catch — the
+    // worktree + run row are tracked rows, not an orphan.
+    opts.signal?.throwIfAborted();
+    yield launchProgress("spawning");
     const session = await createSession({
       runId,
       projectSlug: project.slug,
@@ -990,6 +1016,7 @@ export async function launchScratchRun(args: {
         })
         .where(eq(scratchRuns.runId, runId));
     });
+    yield launchProgress("session_ready");
 
     if (!hasInitialPrompt) {
       log.info(
@@ -1088,6 +1115,30 @@ export async function launchScratchRun(args: {
     );
     throw err;
   }
+}
+
+// Back-compat drain: non-route callers get a Promise<ScratchRunResponse>;
+// `onProgress` observes stages without driving the generator directly.
+export async function launchScratchRun(
+  args: {
+    body: ScratchLaunchInput;
+    uploadedFiles?: readonly ScratchUploadedFileInput[];
+    userId: string;
+  },
+  opts: {
+    onProgress?: (ev: LaunchProgressEvent) => void;
+    signal?: AbortSignal;
+  } = {},
+): Promise<ScratchRunResponse> {
+  const gen = launchScratchRunStaged(args, { signal: opts.signal });
+  let step = await gen.next();
+
+  while (!step.done) {
+    opts.onProgress?.(step.value);
+    step = await gen.next();
+  }
+
+  return step.value;
 }
 
 async function loadScratchRows(db: Db, runId: string) {

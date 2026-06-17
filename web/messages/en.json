@@ -621,6 +621,14 @@
     "restrictions": "Restrictions",
     "launch": "Launch scratch run",
     "launching": "Launching…",
+    "launchInterrupted": "Launch interrupted before the session was ready.",
+    "launchStage": {
+      "precondition": "Checking preconditions…",
+      "worktree_created": "Worktree created…",
+      "materializing": "Materializing capabilities…",
+      "spawning": "Spawning the agent…",
+      "session_ready": "Session ready…"
+    },
     "noWorkspace": "no workspace",
     "noMessages": "No messages yet.",
     "messagePlaceholder": "Continue the conversation with the coding agent.",
@@ -978,6 +986,13 @@
     "summary": "Creates a run for {branch} from {base}.",
     "createRun": "Create run",
     "creating": "Creating…",
+    "launchStage": {
+      "precondition": "Checking…",
+      "worktree_created": "Worktree…",
+      "materializing": "Materializing…",
+      "spawning": "Spawning…",
+      "session_ready": "Ready…"
+    },
     "runner": "Runner",
     "runnerDefault": "Default runner",
     "promotionMode": "Promotion",

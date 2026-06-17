@@ -5,8 +5,14 @@ import pino from "pino";
 
 import { requireActiveSession } from "@/lib/authz";
 import { isMaisterError } from "@/lib/errors";
+import {
+  formatLaunchErrorFrame,
+  formatLaunchProgressFrame,
+  formatLaunchResultFrame,
+  type LaunchProgressEvent,
+} from "@/lib/runs/launch-progress";
 import { parseScratchRequest } from "@/lib/scratch-runs/request";
-import { launchScratchRun } from "@/lib/scratch-runs/service";
+import { launchScratchRunStaged } from "@/lib/scratch-runs/service";
 import { scratchLaunchInputSchema } from "@/lib/scratch-runs/types";
 
 const log = pino({
@@ -51,14 +57,31 @@ function errorResponse(err: unknown): NextResponse {
   );
 }
 
-export async function POST(req: NextRequest): Promise<NextResponse> {
+function frameErrorFor(err: unknown): { code: string; message: string } {
+  if (isMaisterError(err)) return { code: err.code, message: err.message };
+
+  return { code: "CRASH", message: "internal error" };
+}
+
+// Phase 6 (FR-F1/F2, sub-plan 2026-06-17): the launch streams its staged
+// progress on THIS response. We drive ONE generator step first — running every
+// precondition — so a head-check failure is still a JSON error with its HTTP
+// status. Only after `precondition` yields do we commit to `text/event-stream`;
+// side-effect failures (and client cancel) then surface as in-stream frames
+// while the generator's own compensation GCs the worktree/session.
+export async function POST(req: NextRequest): Promise<Response> {
+  let parsed: Awaited<ReturnType<typeof parseScratchRequest>>;
+  let userId: string;
+
   try {
     const user = await requireActiveSession();
-    const parsed = await parseScratchRequest(req, scratchLaunchInputSchema);
+
+    parsed = await parseScratchRequest(req, scratchLaunchInputSchema);
+    userId = user.id;
 
     log.debug(
       {
-        userId: user.id,
+        userId,
         projectId: parsed.body.projectId,
         contentType: parsed.contentType,
         fileCount: parsed.uploadedFiles.length,
@@ -66,14 +89,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       },
       "POST /api/scratch-runs parsed request",
     );
-
-    const response = await launchScratchRun({
-      body: parsed.body,
-      uploadedFiles: parsed.uploadedFiles,
-      userId: user.id,
-    });
-
-    return NextResponse.json(response, { status: 201 });
   } catch (err) {
     if (isMaisterError(err) && err.code === "PRECONDITION") {
       log.warn(
@@ -84,4 +99,73 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     return errorResponse(err);
   }
+
+  const gen = launchScratchRunStaged(
+    { body: parsed.body, uploadedFiles: parsed.uploadedFiles, userId },
+    { signal: req.signal },
+  );
+
+  // Run the head (all preconditions) up to the first `precondition` yield. A
+  // throw here predates any side-effect → JSON error with its HTTP status.
+  let first: IteratorResult<LaunchProgressEvent, unknown>;
+
+  try {
+    first = await gen.next();
+  } catch (err) {
+    if (isMaisterError(err) && err.code === "PRECONDITION") {
+      log.warn(
+        { code: err.code, message: err.message },
+        "POST /api/scratch-runs rejected",
+      );
+    }
+
+    return errorResponse(err);
+  }
+
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const enqueue = (frame: string) => {
+        try {
+          controller.enqueue(encoder.encode(frame));
+        } catch {
+          /* consumer gone — server-side compensation still runs below */
+        }
+      };
+
+      try {
+        if (!first.done) enqueue(formatLaunchProgressFrame(first.value));
+
+        let step: IteratorResult<LaunchProgressEvent, unknown> = first.done
+          ? first
+          : await gen.next();
+
+        while (!step.done) {
+          enqueue(formatLaunchProgressFrame(step.value));
+          step = await gen.next();
+        }
+        enqueue(formatLaunchResultFrame(step.value));
+      } catch (err) {
+        const { code, message } = frameErrorFor(err);
+
+        log.warn({ code, message }, "scratch launch stream failed");
+        enqueue(formatLaunchErrorFrame(code, message));
+      } finally {
+        try {
+          controller.close();
+        } catch {
+          /* already closed */
+        }
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    },
+  });
 }
