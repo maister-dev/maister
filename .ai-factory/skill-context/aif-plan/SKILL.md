@@ -2,10 +2,11 @@
 
 > Curated from review pass-through findings.
 > Sections under "Auto-generated rules" are managed by `/aif-evolve`; do not hand-edit them.
-> Last updated: 2026-06-01
+> Last updated: 2026-06-17
 > Based on: 2 adversarial-review pass-throughs (M6 / 2026-05-28, M7 / 2026-05-28)
 > + M10 verify pass-through (2026-05-30); /aif-evolve patch analysis (2026-05-30,
 > 2026-06-01 — M11b/M11c adversarial-review batch)
+> + /aif-evolve 107-patch batch (2026-06-17, cursor 2026-05-30 → 2026-06-16)
 
 ## Rules
 
@@ -193,3 +194,16 @@ Two hard requirements on the guards themselves:
 - **A new terminal transition that frees a concurrency slot MUST honor the slot-release contract** (`promoteNextPending` / `releaseSlotOnIdle`) — M11c's duration-cap kill freed a slot but never promoted the queue, stranding `Pending` runs.
 
 Reason: a new enum/route was propagated to the surfaces named in the plan's file list but not to *every* consumer (a second read model, the scheduler, the API spec, a coarse guard). The plan/file-list was the checklist and predated the later-added surfaces; the plan must require grepping the new value into every consumer class above.
+
+### Plan MUST allocate ADR + migration numbers up front for parallel branches and budget a renumber pass
+**Source**: 2026-06-05-14.42, 2026-06-07-20.16, 2026-06-09-18.47, 2026-06-09-20.30, 2026-06-11-09.20, 2026-06-12-12.46, 2026-06-10-23.57, 2026-06-11-12.51
+**Rule**: ADR numbers (`### ADR-NNN` in `docs/decisions.md`) and Drizzle migration `idx`/`tag` (in `migrations/meta/_journal.json`) are a GLOBALLY sequential, shared namespace. Two branches forked from one base each grab "the next number" and the clash is invisible on each branch (every gate is green) until merge. For any plan that adds an ADR or a migration:
+
+1. **Reserve the number first.** The next free ADR number is `max(### ADR-NNN)` at **main's HEAD** (`git show main:docs/decisions.md`), NOT the fork point and NOT the author's mental count. Write the `### ADR-NNN` header (even a one-line stub) before citing it — a cited ADR with no header at HEAD is a build break, not a doc nit. The next free migration number is `max` over `_journal.json`, not the highest file on the branch.
+2. **When milestones run in parallel, allocate both branches' ADR + migration numbers from a single source up front** so neither squats the other's number.
+3. **Budget an explicit renumber pass** (its own focused session, AFTER rebasing onto main) into every long-lived branch — it is a deliverable, not a merge-time surprise.
+4. `pnpm validate:docs` only parses Mermaid; it does NOT resolve `[ADR-NNN](decisions.md#...)` anchors. Plan a real anchor check (`scripts/validate-docs-adr-anchors.mjs`) and treat a green docs gate as non-evidence for ADR/migration numbering.
+
+### Plan MUST persist the launch-time decision the terminal path reads, and branch shared dispatch on run_kind
+**Source**: 2026-06-13-16.55, 2026-06-16-22.45
+**Rule**: When a launch resolves a field X from an "effective"/pinned/mutable source (a catalog projection, a package's newest revision, a policy snapshot), the plan MUST require persisting X on the run row at spawn (e.g. `runs.agent_workspace`, the runner snapshot, the delivery-policy snapshot) so the terminal/enforcement path acts on **what the run actually launched with**, never re-derives it from a projection that can drift after launch. The acceptance criteria must name: where X is snapshotted, and that the terminal path reads the snapshot (`row.x ?? wsCtx?.x`). Separately: any SHARED dispatch site that feeds a kind-specific mechanism (reconcile classifier, sweep, a composed/aggregating op switching on `run_kind`) MUST branch on `run_kind`/the discriminant BEFORE routing — a scratch/agent run driven into the flow-only resume driver replies context-less and `Crashed`s. Require a guard at the irreversible apply site in addition to the pure classifier, and a test per discriminant arm (half-A-tested + half-B-tested ≠ A∘B-tested).

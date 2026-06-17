@@ -2,10 +2,11 @@
 
 > Curated from review pass-through findings.
 > Sections under "Auto-generated rules" are managed by `/aif-evolve`; do not hand-edit them.
-> Last updated: 2026-06-01
+> Last updated: 2026-06-17
 > Based on: 2 analyzed patches + 1 adversarial-review pass-through (M7 / 2026-05-28)
 > + /aif-evolve patch analysis (M9-M10 docs-drift + auth-first, 2026-05-30;
 > M11b/M11c adversarial-review batch, 2026-06-01)
+> + /aif-evolve 107-patch batch (2026-06-17, cursor 2026-05-30 → 2026-06-16)
 
 ## Rules
 
@@ -78,9 +79,18 @@ Also flag tests in the same diff: a regression test MUST exist that simulates a 
 
 Per `docs/CLAUDE.md`'s "code wins" policy, analytics drift is a MUST-FIX in the SAME review, not a follow-up — "code lands, docs follow" is the exact pattern that produced consecutive M7 review rounds describing pre-Mx behavior. Also flag any spec section that describes behavior absent at HEAD unless it is explicitly tagged Designed Mx / Phase 2 (R6). The review summary MUST list each analytics surface checked (even "no change required"), mirroring the `/aif-verify` contract-surface enumeration on the review side.
 
+**Highest-risk drift sub-surfaces (re-found across M18-M34):** a **documented edge-case bullet** is the most dangerous drift — it reads as a reviewed invariant and steers future implementers back to the old shape, so a converged/removed special case MUST delete or rewrite its edge-case bullet (not just the diagrams/enums). On a **dormant-capability flip** (a previously-off actor/kind going live), grep older-stage analytics for `never` / `not yet` / `MUST NOT` claims + `(Designed)` status tags the flip invalidates. Derive DB cascade/default claims from the migration SQL `ON DELETE`, not prose. A retirement (a dropped route/status/field) is a contract-WIDE sweep: grep the whole docs tree for the old token (`413`, `files/content`) across Expectations bullets, mermaid labels, edge-case lists, error-taxonomy, env tables, and ADR wording — they drift independently of the primary prose. A `[ADR-NNN]` cite with no `### ADR-NNN` header at HEAD, or a migration number that disagrees with `_journal.json`, is a build break — grep `git show main:docs/decisions.md` for the number before approving a merge.
+
 ### Auth-first ordering — authenticate before any resource lookup, read routes included
 **Source**: M9 adversarial review rounds 2-3 (2026-05-29-13.52, 2026-05-29-14.38); M9 branch review (2026-05-29-15.38)
 **Rule**: For every route handler / server action in the diff, confirm the FIRST awaited operation is the session/active-session gate (`requireActiveSession` or equivalent, INCLUDING the forced-password-change gate) BEFORE any DB lookup of the named resource. A handler that reads `hitl_requests` / `runs` / `projects` before authenticating lets an unauthenticated or password-gated caller probe resource existence (a timing / error-shape oracle). This applies to READ routes (GET / stream) too, not only state-changing ones. Project-role authz then runs against a server-DERIVED `projectId` (from the resource row), never a body field. Flag ordering violations as a security finding, not a nit. (Three consecutive M9 review rounds re-found this on different routes — it is a systemic ordering bug, not a one-off.)
+
+**Extends to body-parse and write-scope (re-found across the M16/M17/M27/M34 routes):**
+- The auth gate MUST be the FIRST `await` BEFORE `req.json()` / Zod `.parse()` — parsing the body first returns `422 CONFIG` (leaking the body schema) to an unauthenticated caller instead of `401`. Flag any `req.json()` / `.parse(` appearing above `requireActiveSession`/`requireGlobalRole`/`ctx.authorize`. After reordering N routes, grep EVERY changed route — an "auth-first on all routes" claim was refuted by a `tasks` POST still parsing first.
+- `ctx.authorize` runs immediately after the minimal lookups that resolve `projectId`; every other precondition/classification/enriched error (launchability, archived, `KEY-N` blocker ids) comes AFTER it (else it leaks state to an unauthorized caller).
+- **Authz scope must match WRITE scope:** a project-URL route whose handler mutates platform-scoped rows (fans `setup.sh` trust across every project on a shared `package_installs` row) needs `requireGlobalRole("admin")`, not project `managePackages`. A project route updating rows with no `projectId` in the WHERE is a red flag.
+- **Fanout tables are not authorization:** a read model over per-recipient fanout rows (`inbox_items` filtered only by `(recipient_type, recipient_id)`) must re-derive visibility at read time (membership inner-join on `project_members` for non-admin + `archived_at IS NULL`); apply to the unused-but-exported sibling too.
+- Server-authoritative fields (`readinessStatus`, ids, timestamps) must NOT appear in request Zod schemas — `.strict()` then rejects them (422); a present-but-overridden field is still a trust smell.
 
 ## Auto-generated rules (managed by `/aif-evolve` — do not hand-edit below this line)
 
@@ -110,3 +120,27 @@ These are not nits — a claimed run holding a slot invisibly and a guard admitt
 ### Public response returns a DB row or a server-only handle — flag as #response-leak
 **Source**: 2026-05-30-13.38, 2026-05-31-23.58, 2026-06-01-01.29
 **Rule**: For every public route handler / server action response in the diff, flag `#response-leak` if it returns a DB row or a service object verbatim, OR includes any server-only operational field: `acp_session_id`, supervisor session id, adapter launch argv/env, materialized paths, worktree paths, internal cost handles. The expected fix is an explicit response-DTO projection at the boundary mirrored in `docs/api/web.openapi.yaml` + a test that asserts the EXACT shape (no extra keys) — never redaction-by-hope or "the service type is internal so it's fine". Also flag a public response whose documented shape does not match the route's actual return (duplicate OpenAPI 409 entries, a `capabilityProfile` schema that diverges from the handler) — a contract that lies is a review finding. (M11/scratch-runs leaked supervisor/materialization handles and shipped register routes returning richer-than-contracted bodies.)
+
+**Project DTOs PER discriminant, and treat any guarded field as sensitive at ALL boundaries.** A shared read-model DTO that crosses to the browser must be projected per `kind`/variant — a `permission` HITL row carries `supervisorSessionId` / `requestId` / `toolCall` in its `schema`, so the projection must be `row.kind === "permission" ? null : row.rawSchema`. This exact leak shipped across FOUR readers (board, inbox, run-detail, ext `GET …/hitl`) and into the RSC flight payload — when one boundary already guards a field, that is a signal it is sensitive at EVERY boundary; grep all sibling readers. A `{ ok, id }` response (not the stored row) is the secure default for create/mutate routes. Flag a "present for `<variant>`" field note in a shared schema the moment a second variant gains the field (same instinct as sibling-Zod-sweep, for docs).
+
+### Concurrency review red-flags — a transaction is atomicity, NOT serialization
+**Source**: 2026-06-02-18.44, 2026-06-03-00.52, 2026-06-03-01.27, 2026-06-07-18.35, 2026-06-08-13.13, 2026-06-10-11.42, 2026-06-10-20.48, 2026-06-11-15.00
+**Rule**: For every concurrent read-then-write / check-then-act in the diff, flag:
+- `SELECT … FOR UPDATE` + an unconditional `UPDATE … WHERE id` → last-writer-wins disguised as a lock. The write predicate must carry the client-observed value (`WHERE version = expected` / `WHERE role = expectedRole` / `WHERE status = observed RETURNING`); 0 rows → typed `CONFLICT`. → `#optimistic-concurrency`.
+- A `SELECT id … FOR UPDATE` that selects only `id` and never re-reads the guarded column (`status`) under the lock → the guard is on the optimistic pre-read, not the locked path. → `#toctou`.
+- A lock taken on table A (`runs`) while the mutation writes table B (`gate_results`) that other writers touch without A's lock → wrong-lock-scope; lock the row whose invariant you protect. → `#wrong-lock-scope`.
+- A set-membership CAS (`status IN (...)`) where the requirement is "reject if it changed under me" — use the EXACT observed value (`status = live.status`); a set CAS silently permits within-set transitions (a `stale` gate restored by a racing report). → `#cas`.
+- An insert gated by a read-then-write `SELECT` instead of `onConflictDoNothing().returning()` (TOCTOU → raw `23505` → 500 instead of 409). → `#race-condition`.
+- A CAS whose guard state is re-enterable by a timeout/reclaim with no fencing token (per-attempt stamp, `eq(lastFiredAt, stagedAt)`) → a hung attempt overwrites a newer reclaim's marker. → `#fencing`.
+- A batch loop staging side-effects that reads a pre-batch count (`countLiveRuns`) for each item instead of threading `reservedSlots` → cap-3 launched 10. → `#batch-state`.
+- `NOT (nullable_col = X AND …)` — three-valued logic drops NULL rows; require `IS DISTINCT FROM` / explicit `IS NULL` arms. → `#sql-null`.
+- A write-once/idempotency marker set AFTER a destructive or divergent side-effect (irreversible `discard` before the CAS) → claim-before-side-effect; marker-after is acceptable ONLY when every racer's effect is idempotent AND identical. → `#claim-order`.
+Require a REAL two-racer test (uncommitted write on a 2nd pg connection + `pg_stat_activity` wait, or one-shot `vi.spyOn(db,"transaction")`) for any 409-vs-500 contract — a single-threaded test is not evidence.
+
+### Establish branch scope with merge-base before trusting a diff — guard against the false-revert
+**Source**: 2026-06-09-14.23, 2026-06-09-18.47, 2026-06-05-15.06
+**Rule**: Before reviewing/diff-reasoning, run `git merge-base main HEAD`; if main is AHEAD of the merge-base, review `main...HEAD` (THREE-dot), never `main..HEAD` (two-dot) — a diverged base renders main-only files as branch "deletions" (false-revert) and contaminates `--stat`. A reviewer claim of "feature removed" MUST be backed by a removing hunk in a branch commit (`git log -p --follow <file>`), not mere absence in `base..HEAD`. Separately, for `git diff` RANGES in the code under review: a fixed stored SHA base → `base..branch` (literal tree delta); two moving branch tips → `base...branch`. A `...` against a fixed point silently omits committed changes; flag every diff helper and confirm which side is fixed. The project has multiple base→branch diff sites (`diffRange`, `diffRunWorkspace`, `diffNameStatus`) — they must share one semantic; a "match the other helper" comment is a consistency argument, not a correctness one.
+
+### DRY/SSOT — a `// mirrors X` comment is a must-fix, and a verdict must come from the one function that computes it
+**Source**: 2026-06-02-02.50, 2026-06-03-02.56, 2026-06-04-12.33, 2026-06-04-16.25, 2026-06-13-20.02
+**Rule**: A `// mirrors X:line`, `// Task N reconciles both`, or `byte-equivalent to X` comment is the author confessing duplication that WILL drift — treat it as a must-fix and require extracting the shared core (not "shared leaf helpers" — the COMPOSITION must be shared; a read model re-assembling shared primitives is a divergence waiting to happen). A user-facing capability flag (`isRunRecoverable`, badge readiness, "needs you" count) MUST derive from the ONE function that performs the capability (`classifyRecover`, `assertEvidenceReady`, `portfolio.totalNeeds`), never a re-implemented predicate that "should match"; when re-eval needs DB state, factor the pure DECISION into the shared module and keep the FETCH in the caller (don't drag IO into the SSOT). Flag a value that is a server-degradation signal (truncated/capped diff) smuggled as an in-band marker string instead of a structured `{ text, truncated }` flag — and flag any "can't fully see X" state at a promote/merge/approve gate that only annotates instead of blocking (or blocking + explicit override).

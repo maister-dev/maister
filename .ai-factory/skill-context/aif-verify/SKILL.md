@@ -2,9 +2,10 @@
 
 > Curated from review pass-through findings.
 > Sections under "Auto-generated rules" are managed by `/aif-evolve`; do not hand-edit them.
-> Last updated: 2026-06-01
+> Last updated: 2026-06-17
 > Based on: 2 adversarial-review pass-throughs (M6 / 2026-05-28, M7 / 2026-05-28)
 > + /aif-evolve M11b/M11c adversarial-review batch (2026-06-01)
+> + /aif-evolve 107-patch batch (2026-06-17, cursor 2026-05-30 → 2026-06-16)
 
 ## Rules
 
@@ -24,6 +25,13 @@ Concrete enumeration checklist (apply to every changed file):
 | New DB column, new table, new index | Drizzle migration committed AND `docs/database-schema.md` AND the relevant `docs/db/*.md` ERD file. |
 
 Mandatory gate: produce the list explicitly in the verification report (even if some entries are "no change required"), so reviewers can see the enumeration was performed. A passing verify report MUST cite the surfaces it checked. If a surface is on the list and the spec was NOT updated, escalate to a blocking finding — not a warning.
+
+**High-drift sub-surfaces the diff scan must also reconcile (each is "code lands, docs lie"):**
+- **Documented edge-case bullets** are the MOST dangerous drift — they read as a reviewed invariant and steer future implementers back to the old shape. A behavior that converged/removed a special case MUST delete or rewrite its old edge-case bullet, not just update the diagrams/enums.
+- **Dormant-capability flip:** when a change turns a previously-dormant capability ON (e.g. the polymorphic `agent` actor going live), grep the older-stage analytics for `never` / `not yet` / `MUST NOT` claims and `(Designed)` / future status tags that the flip invalidates.
+- **DB cascade/default claims** must be derived from the migration SQL `ON DELETE` clause, not the plan prose (docs claimed "no cascade"; migration `0040` shipped `ON DELETE CASCADE`).
+- **Cross-file duplicated tables** (the same outcome strings in `readiness.md` AND `configuration.md`) re-drift — flag them to be collapsed per "cross-reference, do not duplicate," and verify the new value landed in EVERY copy (`system-analytics/` + `configuration.md` + `error-taxonomy.md` + every `.openapi.yaml`).
+- **Self-contradiction on a touched value:** grep for a headline default the change touched appearing with two values (`MAISTER_MAX_CONCURRENT_RUNS` was `6` at one line and "global cap = 3" at another). New schema (`runs.agent_workspace`, migration `0052`) must be added to the runs/agents domain docs + `database-schema.md` citing its migration.
 
 ### Runtime parity gate — verify deployment can actually exercise the new path
 **Source**: M6 adversarial review pass-through (2026-05-28)
@@ -77,4 +85,22 @@ Reason: M7's first design described the three failure modes the Codex adversaria
 
 4. **Never trust a piped exit code.** A verify command piped through `| tail` / `| grep` / `| head` reports the LAST stage's exit status (0), masking a failing vitest / lint / typecheck. Run the command BARE and check `$?`, or use `set -o pipefail`, before asserting pass/fail. A green-looking `| tail` is the worst false-green — it nearly shipped a 20-test-red integration suite as "exit 0". Also: a committed integration seed that inserts a FK/`NOT NULL` column as `null` (loose `drizzle(pool)` does not enforce it) makes a Docker-gated suite silently red — confirm the suite actually ran green, not merely "was present".
 
-The verify report MUST state, for each applicable gate, the production call site / parse path / exact count / bare-exit-code check it confirmed. A gate skipped is an automatic warning; a confirmed false-green (dead validation, literal-fed schema test, piped exit code hiding red) is a blocking finding.
+5. **Mock-hid-the-bug.** A recovery/branch/dispatch action (redispatch, resume, retry, promote) MUST have a test that drives the REAL executor and asserts an OBSERVABLE effect (a new attempt ran, a row advanced), NEVER "the dispatcher was called" against a mock — `runGraph`'s no-op guard returned `{state:"redispatched"}` while doing nothing, invisible because the test mocked `runFlow`. Relatedly, do not let a seeded e2e fixture stand in for the REAL producer of a NEW contract (the `aif` evidence manifest "passed" e2e while being unproducible through the real runner because the e2e seeded the artifacts) — exercise the real producer at least once.
+
+6. **Codify the contract, not the current emission.** A test that asserts "the shape the code currently returns" cements drift. When the contract lives in docs or another module (`classifyRecover`, `assertEvidenceReady`, OpenAPI), assert against THAT, with the EXACT DTO shape (object vs string array; no extra keys) — a route test asserting a field is ABSENT (`expect(body.files).toBeUndefined()`) is a tripwire: when it flips to presence, the matching OpenAPI schema is a required edit in the same commit.
+
+7. **Vacuous-pass guard.** A test asserting "did NOT happen" (not crashed, not quarantined, no supersede) MUST also assert the path was actually exercised (e.g. `candidates >= 1`) so it cannot pass on an empty/short-circuited run. A bounded-query/N+1 test must seed ENOUGH rows to trip a per-run loop (8 runs, not 1).
+
+8. **Concurrency tests must hit the lock branch.** A Postgres-only branch (`isPostgres()` + `FOR UPDATE`/CAS) silently skips unless `process.env.DB_URL` points at the testcontainer in `beforeAll`; the contention contract (409-vs-500) needs TWO racers, not a single-threaded test. Env-var fixtures must capture-and-restore (`originalDbUrl = process.env.DB_URL`; in `afterAll`, `delete` only when originally `undefined`, else restore) — an unconditional `delete` corrupts a pre-existing value.
+
+9. **Probe the host before deferring; mind the vitest realm + glob.** Before deferring a Testcontainers lane as "unrunnable here," probe the HOST with the sandbox disabled (`docker info` against `~/.docker/run/docker.sock`) — "no container runtime" is usually a sandbox limit, not a host one. `vi.resetModules()` + a dynamically-imported SUT breaks `instanceof MaisterError` (fresh module realm) → status maps to 500 instead of 409. `.integration.test.ts` is for real external deps only; a pure-function test belongs in the unit project — after renaming across the unit/integration glob boundary, re-run BOTH projects and confirm per-project counts shifted (a file matching neither glob runs nowhere).
+
+The verify report MUST state, for each applicable gate, the production call site / parse path / exact count / bare-exit-code check / real-executor effect it confirmed. A gate skipped is an automatic warning; a confirmed false-green (dead validation, literal-fed schema test, piped exit code hiding red, mock-asserted dispatch, vacuous "did-not-happen" test) is a blocking finding.
+
+### ADR / migration numbers and journal integrity — re-grep main's HEAD at merge, never trust a checkbox
+**Source**: 2026-06-07-20.16, 2026-06-09-18.47, 2026-06-11-09.20, 2026-06-11-12.51, 2026-06-10-23.57, 2026-06-09-20.30
+**Rule**: ADR numbers and Drizzle migration `idx`/`tag` are a globally-sequential shared namespace, so a collision is invisible on a single branch (every gate green). Before declaring verify pass on a branch that adds an ADR or migration:
+- Re-grep `git show main:docs/decisions.md | grep "^### ADR-"` AND `git show main:web/lib/db/migrations/meta/_journal.json` for the claimed numbers — immediately before merge AND again every time main moves. A `[x]` checkbox or commit subject is NOT evidence the ADR/migration landed (a Task marked `[x]` "write ADR-063" shipped with the ADR silently omitted).
+- Verify each migration number against the JOURNAL, not the prose (`0029` documented in 5 places shipped as `0030`).
+- `pnpm validate:docs` only parses Mermaid; `validate-docs-adr-anchors.mjs` only checks an anchor RESOLVES, not that the visible `[ADR-NNN]` link text matches the `#adr-NNN-…` slug it targets — an over-reached `[ADR-072](#adr-071-…)` passes green. Verify link-text↔slug agreement manually.
+- Keep/confirm a `migration-journal-integrity` test asserting every tag↔file, unique `idx`, unique `tag` (Drizzle's `readMigrationFiles` ignores `idx`, iterates by array order, resolves `${tag}.sql`, dedups by `when` — so a reserved idx-gap is safe but an orphan/dup tag is not).
