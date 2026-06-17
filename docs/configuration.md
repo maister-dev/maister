@@ -712,6 +712,22 @@ live-adapter spike — no cell is flipped. See
 boundary) and the frozen enforcement spec in
 [`system-analytics/flow-settings.md`](system-analytics/flow-settings.md).
 
+**Per-adapter capability home (Implemented — capability composer, M14
+generalization).** Beyond claude's cwd `.claude/`, non-claude adapters get their
+capability home redirected through a **per-session computed env** that the web
+tier injects into the launch's `adapterLaunch.env`
+(`web/lib/capabilities/adapter-home.ts`) — NOT a host environment variable. Codex
+gets a composed `CODEX_HOME` (symlinked global `auth.json`/`config.toml` +
+per-skill symlinks of `~/.codex/skills/*` + the materialized project `skills/`,
+project wins on a name collision); gemini/opencode/mimo get their home/config
+redirect per the adapter `materialization` descriptor. The directory is
+run-scoped under the run artifact tree, so there is **no compose / `.env` wiring
+and no new bound port or sidecar** — the per-session env is the entire deployment
+surface. See [`system-analytics/acp-runners.md`](system-analytics/acp-runners.md)
+and [`supervisor.md`](supervisor.md). (Codex flips to cwd-`.codex` discovery when
+openai/codex#21907 lands; the gemini/opencode/mimo skill subpath is still being
+corrected — `<home>/skills` is not gemini's discovery path.)
+
 **`ai_coding` / `judge` settings** (agent-capability shape):
 
 `judge` carries the same capability shape MINUS `runner_type`, `runner`,

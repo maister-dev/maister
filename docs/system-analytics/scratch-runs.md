@@ -403,7 +403,7 @@ secret material.
 | Permission deferred times out | `HITL_TIMEOUT`; scratch transitions to `Crashed` with error metadata. |
 | Promote merge conflict | `409 CONFLICT`; run remains `Review` and the worktree stays available. |
 | Shared lifecycle drop from scratch detail | Preserve first, remove only a MAIster-owned worktree, set `removed_at`, and mark non-`Done` runs/dialog metadata `Abandoned`. |
-| Composer launch canceled mid-stream (Designed — FR-F2) | Cancel during `materializing`/`spawning` GCs the worktree and any partial session; no orphan worktree/session remains and a typed `MaisterError` code surfaces. |
+| Composer launch canceled mid-stream (Implemented — FR-F2) | A client disconnect aborts at the next stage boundary: pre-commit (during `materializing`) it GCs the worktree+branch; post-commit it marks the run `Crashed` (a tracked row, not an orphan). No orphan worktree/session remains. |
 
 ## Acceptance Criteria
 

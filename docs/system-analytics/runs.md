@@ -579,11 +579,19 @@ Two invariants bind this to the existing run stream:
    noise**, and every other `sessionUpdate` consumer must keep working with the
    event now captured (fan-out audit across both former discard sites).
 
-### Launch progress streaming (Designed — FR-F1/F2)
+### Launch progress streaming (Implemented — FR-F1/F2)
 
-`launchScratchRun` (and flow launch) **(Designed)** emit staged SSE progress so
-the composer can render a live loader instead of freezing on a blocking POST
-(decision D9). The stages are server-provided labels:
+`launchScratchRun` (and flow launch via `launchRun`) stream staged progress on
+the **launch POST's own `text/event-stream` response** — NOT the run SSE (the
+run row and its `/api/runs/{runId}/stream` do not exist until the launch
+finishes; sub-plan 2026-06-17, Option 2). Each side-effect boundary yields a
+frame so the composer/board renders a live loader instead of freezing on a
+blocking POST (decision D9). Scratch spawns its session synchronously and emits
+all five stages; flow launch has no synchronous spawn (`runFlow` runs in the
+background) and `POST /api/runs` is **content-negotiated** — it streams the
+`precondition → worktree_created → materializing(<adapter>)` subset only when the
+client `Accept`s `text/event-stream`, otherwise it returns the JSON 202. The
+stages are server-provided labels:
 
 ```mermaid
 stateDiagram-v2
@@ -595,12 +603,14 @@ stateDiagram-v2
     session_ready --> [*]
 ```
 
-Failure on any stage surfaces a typed `MaisterError` code (the same taxonomy the
-launch choke points already raise — `PRECONDITION`, `SPAWN`,
-`EXECUTOR_UNAVAILABLE`, …) rather than a bare string. The durable intent
-(workspace + run row) is written **before** any side-effect, and **every**
-failure path — including cancel mid-launch — GCs the worktree/session so no
-orphan worktree or live ACP session is left behind.
+The route drives one generator step (running every precondition) BEFORE
+committing to the stream, so a precondition failure is a JSON error with its
+HTTP status; a failure AFTER the stream opens surfaces a typed `MaisterError`
+code as an in-stream `error` frame (`PRECONDITION`, `EXECUTOR_UNAVAILABLE`, …)
+rather than a bare string. A client cancel (disconnect) aborts at the next
+side-effect boundary: pre-commit it GCs the worktree+branch (no orphan);
+post-commit it leaves a **tracked** run row (scratch → `Crashed`, flow → the
+already-inserted run) — never an orphan worktree or live ACP session.
 
 ## Expectations
 
@@ -662,11 +672,13 @@ orphan worktree or live ACP session is left behind.
   event MUST NOT surface as transcript noise, SSE `lastEventId` reconnect
   MUST still work, and the snapshot is exposed scratch-only via
   `GET /api/scratch-runs/[runId]/commands`.
-- **(Designed, FR-F1/F2)** A launch (`launchScratchRun` and flow launch)
-  MUST emit staged SSE progress
-  (`precondition → worktree_created → materializing → spawning →
-  session_ready`), surface failures as a typed `MaisterError` code, and
-  leave NO orphan worktree/session on any failure or cancel-mid-launch path.
+- **(Implemented, FR-F1/F2)** A launch (`launchScratchRun`; flow `launchRun`
+  when the client `Accept`s `text/event-stream`) MUST stream staged progress on
+  the POST's own `text/event-stream` response (scratch: `precondition →
+  worktree_created → materializing → spawning → session_ready`; flow: the
+  `precondition → worktree_created → materializing` subset — no synchronous
+  spawn), surface a post-open failure as a typed `MaisterError` `error` frame,
+  and leave NO orphan worktree/session on any failure or cancel-mid-launch path.
 - **(Implemented)** HITL response surface
   (`POST /api/runs/[runId]/hitl/[hitlRequestId]/respond`) does NOT
   flip `runs.status` to `Running` itself; the runner is the sole
