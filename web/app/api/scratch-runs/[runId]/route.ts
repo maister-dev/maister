@@ -13,6 +13,7 @@ import { extractOptions } from "@/lib/queries/hitl";
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const {
   runs,
+  projects,
   hitlRequests,
   scratchAttachments,
   scratchCapabilityProfiles,
@@ -255,6 +256,7 @@ export async function GET(
     await requireProjectAction(run.projectId, "readScratchRun");
 
     const [
+      projectRows,
       workspaceRows,
       messageRows,
       attachmentRows,
@@ -262,6 +264,7 @@ export async function GET(
       pendingHitlRows,
       creatorRows,
     ] = await Promise.all([
+      db.select().from(projects).where(eq(projects.id, run.projectId)),
       db.select().from(workspaces).where(eq(workspaces.runId, runId)),
       db.select().from(scratchMessages).where(eq(scratchMessages.runId, runId)),
       db
@@ -281,6 +284,8 @@ export async function GET(
         : Promise.resolve([]),
     ]);
     const creator = creatorRows[0];
+    const projectSlug =
+      (projectRows[0] as { slug?: string } | undefined)?.slug ?? null;
     const pendingHitl =
       (pendingHitlRows.find(
         (row: PendingHitlRow) => row.respondedAt === null,
@@ -290,6 +295,7 @@ export async function GET(
       run: {
         id: run.id,
         projectId: run.projectId,
+        projectSlug,
         runnerId: run.runnerId,
         runnerResolutionTier: run.runnerResolutionTier,
         capabilityAgent: run.capabilityAgent,

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import {
   hitlRequests as hitlRequestsTable,
+  projects as projectsTable,
   runs as runsTable,
   scratchAttachments as scratchAttachmentsTable,
   scratchCapabilityProfiles as scratchCapabilityProfilesTable,
@@ -15,6 +16,7 @@ import { MaisterError } from "@/lib/errors";
 type Row = Record<string, unknown>;
 type Tables = {
   hitl_requests: Row[];
+  projects: Row[];
   runs: Row[];
   scratch_attachments: Row[];
   scratch_capability_profiles: Row[];
@@ -26,6 +28,7 @@ type Tables = {
 const dbState: { tables: Tables } = {
   tables: {
     hitl_requests: [],
+    projects: [],
     runs: [],
     scratch_attachments: [],
     scratch_capability_profiles: [],
@@ -37,6 +40,7 @@ const dbState: { tables: Tables } = {
 
 function tableOf(table: unknown): keyof Tables {
   if (table === hitlRequestsTable) return "hitl_requests";
+  if (table === projectsTable) return "projects";
   if (table === runsTable) return "runs";
   if (table === scratchAttachmentsTable) return "scratch_attachments";
   if (table === scratchCapabilityProfilesTable) {
@@ -90,6 +94,7 @@ vi.mock("@/lib/authz", () => ({
 function seedScratchRun(): string {
   const runId = "scratch-get-run";
 
+  dbState.tables.projects = [{ id: "project-1", slug: "demo" }];
   dbState.tables.runs = [
     {
       id: runId,
@@ -215,6 +220,7 @@ describe("GET /api/scratch-runs/[runId]", () => {
     expect(body.run).not.toHaveProperty("acpSessionId");
     expect(body.run).not.toHaveProperty("executorId");
     expect(body.run).toMatchObject({
+      projectSlug: "demo",
       runnerId: "runner-claude",
       runnerResolutionTier: "projectDefault",
       capabilityAgent: "claude",

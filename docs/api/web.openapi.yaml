@@ -10046,6 +10046,7 @@ components:
           properties:
             id: { type: string, format: uuid }
             projectId: { type: string, format: uuid }
+            projectSlug: { type: string, nullable: true }
             runnerId: { type: string, nullable: true }
             runnerResolutionTier:
               type: string
