@@ -1,8 +1,12 @@
 import type { ReactElement } from "react";
 
+import Link from "next/link";
 import clsx from "clsx";
 
 import { MarkdownBody } from "@/components/social/markdown-body";
+
+const keyRefChipClass =
+  "rounded border border-line bg-ivory px-1.5 py-px font-mono text-[11px] font-bold tracking-[0.04em] text-ink-2";
 
 export interface RunHeaderChangeSummary {
   fileCount: number;
@@ -29,6 +33,8 @@ export interface RunHeaderProps {
   subtitle?: string;
   // KEY-N reference chip beside the status badge (null for scratch runs).
   keyRef?: string | null;
+  // Task detail href; turns the KEY-N chip into a link to the task page.
+  taskHref?: string | null;
   // The launching task's prompt, rendered as a collapsible Markdown block.
   taskPrompt?: string | null;
   status: string;
@@ -68,6 +74,7 @@ export function RunHeader({
   title,
   subtitle,
   keyRef,
+  taskHref,
   taskPrompt,
   status,
   branch,
@@ -104,12 +111,22 @@ export function RunHeader({
             {status}
           </span>
           {keyRef ? (
-            <span
-              className="rounded border border-line bg-ivory px-1.5 py-px font-mono text-[11px] font-bold tracking-[0.04em] text-ink-2"
-              data-testid="run-header-keyref"
-            >
-              {keyRef}
-            </span>
+            taskHref ? (
+              <Link
+                className={clsx(
+                  keyRefChipClass,
+                  "transition-colors hover:border-amber hover:text-amber",
+                )}
+                data-testid="run-header-keyref"
+                href={taskHref}
+              >
+                {keyRef}
+              </Link>
+            ) : (
+              <span className={keyRefChipClass} data-testid="run-header-keyref">
+                {keyRef}
+              </span>
+            )
           ) : null}
           {branch ? (
             <span

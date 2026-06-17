@@ -440,10 +440,11 @@ function byTestId(container: ParentNode, id: string): HTMLElement {
 }
 
 describe("WorkbenchLifecycleActions rail menu", () => {
-  it("shows inline Stop and a live action-sheet (open, rename, stop & archive, stop & drop)", async () => {
+  it("has no inline Stop; the action-sheet carries stop, stop & archive, stop & drop", async () => {
     renderMenu({ runKind: "scratch", actions: ["stop"] });
 
-    expect(document.body.querySelector('[data-testid="rail-stop"]')).not.toBeNull();
+    // Stop is no longer an inline button — it lives in the sheet.
+    expect(document.body.querySelector('[data-testid="rail-stop"]')).toBeNull();
 
     await click(byTestId(document.body, "rail-menu-trigger"));
 
@@ -451,12 +452,46 @@ describe("WorkbenchLifecycleActions rail menu", () => {
 
     expect(sheet.querySelector('[data-testid="menu-open"]')).not.toBeNull();
     expect(sheet.querySelector('[data-testid="menu-rename"]')).not.toBeNull();
+    expect(sheet.querySelector('[data-testid="menu-stop"]')).not.toBeNull();
     expect(
       sheet.querySelector('[data-testid="menu-stopArchive"]'),
     ).not.toBeNull();
     expect(sheet.querySelector('[data-testid="menu-stopDrop"]')).not.toBeNull();
-    // Plain Stop is the inline primary, never duplicated in the sheet.
-    expect(sheet.querySelector('[data-testid="menu-stop"]')).toBeNull();
+  });
+
+  it("an agent run gets a plain Stop in the sheet (no combined stop & *)", async () => {
+    renderMenu({
+      runKind: "agent",
+      actions: ["stop"],
+      runHref: "/runs/run-1",
+    });
+
+    await click(byTestId(document.body, "rail-menu-trigger"));
+
+    const sheet = byTestId(document.body, "rail-action-sheet");
+
+    expect(sheet.querySelector('[data-testid="menu-stop"]')).not.toBeNull();
+    expect(sheet.querySelector('[data-testid="menu-stopArchive"]')).toBeNull();
+    expect(sheet.querySelector('[data-testid="menu-stopDrop"]')).toBeNull();
+    expect(sheet.querySelector('[data-testid="menu-rename"]')).toBeNull();
+  });
+
+  it("menu Stop posts to the plain stop endpoint", async () => {
+    const fetchMock = vi.fn<FetchLike>(async () => jsonResponse({ ok: true }));
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderMenu({ runKind: "flow", actions: ["stop"] });
+
+    await click(byTestId(document.body, "rail-menu-trigger"));
+    await click(byTestId(document.body, "menu-stop"));
+    await click(findButton(document.body, "workbenchLifecycle.dialog.confirm"));
+    await flushPromises();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/runs/run-1/stop",
+      expect.objectContaining({ method: "POST" }),
+    );
   });
 
   it("shows a terminal action-sheet (open, archive, drop) with no inline Stop", async () => {

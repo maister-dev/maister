@@ -43,6 +43,17 @@ describe("RunHeader — task-first header", () => {
     expect(html).toContain("MAI-42");
   });
 
+  it("renders the KEY-N chip as a link to the task page when taskHref is set", () => {
+    const html = render({
+      keyRef: "MAI-42",
+      taskHref: "/projects/maister/tasks/42",
+    });
+
+    expect(html).toContain('data-testid="run-header-keyref"');
+    expect(html).toContain('href="/projects/maister/tasks/42"');
+    expect(html).toContain("MAI-42");
+  });
+
   it("omits the KEY-N chip for scratch runs (keyRef null)", () => {
     const html = render({ keyRef: null });
 

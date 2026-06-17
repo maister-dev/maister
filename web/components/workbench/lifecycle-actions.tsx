@@ -9,6 +9,7 @@ import {
   ArchiveBoxIcon,
   ArrowTopRightOnSquareIcon,
   PencilSquareIcon,
+  StopIcon,
   TrashIcon,
 } from "@heroicons/react/24/outline";
 import Link from "next/link";
@@ -47,6 +48,7 @@ type CombinedActionId = "stopArchive" | "stopDrop";
 const MENU_ICON: Partial<Record<UiActionId, typeof TrashIcon>> = {
   open: ArrowTopRightOnSquareIcon,
   rename: PencilSquareIcon,
+  stop: StopIcon,
   stopArchive: ArchiveBoxArrowDownIcon,
   archive: ArchiveBoxIcon,
   stopDrop: TrashIcon,
@@ -179,8 +181,8 @@ function renderActions(
 }
 
 // Rail `menu` variant: the ordered action-sheet items per run state. Plain Stop
-// is the inline primary (never listed here); snapshot/push/handoff stay in the
-// run card. Combined Stop & * are flow + scratch only (agent out of scope).
+// stops the run and leaves the worktree; snapshot/push/handoff stay in the run
+// card. Combined Stop & * are flow + scratch only (agent gets plain Stop only).
 function railMenuItems(
   actions: WorkbenchLifecycleActionId[],
   runKind: RunKind,
@@ -190,6 +192,8 @@ function railMenuItems(
   if (runKind === "scratch") items.push("rename");
 
   if (actions.includes("stop")) {
+    items.push("stop");
+
     if (runKind === "flow" || runKind === "scratch") {
       items.push("stopArchive", "stopDrop");
     }
@@ -708,48 +712,29 @@ export function WorkbenchLifecycleActions({
       data-testid="workbench-lifecycle-actions"
     >
       {variant === "menu" ? (
-        <>
-          {actions.includes("stop") ? (
-            <button
-              className={clsx(
-                buttonBase,
-                "h-[26px] border-line bg-paper px-2 text-[9.5px] text-mute hover:border-mute hover:text-ink-2",
-                busyAction === "stop" && "opacity-60",
-              )}
-              data-testid="rail-stop"
-              disabled={busyAction !== null}
-              type="button"
-              onClick={() => openDialog("stop")}
-            >
-              {busyAction === "stop"
-                ? t("busy", { action: t("action.stop") })
-                : t("action.stop")}
-            </button>
-          ) : null}
-          <button
-            aria-label={t("tooltip.menu")}
-            className={clsx(
-              buttonBase,
-              "h-[26px] w-[26px] justify-center border-line bg-paper p-0 text-mute hover:border-mute hover:text-ink-2",
-            )}
-            data-testid="rail-menu-trigger"
-            disabled={busyAction !== null}
-            title={t("tooltip.menu")}
-            type="button"
-            onClick={() => openDialog("menu")}
+        <button
+          aria-label={t("tooltip.menu")}
+          className={clsx(
+            buttonBase,
+            "h-[26px] w-[26px] justify-center border-line bg-paper p-0 text-mute hover:border-mute hover:text-ink-2",
+          )}
+          data-testid="rail-menu-trigger"
+          disabled={busyAction !== null}
+          title={t("tooltip.menu")}
+          type="button"
+          onClick={() => openDialog("menu")}
+        >
+          <svg
+            aria-hidden="true"
+            className="h-3.5 w-3.5"
+            fill="currentColor"
+            viewBox="0 0 16 16"
           >
-            <svg
-              aria-hidden="true"
-              className="h-3.5 w-3.5"
-              fill="currentColor"
-              viewBox="0 0 16 16"
-            >
-              <circle cx="3" cy="8" r="1.3" />
-              <circle cx="8" cy="8" r="1.3" />
-              <circle cx="13" cy="8" r="1.3" />
-            </svg>
-          </button>
-        </>
+            <circle cx="3" cy="8" r="1.3" />
+            <circle cx="8" cy="8" r="1.3" />
+            <circle cx="13" cy="8" r="1.3" />
+          </svg>
+        </button>
       ) : null}
       {displayActions.map((action) => {
         const label = t(`action.${action}`);

@@ -17,6 +17,7 @@ export interface RunShellProps {
   title: string;
   subtitle?: string;
   keyRef?: string | null;
+  taskHref?: string | null;
   taskPrompt?: string | null;
   status: string;
   branch?: string | null;
@@ -32,6 +33,7 @@ export function RunShell({
   title,
   subtitle,
   keyRef,
+  taskHref,
   taskPrompt,
   status,
   branch,
@@ -59,6 +61,7 @@ export function RunShell({
         status={status}
         subtitle={subtitle}
         targetBranch={targetBranch}
+        taskHref={taskHref}
         taskPrompt={taskPrompt}
         title={title}
         onToggleInspector={() => setInspectorOpen((open) => !open)}

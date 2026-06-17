@@ -118,12 +118,13 @@ describe("ActiveWorkspaceRow", () => {
     expect(html).toContain("text-danger");
   });
 
-  it("shows an inline Stop while live plus the ⋯ overflow, and no inline rename pencil", () => {
+  it("exposes only the ⋯ overflow on the row — Stop lives inside the menu now", () => {
     const live = render(baseRow({ lifecycleActions: ["stop"] }), baseLabels());
 
-    expect(live).toContain('data-testid="rail-stop"');
+    // Stop is no longer inline; it moved into the ⋯ action-sheet.
+    expect(live).not.toContain('data-testid="rail-stop"');
     expect(live).toContain('data-testid="rail-menu-trigger"');
-    // The inline rename pencil is gone — rename moved into the ⋯ action-sheet.
+    // The inline rename pencil is gone too — rename also lives in the sheet.
     expect(live).not.toContain('data-testid="rename-pencil"');
     expect(live).not.toContain('data-testid="rename-pencil-icon"');
 
@@ -135,7 +136,6 @@ describe("ActiveWorkspaceRow", () => {
       baseLabels(),
     );
 
-    // Terminal rows expose only the overflow (no inline Stop).
     expect(terminal).not.toContain('data-testid="rail-stop"');
     expect(terminal).toContain('data-testid="rail-menu-trigger"');
   });

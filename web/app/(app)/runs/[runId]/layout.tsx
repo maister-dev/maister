@@ -1046,6 +1046,11 @@ export default async function RunDetailLayout({
       status={detail.status}
       subtitle={shellSubtitle}
       targetBranch={detail.targetBranch}
+      taskHref={
+        detail.taskNumber != null
+          ? `/projects/${detail.projectSlug}/tasks/${detail.taskNumber}`
+          : null
+      }
       taskPrompt={detail.taskPrompt}
       title={shellTitle}
     >

@@ -128,7 +128,7 @@ export function ActiveWorkspaceRowView({
         >
           {name}
         </Link>
-        <div className="flex min-w-[76px] shrink-0 items-center justify-end gap-1">
+        <div className="flex min-w-[26px] shrink-0 items-center justify-end gap-1">
           <span
             className="font-mono text-[10px] tracking-[0.04em] text-mute-2 group-hover:hidden group-focus-within:hidden"
             data-testid="row-time"
