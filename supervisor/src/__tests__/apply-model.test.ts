@@ -49,6 +49,7 @@ function makeRecord(): SessionRecord {
     pid: 1,
     startedAt: new Date(0).toISOString(),
     logPath: "/tmp/x.log",
+    worktreePath: "/tmp/x-wt",
     monotonicId: 0,
   };
 }

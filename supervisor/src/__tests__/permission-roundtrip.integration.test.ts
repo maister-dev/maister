@@ -64,6 +64,7 @@ async function registerFakeSession(
     pid: 1,
     startedAt: new Date().toISOString(),
     logPath: join(runtimeRoot, "log"),
+    worktreePath: join(runtimeRoot, "wt"),
     monotonicId: 0,
   };
   const emitter = new EventEmitter();

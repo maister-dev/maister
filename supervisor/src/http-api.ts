@@ -7,7 +7,7 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import { access } from "node:fs/promises";
-import { delimiter, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 
 import { z, ZodError } from "zod";
 
@@ -34,6 +34,7 @@ import { ModelSourceRegistry } from "./model-catalog/registry";
 import { resolveModelCatalog } from "./model-catalog/resolve";
 import { ModelCatalogDraftSchema } from "./model-catalog/types";
 import { pendingPermissions } from "./pending-permissions";
+import { contentBlockUriViolation } from "./prompt-confinement";
 import { SESSION_EVENT_CHANNEL } from "./registry";
 import { spawnSession } from "./spawn";
 import {
@@ -491,6 +492,26 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     }
 
     const body = SendPromptRequestSchema.parse(req.body);
+
+    // Defense-in-depth: independently confine every content-block file URI to
+    // roots bound to THIS session at creation (worktree ∪ repo ∪ run dir) before
+    // forwarding — the web tier confines too, but the supervisor must not trust a
+    // direct caller. Remote schemes + sandbox escapes are rejected, not forwarded.
+    const uriViolation = contentBlockUriViolation(body.contentBlocks, {
+      worktreePath: entry.record.worktreePath,
+      repoPath: entry.record.repoPath,
+      runDir: dirname(entry.record.logPath),
+    });
+
+    if (uriViolation) {
+      logger.warn(
+        { sessionId: req.params.id, status: 409, message: uriViolation },
+        "prompt route: content-block URI confinement violation",
+      );
+      reply.status(409).send({ code: "PRECONDITION", message: uriViolation });
+
+      return;
+    }
 
     entry.record.stepId = body.stepId;
     if (body.nodeAttemptId) {

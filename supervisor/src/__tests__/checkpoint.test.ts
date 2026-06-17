@@ -75,6 +75,7 @@ async function registerExitedSession(
       pid: 1,
       startedAt: new Date().toISOString(),
       logPath: join(runtimeRoot, "log"),
+      worktreePath: join(runtimeRoot, "wt"),
       monotonicId: 42,
     },
     makeFakeChild(),

@@ -218,9 +218,12 @@ paths:
                   value: { code: "PRECONDITION", message: "unknown session" }
         "409":
           description: |
-            Session exists but cannot accept a prompt — either it is no
-            longer `live` (already `exited`/`crashed`) or no ACP
-            connection has been attached (initialization race).
+            Session exists but cannot accept the prompt — either it is no
+            longer `live` (already `exited`/`crashed`), no ACP connection
+            has been attached (initialization race), or a `contentBlocks`
+            resource URI failed the session-bound confinement check (a remote
+            scheme, or a `file:` path outside repo ∪ worktree ∪ run dir). The
+            content blocks are NOT forwarded on a confinement violation.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
@@ -231,6 +234,10 @@ paths:
                   value:
                     code: "PRECONDITION"
                     message: "session has no ACP connection"
+                uriEscape:
+                  value:
+                    code: "PRECONDITION"
+                    message: "resource URI escapes the run sandbox: file:///etc/passwd"
                 zodReject:
                   value:
                     code: "PRECONDITION"
@@ -836,6 +843,17 @@ components:
           description: |
             Absolute filesystem path. Becomes `cwd` for the spawned child.
             MUST start with `/` and MUST NOT contain `..` segments.
+        repoPath:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          description: |
+            (Implemented — capability composer) Optional project repo root.
+            Bound to the session and added to the prompt content-block URI
+            confinement allow-set (repo ∪ worktree ∪ run dir) so a `file_path`
+            attachment that references a repo-absolute path is accepted. Same
+            shape as `worktreePath` (absolute, no `..`). Sent only by runs that
+            can carry file content-blocks (scratch).
         stepId:
           type: string
           minLength: 1

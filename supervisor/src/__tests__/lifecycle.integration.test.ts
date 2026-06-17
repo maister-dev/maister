@@ -235,6 +235,7 @@ describe("supervisor lifecycle integration", () => {
         pid: child.pid ?? 0,
         startedAt: new Date().toISOString(),
         logPath: "/tmp/health-live-session.log",
+        worktreePath: "/tmp/health-live-session-wt",
         monotonicId: 0,
       },
       child,

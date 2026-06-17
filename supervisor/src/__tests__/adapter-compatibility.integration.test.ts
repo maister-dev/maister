@@ -46,6 +46,7 @@ function recordFor(adapter: "gemini" | "opencode" | "mimo"): SessionRecord {
     pid: 1,
     startedAt: new Date().toISOString(),
     logPath: `/tmp/compat-${adapter}.log`,
+    worktreePath: `/tmp/compat-${adapter}-wt`,
     monotonicId: 0,
   };
 }

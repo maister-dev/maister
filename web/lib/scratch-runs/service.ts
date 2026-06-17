@@ -982,6 +982,10 @@ export async function* launchScratchRunStaged(
       runId,
       projectSlug: project.slug,
       worktreePath,
+      // Scratch is the one path that sends file content-blocks; pass the repo
+      // root so the supervisor's URI confinement allows repo-absolute file_path
+      // attachments (web-confined to repo ∪ worktree).
+      repoPath: project.repoPath,
       stepId: scratchStepId(),
       executor: runnerExecutorInput(runnerResolution.runnerSnapshot),
       runner: runnerSupervisorInput({

@@ -21,6 +21,7 @@ function makeRecord(sessionId: string): SessionRecord {
     pid: 12345,
     startedAt: new Date().toISOString(),
     logPath: "/tmp/log",
+    worktreePath: "/tmp/wt",
     monotonicId: 0,
   };
 }

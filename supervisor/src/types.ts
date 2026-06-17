@@ -165,6 +165,11 @@ export const StartSessionRequestSchema = z
       .max(64)
       .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "projectSlug must be kebab-case"),
     worktreePath: worktreePathSchema,
+    // Optional project repo root — the supervisor adds it to the prompt
+    // content-block confinement allow-set so a `file_path` attachment that
+    // references a repo-absolute path (web-confined to repo OR worktree) is not
+    // rejected. Absent for runs that never send file references.
+    repoPath: worktreePathSchema.optional(),
     stepId: z
       .string()
       .min(1)
@@ -377,6 +382,10 @@ export type SessionRecord = {
   exitCode?: number | null;
   signal?: NodeJS.Signals | null;
   logPath: string;
+  // Session-bound roots for prompt content-block URI confinement (set at
+  // creation; a per-prompt caller cannot change them). See prompt-confinement.ts.
+  worktreePath: string;
+  repoPath?: string;
   monotonicId: number;
   acpSessionId?: string;
   // M30 (ADR-078 L2): true while a read-only gate-chat prompt is in flight on

@@ -79,6 +79,10 @@ export type CreateSessionInput = {
   runId: string;
   projectSlug: string;
   worktreePath: string;
+  // Project repo root — forwarded so the supervisor can confine prompt
+  // content-block file URIs to repo ∪ worktree ∪ run dir (matches the web-side
+  // attachment confinement). Only set where the run can send file references.
+  repoPath?: string;
   stepId: string;
   nodeAttemptId?: string;
   executor: SupervisorExecutorInput;
