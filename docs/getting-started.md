@@ -26,6 +26,7 @@ two long-running Node processes:
 - **Docker** (only for `compose up postgres` and the `testcontainers`
   integration test suite)
 - **uv** + **Python 3.12** only when a Flow plugin needs Python tooling.
+- **`gh` (GitHub CLI) — optional** (Designed, [ADR-093](decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons)). When present and authed (`gh auth login`), the Add-project flow auto-uses its token (`gh auth token`) for `github.com` HTTPS clones. Absent or unauthed degrades gracefully to SSH / the one-off HTTPS-token field — `gh` is never required for onboarding.
 - **PR-mode promotion (Implemented, M18) — only needed for `pull_request` promotion;
   `local_merge` needs none.** Per the run's provider: `gh` CLI on `PATH` (github),
   `glab` CLI on `PATH` (gitlab) — each with host auth (`gh auth` / `glab auth`, or

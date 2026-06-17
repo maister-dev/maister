@@ -132,6 +132,18 @@ at spawn. The env table above is unchanged by M27.
 
 ## `maister.yaml` v2
 
+> **`maister.yaml` is OPTIONAL at manual registration (Designed, [ADR-093](decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons)).**
+> When the resolved repo has **no** manifest, `POST /api/projects` registers the
+> project from **DB defaults** with the repo left untouched and
+> `projects.maister_yaml_path = NULL` (the "config lives only in the DB" signal).
+> A **present-but-invalid** manifest still fails `CONFIG` (422) — only a
+> *missing* file takes the DB-default branch. An opt-in **persist** action
+> (Project Settings → Git) later serializes the DB config back into a complete
+> `maister.yaml` and commits it. The `MAISTER_PROJECTS_DIR` auto-discovery path
+> stays manifest-gated (it needs a marker); only the manual path becomes
+> optional. Behavior:
+> [`system-analytics/projects.md`](system-analytics/projects.md).
+
 ```yaml
 schemaVersion: 2
 project:
@@ -1074,6 +1086,16 @@ Read by Next.js (`web/`) and `supervisor/` at startup:
 **M17 env-variable parity:** M17 adds no new environment variable. The table
 above is identical to `.env.example`; `compose*.yml`, bound ports, and the
 supervisor sidecar configuration are unchanged by M17.
+
+**Project-onboarding + git-access env parity (Designed, [ADR-093](decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons)):**
+this work adds **no new host-read environment variable**, by design. Git auth is
+**host-ambient** (Q2=A): the host's ssh-agent/keys, optionally the `gh` CLI, and
+the existing git credential helper. The one-off HTTPS clone token is **not** read
+from host config — `MAISTER_GIT_TOKEN` is set **transiently in the git
+child-process env** (via a `0700` `GIT_ASKPASS` script removed in `finally`) and
+read by nothing at startup, so it has **no** `.env.example` or `compose*.yml`
+entry. The absence is intentional, not an oversight. The persist push and remote
+push/fetch reuse the same host-ambient auth — no managed credential store.
 
 Secrets MUST live in `.env` server-side. Never logged, never streamed via
 SSE, never embedded in `session/update` payloads visible to the browser.

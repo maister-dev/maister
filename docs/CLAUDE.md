@@ -115,6 +115,8 @@ per-doc template, and the classification rule.
 | [`screens/chrome/launch-dialog.md`](screens/chrome/launch-dialog.md) | Launch dialog: scratch/launch popover, Cmd/Ctrl+K. |
 | [`screens/inbox.md`](screens/inbox.md) | Unified `/inbox` screen (needs-you HITL + mentions). |
 | [`screens/mcps.md`](screens/mcps.md) | Platform MCP catalog `/mcps` (admin). |
+| [`screens/projects/add-project.md`](screens/projects/add-project.md) | Add-project form `/projects/new`: onboarding mode selector, live name/task-key prefill, classified clone-error remediation (ADR-093). |
+| [`screens/projects/project-settings-git.md`](screens/projects/project-settings-git.md) | Project Settings → Git (block): remotes table + add/edit/remove + push/fetch, persist-config action + banner (ADR-093). |
 | [`screens/studio/README.md`](screens/studio/README.md) | Flow Studio redesign area (overview · sources · packages · package detail · editor · local workspace), `/studio/*`. |
 | [`screens/studio/editor.md`](screens/studio/editor.md) | Flow editor surface (Phase B): 3-pane canvas + properties panel + top-bar drawers, node visual scheme, hideable rail. |
 

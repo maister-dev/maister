@@ -39,6 +39,9 @@ docs/screens/
     scratch-run.md   # /scratch-runs/:runId conversation-first surface
     run-inspector.md # shared right sidebar for run info + actions
     workbench.md     # shared Files/Diff/Evidence/Timeline workbench
+  projects/          # project onboarding + settings surfaces
+    add-project.md   # /projects/new add-project form
+    project-settings-git.md # /projects/:slug?tab=settings Git section (block)
   inbox.md           # /inbox
   mcps.md            # /mcps (admin)
 ```
@@ -117,6 +120,8 @@ flowchart TD
     Rail --> Settings["Settings /settings — admin"]
 
     Portfolio --> Board["Project board /projects/SLUG"]
+    Portfolio --> AddProject["projects/add-project /projects/new — admin"]
+    Board --> SettingsGit["projects/project-settings-git /projects/SLUG?tab=settings — admin/owner"]
     Board --> FlowRun["Flow run detail /runs/ID"]
     Rail --> ScratchRows["Active scratch workspaces"]
     Launch --> ScratchRun["Scratch run detail /scratch-runs/ID"]
@@ -138,6 +143,8 @@ flowchart TD
 | [`chrome/launch-dialog.md`](chrome/launch-dialog.md) | Launch dialog (scratch/launch popover + Cmd/Ctrl+K) | shell | Implemented (WI-4/WI-5) |
 | [`inbox.md`](inbox.md) | Unified inbox | `/inbox` | Implemented (WI-1) |
 | [`mcps.md`](mcps.md) | Platform MCP catalog (admin) | `/mcps` | Implemented (WI-2) |
+| [`projects/add-project.md`](projects/add-project.md) | Add-project form (mode selector, prefill, classified clone errors) | `/projects/new` | Implemented (M21); modes/prefill/errors Designed (ADR-093) |
+| [`projects/project-settings-git.md`](projects/project-settings-git.md) | Project Settings → Git (remotes table + persist-config) | `/projects/{slug}?tab=settings` | Designed (ADR-093) |
 | [`studio/README.md`](studio/README.md) | Flow Studio redesign (area design: overview · sources · packages · package detail · editor · local workspace) | `/studio/*` | Implemented (Phase A: overview · sources · packages · detail); B/C Planned |
 | [`studio/editor.md`](studio/editor.md) | Flow editor (3-pane canvas + properties + drawers, node visual scheme) | `/flows/{projectSlug}/{capId}` | Implemented (Phase B) |
 | [`runs/flow-run.md`](runs/flow-run.md) | Flow run detail | `/runs/{runId}` | Implemented (refinement ongoing) |

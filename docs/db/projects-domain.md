@@ -22,7 +22,7 @@ erDiagram
         text provider "nullable: github|gitlab|gitea|gitverse|generic"
         text main_branch "current column; product default_branch"
         text branch_prefix "default 'maister/'"
-        text maister_yaml_path "where the manifest was loaded from"
+        text maister_yaml_path "nullable (ADR-093 Designed, 0054): manifest path; NULL = config-in-DB-only"
         text default_runner_id "platform runner override"
         text promotion_mode "M18: project-default promotion mode (local_merge|pull_request); override-chain source (§3.4)"
         jsonb delivery_policy_default "ADR-085 Designed: strategy/push/trigger/targetBranch"
@@ -158,6 +158,11 @@ erDiagram
   captured at register time ([ADR-025](../decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots)):
   the clone source / existing `origin`, and the auto-detected host tag.
   `repo_path` is the resolved on-disk dir, not read from `maister.yaml`.
+- `projects.maister_yaml_path` **(Designed, ADR-093, migration `0054`)** is
+  **nullable** (drop `NOT NULL`); `NULL` is the "config lives only in the DB"
+  signal — the project registered without a `maister.yaml`, repo untouched. No
+  backfill, so existing rows keep their path. See
+  [`../system-analytics/projects.md`](../system-analytics/projects.md).
 - `projects.default_runner_id` references a platform runner override; null means
   inherit the platform default.
 - `projects.delivery_policy_default` **(Designed, ADR-085, migration `0047`)**

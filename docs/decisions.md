@@ -118,6 +118,7 @@
 | [ADR-090](#adr-090-agent-workspace-axis-with-three-layer-read-only-enforcement-and-quarantine) | Agent workspace axis with three-layer read-only enforcement and quarantine | Accepted | 2026-06-12 |
 | [ADR-091](#adr-091-flow-requirements-launch-precondition) | Flow requirements launch precondition | Accepted | 2026-06-13 |
 | [ADR-092](#adr-092-flow-studio-redesign--unified-studio-ia--editable-local-package-model) | Flow Studio redesign — unified Studio IA + editable-local-package model | Accepted | 2026-06-15 |
+| [ADR-093](#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons) | Project onboarding — optional `maister.yaml`, host-ambient git auth, onboarding modes, advisory clone reasons | Accepted | 2026-06-17 |
 
 ---
 
@@ -6944,6 +6945,87 @@ Git write-back to an upstream source stays **Phase 2**.
   sub-routes (`/flows/{slug}/{capId}`, `/flows/new`) stay until Phase B relocates
   them to `/studio/edit`. The Sources panel is likewise removed from `/settings`
   (now only at `/studio/sources`).
+
+---
+
+### ADR-093: Project onboarding — optional `maister.yaml`, host-ambient git auth, onboarding modes, advisory clone reasons
+
+**Date:** 2026-06-17
+**Status:** Accepted
+**Context:** The Add-project flow shipped with M21 (URL clone + configurable
+roots, ADR-025) leaves five onboarding gaps. (1) Entering a Git URL does not
+prefill the project name or task key — both are derived server-side and never
+shown. (2) The task key is likewise invisible until after registration. (3)
+Clone failures surface as a generic `PRECONDITION` 409: the real git stderr is
+computed but discarded, and `gitExecOptions` forces `ssh -o BatchMode=yes`, so a
+passphrase-encrypted key not loaded in the agent silently fails
+`Permission denied (publickey)` with no actionable message (reproduced against
+`git@gitverse.ru:…`). (4) `maister.yaml` is **mandatory** to register —
+`register()` calls `loadProjectConfig()` before any DB write, so a repo that does
+not already contain a manifest (every new or external repo) returns `CONFIG` 422
+with no row, even though the source resolver already half-supports bare repos
+(`gitStatus: "initialized" | "no-remote"`). (5) There is no greenfield
+onboarding (a no-URL path that does not exist throws "directory not found") and
+no way to attach a git remote to a local-only project later, which blocks PR
+promotion.
+
+**Decision:**
+- **`maister.yaml` is OPTIONAL at manual registration.** Absent → register from
+  DB defaults with the repo left untouched and `projects.maister_yaml_path = NULL`
+  (the "config lives only in the DB" signal). A present-but-**invalid** manifest
+  still fails `CONFIG` 422 — only a *missing* file takes the DB-default branch.
+- **Three onboarding modes:** clone-from-URL, existing-local-repo, and
+  new-empty-project (`mkdir -p` + `git init`, created **only** on an explicit
+  `mode="new"`, never on a typo).
+- **Live, editable URL→name+task-key prefill** (client), kept in sync until the
+  user edits a field; explicit values win server-side (per ADR-078 D2).
+- **Clone failures are classified** (`SSH_AUTH | SSH_HOSTKEY | HTTPS_AUTH |
+  NOT_FOUND | NETWORK | UNKNOWN`) and carry the **real, redacted** git stderr as
+  **advisory `{ reason, detail }` context on the unchanged `PRECONDITION` code**
+  (the UI keeps branching on `code` and maps `reason` → a specific remediation),
+  plus an optional one-off **HTTPS token** (askpass-injected, never persisted),
+  best-effort **GitHub `gh auth token`**, and **SSH guidance** (no in-app keygen).
+- **Opt-in persist** of the DB config back to `maister.yaml` as a commit on the
+  main branch (with an opt-in push); a dismissible banner nudges it and **Project
+  Settings → Git** is the durable entry point.
+- **Git remote management** in Project Settings (list/add/edit/remove + push/
+  fetch); adding/setting `origin` syncs `projects.repo_url` + `provider`.
+- **Q2 = A — host-ambient git auth.** "Platform-managed" means managed by this
+  MAIster instance via the **host's** mechanisms — ssh-agent/keys, `gh` when
+  present, env vars, and the ephemeral one-off token field. No managed credential
+  store is introduced now; push (persist / remotes) reuses host-ambient auth.
+
+**Consequences:**
+- The registration blocker is removed: greenfield, existing-local, and clone all
+  register without a pre-existing manifest. `projects.maister_yaml_path` becomes
+  nullable (one migration, no backfill — existing rows keep their path), and
+  `NULL` is a first-class signal fanned out to both read models (board +
+  portfolio), `writeBackPackagesPin` (early-returns `"skipped"` when null), and
+  the persist banner.
+- No new managed secret storage. The one-off token lives only in the git
+  child-process env + a `0700` askpass file (removed in `finally`); it is never in
+  argv, a key file, `.git/config`, `projects.repo_url`, or any log. **No new
+  host-read env var** is added (`MAISTER_GIT_TOKEN` is transient child-process env).
+- `gh` is an **optional** host tool; absent or unauthed degrades gracefully to the
+  unified token / SSH path.
+- Work is phased and each phase is independently shippable: **P1** onboarding core
+  (optional manifest + three modes + prefill; owns the migration) → **P2** git
+  access (clone classification + token + `gh` + SSH) → **P3** Git in settings
+  (remotes CRUD + persist with opt-in push).
+
+**Alternatives Considered:**
+- **Managed per-provider credential store now (Q2 = B):** rejected for this work —
+  host-ambient auth covers the wedge without introducing new secret storage; a
+  managed store is a cross-cutting future phase (clone + fetch + push + promotion)
+  with its own design.
+- **Keep `maister.yaml` mandatory, require users to author one first:** rejected —
+  every new or external repo would be un-addable, and the source resolver already
+  models bare repos (`gitStatus`).
+- **Create the directory on any non-existent path:** rejected — only an explicit
+  `mode="new"` creates a directory, so a mistyped existing-repo path fails loudly
+  instead of silently scaffolding an empty project.
+- **In-app SSH key generation:** rejected — guidance only; generating/storing keys
+  is an additional security surface out of scope here.
 
 ---
 

@@ -136,6 +136,11 @@ tags:
       `async/outbound-webhooks.asyncapi.yaml`.
   - name: social-board
     description: ADR-078 (Implemented) — task comments, relations, subscriptions, inbox.
+  - name: git
+    description: >-
+      (Designed, ADR-093) Per-project git surface — persist the DB config back
+      to `maister.yaml` (commit + opt-in push) and manage git remotes
+      (list/add/edit/remove + push/fetch/set-upstream). Host-ambient auth.
 paths:
   /api/admin/acp-runners:
     get:
@@ -860,30 +865,40 @@ paths:
       summary: Register a project from a git URL or local directory
       description: |
         Admin-only (`requireGlobalRole("admin")`). Resolves the project
-        source via `resolveProjectSource` (ADR-025): a `repoUrl` is cloned
-        into `MAISTER_REPOS_ROOT` (refused with `PRECONDITION` if the target
-        dir already exists — pass `target` to override), otherwise an
-        existing local dir named by `target` is used (and `git init`-ed if it
-        is not yet a repo). It then validates `maister.yaml` v2 at
-        `{resolvedDir}/maister.yaml`, derives the project slug from
-        `project.name` (kebab-case, server-side — never body-derived),
-        checks `slug` and `repo_path` (the resolved on-disk dir) uniqueness,
-        persists `projects` (incl. nullable `repo_url` + `provider`) +
-        `executors` rows, installs each Flow plugin listed in `flows[]`, and
-        inserts a `project_members` row for the caller with `role = "owner"`.
+        source via `resolveProjectSource` (ADR-025) across **three onboarding
+        modes** (Designed,
+        [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons)):
+        `clone` (a `repoUrl` is cloned into `MAISTER_REPOS_ROOT`; refused with
+        `PRECONDITION` if the target dir already exists — pass `target` to
+        override; optional one-off HTTPS `token`), `existing` (an existing local
+        dir named by `target`, `git init`-ed if not yet a repo), and `new`
+        (greenfield `mkdir -p` + `git init`, only on an explicit `mode: new`).
+
+        It then **stats `maister.yaml` v2** at `{resolvedDir}/maister.yaml`.
+        **Present** → today's path (validate, derive slug from `project.name`
+        kebab-case server-side, install each `flows[]` plugin). **Absent**
+        (Designed) → register from **DB defaults** with the repo untouched:
+        `name = body.name || basename(resolvedDir)`, slug derived from it,
+        `maister_yaml_path = null` (the "config lives only in the DB" signal),
+        no flow/package install. Either path checks `slug` / `repo_path` /
+        `taskKey` uniqueness, persists `projects` (incl. nullable `repo_url` +
+        `provider`), and inserts a `project_members` row for the caller with
+        `role = "owner"`.
 
         Phases and their error codes:
         1. Auth/authz — `UNAUTHENTICATED` (401) / `UNAUTHORIZED` or
            `PASSWORD_CHANGE_REQUIRED` (403)
-        2. Resolve project source (clone / existing / git-init) —
-           `PRECONDITION` (409) on clone failure, missing dir, or a target
-           path collision
-        3. Load + validate `maister.yaml` — `CONFIG` (422)
-        4. Slug/repo_path collision check — `CONFLICT` (409)
-        5. DB write (project + executors + owner membership) in ONE
-           transaction — `CONFIG` (422) on slug-derivation failure; a
-           concurrent duplicate that races the collision check trips the
-           unique constraint and is reported as `CONFLICT` (409).
+        2. Resolve project source (clone / existing / new-empty git-init) —
+           `PRECONDITION` (409) on clone failure (with advisory `reason` +
+           redacted `detail`), missing dir, or a target/new path collision
+        3. Stat `maister.yaml` — **present-but-invalid** → `CONFIG` (422);
+           **missing** → DB-default branch (no 422)
+        4. Slug/repo_path/taskKey collision check — `CONFLICT` (409)
+        5. DB write (project + owner membership, plus executors/flows on the
+           present-manifest path) in ONE transaction — `CONFIG` (422) on
+           slug-derivation failure; a concurrent duplicate that races the
+           collision check trips the unique constraint and is reported as
+           `CONFLICT` (409).
         6. Flow plugin installs — `FLOW_INSTALL` (502). Registration is
            all-or-nothing: on any install failure the route fully
            compensates — deletes the `projects` row (FK cascade removes
@@ -909,10 +924,22 @@ paths:
                 value:
                   repoUrl: https://github.com/org/my-app
                   target: my-app-fork
+              clone-with-name-and-token:
+                summary: (Designed) Clone with explicit name + one-off HTTPS token
+                value:
+                  mode: clone
+                  repoUrl: https://gitverse.ru/org/private-app
+                  name: Private App
+                  token: ghp_exampleTokenValueRedacted
               register-existing-local:
                 summary: Register an existing local directory
                 value:
                   target: /repos/my-app
+              new-empty-project:
+                summary: (Designed) Create a brand-new empty local project
+                value:
+                  mode: new
+                  name: greenfield-app
       responses:
         "201":
           description: |
@@ -936,17 +963,38 @@ paths:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "409":
           description: |
-            Either `slug` / `repo_path` already registered (`CONFLICT`), or
-            project-source resolution failed (`PRECONDITION`) — clone error,
-            missing directory, or a clone `target` path that already exists.
+            Either `slug` / `repo_path` / `taskKey` already registered
+            (`CONFLICT`), or project-source resolution failed (`PRECONDITION`) —
+            clone error, missing directory, a clone `target` path that already
+            exists, or (`mode: new`) a path that already exists.
+
+            **(Designed)** A **clone-stage** `PRECONDITION` additionally carries
+            advisory `reason` (classification of the git failure) and `detail`
+            (redacted git stderr); `code` stays `PRECONDITION`. The UI maps
+            `reason` → a specific remediation and never string-matches stderr.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+              schema: { $ref: "#/components/schemas/CloneFailureBody" }
+              examples:
+                ssh-auth-failure:
+                  summary: SSH key not loaded / rejected (clone PRECONDITION)
+                  value:
+                    code: PRECONDITION
+                    message: Clone failed
+                    reason: SSH_AUTH
+                    detail: "git@host: Permission denied (publickey).\nfatal: Could not read from remote repository."
+                slug-conflict:
+                  summary: Slug already registered (CONFLICT — no clone reason)
+                  value:
+                    code: CONFLICT
+                    message: A project with this slug is already registered.
         "422":
           description: |
-            `maister.yaml` is missing, invalid YAML, fails schema
-            validation, or `project.name` cannot be kebab-cased
-            (`CONFIG`).
+            A **present** `maister.yaml` is invalid YAML, fails schema
+            validation, or its `project.name` cannot be kebab-cased (`CONFIG`).
+            A **missing** manifest does NOT 422 — it registers from DB defaults
+            (Designed,
+            [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons)).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -957,6 +1005,314 @@ paths:
             `projects` row is deleted (cascading to flows and the
             owner membership) and the slug-scoped artifact subtree is removed —
             so the identical request can be retried without a 409.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/projects/{slug}/persist-config:
+    post:
+      tags: [git]
+      summary: (Designed, ADR-093) Persist DB config to maister.yaml
+      description: |
+        **(Designed,
+        [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons).)**
+        Opt-in: serialize the project's DB-held config into a complete,
+        schema-valid `maister.yaml` v2 and **commit it on the main branch**,
+        then flip `projects.maister_yaml_path`. The durable home for this
+        action is **Project Settings → Git**; the dismissible banner is the
+        nudge. `requireProjectAction(projectId, "editSettings")` — `slug` is a
+        `url-param`, `projectId`/`repo_path` come from `server-state` (never the
+        body).
+
+        Order (multi-store; see ADR-093 crash-window recovery):
+        (1) `atomicWriteText(maister.yaml)` → (2) commit (default identity
+        `maister <noreply@maister.local>` only when the host author is unset →
+        `usedDefaultAuthor: true`; a configured host author is never
+        overridden) → (3) `UPDATE projects SET maister_yaml_path` →
+        (4) optional `git push` when `push: true`. Idempotent-completing: if the
+        file already exists at HEAD with identical content but the DB column is
+        still null (a prior crash after commit), the route reconciles by
+        flipping only. A push failure after the flip returns `200` with a
+        `pushWarning` (persist already succeeded — never rolled back).
+
+        Behavior contract:
+        [`../system-analytics/projects.md`](../system-analytics/projects.md).
+      operationId: postProjectPersistConfig
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PersistConfigBody" }
+            examples:
+              commit-only:
+                summary: Commit the manifest, do not push
+                value:
+                  push: false
+              commit-and-push:
+                summary: Commit the manifest and push to the remote
+                value:
+                  push: true
+      responses:
+        "200":
+          description: |
+            Config persisted (file written + committed + DB flipped), or
+            reconciled from a prior crash. `pushWarning` is present only when an
+            opt-in push was requested and failed (persist still succeeded).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PersistConfigResponse" }
+              examples:
+                ok:
+                  summary: Persisted, host author used, no push
+                  value:
+                    ok: true
+                ok-default-author:
+                  summary: Persisted with the default identity (host author unset)
+                  value:
+                    ok: true
+                    usedDefaultAuthor: true
+                ok-push-warning:
+                  summary: Persisted, but the opt-in push failed
+                  value:
+                    ok: true
+                    pushWarning: "push rejected (non-fast-forward); pull and retry"
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: |
+            Either already persisted (`maister_yaml_path` is non-null →
+            `CONFLICT`), or a precondition failed (`PRECONDITION`): the worktree
+            is not a git repo, HEAD is not on the project's main branch, the
+            tree is dirty, HEAD is detached, an unrelated `maister.yaml` already
+            exists on disk, or the commit failed for a reason other than an
+            unset author (e.g. hooks).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+              examples:
+                already-persisted:
+                  summary: maister.yaml already tracked
+                  value:
+                    code: CONFLICT
+                    message: Project config is already persisted to maister.yaml.
+                wrong-branch:
+                  summary: HEAD is not on the main branch
+                  value:
+                    code: PRECONDITION
+                    message: Persist requires HEAD on the project main branch.
+  /api/projects/{slug}/remotes:
+    get:
+      tags: [git]
+      summary: (Designed, ADR-093) List git remotes
+      description: |
+        **(Designed,
+        [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons).)**
+        Lists the repo's git remotes (`git remote -v`, de-duplicated to one row
+        per name) with every URL **credential-redacted**.
+        `requireProjectAction(projectId, "editSettings")`; `repo_path` from
+        `server-state`. Behavior:
+        [`../system-analytics/git-integration.md`](../system-analytics/git-integration.md).
+      operationId: getProjectRemotes
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+      responses:
+        "200":
+          description: The project's git remotes (URLs redacted).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RemotesListResponse" }
+              examples:
+                two-remotes:
+                  summary: origin + a fork
+                  value:
+                    remotes:
+                      - name: origin
+                        url: https://github.com/org/my-app.git
+                      - name: upstream
+                        url: https://github.com/upstream/my-app.git
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [git]
+      summary: (Designed, ADR-093) Add a remote, or run a remote action
+      description: |
+        **(Designed,
+        [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons).)**
+        Two shapes on one route. **Add** a remote with `{ name, url }`
+        (`git remote add`); adding `origin` syncs `projects.repo_url` +
+        `provider`. **Run an action** with
+        `{ op: "push" | "fetch" | "set-upstream", name, ... }` — these reuse
+        **host-ambient auth** and never write the DB; a failure is an advisory,
+        nothing to roll back. `requireProjectAction(projectId, "editSettings")`;
+        `repo_path` from `server-state`. Remote `name` is `body-controlled` →
+        validated by the shared `remoteNameSchema` (dots/slashes allowed); `url`
+        is scheme-allow-listed and redacted in every response.
+      operationId: postProjectRemote
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RemotePostBody" }
+            examples:
+              add-origin:
+                summary: Add origin (syncs repo_url + provider)
+                value:
+                  name: origin
+                  url: git@github.com:org/my-app.git
+              push:
+                summary: Push a branch to a remote (host-ambient auth)
+                value:
+                  op: push
+                  name: origin
+                  branch: main
+              fetch:
+                summary: Fetch from a remote
+                value:
+                  op: fetch
+                  name: origin
+              set-upstream:
+                summary: Set the upstream tracking branch
+                value:
+                  op: set-upstream
+                  name: origin
+                  branch: main
+      responses:
+        "200":
+          description: |
+            Action (`push` / `fetch` / `set-upstream`) completed, or completed
+            with a non-fatal advisory in `warning`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RemoteActionResponse" }
+              examples:
+                pushed:
+                  value:
+                    ok: true
+                push-warning:
+                  value:
+                    ok: true
+                    warning: "push rejected (non-fast-forward)"
+        "201":
+          description: Remote added (URL redacted in the echoed row).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RemoteItemResponse" }
+              examples:
+                added:
+                  value:
+                    ok: true
+                    remote:
+                      name: origin
+                      url: https://github.com/org/my-app.git
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: |
+            `PRECONDITION` — invalid remote name/url, remote already exists
+            (add), unknown remote (action), or the repo is not a git repo.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422":
+          description: Malformed body (neither a valid add nor a known `op`) (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+    patch:
+      tags: [git]
+      summary: (Designed, ADR-093) Set a remote's URL
+      description: |
+        **(Designed,
+        [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons).)**
+        `git remote set-url <name> <url>`. The remote `name` travels in the
+        **body** (not the path) so names containing `/` or `.` work — the
+        `[name]` path segment cannot represent them (owner decision). Setting
+        `origin` syncs `projects.repo_url` + `provider`.
+        `requireProjectAction(projectId, "editSettings")`; `repo_path` from
+        `server-state`.
+      operationId: patchProjectRemote
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RemoteSetUrlBody" }
+            examples:
+              set-origin-url:
+                value:
+                  name: origin
+                  url: git@github.com:org/my-app.git
+      responses:
+        "200":
+          description: Remote URL updated (URL redacted in the echoed row).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RemoteItemResponse" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: "`PRECONDITION` — unknown remote, invalid url, or not a git repo."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422":
+          description: Malformed body (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+    delete:
+      tags: [git]
+      summary: (Designed, ADR-093) Remove a remote
+      description: |
+        **(Designed,
+        [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons).)**
+        `git remote remove <name>`. The remote `name` travels in the **body**
+        (same `/`-in-name reason as PATCH). Removing `origin` nulls
+        `projects.repo_url` + `provider`.
+        `requireProjectAction(projectId, "editSettings")`; `repo_path` from
+        `server-state`.
+      operationId: deleteProjectRemote
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RemoteDeleteBody" }
+            examples:
+              remove-upstream:
+                value:
+                  name: upstream
+      responses:
+        "200": { $ref: "#/components/responses/OkResult" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: "`PRECONDITION` — unknown remote or not a git repo."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422":
+          description: Malformed body (`CONFIG`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -8633,12 +8989,22 @@ components:
     PostProjectBody:
       type: object
       description: |
-        Project source union (ADR-025). Supply at least one of `repoUrl`
-        or `target`. With `repoUrl` and no `target`, MAIster clones into
-        `MAISTER_REPOS_ROOT` under a name derived from the URL; pass
-        `target` to override that name (or to register an existing local
-        directory when `repoUrl` is omitted). Deep path/URL validation runs
-        server-side before any filesystem access.
+        Project source union (ADR-025, extended by
+        [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons)).
+        Supply at least one of `repoUrl` or `target`. With `repoUrl` and no
+        `target`, MAIster clones into `MAISTER_REPOS_ROOT` under a name derived
+        from the URL; pass `target` to override that name (or to register an
+        existing local directory when `repoUrl` is omitted). Deep path/URL
+        validation runs server-side before any filesystem access.
+
+        **(Designed)** `maister.yaml` is **optional** at manual registration:
+        when the resolved repo has no manifest the project registers from DB
+        defaults (repo untouched, `maister_yaml_path = null`). `mode` selects
+        the onboarding mode; `name` is the explicit project name used when no
+        manifest is present; `token` is a one-off HTTPS clone credential. All
+        are `body-controlled` creation attributes, each independently validated
+        server-side (`mode` allow-list; `name` → `deriveSlug`; `token` →
+        askpass secret handling — never persisted).
       minProperties: 1
       properties:
         repoUrl:
@@ -8659,8 +9025,53 @@ components:
             With `repoUrl`: overrides the clone's on-disk directory name (a
             single safe path segment, or an absolute path). Without `repoUrl`:
             the existing local directory to register (absolute, no `..`
-            segment); `git init`-ed when it is not yet a git repo.
+            segment); `git init`-ed when it is not yet a git repo. With
+            `mode: new` (and no `repoUrl`): the directory to create — a bare
+            name placed under `MAISTER_REPOS_ROOT`, or an absolute path that
+            must not already exist.
           example: /repos/my-app
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: |
+            **(Designed,
+            [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons))**
+            Explicit project name. Used **only when the resolved repo has no
+            `maister.yaml`** — precedence is `yaml.project.name` >
+            `body.name` > `path.basename(resolvedDir)`. The slug is derived
+            from it server-side (kebab-case); never body-derived directly.
+          example: My App
+        mode:
+          type: string
+          enum: [clone, existing, new]
+          description: |
+            **(Designed,
+            [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons))**
+            Onboarding mode. Optional and **inferred** when omitted: `clone`
+            when `repoUrl` is present, `existing` when only `target` is present.
+            `new` (greenfield `mkdir -p` + `git init`) MUST be explicit — it is
+            never inferred, so a typo'd path never silently creates a directory.
+            The server re-validates the resolved path against `mode` (intent,
+            not blind trust).
+          example: clone
+        token:
+          type: string
+          format: password
+          writeOnly: true
+          minLength: 1
+          maxLength: 4096
+          description: |
+            **(Designed,
+            [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons))**
+            One-off HTTPS clone credential (PAT) for the `clone` mode only
+            (http(s) `repoUrl`). Injected via a transient `GIT_ASKPASS` script
+            in the git child-process env, then discarded — **never** placed in
+            argv, written to a key file, stored in `.git/config` or
+            `projects.repo_url`, logged, or persisted. For durable auth use the
+            host's ssh-agent/keys or `gh`. See
+            [`../system-analytics/git-integration.md`](../system-analytics/git-integration.md).
+          example: ghp_exampleTokenValueRedacted
         taskKey:
           type: string
           pattern: "^[A-Z][A-Z0-9]{1,9}$"
@@ -11042,6 +11453,195 @@ components:
           type: string
           enum: [non_fast_forward]
         canForce: { type: boolean }
+
+    CloneFailureReason:
+      type: string
+      description: |
+        **(Designed,
+        [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons))**
+        Advisory classification of a clone-stage git failure. Carried on a
+        `PRECONDITION` error (the `code` is unchanged); the UI maps it to a
+        specific remediation and never string-matches the raw stderr. See
+        [`../error-taxonomy.md`](../error-taxonomy.md).
+      enum:
+        - SSH_AUTH
+        - SSH_HOSTKEY
+        - HTTPS_AUTH
+        - NOT_FOUND
+        - NETWORK
+        - UNKNOWN
+    CloneFailureBody:
+      description: |
+        **(Designed,
+        [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons))**
+        `MaisterErrorBody` plus optional advisory `reason` + `detail` for a
+        clone-stage `PRECONDITION`. Both are absent for non-clone failures
+        (`CONFLICT`, etc.), so this is a drop-in superset of `MaisterErrorBody`.
+      allOf:
+        - $ref: "#/components/schemas/MaisterErrorBody"
+        - type: object
+          properties:
+            reason: { $ref: "#/components/schemas/CloneFailureReason" }
+            detail:
+              type: string
+              description: |
+                Redacted git stderr (credentials stripped via `redactUrl`,
+                truncated). Never contains a token or `://user:pass@`.
+    PersistConfigBody:
+      type: object
+      description: |
+        **(Designed,
+        [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons))**
+        Body for persist-config. All fields optional; an empty body commits
+        without pushing.
+      additionalProperties: false
+      properties:
+        push:
+          type: boolean
+          default: false
+          description: |
+            When `true`, push the persist commit to the remote after the DB
+            flip (host-ambient auth). A push failure is non-fatal — the response
+            is still `200` with a `pushWarning`.
+    PersistConfigResponse:
+      type: object
+      description: |
+        **(Designed,
+        [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons))**
+        Success body for persist-config.
+      additionalProperties: false
+      required: [ok]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        usedDefaultAuthor:
+          type: boolean
+          description: |
+            `true` when the host git author was unset and the commit used the
+            default identity `maister <noreply@maister.local>`. Surfaced to the
+            user (toast) so they can configure a real author.
+        pushWarning:
+          type: string
+          description: |
+            Present only when an opt-in `push` was requested and failed; the
+            local commit + DB flip already succeeded and are never rolled back.
+    RemoteItem:
+      type: object
+      description: |
+        **(Designed,
+        [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons))**
+        One git remote. `url` is always **credential-redacted**.
+      additionalProperties: false
+      required: [name, url]
+      properties:
+        name:
+          type: string
+          description: Remote name (the shared `remoteNameSchema` — dots/slashes allowed, no leading `-`).
+          example: origin
+        url:
+          type: string
+          description: Remote URL, credential-redacted.
+          example: https://github.com/org/my-app.git
+    RemotesListResponse:
+      type: object
+      additionalProperties: false
+      required: [remotes]
+      properties:
+        remotes:
+          type: array
+          items: { $ref: "#/components/schemas/RemoteItem" }
+    RemoteItemResponse:
+      type: object
+      additionalProperties: false
+      required: [ok, remote]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        remote: { $ref: "#/components/schemas/RemoteItem" }
+    RemoteActionResponse:
+      type: object
+      description: |
+        **(Designed,
+        [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons))**
+        Result of a `push` / `fetch` / `set-upstream` action. `warning` carries
+        a non-fatal advisory (e.g. a rejected push) — host-ambient auth, nothing
+        to roll back.
+      additionalProperties: false
+      required: [ok]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        warning: { type: string }
+    RemoteAddBody:
+      type: object
+      description: Add a remote (`git remote add`).
+      additionalProperties: false
+      required: [name, url]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: Remote name; validated by the shared `remoteNameSchema`.
+          example: origin
+        url:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          description: Remote URL (scheme allow-listed; redacted in responses and logs).
+          example: git@github.com:org/my-app.git
+    RemoteActionBody:
+      type: object
+      description: |
+        Run a remote action (`push` / `fetch` / `set-upstream`) reusing
+        host-ambient auth. No DB write.
+      additionalProperties: false
+      required: [op, name]
+      properties:
+        op:
+          type: string
+          enum: [push, fetch, set-upstream]
+        name:
+          type: string
+          minLength: 1
+          description: Target remote name.
+          example: origin
+        branch:
+          type: string
+          minLength: 1
+          description: Branch to push / set upstream for (required for `push` and `set-upstream`).
+          example: main
+    RemotePostBody:
+      description: |
+        **(Designed,
+        [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons))**
+        `POST /remotes` union — either add a remote (`{ name, url }`) or run an
+        action (`{ op, name, ... }`).
+      oneOf:
+        - $ref: "#/components/schemas/RemoteAddBody"
+        - $ref: "#/components/schemas/RemoteActionBody"
+    RemoteSetUrlBody:
+      type: object
+      description: Set a remote's URL (`name` in the body to allow `/` in names).
+      additionalProperties: false
+      required: [name, url]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          example: origin
+        url:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          example: git@github.com:org/my-app.git
+    RemoteDeleteBody:
+      type: object
+      description: Remove a remote (`name` in the body to allow `/` in names).
+      additionalProperties: false
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          example: upstream
 
     GateChatMessage:
       type: object

@@ -36,7 +36,7 @@ exposed publicly. Only `:443` (and `:22`) face the internet.
 - **OS**: any modern Linux with systemd.
 - **Node 24** ([ADR-015](decisions.md#adr-015-pnpm-workspace-node-24)) installed system-wide (e.g. NodeSource), then `corepack enable` to provide `pnpm`.
 - **git** and **Docker** (Docker only runs Postgres here).
-- **Agent adapters** ship as workspace dependencies — `pnpm install` provides `claude-agent-acp` and `codex-acp` under `node_modules/.bin`. **No `gh` or other provider CLI is required for core operation** (clone, worktree, `local_merge` promotion). **Exception (Implemented, M18 — ADR-049):** `pull_request` promotion runs in the web tier and needs, per the run's provider, `gh`/`glab` on `PATH` (github/gitlab) **or** `GITEA_TOKEN`/`GITVERSE_TOKEN` in the web-tier env (gitea/gitverse), **plus** a git push credential helper. The **default compose does not provision** these — it is a host-operator concern ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)). `local_merge` promotion needs none of them. See [`configuration.md`](configuration.md) for the per-provider table.
+- **Agent adapters** ship as workspace dependencies — `pnpm install` provides `claude-agent-acp` and `codex-acp` under `node_modules/.bin`. **No `gh` or other provider CLI is required for core operation** (clone, worktree, `local_merge` promotion). **Optional (Designed, [ADR-093](decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons)):** the `gh` CLI, when present and authed, enables auto-token for `github.com` HTTPS clones — best-effort, never required. **Exception (Implemented, M18 — ADR-049):** `pull_request` promotion runs in the web tier and needs, per the run's provider, `gh`/`glab` on `PATH` (github/gitlab) **or** `GITEA_TOKEN`/`GITVERSE_TOKEN` in the web-tier env (gitea/gitverse), **plus** a git push credential helper. The **default compose does not provision** these — it is a host-operator concern ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)). `local_merge` promotion needs none of them. See [`configuration.md`](configuration.md) for the per-provider table.
 - A dedicated unprivileged user **`maister`** that owns the checkout, the agent credentials (`~/.claude`, `~/.codex`), and the git credentials.
 
 ```bash
@@ -142,6 +142,20 @@ sudo -u maister sh -c 'ssh-keyscan github.com gitlab.com gitverse.ru >> ~/.ssh/k
 **HTTPS + token** — use a Personal Access Token via a git credential helper
 (`git config --global credential.helper store|cache`).
 
+**`gh` CLI (optional)** — when the GitHub CLI is on `PATH` and logged in
+(`gh auth login`), MAIster best-effort uses its token (`gh auth token`) for
+`github.com` HTTPS clones (Designed,
+[ADR-093](decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons)).
+`gh` is **not required** — absent or unauthed, onboarding degrades to the SSH /
+HTTPS-token paths.
+
+**One-off HTTPS token (no storage)** — the Add-project form accepts a transient
+HTTPS token for a single clone (Designed, ADR-093). It is injected via a `0700`
+`GIT_ASKPASS` script for that one `git clone` and then discarded — it is **not**
+persisted, not written to `.git/config`, and not read from any env var at
+startup. Use it for a one-time private clone; for durable auth configure
+ssh-agent/keys or the credential helper above.
+
 Where to register the key / create the token:
 
 | Provider | SSH public key | HTTPS token (PAT) |
@@ -240,7 +254,7 @@ Also back up `/etc/maister/maister.env` (secrets) and the project repos /
 
 - **Supervisor restart orphans live runs** until M19 reconciliation. `Restart=always` recovers the process, not in-flight sessions.
 - **Single host only.** Multi-host (supervisor on a separate machine) needs durable HTTP replay from `run.events.jsonl` — deferred ([ADR-022](decisions.md#adr-022-structured-run-data-projection--runeventsjsonl-is-the-event-log-postgres-holds-derived-read-models)).
-- **No managed git secrets.** Provider auth lives in the host's SSH/credential config, not in MAIster ([ADR-025](decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots)).
+- **No managed git secrets.** Provider auth lives in the host's SSH/credential config, not in MAIster ([ADR-025](decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots)). Git auth is **host-ambient** — ssh-agent/keys, the credential helper, optional `gh`, and the one-off Add-project token (Designed, [ADR-093](decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons)). **Persist-config push and remote push/fetch reuse this same host-ambient auth** — there is no managed credential store, and on an auth failure the action returns an advisory without rolling back the local commit / DB state.
 
 ## Running the MCP facade
 

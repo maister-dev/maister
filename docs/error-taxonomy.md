@@ -49,6 +49,31 @@ defined as a string union in `web/lib/errors.ts`.
 
 > **M12 adds NO new `MaisterError` code** ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror) closed union). Beyond the `CONFIG` / `PRECONDITION` reuses above, two M12 outcomes have **no thrown code at all**: an unsatisfied `artifact_required` gate records `gate_results.status = "failed"` (the gate-result lifecycle, not an exception); a `human_review` refusal driven by a failed blocking gate is a blocking gate failure (no HTTP code). Neither maps to an HTTP status.
 
+> **ADR-093 (project onboarding) adds NO new `MaisterError` code** ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror)
+> closed union). A failed `git clone` keeps `code = "PRECONDITION"` (HTTP 409,
+> the existing repo-onboarding row above); the new **clone-failure reason** is
+> purely **advisory context**, never a code:
+>
+> - **`reason` is advisory on the unchanged `PRECONDITION` code (Designed).**
+>   `classifyGitError(stderr)` derives one of `SSH_AUTH | SSH_HOSTKEY |
+>   HTTPS_AUTH | NOT_FOUND | NETWORK | UNKNOWN`. The classification logic +
+>   marker strings live in [`system-analytics/git-integration.md`](system-analytics/git-integration.md)
+>   (R7) — not restated here.
+> - **`{ reason, detail }` shape (Designed).** `detail` is the **redacted** git
+>   stderr (`redactUrl` applied), **truncated to ~4 KB**. Both ride a new
+>   additive optional `MaisterError.details?: Record<string, unknown>`; the
+>   `POST /api/projects` `errorResponse` serializes the body as
+>   `{ code, message, reason?, detail? }`.
+> - **`MaisterError` gains an additive optional `details?` (Designed).** Backward
+>   compatible — existing throws (which pass no `details`) and every other code
+>   are unaffected. The field carries structured advisory context only; it never
+>   replaces `code`.
+> - **UI branches on `code`, NEVER string-matches (Designed).** The form maps
+>   `reason` → a specific i18n remediation (e.g. `SSH_AUTH` → `ssh-add`;
+>   `github.com` + `HTTPS_AUTH` → the `gh auth login` / token / SSH fork) and
+>   shows `detail` in a collapsible "git output" block. The one-off HTTPS token
+>   (`MAISTER_GIT_TOKEN`) is NEVER in any `detail`, error, or log.
+
 > **M14 adds NO new `MaisterError` code** (ADR-008 closed union). M14 reuses
 > three existing codes at new call sites (all Designed, M14, Phase 0 spec):
 >

@@ -3,13 +3,15 @@
 ## Purpose
 
 A **project** is a single registered git repository that MAIster
-operates on. Registration resolves the project source — a git URL to
-clone OR an existing local directory ([ADR-025](../decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots),
-[`git-integration.md`](git-integration.md)) — then loads `maister.yaml`
-v2, installs the Flow plugins it references, and creates rows in
-`projects` and `flows` with platform runner references. The domain boundary covers project
-lifecycle (register, archive) and the immediate fanout that lifecycle
-triggers.
+operates on. Registration resolves the project source through one of three
+**onboarding modes** (`clone | existing | new`, [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons),
+[`git-integration.md`](git-integration.md)) — then, **when the repo carries a
+`maister.yaml`**, loads it (v2), installs the Flow plugins it references, and
+creates rows in `projects` and `flows` with platform runner references. When the
+manifest is **absent** the project registers from DB defaults with the repo left
+untouched ([ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons)).
+The domain boundary covers project lifecycle (register, archive) and the
+immediate fanout that lifecycle triggers.
 
 ## Domain entities
 
@@ -28,6 +30,12 @@ triggers.
 - **`provider`** — nullable auto-detected host tag
   (`github | gitlab | gitea | gitverse | generic`). See
   [`git-integration.md`](git-integration.md).
+- **`maister_yaml_path`** — nullable path the manifest was loaded from
+  **(Designed, [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons))**.
+  `NULL` is the **"config lives only in the DB"** signal: the project registered
+  without a `maister.yaml` and the repo was not mutated. A persist action can
+  later write the manifest and flip this non-null (see
+  [`git-integration.md`](git-integration.md)).
 
 Identifiers:
 
@@ -40,7 +48,7 @@ Identifiers:
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Registered: POST /api/projects (clone | existing | git-init)<br/>(source resolved + maister.yaml loaded + flows installed)
+    [*] --> Registered: POST /api/projects (clone | existing | new)<br/>(source resolved; from maister.yaml OR DB defaults)
     Registered --> Registered: edit maister.yaml<br/>(re-validate, no row change)
     Registered --> Archived: DELETE /api/projects/[slug]<br/>(soft archive)
     Archived --> Registered: unarchive<br/>(Phase 2)
@@ -57,14 +65,54 @@ Status: **Registration Implemented (M9)** — `POST /api/projects` is live
 supports it (`projects.archived_at`) but no `DELETE /api/projects/[slug]` route
 is wired yet (Phase 2).
 
+### Manifest branch at registration (Designed)
+
+After the source resolves, the manifest presence at `resolved.dir` selects the
+registration branch. The branch is an **allow-list** keyed on the `stat` result —
+exactly as the code gates **([ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons))**.
+A *missing* file is the only thing that branches to DB defaults; a malformed file
+is a user error, never a silent fallback.
+
+```mermaid
+stateDiagram-v2
+    [*] --> SourceResolved: resolveProjectSource(mode)
+    SourceResolved --> ManifestStat: stat(resolved.dir/maister.yaml)
+    ManifestStat --> Present: file present
+    ManifestStat --> Absent: file missing
+    Present --> ParseManifest: loadProjectConfig
+    ParseManifest --> PresentValid: zod parse + cross-ref OK
+    ParseManifest --> PresentInvalid: parse / cross-ref fail
+    PresentValid --> RowsFromManifest: INSERT project + flows/packages install<br/>(maister_yaml_path set)
+    PresentInvalid --> [*]: CONFIG 422<br/>(NOT a fallback)
+    Absent --> RowsFromDefaults: INSERT project from DB defaults<br/>(maister_yaml_path = NULL,<br/>no flow/package/setup install)
+    RowsFromManifest --> Registered
+    RowsFromDefaults --> Registered
+    Registered --> [*]
+```
+
+Status: **Designed ([ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons))** — the
+present-manifest branch is today's path (Implemented M9); the absent-manifest
+DB-default branch is new. `MAISTER_PROJECTS_DIR` auto-discovery stays
+`maister.yaml`-gated (it needs a marker to find a project; only the **manual**
+`POST /api/projects` path becomes optional).
+
 ## Process flows
 
-### Resolve project source (Implemented)
+### Resolve project source (Implemented; `new` mode Designed)
 
-The union resolved before any config load. `repoUrl` → clone into
-`MAISTER_REPOS_ROOT` (refuse if the target dir already exists; supply a
-`target` override). Otherwise an existing local dir → `git init` when it
-is not yet a repo, then read its `origin` remote.
+The union resolved before any config load, selected by an explicit
+**onboarding mode** **([ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons))**:
+
+- **`clone`** (Implemented) — `repoUrl` → clone into `MAISTER_REPOS_ROOT`
+  (refuse if the target dir already exists; supply a `target` override).
+- **`existing`** (Implemented) — an existing local dir → `git init` when it is
+  not yet a repo (deferred to the last register step), then read its `origin`.
+- **`new`** (Designed) — a no-URL path that does **not** exist → `mkdir -p` +
+  `git init`, created **only** on an explicit `mode="new"` (never on a typo), no
+  remote → `gitStatus:"initialized"`.
+
+The diagram below shows the two Implemented modes; the `new` mode mirrors the
+`existing` no-git-dir branch (mkdir-then-deferred-`git init`).
 
 ```mermaid
 sequenceDiagram

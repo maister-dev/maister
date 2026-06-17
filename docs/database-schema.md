@@ -215,7 +215,9 @@ as implicit `owner` of every project.
   id, slug (UNIQUE), name,
   repoPath (UNIQUE), repoUrl?, provider?,
   mainBranch ('main'), branchPrefix ('maister/'),
-  maisterYamlPath,
+  maisterYamlPath?,              // ADR-093 (Designed, migration 0054): nullable;
+                                 //   NULL = config lives only in the DB (registered
+                                 //   without a maister.yaml; repo untouched)
   defaultRunnerId?,              // platform runner override; null = inherit
   promotionMode?,                // M18 (text, migration 0021) project-default
                                  //   promotion mode (local_merge | pull_request);
@@ -238,6 +240,15 @@ default target branch. `repoUrl` and `provider` are nullable metadata captured
 at register time (clone source / existing `origin`, and auto-detected host tag)
 per [ADR-025](decisions.md#adr-025-project-repo-onboarding--url-clone-or-local-path-host-credential-auth-configurable-roots);
 `repoPath` is the resolved on-disk dir, not read from `maister.yaml`.
+
+**(ADR-093 — Designed, migration `0054`.)** `maisterYamlPath` is now
+**nullable** (drop `NOT NULL`). `NULL` is the "config lives only in the DB"
+signal: the project registered without a `maister.yaml` (the manifest is optional
+at manual registration) and the repo was left untouched. The migration adds **no
+backfill** — existing rows keep their path, so only newly DB-default-registered
+projects carry `NULL`. See
+[ADR-093](decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons)
+and [`system-analytics/projects.md`](system-analytics/projects.md).
 
 **(ADR-085 — Designed, migration `0047`.)** `deliveryPolicyDefault`
 (`jsonb`, nullable) stores the project default for run delivery. Shape:
