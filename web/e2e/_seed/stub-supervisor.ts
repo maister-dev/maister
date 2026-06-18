@@ -225,6 +225,31 @@ export function startStubSupervisor(): Promise<Server> {
       return;
     }
 
+    // ---- ADR-093 CCR sidecar start/stop (echo state) ----------------------
+    const sidecarStartMatch = req.url?.match(
+      /^\/sidecars\/([A-Za-z0-9._-]+)\/start$/,
+    );
+
+    if (req.method === "POST" && sidecarStartMatch) {
+      req.resume(); // drain the body
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true, state: "ready" }));
+
+      return;
+    }
+
+    const sidecarStopMatch = req.url?.match(
+      /^\/sidecars\/([A-Za-z0-9._-]+)\/stop$/,
+    );
+
+    if (req.method === "POST" && sidecarStopMatch) {
+      req.resume();
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true, state: "idle" }));
+
+      return;
+    }
+
     res.writeHead(404, { "content-type": "application/json" });
     res.end(
       JSON.stringify({ code: "PRECONDITION", message: "not implemented" }),

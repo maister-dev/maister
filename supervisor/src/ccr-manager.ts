@@ -36,6 +36,10 @@ export interface CcrManager {
     signal?: NodeJS.Signals;
     timeoutMs?: number;
   }): Promise<void>;
+  // ADR-093: stop a SINGLE instance (default instance when no id). Distinct from
+  // shutdown(), which stops every instance — admin stop must not kill unrelated
+  // sidecars or live sessions routing through CCR.
+  stop(instanceId?: string): Promise<void>;
 }
 
 export type CreateCcrManagerOptions = {
@@ -458,15 +462,26 @@ export function createCcrManager(
     setState("idle", { reason: "shutdown-complete", escalated });
   }
 
+  // A single (default) manager owns one child, so stop is shutdown — the
+  // instanceId is accepted for interface symmetry and logged for trace.
+  async function stop(instanceId?: string): Promise<void> {
+    await shutdown();
+    logger.debug({ instanceId: instanceId ?? null, state }, "ccr.stop");
+  }
+
   return {
     ensureRunning,
     getProxyUrl,
     getState,
     shutdown,
+    stop,
   };
 }
 
-function externalCcrManager(instance: CcrInstanceConfig, logger: Logger): CcrManager {
+function externalCcrManager(
+  instance: CcrInstanceConfig,
+  logger: Logger,
+): CcrManager {
   let state: CcrState = "idle";
   const baseUrl = instance.baseUrl;
 
@@ -478,7 +493,9 @@ function externalCcrManager(instance: CcrInstanceConfig, logger: Logger): CcrMan
   }
   const proxyUrl = baseUrl;
 
-  async function ensureRunning(opts: { signal?: AbortSignal } = {}): Promise<void> {
+  async function ensureRunning(
+    opts: { signal?: AbortSignal } = {},
+  ): Promise<void> {
     state = "starting";
     const healthUrl =
       instance.healthcheckUrl ?? new URL("/health", baseUrl).toString();
@@ -530,6 +547,9 @@ function externalCcrManager(instance: CcrInstanceConfig, logger: Logger): CcrMan
     getProxyUrl,
     getState: () => state,
     shutdown: async () => {
+      state = "idle";
+    },
+    stop: async () => {
       state = "idle";
     },
   };
@@ -600,6 +620,29 @@ export function createKeyedCcrManager(
         ),
       );
       managers.clear();
+    },
+    stop: async (instanceId?: string) => {
+      if (!instanceId) {
+        await defaultManager.stop();
+        logger.debug(
+          { instanceId: null, state: defaultManager.getState() },
+          "ccr.keyed.stop default",
+        );
+
+        return;
+      }
+
+      const manager = managers.get(instanceId);
+
+      if (!manager) {
+        logger.debug({ instanceId, state: "idle" }, "ccr.keyed.stop noop");
+
+        return;
+      }
+
+      await manager.stop(instanceId);
+      managers.delete(instanceId);
+      logger.debug({ instanceId, state: "idle" }, "ccr.keyed.stop");
     },
   };
 }

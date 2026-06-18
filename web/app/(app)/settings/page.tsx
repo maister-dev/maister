@@ -46,6 +46,15 @@ export default async function SettingsPage(): Promise<ReactElement> {
           .filter((adapter) => !adapter.available)
           .map((adapter) => adapter.id)
       : [];
+  const sidecarStateById =
+    diagnostics?.kind === "ready"
+      ? Object.fromEntries(
+          diagnostics.diagnostics.sidecars.map((sidecar) => [
+            sidecar.id,
+            sidecar.state,
+          ]),
+        )
+      : {};
 
   return (
     <div className="w-full">
@@ -130,7 +139,10 @@ export default async function SettingsPage(): Promise<ReactElement> {
                 sidecars={runtime.sidecars}
                 unavailableAdapters={unavailableAdapters}
               />
-              <RouterSidecarsPanel sidecars={runtime.sidecars} />
+              <RouterSidecarsPanel
+                processStateById={sidecarStateById}
+                sidecars={runtime.sidecars}
+              />
               <McpServersPanel servers={runtime.mcpServers} />
               <WebhooksPanel />
             </div>

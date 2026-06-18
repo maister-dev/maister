@@ -996,6 +996,8 @@
       "mimo": "MiMo Code — нативный форк OpenCode. Установите `mimo`, затем запустите `mimo acp`. Мульти-провайдерный нативно."
     },
     "routerSidecars": "Роутер-сайдкары",
+    "sidecarStart": "Запустить сайдкар",
+    "sidecarStop": "Остановить сайдкар",
     "sidecarId": "id сайдкара",
     "configPath": "путь конфига",
     "baseUrl": "base URL",

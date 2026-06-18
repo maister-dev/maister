@@ -42,8 +42,9 @@ vi.stubGlobal("fetch", mockFetch);
 
 // IMPORTANT: import the manager AFTER mocks are set so it picks up the
 // mocked node:fs/promises + node:child_process.
-const { createCcrManager, createKeyedCcrManager } =
-  await import("../ccr-manager");
+const { createCcrManager, createKeyedCcrManager } = await import(
+  "../ccr-manager"
+);
 
 class FakeChild extends EventEmitter {
   pid = Math.floor(Math.random() * 90_000) + 1_000;
@@ -420,5 +421,52 @@ describe("ccr-manager (unit)", () => {
     // host/port should appear (no secrets there)
     expect(sink.lines.join("")).toMatch(/"host":"127\.0\.0\.1"/);
     expect(sink.lines.join("")).toMatch(/"port":4567/);
+  });
+
+  it("stop(id) stops ONLY the targeted instance and leaves others running (ADR-093)", async () => {
+    mockAccess.mockResolvedValue(undefined);
+    mockReadFile.mockImplementation(async (path) =>
+      String(path) === "/tmp/ccr-a.json"
+        ? JSON.stringify({ HOST: "127.0.0.1", PORT: 4567 })
+        : JSON.stringify({ HOST: "127.0.0.1", PORT: 5678 }),
+    );
+    mockSpawn.mockImplementation(() => new FakeChild());
+    mockFetch.mockResolvedValue({ status: 200 } as Response);
+
+    const { logger } = captureLogger();
+    const mgr = createKeyedCcrManager({ logger });
+
+    await mgr.ensureRunning({
+      instance: {
+        id: "ccr-a",
+        lifecycle: "managed",
+        configPath: "/tmp/ccr-a.json",
+      },
+    });
+    await mgr.ensureRunning({
+      instance: {
+        id: "ccr-b",
+        lifecycle: "managed",
+        configPath: "/tmp/ccr-b.json",
+      },
+    });
+
+    expect(mgr.getState("ccr-a")).toBe("ready");
+    expect(mgr.getState("ccr-b")).toBe("ready");
+
+    await mgr.stop("ccr-a");
+
+    // ccr-a stopped and removed from the map; ccr-b untouched.
+    expect(mgr.getState("ccr-a")).toBe("idle");
+    expect(mgr.getState("ccr-b")).toBe("ready");
+  });
+
+  it("stop(unknown id) is a no-op", async () => {
+    const { logger } = captureLogger();
+    const mgr = createKeyedCcrManager({ logger });
+
+    await expect(mgr.stop("nope")).resolves.toBeUndefined();
+    expect(mgr.getState("nope")).toBe("idle");
+    expect(mockSpawn).not.toHaveBeenCalled();
   });
 });

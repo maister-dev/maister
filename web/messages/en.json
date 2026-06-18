@@ -996,6 +996,8 @@
       "mimo": "MiMo Code is a native OpenCode fork. Install `mimo`, then run `mimo acp`. Multi-provider native."
     },
     "routerSidecars": "Router sidecars",
+    "sidecarStart": "Start sidecar",
+    "sidecarStop": "Stop sidecar",
     "sidecarId": "sidecar id",
     "configPath": "config path",
     "baseUrl": "base URL",

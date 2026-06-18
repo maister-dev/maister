@@ -799,6 +799,101 @@ export async function checkpointSession(
   return body as CheckpointResponse;
 }
 
+// ADR-093: admin CCR sidecar start/stop. No auth header (the supervisor wire is
+// server-to-server). Non-ok responses default to EXECUTOR_UNAVAILABLE; the
+// supervisor's own code (PRECONDITION on an unwired manager) is preserved by
+// asMaisterError when present.
+export type SidecarInstanceConfig = {
+  readonly lifecycle?: "managed" | "external";
+  readonly configPath?: string | null;
+  readonly baseUrl?: string | null;
+  readonly healthcheckUrl?: string | null;
+};
+
+export type SidecarState =
+  | "idle"
+  | "starting"
+  | "ready"
+  | "failed"
+  | "stopping";
+
+export type SidecarStateResponse = {
+  readonly ok: true;
+  readonly state: SidecarState;
+};
+
+const SIDECAR_STATES: readonly string[] = [
+  "idle",
+  "starting",
+  "ready",
+  "failed",
+  "stopping",
+];
+
+function parseSidecarStateResponse(body: unknown): SidecarStateResponse {
+  if (
+    body !== null &&
+    typeof body === "object" &&
+    (body as { ok?: unknown }).ok === true &&
+    typeof (body as { state?: unknown }).state === "string" &&
+    SIDECAR_STATES.includes((body as { state: string }).state)
+  ) {
+    return body as SidecarStateResponse;
+  }
+
+  throw new MaisterError(
+    "EXECUTOR_UNAVAILABLE",
+    `supervisor returned malformed sidecar state response: ${JSON.stringify(body)}`,
+  );
+}
+
+export async function startSidecar(
+  id: string,
+  instanceConfig: SidecarInstanceConfig,
+): Promise<SidecarStateResponse> {
+  const url = `${baseUrl()}/sidecars/${encodeURIComponent(id)}/start`;
+
+  logger.debug({ url, sidecarId: id }, "startSidecar");
+  let res: Response;
+
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id, ...instanceConfig }),
+    });
+  } catch (err) {
+    throw networkErrorToMaister(err, "startSidecar");
+  }
+  if (!res.ok) {
+    throw await asMaisterError(res, "EXECUTOR_UNAVAILABLE");
+  }
+
+  return parseSidecarStateResponse(await res.json());
+}
+
+export async function stopSidecar(id: string): Promise<SidecarStateResponse> {
+  const url = `${baseUrl()}/sidecars/${encodeURIComponent(id)}/stop`;
+
+  logger.debug({ url, sidecarId: id }, "stopSidecar");
+  let res: Response;
+
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+  } catch (err) {
+    throw networkErrorToMaister(err, "stopSidecar");
+  }
+  if (!res.ok) {
+    throw await asMaisterError(res, "EXECUTOR_UNAVAILABLE");
+  }
+
+  return parseSidecarStateResponse(await res.json());
+}
+
 export async function* streamSession(
   sessionId: string,
   opts: { lastEventId?: number; signal?: AbortSignal } = {},
