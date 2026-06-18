@@ -63,4 +63,58 @@ describe("AcpRunnersPanel", () => {
     expect(markup).toContain("claude-code");
     expect(markup).toContain("codex-openai");
   });
+
+  it("renders a good-tone dot with the ambient-credentials tooltip for a Ready native runner", () => {
+    const markup = renderToStaticMarkup(
+      createElement(AcpRunnersPanel, {
+        defaultRunnerId: "claude-code",
+        presets: [],
+        sidecars: [],
+        runners: [claudeRunner],
+      }),
+    );
+
+    expect(markup).toContain("bg-good");
+    expect(markup).toContain('title="readinessAmbient"');
+  });
+
+  it("renders an attention-tone dot whose tooltip carries the readiness reasons for a NotReady runner", () => {
+    const notReady: RunnerRow = {
+      ...codexRunner,
+      id: "codex-zai-glm",
+      readinessStatus: "NotReady",
+      readinessReasons: ["adapter binary is unavailable: codex"],
+    };
+    const markup = renderToStaticMarkup(
+      createElement(AcpRunnersPanel, {
+        defaultRunnerId: "claude-code",
+        presets: [],
+        sidecars: [],
+        runners: [notReady],
+      }),
+    );
+
+    expect(markup).toContain("bg-attention");
+    expect(markup).toContain("adapter binary is unavailable: codex");
+  });
+
+  it("renders a muted dot for an Unknown runner", () => {
+    const unknown: RunnerRow = {
+      ...codexRunner,
+      id: "pending-runner",
+      readinessStatus: "Unknown",
+      readinessReasons: [],
+    };
+    const markup = renderToStaticMarkup(
+      createElement(AcpRunnersPanel, {
+        defaultRunnerId: "claude-code",
+        presets: [],
+        sidecars: [],
+        runners: [unknown],
+      }),
+    );
+
+    expect(markup).toContain("bg-mute");
+    expect(markup).toContain('title="readinessUnknown"');
+  });
 });

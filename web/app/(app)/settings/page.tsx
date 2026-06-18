@@ -10,6 +10,7 @@ import { AdapterSupportPanel } from "@/components/settings/adapter-support-panel
 import { McpServersPanel } from "@/components/settings/mcp-servers-panel";
 import { RouterSidecarsPanel } from "@/components/settings/router-sidecars-panel";
 import { WebhooksPanel } from "@/components/settings/webhooks-panel";
+import { reconcilePlatformRunners } from "@/lib/acp-runners/native-defaults";
 import { platformRunnerPresetRows } from "@/lib/acp-runners/presets";
 import { getAdapterSupport } from "@/lib/acp-runners/schema";
 import { getDb } from "@/lib/db/client";
@@ -40,8 +41,8 @@ export default async function SettingsPage(): Promise<ReactElement> {
   const isAdmin = user?.role === "admin";
 
   const tools = isAdmin ? await hostToolStatus() : [];
-  const runtime = isAdmin ? await loadPlatformRuntimeView() : null;
   const diagnostics = isAdmin ? await checkSupervisorDiagnostics() : null;
+  const runtime = isAdmin ? await loadPlatformRuntimeView(diagnostics) : null;
 
   return (
     <div className="w-full">
@@ -147,8 +148,19 @@ export default async function SettingsPage(): Promise<ReactElement> {
   );
 }
 
-async function loadPlatformRuntimeView() {
+async function loadPlatformRuntimeView(
+  diagnostics: Awaited<ReturnType<typeof checkSupervisorDiagnostics>> | null,
+) {
   const db = getDb() as any;
+
+  // ADR-093: reconcile materializes native defaults + honest readiness from
+  // live supervisor diagnostics before the catalog is read. Single writer of
+  // readiness_status; an unavailable/null diagnostics is a no-op.
+  await reconcilePlatformRunners({
+    db,
+    diagnostics: diagnostics?.kind === "ready" ? diagnostics.diagnostics : null,
+  });
+
   const [runners, sidecars, settingsRows, mcpServers, agentRows, projectRows] =
     await Promise.all([
       db.select().from(platformAcpRunners),

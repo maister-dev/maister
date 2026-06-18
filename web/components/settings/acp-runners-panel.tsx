@@ -33,6 +33,50 @@ function statusClass(status: RunnerRow["readinessStatus"]): string {
   return "border-line text-mute";
 }
 
+type ReadinessLabels = {
+  ready: string;
+  notReady: string;
+  unknown: string;
+  ambient: string;
+};
+
+// ADR-093: readiness is shown as a color dot + tooltip, never a hardcoded
+// label. A Ready native anthropic/openai runner is only binary-available (no
+// credential check), so its tooltip says so rather than an unqualified "Ready".
+function statusDot(runner: RunnerRow, labels: ReadinessLabels): ReactElement {
+  const { readinessStatus, provider, readinessReasons } = runner;
+  const isNativeAmbient =
+    readinessStatus === "Ready" &&
+    (provider.kind === "anthropic" || provider.kind === "openai");
+  const tone =
+    readinessStatus === "Ready"
+      ? "bg-good"
+      : readinessStatus === "NotReady"
+        ? "bg-attention"
+        : "bg-mute";
+  const statusLabel =
+    readinessStatus === "Ready"
+      ? isNativeAmbient
+        ? labels.ambient
+        : labels.ready
+      : readinessStatus === "NotReady"
+        ? labels.notReady
+        : labels.unknown;
+  const title =
+    readinessStatus === "NotReady" && readinessReasons.length > 0
+      ? readinessReasons.join("; ")
+      : statusLabel;
+
+  return (
+    <span
+      aria-label={title}
+      className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${tone}`}
+      role="img"
+      title={title}
+    />
+  );
+}
+
 async function patchJson(url: string, body: unknown): Promise<void> {
   const response = await fetch(url, {
     method: "PATCH",
@@ -70,6 +114,12 @@ export function AcpRunnersPanel({
   const defaultRunner = runners.find(
     (runner) => runner.id === selectedDefaultRunnerId,
   );
+  const readinessLabels: ReadinessLabels = {
+    ready: t("readinessReady"),
+    notReady: t("readinessNotReady"),
+    unknown: t("readinessUnknown"),
+    ambient: t("readinessAmbient"),
+  };
 
   async function saveDefaultRunner(): Promise<void> {
     setPending("default");
@@ -193,13 +243,7 @@ export function AcpRunnersPanel({
                   {runner.permissionPolicy}
                 </td>
                 <td className="px-4 py-3">
-                  <span
-                    className={`rounded-full border px-2 py-1 text-[11px] font-semibold ${statusClass(
-                      runner.readinessStatus,
-                    )}`}
-                  >
-                    {runner.readinessStatus}
-                  </span>
+                  {statusDot(runner, readinessLabels)}
                 </td>
                 <td className="px-4 py-3 text-ink-2">
                   {runner.enabled ? "✓" : "—"}

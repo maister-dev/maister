@@ -11,22 +11,11 @@ import pino from "pino";
 import * as schemaModule from "./schema";
 
 import { syncProjectFlowRolesFromConfig } from "@/lib/assignments/service";
-import {
-  defaultPlatformRunnerId,
-  platformRunnerPresetRows,
-  routerSidecarPresetRows,
-} from "@/lib/acp-runners/presets";
+import { routerSidecarPresetRows } from "@/lib/acp-runners/presets";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (see schema.integration.test.ts).
-const {
-  flows,
-  platformAcpRunners,
-  platformRouterSidecars,
-  platformRuntimeSettings,
-  projectMembers,
-  projects,
-  users,
-} = schemaModule as unknown as Record<string, any>;
+const { flows, platformRouterSidecars, projectMembers, projects, users } =
+  schemaModule as unknown as Record<string, any>;
 
 const log = pino({ name: "db:seed" });
 
@@ -72,19 +61,14 @@ async function ensurePlatformRuntimeDefaults(
     .values(routerSidecarPresetRows())
     .onConflictDoNothing();
 
-  await db
-    .insert(platformAcpRunners)
-    .values(platformRunnerPresetRows())
-    .onConflictDoNothing();
-
-  await db
-    .insert(platformRuntimeSettings)
-    .values({ id: "singleton", defaultRunnerId: defaultPlatformRunnerId })
-    .onConflictDoNothing();
-
+  // ADR-093: the preset catalog is no longer seeded into platform_acp_runners,
+  // and the platform_runtime_settings singleton is no longer seeded either —
+  // both the default runners and the singleton (`default_runner_id` is NOT NULL)
+  // are materialized by reconcilePlatformRunners at the first admin /settings
+  // load, once a Ready native default exists.
   log.info(
-    { defaultRunnerId: defaultPlatformRunnerId, sidecarId: "ccr-default" },
-    "platform runtime defaults ensured",
+    { sidecarId: "ccr-default" },
+    "platform runtime defaults ensured (runners + default materialize on settings load)",
   );
 }
 
