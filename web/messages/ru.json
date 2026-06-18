@@ -379,7 +379,21 @@
     "eyebrow": "По всем проектам",
     "title": "Входящие",
     "subtitle": "{count} задач ждут вас по всем проектам.",
-    "empty": "Сейчас вас ничего не ждёт."
+    "empty": "Сейчас вас ничего не ждёт.",
+    "needsActionTitle": "Требуют действия · {count}",
+    "waiting": "{count} в ожидании",
+    "respond": "Ответить",
+    "viewRun": "Открыть ран",
+    "contextLoading": "Загрузка контекста…",
+    "contextError": "Не удалось загрузить контекст.",
+    "retry": "Повторить",
+    "gatesEvidence": "Гейты и проверки",
+    "lastAgentMessage": "Последнее сообщение агента",
+    "stageProgress": "Прогресс этапа",
+    "changes": "Изменения",
+    "changesSummary": "{files} файлов · +{additions} −{deletions}",
+    "moreGates": "ещё +{count}",
+    "staleEvidence": "{count} устар."
   },
   "mcps": {
     "eyebrow": "Платформа · админ",

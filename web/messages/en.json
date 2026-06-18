@@ -379,7 +379,21 @@
     "eyebrow": "Across all projects",
     "title": "Inbox",
     "subtitle": "{count} things waiting on you across all projects.",
-    "empty": "Nothing is waiting on you right now."
+    "empty": "Nothing is waiting on you right now.",
+    "needsActionTitle": "Needs your action · {count}",
+    "waiting": "{count} waiting",
+    "respond": "Respond",
+    "viewRun": "View run",
+    "contextLoading": "Loading context…",
+    "contextError": "Couldn't load context.",
+    "retry": "Retry",
+    "gatesEvidence": "Gates & evidence",
+    "lastAgentMessage": "Last agent message",
+    "stageProgress": "Stage progress",
+    "changes": "Changes",
+    "changesSummary": "{files} files · +{additions} −{deletions}",
+    "moreGates": "+{count} more",
+    "staleEvidence": "{count} stale"
   },
   "mcps": {
     "eyebrow": "Platform · admin",
