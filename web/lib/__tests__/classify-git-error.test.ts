@@ -12,10 +12,7 @@ describe("classifyGitError", () => {
       "git@gitverse.ru: Permission denied (publickey).\nfatal: Could not read from remote repository.",
     ],
     ["SSH_HOSTKEY", "Host key verification failed."],
-    [
-      "SSH_HOSTKEY",
-      "@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@",
-    ],
+    ["SSH_HOSTKEY", "@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@"],
     [
       "HTTPS_AUTH",
       "fatal: Authentication failed for 'https://github.com/org/repo.git/'",
@@ -38,7 +35,10 @@ describe("classifyGitError", () => {
       "NETWORK",
       "fatal: unable to access 'https://github.com/org/repo.git/': Could not resolve host: github.com",
     ],
-    ["NETWORK", "ssh: connect to host gitverse.ru port 22: Connection timed out"],
+    [
+      "NETWORK",
+      "ssh: connect to host gitverse.ru port 22: Connection timed out",
+    ],
     ["UNKNOWN", "fatal: something entirely unexpected happened"],
   ];
 

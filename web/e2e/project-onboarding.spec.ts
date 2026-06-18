@@ -71,3 +71,27 @@ test("registers a new empty project with no maister.yaml (initialized)", async (
 
   expect(count).toBe(1);
 });
+
+test("renders a classified, collapsible error when a clone fails", async ({
+  page,
+}) => {
+  await page.goto("/projects/new");
+
+  // Unique repo name → a fresh clone is attempted; a refused localhost URL
+  // fails fast → a classified clone PRECONDITION carrying advisory detail.
+  await page
+    .locator('input[name="repoUrl"]')
+    .fill(`https://127.0.0.1:1/x/clonefail-${Date.now()}.git`);
+
+  const res = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/projects") &&
+      response.request().method() === "POST",
+  );
+
+  await page.getByRole("button", { name: "Register project" }).click();
+  expect((await res).status()).toBe(409);
+
+  // The collapsible git-output block is unique to the clone-error surface.
+  await expect(page.getByText("Show git output")).toBeVisible();
+});

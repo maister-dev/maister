@@ -473,7 +473,7 @@ Every promised test names its **runner project**:
     until en/ru key trees match. *Acceptance:* parity green; no English left in ru
     values for these keys (Reviewer spot-check).
 
-- [ ] **T18 — HTTPS token askpass (TDD, integration).** `postBodySchema` gains
+- [x] **T18 — HTTPS token askpass (TDD, integration).** `postBodySchema` gains
   `token: z.string().min(1).optional()`. `cloneRepo` accepts optional `token`; when
   present and scheme is http(s): write a `mkdtemp` `0700` askpass
   (`#!/bin/sh\nprintf '%s' "$MAISTER_GIT_TOKEN"`), clone the **plain** URL with env
@@ -489,7 +489,7 @@ Every promised test names its **runner project**:
   - *Logging:* `log.debug` "token askpass used" (boolean only, **never** the value).
     *Acceptance:* depends on T14/T15; integration green; **invariant C** Reviewer gate.
 
-- [ ] **T19 — `gh` best-effort + SSH guidance (TDD).** `detectGhAuth(): "ok" |
+- [x] **T19 — `gh` best-effort + SSH guidance (TDD).** `detectGhAuth(): "ok" |
   "unauthed" | "absent"` (probe `execFile("gh", ["auth","token"])`). For
   `github.com` http(s) with no `token`: `ok` → use the token via the askpass path;
   `absent`/`unauthed` → proceed tokenless (likely `HTTPS_AUTH`) and let the

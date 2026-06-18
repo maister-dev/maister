@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createServer } from "node:http";
 import { mkdtemp, rm, mkdir, writeFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -204,6 +205,48 @@ describe("git helpers", () => {
 
     expect(await pathExists(target)).toBe(true);
     expect(await pathExists(join(target, "README.md"))).toBe(true);
+  });
+
+  it("cloneRepo sends a token via askpass (http) and never leaks it", async () => {
+    // A local server that always 401s and records the Authorization header git
+    // sends after the askpass-provided credential. Without the askpass path,
+    // GIT_TERMINAL_PROMPT=0 makes git fail WITHOUT ever sending credentials.
+    const seenAuth: string[] = [];
+    const server = createServer((req, res) => {
+      if (req.headers.authorization) seenAuth.push(req.headers.authorization);
+      res.writeHead(401, { "WWW-Authenticate": 'Basic realm="git"' });
+      res.end("auth required");
+    });
+
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+    const addr = server.address();
+    const port = addr && typeof addr === "object" ? addr.port : 0;
+
+    try {
+      await cloneRepo({
+        url: `http://127.0.0.1:${port}/org/repo.git`,
+        target: join(root, "token-clone"),
+        token: "ghp_TESTTOKEN",
+      });
+      throw new Error("expected cloneRepo to fail (server always 401s)");
+    } catch (err) {
+      expect(isMaisterError(err)).toBe(true);
+      expect((err as Error).message).not.toContain("ghp_TESTTOKEN");
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+
+    const sentToken = seenAuth.some(
+      (a) =>
+        a.startsWith("Basic ") &&
+        Buffer.from(a.slice(6), "base64")
+          .toString()
+          .includes("ghp_TESTTOKEN"),
+    );
+
+    expect(sentToken).toBe(true);
   });
 });
 

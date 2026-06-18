@@ -65,6 +65,9 @@ const postBodySchema = z
     // ADR-093: onboarding mode — optional; absent infers clone (repoUrl) /
     // existing (target). "new" must be explicit (greenfield mkdir + git init).
     mode: z.enum(["clone", "existing", "new"]).optional(),
+    // ADR-093: one-off HTTPS token (NEVER persisted) — answered to git's
+    // credential prompt via askpass; only used for an http(s) clone.
+    token: z.string().min(1).max(512).optional(),
   })
   .refine((b) => Boolean(b.repoUrl || b.target), "provide repoUrl or target");
 

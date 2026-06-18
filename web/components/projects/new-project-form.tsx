@@ -133,6 +133,7 @@ export function NewProjectForm(): ReactElement {
   const [repoUrl, setRepoUrl] = useState("");
   const [name, setName] = useState("");
   const [target, setTarget] = useState("");
+  const [token, setToken] = useState("");
   const [taskKey, setTaskKey] = useState("");
   const [nameDirty, setNameDirty] = useState(false);
   const [taskKeyDirty, setTaskKeyDirty] = useState(false);
@@ -158,6 +159,7 @@ export function NewProjectForm(): ReactElement {
           repoUrl: repoUrl.trim() || undefined,
           name: name.trim() || undefined,
           target: target.trim() || undefined,
+          token: token.trim() || undefined,
           taskKey: taskKey.trim() || undefined,
         }),
       });
@@ -224,6 +226,7 @@ export function NewProjectForm(): ReactElement {
             setRepoUrl("");
             setName("");
             setTarget("");
+            setToken("");
             setTaskKey("");
             setNameDirty(false);
             setTaskKeyDirty(false);
@@ -301,6 +304,30 @@ export function NewProjectForm(): ReactElement {
               {t("warnUrlCreds")}
             </p>
           ) : null}
+        </div>
+      ) : null}
+
+      {mode === "clone" && /^https?:\/\//i.test(repoUrl) ? (
+        <div className="flex flex-col gap-1.5">
+          <label className={fieldLabel} htmlFor="np-token">
+            {t("tokenLabel")}
+          </label>
+          <div className={inputWrap}>
+            <input
+              autoComplete="off"
+              className={inputBase}
+              id="np-token"
+              name="token"
+              placeholder={t("tokenPlaceholder")}
+              spellCheck={false}
+              type="password"
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+            />
+          </div>
+          <p className="text-[11.5px] leading-[1.5] text-mute">
+            {t("tokenHint")}
+          </p>
         </div>
       ) : null}
 

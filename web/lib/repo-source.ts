@@ -1,7 +1,8 @@
 import "server-only";
 
 import { execFile } from "node:child_process";
-import { mkdir, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { isAbsolute, join, sep } from "node:path";
 import { promisify } from "node:util";
 
@@ -190,21 +191,103 @@ export async function assertGitAvailable(): Promise<void> {
   }
 }
 
+// ADR-093: best-effort GitHub auth via the host `gh` CLI. classifyGhResult is
+// the pure core; runGhAuthToken does the exec. A github.com http(s) clone with
+// no explicit token auto-uses the gh token when the operator is logged in.
+export function classifyGhResult(result: {
+  ok: boolean;
+  token: string;
+  notFound: boolean;
+}): "ok" | "unauthed" | "absent" {
+  if (result.notFound) return "absent";
+
+  return result.ok && result.token.trim() ? "ok" : "unauthed";
+}
+
+async function runGhAuthToken(): Promise<{
+  ok: boolean;
+  token: string;
+  notFound: boolean;
+}> {
+  try {
+    const { stdout } = await execFileAsync(
+      "gh",
+      ["auth", "token"],
+      gitExecOptions(GIT_TIMEOUT_MS),
+    );
+
+    return { ok: true, token: stdout, notFound: false };
+  } catch (err) {
+    const e = err as NodeJS.ErrnoException;
+
+    return { ok: false, token: "", notFound: e.code === "ENOENT" };
+  }
+}
+
+export async function detectGhAuth(): Promise<"ok" | "unauthed" | "absent"> {
+  return classifyGhResult(await runGhAuthToken());
+}
+
+async function ghAuthToken(): Promise<string | null> {
+  const result = await runGhAuthToken();
+
+  return classifyGhResult(result) === "ok" ? result.token.trim() : null;
+}
+
 export async function cloneRepo(opts: {
   url: string;
   target: string;
   signal?: AbortSignal;
+  token?: string;
 }): Promise<void> {
   log.debug(
-    { url: redactUrl(opts.url), target: opts.target },
+    {
+      url: redactUrl(opts.url),
+      target: opts.target,
+      token: opts.token ? "present" : "absent",
+    },
     "git clone start",
   );
 
+  // ADR-093: an optional one-off HTTPS token is answered to git's
+  // Username/Password prompts via a transient askpass script — the token is
+  // NEVER in argv, on disk as a key, in the clone's .git/config, or logged.
+  const isHttp = /^https?:\/\//i.test(opts.url);
+  // ADR-093: explicit token wins; otherwise a github.com http(s) clone tries the
+  // host `gh` token (best-effort — absent/unauthed just proceeds tokenless).
+  let effectiveToken = opts.token;
+
+  if (!effectiveToken && isHttp && detectProvider(opts.url) === "github") {
+    effectiveToken = (await ghAuthToken()) ?? undefined;
+  }
+
+  const useToken = Boolean(effectiveToken) && isHttp;
+  let askpassDir: string | undefined;
+  const base = gitExecOptions(CLONE_TIMEOUT_MS, opts.signal);
+  let env: NodeJS.ProcessEnv = base.env;
+
   try {
+    if (useToken) {
+      askpassDir = await mkdtemp(join(tmpdir(), "maister-askpass-"));
+      const script = join(askpassDir, "askpass.sh");
+
+      // The script prints the token for BOTH the Username and Password prompts
+      // (works for gitverse token-as-userinfo and GitHub token-in-either-field).
+      await writeFile(script, `#!/bin/sh\nprintf '%s' "$MAISTER_GIT_TOKEN"\n`, {
+        mode: 0o700,
+      });
+      env = {
+        ...base.env,
+        GIT_ASKPASS: script,
+        MAISTER_GIT_TOKEN: effectiveToken,
+        GIT_TERMINAL_PROMPT: "0",
+      };
+    }
+
     const { stdout, stderr } = await execFileAsync(
       "git",
       ["clone", opts.url, opts.target],
-      gitExecOptions(CLONE_TIMEOUT_MS, opts.signal),
+      { ...base, env },
     );
 
     log.debug(
@@ -223,6 +306,10 @@ export async function cloneRepo(opts: {
       cause: asError(err),
       details: { reason, detail: redacted.slice(0, MAX_CLONE_DETAIL) },
     });
+  } finally {
+    if (askpassDir) {
+      await rm(askpassDir, { recursive: true, force: true }).catch(() => {});
+    }
   }
 }
 
@@ -327,6 +414,7 @@ export async function resolveProjectSource(body: {
   repoUrl?: string;
   target?: string;
   mode?: "clone" | "existing" | "new";
+  token?: string;
 }): Promise<ResolvedSource> {
   const reposRootDir = reposRoot();
 
@@ -348,7 +436,7 @@ export async function resolveProjectSource(body: {
     await mkdir(reposRootDir, { recursive: true });
 
     try {
-      await cloneRepo({ url: body.repoUrl, target: dir });
+      await cloneRepo({ url: body.repoUrl, target: dir, token: body.token });
     } catch (err) {
       await rm(dir, { recursive: true, force: true }).catch(() => {}); // we created it; safe to remove
       throw err;
