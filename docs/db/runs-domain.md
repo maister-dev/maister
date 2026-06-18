@@ -58,6 +58,7 @@ erDiagram
         text runner_id FK "M34: verdict runner, SET NULL"
         text target_branch "M34: verdict branch, nullable"
         text promotion_mode "M34: local_merge|pull_request, nullable"
+        jsonb execution_policy "migration 0055: per-task default execution policy, nullable"
         timestamp created_at
         timestamp updated_at
     }
@@ -90,6 +91,7 @@ erDiagram
         text resume_target_step_id "node id retained at crash time for Recover; current_step_id is nulled on crash (M19, 0016)"
         jsonb resolved_capability_set "M27 Designed: frozen capability snapshot at launch; runner reads this, never live catalog"
         jsonb delivery_policy_snapshot "ADR-085 Designed: resolved policy at launch"
+        jsonb execution_policy "migration 0055: resolved execution policy {preset,overrides} at launch"
         timestamp started_at
         timestamp ended_at
     }

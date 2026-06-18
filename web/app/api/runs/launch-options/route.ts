@@ -32,6 +32,10 @@ import {
   resolveDeliveryPolicy,
   type StoredDeliveryPolicy,
 } from "@/lib/runs/delivery-policy";
+import {
+  resolveExecutionPolicy,
+  type ExecutionPolicy,
+} from "@/lib/runs/execution-policy";
 import { getOpenRelationBlockers } from "@/lib/social/relations";
 import { listBranches } from "@/lib/worktree";
 
@@ -341,6 +345,14 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         : {}),
       ...(verdictTargetBranch ? { targetBranch: verdictTargetBranch } : {}),
     };
+    // Resolved execution-control default for the dialog (no launch override at
+    // options time). Preset + per-axis option enums are client-side constants
+    // the launch UI imports directly from @/lib/runs/execution-policy.
+    const executionPolicyDefault = resolveExecutionPolicy({
+      taskDefault: (task.executionPolicy as ExecutionPolicy | null) ?? null,
+      projectDefault:
+        (project.executionPolicyDefault as ExecutionPolicy | null) ?? null,
+    });
     const safeRunners = runnerRows.map((runner: Record<string, any>) => ({
       id: runner.id,
       label: runner.id,
@@ -402,6 +414,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       defaultBaseBranch: project.mainBranch ?? null,
       defaultTargetBranch: verdictTargetBranch ?? project.mainBranch ?? null,
       deliveryPolicyDefault,
+      executionPolicyDefault,
     });
   } catch (err) {
     return errorResponse(err);

@@ -2,6 +2,7 @@ import type {
   DeliveryPolicy,
   StoredDeliveryPolicy,
 } from "@/lib/runs/delivery-policy";
+import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
 
 import { sql } from "drizzle-orm";
 import {
@@ -132,6 +133,9 @@ export const projects = pgTable("projects", {
   deliveryPolicyDefault: jsonb(
     "delivery_policy_default",
   ).$type<StoredDeliveryPolicy | null>(),
+  executionPolicyDefault: jsonb(
+    "execution_policy_default",
+  ).$type<ExecutionPolicy | null>(),
   taskKey: text("task_key").notNull().unique(),
   nextTaskNumber: integer("next_task_number").notNull().default(1),
   createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
@@ -1018,6 +1022,7 @@ export const tasks = pgTable(
     promotionMode: text("promotion_mode", {
       enum: ["local_merge", "pull_request"],
     }),
+    executionPolicy: jsonb("execution_policy").$type<ExecutionPolicy | null>(),
     createdByUserId: text("created_by_user_id").references(() => users.id, {
       onDelete: "set null",
     }),
@@ -1241,6 +1246,10 @@ export const runs = pgTable(
     deliveryPolicySnapshot: jsonb(
       "delivery_policy_snapshot",
     ).$type<DeliveryPolicy | null>(),
+    executionPolicy: jsonb("execution_policy")
+      .$type<ExecutionPolicy>()
+      .notNull()
+      .default({ preset: "supervised" }),
   },
   (t) => ({
     idxProjectStatus: index("runs_project_status_idx").on(

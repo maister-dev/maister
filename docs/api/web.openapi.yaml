@@ -9652,6 +9652,58 @@ components:
           nullable: true
           minLength: 1
           maxLength: 255
+    ExecutionPolicyOverrides:
+      type: object
+      additionalProperties: false
+      description: |
+        Sparse per-axis overrides. Keys map to the execution-control axes
+        (A1 reworkExhaustion / A2 crashRetry / A3 checks / B1 permissions /
+        B2 humanGate / B3 onStuck / C1 promotion / C2 commits / C3 dirtyResolve).
+        Unset keys inherit the preset baseline.
+      properties:
+        reworkExhaustion:
+          type: string
+          enum: [escalate, ship_with_warning, fail]
+        crashRetry:
+          type: string
+          enum: [fail, ralph_loop, auto_retry]
+        checks:
+          type: string
+          enum: [strict, advisory, skip]
+        permissions:
+          type: string
+          enum: [ask, auto_approve]
+        humanGate:
+          type: string
+          enum: [stop, auto_pass]
+        onStuck:
+          type: string
+          enum: [escalate, ship_with_warning, notify_only]
+        promotion:
+          type: string
+          enum: [manual, auto_on_ready]
+        commits:
+          type: string
+          enum: [keep_all, squash_rework, squash_on_promote, defer]
+        dirtyResolve:
+          type: string
+          enum: [ask, commit, proceed]
+    ExecutionPolicy:
+      type: object
+      required: [preset]
+      additionalProperties: false
+      description: |
+        Flow execution-control policy snapshotted on the run (migration 0055).
+        A preset sets every axis; `overrides` tune individual axes. The server
+        rejects blind-ship combos (relaxed checks + auto-passed human gate or
+        auto-promotion) with `PRECONDITION`, and a non-supervised resolved
+        policy requires the `launchUnattended` project action.
+      properties:
+        preset:
+          type: string
+          enum: [supervised, assisted, unattended]
+        overrides:
+          $ref: "#/components/schemas/ExecutionPolicyOverrides"
     ProjectSettingsPatchBody:
       type: object
       additionalProperties: false
@@ -9727,6 +9779,13 @@ components:
             Optional per-launch policy override. Omitted means the project
             default. Any field differing from the default is shown as an
             override in the launch dialog and snapshotted on the run.
+        executionPolicy:
+          allOf: [{ $ref: "#/components/schemas/ExecutionPolicy" }]
+          description: |
+            Optional per-launch execution-control policy. Omitted resolves
+            through task -> project defaults -> `supervised`. A blind-ship combo
+            is refused `PRECONDITION` (409); a non-supervised resolved policy
+            requires the `launchUnattended` action (403).
     PostRunResponse:
       type: object
       required: [runId, status]
@@ -10264,6 +10323,7 @@ components:
         defaultBaseBranch: { type: string, nullable: true }
         defaultTargetBranch: { type: string, nullable: true }
         deliveryPolicyDefault: { $ref: "#/components/schemas/DeliveryPolicy" }
+        executionPolicyDefault: { $ref: "#/components/schemas/ExecutionPolicy" }
     ScratchLaunchOptionsResponse:
       type: object
       required:

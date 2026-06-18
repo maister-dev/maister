@@ -26,6 +26,7 @@ erDiagram
         text default_runner_id "platform runner override"
         text promotion_mode "M18: project-default promotion mode (local_merge|pull_request); override-chain source (§3.4)"
         jsonb delivery_policy_default "ADR-085 Designed: strategy/push/trigger/targetBranch"
+        jsonb execution_policy_default "migration 0055: default execution policy {preset,overrides}, nullable"
         timestamp created_at
         timestamp archived_at "soft archive"
     }
@@ -169,6 +170,10 @@ erDiagram
   stores the project default `DeliveryPolicy`. Null rows map from the legacy
   `promotion_mode` value, and project settings writes use one aggregate PATCH so
   partial settings updates cannot apply after another sub-section fails.
+- `projects.execution_policy_default` **(Implemented, migration `0055`)** stores
+  the project default execution-control policy (`{preset, overrides?}`). Null
+  resolves through launch override → task → project → `supervised`; the resolved
+  policy is snapshotted on `runs.execution_policy` at launch.
 - `flows.manifest` stores the **parsed** `flow.yaml` — full step DSL,
   portable runner profiles, etc. Source of truth for the runtime step
   loader; the on-disk `flow.yaml` is only read on install / refresh.
