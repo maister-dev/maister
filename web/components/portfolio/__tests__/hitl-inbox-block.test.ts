@@ -38,7 +38,20 @@ interface CrossProjectHitlItemStub {
   agent: "claude" | "codex";
   branch: string;
   flowRef: string;
+  stage: {
+    label: string;
+    type:
+      | "ai_coding"
+      | "judge"
+      | "cli"
+      | "check"
+      | "human"
+      | "form"
+      | "guard"
+      | null;
+  };
   taskRef: string | null;
+  taskTitle: string | null;
   time: string;
   projectId: string;
   projectSlug: string;
@@ -72,7 +85,9 @@ function createItemStub(
     schema: { options: [{ optionId: "yes", label: "Yes" }] },
     agent: "claude",
     branch: "maister/feature-x",
+    stage: { label: "review", type: "human" },
     taskRef: null,
+    taskTitle: null,
     flowRef: "bugfix",
     time: "2h",
     projectId: "proj-1",

@@ -29,6 +29,7 @@ import { MaisterError } from "@/lib/errors";
 import { deriveTtlInfo } from "@/lib/gc/ttl";
 import { gcAgeDays, gcWarningDays } from "@/lib/instance-config";
 import { mapRowsToHitlItems } from "@/lib/queries/hitl";
+import { resolveStages } from "@/lib/queries/hitl-stage";
 import * as schema from "@/lib/db/schema";
 import { computeReadinessByRun } from "@/lib/queries/readiness-batch";
 import { runnerAgentFromFields } from "@/lib/queries/runner-agent";
@@ -1085,6 +1086,10 @@ export async function getCrossProjectHitlInbox(
       projectId: runs.projectId,
       taskNumber: tasks.number,
       taskKey: projects.taskKey,
+      taskTitle: tasks.title,
+      stepId: hitlRequests.stepId,
+      flowRevisionId: runs.flowRevisionId,
+      flowId: runs.flowId,
     })
     .from(hitlRequests)
     .innerJoin(runs, eq(runs.id, hitlRequests.runId))
@@ -1137,10 +1142,12 @@ export async function getCrossProjectHitlInbox(
     visibleProjects.map((p) => [p.id, { slug: p.slug, name: p.name }]),
   );
 
+  const stagesByHitlId = await resolveStages(client, rows);
   const baseItems = mapRowsToHitlItems(
     rows,
     assignmentsByHitlId,
     actorsById,
+    stagesByHitlId,
     now,
   );
 

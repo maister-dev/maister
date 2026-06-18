@@ -8,6 +8,7 @@ import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
+import { resolveStages, type StageChip } from "@/lib/queries/hitl-stage";
 import { runnerAgentFromFields } from "@/lib/queries/runner-agent";
 
 const {
@@ -86,8 +87,12 @@ export interface HitlItem {
   agent: HitlAgent;
   branch: string;
   flowRef: string;
+  // Originating flow node: label (= step_id) + resolved node kind.
+  stage: StageChip;
   // ADR-078: KEY-N of the launching task (null for scratch-run HITL).
   taskRef: string | null;
+  // Human task title (null for scratch-run HITL).
+  taskTitle: string | null;
   prompt: string;
   options: HitlOption[];
   time: string;
@@ -167,6 +172,10 @@ export type HitlRowBase = {
   flowRef: string;
   taskNumber: number | null;
   taskKey: string | null;
+  taskTitle: string | null;
+  stepId: string;
+  flowRevisionId: string | null;
+  flowId: string | null;
 };
 
 // Map a batch of HitlRowBase rows + pre-fetched assignment/actor maps to HitlItem[].
@@ -187,6 +196,7 @@ export function mapRowsToHitlItems(
     string,
     { id: string; label: string | null; userId: string | null }
   >,
+  stagesByHitlId: Map<string, StageChip>,
   now: Date,
 ): HitlItem[] {
   return rows.map((row) => {
@@ -214,10 +224,15 @@ export function mapRowsToHitlItems(
       }),
       branch: row.branch,
       flowRef: row.flowRef,
+      stage: stagesByHitlId.get(row.hitlRequestId) ?? {
+        label: row.stepId,
+        type: null,
+      },
       taskRef:
         row.taskNumber !== null && row.taskKey
           ? `${row.taskKey}-${row.taskNumber}`
           : null,
+      taskTitle: row.taskTitle,
       prompt: row.prompt,
       options: extractOptions(row.kind, row.rawSchema),
       time: relativeTime(row.createdAt, now),
@@ -266,6 +281,10 @@ export async function getHitlInbox(projectId: string): Promise<HitlInbox> {
       flowRef: flows.flowRefId,
       taskNumber: tasks.number,
       taskKey: projects.taskKey,
+      taskTitle: tasks.title,
+      stepId: hitlRequests.stepId,
+      flowRevisionId: runs.flowRevisionId,
+      flowId: runs.flowId,
     })
     .from(hitlRequests)
     .innerJoin(runs, eq(runs.id, hitlRequests.runId))
@@ -307,7 +326,14 @@ export async function getHitlInbox(projectId: string): Promise<HitlInbox> {
     assignmentRows.map((assignment) => [assignment.hitlRequestId, assignment]),
   );
 
-  const items = mapRowsToHitlItems(rows, assignmentsByHitlId, actorsById, now);
+  const stagesByHitlId = await resolveStages(client, rows);
+  const items = mapRowsToHitlItems(
+    rows,
+    assignmentsByHitlId,
+    actorsById,
+    stagesByHitlId,
+    now,
+  );
 
   return {
     items,
