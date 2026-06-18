@@ -69,6 +69,26 @@ blank).
 9. **Linked artifacts** — ADRs (cited as bare `#adr-NNN`),
    `system-analytics/*`, and source paths.
 
+## Shared popup & density conventions
+
+These hold across **every** dialog/popup and screen; an individual doc only
+notes where it *deviates*.
+
+- **Close affordance.** A dialog closes via a top-right **✕** crossmark
+  (`aria-label` for screen readers, no visible label), plus Esc and a backdrop
+  click. There is no text "Close" button — the ✕ is the single consistent
+  close. Canonical: `web/components/settings/mcp-server-modal.tsx`; the board
+  launch dialog (`web/components/board/launch-popover.tsx`) follows it.
+- **Backdrop.** The overlay dims and blurs the **full viewport, including the
+  left rail** — so it must sit above the rail (`z-[200]`; rail flyouts are
+  `z-[130]`). A dialog rendered inside a card/row must `createPortal` to
+  `document.body`: a hover `transform` on an ancestor otherwise becomes the
+  containing block for `position: fixed` and collapses the dialog into the card.
+- **Minimum necessary information.** Show the least that identifies a choice. A
+  flow option is its name (`aif-dev`), not `name · version · default`; a default
+  need not be spelled out when it is already the pre-selected value. Across all
+  screens, prefer dropping redundant qualifiers over adding them.
+
 ## Global navigation & IA map
 
 The persistent chrome (top nav, left rail, status bar, launch dialog) frames

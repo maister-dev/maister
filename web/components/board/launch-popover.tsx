@@ -370,9 +370,7 @@ export function LaunchPopover({
     options?.flows.map((flow) => ({
       id: flow.id,
       disabled: !flow.enabled,
-      label: `${flow.name}${flow.version ? ` · ${flow.version}` : ""}${
-        flow.isTaskDefault ? ` · ${t("default")}` : ""
-      }`,
+      label: flow.name,
     })) ?? [];
   const runnerOptions: Array<SelectOption<string>> =
     options?.runners.map((runner) => ({
@@ -440,7 +438,7 @@ export function LaunchPopover({
             <div
               aria-labelledby={`${dialogId}-title`}
               aria-modal="true"
-              className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto px-4 py-10"
+              className="fixed inset-0 z-[200] flex items-start justify-center overflow-y-auto px-4 py-10"
               role="dialog"
             >
               <button
@@ -472,19 +470,18 @@ export function LaunchPopover({
                       })}
                     </p>
                   </div>
-                  <Button
+                  <button
                     ref={closeRef}
-                    className="border-line bg-ivory font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-mute hover:text-ink"
-                    size="sm"
+                    aria-label={t("close")}
+                    className="font-mono text-[14px] text-mute hover:text-ink"
                     type="button"
-                    variant="outline"
                     onClick={() => {
                       setOpen(false);
                       openerRef.current?.focus();
                     }}
                   >
-                    {t("close")}
-                  </Button>
+                    ✕
+                  </button>
                 </div>
 
                 {loadingOptions ? (
@@ -648,15 +645,6 @@ export function LaunchPopover({
                     ) : null}
 
                     <div className="flex justify-end gap-2 border-t border-line-soft pt-3">
-                      <Button
-                        className="border-line bg-ivory font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-mute hover:text-ink"
-                        size="sm"
-                        type="button"
-                        variant="outline"
-                        onClick={() => setOpen(false)}
-                      >
-                        {t("close")}
-                      </Button>
                       <Button
                         className={clsx(
                           "bg-amber font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-white hover:bg-amber-2",
