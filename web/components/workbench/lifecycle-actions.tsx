@@ -335,13 +335,21 @@ function DialogShell({
         <div className="flex-1 overflow-auto py-1">{children}</div>
       ) : (
         <>
-          <div className="border-b border-line px-4 py-3">
+          <div className="flex items-start justify-between gap-3 border-b border-line px-4 py-3">
             <h2
               className="font-mono text-[13px] font-bold uppercase tracking-[0.08em] text-ink"
               id="workbench-lifecycle-dialog-title"
             >
               {title}
             </h2>
+            <button
+              aria-label={cancel}
+              className="font-mono text-[14px] text-mute hover:text-ink"
+              type="button"
+              onClick={onClose}
+            >
+              ✕
+            </button>
           </div>
           <div className="flex-1 overflow-auto px-4 py-4">{children}</div>
           <div className="flex flex-wrap justify-end gap-2 border-t border-line px-4 py-3">

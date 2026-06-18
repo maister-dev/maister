@@ -96,7 +96,7 @@ function branchFallback(options: LaunchOptions): string {
 }
 
 function runnerLabel(runner: LaunchRunnerOption): string {
-  return `${runner.id} · ${runner.adapter} · ${runner.model}`;
+  return `${runner.id} · ${runner.model}`;
 }
 
 function selectedValue<T extends string>(key: Key | null, fallback: T): T {

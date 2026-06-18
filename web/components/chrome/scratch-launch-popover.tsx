@@ -143,11 +143,11 @@ export function ScratchLaunchPopover({
               </div>
               <button
                 aria-label={t("close")}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-line-soft bg-paper font-mono text-[13px] text-mute shadow-[var(--shadow-sm)] hover:border-amber hover:text-amber"
+                className="font-mono text-[14px] text-mute hover:text-ink"
                 type="button"
                 onClick={() => setOpen(false)}
               >
-                x
+                ✕
               </button>
             </header>
             <div className="max-h-[calc(100vh-153px)] overflow-y-auto p-3">

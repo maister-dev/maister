@@ -157,7 +157,7 @@ function runnerCatalogEntry(row: Record<string, any>): RunnerCatalogEntry {
 function runnerLabel(row: RunnerCatalogEntry): string {
   const sidecar = row.sidecarId ? ` via ${row.sidecarId}` : "";
 
-  return `${row.id} · ${row.adapter} · ${row.model}${sidecar}`;
+  return `${row.id} · ${row.model}${sidecar}`;
 }
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
