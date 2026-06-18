@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 // /agents is the admin-only platform-agent catalog, relocated off /settings
-// (ADR-093). The admin spec runs as the seeded admin via AUTHED_SPEC
+// (ADR-094). The admin spec runs as the seeded admin via AUTHED_SPEC
 // (`platform-agents-.*`); the member spec opens its own unauthenticated context
 // and signs in as the seeded non-admin member.
 const MEMBER_EMAIL = "e2e-member@maister.local";

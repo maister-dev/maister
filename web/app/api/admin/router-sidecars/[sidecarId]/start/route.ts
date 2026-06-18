@@ -61,7 +61,7 @@ function errorResponse(err: unknown): NextResponse {
 
 type RouteParams = { params: Promise<{ sidecarId: string }> };
 
-// ADR-093: admin-triggered CCR sidecar start. Loads the sidecar from DB,
+// ADR-094: admin-triggered CCR sidecar start. Loads the sidecar from DB,
 // forwards its config to the supervisor, and returns the supervisor-reported
 // process state. No DB idempotency marker — process state is owned by the
 // supervisor (the route is a proxy).

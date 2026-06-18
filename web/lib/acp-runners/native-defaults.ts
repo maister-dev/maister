@@ -23,7 +23,7 @@ const defaultLog = pino({
 });
 
 // Native default runner id per adapter = the preset row for that adapter's
-// native provider (ADR-093). Materialized only when the adapter binary is
+// native provider (ADR-094). Materialized only when the adapter binary is
 // reported available by supervisor diagnostics.
 export const nativeDefaultRunnerByAdapter: Record<AdapterId, string> = {
   claude: "claude-code",
@@ -33,7 +33,7 @@ export const nativeDefaultRunnerByAdapter: Record<AdapterId, string> = {
   mimo: "mimo-code-native",
 };
 
-// Deterministic platform-default preference order (ADR-093). The singleton
+// Deterministic platform-default preference order (ADR-094). The singleton
 // default is set to the first Ready native default in this order.
 const ADAPTER_DEFAULT_PREFERENCE: readonly AdapterId[] = [
   "claude",
@@ -56,7 +56,7 @@ function sameReasons(
 
 /**
  * Reconcile the platform ACP runner catalog against live supervisor diagnostics
- * (ADR-093). Runs at admin `/settings` load and is the single writer of
+ * (ADR-094). Runs at admin `/settings` load and is the single writer of
  * `readiness_status` outside the create/edit path:
  *
  * 1. Upsert-if-absent each AVAILABLE adapter's native default runner.

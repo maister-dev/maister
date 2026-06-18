@@ -35,7 +35,7 @@ type ReadinessLabels = {
   ambient: string;
 };
 
-// ADR-093: readiness is shown as a color dot + tooltip, never a hardcoded
+// ADR-094: readiness is shown as a color dot + tooltip, never a hardcoded
 // label. A Ready native anthropic/openai runner is only binary-available (no
 // credential check), so its tooltip says so rather than an unqualified "Ready".
 function statusDot(runner: RunnerRow, labels: ReadinessLabels): ReactElement {

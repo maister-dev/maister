@@ -36,7 +36,7 @@ export interface CcrManager {
     signal?: NodeJS.Signals;
     timeoutMs?: number;
   }): Promise<void>;
-  // ADR-093: stop a SINGLE instance (default instance when no id). Distinct from
+  // ADR-094: stop a SINGLE instance (default instance when no id). Distinct from
   // shutdown(), which stops every instance — admin stop must not kill unrelated
   // sidecars or live sessions routing through CCR.
   stop(instanceId?: string): Promise<void>;

@@ -444,7 +444,7 @@ never extends its TTL window). The web tier proxies this route through the admin
 [`api/supervisor.openapi.yaml`](api/supervisor.openapi.yaml);
 domain: [`system-analytics/model-catalog.md`](system-analytics/model-catalog.md).
 
-### `POST /sidecars/:id/start` *(Implemented — ADR-093)*
+### `POST /sidecars/:id/start` *(Implemented — ADR-094)*
 
 Admin-triggered start for a CCR router sidecar. The web tier
 (`POST /api/admin/router-sidecars/:sidecarId/start`) loads the sidecar from
@@ -469,7 +469,7 @@ concern — a started-without-config CCR healthchecks red and `state` stays
 `failed`. The route is a proxy over supervisor-owned process state; it writes no
 DB idempotency marker.
 
-### `POST /sidecars/:id/stop` *(Implemented — ADR-093)*
+### `POST /sidecars/:id/stop` *(Implemented — ADR-094)*
 
 Admin-triggered stop for **one** CCR sidecar instance. Calls the per-instance
 `ccrManager.stop(id)` (SIGTERM → grace → SIGKILL on the targeted child only) —
@@ -654,7 +654,7 @@ sidecar manager before spawning the adapter:
   exit event vs grace timer → SIGKILL on timer win → `await exited`
   (never `proc.killed`; see
   [`.ai-factory/rules/backend.md`](../.ai-factory/rules/backend.md)).
-- **Admin start/stop (ADR-093).** Beyond lazy start-on-launch, the admin
+- **Admin start/stop (ADR-094).** Beyond lazy start-on-launch, the admin
   `/settings` router-sidecar card starts/stops a sidecar directly via
   `POST /sidecars/:id/start` and `POST /sidecars/:id/stop`. Stop targets a
   **single** instance through the per-instance `ccrManager.stop(id)` — never the

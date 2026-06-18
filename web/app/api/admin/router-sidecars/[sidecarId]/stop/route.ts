@@ -61,7 +61,7 @@ function errorResponse(err: unknown): NextResponse {
 
 type RouteParams = { params: Promise<{ sidecarId: string }> };
 
-// ADR-093: admin-triggered CCR sidecar stop. Forwards to the supervisor
+// ADR-094: admin-triggered CCR sidecar stop. Forwards to the supervisor
 // per-instance stop (never the manager-wide shutdown) and returns the
 // supervisor-reported process state. No DB idempotency marker.
 export async function POST(

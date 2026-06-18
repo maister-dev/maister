@@ -1,7 +1,7 @@
 import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 
 // i18n key (relative to the `settings` namespace) for the per-adapter setup
-// hint shown when an adapter is not available/ready (ADR-093). Research-derived:
+// hint shown when an adapter is not available/ready (ADR-094). Research-derived:
 // codex uses `wire_api = responses` for OpenAI-compatible providers; the
 // opencode package is `opencode-ai`; CCR binds port 3456; gemini is Google-only
 // natively (non-Google needs a translating gateway); mimo is a native OpenCode

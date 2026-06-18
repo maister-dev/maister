@@ -709,7 +709,7 @@ paths:
       tags: [admin]
       summary: Start a managed CCR router sidecar
       description: |
-        Admin-only (ADR-093). Loads the sidecar from `platform_router_sidecars`,
+        Admin-only (ADR-094). Loads the sidecar from `platform_router_sidecars`,
         forwards its config to the supervisor `POST /sidecars/{id}/start`, and
         returns the supervisor-reported process state. No DB idempotency marker is
         written — CCR process state is owned by the supervisor. Start only
@@ -744,7 +744,7 @@ paths:
       tags: [admin]
       summary: Stop a managed CCR router sidecar
       description: |
-        Admin-only (ADR-093). Loads the sidecar, forwards to the supervisor
+        Admin-only (ADR-094). Loads the sidecar, forwards to the supervisor
         per-instance `POST /sidecars/{id}/stop` (stops ONLY this instance, not the
         manager-wide shutdown), and returns the supervisor-reported state.
       operationId: stopAdminRouterSidecar
@@ -11580,7 +11580,7 @@ components:
       additionalProperties: false
       description: |
         Result of an admin CCR sidecar start/stop. `state` is the
-        supervisor-reported process state (ADR-093); no DB marker is persisted.
+        supervisor-reported process state (ADR-094); no DB marker is persisted.
       properties:
         ok: { type: boolean, enum: [true] }
         state:

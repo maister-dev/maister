@@ -164,7 +164,7 @@ async function loadPlatformRuntimeView(
 ) {
   const db = getDb() as any;
 
-  // ADR-093: reconcile materializes native defaults + honest readiness from
+  // ADR-094: reconcile materializes native defaults + honest readiness from
   // live supervisor diagnostics before the catalog is read. Single writer of
   // readiness_status; an unavailable/null diagnostics is a no-op.
   await reconcilePlatformRunners({

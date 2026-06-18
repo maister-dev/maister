@@ -225,7 +225,7 @@ export function startStubSupervisor(): Promise<Server> {
       return;
     }
 
-    // ---- ADR-093 CCR sidecar start/stop (echo state) ----------------------
+    // ---- ADR-094 CCR sidecar start/stop (echo state) ----------------------
     const sidecarStartMatch = req.url?.match(
       /^\/sidecars\/([A-Za-z0-9._-]+)\/start$/,
     );

@@ -53,7 +53,7 @@ tags:
   - name: model-catalog
     description: Model discovery resolver for a runner draft (ADR-076).
   - name: sidecars
-    description: CCR router-sidecar admin lifecycle — start/stop (ADR-093).
+    description: CCR router-sidecar admin lifecycle — start/stop (ADR-094).
 paths:
   /health:
     get:
@@ -511,7 +511,7 @@ paths:
   /sidecars/{id}/start:
     post:
       tags: [sidecars]
-      summary: (ADR-093) Start a managed CCR router sidecar
+      summary: (ADR-094) Start a managed CCR router sidecar
       description: |
         Admin-triggered start for a CCR router sidecar. The web tier forwards the
         sidecar's `CcrInstanceConfig` (`{ id, lifecycle, configPath, baseUrl,
@@ -523,7 +523,7 @@ paths:
         Requires the CCR manager to be wired (`spawnOverrides.ccrManager`);
         otherwise 409.
 
-        **Note (ADR-093):** start only launches the CCR process. CCR routing
+        **Note (ADR-094):** start only launches the CCR process. CCR routing
         configuration (config.json contents) is a separate, deferred concern; a
         started-without-config CCR healthchecks red and `state` stays `failed`.
 
@@ -562,7 +562,7 @@ paths:
   /sidecars/{id}/stop:
     post:
       tags: [sidecars]
-      summary: (ADR-093) Stop a single managed CCR router sidecar
+      summary: (ADR-094) Stop a single managed CCR router sidecar
       description: |
         Admin-triggered stop for ONE CCR sidecar instance. Calls the per-instance
         `ccrManager.stop(id)` (SIGTERM → grace → SIGKILL on the targeted child

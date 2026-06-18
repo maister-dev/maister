@@ -61,7 +61,7 @@ async function ensurePlatformRuntimeDefaults(
     .values(routerSidecarPresetRows())
     .onConflictDoNothing();
 
-  // ADR-093: the preset catalog is no longer seeded into platform_acp_runners,
+  // ADR-094: the preset catalog is no longer seeded into platform_acp_runners,
   // and the platform_runtime_settings singleton is no longer seeded either —
   // both the default runners and the singleton (`default_runner_id` is NOT NULL)
   // are materialized by reconcilePlatformRunners at the first admin /settings

@@ -799,7 +799,7 @@ export async function checkpointSession(
   return body as CheckpointResponse;
 }
 
-// ADR-093: admin CCR sidecar start/stop. No auth header (the supervisor wire is
+// ADR-094: admin CCR sidecar start/stop. No auth header (the supervisor wire is
 // server-to-server). Non-ok responses default to EXECUTOR_UNAVAILABLE; the
 // supervisor's own code (PRECONDITION on an unwired manager) is preserved by
 // asMaisterError when present.

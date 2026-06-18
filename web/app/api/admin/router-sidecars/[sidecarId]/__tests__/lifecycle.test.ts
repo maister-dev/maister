@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MaisterError } from "@/lib/errors";
 
-// ADR-093 — POST /api/admin/router-sidecars/[sidecarId]/start|stop. Mocks the
+// ADR-094 — POST /api/admin/router-sidecars/[sidecarId]/start|stop. Mocks the
 // supervisor-client boundary + auth + db; asserts the admin gate, missing-sidecar
 // 409, EXECUTOR_UNAVAILABLE → 503 mapping, and that the supervisor-reported state
 // is echoed verbatim.

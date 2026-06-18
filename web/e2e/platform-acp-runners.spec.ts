@@ -16,7 +16,7 @@ test("platform ACP runners drive admin settings, task launch, and scratch launch
   await expect(platformDefault).toHaveValue("claude-code");
   await expect(page.getByText("Router sidecars")).toBeVisible();
   await expect(page.getByText("Adapter support")).toBeVisible();
-  // The compact adapter cards (ADR-093) show a per-adapter setup hint for
+  // The compact adapter cards (ADR-094) show a per-adapter setup hint for
   // adapters the stub diagnostics does not report available; the binary moved
   // into a collapsed <details>, so it is no longer asserted here.
   await expect(page.getByText(/Install the .gemini. CLI/i)).toBeVisible();

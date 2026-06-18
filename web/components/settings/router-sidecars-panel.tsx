@@ -29,7 +29,7 @@ type Sidecar = {
 
 type Props = {
   sidecars: Sidecar[];
-  // ADR-093: live CCR process state per sidecar id (idle|starting|ready|failed|
+  // ADR-094: live CCR process state per sidecar id (idle|starting|ready|failed|
   // stopping), seeded from supervisor diagnostics and updated on start/stop.
   processStateById?: Record<string, string>;
 };

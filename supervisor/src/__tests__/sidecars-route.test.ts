@@ -1,4 +1,4 @@
-// ADR-093 — POST /sidecars/:id/start|stop. Boots Fastify with a mocked
+// ADR-094 — POST /sidecars/:id/start|stop. Boots Fastify with a mocked
 // CcrManager injected via spawnOverrides and exercises the routes through
 // app.inject: happy path (state echoed), 409 when the manager is unwired, body
 // id ≠ path id, invalid lifecycle, and per-instance stop targeting.

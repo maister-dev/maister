@@ -68,7 +68,7 @@ const InputBodySchema = z
 // onto the checkpoint surface (D11 identifier-table rule).
 export const CheckpointBodySchema = z.object({}).strict();
 
-// ADR-093: admin CCR sidecar start body — the full CcrInstanceConfig forwarded
+// ADR-094: admin CCR sidecar start body — the full CcrInstanceConfig forwarded
 // by the admin-gated web tier. `id` must equal the path param (body-controlled,
 // trusted only because the sole caller is the server-to-server web tier).
 const SidecarStartBodySchema = z
@@ -966,7 +966,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     reply.status(200).send(result);
   });
 
-  // ADR-093: admin-triggered CCR sidecar start/stop. Reuses the existing keyed
+  // ADR-094: admin-triggered CCR sidecar start/stop. Reuses the existing keyed
   // CcrManager. Stop targets a SINGLE instance via the per-instance stop(id),
   // never the manager-wide shutdown() (which would kill every instance and any
   // live session routing through CCR). The route is a proxy over

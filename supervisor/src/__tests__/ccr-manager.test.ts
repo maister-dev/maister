@@ -423,7 +423,7 @@ describe("ccr-manager (unit)", () => {
     expect(sink.lines.join("")).toMatch(/"port":4567/);
   });
 
-  it("stop(id) stops ONLY the targeted instance and leaves others running (ADR-093)", async () => {
+  it("stop(id) stops ONLY the targeted instance and leaves others running (ADR-094)", async () => {
     mockAccess.mockResolvedValue(undefined);
     mockReadFile.mockImplementation(async (path) =>
       String(path) === "/tmp/ccr-a.json"
