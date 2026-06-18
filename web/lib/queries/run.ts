@@ -15,6 +15,7 @@ import type {
   ResolvedCapabilitySet,
 } from "@/lib/db/schema";
 import type { DeliveryPolicy } from "@/lib/runs/delivery-policy";
+import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
 import type { SettingsNodeView } from "@/lib/flows/settings-view";
 import type { HitlOption } from "@/lib/queries/hitl";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
@@ -123,6 +124,7 @@ export interface RunDetail {
   prUrl: string | null;
   prNumber: number | null;
   deliveryPolicySnapshot: DeliveryPolicy | null;
+  executionPolicy: ExecutionPolicy | null;
   pendingHitl: RunPendingHitl | null;
   // M11b (ADR-030): the user holding an active takeover claim (null unless a
   // takeover node_attempts row is open). Drives the owner-gated Return action.
@@ -206,6 +208,7 @@ export const getRunDetail = cache(async function getRunDetail(
       prUrl: workspaces.prUrl,
       prNumber: workspaces.prNumber,
       deliveryPolicySnapshot: runs.deliveryPolicySnapshot,
+      executionPolicy: runs.executionPolicy,
       capabilityAgent: runs.capabilityAgent,
       runnerSnapshot: runs.runnerSnapshot,
       endedAt: runs.endedAt,
@@ -331,6 +334,7 @@ export const getRunDetail = cache(async function getRunDetail(
     prUrl: row.prUrl,
     prNumber: row.prNumber,
     deliveryPolicySnapshot: row.deliveryPolicySnapshot ?? null,
+    executionPolicy: row.executionPolicy ?? null,
     agent: runnerAgentFromFields({
       capabilityAgent: row.capabilityAgent,
       runnerSnapshot: row.runnerSnapshot,

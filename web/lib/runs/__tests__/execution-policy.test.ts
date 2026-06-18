@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { isMaisterError } from "@/lib/errors-core";
 import {
   assertNoBlindShip,
+  blindShipLockedOptions,
   defaultExecutionPolicy,
   executionPolicySchema,
   expandExecutionPolicy,
@@ -207,6 +208,55 @@ describe("requiresLaunchUnattended", () => {
         overrides: { humanGate: "auto_pass" },
       }),
     ).toBe(true);
+  });
+});
+
+describe("blindShipLockedOptions (launch-UI guard projection)", () => {
+  it("locks nothing for the supervised baseline", () => {
+    expect(
+      blindShipLockedOptions({
+        checks: "strict",
+        humanGate: "stop",
+        promotion: "manual",
+      }),
+    ).toEqual({
+      relaxedChecksDisabled: false,
+      autoPassDisabled: false,
+      autoPromoteDisabled: false,
+    });
+  });
+
+  it("disables relaxed checks once a human gate auto-passes", () => {
+    expect(
+      blindShipLockedOptions({
+        checks: "strict",
+        humanGate: "auto_pass",
+        promotion: "manual",
+      }).relaxedChecksDisabled,
+    ).toBe(true);
+  });
+
+  it("disables relaxed checks once promotion is automatic", () => {
+    expect(
+      blindShipLockedOptions({
+        checks: "strict",
+        humanGate: "stop",
+        promotion: "auto_on_ready",
+      }).relaxedChecksDisabled,
+    ).toBe(true);
+  });
+
+  it("disables auto-pass and auto-promote once checks are relaxed", () => {
+    for (const checks of ["advisory", "skip"] as const) {
+      const locks = blindShipLockedOptions({
+        checks,
+        humanGate: "stop",
+        promotion: "manual",
+      });
+
+      expect(locks.autoPassDisabled).toBe(true);
+      expect(locks.autoPromoteDisabled).toBe(true);
+    }
   });
 });
 

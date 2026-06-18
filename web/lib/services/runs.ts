@@ -64,6 +64,7 @@ import {
   resolveExecutionPolicy,
   type ExecutionPolicy,
 } from "@/lib/runs/execution-policy";
+import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
 import { actorForUserId, recordTaskActivity } from "@/lib/social/activity";
 import { getOpenRelationBlockers } from "@/lib/social/relations";
 import { tryStartRun } from "@/lib/scheduler";
@@ -899,6 +900,18 @@ export async function* launchRunStaged(
         flowRevision: revision.resolvedRevision,
         flowRevisionId: revision.id,
       });
+
+      if (requiresLaunchUnattended(executionPolicy)) {
+        logExecPolicyAction({
+          runId,
+          kind: "launched",
+          detail: {
+            preset: executionPolicy.preset,
+            overrides: executionPolicy.overrides ?? {},
+          },
+        });
+      }
+
       await tx.insert(workspaces).values({
         id: randomUUID(),
         runId,

@@ -195,6 +195,32 @@ export function requiresLaunchUnattended(policy: ExecutionPolicy): boolean {
   );
 }
 
+// Launch-UI projection of the no-blind-ship invariant: given the current
+// A3/B2/C1 selections, which conflicting options the launch dialog must disable
+// so an operator cannot pick a blind-ship combo in the first place (the server
+// still re-validates via assertNoBlindShip).
+export type BlindShipAxes = {
+  checks: CheckStrictness;
+  humanGate: HumanGateAutonomy;
+  promotion: PromotionTrigger;
+};
+
+export function blindShipLockedOptions(current: BlindShipAxes): {
+  relaxedChecksDisabled: boolean;
+  autoPassDisabled: boolean;
+  autoPromoteDisabled: boolean;
+} {
+  const autoShip =
+    current.humanGate === "auto_pass" || current.promotion === "auto_on_ready";
+  const checksRelaxed = current.checks !== "strict";
+
+  return {
+    relaxedChecksDisabled: autoShip,
+    autoPassDisabled: checksRelaxed,
+    autoPromoteDisabled: checksRelaxed,
+  };
+}
+
 export const executionPresetSchema = z.enum([
   "supervised",
   "assisted",

@@ -49,6 +49,7 @@ import {
   type ResolvedCapabilitySetLabels,
 } from "@/components/runs/resolved-capability-set-panel";
 import { RunShell, type RunShellLabels } from "@/components/runs/run-shell";
+import { ExecutionPolicyBadge } from "@/components/runs/execution-policy-badge";
 import {
   ReviewPanel,
   type ReviewPanelDiff,
@@ -883,6 +884,12 @@ export default async function RunDetailLayout({
         : t("policyLegacy"),
     },
     {
+      label: t("executionPolicyTitle"),
+      value: detail.executionPolicy
+        ? `${detail.executionPolicy.preset}${detail.executionPolicy.overrides ? " *" : ""}`
+        : "supervised",
+    },
+    {
       label: t("settingsTitle"),
       value: settings ? String(settings.nodes.length) : "-",
     },
@@ -1069,6 +1076,18 @@ export default async function RunDetailLayout({
       title={shellTitle}
     >
       <div className="grid gap-5">
+        <div className="flex flex-wrap items-center gap-3">
+          <ExecutionPolicyBadge
+            labels={{
+              supervised: t("execPolicySupervised"),
+              assisted: t("execPolicyAssisted"),
+              unattended: t("execPolicyUnattended"),
+              custom: t("execPolicyCustom"),
+            }}
+            policy={detail.executionPolicy}
+          />
+        </div>
+
         {detail.lifecycleActions.length > 0 ? (
           <WorkbenchLifecycleActions
             actions={detail.lifecycleActions}

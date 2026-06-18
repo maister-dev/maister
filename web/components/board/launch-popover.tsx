@@ -2,6 +2,14 @@
 
 import type { Key, ReactElement } from "react";
 import type { LaunchStage } from "@/lib/runs/launch-progress";
+import type {
+  CheckStrictness,
+  ExecutionPolicy,
+  ExecutionPolicyOverrides,
+  ExecutionPreset,
+  HumanGateAutonomy,
+  PromotionTrigger,
+} from "@/lib/runs/execution-policy";
 
 import { Button, ListBox, Select } from "@heroui/react";
 import { useRouter } from "next/navigation";
@@ -18,6 +26,10 @@ import { useTranslations } from "next-intl";
 import clsx from "clsx";
 
 import { readLaunchStream } from "@/lib/runs/launch-progress";
+import {
+  blindShipLockedOptions,
+  expandExecutionPolicy,
+} from "@/lib/runs/execution-policy";
 
 type DeliveryPolicyStrategy =
   | "merge"
@@ -69,6 +81,7 @@ type LaunchOptions = {
   defaultBaseBranch: string | null;
   defaultTargetBranch: string | null;
   deliveryPolicyDefault: DeliveryPolicy;
+  executionPolicyDefault: ExecutionPolicy;
   task: { projectSlug: string; number: number };
 };
 
@@ -188,6 +201,12 @@ export function LaunchPopover({
   const [policyPush, setPolicyPush] = useState<DeliveryPolicyPush>("never");
   const [policyTrigger, setPolicyTrigger] =
     useState<DeliveryPolicyTrigger>("manual");
+  const [execPreset, setExecPreset] = useState<ExecutionPreset>("supervised");
+  const [execChecks, setExecChecks] = useState<CheckStrictness>("strict");
+  const [execHumanGate, setExecHumanGate] = useState<HumanGateAutonomy>("stop");
+  const [execPromotion, setExecPromotion] =
+    useState<PromotionTrigger>("manual");
+  const [execAdvancedOpen, setExecAdvancedOpen] = useState(false);
   const dialogId = useId();
   const openerRef = useRef<HTMLButtonElement | null>(null);
   const closeRef = useRef<HTMLButtonElement | null>(null);
@@ -223,6 +242,13 @@ export function LaunchPopover({
         setPolicyStrategy(payload.deliveryPolicyDefault.strategy);
         setPolicyPush(payload.deliveryPolicyDefault.push);
         setPolicyTrigger(payload.deliveryPolicyDefault.trigger);
+
+        const eff = expandExecutionPolicy(payload.executionPolicyDefault);
+
+        setExecPreset(eff.preset);
+        setExecChecks(eff.checks);
+        setExecHumanGate(eff.humanGate);
+        setExecPromotion(eff.promotion);
       })
       .catch(() => {
         if (controller.signal.aborted) return;
@@ -267,6 +293,28 @@ export function LaunchPopover({
     }),
     [baseBranch, policyPush, policyStrategy, policyTrigger, targetBranch],
   );
+
+  function onExecPresetChange(preset: ExecutionPreset): void {
+    const eff = expandExecutionPolicy({ preset });
+
+    setExecPreset(preset);
+    setExecChecks(eff.checks);
+    setExecHumanGate(eff.humanGate);
+    setExecPromotion(eff.promotion);
+  }
+
+  const currentExecutionPolicy = useMemo<ExecutionPolicy>(() => {
+    const base = expandExecutionPolicy({ preset: execPreset });
+    const overrides: ExecutionPolicyOverrides = {};
+
+    if (execChecks !== base.checks) overrides.checks = execChecks;
+    if (execHumanGate !== base.humanGate) overrides.humanGate = execHumanGate;
+    if (execPromotion !== base.promotion) overrides.promotion = execPromotion;
+
+    return Object.keys(overrides).length > 0
+      ? { preset: execPreset, overrides }
+      : { preset: execPreset };
+  }, [execChecks, execHumanGate, execPreset, execPromotion]);
 
   // M34 (ADR-089): a flowless simple-intent task classifies `unconfigured` —
   // the user's flow pick is the set-up step and clears the gate locally.
@@ -320,6 +368,7 @@ export function LaunchPopover({
           baseBranch: baseBranch || undefined,
           targetBranch: targetBranch || undefined,
           deliveryPolicy: currentPolicy,
+          executionPolicy: currentExecutionPolicy,
         }),
       });
 
@@ -394,6 +443,58 @@ export function LaunchPopover({
     { id: "manual", label: t("triggerManual") },
     { id: "auto_on_ready", label: t("triggerAutoOnReady") },
   ];
+  const execPresetOptions: Array<SelectOption<ExecutionPreset>> = [
+    { id: "supervised", label: t("execPresetSupervised") },
+    { id: "assisted", label: t("execPresetAssisted") },
+    { id: "unattended", label: t("execPresetUnattended") },
+  ];
+  const execLocks = blindShipLockedOptions({
+    checks: execChecks,
+    humanGate: execHumanGate,
+    promotion: execPromotion,
+  });
+  const execChecksOptions: Array<SelectOption<CheckStrictness>> = [
+    { id: "strict", label: t("execChecksStrict") },
+    {
+      id: "advisory",
+      label: t("execChecksAdvisory"),
+      disabled: execLocks.relaxedChecksDisabled,
+    },
+    {
+      id: "skip",
+      label: t("execChecksSkip"),
+      disabled: execLocks.relaxedChecksDisabled,
+    },
+  ];
+  const execHumanGateOptions: Array<SelectOption<HumanGateAutonomy>> = [
+    { id: "stop", label: t("execHumanGateStop") },
+    {
+      id: "auto_pass",
+      label: t("execHumanGateAutoPass"),
+      disabled: execLocks.autoPassDisabled,
+    },
+  ];
+  const execPromotionOptions: Array<SelectOption<PromotionTrigger>> = [
+    { id: "manual", label: t("execPromotionManual") },
+    {
+      id: "auto_on_ready",
+      label: t("execPromotionAuto"),
+      disabled: execLocks.autoPromoteDisabled,
+    },
+  ];
+  const defaultExec = options
+    ? expandExecutionPolicy(options.executionPolicyDefault)
+    : null;
+  const execChanged =
+    defaultExec !== null &&
+    (execPreset !== defaultExec.preset ||
+      execChecks !== defaultExec.checks ||
+      execHumanGate !== defaultExec.humanGate ||
+      execPromotion !== defaultExec.promotion);
+  const execGuardActive =
+    execLocks.relaxedChecksDisabled ||
+    execLocks.autoPassDisabled ||
+    execLocks.autoPromoteDisabled;
   const showOverride =
     options !== null &&
     defaultPolicy !== undefined &&
@@ -626,6 +727,84 @@ export function LaunchPopover({
                           />
                         </label>
                       </div>
+                    </div>
+
+                    <div className="rounded-[10px] border border-line-soft bg-ivory/50 p-3">
+                      <div className="mb-2 flex items-center justify-between gap-3">
+                        <h3 className="text-[13px] font-semibold text-ink">
+                          {t("executionControl")}
+                        </h3>
+                        {execChanged ? (
+                          <span className="rounded-full border border-amber-line bg-amber-soft px-2 py-[2px] font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-amber">
+                            {t("override")}
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="grid items-end gap-3 md:grid-cols-2">
+                        <label className="flex flex-col gap-1">
+                          <span className={fieldLabelClass}>
+                            {t("execPreset")}
+                          </span>
+                          <LaunchSelect
+                            label={t("execPreset")}
+                            options={execPresetOptions}
+                            value={execPreset}
+                            onChange={onExecPresetChange}
+                          />
+                        </label>
+                        <button
+                          aria-expanded={execAdvancedOpen}
+                          className="h-9 self-end text-left font-mono text-[10.5px] text-mute hover:text-ink"
+                          type="button"
+                          onClick={() => setExecAdvancedOpen((v) => !v)}
+                        >
+                          {execAdvancedOpen
+                            ? t("execAdvancedHide")
+                            : t("execAdvancedShow")}
+                        </button>
+                      </div>
+                      {execAdvancedOpen ? (
+                        <div className="mt-3 grid gap-3 md:grid-cols-3">
+                          <label className="flex flex-col gap-1">
+                            <span className={fieldLabelClass}>
+                              {t("execChecks")}
+                            </span>
+                            <LaunchSelect
+                              label={t("execChecks")}
+                              options={execChecksOptions}
+                              value={execChecks}
+                              onChange={setExecChecks}
+                            />
+                          </label>
+                          <label className="flex flex-col gap-1">
+                            <span className={fieldLabelClass}>
+                              {t("execHumanGate")}
+                            </span>
+                            <LaunchSelect
+                              label={t("execHumanGate")}
+                              options={execHumanGateOptions}
+                              value={execHumanGate}
+                              onChange={setExecHumanGate}
+                            />
+                          </label>
+                          <label className="flex flex-col gap-1">
+                            <span className={fieldLabelClass}>
+                              {t("execPromotion")}
+                            </span>
+                            <LaunchSelect
+                              label={t("execPromotion")}
+                              options={execPromotionOptions}
+                              value={execPromotion}
+                              onChange={setExecPromotion}
+                            />
+                          </label>
+                        </div>
+                      ) : null}
+                      {execAdvancedOpen && execGuardActive ? (
+                        <p className="mt-2 font-mono text-[10px] text-mute">
+                          {t("execNoBlindShip")}
+                        </p>
+                      ) : null}
                     </div>
 
                     {showOverride ? (
