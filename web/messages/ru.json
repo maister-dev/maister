@@ -1831,7 +1831,28 @@
     "scopeRelationsRead": "Чтение связей",
     "scopeRelationsCreate": "Создание связей",
     "scopeRelationsDelete": "Удаление связей",
-    "scopeAgentsTrigger": "Триггер агентов"
+    "scopeAgentsTrigger": "Триггер агентов",
+    "audit": {
+      "title": "Активность токенов",
+      "description": "Действия через API-токены — вызовы внешнего API, а не из веб-интерфейса.",
+      "empty": "Активности токенов пока нет.",
+      "colWhen": "Когда",
+      "colToken": "Токен",
+      "colMethod": "Метод",
+      "colEndpoint": "Эндпоинт",
+      "colScope": "Скоуп",
+      "colResult": "Результат",
+      "colStatus": "Статус",
+      "filterToken": "Токен",
+      "filterResult": "Результат",
+      "filterAny": "Любой",
+      "resultOk": "OK",
+      "resultError": "Ошибка",
+      "apply": "Применить",
+      "pagePrev": "Назад",
+      "pageNext": "Вперёд",
+      "pageInfo": "стр. {page} / {pages}"
+    }
   },
   "gc": {
     "ttl": {

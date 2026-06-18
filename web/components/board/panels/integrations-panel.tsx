@@ -1,8 +1,13 @@
+import type { TokenAuditEntry } from "@/lib/tokens/audit-list";
 import type { TokenListItem } from "@/lib/tokens/list";
 import type { ReactElement, ReactNode } from "react";
 
 import { getTranslations } from "next-intl/server";
 
+import {
+  TokenAuditTable,
+  type TokenAuditLabels,
+} from "@/components/board/panels/token-audit-table";
 import {
   CreateTokenModal,
   RevokeTokenButton,
@@ -285,12 +290,21 @@ export interface IntegrationsPanelProps {
   tokens: TokenListItem[];
   slug: string;
   isAdmin: boolean;
+  audit?: {
+    rows: TokenAuditEntry[];
+    total: number;
+    page: number;
+    pageSize: number;
+    filters: { tokenId?: string; result?: "ok" | "error" };
+    tokenOptions: Array<{ id: string; name: string }>;
+  } | null;
 }
 
 export async function IntegrationsPanel({
   tokens,
   slug,
   isAdmin,
+  audit,
 }: IntegrationsPanelProps): Promise<ReactElement> {
   const t = await getTranslations("tokens");
 
@@ -346,17 +360,55 @@ export async function IntegrationsPanel({
     errorGeneric: t("errorGeneric"),
   };
 
+  const auditLabels: TokenAuditLabels = {
+    title: t("audit.title"),
+    description: t("audit.description"),
+    empty: t("audit.empty"),
+    colWhen: t("audit.colWhen"),
+    colToken: t("audit.colToken"),
+    colMethod: t("audit.colMethod"),
+    colEndpoint: t("audit.colEndpoint"),
+    colScope: t("audit.colScope"),
+    colResult: t("audit.colResult"),
+    colStatus: t("audit.colStatus"),
+    filterToken: t("audit.filterToken"),
+    filterResult: t("audit.filterResult"),
+    filterAny: t("audit.filterAny"),
+    resultOk: t("audit.resultOk"),
+    resultError: t("audit.resultError"),
+    apply: t("audit.apply"),
+    pagePrev: t("audit.pagePrev"),
+    pageNext: t("audit.pageNext"),
+    // Raw template: TokenAuditTable interpolates {page}/{pages} itself, so the
+    // server must not format it eagerly.
+    pageInfo: t.raw("audit.pageInfo"),
+  };
+
   return (
-    <TokensTable
-      createSlot={
-        isAdmin ? <CreateTokenModal labels={labels} slug={slug} /> : null
-      }
-      isAdmin={isAdmin}
-      labels={labels}
-      renderRevoke={(token) => (
-        <RevokeTokenButton labels={labels} slug={slug} tokenId={token.id} />
-      )}
-      tokens={tokens}
-    />
+    <>
+      <TokensTable
+        createSlot={
+          isAdmin ? <CreateTokenModal labels={labels} slug={slug} /> : null
+        }
+        isAdmin={isAdmin}
+        labels={labels}
+        renderRevoke={(token) => (
+          <RevokeTokenButton labels={labels} slug={slug} tokenId={token.id} />
+        )}
+        tokens={tokens}
+      />
+      {isAdmin && audit ? (
+        <TokenAuditTable
+          filters={audit.filters}
+          labels={auditLabels}
+          page={audit.page}
+          pageSize={audit.pageSize}
+          rows={audit.rows}
+          slug={slug}
+          tokenOptions={audit.tokenOptions}
+          total={audit.total}
+        />
+      ) : null}
+    </>
   );
 }

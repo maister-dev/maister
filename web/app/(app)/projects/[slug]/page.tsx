@@ -49,6 +49,7 @@ import { listProjectMembers } from "@/lib/project-members";
 import { listProjectSchedules } from "@/lib/run-schedules/queries";
 import { listTaskDTOs } from "@/lib/services/tasks";
 import { getPlatformStatus } from "@/lib/supervisor-client";
+import { listTokenAudit, TOKEN_AUDIT_PAGE_SIZE } from "@/lib/tokens/audit-list";
 import { listTokens } from "@/lib/tokens/list";
 import { listBranches } from "@/lib/worktree";
 
@@ -86,6 +87,9 @@ interface PageProps {
     event_kind?: string | string[];
     task?: string | string[];
     page?: string | string[];
+    audit_token?: string | string[];
+    audit_result?: string | string[];
+    audit_page?: string | string[];
   }>;
 }
 
@@ -108,6 +112,9 @@ export default async function ProjectBoardPage({
     event_kind: rawEventKind,
     task: rawTaskFilter,
     page: rawPage,
+    audit_token: rawAuditToken,
+    audit_result: rawAuditResult,
+    audit_page: rawAuditPage,
   } = await searchParams;
   const tab = parseTab(rawTab);
   const one = (v: string | string[] | undefined): string | undefined =>
@@ -117,6 +124,14 @@ export default async function ProjectBoardPage({
     eventKind: one(rawEventKind),
     task: one(rawTaskFilter),
     page: Number.parseInt(one(rawPage) ?? "1", 10) || 1,
+  };
+  const auditResult = one(rawAuditResult);
+  const auditFilters = {
+    tokenId: one(rawAuditToken),
+    result: (auditResult === "ok" || auditResult === "error"
+      ? auditResult
+      : undefined) as "ok" | "error" | undefined,
+    page: Number.parseInt(one(rawAuditPage) ?? "1", 10) || 1,
   };
   const file = parseFile(rawFile);
 
@@ -176,6 +191,12 @@ export default async function ProjectBoardPage({
   const activityLog =
     tab === "activity"
       ? await getProjectActivityLog(project.id, logFilters)
+      : null;
+  const integrationsTokens =
+    tab === "integrations" && isAdmin ? await listTokens(project.id) : [];
+  const tokenAudit =
+    tab === "integrations" && isAdmin
+      ? await listTokenAudit(project.id, auditFilters)
       : null;
   // Branch picker for the repo tab; a broken repo_path falls back to the
   // default branch rather than crashing the page. currentRef is constrained to
@@ -432,9 +453,25 @@ export default async function ProjectBoardPage({
       ) : null}
       {tab === "integrations" ? (
         <IntegrationsPanel
+          audit={
+            tokenAudit
+              ? {
+                  ...tokenAudit,
+                  pageSize: TOKEN_AUDIT_PAGE_SIZE,
+                  filters: {
+                    tokenId: auditFilters.tokenId,
+                    result: auditFilters.result,
+                  },
+                  tokenOptions: integrationsTokens.map((tok) => ({
+                    id: tok.id,
+                    name: tok.name,
+                  })),
+                }
+              : null
+          }
           isAdmin={isAdmin}
           slug={slug}
-          tokens={isAdmin ? await listTokens(project.id) : []}
+          tokens={integrationsTokens}
         />
       ) : null}
       {tab === "schedules" ? (

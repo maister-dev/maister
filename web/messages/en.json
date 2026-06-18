@@ -1831,7 +1831,28 @@
     "scopeRelationsRead": "Read relations",
     "scopeRelationsCreate": "Create relations",
     "scopeRelationsDelete": "Delete relations",
-    "scopeAgentsTrigger": "Trigger agents"
+    "scopeAgentsTrigger": "Trigger agents",
+    "audit": {
+      "title": "Token activity",
+      "description": "Actions performed through API tokens — calls to the external API, not from the web UI.",
+      "empty": "No token activity recorded yet.",
+      "colWhen": "When",
+      "colToken": "Token",
+      "colMethod": "Method",
+      "colEndpoint": "Endpoint",
+      "colScope": "Scope",
+      "colResult": "Result",
+      "colStatus": "Status",
+      "filterToken": "Token",
+      "filterResult": "Result",
+      "filterAny": "Any",
+      "resultOk": "OK",
+      "resultError": "Error",
+      "apply": "Apply",
+      "pagePrev": "Prev",
+      "pageNext": "Next",
+      "pageInfo": "page {page} / {pages}"
+    }
   },
   "gc": {
     "ttl": {
