@@ -2222,6 +2222,13 @@
       "blocked": "Задача заблокирована другой задачей.",
       "launchable": "Готова к запуску."
     },
+    "launchConfigTitle": "Конфигурация запуска",
+    "lcFlow": "Flow",
+    "lcRunner": "Раннер / модель",
+    "lcBaseBranch": "Базовая ветка",
+    "lcDelivery": "Доставка",
+    "lcExecution": "Контроль выполнения",
+    "lcExecutionSupervised": "Supervised (по умолчанию)",
     "runsTitle": "История запусков",
     "runsEmpty": "Запусков пока нет.",
     "runsCount": "{count} запусков",

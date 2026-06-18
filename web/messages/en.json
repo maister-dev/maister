@@ -2222,6 +2222,13 @@
       "blocked": "This task is blocked by another task.",
       "launchable": "Ready to launch."
     },
+    "launchConfigTitle": "Launch configuration",
+    "lcFlow": "Flow",
+    "lcRunner": "Runner / Model",
+    "lcBaseBranch": "Base branch",
+    "lcDelivery": "Delivery",
+    "lcExecution": "Execution control",
+    "lcExecutionSupervised": "Supervised (default)",
     "runsTitle": "Run history",
     "runsEmpty": "No runs yet.",
     "runsCount": "{count} runs",

@@ -24,7 +24,20 @@ import { getRunNodeStatuses } from "@/lib/queries/run-node-status";
 import { getProjectAgentsView } from "@/lib/agents/project-links";
 import { getTaskDetail } from "@/lib/queries/task-detail";
 import { classifyManualTaskLaunchability } from "@/lib/runs/launchability";
+import { resolveTaskLaunchConfig } from "@/lib/runs/task-launch-config";
 import { getPlatformStatus } from "@/lib/supervisor-client";
+
+const DELIVERY_STRATEGY_LABEL: Record<string, string> = {
+  merge: "strategyMerge",
+  rebase_merge: "strategyRebaseMerge",
+  pull_request: "strategyPullRequest",
+  ai_rebase_merge: "strategyAiRebaseMerge",
+};
+
+const DELIVERY_TRIGGER_LABEL: Record<string, string> = {
+  manual: "triggerManual",
+  auto_on_ready: "triggerAutoOnReady",
+};
 
 type PageProps = {
   params: Promise<{ slug: string; number: string }>;
@@ -85,9 +98,11 @@ export default async function TaskDetailPage({
   if (!role) notFound();
 
   const canAct = role === "owner" || role === "admin" || role === "member";
-  const [t, platformStatus] = await Promise.all([
+  const [t, tLaunch, platformStatus, launchConfig] = await Promise.all([
     getTranslations("taskDetail"),
+    getTranslations("launch"),
     getPlatformStatus(),
+    resolveTaskLaunchConfig(detail.task.id),
   ]);
   const manualLaunchability = classifyManualTaskLaunchability(
     { status: detail.task.status as TaskStatus },
@@ -319,6 +334,51 @@ export default async function TaskDetailPage({
           taskNumber={detail.task.number}
         />
       </header>
+
+      {launchConfig ? (
+        <section className="flex flex-col gap-2">
+          <h2 className="text-[12px] font-semibold uppercase tracking-[0.08em] text-mute">
+            {t("launchConfigTitle")}
+          </h2>
+          <div
+            className="grid gap-px overflow-hidden rounded-lg border border-line bg-line sm:grid-cols-5"
+            data-testid="task-launch-config"
+          >
+            {(
+              [
+                [t("lcFlow"), launchConfig.flow?.refId ?? "—"],
+                [
+                  t("lcRunner"),
+                  launchConfig.runner
+                    ? `${launchConfig.runner.id} · ${launchConfig.runner.model}`
+                    : "—",
+                ],
+                [t("lcBaseBranch"), launchConfig.baseBranch],
+                [
+                  t("lcDelivery"),
+                  `${tLaunch(
+                    DELIVERY_STRATEGY_LABEL[
+                      launchConfig.deliveryPolicy.strategy
+                    ],
+                  )} · ${tLaunch(
+                    DELIVERY_TRIGGER_LABEL[launchConfig.deliveryPolicy.trigger],
+                  )}`,
+                ],
+                [t("lcExecution"), t("lcExecutionSupervised")],
+              ] as const
+            ).map(([label, value]) => (
+              <div key={label} className="bg-paper px-3 py-2">
+                <div className="font-mono text-[9.5px] font-bold uppercase tracking-[0.08em] text-mute">
+                  {label}
+                </div>
+                <div className="mt-1 break-words font-mono text-[12px] font-semibold text-ink">
+                  {value}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       <section className="flex flex-col gap-3">
         <h2 className="text-[12px] font-semibold uppercase tracking-[0.08em] text-mute">
