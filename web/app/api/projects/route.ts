@@ -88,8 +88,17 @@ function deriveSlug(name: string): string {
 
 function errorResponse(err: unknown): NextResponse {
   if (isMaisterError(err)) {
+    // ADR-093: surface the advisory clone { reason, detail } (when present) so
+    // the UI can map reason -> a specific remediation. UI still branches on code.
+    const details = err.details ?? {};
+
     return NextResponse.json(
-      { code: err.code, message: err.message },
+      {
+        code: err.code,
+        message: err.message,
+        ...("reason" in details ? { reason: details.reason } : {}),
+        ...("detail" in details ? { detail: details.detail } : {}),
+      },
       { status: httpStatusForCode(err.code) },
     );
   }

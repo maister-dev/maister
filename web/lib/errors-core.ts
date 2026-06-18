@@ -25,11 +25,19 @@ export type MaisterErrorCode =
 
 export class MaisterError extends Error {
   readonly code: MaisterErrorCode;
+  // ADR-093: additive, optional structured context (e.g. the advisory clone
+  // { reason, detail }). Never replaces `code` — the UI still branches on code.
+  readonly details?: Record<string, unknown>;
 
-  constructor(code: MaisterErrorCode, message: string, options?: ErrorOptions) {
+  constructor(
+    code: MaisterErrorCode,
+    message: string,
+    options?: ErrorOptions & { details?: Record<string, unknown> },
+  ) {
     super(message, options);
     this.name = "MaisterError";
     this.code = code;
+    this.details = options?.details;
     Object.setPrototypeOf(this, MaisterError.prototype);
   }
 }

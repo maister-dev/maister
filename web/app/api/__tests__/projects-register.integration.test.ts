@@ -24,6 +24,7 @@ import {
 
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { resolveProjectSource } from "@/lib/repo-source";
 
 const schema = schemaModule as unknown as Record<string, any>;
 
@@ -694,5 +695,24 @@ describe("POST /api/projects — maister.yaml optional (ADR-093, integration)", 
     const { gitInit } = await import("@/lib/repo-source");
 
     expect(gitInit).toHaveBeenCalledWith(noManifestDir);
+  });
+
+  it("surfaces a classified clone failure as 409 with reason + detail", async () => {
+    vi.mocked(resolveProjectSource).mockRejectedValueOnce(
+      new MaisterError("PRECONDITION", "git clone failed: redacted stderr", {
+        details: {
+          reason: "SSH_AUTH",
+          detail: "Permission denied (publickey).",
+        },
+      }),
+    );
+
+    const res = await POST(req({ repoUrl: "git@gitverse.ru:kaa/x.git" }));
+    const body = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(body.code).toBe("PRECONDITION");
+    expect(body.reason).toBe("SSH_AUTH");
+    expect(body.detail).toContain("Permission denied");
   });
 });

@@ -13,7 +13,10 @@ vi.mock("next-intl", () => ({
   useTranslations: () => (key: string) => key,
 }));
 
-import { NewProjectForm } from "@/components/projects/new-project-form";
+import {
+  CloneErrorBlock,
+  NewProjectForm,
+} from "@/components/projects/new-project-form";
 
 describe("NewProjectForm project-name field", () => {
   it("renders the optional project-name input with its label", () => {
@@ -40,5 +43,74 @@ describe("NewProjectForm project-name field", () => {
     expect(html).toContain("modeClone");
     expect(html).toContain("modeExisting");
     expect(html).toContain("modeNew");
+  });
+});
+
+// ADR-093: reason-aware clone-failure remediation. The mocked next-intl returns
+// the key verbatim, so we assert the remediation/help keys + the raw detail.
+describe("CloneErrorBlock", () => {
+  it("renders the reason-specific remediation + collapsible git output", () => {
+    const html = renderToStaticMarkup(
+      createElement(CloneErrorBlock, {
+        errorCode: "PRECONDITION",
+        cloneReason: "SSH_AUTH",
+        cloneDetail: "Permission denied (publickey).",
+        repoUrl: "git@gitverse.ru:kaa/x.git",
+      }),
+    );
+
+    expect(html).toContain("errorSshAuth");
+    expect(html).toContain("errorCloneDetail");
+    expect(html).toContain("Permission denied (publickey).");
+  });
+
+  it("shows the gh hint only for a github.com HTTPS_AUTH failure", () => {
+    const gh = renderToStaticMarkup(
+      createElement(CloneErrorBlock, {
+        errorCode: "PRECONDITION",
+        cloneReason: "HTTPS_AUTH",
+        cloneDetail: undefined,
+        repoUrl: "https://github.com/org/x.git",
+      }),
+    );
+
+    expect(gh).toContain("ghLoginHint");
+
+    const nongh = renderToStaticMarkup(
+      createElement(CloneErrorBlock, {
+        errorCode: "PRECONDITION",
+        cloneReason: "HTTPS_AUTH",
+        cloneDetail: undefined,
+        repoUrl: "https://gitverse.ru/org/x.git",
+      }),
+    );
+
+    expect(nongh).not.toContain("ghLoginHint");
+  });
+
+  it("falls back to the generic code message for non-clone errors", () => {
+    const html = renderToStaticMarkup(
+      createElement(CloneErrorBlock, {
+        errorCode: "CONFLICT",
+        cloneReason: undefined,
+        cloneDetail: undefined,
+        repoUrl: "",
+      }),
+    );
+
+    expect(html).toContain("errorConflict");
+  });
+
+  it("renders nothing when there is no error", () => {
+    const html = renderToStaticMarkup(
+      createElement(CloneErrorBlock, {
+        errorCode: undefined,
+        cloneReason: undefined,
+        cloneDetail: undefined,
+        repoUrl: "",
+      }),
+    );
+
+    expect(html).toBe("");
   });
 });

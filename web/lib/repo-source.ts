@@ -22,6 +22,8 @@ const log = pino({
 const GIT_TIMEOUT_MS = 60_000;
 const CLONE_TIMEOUT_MS = 120_000;
 const EXEC_MAX_BUFFER = 4 * 1024 * 1024;
+// ADR-093: cap the redacted stderr carried to the client as advisory `detail`.
+const MAX_CLONE_DETAIL = 4096;
 
 const SAFE_SEGMENT = /^[A-Za-z0-9._-]+$/;
 const URL_SCHEME_ALLOWLIST = ["https://", "http://", "ssh://", "file://"];
@@ -119,6 +121,65 @@ export function redactUrl(url: string): string {
   );
 }
 
+// ADR-093: classify a (redacted) git stderr blob into an advisory reason. The
+// UI maps the reason to a specific remediation; the thrown error KEEPS
+// code: "PRECONDITION". Order matters — NOT_FOUND is checked before SSH_AUTH so
+// a not-found-over-SSH ("Repository not found … Could not read from remote
+// repository") is not swallowed by the SSH_AUTH "could not read" marker.
+export type CloneFailureReason =
+  | "SSH_AUTH"
+  | "SSH_HOSTKEY"
+  | "HTTPS_AUTH"
+  | "NOT_FOUND"
+  | "NETWORK"
+  | "UNKNOWN";
+
+export function classifyGitError(stderr: string): CloneFailureReason {
+  const s = stderr.toLowerCase();
+
+  if (
+    s.includes("host key verification failed") ||
+    s.includes("remote host identification has changed")
+  ) {
+    return "SSH_HOSTKEY";
+  }
+  if (
+    s.includes("authentication failed") ||
+    s.includes("could not read username") ||
+    s.includes("could not read password") ||
+    s.includes("terminal prompts disabled") ||
+    s.includes("invalid username or password") ||
+    s.includes("403")
+  ) {
+    return "HTTPS_AUTH";
+  }
+  if (
+    s.includes("repository not found") ||
+    s.includes("does not exist") ||
+    s.includes("404")
+  ) {
+    return "NOT_FOUND";
+  }
+  if (
+    s.includes("permission denied (publickey)") ||
+    s.includes("could not read from remote repository")
+  ) {
+    return "SSH_AUTH";
+  }
+  if (
+    s.includes("could not resolve host") ||
+    s.includes("connection timed out") ||
+    s.includes("connection refused") ||
+    s.includes("network is unreachable") ||
+    s.includes("unable to access") ||
+    s.includes("timed out")
+  ) {
+    return "NETWORK";
+  }
+
+  return "UNKNOWN";
+}
+
 export async function assertGitAvailable(): Promise<void> {
   try {
     await execFileAsync("git", ["--version"], gitExecOptions(GIT_TIMEOUT_MS));
@@ -153,12 +214,15 @@ export async function cloneRepo(opts: {
   } catch (err) {
     const e = err as NodeJS.ErrnoException & { stderr?: string };
     const stderrText = (e.stderr ?? e.message ?? "").toString();
+    const redacted = redactUrl(stderrText);
+    const reason = classifyGitError(redacted);
 
-    throw new MaisterError(
-      "PRECONDITION",
-      `git clone failed: ${redactUrl(stderrText)}`,
-      { cause: asError(err) },
-    );
+    log.debug({ reason }, "git clone failed — classified");
+
+    throw new MaisterError("PRECONDITION", `git clone failed: ${redacted}`, {
+      cause: asError(err),
+      details: { reason, detail: redacted.slice(0, MAX_CLONE_DETAIL) },
+    });
   }
 }
 

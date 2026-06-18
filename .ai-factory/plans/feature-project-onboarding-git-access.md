@@ -420,7 +420,7 @@ Every promised test names its **runner project**:
     unit+integration green; **cleanup-on-failure tested** (create fails mid-register
     → dir removed).
 
-- [ ] **T13 — P1 E2E + green checkpoint.** Playwright spec
+- [x] **T13 — P1 E2E + green checkpoint.** Playwright spec
   `web/e2e/project-onboarding.spec.ts` (add stem `project-onboarding` to the
   `AUTHED_SPEC` regex in `web/playwright.config.ts`): add a **new-empty** project
   with no `maister.yaml` → lands on board; assert URL→name/key prefill + dirty-stop
@@ -433,7 +433,7 @@ Every promised test names its **runner project**:
 
 ### Phase 2 (P2) — Git access *(fixes private-clone pain, e.g. gitverse)*
 
-- [ ] **T14 — `classifyGitError` + `MaisterError.details` (TDD).** Pure helper in
+- [x] **T14 — `classifyGitError` + `MaisterError.details` (TDD).** Pure helper in
   `web/lib/repo-source.ts`: `classifyGitError(stderr): CloneFailureReason`
   (`SSH_AUTH | SSH_HOSTKEY | HTTPS_AUTH | NOT_FOUND | NETWORK | UNKNOWN`) with the
   marker sets from design §5.1. Confirm `web/lib/errors-core.ts` `MaisterError`
@@ -447,7 +447,7 @@ Every promised test names its **runner project**:
   - *Logging:* `log.debug` `{ reason }` (never raw token; stderr already redacted).
     *Acceptance:* unit green; `details` is additive (existing throws unaffected).
 
-- [ ] **T15 — `errorResponse` carries reason/detail (TDD, integration).** In
+- [x] **T15 — `errorResponse` carries reason/detail (TDD, integration).** In
   `web/app/api/projects/route.ts`, `errorResponse` serializes `{ code, message,
   reason?, detail? }` from `MaisterError.details` (UI still branches on `code`).
   Keep all other codes unchanged.
@@ -455,7 +455,7 @@ Every promised test names its **runner project**:
     `reason` + redacted `detail`; non-clone errors unchanged.
   - *Logging:* existing. *Acceptance:* depends on T14; integration green.
 
-- [ ] **T16 — UI remediation per reason + collapsible detail (TDD).** In
+- [x] **T16 — UI remediation per reason + collapsible detail (TDD).** In
   `new-project-form.tsx`: widen the error model from a single `ERROR_KEY` string to
   map clone `reason` → a specific i18n remediation, with a collapsible "git output"
   block showing `detail`. `SSH_AUTH` leads with `ssh-add`; `HTTPS_AUTH` on
@@ -464,7 +464,7 @@ Every promised test names its **runner project**:
     remediation key + the detail block.
   - *Acceptance:* depends on T15; unit + i18n-parity green.
 
-- [ ] **T17 — Fix untranslated ru keys (TDD).** In
+- [x] **T17 — Fix untranslated ru keys (TDD).** In
   [`web/messages/ru.json`](../../web/messages/ru.json) translate the
   `projects.*` keys flagged in design §5.1 (`errorConflict`, `errorForbidden`,
   `successTitle`, verify `errorConfig`) + all new P2 keys. Mirror in

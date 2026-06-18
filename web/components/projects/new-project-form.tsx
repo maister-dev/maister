@@ -26,6 +26,17 @@ const ERROR_KEY: Record<ErrorCode, string> = {
   PRECONDITION: "errorClone",
 };
 
+// ADR-093: a clone PRECONDITION carries an advisory `reason` → a specific
+// remediation key. UNKNOWN (and any unmapped reason) falls back to errorClone.
+const REASON_KEY: Record<string, string> = {
+  SSH_AUTH: "errorSshAuth",
+  SSH_HOSTKEY: "errorSshHostkey",
+  HTTPS_AUTH: "errorHttpsAuth",
+  NOT_FOUND: "errorNotFound",
+  NETWORK: "errorNetwork",
+  UNKNOWN: "errorClone",
+};
+
 type GitStatus = "remote" | "no-remote" | "initialized";
 type Mode = "clone" | "existing" | "new";
 
@@ -68,6 +79,52 @@ function previewKey(source: string): string {
   return TASK_KEY_REGEX.test(key) ? key : "";
 }
 
+// ADR-093: the registration error surface. A clone PRECONDITION renders its
+// advisory `reason` as a specific remediation + a collapsible (redacted) git
+// output; a github.com HTTPS_AUTH adds the `gh` hint. Extracted as a pure
+// component so each reason branch is unit-testable (the form sets the state via
+// an async submit that renderToStaticMarkup cannot drive).
+export function CloneErrorBlock({
+  errorCode,
+  cloneReason,
+  cloneDetail,
+  repoUrl,
+}: {
+  errorCode: ErrorCode | undefined;
+  cloneReason: string | undefined;
+  cloneDetail: string | undefined;
+  repoUrl: string;
+}): ReactElement | null {
+  const t = useTranslations("projects");
+
+  if (!errorCode) return null;
+
+  return (
+    <div className="flex flex-col gap-1.5" role="alert">
+      <p className="text-[11.5px] leading-[1.5] text-[#d9534f]">
+        {errorCode === "PRECONDITION" && cloneReason
+          ? t(REASON_KEY[cloneReason] ?? "errorClone")
+          : t(ERROR_KEY[errorCode])}
+      </p>
+      {errorCode === "PRECONDITION" &&
+      cloneReason === "HTTPS_AUTH" &&
+      /github\.com/i.test(repoUrl) ? (
+        <p className="text-[11.5px] leading-[1.5] text-mute">
+          {t("ghLoginHint")}
+        </p>
+      ) : null}
+      {cloneDetail ? (
+        <details className="text-[11.5px] leading-[1.5] text-mute">
+          <summary className="cursor-pointer">{t("errorCloneDetail")}</summary>
+          <pre className="mt-1 overflow-x-auto whitespace-pre-wrap rounded-md border border-line bg-paper p-2 font-mono text-[10.5px] text-ink-2">
+            {cloneDetail}
+          </pre>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
 export function NewProjectForm(): ReactElement {
   const t = useTranslations("projects");
   const router = useRouter();
@@ -81,11 +138,15 @@ export function NewProjectForm(): ReactElement {
   const [taskKeyDirty, setTaskKeyDirty] = useState(false);
   const [pending, setPending] = useState(false);
   const [errorCode, setErrorCode] = useState<ErrorCode | undefined>(undefined);
+  const [cloneReason, setCloneReason] = useState<string | undefined>(undefined);
+  const [cloneDetail, setCloneDetail] = useState<string | undefined>(undefined);
   const [success, setSuccess] = useState<Success | undefined>(undefined);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setErrorCode(undefined);
+    setCloneReason(undefined);
+    setCloneDetail(undefined);
     setPending(true);
 
     try {
@@ -122,10 +183,14 @@ export function NewProjectForm(): ReactElement {
 
       const payload = (await res.json().catch(() => null)) as {
         code?: string;
+        reason?: string;
+        detail?: string;
       } | null;
       const code = payload?.code;
 
       setErrorCode(code && code in ERROR_KEY ? (code as ErrorCode) : "CONFIG");
+      setCloneReason(payload?.reason);
+      setCloneDetail(payload?.detail);
     } catch {
       setErrorCode("CONFIG");
     } finally {
@@ -314,11 +379,12 @@ export function NewProjectForm(): ReactElement {
 
       <p className="text-[11.5px] leading-[1.5] text-mute">{t("sourceHint")}</p>
 
-      {errorCode ? (
-        <p className="text-[11.5px] leading-[1.5] text-[#d9534f]">
-          {t(ERROR_KEY[errorCode])}
-        </p>
-      ) : null}
+      <CloneErrorBlock
+        cloneDetail={cloneDetail}
+        cloneReason={cloneReason}
+        errorCode={errorCode}
+        repoUrl={repoUrl}
+      />
 
       <button
         className={submitBtn}
