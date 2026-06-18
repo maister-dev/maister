@@ -486,7 +486,7 @@ sequenceDiagram
     W-->>H: onRespond callback triggers revalidation
 ```
 
-### Inbox card redesign — 3-tier disclosure + lazy context (Designed)
+### Inbox card redesign — 3-tier disclosure + lazy context (Implemented)
 
 The cross-project `/inbox` and the per-project board render one unified
 `HitlCard` with three disclosure tiers: **collapsed** (scan), **expanded**
@@ -797,11 +797,11 @@ fields:
   home summary; the "Needs you (N)" count is the canonical `needsYou` owned by
   [`social-board.md`](social-board.md) (`pendingHitlCount` = the
   `getCrossProjectHitlInbox(userId, role)` count), with RBAC scoping preserved.
-- **(Designed)** Every `HitlItem` MUST carry `taskTitle` and `stage {label,
+- **(Implemented)** Every `HitlItem` MUST carry `taskTitle` and `stage {label,
   type}`; the stage `type` MUST be resolved by compiling each distinct flow
   revision's manifest at most ONCE per list query (never per item), and an
   unresolved `step_id` MUST degrade to the raw label rather than throw.
-- **(Designed)** `GET /api/runs/{runId}/inbox-context` MUST be read-only, gated by
+- **(Implemented)** `GET /api/runs/{runId}/inbox-context` MUST be read-only, gated by
   `readBoard` on the run's project (foreign run → 403, missing → 404), return an
   explicit DTO `{ lastAgentMessage, gates[], diff, progress }` carrying no DB rows
   or server-only handles, and degrade any unreadable field to `null` (never 500

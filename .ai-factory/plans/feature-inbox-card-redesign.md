@@ -110,7 +110,7 @@ No `Co-Authored-By` trailer (repo convention).
 <!-- Commit checkpoint: Phase 3-4 -->
 
 ### Phase 5 — Docs reconcile
-- [ ] T5.1: Flip `(Designed)` → `(Implemented)` in `docs/screens/inbox.md` + `docs/system-analytics/hitl.md`; final `pnpm validate:docs` + redocly + i18n parity.
+- [x] T5.1: Flip `(Designed)` → `(Implemented)` in `docs/screens/inbox.md` + `docs/system-analytics/hitl.md`; final `pnpm validate:docs` + redocly + i18n parity.
 <!-- Commit checkpoint: Phase 5 -->
 
 ## Test integrity (Rule)
