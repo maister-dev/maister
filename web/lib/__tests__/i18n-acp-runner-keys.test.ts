@@ -55,6 +55,8 @@ const ACP_RUNNER_KEYS = [
   "policyDefault",
   "policyDangerous",
   "saveFailed",
+  "providerPresetsReference",
+  "usePreset",
   // Generic settings keys the runner modal also depends on (modal save/cancel).
   "cancel",
   "save",

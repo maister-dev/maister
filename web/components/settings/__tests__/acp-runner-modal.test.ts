@@ -78,6 +78,25 @@ describe("AcpRunnerModal", () => {
     expect(markup).toContain("modelSuggestions.refresh");
   });
 
+  it("prefills the create form from initialPresetId (Use-prefill)", () => {
+    const markup = renderToStaticMarkup(
+      createElement(AcpRunnerModal, {
+        mode: "create",
+        sidecars: [],
+        presets: [codexPreset],
+        initialPresetId: "codex-openai",
+        onClose() {},
+        onSaved() {},
+      }),
+    );
+
+    // Model seeded from the preset (empty without prefill).
+    expect(markup).toContain("gpt-5-codex");
+    // The openai provider-kind option only exists for the codex adapter, so
+    // its presence proves the adapter was seeded to codex.
+    expect(markup).toContain('value="openai"');
+  });
+
   it("renders the edit form with delete affordance and the runner's values", () => {
     const markup = renderToStaticMarkup(
       createElement(AcpRunnerModal, {

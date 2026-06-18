@@ -28,13 +28,6 @@ type Props = {
   unavailableAdapters?: readonly AdapterId[];
 };
 
-function statusClass(status: RunnerRow["readinessStatus"]): string {
-  if (status === "Ready") return "border-emerald-500/30 text-emerald-700";
-  if (status === "NotReady") return "border-red-500/30 text-red-700";
-
-  return "border-line text-mute";
-}
-
 type ReadinessLabels = {
   ready: string;
   notReady: string;
@@ -112,6 +105,7 @@ export function AcpRunnersPanel({
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<RunnerRow | null>(null);
+  const [usePresetId, setUsePresetId] = useState<string | null>(null);
 
   const refresh = (): void => startTransition(() => router.refresh());
   const defaultRunner = runners.find(
@@ -200,7 +194,10 @@ export function AcpRunnersPanel({
           <button
             className="h-10 rounded-[8px] border border-amber bg-amber px-4 text-[13px] font-semibold text-white hover:bg-amber-2"
             type="button"
-            onClick={() => setCreating(true)}
+            onClick={() => {
+              setUsePresetId(null);
+              setCreating(true);
+            }}
           >
             {t("addRunner")}
           </button>
@@ -281,50 +278,45 @@ export function AcpRunnersPanel({
         </table>
       </div>
 
-      <div className="mt-4 border-t border-line pt-4">
-        <h3 className="m-0 mb-2 font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute">
-          {t("providerPresets")}
-        </h3>
-        <div className="grid gap-2">
+      <details className="mt-4 border-t border-line pt-4">
+        <summary className="cursor-pointer list-none font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute hover:text-ink-2">
+          {t("providerPresetsReference")}
+        </summary>
+        <ul className="mt-3 grid list-none gap-1.5 p-0">
           {presets.map((preset) => (
-            <article
+            <li
               key={preset.id}
-              className="rounded-[8px] border border-line bg-paper px-3 py-2"
+              className="flex flex-wrap items-center justify-between gap-2 rounded-[8px] border border-line bg-paper px-3 py-2"
             >
-              <div className="flex flex-wrap items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="truncate text-[12px] font-semibold text-ink">
-                    {preset.id}
-                  </div>
-                  <div className="mt-0.5 text-[11px] leading-[1.4] text-mute">
-                    {preset.adapter} · {preset.model} · {preset.provider.kind}
-                    {preset.permissionPolicy === "dangerously_skip_permissions"
-                      ? " · dangerous"
-                      : ""}
-                  </div>
+              <div className="min-w-0">
+                <div className="truncate text-[12px] font-semibold text-ink">
+                  {preset.id}
                 </div>
-                <span
-                  className={`rounded-full border px-2 py-1 text-[10.5px] font-semibold ${statusClass(
-                    preset.readinessStatus,
-                  )}`}
-                >
-                  {preset.readinessStatus}
-                </span>
+                <div className="mt-0.5 font-mono text-[11px] leading-[1.4] text-mute">
+                  {preset.adapter} · {preset.model} · {preset.provider.kind}
+                  {preset.permissionPolicy === "dangerously_skip_permissions"
+                    ? " · dangerous"
+                    : ""}
+                </div>
               </div>
-              {preset.readinessReasons.length > 0 ? (
-                <ul className="m-0 mt-1.5 list-none p-0 text-[11px] leading-[1.45] text-mute">
-                  {preset.readinessReasons.map((reason) => (
-                    <li key={reason}>{reason}</li>
-                  ))}
-                </ul>
-              ) : null}
-            </article>
+              <button
+                className="h-8 shrink-0 rounded-[8px] border border-line px-3 text-[12px] font-semibold text-ink hover:border-mute"
+                type="button"
+                onClick={() => {
+                  setUsePresetId(preset.id);
+                  setCreating(true);
+                }}
+              >
+                {t("usePreset")}
+              </button>
+            </li>
           ))}
-        </div>
-      </div>
+        </ul>
+      </details>
 
       {creating || editing ? (
         <AcpRunnerModal
+          initialPresetId={usePresetId ?? undefined}
           mode={editing ? "edit" : "create"}
           presets={presets}
           runner={editing ?? undefined}
@@ -333,6 +325,7 @@ export function AcpRunnersPanel({
           onClose={() => {
             setCreating(false);
             setEditing(null);
+            setUsePresetId(null);
           }}
           onSaved={refresh}
         />

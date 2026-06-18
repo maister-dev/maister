@@ -61,6 +61,7 @@ export interface AcpRunnerModalProps {
   runner?: RunnerRow;
   sidecars: { id: string }[];
   presets: PresetRow[];
+  initialPresetId?: string;
   unavailableAdapters?: readonly AdapterId[];
   onClose: () => void;
   onSaved: () => void;
@@ -155,13 +156,38 @@ export function AcpRunnerModal({
   runner,
   sidecars,
   presets,
+  initialPresetId,
   unavailableAdapters,
   onClose,
   onSaved,
 }: AcpRunnerModalProps): ReactElement {
   const t = useTranslations("settings");
-  const [draft, setDraft] = useState<RunnerDraft>(() =>
-    seedDraft(mode, runner),
+  const [draft, setDraft] = useState<RunnerDraft>(() => {
+    if (mode === "create" && initialPresetId) {
+      const preset = presets.find((item) => item.id === initialPresetId);
+
+      if (preset) {
+        const sidecarId =
+          preset.sidecarId && sidecars.some((s) => s.id === preset.sidecarId)
+            ? preset.sidecarId
+            : null;
+
+        return draftFromProvider(
+          preset.adapter,
+          preset.provider,
+          preset.permissionPolicy,
+          sidecarId,
+          true,
+          "",
+          preset.model,
+        );
+      }
+    }
+
+    return seedDraft(mode, runner);
+  });
+  const [selectedPresetId, setSelectedPresetId] = useState(
+    initialPresetId ?? "",
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -396,9 +422,12 @@ export function AcpRunnerModal({
               <span className={fieldLabel}>{t("fromPreset")}</span>
               <select
                 className={inputClass}
-                defaultValue=""
                 disabled={busy}
-                onChange={(e) => applyPreset(e.target.value)}
+                value={selectedPresetId}
+                onChange={(e) => {
+                  setSelectedPresetId(e.target.value);
+                  applyPreset(e.target.value);
+                }}
               >
                 <option value="" />
                 {presets.map((preset) => (

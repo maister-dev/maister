@@ -984,7 +984,8 @@
     "capability": "capability",
     "binary": "binary",
     "providers": "providers",
-    "providerPresets": "Provider presets",
+    "providerPresetsReference": "Provider presets (reference)",
+    "usePreset": "Use",
     "permissionPolicies": "permission policies",
     "adapterDetails": "Details",
     "setupHint": {

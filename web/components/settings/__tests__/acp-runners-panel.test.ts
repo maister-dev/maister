@@ -59,9 +59,37 @@ describe("AcpRunnersPanel", () => {
     expect(markup).toContain("colReadiness");
     expect(markup).toContain("colActions");
     expect(markup).toContain("platformDefaultRunner");
-    expect(markup).toContain("providerPresets");
+    expect(markup).toContain("providerPresetsReference");
     expect(markup).toContain("claude-code");
     expect(markup).toContain("codex-openai");
+  });
+
+  it("renders the provider presets as a collapsed reference list with Use buttons", () => {
+    const preset = {
+      id: "codex-zai-glm",
+      adapter: "codex" as const,
+      model: "glm-5.1",
+      provider: { kind: "openai_compatible" },
+      permissionPolicy: "default" as const,
+      sidecarId: null,
+      readinessStatus: "NotReady" as const,
+      readinessReasons: [] as readonly string[],
+    };
+    const markup = renderToStaticMarkup(
+      createElement(AcpRunnersPanel, {
+        defaultRunnerId: "claude-code",
+        presets: [preset],
+        sidecars: [],
+        runners: [claudeRunner],
+      }),
+    );
+
+    expect(markup).toContain("<details");
+    expect(markup).toContain("providerPresetsReference");
+    expect(markup).toContain("codex-zai-glm");
+    expect(markup).toContain("usePreset");
+    // Reference list shows no readiness badge text.
+    expect(markup).not.toContain("NotReady");
   });
 
   it("renders a good-tone dot with the ambient-credentials tooltip for a Ready native runner", () => {

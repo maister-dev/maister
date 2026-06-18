@@ -113,9 +113,9 @@ Next-free at **main HEAD** is `### ADR-092` → reserve **ADR-093**. ⚠ The unm
 <!-- Commit checkpoint: Phase 2 -->
 
 ### Phase 3 — Provider-presets reference (collapsed) + Use-prefill
-- [ ] **T3.1** `acp-runners-panel.tsx`: replace the always-on "Provider presets" card grid with a `<details>` collapsed-by-default "Provider presets (reference)" list — each row `id` + `adapter · model · provider` + a "Use" button; no status badges. Files: `acp-runners-panel.tsx`.
-- [ ] **T3.2** `acp-runner-modal.tsx`: add `initialPresetId?: string` prop, apply `applyPreset(initialPresetId)` on open (control the preset `<select>` value); panel wires "Use" → open modal in create mode prefilled. Files: `acp-runner-modal.tsx`, `acp-runners-panel.tsx`.
-- [ ] **T3.3** Tests: component test — collapsed presets render + "Use" opens the modal prefilled (adapter/model/provider seeded). Acceptance: suite green.
+- [x] **T3.1** `acp-runners-panel.tsx`: replace the always-on "Provider presets" card grid with a `<details>` collapsed-by-default "Provider presets (reference)" list — each row `id` + `adapter · model · provider` + a "Use" button; no status badges. Files: `acp-runners-panel.tsx`.
+- [x] **T3.2** `acp-runner-modal.tsx`: add `initialPresetId?: string` prop, apply `applyPreset(initialPresetId)` on open (control the preset `<select>` value); panel wires "Use" → open modal in create mode prefilled. Files: `acp-runner-modal.tsx`, `acp-runners-panel.tsx`.
+- [x] **T3.3** Tests: component test — collapsed presets render + "Use" opens the modal prefilled (adapter/model/provider seeded). Acceptance: suite green.
 <!-- Commit checkpoint: Phase 3 -->
 
 ### Phase 4 — Move platform agents to admin-only /agents

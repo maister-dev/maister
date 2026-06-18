@@ -984,7 +984,8 @@
     "capability": "capability",
     "binary": "бинарник",
     "providers": "провайдеры",
-    "providerPresets": "Пресеты провайдеров",
+    "providerPresetsReference": "Пресеты провайдеров (справочник)",
+    "usePreset": "Использовать",
     "permissionPolicies": "политики прав",
     "adapterDetails": "Подробнее",
     "setupHint": {
