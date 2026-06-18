@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, symlink, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -23,6 +23,7 @@ import {
 } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
+import { requireGlobalRole } from "@/lib/authz";
 import { MaisterError } from "@/lib/errors";
 import { resolveProjectSource } from "@/lib/repo-source";
 
@@ -714,5 +715,39 @@ describe("POST /api/projects — maister.yaml optional (ADR-093, integration)", 
     expect(body.code).toBe("PRECONDITION");
     expect(body.reason).toBe("SSH_AUTH");
     expect(body.detail).toContain("Permission denied");
+  });
+
+  // [FIX] Codex F4: authenticate BEFORE parsing the body. An empty body fails
+  // postBodySchema (no repoUrl/target) — a 422 if parsed first; auth-first makes
+  // the 403 win, so the route contract is not leaked before the auth gate.
+  it("authenticates before parsing the body (unauthorized + bad body → 403, not 422)", async () => {
+    vi.mocked(requireGlobalRole).mockRejectedValueOnce(
+      new MaisterError("UNAUTHORIZED", "admin required"),
+    );
+
+    const res = await POST(req({}));
+
+    expect(res.status).toBe(403);
+  });
+
+  // [FIX] Codex F3: a present-but-unreadable maister.yaml (stat ELOOP, not
+  // ENOENT) MUST fail CONFIG, never silently fall back to DB-default registration.
+  it("a present-but-unreadable maister.yaml fails CONFIG (no DB-default fallback)", async () => {
+    const looped = await mkdtemp(join(tmpRoot, "eloop-"));
+
+    await symlink("maister.yaml", join(looped, "maister.yaml"));
+    currentResolved = {
+      dir: looped,
+      repoUrl: null,
+      provider: null,
+      gitStatus: "no-remote",
+      clonedByUs: false,
+    };
+
+    const res = await POST(req({ target: "ignored" }));
+    const body = await res.json();
+
+    expect(res.status).toBe(422);
+    expect(body.code).toBe("CONFIG");
   });
 });

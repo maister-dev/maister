@@ -154,34 +154,44 @@ function httpStatusForCode(code: string): number {
   }
 }
 
+// [FIX] Codex F3: ONLY a genuinely missing file falls back to DB-default
+// registration. A present-but-unreadable manifest (EACCES/EPERM) or a transient
+// IO error MUST fail fast as CONFIG — never be silently treated as "absent",
+// which would skip manifest parsing + declared flows/packages/setup.
 async function pathExists(p: string): Promise<boolean> {
   try {
     await stat(p);
 
     return true;
-  } catch {
-    return false;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+
+    if (code === "ENOENT" || code === "ENOTDIR") return false;
+
+    throw new MaisterError(
+      "CONFIG",
+      `cannot stat ${p}: ${(err as Error).message}`,
+    );
   }
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
-  let body: z.infer<typeof postBodySchema>;
-
   try {
-    body = postBodySchema.parse(await req.json());
-  } catch (err) {
-    return errorResponse(
-      new MaisterError(
+    // [FIX] Codex F4: authenticate/authorize BEFORE parsing the body, so an
+    // unauthenticated/unauthorized caller gets 401/403 — not a schema-specific
+    // 422 that leaks the route contract before the auth gate.
+    const admin = await requireGlobalRole("admin");
+
+    let body: z.infer<typeof postBodySchema>;
+
+    try {
+      body = postBodySchema.parse(await req.json());
+    } catch (err) {
+      throw new MaisterError(
         "CONFIG",
         `invalid POST body: ${(err as Error).message}`,
-      ),
-    );
-  }
-
-  try {
-    // Authn/authz BEFORE any filesystem or DB work. Throws
-    // UNAUTHENTICATED/UNAUTHORIZED → 401/403.
-    const admin = await requireGlobalRole("admin");
+      );
+    }
 
     // Serialize the clone+register critical section so two concurrent
     // registrations can't race on the same derived target (TOCTOU).

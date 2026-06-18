@@ -25,6 +25,8 @@ import {
 } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
+import { requireActiveSession } from "@/lib/authz";
+import { MaisterError } from "@/lib/errors";
 import { serializeProjectConfig } from "@/lib/packages/yaml-writeback";
 
 const execFileAsync = promisify(execFile);
@@ -182,6 +184,19 @@ beforeEach(async () => {
 });
 
 describe("POST /api/projects/[slug]/persist-config (ADR-093, integration)", () => {
+  // [FIX] Codex F4: the session gate runs BEFORE the body is parsed. A bad body
+  // (non-boolean push) would be a 422 if parsed first; auth-first makes the 401
+  // win, so the route contract is not leaked before authentication.
+  it("authenticates before parsing the body (unauthenticated + bad body → 401, not 422)", async () => {
+    vi.mocked(requireActiveSession).mockRejectedValueOnce(
+      new MaisterError("UNAUTHENTICATED", "sign in"),
+    );
+
+    const res = await callPersist("any-slug", { push: "not-a-boolean" });
+
+    expect(res.status).toBe(401);
+  });
+
   it("happy path: writes + commits maister.yaml with the host author, flips the DB", async () => {
     const repo = await initRepo({ author: true, initialCommit: true });
     const { id, slug } = await seedProject({ repoPath: repo });

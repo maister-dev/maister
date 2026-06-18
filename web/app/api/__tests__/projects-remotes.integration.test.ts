@@ -373,6 +373,50 @@ describe("POST/GET/PATCH/DELETE /api/projects/[slug]/remotes (route, integration
     expect(body.code).toBe("CONFIG");
   });
 
+  // [FIX] Codex F2: an action on an UNKNOWN remote is a 409 PRECONDITION, not a
+  // 200 "success with warning" — invalid input must never read as success.
+  it("POST push to an unknown remote → 409 PRECONDITION (not an advisory)", async () => {
+    const repo = await initRepo();
+    const { slug } = await seedProject(repo);
+
+    const res = await route.POST(
+      remotesReq("POST", { op: "push", name: "origin", branch: "main" }),
+      { params: Promise.resolve({ slug }) },
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(body.code).toBe("PRECONDITION");
+  });
+
+  it("POST fetch on an unknown remote → 409 PRECONDITION", async () => {
+    const repo = await initRepo();
+    const { slug } = await seedProject(repo);
+
+    const res = await route.POST(
+      remotesReq("POST", { op: "fetch", name: "nope" }),
+      { params: Promise.resolve({ slug }) },
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(body.code).toBe("PRECONDITION");
+  });
+
+  it("POST push action with an invalid remote name → 409 PRECONDITION", async () => {
+    const repo = await initRepo();
+    const { slug } = await seedProject(repo);
+
+    const res = await route.POST(
+      remotesReq("POST", { op: "push", name: "-bad", branch: "main" }),
+      { params: Promise.resolve({ slug }) },
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(body.code).toBe("PRECONDITION");
+  });
+
   it("GET lists remotes (redacted) and heals the origin cache", async () => {
     const repo = await initRepo();
     const { id, slug } = await seedProject(repo);

@@ -69,23 +69,11 @@ export async function POST(
   { params }: RouteParams,
 ): Promise<NextResponse> {
   const { slug } = await params;
-  let body: z.infer<typeof postBodySchema>;
 
   try {
-    const raw = await req.json().catch(() => ({}));
-
-    body = postBodySchema.parse(raw ?? {});
-  } catch (err) {
-    return errorResponse(
-      new MaisterError(
-        "CONFIG",
-        `invalid POST body: ${err instanceof Error ? err.message : String(err)}`,
-      ),
-      slug,
-    );
-  }
-
-  try {
+    // [FIX] Codex F4: session + project-action gate BEFORE parsing the body, so
+    // an unauthenticated/unauthorized caller gets 401/403 — not a schema 422 that
+    // leaks the route contract before the auth gate.
     await requireActiveSession();
 
     const db = getDb() as any;
@@ -99,9 +87,22 @@ export async function POST(
       throw new MaisterError("PRECONDITION", `project not found: ${slug}`);
     }
 
-    // Identifiers (invariant A): slug = url-param (access-controlled below);
+    // Identifiers (invariant A): slug = url-param (access-controlled here);
     // projectId + repo_path = server-state (the row), never the body.
     await requireProjectAction(project.id, "editSettings");
+
+    let body: z.infer<typeof postBodySchema>;
+
+    try {
+      const raw = await req.json().catch(() => ({}));
+
+      body = postBodySchema.parse(raw ?? {});
+    } catch (err) {
+      throw new MaisterError(
+        "CONFIG",
+        `invalid POST body: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
 
     const result = await persistProjectConfig({
       project: {

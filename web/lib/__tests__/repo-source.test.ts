@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { createServer } from "node:http";
-import { mkdtemp, rm, mkdir, writeFile, stat } from "node:fs/promises";
+import { mkdtemp, rm, mkdir, symlink, writeFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -241,9 +241,7 @@ describe("git helpers", () => {
     const sentToken = seenAuth.some(
       (a) =>
         a.startsWith("Basic ") &&
-        Buffer.from(a.slice(6), "base64")
-          .toString()
-          .includes("ghp_TESTTOKEN"),
+        Buffer.from(a.slice(6), "base64").toString().includes("ghp_TESTTOKEN"),
     );
 
     expect(sentToken).toBe(true);
@@ -405,6 +403,24 @@ describe("resolveProjectSource", () => {
     expect(await pathExists(result.dir)).toBe(true);
     // init is deferred to the route — the created dir is NOT yet a git repo.
     expect(await isGitRepo(result.dir)).toBe(false);
+  });
+
+  // [FIX] Codex F1: a dangling symlink is the deterministic stand-in for the
+  // create race — stat() follows it → ENOENT (pathExists=false → we enter
+  // mode:new), but the path ENTRY exists, so the exclusive (non-recursive)
+  // mkdir throws EEXIST. The fix must REFUSE (PRECONDITION), never claim
+  // createdByUs on a path it did not exclusively create (the route rm -rf's it).
+  it("new-empty mode: refuses with PRECONDITION when the path entry already exists at create time", async () => {
+    await mkdir(reposDir, { recursive: true });
+    await symlink(join(root, "missing-target"), join(reposDir, "racey"));
+
+    try {
+      await resolveProjectSource({ target: "racey", mode: "new" });
+      throw new Error("expected PRECONDITION");
+    } catch (err) {
+      expect(isMaisterError(err)).toBe(true);
+      expect((err as { code: string }).code).toBe("PRECONDITION");
+    }
   });
 
   it("missing dir without mode='new' throws PRECONDITION (no implicit create)", async () => {

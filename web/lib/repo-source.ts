@@ -3,7 +3,7 @@ import "server-only";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, sep } from "node:path";
+import { dirname, isAbsolute, join, sep } from "node:path";
 import { promisify } from "node:util";
 
 import pino from "pino";
@@ -473,7 +473,29 @@ export async function resolveProjectSource(body: {
     // directory (never on a typo'd existing-repo path). The route's deferred
     // gitInit turns it into a repo after the registration commits.
     if (body.mode === "new") {
-      await mkdir(dir, { recursive: true });
+      // [FIX] Atomic ownership claim (Codex F1): create parents recursively,
+      // then the final dir EXCLUSIVELY (non-recursive). A recursive mkdir
+      // succeeds even if `dir` appeared concurrently between the absence check
+      // and here, which would mark `createdByUs: true` on a dir we did NOT make
+      // — and the route's failure cleanup `rm -rf`s any `createdByUs` dir,
+      // destroying host data we don't own. EEXIST ⇒ someone else owns it → refuse.
+      await mkdir(dirname(dir), { recursive: true });
+      try {
+        await mkdir(dir);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "EEXIST") {
+          log.warn(
+            { dir },
+            "[FIX] new-empty target appeared concurrently — refusing",
+          );
+          throw new MaisterError(
+            "PRECONDITION",
+            `target already exists: ${dir}`,
+          );
+        }
+        throw err;
+      }
+      log.info({ dir }, "[FIX] new-empty project dir created exclusively");
 
       return {
         dir,

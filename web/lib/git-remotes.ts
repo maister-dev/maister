@@ -9,6 +9,7 @@ import { detectProvider, redactUrl, validateUrl } from "@/lib/repo-source";
 import {
   fetchRemote,
   getRemoteUrl,
+  GitPushRejectedError,
   listRemoteUrls,
   pushBranch,
   remoteAdd,
@@ -123,15 +124,42 @@ export async function removeProjectRemote(opts: {
   }
 }
 
-// Push / fetch / set-upstream reuse host-ambient auth. A failure
-// (GitPushRejectedError / EXECUTOR_UNAVAILABLE — both MaisterError, already
-// redacted) is an advisory; there is no DB state to roll back.
+// [FIX] Codex F2: only a GENUINE push/fetch failure on an EXISTING remote is an
+// advisory — a non-fast-forward rejection or a network/auth EXECUTOR_UNAVAILABLE.
+// Validation failures (bad name/branch → PRECONDITION) and an unknown remote MUST
+// surface as 409, per the OpenAPI contract — they are NOT advisories.
+function isAdvisoryGitError(err: unknown): err is MaisterError {
+  return (
+    err instanceof GitPushRejectedError ||
+    (err instanceof MaisterError && err.code === "EXECUTOR_UNAVAILABLE")
+  );
+}
+
+// [FIX] Codex F2: reject an action on an unconfigured remote with 409. getRemoteUrl
+// validates the name (remoteNameSchema → PRECONDITION) and returns null when the
+// remote is not configured — both map to 409, never an advisory "success".
+async function assertRemoteExists(
+  project: RemotesProject,
+  name: string,
+): Promise<void> {
+  const url = await getRemoteUrl({ projectRepoPath: project.repoPath, name });
+
+  if (url === null) {
+    throw new MaisterError("PRECONDITION", `unknown remote: ${name}`);
+  }
+}
+
+// Push / fetch / set-upstream reuse host-ambient auth. A genuine failure on a
+// known remote (non-fast-forward / network / auth) is an advisory; there is no
+// DB state to roll back. Bad input / unknown remote propagates as PRECONDITION.
 export async function pushProjectRemote(opts: {
   project: RemotesProject;
   name: string;
   branch: string;
   setUpstream?: boolean;
 }): Promise<RemoteActionResult> {
+  await assertRemoteExists(opts.project, opts.name);
+
   try {
     await pushBranch({
       projectRepoPath: opts.project.repoPath,
@@ -142,7 +170,7 @@ export async function pushProjectRemote(opts: {
 
     return { ok: true };
   } catch (err) {
-    if (err instanceof MaisterError) {
+    if (isAdvisoryGitError(err)) {
       log.warn(
         { projectId: opts.project.id, warning: err.message },
         "push failed (advisory)",
@@ -158,6 +186,8 @@ export async function fetchProjectRemote(opts: {
   project: RemotesProject;
   name: string;
 }): Promise<RemoteActionResult> {
+  await assertRemoteExists(opts.project, opts.name);
+
   try {
     await fetchRemote({
       projectRepoPath: opts.project.repoPath,
@@ -166,7 +196,7 @@ export async function fetchProjectRemote(opts: {
 
     return { ok: true };
   } catch (err) {
-    if (err instanceof MaisterError) {
+    if (isAdvisoryGitError(err)) {
       log.warn(
         { projectId: opts.project.id, warning: err.message },
         "fetch failed (advisory)",

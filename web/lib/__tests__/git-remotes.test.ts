@@ -18,10 +18,13 @@ vi.mock("@/lib/worktree", async (importActual) => {
 });
 
 import * as worktree from "@/lib/worktree";
-import { remoteNameSchema } from "@/lib/worktree";
+import { GitPushRejectedError, remoteNameSchema } from "@/lib/worktree";
+import { MaisterError } from "@/lib/errors";
 import {
   addProjectRemote,
+  fetchProjectRemote,
   listProjectRemotes,
+  pushProjectRemote,
   reconcileOriginRepoUrl,
   removeProjectRemote,
 } from "@/lib/git-remotes";
@@ -160,5 +163,71 @@ describe("git-remotes orchestrator", () => {
     });
 
     expect(db.calls).toEqual([]);
+  });
+});
+
+// [FIX] Codex F2: push/fetch classify failures — only a genuine push/fetch
+// failure on an EXISTING remote (non-fast-forward / EXECUTOR_UNAVAILABLE) is an
+// advisory; an unknown remote and any validation PRECONDITION must surface, not
+// be swallowed as "success with warning".
+describe("git-remotes push/fetch failure classification", () => {
+  it("push to an unknown remote → PRECONDITION (never touches pushBranch)", async () => {
+    vi.mocked(worktree.getRemoteUrl).mockResolvedValueOnce(null);
+
+    await expect(
+      pushProjectRemote({ project, name: "origin", branch: "main" }),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+    expect(worktree.pushBranch).not.toHaveBeenCalled();
+  });
+
+  it("non-fast-forward push on a known remote → advisory { ok, warning }", async () => {
+    vi.mocked(worktree.getRemoteUrl).mockResolvedValueOnce("https://h/r.git");
+    vi.mocked(worktree.pushBranch).mockRejectedValueOnce(
+      new GitPushRejectedError("push rejected (non-fast-forward)"),
+    );
+
+    const res = await pushProjectRemote({
+      project,
+      name: "origin",
+      branch: "main",
+    });
+
+    expect(res.ok).toBe(true);
+    expect(res.warning).toContain("non-fast-forward");
+  });
+
+  it("network EXECUTOR_UNAVAILABLE push → advisory", async () => {
+    vi.mocked(worktree.getRemoteUrl).mockResolvedValueOnce("https://h/r.git");
+    vi.mocked(worktree.pushBranch).mockRejectedValueOnce(
+      new MaisterError("EXECUTOR_UNAVAILABLE", "network down"),
+    );
+
+    const res = await pushProjectRemote({
+      project,
+      name: "origin",
+      branch: "main",
+    });
+
+    expect(res).toEqual({ ok: true, warning: "network down" });
+  });
+
+  it("a validation PRECONDITION from pushBranch (e.g. bad branch) is rethrown, not advisory", async () => {
+    vi.mocked(worktree.getRemoteUrl).mockResolvedValueOnce("https://h/r.git");
+    vi.mocked(worktree.pushBranch).mockRejectedValueOnce(
+      new MaisterError("PRECONDITION", "Invalid branch"),
+    );
+
+    await expect(
+      pushProjectRemote({ project, name: "origin", branch: "main" }),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+  });
+
+  it("fetch on an unknown remote → PRECONDITION", async () => {
+    vi.mocked(worktree.getRemoteUrl).mockResolvedValueOnce(null);
+
+    await expect(
+      fetchProjectRemote({ project, name: "missing" }),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+    expect(worktree.fetchRemote).not.toHaveBeenCalled();
   });
 });
