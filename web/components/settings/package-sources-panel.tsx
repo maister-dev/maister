@@ -96,6 +96,27 @@ export function PackageSourcesPanel({
     }
   }
 
+  async function trustInstall(id: string): Promise<void> {
+    setBusyKey(`trust:${id}`);
+    setNotice(null);
+    try {
+      const res = await fetch(`/api/admin/package-installs/${id}/trust`, {
+        method: "POST",
+      });
+
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as {
+          message?: string;
+        } | null;
+
+        setNotice(body?.message ?? t("pkgTrustFailed"));
+      }
+      refresh();
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
   const installedKeys = new Set(
     installs.map((i) => `${i.name}@${i.versionLabel}`),
   );
@@ -280,6 +301,7 @@ export function PackageSourcesPanel({
                   <th className="px-4 py-3">{t("colStatus")}</th>
                   <th className="px-4 py-3">{t("pkgColTrust")}</th>
                   <th className="px-4 py-3">{t("pkgColFlows")}</th>
+                  <th className="px-4 py-3 text-right">{t("colActions")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -302,6 +324,18 @@ export function PackageSourcesPanel({
                     </td>
                     <td className="px-4 py-3 font-mono text-[11.5px] text-mute">
                       {install.flows.join(", ")}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      {install.trustStatus === "untrusted" ? (
+                        <button
+                          className="h-8 rounded-[8px] border border-line px-3 text-[12px] font-semibold text-ink hover:bg-ivory disabled:opacity-50"
+                          disabled={busyKey === `trust:${install.id}`}
+                          type="button"
+                          onClick={() => trustInstall(install.id)}
+                        >
+                          {t("pkgTrust")}
+                        </button>
+                      ) : null}
                     </td>
                   </tr>
                 ))}

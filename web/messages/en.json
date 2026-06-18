@@ -1014,7 +1014,9 @@
     "pkgColVersion": "Version",
     "pkgColRevision": "Revision",
     "pkgColTrust": "Trust",
-    "pkgColFlows": "Flows"
+    "pkgColFlows": "Flows",
+    "pkgTrust": "Trust",
+    "pkgTrustFailed": "Failed to trust package."
   },
   "newtask": {
     "title": "New task",

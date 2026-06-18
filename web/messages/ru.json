@@ -1014,7 +1014,9 @@
     "pkgColVersion": "Версия",
     "pkgColRevision": "Ревизия",
     "pkgColTrust": "Доверие",
-    "pkgColFlows": "Флоу"
+    "pkgColFlows": "Флоу",
+    "pkgTrust": "Доверять",
+    "pkgTrustFailed": "Не удалось отметить пакет доверенным."
   },
   "newtask": {
     "title": "Новая задача",

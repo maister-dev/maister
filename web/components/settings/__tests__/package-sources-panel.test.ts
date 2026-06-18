@@ -93,4 +93,31 @@ describe("PackageSourcesPanel", () => {
     // of it), so count the hint to assert exactly one badge rendered.
     expect(markup.match(/pkgSourceBuiltInHint/g) ?? []).toHaveLength(1);
   });
+
+  it("offers a Trust action only for untrusted installs", () => {
+    const untrusted: PackageInstallRow = {
+      ...install,
+      id: "inst-untrusted",
+      trustStatus: "untrusted",
+    };
+
+    const trustedMarkup = renderToStaticMarkup(
+      createElement(PackageSourcesPanel, {
+        sources: [source],
+        installs: [install],
+      }),
+    );
+    const untrustedMarkup = renderToStaticMarkup(
+      createElement(PackageSourcesPanel, {
+        sources: [source],
+        installs: [untrusted],
+      }),
+    );
+
+    // trusted_by_policy install → no Trust action button (column header
+    // "pkgColTrust" is a distinct token and still renders).
+    expect(trustedMarkup).not.toContain("pkgTrust");
+    // untrusted install → the Trust action button renders.
+    expect(untrustedMarkup).toContain("pkgTrust");
+  });
 });
