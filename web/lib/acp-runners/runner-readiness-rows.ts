@@ -12,7 +12,11 @@ export async function loadRunnerReadinessRows(): Promise<RunnerReadinessRow[]> {
 
   return db
     .select({
+      id: platformAcpRunners.id,
       adapter: platformAcpRunners.adapter,
+      capabilityAgent: platformAcpRunners.capabilityAgent,
+      model: platformAcpRunners.model,
+      provider: platformAcpRunners.provider,
       enabled: platformAcpRunners.enabled,
       readinessStatus: platformAcpRunners.readinessStatus,
       readinessReasons: platformAcpRunners.readinessReasons,

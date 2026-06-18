@@ -1,3 +1,4 @@
+import type { PlatformRunnerProvider } from "@/lib/db/schema";
 import type {
   SupervisorDiagnostics,
   SupervisorDiagnosticsStatus,
@@ -5,7 +6,11 @@ import type {
 
 import { describe, expect, it } from "vitest";
 
-import { type AdapterId } from "@/lib/acp-runners/adapter-support";
+import {
+  type AdapterId,
+  type ProviderKind,
+  PROVIDER_KINDS,
+} from "@/lib/acp-runners/adapter-support";
 import {
   summarizeAdapterReadiness,
   type RunnerReadinessRow,
@@ -54,8 +59,19 @@ function runner(
   enabled: boolean,
   readinessStatus: RunnerReadinessRow["readinessStatus"],
   readinessReasons: string[] | null = null,
+  overrides: Partial<RunnerReadinessRow> = {},
 ): RunnerReadinessRow {
-  return { adapter, enabled, readinessStatus, readinessReasons };
+  return {
+    id: `${adapter}-runner`,
+    adapter,
+    capabilityAgent: adapter,
+    model: `${adapter}-model`,
+    provider: { kind: "anthropic" },
+    enabled,
+    readinessStatus,
+    readinessReasons,
+    ...overrides,
+  };
 }
 
 function findAdapter(
@@ -201,5 +217,192 @@ describe("summarizeAdapterReadiness", () => {
         detail: null,
       });
     });
+  });
+});
+
+// The exact, complete key set a RailRunnerDTO is allowed to carry to the client.
+// Any other key (especially a secret-bearing provider ref) is a redaction leak.
+const SAFE_RUNNER_DTO_KEYS = [
+  "capabilityAgent",
+  "enabled",
+  "firstReason",
+  "id",
+  "model",
+  "providerKind",
+  "readinessStatus",
+].sort();
+
+const PROVIDER_SECRET_KEYS = [
+  "provider",
+  "authToken",
+  "apiKey",
+  "baseUrl",
+  "projectId",
+  "location",
+  "wireApi",
+] as const;
+
+// Every secret-bearing provider variant, each paired with a supporting adapter
+// and carrying `env:` secret refs in ALL of its secret fields. The redaction
+// boundary must hold for the WHOLE union, not a sample — so the sweep below
+// exercises each one, and the guard test fails if a new secret-bearing kind is
+// added without an entry here.
+const SECRET_BEARING_RUNNERS: ReadonlyArray<{
+  readonly adapter: AdapterId;
+  readonly provider: PlatformRunnerProvider;
+}> = [
+  {
+    adapter: "claude",
+    provider: {
+      kind: "anthropic_compatible",
+      baseUrl: "https://x",
+      authToken: "env:TOK",
+    },
+  },
+  {
+    adapter: "codex",
+    provider: {
+      kind: "openai_compatible",
+      baseUrl: "https://y",
+      apiKey: "env:KEY",
+      wireApi: "responses",
+    },
+  },
+  {
+    adapter: "gemini",
+    provider: { kind: "google_gemini", apiKey: "env:GEM" },
+  },
+  {
+    adapter: "gemini",
+    provider: {
+      kind: "google_vertex",
+      projectId: "proj",
+      location: "us-central1",
+      apiKey: "env:K2",
+    },
+  },
+  {
+    adapter: "gemini",
+    provider: {
+      kind: "google_gateway",
+      baseUrl: "https://z",
+      apiKey: "env:GW",
+    },
+  },
+];
+
+// ProviderKinds with no secret fields (bare `{ kind }`). Anything outside this
+// allowlist MUST appear in SECRET_BEARING_RUNNERS above.
+const SECRET_FREE_PROVIDER_KINDS: readonly ProviderKind[] = [
+  "anthropic",
+  "openai",
+  "agent_native",
+];
+
+describe("summarizeAdapterReadiness — safe runner DTO projection", () => {
+  it("groups runners under their own adapter (no cross-adapter bleed)", () => {
+    const result = summarizeAdapterReadiness({
+      runners: [
+        runner("claude", true, "Ready", null, { id: "claude-1" }),
+        runner("gemini", true, "Ready", null, { id: "gemini-1" }),
+      ],
+      diagnostics: readyDiag([
+        diagAdapter("claude", true),
+        diagAdapter("gemini", true),
+      ]),
+    });
+
+    const gemini = findAdapter(result, "gemini");
+    const claude = findAdapter(result, "claude");
+
+    expect(gemini.runners.map((dto) => dto.id)).toEqual(["gemini-1"]);
+    expect(claude.runners.map((dto) => dto.id)).toEqual(["claude-1"]);
+    expect(
+      gemini.runners.every((dto) => dto.capabilityAgent === "gemini"),
+    ).toBe(true);
+  });
+
+  it("redaction sweep covers every secret-bearing provider kind", () => {
+    const covered = new Set<ProviderKind>(
+      SECRET_BEARING_RUNNERS.map((entry) => entry.provider.kind),
+    );
+    const uncovered = PROVIDER_KINDS.filter(
+      (kind) =>
+        !SECRET_FREE_PROVIDER_KINDS.includes(kind) && !covered.has(kind),
+    );
+
+    expect(uncovered).toEqual([]);
+  });
+
+  it("projects only safe fields for every secret-bearing provider — never the secret refs", () => {
+    const result = summarizeAdapterReadiness({
+      runners: SECRET_BEARING_RUNNERS.map((entry, index) =>
+        runner(entry.adapter, true, "Ready", null, {
+          id: `secret-${index}`,
+          provider: entry.provider,
+        }),
+      ),
+      diagnostics: readyDiag([
+        diagAdapter("claude", true),
+        diagAdapter("codex", true),
+        diagAdapter("gemini", true),
+      ]),
+    });
+
+    const dtos = result.flatMap((adapter) => adapter.runners);
+
+    expect(dtos).toHaveLength(SECRET_BEARING_RUNNERS.length);
+    expect(new Set(dtos.map((dto) => dto.providerKind))).toEqual(
+      new Set(SECRET_BEARING_RUNNERS.map((entry) => entry.provider.kind)),
+    );
+
+    for (const dto of dtos) {
+      expect(Object.keys(dto).sort()).toEqual(SAFE_RUNNER_DTO_KEYS);
+
+      for (const secret of PROVIDER_SECRET_KEYS) {
+        expect(dto).not.toHaveProperty(secret);
+      }
+
+      expect(JSON.stringify(dto)).not.toContain("env:");
+    }
+  });
+
+  it("DTO firstReason picks the first non-empty readiness reason", () => {
+    const result = summarizeAdapterReadiness({
+      runners: [
+        runner("opencode", true, "NotReady", ["", "real reason"], {
+          id: "oc-1",
+        }),
+      ],
+      diagnostics: readyDiag([diagAdapter("opencode", true)]),
+    });
+
+    expect(findAdapter(result, "opencode").runners[0].firstReason).toBe(
+      "real reason",
+    );
+  });
+
+  it("returns runners: [] for an available adapter with no configured runner", () => {
+    const result = summarizeAdapterReadiness({
+      runners: [],
+      diagnostics: readyDiag([diagAdapter("codex", true)]),
+    });
+
+    expect(findAdapter(result, "codex").runners).toEqual([]);
+  });
+
+  it("maps every configured runner of an adapter into the DTO list", () => {
+    const result = summarizeAdapterReadiness({
+      runners: [
+        runner("claude", true, "Ready", null, { id: "c1" }),
+        runner("claude", false, "Unknown", null, { id: "c2" }),
+      ],
+      diagnostics: readyDiag([diagAdapter("claude", true)]),
+    });
+
+    expect(findAdapter(result, "claude").runners.map((dto) => dto.id)).toEqual([
+      "c1",
+      "c2",
+    ]);
   });
 });

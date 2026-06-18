@@ -20,7 +20,7 @@ launch — so I can navigate and start work without leaving the current screen.
 | Role | Sees | Notes |
 | --- | --- | --- |
 | Global viewer / member | Projects, Inbox, Studio nav; active workspaces; runners readiness; launch | `Agents` renders disabled ("coming soon"); `MCPs` / `Users` / `Scheduler` / `Settings` are hidden |
-| Global admin | All of the above plus `MCPs`, `Users`, `Scheduler`, `Settings` | Hidden nav is convenience only; each route re-checks `requireGlobalRole("admin")` |
+| Global admin | All of the above plus `MCPs`, `Users`, `Scheduler`, `Settings` | Hidden nav is convenience only; `MCPs`/`Users`/`Scheduler` re-check `requireGlobalRole("admin")`, while `/settings` renders a forbidden panel and loads no admin data for non-admins |
 
 The hidden admin nav is never the authorization boundary — the route enforces it.
 
@@ -55,8 +55,17 @@ Expanded mode, top to bottom:
    rename, linked flow/issue chips, runner info chip, hover/focus icon actions,
    TTL/archived badges) is documented in
    [`active-workspaces.md`](active-workspaces.md).
-3. **Runners readiness** (WI-3) — one chip per available adapter; supervisor
-   status is **not** here (it lives once in the footer,
+3. **Runners readiness** (WI-3) — one chip per available adapter (hidden /
+   binary-unavailable adapters are omitted by design). Hovering or focusing a
+   chip opens a popover listing that adapter's configured platform runners —
+   identity (`model` / provider kind) as text, `enabled` + `readiness` as
+   `aria-label`led icon/colour indicators, plus the first blocking reason for a
+   not-ready runner, or a "no runners configured" empty state. Secret provider
+   refs (`env:NAME`) are never projected to the client. For **admins** the chip
+   links to `/settings` (the platform runner catalog) and the popover shows a
+   "Configure in Settings" cue; for non-admins it is information-only (the
+   `title` is the keyboard/SR fallback — non-admin chips are not focusable).
+   Supervisor status is **not** here (it lives once in the footer,
    [`status-bar.md`](status-bar.md)).
 4. **Launch** — primary launch button + hint, with a Cmd/Ctrl+K shortcut
    ([`launch-dialog.md`](launch-dialog.md)).
@@ -114,9 +123,12 @@ stateDiagram-v2
   Projects).
 - `summarizeAdapterReadiness({ runners, diagnostics })`
   (`lib/acp-runners/readiness-summary.ts`) over `checkSupervisorDiagnostics()`
-  `/diagnostics` × `platform_acp_runners` rows (`loadRunnerReadinessRows`).
-  Stored `readiness_status` is recomputed on each runner write; live
-  availability gates visibility.
+  `/diagnostics` × `platform_acp_runners` rows (`loadRunnerReadinessRows`, which
+  also selects `id` / `capabilityAgent` / `model` / `provider`). Stored
+  `readiness_status` is recomputed on each runner write; live availability gates
+  visibility. Each summary carries a `runners: RailRunnerDTO[]` projection (safe
+  fields only — `providerKind`, never the secret-bearing `provider`) that feeds
+  the chip popover (`runners-readiness-rail.tsx`).
 - Inbox badge count — see [`../inbox.md`](../inbox.md) and
   [`../../system-analytics/social-board.md`](../../system-analytics/social-board.md).
 
@@ -124,7 +136,9 @@ stateDiagram-v2
 
 `nav` (section labels, `comingSoon`), `portfolio` (`runnersReadiness`,
 `runnerReady` / `runnerNoRunner` / `runnerAllDisabled` / `runnerNotReady` /
-`runnerDiagnosticsUnavailable` / `runnersNone`, launch + active-workspace
+`runnerDiagnosticsUnavailable` / `runnersNone`; popover: `runnerNoneConfigured` /
+`runnerEnabledShort` / `runnerDisabledShort` / `runnerConfigureCta` /
+`runnerStatusNotReady` / `runnerStatusUnknown`; launch + active-workspace
 labels), `gc` (TTL badges).
 
 ## Linked artifacts
@@ -136,6 +150,7 @@ labels), `gc` (TTL badges).
   (Needs-you badge).
 - Source: `web/components/chrome/left-rail.tsx`,
   `web/components/chrome/left-rail-nav.tsx`,
+  `web/components/chrome/runners-readiness-rail.tsx`,
   `web/components/chrome/left-rail-route.ts`, `web/app/(app)/layout.tsx`,
   `web/lib/acp-runners/readiness-summary.ts`,
   `web/lib/acp-runners/runner-readiness-rows.ts`.

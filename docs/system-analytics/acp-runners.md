@@ -269,6 +269,11 @@ flowchart TD
   CRUD pattern precisely — same usage-guard delete, same `onConflictDoNothing`
   duplicate-id protection, same `env:NAME` secret policy, same `admin`-only gate
   (ADR-065 precedent). See [`mcp-management.md`](mcp-management.md).
+- **Rail surface:** the left-rail "Runners readiness" block
+  ([`../screens/chrome/left-rail.md`](../screens/chrome/left-rail.md)) surfaces
+  each adapter's configured runners read-only (identity + enabled/readiness, no
+  secrets) in a hover popover, with an admin-only click-through to this
+  `/settings` catalog.
 - **Errors:** [error-taxonomy.md](../error-taxonomy.md) —
   `CONFIG | CONFLICT | PRECONDITION`.
 - **Source:** `web/app/api/admin/acp-runners/route.ts`,
@@ -277,4 +282,5 @@ flowchart TD
   `web/components/settings/acp-runners-panel.tsx`,
   `web/components/settings/acp-runner-modal.tsx`,
   `web/components/chrome/left-rail.tsx`,
+  `web/components/chrome/runners-readiness-rail.tsx`,
   `web/app/(app)/settings/page.tsx`.

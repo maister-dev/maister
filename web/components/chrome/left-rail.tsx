@@ -20,6 +20,7 @@ import { AutoCloseDetails } from "@/components/chrome/auto-close-details";
 import { LaunchHotkeyHint } from "@/components/chrome/launch-hotkey-hint";
 import { LeftRailNav } from "@/components/chrome/left-rail-nav";
 import { RailCollapse } from "@/components/chrome/rail-collapse";
+import { RunnersReadinessRailView } from "@/components/chrome/runners-readiness-rail";
 import { ScratchLaunchPopover } from "@/components/chrome/scratch-launch-popover";
 
 // Coarse relative-time copy for the GC removal countdown. Picks the largest unit
@@ -168,6 +169,11 @@ export async function LeftRail({
   const visibleAdapters = runnersReadiness.filter(
     (item) => item.state !== "hidden",
   );
+  const causeLabels = Object.fromEntries(
+    (Object.keys(runnerCauseLabelKey) as AdapterReadinessCause[]).map(
+      (cause) => [cause, tPortfolio(runnerCauseLabelKey[cause])],
+    ),
+  ) as Record<AdapterReadinessCause, string>;
 
   function buildLabels(
     ws: RailWorkspaceGroup["workspaces"][number],
@@ -520,36 +526,24 @@ export async function LeftRail({
         )}
       </section>
 
-      <div className="flex flex-col gap-1.5 px-0.5 pb-0.5">
-        <div className="font-mono text-[9.5px] font-semibold uppercase tracking-[0.12em] text-mute">
-          {tPortfolio("runnersReadiness")}
-        </div>
-        <div className="flex flex-wrap gap-1 font-mono text-[10.5px] tracking-[0.02em]">
-          {visibleAdapters.length > 0 ? (
-            visibleAdapters.map((adapter) => {
-              const label = tPortfolio(runnerCauseLabelKey[adapter.cause]);
-
-              return (
-                <span
-                  key={adapter.adapter}
-                  className="inline-flex items-center gap-1.5 rounded-full border border-line bg-ivory py-[3px] pl-[7px] pr-2 font-mono text-[10.5px] tracking-[0.02em] text-mute"
-                  title={adapter.detail ? `${label}: ${adapter.detail}` : label}
-                >
-                  <span
-                    className={clsx(
-                      "h-[5px] w-[5px] rounded-full",
-                      adapter.state === "green" ? "bg-accent-4" : "bg-amber",
-                    )}
-                  />
-                  {adapter.adapter}
-                </span>
-              );
-            })
-          ) : (
-            <span className="text-mute-2">{tPortfolio("runnersNone")}</span>
-          )}
-        </div>
-      </div>
+      <RunnersReadinessRailView
+        adapters={visibleAdapters}
+        causeLabels={causeLabels}
+        isAdmin={userRole === "admin"}
+        labels={{
+          heading: tPortfolio("runnersReadiness"),
+          none: tPortfolio("runnersNone"),
+          noneConfigured: tPortfolio("runnerNoneConfigured"),
+          enabledLabel: tPortfolio("runnerEnabledShort"),
+          disabledLabel: tPortfolio("runnerDisabledShort"),
+          configureCta: tPortfolio("runnerConfigureCta"),
+          readiness: {
+            Ready: tPortfolio("runnerReady"),
+            NotReady: tPortfolio("runnerStatusNotReady"),
+            Unknown: tPortfolio("runnerStatusUnknown"),
+          },
+        }}
+      />
 
       <div className="mt-auto flex shrink-0 flex-col gap-2 border-t border-line pb-4 pt-3">
         <ScratchLaunchPopover
