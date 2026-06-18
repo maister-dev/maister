@@ -16,11 +16,14 @@ test("platform ACP runners drive admin settings, task launch, and scratch launch
   await expect(platformDefault).toHaveValue("claude-code");
   await expect(page.getByText("Router sidecars")).toBeVisible();
   await expect(page.getByText("Adapter support")).toBeVisible();
-  await expect(page.getByText("claude-agent-acp")).toBeVisible();
-  await expect(page.getByText("codex-acp")).toBeVisible();
+  // The compact adapter cards (ADR-093) show a per-adapter setup hint for
+  // adapters the stub diagnostics does not report available; the binary moved
+  // into a collapsed <details>, so it is no longer asserted here.
+  await expect(page.getByText(/Install the .gemini. CLI/i)).toBeVisible();
   await expect(page.getByText("ccr-default").first()).toBeVisible();
   await expect(page.getByRole("cell", { name: "codex-zai-glm" })).toBeVisible();
-  await expect(page.getByText("NotReady").first()).toBeVisible();
+  // codex-zai-glm is NotReady (openai_compatible) → its default-runner option is
+  // disabled. Readiness now renders as a color dot, not a "NotReady" label.
   await expect(
     platformDefault.locator('option[value="codex-zai-glm"]'),
   ).toHaveAttribute("disabled", "");

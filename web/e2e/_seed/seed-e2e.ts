@@ -1217,6 +1217,13 @@ async function seedPlatformRuntime(pool: Pool): Promise<void> {
       "env:MAISTER_CCR_AUTH_TOKEN",
     ],
   );
+  // ADR-093: the readiness seeded here equals what reconcilePlatformRunners
+  // derives from the stub diagnostics (claude + codex binaries available,
+  // ZAI_API_KEY absent) — claude-code/codex-openai Ready, codex-zai-glm
+  // NotReady. Specs that launch a run WITHOUT visiting /settings (the reconcile
+  // only runs on the settings page) therefore see deterministic readiness; the
+  // platform-acp-runners spec visits /settings, where the reconcile recomputes
+  // the same verdicts (idempotent) over the dot-based UI.
   await pool.query(
     `INSERT INTO platform_acp_runners
        (id, adapter, capability_agent, model, provider, permission_policy,
