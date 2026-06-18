@@ -24,7 +24,9 @@ shortcut respects that same disabled state.
 
 - **Open:** the rail's primary **Launch run** button, a per-project **+** icon,
   or **Cmd/Ctrl+K** (primary launcher only).
-- **Close:** Esc, the backdrop, or the header **×**.
+- **Close:** Esc, a backdrop click, or the top-right **✕** — the shared
+  bare-crossmark close ([popup conventions](../README.md#shared-popup--density-conventions),
+  no text label).
 - **Submit:** a successful launch routes to the run / scratch detail page.
 
 ## Layout & regions
