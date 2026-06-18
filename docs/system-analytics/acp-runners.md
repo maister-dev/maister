@@ -35,9 +35,22 @@ decision record for the delete guard and the in-`/settings` CRUD surface is
   `agent_native`, policy `default`. Gemini/OpenCode/MiMo are code-owned adapter
   families, not operator-created arbitrary commands.
 - **Runner presets** — static templates (`platformRunnerPresetRows()`) offered
-  as create-form prefills; not catalog rows until instantiated.
+  as create-form prefills and a collapsed read-only reference list; **not**
+  catalog rows. As of [ADR-093](../decisions.md#adr-093) the seed **no longer
+  inserts** this preset list into `platform_acp_runners`, so a fresh install
+  starts with an empty runner catalog. (Implemented, ADR-093)
+- **Default runners (materialized, not seeded)** — `reconcilePlatformRunners`
+  (`web/lib/acp-runners/native-defaults.ts`) upserts-if-absent each **available**
+  adapter's native default runner (`claude→claude-code`, `codex→codex-openai`,
+  `gemini→gemini-cli`, `opencode→opencode-native`, `mimo→mimo-native`) at admin
+  `/settings` load, driven by live supervisor diagnostics. It is the **single
+  writer** of `readiness_status`/`readiness_reasons` outside create/edit and
+  never auto-deletes a row. (Implemented, ADR-093)
 - **`platform_runtime_settings.default_runner_id`** — NOT-NULL FK to a runner
-  row (no cascade); the singleton platform default.
+  row (no cascade); the singleton platform default. The singleton is **created
+  by the reconcile** (pointing at the first `Ready` default) rather than seeded;
+  until then it is *absent* (there is no null-default state), and readers fall
+  back to "no platform default configured". (Implemented, ADR-093)
 - **Usage references** — `loadRunnerUsageReferences()` computes every live and
   historical pointer at a runner (platform/project/flow defaults, flow-step
   remaps, active runs, historical run snapshots, scratch runs). The delete and
@@ -185,6 +198,37 @@ flowchart TD
     del --> ok[204 No Content]
 ```
 
+### Default-runner reconcile (admin → GET /settings) *(Implemented, ADR-093)*
+
+The admin settings page fetches supervisor diagnostics, then runs
+`reconcilePlatformRunners` before reading the catalog. It is the single writer of
+stored readiness and the only path that materializes default runners. When
+diagnostics are unavailable it is a no-op (last-known readiness is preserved, not
+clobbered to `NotReady`).
+
+```mermaid
+sequenceDiagram
+    participant A as Admin (/settings load)
+    participant D as Supervisor /diagnostics
+    participant RC as reconcilePlatformRunners
+    participant DB as platform_acp_runners + runtime_settings
+    A->>D: fetch diagnostics
+    alt diagnostics unavailable (null)
+        A->>RC: reconcile(db, null)
+        RC-->>A: no-op (preserve last-known readiness)
+    else diagnostics available
+        A->>RC: reconcile(db, diagnostics)
+        RC->>DB: upsert-if-absent native default per available adapter
+        RC->>RC: evaluateRunnerReadiness over all rows
+        RC->>DB: persist readiness only for changed rows
+        opt singleton absent and a Ready default exists
+            RC->>DB: insert runtime_settings singleton at chosen default
+        end
+        RC-->>A: done
+    end
+    A->>DB: read rows (now honest)
+```
+
 ## Expectations
 
 - A `platform_acp_runners.id` MUST be unique and match `^[A-Za-z0-9._-]+$`; a
@@ -228,6 +272,18 @@ flowchart TD
   `web/components/chrome/left-rail.tsx`. (Implemented)
 - After any catalog mutation the UI MUST re-fetch authoritative state via
   `router.refresh()` (no optimistic readiness). (Implemented)
+- `reconcilePlatformRunners` MUST be the single writer of `readiness_status`
+  outside the create/edit path: it recomputes readiness for ALL rows from live
+  supervisor diagnostics at `/settings` load and persists a row ONLY when its
+  status or reasons changed (no `updated_at` churn). (Implemented, ADR-093)
+- Native `anthropic`/`openai` readiness MUST be treated as adapter-binary
+  availability, NOT credential verification — `evaluateRunnerReadiness` performs
+  no API-key/login check for those kinds; the UI MUST label a `Ready` native
+  runner "Available (ambient credentials — key/login not verified)", never an
+  unqualified "Ready". (Implemented, ADR-093)
+- When supervisor diagnostics are unavailable (null), the reconcile MUST be a
+  no-op — it MUST NOT clobber runners to `NotReady`, materialize defaults, or
+  write the singleton. (Implemented, ADR-093)
 
 ## Edge cases
 
@@ -258,7 +314,7 @@ flowchart TD
 - **API contract:** [`api/web.openapi.yaml`](../api/web.openapi.yaml) —
   `getAdminAcpRunners`, `postAdminAcpRunner`, `patchAdminAcpRunner`,
   `deleteAdminAcpRunner`.
-- **Decision:** [ADR-065](../decisions.md#adr-065), [ADR-084](../decisions.md#adr-084-acp-adapter-families-for-gemini-cli-and-opencode), [ADR-085](../decisions.md#adr-085-mimo-code-as-a-distinct-acp-adapter-family).
+- **Decision:** [ADR-065](../decisions.md#adr-065), [ADR-084](../decisions.md#adr-084-acp-adapter-families-for-gemini-cli-and-opencode), [ADR-085](../decisions.md#adr-085-mimo-code-as-a-distinct-acp-adapter-family), [ADR-093](../decisions.md#adr-093) (default-runner materialization + honest readiness).
 - **Related domains:** [executors.md](executors.md) (resolution + routing),
   [readiness.md](readiness.md) (readiness evaluation),
   [instance-config.md](instance-config.md) (host roots / host tools on the same
@@ -278,6 +334,7 @@ flowchart TD
   `CONFIG | CONFLICT | PRECONDITION`.
 - **Source:** `web/app/api/admin/acp-runners/route.ts`,
   `web/app/api/admin/acp-runners/[runnerId]/route.ts`,
+  `web/lib/acp-runners/native-defaults.ts` (ADR-093 reconcile),
   `web/lib/acp-runners/usage.ts`, `web/lib/acp-runners/runner-form.ts`,
   `web/components/settings/acp-runners-panel.tsx`,
   `web/components/settings/acp-runner-modal.tsx`,

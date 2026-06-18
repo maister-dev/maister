@@ -52,6 +52,8 @@ tags:
     description: Permission-only human-in-the-loop input delivery.
   - name: model-catalog
     description: Model discovery resolver for a runner draft (ADR-076).
+  - name: sidecars
+    description: CCR router-sidecar admin lifecycle — start/stop (ADR-093).
 paths:
   /health:
     get:
@@ -506,6 +508,82 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+  /sidecars/{id}/start:
+    post:
+      tags: [sidecars]
+      summary: (ADR-093) Start a managed CCR router sidecar
+      description: |
+        Admin-triggered start for a CCR router sidecar. The web tier forwards the
+        sidecar's `CcrInstanceConfig` (`{ id, lifecycle, configPath, baseUrl,
+        healthcheckUrl }`) loaded from `platform_router_sidecars`; the supervisor
+        validates `lifecycle` and that the body `id` matches the path `id`, then
+        calls `ccrManager.ensureRunning({ instance })`. Idempotent — an already
+        `ready` instance returns 200 with `state: "ready"`. The route is a proxy
+        over supervisor-owned process state — no DB idempotency marker is written.
+        Requires the CCR manager to be wired (`spawnOverrides.ccrManager`);
+        otherwise 409.
+
+        **Note (ADR-093):** start only launches the CCR process. CCR routing
+        configuration (config.json contents) is a separate, deferred concern; a
+        started-without-config CCR healthchecks red and `state` stays `failed`.
+
+        **Identifiers.** `id` is the path key (`url-param`); the request body is
+        the sidecar config (`body-controlled`, trusted because the only caller is
+        the admin-gated web tier), validated so body `id` equals path `id`.
+      operationId: startSidecar
+      parameters:
+        - $ref: "#/components/parameters/SidecarId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CcrInstanceConfig" }
+      responses:
+        "200":
+          description: Start initiated (or idempotent ack); current state echoed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SidecarStateResponse" }
+        "409":
+          description: |
+            CCR manager not wired, body `id` ≠ path `id`, or invalid `lifecycle`
+            (`PRECONDITION`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+        "503":
+          description: |
+            CCR failed to start or become ready — config missing/malformed, health
+            probe failure or identity mismatch, or child exited before ready
+            (`EXECUTOR_UNAVAILABLE`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+  /sidecars/{id}/stop:
+    post:
+      tags: [sidecars]
+      summary: (ADR-093) Stop a single managed CCR router sidecar
+      description: |
+        Admin-triggered stop for ONE CCR sidecar instance. Calls the per-instance
+        `ccrManager.stop(id)` (SIGTERM → grace → SIGKILL on the targeted child
+        only) — NOT the manager-wide `shutdown()`, which stops every instance and
+        any live session routing through CCR. Idempotent — stopping an already
+        `idle` instance returns 200 with `state: "idle"`. Requires the CCR manager
+        to be wired; otherwise 409.
+      operationId: stopSidecar
+      parameters:
+        - $ref: "#/components/parameters/SidecarId"
+      responses:
+        "200":
+          description: Stop completed (or idempotent ack); state echoed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SidecarStateResponse" }
+        "409":
+          description: CCR manager not wired (`PRECONDITION`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
 components:
   parameters:
     SessionId:
@@ -528,7 +606,51 @@ components:
         format: uuid
         minLength: 1
         maxLength: 128
+    SidecarId:
+      name: id
+      in: path
+      required: true
+      description: |
+        Router-sidecar id (e.g. `ccr-default`). The path key for every
+        `/sidecars/{id}/...` endpoint; the supervisor validates that a `start`
+        body's `id` equals this path value.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+        pattern: "^[A-Za-z0-9._-]+$"
   schemas:
+    CcrInstanceConfig:
+      type: object
+      required: [id]
+      additionalProperties: false
+      description: |
+        Router-sidecar launch config forwarded by the web tier on
+        `POST /sidecars/{id}/start`. Mirrors the supervisor `CcrInstanceConfig`
+        type. No secret values — auth tokens live only as env refs resolved
+        supervisor-side.
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: "^[A-Za-z0-9._-]+$"
+        lifecycle:
+          type: string
+          enum: [managed, external]
+        configPath: { type: string, minLength: 1 }
+        baseUrl: { type: string, format: uri }
+        healthcheckUrl: { type: string, format: uri }
+    SidecarStateResponse:
+      type: object
+      required: [ok, state]
+      additionalProperties: false
+      properties:
+        ok: { type: boolean, enum: [true] }
+        state:
+          type: string
+          enum: [idle, starting, ready, failed, stopping]
+          description: CCR instance state as reported by the supervisor manager.
     SupervisorHealthResponse:
       type: object
       required: [status, version, uptimeMs, sessions, checkedAt]

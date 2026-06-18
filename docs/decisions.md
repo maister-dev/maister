@@ -119,6 +119,7 @@
 | [ADR-091](#adr-091-flow-requirements-launch-precondition) | Flow requirements launch precondition | Accepted | 2026-06-13 |
 | [ADR-092](#adr-092-flow-studio-redesign--unified-studio-ia--editable-local-package-model) | Flow Studio redesign — unified Studio IA + editable-local-package model | Accepted | 2026-06-15 |
 | [ADR-093](#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons) | Project onboarding — optional `maister.yaml`, host-ambient git auth, onboarding modes, advisory clone reasons | Accepted | 2026-06-17 |
+| [ADR-094](#adr-094-default-runner-materialization-honest-readiness-and-ccr-admin-lifecycle) | Default-runner materialization, honest readiness, and CCR admin lifecycle | Accepted | 2026-06-18 |
 
 ---
 
@@ -7026,6 +7027,123 @@ promotion.
   instead of silently scaffolding an empty project.
 - **In-app SSH key generation:** rejected — guidance only; generating/storing keys
   is an additional security surface out of scope here.
+
+---
+
+### ADR-094: Default-runner materialization, honest readiness, and CCR admin lifecycle
+
+**Date:** 2026-06-18
+**Status:** Accepted
+**Context:** The admin `/settings` → runners area was dishonest and noisy. The
+seed (`web/lib/db/seed.ts` `ensurePlatformRuntimeDefaults`) inserted the **entire**
+`platformRunnerPresetRows()` catalog (10 rows) into `platform_acp_runners` on
+every install, so a fresh instance showed a large table of runners the operator
+never created — including a "Ready" z.ai/CCR/GLM runner whose readiness was a
+**hardcoded** preset field (`readinessStatus: "Ready"`), never verified against
+live diagnostics. The same preset list was *also* rendered as an always-on
+"Provider presets" card grid (double exposure), the "Adapter support" cards
+were oversized with repeated textual badges, and platform agents (M34) lived on
+the same admin settings page as the runner catalog. Separately, the CCR router
+sidecar had no admin-triggered start path: the supervisor only spawned CCR
+lazily on a `router:ccr` launch, and its keyed manager's `shutdown()` stops
+**all** instances at once (`supervisor/src/ccr-manager.ts`) — there was no
+per-instance stop to wire a UI button to.
+
+**Decision:**
+1. **Preset catalog = templates only.** `platformRunnerPresetRows()` is kept
+   unchanged (still consumed by the Add-runner modal, the
+   `GET /api/admin/acp-runners` response, and a new *collapsed* reference list)
+   but is **no longer seeded** into `platform_acp_runners`. Fresh installs start
+   with an empty runner catalog.
+2. **Default runners are materialized from the adapter scan**, not seeded. A new
+   `reconcilePlatformRunners({ db, diagnostics })` runs at admin `/settings` load
+   (where supervisor diagnostics are already fetched). For each adapter reported
+   **available** by diagnostics it upserts-if-absent that adapter's native
+   default runner (`claude→claude-code`, `codex→codex-openai`,
+   `gemini→gemini-cli`, `opencode→opencode-native`, `mimo→mimo-native`),
+   recomputes `readiness_status`/`readiness_reasons` for **all** rows via
+   `evaluateRunnerReadiness` against live diagnostics, and **creates the
+   singleton `platform_runtime_settings` row** pointing at a `Ready` default
+   when none exists yet (deterministic adapter preference: claude > codex >
+   gemini > opencode > mimo). `default_runner_id` is **NOT NULL** with an FK to
+   `platform_acp_runners`, so the pre-configuration state is an *absent*
+   singleton — not a null column — which every reader already tolerates (launch
+   paths raise `EXECUTOR_UNAVAILABLE` "platform default ACP runner is not
+   configured"; UI/launch-option reads fall back to no-default). It **never
+   auto-deletes**: a materialized row is a normal
+   editable runner, and an adapter going unavailable leaves the row reading
+   not-ready rather than removing it. The reconcile is the **single writer** of
+   `readiness_status`; every downstream reader keeps consuming the stored column
+   unchanged.
+3. **Honest readiness, with a stated limitation.** The UI shows a readiness
+   color dot + tooltip driven by the stored column, never a hardcoded label.
+   **Verified limitation:** `evaluateRunnerReadiness` does **not**
+   credential-verify the native `anthropic` / `openai` providers — for
+   `claude-code` / `codex-openai`, readiness = the adapter binary is available
+   (`--version` ok), with **no** API-key/login check. Such a native default
+   therefore reads `Ready` whenever the binary is installed; the UI labels this
+   state **"Available (ambient credentials — key/login not verified)"** rather
+   than a verified "Ready". A real per-adapter auth-smoke (parallel to the
+   gemini/opencode/mimo smoke gate) is **deferred** (owner decision 2026-06-18).
+4. **Reconcile robustness.** When supervisor diagnostics are **unavailable**
+   (null), the reconcile is a **no-op** — it preserves last-known readiness and
+   never clobbers every runner to `NotReady` on a transient outage. A row is
+   persisted only when its `readiness_status` / `readiness_reasons` actually
+   changed (no `updated_at` churn).
+5. **CCR admin start/stop reuses the existing supervisor `CcrManager`.** New
+   `POST /sidecars/{id}/start` + `POST /sidecars/{id}/stop` supervisor routes and
+   `POST /api/admin/router-sidecars/{sidecarId}/start` + `/stop` web proxies
+   expose start/stop; no new process manager is introduced. Because the keyed
+   manager's `shutdown()` stops **all** instances and clears the map, a new
+   per-instance `CcrManager.stop(instanceId?)` is added and the stop route
+   targets only that instance. CCR **runner configuration** (config.json
+   contents + runners routing through CCR) is **deferred** to a later session;
+   admin Start just launches the process, and the healthcheck stays red until a
+   config exists — honestly.
+6. **No DB schema change, no migration.** Existing auto-seeded preset rows on a
+   local dev DB are removed by a one-off cleanup, not a migration; fresh
+   installs are clean because the seed no longer inserts the catalog **nor the
+   `platform_runtime_settings` singleton** — it cannot, since `default_runner_id`
+   is NOT NULL and would have no catalog row to point at; the singleton is
+   instead created by the reconcile once a default materializes. No new env var
+   and no new bound port (CCR's 3456 is pre-existing).
+
+**Consequences:**
+- A fresh admin instance no longer shows fabricated "Ready" runners; the catalog
+  reflects only adapters the host can actually launch, materialized on first
+  `/settings` load.
+- Readiness stops lying: the single-writer reconcile recomputes it from live
+  diagnostics, and the native-provider state is explicitly labeled as
+  ambient-credential availability rather than a verified credential check.
+- **Known limitation (accepted):** runner rows + honest readiness
+  materialize/refresh when an admin first opens `/settings`. Until then launch
+  dialogs show no platform runners on a brand-new instance. Acceptable for an
+  admin-operated host; eager materialization is a later option if needed.
+- CCR can be started from MAIster, but a started-without-config CCR healthchecks
+  red — start ≠ usable routing until the deferred config work lands.
+- Moving platform agents to a dedicated admin-only `/agents` route declutters
+  `/settings`; the runner catalog and agents are separate admin concerns again.
+
+**Alternatives Considered:**
+- **Keep seeding the catalog, just fix the readiness field:** rejected — the
+  seeded rows are still runners the operator never made; honest readiness alone
+  does not remove the "huge table of fake runners" complaint.
+- **Eager materialization at startup / migration:** rejected for now — adds a
+  startup dependency on supervisor diagnostics and a migration for a UX that an
+  admin-operated instance gets on first settings load anyway.
+- **Credential-verify native anthropic/openai at reconcile time:** deferred —
+  a real auth-smoke is a separate, owner-gated effort; labeling the state
+  honestly ("ambient credentials") is the correct interim contract.
+- **Wire the CCR Stop button to `CcrManager.shutdown()`:** rejected — it stops
+  **every** CCR instance and any live session routing through CCR; a
+  per-instance `stop(id)` is required.
+
+> **Numbering note.** This ADR was renumbered from a draft `ADR-093` to
+> **ADR-094** when rebased onto main — main's onboarding work (`ADR-093`) and
+> migration `0054` had already landed. This plan adds **no** migration, so only
+> the ADR number collided. After any renumber run
+> `node scripts/validate-docs-adr-anchors.mjs` (`pnpm validate:docs` does not
+> resolve ADR anchors).
 
 ---
 

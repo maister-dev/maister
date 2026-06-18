@@ -444,6 +444,42 @@ never extends its TTL window). The web tier proxies this route through the admin
 [`api/supervisor.openapi.yaml`](api/supervisor.openapi.yaml);
 domain: [`system-analytics/model-catalog.md`](system-analytics/model-catalog.md).
 
+### `POST /sidecars/:id/start` *(Implemented — ADR-093)*
+
+Admin-triggered start for a CCR router sidecar. The web tier
+(`POST /api/admin/router-sidecars/:sidecarId/start`) loads the sidecar from
+`platform_router_sidecars` and forwards its `CcrInstanceConfig`
+(`{ id, lifecycle, configPath, baseUrl, healthcheckUrl }`) in the body. The
+supervisor validates `lifecycle` and that the body `id` equals the path `id`,
+then calls `ccrManager.ensureRunning({ instance })` and returns the current
+state.
+
+- `200 { ok: true, state }` — `state ∈ idle | starting | ready | failed |
+  stopping`. Idempotent: an already-`ready` instance returns `state: "ready"`.
+- `409 { code: "PRECONDITION" }` — CCR manager not wired
+  (`spawnOverrides.ccrManager` absent), body `id` ≠ path `id`, or invalid
+  `lifecycle`.
+- `503 { code: "EXECUTOR_UNAVAILABLE" }` — CCR failed to start or become ready
+  (config missing/malformed, health/identity failure, child exited before
+  ready).
+
+Start only **launches** the CCR process. CCR routing configuration (the contents
+of `config.json` and which runners route through CCR) is a separate, deferred
+concern — a started-without-config CCR healthchecks red and `state` stays
+`failed`. The route is a proxy over supervisor-owned process state; it writes no
+DB idempotency marker.
+
+### `POST /sidecars/:id/stop` *(Implemented — ADR-093)*
+
+Admin-triggered stop for **one** CCR sidecar instance. Calls the per-instance
+`ccrManager.stop(id)` (SIGTERM → grace → SIGKILL on the targeted child only) —
+**not** the manager-wide `shutdown()`, which stops every instance and any live
+session routing through CCR.
+
+- `200 { ok: true, state }` — idempotent; stopping an already-`idle` instance
+  returns `state: "idle"`.
+- `409 { code: "PRECONDITION" }` — CCR manager not wired.
+
 ### Run-scoped durable event log: `<runId>/run.events.jsonl` *(M7+)*
 
 Every `SessionEvent` (`session.line`, `session.update`,
@@ -618,6 +654,14 @@ sidecar manager before spawning the adapter:
   exit event vs grace timer → SIGKILL on timer win → `await exited`
   (never `proc.killed`; see
   [`.ai-factory/rules/backend.md`](../.ai-factory/rules/backend.md)).
+- **Admin start/stop (ADR-093).** Beyond lazy start-on-launch, the admin
+  `/settings` router-sidecar card starts/stops a sidecar directly via
+  `POST /sidecars/:id/start` and `POST /sidecars/:id/stop`. Stop targets a
+  **single** instance through the per-instance `ccrManager.stop(id)` — never the
+  manager-wide `shutdown()` (which would kill every instance and any live
+  CCR-routed session). Both are idempotent and echo the instance `state`. Start
+  only launches the process; CCR *routing configuration* is deferred, so a
+  started-without-config sidecar healthchecks red.
 - **All failure modes surface as `EXECUTOR_UNAVAILABLE` (503).** Full
   table in
   [executors §CCR setup](system-analytics/executors.md#ccr-setup).
