@@ -7,10 +7,13 @@
 - **ADR:** next-free (≥ ADR-093) — assign at implementation; do not hard-pin
   here (ADR-093 is tentatively claimed by Flow Studio Phase C in another
   worktree).
-- **Umbrella:** this is the **Phase 1 (HITL handoff)** slice of the broader
-  axis map in
-  [`2026-06-18-flow-execution-control-policy-plan.md`](2026-06-18-flow-execution-control-policy-plan.md)
-  (which also covers check-relaxation, retries, commit policy, etc.).
+- **Umbrella:** this is **Group B (human escalation)** of the broader axis map in
+  [`2026-06-18-flow-execution-control-policy-plan.md`](2026-06-18-flow-execution-control-policy-plan.md).
+  Per the umbrella's v2 reframe, the machine **self-correction** loop (Group A:
+  crash-retry, rework, check-strictness) sequences **first** (Phase 1) and this
+  HITL handoff **second** (Phase 2) — and the human-gate auto-pass below fires
+  **only after machine review has passed**. Read the umbrella for the
+  self-correct-then-escalate model.
 
 ## Problem
 
