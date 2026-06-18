@@ -770,6 +770,8 @@
     "pathPlaceholder": "/repos/myapp",
     "urlLabel": "Git URL",
     "urlPlaceholder": "git@github.com:org/myapp.git",
+    "nameLabel": "Project name",
+    "namePlaceholder": "myapp — prefilled from the URL, edit to override",
     "overrideLabel": "Name or local path",
     "overridePlaceholder": "myapp or /repos/myapp",
     "sourceHint": "Provide a Git URL to clone, or a name/path for an existing local repo.",

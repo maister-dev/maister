@@ -770,6 +770,8 @@
     "pathPlaceholder": "/repos/myapp",
     "urlLabel": "Git URL",
     "urlPlaceholder": "git@github.com:org/myapp.git",
+    "nameLabel": "Название проекта",
+    "namePlaceholder": "myapp — подставляется из URL, измените при необходимости",
     "overrideLabel": "Имя или локальный путь",
     "overridePlaceholder": "myapp или /repos/myapp",
     "sourceHint": "Укажите Git URL для клонирования или имя/путь к существующему локальному репозиторию.",

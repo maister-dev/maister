@@ -8,6 +8,9 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import clsx from "clsx";
 
+import { deriveRepoNameSafe } from "@/lib/repo-name";
+import { deriveTaskKey, TASK_KEY_REGEX } from "@/lib/social/task-key";
+
 type ErrorCode =
   | "CONFLICT"
   | "CONFIG"
@@ -45,13 +48,28 @@ const submitBtn = clsx(
   "hover:-translate-y-px hover:bg-amber-2 disabled:cursor-not-allowed disabled:opacity-70",
 );
 
+// Mirror the server's task-key derivation (deriveTaskKey) for the live preview,
+// emitting "" for empty input so we never prefill a key with nothing to derive.
+function previewKey(source: string): string {
+  const trimmed = source.trim();
+
+  if (!trimmed) return "";
+
+  const key = deriveTaskKey(trimmed);
+
+  return TASK_KEY_REGEX.test(key) ? key : "";
+}
+
 export function NewProjectForm(): ReactElement {
   const t = useTranslations("projects");
   const router = useRouter();
 
   const [repoUrl, setRepoUrl] = useState("");
+  const [name, setName] = useState("");
   const [target, setTarget] = useState("");
   const [taskKey, setTaskKey] = useState("");
+  const [nameDirty, setNameDirty] = useState(false);
+  const [taskKeyDirty, setTaskKeyDirty] = useState(false);
   const [pending, setPending] = useState(false);
   const [errorCode, setErrorCode] = useState<ErrorCode | undefined>(undefined);
   const [success, setSuccess] = useState<Success | undefined>(undefined);
@@ -67,6 +85,7 @@ export function NewProjectForm(): ReactElement {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           repoUrl: repoUrl.trim() || undefined,
+          name: name.trim() || undefined,
           target: target.trim() || undefined,
           taskKey: taskKey.trim() || undefined,
         }),
@@ -127,7 +146,11 @@ export function NewProjectForm(): ReactElement {
           onClick={() => {
             setSuccess(undefined);
             setRepoUrl("");
+            setName("");
             setTarget("");
+            setTaskKey("");
+            setNameDirty(false);
+            setTaskKeyDirty(false);
           }}
         >
           {t("registerAnother")}
@@ -157,7 +180,17 @@ export function NewProjectForm(): ReactElement {
             spellCheck={false}
             type="text"
             value={repoUrl}
-            onChange={(e) => setRepoUrl(e.target.value)}
+            onChange={(e) => {
+              const url = e.target.value;
+
+              setRepoUrl(url);
+
+              const derived = deriveRepoNameSafe(url) ?? "";
+              const effectiveName = nameDirty ? name : derived;
+
+              if (!nameDirty) setName(derived);
+              if (!taskKeyDirty) setTaskKey(previewKey(effectiveName));
+            }}
           />
         </div>
         {urlHasCreds ? (
@@ -165,6 +198,31 @@ export function NewProjectForm(): ReactElement {
             {t("warnUrlCreds")}
           </p>
         ) : null}
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <label className={fieldLabel} htmlFor="np-name">
+          {t("nameLabel")}
+        </label>
+        <div className={inputWrap}>
+          <input
+            autoComplete="off"
+            className={inputBase}
+            id="np-name"
+            name="name"
+            placeholder={t("namePlaceholder")}
+            spellCheck={false}
+            type="text"
+            value={name}
+            onChange={(e) => {
+              const v = e.target.value;
+
+              setName(v);
+              setNameDirty(true);
+              if (!taskKeyDirty) setTaskKey(previewKey(v));
+            }}
+          />
+        </div>
       </div>
 
       <div className="flex flex-col gap-1.5">
@@ -200,9 +258,12 @@ export function NewProjectForm(): ReactElement {
             spellCheck={false}
             type="text"
             value={taskKey}
-            onChange={(e) =>
-              setTaskKey(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))
-            }
+            onChange={(e) => {
+              setTaskKeyDirty(true);
+              setTaskKey(
+                e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""),
+              );
+            }}
           />
         </div>
         {taskKey.length > 0 && !/^[A-Z][A-Z0-9]{1,9}$/.test(taskKey) ? (

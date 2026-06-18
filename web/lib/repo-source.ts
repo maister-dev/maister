@@ -10,6 +10,7 @@ import { z } from "zod";
 
 import { reposRoot } from "@/lib/instance-config";
 import { MaisterError } from "@/lib/errors";
+import { deriveRepoNameSafe } from "@/lib/repo-name";
 
 const execFileAsync = promisify(execFile);
 
@@ -90,16 +91,13 @@ export function detectProvider(url: string): Provider {
   return "generic";
 }
 
+// Thin throwing wrapper over the client-safe `deriveRepoNameSafe` — keeps the
+// server contract (PRECONDITION on an underivable name) while single-sourcing
+// the regex/segment logic in the client-importable `repo-name.ts`.
 export function deriveRepoName(url: string): string {
-  const scpPath = /^[^/@]+@[^/:]+:(.+)$/.exec(url);
-  const pathPart = scpPath
-    ? scpPath[1]
-    : url.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "");
-  const segments = pathPart.split("/");
-  const last = segments[segments.length - 1] ?? "";
-  const name = last.replace(/\.git$/, "");
+  const name = deriveRepoNameSafe(url);
 
-  if (!SAFE_SEGMENT.test(name) || name === "." || name === "..") {
+  if (name === null) {
     throw new MaisterError(
       "PRECONDITION",
       "cannot derive a safe repo name from URL",

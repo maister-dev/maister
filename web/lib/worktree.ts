@@ -703,6 +703,53 @@ export async function listRemotes(args: ListRemotesArgs): Promise<string[]> {
   }
 }
 
+// Resolve a repo's default branch for DB-default registration (ADR-093): the
+// remote's HEAD when a clone has one, else the current local branch, else the
+// "main" literal. Best-effort and never-throw, mirroring readRemoteOrigin.
+export async function getDefaultBranch(
+  projectRepoPath: string,
+): Promise<string> {
+  const repo = validate(absolutePathSchema, projectRepoPath, "projectRepoPath");
+
+  log.debug({ projectRepoPath: repo }, "getDefaultBranch");
+
+  try {
+    const { stdout } = await runGit(repo, [
+      "symbolic-ref",
+      "--short",
+      "refs/remotes/origin/HEAD",
+    ]);
+    const ref = stdout.trim();
+
+    if (ref) {
+      const branch = ref.replace(/^origin\//, "");
+
+      log.debug({ branch, tier: "origin-head" }, "getDefaultBranch resolved");
+
+      return branch;
+    }
+  } catch {
+    // no refs/remotes/origin/HEAD — fall through to the local HEAD
+  }
+
+  try {
+    const { stdout } = await runGit(repo, ["rev-parse", "--abbrev-ref", "HEAD"]);
+    const branch = stdout.trim();
+
+    if (branch && branch !== "HEAD") {
+      log.debug({ branch, tier: "head" }, "getDefaultBranch resolved");
+
+      return branch;
+    }
+  } catch {
+    // not a git repo / detached HEAD — fall through to the default
+  }
+
+  log.debug({ branch: "main", tier: "fallback" }, "getDefaultBranch resolved");
+
+  return "main";
+}
+
 export type HeadCommitArgs = {
   worktreePath: string;
 };

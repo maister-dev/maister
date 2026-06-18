@@ -229,8 +229,8 @@ Every promised test names its **runner project**:
 ## Commit Plan
 
 - **Commit 0** (Phase 0, T1–T5): `docs(onboarding): ADR-093 + analytics/contracts for project onboarding + git access`
-- **Commit 1** (P1, T6–T9): `feat(projects): client-safe repo-name + live URL→name/key prefill`
-- **Commit 2** (P1, T10–T13): `feat(projects): maister.yaml optional at register + 3 onboarding modes + migration 0054`
+- **Commit 1** (P1, T6–T8): `feat(projects): client-safe repo-name + URL→name/key prefill + getDefaultBranch`
+- **Commit 2** (P1, T9–T13): `feat(projects): maister.yaml optional at register + 3 onboarding modes + migration 0054` <!-- T9 lands WITH its migration T10 (dependency order) -->
 - **Commit 3** (P2, T14–T17): `feat(projects): classified clone failures + real stderr to UI`
 - **Commit 4** (P2, T18–T20): `feat(projects): HTTPS token (askpass) + gh best-effort + SSH guidance`
 - **Commit 5** (P3, T21–T23): `feat(settings): serialize + persist maister.yaml (idempotent commit + opt-in push) + banner`
@@ -312,7 +312,7 @@ Every promised test names its **runner project**:
 
 ### Phase 1 (P1) — Onboarding core *(removes the registration blocker)*
 
-- [ ] **T6 — Extract client-safe repo-name deriver (TDD).** New
+- [x] **T6 — Extract client-safe repo-name deriver (TDD).** New
   `web/lib/repo-name.ts`: `deriveRepoNameSafe(url: string): string | null` (the
   segment/regex logic from `deriveRepoName`, **minus** the `MaisterError` throw —
   no `server-only`, no `node:*`). Refactor `web/lib/repo-source.ts` `deriveRepoName`
@@ -324,7 +324,7 @@ Every promised test names its **runner project**:
   - *Logging:* pure fn, none. *Acceptance:* `repo-name.ts` has **no** `server-only`
     import (Reviewer greps); unit green.
 
-- [ ] **T7 — Live URL→name/key prefill (TDD, client).** Rework
+- [x] **T7 — Live URL→name/key prefill (TDD, client).** Rework
   `web/components/projects/new-project-form.tsx` per design §4: add `nameDirty` /
   `taskKeyDirty` state; on `repoUrl` change prefill name (`deriveRepoNameSafe`) then
   key while not dirty; manual edits set the dirty flag and stop auto-prefill for
@@ -337,7 +337,7 @@ Every promised test names its **runner project**:
     that `renderToStaticMarkup` can't drive move to the T13 e2e.)
   - *Logging:* client; none. *Acceptance:* depends on T6; unit green.
 
-- [ ] **T8 — `getDefaultBranch` helper (TDD).** Add to
+- [x] **T8 — `getDefaultBranch` helper (TDD).** Add to
   [`web/lib/worktree.ts`](../../web/lib/worktree.ts)
   `getDefaultBranch(repo): Promise<string>` — `git -C <repo> symbolic-ref --short
   refs/remotes/origin/HEAD` (strip `origin/`) → fallback `git rev-parse
