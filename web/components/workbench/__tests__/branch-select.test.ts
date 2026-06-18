@@ -1,5 +1,8 @@
-// Render test for the searchable branch picker (no jsdom — renderToStaticMarkup).
-// next/navigation hooks are read at render, so stub the three used here.
+// Render test for the searchable branch combobox (no jsdom —
+// renderToStaticMarkup). next/navigation hooks are read at render, so stub the
+// three used here. The dropdown is opened by focus (a client effect), which
+// does not run under static markup, so these assert the collapsed contract; the
+// open/filter behavior is exercised in the browser.
 
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -26,20 +29,18 @@ function render(props: Partial<Parameters<typeof BranchSelect>[0]>): string {
 }
 
 describe("BranchSelect", () => {
-  it("renders a searchable input seeded with the current branch", () => {
+  it("renders a combobox input seeded with the current branch", () => {
     const markup = render({ current: "develop" });
 
+    expect(markup).toContain('role="combobox"');
     expect(markup).toContain('aria-label="Branch"');
-    expect(markup).toContain("list=");
     expect(markup).toContain('value="develop"');
   });
 
-  it("renders every branch as a datalist option for typeahead", () => {
+  it("keeps the dropdown collapsed until focus (no listbox initially)", () => {
     const markup = render({});
 
-    expect(markup).toContain("<datalist");
-    expect(markup).toContain('value="main"');
-    expect(markup).toContain('value="develop"');
-    expect(markup).toContain('value="feature/x"');
+    expect(markup).toContain('aria-expanded="false"');
+    expect(markup).not.toContain('role="listbox"');
   });
 });

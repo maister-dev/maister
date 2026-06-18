@@ -104,6 +104,7 @@ export async function RepoFilesPanel({
         </h2>
         {branches.length > 0 ? (
           <BranchSelect
+            key={currentRef}
             branches={branches}
             current={currentRef}
             defaultBranch={mainBranch}
