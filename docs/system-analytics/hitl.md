@@ -486,6 +486,48 @@ sequenceDiagram
     W-->>H: onRespond callback triggers revalidation
 ```
 
+### Inbox card redesign — 3-tier disclosure + lazy context (Designed)
+
+The cross-project `/inbox` and the per-project board render one unified
+`HitlCard` with three disclosure tiers: **collapsed** (scan), **expanded**
+(decide), and the **run page** (deep dive). The list query stays cheap; the
+expensive context loads lazily only when a card is expanded.
+
+- **Eager (the list query).** `getHitlInbox` (board) and
+  `getCrossProjectHitlInbox` (portfolio) each add `tasks.title` and a
+  `stage {label, type}` to every `HitlItem`. `label` is the originating
+  `hitl_requests.step_id`; `type` is the node kind resolved from the run's
+  compiled flow graph. To avoid an N+1 the resolver loads each distinct flow
+  revision's manifest ONCE (`resolveManifest` + `compileManifest`) and maps every
+  item's `step_id → nodeType`; legacy linear-step runs fall back to
+  `{ step_id, "cli" }`. An unresolved `step_id` logs a WARN and degrades to the
+  raw label — the inbox always renders.
+- **Lazy (`GET /api/runs/{runId}/inbox-context`).** On expand the browser fetches
+  a read-only, project-scoped (`readBoard`) DTO
+  `{ lastAgentMessage, gates[], diff, progress }`: `gates` + `progress` from
+  `getRunNodeStatuses` (the current node attempt's gates + a done/total count);
+  `lastAgentMessage` from the trailing coalesced `agent_message_chunk` in the
+  run's `run.events.jsonl`; `diff` from `prepareDiffSummary` over the run's raw
+  git diff. Any field that cannot be read degrades to `null` (the card stays
+  answerable); the route never 500s for a missing peek.
+
+```mermaid
+sequenceDiagram
+    actor U as Operator
+    participant C as HitlCard browser
+    participant R as inbox-context route
+    participant DB as Postgres
+    participant FS as run.events.jsonl
+
+    U->>C: expand a card
+    C->>R: GET inbox-context (readBoard on run.projectId)
+    R->>DB: getRunNodeStatuses -> gates + progress
+    R->>FS: tail -> last agent_message_chunk
+    R->>R: prepareDiffSummary(raw git diff) -> files + and -
+    R-->>C: lastAgentMessage, gates, diff, progress (partial-null on miss)
+    C-->>U: expanded decision context
+```
+
 ### HITL-over-MCP — hitl_list and hitl_respond (Implemented — M17)
 
 External token-scoped agents query and answer pending HITL via two new
@@ -755,6 +797,15 @@ fields:
   home summary; the "Needs you (N)" count is the canonical `needsYou` owned by
   [`social-board.md`](social-board.md) (`pendingHitlCount` = the
   `getCrossProjectHitlInbox(userId, role)` count), with RBAC scoping preserved.
+- **(Designed)** Every `HitlItem` MUST carry `taskTitle` and `stage {label,
+  type}`; the stage `type` MUST be resolved by compiling each distinct flow
+  revision's manifest at most ONCE per list query (never per item), and an
+  unresolved `step_id` MUST degrade to the raw label rather than throw.
+- **(Designed)** `GET /api/runs/{runId}/inbox-context` MUST be read-only, gated by
+  `readBoard` on the run's project (foreign run → 403, missing → 404), return an
+  explicit DTO `{ lastAgentMessage, gates[], diff, progress }` carrying no DB rows
+  or server-only handles, and degrade any unreadable field to `null` (never 500
+  for a missing peek).
 
 ## Edge cases
 

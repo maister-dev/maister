@@ -3395,6 +3395,35 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
 
+  /api/runs/{runId}/inbox-context:
+    get:
+      tags: [runs]
+      summary: Designed (inbox card redesign) — lazy per-card decision context
+      description: |
+        Read-only context for an expanded inbox HITL card: the last agent
+        message, the current node attempt's gates, a diff summary, and stage
+        progress. Gated `readBoard` on the run's project (project derived from
+        the run row; `runId` is the only input). Every field degrades to `null`
+        when its source cannot be read — the route never 500s for a missing peek.
+      operationId: getRunInboxContext
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Inbox card decision context (partial-null on a missing peek).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InboxCardContext" }
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /api/runs/{runId}/change-summary:
     get:
       tags: [runs]
@@ -8986,6 +9015,60 @@ components:
             properties:
               ok: { type: boolean, enum: [true] }
   schemas:
+    InboxCardContext:
+      type: object
+      description: |
+        Designed (inbox card redesign). Lazy per-card decision context loaded when
+        an inbox HITL card is expanded. Explicit DTO — no DB rows or server-only
+        handles. Every field is nullable: a source that cannot be read degrades to
+        `null` rather than failing the request.
+      additionalProperties: false
+      required: [lastAgentMessage, gates, diff, progress]
+      properties:
+        lastAgentMessage:
+          nullable: true
+          type: object
+          additionalProperties: false
+          required: [text, at]
+          properties:
+            text: { type: string }
+            at: { type: string, format: date-time }
+          description: Trailing coalesced `agent_message_chunk` from `run.events.jsonl`.
+        gates:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [gateId, kind, mode, status]
+            properties:
+              gateId: { type: string }
+              kind:
+                type: string
+                enum: [command_check, skill_check, ai_judgment, artifact_required, external_check, human_review]
+              mode: { type: string, enum: [blocking, advisory] }
+              status:
+                type: string
+                enum: [pending, running, passed, failed, stale, skipped, overridden]
+          description: Gates of the run's current node attempt (`getRunNodeStatuses`).
+        diff:
+          nullable: true
+          type: object
+          additionalProperties: false
+          required: [files, additions, deletions]
+          properties:
+            files: { type: integer }
+            additions: { type: integer }
+            deletions: { type: integer }
+          description: Changed-files summary (`prepareDiffSummary`); no code payload.
+        progress:
+          nullable: true
+          type: object
+          additionalProperties: false
+          required: [done, total]
+          properties:
+            done: { type: integer }
+            total: { type: integer }
+          description: Node progress (graph runs; legacy runs derive from the board spine).
     PostProjectBody:
       type: object
       description: |
