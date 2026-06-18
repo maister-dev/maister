@@ -4,7 +4,9 @@
 - **Status:** Draft (brainstorm) — **v2**, reframed per owner feedback
   (2026-06-18): composable axes confirmed; model reorganised around
   *self-correct → escalate*; `auto-abandon` dropped (persistent sessions);
-  check-relaxation reconciled with the rework loop.
+  check-relaxation reconciled with the rework loop. Axis defaults triaged
+  round 2: A2 → `fail`, A3 all-advisory-as-setting + footgun guard, C2
+  `squash_rework`.
 - **Scope:** web + supervisor + flow engine + one migration. No new adapters.
 - **Relation:** the permission / human-gate / promotion axes have a detailed
   design in
@@ -69,14 +71,18 @@ default · options · safety.
   or `fail`. Policy may **not** raise the author's cap, and **never** auto-skips
   the `judge` (`ai_judgment`) node — that node *is* the machine's quality engine.
 
-**A2. Crash-retry.**
+**A2. Crash / hard-failure handling.**
 - **Hook:** `node_attempts`; `retry_safe` per node (`current-node-kind.ts:95`,
-  ADR-034). Today a crash → `Crashed`, waits for HITL "Recover or discard."
-- **Default:** `hold` (HITL recover).
-- **Options:** `hold` → `auto_retry` (bounded N, backoff, **`retry_safe` nodes
-  only**; after N → hold/escalate).
-- **Safety:** hard attempt bound (crash-loop backoff); never auto-retry a
-  non-`retry_safe` node; count cost.
+  ADR-034). (A *checkpointed* idle / `NeedsInput` run is a separate,
+  always-recoverable case — `session/resume`, never lost. This axis is hard
+  failure, not idle-wait.)
+- **Default (owner):** `fail` — a node that cannot proceed → `Failed`
+  (terminal). The task auto-returns to `Backlog`, where **relaunch is the retry
+  path** (a fresh attempt). Keep it simple — no in-run backoff machinery.
+- **Options:** `fail` → `auto_retry` (a small bounded in-run re-dispatch of
+  `retry_safe` nodes before `Failed`), off by default.
+- **Safety:** never auto-retry a non-`retry_safe` node; bound any in-run retry
+  hard; `Failed` keeps the worktree for forensics (the hold+resume substrate).
 
 **A3. Check strictness — the *non-review* check gates.**
 - **Hook:** `lib/flows/graph/gates-exec.ts` — `command_check | skill_check |
@@ -91,8 +97,17 @@ default · options · safety.
   self-correction loop (A1) is **untouched**. So "all blocking → advisory" is
   coherent: the machine still self-corrects via the judge; advisory just means
   "after self-correction, promote with a recorded warning instead of stopping."
-  Recommend `advisory`/`skip` be **per-gate opt-in** with a logged downgrade,
-  not a silent blanket. `ai_judgment` is governed by A1, never relaxed here.
+  `advisory`/`skip` are **per-gate opt-in** by default (logged downgrade);
+  `ai_judgment` is governed by A1, never relaxed here.
+- **Global "all → advisory" + the footgun (owner #3).** Per-gate clicking is
+  tedious, so a single **all-advisory** switch is allowed — but as a deliberate
+  **setting**, not a casual per-launch toggle. **★ Guard:** a non-strict
+  promotion path (any `advisory`/`skip` check, or B3 `ship_with_warning`)
+  **combined with auto-promote (C1 `auto_on_ready`)** ships work that failed its
+  checks straight to the target branch — the owner's "shoot yourself in the
+  foot." The policy must guard that combo: when checks are non-strict, force C1
+  to `manual` (or require a separate, explicitly-authorised override). Never let
+  "advisory checks + auto-ship" be a one-click default.
 
 ### Group B — Human escalation (the escape valve)
 
@@ -117,10 +132,18 @@ default · options · safety.
 **C1. Promotion trigger** — `manual | auto_on_ready` (`delivery-policy.ts`,
 `promote.ts`). Conflict on merge still aborts → `Review`.
 
-**C2. Commit policy** — `agent_managed` (today) · `auto_snapshot_per_node`
-(clean per-step history, easy rollback) · `squash_on_promote` · `defer` (no
-intermediate commits). **Hook:** `worktree.ts:1702` (`git commit --no-verify`),
-`inspector-actions.ts` `snapshotCommit`. Low blast radius (history shape).
+**C2. Commit policy (owner #4)** — a toggle over how much history survives:
+- `keep_all` — every node attempt, rework cycles included (full audit trail).
+- `squash_rework` (owner's idea) — MAIster commits each attempt with a
+  **structured prefix** (e.g. `[node:<id> attempt:<n>]`), then at promotion
+  **rewrites history** to collapse each node's rework attempts into one clean
+  commit: full trace *during* the run, tidy history *at the end*.
+- `squash_on_promote` — collapse everything to a single commit.
+- `defer` — no intermediate commits; one commit at the end.
+- **Hook:** `worktree.ts:1702` (`git commit --no-verify`),
+  `inspector-actions.ts` `snapshotCommit`; the prefixes drive the end-of-run
+  rewrite on the run branch, pre-promote. **Default:** `keep_all`; `unattended`
+  → `squash_rework`. Low blast radius (history shape only).
 
 **C3. Dirty-worktree resolution** — `ask` (today, `dirty-resolution.ts`:
 `commit | discard | proceed`) → a fixed auto choice (`commit | proceed`) under
@@ -141,13 +164,13 @@ autonomy. `discard` is **never** an automatic default (data loss).
 | Axis | `supervised` (default) | `assisted` | `unattended` |
 | --- | --- | --- | --- |
 | A1 Rework | author cap → escalate | author cap → escalate | author cap → escalate |
-| A2 Crash-retry | hold | auto_retry (N) | auto_retry (N) |
+| A2 Crash/fail | fail (→ Backlog) | fail (→ Backlog) | fail (→ Backlog) |
 | A3 Checks | strict | strict | strict |
 | B1 Permissions | ask | auto_approve | auto_approve |
 | B2 Human gate | stop | stop | auto_pass (post-A, fail-closed) |
 | B3 On stuck | escalate | escalate | escalate |
 | C1 Promotion | manual | manual | auto_on_ready |
-| C2 Commits | agent_managed | agent_managed | squash_on_promote |
+| C2 Commits | keep_all | keep_all | squash_rework |
 | C3 Dirty | ask | proceed | proceed |
 
 `assisted` = "don't pester me for permissions or a dirty tree, but a human still
@@ -204,13 +227,14 @@ override → task → project → platform → `supervised`.
 
 ## Open questions (для владельца)
 
-1. На исчерпании rework (A1): дефолт `escalate` (к человеку) — ок? `ship_with_
-   warning` оставляем только как явный opt-in?
-2. A2 crash-retry: дефолтные N и backoff? Только `retry_safe`-ноды (ADR-034) —
-   подтверждаешь?
-3. A3 «advisory»: per-gate opt-in (рекомендую) — или нужен и глобальный
-   «все blocking → advisory» переключатель (рискованнее)?
-4. Фазинг: self-correction (A) → escalation (B) → output (C) — теперь так, ок?
-5. C2 commits для `unattended`: `squash_on_promote` или `auto_snapshot_per_node`?
-6. Подтверди: `auto-abandon` выкидываем совсем (персистентные сессии = hold+
-   resume), budget — отложен.
+Round-2 ответы вшиты (A1 `escalate`; A2 → `fail`; A3 all-advisory как настройка +
+footgun-guard; C2 `squash_rework`). Осталось:
+
+1. **Footgun-guard (A3 × C1):** при не-strict чеках принудительно `manual`-
+   промоут — или достаточно громкого warning + отдельного явного override?
+   (рекомендую принудительный `manual`.)
+2. **`squash_rework`:** префикс `[node:<id> attempt:<n>]` + перезапись истории на
+   ветке рана перед промоутом — ок как механизм? Дефолт `unattended` →
+   `squash_rework`?
+3. **A2:** `fail` → Backlog → relaunch как ретрай-путь, `auto_retry` опц.-выкл —
+   ок? (авто-relaunch / ралф-loop — отдельно, позже.)
