@@ -806,7 +806,27 @@
     "registerAnother": "Register another",
     "taskKeyLabel": "Task key (optional)",
     "taskKeyPlaceholder": "MAI — derived from the project name when empty",
-    "taskKeyFormatHint": "2–10 chars: A–Z and digits, starting with a letter."
+    "taskKeyFormatHint": "2–10 chars: A–Z and digits, starting with a letter.",
+    "persistBanner": {
+      "title": "{project}: config lives only in the database",
+      "body": "Persist it to a committed maister.yaml so this project can be re-created from git alone.",
+      "persist": "Persist to maister.yaml",
+      "dismiss": "Dismiss",
+      "settingsLink": "Or set it up later in Settings → Git",
+      "confirmTitle": "Persist project config?",
+      "branchLabel": "Branch",
+      "pathLabel": "Repository",
+      "commitLabel": "Commit",
+      "alsoPush": "Also push to the remote",
+      "confirm": "Persist",
+      "cancel": "Cancel",
+      "pending": "Persisting…",
+      "doneTitle": "Config persisted to maister.yaml",
+      "close": "Close",
+      "usedDefaultAuthor": "Committed with the default identity maister <noreply@maister.local> — set git user.name and user.email for a real author.",
+      "pushWarning": "Push failed: {detail}",
+      "error": "Couldn't persist the config. Please try again."
+    }
   },
   "settings": {
     "title": "Settings",

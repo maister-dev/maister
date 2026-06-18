@@ -307,6 +307,47 @@ describe("portfolio queries (integration)", () => {
     expect(proj?.need?.runId).not.toBe(proj?.slug);
   });
 
+  it("derives needsPersist from maisterYamlPath (null → true, set → false) in both role branches", async () => {
+    const user = await createUser("persist@test.com");
+
+    // A DB-only project (registered with no maister.yaml → column null).
+    const dbOnlyId = randomUUID();
+    const dbOnlySlug = `proj-${dbOnlyId.slice(0, 8)}`;
+
+    await db.insert(schema.projects).values({
+      taskKey: `T${randomUUID().slice(0, 8)}`.toUpperCase(),
+      id: dbOnlyId,
+      slug: dbOnlySlug,
+      name: "DB Only",
+      repoPath: `/repos/${dbOnlySlug}`,
+      maisterYamlPath: null,
+    });
+    // createProject() sets a non-null maisterYamlPath.
+    const persistedId = await createProject("Persisted");
+
+    await addProjectMember(user, dbOnlyId, "owner");
+    await addProjectMember(user, persistedId, "owner");
+
+    const memberView = await getPortfolio(user, "member");
+
+    expect(
+      memberView.projects.find((p) => p.id === dbOnlyId)?.needsPersist,
+    ).toBe(true);
+    expect(
+      memberView.projects.find((p) => p.id === persistedId)?.needsPersist,
+    ).toBe(false);
+
+    // The admin branch selects all columns — same derivation must hold.
+    const adminView = await getPortfolio(user, "admin");
+
+    expect(
+      adminView.projects.find((p) => p.id === dbOnlyId)?.needsPersist,
+    ).toBe(true);
+    expect(
+      adminView.projects.find((p) => p.id === persistedId)?.needsPersist,
+    ).toBe(false);
+  });
+
   it("counts a HumanWorking (claimed takeover) run as an active workspace", async () => {
     const user = await createUser("humanworking@test.com");
     const project = await createProject("HumanWorking Project");

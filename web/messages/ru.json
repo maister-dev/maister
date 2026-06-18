@@ -806,7 +806,27 @@
     "registerAnother": "Зарегистрировать ещё",
     "taskKeyLabel": "Ключ задач (необязательно)",
     "taskKeyPlaceholder": "MAI — выводится из имени проекта, если пусто",
-    "taskKeyFormatHint": "2–10 символов: A–Z и цифры, первая — буква."
+    "taskKeyFormatHint": "2–10 символов: A–Z и цифры, первая — буква.",
+    "persistBanner": {
+      "title": "{project}: конфигурация хранится только в базе данных",
+      "body": "Зафиксируйте её в закоммиченный maister.yaml, чтобы проект можно было воссоздать из одного git.",
+      "persist": "Сохранить в maister.yaml",
+      "dismiss": "Скрыть",
+      "settingsLink": "Или настройте позже в «Настройки → Git»",
+      "confirmTitle": "Сохранить конфигурацию проекта?",
+      "branchLabel": "Ветка",
+      "pathLabel": "Репозиторий",
+      "commitLabel": "Коммит",
+      "alsoPush": "Также отправить в удалённый репозиторий",
+      "confirm": "Сохранить",
+      "cancel": "Отмена",
+      "pending": "Сохранение…",
+      "doneTitle": "Конфигурация сохранена в maister.yaml",
+      "close": "Закрыть",
+      "usedDefaultAuthor": "Коммит создан под именем по умолчанию maister <noreply@maister.local> — задайте git user.name и user.email для реального автора.",
+      "pushWarning": "Не удалось отправить: {detail}",
+      "error": "Не удалось сохранить конфигурацию. Попробуйте ещё раз."
+    }
   },
   "settings": {
     "title": "Настройки",

@@ -9,6 +9,7 @@ import { EmptyState } from "@/components/portfolio/empty-state";
 import { NeedsYouSummary } from "@/components/portfolio/needs-you-summary";
 import { NewProjectTile } from "@/components/portfolio/new-project-tile";
 import { ProjectCard } from "@/components/portfolio/project-card";
+import { ConfigPersistBanner } from "@/components/projects/config-persist-banner";
 import { requireSession } from "@/lib/authz";
 import { getUnreadInboxCount } from "@/lib/queries/inbox";
 import {
@@ -90,6 +91,21 @@ export default async function PortfolioPage(): Promise<ReactElement> {
               }}
             />
           ) : null}
+
+          {user.role === "admin"
+            ? portfolio.projects
+                .filter((project) => project.needsPersist)
+                .map((project) => (
+                  <ConfigPersistBanner
+                    key={project.id}
+                    canEdit
+                    needsPersist
+                    projectName={project.name}
+                    settingsHref={`/projects/${project.slug}?tab=settings`}
+                    slug={project.slug}
+                  />
+                ))
+            : null}
 
           <section
             aria-label="Projects"

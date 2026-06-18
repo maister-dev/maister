@@ -754,6 +754,134 @@ export async function getDefaultBranch(
   return "main";
 }
 
+// ADR-093 (persist-config): is this path a git work tree at all? Distinct from
+// getDefaultBranch (never-throw) so the persist precondition can give a clear
+// "not a git repo" message before the branch/clean-tree checks.
+export async function isGitRepo(projectRepoPath: string): Promise<boolean> {
+  const repo = validate(absolutePathSchema, projectRepoPath, "projectRepoPath");
+
+  try {
+    await runGit(repo, ["rev-parse", "--git-dir"]);
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// ADR-093 (persist-config): the current branch via `symbolic-ref` — which,
+// unlike `rev-parse --abbrev-ref`, resolves on an UNBORN HEAD (a fresh
+// `git init` repo points at its default branch with no commits yet), so the
+// new-empty onboarding case passes the "HEAD on main_branch" precondition.
+// null = detached HEAD or not a git repo.
+export async function currentBranchName(
+  projectRepoPath: string,
+): Promise<string | null> {
+  const repo = validate(absolutePathSchema, projectRepoPath, "projectRepoPath");
+
+  try {
+    const { stdout } = await runGit(repo, ["symbolic-ref", "--short", "HEAD"]);
+    const branch = stdout.trim();
+
+    return branch.length > 0 ? branch : null;
+  } catch {
+    return null;
+  }
+}
+
+// ADR-093 (persist-config idempotent reconcile): a tracked file's content at
+// HEAD. null when HEAD is unborn or the file is not committed. Used to detect a
+// prior persist that committed maister.yaml but crashed before the DB flip.
+export async function showFileAtHead(
+  projectRepoPath: string,
+  file: string,
+): Promise<string | null> {
+  const repo = validate(absolutePathSchema, projectRepoPath, "projectRepoPath");
+  const f = validate(repoRelPathSchema, file, "file");
+
+  try {
+    const { stdout } = await runGit(repo, ["show", `HEAD:${f}`]);
+
+    return stdout;
+  } catch {
+    return null;
+  }
+}
+
+// Read a single git config value (any scope). null when unset (exit 1) so the
+// caller can default rather than let `git commit` fail.
+async function gitConfigValue(
+  repo: string,
+  key: "user.name" | "user.email",
+): Promise<string | null> {
+  try {
+    const { stdout } = await runGit(repo, ["config", "--get", key]);
+    const value = stdout.trim();
+
+    return value.length > 0 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+export type CommitFileArgs = {
+  repo: string;
+  file: string;
+  message: string;
+};
+
+export type CommitFileResult = {
+  usedDefaultAuthor: boolean;
+};
+
+// ADR-093 (persist-config): stage one repo-relative file and commit it. When the
+// host git author is UNSET, supply a default identity PER-FIELD via `-c` (a
+// configured host name/email is never overridden — only the missing one is
+// defaulted) and report `usedDefaultAuthor` so the UI can nudge the operator.
+// Works on an unborn HEAD (the first commit of a fresh `git init` repo). NOT a
+// network op — push is the caller's opt-in step.
+export async function commitFile(
+  args: CommitFileArgs,
+): Promise<CommitFileResult> {
+  const repo = validate(absolutePathSchema, args.repo, "repo");
+  const file = validate(repoRelPathSchema, args.file, "file");
+  const message = validate(commitMessageSchema, args.message, "commitMessage");
+
+  log.info({ repo, file }, "commitFile");
+
+  try {
+    await runGit(repo, ["add", "--", file]);
+
+    const [name, email] = await Promise.all([
+      gitConfigValue(repo, "user.name"),
+      gitConfigValue(repo, "user.email"),
+    ]);
+    const identityArgs: string[] = [];
+
+    if (!name) identityArgs.push("-c", "user.name=maister");
+    if (!email) identityArgs.push("-c", "user.email=noreply@maister.local");
+    const usedDefaultAuthor = identityArgs.length > 0;
+
+    const { stdout, stderr } = await runGit(repo, [
+      ...identityArgs,
+      "commit",
+      "-m",
+      message,
+    ]);
+
+    log.info({ repo, file, usedDefaultAuthor }, "commitFile done");
+    log.debug({ stdout, stderr }, "commitFile git output");
+
+    return { usedDefaultAuthor };
+  } catch (err) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `git commit failed: ${errorText(err) || asError(err).message}`,
+      { cause: asError(err) },
+    );
+  }
+}
+
 export type HeadCommitArgs = {
   worktreePath: string;
 };

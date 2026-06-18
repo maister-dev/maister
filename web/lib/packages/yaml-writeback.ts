@@ -3,9 +3,10 @@ import "server-only";
 import { readFile } from "node:fs/promises";
 
 import pino from "pino";
-import { isSeq, parseDocument } from "yaml";
+import { isSeq, parseDocument, stringify } from "yaml";
 
 import { atomicWriteText } from "@/lib/atomic";
+import { maisterYamlV2Schema } from "@/lib/config.schema";
 
 const log = pino({
   name: "package-yaml-writeback",
@@ -112,4 +113,56 @@ export async function writeBackPackagesPin(opts: {
 
     return "failed";
   }
+}
+
+export type SerializeProjectInput = {
+  name: string;
+  mainBranch: string;
+  branchPrefix: string;
+  defaultRunnerId: string | null;
+  promotionMode: string | null;
+};
+
+export type SerializeProjectAttachments = {
+  flows?: { id: string; source: string; version: string; runner?: string }[];
+  packages?: { id: string; source: string; version: string; path?: string }[];
+};
+
+// ADR-093: render a DB-only project's config to a complete, schema-valid
+// maister.yaml v2 (the persist serializer — writeBackPackagesPin only edits an
+// EXISTING file). Defaults (main/maister/null) are omitted for a clean file;
+// the result is round-tripped through maisterYamlV2Schema before returning.
+export function serializeProjectConfig(
+  project: SerializeProjectInput,
+  attachments?: SerializeProjectAttachments,
+): string {
+  const projectBlock: Record<string, unknown> = { name: project.name };
+
+  if (project.mainBranch !== "main") {
+    projectBlock.main_branch = project.mainBranch;
+  }
+  if (project.branchPrefix !== "maister/") {
+    projectBlock.branch_prefix = project.branchPrefix;
+  }
+  if (project.defaultRunnerId) {
+    projectBlock.default_runner = project.defaultRunnerId;
+  }
+  if (project.promotionMode) {
+    projectBlock.promotion = { mode: project.promotionMode };
+  }
+
+  const doc: Record<string, unknown> = {
+    schemaVersion: 2,
+    project: projectBlock,
+    flows: attachments?.flows ?? [],
+  };
+
+  if (attachments?.packages && attachments.packages.length > 0) {
+    doc.packages = attachments.packages;
+  }
+
+  // Self-check: fail loudly here rather than write an invalid manifest.
+  maisterYamlV2Schema.parse(doc);
+
+  return stringify(doc);
 }

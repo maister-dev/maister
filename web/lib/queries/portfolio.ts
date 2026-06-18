@@ -148,6 +148,10 @@ export interface PortfolioProject {
   activeWorkspaces: PortfolioWorkspace[];
   recentMerges: PortfolioRecentMerge[];
   need: PortfolioNeed | null;
+  // ADR-093 (invariant D): derived signal that the project's config lives only
+  // in the DB (registered with no maister.yaml). The raw path is never exposed
+  // to the client (owner 2026-06-17) — only this boolean drives the home banner.
+  needsPersist: boolean;
 }
 
 export interface Portfolio {
@@ -622,6 +626,7 @@ export async function getPortfolio(
       activeWorkspaces,
       recentMerges: mergesByProject.get(p.id) ?? [],
       need: firstNeedByProject.get(p.id) ?? null,
+      needsPersist: p.maisterYamlPath === null,
     };
   });
 

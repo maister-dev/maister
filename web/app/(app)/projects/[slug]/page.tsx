@@ -22,6 +22,7 @@ import { RepoFilesPanel } from "@/components/board/panels/repo-files-panel";
 import { SettingsPanel } from "@/components/board/panels/settings-panel";
 import { WebhooksPanel } from "@/components/board/panels/webhooks-panel";
 import { ProjectMembersPanel } from "@/components/project/project-members-panel";
+import { ConfigPersistBanner } from "@/components/projects/config-persist-banner";
 import { AgentsAttachPanel } from "@/components/board/panels/agents-attach-panel";
 import { SchedulesPanel } from "@/components/schedules/schedules-panel";
 import { WorkbenchLifecycleActions } from "@/components/workbench/lifecycle-actions";
@@ -171,6 +172,15 @@ export default async function ProjectBoardPage({
 
   return (
     <>
+      <ConfigPersistBanner
+        canEdit={isAdmin}
+        mainBranch={project.mainBranch}
+        needsPersist={project.maisterYamlPath === null}
+        projectName={project.name}
+        repoPath={project.repoPath}
+        settingsHref={`/projects/${slug}?tab=settings`}
+        slug={slug}
+      />
       <header className="mb-6 grid grid-cols-1 items-start gap-6 border-b border-line pb-[22px] lg:grid-cols-[1fr_auto]">
         <div className="min-w-0">
           <div className="mb-3 inline-flex items-center gap-2.5 font-mono text-[10.5px] font-semibold uppercase tracking-[0.14em] text-mute before:h-px before:w-[18px] before:bg-amber before:content-['']">

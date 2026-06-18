@@ -500,7 +500,7 @@ Every promised test names its **runner project**:
     for the three outcomes; remediation copy keys exist in both locales.
   - *Logging:* `log.info` gh-auth outcome (enum only). *Acceptance:* unit + parity green.
 
-- [ ] **T20 — P2 green checkpoint.** *(phase gate)* `pnpm typecheck` 0;
+- [x] **T20 — P2 green checkpoint.** *(phase gate)* `pnpm typecheck` 0;
   `pnpm test:unit && pnpm test:integration` green; scoped eslint clean. Update the
   `project-onboarding` e2e (or a `git-access` spec) to assert a classified-clone
   error renders with the collapsible detail (using a deliberately-bad URL against
@@ -509,7 +509,7 @@ Every promised test names its **runner project**:
 
 ### Phase 3 (P3) — Git in settings: persist + remotes *(depends on P1)*
 
-- [ ] **T21 — `serializeProjectConfig` (TDD).** New serializer (in
+- [x] **T21 — `serializeProjectConfig` (TDD).** New serializer (in
   `web/lib/packages/yaml-writeback.ts` or a sibling) →
   `serializeProjectConfig(project, attachments): string` producing a complete,
   **schema-valid** `maister.yaml` v2: `schemaVersion: 2`; `project.{name,
@@ -522,7 +522,7 @@ Every promised test names its **runner project**:
     emitted; round-trip identity on the project fields.
   - *Logging:* none (pure). *Acceptance:* unit green.
 
-- [ ] **T22 — `persist-config` endpoint (TDD, integration) — two-phase per
+- [x] **T22 — `persist-config` endpoint (TDD, integration) — two-phase per
   invariant B.** New `POST /api/projects/[slug]/persist-config`
   (`requireProjectAction(projectId,"editSettings")`): load project (slug→`server-state`);
   require `maisterYamlPath IS NULL` (else 409); preconditions on `repo_path` — git
@@ -550,7 +550,7 @@ Every promised test names its **runner project**:
     outcome. *Acceptance:* depends on T21; integration green; **invariant B**
     Reviewer gate (crash windows enumerated + tested).
 
-- [ ] **T23 — Persist banner (TDD) + home DTO fan-out.** Client island
+- [x] **T23 — Persist banner (TDD) + home DTO fan-out.** Client island
   `web/components/projects/config-persist-banner.tsx` rendering iff the project needs
   persist **AND the viewer can `editSettings`** (admin/owner — never a CTA that
   403s), mounted on **both** the portfolio home
