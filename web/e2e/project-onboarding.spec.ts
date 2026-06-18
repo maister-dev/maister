@@ -1,8 +1,24 @@
 import path from "node:path";
 
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 
 import { countRows } from "./_seed/db";
+
+// Register a new-empty (greenfield) project and land on its board. Returns the
+// derived slug. The greenfield repo is git-initialized on `main` (ADR-093), so
+// it is persist-eligible.
+async function registerNewEmpty(page: Page, location: string): Promise<string> {
+  const slug = path.basename(location);
+
+  await page.goto("/projects/new");
+  await page.getByRole("radio", { name: "New empty project" }).click();
+  await page.locator('input[name="target"]').fill(location);
+  await page.getByRole("button", { name: "Register project" }).click();
+  await page.getByRole("link", { name: /Open project/ }).click();
+  await expect(page).toHaveURL(new RegExp(`/projects/${slug}(\\?|$)`));
+
+  return slug;
+}
 
 // ADR-093 onboarding redesign. Runs as the seeded admin (authed storageState).
 // Covers the two behaviors the headless component tests cannot drive:
@@ -94,4 +110,73 @@ test("renders a classified, collapsible error when a clone fails", async ({
 
   // The collapsible git-output block is unique to the clone-error surface.
   await expect(page.getByText("Show git output")).toBeVisible();
+});
+
+test("persists a new-empty project's config from the board banner", async ({
+  page,
+}) => {
+  const slug = await registerNewEmpty(
+    page,
+    path.resolve(`e2e/.runtime/persist-${Date.now()}`),
+  );
+
+  // The persist banner shows on the board (admin + config lives only in the DB).
+  await expect(
+    page.getByRole("button", { name: "Persist to maister.yaml" }),
+  ).toBeVisible();
+
+  const persisted = page.waitForResponse(
+    (response) =>
+      response.url().includes(`/projects/${slug}/persist-config`) &&
+      response.request().method() === "POST",
+  );
+
+  await page.getByRole("button", { name: "Persist to maister.yaml" }).click();
+  // The confirm step's button is the bare "Persist".
+  await page.getByRole("button", { name: "Persist", exact: true }).click();
+  expect((await persisted).status()).toBe(200);
+
+  await expect(
+    page.getByText("Config persisted to maister.yaml"),
+  ).toBeVisible();
+
+  // Closing refreshes server data → needsPersist flips → the banner is gone.
+  await page.getByRole("button", { name: "Close" }).click();
+  await expect(
+    page.getByRole("button", { name: "Persist to maister.yaml" }),
+  ).toHaveCount(0);
+});
+
+test("adds a git remote from Settings → Git", async ({ page }) => {
+  const slug = await registerNewEmpty(
+    page,
+    path.resolve(`e2e/.runtime/remotes-${Date.now()}`),
+  );
+
+  await page.goto(`/projects/${slug}?tab=settings`);
+  await expect(
+    page.getByRole("heading", { name: "Git remotes" }),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "Add remote" }).click();
+
+  const dialog = page.getByRole("dialog");
+
+  await dialog.getByPlaceholder("origin").fill("origin");
+  await dialog
+    .getByPlaceholder("git@github.com:org/app.git")
+    .fill("https://github.com/e2e/added.git");
+
+  const added = page.waitForResponse(
+    (response) =>
+      response.url().includes(`/projects/${slug}/remotes`) &&
+      response.request().method() === "POST",
+  );
+
+  await dialog.getByRole("button", { name: "Add remote" }).click();
+  expect((await added).status()).toBe(201);
+
+  await expect(
+    page.getByText("https://github.com/e2e/added.git"),
+  ).toBeVisible();
 });

@@ -580,6 +580,9 @@ export type PushBranchArgs = {
   remote: string;
   branch: string;
   force?: boolean;
+  // ADR-093: `git push -u` — sets the branch's upstream to remote/branch while
+  // pushing (the "set upstream" remotes action).
+  setUpstream?: boolean;
 };
 
 export type PushRejectedReason = "non_fast_forward";
@@ -640,6 +643,7 @@ export async function pushBranch(args: PushBranchArgs): Promise<void> {
       repo,
       "push",
       ...(force ? ["--force-with-lease"] : []),
+      ...(args.setUpstream === true ? ["--set-upstream"] : []),
       "--end-of-options",
       remote,
       branch,
@@ -698,6 +702,202 @@ export async function listRemotes(args: ListRemotesArgs): Promise<string[]> {
     throw new MaisterError(
       "CONFLICT",
       `git remote failed: ${errorText(err) || asError(err).message}`,
+      { cause: asError(err) },
+    );
+  }
+}
+
+// ADR-093 Workstream 6: git remote management primitives. `name` is validated
+// against the SHARED remoteNameSchema (dotted/slashed allowed, no leading '-')
+// — the same schema listRemotes/pushBranch validate, so a slashed remote added
+// here never throws in those readers. `url` is scheme-validated by the caller
+// (git-remotes.validateUrl) before reaching here; neither arg can be read as an
+// option (name has no leading '-', url carries a scheme). Path-confined to the
+// project repo (server-state). All git stderr is redacted (URLs carry creds).
+export type RemoteMutateArgs = {
+  projectRepoPath: string;
+  name: string;
+  url: string;
+};
+
+export async function remoteAdd(args: RemoteMutateArgs): Promise<void> {
+  const repo = validate(
+    absolutePathSchema,
+    args.projectRepoPath,
+    "projectRepoPath",
+  );
+  const name = validate(remoteNameSchema, args.name, "remote");
+
+  log.info({ projectRepoPath: repo, remote: name }, "remoteAdd");
+
+  try {
+    await runGit(repo, ["remote", "add", name, args.url]);
+  } catch (err) {
+    const stderrText = errorText(err);
+
+    if (stderrText.includes("already exists")) {
+      throw new MaisterError("CONFLICT", `remote already exists: ${name}`, {
+        cause: asError(err),
+      });
+    }
+
+    throw new MaisterError(
+      "CONFLICT",
+      `git remote add failed: ${redactUrl(stderrText || asError(err).message)}`,
+      { cause: asError(err) },
+    );
+  }
+}
+
+export async function remoteSetUrl(args: RemoteMutateArgs): Promise<void> {
+  const repo = validate(
+    absolutePathSchema,
+    args.projectRepoPath,
+    "projectRepoPath",
+  );
+  const name = validate(remoteNameSchema, args.name, "remote");
+
+  log.info({ projectRepoPath: repo, remote: name }, "remoteSetUrl");
+
+  try {
+    await runGit(repo, ["remote", "set-url", name, args.url]);
+  } catch (err) {
+    const stderrText = errorText(err);
+
+    if (stderrText.includes("No such remote")) {
+      throw new MaisterError("PRECONDITION", `remote not found: ${name}`, {
+        cause: asError(err),
+      });
+    }
+
+    throw new MaisterError(
+      "CONFLICT",
+      `git remote set-url failed: ${redactUrl(stderrText || asError(err).message)}`,
+      { cause: asError(err) },
+    );
+  }
+}
+
+export type RemoteNameArgs = {
+  projectRepoPath: string;
+  name: string;
+};
+
+export async function remoteRemove(args: RemoteNameArgs): Promise<void> {
+  const repo = validate(
+    absolutePathSchema,
+    args.projectRepoPath,
+    "projectRepoPath",
+  );
+  const name = validate(remoteNameSchema, args.name, "remote");
+
+  log.info({ projectRepoPath: repo, remote: name }, "remoteRemove");
+
+  try {
+    await runGit(repo, ["remote", "remove", name]);
+  } catch (err) {
+    const stderrText = errorText(err);
+
+    if (stderrText.includes("No such remote")) {
+      log.debug(
+        { projectRepoPath: repo, remote: name },
+        "remoteRemove: missing — no-op",
+      );
+
+      return;
+    }
+
+    throw new MaisterError(
+      "CONFLICT",
+      `git remote remove failed: ${stderrText || asError(err).message}`,
+      { cause: asError(err) },
+    );
+  }
+}
+
+export type RemoteUrlEntry = { name: string; url: string };
+
+// `git remote -v` collapsed to one row per remote (the fetch URL). URLs are
+// returned RAW (may carry creds) — the orchestrator redacts before display.
+export async function listRemoteUrls(
+  projectRepoPath: string,
+): Promise<RemoteUrlEntry[]> {
+  const repo = validate(absolutePathSchema, projectRepoPath, "projectRepoPath");
+
+  log.debug({ projectRepoPath: repo }, "listRemoteUrls");
+
+  try {
+    const { stdout } = await runGit(repo, ["remote", "-v"]);
+    const byName = new Map<string, string>();
+
+    for (const line of stdout.split(/\r?\n/)) {
+      const match = line.match(/^(\S+)\s+(\S+)\s+\((fetch|push)\)$/);
+
+      if (!match) continue;
+      const [, name, url, kind] = match;
+
+      if (kind === "fetch" || !byName.has(name)) byName.set(name, url);
+    }
+
+    return [...byName.entries()].map(([name, url]) => ({ name, url }));
+  } catch (err) {
+    throw new MaisterError(
+      "CONFLICT",
+      `git remote -v failed: ${errorText(err) || asError(err).message}`,
+      { cause: asError(err) },
+    );
+  }
+}
+
+// Single remote's URL (`git remote get-url`), RAW. null when the remote is
+// absent — used by the origin DB-cache self-heal (reconcile).
+export async function getRemoteUrl(
+  args: RemoteNameArgs,
+): Promise<string | null> {
+  const repo = validate(
+    absolutePathSchema,
+    args.projectRepoPath,
+    "projectRepoPath",
+  );
+  const name = validate(remoteNameSchema, args.name, "remote");
+
+  try {
+    const { stdout } = await runGit(repo, ["remote", "get-url", name]);
+    const url = stdout.trim();
+
+    return url.length > 0 ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+// `git fetch <remote>` — a NETWORK op via host-ambient auth (NETWORK_GIT_ENV,
+// no token in argv). A failure is EXECUTOR_UNAVAILABLE (redacted); the
+// orchestrator surfaces it as an advisory, nothing to roll back.
+export async function fetchRemote(args: RemoteNameArgs): Promise<void> {
+  const repo = validate(
+    absolutePathSchema,
+    args.projectRepoPath,
+    "projectRepoPath",
+  );
+  const name = validate(remoteNameSchema, args.name, "remote");
+
+  log.info({ projectRepoPath: repo, remote: name }, "fetchRemote");
+
+  try {
+    await execFileAsync(
+      "git",
+      ["-C", repo, "fetch", "--end-of-options", name],
+      {
+        signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
+        maxBuffer: EXEC_MAX_BUFFER,
+        env: NETWORK_GIT_ENV,
+      },
+    );
+  } catch (err) {
+    throw new MaisterError(
+      "EXECUTOR_UNAVAILABLE",
+      `git fetch ${name} failed: ${redactUrl(errorText(err) || asError(err).message)}`,
       { cause: asError(err) },
     );
   }

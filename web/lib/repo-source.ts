@@ -343,9 +343,14 @@ export async function isGitRepo(dir: string): Promise<boolean> {
 
 export async function gitInit(dir: string): Promise<void> {
   try {
+    // ADR-093: force the initial branch to "main" so a repo we create matches
+    // the DB-default `main_branch` ("main"). Without `-b`, the branch follows
+    // the host's `init.defaultBranch` (often "master" when unset), which would
+    // make the persist-config "HEAD on main_branch" precondition fail on a
+    // new-empty project — the primary persist scenario.
     await execFileAsync(
       "git",
-      ["-C", dir, "init"],
+      ["-C", dir, "init", "-b", "main"],
       gitExecOptions(GIT_TIMEOUT_MS),
     );
   } catch (err) {
@@ -370,7 +375,9 @@ async function pathExists(p: string): Promise<boolean> {
   }
 }
 
-function validateUrl(url: string): void {
+// ADR-093: reused by git-remotes (remote url scheme allow-list). Cred-bearing
+// remotes are accepted (host-ambient auth) — callers redact for display/storage.
+export function validateUrl(url: string): void {
   const isScp = /^[^/@]+@[^/:]+:/.test(url);
   const isSchemed = URL_SCHEME_ALLOWLIST.some((s) => url.startsWith(s));
 

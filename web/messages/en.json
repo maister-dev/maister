@@ -826,6 +826,29 @@
       "usedDefaultAuthor": "Committed with the default identity maister <noreply@maister.local> — set git user.name and user.email for a real author.",
       "pushWarning": "Push failed: {detail}",
       "error": "Couldn't persist the config. Please try again."
+    },
+    "git": {
+      "remotesTitle": "Git remotes",
+      "remotesDesc": "Manage the repository's git remotes — URLs are credential-redacted.",
+      "empty": "No remotes configured.",
+      "colName": "Name",
+      "colUrl": "URL",
+      "addRemote": "Add remote",
+      "manage": "Manage",
+      "nameLabel": "Remote name",
+      "urlLabel": "URL",
+      "addTitle": "Add a remote",
+      "manageTitle": "Manage remote",
+      "save": "Save URL",
+      "cancel": "Cancel",
+      "remove": "Remove",
+      "push": "Push",
+      "fetch": "Fetch",
+      "pending": "Working…",
+      "error": "Request failed. Please try again.",
+      "persistTitle": "Config lives only in the database",
+      "persistDesc": "Persist it to a committed maister.yaml so this project can be re-created from git alone.",
+      "persist": "Persist now"
     }
   },
   "settings": {

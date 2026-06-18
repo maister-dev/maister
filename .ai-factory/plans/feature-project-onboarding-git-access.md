@@ -567,7 +567,7 @@ Every promised test names its **runner project**:
     copy. A `lib/**` test asserts the portfolio DTO now carries `needsPersist`.
   - *Logging:* client. *Acceptance:* depends on T22; unit + parity green.
 
-- [ ] **T24 — Git remote primitives (TDD).** Add **exported** ops to
+- [x] **T24 — Git remote primitives (TDD).** Add **exported** ops to
   `web/lib/worktree.ts` — `remoteAdd` / `remoteSetUrl` / `remoteRemove` /
   `listRemoteUrls` (`git remote -v`) — next to `listRemotes`/`pushBranch`, reusing
   the private `runGit` + the **existing exported `remoteNameSchema`** (do NOT export
@@ -588,7 +588,7 @@ Every promised test names its **runner project**:
   - *Logging:* `log.info` op + redacted url + origin-sync result. *Acceptance:* unit
     + integration green.
 
-- [ ] **T25 — Remotes API route (TDD, integration).** **Single collection route**
+- [x] **T25 — Remotes API route (TDD, integration).** **Single collection route**
   `web/app/api/projects/[slug]/remotes/route.ts`: `GET` list, `POST` add,
   `PATCH` set-url, `DELETE` remove (remote `name` in the **body** for PATCH/DELETE
   so `/`-containing names work; owner 2026-06-17), plus push/fetch/set-upstream
@@ -601,7 +601,7 @@ Every promised test names its **runner project**:
   - *Logging:* `log.info` route + op (redacted url). *Acceptance:* depends on T24;
     integration green.
 
-- [ ] **T26 — Settings → Git section (TDD) + P3 e2e + green checkpoint.** Add a
+- [x] **T26 — Settings → Git section (TDD) + P3 e2e + green checkpoint.** Add a
   **Git** section to `web/components/board/panels/settings-panel.tsx` (a **Server
   Component**) as a **client-island control** imported alongside its existing
   siblings (`DeliveryPolicySettingsControl` etc., gated on `isAdmin`; the route's

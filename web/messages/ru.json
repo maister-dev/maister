@@ -826,6 +826,29 @@
       "usedDefaultAuthor": "Коммит создан под именем по умолчанию maister <noreply@maister.local> — задайте git user.name и user.email для реального автора.",
       "pushWarning": "Не удалось отправить: {detail}",
       "error": "Не удалось сохранить конфигурацию. Попробуйте ещё раз."
+    },
+    "git": {
+      "remotesTitle": "Git-удалённые",
+      "remotesDesc": "Управление git-удалёнными репозитория — учётные данные в URL скрыты.",
+      "empty": "Удалённые не настроены.",
+      "colName": "Имя",
+      "colUrl": "URL",
+      "addRemote": "Добавить удалённый",
+      "manage": "Управление",
+      "nameLabel": "Имя удалённого",
+      "urlLabel": "URL",
+      "addTitle": "Добавить удалённый",
+      "manageTitle": "Управление удалённым",
+      "save": "Сохранить URL",
+      "cancel": "Отмена",
+      "remove": "Удалить",
+      "push": "Push",
+      "fetch": "Fetch",
+      "pending": "Выполняется…",
+      "error": "Запрос не выполнен. Попробуйте ещё раз.",
+      "persistTitle": "Конфигурация хранится только в базе данных",
+      "persistDesc": "Зафиксируйте её в закоммиченный maister.yaml, чтобы проект можно было воссоздать из одного git.",
+      "persist": "Сохранить сейчас"
     }
   },
   "settings": {

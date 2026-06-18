@@ -6,7 +6,13 @@ import clsx from "clsx";
 
 import { DeliveryPolicySettingsControl } from "@/components/board/panels/delivery-policy-settings-control";
 import { FlowRunnerReconfigurationControl } from "@/components/board/panels/flow-runner-reconfiguration-control";
+import {
+  ProjectGitSettingsControl,
+  type RemoteItem,
+} from "@/components/board/panels/project-git-settings-control";
 import { ProjectRunnerSettingsControl } from "@/components/board/panels/project-runner-settings-control";
+import { getDb } from "@/lib/db/client";
+import { listProjectRemotes, reconcileOriginRepoUrl } from "@/lib/git-remotes";
 
 export interface SettingsPanelProps {
   data: ProjectPageData;
@@ -33,6 +39,30 @@ export async function SettingsPanel({
     runners,
   } = data;
   const defaultFlow = flows[0];
+
+  // ADR-093 Workstream 6: the Git section is admin-only (the route's
+  // editSettings is the real boundary). Remotes are read live from git for SSR;
+  // origin's repo_url/provider cache is healed best-effort on this read
+  // (invariant B). A non-git repo / git error degrades to an empty table.
+  let gitRemotes: RemoteItem[] = [];
+
+  if (isAdmin) {
+    try {
+      const db = getDb();
+
+      await reconcileOriginRepoUrl({
+        db,
+        project: {
+          id: project.id,
+          repoPath: project.repoPath,
+          repoUrl: project.repoUrl ?? null,
+        },
+      });
+      gitRemotes = await listProjectRemotes(project.repoPath);
+    } catch {
+      gitRemotes = [];
+    }
+  }
 
   const rows: { k: string; d: string; v: string }[] = [
     ...(isAdmin
@@ -96,6 +126,14 @@ export async function SettingsPanel({
           projectSlug={project.slug}
           remaps={flowRunnerRemaps}
           runners={runners}
+        />
+      ) : null}
+      {isAdmin ? (
+        <ProjectGitSettingsControl
+          mainBranch={project.mainBranch}
+          needsPersist={project.maisterYamlPath === null}
+          projectSlug={project.slug}
+          remotes={gitRemotes}
         />
       ) : null}
       <div className="flex flex-col gap-px overflow-hidden rounded-xl border border-line bg-line">
