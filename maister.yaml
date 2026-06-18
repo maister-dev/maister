@@ -2,9 +2,9 @@ schemaVersion: 2
 # Dogfood registration: MAIster registers itself (T8). The AIF package is
 # consumed as ONE packages[] import (ADR-088) from the public maister-plugins
 # git repo, tag-pinned — portable across hosts (the stand clones it over HTTPS).
-# No repo_path: it is optional and unconsumed — registration derives the
-# project's repo location from the resolved source (clone target in clone-mode,
-# the provided dir in existing-mode), never from this file.
+# No repo_path here: registration derives the project's repo location from the
+# resolved source (clone target in clone-mode, the provided dir in
+# existing-mode), never from this file.
 project:
   name: maister
   main_branch: main

@@ -52,7 +52,6 @@ describe("foundation cross-module", () => {
 schemaVersion: 2
 project:
   name: foundation-app
-  repo_path: /repos/foundation-app
   main_branch: main
   branch_prefix: maister/
   default_runner: claude-code
@@ -77,7 +76,7 @@ flows:
       id: projectId,
       slug: "foundation-app",
       name: cfg.project.name,
-      repoPath: cfg.project.repo_path,
+      repoPath: "/repos/foundation-app",
       mainBranch: cfg.project.main_branch,
       branchPrefix: cfg.project.branch_prefix,
       maisterYamlPath,

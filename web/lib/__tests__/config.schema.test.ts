@@ -20,7 +20,6 @@ const goldenMaisterYaml = {
   schemaVersion: 2,
   project: {
     name: "myapp",
-    repo_path: "/repos/myapp",
     main_branch: "main",
     branch_prefix: "maister/",
     default_runner: "claude-code",
@@ -94,24 +93,6 @@ describe("maisterYamlV2Schema", () => {
     };
 
     expect(() => maisterYamlV2Schema.parse(bad)).toThrow();
-  });
-
-  it("rejects a relative repo_path", () => {
-    const bad = {
-      ...goldenMaisterYaml,
-      project: { ...goldenMaisterYaml.project, repo_path: "repos/myapp" },
-    };
-
-    expect(() => maisterYamlV2Schema.parse(bad)).toThrow(/absolute path/);
-  });
-
-  it("rejects a repo_path with a '..' traversal segment", () => {
-    const bad = {
-      ...goldenMaisterYaml,
-      project: { ...goldenMaisterYaml.project, repo_path: "/repos/../etc" },
-    };
-
-    expect(() => maisterYamlV2Schema.parse(bad)).toThrow(/absolute path/);
   });
 
   it("rejects flow with missing version", () => {

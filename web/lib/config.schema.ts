@@ -173,14 +173,6 @@ export const projectPromotionSchema = z
 
 export const projectBlockSchema = z.object({
   name: z.string().min(1),
-  repo_path: z
-    .string()
-    .min(1)
-    .refine(
-      (p) => p.startsWith("/") && !p.split("/").includes(".."),
-      "repo_path must be an absolute path with no '..' segment",
-    )
-    .optional(),
   main_branch: z.string().min(1).default("main"),
   branch_prefix: z.string().min(1).default("maister/"),
   promotion: projectPromotionSchema.optional(),
