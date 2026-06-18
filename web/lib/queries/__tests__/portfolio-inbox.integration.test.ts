@@ -307,6 +307,29 @@ describe("getCrossProjectHitlInbox (M17 P5, integration)", () => {
     expect(criticalItem?.projectName).toBe("Project 2");
   });
 
+  it("each item carries taskTitle and a stage {label,type} (inbox-card-redesign)", async () => {
+    const admin = await createAdminUser("admin@test.com");
+    const proj = await createProject("Stage Project");
+    const flow = await createFlow(proj);
+    const exec = await createExecutor();
+    const task = await createTask(proj, flow, "Refactor session store");
+    const run = await createRun(proj, task, flow, exec, "NeedsInput");
+
+    await createWorkspace(run, proj);
+    await createHitlRequest("hitl-stage-1", run, "human", "high");
+
+    const result = await getCrossProjectHitlInbox(admin, "admin");
+
+    expect(result.items).toHaveLength(1);
+    const item = result.items[0];
+
+    expect(item.taskTitle).toBe("Refactor session store");
+    // label is the originating step_id; type degrades to null when the seed
+    // flow has no matching graph node (the resolver never throws).
+    expect(item.stage.label).toBe("step-hitl-stage-1");
+    expect(item.stage).toHaveProperty("type");
+  });
+
   it("member sees ONLY their projects' HITL; projects they are NOT a member of are absent (RBAC strict)", async () => {
     const memberUser = await createUser("member@test.com");
     const memberProj = await createProject("Member Project");
