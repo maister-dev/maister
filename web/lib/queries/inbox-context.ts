@@ -188,7 +188,10 @@ async function loadProgress(
       .select({ nodeId: nodeAttempts.nodeId })
       .from(nodeAttempts)
       .where(
-        and(eq(nodeAttempts.runId, run.id), eq(nodeAttempts.status, "Succeeded")),
+        and(
+          eq(nodeAttempts.runId, run.id),
+          eq(nodeAttempts.status, "Succeeded"),
+        ),
       );
     const done = new Set(doneRows.map((r) => r.nodeId)).size;
 
