@@ -8,7 +8,7 @@ import { notFound } from "next/navigation";
 
 import { Board } from "@/components/board/board";
 import { BoardTools } from "@/components/board/board-tools";
-import { HitlInbox } from "@/components/board/hitl-inbox";
+import { HitlInboxGrid } from "@/components/inbox/hitl-inbox-list";
 import { NewTaskModal } from "@/components/board/new-task-modal";
 import { ProjectTabs } from "@/components/board/project-tabs";
 import { ActivityPanel } from "@/components/board/panels/activity-panel";
@@ -334,7 +334,21 @@ export default async function ProjectBoardPage({
 
       {tab === "board" ? (
         <section>
-          <HitlInbox canAct={canAct} currentUserId={user.id} inbox={hitl} />
+          {hitl.count > 0 ? (
+            <section aria-label="Human-in-the-loop inbox" className="mb-7">
+              <h2 className="mb-3.5 inline-flex items-center gap-2.5 font-sans text-sm font-bold tracking-[-0.01em] text-ink before:h-[7px] before:w-[7px] before:rounded-full before:bg-amber before:content-['']">
+                {t("hitlInbox")}
+                <span className="rounded-full border border-amber-line bg-paper px-2.5 py-[3px] font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-amber">
+                  {t("paused", { count: hitl.count })}
+                </span>
+              </h2>
+              <HitlInboxGrid
+                canAct={canAct}
+                currentUserId={user.id}
+                items={hitl.items}
+              />
+            </section>
+          ) : null}
           <BoardTools
             labels={{
               filterFlow: t("filterFlow"),

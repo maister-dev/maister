@@ -3,9 +3,8 @@ import type { ReactElement } from "react";
 
 import { getTranslations } from "next-intl/server";
 
-import { HitlInboxBlock } from "@/components/portfolio/hitl-inbox-block";
+import { HitlInboxList } from "@/components/inbox/hitl-inbox-list";
 import { InboxPanel } from "@/components/portfolio/inbox-panel";
-import { InboxRespond } from "@/components/portfolio/inbox-respond";
 import { requireSession } from "@/lib/authz";
 import { getInboxItems, getUnreadInboxCount } from "@/lib/queries/inbox";
 import { getCrossProjectHitlInbox } from "@/lib/queries/portfolio";
@@ -29,7 +28,7 @@ export default async function InboxPage(): Promise<ReactElement> {
   const needsYou = hitl.count + unreadInbox;
 
   return (
-    <div className="mx-auto w-full max-w-[860px]">
+    <div className="w-full">
       <header className="mb-7">
         <div className="mb-2.5 inline-flex items-center gap-2 font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-mute before:h-px before:w-[18px] before:bg-amber before:content-['']">
           {t("eyebrow")}
@@ -47,30 +46,18 @@ export default async function InboxPage(): Promise<ReactElement> {
           {t("empty")}
         </div>
       ) : (
-        <div className="flex flex-col gap-6">
+        <div className="flex flex-col gap-8">
           {hitl.count > 0 ? (
-            <HitlInboxBlock
-              count={hitl.count}
-              items={hitl.items}
-              labels={{
-                title: tp("inboxTitle", { count: hitl.count }),
-                empty: tp("inboxEmpty"),
-                ariaLabel: tp("inboxAriaLabel"),
-                countAriaLabel: tp("inboxCountAriaLabel", {
-                  count: hitl.count,
-                }),
-              }}
-              renderRespond={(item) => (
-                <InboxRespond
-                  criticality={item.criticality}
-                  hitlRequestId={item.hitlRequestId}
-                  kind={item.kind}
-                  options={item.options}
-                  runId={item.runId}
-                  schema={item.schema}
-                />
-              )}
-            />
+            <section aria-label={tp("inboxAriaLabel")}>
+              <h2 className="mb-3.5 inline-flex items-center gap-2.5 font-sans text-sm font-bold tracking-[-0.01em] text-ink before:h-[7px] before:w-[7px] before:rounded-full before:bg-amber before:content-['']">
+                {t("needsActionTitle", { count: hitl.count })}
+              </h2>
+              <HitlInboxList
+                canAct
+                currentUserId={user.id}
+                items={hitl.items}
+              />
+            </section>
           ) : null}
 
           {unreadInbox > 0 ? (
