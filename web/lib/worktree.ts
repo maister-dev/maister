@@ -733,7 +733,11 @@ export async function getDefaultBranch(
   }
 
   try {
-    const { stdout } = await runGit(repo, ["rev-parse", "--abbrev-ref", "HEAD"]);
+    const { stdout } = await runGit(repo, [
+      "rev-parse",
+      "--abbrev-ref",
+      "HEAD",
+    ]);
     const branch = stdout.trim();
 
     if (branch && branch !== "HEAD") {

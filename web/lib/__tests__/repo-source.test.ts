@@ -348,4 +348,31 @@ describe("resolveProjectSource", () => {
       expect((err as { code: string }).code).toBe("PRECONDITION");
     }
   });
+
+  it("new-empty mode: mkdir + reports initialized + createdByUs (init deferred)", async () => {
+    const result = await resolveProjectSource({
+      target: "fresh-proj",
+      mode: "new",
+    });
+
+    expect(result.dir).toBe(join(reposDir, "fresh-proj"));
+    expect(result.gitStatus).toBe("initialized");
+    expect(result.clonedByUs).toBe(false);
+    expect(result.createdByUs).toBe(true);
+    expect(await pathExists(result.dir)).toBe(true);
+    // init is deferred to the route — the created dir is NOT yet a git repo.
+    expect(await isGitRepo(result.dir)).toBe(false);
+  });
+
+  it("missing dir without mode='new' throws PRECONDITION (no implicit create)", async () => {
+    try {
+      await resolveProjectSource({ target: "ghost-proj", mode: "existing" });
+      throw new Error("expected throw");
+    } catch (err) {
+      expect(isMaisterError(err)).toBe(true);
+      expect((err as { code: string }).code).toBe("PRECONDITION");
+    }
+
+    expect(await pathExists(join(reposDir, "ghost-proj"))).toBe(false);
+  });
 });

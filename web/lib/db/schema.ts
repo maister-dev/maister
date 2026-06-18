@@ -124,7 +124,9 @@ export const projects = pgTable("projects", {
   provider: text("provider"),
   mainBranch: text("main_branch").notNull().default("main"),
   branchPrefix: text("branch_prefix").notNull().default("maister/"),
-  maisterYamlPath: text("maister_yaml_path").notNull(),
+  // ADR-093: nullable — NULL = config lives only in the DB (registered with no
+  // maister.yaml on disk; the manifest is optional at manual registration).
+  maisterYamlPath: text("maister_yaml_path"),
   defaultRunnerId: text("default_runner_id"),
   promotionMode: text("promotion_mode"),
   deliveryPolicyDefault: jsonb(

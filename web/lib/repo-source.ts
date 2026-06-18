@@ -34,6 +34,9 @@ export type ResolvedSource = {
   provider: Provider | null;
   gitStatus: GitStatus;
   clonedByUs: boolean;
+  // ADR-093: the new-empty path created this dir; the route cleans it up on a
+  // registration failure (mirrors clonedByUs for the clone path).
+  createdByUs: boolean;
 };
 
 const absolutePathSchema = z
@@ -259,6 +262,7 @@ function resolveDir(reposRootDir: string, nameOrPath: string): string {
 export async function resolveProjectSource(body: {
   repoUrl?: string;
   target?: string;
+  mode?: "clone" | "existing" | "new";
 }): Promise<ResolvedSource> {
   const reposRootDir = reposRoot();
 
@@ -292,6 +296,7 @@ export async function resolveProjectSource(body: {
       provider: detectProvider(body.repoUrl),
       gitStatus: "remote",
       clonedByUs: true,
+      createdByUs: false,
     };
   }
 
@@ -305,6 +310,22 @@ export async function resolveProjectSource(body: {
   const dir = resolveDir(reposRootDir, body.target);
 
   if (!(await pathExists(dir))) {
+    // ADR-093: greenfield onboarding — ONLY an explicit mode="new" creates the
+    // directory (never on a typo'd existing-repo path). The route's deferred
+    // gitInit turns it into a repo after the registration commits.
+    if (body.mode === "new") {
+      await mkdir(dir, { recursive: true });
+
+      return {
+        dir,
+        repoUrl: null,
+        provider: null,
+        gitStatus: "initialized",
+        clonedByUs: false,
+        createdByUs: true,
+      };
+    }
+
     throw new MaisterError("PRECONDITION", "directory not found");
   }
 
@@ -318,6 +339,7 @@ export async function resolveProjectSource(body: {
       provider: null,
       gitStatus: "initialized",
       clonedByUs: false,
+      createdByUs: false,
     };
   }
 
@@ -330,5 +352,6 @@ export async function resolveProjectSource(body: {
     provider,
     gitStatus: remote ? "remote" : "no-remote",
     clonedByUs: false,
+    createdByUs: false,
   };
 }

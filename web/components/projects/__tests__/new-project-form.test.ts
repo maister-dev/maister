@@ -28,7 +28,17 @@ describe("NewProjectForm project-name field", () => {
   it("still renders the URL and task-key fields (regression)", () => {
     const html = renderToStaticMarkup(createElement(NewProjectForm));
 
+    // Default mode is "clone" → the URL field is shown.
     expect(html).toContain('id="np-url"');
     expect(html).toContain('id="np-task-key"');
+  });
+
+  it("renders the onboarding mode selector (clone/existing/new)", () => {
+    const html = renderToStaticMarkup(createElement(NewProjectForm));
+
+    expect(html).toContain('role="radiogroup"');
+    expect(html).toContain("modeClone");
+    expect(html).toContain("modeExisting");
+    expect(html).toContain("modeNew");
   });
 });

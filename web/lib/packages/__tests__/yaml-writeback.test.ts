@@ -130,4 +130,18 @@ describe("writeBackPackagesPin", () => {
 
     expect(result).toBe("failed");
   });
+
+  // ADR-093: a project registered with no maister.yaml has maisterYamlPath
+  // null (DB is authoritative). Write-back is a benign no-op, not a failure.
+  it("returns 'skipped' for a null path without touching the disk", async () => {
+    const before = await readFile(yamlPath, "utf8");
+
+    const result = await writeBackPackagesPin({
+      maisterYamlPath: null,
+      change: { op: "remove", id: "aif" },
+    });
+
+    expect(result).toBe("skipped");
+    expect(await readFile(yamlPath, "utf8")).toBe(before);
+  });
 });

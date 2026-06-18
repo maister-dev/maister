@@ -3,7 +3,7 @@ import "server-only";
 import type { AgentDefinitionCapabilityConfig } from "@/lib/config.schema";
 
 import { randomUUID } from "node:crypto";
-import { rm } from "node:fs/promises";
+import { rm, stat } from "node:fs/promises";
 import path from "node:path";
 
 import { eq, or } from "drizzle-orm";
@@ -33,6 +33,7 @@ import {
   resolveProjectSource,
   type ResolvedSource,
 } from "@/lib/repo-source";
+import { getDefaultBranch } from "@/lib/worktree";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches usage in
 // web/app/api/runs/route.ts and web/lib/flows.ts).
@@ -51,12 +52,19 @@ const postBodySchema = z
   .object({
     repoUrl: z.string().min(1).max(2048).optional(),
     target: z.string().min(1).max(4096).optional(),
+    // ADR-093: optional project name (the "what"). Authoritative only when the
+    // repo has no maister.yaml; precedence is yaml.project.name > body.name >
+    // basename(dir). Becomes a project attribute — validated via deriveSlug.
+    name: z.string().min(1).max(200).optional(),
     // ADR-078 D2: body-controlled but regex allow-listed; names no path and
     // no cross-resource lookup — it becomes an attribute of the new project.
     taskKey: z
       .string()
       .regex(TASK_KEY_REGEX, "task key must match ^[A-Z][A-Z0-9]{1,9}$")
       .optional(),
+    // ADR-093: onboarding mode — optional; absent infers clone (repoUrl) /
+    // existing (target). "new" must be explicit (greenfield mkdir + git init).
+    mode: z.enum(["clone", "existing", "new"]).optional(),
   })
   .refine((b) => Boolean(b.repoUrl || b.target), "provide repoUrl or target");
 
@@ -134,6 +142,16 @@ function httpStatusForCode(code: string): number {
   }
 }
 
+async function pathExists(p: string): Promise<boolean> {
+  try {
+    await stat(p);
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function POST(req: NextRequest): Promise<NextResponse> {
   let body: z.infer<typeof postBodySchema>;
 
@@ -159,14 +177,14 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       const resolved = await resolveProjectSource(body);
 
       try {
-        return await register(resolved, admin.id, body.taskKey);
+        return await register(resolved, admin.id, body.taskKey, body.name);
       } catch (err) {
-        if (resolved.clonedByUs) {
+        if (resolved.clonedByUs || resolved.createdByUs) {
           await rm(resolved.dir, { recursive: true, force: true }).catch(
             (rmErr) =>
               log.error(
                 { dir: resolved.dir, rmErr: (rmErr as Error).message },
-                "clone cleanup failed",
+                "source cleanup failed",
               ),
           );
         }
@@ -178,10 +196,153 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 }
 
+// ADR-093: register a project with NO maister.yaml on disk — from DB defaults,
+// leaving the repo untouched (maisterYamlPath NULL). No flow/package/import
+// install runs here (none declared) → there is no fetch-then-execute and no
+// trust gate to clear. The manifest can be persisted later via
+// POST /api/projects/{slug}/persist-config.
+async function registerFromDbDefaults(
+  resolved: ResolvedSource,
+  adminId: string,
+  explicitName?: string,
+  explicitTaskKey?: string,
+): Promise<NextResponse> {
+  const name = explicitName?.trim() || path.basename(resolved.dir);
+  const slug = deriveSlug(name);
+  const repoPath = resolved.dir;
+  const taskKey = explicitTaskKey ?? deriveTaskKey(name, slug);
+  const mainBranch = await getDefaultBranch(resolved.dir);
+
+  log.info(
+    {
+      slug,
+      taskKey,
+      mainBranch,
+      source: explicitTaskKey ? "explicit" : "derived",
+    },
+    "register project (no maister.yaml) — DB defaults",
+  );
+
+  const db = getDb() as unknown as {
+    select: any;
+    insert: any;
+    delete: any;
+    transaction: any;
+  };
+
+  // Same slug / repo_path / task_key uniqueness as the manifest path.
+  const collisions = await db
+    .select({
+      slug: projects.slug,
+      repoPath: projects.repoPath,
+      taskKey: projects.taskKey,
+    })
+    .from(projects)
+    .where(
+      or(
+        eq(projects.slug, slug),
+        eq(projects.repoPath, repoPath),
+        eq(projects.taskKey, taskKey),
+      ),
+    );
+
+  if (collisions.length > 0) {
+    const taskKeyTaken = collisions.some(
+      (c: { taskKey: string }) => c.taskKey === taskKey,
+    );
+
+    log.warn(
+      { slug, repoPath, taskKey, taskKeyTaken },
+      "register project collision (DB defaults)",
+    );
+    throw new MaisterError(
+      "CONFLICT",
+      taskKeyTaken
+        ? `task key "${taskKey}" already registered`
+        : `project slug "${slug}" or repo_path "${repoPath}" already registered`,
+    );
+  }
+
+  const projectId = randomUUID();
+
+  // Project + owner membership in ONE transaction (atomic). maisterYamlPath is
+  // NULL — the "config lives only in the DB" signal.
+  try {
+    await db.transaction(async (tx: any) => {
+      await tx.insert(projects).values({
+        id: projectId,
+        slug,
+        name,
+        repoPath,
+        repoUrl: resolved.repoUrl,
+        provider: resolved.provider,
+        mainBranch,
+        branchPrefix: "maister/",
+        maisterYamlPath: null,
+        promotionMode: null,
+        defaultRunnerId: null,
+        taskKey,
+      });
+
+      await tx.insert(projectMembers).values({
+        id: randomUUID(),
+        projectId,
+        userId: adminId,
+        role: "owner",
+      });
+    });
+  } catch (err) {
+    if (isUniqueViolation(err)) {
+      throw new MaisterError(
+        "CONFLICT",
+        `project slug "${slug}", repo_path "${repoPath}", or task key "${taskKey}" already registered`,
+      );
+    }
+    throw err;
+  }
+
+  // Mutate the operator's directory LAST — only after the row is committed. On
+  // gitInit failure, roll the project row back so the unique slug/repo is freed
+  // for a retry (mirrors the manifest path's compensation).
+  if (resolved.gitStatus === "initialized") {
+    try {
+      await gitInit(resolved.dir);
+    } catch (err) {
+      await db
+        .delete(projects)
+        .where(eq(projects.id, projectId))
+        .catch((delErr: unknown) =>
+          log.error(
+            { projectId, slug, delErr: (delErr as Error).message },
+            "CRITICAL: project rollback failed — manual cleanup required",
+          ),
+        );
+      throw err;
+    }
+  }
+
+  log.info(
+    {
+      projectId,
+      slug,
+      repoPath,
+      provider: resolved.provider,
+      gitStatus: resolved.gitStatus,
+    },
+    "register project success (DB defaults)",
+  );
+
+  return NextResponse.json(
+    { slug, projectId, gitStatus: resolved.gitStatus },
+    { status: 201 },
+  );
+}
+
 async function register(
   resolved: ResolvedSource,
   adminId: string,
   explicitTaskKey?: string,
+  explicitName?: string,
 ): Promise<NextResponse> {
   const maisterYamlPath = path.join(resolved.dir, "maister.yaml");
 
@@ -189,6 +350,19 @@ async function register(
     { dir: resolved.dir, gitStatus: resolved.gitStatus, userId: adminId },
     "register project start",
   );
+
+  // ADR-093: maister.yaml is OPTIONAL at manual registration. A *missing*
+  // manifest registers from DB defaults (repo untouched, maisterYamlPath NULL).
+  // A present-but-invalid manifest still fails CONFIG below — only an absent
+  // file takes the DB-default branch.
+  if (!(await pathExists(maisterYamlPath))) {
+    return registerFromDbDefaults(
+      resolved,
+      adminId,
+      explicitName,
+      explicitTaskKey,
+    );
+  }
 
   // Phase (a): load + validate maister.yaml. On failure → CONFIG (422),
   // NO db row written.

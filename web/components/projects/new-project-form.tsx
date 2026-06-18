@@ -27,6 +27,7 @@ const ERROR_KEY: Record<ErrorCode, string> = {
 };
 
 type GitStatus = "remote" | "no-remote" | "initialized";
+type Mode = "clone" | "existing" | "new";
 
 interface Success {
   slug: string;
@@ -47,6 +48,13 @@ const submitBtn = clsx(
   "shadow-[0_8px_24px_-8px_var(--amber),0_2px_6px_-2px_rgba(0,0,0,0.08),0_1px_0_rgba(255,255,255,0.15)_inset]",
   "hover:-translate-y-px hover:bg-amber-2 disabled:cursor-not-allowed disabled:opacity-70",
 );
+const modeBtn = (active: boolean) =>
+  clsx(
+    "flex-1 rounded-md px-3 py-2 font-sans text-[12px] font-semibold transition-all",
+    active
+      ? "bg-amber text-white shadow-[0_2px_6px_-2px_var(--amber)]"
+      : "bg-transparent text-mute hover:text-ink",
+  );
 
 // Mirror the server's task-key derivation (deriveTaskKey) for the live preview,
 // emitting "" for empty input so we never prefill a key with nothing to derive.
@@ -64,6 +72,7 @@ export function NewProjectForm(): ReactElement {
   const t = useTranslations("projects");
   const router = useRouter();
 
+  const [mode, setMode] = useState<Mode>("clone");
   const [repoUrl, setRepoUrl] = useState("");
   const [name, setName] = useState("");
   const [target, setTarget] = useState("");
@@ -84,6 +93,7 @@ export function NewProjectForm(): ReactElement {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          mode,
           repoUrl: repoUrl.trim() || undefined,
           name: name.trim() || undefined,
           target: target.trim() || undefined,
@@ -145,6 +155,7 @@ export function NewProjectForm(): ReactElement {
           type="button"
           onClick={() => {
             setSuccess(undefined);
+            setMode("clone");
             setRepoUrl("");
             setName("");
             setTarget("");
@@ -159,46 +170,74 @@ export function NewProjectForm(): ReactElement {
     );
   }
 
-  const bothEmpty = repoUrl.trim() === "" && target.trim() === "";
+  const canSubmit =
+    mode === "clone" ? repoUrl.trim() !== "" : target.trim() !== "";
   // Warn (don't block) when the URL embeds credentials — they'd be stored as
   // entered. Host SSH keys / credential helper are the recommended path.
   const urlHasCreds = /:\/\/[^/@\s]+:[^/@\s]+@/.test(repoUrl);
 
   return (
     <form className="flex flex-col gap-3.5" onSubmit={handleSubmit}>
-      <div className="flex flex-col gap-1.5">
-        <label className={fieldLabel} htmlFor="np-url">
-          {t("urlLabel")}
-        </label>
-        <div className={inputWrap}>
-          <input
-            autoComplete="off"
-            className={inputBase}
-            id="np-url"
-            name="repoUrl"
-            placeholder={t("urlPlaceholder")}
-            spellCheck={false}
-            type="text"
-            value={repoUrl}
-            onChange={(e) => {
-              const url = e.target.value;
-
-              setRepoUrl(url);
-
-              const derived = deriveRepoNameSafe(url) ?? "";
-              const effectiveName = nameDirty ? name : derived;
-
-              if (!nameDirty) setName(derived);
-              if (!taskKeyDirty) setTaskKey(previewKey(effectiveName));
-            }}
-          />
-        </div>
-        {urlHasCreds ? (
-          <p className="text-[11.5px] leading-[1.5] text-amber">
-            {t("warnUrlCreds")}
-          </p>
-        ) : null}
+      <div
+        aria-label={t("modeLabel")}
+        className="flex gap-1 rounded-lg border border-line bg-paper p-1"
+        role="radiogroup"
+      >
+        {(["clone", "existing", "new"] as const).map((m) => (
+          <button
+            key={m}
+            aria-checked={mode === m}
+            className={modeBtn(mode === m)}
+            role="radio"
+            type="button"
+            onClick={() => setMode(m)}
+          >
+            {t(
+              m === "clone"
+                ? "modeClone"
+                : m === "existing"
+                  ? "modeExisting"
+                  : "modeNew",
+            )}
+          </button>
+        ))}
       </div>
+
+      {mode === "clone" ? (
+        <div className="flex flex-col gap-1.5">
+          <label className={fieldLabel} htmlFor="np-url">
+            {t("urlLabel")}
+          </label>
+          <div className={inputWrap}>
+            <input
+              autoComplete="off"
+              className={inputBase}
+              id="np-url"
+              name="repoUrl"
+              placeholder={t("urlPlaceholder")}
+              spellCheck={false}
+              type="text"
+              value={repoUrl}
+              onChange={(e) => {
+                const url = e.target.value;
+
+                setRepoUrl(url);
+
+                const derived = deriveRepoNameSafe(url) ?? "";
+                const effectiveName = nameDirty ? name : derived;
+
+                if (!nameDirty) setName(derived);
+                if (!taskKeyDirty) setTaskKey(previewKey(effectiveName));
+              }}
+            />
+          </div>
+          {urlHasCreds ? (
+            <p className="text-[11.5px] leading-[1.5] text-amber">
+              {t("warnUrlCreds")}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="flex flex-col gap-1.5">
         <label className={fieldLabel} htmlFor="np-name">
@@ -227,7 +266,7 @@ export function NewProjectForm(): ReactElement {
 
       <div className="flex flex-col gap-1.5">
         <label className={fieldLabel} htmlFor="np-target">
-          {t("overrideLabel")}
+          {t("locationLabel")}
         </label>
         <div className={inputWrap}>
           <input
@@ -235,7 +274,7 @@ export function NewProjectForm(): ReactElement {
             className={inputBase}
             id="np-target"
             name="target"
-            placeholder={t("overridePlaceholder")}
+            placeholder={t("locationPlaceholder")}
             spellCheck={false}
             type="text"
             value={target}
@@ -283,7 +322,7 @@ export function NewProjectForm(): ReactElement {
 
       <button
         className={submitBtn}
-        disabled={pending || bothEmpty}
+        disabled={pending || !canSubmit}
         type="submit"
       >
         {pending ? t("registering") : t("register")}{" "}

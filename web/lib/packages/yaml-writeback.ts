@@ -23,7 +23,7 @@ export type WriteBackOp =
   | { op: "upsert"; entry: PackagesPinEntry }
   | { op: "remove"; id: string };
 
-export type WriteBackResult = "ok" | "failed";
+export type WriteBackResult = "ok" | "failed" | "skipped";
 
 // ADR-088: after an attach/detach/upgrade transaction COMMITS, the project's
 // `maister.yaml packages[]` pin is rewritten so the project can be re-raised
@@ -32,9 +32,21 @@ export type WriteBackResult = "ok" | "failed";
 // caller surfaces `writeBack: "failed"`; the next mutation (or a manual
 // edit) heals the file.
 export async function writeBackPackagesPin(opts: {
-  maisterYamlPath: string;
+  maisterYamlPath: string | null;
   change: WriteBackOp;
 }): Promise<WriteBackResult> {
+  // ADR-093: a DB-only project (registered with no maister.yaml) has nothing to
+  // write back to — a benign no-op, never a failure. The persist banner nudges
+  // the operator to materialize the manifest later.
+  if (opts.maisterYamlPath === null) {
+    log.info(
+      { op: opts.change.op },
+      "packages[] write-back skipped — config lives only in the DB",
+    );
+
+    return "skipped";
+  }
+
   try {
     const raw = await readFile(opts.maisterYamlPath, "utf8");
     const doc = parseDocument(raw);

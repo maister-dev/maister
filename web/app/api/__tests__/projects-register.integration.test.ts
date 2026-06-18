@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   PostgreSqlContainer,
@@ -107,6 +110,18 @@ const seedConfig = {
 };
 let currentConfig: Record<string, any> = seedConfig;
 let currentManifest: Record<string, any> = baseManifest;
+// ADR-093: drive register()'s real maister.yaml presence check + source.
+let currentConfigError: unknown = null;
+let currentResolved: Record<string, any> = {
+  dir: "/repos/saga-proj",
+  repoUrl: null,
+  provider: null,
+  gitStatus: "no-remote",
+  clonedByUs: false,
+};
+let tmpRoot: string;
+let withManifestDir: string;
+let noManifestDir: string;
 
 vi.mock("@/lib/authz", () => ({
   requireGlobalRole: vi.fn(async () => ({
@@ -117,7 +132,11 @@ vi.mock("@/lib/authz", () => ({
 }));
 
 vi.mock("@/lib/config", () => ({
-  loadProjectConfig: vi.fn(async () => currentConfig),
+  loadProjectConfig: vi.fn(async () => {
+    if (currentConfigError) throw currentConfigError;
+
+    return currentConfig;
+  }),
   buildCapabilityRefIds: vi.fn(() => ({
     mcp: new Set<string>(),
     skill: new Set<string>(),
@@ -148,13 +167,8 @@ vi.mock("@/lib/packages/attach", () => ({
 // resolveProjectSource so no real git clone/init runs. clonedByUs:false means
 // the route's clone-cleanup path never fires.
 vi.mock("@/lib/repo-source", () => ({
-  resolveProjectSource: vi.fn(async () => ({
-    dir: "/repos/saga-proj",
-    repoUrl: null,
-    provider: null,
-    gitStatus: "no-remote",
-    clonedByUs: false,
-  })),
+  resolveProjectSource: vi.fn(async () => currentResolved),
+  gitInit: vi.fn(async () => undefined),
 }));
 
 vi.mock("@/lib/db/client", () => ({
@@ -264,12 +278,20 @@ beforeAll(async () => {
 
   await migrate(db, { migrationsFolder: "./lib/db/migrations" });
 
+  tmpRoot = await mkdtemp(join(tmpdir(), "projects-register-"));
+  withManifestDir = join(tmpRoot, "with-manifest");
+  noManifestDir = join(tmpRoot, "no-manifest");
+  await mkdir(withManifestDir, { recursive: true });
+  await mkdir(noManifestDir, { recursive: true });
+  await writeFile(join(withManifestDir, "maister.yaml"), "schemaVersion: 2\n");
+
   ({ POST } = await import("@/app/api/projects/route"));
 }, 180_000);
 
 afterAll(async () => {
   await pool?.end();
   await container?.stop();
+  if (tmpRoot) await rm(tmpRoot, { recursive: true, force: true });
 });
 
 beforeEach(async () => {
@@ -281,6 +303,14 @@ beforeEach(async () => {
   attachPackage.mockClear();
   currentConfig = seedConfig;
   currentManifest = baseManifest;
+  currentConfigError = null;
+  currentResolved = {
+    dir: withManifestDir,
+    repoUrl: null,
+    provider: null,
+    gitStatus: "no-remote",
+    clonedByUs: false,
+  };
   await db.delete(schema.projects);
   await db.delete(schema.platformAcpRunners);
 });
@@ -529,5 +559,140 @@ describe("POST /api/projects — packages[] bootstrap (ADR-088, integration)", (
 
     expect(retry.status).toBe(201);
     expect(await projectRows("saga-proj")).toHaveLength(1);
+  });
+});
+
+describe("POST /api/projects — maister.yaml optional (ADR-093, integration)", () => {
+  function req(body: Record<string, unknown>): NextRequest {
+    return new NextRequest("http://localhost/api/projects", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
+
+  it("registers from DB defaults when no maister.yaml is on disk", async () => {
+    currentResolved = {
+      dir: noManifestDir,
+      repoUrl: null,
+      provider: null,
+      gitStatus: "no-remote",
+      clonedByUs: false,
+    };
+
+    const res = await POST(req({ target: "ignored-by-mock" }));
+
+    expect(res.status).toBe(201);
+
+    // basename(noManifestDir) === "no-manifest" → slug "no-manifest".
+    const rows = await projectRows("no-manifest");
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].maisterYamlPath).toBeNull();
+    expect(rows[0].name).toBe("no-manifest");
+    expect(rows[0].mainBranch).toBe("main"); // non-git dir → tier-3 fallback
+    expect(rows[0].taskKey).toBe("NOM"); // deriveTaskKey("no-manifest")
+    expect(installFlowPlugin).not.toHaveBeenCalled();
+
+    const members = await db
+      .select()
+      .from(schema.projectMembers)
+      .where(eq(schema.projectMembers.projectId, rows[0].id));
+
+    expect(members).toHaveLength(1);
+    expect(members[0].role).toBe("owner");
+  });
+
+  it("lets an explicit name and task key win over the derived values", async () => {
+    currentResolved = {
+      dir: noManifestDir,
+      repoUrl: null,
+      provider: null,
+      gitStatus: "no-remote",
+      clonedByUs: false,
+    };
+
+    const res = await POST(
+      req({ target: "ignored", name: "My Cool App", taskKey: "COOL" }),
+    );
+
+    expect(res.status).toBe(201);
+
+    const rows = await projectRows("my-cool-app");
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].name).toBe("My Cool App");
+    expect(rows[0].taskKey).toBe("COOL");
+    expect(rows[0].maisterYamlPath).toBeNull();
+  });
+
+  it("still loads the manifest (maisterYamlPath set) when maister.yaml is present", async () => {
+    const res = await POST(req({ target: "ignored" }));
+
+    expect(res.status).toBe(201);
+
+    const rows = await projectRows("saga-proj");
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].maisterYamlPath).toBe(join(withManifestDir, "maister.yaml"));
+    expect(installFlowPlugin).toHaveBeenCalled();
+  });
+
+  it("fails CONFIG when a present maister.yaml is invalid (no DB-default fallback)", async () => {
+    currentConfigError = new MaisterError("CONFIG", "bad manifest");
+
+    const res = await POST(req({ target: "ignored" }));
+    const body = await res.json();
+
+    expect(res.status).toBe(422);
+    expect(body.code).toBe("CONFIG");
+    expect(await projectRows("saga-proj")).toHaveLength(0);
+  });
+
+  it("refuses a duplicate task key with CONFLICT", async () => {
+    currentResolved = {
+      dir: noManifestDir,
+      repoUrl: null,
+      provider: null,
+      gitStatus: "no-remote",
+      clonedByUs: false,
+    };
+
+    const first = await POST(req({ target: "ignored", taskKey: "DUP" }));
+
+    expect(first.status).toBe(201);
+
+    const second = await POST(req({ target: "ignored", taskKey: "DUP" }));
+    const body = await second.json();
+
+    expect(second.status).toBe(409);
+    expect(body.code).toBe("CONFLICT");
+  });
+
+  it("git-inits a created new-empty project (gitStatus initialized)", async () => {
+    currentResolved = {
+      dir: noManifestDir,
+      repoUrl: null,
+      provider: null,
+      gitStatus: "initialized",
+      clonedByUs: false,
+      createdByUs: true,
+    };
+
+    const res = await POST(
+      req({ target: "ignored", name: "Fresh App", mode: "new" }),
+    );
+
+    expect(res.status).toBe(201);
+
+    const rows = await projectRows("fresh-app");
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].maisterYamlPath).toBeNull();
+
+    // register's "initialized" branch ran the (mocked) gitInit on the dir.
+    const { gitInit } = await import("@/lib/repo-source");
+
+    expect(gitInit).toHaveBeenCalledWith(noManifestDir);
   });
 });

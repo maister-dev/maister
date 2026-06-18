@@ -1,0 +1,1 @@
+ALTER TABLE "projects" ALTER COLUMN "maister_yaml_path" DROP NOT NULL;

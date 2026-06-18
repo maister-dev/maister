@@ -346,7 +346,7 @@ Every promised test names its **runner project**:
     git exec layer; assert each of the three fallback tiers.
   - *Logging:* `log.debug` the resolved branch + tier. *Acceptance:* unit green.
 
-- [ ] **T9 — `maister.yaml`-optional registration (TDD, integration).** Rework
+- [x] **T9 — `maister.yaml`-optional registration (TDD, integration).** Rework
   `register()` in [`web/app/api/projects/route.ts`](../../web/app/api/projects/route.ts):
   after `resolveProjectSource`, `stat` `maister.yaml` at `resolved.dir`:
   **present** → today's path (`loadProjectConfig` → flows/packages install,
@@ -369,7 +369,7 @@ Every promised test names its **runner project**:
     slug/taskKey/mainBranch. *Acceptance:* depends on T8; integration green; the
     present-path regression stays green.
 
-- [ ] **T10 — Migration 0054 (nullable column).** Drop `.notNull()` on
+- [x] **T10 — Migration 0054 (nullable column).** Drop `.notNull()` on
   `maisterYamlPath` in [`web/lib/db/schema.ts`](../../web/lib/db/schema.ts) (line
   ~127 → `text("maister_yaml_path")`), then run the project's Drizzle generate
   script (`web/package.json` `db:*`) to emit `0054_*.sql` containing
@@ -384,7 +384,7 @@ Every promised test names its **runner project**:
     the column is nullable — it fails against the old `NOT NULL`. *Logging:* n/a.
     *Acceptance:* fresh testcontainers migrate applies 0054; T9 green.
 
-- [ ] **T11 — `writeBackPackagesPin` null guard (TDD).** Per invariant D: make
+- [x] **T11 — `writeBackPackagesPin` null guard (TDD).** Per invariant D: make
   `writeBackPackagesPin` (`web/lib/packages/yaml-writeback.ts`) early-return a
   benign `"skipped"` when the target project's `maisterYamlPath` is null (extend
   the `WriteBackResult` union to `"ok" | "failed" | "skipped"`), and update its
@@ -395,7 +395,7 @@ Every promised test names its **runner project**:
   - *Logging:* `log.info` skip reason (DB authoritative). *Acceptance:* unit green;
     Reviewer confirms all callers handle `"skipped"`.
 
-- [ ] **T12 — New-empty mode + form reframe (TDD).** Server: extend
+- [x] **T12 — New-empty mode + form reframe (TDD).** Server: extend
   `resolveProjectSource` (`web/lib/repo-source.ts`) — body gains `mode: "clone" |
   "existing" | "new"`; on the no-URL branch, if the path is absent **and
   `mode==="new"`** (explicit; never on a typo), `mkdir -p` + mark created for
