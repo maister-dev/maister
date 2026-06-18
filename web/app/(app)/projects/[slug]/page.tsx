@@ -50,6 +50,7 @@ import { listProjectSchedules } from "@/lib/run-schedules/queries";
 import { listTaskDTOs } from "@/lib/services/tasks";
 import { getPlatformStatus } from "@/lib/supervisor-client";
 import { listTokens } from "@/lib/tokens/list";
+import { listBranches } from "@/lib/worktree";
 
 const VALID_TABS: readonly ProjectTab[] = [
   "board",
@@ -80,6 +81,7 @@ interface PageProps {
   searchParams: Promise<{
     tab?: string | string[];
     file?: string | string[];
+    ref?: string | string[];
     actor_type?: string | string[];
     event_kind?: string | string[];
     task?: string | string[];
@@ -101,6 +103,7 @@ export default async function ProjectBoardPage({
   const {
     tab: rawTab,
     file: rawFile,
+    ref: rawRef,
     actor_type: rawActorType,
     event_kind: rawEventKind,
     task: rawTaskFilter,
@@ -155,6 +158,8 @@ export default async function ProjectBoardPage({
     loadError: tWorkbench("files.loadError"),
     forbidden: tWorkbench("files.forbidden"),
     treeLabel: tWorkbench("files.treeLabel"),
+    selectPrompt: tWorkbench("files.selectPrompt"),
+    branchLabel: tWorkbench("files.branchLabel"),
   };
 
   const [pageData, board, hitl, platformStatus, unreadInbox] =
@@ -169,6 +174,22 @@ export default async function ProjectBoardPage({
     tab === "activity"
       ? await getProjectActivityLog(project.id, logFilters)
       : null;
+  // Branch picker for the repo tab; a broken repo_path falls back to the
+  // default branch rather than crashing the page. currentRef is constrained to
+  // a real branch (or the default), and always present in branchOptions so the
+  // <select> has a matching value.
+  const repoBranches =
+    tab === "repo"
+      ? await listBranches(project.repoPath).catch(() => [project.mainBranch])
+      : [];
+  const requestedRef = one(rawRef);
+  const currentRef =
+    requestedRef && repoBranches.includes(requestedRef)
+      ? requestedRef
+      : project.mainBranch;
+  const branchOptions = repoBranches.includes(currentRef)
+    ? repoBranches
+    : [currentRef, ...repoBranches];
 
   return (
     <>
@@ -376,7 +397,9 @@ export default async function ProjectBoardPage({
       ) : null}
       {tab === "repo" ? (
         <RepoFilesPanel
+          branches={branchOptions}
           canReadRepoFiles={canReadRepoFiles}
+          currentRef={currentRef}
           file={file}
           labels={filesLabels}
           mainBranch={project.mainBranch}

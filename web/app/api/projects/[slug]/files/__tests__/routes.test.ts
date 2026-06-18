@@ -11,9 +11,9 @@
 //   project = getProjectBySlug(slug);
 //     !project || project.archivedAt → bare 404 {message}
 //   requireProjectAction(project.id, "readRepoFiles")
-//   read ?path (default "" root)
+//   read ?path (default "" root) and ?ref (default project.mainBranch)
 //   non-empty path → repoRelPathSchema (reject → 400 {code:"CONFIG"})
-//   listTree({repo: project.repoPath, ref: project.mainBranch, dir: path})
+//   listTree({repo: project.repoPath, ref, dir: path})
 //              → null → 404 ; else 200 {path, entries}
 //
 // authz / queries / instance-config mocked at the module boundary; the REAL
@@ -100,12 +100,16 @@ beforeEach(() => {
   vi.mocked(getProjectBySlug).mockResolvedValue(projectRow());
 });
 
-async function invokeList(slug: string, path?: string) {
+async function invokeList(slug: string, path?: string, ref?: string) {
   const { GET } = await import("../route");
-  const url =
-    path === undefined
-      ? `http://localhost/api/projects/${slug}/files`
-      : `http://localhost/api/projects/${slug}/files?path=${encodeURIComponent(path)}`;
+  const params = new URLSearchParams();
+
+  if (path !== undefined) params.set("path", path);
+  if (ref !== undefined) params.set("ref", ref);
+  const query = params.toString();
+  const url = query
+    ? `http://localhost/api/projects/${slug}/files?${query}`
+    : `http://localhost/api/projects/${slug}/files`;
   const req = new NextRequest(new Request(url, { method: "GET" }));
 
   return GET(req, { params: Promise.resolve({ slug }) });
@@ -134,6 +138,18 @@ describe("GET /api/projects/[slug]/files (list)", () => {
       dir: "",
     });
     expect(body.entries).toHaveLength(2);
+  });
+
+  it("passes ?ref through to listTree (browse a non-default branch)", async () => {
+    vi.mocked(listTree).mockResolvedValue({ path: "", entries: [] });
+
+    await invokeList(SLUG, undefined, "feature-x");
+
+    expect(listTree).toHaveBeenCalledWith({
+      repo: REPO_PATH,
+      ref: "feature-x",
+      dir: "",
+    });
   });
 
   it("returns 404 when the project does not exist", async () => {

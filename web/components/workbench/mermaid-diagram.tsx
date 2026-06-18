@@ -4,6 +4,8 @@ import type { ReactElement } from "react";
 
 import { useEffect, useId, useState } from "react";
 
+import { useTheme } from "@/lib/theme";
+
 type MermaidApi = typeof import("mermaid");
 
 type DiagramState =
@@ -21,6 +23,7 @@ function mermaidApi(module: MermaidApi): MermaidApi["default"] {
 
 export function MermaidDiagram({ source }: { source: string }): ReactElement {
   const reactId = useId();
+  const { resolvedTheme } = useTheme();
   const [state, setState] = useState<DiagramState>({ kind: "pending" });
 
   useEffect(() => {
@@ -28,13 +31,18 @@ export function MermaidDiagram({ source }: { source: string }): ReactElement {
 
     async function renderDiagram(): Promise<void> {
       try {
-        const module = await import("mermaid");
-        const mermaid = mermaidApi(module);
+        const mod = await import("mermaid");
+        const mermaid = mermaidApi(mod);
 
         mermaid.initialize({
           startOnLoad: false,
           securityLevel: "strict",
-          theme: "base",
+          // Built-in presets render legible ER tables on either background
+          // (dark = dark attribute boxes + light text + visible lines).
+          // Hand-mapped base themeVariables mis-rendered alternating rows: the
+          // even-row background fell back to lighten(background), washing out
+          // the bright text.
+          theme: resolvedTheme === "dark" ? "dark" : "default",
         });
 
         const { svg } = await mermaid.render(cleanDiagramId(reactId), source);
@@ -52,14 +60,15 @@ export function MermaidDiagram({ source }: { source: string }): ReactElement {
     return () => {
       cancelled = true;
     };
-  }, [reactId, source]);
+    // resolvedTheme re-renders the diagram with the new palette on theme toggle.
+  }, [reactId, source, resolvedTheme]);
 
   if (state.kind === "rendered") {
     return (
       <div
+        dangerouslySetInnerHTML={{ __html: state.svg }}
         className="my-3 overflow-auto rounded-[8px] border border-line bg-paper p-3"
         data-testid="mermaid-diagram"
-        dangerouslySetInnerHTML={{ __html: state.svg }}
       />
     );
   }

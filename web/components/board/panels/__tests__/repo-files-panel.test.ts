@@ -15,7 +15,8 @@
 //                                 BEFORE any auth/read) + NO data-testid="file-tree".
 //   canReadRepoFiles === true, file === null
 //                              -> <FileTree> mount (data-testid="file-tree") +
-//                                 the no-selection empty pane (data-testid="file-empty").
+//                                 the no-selection prompt pane
+//                                 (data-testid="file-select-prompt").
 //   canReadRepoFiles === true, file = "<bad>"
 //                              -> the not-found pane (data-testid="file-not-found");
 //                                 readBlob is NOT reached.
@@ -31,6 +32,8 @@ const labels = {
   forbidden: "You do not have access to repository files",
   title: "Repo files",
   empty: "No files",
+  selectPrompt: "Select a file to view it",
+  branchLabel: "Branch",
   tooLarge: "File is too large to display",
   binary: "Binary file — not shown",
   notFound: "File not found",
@@ -76,12 +79,15 @@ beforeEach(() => {
 async function render(args: {
   canReadRepoFiles: boolean;
   file: string | null;
+  currentRef?: string;
 }): Promise<string> {
   const el = await RepoFilesPanel({
     slug: "acme",
     projectId: "project-1",
     repoPath: "/repos/acme",
     mainBranch: "main",
+    currentRef: args.currentRef ?? "main",
+    branches: ["main"],
     file: args.file,
     canReadRepoFiles: args.canReadRepoFiles,
     labels,
@@ -114,10 +120,11 @@ describe("RepoFilesPanel — member access (canReadRepoFiles=true)", () => {
     );
   });
 
-  it("renders the no-selection empty pane when ?file= is absent (no readBlob)", async () => {
+  it("renders the no-selection prompt pane when ?file= is absent (no readBlob)", async () => {
     const html = await render({ canReadRepoFiles: true, file: null });
 
-    expect(html).toContain('data-testid="file-empty"');
+    expect(html).toContain('data-testid="file-select-prompt"');
+    expect(html).toContain(labels.selectPrompt);
     expect(readBlob).not.toHaveBeenCalled();
   });
 
@@ -141,6 +148,26 @@ describe("RepoFilesPanel — member access (canReadRepoFiles=true)", () => {
     expect(readBlob).toHaveBeenCalledWith({
       repo: "/repos/acme",
       ref: "main",
+      path: "src/x.ts",
+      maxBytes: 524288,
+    });
+  });
+
+  it("reads the blob at the selected branch ref (currentRef)", async () => {
+    vi.mocked(readBlob).mockResolvedValue({
+      kind: "text",
+      content: "x\n",
+    });
+
+    await render({
+      canReadRepoFiles: true,
+      file: "src/x.ts",
+      currentRef: "feature-x",
+    });
+
+    expect(readBlob).toHaveBeenCalledWith({
+      repo: "/repos/acme",
+      ref: "feature-x",
       path: "src/x.ts",
       maxBytes: 524288,
     });

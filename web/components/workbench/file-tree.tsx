@@ -156,13 +156,19 @@ export function FileTreeList({
 export interface FileTreeProps {
   filesApiBase: string;
   labels: FileTreeLabels;
+  gitRef?: string;
 }
 
 async function fetchEntries(
   filesApiBase: string,
   dir: string,
+  gitRef?: string,
 ): Promise<FileTreeEntry[] | null> {
-  const res = await fetch(`${filesApiBase}?path=${encodeURIComponent(dir)}`);
+  const query = new URLSearchParams({ path: dir });
+
+  if (gitRef) query.set("ref", gitRef);
+
+  const res = await fetch(`${filesApiBase}?${query.toString()}`);
 
   if (!res.ok) return null;
 
@@ -174,6 +180,7 @@ async function fetchEntries(
 export default function FileTree({
   filesApiBase,
   labels,
+  gitRef,
 }: FileTreeProps): ReactElement {
   const router = useRouter();
   const pathname = usePathname();
@@ -192,7 +199,7 @@ export default function FileTree({
     let cancelled = false;
 
     async function loadRoot(): Promise<void> {
-      const entries = await fetchEntries(filesApiBase, "");
+      const entries = await fetchEntries(filesApiBase, "", gitRef);
 
       if (cancelled) return;
       // A null result is a fetch/auth/precondition failure — surface it as an
@@ -206,7 +213,7 @@ export default function FileTree({
     return () => {
       cancelled = true;
     };
-  }, [filesApiBase]);
+  }, [filesApiBase, gitRef]);
 
   const onActivateEntry = useCallback(
     (entry: FileTreeEntry, fullPath: string) => {
@@ -234,7 +241,7 @@ export default function FileTree({
         !inFlightDirs.current.has(fullPath)
       ) {
         inFlightDirs.current.add(fullPath);
-        void fetchEntries(filesApiBase, fullPath)
+        void fetchEntries(filesApiBase, fullPath, gitRef)
           .then((entries) => {
             setChildrenByDir((prev) => ({
               ...prev,
@@ -246,7 +253,15 @@ export default function FileTree({
           });
       }
     },
-    [filesApiBase, expandedDirs, childrenByDir, router, pathname, searchParams],
+    [
+      filesApiBase,
+      gitRef,
+      expandedDirs,
+      childrenByDir,
+      router,
+      pathname,
+      searchParams,
+    ],
   );
 
   const isEmpty = rootEntries !== null && rootEntries.length === 0;

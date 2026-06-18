@@ -67,7 +67,11 @@ export async function GET(
 
     await requireProjectAction(project.id, "readRepoFiles");
 
-    const path = new URL(req.url).searchParams.get("path") ?? "";
+    const url = new URL(req.url);
+    const path = url.searchParams.get("path") ?? "";
+    // `ref` lets the project repo tab browse a branch other than the default;
+    // listTree format-validates it via gitRefSchema and a missing ref → 404.
+    const ref = url.searchParams.get("ref") || project.mainBranch;
 
     if (path !== "" && !repoRelPathSchema.safeParse(path).success) {
       throw new MaisterError("CONFIG", "invalid path");
@@ -75,7 +79,7 @@ export async function GET(
 
     const tree = await listTree({
       repo: project.repoPath,
-      ref: project.mainBranch,
+      ref,
       dir: path,
     });
 

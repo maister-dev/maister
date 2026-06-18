@@ -1410,6 +1410,8 @@
     "files": {
       "title": "Repo files",
       "empty": "No tracked files.",
+      "selectPrompt": "Select a file to view it",
+      "branchLabel": "Branch",
       "tooLarge": "File is too large to display",
       "binary": "Binary file — not shown",
       "loadError": "Could not load file",

@@ -2260,9 +2260,20 @@ export async function listTree(
     out = (
       await runGit(
         repo,
+        // --full-tree lists from the repo root regardless of CWD, so a repo_path
+        // that is itself a nested subdirectory of a larger repo can't silently
+        // list that subdir's (often empty) subtree instead of the real root.
         dir === ""
-          ? ["ls-tree", "-z", "--end-of-options", ref]
-          : ["ls-tree", "-z", "--end-of-options", ref, "--", `${dir}/`],
+          ? ["ls-tree", "-z", "--full-tree", "--end-of-options", ref]
+          : [
+              "ls-tree",
+              "-z",
+              "--full-tree",
+              "--end-of-options",
+              ref,
+              "--",
+              `${dir}/`,
+            ],
       )
     ).stdout;
   } catch {
