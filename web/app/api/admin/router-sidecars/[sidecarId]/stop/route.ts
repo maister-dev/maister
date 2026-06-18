@@ -4,6 +4,7 @@ import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 
+import { reconcilePlatformRunnersFromSupervisor } from "@/lib/acp-runners/native-defaults";
 import { requireGlobalRole } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -63,7 +64,10 @@ type RouteParams = { params: Promise<{ sidecarId: string }> };
 
 // ADR-094: admin-triggered CCR sidecar stop. Forwards to the supervisor
 // per-instance stop (never the manager-wide shutdown) and returns the
-// supervisor-reported process state. No DB idempotency marker.
+// supervisor-reported process state. No DB idempotency marker. After the
+// supervisor acks, refresh stored readiness from fresh diagnostics so a now-
+// stopped sidecar drops its dependent runners to NotReady without waiting for
+// the next admin /settings load.
 export async function POST(
   _req: NextRequest,
   { params }: RouteParams,
@@ -91,6 +95,8 @@ export async function POST(
     const result = await stopSidecar(sidecarId);
 
     log.info({ sidecarId, state: result.state }, "router sidecar stop outcome");
+
+    await reconcilePlatformRunnersFromSupervisor({ db, logger: log });
 
     return NextResponse.json(result);
   } catch (err) {

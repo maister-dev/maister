@@ -7,6 +7,7 @@ import { z } from "zod";
 
 import { loadSidecarUsageReferences } from "@/lib/acp-runners/usage";
 import { evaluateSidecarReadiness } from "@/lib/acp-runners/readiness";
+import { sidecarConfigPathSchema } from "@/lib/acp-runners/sidecar-schema";
 import { requireGlobalRole } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -34,7 +35,7 @@ const patchBodySchema = z
   .object({
     lifecycle: z.enum(["managed", "external"]).optional(),
     commandPreset: z.literal("ccr_start").nullable().optional(),
-    configPath: z.string().min(1).nullable().optional(),
+    configPath: sidecarConfigPathSchema.nullable().optional(),
     baseUrl: z.string().url().nullable().optional(),
     healthcheckUrl: z.string().url().nullable().optional(),
     authTokenRef: secretRefSchema.nullable().optional(),

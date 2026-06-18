@@ -245,4 +245,50 @@ describe("admin router sidecar API", () => {
     expect(res.status).toBe(409);
     expect(body.code).toBe("CONFLICT");
   });
+
+  it("POST rejects a configPath with '..' traversal and writes nothing (ADR-094)", async () => {
+    const { POST } = await import("../route");
+    const res = await POST(
+      request({
+        id: "ccr-default",
+        kind: "ccr",
+        lifecycle: "managed",
+        configPath: "../../etc/passwd",
+      }),
+    );
+    const body = (await res.json()) as { code?: string };
+
+    expect(res.status).toBe(422);
+    expect(body.code).toBe("CONFIG");
+    expect(state.inserts).toEqual([]);
+  });
+
+  it("PATCH rejects a configPath with '..' traversal and leaves the stored value unchanged (ADR-094)", async () => {
+    state.tables.platform_router_sidecars = [
+      {
+        id: "ccr-default",
+        kind: "ccr",
+        lifecycle: "managed",
+        commandPreset: "ccr_start",
+        configPath: "~/.claude-code-router/config.json",
+        enabled: true,
+        readinessStatus: "Ready",
+        readinessReasons: [],
+      },
+    ];
+
+    const { PATCH } = await import("../[sidecarId]/route");
+    const res = await PATCH(request({ configPath: "../../etc/passwd" }), {
+      params: Promise.resolve({ sidecarId: "ccr-default" }),
+    });
+    const body = (await res.json()) as { code?: string };
+
+    expect(res.status).toBe(422);
+    expect(body.code).toBe("CONFIG");
+    // The update boundary must reject traversal so a value the supervisor fs
+    // sink would refuse can never be persisted (the gap Codex flagged).
+    expect(state.tables.platform_router_sidecars[0].configPath).toBe(
+      "~/.claude-code-router/config.json",
+    );
+  });
 });

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { nativeDefaultRunnerByAdapter } from "@/lib/acp-runners/native-defaults";
 import {
   defaultPlatformRunnerId,
   platformRunnerPresetRows,
@@ -133,5 +134,17 @@ describe("platform ACP runner presets", () => {
         readinessStatus: "NotReady",
       }),
     ]);
+  });
+
+  it("maps every native default runner id (ADR-094) to a real preset row", () => {
+    const presetIds = new Set(
+      platformRunnerPresetRows().map((runner) => runner.id),
+    );
+
+    // reconcilePlatformRunners upserts these ids verbatim; a drift between the
+    // map and the preset catalog would make the upsert a silent no-op.
+    for (const runnerId of Object.values(nativeDefaultRunnerByAdapter)) {
+      expect(presetIds.has(runnerId)).toBe(true);
+    }
   });
 });

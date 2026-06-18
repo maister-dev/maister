@@ -23,7 +23,7 @@ import {
   resolveAdapterBinary,
   type AdapterRuntime,
 } from "./adapter-registry";
-import { type CcrManager } from "./ccr-manager";
+import { type CcrManager, type CcrState } from "./ccr-manager";
 import { attachCost } from "./cost";
 import { attachHeartbeat } from "./heartbeat";
 import {
@@ -68,18 +68,29 @@ const InputBodySchema = z
 // onto the checkpoint surface (D11 identifier-table rule).
 export const CheckpointBodySchema = z.object({}).strict();
 
+// ADR-094: admin CCR sidecar id — the path key for every /sidecars/:id route and
+// the start-body `id` field. Constrained to a filesystem-safe segment because it
+// keys the supervisor CcrManager instance map.
+const SidecarIdSchema = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^[A-Za-z0-9._-]+$/);
+
 // ADR-094: admin CCR sidecar start body — the full CcrInstanceConfig forwarded
 // by the admin-gated web tier. `id` must equal the path param (body-controlled,
 // trusted only because the sole caller is the server-to-server web tier).
+// `configPath` flows into supervisor-side fs.access/readFile, so it rejects `..`
+// traversal segments — the URL siblings already carry `.url()` constraints.
 const SidecarStartBodySchema = z
   .object({
-    id: z
+    id: SidecarIdSchema,
+    lifecycle: z.enum(["managed", "external"]).optional(),
+    configPath: z
       .string()
       .min(1)
-      .max(128)
-      .regex(/^[A-Za-z0-9._-]+$/),
-    lifecycle: z.enum(["managed", "external"]).optional(),
-    configPath: z.string().min(1).optional(),
+      .regex(/^(?!.*\.\.).+$/, "configPath must not contain '..' path segments")
+      .optional(),
     baseUrl: z.string().url().optional(),
     healthcheckUrl: z.string().url().optional(),
   })
@@ -391,6 +402,17 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     const smokeCache = await readAdapterSmokeCache(
       adapterSmokeCachePath(runtimeRoot),
     );
+    // ADR-094: report keyed CCR instance states. Admin Start and
+    // session-spawn-with-sidecar both populate the KEYED `ccr-default` manager,
+    // not the anonymous default that `getState()` (no id) reads — so report
+    // listStates(). Always seed `ccr-default` as `idle` so readiness sees its
+    // state rather than "diagnostics missing"; overlay every started instance
+    // (incl. admin-created sidecar ids) on top.
+    const sidecarStates = new Map<string, CcrState>([["ccr-default", "idle"]]);
+
+    for (const entry of ccr?.listStates() ?? []) {
+      sidecarStates.set(entry.id, entry.state);
+    }
     const body: SupervisorDiagnosticsResponse = {
       status: "ready",
       version: SUPERVISOR_VERSION,
@@ -400,13 +422,11 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
           diagnoseAdapterBinary(runtime, smokeCache, logger),
         ),
       ),
-      sidecars: [
-        {
-          id: "ccr-default",
-          kind: "ccr",
-          state: ccr?.getState() ?? "idle",
-        },
-      ],
+      sidecars: [...sidecarStates].map(([id, state]) => ({
+        id,
+        kind: "ccr" as const,
+        state,
+      })),
       envRefs: diagnosticEnvRefs(),
     };
 
@@ -1032,6 +1052,11 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
 
       return;
     }
+
+    // ADR-094: the start route validates the id via the body schema + the
+    // body.id === params.id check; the bodiless stop route guards the path id
+    // here. Invalid id → ZodError → 409 PRECONDITION via the shared handler.
+    SidecarIdSchema.parse(req.params.id);
 
     logger.debug({ sidecarId: req.params.id }, "http POST /sidecars/:id/stop");
     await ccr.stop(req.params.id);

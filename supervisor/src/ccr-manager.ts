@@ -32,6 +32,10 @@ export interface CcrManager {
   }): Promise<void>;
   getProxyUrl(instanceId?: string): string;
   getState(instanceId?: string): CcrState;
+  // ADR-094: keyed instance states for supervisor diagnostics. Only NAMED
+  // sidecar instances are enumerated; the anonymous default manager maps to no
+  // catalog sidecar id and reports nothing here.
+  listStates(): ReadonlyArray<{ id: string; state: CcrState }>;
   shutdown(opts?: {
     signal?: NodeJS.Signals;
     timeoutMs?: number;
@@ -60,6 +64,19 @@ function defaultConfigPath(): string {
     process.env.MAISTER_CCR_CONFIG_PATH ??
     join(homedir(), ".claude-code-router", "config.json")
   );
+}
+
+// configPath may arrive as `~/…` — the seeded `ccr-default` value is a
+// human-portable, home-relative path. fs.access/readFile do NOT expand `~`, so
+// a literal `~` is read as a relative path under the supervisor cwd and the
+// real config is never found. Expand HERE, supervisor-side: the supervisor may
+// run on a different host/user than the web tier that stored the value, so
+// expanding web-side would bake in the wrong home directory.
+function expandHome(p: string): string {
+  if (p === "~") return homedir();
+  if (p.startsWith("~/")) return join(homedir(), p.slice(2));
+
+  return p;
 }
 
 type CcrConfigShape = { host: string; port: number };
@@ -218,7 +235,7 @@ export function createCcrManager(
     pino({ name: "ccr-manager", level: process.env.LOG_LEVEL ?? "info" });
   const binary = opts.binaryOverride ?? "ccr";
   const argsBase = opts.argsOverride ?? ["start"];
-  const configPath = opts.configPath ?? defaultConfigPath();
+  const configPath = expandHome(opts.configPath ?? defaultConfigPath());
   const totalHealthMs = opts.healthCheckTotalMs ?? DEFAULT_HEALTH_TOTAL_MS;
 
   let state: CcrState = "idle";
@@ -473,6 +490,9 @@ export function createCcrManager(
     ensureRunning,
     getProxyUrl,
     getState,
+    // A bare manager has no sidecar-id registry; the keyed facade owns
+    // enumeration of named instances.
+    listStates: () => [],
     shutdown,
     stop,
   };
@@ -546,6 +566,7 @@ function externalCcrManager(
     ensureRunning,
     getProxyUrl,
     getState: () => state,
+    listStates: () => [],
     shutdown: async () => {
       state = "idle";
     },
@@ -613,6 +634,11 @@ export function createKeyedCcrManager(
 
       return managers.get(instanceId)?.getState() ?? "idle";
     },
+    listStates: () =>
+      [...managers.entries()].map(([id, manager]) => ({
+        id,
+        state: manager.getState(),
+      })),
     shutdown: async (shutdownOpts = {}) => {
       await Promise.all(
         [defaultManager, ...managers.values()].map((manager) =>

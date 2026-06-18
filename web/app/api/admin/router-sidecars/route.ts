@@ -7,6 +7,7 @@ import { z } from "zod";
 
 import { requireGlobalRole } from "@/lib/authz";
 import { evaluateSidecarReadiness } from "@/lib/acp-runners/readiness";
+import { sidecarConfigPathSchema } from "@/lib/acp-runners/sidecar-schema";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -38,7 +39,7 @@ const sidecarBodySchema = z
     kind: z.literal("ccr"),
     lifecycle: z.enum(["managed", "external"]),
     commandPreset: z.literal("ccr_start").nullable().optional(),
-    configPath: z.string().min(1).nullable().optional(),
+    configPath: sidecarConfigPathSchema.nullable().optional(),
     baseUrl: z.string().url().nullable().optional(),
     healthcheckUrl: z.string().url().nullable().optional(),
     authTokenRef: secretRefSchema.nullable().optional(),

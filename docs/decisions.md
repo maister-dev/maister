@@ -7060,7 +7060,7 @@ per-instance stop to wire a UI button to.
    (where supervisor diagnostics are already fetched). For each adapter reported
    **available** by diagnostics it upserts-if-absent that adapter's native
    default runner (`claude→claude-code`, `codex→codex-openai`,
-   `gemini→gemini-cli`, `opencode→opencode-native`, `mimo→mimo-native`),
+   `gemini→gemini-cli`, `opencode→opencode-native`, `mimo→mimo-code-native`),
    recomputes `readiness_status`/`readiness_reasons` for **all** rows via
    `evaluateRunnerReadiness` against live diagnostics, and **creates the
    singleton `platform_runtime_settings` row** pointing at a `Ready` default
@@ -7073,8 +7073,10 @@ per-instance stop to wire a UI button to.
    auto-deletes**: a materialized row is a normal
    editable runner, and an adapter going unavailable leaves the row reading
    not-ready rather than removing it. The reconcile is the **single writer** of
-   `readiness_status`; every downstream reader keeps consuming the stored column
-   unchanged.
+   runner AND router-sidecar `readiness_status` outside create/edit — it
+   recomputes sidecar readiness from the same diagnostics before runner
+   readiness, since a sidecar-backed runner keys on the stored sidecar status;
+   every downstream reader keeps consuming the stored column unchanged.
 3. **Honest readiness, with a stated limitation.** The UI shows a readiness
    color dot + tooltip driven by the stored column, never a hardcoded label.
    **Verified limitation:** `evaluateRunnerReadiness` does **not**
@@ -7096,10 +7098,15 @@ per-instance stop to wire a UI button to.
    expose start/stop; no new process manager is introduced. Because the keyed
    manager's `shutdown()` stops **all** instances and clears the map, a new
    per-instance `CcrManager.stop(instanceId?)` is added and the stop route
-   targets only that instance. CCR **runner configuration** (config.json
-   contents + runners routing through CCR) is **deferred** to a later session;
-   admin Start just launches the process, and the healthcheck stays red until a
-   config exists — honestly.
+   targets only that instance. After the supervisor acks, each web proxy calls
+   `reconcilePlatformRunnersFromSupervisor` so the just-changed sidecar — and the
+   runners that depend on it — refresh their stored readiness from fresh
+   diagnostics immediately, not only at the next `/settings` load (otherwise a
+   successful Start reports `ready` while the dependent runner stays `NotReady`
+   and launch is refused with `EXECUTOR_UNAVAILABLE`). CCR **runner
+   configuration** (config.json contents + runners routing through CCR) is
+   **deferred** to a later session; admin Start just launches the process, and
+   the healthcheck stays red until a config exists — honestly.
 6. **No DB schema change, no migration.** Existing auto-seeded preset rows on a
    local dev DB are removed by a one-off cleanup, not a migration; fresh
    installs are clean because the seed no longer inserts the catalog **nor the

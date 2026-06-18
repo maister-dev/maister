@@ -8,8 +8,12 @@ import pino from "pino";
 
 import { ADAPTER_IDS, type AdapterId } from "@/lib/acp-runners/adapter-support";
 import { platformRunnerPresetRows } from "@/lib/acp-runners/presets";
-import { evaluateRunnerReadiness } from "@/lib/acp-runners/readiness";
+import {
+  evaluateRunnerReadiness,
+  evaluateSidecarReadiness,
+} from "@/lib/acp-runners/readiness";
 import * as schemaModule from "@/lib/db/schema";
+import { checkSupervisorDiagnostics } from "@/lib/supervisor-client";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (see schema.integration.test.ts).
 const { platformAcpRunners, platformRouterSidecars, platformRuntimeSettings } =
@@ -57,10 +61,12 @@ function sameReasons(
 /**
  * Reconcile the platform ACP runner catalog against live supervisor diagnostics
  * (ADR-094). Runs at admin `/settings` load and is the single writer of
- * `readiness_status` outside the create/edit path:
+ * `readiness_status` (runner AND router-sidecar) outside the create/edit path:
  *
  * 1. Upsert-if-absent each AVAILABLE adapter's native default runner.
- * 2. Recompute readiness for ALL rows; persist only when status/reasons changed.
+ * 2. Recompute readiness for ALL router-sidecar rows, THEN ALL runner rows
+ *    (sidecars first so a sidecar-backed runner sees fresh sidecar state, which
+ *    `evaluateRunnerReadiness` keys on); persist only when status/reasons changed.
  * 3. Create the `platform_runtime_settings` singleton (pointing at the first
  *    Ready native default) when none exists yet — `default_runner_id` is
  *    NOT NULL, so the pre-config state is an absent singleton, not a null column.
@@ -135,6 +141,58 @@ export async function reconcilePlatformRunners(args: {
   const sidecarById = new Map<string, any>(
     sidecarRows.map((row: any) => [row.id, row]),
   );
+
+  // 2a. Recompute sidecar readiness from the SAME diagnostics BEFORE the runner
+  // loop. evaluateRunnerReadiness keys a sidecar-backed runner on the stored
+  // sidecar.readinessStatus, so without this a sidecar that became (un)ready
+  // out-of-band — an admin Start/Stop, or external CCR coming up — would only
+  // re-converge on a manual create/edit, leaving dependent runners stale.
+  for (const sidecar of sidecarRows) {
+    const prevStatus = sidecar.readinessStatus;
+    const readiness = evaluateSidecarReadiness({
+      sidecar: {
+        id: sidecar.id,
+        kind: sidecar.kind,
+        lifecycle: sidecar.lifecycle,
+        commandPreset: sidecar.commandPreset ?? null,
+        configPath: sidecar.configPath ?? null,
+        baseUrl: sidecar.baseUrl ?? null,
+        healthcheckUrl: sidecar.healthcheckUrl ?? null,
+        enabled: sidecar.enabled,
+      },
+      diagnostics,
+      diagnosticsUnavailableReason: null,
+    });
+    const changed =
+      readiness.status !== prevStatus ||
+      !sameReasons(readiness.reasons, sidecar.readinessReasons);
+
+    // Keep the in-memory row authoritative for the runner loop below.
+    sidecar.readinessStatus = readiness.status;
+    sidecar.readinessReasons = readiness.reasons;
+
+    if (!changed) continue;
+
+    await db
+      .update(platformRouterSidecars)
+      .set({
+        readinessStatus: readiness.status,
+        readinessReasons: readiness.reasons,
+        updatedAt: new Date(),
+      })
+      .where(eq(platformRouterSidecars.id, sidecar.id));
+
+    log.debug(
+      {
+        sidecarId: sidecar.id,
+        from: prevStatus,
+        to: readiness.status,
+        reasons: readiness.reasons,
+      },
+      "[reconcilePlatformRunners] sidecar readiness change",
+    );
+  }
+
   const computedReadiness = new Map<
     string,
     { status: string; enabled: boolean }
@@ -220,4 +278,35 @@ export async function reconcilePlatformRunners(args: {
     { defaultRunnerId: chosenDefault },
     "[reconcilePlatformRunners] platform default set",
   );
+}
+
+/**
+ * Fetch live supervisor diagnostics and reconcile the runner + sidecar catalog
+ * (ADR-094). For callers that do NOT already hold diagnostics — the admin CCR
+ * Start/Stop routes — so a just-changed sidecar process state is reflected in
+ * stored readiness (and dependent runner readiness) immediately, instead of only
+ * at the next `/settings` load. Best-effort: a diagnostics outage makes the
+ * reconcile a no-op, and a reconcile failure is logged (never thrown) so a
+ * successful start/stop is not reported back to the admin as a failure.
+ */
+export async function reconcilePlatformRunnersFromSupervisor(args: {
+  db: Db;
+  logger?: Logger;
+}): Promise<void> {
+  const log = args.logger ?? defaultLog;
+
+  try {
+    const status = await checkSupervisorDiagnostics();
+
+    await reconcilePlatformRunners({
+      db: args.db,
+      diagnostics: status.kind === "ready" ? status.diagnostics : null,
+      logger: log,
+    });
+  } catch (err) {
+    log.warn(
+      { err: err instanceof Error ? err.message : String(err) },
+      "[reconcilePlatformRunnersFromSupervisor] readiness reconcile failed; will heal on next /settings load",
+    );
+  }
 }

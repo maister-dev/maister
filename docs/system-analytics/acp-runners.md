@@ -42,10 +42,11 @@ decision record for the delete guard and the in-`/settings` CRUD surface is
 - **Default runners (materialized, not seeded)** — `reconcilePlatformRunners`
   (`web/lib/acp-runners/native-defaults.ts`) upserts-if-absent each **available**
   adapter's native default runner (`claude→claude-code`, `codex→codex-openai`,
-  `gemini→gemini-cli`, `opencode→opencode-native`, `mimo→mimo-native`) at admin
-  `/settings` load, driven by live supervisor diagnostics. It is the **single
-  writer** of `readiness_status`/`readiness_reasons` outside create/edit and
-  never auto-deletes a row. (Implemented, ADR-094)
+  `gemini→gemini-cli`, `opencode→opencode-native`, `mimo→mimo-code-native`) at
+  admin `/settings` load, driven by live supervisor diagnostics. It is the
+  **single writer** of runner **and** router-sidecar
+  `readiness_status`/`readiness_reasons` outside create/edit and never
+  auto-deletes a row. (Implemented, ADR-094)
 - **`platform_runtime_settings.default_runner_id`** — NOT-NULL FK to a runner
   row (no cascade); the singleton platform default. The singleton is **created
   by the reconcile** (pointing at the first `Ready` default) rather than seeded;
@@ -202,16 +203,20 @@ flowchart TD
 
 The admin settings page fetches supervisor diagnostics, then runs
 `reconcilePlatformRunners` before reading the catalog. It is the single writer of
-stored readiness and the only path that materializes default runners. When
-diagnostics are unavailable it is a no-op (last-known readiness is preserved, not
-clobbered to `NotReady`).
+stored readiness (router-sidecar rows first, then runner rows — a sidecar-backed
+runner's readiness keys on the stored sidecar status) and the only path that
+materializes default runners. The admin CCR Start/Stop routes call
+`reconcilePlatformRunnersFromSupervisor` after the supervisor acks, so a started
+sidecar and its dependent runners converge to `Ready` without waiting for the
+next `/settings` load. When diagnostics are unavailable it is a no-op (last-known
+readiness is preserved, not clobbered to `NotReady`).
 
 ```mermaid
 sequenceDiagram
     participant A as Admin (/settings load)
     participant D as Supervisor /diagnostics
     participant RC as reconcilePlatformRunners
-    participant DB as platform_acp_runners + runtime_settings
+    participant DB as platform_acp_runners + router_sidecars + runtime_settings
     A->>D: fetch diagnostics
     alt diagnostics unavailable (null)
         A->>RC: reconcile(db, null)
@@ -219,8 +224,10 @@ sequenceDiagram
     else diagnostics available
         A->>RC: reconcile(db, diagnostics)
         RC->>DB: upsert-if-absent native default per available adapter
-        RC->>RC: evaluateRunnerReadiness over all rows
-        RC->>DB: persist readiness only for changed rows
+        RC->>RC: evaluateSidecarReadiness over all sidecar rows
+        RC->>DB: persist sidecar readiness only for changed rows
+        RC->>RC: evaluateRunnerReadiness over all runner rows
+        RC->>DB: persist runner readiness only for changed rows
         opt singleton absent and a Ready default exists
             RC->>DB: insert runtime_settings singleton at chosen default
         end
@@ -273,9 +280,13 @@ sequenceDiagram
 - After any catalog mutation the UI MUST re-fetch authoritative state via
   `router.refresh()` (no optimistic readiness). (Implemented)
 - `reconcilePlatformRunners` MUST be the single writer of `readiness_status`
-  outside the create/edit path: it recomputes readiness for ALL rows from live
-  supervisor diagnostics at `/settings` load and persists a row ONLY when its
-  status or reasons changed (no `updated_at` churn). (Implemented, ADR-094)
+  (runner AND router-sidecar) outside the create/edit path: it recomputes
+  router-sidecar readiness, then runner readiness, for ALL rows from live
+  supervisor diagnostics and persists a row ONLY when its status or reasons
+  changed (no `updated_at` churn). The admin CCR Start/Stop routes MUST trigger
+  this reconcile (`reconcilePlatformRunnersFromSupervisor`) after the supervisor
+  acks, so a sidecar-backed runner's launchability reflects the new process
+  state without a manual `/settings` reload. (Implemented, ADR-094)
 - Native `anthropic`/`openai` readiness MUST be treated as adapter-binary
   availability, NOT credential verification — `evaluateRunnerReadiness` performs
   no API-key/login check for those kinds; the UI MUST label a `Ready` native

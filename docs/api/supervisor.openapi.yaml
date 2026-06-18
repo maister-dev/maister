@@ -638,7 +638,13 @@ components:
         lifecycle:
           type: string
           enum: [managed, external]
-        configPath: { type: string, minLength: 1 }
+        configPath:
+          type: string
+          minLength: 1
+          pattern: "^(?!.*\\.\\.).+$"
+          description: |
+            Must not contain '..' path segments — the supervisor reads it via
+            fs.access/readFile.
         baseUrl: { type: string, format: uri }
         healthcheckUrl: { type: string, format: uri }
     SidecarStateResponse:

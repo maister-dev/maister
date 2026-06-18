@@ -1,5 +1,8 @@
-import Fastify from "fastify";
-import pino from "pino";
+import type { CcrManager } from "./ccr-manager";
+import type { RegisterRoutesOptions } from "./http-api";
+
+import Fastify, { type FastifyInstance } from "fastify";
+import pino, { type Logger } from "pino";
 
 import { ccrManager } from "./ccr-manager";
 import { startHeartbeatWatcher } from "./heartbeat";
@@ -20,6 +23,32 @@ function envInt(name: string, fallback: number): number {
   const parsed = Number.parseInt(raw, 10);
 
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+// ADR-094: build the production registerRoutes options. Extracted so a unit test
+// asserts the CCR manager is wired into spawnOverrides — without it the admin
+// /sidecars/:id/start|stop routes 409 in production (those routes have no
+// defaultCcrManager fallback, unlike the session-spawn path). main.ts is the
+// only production caller of registerRoutes.
+export function buildRegisterRoutesOptions(deps: {
+  app: FastifyInstance;
+  registry: SessionRegistry;
+  logger: Logger;
+  runtimeRoot: string;
+  killGraceMs: number;
+  ccrManager: CcrManager;
+}): RegisterRoutesOptions {
+  return {
+    app: deps.app,
+    registry: deps.registry,
+    logger: deps.logger,
+    runtimeRoot: deps.runtimeRoot,
+    killGraceMs: deps.killGraceMs,
+    modelCatalog: {
+      registry: createDefaultModelSourceRegistry(deps.ccrManager),
+    },
+    spawnOverrides: { ccrManager: deps.ccrManager },
+  };
 }
 
 export async function start(): Promise<void> {
@@ -51,14 +80,16 @@ export async function start(): Promise<void> {
   const registry = new SessionRegistry(logger);
   const app = Fastify({ logger: loggerConfig });
 
-  registerRoutes({
-    app,
-    registry,
-    logger,
-    runtimeRoot,
-    killGraceMs,
-    modelCatalog: { registry: createDefaultModelSourceRegistry(ccrManager) },
-  });
+  registerRoutes(
+    buildRegisterRoutesOptions({
+      app,
+      registry,
+      logger,
+      runtimeRoot,
+      killGraceMs,
+      ccrManager,
+    }),
+  );
 
   const stopHeartbeat = startHeartbeatWatcher({
     registry,
@@ -136,8 +167,13 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-start().catch((err) => {
-  // eslint-disable-next-line no-console
-  console.error("supervisor failed to start:", err);
-  process.exit(1);
-});
+// Guard the auto-start so tests can import buildRegisterRoutesOptions without
+// binding a port. Vitest sets process.env.VITEST in every test worker; prod and
+// dev (tsx) never set it.
+if (!process.env.VITEST) {
+  start().catch((err) => {
+    // eslint-disable-next-line no-console
+    console.error("supervisor failed to start:", err);
+    process.exit(1);
+  });
+}

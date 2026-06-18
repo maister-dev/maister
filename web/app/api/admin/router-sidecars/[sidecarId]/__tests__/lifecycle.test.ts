@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   requireGlobalRole: vi.fn(),
   startSidecar: vi.fn(),
   stopSidecar: vi.fn(),
+  reconcileFromSupervisor: vi.fn(),
 }));
 
 type Row = Record<string, unknown>;
@@ -27,6 +28,9 @@ vi.mock("@/lib/db/client", () => ({ getDb: () => fakeDb }));
 vi.mock("@/lib/supervisor-client", () => ({
   startSidecar: mocks.startSidecar,
   stopSidecar: mocks.stopSidecar,
+}));
+vi.mock("@/lib/acp-runners/native-defaults", () => ({
+  reconcilePlatformRunnersFromSupervisor: mocks.reconcileFromSupervisor,
 }));
 
 function ctx(sidecarId: string): { params: Promise<{ sidecarId: string }> } {
@@ -55,6 +59,7 @@ describe("admin router sidecar start/stop", () => {
     mocks.requireGlobalRole.mockResolvedValue({ id: "admin", role: "admin" });
     mocks.startSidecar.mockResolvedValue({ ok: true, state: "ready" });
     mocks.stopSidecar.mockResolvedValue({ ok: true, state: "idle" });
+    mocks.reconcileFromSupervisor.mockResolvedValue(undefined);
   });
 
   it("start: forwards the sidecar config and echoes the state (200)", async () => {
@@ -71,6 +76,8 @@ describe("admin router sidecar start/stop", () => {
         configPath: "~/.claude-code-router/config.json",
       }),
     );
+    // Readiness is refreshed from fresh diagnostics after a successful start.
+    expect(mocks.reconcileFromSupervisor).toHaveBeenCalledTimes(1);
   });
 
   it("start: 409 PRECONDITION when the sidecar is not found", async () => {
@@ -81,6 +88,7 @@ describe("admin router sidecar start/stop", () => {
     expect(res.status).toBe(409);
     expect((await res.json()).code).toBe("PRECONDITION");
     expect(mocks.startSidecar).not.toHaveBeenCalled();
+    expect(mocks.reconcileFromSupervisor).not.toHaveBeenCalled();
   });
 
   it("start: 403 for a non-admin", async () => {
@@ -103,6 +111,8 @@ describe("admin router sidecar start/stop", () => {
 
     expect(res.status).toBe(503);
     expect((await res.json()).code).toBe("EXECUTOR_UNAVAILABLE");
+    // A failed start must NOT refresh readiness (the process never came up).
+    expect(mocks.reconcileFromSupervisor).not.toHaveBeenCalled();
   });
 
   it("stop: forwards to the per-instance stop and echoes the state (200)", async () => {
@@ -113,6 +123,8 @@ describe("admin router sidecar start/stop", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true, state: "idle" });
     expect(mocks.stopSidecar).toHaveBeenCalledWith("ccr-default");
+    // Readiness is refreshed from fresh diagnostics after a successful stop.
+    expect(mocks.reconcileFromSupervisor).toHaveBeenCalledTimes(1);
   });
 
   it("stop: 409 PRECONDITION when the sidecar is not found", async () => {

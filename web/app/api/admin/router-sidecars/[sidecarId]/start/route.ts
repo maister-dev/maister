@@ -4,6 +4,7 @@ import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 
+import { reconcilePlatformRunnersFromSupervisor } from "@/lib/acp-runners/native-defaults";
 import { requireGlobalRole } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -64,7 +65,9 @@ type RouteParams = { params: Promise<{ sidecarId: string }> };
 // ADR-094: admin-triggered CCR sidecar start. Loads the sidecar from DB,
 // forwards its config to the supervisor, and returns the supervisor-reported
 // process state. No DB idempotency marker — process state is owned by the
-// supervisor (the route is a proxy).
+// supervisor. After the supervisor acks, refresh stored readiness from fresh
+// diagnostics so a CCR-backed runner becomes launchable without waiting for the
+// next admin /settings load.
 export async function POST(
   _req: NextRequest,
   { params }: RouteParams,
@@ -101,6 +104,8 @@ export async function POST(
       { sidecarId, state: result.state },
       "router sidecar start outcome",
     );
+
+    await reconcilePlatformRunnersFromSupervisor({ db, logger: log });
 
     return NextResponse.json(result);
   } catch (err) {

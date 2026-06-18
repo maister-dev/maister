@@ -1,4 +1,6 @@
 import { EventEmitter } from "node:events";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { Writable } from "node:stream";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -468,5 +470,47 @@ describe("ccr-manager (unit)", () => {
     await expect(mgr.stop("nope")).resolves.toBeUndefined();
     expect(mgr.getState("nope")).toBe("idle");
     expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
+  it("expands a leading ~ in configPath before the fs preflight (ADR-094)", async () => {
+    mockAccess.mockRejectedValue(new Error("ENOENT"));
+    const expanded = join(homedir(), ".claude-code-router", "config.json");
+    const { logger } = captureLogger();
+    const mgr = createCcrManager({
+      logger,
+      configPath: "~/.claude-code-router/config.json",
+    });
+
+    // The seeded `ccr-default` value is `~/â€¦`; without expansion the manager
+    // reads a literal `~` path under cwd and never finds the real config.
+    await expect(mgr.ensureRunning()).rejects.toThrow(expanded);
+    expect(mockAccess).toHaveBeenCalledWith(expanded, expect.anything());
+  });
+
+  it("keyed getState/listStates report the keyed instance, not the default manager (ADR-094)", async () => {
+    mockAccess.mockResolvedValue(undefined);
+    mockReadFile.mockResolvedValue(
+      JSON.stringify({ HOST: "127.0.0.1", PORT: 4567 }),
+    );
+    mockSpawn.mockImplementation(() => new FakeChild());
+    mockFetch.mockResolvedValue({ status: 200 } as Response);
+
+    const { logger } = captureLogger();
+    const mgr = createKeyedCcrManager({ logger });
+
+    await mgr.ensureRunning({
+      instance: {
+        id: "ccr-default",
+        lifecycle: "managed",
+        configPath: "/c.json",
+      },
+    });
+
+    expect(mgr.getState("ccr-default")).toBe("ready");
+    // The anonymous default manager was never started â€” the diagnostics bug was
+    // reading getState() (no id) instead of the keyed view that admin Start and
+    // session-spawn-with-sidecar actually populate.
+    expect(mgr.getState()).toBe("idle");
+    expect(mgr.listStates()).toEqual([{ id: "ccr-default", state: "ready" }]);
   });
 });
