@@ -25,19 +25,19 @@ PR creation** for `pull_request` promotion (**Implemented (M18)**) — see
   `web/lib/repo-source.ts`: `cloneRepo`, `gitInit`, `readRemoteOrigin`,
   `isGitRepo`, `assertGitAvailable` (plus the worktree / merge wrappers
   elsewhere). All run against a resolved local path.
-- **Clone-failure reason (`CloneFailureReason`)** — **(Designed, ADR-093)**. A
+- **Clone-failure reason (`CloneFailureReason`)** — **(Implemented, ADR-093)**. A
   classification of a failed `git clone`, computed from the redacted git stderr
   by the pure `classifyGitError(stderr)` helper:
   `SSH_AUTH | SSH_HOSTKEY | HTTPS_AUTH | NOT_FOUND | NETWORK | UNKNOWN`. It is
   **advisory context on the unchanged `PRECONDITION` code**, never a new error
   code — the shape and UI contract live in
   [`../error-taxonomy.md`](../error-taxonomy.md) (R7).
-- **Host-ambient git auth** — **(Designed, ADR-093)**. The host's own
+- **Host-ambient git auth** — **(Implemented, ADR-093)**. The host's own
   mechanisms: ssh-agent + `~/.ssh` keys (SSH URLs), the host git credential
   helper (HTTP(S) URLs), optional GitHub `gh` (best-effort `gh auth token`),
   and the one-off **HTTPS token** field. No managed credential store; MAIster
   holds zero git provider secrets at rest (credential model B / Q2=A, ADR-093).
-- **One-off HTTPS token (`MAISTER_GIT_TOKEN`)** — **(Designed, ADR-093)**. An
+- **One-off HTTPS token (`MAISTER_GIT_TOKEN`)** — **(Implemented, ADR-093)**. An
   optional per-clone token, askpass-injected into the git child-process env and
   a `0700` temp script only, **never persisted** (not in argv, a key file,
   `.git/config`, `projects.repo_url`, or any log). It is **not** a host-read env
@@ -120,7 +120,7 @@ sequenceDiagram
 
 Status: **Implemented** — `web/lib/repo-source.ts`.
 
-### Clone-failure classification (Designed, ADR-093)
+### Clone-failure classification (Implemented, ADR-093)
 
 A failed clone no longer collapses to a generic `PRECONDITION`. `cloneRepo`'s
 catch redacts the git stderr, runs `classifyGitError` over it to derive a
@@ -152,7 +152,7 @@ flowchart TD
 Status: **Designed (ADR-093)** — `classifyGitError` + `cloneRepo` catch in
 `web/lib/repo-source.ts`; shape in [`../error-taxonomy.md`](../error-taxonomy.md).
 
-### Auth resolution + one-off HTTPS token (Designed, ADR-093)
+### Auth resolution + one-off HTTPS token (Implemented, ADR-093)
 
 Clone auth is host-ambient. SSH URLs use the host ssh-agent + `~/.ssh` keys.
 HTTP(S) URLs use the host git credential helper, unless the user supplies a
@@ -193,7 +193,7 @@ provider, load it). MAIster generates no keys itself.
 Status: **Designed (ADR-093)** — `cloneRepo` token/askpass path + `detectGhAuth`
 in `web/lib/repo-source.ts`.
 
-### Remote management (Designed, ADR-093)
+### Remote management (Implemented, ADR-093)
 
 A local-only project (`no-remote` / new-empty) attaches a remote later through
 Project Settings → Git, served by the single collection route
@@ -352,7 +352,7 @@ schemas, and secret-bearing remote output is redacted before errors surface.
 - **(Implemented, M18)** `git push` and PR creation MUST use host credentials /
   host-env provider tokens only (credential model B); no provider secret is
   stored by MAIster, and tokens / secret-bearing URLs are NEVER logged.
-- **(Designed, ADR-093)** A failed clone MUST keep `code = "PRECONDITION"` and
+- **(Implemented, ADR-093)** A failed clone MUST keep `code = "PRECONDITION"` and
   carry advisory `{ reason, detail }` only; the one-off `MAISTER_GIT_TOKEN` MUST
   live solely in the git child-process env + a `0700` askpass file removed in
   `finally` (never argv / key file / `.git/config` / `projects.repo_url` / log),
@@ -386,23 +386,23 @@ schemas, and secret-bearing remote output is redacted before errors surface.
 - **(Implemented, M27) handoff remote check or push transiently fails** →
   `EXECUTOR_UNAVAILABLE` (HTTP 503); the lifecycle claim is left retryable and
   the operator can re-run the action.
-- **(Designed, ADR-093) clone fails on SSH auth** (`Permission denied
+- **(Implemented, ADR-093) clone fails on SSH auth** (`Permission denied
   (publickey)` — e.g. a passphrase key absent from the ssh-agent under
   `BatchMode=yes`) → `PRECONDITION` (HTTP 409) with `reason: "SSH_AUTH"`; the UI
   leads with `ssh-add --apple-use-keychain`.
-- **(Designed, ADR-093) clone fails on HTTPS auth** (`Authentication failed` /
+- **(Implemented, ADR-093) clone fails on HTTPS auth** (`Authentication failed` /
   `403`, no/expired token) → `PRECONDITION` with `reason: "HTTPS_AUTH"`; for a
   `github.com` host the remediation surfaces the `gh auth login` / paste-token /
   SSH fork.
-- **(Designed, ADR-093) clone fails on unknown host key, missing repo, or
+- **(Implemented, ADR-093) clone fails on unknown host key, missing repo, or
   network** → `PRECONDITION` with `reason: "SSH_HOSTKEY" | "NOT_FOUND" |
   "NETWORK"` respectively; an unrecognized stderr → `reason: "UNKNOWN"` with the
   redacted `detail` still surfaced.
-- **(Designed, ADR-093) one-off HTTPS token supplied** → injected via the `0700`
+- **(Implemented, ADR-093) one-off HTTPS token supplied** → injected via the `0700`
   askpass path and removed in `finally`; on success `projects.repo_url` stores
   the **plain** URL (token never persisted); a still-failing auth → `HTTPS_AUTH`
   `PRECONDITION`.
-- **(Designed, ADR-093) `/remotes` add/set-url with an invalid url or name** →
+- **(Implemented, ADR-093) `/remotes` add/set-url with an invalid url or name** →
   `PRECONDITION` (HTTP 409) from `validateUrl` / `remoteNameSchema`; a
   non-admin/owner caller → `UNAUTHORIZED` (HTTP 403); push/fetch auth failure is
   an **advisory** (no DB write, nothing to roll back).
@@ -413,10 +413,10 @@ schemas, and secret-bearing remote output is redacted before errors surface.
   [ADR-049 PR promotion via a hybrid provider `PrAdapter`](../decisions.md#adr-049-pr-promotion-via-a-hybrid-provider-pradapter-credential-model-b-reverses-the-gh-is-never-invoked-invariant)
   (Implemented, M18),
   [ADR-093 Project onboarding — optional `maister.yaml`, host-ambient git auth, onboarding modes, advisory clone reasons](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons)
-  (Designed).
+  (Implemented).
 - Clone-failure `{ reason, detail }` shape + UI contract:
   [`../error-taxonomy.md`](../error-taxonomy.md).
-- Screens (Designed, ADR-093): [`../screens/projects/add-project.md`](../screens/projects/add-project.md)
+- Screens (Implemented, ADR-093): [`../screens/projects/add-project.md`](../screens/projects/add-project.md)
   (classified clone remediation), [`../screens/projects/project-settings-git.md`](../screens/projects/project-settings-git.md)
   (remotes management).
 - Deployment (host credentials, `known_hosts` seeding):
@@ -429,6 +429,6 @@ schemas, and secret-bearing remote output is redacted before errors surface.
 - Source: `web/lib/repo-source.ts`; **(Implemented, M18)** `web/lib/worktree.ts`
   (`pushBranch`), `web/lib/runs/pr-adapter.ts`; **(Implemented, M27)**
   `web/lib/worktree.ts` (`listRemotes`, `headCommit`, branch collision helpers,
-  `createBranchAtHead`); **(Designed, ADR-093)** `web/lib/repo-source.ts`
+  `createBranchAtHead`); **(Implemented, ADR-093)** `web/lib/repo-source.ts`
   (`classifyGitError`, token/askpass clone, `detectGhAuth`),
   `web/lib/git-remotes.ts`, `web/app/api/projects/[slug]/remotes/route.ts`.

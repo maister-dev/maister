@@ -138,7 +138,7 @@ tags:
     description: ADR-078 (Implemented) — task comments, relations, subscriptions, inbox.
   - name: git
     description: >-
-      (Designed, ADR-093) Per-project git surface — persist the DB config back
+      (Implemented, ADR-093) Per-project git surface — persist the DB config back
       to `maister.yaml` (commit + opt-in push) and manage git remotes
       (list/add/edit/remove + push/fetch/set-upstream). Host-ambient auth.
 paths:
@@ -866,7 +866,7 @@ paths:
       description: |
         Admin-only (`requireGlobalRole("admin")`). Resolves the project
         source via `resolveProjectSource` (ADR-025) across **three onboarding
-        modes** (Designed,
+        modes** (Implemented,
         [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons)):
         `clone` (a `repoUrl` is cloned into `MAISTER_REPOS_ROOT`; refused with
         `PRECONDITION` if the target dir already exists — pass `target` to
@@ -877,7 +877,7 @@ paths:
         It then **stats `maister.yaml` v2** at `{resolvedDir}/maister.yaml`.
         **Present** → today's path (validate, derive slug from `project.name`
         kebab-case server-side, install each `flows[]` plugin). **Absent**
-        (Designed) → register from **DB defaults** with the repo untouched:
+        (Implemented) → register from **DB defaults** with the repo untouched:
         `name = body.name || basename(resolvedDir)`, slug derived from it,
         `maister_yaml_path = null` (the "config lives only in the DB" signal),
         no flow/package install. Either path checks `slug` / `repo_path` /
@@ -925,7 +925,7 @@ paths:
                   repoUrl: https://github.com/org/my-app
                   target: my-app-fork
               clone-with-name-and-token:
-                summary: (Designed) Clone with explicit name + one-off HTTPS token
+                summary: (Implemented) Clone with explicit name + one-off HTTPS token
                 value:
                   mode: clone
                   repoUrl: https://gitverse.ru/org/private-app
@@ -936,7 +936,7 @@ paths:
                 value:
                   target: /repos/my-app
               new-empty-project:
-                summary: (Designed) Create a brand-new empty local project
+                summary: (Implemented) Create a brand-new empty local project
                 value:
                   mode: new
                   name: greenfield-app
@@ -968,7 +968,7 @@ paths:
             clone error, missing directory, a clone `target` path that already
             exists, or (`mode: new`) a path that already exists.
 
-            **(Designed)** A **clone-stage** `PRECONDITION` additionally carries
+            **(Implemented)** A **clone-stage** `PRECONDITION` additionally carries
             advisory `reason` (classification of the git failure) and `detail`
             (redacted git stderr); `code` stays `PRECONDITION`. The UI maps
             `reason` → a specific remediation and never string-matches stderr.
@@ -993,7 +993,7 @@ paths:
             A **present** `maister.yaml` is invalid YAML, fails schema
             validation, or its `project.name` cannot be kebab-cased (`CONFIG`).
             A **missing** manifest does NOT 422 — it registers from DB defaults
-            (Designed,
+            (Implemented,
             [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons)).
           content:
             application/json:
@@ -1011,9 +1011,9 @@ paths:
   /api/projects/{slug}/persist-config:
     post:
       tags: [git]
-      summary: (Designed, ADR-093) Persist DB config to maister.yaml
+      summary: (Implemented, ADR-093) Persist DB config to maister.yaml
       description: |
-        **(Designed,
+        **(Implemented,
         [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons).)**
         Opt-in: serialize the project's DB-held config into a complete,
         schema-valid `maister.yaml` v2 and **commit it on the main branch**,
@@ -1107,9 +1107,9 @@ paths:
   /api/projects/{slug}/remotes:
     get:
       tags: [git]
-      summary: (Designed, ADR-093) List git remotes
+      summary: (Implemented, ADR-093) List git remotes
       description: |
-        **(Designed,
+        **(Implemented,
         [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons).)**
         Lists the repo's git remotes (`git remote -v`, de-duplicated to one row
         per name) with every URL **credential-redacted**.
@@ -1141,9 +1141,9 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
     post:
       tags: [git]
-      summary: (Designed, ADR-093) Add a remote, or run a remote action
+      summary: (Implemented, ADR-093) Add a remote, or run a remote action
       description: |
-        **(Designed,
+        **(Implemented,
         [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons).)**
         Two shapes on one route. **Add** a remote with `{ name, url }`
         (`git remote add`); adding `origin` syncs `projects.repo_url` +
@@ -1232,9 +1232,9 @@ paths:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
     patch:
       tags: [git]
-      summary: (Designed, ADR-093) Set a remote's URL
+      summary: (Implemented, ADR-093) Set a remote's URL
       description: |
-        **(Designed,
+        **(Implemented,
         [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons).)**
         `git remote set-url <name> <url>`. The remote `name` travels in the
         **body** (not the path) so names containing `/` or `.` work — the
@@ -1278,9 +1278,9 @@ paths:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
     delete:
       tags: [git]
-      summary: (Designed, ADR-093) Remove a remote
+      summary: (Implemented, ADR-093) Remove a remote
       description: |
-        **(Designed,
+        **(Implemented,
         [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons).)**
         `git remote remove <name>`. The remote `name` travels in the **body**
         (same `/`-in-name reason as PATCH). Removing `origin` nulls
@@ -8997,7 +8997,7 @@ components:
         existing local directory when `repoUrl` is omitted). Deep path/URL
         validation runs server-side before any filesystem access.
 
-        **(Designed)** `maister.yaml` is **optional** at manual registration:
+        **(Implemented)** `maister.yaml` is **optional** at manual registration:
         when the resolved repo has no manifest the project registers from DB
         defaults (repo untouched, `maister_yaml_path = null`). `mode` selects
         the onboarding mode; `name` is the explicit project name used when no
@@ -9035,7 +9035,7 @@ components:
           minLength: 1
           maxLength: 200
           description: |
-            **(Designed,
+            **(Implemented,
             [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons))**
             Explicit project name. Used **only when the resolved repo has no
             `maister.yaml`** — precedence is `yaml.project.name` >
@@ -9046,7 +9046,7 @@ components:
           type: string
           enum: [clone, existing, new]
           description: |
-            **(Designed,
+            **(Implemented,
             [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons))**
             Onboarding mode. Optional and **inferred** when omitted: `clone`
             when `repoUrl` is present, `existing` when only `target` is present.
@@ -9062,7 +9062,7 @@ components:
           minLength: 1
           maxLength: 4096
           description: |
-            **(Designed,
+            **(Implemented,
             [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons))**
             One-off HTTPS clone credential (PAT) for the `clone` mode only
             (http(s) `repoUrl`). Injected via a transient `GIT_ASKPASS` script
@@ -11457,7 +11457,7 @@ components:
     CloneFailureReason:
       type: string
       description: |
-        **(Designed,
+        **(Implemented,
         [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons))**
         Advisory classification of a clone-stage git failure. Carried on a
         `PRECONDITION` error (the `code` is unchanged); the UI maps it to a
@@ -11472,7 +11472,7 @@ components:
         - UNKNOWN
     CloneFailureBody:
       description: |
-        **(Designed,
+        **(Implemented,
         [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons))**
         `MaisterErrorBody` plus optional advisory `reason` + `detail` for a
         clone-stage `PRECONDITION`. Both are absent for non-clone failures
@@ -11490,7 +11490,7 @@ components:
     PersistConfigBody:
       type: object
       description: |
-        **(Designed,
+        **(Implemented,
         [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons))**
         Body for persist-config. All fields optional; an empty body commits
         without pushing.
@@ -11506,7 +11506,7 @@ components:
     PersistConfigResponse:
       type: object
       description: |
-        **(Designed,
+        **(Implemented,
         [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons))**
         Success body for persist-config.
       additionalProperties: false
@@ -11527,7 +11527,7 @@ components:
     RemoteItem:
       type: object
       description: |
-        **(Designed,
+        **(Implemented,
         [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons))**
         One git remote. `url` is always **credential-redacted**.
       additionalProperties: false
@@ -11559,7 +11559,7 @@ components:
     RemoteActionResponse:
       type: object
       description: |
-        **(Designed,
+        **(Implemented,
         [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons))**
         Result of a `push` / `fetch` / `set-upstream` action. `warning` carries
         a non-fatal advisory (e.g. a rejected push) — host-ambient auth, nothing
@@ -11610,7 +11610,7 @@ components:
           example: main
     RemotePostBody:
       description: |
-        **(Designed,
+        **(Implemented,
         [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons))**
         `POST /remotes` union — either add a remote (`{ name, url }`) or run an
         action (`{ op, name, ... }`).

@@ -620,7 +620,7 @@ Every promised test names its **runner project**:
 
 ### Phase 4 — Finalization
 
-- [ ] **T-FIN — Renumber check, docs status, full verify.**
+- [x] **T-FIN — Renumber check, docs status, full verify.**
   1. **Renumber pass** (own focused step, after rebase onto main): re-derive
      `max(### ADR-NNN)` from `git show main:docs/decisions.md` and `max(idx)` from
      `git show main:.../meta/_journal.json`; if ADR-093 / 0054 were taken by the

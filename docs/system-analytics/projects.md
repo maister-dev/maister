@@ -31,7 +31,7 @@ immediate fanout that lifecycle triggers.
   (`github | gitlab | gitea | gitverse | generic`). See
   [`git-integration.md`](git-integration.md).
 - **`maister_yaml_path`** — nullable path the manifest was loaded from
-  **(Designed, [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons))**.
+  **(Implemented, [ADR-093](../decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons))**.
   `NULL` is the **"config lives only in the DB"** signal: the project registered
   without a `maister.yaml` and the repo was not mutated. A persist action can
   later write the manifest and flip this non-null (see
@@ -65,7 +65,7 @@ Status: **Registration Implemented (M9)** — `POST /api/projects` is live
 supports it (`projects.archived_at`) but no `DELETE /api/projects/[slug]` route
 is wired yet (Phase 2).
 
-### Manifest branch at registration (Designed)
+### Manifest branch at registration (Implemented)
 
 After the source resolves, the manifest presence at `resolved.dir` selects the
 registration branch. The branch is an **allow-list** keyed on the `stat` result —
@@ -107,7 +107,7 @@ The union resolved before any config load, selected by an explicit
   (refuse if the target dir already exists; supply a `target` override).
 - **`existing`** (Implemented) — an existing local dir → `git init` when it is
   not yet a repo (deferred to the last register step), then read its `origin`.
-- **`new`** (Designed) — a no-URL path that does **not** exist → `mkdir -p` +
+- **`new`** (Implemented) — a no-URL path that does **not** exist → `mkdir -p` +
   `git init`, created **only** on an explicit `mode="new"` (never on a typo), no
   remote → `gitStatus:"initialized"`.
 
