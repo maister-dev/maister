@@ -20,6 +20,7 @@ import {
   providerKindsForAdapter,
   validateRunnerDraft,
 } from "@/lib/acp-runners/runner-form";
+import { adapterSetupHint } from "@/lib/acp-runners/setup-hints";
 import { ModelAutocomplete } from "@/components/settings/model-autocomplete";
 import { useModelSuggestions } from "@/components/settings/use-model-suggestions";
 
@@ -60,6 +61,7 @@ export interface AcpRunnerModalProps {
   runner?: RunnerRow;
   sidecars: { id: string }[];
   presets: PresetRow[];
+  unavailableAdapters?: readonly AdapterId[];
   onClose: () => void;
   onSaved: () => void;
 }
@@ -153,6 +155,7 @@ export function AcpRunnerModal({
   runner,
   sidecars,
   presets,
+  unavailableAdapters,
   onClose,
   onSaved,
 }: AcpRunnerModalProps): ReactElement {
@@ -449,6 +452,11 @@ export function AcpRunnerModal({
                 {draft.adapter}
               </code>
             )}
+            {unavailableAdapters?.includes(draft.adapter) ? (
+              <span className="rounded-lg border border-amber-line bg-amber-soft px-2.5 py-1.5 text-[11px] leading-[1.45] text-ink-2">
+                {t(adapterSetupHint(draft.adapter))}
+              </span>
+            ) : null}
           </label>
 
           <div className="flex flex-col gap-1.5">

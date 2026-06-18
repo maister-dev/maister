@@ -986,7 +986,14 @@
     "providers": "провайдеры",
     "providerPresets": "Пресеты провайдеров",
     "permissionPolicies": "политики прав",
-    "runners": "раннеры",
+    "adapterDetails": "Подробнее",
+    "setupHint": {
+      "claude": "Нативный Anthropic через `claude-agent-acp`. Для мульти-провайдерной маршрутизации запустите CCR-сайдкар (порт 3456) или задайте ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN.",
+      "codex": "Установите `codex-acp`. Нативный OpenAI или OpenAI-совместимый `base_url` с `wire_api = responses` в ~/.codex/config.toml.",
+      "gemini": "Установите CLI `gemini` (нативно только Google) и запустите `gemini --acp`. Для не-Google моделей нужен транслирующий шлюз, например LiteLLM.",
+      "opencode": "Установите пакет `opencode-ai`, выполните `opencode auth login`, затем `opencode acp`. Мульти-провайдерный нативно.",
+      "mimo": "MiMo Code — нативный форк OpenCode. Установите `mimo`, затем запустите `mimo acp`. Мульти-провайдерный нативно."
+    },
     "routerSidecars": "Роутер-сайдкары",
     "sidecarId": "id сайдкара",
     "configPath": "путь конфига",

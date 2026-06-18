@@ -106,10 +106,10 @@ Next-free at **main HEAD** is `### ADR-092` → reserve **ADR-093**. ⚠ The unm
 <!-- Commit checkpoint: Phase 1 -->
 
 ### Phase 2 — Compact adapter-support cards + per-adapter setup hints
-- [ ] **T2.1** New `web/lib/acp-runners/setup-hints.ts`: `adapterSetupHint(adapterId)` returning i18n key(s) for the research-derived per-adapter setup text (opencode pkg `opencode-ai`; codex `wire_api=responses`; CCR port 3456; gemini Google-only; mimo native fork). Files: `setup-hints.ts`.
-- [ ] **T2.2** `web/components/settings/adapter-support-panel.tsx`: compact card — color status dot + tooltip (replace textual available/unavailable badge); move binary/providers/permission-policies into a `<details>`; drop the per-card "runners" list; show `adapterSetupHint` in the expansion when not ready; 2-col grid on wide. Files: `adapter-support-panel.tsx`.
-- [ ] **T2.3** Surface the hint in the Add-runner popup: `web/components/settings/acp-runner-modal.tsx` shows `adapterSetupHint(adapter)` when the chosen adapter/preset is not available/ready. Files: `acp-runner-modal.tsx`.
-- [ ] **T2.4** Tests: unit (renderToStaticMarkup) for `setup-hints` coverage (one per adapter) + adapter-card status-dot/expansion render. Acceptance: suite green.
+- [x] **T2.1** New `web/lib/acp-runners/setup-hints.ts`: `adapterSetupHint(adapterId)` returning i18n key(s) for the research-derived per-adapter setup text (opencode pkg `opencode-ai`; codex `wire_api=responses`; CCR port 3456; gemini Google-only; mimo native fork). Files: `setup-hints.ts`.
+- [x] **T2.2** `web/components/settings/adapter-support-panel.tsx`: compact card — color status dot + tooltip (replace textual available/unavailable badge); move binary/providers/permission-policies into a `<details>`; drop the per-card "runners" list; show `adapterSetupHint` in the expansion when not ready; 2-col grid on wide. Files: `adapter-support-panel.tsx`.
+- [x] **T2.3** Surface the hint in the Add-runner popup: `web/components/settings/acp-runner-modal.tsx` shows `adapterSetupHint(adapter)` when the chosen adapter/preset is not available/ready. Files: `acp-runner-modal.tsx`.
+- [x] **T2.4** Tests: unit (renderToStaticMarkup) for `setup-hints` coverage (one per adapter) + adapter-card status-dot/expansion render. Acceptance: suite green.
 <!-- Commit checkpoint: Phase 2 -->
 
 ### Phase 3 — Provider-presets reference (collapsed) + Use-prefill

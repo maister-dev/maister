@@ -43,6 +43,12 @@ export default async function SettingsPage(): Promise<ReactElement> {
   const tools = isAdmin ? await hostToolStatus() : [];
   const diagnostics = isAdmin ? await checkSupervisorDiagnostics() : null;
   const runtime = isAdmin ? await loadPlatformRuntimeView(diagnostics) : null;
+  const unavailableAdapters =
+    diagnostics?.kind === "ready"
+      ? diagnostics.diagnostics.adapters
+          .filter((adapter) => !adapter.available)
+          .map((adapter) => adapter.id)
+      : [];
 
   return (
     <div className="w-full">
@@ -113,7 +119,6 @@ export default async function SettingsPage(): Promise<ReactElement> {
                 <AdapterSupportPanel
                   adapters={runtime.adapters}
                   diagnostics={diagnostics}
-                  runners={runtime.runners}
                 />
               ) : null}
             </div>
@@ -126,6 +131,7 @@ export default async function SettingsPage(): Promise<ReactElement> {
                 presets={runtime.presets}
                 runners={runtime.runners}
                 sidecars={runtime.sidecars}
+                unavailableAdapters={unavailableAdapters}
               />
               <AgentsPanel
                 agents={runtime.agents}

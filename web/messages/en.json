@@ -986,7 +986,14 @@
     "providers": "providers",
     "providerPresets": "Provider presets",
     "permissionPolicies": "permission policies",
-    "runners": "runners",
+    "adapterDetails": "Details",
+    "setupHint": {
+      "claude": "Native Anthropic via `claude-agent-acp`. For multi-provider routing, run a CCR sidecar (port 3456) or set ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN.",
+      "codex": "Install `codex-acp`. OpenAI-native, or an OpenAI-compatible `base_url` with `wire_api = responses` in ~/.codex/config.toml.",
+      "gemini": "Install the `gemini` CLI (Google-only natively) and run `gemini --acp`. Non-Google models need a translating gateway such as LiteLLM.",
+      "opencode": "Install the `opencode-ai` package, run `opencode auth login`, then `opencode acp`. Multi-provider native.",
+      "mimo": "MiMo Code is a native OpenCode fork. Install `mimo`, then run `mimo acp`. Multi-provider native."
+    },
     "routerSidecars": "Router sidecars",
     "sidecarId": "sidecar id",
     "configPath": "config path",

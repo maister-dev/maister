@@ -9,7 +9,7 @@ vi.mock("next-intl/server", () => ({
 }));
 
 describe("AdapterSupportPanel", () => {
-  it("renders supervisor diagnostics binary readiness and runner usage", async () => {
+  it("renders a status dot per adapter, a details expansion, and a setup hint only for unavailable adapters", async () => {
     const element = await AdapterSupportPanel({
       adapters: getAdapterSupport().filter((adapter) =>
         ["claude", "codex"].includes(adapter.id),
@@ -56,16 +56,22 @@ describe("AdapterSupportPanel", () => {
           envRefs: [],
         },
       },
-      runners: [{ id: "claude-default", adapter: "claude" }],
     });
 
     const html = renderToStaticMarkup(element);
 
+    // Status dots: claude available (good), codex unavailable (attention).
+    expect(html).toContain("bg-good");
+    expect(html).toContain("bg-attention");
+    expect(html).toContain('title="available"');
+    expect(html).toContain('title="unavailable"');
+    // Binary still present inside the details expansion.
     expect(html).toContain("claude-agent-acp");
-    expect(html).toContain("available");
     expect(html).toContain("codex-acp");
-    expect(html).toContain("unavailable");
-    expect(html).toContain("claude-default");
+    expect(html).toContain("adapterDetails");
+    // Setup hint only for the unavailable adapter.
+    expect(html).toContain("setupHint.codex");
+    expect(html).not.toContain("setupHint.claude");
   });
 
   it("renders diagnostics unavailable without leaking messages", async () => {
@@ -78,7 +84,6 @@ describe("AdapterSupportPanel", () => {
         reason: "network",
         message: "secret-like diagnostic detail",
       },
-      runners: [],
     });
 
     const html = renderToStaticMarkup(element);

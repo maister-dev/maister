@@ -1,5 +1,6 @@
 "use client";
 
+import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { ReactElement } from "react";
 
 import { useState, useTransition } from "react";
@@ -24,6 +25,7 @@ type Props = {
   presets: PresetRow[];
   runners: RunnerRow[];
   sidecars: { id: string }[];
+  unavailableAdapters?: readonly AdapterId[];
 };
 
 function statusClass(status: RunnerRow["readinessStatus"]): string {
@@ -98,6 +100,7 @@ export function AcpRunnersPanel({
   presets,
   runners,
   sidecars,
+  unavailableAdapters,
 }: Props): ReactElement {
   const t = useTranslations("settings");
   const router = useRouter();
@@ -326,6 +329,7 @@ export function AcpRunnersPanel({
           presets={presets}
           runner={editing ?? undefined}
           sidecars={sidecars}
+          unavailableAdapters={unavailableAdapters}
           onClose={() => {
             setCreating(false);
             setEditing(null);
