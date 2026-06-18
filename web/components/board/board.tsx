@@ -198,7 +198,9 @@ export async function Board({
                             .join(", ")}`
                         : undefined)
                     }
-                    launchLabel={t("runAgain")}
+                    launchLabel={
+                      card.runCount > 0 ? t("runAgain") : t("launchFirst")
+                    }
                     runsCountLabel={(count) => t("runsCount", { count })}
                     slug={slug}
                     triagedLabel={t("triaged")}

@@ -735,6 +735,7 @@
     "launchSupervisorUnavailable": "Supervisor unavailable. Start or recover the supervisor daemon, then retry.",
     "launchBusy": "Another run is active for this task.",
     "runAgain": "Run again",
+    "launchFirst": "Launch",
     "runsCount": "{count} runs",
     "prsDeferred": "Pull-request sync isn't wired up on this POC yet.",
     "mcpsDeferred": "MCP server management isn't wired up on this POC yet.",
@@ -967,6 +968,7 @@
   "launch": {
     "advanced": "Advanced launch options",
     "title": "Run again",
+    "titleFirst": "Launch",
     "close": "Close",
     "loading": "Loading launch options…",
     "optionsError": "Could not load launch options. Try again.",
@@ -2209,6 +2211,7 @@
     "errorForbidden": "You need member access for that.",
     "errorGeneric": "Action failed. Try again.",
     "runAgain": "Run again",
+    "launchFirst": "Launch",
     "runAgainUnavailable": "unavailable",
     "launchSupervisorUnavailable": "Supervisor unavailable. Start or recover the supervisor daemon, then retry.",
     "launchBlocked": "Blocked by",

@@ -13,6 +13,7 @@ import {
   useState,
   useTransition,
 } from "react";
+import { createPortal } from "react-dom";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
 
@@ -82,6 +83,7 @@ export interface LaunchPopoverProps {
   label: string;
   disabledLabel: string;
   disabledReason?: string;
+  hasRuns?: boolean;
 }
 
 function branchFallback(options: LaunchOptions): string {
@@ -164,6 +166,7 @@ export function LaunchPopover({
   label,
   disabledLabel,
   disabledReason,
+  hasRuns = true,
 }: LaunchPopoverProps): ReactElement {
   const t = useTranslations("launch");
   const tRun = useTranslations("run");
@@ -236,6 +239,10 @@ export function LaunchPopover({
     if (!open) return;
     closeRef.current?.focus();
 
+    const previousOverflow = document.body.style.overflow;
+
+    document.body.style.overflow = "hidden";
+
     function onKeyDown(event: KeyboardEvent): void {
       if (event.key === "Escape") {
         setOpen(false);
@@ -245,7 +252,10 @@ export function LaunchPopover({
 
     window.addEventListener("keydown", onKeyDown);
 
-    return () => window.removeEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = previousOverflow;
+    };
   }, [open]);
 
   const currentPolicy = useMemo<DeliveryPolicy>(
@@ -425,239 +435,261 @@ export function LaunchPopover({
         </Button>
       </span>
 
-      {open ? (
-        <div
-          aria-labelledby={`${dialogId}-title`}
-          aria-modal="true"
-          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/30 px-4 py-10"
-          role="dialog"
-        >
-          <section
-            className="w-full max-w-[620px] rounded-[12px] border border-line bg-paper p-4 shadow-[0_24px_80px_-28px_rgba(22,20,15,0.45)]"
-            data-testid="task-launch-dialog"
-          >
-            <div className="mb-4 flex items-start justify-between gap-3">
-              <div>
-                <h2
-                  className="text-[16px] font-semibold leading-tight text-ink"
-                  id={`${dialogId}-title`}
-                >
-                  {t("title")}
-                </h2>
-                <p className="mt-1 font-mono text-[11px] text-mute">
-                  {t("summary", {
-                    branch: targetBranch || "-",
-                    base: baseBranch || "-",
-                  })}
-                </p>
-              </div>
-              <Button
-                ref={closeRef}
-                className="border-line bg-ivory font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-mute hover:text-ink"
-                size="sm"
+      {open && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              aria-labelledby={`${dialogId}-title`}
+              aria-modal="true"
+              className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto px-4 py-10"
+              role="dialog"
+            >
+              <button
+                aria-label={t("close")}
+                className="fixed inset-0 cursor-default bg-[rgba(22,20,15,0.48)] backdrop-blur-sm"
+                tabIndex={-1}
                 type="button"
-                variant="outline"
                 onClick={() => {
                   setOpen(false);
                   openerRef.current?.focus();
                 }}
+              />
+              <section
+                className="relative w-full max-w-[620px] rounded-[12px] border border-line bg-paper p-5 shadow-[0_24px_80px_-28px_rgba(22,20,15,0.45)]"
+                data-testid="task-launch-dialog"
               >
-                {t("close")}
-              </Button>
-            </div>
-
-            {loadingOptions ? (
-              <p className="font-mono text-[12px] text-mute">{t("loading")}</p>
-            ) : optionsError ? (
-              <p
-                aria-live="polite"
-                className="rounded-[8px] border border-red-200 bg-red-50 px-3 py-2 font-mono text-[12px] text-red-700"
-                role="alert"
-              >
-                {t("optionsError")}
-              </p>
-            ) : options ? (
-              <div className="flex flex-col gap-4">
-                {!options.launchability.launchable ? (
-                  <p className="rounded-[8px] border border-amber-line bg-amber-soft px-3 py-2 font-mono text-[11px] text-amber">
-                    {unconfigured
-                      ? t("unconfiguredHint")
-                      : t("disabledReason", {
-                          reason: options.launchability.reason,
-                        })}
-                  </p>
-                ) : null}
-
-                <div className="grid gap-3 md:grid-cols-2">
-                  <label className="flex flex-col gap-1">
-                    <span className={fieldLabelClass}>
-                      {t("flow")}
-                      {flowId !== options.selectedFlowId ? (
-                        <b className="ml-2 text-amber">{t("override")}</b>
-                      ) : null}
-                    </span>
-                    <LaunchSelect
-                      label={t("flow")}
-                      options={flowOptions}
-                      value={flowId}
-                      onChange={setFlowId}
-                    />
-                  </label>
-
-                  <label className="flex flex-col gap-1">
-                    <span className={fieldLabelClass}>
-                      {t("runnerModel")}
-                      {runnerId !== (options.selectedRunnerId ?? "") ? (
-                        <b className="ml-2 text-amber">{t("override")}</b>
-                      ) : null}
-                    </span>
-                    <LaunchSelect
-                      label={t("runnerModel")}
-                      options={runnerOptions}
-                      value={runnerId}
-                      onChange={setRunnerId}
-                    />
-                    <span className="font-mono text-[10px] text-mute">
-                      {t("pinnedModel", {
-                        model:
-                          options.runners.find((r) => r.id === runnerId)
-                            ?.pinnedModel.model ?? "-",
+                <div className="mb-4 flex items-start justify-between gap-3">
+                  <div>
+                    <h2
+                      className="text-[16px] font-semibold leading-tight text-ink"
+                      id={`${dialogId}-title`}
+                    >
+                      {t(hasRuns ? "title" : "titleFirst")}
+                    </h2>
+                    <p className="mt-1 font-mono text-[11px] text-mute">
+                      {t("summary", {
+                        branch: targetBranch || "-",
+                        base: baseBranch || "-",
                       })}
-                    </span>
-                  </label>
-
-                  <label className="flex flex-col gap-1">
-                    <span className={fieldLabelClass}>
-                      {tRun("baseBranch")}
-                      {baseBranch !==
-                      (options.defaultBaseBranch ?? branchFallback(options)) ? (
-                        <b className="ml-2 text-amber">{t("override")}</b>
-                      ) : null}
-                    </span>
-                    <LaunchSelect
-                      label={tRun("baseBranch")}
-                      options={branchOptions}
-                      value={baseBranch}
-                      onChange={setBaseBranch}
-                    />
-                  </label>
-
-                  <label className="flex flex-col gap-1">
-                    <span className={fieldLabelClass}>
-                      {tRun("targetBranch")}
-                      {targetBranch !==
-                      (options.defaultTargetBranch ??
-                        branchFallback(options)) ? (
-                        <b className="ml-2 text-amber">{t("override")}</b>
-                      ) : null}
-                    </span>
-                    <LaunchSelect
-                      label={tRun("targetBranch")}
-                      options={branchOptions}
-                      value={targetBranch}
-                      onChange={setTargetBranch}
-                    />
-                  </label>
+                    </p>
+                  </div>
+                  <Button
+                    ref={closeRef}
+                    className="border-line bg-ivory font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-mute hover:text-ink"
+                    size="sm"
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      setOpen(false);
+                      openerRef.current?.focus();
+                    }}
+                  >
+                    {t("close")}
+                  </Button>
                 </div>
 
-                <div className="rounded-[10px] border border-line-soft bg-ivory/50 p-3">
-                  <div className="mb-2 flex items-center justify-between gap-3">
-                    <h3 className="text-[13px] font-semibold text-ink">
-                      {t("deliveryPolicy")}
-                    </h3>
-                    {defaultPolicy &&
-                    policyChanged(currentPolicy, defaultPolicy) ? (
-                      <span className="rounded-full border border-amber-line bg-amber-soft px-2 py-[2px] font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-amber">
-                        {t("override")}
-                      </span>
-                    ) : null}
-                  </div>
-                  <div className="grid gap-3 md:grid-cols-3">
-                    <label className="flex flex-col gap-1">
-                      <span className={fieldLabelClass}>{t("strategy")}</span>
-                      <LaunchSelect
-                        label={t("strategy")}
-                        options={strategyOptions}
-                        value={policyStrategy}
-                        onChange={setPolicyStrategy}
-                      />
-                    </label>
-                    <label className="flex flex-col gap-1">
-                      <span className={fieldLabelClass}>{t("push")}</span>
-                      <LaunchSelect
-                        label={t("push")}
-                        options={pushOptions}
-                        value={policyPush}
-                        onChange={setPolicyPush}
-                      />
-                    </label>
-                    <label className="flex flex-col gap-1">
-                      <span className={fieldLabelClass}>{t("trigger")}</span>
-                      <LaunchSelect
-                        label={t("trigger")}
-                        options={triggerOptions}
-                        value={policyTrigger}
-                        onChange={setPolicyTrigger}
-                      />
-                    </label>
-                  </div>
-                </div>
-
-                {showOverride ? (
-                  <p className="font-mono text-[10.5px] text-amber">
-                    {t("overrideHint")}
+                {loadingOptions ? (
+                  <p className="font-mono text-[12px] text-mute">
+                    {t("loading")}
                   </p>
-                ) : null}
-
-                {error ? (
+                ) : optionsError ? (
                   <p
                     aria-live="polite"
                     className="rounded-[8px] border border-red-200 bg-red-50 px-3 py-2 font-mono text-[12px] text-red-700"
                     role="alert"
                   >
-                    {error}
+                    {t("optionsError")}
                   </p>
-                ) : null}
+                ) : options ? (
+                  <div className="flex flex-col gap-4">
+                    {!options.launchability.launchable ? (
+                      <p className="rounded-[8px] border border-amber-line bg-amber-soft px-3 py-2 font-mono text-[11px] text-amber">
+                        {unconfigured
+                          ? t("unconfiguredHint")
+                          : t("disabledReason", {
+                              reason: options.launchability.reason,
+                            })}
+                      </p>
+                    ) : null}
 
-                <div className="flex justify-end gap-2 border-t border-line-soft pt-3">
-                  <Button
-                    className="border-line bg-ivory font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-mute hover:text-ink"
-                    size="sm"
-                    type="button"
-                    variant="outline"
-                    onClick={() => setOpen(false)}
-                  >
-                    {t("close")}
-                  </Button>
-                  <Button
-                    className={clsx(
-                      "bg-amber font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-white hover:bg-amber-2",
-                      createDisabled && "opacity-60",
-                    )}
-                    isDisabled={createDisabled}
-                    size="sm"
-                    type="button"
-                    variant="primary"
-                    onClick={() => void launch()}
-                  >
-                    {busy || pending
-                      ? launchStage
-                        ? {
-                            precondition: t("launchStage.precondition"),
-                            worktree_created: t("launchStage.worktree_created"),
-                            materializing: t("launchStage.materializing"),
-                            spawning: t("launchStage.spawning"),
-                            session_ready: t("launchStage.session_ready"),
-                          }[launchStage]
-                        : t("creating")
-                      : t("createRun")}
-                  </Button>
-                </div>
-              </div>
-            ) : null}
-          </section>
-        </div>
-      ) : null}
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <label className="flex flex-col gap-1">
+                        <span className={fieldLabelClass}>
+                          {t("flow")}
+                          {flowId !== options.selectedFlowId ? (
+                            <b className="ml-2 text-amber">{t("override")}</b>
+                          ) : null}
+                        </span>
+                        <LaunchSelect
+                          label={t("flow")}
+                          options={flowOptions}
+                          value={flowId}
+                          onChange={setFlowId}
+                        />
+                      </label>
+
+                      <label className="flex flex-col gap-1">
+                        <span className={fieldLabelClass}>
+                          {t("runnerModel")}
+                          {runnerId !== (options.selectedRunnerId ?? "") ? (
+                            <b className="ml-2 text-amber">{t("override")}</b>
+                          ) : null}
+                        </span>
+                        <LaunchSelect
+                          label={t("runnerModel")}
+                          options={runnerOptions}
+                          value={runnerId}
+                          onChange={setRunnerId}
+                        />
+                        <span className="font-mono text-[10px] text-mute">
+                          {t("pinnedModel", {
+                            model:
+                              options.runners.find((r) => r.id === runnerId)
+                                ?.pinnedModel.model ?? "-",
+                          })}
+                        </span>
+                      </label>
+
+                      <label className="flex flex-col gap-1">
+                        <span className={fieldLabelClass}>
+                          {tRun("baseBranch")}
+                          {baseBranch !==
+                          (options.defaultBaseBranch ??
+                            branchFallback(options)) ? (
+                            <b className="ml-2 text-amber">{t("override")}</b>
+                          ) : null}
+                        </span>
+                        <LaunchSelect
+                          label={tRun("baseBranch")}
+                          options={branchOptions}
+                          value={baseBranch}
+                          onChange={setBaseBranch}
+                        />
+                      </label>
+
+                      <label className="flex flex-col gap-1">
+                        <span className={fieldLabelClass}>
+                          {tRun("targetBranch")}
+                          {targetBranch !==
+                          (options.defaultTargetBranch ??
+                            branchFallback(options)) ? (
+                            <b className="ml-2 text-amber">{t("override")}</b>
+                          ) : null}
+                        </span>
+                        <LaunchSelect
+                          label={tRun("targetBranch")}
+                          options={branchOptions}
+                          value={targetBranch}
+                          onChange={setTargetBranch}
+                        />
+                      </label>
+                    </div>
+
+                    <div className="rounded-[10px] border border-line-soft bg-ivory/50 p-3">
+                      <div className="mb-2 flex items-center justify-between gap-3">
+                        <h3 className="text-[13px] font-semibold text-ink">
+                          {t("deliveryPolicy")}
+                        </h3>
+                        {defaultPolicy &&
+                        policyChanged(currentPolicy, defaultPolicy) ? (
+                          <span className="rounded-full border border-amber-line bg-amber-soft px-2 py-[2px] font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-amber">
+                            {t("override")}
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="grid gap-3 md:grid-cols-3">
+                        <label className="flex flex-col gap-1">
+                          <span className={fieldLabelClass}>
+                            {t("strategy")}
+                          </span>
+                          <LaunchSelect
+                            label={t("strategy")}
+                            options={strategyOptions}
+                            value={policyStrategy}
+                            onChange={setPolicyStrategy}
+                          />
+                        </label>
+                        <label className="flex flex-col gap-1">
+                          <span className={fieldLabelClass}>{t("push")}</span>
+                          <LaunchSelect
+                            label={t("push")}
+                            options={pushOptions}
+                            value={policyPush}
+                            onChange={setPolicyPush}
+                          />
+                        </label>
+                        <label className="flex flex-col gap-1">
+                          <span className={fieldLabelClass}>
+                            {t("trigger")}
+                          </span>
+                          <LaunchSelect
+                            label={t("trigger")}
+                            options={triggerOptions}
+                            value={policyTrigger}
+                            onChange={setPolicyTrigger}
+                          />
+                        </label>
+                      </div>
+                    </div>
+
+                    {showOverride ? (
+                      <p className="font-mono text-[10.5px] text-amber">
+                        {t("overrideHint")}
+                      </p>
+                    ) : null}
+
+                    {error ? (
+                      <p
+                        aria-live="polite"
+                        className="rounded-[8px] border border-red-200 bg-red-50 px-3 py-2 font-mono text-[12px] text-red-700"
+                        role="alert"
+                      >
+                        {error}
+                      </p>
+                    ) : null}
+
+                    <div className="flex justify-end gap-2 border-t border-line-soft pt-3">
+                      <Button
+                        className="border-line bg-ivory font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-mute hover:text-ink"
+                        size="sm"
+                        type="button"
+                        variant="outline"
+                        onClick={() => setOpen(false)}
+                      >
+                        {t("close")}
+                      </Button>
+                      <Button
+                        className={clsx(
+                          "bg-amber font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-white hover:bg-amber-2",
+                          createDisabled && "opacity-60",
+                        )}
+                        isDisabled={createDisabled}
+                        size="sm"
+                        type="button"
+                        variant="primary"
+                        onClick={() => void launch()}
+                      >
+                        {busy || pending
+                          ? launchStage
+                            ? {
+                                precondition: t("launchStage.precondition"),
+                                worktree_created: t(
+                                  "launchStage.worktree_created",
+                                ),
+                                materializing: t("launchStage.materializing"),
+                                spawning: t("launchStage.spawning"),
+                                session_ready: t("launchStage.session_ready"),
+                              }[launchStage]
+                            : t("creating")
+                          : t("createRun")}
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
+              </section>
+            </div>,
+            document.body,
+          )
+        : null}
     </>
   );
 }

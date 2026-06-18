@@ -268,7 +268,10 @@ export default async function TaskDetailPage({
               <LaunchPopover
                 disabledLabel={t("runAgainUnavailable")}
                 disabledReason={launchDisabledReason}
-                label={t("runAgain")}
+                hasRuns={detail.totals.runCount > 0}
+                label={
+                  detail.totals.runCount > 0 ? t("runAgain") : t("launchFirst")
+                }
                 taskId={detail.task.id}
               />
             ) : null}

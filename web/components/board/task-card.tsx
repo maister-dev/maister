@@ -119,6 +119,7 @@ export function TaskCard({
           <LaunchPopover
             disabledLabel={launchDisabledLabel}
             disabledReason={launchDisabledReason}
+            hasRuns={card.runCount > 0}
             label={launchLabel}
             taskId={card.taskId}
           />
