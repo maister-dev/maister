@@ -5,7 +5,6 @@ import { getTranslations } from "next-intl/server";
 
 import { getSessionUser } from "@/lib/authz";
 import { AcpRunnersPanel } from "@/components/settings/acp-runners-panel";
-import { AgentsPanel } from "@/components/settings/agents-panel";
 import { AdapterSupportPanel } from "@/components/settings/adapter-support-panel";
 import { McpServersPanel } from "@/components/settings/mcp-servers-panel";
 import { RouterSidecarsPanel } from "@/components/settings/router-sidecars-panel";
@@ -15,12 +14,10 @@ import { platformRunnerPresetRows } from "@/lib/acp-runners/presets";
 import { getAdapterSupport } from "@/lib/acp-runners/schema";
 import { getDb } from "@/lib/db/client";
 import {
-  agents,
   platformAcpRunners,
   platformMcpServers,
   platformRouterSidecars,
   platformRuntimeSettings,
-  projects,
 } from "@/lib/db/schema";
 import {
   hostToolStatus,
@@ -133,10 +130,6 @@ export default async function SettingsPage(): Promise<ReactElement> {
                 sidecars={runtime.sidecars}
                 unavailableAdapters={unavailableAdapters}
               />
-              <AgentsPanel
-                agents={runtime.agents}
-                projects={runtime.projects}
-              />
               <RouterSidecarsPanel sidecars={runtime.sidecars} />
               <McpServersPanel servers={runtime.mcpServers} />
               <WebhooksPanel />
@@ -167,15 +160,12 @@ async function loadPlatformRuntimeView(
     diagnostics: diagnostics?.kind === "ready" ? diagnostics.diagnostics : null,
   });
 
-  const [runners, sidecars, settingsRows, mcpServers, agentRows, projectRows] =
-    await Promise.all([
-      db.select().from(platformAcpRunners),
-      db.select().from(platformRouterSidecars),
-      db.select().from(platformRuntimeSettings),
-      db.select().from(platformMcpServers),
-      db.select().from(agents),
-      db.select().from(projects),
-    ]);
+  const [runners, sidecars, settingsRows, mcpServers] = await Promise.all([
+    db.select().from(platformAcpRunners),
+    db.select().from(platformRouterSidecars),
+    db.select().from(platformRuntimeSettings),
+    db.select().from(platformMcpServers),
+  ]);
 
   return {
     adapters: getAdapterSupport(),
@@ -184,28 +174,5 @@ async function loadPlatformRuntimeView(
     runners,
     sidecars,
     mcpServers,
-    // M34: explicit DTO projection — serialized dates, no raw rows.
-    agents: agentRows.map((row: any) => ({
-      id: row.id,
-      flowRefId: row.flowRefId,
-      versionLabel: row.versionLabel,
-      origin: row.origin,
-      name: row.name,
-      description: row.description,
-      runnerId: row.runnerId ?? null,
-      workspace: row.workspace,
-      mode: row.mode,
-      triggers: row.triggers,
-      riskTier: row.riskTier,
-      sourcePath: row.sourcePath,
-      enabled: row.enabled,
-      quarantinedAt: row.quarantinedAt
-        ? new Date(row.quarantinedAt).toISOString()
-        : null,
-      quarantineReason: row.quarantineReason ?? null,
-    })),
-    projects: projectRows
-      .filter((row: any) => !row.archivedAt)
-      .map((row: any) => ({ id: row.id, slug: row.slug, name: row.name })),
   };
 }

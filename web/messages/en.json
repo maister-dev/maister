@@ -2399,6 +2399,8 @@
   },
   "agents": {
     "title": "Platform agents",
+    "sub": "Admin-only catalog of platform agents projected from installed flow packages.",
+    "forbidden": "You do not have access to the platform agents catalog.",
     "resync": "Re-sync catalog",
     "empty": "No agents attached. Attach a package-provided agent or re-sync package metadata.",
     "colId": "ID",

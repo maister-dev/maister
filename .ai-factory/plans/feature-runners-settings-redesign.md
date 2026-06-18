@@ -119,10 +119,10 @@ Next-free at **main HEAD** is `### ADR-092` → reserve **ADR-093**. ⚠ The unm
 <!-- Commit checkpoint: Phase 3 -->
 
 ### Phase 4 — Move platform agents to admin-only /agents
-- [ ] **T4.1** New `web/app/(app)/agents/page.tsx`: admin-gated (mirror settings page `getSessionUser().role === "admin"` / `requireGlobalRole`), load agents + projects as `settings/page.tsx` does today, render `<AgentsPanel>`. Files: `web/app/(app)/agents/page.tsx`.
-- [ ] **T4.2** Remove `<AgentsPanel>` and its now-unused agents/projects loads from `web/app/(app)/settings/page.tsx`. Files: `settings/page.tsx`.
-- [ ] **T4.3** `web/components/chrome/left-rail.tsx`: remove the `agents` item from the general `sections` array (line ~241) and push it inside the `userRole === "admin"` block (lines ~246-271) with `ready: true`. Files: `left-rail.tsx`.
-- [ ] **T4.4** Tests: e2e — `/agents` reachable + AgentsPanel visible as admin; hidden/403 for non-admin. Add the new spec to the playwright `AUTHED_SPEC` regex. Acceptance: e2e green (free :3000 first — Next refuses a 2nd dev server).
+- [x] **T4.1** New `web/app/(app)/agents/page.tsx`: admin-gated (mirror settings page `getSessionUser().role === "admin"` / `requireGlobalRole`), load agents + projects as `settings/page.tsx` does today, render `<AgentsPanel>`. Files: `web/app/(app)/agents/page.tsx`.
+- [x] **T4.2** Remove `<AgentsPanel>` and its now-unused agents/projects loads from `web/app/(app)/settings/page.tsx`. Files: `settings/page.tsx`.
+- [x] **T4.3** `web/components/chrome/left-rail.tsx`: remove the `agents` item from the general `sections` array (line ~241) and push it inside the `userRole === "admin"` block (lines ~246-271) with `ready: true`. Files: `left-rail.tsx`.
+- [x] **T4.4** Tests: e2e — `/agents` reachable + AgentsPanel visible as admin; hidden/403 for non-admin. Add the new spec to the playwright `AUTHED_SPEC` regex. Acceptance: e2e green (free :3000 first — Next refuses a 2nd dev server).
 <!-- Commit checkpoint: Phase 4 -->
 
 ### Phase 5 — CCR start/stop + iconified sidecar cards
