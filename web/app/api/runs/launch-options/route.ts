@@ -316,7 +316,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       manualLaunchability === "launchable" && !task.flowId
         ? "unconfigured"
         : manualLaunchability;
-    const branches = await listBranches(project.repoPath);
+    const branches = await listBranches(project.repoPath, {
+      includeRemotes: true,
+    });
     const projectPolicy = resolveDeliveryPolicy({
       projectDefault:
         project.deliveryPolicyDefault as StoredDeliveryPolicy | null,

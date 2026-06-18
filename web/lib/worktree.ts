@@ -281,6 +281,11 @@ export async function addDetachedWorktree(
 export type ResolveBaseCommitArgs = {
   projectRepoPath: string;
   baseRef: string;
+  // Prefer the remote-tracking commit (`<preferRemote>/<baseRef>`) when it
+  // resolves, so a launch forks from the freshest fetched origin state instead
+  // of a stale local branch; falls back to `<baseRef>`. Only meaningful right
+  // after a fetch. Omitted by callers that want the local ref verbatim.
+  preferRemote?: string;
 };
 
 export async function resolveBaseCommit(
@@ -293,23 +298,36 @@ export async function resolveBaseCommit(
   );
   const baseRef = validate(gitRefSchema, args.baseRef, "baseRef");
 
-  try {
-    const { stdout } = await runGit(repo, [
-      "rev-parse",
-      "--verify",
-      "--end-of-options",
-      `${baseRef}^{commit}`,
-    ]);
-    const commit = stdout.trim();
+  const candidates =
+    args.preferRemote === undefined
+      ? [baseRef]
+      : [`${args.preferRemote}/${baseRef}`, baseRef];
+  let lastErr: unknown;
 
-    return validate(gitCommitSchema, commit, "baseCommit").toLowerCase();
-  } catch (err) {
-    throw new MaisterError(
-      "PRECONDITION",
-      `base ref does not resolve to a commit: ${baseRef}`,
-      { cause: asError(err) },
-    );
+  for (const ref of candidates) {
+    try {
+      const { stdout } = await runGit(repo, [
+        "rev-parse",
+        "--verify",
+        "--end-of-options",
+        `${ref}^{commit}`,
+      ]);
+
+      return validate(
+        gitCommitSchema,
+        stdout.trim(),
+        "baseCommit",
+      ).toLowerCase();
+    } catch (err) {
+      lastErr = err;
+    }
   }
+
+  throw new MaisterError(
+    "PRECONDITION",
+    `base ref does not resolve to a commit: ${baseRef}`,
+    { cause: asError(lastErr) },
+  );
 }
 
 export type BranchRefArgs = {
@@ -386,20 +404,47 @@ export async function removeBranch(args: BranchRefArgs): Promise<void> {
   }
 }
 
-export async function listBranches(projectRepoPath: string): Promise<string[]> {
+export async function listBranches(
+  projectRepoPath: string,
+  opts?: { includeRemotes?: boolean },
+): Promise<string[]> {
   const repo = validate(absolutePathSchema, projectRepoPath, "projectRepoPath");
 
   try {
     const { stdout } = await runGit(repo, [
       "for-each-ref",
-      "--format=%(refname:short)",
+      "--format=%(refname)",
       "refs/heads",
+      ...(opts?.includeRemotes ? ["refs/remotes/origin"] : []),
     ]);
 
-    return stdout
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0);
+    // Collapse local `refs/heads/<name>` and remote `refs/remotes/origin/<name>`
+    // onto the bare branch name so a branch appears once whether it is local,
+    // remote, or both; skip the `origin/HEAD` symbolic default. Full refnames
+    // are used (not `refname:short`, which renders origin/HEAD as the ambiguous
+    // bare `origin`). Insertion order keeps local heads first.
+    const names: string[] = [];
+    const seen = new Set<string>();
+
+    for (const line of stdout.split("\n")) {
+      const ref = line.trim();
+      let name: string | null = null;
+
+      if (ref.startsWith("refs/heads/")) {
+        name = ref.slice("refs/heads/".length);
+      } else if (ref.startsWith("refs/remotes/origin/")) {
+        const remoteName = ref.slice("refs/remotes/origin/".length);
+
+        if (remoteName !== "HEAD") name = remoteName;
+      }
+
+      if (name !== null && !seen.has(name)) {
+        seen.add(name);
+        names.push(name);
+      }
+    }
+
+    return names;
   } catch (err) {
     throw new MaisterError(
       "CONFLICT",

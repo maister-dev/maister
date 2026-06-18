@@ -245,7 +245,9 @@ describe("GET /api/scratch-runs/launch-options", () => {
     expect(body.capabilities.rules).toEqual([
       expect.objectContaining({ id: "repo-rules" }),
     ]);
-    expect(mocks.listBranches).toHaveBeenCalledWith("/repos/alpha");
+    expect(mocks.listBranches).toHaveBeenCalledWith("/repos/alpha", {
+      includeRemotes: true,
+    });
     expect(mocks.loadSelectableCapabilities).toHaveBeenCalledWith(
       projectA.id,
       fakeDb,
@@ -276,6 +278,8 @@ describe("GET /api/scratch-runs/launch-options", () => {
 
     expect(res.status).toBe(409);
     expect(body.code).toBe("CONFLICT");
-    expect(mocks.listBranches).toHaveBeenCalledWith("/repos/alpha");
+    expect(mocks.listBranches).toHaveBeenCalledWith("/repos/alpha", {
+      includeRemotes: true,
+    });
   });
 });

@@ -61,6 +61,7 @@ import { actorForUserId, recordTaskActivity } from "@/lib/social/activity";
 import { getOpenRelationBlockers } from "@/lib/social/relations";
 import { tryStartRun } from "@/lib/scheduler";
 import { checkSupervisorHealth } from "@/lib/supervisor-client";
+import { fetchProjectRemote, listProjectRemotes } from "@/lib/git-remotes";
 import {
   addWorktree,
   listBranches,
@@ -698,7 +699,30 @@ export async function* launchRunStaged(
     },
   });
   const target = input.targetBranch ?? deliveryPolicy.targetBranch ?? base;
-  const knownBranches = new Set(await listBranches(project.repoPath));
+
+  // Refresh origin (read-only: updates remote-tracking refs, never the working
+  // tree) so the branch allow-list and the base commit reflect the freshest
+  // remote state. Best-effort — offline / no origin is advisory, the launch
+  // continues from whatever refs exist locally.
+  try {
+    const remotes = await listProjectRemotes(project.repoPath);
+
+    if (remotes.some((r) => r.name === "origin")) {
+      await fetchProjectRemote({
+        project: { id: project.id, repoPath: project.repoPath },
+        name: "origin",
+      });
+    }
+  } catch (err) {
+    log.warn(
+      { taskId: task.id, err: (err as Error).message },
+      "pre-launch origin fetch failed (advisory)",
+    );
+  }
+
+  const knownBranches = new Set(
+    await listBranches(project.repoPath, { includeRemotes: true }),
+  );
 
   if (!knownBranches.has(base)) {
     throw new MaisterError(
@@ -716,6 +740,10 @@ export async function* launchRunStaged(
   const baseCommit = await resolveBaseCommit({
     projectRepoPath: project.repoPath,
     baseRef: base,
+    // Fork from origin/<base> when present (just fetched) so runs start from
+    // the freshest remote state, not a stale local checkout; falls back to the
+    // local <base>.
+    preferRemote: "origin",
   });
   const promotionMode: PromotionMode =
     deliveryPolicy.strategy === "ai_rebase_merge"

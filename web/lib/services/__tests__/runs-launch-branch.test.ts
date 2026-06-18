@@ -338,7 +338,9 @@ describe("launchRun — branch allow-list validation precedes the worktree side-
       launchRun({ taskId: TASK_ID, baseBranch: "ghost" }, ctx(), fakeDb),
     ).rejects.toMatchObject({ code: "PRECONDITION" });
 
-    expect(mocks.listBranches).toHaveBeenCalledWith("/repos/demo");
+    expect(mocks.listBranches).toHaveBeenCalledWith("/repos/demo", {
+      includeRemotes: true,
+    });
     expect(mocks.addWorktree).not.toHaveBeenCalled();
   });
 

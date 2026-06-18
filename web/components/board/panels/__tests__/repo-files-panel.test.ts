@@ -39,6 +39,9 @@ const labels = {
   notFound: "File not found",
   loadError: "Could not load file",
   treeLabel: "Repository file tree",
+  fetchOrigin: "Fetch origin",
+  fetching: "Fetching…",
+  fetchFailed: "Fetch failed.",
 };
 
 // FileTree ("use client") reads next/navigation router hooks at render; under
@@ -90,6 +93,7 @@ async function render(args: {
     branches: ["main"],
     file: args.file,
     canReadRepoFiles: args.canReadRepoFiles,
+    canFetch: false,
     labels,
   });
 

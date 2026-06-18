@@ -211,7 +211,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
     const [branchRows, runnerRows, runtimeRows, capabilities] =
       await Promise.all([
-        listBranches(project.repoPath),
+        listBranches(project.repoPath, { includeRemotes: true }),
         db.select().from(platformAcpRunners),
         db
           .select()

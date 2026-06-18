@@ -3,6 +3,7 @@ import type { ReactElement } from "react";
 
 import pino from "pino";
 
+import { RepoFetchButton } from "@/components/board/panels/repo-fetch-button";
 import { BranchSelect } from "@/components/workbench/branch-select";
 import {
   CodeView,
@@ -23,6 +24,9 @@ export interface RepoFilesLabels extends FileTreeLabels, CodeViewLabels {
   forbidden: string;
   selectPrompt: string;
   branchLabel: string;
+  fetchOrigin: string;
+  fetching: string;
+  fetchFailed: string;
 }
 
 export interface RepoFilesPanelProps {
@@ -34,6 +38,7 @@ export interface RepoFilesPanelProps {
   branches: string[];
   file: string | null;
   canReadRepoFiles: boolean;
+  canFetch: boolean;
   labels: RepoFilesLabels;
 }
 
@@ -55,6 +60,7 @@ export async function RepoFilesPanel({
   branches,
   file,
   canReadRepoFiles,
+  canFetch,
   labels,
 }: RepoFilesPanelProps): Promise<ReactElement> {
   if (!canReadRepoFiles) {
@@ -102,15 +108,25 @@ export async function RepoFilesPanel({
         <h2 className="font-sans text-[14px] font-bold tracking-[-0.01em] text-ink">
           {labels.title}
         </h2>
-        {branches.length > 0 ? (
-          <BranchSelect
-            key={currentRef}
-            branches={branches}
-            current={currentRef}
-            defaultBranch={mainBranch}
-            label={labels.branchLabel}
-          />
-        ) : null}
+        <div className="flex flex-wrap items-center gap-2">
+          {canFetch ? (
+            <RepoFetchButton
+              failedLabel={labels.fetchFailed}
+              label={labels.fetchOrigin}
+              pendingLabel={labels.fetching}
+              slug={slug}
+            />
+          ) : null}
+          {branches.length > 0 ? (
+            <BranchSelect
+              key={currentRef}
+              branches={branches}
+              current={currentRef}
+              defaultBranch={mainBranch}
+              label={labels.branchLabel}
+            />
+          ) : null}
+        </div>
       </header>
       {/* No fixed height/scroll: align-items:stretch makes both columns share
           the row height, so the file pane grows to match an expanding tree

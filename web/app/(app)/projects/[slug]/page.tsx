@@ -160,6 +160,9 @@ export default async function ProjectBoardPage({
     treeLabel: tWorkbench("files.treeLabel"),
     selectPrompt: tWorkbench("files.selectPrompt"),
     branchLabel: tWorkbench("files.branchLabel"),
+    fetchOrigin: tWorkbench("files.fetchOrigin"),
+    fetching: tWorkbench("files.fetching"),
+    fetchFailed: tWorkbench("files.fetchFailed"),
   };
 
   const [pageData, board, hitl, platformStatus, unreadInbox] =
@@ -180,7 +183,9 @@ export default async function ProjectBoardPage({
   // <select> has a matching value.
   const repoBranches =
     tab === "repo"
-      ? await listBranches(project.repoPath).catch(() => [project.mainBranch])
+      ? await listBranches(project.repoPath, { includeRemotes: true }).catch(
+          () => [project.mainBranch],
+        )
       : [];
   const requestedRef = one(rawRef);
   const currentRef =
@@ -398,6 +403,7 @@ export default async function ProjectBoardPage({
       {tab === "repo" ? (
         <RepoFilesPanel
           branches={branchOptions}
+          canFetch={isAdmin}
           canReadRepoFiles={canReadRepoFiles}
           currentRef={currentRef}
           file={file}
