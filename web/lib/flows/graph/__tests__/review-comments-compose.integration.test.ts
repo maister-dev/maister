@@ -1,4 +1,5 @@
 import type { ArtifactInstance, NodeAttempt, Run } from "@/lib/db/schema";
+import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
 
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -56,7 +57,10 @@ type Seeded = {
   runtimeRoot: string;
 };
 
-async function seedGraphRun(manifest: unknown): Promise<Seeded> {
+async function seedGraphRun(
+  manifest: unknown,
+  opts: { executionPolicy?: ExecutionPolicy } = {},
+): Promise<Seeded> {
   const projectId = randomUUID();
   const slug = `proj-${projectId.slice(0, 8)}`;
   const executorId = randomUUID();
@@ -103,6 +107,9 @@ async function seedGraphRun(manifest: unknown): Promise<Seeded> {
     runnerSnapshot: testRunnerSnapshot(executorId),
     flowVersion: "v1.0.0",
     status: "Running",
+    ...(opts.executionPolicy !== undefined
+      ? { executionPolicy: opts.executionPolicy }
+      : {}),
   });
   await db.insert(schema.workspaces).values({
     id: randomUUID(),
@@ -681,20 +688,25 @@ describe("runGraph — ADR-072 loop-exhaustion engine boundary (total visits = m
     expect(review2?.decision).toBe("approve");
   }, 60_000);
 
-  it("a rework consumed at the final visit (validate bypassed) dies at the FRESH visit-3 append — CONFIG backstop", async () => {
-    const seeded = await seedGraphRun(boundaryFlow);
+  it("an overrunning rework at the final visit with reworkExhaustion=fail → run Failed at the decision site (A.2)", async () => {
+    // boundaryFlow has maxLoops: 1. Under the explicit `fail` action the
+    // overrunning rework (gateAttempt 2 > maxLoops 1) is intercepted at the
+    // rework-decision site (A.2) and the run Fails — the pre-A.2 outcome, now
+    // policy-driven rather than the loop-top backstop (which remains as
+    // defense-in-depth). The overrun rework is NOT consumed into a Reworked
+    // attempt: the visit-2 row is marked Failed and no third review row starts.
+    const seeded = await seedGraphRun(boundaryFlow, {
+      executionPolicy: {
+        preset: "supervised",
+        overrides: { reworkExhaustion: "fail" },
+      },
+    });
 
     await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
     await writeDecision(seeded, "review", "rework");
     await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
     expect((await getRun(seeded.runId)).status).toBe("NeedsInput");
 
-    // A raw rework decision artifact at visit 2 — the legacy/bypass path the
-    // respond route's validate rule (NEEDS_INPUT 422) normally refuses. The
-    // engine still processes the decision on the reused visit-2 row (visit 2
-    // is legal), reworks, and the CONFIG backstop fires when traversal
-    // returns to START fresh visit 3 (beyond maxLoops + 1 total): run Failed,
-    // no third review row appended.
     await writeDecision(seeded, "review", "rework");
     await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
 
@@ -705,12 +717,7 @@ describe("runGraph — ADR-072 loop-exhaustion engine boundary (total visits = m
     );
 
     expect(reviewAttempts).toHaveLength(2);
-    // The bypassed rework WAS consumed (its visit was legal) — the overflow
-    // is caught at the next gate entry, exactly where the docs place the
-    // backstop.
-    expect(reviewAttempts.find((a) => a.attempt === 2)?.status).toBe(
-      "Reworked",
-    );
+    expect(reviewAttempts.find((a) => a.attempt === 2)?.status).toBe("Failed");
   }, 60_000);
 });
 

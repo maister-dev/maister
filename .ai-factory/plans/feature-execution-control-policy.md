@@ -128,7 +128,7 @@
 - **Test:** advisory check does not block promotion but the judge→rework loop
   still drives rework; skip omits the gate; review gates unaffected.
 
-### A.2 — Rework on-exhaustion (axis A1)
+### A.2 ✅ — Rework on-exhaustion (axis A1)
 - **Files:** the rework-cap enforcement path (`web/lib/flows/graph/ledger.ts`
   `markNodeReworked`, the transition/advance that counts rework against the
   flow's declared cap).

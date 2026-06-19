@@ -1,4 +1,5 @@
 import type { NodeAttempt, Run } from "@/lib/db/schema";
+import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
 
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -51,7 +52,10 @@ type Seeded = {
   runtimeRoot: string;
 };
 
-async function seedGraphRun(manifest: unknown): Promise<Seeded> {
+async function seedGraphRun(
+  manifest: unknown,
+  opts: { executionPolicy?: ExecutionPolicy } = {},
+): Promise<Seeded> {
   const projectId = randomUUID();
   const slug = `proj-${projectId.slice(0, 8)}`;
   const executorId = randomUUID();
@@ -98,6 +102,9 @@ async function seedGraphRun(manifest: unknown): Promise<Seeded> {
     runnerSnapshot: testRunnerSnapshot(executorId),
     flowVersion: "v1.0.0",
     status: "Running",
+    ...(opts.executionPolicy !== undefined
+      ? { executionPolicy: opts.executionPolicy }
+      : {}),
   });
   await db.insert(schema.workspaces).values({
     id: randomUUID(),
@@ -304,10 +311,18 @@ describe("runGraph — traversal + ledger", () => {
     expect(run.status).toBe("Review");
   });
 
-  it("maxLoops exhausted across multiple resumes → run Failed (Phase 5.6 / AC-3)", async () => {
-    // tightLoopFlow has maxLoops: 1 — one rework is allowed, the second
-    // exhausts the persisted-ledger bound and must fail the run.
-    const seeded = await seedGraphRun(tightLoopFlow);
+  // A.2 (axis A1): rework on-exhaustion. tightLoopFlow has maxLoops: 1 — one
+  // rework is allowed; the second rework decision overruns the bound. The
+  // run's execution-policy reworkExhaustion action decides what happens then.
+  it("rework exhausted with reworkExhaustion=fail → run Failed (A.2)", async () => {
+    // Explicit `fail` — the pre-A.2 outcome, now policy-driven at the rework
+    // decision site rather than the loop-top backstop.
+    const seeded = await seedGraphRun(tightLoopFlow, {
+      executionPolicy: {
+        preset: "supervised",
+        overrides: { reworkExhaustion: "fail" },
+      },
+    });
 
     // Pass 1: work → review (NeedsInput, attempt 1).
     await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
@@ -329,14 +344,80 @@ describe("runGraph — traversal + ledger", () => {
         ?.status,
     ).toBe("Reworked");
 
-    // Rework 2 (exceeds maxLoops: 1 — the persisted ledger already has 2
-    // review attempts; entering review again would be attempt 3 → fail).
+    // Rework 2 (overruns maxLoops: 1) → fail action → run Failed.
     await writeDecision(seeded, "review", "rework");
     await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
 
-    const finalRun = await getRun(seeded.runId);
+    expect((await getRun(seeded.runId)).status).toBe("Failed");
+  }, 60_000);
 
-    expect(finalRun.status).toBe("Failed");
+  it("rework exhausted with reworkExhaustion=escalate (default) → NeedsInput, no further loop (A.2)", async () => {
+    // Default supervised policy → escalate: the overrunning rework re-pauses
+    // the review for a human terminal decision instead of failing or looping.
+    const seeded = await seedGraphRun(tightLoopFlow, {
+      executionPolicy: { preset: "supervised" },
+    });
+
+    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+    await writeDecision(seeded, "review", "rework");
+    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+    expect((await getRun(seeded.runId)).status).toBe("NeedsInput");
+
+    // Second (overrunning) rework → escalate → NeedsInput, NOT Failed.
+    await writeDecision(seeded, "review", "rework");
+    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+
+    const run = await getRun(seeded.runId);
+
+    expect(run.status).toBe("NeedsInput");
+    expect(run.currentStepId).toBe("review");
+
+    // No jump-back happened: review stays at 2 attempts and work did not re-run
+    // a third time — the loop is held, not advanced.
+    const attempts = await getAttempts(seeded.runId);
+
+    expect(attempts.filter((a) => a.nodeId === "review")).toHaveLength(2);
+    expect(attempts.filter((a) => a.nodeId === "work")).toHaveLength(2);
+
+    // A fresh escalation HITL request exists so a human is asked to resolve.
+    const hitl = await db
+      .select()
+      .from(schema.hitlRequests)
+      .where(eq(schema.hitlRequests.runId, seeded.runId));
+
+    expect(hitl.length).toBeGreaterThanOrEqual(1);
+  }, 60_000);
+
+  it("rework exhausted with reworkExhaustion=ship_with_warning → ships forward to Review (A.2)", async () => {
+    // ship_with_warning takes the node's forward (approve) transition past the
+    // exhausted loop and records the warning on the attempt.
+    const seeded = await seedGraphRun(tightLoopFlow, {
+      executionPolicy: {
+        preset: "supervised",
+        overrides: { reworkExhaustion: "ship_with_warning" },
+      },
+    });
+
+    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+    await writeDecision(seeded, "review", "rework");
+    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+    expect((await getRun(seeded.runId)).status).toBe("NeedsInput");
+
+    // Second (overrunning) rework → ship_with_warning → forward to Review.
+    await writeDecision(seeded, "review", "rework");
+    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+
+    expect((await getRun(seeded.runId)).status).toBe("Review");
+
+    const review2 = (await getAttempts(seeded.runId)).find(
+      (a) => a.nodeId === "review" && a.attempt === 2,
+    );
+
+    expect(review2?.status).toBe("Succeeded");
+    expect(review2?.decision).toBe("approve");
+    expect(
+      (review2?.vars as Record<string, unknown>)?.execPolicyWarning,
+    ).toBeDefined();
   }, 60_000);
 
   it("injects the reviewer's comments into the rework target's context (commentsVar)", async () => {

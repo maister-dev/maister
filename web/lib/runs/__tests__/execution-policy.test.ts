@@ -11,6 +11,7 @@ import {
   isBlindShip,
   requiresLaunchUnattended,
   resolveExecutionPolicy,
+  reworkExhaustionFromSnapshot,
   type ExecutionPolicy,
 } from "@/lib/runs/execution-policy";
 
@@ -333,5 +334,51 @@ describe("checksFromSnapshot (run snapshot → check-strictness, fail-closed)", 
         overrides: { checks: "loose" },
       }),
     ).toBe("strict");
+  });
+});
+
+describe("reworkExhaustionFromSnapshot (run snapshot → rework action, fail-closed)", () => {
+  it("null / undefined snapshot → escalate (safe default)", () => {
+    expect(reworkExhaustionFromSnapshot(null)).toBe("escalate");
+    expect(reworkExhaustionFromSnapshot(undefined)).toBe("escalate");
+  });
+
+  it("every preset defaults rework exhaustion → escalate", () => {
+    expect(reworkExhaustionFromSnapshot({ preset: "supervised" })).toBe(
+      "escalate",
+    );
+    expect(reworkExhaustionFromSnapshot({ preset: "assisted" })).toBe(
+      "escalate",
+    );
+    expect(reworkExhaustionFromSnapshot({ preset: "unattended" })).toBe(
+      "escalate",
+    );
+  });
+
+  it("explicit fail / ship_with_warning overrides resolve through", () => {
+    expect(
+      reworkExhaustionFromSnapshot({
+        preset: "supervised",
+        overrides: { reworkExhaustion: "fail" },
+      }),
+    ).toBe("fail");
+    expect(
+      reworkExhaustionFromSnapshot({
+        preset: "unattended",
+        overrides: { reworkExhaustion: "ship_with_warning" },
+      }),
+    ).toBe("ship_with_warning");
+  });
+
+  it("malformed snapshots fail closed to escalate (never silently ship or fail)", () => {
+    expect(reworkExhaustionFromSnapshot({ preset: "bogus" })).toBe("escalate");
+    expect(reworkExhaustionFromSnapshot({})).toBe("escalate");
+    expect(reworkExhaustionFromSnapshot("fail")).toBe("escalate");
+    expect(
+      reworkExhaustionFromSnapshot({
+        preset: "supervised",
+        overrides: { reworkExhaustion: "abandon" },
+      }),
+    ).toBe("escalate");
   });
 });

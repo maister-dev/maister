@@ -116,6 +116,8 @@ import {
 } from "@/lib/review-comments/serialize";
 import { promoteNextPending } from "@/lib/scheduler";
 import { deliverRunIfAutoReady } from "@/lib/runs/auto-delivery";
+import { reworkExhaustionFromSnapshot } from "@/lib/runs/execution-policy";
+import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
 import {
   isMaisterError,
   MaisterError,
@@ -2291,6 +2293,148 @@ export async function runGraph(
           );
           break;
         }
+      }
+
+      // A.2 (axis A1): rework cap exhausted. The review wants rework again but
+      // the author's maxLoops is spent — apply the run's execution-policy action
+      // instead of looping. nodeAttemptNumber is the 1-based visit count of this
+      // review node (maxLoops reworks = visits 1..maxLoops+1), so deciding rework
+      // at visit > maxLoops is the overrun. Fail-closed default is `escalate`.
+      // The loop-top rework.maxLoops backstop stays as defense-in-depth.
+      if (
+        isRework &&
+        node.rework !== undefined &&
+        nodeAttemptNumber > node.rework.maxLoops
+      ) {
+        const action = reworkExhaustionFromSnapshot(
+          loaded.run.executionPolicy ?? null,
+        );
+
+        logExecPolicyAction({
+          runId,
+          kind: "rework_exhausted",
+          detail: {
+            nodeId: node.id,
+            action,
+            maxLoops: node.rework.maxLoops,
+            attempt: nodeAttemptNumber,
+          },
+        });
+        log2.info(
+          { runId, nodeId: node.id, attempts: nodeAttemptNumber, action },
+          "[rework.exhausted]",
+        );
+
+        if (action === "fail") {
+          // Mark the overrun attempt Failed + fail the run (same in-loop
+          // pattern as the evidence-readiness refusal above), rather than throw
+          // and leave the attempt dangling NeedsInput on a Failed run.
+          const msg = `node "${node.id}" exhausted rework.maxLoops (${node.rework.maxLoops}) for run ${runId} (execution-policy reworkExhaustion=fail)`;
+
+          await markNodeFailed(
+            nodeAttemptId,
+            { errorCode: "CONFIG", stdout: msg },
+            db,
+          );
+          failed = true;
+          runErrorCode = "CONFIG";
+          break;
+        }
+
+        if (action === "escalate") {
+          // Reuse the review HITL substrate: re-pause for a human to make the
+          // terminal call (approve or end the run). This visit's decision
+          // artifact was consumed on read, so runReviewHuman creates a fresh
+          // HITL request + assignment. The attempt row stays NeedsInput — a
+          // re-decided rework re-exhausts here, so only a non-rework decision
+          // moves the run forward.
+          logExecPolicyAction({
+            runId,
+            kind: "escalated",
+            detail: { nodeId: node.id, reason: "rework_exhausted" },
+          });
+          await runReviewHuman(
+            node,
+            loaded,
+            `Rework limit (${node.rework.maxLoops}) reached for "${node.id}". A human must approve or end the run.`,
+            { runtimeRoot, db, gateAttempt: nodeAttemptNumber },
+          );
+          await db.transaction(async (tx: Db) => {
+            await markNodeNeedsInput(nodeAttemptId, tx);
+            const flipped = await tx
+              .update(runs)
+              .set({ status: "NeedsInput", currentStepId: node.id })
+              .where(eq(runs.id, runId))
+              .returning({ projectId: runs.projectId });
+
+            if (flipped.length > 0) {
+              await emitWebhookEvent({
+                db: tx,
+                type: "run.needs_input",
+                projectId: flipped[0].projectId,
+                runId,
+                data: { reason: "human", nodeId: node.id },
+              });
+            }
+          });
+          needsInput = true;
+          log2.info(
+            { nodeId: node.id },
+            "rework exhausted → escalated to human (NeedsInput)",
+          );
+          break;
+        }
+
+        // ship_with_warning: ship past the loop on the node's forward
+        // (non-rework) transition — its `success`/approve edge — recording the
+        // warning on the attempt rather than jumping back or failing.
+        const reworkTargets = node.rework.allowedTargets;
+        const forwardOutcome =
+          "success" in node.transitions
+            ? "success"
+            : Object.keys(node.transitions).find(
+                (o) => !reworkTargets.includes(node.transitions[o]),
+              );
+
+        await markNodeSucceeded(
+          nodeAttemptId,
+          {
+            stdout: result.stdout,
+            vars: {
+              ...(result.vars as Record<string, unknown>),
+              execPolicyWarning: `shipped past rework cap (${node.rework.maxLoops}) without resolving the review`,
+            },
+            exitCode: result.exitCode,
+            decision: forwardOutcome,
+            acpSessionId: result.acpSessionId,
+          },
+          db,
+        );
+        if (materialized) {
+          await cleanupNodeMaterialization({
+            nodeAttemptId,
+            runId: loaded.run.id,
+            worktreePath,
+            db,
+          });
+        }
+
+        const next = forwardOutcome
+          ? resolveTransition(node, forwardOutcome)
+          : null;
+
+        log2.info(
+          {
+            from: node.id,
+            outcome: forwardOutcome ?? "(terminal)",
+            to: next ?? "(terminal)",
+            shipWithWarning: true,
+          },
+          "rework exhausted → ship_with_warning (forward transition)",
+        );
+        await safeProject();
+        currentNodeId = next;
+        continue;
       }
 
       if (isRework) {

@@ -263,3 +263,17 @@ export function checksFromSnapshot(snapshot: unknown): CheckStrictness {
 
   return parsed.success ? expandExecutionPolicy(parsed.data).checks : "strict";
 }
+
+// Resolve just the rework-exhaustion axis (A1) from a run's execution_policy
+// snapshot. Same fail-closed discipline as checksFromSnapshot: a null / absent /
+// malformed snapshot resolves to `escalate` (the safe default — pause for a
+// human rather than ship or fail on a corrupt policy).
+export function reworkExhaustionFromSnapshot(
+  snapshot: unknown,
+): ReworkExhaustionAction {
+  const parsed = executionPolicySchema.safeParse(snapshot);
+
+  return parsed.success
+    ? expandExecutionPolicy(parsed.data).reworkExhaustion
+    : "escalate";
+}
