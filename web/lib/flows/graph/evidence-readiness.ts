@@ -18,12 +18,11 @@ import {
   gateStatusContribution,
   liveBlockingGates,
 } from "@/lib/flows/graph/readiness-core";
+import { checksFromSnapshot } from "@/lib/runs/execution-policy";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { artifactInstances, gateResults } = schemaModule as unknown as Record<
-  string,
-  any
->;
+const { artifactInstances, gateResults, runs } =
+  schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
@@ -164,7 +163,18 @@ export async function assertEvidenceReady(
     ].map((a) => a.id),
   );
 
-  const blocking = liveBlockingGates(allGateRows, liveAttemptIds);
+  // Execution-policy check-strictness (axis A3): under advisory/skip, the
+  // non-review check gates no longer block promotion-readiness. Loaded from the
+  // run snapshot (fail-closed to strict on a null/malformed policy). The review
+  // gates (ai_judgment/human_review) are never relaxed.
+  const [runRow] = await d
+    .select({ executionPolicy: runs.executionPolicy })
+    .from(runs)
+    .where(eq(runs.id, runId))
+    .limit(1);
+  const checks = checksFromSnapshot(runRow?.executionPolicy ?? null);
+
+  const blocking = liveBlockingGates(allGateRows, liveAttemptIds, checks);
 
   for (const gate of blocking) {
     if (gate.kind === "artifact_required") {
@@ -241,7 +251,7 @@ export async function assertEvidenceReady(
   const ready = reasons.length === 0;
 
   log.info(
-    { runId, phase, ready, reasonCount: reasons.length },
+    { runId, phase, ready, reasonCount: reasons.length, checks },
     "evidence readiness verdict",
   );
 

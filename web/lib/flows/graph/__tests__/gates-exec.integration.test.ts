@@ -60,6 +60,7 @@ afterAll(async () => {
 
 async function seedGraphRun(
   manifest: unknown,
+  opts?: { executionPolicy?: unknown },
 ): Promise<{ runId: string; runtimeRoot: string }> {
   const projectId = randomUUID();
   const slug = `proj-${projectId.slice(0, 8)}`;
@@ -103,6 +104,9 @@ async function seedGraphRun(
     runnerSnapshot: testRunnerSnapshot(executorId),
     flowVersion: "v1.0.0",
     status: "Running",
+    ...(opts?.executionPolicy !== undefined
+      ? { executionPolicy: opts.executionPolicy }
+      : {}),
   });
   await db.insert(schema.workspaces).values({
     id: randomUUID(),
@@ -272,6 +276,81 @@ describe("gate execution", () => {
 });
 
 // T4.2: artifact_required gate execution
+describe("A.1 / axis A3: execution-policy check strictness (node-finish, e2e)", () => {
+  it("checks=advisory downgrades a BLOCKING command_check: it fails but the node still finishes (run Review)", async () => {
+    const seeded = await seedGraphRun(
+      oneNode([
+        {
+          id: "test",
+          kind: "command_check",
+          mode: "blocking",
+          command: "false",
+        },
+      ]),
+      {
+        executionPolicy: {
+          preset: "assisted",
+          overrides: { checks: "advisory" },
+        },
+      },
+    );
+
+    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+
+    expect((await getRun(seeded.runId)).status).toBe("Review");
+    const gates = await getGates(seeded.runId);
+
+    expect(gates).toHaveLength(1);
+    expect(gates[0].status).toBe("failed"); // ran + recorded, but did not block
+  });
+
+  it("checks=skip leaves a BLOCKING command_check unevaluated (recorded skipped, node finishes)", async () => {
+    const seeded = await seedGraphRun(
+      oneNode([
+        {
+          id: "test",
+          kind: "command_check",
+          mode: "blocking",
+          command: "false",
+        },
+      ]),
+      {
+        executionPolicy: {
+          preset: "supervised",
+          overrides: { checks: "skip" },
+        },
+      },
+    );
+
+    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+
+    expect((await getRun(seeded.runId)).status).toBe("Review");
+    const gates = await getGates(seeded.runId);
+
+    expect(gates).toHaveLength(1);
+    expect(gates[0].status).toBe("skipped"); // policy skip: not evaluated
+    expect((gates[0].verdict as { verdict: string }).verdict).toBe("skipped");
+  });
+
+  it("checks=strict (supervised default) still fails the run on a BLOCKING command_check failure (regression)", async () => {
+    const seeded = await seedGraphRun(
+      oneNode([
+        {
+          id: "test",
+          kind: "command_check",
+          mode: "blocking",
+          command: "false",
+        },
+      ]),
+      { executionPolicy: { preset: "supervised" } },
+    );
+
+    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+
+    expect((await getRun(seeded.runId)).status).toBe("Failed");
+  });
+});
+
 describe("T4.2: artifact_required gate (M12 typed artifacts)", () => {
   it("artifact_required with all inputArtifacts present → gate passed", async () => {
     const seeded = await seedGraphRun(

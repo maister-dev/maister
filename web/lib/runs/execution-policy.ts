@@ -253,3 +253,13 @@ export const executionPolicySchema = z
     overrides: executionPolicyOverridesSchema.optional(),
   })
   .strict();
+
+// Resolve just the check-strictness axis (A3) from a run's execution_policy
+// snapshot. The column is open jsonb (validated at launch, read back untyped),
+// so fail closed: a null / absent / malformed snapshot resolves to `strict` —
+// a corrupt policy can never silently relax the promotion checks.
+export function checksFromSnapshot(snapshot: unknown): CheckStrictness {
+  const parsed = executionPolicySchema.safeParse(snapshot);
+
+  return parsed.success ? expandExecutionPolicy(parsed.data).checks : "strict";
+}

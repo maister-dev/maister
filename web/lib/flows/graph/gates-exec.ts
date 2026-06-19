@@ -35,8 +35,17 @@ import {
   runDirPath,
   touchedPaths,
 } from "./mutation-check";
+import {
+  isEffectivelyBlockingGate,
+  isPolicySkippedGate,
+} from "./readiness-core";
 
 import * as schemaModule from "@/lib/db/schema";
+import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
+import {
+  checksFromSnapshot,
+  type CheckStrictness,
+} from "@/lib/runs/execution-policy";
 
 const log = pino({
   name: "flow-gates-exec",
@@ -241,6 +250,12 @@ export async function runNodeGates(
 ): Promise<GateRunResult> {
   let blockingFailedGateId: string | undefined;
 
+  // Execution-policy check-strictness (axis A3): advisory/skip relax the
+  // non-review check gates so a failed one no longer aborts the node finish.
+  // The judge→rework loop (ai_judgment/human_review) is never relaxed here.
+  // Fail-closed to strict on a null/malformed snapshot.
+  const checks = checksFromSnapshot(loaded.run.executionPolicy ?? null);
+
   for (const gate of node.gates) {
     const status = await runOneGate(
       gate,
@@ -249,6 +264,7 @@ export async function runNodeGates(
       loaded,
       context,
       ctx,
+      checks,
     );
 
     log.info(
@@ -263,11 +279,31 @@ export async function runNodeGates(
       "gate executed",
     );
 
-    if (
-      gate.mode === "blocking" &&
-      status === "failed" &&
-      !blockingFailedGateId
-    ) {
+    const effectiveBlocking = isEffectivelyBlockingGate(
+      checks,
+      gate.kind,
+      gate.mode,
+    );
+
+    // An author-`blocking` non-review check gate that policy relaxed is recorded
+    // for audit but does not block the node finish — surface it through the
+    // exec-policy audit boundary.
+    if (gate.mode === "blocking" && !effectiveBlocking) {
+      logExecPolicyAction({
+        runId: loaded.run.id,
+        kind: "check_downgraded",
+        detail: {
+          nodeId: node.id,
+          gateId: gate.id,
+          kind: gate.kind,
+          from: "blocking",
+          to: checks,
+          status,
+        },
+      });
+    }
+
+    if (effectiveBlocking && status === "failed" && !blockingFailedGateId) {
       blockingFailedGateId = gate.id;
       // Keep running the remaining gates so all verdicts are recorded for the
       // attempt, but the node will not finish (caller aborts).
@@ -284,6 +320,7 @@ async function runOneGate(
   loaded: LoadedRun,
   context: FlowContext,
   ctx: GateRunContext,
+  checks: CheckStrictness,
 ): Promise<"passed" | "failed" | "skipped" | "pending"> {
   const base = {
     runId: loaded.run.id,
@@ -298,6 +335,25 @@ async function runOneGate(
     staleFrom: gate.staleFrom,
     db: ctx.db,
   };
+
+  // Execution-policy check-strictness `skip` (axis A3): a non-review check gate
+  // is not evaluated. Record it `skipped` (never silently absent — same
+  // discipline as the human_review/default arms) so the evidence graph shows
+  // the policy decision.
+  if (isPolicySkippedGate(checks, gate.kind)) {
+    const { id } = await createGateResult({ ...base, status: "running" });
+
+    await markGateSkipped(
+      id,
+      {
+        verdict: "skipped",
+        reasons: ["execution policy checks=skip: gate not evaluated"],
+      },
+      ctx.db,
+    );
+
+    return "skipped";
+  }
 
   const common = {
     runtimeRoot: ctx.runtimeRoot,

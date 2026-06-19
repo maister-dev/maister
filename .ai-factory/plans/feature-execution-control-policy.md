@@ -114,7 +114,7 @@
 
 ## Phase A — Self-correction core (BUILD FIRST)
 
-### A.1 — Check strictness (axis A3)
+### A.1 ✅ — Check strictness (axis A3)
 - **Files:** `web/lib/flows/graph/gates-exec.ts` (blocking filter ~267, `gate.mode`),
   `web/lib/flows/graph/readiness-core.ts` (`blockingGateContribution`,
   `liveBlockingGates`).

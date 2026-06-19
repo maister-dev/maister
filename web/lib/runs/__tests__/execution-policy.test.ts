@@ -4,6 +4,7 @@ import { isMaisterError } from "@/lib/errors-core";
 import {
   assertNoBlindShip,
   blindShipLockedOptions,
+  checksFromSnapshot,
   defaultExecutionPolicy,
   executionPolicySchema,
   expandExecutionPolicy,
@@ -293,5 +294,44 @@ describe("executionPolicySchema (launch-body validation)", () => {
         overrides: { checks: "loose" },
       }),
     ).toThrow();
+  });
+});
+
+describe("checksFromSnapshot (run snapshot → check-strictness, fail-closed)", () => {
+  it("null / undefined snapshot → strict (pre-policy runs unchanged)", () => {
+    expect(checksFromSnapshot(null)).toBe("strict");
+    expect(checksFromSnapshot(undefined)).toBe("strict");
+  });
+
+  it("supervised and unattended presets both resolve checks → strict", () => {
+    expect(checksFromSnapshot({ preset: "supervised" })).toBe("strict");
+    expect(checksFromSnapshot({ preset: "unattended" })).toBe("strict");
+  });
+
+  it("an explicit advisory / skip override resolves through", () => {
+    expect(
+      checksFromSnapshot({
+        preset: "assisted",
+        overrides: { checks: "advisory" },
+      }),
+    ).toBe("advisory");
+    expect(
+      checksFromSnapshot({
+        preset: "supervised",
+        overrides: { checks: "skip" },
+      }),
+    ).toBe("skip");
+  });
+
+  it("malformed snapshots fail closed to strict (never silently relax)", () => {
+    expect(checksFromSnapshot({ preset: "bogus" })).toBe("strict");
+    expect(checksFromSnapshot({})).toBe("strict");
+    expect(checksFromSnapshot("advisory")).toBe("strict");
+    expect(
+      checksFromSnapshot({
+        preset: "supervised",
+        overrides: { checks: "loose" },
+      }),
+    ).toBe("strict");
   });
 });
