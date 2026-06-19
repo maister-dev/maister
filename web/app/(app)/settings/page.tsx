@@ -6,7 +6,6 @@ import { getTranslations } from "next-intl/server";
 import { getSessionUser } from "@/lib/authz";
 import { AcpRunnersPanel } from "@/components/settings/acp-runners-panel";
 import { AdapterSupportPanel } from "@/components/settings/adapter-support-panel";
-import { McpServersPanel } from "@/components/settings/mcp-servers-panel";
 import { RouterSidecarsPanel } from "@/components/settings/router-sidecars-panel";
 import { WebhooksPanel } from "@/components/settings/webhooks-panel";
 import { reconcilePlatformRunners } from "@/lib/acp-runners/native-defaults";
@@ -15,7 +14,6 @@ import { getAdapterSupport } from "@/lib/acp-runners/schema";
 import { getDb } from "@/lib/db/client";
 import {
   platformAcpRunners,
-  platformMcpServers,
   platformRouterSidecars,
   platformRuntimeSettings,
 } from "@/lib/db/schema";
@@ -143,7 +141,6 @@ export default async function SettingsPage(): Promise<ReactElement> {
                 processStateById={sidecarStateById}
                 sidecars={runtime.sidecars}
               />
-              <McpServersPanel servers={runtime.mcpServers} />
               <WebhooksPanel />
             </div>
           ) : null}
@@ -172,11 +169,10 @@ async function loadPlatformRuntimeView(
     diagnostics: diagnostics?.kind === "ready" ? diagnostics.diagnostics : null,
   });
 
-  const [runners, sidecars, settingsRows, mcpServers] = await Promise.all([
+  const [runners, sidecars, settingsRows] = await Promise.all([
     db.select().from(platformAcpRunners),
     db.select().from(platformRouterSidecars),
     db.select().from(platformRuntimeSettings),
-    db.select().from(platformMcpServers),
   ]);
 
   return {
@@ -185,6 +181,5 @@ async function loadPlatformRuntimeView(
     presets: platformRunnerPresetRows(),
     runners,
     sidecars,
-    mcpServers,
   };
 }

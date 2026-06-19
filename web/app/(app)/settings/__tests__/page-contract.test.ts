@@ -5,6 +5,14 @@ const getSessionUserMock = vi.hoisted(() => vi.fn());
 const getDbMock = vi.hoisted(() => vi.fn());
 const hostToolStatusMock = vi.hoisted(() => vi.fn());
 const checkSupervisorDiagnosticsMock = vi.hoisted(() => vi.fn());
+const mcpServersPanelMock = vi.hoisted(() => vi.fn(() => null));
+const selectedTables = vi.hoisted(() => [] as unknown[]);
+const schemaTables = vi.hoisted(() => ({
+  platformAcpRunners: { name: "platform_acp_runners" },
+  platformMcpServers: { name: "platform_mcp_servers" },
+  platformRouterSidecars: { name: "platform_router_sidecars" },
+  platformRuntimeSettings: { name: "platform_runtime_settings" },
+}));
 
 vi.mock("next-intl/server", () => ({
   getTranslations: async () => (key: string) => translate(key),
@@ -17,6 +25,8 @@ vi.mock("@/lib/authz", () => ({
 vi.mock("@/lib/db/client", () => ({
   getDb: getDbMock,
 }));
+
+vi.mock("@/lib/db/schema", () => schemaTables);
 
 vi.mock("@/lib/instance-config", () => ({
   hostToolStatus: hostToolStatusMock,
@@ -40,7 +50,7 @@ vi.mock("@/components/settings/adapter-support-panel", () => ({
   AdapterSupportPanel: () => null,
 }));
 vi.mock("@/components/settings/mcp-servers-panel", () => ({
-  McpServersPanel: () => null,
+  McpServersPanel: mcpServersPanelMock,
 }));
 vi.mock("@/components/settings/router-sidecars-panel", () => ({
   RouterSidecarsPanel: () => null,
@@ -58,10 +68,18 @@ describe("SettingsPage authorization contract", () => {
     getDbMock.mockReset();
     hostToolStatusMock.mockReset();
     checkSupervisorDiagnosticsMock.mockReset();
+    mcpServersPanelMock.mockClear();
+    selectedTables.length = 0;
     hostToolStatusMock.mockResolvedValue([]);
     checkSupervisorDiagnosticsMock.mockResolvedValue(null);
     getDbMock.mockReturnValue({
-      select: () => ({ from: () => Promise.resolve([]) }),
+      select: () => ({
+        from: (table: unknown) => {
+          selectedTables.push(table);
+
+          return Promise.resolve([]);
+        },
+      }),
     });
   });
 
@@ -92,6 +110,8 @@ describe("SettingsPage authorization contract", () => {
     expect(getDbMock).toHaveBeenCalled();
     expect(hostToolStatusMock).toHaveBeenCalled();
     expect(checkSupervisorDiagnosticsMock).toHaveBeenCalled();
+    expect(mcpServersPanelMock).not.toHaveBeenCalled();
+    expect(selectedTables).not.toContain(schemaTables.platformMcpServers);
   });
 });
 
