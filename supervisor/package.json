@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/main.ts",
-    "start": "tsx src/main.ts",
+    "dev": "tsx watch --env-file-if-exists=.env src/main.ts",
+    "start": "tsx --env-file-if-exists=.env src/main.ts",
     "smoke:acp": "tsx scripts/smoke-acp-adapter.ts",
     "lint": "eslint --fix",
     "typecheck": "tsc --noEmit",
