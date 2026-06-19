@@ -6,6 +6,7 @@ import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
 import { and, desc, eq } from "drizzle-orm";
+import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
@@ -16,7 +17,12 @@ import { runtimeRoot } from "@/lib/instance-config";
 import { interpretScratchUpdate } from "@/lib/scratch-runs/transcript";
 import { diffRunWorkspace, resolveBaseRef } from "@/lib/worktree";
 
-const { gateResults, nodeAttempts, projects, workspaces } = schema;
+const { gateResults, nodeAttempts, projects, stepRuns, workspaces } = schema;
+
+const log = pino({
+  name: "inbox-context",
+  level: process.env.LOG_LEVEL ?? "info",
+});
 
 // FIXME(any): getDb() returns a pg|sqlite drizzle union; narrow to pg. POC = Postgres.
 type Db = NodePgDatabase<typeof schema>;
@@ -128,7 +134,12 @@ async function loadLastAgentMessage(
     const st = await stat(eventsLogPath);
 
     return { text, at: st.mtime.toISOString() };
-  } catch {
+  } catch (err) {
+    log.warn(
+      { runId: run.id, err },
+      "[inbox-context] lastAgentMessage read failed",
+    );
+
     return null;
   }
 }
@@ -164,9 +175,34 @@ async function loadCurrentNodeGates(
       })
       .from(gateResults)
       .where(eq(gateResults.nodeAttemptId, attemptId));
-  } catch {
+  } catch (err) {
+    log.warn(
+      { runId: run.id, currentStepId: run.currentStepId, err },
+      "[inbox-context] gates read failed",
+    );
+
     return [];
   }
+}
+
+async function countSucceededNodes(client: Db, runId: string): Promise<number> {
+  const rows = await client
+    .select({ nodeId: nodeAttempts.nodeId })
+    .from(nodeAttempts)
+    .where(
+      and(eq(nodeAttempts.runId, runId), eq(nodeAttempts.status, "Succeeded")),
+    );
+
+  return new Set(rows.map((r) => r.nodeId)).size;
+}
+
+async function countSucceededSteps(client: Db, runId: string): Promise<number> {
+  const rows = await client
+    .select({ stepId: stepRuns.stepId })
+    .from(stepRuns)
+    .where(and(eq(stepRuns.runId, runId), eq(stepRuns.status, "Succeeded")));
+
+  return new Set(rows.map((r) => r.stepId)).size;
 }
 
 async function loadProgress(
@@ -184,19 +220,18 @@ async function loadProgress(
 
     if (total === 0) return null;
 
-    const doneRows = await client
-      .select({ nodeId: nodeAttempts.nodeId })
-      .from(nodeAttempts)
-      .where(
-        and(
-          eq(nodeAttempts.runId, run.id),
-          eq(nodeAttempts.status, "Succeeded"),
-        ),
-      );
-    const done = new Set(doneRows.map((r) => r.nodeId)).size;
+    // Graph (`nodes[]`) runs ledger progress in node_attempts; legacy linear
+    // (`steps[]`) runs record it in step_runs (runner.ts:184 dispatch). Counting
+    // only node_attempts would render every legacy run as 0/N.
+    const isLinear = Array.isArray(manifest.steps) && manifest.steps.length > 0;
+    const done = isLinear
+      ? await countSucceededSteps(client, run.id)
+      : await countSucceededNodes(client, run.id);
 
     return { done: Math.min(done, total), total };
-  } catch {
+  } catch (err) {
+    log.warn({ runId: run.id, err }, "[inbox-context] progress read failed");
+
     return null;
   }
 }
@@ -241,7 +276,9 @@ async function loadDiffSummary(
       additions: summary.files.reduce((sum, f) => sum + (f.additions ?? 0), 0),
       deletions: summary.files.reduce((sum, f) => sum + (f.deletions ?? 0), 0),
     };
-  } catch {
+  } catch (err) {
+    log.warn({ runId: run.id, err }, "[inbox-context] diff read failed");
+
     return null;
   }
 }

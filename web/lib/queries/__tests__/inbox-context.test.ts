@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import { extractLastAgentMessage } from "@/lib/queries/inbox-context";
 
-function ev(sessionUpdate: string, extra: Record<string, unknown> = {}): string {
+function ev(
+  sessionUpdate: string,
+  extra: Record<string, unknown> = {},
+): string {
   return JSON.stringify({
     type: "session.update",
     update: { sessionUpdate, ...extra },

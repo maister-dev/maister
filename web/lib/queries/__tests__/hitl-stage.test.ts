@@ -30,7 +30,12 @@ describe("resolveStages", () => {
     compileManifest.mockReturnValue(graphWith({ review: "human" }));
 
     const out = await resolveStages(fakeDb, [
-      { hitlRequestId: "h1", stepId: "review", flowRevisionId: "rev1", flowId: null },
+      {
+        hitlRequestId: "h1",
+        stepId: "review",
+        flowRevisionId: "rev1",
+        flowId: null,
+      },
     ]);
 
     expect(out.get("h1")).toEqual({ label: "review", type: "human" });
@@ -41,9 +46,24 @@ describe("resolveStages", () => {
     compileManifest.mockReturnValue(graphWith({ a: "ai_coding", b: "judge" }));
 
     const rows: StageInput[] = [
-      { hitlRequestId: "h1", stepId: "a", flowRevisionId: "rev1", flowId: null },
-      { hitlRequestId: "h2", stepId: "b", flowRevisionId: "rev1", flowId: null },
-      { hitlRequestId: "h3", stepId: "a", flowRevisionId: "rev2", flowId: null },
+      {
+        hitlRequestId: "h1",
+        stepId: "a",
+        flowRevisionId: "rev1",
+        flowId: null,
+      },
+      {
+        hitlRequestId: "h2",
+        stepId: "b",
+        flowRevisionId: "rev1",
+        flowId: null,
+      },
+      {
+        hitlRequestId: "h3",
+        stepId: "a",
+        flowRevisionId: "rev2",
+        flowId: null,
+      },
     ];
 
     await resolveStages(fakeDb, rows);
@@ -57,7 +77,12 @@ describe("resolveStages", () => {
     compileManifest.mockReturnValue(graphWith({ other: "cli" }));
 
     const out = await resolveStages(fakeDb, [
-      { hitlRequestId: "h1", stepId: "missing", flowRevisionId: "rev1", flowId: null },
+      {
+        hitlRequestId: "h1",
+        stepId: "missing",
+        flowRevisionId: "rev1",
+        flowId: null,
+      },
     ]);
 
     expect(out.get("h1")).toEqual({ label: "missing", type: null });
@@ -67,7 +92,12 @@ describe("resolveStages", () => {
     resolveManifest.mockResolvedValue(null);
 
     const out = await resolveStages(fakeDb, [
-      { hitlRequestId: "h1", stepId: "step1", flowRevisionId: null, flowId: null },
+      {
+        hitlRequestId: "h1",
+        stepId: "step1",
+        flowRevisionId: null,
+        flowId: null,
+      },
     ]);
 
     expect(out.get("h1")).toEqual({ label: "step1", type: null });

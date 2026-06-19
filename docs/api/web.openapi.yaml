@@ -3398,7 +3398,7 @@ paths:
   /api/runs/{runId}/inbox-context:
     get:
       tags: [runs]
-      summary: Designed (inbox card redesign) — lazy per-card decision context
+      summary: Implemented (inbox card redesign) — lazy per-card decision context
       description: |
         Read-only context for an expanded inbox HITL card: the last agent
         message, the current node attempt's gates, a diff summary, and stage

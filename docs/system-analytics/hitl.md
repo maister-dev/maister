@@ -462,11 +462,14 @@ run page. Access is RBAC-scoped: members see only their own projects;
 admins see all.
 
 **(WI-1 — Implemented)** A dedicated cross-project `/inbox` page is the primary
-working surface: it reuses the same `getCrossProjectHitlInbox` query and
-inline respond component (`HitlInboxBlock` + `InboxRespond`) plus the social
-inbox, while the portfolio home collapses both blocks into one compact "Needs
-you (N)" summary card that links to `/inbox`. The numeric badge follows the
-canonical `needsYou` formula owned by [`social-board.md`](social-board.md).
+working surface: it reuses the same `getCrossProjectHitlInbox` query and renders
+the project-grouped `HitlInboxList` of unified `HitlCard`s (respond controls
+reuse `components/board/run-hitl-response.tsx`) above the social inbox, while the
+portfolio home collapses both blocks into one compact "Needs you (N)" summary
+card that links to `/inbox`. The card's three disclosure tiers and lazy
+`inbox-context` load are detailed in the *Inbox card redesign* section below. The
+numeric badge follows the canonical `needsYou` formula owned by
+[`social-board.md`](social-board.md).
 
 ```mermaid
 sequenceDiagram
@@ -480,7 +483,7 @@ sequenceDiagram
     Q->>DB: SELECT hitl_requests JOIN assignments JOIN runs JOIN projects<br/>WHERE respondedAt IS NULL AND status IN (NeedsInput, NeedsInputIdle)<br/>AND (admin OR projectId IN member_projects)<br/>ORDER BY criticality DESC, created_at ASC
     DB-->>Q: HitlItem[] with schema, criticality, assignment state
     Q-->>H: HitlItem[]
-    H->>H: render InboxBlock with inline HitlDecisionControls per item
+    H->>H: render HitlInboxList of HitlCard (lazy inbox-context on expand)
     H->>H: render Needs-you badge = count(HitlItem[])
     U->>W: POST /api/runs/{runId}/hitl/{hitlRequestId}/respond (inline)
     W-->>H: onRespond callback triggers revalidation
