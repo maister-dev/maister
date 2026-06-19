@@ -7,6 +7,9 @@ import {
   checksFromSnapshot,
   crashRetryFromSnapshot,
   permissionsFromSnapshot,
+  humanGateFromSnapshot,
+  onStuckFromSnapshot,
+  resolveHumanGateDisposition,
   defaultExecutionPolicy,
   executionPolicySchema,
   expandExecutionPolicy,
@@ -453,5 +456,105 @@ describe("permissionsFromSnapshot (run snapshot → permission autonomy, fail-cl
         overrides: { permissions: "yolo" },
       }),
     ).toBe("ask");
+  });
+});
+
+describe("humanGateFromSnapshot / onStuckFromSnapshot (fail-closed)", () => {
+  it("humanGate: only unattended auto-passes; null/malformed → stop", () => {
+    expect(humanGateFromSnapshot({ preset: "supervised" })).toBe("stop");
+    expect(humanGateFromSnapshot({ preset: "assisted" })).toBe("stop");
+    expect(humanGateFromSnapshot({ preset: "unattended" })).toBe("auto_pass");
+    expect(humanGateFromSnapshot(null)).toBe("stop");
+    expect(humanGateFromSnapshot({ preset: "bogus" })).toBe("stop");
+  });
+
+  it("onStuck: every preset escalates; null/malformed → escalate", () => {
+    expect(onStuckFromSnapshot({ preset: "supervised" })).toBe("escalate");
+    expect(onStuckFromSnapshot({ preset: "unattended" })).toBe("escalate");
+    expect(
+      onStuckFromSnapshot({
+        preset: "unattended",
+        overrides: { onStuck: "notify_only" },
+      }),
+    ).toBe("notify_only");
+    expect(onStuckFromSnapshot(null)).toBe("escalate");
+    expect(onStuckFromSnapshot("notify_only")).toBe("escalate");
+  });
+});
+
+describe("resolveHumanGateDisposition (B2/B3 decision matrix)", () => {
+  it("humanGate=stop always pauses with an assignment (pre-B2 behavior)", () => {
+    expect(
+      resolveHumanGateDisposition({
+        humanGate: "stop",
+        onStuck: "escalate",
+        hasSafeDefault: true,
+        evidenceReady: true,
+      }),
+    ).toEqual({ action: "pause", assign: true });
+  });
+
+  it("auto_pass + machine review ready + safe default → auto_pass", () => {
+    expect(
+      resolveHumanGateDisposition({
+        humanGate: "auto_pass",
+        onStuck: "escalate",
+        hasSafeDefault: true,
+        evidenceReady: true,
+      }),
+    ).toEqual({ action: "auto_pass" });
+  });
+
+  it("auto_pass but review NOT ready → routes per onStuck (escalate = pause+assign)", () => {
+    expect(
+      resolveHumanGateDisposition({
+        humanGate: "auto_pass",
+        onStuck: "escalate",
+        hasSafeDefault: true,
+        evidenceReady: false,
+      }),
+    ).toEqual({ action: "pause", assign: true });
+  });
+
+  it("auto_pass + no safe default → never auto-passes; escalate-pauses by default", () => {
+    expect(
+      resolveHumanGateDisposition({
+        humanGate: "auto_pass",
+        onStuck: "escalate",
+        hasSafeDefault: false,
+        evidenceReady: true,
+      }),
+    ).toEqual({ action: "pause", assign: true });
+  });
+
+  it("onStuck=ship_with_warning ships forward only when a safe default exists", () => {
+    expect(
+      resolveHumanGateDisposition({
+        humanGate: "auto_pass",
+        onStuck: "ship_with_warning",
+        hasSafeDefault: true,
+        evidenceReady: false,
+      }),
+    ).toEqual({ action: "ship_with_warning" });
+    // No safe default to ship onto → fall back to escalate-pause.
+    expect(
+      resolveHumanGateDisposition({
+        humanGate: "auto_pass",
+        onStuck: "ship_with_warning",
+        hasSafeDefault: false,
+        evidenceReady: false,
+      }),
+    ).toEqual({ action: "pause", assign: true });
+  });
+
+  it("onStuck=notify_only pauses WITHOUT an assignment", () => {
+    expect(
+      resolveHumanGateDisposition({
+        humanGate: "auto_pass",
+        onStuck: "notify_only",
+        hasSafeDefault: true,
+        evidenceReady: false,
+      }),
+    ).toEqual({ action: "pause", assign: false });
   });
 });

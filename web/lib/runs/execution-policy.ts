@@ -299,3 +299,59 @@ export function permissionsFromSnapshot(snapshot: unknown): PermissionAutonomy {
     ? expandExecutionPolicy(parsed.data).permissions
     : "ask";
 }
+
+// Resolve just the human-gate axis (B2) from a run's execution_policy snapshot.
+// Fail closed: a null / absent / malformed snapshot resolves to `stop` — a
+// corrupt policy must NEVER silently auto-pass a human gate.
+export function humanGateFromSnapshot(snapshot: unknown): HumanGateAutonomy {
+  const parsed = executionPolicySchema.safeParse(snapshot);
+
+  return parsed.success ? expandExecutionPolicy(parsed.data).humanGate : "stop";
+}
+
+// Resolve just the on-stuck axis (B3) from a run's execution_policy snapshot.
+// Fail closed: a null / absent / malformed snapshot resolves to `escalate` —
+// a corrupt policy must NEVER silently ship or notify-without-escalating.
+export function onStuckFromSnapshot(snapshot: unknown): OnStuckAction {
+  const parsed = executionPolicySchema.safeParse(snapshot);
+
+  return parsed.success
+    ? expandExecutionPolicy(parsed.data).onStuck
+    : "escalate";
+}
+
+// B2/B3 decision matrix for a human gate (pure). The runner computes the policy
+// axes + whether the node has a safe-default (forward, non-rework) decision +
+// whether Group-A machine review passed (assertEvidenceReady), then dispatches:
+//  - `pause`     — the normal HITL pause; `assign:false` is B3 notify_only
+//                  (pause WITHOUT a human assignment — emit-and-don't-block).
+//  - `auto_pass` — B2: machine review passed → resolve the gate with the
+//                  safe-default decision, no human.
+//  - `ship_with_warning` — B3: ship forward on the safe-default + a warning.
+// `humanGate==="stop"` (supervised/assisted) always pauses with an assignment —
+// the pre-B2 behavior. Under `auto_pass`, a not-ready / no-safe-default gate is
+// "stuck" and routes per `onStuck` (default escalate ⇒ pause+assign).
+export type HumanGateDisposition =
+  | { action: "pause"; assign: boolean }
+  | { action: "auto_pass" }
+  | { action: "ship_with_warning" };
+
+export function resolveHumanGateDisposition(args: {
+  humanGate: HumanGateAutonomy;
+  onStuck: OnStuckAction;
+  hasSafeDefault: boolean;
+  evidenceReady: boolean;
+}): HumanGateDisposition {
+  if (args.humanGate !== "auto_pass") return { action: "pause", assign: true };
+
+  if (args.hasSafeDefault && args.evidenceReady) return { action: "auto_pass" };
+
+  // Stuck (machine review not ready, or no safe default) → route per onStuck.
+  if (args.onStuck === "ship_with_warning" && args.hasSafeDefault) {
+    return { action: "ship_with_warning" };
+  }
+  if (args.onStuck === "notify_only") return { action: "pause", assign: false };
+
+  // escalate (default), or ship_with_warning with no safe default to ship onto.
+  return { action: "pause", assign: true };
+}

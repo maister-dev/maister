@@ -265,7 +265,7 @@
     not depend on it); treat as a separate, low-priority cleanup unless a non-claude
     `dangerously_skip` runner is actually configured.
 
-### B.2 — Human-gate auto-pass (axis B2), gated on machine review
+### B.2 ✅ — Human-gate auto-pass (axis B2), gated on machine review
 - **Files:** `web/lib/flows/runner-human.ts` (~216), `gates-exec.ts` (`human_review` ~559).
 - **Do:** under `unattended`, auto-resolve `human` nodes / `human_review` gates
   with a recorded system decision — **only after Group-A machine review passed**;
@@ -301,7 +301,7 @@
     review-evidence set is green (conservative = safe). Not ready ⇒ do NOT auto-pass
     → route per B.3 `onStuck`.
 
-### B.3 — Escalation threshold (axis B3)
+### B.3 ✅ — Escalation threshold (axis B3)
 - **Files:** domain-events/webhooks (ADR-077), inbox / "Needs you".
 - **Do:** on-stuck routing `escalate | ship_with_warning | notify_only` (the last
   two subject to the guard).

@@ -10,6 +10,7 @@ export const DOMAIN_EVENT_KINDS = [
   "run.failed",
   "run.crashed",
   "run.abandoned",
+  "run.escalated",
   "gate.failed",
 ] as const;
 

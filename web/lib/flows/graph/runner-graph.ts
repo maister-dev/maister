@@ -117,7 +117,10 @@ import {
 import { promoteNextPending } from "@/lib/scheduler";
 import { deliverRunIfAutoReady } from "@/lib/runs/auto-delivery";
 import {
+  humanGateFromSnapshot,
+  onStuckFromSnapshot,
   permissionsFromSnapshot,
+  resolveHumanGateDisposition,
   reworkExhaustionFromSnapshot,
 } from "@/lib/runs/execution-policy";
 import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
@@ -203,6 +206,37 @@ async function tryReadInputArtifact(
   }
 }
 
+// B3 (execution-policy onStuck): emit the run.escalated signal — the domain
+// fact log (internal consumers / audit) + the outbound webhook (external
+// notify). Best-effort notification: run.escalated drives no idempotent state
+// transition, so it is not transactionally bound to the pause/ship write that
+// follows.
+async function emitRunEscalated(args: {
+  db: Db;
+  projectId: string;
+  runId: string;
+  taskId: string | null;
+  nodeId: string;
+  onStuck: "escalate" | "ship_with_warning" | "notify_only";
+}): Promise<void> {
+  await emitDomainEvent({
+    db: args.db,
+    kind: "run.escalated",
+    projectId: args.projectId,
+    runId: args.runId,
+    taskId: args.taskId,
+    actor: { type: "system", id: null },
+    payload: { runId: args.runId, nodeId: args.nodeId, onStuck: args.onStuck },
+  });
+  await emitWebhookEvent({
+    db: args.db,
+    type: "run.escalated",
+    projectId: args.projectId,
+    runId: args.runId,
+    data: { nodeId: args.nodeId, onStuck: args.onStuck },
+  });
+}
+
 // Human review node: on resume read the operator's decision from the input
 // artifact; on first visit create the review HITL (with the manifest-derived
 // allow-list in `schema`) and pause. Full decision validation + rework
@@ -253,6 +287,113 @@ export async function runReviewHuman(
       decision,
       workspacePolicy,
     };
+  }
+
+  // B2/B3 (execution-policy human-gate auto-pass + on-stuck routing): under the
+  // `unattended` preset (humanGate=auto_pass), resolve this human gate WITHOUT a
+  // human once Group-A machine review has passed (assertEvidenceReady). When it
+  // cannot auto-pass (review not ready, or no safe-default decision), route per
+  // the onStuck axis. Inert (the normal HITL pause) for supervised/assisted
+  // (humanGate=stop) — fail-closed on a null/malformed policy snapshot.
+  let assignHitl = true;
+  const humanGate = humanGateFromSnapshot(loaded.run.executionPolicy ?? null);
+
+  if (humanGate === "auto_pass") {
+    // Safe-default = the forward (non-rework) decision (mirrors A.2's rule).
+    const reworkTargets = node.rework?.allowedTargets ?? [];
+    const safeDefault = (node.finishHuman?.decisions ?? []).find(
+      (d) =>
+        node.transitions[d] !== undefined &&
+        !reworkTargets.includes(node.transitions[d]),
+    );
+    const evidenceReady =
+      safeDefault !== undefined
+        ? (await assertEvidenceReady(loaded.run.id, "review", ctx.db)).ready
+        : false;
+    const disposition = resolveHumanGateDisposition({
+      humanGate,
+      onStuck: onStuckFromSnapshot(loaded.run.executionPolicy ?? null),
+      hasSafeDefault: safeDefault !== undefined,
+      evidenceReady,
+    });
+
+    if (disposition.action === "auto_pass" && safeDefault !== undefined) {
+      logExecPolicyAction({
+        runId: loaded.run.id,
+        kind: "human_gate_auto_passed",
+        detail: { nodeId: node.id, decision: safeDefault },
+      });
+      log.info(
+        { runId: loaded.run.id, nodeId: node.id, decision: safeDefault },
+        "[human-gate.auto-pass] machine review ready → auto-resolved",
+      );
+
+      return {
+        ok: true,
+        stdout: "",
+        vars: {},
+        durationMs: Date.now() - startedAt,
+        needsInput: false,
+        decision: safeDefault,
+      };
+    }
+
+    if (
+      disposition.action === "ship_with_warning" &&
+      safeDefault !== undefined
+    ) {
+      logExecPolicyAction({
+        runId: loaded.run.id,
+        kind: "escalated",
+        detail: { nodeId: node.id, onStuck: "ship_with_warning" },
+      });
+      await emitRunEscalated({
+        db: ctx.db,
+        projectId: loaded.run.projectId,
+        runId: loaded.run.id,
+        taskId: loaded.run.taskId ?? null,
+        nodeId: node.id,
+        onStuck: "ship_with_warning",
+      });
+      log.info(
+        { runId: loaded.run.id, nodeId: node.id, decision: safeDefault },
+        "[on-stuck] ship_with_warning → forward past the human gate",
+      );
+
+      return {
+        ok: true,
+        stdout: "",
+        vars: {
+          execPolicyWarning:
+            "shipped past an unresolved human gate (machine review not ready)",
+        },
+        durationMs: Date.now() - startedAt,
+        needsInput: false,
+        decision: safeDefault,
+      };
+    }
+
+    // Pause route — escalate (assign a human) or notify_only (pause WITHOUT an
+    // assignment: emit the signal, don't actively route to "Needs you").
+    const notifyOnly =
+      disposition.action === "pause" && disposition.assign === false;
+
+    assignHitl = !notifyOnly;
+    const onStuck = notifyOnly ? "notify_only" : "escalate";
+
+    logExecPolicyAction({
+      runId: loaded.run.id,
+      kind: "escalated",
+      detail: { nodeId: node.id, onStuck },
+    });
+    await emitRunEscalated({
+      db: ctx.db,
+      projectId: loaded.run.projectId,
+      runId: loaded.run.id,
+      taskId: loaded.run.taskId ?? null,
+      nodeId: node.id,
+      onStuck,
+    });
   }
 
   // Server-state allow-list stored on the row at creation (Phase 5 validates
@@ -331,22 +472,28 @@ export async function runReviewHuman(
       { runId: loaded.run.id, nodeId: node.id, criticality: nodeCriticality },
       "criticality resolved at creation",
     );
-    await createHitlAssignmentForRun({
-      db: tx,
-      runId: loaded.run.id,
-      hitlRequestId,
-      nodeId: node.id,
-      actionKind: "human_review",
-      roleRefs,
-      title: prompt,
-    });
-    await emitWebhookEvent({
-      db: tx,
-      type: "hitl.requested",
-      projectId: loaded.run.projectId,
-      runId: loaded.run.id,
-      data: { hitlRequestId, kind: "human", nodeId: node.id },
-    });
+    // B3 notify_only (assignHitl=false): the HITL request row is still written
+    // so a response CAN resolve the run, but no assignment is created and no
+    // hitl.requested fires — the run pauses without routing to "Needs you" (the
+    // run.escalated signal already notified externally).
+    if (assignHitl) {
+      await createHitlAssignmentForRun({
+        db: tx,
+        runId: loaded.run.id,
+        hitlRequestId,
+        nodeId: node.id,
+        actionKind: "human_review",
+        roleRefs,
+        title: prompt,
+      });
+      await emitWebhookEvent({
+        db: tx,
+        type: "hitl.requested",
+        projectId: loaded.run.projectId,
+        runId: loaded.run.id,
+        data: { hitlRequestId, kind: "human", nodeId: node.id },
+      });
+    }
   };
 
   try {

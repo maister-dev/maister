@@ -29,9 +29,11 @@ borrows ([scheduler.md](scheduler.md)).
   consumer: `{ consumer_id (PK), cursor_event_id, lease_expires_at?,
   last_dispatched_at?, last_error?, consecutive_failures }`. Claim/advance
   mechanics below. See [db/domain-events.md](../db/domain-events.md).
-- **Kind taxonomy v1** (Implemented) — exactly 8 kinds:
+- **Kind taxonomy** (Implemented) — exactly 9 kinds:
   `task.created`, `task.comment_added`, `task.triage_requeued`, `run.done`,
-  `run.failed`, `run.crashed`, `run.abandoned`, `gate.failed`.
+  `run.failed`, `run.crashed`, `run.abandoned`, `run.escalated`, `gate.failed`.
+  `run.escalated` is the execution-policy B3 on-stuck signal (emitted when a
+  human gate cannot auto-pass; migration `0056`).
   `task.triage_requeued` was registered with no emitter; its emitter is the
   M34 "Send to triage" action (Implemented — `triage_status = NULL` + emit +
   `triage_requeued` activity in one transaction, ADR-089). Extension rule:

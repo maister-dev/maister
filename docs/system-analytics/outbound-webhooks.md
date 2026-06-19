@@ -189,7 +189,7 @@ never fanned out or retried.
 
 ## Event taxonomy v1
 
-Exactly 12 types, each mapped from a DB transition (never raw `session/update`).
+Exactly 13 types, each mapped from a DB transition (never raw `session/update`).
 Adding a type later = one taxonomy entry + one emit site + one doc row (additive,
 cheap). (All Implemented.)
 
@@ -197,6 +197,7 @@ cheap). (All Implemented.)
 | ---- | -------------- | ----------------------- |
 | `run.started` | `Pending → Running` (direct start and queue-promote) | `scheduler.ts` (`tryStartRun`, `promoteNextPending`) |
 | `run.needs_input` | `→ NeedsInput` (permission / form / human) | `flows/runner.ts`, `flows/runner-human.ts`, `flows/runner-agent.ts`, `flows/graph/runner-graph.ts`, `scratch-runs/events.ts` |
+| `run.escalated` | execution-policy B3 on-stuck (human gate can't auto-pass: `escalate` / `notify_only`) | `flows/graph/runner-graph.ts` (`emitRunEscalated`) |
 | `hitl.requested` | `hitl_requests` INSERT | `flows/runner-agent.ts`, `flows/runner-human.ts`, `flows/graph/runner-graph.ts` (persist writepoint), `scratch-runs/events.ts` |
 | `hitl.responded` | `hitl_requests.responded_at` write (incl. idle-resume + auto-deliver) | `services/hitl.ts` (permission / form / human review), `flows/runner-agent.ts` (auto-deliver), `runs/resume-driver.ts` (idle-resume) |
 | `run.review` | `Running → Review` (runner and workbench paths) | `flows/runner.ts`, `flows/graph/runner-graph.ts`, `workbench-lifecycle/service.ts` (stop / drop→Review), `runs/resume-driver.ts`, `scratch-runs/events.ts` |

@@ -65,7 +65,8 @@ async function seedGraphRun(
   const worktreePath = await mkdtemp(join(tmpdir(), "wt-"));
   const runtimeRoot = await mkdtemp(join(tmpdir(), "rt-"));
 
-  await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
+  await db.insert(schema.projects).values({
+    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug,
     name: "Test",
@@ -85,7 +86,8 @@ async function seedGraphRun(
     manifest,
     schemaVersion: 1,
   });
-  await db.insert(schema.tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
+  await db.insert(schema.tasks).values({
+    number: Math.trunc(Math.random() * 1e9) + 1,
     id: taskId,
     projectId,
     title: "t",
@@ -477,5 +479,132 @@ describe("runGraph — traversal + ledger", () => {
 
     expect(fix?.status).toBe("Succeeded");
     expect(fix?.stdout ?? "").toContain("rc:tighten-errors");
+  }, 60_000);
+});
+
+// B2/B3: human-gate auto-pass + on-stuck routing. reviewFlow has a forward
+// "approve" decision (safe default); noForwardFlow has only a rework decision,
+// so auto-pass can never fire → the can't-auto-pass routing (onStuck) is
+// exercised without an expensive evidence-not-ready fixture.
+const noForwardFlow = {
+  schemaVersion: 1,
+  name: "g",
+  compat: { engine_min: "1.1.0" },
+  nodes: [
+    {
+      id: "work",
+      type: "cli",
+      action: { command: "echo work" },
+      transitions: { success: "review" },
+    },
+    {
+      id: "review",
+      type: "human",
+      finish: { human: { decisions: ["redo"] } },
+      transitions: { redo: "work", approve: "done" },
+      rework: {
+        allowedTargets: ["work"],
+        workspacePolicies: ["keep"],
+        maxLoops: 3,
+      },
+    },
+  ],
+};
+
+async function hitlCount(runId: string): Promise<number> {
+  return (
+    await db
+      .select()
+      .from(schema.hitlRequests)
+      .where(eq(schema.hitlRequests.runId, runId))
+  ).length;
+}
+
+async function assignmentCount(runId: string): Promise<number> {
+  return (
+    await db
+      .select()
+      .from(schema.assignments)
+      .where(eq(schema.assignments.runId, runId))
+  ).length;
+}
+
+async function escalatedEventCount(runId: string): Promise<number> {
+  const rows = (await db
+    .select()
+    .from(schema.domainEvents)
+    .where(eq(schema.domainEvents.runId, runId))) as Array<{ kind: string }>;
+
+  return rows.filter((e) => e.kind === "run.escalated").length;
+}
+
+describe("runGraph — B2/B3 human-gate auto-pass + on-stuck routing", () => {
+  it("auto-passes a human gate with the forward decision when machine review is ready", async () => {
+    const seeded = await seedGraphRun(reviewFlow, {
+      executionPolicy: {
+        preset: "supervised",
+        overrides: { humanGate: "auto_pass" },
+      },
+    });
+
+    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+
+    // No blocking gates / required artifacts → evidence ready → auto-pass
+    // resolves "approve" and the run reaches Review with NO HITL.
+    expect((await getRun(seeded.runId)).status).toBe("Review");
+    expect(await hitlCount(seeded.runId)).toBe(0);
+
+    const review = (await getAttempts(seeded.runId)).find(
+      (a) => a.nodeId === "review",
+    );
+
+    expect(review?.status).toBe("Succeeded");
+    expect(review?.decision).toBe("approve");
+  }, 60_000);
+
+  it("supervised (humanGate=stop) still pauses for a human (regression)", async () => {
+    const seeded = await seedGraphRun(reviewFlow, {
+      executionPolicy: { preset: "supervised" },
+    });
+
+    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+
+    expect((await getRun(seeded.runId)).status).toBe("NeedsInput");
+    expect(await hitlCount(seeded.runId)).toBe(1);
+    expect(await escalatedEventCount(seeded.runId)).toBe(0);
+  }, 60_000);
+
+  it("auto_pass with no safe default → escalate: NeedsInput + assignment + run.escalated", async () => {
+    const seeded = await seedGraphRun(noForwardFlow, {
+      executionPolicy: {
+        preset: "supervised",
+        overrides: { humanGate: "auto_pass" },
+      },
+    });
+
+    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+
+    expect((await getRun(seeded.runId)).status).toBe("NeedsInput");
+    expect(await hitlCount(seeded.runId)).toBe(1);
+    expect(await assignmentCount(seeded.runId)).toBeGreaterThanOrEqual(1);
+    expect(await escalatedEventCount(seeded.runId)).toBe(1);
+  }, 60_000);
+
+  it("auto_pass + onStuck=notify_only → NeedsInput WITHOUT an assignment + run.escalated", async () => {
+    const seeded = await seedGraphRun(noForwardFlow, {
+      executionPolicy: {
+        preset: "supervised",
+        overrides: { humanGate: "auto_pass", onStuck: "notify_only" },
+      },
+    });
+
+    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+
+    expect((await getRun(seeded.runId)).status).toBe("NeedsInput");
+    // The HITL request still exists (a response CAN resolve it) but no human
+    // is assigned — notify-and-don't-block.
+    expect(await hitlCount(seeded.runId)).toBe(1);
+    expect(await assignmentCount(seeded.runId)).toBe(0);
+    expect(await escalatedEventCount(seeded.runId)).toBe(1);
   }, 60_000);
 });

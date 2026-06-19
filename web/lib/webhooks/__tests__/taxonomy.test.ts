@@ -24,6 +24,7 @@ import {
 const EXPECTED_TYPES = [
   "run.started",
   "run.needs_input",
+  "run.escalated",
   "hitl.requested",
   "hitl.responded",
   "run.review",
@@ -57,8 +58,8 @@ describe("WEBHOOK_API_VERSION", () => {
 });
 
 describe("WEBHOOK_EVENT_TYPES", () => {
-  it("has exactly the 12 listed types in order", () => {
-    expect(WEBHOOK_EVENT_TYPES).toHaveLength(12);
+  it("has exactly the 13 listed types in order", () => {
+    expect(WEBHOOK_EVENT_TYPES).toHaveLength(13);
     expect([...WEBHOOK_EVENT_TYPES]).toEqual([...EXPECTED_TYPES]);
   });
 
@@ -186,6 +187,10 @@ describe("buildEnvelopePayload — per-type data shapes pass through unchanged",
       data: { reason: "human_review", nodeId: "review" },
     },
     {
+      type: "run.escalated",
+      data: { nodeId: "review", onStuck: "escalate" },
+    },
+    {
       type: "hitl.requested",
       data: {
         hitlRequestId: "44444444-4444-4444-8444-444444444444",
@@ -223,7 +228,7 @@ describe("buildEnvelopePayload — per-type data shapes pass through unchanged",
     { type: "ping", data: { message: "MAIster webhook ping" } },
   ];
 
-  it("covers all 12 types in the table", () => {
+  it("covers all 13 types in the table", () => {
     expect(cases.map((c) => c.type)).toEqual([...EXPECTED_TYPES]);
   });
 

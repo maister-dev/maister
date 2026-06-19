@@ -9,6 +9,7 @@ export const WEBHOOK_API_VERSION = 1 as const;
 export const WEBHOOK_EVENT_TYPES = [
   "run.started",
   "run.needs_input",
+  "run.escalated",
   "hitl.requested",
   "hitl.responded",
   "run.review",

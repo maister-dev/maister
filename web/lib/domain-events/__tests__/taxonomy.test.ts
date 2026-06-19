@@ -6,7 +6,7 @@ import {
 } from "@/lib/domain-events/taxonomy";
 
 describe("domain-event taxonomy", () => {
-  it("contains exactly the 8 ADR-086 kinds", () => {
+  it("contains exactly the 9 taxonomy kinds (ADR-086 + B3 run.escalated)", () => {
     expect([...DOMAIN_EVENT_KINDS]).toEqual([
       "task.created",
       "task.comment_added",
@@ -15,6 +15,7 @@ describe("domain-event taxonomy", () => {
       "run.failed",
       "run.crashed",
       "run.abandoned",
+      "run.escalated",
       "gate.failed",
     ]);
   });
