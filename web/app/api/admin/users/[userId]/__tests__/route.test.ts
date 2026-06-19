@@ -108,6 +108,22 @@ describe("/api/admin/users/[userId]", () => {
       expect(response.status).toBe(403);
       expect(updateAdminUserMock).not.toHaveBeenCalled();
     });
+
+    it("runs the admin check before body validation (auth-first)", async () => {
+      requireGlobalRoleMock.mockRejectedValue(
+        new MaisterError("UNAUTHORIZED", "not an admin"),
+      );
+      const { PATCH } = await import("../route");
+
+      // An empty body WOULD 422 ("no fields to update") if it reached the
+      // schema; a non-admin must get 403 first, with no CONFIG/Zod detail.
+      const response = await PATCH(patchRequest({}), makeParams());
+      const body = await response.json();
+
+      expect(response.status).toBe(403);
+      expect(body.code).not.toBe("CONFIG");
+      expect(updateAdminUserMock).not.toHaveBeenCalled();
+    });
   });
 
   describe("DELETE", () => {

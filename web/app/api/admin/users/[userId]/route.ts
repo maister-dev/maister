@@ -87,23 +87,20 @@ export async function PATCH(
   { params }: RouteParams,
 ): Promise<NextResponse> {
   const { userId } = await params;
-  const body = await parseJson(req).catch((err) => errorResponse(err, userId));
-
-  if (body instanceof NextResponse) {
-    return body;
-  }
-
-  const parsed = bodySchema.safeParse(body);
-
-  if (!parsed.success) {
-    return errorResponse(
-      new MaisterError("CONFIG", `invalid PATCH body: ${parsed.error.message}`),
-      userId,
-    );
-  }
 
   try {
+    // Auth-first: the admin check precedes reading/validating the body, so a
+    // non-admin caller never receives a CONFIG/Zod schema oracle.
     const admin = await requireGlobalRole("admin");
+
+    const parsed = bodySchema.safeParse(await parseJson(req));
+
+    if (!parsed.success) {
+      throw new MaisterError(
+        "CONFIG",
+        `invalid PATCH body: ${parsed.error.message}`,
+      );
+    }
 
     await updateAdminUser({
       adminUserId: admin.id,

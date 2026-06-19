@@ -119,21 +119,21 @@ export async function PATCH(
   { params }: RouteParams,
 ): Promise<NextResponse> {
   const { sidecarId } = await params;
-  let body: z.infer<typeof patchBodySchema>;
 
   try {
-    body = patchBodySchema.parse(await req.json());
-  } catch (err) {
-    return errorResponse(
-      new MaisterError(
+    // Auth-first: the admin check precedes reading/validating the body.
+    await requireGlobalRole("admin");
+
+    let body: z.infer<typeof patchBodySchema>;
+
+    try {
+      body = patchBodySchema.parse(await req.json());
+    } catch (err) {
+      throw new MaisterError(
         "CONFIG",
         `invalid PATCH body: ${err instanceof Error ? err.message : String(err)}`,
-      ),
-    );
-  }
-
-  try {
-    await requireGlobalRole("admin");
+      );
+    }
 
     const db = getDb() as any;
     const rows = await db

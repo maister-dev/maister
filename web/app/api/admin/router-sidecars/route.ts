@@ -148,20 +148,20 @@ export async function GET(): Promise<NextResponse> {
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
-  const body = await parseJson(req).catch(errorResponse);
-
-  if (body instanceof NextResponse) return body;
-
-  const parsed = sidecarBodySchema.safeParse(body);
-
-  if (!parsed.success) {
-    return errorResponse(
-      new MaisterError("CONFIG", `invalid POST body: ${parsed.error.message}`),
-    );
-  }
-
   try {
+    // Auth-first: the admin check is the first awaited op, before the body is
+    // read or validated, so an unauthenticated caller never gets a CONFIG/Zod
+    // schema oracle on this admin-only surface.
     await requireGlobalRole("admin");
+
+    const parsed = sidecarBodySchema.safeParse(await parseJson(req));
+
+    if (!parsed.success) {
+      throw new MaisterError(
+        "CONFIG",
+        `invalid POST body: ${parsed.error.message}`,
+      );
+    }
 
     const db = getDb() as any;
     const diagnostics = await loadDiagnosticsForReadiness();

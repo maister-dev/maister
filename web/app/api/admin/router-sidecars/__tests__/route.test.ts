@@ -3,6 +3,8 @@ import type { NextRequest } from "next/server";
 import { getTableName } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { MaisterError } from "@/lib/errors";
+
 const mocks = vi.hoisted(() => ({
   checkSupervisorDiagnostics: vi.fn(),
   requireGlobalRole: vi.fn(),
@@ -290,5 +292,36 @@ describe("admin router sidecar API", () => {
     expect(state.tables.platform_router_sidecars[0].configPath).toBe(
       "~/.claude-code-router/config.json",
     );
+  });
+
+  it("POST runs the admin check before body validation (auth-first)", async () => {
+    mocks.requireGlobalRole.mockRejectedValue(
+      new MaisterError("UNAUTHORIZED", "requires admin"),
+    );
+
+    const { POST } = await import("../route");
+    // A body that WOULD 422 (raw token, not an env ref) if it reached the schema.
+    const res = await POST(request({ authTokenRef: "raw-token" }));
+    const body = (await res.json()) as { code?: string };
+
+    expect(res.status).toBe(403);
+    expect(body.code).not.toBe("CONFIG");
+    expect(state.inserts).toEqual([]);
+  });
+
+  it("PATCH runs the admin check before body validation (auth-first)", async () => {
+    mocks.requireGlobalRole.mockRejectedValue(
+      new MaisterError("UNAUTHORIZED", "requires admin"),
+    );
+
+    const { PATCH } = await import("../[sidecarId]/route");
+    // A configPath traversal that WOULD 422 if it reached the schema.
+    const res = await PATCH(request({ configPath: "../../etc/passwd" }), {
+      params: Promise.resolve({ sidecarId: "ccr-default" }),
+    });
+    const body = (await res.json()) as { code?: string };
+
+    expect(res.status).toBe(403);
+    expect(body.code).not.toBe("CONFIG");
   });
 });
