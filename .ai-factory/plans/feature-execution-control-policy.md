@@ -136,7 +136,43 @@
   default) · `ship_with_warning` (advisory-promote, subject to the guard) ·
   `fail`. Policy may lower the cap, never raise the author's ceiling.
 - **Log:** `INFO [rework.exhausted] { runId, nodeId, attempts, action }`.
-- **Test:** each action path; cap-lowering honored; author cap not raised.
+- **Test:** each action path; author cap not raised.
+- **Resolved (2026-06-19, owner):** (1) **cap-lowering DEFERRED** — `ExecutionPolicy`
+  carries no rework-cap number, only the action; implement only the on-exhaustion
+  ACTION and respect the author's `rework.maxLoops` as-is (a `reworkMaxLoops` field
+  would reopen Phase 0). The "cap-lowering honored" test is dropped (unmodeled).
+  (2) **`escalate` reuses the existing** human-review / `NeedsInput` HITL substrate —
+  no new escalation primitive. (3) **`ship_with_warning` = ship FORWARD past the
+  loops:** on exhaustion take the node's SUCCESS transition onward (imperfect-but-ship)
+  + record the warning, rather than jump-back or stop.
+- **Implementation map (mapped 2026-06-19, ready to build):**
+  - **Inject at the rework-decision site** `web/lib/flows/graph/runner-graph.ts:2296`
+    (`if (isRework) {`), NOT the cap backstop (~1440). In scope there: `outcome`,
+    `target`, `isRework`, `nodeAttemptNumber` (1-based review-node visit),
+    `node.rework.maxLoops`, `loaded.run.executionPolicy`, `node`, `db`, `runId`.
+  - **Exhaustion condition:** `isRework && node.rework && nodeAttemptNumber >
+    node.rework.maxLoops` — verify the off-by-one against the existing test
+    `runner-graph.integration.test.ts` (maxLoops=1: 1st rework allowed, 2nd
+    rework exhausts → today CONFIG/Failed via backstop). Resolve action via
+    `expandExecutionPolicy(loaded.run.executionPolicy).reworkExhaustion`
+    (add the import; runner-graph.ts has none yet).
+  - **`fail`:** throw the existing `CONFIG` (or fall through to the ~1440 backstop)
+    → run Failed. **`escalate` (DEFAULT for all presets):** reuse `runReviewHuman`'s
+    HITL creation (`hitl_requests` insert L315–324 + `createHitlAssignmentForRun`
+    L329–337 + needs-input artifact L271–279) → run `NeedsInput`. **`ship_with_warning`:**
+    skip the rework block, `markNodeSucceeded` + `resolveTransition` onto the node's
+    forward (success) path; record a warning artifact/event.
+  - **Audit/log:** `logExecPolicyAction({runId, kind:"rework_exhausted", detail:{nodeId,
+    action, maxLoops, attempt:nodeAttemptNumber}})` (+ `kind:"escalated"` on escalate);
+    `INFO [rework.exhausted]` per plan.
+  - **★ BEHAVIOR-CHANGE + TEST MIGRATION:** default `reworkExhaustion="escalate"`,
+    so the existing `runner-graph.integration.test.ts` "maxLoops exhaustion → Failed"
+    case now escalates → `NeedsInput`. Migrate that assertion (or seed it with
+    `overrides:{reworkExhaustion:"fail"}`) IN THIS task. Add 3 new cases (escalate /
+    ship_with_warning / fail) via `seedGraphRun(manifest, {executionPolicy})` +
+    `writeDecision` + `runFlow` (harness in `runner-graph.integration.test.ts`).
+  - **Status fan-out reminder (skill-context):** escalate adds a `NeedsInput`
+    transition from a new path — confirm HITL/inbox/board read models surface it.
 
 ### A.3 — Ralph-loop (axis A2) — build now, don't defer
 - **Files:** `web/lib/services/runs.ts` (run finalization / Failed→Backlog ~750),
