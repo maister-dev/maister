@@ -95,6 +95,10 @@ export type CreateSessionInput = {
   // write-class tool permission requests for the whole session. Used for
   // none/repo_read platform-agent runs.
   readOnlySession?: boolean;
+  // B1 (execution-policy permissions=auto_approve): the supervisor auto-selects
+  // the allow option for every permission request in this session (below the
+  // read-only layers). Derived from the run's execution_policy snapshot.
+  autoApprovePermissions?: boolean;
 };
 
 export type CreateSessionResult = {

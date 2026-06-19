@@ -306,6 +306,8 @@ export async function spawnSession(
     monotonicId: seedMonotonicId,
     // M34 (ADR-090 L1): session-scoped read-only permission arbitration.
     readOnlySession: request.readOnlySession === true,
+    // B1 (execution-policy permissions=auto_approve): inline L3 auto-approve.
+    autoApprovePermissions: request.autoApprovePermissions === true,
   };
 
   const emitter = new EventEmitter();

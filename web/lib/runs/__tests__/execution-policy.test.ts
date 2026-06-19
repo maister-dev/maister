@@ -6,6 +6,7 @@ import {
   blindShipLockedOptions,
   checksFromSnapshot,
   crashRetryFromSnapshot,
+  permissionsFromSnapshot,
   defaultExecutionPolicy,
   executionPolicySchema,
   expandExecutionPolicy,
@@ -415,5 +416,42 @@ describe("crashRetryFromSnapshot (run snapshot → crash-retry, fail-closed)", (
         overrides: { crashRetry: "loop_forever" },
       }),
     ).toBe("fail");
+  });
+});
+
+describe("permissionsFromSnapshot (run snapshot → permission autonomy, fail-closed)", () => {
+  it("null / undefined snapshot → ask (never auto-approve on a corrupt policy)", () => {
+    expect(permissionsFromSnapshot(null)).toBe("ask");
+    expect(permissionsFromSnapshot(undefined)).toBe("ask");
+  });
+
+  it("supervised asks; assisted and unattended auto-approve", () => {
+    expect(permissionsFromSnapshot({ preset: "supervised" })).toBe("ask");
+    expect(permissionsFromSnapshot({ preset: "assisted" })).toBe(
+      "auto_approve",
+    );
+    expect(permissionsFromSnapshot({ preset: "unattended" })).toBe(
+      "auto_approve",
+    );
+  });
+
+  it("an explicit permissions override resolves through", () => {
+    expect(
+      permissionsFromSnapshot({
+        preset: "supervised",
+        overrides: { permissions: "auto_approve" },
+      }),
+    ).toBe("auto_approve");
+  });
+
+  it("malformed snapshots fail closed to ask", () => {
+    expect(permissionsFromSnapshot({ preset: "bogus" })).toBe("ask");
+    expect(permissionsFromSnapshot("auto_approve")).toBe("ask");
+    expect(
+      permissionsFromSnapshot({
+        preset: "unattended",
+        overrides: { permissions: "yolo" },
+      }),
+    ).toBe("ask");
   });
 });

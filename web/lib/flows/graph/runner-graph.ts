@@ -116,7 +116,10 @@ import {
 } from "@/lib/review-comments/serialize";
 import { promoteNextPending } from "@/lib/scheduler";
 import { deliverRunIfAutoReady } from "@/lib/runs/auto-delivery";
-import { reworkExhaustionFromSnapshot } from "@/lib/runs/execution-policy";
+import {
+  permissionsFromSnapshot,
+  reworkExhaustionFromSnapshot,
+} from "@/lib/runs/execution-policy";
 import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
 import {
   isMaisterError,
@@ -602,6 +605,11 @@ async function executeNodeAction(
           ),
           mcpServers: ctx.mcpServers,
           profileDigest: ctx.profileDigest,
+          // B1 (execution-policy permissions=auto_approve): fail-closed to
+          // `ask`; threaded to the supervisor session for inline L3 auto-approve.
+          autoApprovePermissions:
+            permissionsFromSnapshot(loaded.run.executionPolicy ?? null) ===
+            "auto_approve",
         },
         ctx.supervisorApi,
       );

@@ -200,6 +200,11 @@ export const StartSessionRequestSchema = z
     // read-safe allow-list for the WHOLE session. Used for none/repo_read
     // platform-agent runs (headless: no HITL inbox exists for them).
     readOnlySession: z.boolean().optional(),
+    // B1 (execution-policy permissions=auto_approve): the requestPermission
+    // handler auto-selects the allow option for every request in this session
+    // (L3, below the read-only layers — read-only always wins). Resolved from
+    // the run's execution_policy snapshot at launch.
+    autoApprovePermissions: z.boolean().optional(),
   })
   .strict()
   .superRefine((value, ctx) => {
@@ -395,6 +400,10 @@ export type SessionRecord = {
   // request is decided inline (write-class denied, read-safe approved); no
   // pending-permission deferred is ever created.
   readOnlySession?: boolean;
+  // B1 (execution-policy permissions=auto_approve): auto-select the allow
+  // option for every permission request in this session, BELOW the read-only
+  // layers. Resolved from the run's execution_policy snapshot in spawn.ts.
+  autoApprovePermissions?: boolean;
 };
 
 export type PermissionOptionDescriptor = {

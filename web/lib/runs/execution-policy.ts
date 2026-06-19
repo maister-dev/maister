@@ -288,3 +288,14 @@ export function crashRetryFromSnapshot(snapshot: unknown): CrashRetryMode {
     ? expandExecutionPolicy(parsed.data).crashRetry
     : "fail";
 }
+
+// Resolve just the permission-autonomy axis (B1) from a run's execution_policy
+// snapshot. Fail closed: a null / absent / malformed snapshot resolves to `ask`
+// — a corrupt policy must NEVER silently auto-approve tool permissions.
+export function permissionsFromSnapshot(snapshot: unknown): PermissionAutonomy {
+  const parsed = executionPolicySchema.safeParse(snapshot);
+
+  return parsed.success
+    ? expandExecutionPolicy(parsed.data).permissions
+    : "ask";
+}

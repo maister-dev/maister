@@ -153,6 +153,21 @@ export function resolveReadOnlySessionDecision(
   };
 }
 
+// B1 (execution-policy permissions=auto_approve): pick the allow/proceed option
+// for inline auto-approval (L3, below the read-only layers). Mirrors the L1
+// allow-kind match; never selects a reject* option. Null when no allow-shaped
+// option exists — the caller then falls through to HITL rather than
+// blind-approve or cancel. Exported for the supervisor test suite.
+export function resolveAutoApproveOption(
+  options: ReadonlyArray<PermissionOptionDescriptor>,
+): PermissionOptionDescriptor | null {
+  return (
+    options.find((o) => o.kind === "allow_once") ??
+    options.find((o) => (o.kind ?? "").startsWith("allow")) ??
+    null
+  );
+}
+
 type AcpMethod = "initialize" | "newSession" | "resumeSession" | "prompt";
 
 function errorText(err: unknown): string {
@@ -353,6 +368,26 @@ export async function createAcpConnection(
         return {
           outcome: { outcome: "selected", optionId: autoReject.optionId },
         };
+      }
+
+      // B1 (execution-policy permissions=auto_approve, L3): a session launched
+      // with autoApprovePermissions auto-selects the allow option inline —
+      // BELOW the read-only layers (L1 session / L2 gate-chat turn always win
+      // above). No allow-shaped option → fall through to the HITL deferred
+      // (never blind-approve or cancel).
+      if (record.autoApprovePermissions === true) {
+        const autoApprove = resolveAutoApproveOption(options);
+
+        if (autoApprove) {
+          logger.info(
+            { sessionId, toolKind: tc.kind, optionId: autoApprove.optionId },
+            "[perm.auto] permission auto-approved (L3)",
+          );
+
+          return {
+            outcome: { outcome: "selected", optionId: autoApprove.optionId },
+          };
+        }
       }
 
       record.monotonicId += 1;

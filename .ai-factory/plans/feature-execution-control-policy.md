@@ -220,7 +220,7 @@
 > against the current tree). B.1 is fully specified (no open decisions). B.2 and
 > B.3 carry the **owner-decision callouts** below — resolve those before building.
 
-### B.1 — Permission auto-approve (axis B1), runner-agnostic
+### B.1 ✅ — Permission auto-approve (axis B1), runner-agnostic
 - **Files:** `supervisor/src/acp-client.ts` (`requestPermission` — add a 3rd
   inline arbitration **below** the ADR-090 L1 / ADR-078 L2 layers),
   `supervisor/src/types.ts` (+`autoApprovePermissions` on the session-create
