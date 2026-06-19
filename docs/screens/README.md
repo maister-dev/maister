@@ -112,7 +112,7 @@ flowchart TD
     Rail --> Portfolio["Portfolio /"]
     Rail --> Inbox["Inbox /inbox — needs-you HITL plus mentions"]
     Rail --> Flows["Flows /flows"]
-    Rail --> Agents["Agents /agents — planned, M34"]
+    Rail --> Agents["Agents /agents — admin"]
     Rail --> Mcps["MCPs /mcps — admin"]
 
     Rail --> Users["Users /admin/users — admin"]

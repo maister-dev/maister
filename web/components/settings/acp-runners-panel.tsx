@@ -3,6 +3,13 @@
 import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { ReactElement } from "react";
 
+import {
+  CheckCircleIcon,
+  NoSymbolIcon,
+  PencilSquareIcon,
+  TrashIcon,
+  XMarkIcon,
+} from "@heroicons/react/24/outline";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
@@ -106,6 +113,9 @@ export function AcpRunnersPanel({
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<RunnerRow | null>(null);
   const [usePresetId, setUsePresetId] = useState<string | null>(null);
+  const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(
+    null,
+  );
 
   const refresh = (): void => startTransition(() => router.refresh());
   const defaultRunner = runners.find(
@@ -142,6 +152,41 @@ export function AcpRunnersPanel({
     try {
       await patchJson(`/api/admin/acp-runners/${runnerId}`, { enabled });
       refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function deleteRunner(runnerId: string): Promise<void> {
+    setPending(runnerId);
+    setError(null);
+    try {
+      const res = await fetch(`/api/admin/acp-runners/${runnerId}`, {
+        method: "DELETE",
+      });
+
+      if (res.status === 204) {
+        setConfirmingDeleteId(null);
+        refresh();
+
+        return;
+      }
+
+      const payload = (await res.json().catch(() => null)) as {
+        code?: string;
+        message?: string;
+      } | null;
+
+      // The DELETE usage-guard returns 409 CONFLICT when the runner is still
+      // referenced (platform/project/flow default, active run, …) — surface the
+      // same explanation the edit-modal delete shows.
+      setError(
+        payload?.code === "CONFLICT"
+          ? `${t("deleteBlockedTitle")}: ${payload.message ?? t("deleteBlockedIntro")}`
+          : (payload?.message ?? `request failed: ${res.status}`),
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -248,28 +293,82 @@ export function AcpRunnersPanel({
                 <td className="px-4 py-3 text-ink-2">
                   {runner.enabled ? "✓" : "—"}
                 </td>
-                <td className="px-4 py-3 text-right">
-                  <div className="inline-flex items-center gap-2">
-                    <button
-                      className="h-8 rounded-[8px] border border-line px-3 text-[12px] font-semibold text-ink disabled:opacity-50"
-                      type="button"
-                      onClick={() => setEditing(runner)}
-                    >
-                      {t("editAction")}
-                    </button>
-                    <button
-                      className="h-8 rounded-[8px] border border-line px-3 text-[12px] font-semibold text-ink disabled:opacity-50"
-                      disabled={
-                        pending !== null ||
-                        (runner.id === defaultRunnerId && runner.enabled)
-                      }
-                      type="button"
-                      onClick={() =>
-                        void setRunnerEnabled(runner.id, !runner.enabled)
-                      }
-                    >
-                      {runner.enabled ? t("disable") : t("enable")}
-                    </button>
+                <td className="px-4 py-3">
+                  <div className="flex items-center justify-end gap-1.5">
+                    {confirmingDeleteId === runner.id ? (
+                      <>
+                        <button
+                          aria-label={t("deleteConfirm")}
+                          className="grid h-8 w-8 place-items-center rounded-[8px] border border-[#b5332b] bg-[#b5332b] text-white disabled:opacity-50"
+                          disabled={pending !== null}
+                          title={t("deleteConfirm")}
+                          type="button"
+                          onClick={() => void deleteRunner(runner.id)}
+                        >
+                          <TrashIcon aria-hidden="true" className="h-4 w-4" />
+                        </button>
+                        <button
+                          aria-label={t("cancel")}
+                          className="grid h-8 w-8 place-items-center rounded-[8px] border border-line text-mute hover:text-ink disabled:opacity-50"
+                          disabled={pending !== null}
+                          title={t("cancel")}
+                          type="button"
+                          onClick={() => setConfirmingDeleteId(null)}
+                        >
+                          <XMarkIcon aria-hidden="true" className="h-4 w-4" />
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          aria-label={t("editAction")}
+                          className="grid h-8 w-8 place-items-center rounded-[8px] border border-line text-ink hover:border-mute disabled:opacity-50"
+                          disabled={pending !== null}
+                          title={t("editAction")}
+                          type="button"
+                          onClick={() => setEditing(runner)}
+                        >
+                          <PencilSquareIcon
+                            aria-hidden="true"
+                            className="h-4 w-4"
+                          />
+                        </button>
+                        <button
+                          className="inline-flex h-8 items-center gap-1.5 rounded-[8px] border border-line px-2.5 text-[12px] font-semibold text-ink hover:border-mute disabled:opacity-50"
+                          disabled={
+                            pending !== null ||
+                            (runner.id === defaultRunnerId && runner.enabled)
+                          }
+                          type="button"
+                          onClick={() =>
+                            void setRunnerEnabled(runner.id, !runner.enabled)
+                          }
+                        >
+                          {runner.enabled ? (
+                            <NoSymbolIcon
+                              aria-hidden="true"
+                              className="h-4 w-4"
+                            />
+                          ) : (
+                            <CheckCircleIcon
+                              aria-hidden="true"
+                              className="h-4 w-4"
+                            />
+                          )}
+                          {runner.enabled ? t("disable") : t("enable")}
+                        </button>
+                        <button
+                          aria-label={t("deleteRunner")}
+                          className="grid h-8 w-8 place-items-center rounded-[8px] border border-[#b5332b]/40 text-[#b5332b] hover:border-[#b5332b] hover:bg-[#b5332b]/5 disabled:opacity-50"
+                          disabled={pending !== null}
+                          title={t("deleteRunner")}
+                          type="button"
+                          onClick={() => setConfirmingDeleteId(runner.id)}
+                        >
+                          <TrashIcon aria-hidden="true" className="h-4 w-4" />
+                        </button>
+                      </>
+                    )}
                   </div>
                 </td>
               </tr>

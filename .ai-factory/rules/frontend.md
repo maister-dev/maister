@@ -8,6 +8,7 @@
 
 - Default to React Server Components. Add `"use client"` only when the component uses state, effects, browser APIs, or HeroUI client components.
 - Use HeroUI v3 (`@heroui/react`) for every UI primitive (`Button`, `Card`, `Modal`, `Input`, `Navbar`). Do not add shadcn/ui, MUI, Chakra, Radix, or hand-rolled equivalents.
+- Prefer **icon buttons** (or icon + label) over text-only buttons for actions; icon-only controls MUST carry an `aria-label`/`title`. Use `@heroicons/react` (no hand-rolled SVGs for standard actions). Destructive actions (delete/remove) get a distinct icon + danger tone. Signal success with a green check glyph (red ✗ / amber warning for failure), not the word "Succeeded". Full rationale in `web/CLAUDE.md` → UI affordance conventions.
 - Style with Tailwind 4 utility classes. For variant-based class composition use `tailwind-variants` (`tv(...)`) mirroring `web/components/primitives.ts`. Use `clsx` only for ad-hoc class merging.
 - Default theme is `dark` (`<Providers themeProps={{ attribute: "class", defaultTheme: "dark" }}>` in `app/layout.tsx`). Toggle via `next-themes` `useTheme()`.
 - React component files: `kebab-case.tsx`. Named exports preferred for new components.

@@ -288,11 +288,10 @@ add`, supervisor `POST /sessions` — body carries `taskId` and optional
   all projects)
 
 Primary nav is the role-driven left rail (`components/chrome/left-rail.tsx`):
-**Projects** (`/`), **Inbox** (`/inbox`), **Flows** (`/flows`), **Agents**
-(`/agents`, M34 — disabled), plus an admin-only block (**MCPs** `/mcps`,
-**Users**, **Scheduler**, **Settings**). Supervisor status lives once in the
-footer status bar. The `config/site.ts` `navItems` are template leftovers, not
-the live nav.
+**Projects** (`/`), **Inbox** (`/inbox`), **Flows** (`/flows`), plus an
+admin-only block (**Agents** `/agents` (M34), **MCPs** `/mcps`, **Users**,
+**Scheduler**, **Settings**). Supervisor status lives once in the footer status
+bar. The `config/site.ts` `navItems` are template leftovers, not the live nav.
 
 Server-side modules (add as needed, names suggested — not yet present):
 
@@ -513,6 +512,30 @@ CRUD is admin-only and the page is reachable from the admin section of
 - **Cursor:** enabled `<button>`/`[role=button]` get `cursor: pointer`
   app-wide via the `@layer base` rule in `styles/globals.css` — don't add
   per-button `cursor-pointer`.
+
+### UI affordance conventions
+
+A visual affordance is read faster than a word — favour glyphs.
+
+- **Prefer icon buttons (or icon + label) over text-only buttons** for
+  actions. A recognizable glyph makes the action scannable; reach for an
+  icon-only control where space is tight (table/row actions, toolbars) and
+  icon + label where the action is rare or ambiguous. Icon-only controls
+  **MUST** carry an accessible name (`aria-label` or `title`); icon + label
+  keeps the visible text as the name. Use `@heroicons/react` (already the
+  rail/nav icon source) — do not hand-roll SVGs for standard actions.
+- **Destructive actions (delete / remove) use a distinct icon and tone** —
+  e.g. a trash glyph with a danger/rose colour — never the same neutral
+  treatment as Edit. A row's action cluster reads left-to-right
+  primary → secondary → destructive.
+- **Signal success with a green check glyph, not the word "Succeeded".**
+  Outcomes are status, and a green ✓ (or red ✗ / amber warning for
+  failure) is read at a glance; reserve a word only when the glyph alone is
+  genuinely ambiguous, and even then keep it short. This applies to inline
+  result indicators, toasts, and status cells (the readiness dot + the
+  Enabled `✓`/`—` cell already follow this).
+- HeroUI buttons and the app-wide `cursor: pointer` base rule (above) still
+  apply to every affordance, icon or not.
 
 ## HeroUI integration notes
 

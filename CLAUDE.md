@@ -484,6 +484,10 @@ consumers of it, see ADR-077.)
   for non-obvious WHY (invariants, workarounds, surprising constraints).
 - **Surgical changes**: every changed line traces to the request. Don't refactor
   adjacent code "while you're there".
+- **UI affordances**: prefer icon (or icon + label) buttons over text-only, and
+  show success as a green check glyph — not the word "Succeeded". Full rules in
+  `web/CLAUDE.md` → "UI affordance conventions" (mirrored in
+  `.ai-factory/rules/frontend.md`).
 
 ## ACP Spike Findings (Current Baseline)
 

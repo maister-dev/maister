@@ -64,6 +64,25 @@ describe("AcpRunnersPanel", () => {
     expect(markup).toContain("codex-openai");
   });
 
+  it("renders icon action buttons (edit, enable/disable, remove) with accessible labels", () => {
+    const markup = renderToStaticMarkup(
+      createElement(AcpRunnersPanel, {
+        defaultRunnerId: "claude-code",
+        presets: [],
+        sidecars: [],
+        runners: [codexRunner],
+      }),
+    );
+
+    // Row actions are icon buttons carrying the action as an accessible name.
+    expect(markup).toContain('aria-label="editAction"');
+    expect(markup).toContain('aria-label="deleteRunner"');
+    // codexRunner is enabled → the toggle offers the disable action.
+    expect(markup).toContain("disable");
+    // Glyphs, not text-only labels.
+    expect(markup).toContain("<svg");
+  });
+
   it("renders the provider presets as a collapsed reference list with Use buttons", () => {
     const preset = {
       id: "codex-zai-glm",

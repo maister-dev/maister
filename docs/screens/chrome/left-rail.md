@@ -19,8 +19,8 @@ launch — so I can navigate and start work without leaving the current screen.
 
 | Role | Sees | Notes |
 | --- | --- | --- |
-| Global viewer / member | Projects, Inbox, Studio nav; active workspaces; runners readiness; launch | `Agents` renders disabled ("coming soon"); `MCPs` / `Users` / `Scheduler` / `Settings` are hidden |
-| Global admin | All of the above plus `MCPs`, `Users`, `Scheduler`, `Settings` | Hidden nav is convenience only; `MCPs`/`Users`/`Scheduler` re-check `requireGlobalRole("admin")`, while `/settings` renders a forbidden panel and loads no admin data for non-admins |
+| Global viewer / member | Projects, Inbox, Studio nav; active workspaces; runners readiness; launch | `Agents` / `MCPs` / `Users` / `Scheduler` / `Settings` are hidden (admin-only) |
+| Global admin | All of the above plus `Agents`, `MCPs`, `Users`, `Scheduler`, `Settings` | Hidden nav is convenience only; `Agents`/`MCPs`/`Users`/`Scheduler` re-check `requireGlobalRole("admin")`, while `/settings` renders a forbidden panel and loads no admin data for non-admins |
 
 The hidden admin nav is never the authorization boundary — the route enforces it.
 
@@ -29,9 +29,10 @@ The hidden admin nav is never the authorization boundary — the route enforces 
 The rail is the primary navigation spine. Entry points / exits:
 
 - **Section nav** → `/` (portfolio), `/inbox` ([`../inbox.md`](../inbox.md)),
-  `/studio` ([`../studio/README.md`](../studio/README.md)), `/mcps`
-  ([`../mcps.md`](../mcps.md), admin), `/admin/users`, `/admin/scheduler`,
-  `/settings`. The active section is resolved from the current pathname, so
+  `/studio` ([`../studio/README.md`](../studio/README.md)), `/agents` (admin),
+  `/mcps` ([`../mcps.md`](../mcps.md), admin), `/admin/users`,
+  `/admin/scheduler`, `/settings`. The active section is resolved from the
+  current pathname, so
   `/settings` selects Settings, `/inbox` selects Inbox, and `/runs/*` /
   `/scratch-runs/*` stay under Projects.
 - **Active workspaces** → each row links to its run/workbench (`/runs/[id]`).
@@ -45,8 +46,8 @@ See [`../README.md`](../README.md) for the global IA map.
 
 Expanded mode, top to bottom:
 
-1. **Section nav** — Projects, Inbox (badge), Studio, Agents (disabled), then the
-   admin block (MCPs, Users, Scheduler, Settings). The Inbox badge shows the
+1. **Section nav** — Projects, Inbox (badge), Studio, then the admin block
+   (Agents, MCPs, Users, Scheduler, Settings). The Inbox badge shows the
    canonical `needsYou` count (WI-1; see [`../inbox.md`](../inbox.md)). Section
    icons come from `@heroicons/react`; Settings uses the gear icon and the
    collapsed/expanded states share the same route-derived active marker.
@@ -86,9 +87,9 @@ the async Server Component.
 
 Collapsed mode order:
 
-1. **Section icon stack** — Projects, Inbox (badge), Studio, Agents (disabled),
-   then the admin icons when allowed. These packaged icons are the same
-   destinations as expanded mode, not a separate compact menu.
+1. **Section icon stack** — Projects, Inbox (badge), Studio, then the admin
+   icons when allowed (Agents, MCPs, Users, Scheduler, Settings). These packaged
+   icons are the same destinations as expanded mode, not a separate compact menu.
 2. **Active workspaces flyout** — one icon opens the same per-project live-run
    groups documented in [`active-workspaces.md`](active-workspaces.md). The rail
    itself shows only the affordance and count, not duplicate narrow text rows.
