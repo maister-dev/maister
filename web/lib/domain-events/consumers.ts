@@ -5,6 +5,7 @@ import type { DomainEventRow } from "@/lib/db/schema";
 import pino from "pino";
 
 import { agentTriggersConsumer } from "@/lib/agents/triggers";
+import { ralphLoopConsumer } from "@/lib/runs/ralph-loop";
 
 const log = pino({
   name: "domain-events-noop",
@@ -49,4 +50,8 @@ export const noopConsumer: DomainEventConsumer = {
 export const DOMAIN_EVENT_CONSUMERS: DomainEventConsumer[] = [
   noopConsumer,
   agentTriggersConsumer,
+  // A.2/A1 (execution-policy axis A2): auto-relaunches a fresh attempt on
+  // run.failed when the failed run's snapshotted policy is ralph_loop, bounded
+  // by MAISTER_RALPH_MAX_ATTEMPTS. Idempotent via tasks.attempt_number.
+  ralphLoopConsumer,
 ];

@@ -277,3 +277,14 @@ export function reworkExhaustionFromSnapshot(
     ? expandExecutionPolicy(parsed.data).reworkExhaustion
     : "escalate";
 }
+
+// Resolve just the crash-retry axis (A2) from a run's execution_policy snapshot.
+// Fail closed: a null / absent / malformed snapshot resolves to `fail` — a
+// corrupt policy must NEVER silently auto-relaunch (ralph_loop) a failed run.
+export function crashRetryFromSnapshot(snapshot: unknown): CrashRetryMode {
+  const parsed = executionPolicySchema.safeParse(snapshot);
+
+  return parsed.success
+    ? expandExecutionPolicy(parsed.data).crashRetry
+    : "fail";
+}

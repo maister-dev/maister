@@ -5,6 +5,7 @@ import {
   assertNoBlindShip,
   blindShipLockedOptions,
   checksFromSnapshot,
+  crashRetryFromSnapshot,
   defaultExecutionPolicy,
   executionPolicySchema,
   expandExecutionPolicy,
@@ -380,5 +381,39 @@ describe("reworkExhaustionFromSnapshot (run snapshot → rework action, fail-clo
         overrides: { reworkExhaustion: "abandon" },
       }),
     ).toBe("escalate");
+  });
+});
+
+describe("crashRetryFromSnapshot (run snapshot → crash-retry, fail-closed)", () => {
+  it("null / undefined snapshot → fail (never auto-relaunch on a corrupt policy)", () => {
+    expect(crashRetryFromSnapshot(null)).toBe("fail");
+    expect(crashRetryFromSnapshot(undefined)).toBe("fail");
+  });
+
+  it("only unattended resolves crashRetry → ralph_loop", () => {
+    expect(crashRetryFromSnapshot({ preset: "supervised" })).toBe("fail");
+    expect(crashRetryFromSnapshot({ preset: "assisted" })).toBe("fail");
+    expect(crashRetryFromSnapshot({ preset: "unattended" })).toBe("ralph_loop");
+  });
+
+  it("an explicit crashRetry override resolves through", () => {
+    expect(
+      crashRetryFromSnapshot({
+        preset: "supervised",
+        overrides: { crashRetry: "ralph_loop" },
+      }),
+    ).toBe("ralph_loop");
+  });
+
+  it("malformed snapshots fail closed to fail (never silently relaunch)", () => {
+    expect(crashRetryFromSnapshot({ preset: "bogus" })).toBe("fail");
+    expect(crashRetryFromSnapshot({})).toBe("fail");
+    expect(crashRetryFromSnapshot("ralph_loop")).toBe("fail");
+    expect(
+      crashRetryFromSnapshot({
+        preset: "unattended",
+        overrides: { crashRetry: "loop_forever" },
+      }),
+    ).toBe("fail");
   });
 });

@@ -174,7 +174,7 @@
   - **Status fan-out reminder (skill-context):** escalate adds a `NeedsInput`
     transition from a new path — confirm HITL/inbox/board read models surface it.
 
-### A.3 — Ralph-loop (axis A2) — build now, don't defer
+### A.3 ✅ — Ralph-loop (axis A2) — build now, don't defer
 - **Files:** `web/lib/services/runs.ts` (run finalization / Failed→Backlog ~750),
   `web/lib/db/schema.ts` (`tasks.attemptNumber` ~1010 already exists).
 - **Do:** on a run reaching `Failed`, if A2 == `ralph_loop` and
@@ -188,6 +188,29 @@
 - **Log:** `INFO [ralph] { taskId, fromRunId, attempt, max, action }`.
 - **Test:** bounded relaunch count; stops at cap → Backlog hold; supervised → no
   relaunch (manual); concurrency cap respected.
+- **Resolved (2026-06-20, owner):** `maxAttempts` = **5** TOTAL attempts (original
+  launch + relaunches), env-overridable `MAISTER_RALPH_MAX_ATTEMPTS`; **backoff =
+  immediate** (smallest scope, no new scheduler job kind); only `unattended` gets
+  `ralph_loop` (already encoded in the preset table — `assisted`/`supervised` =
+  `fail`).
+- **As-built (deviates from the file pointer above):** implemented as a NEW
+  `run.failed` **domain-event consumer** (`web/lib/runs/ralph-loop.ts`, registered
+  in `DOMAIN_EVENT_CONSUMERS`) rather than inline finalization in `runs.ts` — the
+  owner-chosen mechanism. The consumer reads the FAILED run's snapshotted policy
+  (`crashRetryFromSnapshot`, fail-closed → `fail`), relaunches via the sanctioned
+  system entry `launchRun` (`{ actorUserId: null, authorize: async () => {} }`,
+  same as scheduler/run-schedule fires) carrying the run's `executionPolicy`
+  forward, and respects the global cap for free (launch always creates `Pending`).
+  **Idempotency without a migration:** `runs` has NO `attempt_number` and there is
+  NO `tasks.latest_run_id`, so the dedup/staleness key is **"the failed run is the
+  task's current latest flow run"** (max `started_at`, board.ts's rule). A relaunch
+  inserts a newer `Pending` run, so at-least-once redelivery (and any newer
+  in-flight attempt) is a no-op. The cap bounds on `tasks.attempt_number` (the
+  high-water mark = the latest attempt). `handle` never throws (a throw redelivers
+  the window forever — mirrors `agent_triggers`). Triggers on `run.failed` only,
+  flow runs only (`run_kind='flow'`, `taskId` present); `Crashed` keeps its own
+  Recover/discard UX. Worktree forensics preserved automatically (relaunch forks a
+  fresh worktree; the failed worktree persists until the 7d GC).
 
 ---
 
@@ -260,8 +283,10 @@
 
 ## Open numbers (resolve during implementation)
 
-- Ralph-loop `maxAttempts` + backoff; whether `assisted` also gets `ralph_loop`
-  (plan default: only `unattended`).
+- ✅ **Resolved (2026-06-20, A.3):** Ralph-loop `maxAttempts` = **5** total
+  (`MAISTER_RALPH_MAX_ATTEMPTS`); **backoff = immediate** (run.failed consumer, no
+  scheduler delay); only `unattended` gets `ralph_loop` (preset table). See A.3
+  as-built note above.
 
 ## Commit Plan (checkpoints every 3–5 tasks)
 

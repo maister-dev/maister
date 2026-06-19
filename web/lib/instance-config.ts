@@ -61,6 +61,7 @@ const DEFAULT_GC_WARNING_DAYS = 2;
 const DEFAULT_GC_SWEEP_INTERVAL_SECONDS = 3600;
 const DEFAULT_RECONCILE_SWEEP_INTERVAL_SECONDS = 60;
 const DEFAULT_RECONCILE_GRACE_SECONDS = 90;
+const DEFAULT_RALPH_MAX_ATTEMPTS = 5;
 const DEFAULT_PROMOTION_CLAIM_TIMEOUT_SECONDS = 300;
 
 // M18 Phase 2 (§3.2, Codex F1): a durable `claiming` promotion claim older than
@@ -75,6 +76,20 @@ export function promotionClaimTimeoutSeconds(): number {
   if (!Number.isFinite(parsed) || parsed < 1) {
     return DEFAULT_PROMOTION_CLAIM_TIMEOUT_SECONDS;
   }
+
+  return parsed;
+}
+
+// A.2/A1 ralph-loop (execution-policy axis A2): hard cap on TOTAL attempts per
+// task (the original launch + auto-relaunches) before the loop holds the task
+// in Backlog for a human. Env override, sane default, floor at 1.
+export function ralphMaxAttempts(): number {
+  const raw = process.env.MAISTER_RALPH_MAX_ATTEMPTS;
+
+  if (!raw) return DEFAULT_RALPH_MAX_ATTEMPTS;
+  const parsed = Number.parseInt(raw, 10);
+
+  if (!Number.isFinite(parsed) || parsed < 1) return DEFAULT_RALPH_MAX_ATTEMPTS;
 
   return parsed;
 }
