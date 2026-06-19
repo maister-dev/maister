@@ -214,7 +214,11 @@
 
 ---
 
-## Phase B — Human escalation (outline; build after A is trustworthy)
+## Phase B — Human escalation (build after A is trustworthy)
+
+> **Design mapped 2026-06-20** (3-agent code survey, injection points verified
+> against the current tree). B.1 is fully specified (no open decisions). B.2 and
+> B.3 carry the **owner-decision callouts** below — resolve those before building.
 
 ### B.1 — Permission auto-approve (axis B1), runner-agnostic
 - **Files:** `supervisor/src/acp-client.ts` (`requestPermission` — add a 3rd
@@ -229,6 +233,37 @@
 - **Log:** `INFO [perm.auto] { sessionId, toolKind, optionId }`.
 - **Test:** mock-adapter `requestPermission` auto-approves; read-only session/turn
   still wins; non-claude adapters no longer throw.
+- **★ Implementation map (verified 2026-06-20):**
+  - **Inject L3 at `supervisor/src/acp-client.ts`** inside `requestPermission`,
+    AFTER the L1 `resolveReadOnlySessionDecision` (read-only session) and L2
+    `resolveReadOnlyAutoReject` (read-only gate-chat turn) early-returns, and
+    BEFORE the `session.permission_request` SSE emit + `pendingPermissions.register`
+    deferred (~line 357). If `record.autoApprovePermissions`, call the new exported
+    `resolveAutoApproveOption(options)` and, on a hit, `return { outcome: {
+    outcome: "selected", optionId } }` — short-circuiting the HITL deferred. On NO
+    allow option, **fall through to HITL** (never blind-cancel).
+  - **`resolveAutoApproveOption(options)`** mirrors L1's allow-kind match (~line
+    139): pick the option whose `kind` starts with `allow` (e.g. `allow_once` /
+    `allow` / `allow_always`); never a `reject*` kind. `PermissionOptionDescriptor`
+    = `{ optionId, kind?, name? }`.
+  - **Contract field:** add `autoApprovePermissions?: boolean` to
+    `StartSessionRequestSchema` (after `readOnlySession`, ~202) + `SessionRecord`
+    (~397); assign onto the record in `supervisor/src/spawn.ts` where
+    `readOnlySession` is set. `http-api.ts` already threads the parsed body into
+    `spawnSession`.
+  - **Web side:** add the field to `CreateSessionInput` (`web/lib/supervisor-client.ts`
+    ~97; `createSession` already `JSON.stringify`s the input). Resolve
+    `expandExecutionPolicy(run.executionPolicy).permissions === "auto_approve"` and
+    set it on the `createInput` in `web/lib/flows/runner-agent.ts` (~700). **★ Thread
+    `executionPolicy`** from the `LoadedRun` in the runner down to `runAgentStep`'s
+    ctx (it is not carried today — extend `RunFlowOptions`/the agent step ctx; small
+    surgical change). Orthogonal to read-only: L1/L2 always win.
+  - **runner-provisioner throw:** the ~89-95 throw gates the claude-only
+    `--dangerously-skip-permissions` CLI flag — a DIFFERENT mechanism from
+    supervisor-layer auto-approve (which works for every adapter at the ACP handler
+    regardless of the flag). Dropping it is **optional for B.1** (auto-approve does
+    not depend on it); treat as a separate, low-priority cleanup unless a non-claude
+    `dangerously_skip` runner is actually configured.
 
 ### B.2 — Human-gate auto-pass (axis B2), gated on machine review
 - **Files:** `web/lib/flows/runner-human.ts` (~216), `gates-exec.ts` (`human_review` ~559).
@@ -237,12 +272,69 @@
   if the machine is stuck (A exhausted) or a node has no safe default, **escalate
   / fail closed**, never silently pass.
 - **Test:** auto-pass only post-machine-pass; fail-closed on no-default; stuck → escalate.
+- **★ Implementation map (verified 2026-06-20):**
+  - **Inject at the human-NODE pause** in `web/lib/flows/graph/runner-graph.ts`
+    `runReviewHuman` — the first-visit `needsInput: true` return (~386, the branch
+    AFTER the `existing` input-artifact resume check ~216). Under `humanGate ===
+    "auto_pass"` AND the machine-review precondition holds, SKIP the HITL creation
+    entirely (no `hitl_requests` row, no assignment, no `needs-input.json`) and
+    return a synthetic resolved result: `{ ok: true, needsInput: false, decision:
+    <safe-default> }`. The existing post-node path then `markNodeSucceeded({
+    decision, vars })` + transitions forward. (Skipping the HITL avoids a spurious
+    inbox entry; the audit is the `logExecPolicyAction({ kind:
+    "human_gate_auto_passed" })` line — that kind already exists in the audit
+    taxonomy — plus a `task_activity`/domain-event system-actor record.)
+  - **`human_review` GATES** (`gates-exec.ts` ~615) are already recorded `skipped`
+    (deferred to the node finish) and contribute `"blocked"` to readiness — they are
+    NOT a second auto-pass site; the human NODE is the only target.
+  - **Safe-default decision** = reuse A.2's forward-outcome rule: the decision in
+    `node.finishHuman.decisions` whose `node.transitions[decision]` is NOT in
+    `node.rework.allowedTargets` (the approve/forward branch). **No safe default**
+    (empty decisions, or every declared decision targets a rework node) ⇒ do NOT
+    auto-pass → route per B.3 onStuck (default escalate).
+  - **System actor:** `actorForUserId(null)` → `{ type: "system", id: null }`; the
+    decision persists via `markNodeSucceeded({ decision })` on the attempt.
+  - **✅ Resolved (2026-06-20, owner) — precondition = `assertEvidenceReady(runId,
+    "review", db).ready`.** The single established "machine evidence is ready"
+    contract (all live blocking gates passed + required artifacts current),
+    fail-closed. A mid-flow human node auto-passes only once the whole
+    review-evidence set is green (conservative = safe). Not ready ⇒ do NOT auto-pass
+    → route per B.3 `onStuck`.
 
 ### B.3 — Escalation threshold (axis B3)
 - **Files:** domain-events/webhooks (ADR-077), inbox / "Needs you".
 - **Do:** on-stuck routing `escalate | ship_with_warning | notify_only` (the last
   two subject to the guard).
 - **Test:** each route emits the right signal.
+- **★ Survey finding (2026-06-20):** `onStuck` is type-defined + preset-configured
+  (all presets `escalate`) + privilege-gated (`requiresLaunchUnattended` trips on
+  `onStuck !== "escalate"`), but has **no engine hook site today**. The only
+  concrete "stuck" the engine detects is **rework-cap exhaustion**, and A.2 already
+  routes that via its OWN `reworkExhaustion` axis (escalate/ship_with_warning/fail),
+  NOT `onStuck`. The other candidate stuck sites are either prevented by the
+  no-blind-ship guard or are exactly **B.2's "cannot auto-pass" branch**.
+- **✅ Resolved (2026-06-20, owner) — B.3 = the routing policy for B.2's
+  can't-auto-pass branch.** When `humanGate=auto_pass` but `assertEvidenceReady`
+  is NOT ready OR the node has no safe default, the engine routes per `onStuck`
+  instead of hard-coding escalate:
+  - `escalate` (default) → reuse `runReviewHuman` → `NeedsInput` (same substrate as
+    A.2's escalate); a human resolves.
+  - `ship_with_warning` → take the forward (non-rework) transition + record the
+    warning on the attempt (the no-blind-ship guard already forbids the dangerous
+    relaxed-checks + auto-ship combo, so this stays behind strict checks).
+  - `notify_only` → emit the escalation signal and leave the run in the
+    terminal/needs-input state it would otherwise reach, **without** creating a HITL
+    assignment ("don't block on a human, just tell someone").
+  - **Add a `run.escalated` event kind** to BOTH the webhook taxonomy
+    (`web/lib/webhooks/taxonomy.ts`) and the domain-event taxonomy
+    (`web/lib/domain-events/taxonomy.ts`) so `escalate` AND `notify_only` emit an
+    auditable signal (today escalate only emits `run.needs_input`). `notify_only`
+    fires `run.escalated` only; `escalate` fires both `run.escalated` +
+    `run.needs_input`.
+  - **NOT unified with A.2's `reworkExhaustion`** — A.2 shipped + tested with its own
+    axis; the two stay separate (rework-cap exhaustion = `reworkExhaustion`;
+    human-gate-can't-auto-pass = `onStuck`). Reassess only if a single axis is wanted
+    later.
 
 ---
 
