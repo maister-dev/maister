@@ -13,6 +13,8 @@ import { ObservatorySummary } from "@/components/observatory/observatory-summary
 import { SensorFiringCard } from "@/components/observatory/sensor-firing-card";
 import { getProjectRole, getSessionUser } from "@/lib/authz";
 import { parseObservatorySearchParams } from "@/lib/observatory/filters";
+import { reposRoot } from "@/lib/instance-config";
+import { formatProjectRepoPath } from "@/lib/project-path-display";
 import {
   getNodeObservatoryDetail,
   getProjectObservatory,
@@ -51,6 +53,7 @@ export default async function ProjectObservatoryPage({
 
   const t = await getTranslations("observatory");
   const labels = labelsFromTranslations(t);
+  const displayRepoPath = formatProjectRepoPath(project.repoPath, reposRoot());
   const { filters, current } = parseObservatorySearchParams(await searchParams);
   const [observatory, board] = await Promise.all([
     getProjectObservatory(project.id, filters),
@@ -70,7 +73,7 @@ export default async function ProjectObservatoryPage({
           {project.name} · {labels.projectTitle}
         </h1>
         <p className="mt-2 max-w-[60ch] text-sm leading-6 text-body">
-          {project.repoPath}
+          {displayRepoPath}
         </p>
       </header>
 

@@ -43,6 +43,8 @@ import {
 import { TaskActivityLog } from "@/components/board/panels/task-activity-log";
 import { getProjectAgentsView } from "@/lib/agents/project-links";
 import { DOMAIN_EVENT_KINDS } from "@/lib/domain-events/taxonomy";
+import { reposRoot } from "@/lib/instance-config";
+import { formatProjectRepoPath } from "@/lib/project-path-display";
 import { getProjectBySlug, getProjectPageData } from "@/lib/queries/project";
 import { listProjectMcps } from "@/lib/mcp/project-mcp-service";
 import { listProjectMembers } from "@/lib/project-members";
@@ -163,6 +165,7 @@ export default async function ProjectBoardPage({
   const tScratch = await getTranslations("scratch");
   const tWorkbench = await getTranslations("workbench");
   const tLog = await getTranslations("projectLog");
+  const displayRepoPath = formatProjectRepoPath(project.repoPath, reposRoot());
 
   const filesLabels = {
     title: tWorkbench("files.title"),
@@ -224,7 +227,7 @@ export default async function ProjectBoardPage({
         mainBranch={project.mainBranch}
         needsPersist={project.maisterYamlPath === null}
         projectName={project.name}
-        repoPath={project.repoPath}
+        repoPath={displayRepoPath}
         settingsHref={`/projects/${slug}?tab=settings`}
         slug={slug}
       />
@@ -247,7 +250,7 @@ export default async function ProjectBoardPage({
             </span>
           </div>
           <p className="mt-2 max-w-[56ch] text-sm leading-[1.5] text-body">
-            {project.repoPath}
+            {displayRepoPath}
           </p>
         </div>
 

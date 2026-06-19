@@ -22,9 +22,9 @@ export interface ConfigPersistBannerProps {
   needsPersist: boolean;
   canEdit: boolean;
   settingsHref: string;
-  // Optional context for the confirm step. Omitted on the home (the portfolio
-  // DTO never carries the raw repo path — owner 2026-06-17); present on the
-  // board where getProjectBySlug exposes the full row.
+  // Optional display context for the confirm step. Omitted on the home (the
+  // portfolio DTO never carries the raw repo path — owner 2026-06-17); present
+  // on the board with managed roots already redacted by the server page.
   mainBranch?: string;
   repoPath?: string;
 }
