@@ -224,6 +224,12 @@ never leaves a cut install behind. The tmp export dir is removed in a `finally`.
 - A cut MUST stamp `last_cut_install_id` only AFTER the install (and any attach)
   succeeds — the stamp is the durable "cut succeeded" marker, never written
   before the side-effect.
+- The MCP-template editor (M36 T2.5) sources its prefill from the platform MCP
+  catalog (`platform_mcp_servers`) and materializes a `mcps/*` template carrying
+  ONLY transport/command/args/url + `env:NAME` references — secret VALUES MUST
+  NEVER be read or written. MCP-template provenance is **display-only**: the
+  picked catalog server's id is NOT persisted on the template (no schema column,
+  no migration — T2.1 decision); re-opening the editor does not re-link it.
 - Local working-dir sources MUST resolve to `trusted_by_policy`; `setup.sh` MUST
   NOT run during install and MUST run only post-attach (ADR-021).
 - Deleting a `local_packages` row MUST remove its `working_dir`; orphaned dirs

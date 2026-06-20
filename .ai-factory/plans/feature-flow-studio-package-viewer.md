@@ -112,13 +112,13 @@ Agent bundles/subdirs (agents stay single-file); editable on-canvas node popup (
   Acceptance (spec §6.3): writes only under a live lock (else `CONFLICT`); path confined pre-fs; `working_dir` never client-exposed.
   Logging: DEBUG `[localPkg.files] {id, op, path}`; WARN on confinement reject.
 
-- [ ] **T2.4 — `/studio/local` + `/studio/edit/[id]/[[...path]]`.** (depends on T2.3)
+- [x] **T2.4 — `/studio/local` + `/studio/edit/[id]/[[...path]]`.** (depends on T2.3)
   `/studio/local` RSC list (owner's local packages, per-project default badge). `/studio/edit` mounts Phase B `FlowEditorTabs` via the injectable seam (`saveAction`/`publishAction`/`filesDrawer`) with a NEW working-dir save action (writes via T2.3, lock-guarded, no draft-version CAS). Lock acquire on open + `lock-refresh` keep-alive + read-only fallback. Wire the dead `rework` span (`package-detail.tsx`) → fork-to-local. NOTE the coexistence with the legacy `/flows/{slug}/{capId}` authored-flow editor (not removed by this plan). en + ru keys.
   Files: `web/app/(app)/studio/local/page.tsx`, `web/app/(app)/studio/edit/[id]/[[...path]]/page.tsx`, `web/components/studio/local-packages-list.tsx`, `web/components/flows/flow-editor-tabs.tsx` (seam already injectable), `messages/{en,ru}.json`.
   Acceptance: editor reads/writes the working dir; 2nd tab read-only; lock refresh extends; YAML drawer hidden by default (inherited); en/ru parity.
   Logging: DEBUG `[studio.edit] {id, path, lockHeld}`.
 
-- [ ] **T2.5 — Per-kind editors + MCP-template editor.** (depends on T2.4)
+- [x] **T2.5 — Per-kind editors + MCP-template editor.** (depends on T2.4)
   Wire existing `FrontmatterArtifactEditor` (skill/agent/rule), `ScriptArtifactEditor`, `FormSchemaBuilder` to working-dir files (the `PackageFilesEditor` tree already supports nested folders). NEW MCP-template editor sourcing a `platform_mcp_servers` row (transport/command/args/url/`envKeys`, `env:NAME` only) at the `ContentEditor` dispatch insertion point. RECON: packages today carry **self-contained** MCP templates with NO catalog reference — the catalog-pick + optional `platform_mcp_server_id` provenance is ADDITIVE and tentative; validate against a real `platform_mcp_servers` entry per the T2.1 decision.
   Files: `web/components/flows/package-files-editor.tsx` (ContentEditor MCP branch), new `web/components/flows/artifact-editors/mcp-template-editor.tsx`, query for `platform_mcp_servers`, `messages/{en,ru}.json`.
   Acceptance: each kind edits via its editor; MCP editor materializes a template with `env:NAME` refs only (no secret values); unknown frontmatter keys preserved byte-stable; en/ru parity.

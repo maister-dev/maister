@@ -236,6 +236,23 @@
       "triggerDomain_event": "Event",
       "triggerWebhook": "Webhook",
       "triggerFlow": "Flow"
+    },
+    "backToStudio": "Back to Studio",
+    "local": {
+      "newPackage": "New local package",
+      "newName": "New package name",
+      "newNamePlaceholder": "Package name",
+      "create": "Create",
+      "cancel": "Cancel",
+      "empty": "No local packages yet.",
+      "defaultBadge": "Project default",
+      "readOnlyHeld": "Locked by $holder — read-only.",
+      "readOnlyUnknownHolder": "Locked by another session — read-only.",
+      "lockLost": "Edit lock expired or was taken over by another session.",
+      "reload": "Reload",
+      "saving": "Saving…",
+      "saved": "Saved",
+      "saveFailed": "Save failed"
     }
   },
   "flows": {
@@ -2392,6 +2409,17 @@
         "clean": "No content issues.",
         "blockTitle": "Blocking content issues",
         "warnTitle": "Content warnings"
+      },
+      "mcp": {
+        "prefillHeading": "Prefill from catalog",
+        "prefillHint": "Pick a platform MCP server to materialize a template. Only env-var references are written — never secret values.",
+        "catalogLabel": "Catalog server",
+        "catalogPlaceholder": "Select a server…",
+        "catalogEmpty": "No platform MCP servers are registered.",
+        "apply": "Apply template",
+        "secretNotice": "Secrets are referenced by env:NAME only and resolved at run time.",
+        "rawHeading": "Template (YAML)",
+        "invalidNotice": "Template YAML does not parse."
       }
     }
   },

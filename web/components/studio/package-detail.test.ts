@@ -6,6 +6,10 @@ vi.mock("next-intl", () => ({
   useTranslations: () => (key: string) => key,
 }));
 
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
+}));
+
 import { PackageDetail } from "@/components/studio/package-detail";
 
 const pkg = {

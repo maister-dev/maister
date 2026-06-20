@@ -4,9 +4,11 @@ import type { ElementCardLabels } from "@/components/studio/element-card";
 import type { PackageTabDescriptor } from "@/components/studio/package-tabs";
 import type { PackageBom } from "@/lib/queries/packages";
 import type { PackageVersion } from "@/lib/studio/group-packages";
-import type { ReactNode } from "react";
+import type { ReactElement, ReactNode } from "react";
 
 import Link from "next/link";
+import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
 import { ElementCard } from "@/components/studio/element-card";
@@ -14,6 +16,7 @@ import {
   PACKAGE_TAB_PAGE_SIZE,
   PackageTabs,
 } from "@/components/studio/package-tabs";
+import { readApiError } from "@/lib/api-error";
 
 export type PackageDetailView = {
   name: string;
@@ -146,18 +149,10 @@ export function PackageDetail({
               {t("trust")}
             </Link>
           ) : null}
-          {/* Fork-to-local is wired in Phase 2 — rendered disabled with a hint.
-              Import (⤓) stays ABSENT here: installed packages are immutable. */}
-          {canManage ? (
-            <span
-              aria-disabled="true"
-              className="cursor-default rounded-[10px] border border-dashed border-line px-3 py-1.5 text-[12.5px] text-mute"
-              data-testid="package-fork-disabled"
-              title={t("reworkHint")}
-            >
-              {t("rework")}
-            </span>
-          ) : null}
+          {/* Fork-to-local (M36 T2.4): clones the package into a new local
+              package and opens the editor. Import (⤓) stays ABSENT here:
+              installed packages are immutable. */}
+          {canManage ? <ForkButton refName={pkg.name} /> : null}
         </div>
       </div>
 
@@ -202,6 +197,63 @@ export function PackageDetail({
         </ul>
       </section>
     </div>
+  );
+}
+
+// Forks an installed package into a fresh local package, then opens the editor.
+// The package `ref` is the package name (Phase A ref); fork resolution happens
+// server-side — no disk handle crosses the wire.
+function ForkButton({ refName }: { refName: string }): ReactElement {
+  const t = useTranslations("studio");
+  const tApiErrors = useTranslations("apiErrors");
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function fork(): Promise<void> {
+    setBusy(true);
+    setError(null);
+
+    try {
+      const res = await fetch(
+        `/api/studio/packages/${encodeURIComponent(refName)}/fork`,
+        { method: "POST" },
+      );
+
+      if (!res.ok) {
+        setError(await readApiError(res, tApiErrors));
+
+        return;
+      }
+
+      const result = (await res.json()) as { localPackageId: string };
+
+      router.push(`/studio/edit/${result.localPackageId}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <span className="inline-flex flex-col gap-1">
+      <button
+        className="rounded-[10px] border border-line bg-ivory px-3 py-1.5 text-[12.5px] font-semibold text-ink transition-colors hover:border-amber disabled:opacity-60"
+        data-testid="package-fork"
+        disabled={busy}
+        title={t("reworkHint")}
+        type="button"
+        onClick={() => void fork()}
+      >
+        {t("rework")}
+      </button>
+      {error ? (
+        <span className="font-mono text-[10.5px] text-danger" role="alert">
+          {error}
+        </span>
+      ) : null}
+    </span>
   );
 }
 
