@@ -316,6 +316,50 @@ async function runCount(taskId: string): Promise<number> {
   return r.rows[0].n;
 }
 
+// M36 (ADR-097): a child reaching Review under the orchestrator + its run.review
+// event. The RUN's launch_mode selects as-plan ('auto', auto-promoted by this
+// consumer) vs as-run ('manual', coordinator-driven — not auto-promoted).
+async function emitChildReview(args: {
+  parentRunId: string;
+  childTaskId: string;
+  launchMode: "auto" | "manual";
+}): Promise<DomainEventRow> {
+  const childRunId = randomUUID();
+
+  await pool.query(
+    `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id", "task_id",
+       "status", "flow_version", "flow_revision", "parent_run_id", "root_run_id", "runner_id", "launch_mode")
+     VALUES ($1, 'agent', $2, $3, $4, 'Review', 'agent', 'manual', $5, $5, $6, $7)`,
+    [
+      childRunId,
+      workerAgentId,
+      projectId,
+      args.childTaskId,
+      args.parentRunId,
+      executorId,
+      args.launchMode,
+    ],
+  );
+
+  await emitDomainEvent({
+    db,
+    kind: "run.review",
+    projectId,
+    taskId: args.childTaskId,
+    runId: childRunId,
+    actor: { type: "agent", id: workerAgentId },
+    parentRunId: args.parentRunId,
+    payload: { runKind: "agent", agentId: workerAgentId, status: "Review" },
+  });
+
+  const rows = (await db
+    .select()
+    .from(schema.domainEvents)
+    .where(eq(schema.domainEvents.runId, childRunId))) as DomainEventRow[];
+
+  return rows[0];
+}
+
 describe("auto_launch_run_plan consumer", () => {
   it("(5) launches a dependent once its blocker completes; redelivery is idempotent", async () => {
     const { parentRunId, orchTaskId } = await seedOrchestrator();
@@ -477,5 +521,63 @@ describe("auto_launch_run_plan consumer", () => {
 
     // B not launched — the event carried no orchestrator parent.
     expect(await runCount(taskB)).toBe(0);
+  });
+
+  // M36 (ADR-097): an as-plan (launch_mode='auto') child reaching Review is
+  // auto-promoted (system actor) so the auto-DAG flows without a live coordinator.
+  it("(8) an as-plan child reaching Review is auto-promoted (ADR-097)", async () => {
+    const { parentRunId, orchTaskId } = await seedOrchestrator();
+    const taskA = await seedAsPlanTask({ orchTaskId, title: "A" });
+    const event = await emitChildReview({
+      parentRunId,
+      childTaskId: taskA,
+      launchMode: "auto",
+    });
+
+    const promoteCalls: Array<{ childRunId: string; actorKind: string }> = [];
+    const consumer = buildAutoLaunchRunPlanConsumer({
+      db,
+      promote: async (childRunId, opts) => {
+        promoteCalls.push({ childRunId, actorKind: opts.actor.kind });
+
+        return {
+          ok: true,
+          mode: "local_merge",
+          pullRequestUrl: null,
+        } as never;
+      },
+    });
+
+    await consumer.handle([event]);
+
+    expect(promoteCalls).toHaveLength(1);
+    expect(promoteCalls[0].childRunId).toBe(event.runId);
+    expect(promoteCalls[0].actorKind).toBe("system");
+  });
+
+  // A MANUAL (as-run) child reaching Review is the live coordinator's to promote
+  // via run_promote — the auto-launcher must NOT auto-promote it.
+  it("a manual (as-run) child reaching Review is NOT auto-promoted", async () => {
+    const { parentRunId, orchTaskId } = await seedOrchestrator();
+    const taskA = await seedAsPlanTask({ orchTaskId, title: "A" });
+    const event = await emitChildReview({
+      parentRunId,
+      childTaskId: taskA,
+      launchMode: "manual",
+    });
+
+    const promoteCalls: string[] = [];
+    const consumer = buildAutoLaunchRunPlanConsumer({
+      db,
+      promote: async (childRunId) => {
+        promoteCalls.push(childRunId);
+
+        return { ok: true } as never;
+      },
+    });
+
+    await consumer.handle([event]);
+
+    expect(promoteCalls).toEqual([]);
   });
 });

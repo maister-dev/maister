@@ -586,9 +586,12 @@ paths:
           application/json:
             schema: { $ref: "#/components/schemas/ExtRunDelegateBody" }
       responses:
-        "200":
+        "202":
           description: |
-            Child unit created. `childTaskId` is present only for `mode = "task"`.
+            Child unit created (the run row is committed; the supervisor
+            `POST /sessions` happens after commit, so the child may still be
+            `Pending` when this returns). `childTaskId` is present only for
+            `mode = "task"`.
           content:
             application/json:
               schema:
@@ -668,7 +671,7 @@ paths:
           application/json:
             schema: { $ref: "#/components/schemas/ExtRunPlanBody" }
       responses:
-        "200":
+        "202":
           description: |
             DAG written. One result row per submitted task `key`; `childRunId` is
             present only for tasks that were immediately launchable.
@@ -711,9 +714,9 @@ paths:
       tags: [runs]
       summary: (M36 — Implemented) Collect terminal results of orchestrator children
       description: |
-        (M36 — Implemented, ADR-095.) Scope `runs:read`. Returns terminal-result
-        summaries for the calling orchestrator's children. Backs the
-        `run_collect` delegation tool. Reads each child's `RunDTO` projection plus
+        (M36 — Implemented, ADR-095.) Scope `runs:collect`. Returns
+        terminal-result summaries for the calling orchestrator's children. Backs
+        the `run_collect` delegation tool. Reads each child's `RunDTO` projection plus
         its produced-artifact manifest (`artifact_instances`) and the base→run
         diff ref — NEVER the child worktree directly, matching the
         reviewer-isolation contract.
@@ -725,7 +728,7 @@ paths:
         child of the calling orchestrator is returned. Exactly one of
         `childRunId` / `all` MUST be supplied.
 
-        Writes a `token_audit_log` row with scope `runs:read` after success.
+        Writes a `token_audit_log` row with scope `runs:collect` after success.
       operationId: extCollectRuns
       security:
         - projectToken: []
@@ -756,7 +759,7 @@ paths:
       tags: [runs]
       summary: (M36 — Implemented) Cancel an orchestrator child run
       description: |
-        (M36 — Implemented, ADR-095.) Scope `runs:delegate`. Cancels one child run
+        (M36 — Implemented, ADR-095.) Scope `runs:cancel`. Cancels one child run
         of the calling orchestrator. Backs the `run_cancel` delegation tool.
 
         **Identifiers (trust contour).** The `projectId` and the parent `runId`
@@ -766,7 +769,7 @@ paths:
         the session-auth surface; the returned `status` is the child's row state
         after the cancel was applied.
 
-        Writes a `token_audit_log` row with scope `runs:delegate` after success.
+        Writes a `token_audit_log` row with scope `runs:cancel` after success.
       operationId: extCancelRun
       security:
         - projectToken: []
@@ -792,6 +795,221 @@ paths:
                     description: |
                       The child's run status after the cancel was applied (e.g.
                       `Abandoned`). A run-status string per the run state machine.
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /api/v1/ext/runs/message:
+    post:
+      tags: [runs]
+      summary: (M36 — Implemented) Re-message a persistent swarm child
+      description: |
+        (M36 — Implemented, ADR-096.) Scope `runs:delegate`. Sends a follow-up
+        prompt to a PERSISTENT addressable child in the calling orchestrator's
+        run-tree. Backs the `run_message` delegation tool. If the child is parked
+        between turns it is respawned and resumed with prior context
+        (`session/resume`); if it is live the prompt is delivered to the running
+        session. The child re-parks on its next `end_turn`.
+
+        **Identifiers (trust contour).** The `projectId` and the **caller**
+        `runId` are derived SERVER-SIDE from the orchestrator's `agent:<id>`
+        token — NEVER body fields. The target is resolved by `addressableKey` OR
+        `childRunId` (exactly one required) and is SCOPED to the caller's own
+        tree (`root_run_id`) — a persistent child in another tree is invisible
+        (resolved to `PRECONDITION` → 409). The target MUST be a persistent
+        agent child; a non-persistent or non-agent target → `PRECONDITION` → 409.
+
+        Writes a `token_audit_log` row with scope `runs:delegate` after success.
+      operationId: extMessageRun
+      security:
+        - projectToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [prompt]
+              description: |
+                Exactly one of `addressableKey` / `childRunId` MUST be supplied.
+              properties:
+                addressableKey:
+                  type: string
+                  minLength: 1
+                  maxLength: 128
+                  pattern: "^[A-Za-z0-9._-]+$"
+                  description: |
+                    The persistent child's stable key, unique within the caller's
+                    orchestrator tree.
+                childRunId:
+                  type: string
+                  format: uuid
+                  description: The persistent child's run id, in the caller's tree.
+                prompt:
+                  type: string
+                  minLength: 1
+                  description: Free-text follow-up prompt delivered to the child.
+      responses:
+        "200":
+          description: Message delivered; the child's row state is returned.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [childRunId, status]
+                properties:
+                  childRunId:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                    description: The child's run status after delivery (e.g. `Running`).
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /api/v1/ext/runs/promote:
+    post:
+      tags: [runs]
+      summary: (M36 — Implemented) Promote a reviewed delegated child to Done
+      description: |
+        (M36 — Implemented, ADR-097.) Scope `runs:promote` — held ONLY by the
+        orchestrator's run-bound token (a child agent token does not), so a
+        child→child promote is a 403 by scope. Merges a reviewed child's branch
+        into its target and flips the child `Done`. Backs the `run_promote`
+        delegation tool.
+
+        **Identifiers (trust contour).** The `projectId` and the **parent**
+        `runId` are derived SERVER-SIDE from the run-bound orchestrator token —
+        NEVER body fields. `childRunId` MUST be a direct child of the bound
+        orchestrator, in the token's project, and currently in `Review`
+        (otherwise `PRECONDITION` → 409). A merge CONFLICT returns `CONFLICT` →
+        409 and leaves the child in `Review` for a human to resolve — the
+        orchestrator NEVER auto-resolves (§8).
+
+        Writes a `token_audit_log` row with scope `runs:promote` after success.
+      operationId: extPromoteRun
+      security:
+        - projectToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [childRunId]
+              properties:
+                childRunId:
+                  type: string
+                  format: uuid
+                  description: The reviewed child run to promote.
+      responses:
+        "200":
+          description: Child merged to its target; the child is now `Done`.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [childRunId, status]
+                properties:
+                  childRunId:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                    enum: [Done]
+                  commit:
+                    type: string
+                    description: |
+                      The merge commit sha, when the promotion produced one.
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: |
+            A `PRECONDITION` (child is not a direct child of the bound
+            orchestrator, or not in `Review`, or the token is not run-bound) or a
+            merge `CONFLICT` (the child stays in `Review`; no auto-resolve).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtErrorBody" }
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /api/v1/ext/runs/rework:
+    post:
+      tags: [runs]
+      summary: (M36 — Implemented) Re-open a reviewed delegated child for another turn
+      description: |
+        (M36 — Implemented, ADR-097.) Scope `runs:delegate` (a run-bound
+        orchestrator addressing its own child). CAS-flips a reviewed child
+        `Review → Running` and resumes its session (`session/resume` on the
+        retained `acp_session_id`) with the coordinator's override `prompt`
+        against the child's existing worktree; it re-reviews on its next
+        `end_turn`. Backs the `run_rework` delegation tool.
+
+        **Identifiers (trust contour).** The `projectId` and the **parent**
+        `runId` are derived SERVER-SIDE from the run-bound orchestrator token —
+        NEVER body fields. `childRunId` MUST be a direct child of the bound
+        orchestrator, in the token's project, and currently in `Review`
+        (otherwise `PRECONDITION` → 409).
+
+        Writes a `token_audit_log` row with scope `runs:delegate` after success.
+      operationId: extReworkRun
+      security:
+        - projectToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [childRunId, prompt]
+              properties:
+                childRunId:
+                  type: string
+                  format: uuid
+                  description: The reviewed child run to re-open.
+                prompt:
+                  type: string
+                  minLength: 1
+                  description: |
+                    Rework instruction delivered to the resumed child session.
+      responses:
+        "200":
+          description: Child re-opened; it is now `Running`.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [childRunId, status]
+                properties:
+                  childRunId:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                    enum: [Running]
         "401":
           $ref: "#/components/responses/TokenUnauthorized"
         "403":

@@ -54,10 +54,14 @@ ADR-041/ADR-043 — [flow-settings.md](flow-settings.md)).
   `Abandoned` keeps it blocked and wakes the orchestrator. Distinct from
   `depends_on` / `blocks` (release on Done **and** Abandoned) and `parent_of`
   (never gates). See [social-board.md](social-board.md).
-- **Delegation toolset** (Implemented) — `run_delegate` / `run_plan` / `run_collect`
-  / `run_cancel`, exposed over the maister MCP facade and reachable only from an
-  `orchestrator` session via a per-launch ephemeral `agent:<id>` token scoped
-  `runs:delegate`. See [`../api/external/operations.openapi.yaml`](../api/external/operations.openapi.yaml)
+- **Delegation toolset** (Implemented) — `run_delegate` / `run_plan` /
+  `run_collect` / `run_cancel`, plus `run_message` (re-message a persistent
+  swarm child, ADR-096) and `run_promote` / `run_rework` (resolve a reviewed
+  child, ADR-097), exposed over the maister MCP facade and reachable only from an
+  `orchestrator` session via a per-launch ephemeral run-bound token carrying
+  `ORCHESTRATOR_TOKEN_SCOPES`
+  (`runs:delegate`+`runs:collect`+`runs:cancel`+`runs:promote`). See
+  [`../api/external/operations.openapi.yaml`](../api/external/operations.openapi.yaml)
   (`/api/v1/ext/runs/*`).
 
 ## State machine
@@ -70,10 +74,11 @@ All transitions Implemented.
 stateDiagram-v2
     [*] --> Running: scheduler promotes<br/>(agent-pool slot free)
     Running --> WaitingOnChildren: agent yields awaiting children<br/>checkpoint + releaseSlotOnIdle->promoteNextPending
-    WaitingOnChildren --> Running: child-terminal domain event<br/>session/resume on acp_session_id (race-guarded)
+    WaitingOnChildren --> Running: child SETTLED domain event (terminal OR run.review)<br/>session/resume on acp_session_id (race-guarded)
     Running --> Downstream: agent declares goal met<br/>node_attempts terminal verdict -> judge/readiness/promote
     Running --> Crashed: reconcile - session died, no checkpoint
     WaitingOnChildren --> Crashed: reconcile - no live checkpoint
+    WaitingOnChildren --> Abandoned: cascade / direct abandon<br/>(operator stop / drop / parent abandon)
     Crashed --> Running: Recover<br/>(session/resume)
     Crashed --> Abandoned: Discard
     Downstream --> [*]
@@ -117,10 +122,12 @@ sequenceDiagram
 
 `run_plan` validates the DAG **before** any write (acyclic, fan-out, depth), then
 emits N child tasks + M `requires` relations in **one** transaction, all
-`launch_mode='auto'`. As each blocker terminates `Done`, the auto-launcher
-consumer clears the `requires` edge, marks the now-unblocked dependent `Pending`,
-and lets the existing `promoteNextPending` enforce the pool cap — it never
-launches directly.
+`launch_mode='auto'`. As each blocker terminates `Done`, the `auto_launch_run_plan`
+consumer flips the producer task `Done`, clears the `requires` edge, and calls
+`launchAgentRun` **directly** for the now-unblocked dependent — cap admission
+(Pending vs Running under the global cap) happens inside that call, so there is no
+separate `promoteNextPending` mark; the per-task `hasAnyRun` belt makes a
+redelivered window idempotent.
 
 ```mermaid
 flowchart TD
@@ -128,10 +135,9 @@ flowchart TD
     V -- no --> CFG[CONFIG / PRECONDITION - NO rows written]
     V -- yes --> TX[one tx: INSERT N tasks parent_of + M requires<br/>all launch_mode=auto, status Backlog/blocked]
     TX --> WAIT[blocked tasks wait]
-    CT([child run.done/failed/crashed/abandoned<br/>payload parent_run_id]) --> AL[auto-launcher consumer]
+    CT([child settled: run.done/failed/crashed/abandoned/review<br/>payload parent_run_id]) --> AL[auto_launch_run_plan consumer]
     AL --> Q{required blockers all Done?}
-    Q -- yes + launch_mode=auto + no open blockers --> MARK[mark dependent Pending/launchable]
-    MARK --> PNP[promoteNextPending enforces cap - promotes exactly once]
+    Q -- yes + launch_mode=auto + no open blockers --> LAU[launchAgentRun directly<br/>cap admission inside; hasAnyRun belt = idempotent]
     Q -- a required blocker Failed/Abandoned --> WK[do NOT release - wake the orchestrator]
 ```
 
@@ -139,9 +145,14 @@ flowchart TD
 
 When the orchestrator yields awaiting children it transitions
 `Running → WaitingOnChildren`, checkpoints, and releases its agent-pool slot. A
-child terminal of ANY kind (`Done` / `Failed` / `Crashed` / `Abandoned`) emits a
-domain event carrying `parent_run_id`; the resume consumer wakes the parked
-parent via ACP `session/resume`.
+child is **SETTLED** when it reaches a terminal state (`Done` / `Failed` /
+`Crashed` / `Abandoned`) OR `Review` (a diff awaiting the coordinator); each
+settled transition emits a domain event carrying `parent_run_id`. A
+`Failed`/`Crashed`/`Abandoned` child wakes the parent unconditionally; a
+success-side settle (`run.done` OR `run.review`) wakes it only once no pending
+(non-settled, `SETTLED_RUN_STATUSES`) sibling remains. The `orchestrator_resume`
+consumer does the wake via ACP `session/resume`; a child reaching `Review` keeps
+its `acp_session_id` so a later `run_rework` can resume it.
 
 ```mermaid
 sequenceDiagram
@@ -149,13 +160,13 @@ sequenceDiagram
     participant SUP as supervisor
     participant CH as child run
     participant B as domain-event bus
-    participant R as resume consumer
+    participant R as orchestrator_resume consumer
     O->>SUP: yields awaiting children
     O->>O: Running to WaitingOnChildren<br/>(status + node_attempts cursor, one tx)
     O->>SUP: checkpointSession (SIGTERM agent)<br/>+ releaseSlotOnIdle then promoteNextPending
-    CH->>B: run.done failed crashed abandoned<br/>(payload parent_run_id)
+    CH->>B: child SETTLED: run.done/failed/crashed/abandoned/review<br/>(payload parent_run_id)
     B->>R: dispatch (branch on run_kind BEFORE choosing resume driver)
-    R->>R: re-read parent status under lock<br/>skip if not WaitingOnChildren
+    R->>R: re-read parent status under lock<br/>skip if not WaitingOnChildren<br/>success-side settle waits for last non-settled sibling
     R->>SUP: session resume on acp_session_id
     R->>O: WaitingOnChildren to Running
     Note over R: concurrent manual-resume + event-resume converge to one (CONFLICT on the loser)
@@ -173,6 +184,31 @@ flowchart TD
     ONE --> TWO[release any WaitingOnChildren child]
     TWO --> THREE[mark un-launched launch_mode=auto child tasks Abandoned]
     THREE --> SLOT[every cascaded terminal -> promoteNextPending<br/>no orphan holds a slot]
+```
+
+### (e) reviewed-child settle → promote / rework / auto-promote (Implemented, ADR-097)
+
+A `worktree` child runs to `Review` (a diff), not straight to `Done`. Reaching
+`Review` emits `run.review` (only when the child has a parent; `acp_session_id`
+is preserved). The coordinator's choice differs by `launch_mode`: a **manual**
+(as-run) child waits for the live coordinator to `run_promote` (merge → `Done`)
+or `run_rework` (`Review → Running` + `session/resume` with an override prompt);
+an **as-plan** (`launch_mode='auto'`) child is **auto-promoted** by
+`auto_launch_run_plan` (system actor, `local_merge`) so the DAG flows without a
+live coordinator. A merge conflict surfaces as `CONFLICT` (409) and leaves the
+child in `Review` — never auto-resolved (§8).
+
+```mermaid
+flowchart TD
+    CH[worktree child reaches Review<br/>emit run.review payload parent_run_id<br/>acp_session_id preserved] --> WAKE[orchestrator_resume wakes parent<br/>once no non-settled sibling remains]
+    CH --> MODE{launch_mode}
+    MODE -- manual as-run --> COORD[live coordinator decides]
+    COORD --> PROM[run_promote: merge branch -> child Done]
+    COORD --> REW[run_rework: Review -> Running<br/>session/resume + override prompt -> re-review]
+    PROM -. merge conflict .-> CONF[CONFLICT 409<br/>child stays Review, human resolves]
+    MODE -- auto as-plan --> AP[auto_launch_run_plan auto-promotes<br/>system actor, local_merge]
+    AP --> DONE[child Done -> run.done -> advance task + release dependents]
+    AP -. merge conflict .-> CONF
 ```
 
 ## Expectations
@@ -197,24 +233,32 @@ flowchart TD
   MAISTER_MAX_ORCHESTRATOR_FANOUT`, or run-tree depth `>=
   MAISTER_ORCHESTRATOR_MAX_DEPTH` BEFORE writing any row (`CONFIG`); a valid plan
   writes all task + relation rows in one transaction.
-- Auto-launch MUST mark a dependency-cleared `launch_mode='auto'` task
-  `Pending`/launchable and let `promoteNextPending` enforce the cap — it MUST NOT
-  launch directly; the dependent MUST be promoted exactly once under concurrent
-  child terminals.
-- The orchestrator-resume path MUST use ACP `session/resume` on
-  `runs.acp_session_id`, re-read parent status under lock before the resume RPC,
-  and skip if the status is not `WaitingOnChildren` (concurrent resume converges to
-  one).
-- A child terminal of ANY kind (`Done`/`Failed`/`Crashed`/`Abandoned`) MUST wake a
-  parked parent; the resume consumer MUST branch on `runs.run_kind` before choosing
-  the resume driver.
+- `auto_launch_run_plan` MUST launch a dependency-cleared `launch_mode='auto'`
+  dependent by calling `launchAgentRun` directly (cap admission inside that
+  call), guarded idempotent by the per-task `hasAnyRun` belt so the dependent
+  starts exactly once under concurrent child settles.
+- A child SETTLE (terminal `Done`/`Failed`/`Crashed`/`Abandoned` OR `run.review`)
+  MUST wake a parked parent via `orchestrator_resume` — `Failed`/`Crashed`/
+  `Abandoned` unconditionally, a success-side settle (`run.done`/`run.review`)
+  only once no non-settled (`SETTLED_RUN_STATUSES`) sibling remains — using ACP
+  `session/resume` on `runs.acp_session_id` after branching on `runs.run_kind`
+  and re-reading parent status under lock (skip if not `WaitingOnChildren`;
+  concurrent resume converges to one).
+- A DELEGATED child reaching `Review` MUST emit `run.review` (a top-level Review
+  emits nothing) and keep its `acp_session_id`; a manual child MUST be resolvable
+  via `run_promote` (merge → `Done`; conflict → `CONFLICT`, stays `Review`) or
+  `run_rework` (`Review → Running` + resume), while a `launch_mode='auto'` child
+  MUST instead be auto-promoted (system actor, `local_merge`) by
+  `auto_launch_run_plan`.
 - Cancelling or abandoning an orchestrator run MUST cascade to its run-tree in one
   transaction (cancel in-flight children, release `WaitingOnChildren`, mark
   un-launched `launch_mode='auto'` child tasks Abandoned) and every cascaded
   terminal MUST honor `promoteNextPending`.
-- The delegation tools MUST be reachable ONLY from an `orchestrator` session
-  (ephemeral `agent:<id>` token scoped `runs:delegate` materialized into its ACP
-  `mcpServers`), and the token MUST be revoked on terminal.
+- The delegation tools MUST be reachable ONLY from an `orchestrator` session (a
+  run-bound token carrying `ORCHESTRATOR_TOKEN_SCOPES` =
+  `runs:delegate`+`runs:collect`+`runs:cancel`+`runs:promote` materialized into
+  its ACP `mcpServers`; `runs:promote` is held by NO child agent token), and the
+  token MUST be revoked on terminal but MUST survive the `WaitingOnChildren` park.
 
 ## Edge cases
 
@@ -242,33 +286,50 @@ flowchart TD
 - **`workspace_mode: shared` with no `root_run_id`** (a top-level run) →
   `MaisterError("CONFIG")` at launch — a shared tree is keyed by the tree root,
   so only a delegated child can join one (ADR-096).
+- **Merge conflict on promote** (`run_promote` or the as-plan auto-promote) →
+  `MaisterError("CONFLICT")` (HTTP 409); the child STAYS in `Review`, never
+  auto-resolved — a human resolves it, then re-promotes (ADR-097, §8).
+- **`run_promote` from a child agent token** → 403 by scope (`runs:promote` is
+  held only by the run-bound orchestrator token, not child agent tokens).
 
 ## Linked artifacts
 
 - **Decisions:** [ADR-095](../decisions.md#adr-095-orchestrator-engine--supervisory-node-governed-run-tree-delegation-toolset-success-gated-task-dag-idle-checkpoint-waitresume),
-  [ADR-096](../decisions.md#adr-096-persistent-swarm-layer-2--addressable-sessions-star-routed-messaging-worktree-modes-per-agent-read-only);
+  [ADR-096](../decisions.md#adr-096-persistent-swarm-layer-2--addressable-sessions-star-routed-messaging-worktree-modes-per-agent-read-only),
+  [ADR-097](../decisions.md#adr-097-delegated-child-review-settle--promoterework)
+  (delegated-child `Review` settle + promote/rework, the `run.review` kind);
   boundary kept from ADR-041/ADR-043 (materialize-only) and ADR-008 (closed error
   union — no new code).
 - **Flow DSL + engine:** [`../flow-dsl.md`](../flow-dsl.md) (`orchestrator` node
   type, `1.6.0` floor, delegation semantics).
 - **DB:** [`../database-schema.md`](../database-schema.md) (migration `0055`:
   run-tree columns, `WaitingOnChildren`, `node_attempts.node_type` value,
-  `requires` kind), [`db/runs-domain.md`](../db/runs-domain.md) (run-tree ERD),
+  `requires` kind; migration `0059`: the `run.review` `domain_events_kind` CHECK,
+  ADR-097), [`db/runs-domain.md`](../db/runs-domain.md) (run-tree ERD),
   [`social-board.md`](social-board.md) (`requires` relation).
 - **HTTP + SSE:** [`../api/external/operations.openapi.yaml`](../api/external/operations.openapi.yaml)
-  (`/api/v1/ext/runs/*` delegation routes),
+  (`/api/v1/ext/runs/*` delegation routes — incl. `message`/`promote`/`rework`),
   [`../api/async/web-runs.asyncapi.yaml`](../api/async/web-runs.asyncapi.yaml)
   (`WaitingOnChildren` SSE status).
-- **Triggers:** [`domain-events.md`](domain-events.md) (orchestrator-resume +
-  auto-launcher consumer; `run.done/failed/crashed/abandoned` payload widened with
-  `parent_run_id`, no new event kind), [`db/domain-events.md`](../db/domain-events.md).
+- **Triggers:** [`domain-events.md`](domain-events.md) (the `auto_launch_run_plan`
+  + `orchestrator_resume` sibling consumers reacting to the SETTLED set;
+  `run.done/failed/crashed/abandoned` payload widened with `parent_run_id`; the
+  new `run.review` settled-not-terminal kind, ADR-097),
+  [`db/domain-events.md`](../db/domain-events.md).
 - **Errors:** [`../error-taxonomy.md`](../error-taxonomy.md) (`PRECONDITION`,
   `CONFIG`, `CONFLICT`, `CHECKPOINT`, `EXECUTOR_UNAVAILABLE` callers).
 - **Catalog/trust + run substrate:** [agents.md](agents.md)
   (`resolveEffectiveAgentDefinition`, ephemeral agent tokens), [runs.md](runs.md)
   (base FSM, `run_kind`), [scheduler.md](scheduler.md) (cap, `promoteNextPending`).
 - **Source (Implemented):** `web/lib/flows/graph/runner-graph.ts` (orchestrator node
-  dispatch + supervisory lifecycle), `web/lib/social/relations.ts` (`requires`
-  success-gate), `web/lib/runs/launchability.ts` (shared classifier wiring),
-  `web/lib/domain-events/consumers.ts` (auto-launcher + orchestrator-resume),
-  `mcp/src/tools.ts` (`run_delegate`/`run_plan`/`run_collect`/`run_cancel`).
+  dispatch + supervisory lifecycle + `countPendingChildren`),
+  `web/lib/runs/run-status-sets.ts` (`SETTLED_RUN_STATUSES` — the shared
+  child-pending set), `web/lib/social/relations.ts` (`requires` success-gate),
+  `web/lib/runs/launchability.ts` (shared classifier wiring),
+  `web/lib/domain-events/auto-launch.ts` (`auto_launch_run_plan` — launch +
+  auto-promote) + `web/lib/domain-events/orchestrator-resume.ts`
+  (`orchestrator_resume` — wake) + `web/lib/domain-events/consumers.ts`
+  (registry), `web/lib/runs/promote.ts` (`promoteChildRunForToken`),
+  `web/lib/agents/launch.ts` (`finalizeAgentRun` `run.review` emit +
+  `reworkChildRun`), `mcp/src/tools.ts`
+  (`run_delegate`/`run_plan`/`run_collect`/`run_cancel`/`run_message`/`run_promote`/`run_rework`).

@@ -140,7 +140,9 @@ async function seedParkedOrchestrator(runKind = "flow"): Promise<string> {
 // A child run under the orchestrator + its emitted run-terminal event.
 async function seedChildTerminal(args: {
   parentRunId: string;
-  outcome: "Done" | "Failed" | "Crashed" | "Abandoned";
+  // M36 (ADR-097): "Review" emits run.review (settled, not terminal) — the child
+  // produced a worktree diff and the coordinator must be woken to act on it.
+  outcome: "Done" | "Failed" | "Crashed" | "Abandoned" | "Review";
 }): Promise<DomainEventRow> {
   const childTaskId = randomUUID();
   const childRunId = randomUUID();
@@ -171,11 +173,13 @@ async function seedChildTerminal(args: {
   const kind =
     args.outcome === "Done"
       ? "run.done"
-      : args.outcome === "Failed"
-        ? "run.failed"
-        : args.outcome === "Crashed"
-          ? "run.crashed"
-          : "run.abandoned";
+      : args.outcome === "Review"
+        ? "run.review"
+        : args.outcome === "Failed"
+          ? "run.failed"
+          : args.outcome === "Crashed"
+            ? "run.crashed"
+            : "run.abandoned";
 
   await emitDomainEvent({
     db,
@@ -333,6 +337,75 @@ describe("orchestrator_resume consumer (M36 T5.2)", () => {
 
     expect(await statusOf(parentRunId)).toBe("Running");
     expect(resumed).toEqual([parentRunId]);
+  });
+
+  // C3 (real two-racer): two dispatcher workers handling the same batch
+  // concurrently must still wake the parent exactly once (the markResumedFromWait
+  // CAS is the single-winner guard, not in-loop sequencing).
+  it("(5b) two concurrent handle() calls wake the parent exactly once", async () => {
+    const parentRunId = await seedParkedOrchestrator();
+    const e1 = await seedChildTerminal({ parentRunId, outcome: "Done" });
+
+    const resumed: string[] = [];
+    const consumer = buildOrchestratorResumeConsumer({
+      db,
+      resumeFlow: async (runId) => {
+        resumed.push(runId);
+      },
+    });
+
+    await Promise.all([consumer.handle([e1]), consumer.handle([e1])]);
+
+    expect(await statusOf(parentRunId)).toBe("Running");
+    expect(resumed).toEqual([parentRunId]);
+  }, 60_000);
+
+  // M36 (ADR-097): the headline fix — a delegated child reaching REVIEW (a
+  // worktree diff, the path the e2e skips with workspace=none) emits run.review
+  // and wakes the parked coordinator so it can collect/promote/rework. Before
+  // ADR-097 this child emitted nothing and counted as pending forever → deadlock.
+  it("(6) a child reaching Review wakes the parked parent (ADR-097)", async () => {
+    const parentRunId = await seedParkedOrchestrator();
+    const event = await seedChildTerminal({ parentRunId, outcome: "Review" });
+
+    const resumed: string[] = [];
+    const consumer = buildOrchestratorResumeConsumer({
+      db,
+      resumeFlow: async (runId) => {
+        resumed.push(runId);
+      },
+    });
+
+    await consumer.handle([event]);
+
+    expect(await statusOf(parentRunId)).toBe("Running");
+    expect(resumed).toEqual([parentRunId]);
+  });
+
+  // A Review child does NOT block completion (settled), but a still-RUNNING
+  // sibling does — so a Review event while a sibling is pending must NOT wake.
+  it("(7) a Review child with a pending sibling does NOT wake; settling the last does", async () => {
+    const parentRunId = await seedParkedOrchestrator();
+
+    await seedPendingChild(parentRunId);
+    const reviewEvent = await seedChildTerminal({
+      parentRunId,
+      outcome: "Review",
+    });
+
+    const resumed: string[] = [];
+    const consumer = buildOrchestratorResumeConsumer({
+      db,
+      resumeFlow: async (runId) => {
+        resumed.push(runId);
+      },
+    });
+
+    await consumer.handle([reviewEvent]);
+
+    // Still parked — a non-settled sibling remains.
+    expect(await statusOf(parentRunId)).toBe("WaitingOnChildren");
+    expect(resumed).toEqual([]);
   });
 
   it("never drives a NON-flow (agent) orchestrator into the flow resume path", async () => {

@@ -29,23 +29,28 @@ borrows ([scheduler.md](scheduler.md)).
   consumer: `{ consumer_id (PK), cursor_event_id, lease_expires_at?,
   last_dispatched_at?, last_error?, consecutive_failures }`. Claim/advance
   mechanics below. See [db/domain-events.md](../db/domain-events.md).
-- **Kind taxonomy v1** (Implemented) — exactly 8 kinds:
+- **Kind taxonomy v1** (Implemented) — 9 kinds:
   `task.created`, `task.comment_added`, `task.triage_requeued`, `run.done`,
-  `run.failed`, `run.crashed`, `run.abandoned`, `gate.failed`.
+  `run.failed`, `run.crashed`, `run.abandoned`, `run.review`, `gate.failed`.
   `task.triage_requeued` was registered with no emitter; its emitter is the
   M34 "Send to triage" action (Implemented — `triage_status = NULL` + emit +
   `triage_requeued` activity in one transaction, ADR-089). Extension rule:
   one taxonomy entry + emit site(s) in the owning domain transaction + one
   doc row + a CHECK update via migration.
-  **(M36 — Implemented, ADR-095)** No new kind is added for the orchestrator
-  engine. Instead the four run-terminal kinds (`run.done`, `run.failed`,
-  `run.crashed`, `run.abandoned`) have their `payload` **widened** with
-  `parent_run_id` (the emitting run's `runs.parent_run_id`; `null` for a
-  parentless run). This keeps the kind count stable across every
-  kind-registration site while letting the `orchestrator_resume` consumer
-  route a child-terminal fact to its parent orchestrator and to any
-  dependent auto-tasks. The payload stays ids/keys/statuses only (no
-  secrets).
+  **(M36 — Implemented, ADR-095)** The four run-terminal kinds (`run.done`,
+  `run.failed`, `run.crashed`, `run.abandoned`) have their `payload`
+  **widened** with `parent_run_id` (the emitting run's `runs.parent_run_id`;
+  `null` for a parentless run) without adding a kind — letting the
+  orchestrator consumers route a child-terminal fact to its parent
+  orchestrator and to any dependent auto-tasks.
+  **(M36 — Implemented, ADR-097, migration 0059)** One new kind `run.review`
+  is added (the CHECK extended to 9 kinds): a DELEGATED child reaching
+  `Review` (a diff awaiting the coordinator). It is **settled but NOT
+  terminal** (`Review → Done` via promote / `Review → Running` via rework),
+  carries `parent_run_id`, and is emitted ONLY for a child with a parent (a
+  top-level Review emits nothing). It wakes a parked orchestrator to
+  collect/promote/rework and drives as-plan auto-promote. The payload stays
+  ids/keys/statuses only (no secrets).
 - **`domain_event_dispatch` job kind** (Implemented) — singleton dispatcher on
   the M24 clock (one seeded `domain_event_dispatch.default` job, cadence 60s,
   budget `domainEventDispatch: 1`, not user-creatable). See
@@ -63,23 +68,36 @@ borrows ([scheduler.md](scheduler.md)).
   the `Pending` agent run under the partial UNIQUE
   `(agent_id, trigger_event_id)` — at-least-once redelivery converges to
   exactly one run. See [agents.md](agents.md).
-- **`orchestrator_resume` consumer** (M36 — Implemented, ADR-095) — the
-  orchestrator-engine consumer (`startFrom: "now"`) reacting to the
-  run-terminal kinds (`run.done`, `run.failed`, `run.crashed`,
-  `run.abandoned`). Using the `parent_run_id` widened onto each run-terminal
-  payload (see the kind-taxonomy note), it routes a child-terminal fact two
-  ways: (1) **resume the parent orchestrator** — wake the `parent_run_id`
-  run out of `WaitingOnChildren`, closing the child's status + the
-  `node_attempts` cursor in one transaction; and (2) **clear `requires`
-  blockers** — mark dependent auto-tasks `Pending`/launchable when their
-  producer reached `Done` (the success-gated `requires` kind releases only
-  on `Done`; Failed/Abandoned keeps dependents blocked and only wakes the
-  orchestrator). Auto-launch folds into the advisory-locked
-  `promoteNextPending` CAS — the consumer NEVER launches directly (that would
-  bypass the global cap). It branches on `run_kind`/parent-linkage BEFORE
+- **`auto_launch_run_plan` consumer** (M36 — Implemented, ADR-095/097) — the
+  as-plan DAG consumer (`startFrom: "now"`) reacting to the SETTLED set
+  (run-terminal kinds + `run.review`). Using the `parent_run_id` widened onto
+  each settled payload, it: (1) **advances the producer task** — a successful
+  as-plan child (`run.done`) flips its OWN `launch_mode='auto'` task `Done`,
+  the `requires` success-gate's release condition; (2) **clears `requires`
+  blockers + launches the dependent** — discovers the orchestrator's
+  `parent_of` sibling tasks and, for each now-unblocked
+  `launch_mode='auto'` dependent, calls `launchAgentRun` **directly**
+  (cap admission happens inside that call, NOT via a separate
+  `promoteNextPending` mark), idempotent under the per-task
+  `hasAnyRun` belt; and (3) **auto-promotes an as-plan child** — on
+  `run.review` for a `launch_mode='auto'` child it promotes it (system actor,
+  `local_merge`) so the auto-DAG flows without a live coordinator (a merge
+  conflict leaves the child in `Review`, logged; manual as-run children are
+  coordinator-driven via `run_promote`, not promoted here). It branches on
+  `run_kind`/parent-linkage BEFORE acting. See [orchestrator.md](orchestrator.md).
+- **`orchestrator_resume` consumer** (M36 — Implemented, ADR-095/097) — the
+  parked-coordinator wake consumer (`startFrom: "now"`), a SIBLING of
+  `auto_launch_run_plan` and the ONLY consumer that wakes the parent. It
+  reacts to the SETTLED set (run-terminal kinds + `run.review`): a child that
+  ended `Failed`/`Crashed`/`Abandoned` ALWAYS wakes the parent; a child that
+  settled success-side (`run.done` OR `run.review`) wakes it only once no
+  pending (non-settled, `SETTLED_RUN_STATUSES`) sibling remains. The wake is a
+  single-winner CAS `WaitingOnChildren → Running` + `session/resume` on the
+  retained `acp_session_id`, closing the child's status + the `node_attempts`
+  cursor in one transaction. It branches on `run_kind`/parent-linkage BEFORE
   driving any run into the flow resume driver (a child driven into the
-  flow-only path would `Crash` context-less). NO new event kind is added.
-  See [agents.md](agents.md) and ADR-095.
+  flow-only path would `Crash` context-less). See [agents.md](agents.md) and
+  ADR-095/097.
 
 ## State machine
 
@@ -193,12 +211,15 @@ flowchart TD
   at claim; a zombie advance after lease reap + reclaim MUST no-op.
 - Delivery MUST be at-least-once: a handler failure or a crash before advance
   MUST redeliver the same window on a later tick; consumers MUST be idempotent.
-  **(M36 — Implemented, ADR-095)** the `orchestrator_resume` consumer MUST route a
-  run-terminal fact by `parent_run_id` to resume the parent (out of
-  `WaitingOnChildren`) and to clear `requires` blockers (released only on
-  `Done`), and MUST fold any auto-launch into the advisory-locked
-  `promoteNextPending` CAS — NEVER launching directly (cap-preserving) — after
-  branching on `run_kind`/parent-linkage.
+  **(M36 — Implemented, ADR-095/097)** the orchestrator engine registers TWO
+  sibling consumers reacting to the SETTLED set (run-terminal kinds +
+  `run.review`), each branching on `run_kind`/parent-linkage first:
+  `auto_launch_run_plan` MUST clear `requires` blockers (released only on a
+  producer's `Done`), launch each unblocked `launch_mode='auto'` dependent via
+  `launchAgentRun` (cap admission inside that call), and auto-promote an
+  as-plan child reaching `Review`; `orchestrator_resume` MUST be the only
+  consumer that wakes the parent out of `WaitingOnChildren` (single-winner CAS
+  + `session/resume`).
 - A handler failure MUST increment `consecutive_failures`, set `last_error`,
   release the lease, and leave the cursor unchanged; a subsequent success MUST
   reset `consecutive_failures` to 0. There is NO auto-disable in this stage.
@@ -216,7 +237,9 @@ flowchart TD
   never secrets, env values, tokens, or raw agent output. **(M36 — Implemented,
   ADR-095)** the four run-terminal payloads MUST additionally carry
   `parent_run_id` (the emitting run's `runs.parent_run_id`, `null` when
-  parentless) WITHOUT introducing a new kind.
+  parentless) WITHOUT introducing a new kind. **(M36 — Implemented, ADR-097,
+  migration 0059)** the settled-not-terminal `run.review` kind MUST be emitted
+  ONLY for a child with a parent and MUST carry `parent_run_id`.
 
 ## Edge cases
 
@@ -241,10 +264,12 @@ flowchart TD
 ## Linked artifacts
 
 - **Decision:** [ADR-086](../decisions.md#adr-086-domain-event-outbox-as-the-shared-trigger-bus).
-- **Orchestrator consumer (M36 — Implemented):** [ADR-095](../decisions.md#adr-095-orchestrator-engine--supervisory-node-governed-run-tree-delegation-toolset-success-gated-task-dag-idle-checkpoint-waitresume)
-  — the `orchestrator_resume` consumer, the run-terminal `parent_run_id`
-  payload widening, the success-gated `requires` relation, and the
-  `WaitingOnChildren` resume.
+- **Orchestrator consumers (M36 — Implemented):** [ADR-095](../decisions.md#adr-095-orchestrator-engine--supervisory-node-governed-run-tree-delegation-toolset-success-gated-task-dag-idle-checkpoint-waitresume)
+  / [ADR-097](../decisions.md#adr-097-delegated-child-review-settle--promoterework)
+  — the `auto_launch_run_plan` + `orchestrator_resume` sibling consumers, the
+  run-terminal `parent_run_id` payload widening, the settled-not-terminal
+  `run.review` kind (migration 0059), the success-gated `requires` relation,
+  and the `WaitingOnChildren` resume.
 - **Spec freeze:** [`../../.ai-factory/specs/domain-event-outbox.spec.md`](../../.ai-factory/specs/domain-event-outbox.spec.md).
 - **DB:** [`db/domain-events.md`](../db/domain-events.md) and
   [`database-schema.md`](../database-schema.md) — the two tables (migration

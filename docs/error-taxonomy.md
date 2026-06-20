@@ -271,9 +271,9 @@ defined as a string union in `web/lib/errors.ts`.
 > **The M36 orchestrator engine (ADR-095) reuses existing codes and adds none**
 > ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror) closed union).
 > The orchestrator / delegation paths (`run_delegate` / `run_plan` / `run_collect`
-> / `run_cancel` over the MCP facade, the governed run-tree, and the
-> idle-checkpoint wait/resume) map onto the existing closed union. New call sites
-> (all Designed, M36):
+> / `run_cancel` / `run_message` / `run_promote` / `run_rework` over the MCP
+> facade, the governed run-tree, and the idle-checkpoint wait/resume) map onto the
+> existing closed union. **(M36 — Implemented, ADR-095/096/097.)** New call sites:
 > - **`PRECONDITION` → HTTP 409** — a `run_delegate` / `run_plan` naming an agent
 >   not resolvable through the project's enabled + trusted catalog (unresolvable /
 >   untrusted delegation target — "resolve+trust" is physically separate from
@@ -284,8 +284,10 @@ defined as a string union in `web/lib/errors.ts`.
 >   over-`max_depth` request (bounds, enforced pre-tx); a cyclic task DAG in
 >   `run_plan`; a `strict` path-scope enforcement declaration (the Phase-2 policy
 >   gap — refused until [ADR-096](decisions.md#adr-096-persistent-swarm-layer-2--addressable-sessions-star-routed-messaging-worktree-modes-per-agent-read-only) lands).
-> - **`CONFLICT` → HTTP 409** — a concurrent orchestrator resume (two child-terminal
->   events racing the same `WaitingOnChildren → Running` wake).
+> - **`CONFLICT` → HTTP 409** — a concurrent orchestrator resume (two child-settle
+>   events racing the same `WaitingOnChildren → Running` wake); a merge conflict
+>   promoting a reviewed child (`run_promote` or as-plan auto-promote, ADR-097) —
+>   the child stays in `Review`, never auto-resolved.
 > - **`CHECKPOINT`** — an orchestrator `session/resume` failure when waking from
 >   `WaitingOnChildren` (terminal resume failure, same class as the M8 idle path).
 > - **`EXECUTOR_UNAVAILABLE` → HTTP 503** — a child-run spawn or concurrency-cap

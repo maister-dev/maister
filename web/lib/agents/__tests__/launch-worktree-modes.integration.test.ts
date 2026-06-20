@@ -311,6 +311,50 @@ describe("M36 Phase 10 — worktree allocation modes via launchAgentRun", () => 
     expect(trees.filter((w) => w.path === sharedPath)).toHaveLength(1);
   });
 
+  // C4 (real two-racer): two shared-mode children allocating CONCURRENTLY can
+  // both pass the listWorktrees check before either addWorktree completes (the
+  // TOCTOU /aif-review flagged). The idempotent allocation (catch → re-check →
+  // reuse, else typed CONFLICT) must converge to exactly ONE tree + ONE
+  // workspaces row, and NEVER surface a raw git error as a 500.
+  it("(C4) two CONCURRENT shared-mode allocations converge to one tree (no raw 500)", async () => {
+    const ids = await seedPackageWithAgents([
+      { stem: "coordinator", workspace: "worktree" },
+      { stem: "worker", workspace: "worktree" },
+    ]);
+    const root = await insertRoot();
+    const sharedPath = sharedAgentWorktreePath(projectSlug, root);
+
+    const launch = () =>
+      launchAgentRun({
+        agentId: ids.worker,
+        projectId,
+        parentRunId: root,
+        rootRunId: root,
+        launchMode: "manual",
+        workspaceMode: "shared",
+        trigger: { source: "manual" },
+        db,
+      });
+
+    const results = await Promise.allSettled([launch(), launch()]);
+
+    // At least one allocation succeeded; any rejection is a TYPED CONFLICT (the
+    // idempotent-allocation guard), never an untyped raw git failure.
+    expect(results.some((r) => r.status === "fulfilled")).toBe(true);
+    for (const r of results) {
+      if (r.status === "rejected") {
+        expect((r.reason as { code?: string }).code).toBe("CONFLICT");
+      }
+    }
+
+    // Exactly one workspaces row + one git worktree for the shared path.
+    expect(await workspaceRows(sharedPath)).toHaveLength(1);
+    const { listWorktrees } = await import("@/lib/worktree");
+    const trees = await listWorktrees(repoPath);
+
+    expect(trees.filter((w) => w.path === sharedPath)).toHaveLength(1);
+  }, 60_000);
+
   it("an own-mode (default) child gets a per-run worktree and no serialization linkage", async () => {
     const ids = await seedPackageWithAgents([
       { stem: "coordinator", workspace: "worktree" },

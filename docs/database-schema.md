@@ -2084,11 +2084,14 @@ only). No UPDATE/DELETE application paths; future pruning MUST honor
 {
   id,                              // bigint GENERATED ALWAYS AS IDENTITY PK —
                                    //   dispatch ordering key
-  kind,                            // one of 8 taxonomy kinds (CHECK):
+  kind,                            // one of 9 taxonomy kinds (CHECK):
                                    //   task.created | task.comment_added |
                                    //   task.triage_requeued | run.done |
                                    //   run.failed | run.crashed |
-                                   //   run.abandoned | gate.failed
+                                   //   run.abandoned | run.review | gate.failed
+                                   //   run.review added by migration 0059
+                                   //   (M36, ADR-097): settled, NOT terminal —
+                                   //   a delegated child reaching Review
   projectId,                       // NOT NULL, FK -> projects.id (cascade)
   taskId?,                         // NULL, FK -> tasks.id (cascade) — task.* kinds
   runId?,                          // NULL, FK -> runs.id (cascade) — run.*/gate.* kinds

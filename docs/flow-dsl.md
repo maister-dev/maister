@@ -537,12 +537,16 @@ launch-time snapshot. They form a run-tree via `runs.parent_run_id` /
 orchestrator node debuts at `1.6.0`, the new engine floor). Flows without an
 `orchestrator` node stay valid at any `engine_min`.
 
-> **Persistent-swarm pieces are Phase 2 (ADR-096).** Addressable long-lived child
-> sessions, star-routed child↔child messaging, shared-vs-own worktree modes, and
-> per-agent read-only / path-scoped write enforcement are **(Phase 2 — see
-> [ADR-096](decisions.md#adr-096-persistent-swarm-layer-2--addressable-sessions-star-routed-messaging-worktree-modes-per-agent-read-only))**.
-> M36 ships the orchestrator foundation only; a `strict` path-scope declaration is
-> refused (`CONFIG`) until that policy layer lands.
+> **Persistent-swarm Layer 2 is Implemented (ADR-096).** Addressable long-lived
+> child sessions (`runs.persistent`/`addressable_key`, re-messaged via
+> `run_message`), star-routed messaging through the orchestrator, shared-vs-own
+> worktree modes (`workspace_mode`), and per-agent read-only enforcement ship in
+> M36 (**Implemented — see
+> [ADR-096](decisions.md#adr-096-persistent-swarm-layer-2--addressable-sessions-star-routed-messaging-worktree-modes-per-agent-read-only)**).
+> The one carve-out remains **path-scoped** write enforcement ("tester edits only
+> tests"): a `strict` path-scope declaration is still refused (`CONFIG`) until the
+> deferred policy layer lands — maister enforces read-only-vs-full only, so
+> path-scope ships `instructed`-only **(Phase 2)**.
 
 ## Rework `session_policy` (M30 — Implemented)
 

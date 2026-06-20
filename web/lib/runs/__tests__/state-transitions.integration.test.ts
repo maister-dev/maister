@@ -31,6 +31,7 @@ import {
   markResumed,
   markResumedFromWait,
   markReturnedToRunning,
+  markReworkFromReview,
   markWaitingOnChildren,
   releaseHumanWorking,
 } from "@/lib/runs/state-transitions";
@@ -195,6 +196,67 @@ describe("state-transitions — markWaitingOnChildren / markResumedFromWait (M36
 
     expect((await readRun(runId)).status).toBe("Running");
   });
+
+  // C3 (real two-racer): a child-terminal event resume + a manual resume racing
+  // markResumedFromWait must converge to ONE winner (the loser → 409). The
+  // pooled db hands two physical connections to Promise.all, so the row-lock
+  // serializes the two CAS UPDATEs.
+  it("concurrent markResumedFromWait: exactly one CAS wins", async () => {
+    const runId = await seedRun("WaitingOnChildren", {
+      checkpointAt: new Date(),
+    });
+
+    const [a, b] = await Promise.all([
+      markResumedFromWait(runId, { db }),
+      markResumedFromWait(runId, { db }),
+    ]);
+
+    expect([a, b].filter((r) => r.ok).length).toBe(1);
+    expect([a, b].filter((r) => !r.ok).length).toBe(1);
+    expect((await readRun(runId)).status).toBe("Running");
+  }, 60_000);
+
+  it("markReworkFromReview: Review → Running keeps acp_session_id, clears keepalive", async () => {
+    const runId = await seedRun("Review", {
+      acpSessionId: "sess-rework",
+      keepaliveUntil: new Date(),
+    });
+
+    const r = await markReworkFromReview(runId, { db });
+
+    expect(r.ok).toBe(true);
+    const after = await readRun(runId);
+
+    expect(after.status).toBe("Running");
+    // The resume handle survives so startAgentSession can session/resume.
+    expect(after.acpSessionId).toBe("sess-rework");
+    expect(after.keepaliveUntil).toBeNull();
+  });
+
+  it("markReworkFromReview rejects a non-Review row (status-guard mismatch)", async () => {
+    const runId = await seedRun("Running");
+
+    const r = await markReworkFromReview(runId, { db });
+
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("status-guard-mismatch");
+    expect((await readRun(runId)).status).toBe("Running");
+  });
+
+  // C3 (real two-racer): a promote (Review→Done) and a rework (Review→Running)
+  // racing, OR two reworks racing, must converge to ONE winner from Review.
+  it("concurrent markReworkFromReview: exactly one CAS wins from Review", async () => {
+    const runId = await seedRun("Review", { acpSessionId: "sess-x" });
+
+    const [a, b] = await Promise.all([
+      markReworkFromReview(runId, { db }),
+      markReworkFromReview(runId, { db }),
+    ]);
+
+    expect([a, b].filter((r) => r.ok).length).toBe(1);
+    expect([a, b].filter((r) => !r.ok).length).toBe(1);
+    expect((await readRun(runId)).status).toBe("Running");
+  }, 60_000);
 
   it("parent_run_id is SET NULL when the parent run is deleted (FK cascade, migration 0055)", async () => {
     const parentId = await seedRun("Running");

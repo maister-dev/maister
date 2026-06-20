@@ -7227,10 +7227,12 @@ default 3), so a long-lived coordinator must not hold a scheduler slot while blo
     orphan (committed run, no session) reconciles to `Crashed`. `run_plan` writes N
     tasks + M `requires` relations in **one** `db.transaction` after pre-tx
     cycle/depth/fanout validation (clean `CONFIG`/`PRECONDITION`, no partial DAG).
-    Auto-launch on dependency-clear marks the dependent `Pending`/launchable and
-    folds into the existing advisory-locked `promoteNextPending` CAS — the consumer
-    **never launches directly** (that would bypass the cap). Wait/resume each close
-    status + `node_attempts` cursor in one tx.
+    Auto-launch on dependency-clear calls `launchAgentRun` **directly** for the
+    unblocked dependent — that launch path does its own cap admission (a
+    Pending/Running decision under the global cap), so the consumer does not need
+    a separate `promoteNextPending` mark; idempotency is the per-task `hasAnyRun`
+    belt on the singleton dispatcher. Wait/resume each close status +
+    `node_attempts` cursor in one tx.
 11. **Bounds.** `MAISTER_MAX_ORCHESTRATOR_FANOUT` (per-plan task cap, default 16)
     and `MAISTER_ORCHESTRATOR_MAX_DEPTH` (run-tree recursion bound, default 3),
     enforced pre-tx; over-limit → `CONFIG`.
@@ -7325,6 +7327,98 @@ roles. Migrations 0057 (persistent/addressable_key) + 0058 (workspace_mode).
   keeps governance on one node.
 - **OS-sandbox `write_paths` for path-scope now:** deferred — couples to a sandbox
   dependency; the policy layer is the chosen home for path-scoped enforcement.
+
+---
+
+### ADR-097: delegated-child Review settle + promote/rework
+
+**Date:** 2026-06-20
+**Status:** Accepted
+**Context:** ADR-095/096 ship the orchestrator with a child-completion model keyed
+on **terminal** statuses only (`run.done/failed/crashed/abandoned` wake the parent
+and release `requires` dependents). But a `worktree` child does not run straight to
+a terminal — it produces a diff and lands in `Review`, awaiting a promote/rework
+decision. With the terminal-only model a parked orchestrator never learns its child
+reached `Review`, never promotes it, and (for an as-plan DAG) the dependent stays
+blocked forever because the producer task never reaches `Done`. The coordinator
+needs (a) a wake signal on `Review`, (b) tools to promote or rework a reviewed
+child, and (c) an unattended auto-promote for as-plan DAGs that have no live
+coordinator.
+
+**Decision:**
+1. **New domain-event kind `run.review`** (migration 0059 extends the
+   `domain_events_kind` CHECK to 9 kinds). It is **settled but NOT terminal**
+   (`Review → Done` via promote, `Review → Running` via rework). `finalizeAgentRun`
+   emits it ONLY for a **delegated** child reaching `Review` (carries
+   `parent_run_id`); a top-level Review emits nothing. The exception to the
+   "no new kind, widen the payload" rule of ADR-095 is deliberate: `Review` is not a
+   run-terminal transition, so it cannot ride a run-terminal payload.
+2. **C-2 completion model: a shared `SETTLED_RUN_STATUSES` = terminal + `Review`**
+   (`web/lib/runs/run-status-sets.ts`), the single source of truth for the three
+   child-pending counters (`runner-graph` `countPendingChildren`, `orchestrator-resume`
+   `pendingChildCount`, reconcile `hasPendingChildren`). A parked orchestrator
+   COMPLETES once no NON-settled child remains, and is WOKEN on each child
+   `run.review` — `orchestrator_resume` now reacts to the SETTLED set, not just
+   terminal (a `Failed`/`Crashed`/`Abandoned` child wakes unconditionally; a
+   success-side settle — `run.done` OR `run.review` — wakes only once the last
+   non-settled sibling clears). Reconcile's grace window keeps the model
+   deadlock-free.
+3. **Preserve `acp_session_id` on the delegated-Review flip.** A delegated child
+   reaching `Review` keeps its session handle (a top-level Review still nulls it),
+   so `run_rework` can `session/resume` the same conversation rather than orphan it.
+4. **Promote / rework ext routes + MCP tools.**
+   `POST /api/v1/ext/runs/promote` (scope **`runs:promote`**, body `{childRunId}`,
+   200 `{childRunId, status:"Done", commit?}`) merges a reviewed child → `Done`; a
+   merge conflict returns `CONFLICT` (409) and leaves the child in `Review` —
+   **never auto-resolved** (§8). `POST /api/v1/ext/runs/rework` (scope
+   `runs:delegate`, body `{childRunId, prompt}`, 200 `{childRunId, status:"Running"}`)
+   CAS-flips `Review → Running` and resumes with an override prompt. Both require the
+   child be a direct child of the bound orchestrator and currently in `Review`. MCP
+   tools `run_promote` / `run_rework` (`mcp/src/tools.ts`). New scope `runs:promote`
+   added to `ORCHESTRATOR_TOKEN_SCOPES` (`web/lib/agents/tokens.ts`) + `TOKEN_SCOPES`
+   (`web/types/token-scopes.ts`); it is held ONLY by the run-bound orchestrator
+   token, so a child→child promote is a 403 by scope.
+5. **As-plan auto-promote.** The `auto_launch_run_plan` consumer
+   (`web/lib/domain-events/auto-launch.ts`) reacts to `run.review` for a
+   `launch_mode='auto'` child and auto-promotes it (system actor, `local_merge`) so
+   the auto-DAG flows without a live coordinator; the resulting `run.done` re-enters
+   the consumer to advance the task + release dependents. A merge conflict leaves the
+   child in `Review` (logged). Manual (as-run) children are coordinator-driven via
+   `run_promote`, never auto-promoted here.
+6. **Workspace axis is an HONORED per-child override.** The delegation `workspace`
+   (`none|repo_read|worktree`) was parsed then dropped; it is now threaded through
+   the delegate route + the as-plan `delegationSpec` into
+   `LaunchAgentRunInput.workspace`, defaulting to the resolved definition's
+   recommended workspace when omitted.
+7. **No new `MaisterError` code** (ADR-008 closed union). The merge conflict reuses
+   `CONFLICT` (HTTP 409); promote/rework preconditions reuse `PRECONDITION` (409).
+
+**Consequences:**
+- A delegated `worktree` child's `Review` diff is now actionable by the coordinator
+  (collect → promote/rework) and, for as-plan DAGs, advances unattended.
+- The completion model can no longer deadlock on a child stuck in `Review`: `Review`
+  is a settled state for the parent's completion check while still triggering a wake.
+- One new domain-event kind is added — the kind count moves 8 → 9; every
+  kind-registration site is updated.
+
+**Alternatives Considered:**
+- **Treat `Review` as terminal for the orchestrator:** rejected — the coordinator
+  must still act on the diff (promote/rework), so a settled-not-terminal state is
+  the correct shape; collapsing it to terminal loses the rework path.
+- **Widen a run-terminal payload instead of a new kind:** rejected — `Review` is not
+  a run-terminal transition, so there is no terminal event to ride; a distinct
+  `run.review` kind is unavoidable.
+- **Coordinator-only promote (no as-plan auto-promote):** rejected — an as-plan DAG
+  has no live coordinator parked on it, so its `worktree` children would never leave
+  `Review` and the DAG would stall.
+
+> **Numbering note.** ADR-097 was the next-free number on
+> `feature/orchestrator-engine` (after ADR-095/096 on the same branch) and migration
+> 0059 the next-free migration (after 0055–0058). Both still next-free vs main's HEAD
+> at the fix-commit check. A renumber pass against main at merge time remains a
+> pre-merge deliverable IF main claims 0059/ADR-097 first (a sibling-branch collision
+> is known); do NOT renumber here. Run `node scripts/validate-docs-adr-anchors.mjs`
+> after any renumber.
 
 ---
 
