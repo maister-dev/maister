@@ -293,88 +293,102 @@ export async function LeftRail({
           iconTestId="rail-flyout-icon-workspaces"
           label={tPortfolio("activeWorkspaces")}
         >
-          {workspaceGroups.length > 0 ? (
-            <div className="flex flex-col gap-2">
-              {workspaceGroups.map((group) => (
-                <section
-                  key={group.projectId}
-                  className="flex flex-col gap-0.5"
-                >
-                  <div className="flex items-center gap-1.5 px-1 py-1">
-                    <span className="min-w-0 flex-1 truncate text-[11px] font-semibold text-ink-2">
-                      {group.projectName}
-                    </span>
-                    <span className="rounded-full bg-ivory px-1.5 py-px font-mono text-[9.5px] text-mute">
-                      {group.activeCount}
-                    </span>
-                    <ScratchLaunchPopover
-                      hint={group.projectName}
-                      label="+"
-                      projectId={group.projectId}
-                      title={tPortfolio("startScratchInProject", {
-                        project: group.projectName,
-                      })}
-                      variant="icon"
-                    />
-                  </div>
-                  <ul className="flex list-none flex-col gap-0.5">
-                    {group.workspaces.map((ws) => (
-                      <li key={ws.runId}>
-                        <ActiveWorkspaceRow labels={buildLabels(ws)} row={ws} />
-                      </li>
-                    ))}
-                  </ul>
-                </section>
-              ))}
-            </div>
-          ) : workspaces.length > 0 ? (
-            <ul className="flex list-none flex-col gap-0.5">
-              {workspaces.map((ws) => (
-                <li key={`${ws.name}-${ws.meta}`}>
-                  <Link
-                    className={clsx(
-                      "relative grid cursor-pointer grid-cols-[12px_1fr_auto] items-center gap-2 rounded-lg px-2.5 py-2 transition-colors",
-                      ws.current ? "bg-amber-soft" : "hover:bg-ivory",
-                    )}
-                    href={ws.href ?? "#"}
-                    title={`Open ${ws.name} · ${ws.meta}`}
+          <div className="flex flex-col gap-2">
+            <Link
+              className="inline-flex items-center justify-between rounded-lg border border-line bg-ivory px-2.5 py-1.5 font-mono text-[10px] font-semibold text-mute transition-colors hover:border-mute hover:text-ink"
+              href="/runs"
+            >
+              <span>{tPortfolio("seeAll")}</span>
+              <span className="rounded-full bg-paper px-1.5 py-px text-[9.5px] text-ink-2">
+                {activeCount}
+              </span>
+            </Link>
+            {workspaceGroups.length > 0 ? (
+              <div className="flex flex-col gap-2">
+                {workspaceGroups.map((group) => (
+                  <section
+                    key={group.projectId}
+                    className="flex flex-col gap-0.5"
                   >
-                    {ws.current ? (
-                      <span className="absolute inset-y-2 left-0 w-0.5 rounded-sm bg-amber" />
-                    ) : null}
-                    <span
-                      className={clsx(
-                        "h-2 w-2 rounded-full",
-                        dotByStatus[ws.status],
-                      )}
-                    />
-                    <div className="flex min-w-0 flex-col gap-px">
-                      <code className="truncate font-mono text-[11.5px] font-semibold tracking-[-0.005em] text-ink">
-                        {ws.name}
-                      </code>
-                      <span className="truncate font-mono text-[10px] tracking-[0.02em] text-mute">
-                        {ws.meta}
+                    <div className="flex items-center gap-1.5 px-1 py-1">
+                      <span className="min-w-0 flex-1 truncate text-[11px] font-semibold text-ink-2">
+                        {group.projectName}
                       </span>
+                      <span className="rounded-full bg-ivory px-1.5 py-px font-mono text-[9.5px] text-mute">
+                        {group.activeCount}
+                      </span>
+                      <ScratchLaunchPopover
+                        hint={group.projectName}
+                        label="+"
+                        projectId={group.projectId}
+                        title={tPortfolio("startScratchInProject", {
+                          project: group.projectName,
+                        })}
+                        variant="icon"
+                      />
                     </div>
-                    <span
+                    <ul className="flex list-none flex-col gap-0.5">
+                      {group.workspaces.map((ws) => (
+                        <li key={ws.runId}>
+                          <ActiveWorkspaceRow
+                            labels={buildLabels(ws)}
+                            row={ws}
+                          />
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                ))}
+              </div>
+            ) : workspaces.length > 0 ? (
+              <ul className="flex list-none flex-col gap-0.5">
+                {workspaces.map((ws) => (
+                  <li key={`${ws.name}-${ws.meta}`}>
+                    <Link
                       className={clsx(
-                        "font-mono text-[10px] tracking-[0.04em]",
-                        ws.status === "needs"
-                          ? "font-semibold text-amber"
-                          : "text-mute-2",
+                        "relative grid cursor-pointer grid-cols-[12px_1fr_auto] items-center gap-2 rounded-lg px-2.5 py-2 transition-colors",
+                        ws.current ? "bg-amber-soft" : "hover:bg-ivory",
                       )}
+                      href={ws.href ?? "#"}
+                      title={`Open ${ws.name} · ${ws.meta}`}
                     >
-                      {ws.time}
-                    </span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="m-0 px-1 py-2 font-mono text-[11px] text-mute-2">
-              {tPortfolio("noneActive")}
-            </p>
-          )}
+                      {ws.current ? (
+                        <span className="absolute inset-y-2 left-0 w-0.5 rounded-sm bg-amber" />
+                      ) : null}
+                      <span
+                        className={clsx(
+                          "h-2 w-2 rounded-full",
+                          dotByStatus[ws.status],
+                        )}
+                      />
+                      <div className="flex min-w-0 flex-col gap-px">
+                        <code className="truncate font-mono text-[11.5px] font-semibold tracking-[-0.005em] text-ink">
+                          {ws.name}
+                        </code>
+                        <span className="truncate font-mono text-[10px] tracking-[0.02em] text-mute">
+                          {ws.meta}
+                        </span>
+                      </div>
+                      <span
+                        className={clsx(
+                          "font-mono text-[10px] tracking-[0.04em]",
+                          ws.status === "needs"
+                            ? "font-semibold text-amber"
+                            : "text-mute-2",
+                        )}
+                      >
+                        {ws.time}
+                      </span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="m-0 px-1 py-2 font-mono text-[11px] text-mute-2">
+                {tPortfolio("noneActive")}
+              </p>
+            )}
+          </div>
         </CollapsedRailFlyout>
 
         <CollapsedRailFlyout
@@ -444,16 +458,16 @@ export async function LeftRail({
       <section className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto overflow-x-hidden">
         <div className="flex items-center justify-between px-1 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-mute">
           <span>{tPortfolio("activeWorkspaces")}</span>
-          <button
+          <Link
             className="inline-flex cursor-pointer items-center gap-1 font-mono text-[9.5px] normal-case tracking-[0.06em] text-mute hover:text-amber"
-            type="button"
+            href="/runs"
           >
             {tPortfolio("seeAll")}{" "}
             <span className="rounded-full bg-ivory px-1.5 py-px text-[9.5px] tracking-normal text-ink-2">
               {activeCount}
             </span>{" "}
             →
-          </button>
+          </Link>
         </div>
         {workspaceGroups.length > 0 ? (
           <div className="flex flex-col gap-2 py-1">

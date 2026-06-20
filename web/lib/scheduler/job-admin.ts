@@ -11,6 +11,7 @@ import {
   schedulerAgentTickMaxFailures,
   type SchedulerJobKind,
 } from "@/lib/scheduler/jobs";
+import { normalizeSchedulerTargetDraft } from "@/lib/scheduler/job-targets";
 
 type AdminDb = {
   execute(query: SQL): Promise<{ rows?: unknown[] }>;
@@ -46,7 +47,10 @@ export async function createSchedulerJob(
   db?: AdminDb,
 ): Promise<{ id: string }> {
   const database = db ?? (getDb() as unknown as AdminDb);
-  const target = input.target ?? {};
+  const target = normalizeAdminSchedulerTarget(
+    input.jobKind,
+    input.target ?? {},
+  );
 
   if (input.cadenceIntervalSeconds <= 0) {
     throw new MaisterError(
@@ -54,7 +58,6 @@ export async function createSchedulerJob(
       `scheduler cadence_interval_seconds must be positive: ${input.cadenceIntervalSeconds}`,
     );
   }
-  assertValidTarget(input.jobKind, target);
 
   const id = input.id ?? randomUUID();
   const maxFailures = input.maxFailures ?? defaultMaxFailures(input.jobKind);
@@ -109,9 +112,11 @@ export async function updateSchedulerJob(
   if (!row) {
     throw new MaisterError("PRECONDITION", `scheduler job not found: ${jobId}`);
   }
-  if (input.target !== undefined) {
-    assertValidTarget(row.job_kind, input.target);
-  }
+  const target =
+    input.target === undefined
+      ? undefined
+      : normalizeAdminSchedulerTarget(row.job_kind, input.target);
+
   if (
     input.cadenceIntervalSeconds !== undefined &&
     input.cadenceIntervalSeconds <= 0
@@ -124,8 +129,8 @@ export async function updateSchedulerJob(
 
   const sets: SQL[] = [sql`updated_at = now()`];
 
-  if (input.target !== undefined) {
-    sets.push(sql`target = ${JSON.stringify(input.target)}::jsonb`);
+  if (target !== undefined) {
+    sets.push(sql`target = ${JSON.stringify(target)}::jsonb`);
   }
   if (input.cadenceIntervalSeconds !== undefined) {
     sets.push(sql`cadence_interval_seconds = ${input.cadenceIntervalSeconds}`);
@@ -180,42 +185,31 @@ function defaultMaxFailures(jobKind: SchedulerJobKind): number {
     : DEFAULT_MAX_FAILURES;
 }
 
-function assertValidTarget(
-  jobKind: SchedulerJobKind,
+function normalizeAdminSchedulerTarget(
+  jobKind: SchedulerJobKind | undefined,
   target: Record<string, unknown>,
-): void {
-  if (jobKind === "command") {
-    const commandKind = target.commandKind;
-
-    if (commandKind !== "http_ping" && commandKind !== "console_ping") {
-      throw new MaisterError(
-        "CONFIG",
-        "command target.commandKind must be 'http_ping' or 'console_ping'",
-      );
-    }
-    if (commandKind === "http_ping" && !isNonEmptyString(target.url)) {
-      throw new MaisterError(
-        "CONFIG",
-        "command http_ping target.url is required",
-      );
-    }
-    if (commandKind === "console_ping" && !isNonEmptyString(target.host)) {
-      throw new MaisterError(
-        "CONFIG",
-        "command console_ping target.host is required",
-      );
-    }
-
-    return;
+): Record<string, unknown> {
+  if (jobKind === undefined) {
+    throw new MaisterError("PRECONDITION", "scheduler job kind is unknown");
   }
 
-  if (jobKind === "flow_run" && !isNonEmptyString(target.taskId)) {
-    throw new MaisterError("CONFIG", "flow_run target.taskId is required");
-  }
-}
+  try {
+    return normalizeSchedulerTargetDraft({ draft: target, jobKind });
+  } catch (err) {
+    log.warn(
+      {
+        err: err instanceof Error ? err.message : String(err),
+        jobKind,
+        targetKeys: Object.keys(target).sort(),
+      },
+      "[FIX:scheduler-target-validation] rejected invalid scheduler target",
+    );
 
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.length > 0;
+    throw new MaisterError(
+      "CONFIG",
+      err instanceof Error ? err.message : String(err),
+    );
+  }
 }
 
 function rowsOf<T>(result: { rows?: unknown[] }): T[] {

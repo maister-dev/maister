@@ -1,14 +1,8 @@
 import { z } from "zod";
 
-// M34 (ADR-089): agent_tick joins the seeded-singleton kinds (run_schedule,
-// domain_event_dispatch precedent) — agent_tick.dispatcher is the only
-// instance, so the kind is rejected here.
-const jobKindSchema = z.enum([
-  "system_sweep",
-  "command",
-  "flow_run",
-  "webhook_delivery",
-]);
+import { CREATABLE_SCHEDULER_JOB_KINDS } from "@/lib/scheduler/job-catalog";
+
+const jobKindSchema = z.enum(CREATABLE_SCHEDULER_JOB_KINDS);
 
 const targetSchema = z.record(z.string(), z.unknown());
 

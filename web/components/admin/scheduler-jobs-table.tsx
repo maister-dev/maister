@@ -4,15 +4,20 @@ import type { SchedulerJobKind } from "@/lib/db/schema";
 import type { ReactElement } from "react";
 
 import { useEffect, useState, useTransition } from "react";
+import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
 
 import { SchedulerJobEditModal } from "@/components/admin/scheduler-job-edit-modal";
+import { FILTERABLE_SCHEDULER_JOB_KINDS } from "@/lib/scheduler/job-catalog";
+import { summarizeSchedulerTargetForDisplay } from "@/lib/scheduler/job-targets";
 
 export interface SchedulerJobRow {
   id: string;
   projectId: string | null;
+  projectName?: string | null;
+  projectSlug?: string | null;
   jobKind: SchedulerJobKind;
   target: Record<string, unknown>;
   cadenceIntervalSeconds: number;
@@ -35,15 +40,6 @@ export interface SchedulerJobsTableProps {
   filters: SchedulerJobsFilters;
   jobs: SchedulerJobRow[];
 }
-
-const JOB_KINDS: SchedulerJobKind[] = [
-  "system_sweep",
-  "command",
-  "agent_tick",
-  "flow_run",
-  "run_schedule",
-  "webhook_delivery",
-];
 
 const inputClass =
   "min-h-[34px] rounded-md border border-line bg-paper px-2.5 font-mono text-[11px] text-ink outline-none focus:border-amber";
@@ -128,7 +124,7 @@ export function SchedulerJobsTable({
             }}
           >
             <option value="all">{t("filterKindAll")}</option>
-            {JOB_KINDS.map((kind) => (
+            {FILTERABLE_SCHEDULER_JOB_KINDS.map((kind) => (
               <option key={kind} value={kind}>
                 {t(`kind.${kind}`)}
               </option>
@@ -156,14 +152,16 @@ export function SchedulerJobsTable({
         <table
           aria-busy={pending}
           className={clsx(
-            "w-full min-w-[920px] border-collapse text-left transition-opacity",
+            "w-full min-w-[1180px] border-collapse text-left transition-opacity",
             pending && "opacity-60",
           )}
         >
           <thead className="border-b border-line bg-ivory">
             <tr className="font-mono text-[10px] uppercase tracking-[0.12em] text-mute">
               <th className="px-5 py-3">{t("job")}</th>
+              <th className="px-4 py-3">{t("projectLabel")}</th>
               <th className="px-4 py-3">{t("kindLabel")}</th>
+              <th className="px-4 py-3">{t("targetLabel")}</th>
               <th className="px-4 py-3">{t("cadence")}</th>
               <th className="px-4 py-3">{t("nextRun")}</th>
               <th className="px-4 py-3">{t("stateLabel")}</th>
@@ -176,7 +174,7 @@ export function SchedulerJobsTable({
               <tr>
                 <td
                   className="px-5 py-8 text-center font-mono text-[11.5px] text-mute"
-                  colSpan={7}
+                  colSpan={9}
                 >
                   {t("noResults")}
                 </td>
@@ -188,6 +186,8 @@ export function SchedulerJobsTable({
                   activeLabel={t("state.active")}
                   disabledLabel={t("state.disabled")}
                   editLabel={t("edit")}
+                  globalProjectLabel={t("globalProjectLabel")}
+                  invalidTargetLabel={t("invalidTarget")}
                   job={job}
                   kindLabel={t(`kind.${job.jobKind}`)}
                   neverLabel={t("never")}
@@ -226,11 +226,15 @@ function JobRow({
   neverLabel,
   secondsSuffix,
   editLabel,
+  globalProjectLabel,
+  invalidTargetLabel,
   onEdit,
 }: {
   activeLabel: string;
   disabledLabel: string;
   editLabel: string;
+  globalProjectLabel: string;
+  invalidTargetLabel: string;
   job: SchedulerJobRow;
   kindLabel: string;
   neverLabel: string;
@@ -238,6 +242,10 @@ function JobRow({
   secondsSuffix: string;
 }): ReactElement {
   const isDisabled = job.disabledAt !== null;
+  const targetSummary = summarizeSchedulerTargetForDisplay({
+    jobKind: job.jobKind,
+    target: job.target,
+  });
 
   return (
     <tr className="border-b border-line align-middle last:border-b-0">
@@ -252,9 +260,38 @@ function JobRow({
         ) : null}
       </td>
       <td className="px-4 py-3.5">
+        {job.projectSlug ? (
+          <Link
+            className="block max-w-[180px] truncate text-[12px] font-semibold text-ink-2 underline-offset-2 hover:underline"
+            href={`/projects/${job.projectSlug}`}
+          >
+            {job.projectName ?? job.projectSlug}
+          </Link>
+        ) : (
+          <span className="font-mono text-[11px] text-mute">
+            {globalProjectLabel}
+          </span>
+        )}
+      </td>
+      <td className="px-4 py-3.5">
         <span className={clsx(badgeBase, "border-line bg-ivory text-ink-2")}>
           {kindLabel}
         </span>
+      </td>
+      <td className="px-4 py-3.5">
+        <div
+          className={clsx(
+            "max-w-[260px] truncate text-[12px]",
+            targetSummary.ok ? "text-ink-2" : "font-mono text-danger",
+          )}
+          title={
+            targetSummary.ok
+              ? targetSummary.summary
+              : targetSummary.errorMessage
+          }
+        >
+          {targetSummary.ok ? targetSummary.summary : invalidTargetLabel}
+        </div>
       </td>
       <td className="px-4 py-3.5 font-mono text-[11px] tabular-nums text-ink-2">
         {job.cadenceIntervalSeconds}

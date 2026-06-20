@@ -394,7 +394,15 @@ paths:
     post:
       tags: [admin]
       summary: (M24) Create a scheduler job
-      description: Admin-only. Creates a scheduler job. Per-kind `target` shape is validated (command requires `commandKind` + url/host; flow_run requires `taskId`). `run_schedule`, `domain_event_dispatch`, and `agent_tick` are deliberately NOT creatable here — the singletons `run_schedule.dispatcher` (M28, ADR-071), `domain_event_dispatch.default` (ADR-086), and `agent_tick.dispatcher` (M34 — Implemented, ADR-089) are seeded by the tick; all three kinds are rejected at the schema.
+      description: |
+        Admin-only. Creates a scheduler job. Per-kind `target` shape is
+        validated: `command` uses `http_ping` or `console_ping`; `flow_run`
+        requires `taskId`; no-target jobs use `{}`. `run_schedule`,
+        `domain_event_dispatch`, and `agent_tick` are deliberately NOT
+        creatable here — the singletons `run_schedule.dispatcher` (M28,
+        ADR-071), `domain_event_dispatch.default` (ADR-086), and
+        `agent_tick.dispatcher` (M34 — Implemented, ADR-089) are seeded by
+        the tick; all three kinds are rejected at the schema.
       operationId: postAdminSchedulerJob
       requestBody:
         required: true
@@ -417,11 +425,41 @@ paths:
                         webhook_delivery,
                       ],
                   }
-                target: { type: object }
+                target:
+                  $ref: "#/components/schemas/SchedulerJobTarget"
                 cadenceIntervalSeconds: { type: integer, minimum: 1 }
                 maxFailures: { type: integer, minimum: 1 }
                 nextRunAt: { type: string, format: date-time }
                 projectId: { type: string, nullable: true }
+            examples:
+              command-http:
+                value:
+                  id: healthcheck
+                  jobKind: command
+                  target:
+                    commandKind: http_ping
+                    url: https://example.com/healthz
+                    timeoutMs: 5000
+                  cadenceIntervalSeconds: 300
+              command-console:
+                value:
+                  jobKind: command
+                  target:
+                    commandKind: console_ping
+                    host: example.com
+                  cadenceIntervalSeconds: 300
+              flow-run:
+                value:
+                  jobKind: flow_run
+                  target:
+                    taskId: 7f6f7c99-4f47-4dc3-9e31-dca2044d1c5b
+                    runnerId: codex-default
+                  cadenceIntervalSeconds: 900
+              webhook-delivery:
+                value:
+                  jobKind: webhook_delivery
+                  target: {}
+                  cadenceIntervalSeconds: 60
       responses:
         "201":
           description: Scheduler job created.
@@ -449,7 +487,12 @@ paths:
     patch:
       tags: [admin]
       summary: (M24) Update a scheduler job
-      description: Admin-only. Mutates cadence, target, maxFailures, nextRunAt, or enabled state. `enabled=true` clears `disabledAt` and resets `consecutiveFailures`.
+      description: |
+        Admin-only. Mutates cadence, target, maxFailures, nextRunAt, or
+        enabled state. `enabled=true` clears `disabledAt` and resets
+        `consecutiveFailures`. The refined `/admin/scheduler` UI builds
+        `target` through typed controls; raw JSON is not the primary write
+        path.
       operationId: patchAdminSchedulerJob
       parameters:
         - name: jobId
@@ -465,7 +508,8 @@ paths:
               additionalProperties: false
               minProperties: 1
               properties:
-                target: { type: object }
+                target:
+                  $ref: "#/components/schemas/SchedulerJobTarget"
                 cadenceIntervalSeconds: { type: integer, minimum: 1 }
                 maxFailures: { type: integer, minimum: 1 }
                 nextRunAt: { type: string, format: date-time }
@@ -495,7 +539,11 @@ paths:
     delete:
       tags: [admin]
       summary: (M24) Delete a scheduler job
-      description: Admin-only. Deletes the job and cascades its attempt ledger. The default system_sweep job is re-seeded on the next tick.
+      description: |
+        Admin-only. Deletes the job and cascades its attempt ledger. The
+        default seeded jobs are re-seeded on the next tick. The designed
+        `/admin/scheduler` UI hides delete on seeded singleton rows and
+        confirmation-gates delete for custom jobs.
       operationId: deleteAdminSchedulerJob
       parameters:
         - name: jobId
@@ -9841,6 +9889,70 @@ components:
           type: array
           description: Per-row skip reasons when a sub-sweep partially failed (207).
           items: { type: string }
+    SchedulerCommandHttpPingTarget:
+      type: object
+      additionalProperties: false
+      required: [commandKind, url]
+      properties:
+        commandKind:
+          type: string
+          enum: [http_ping]
+        url:
+          type: string
+          format: uri
+          description: HTTP or HTTPS URL checked with a HEAD request.
+        timeoutMs:
+          type: number
+          minimum: 1
+          description: Optional request timeout in milliseconds.
+    SchedulerCommandConsolePingTarget:
+      type: object
+      additionalProperties: false
+      required: [commandKind, host]
+      properties:
+        commandKind:
+          type: string
+          enum: [console_ping]
+        host:
+          type: string
+          description: Hostname or IP literal passed to `ping`.
+        timeoutMs:
+          type: number
+          minimum: 1
+          description: Optional process timeout in milliseconds.
+    SchedulerFlowRunTarget:
+      type: object
+      additionalProperties: false
+      required: [taskId]
+      properties:
+        taskId:
+          type: string
+          minLength: 1
+          description: Engine jobs use an explicit task id; friendly task selection belongs to project `run_schedules`.
+        runnerId:
+          type: string
+          minLength: 1
+        baseBranch:
+          type: string
+          minLength: 1
+        targetBranch:
+          type: string
+          minLength: 1
+    SchedulerNoTarget:
+      type: object
+      additionalProperties: false
+      maxProperties: 0
+      description: Empty target for seeded/no-target jobs.
+    SchedulerJobTarget:
+      oneOf:
+        - $ref: "#/components/schemas/SchedulerCommandHttpPingTarget"
+        - $ref: "#/components/schemas/SchedulerCommandConsolePingTarget"
+        - $ref: "#/components/schemas/SchedulerFlowRunTarget"
+        - $ref: "#/components/schemas/SchedulerNoTarget"
+      description: |
+        Per-kind scheduler target payload. `command` jobs use one of the
+        command shapes, `flow_run` uses `SchedulerFlowRunTarget`, and
+        no-target jobs use `{}`.
     SchedulerTickSummary:
       type: object
       description: |
@@ -9865,7 +9977,16 @@ components:
         jobKind:
           type: string
           nullable: true
-          enum: [system_sweep, command, agent_tick, flow_run, run_schedule]
+          enum:
+            [
+              system_sweep,
+              command,
+              agent_tick,
+              flow_run,
+              run_schedule,
+              webhook_delivery,
+              domain_event_dispatch,
+            ]
         attempts:
           type: array
           items:
@@ -9876,7 +9997,16 @@ components:
               attemptId: { type: string, nullable: true }
               jobKind:
                 type: string
-                enum: [system_sweep, command, agent_tick, flow_run, run_schedule]
+                enum:
+                  [
+                    system_sweep,
+                    command,
+                    agent_tick,
+                    flow_run,
+                    run_schedule,
+                    webhook_delivery,
+                    domain_event_dispatch,
+                  ]
               status:
                 type: string
                 enum: [Claimed, Running, Succeeded, Failed, Skipped]

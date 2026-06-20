@@ -601,9 +601,9 @@ scheduler_jobs {
 scheduler_job_runs {
   id, jobId,
   jobKind,
-  claimToken,
   status: 'Claimed' | 'Running' | 'Succeeded' | 'Failed' | 'Skipped',
-  startedAt, leaseExpiresAt, endedAt?,
+  claimedAt,
+  startedAt?, leaseExpiresAt, finishedAt?,
   summary?,
   errorCode?, errorMessage?
 }
@@ -628,7 +628,9 @@ See [`db/agents-domain.md`](db/agents-domain.md).
 `scheduler_jobs` is indexed on `(disabled_at, next_run_at)` and
 `(job_kind, next_run_at)`. `scheduler_job_runs` is indexed on
 `(status, lease_expires_at)` so the tick can reap expired attempts before
-claiming new work.
+claiming new work. `agent_schedules` is indexed on `(project_id, agent_id)` and
+`(trigger_type, enabled, next_fire_at)` for project lookups and the cron
+dispatcher scan.
 
 ## Run schedule tables (Implemented, M28)
 
@@ -653,7 +655,8 @@ run_schedules {
   lastFiredAt?,
   lastFireOutcome?: 'launched' | 'queued_pending' | 'catchup_queued'
     | 'skipped_task_busy' | 'skipped_cap' | 'skipped_target_terminal'
-    | 'skipped_crashed' | 'launch_failed' | 'dispatching',
+    | 'skipped_crashed' | 'skipped_blocked' | 'skipped_unconfigured'
+    | 'launch_failed' | 'dispatching',
   lastFireError?,                   // "CODE: message", bounded ≤500 chars
   lastRunId?,                       // runs FK, SET NULL
   createdByUserId?,                 // users FK, SET NULL

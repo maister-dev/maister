@@ -8,16 +8,17 @@ import {
   SchedulerJobsTable,
   type SchedulerJobRow,
 } from "@/components/admin/scheduler-jobs-table";
+import {
+  SchedulerRunSchedulesOverview,
+  type SchedulerRunScheduleOverviewRow,
+} from "@/components/admin/scheduler-run-schedules-overview";
 import { requireGlobalRole } from "@/lib/authz";
-import { listSchedulerStatusRows } from "@/lib/queries/scheduler";
+import {
+  listSchedulerRunScheduleOverviewRows,
+  listSchedulerStatusRows,
+} from "@/lib/queries/scheduler";
+import { FILTERABLE_SCHEDULER_JOB_KINDS } from "@/lib/scheduler/job-catalog";
 
-const JOB_KINDS = [
-  "system_sweep",
-  "command",
-  "agent_tick",
-  "flow_run",
-  "webhook_delivery",
-] as const;
 const STATES = ["active", "disabled"] as const;
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
@@ -45,7 +46,8 @@ export default async function AdminSchedulerPage({
   const kindParam = first(sp.jobKind);
   const stateParam = first(sp.state);
   const jobKind =
-    kindParam && (JOB_KINDS as readonly string[]).includes(kindParam)
+    kindParam &&
+    (FILTERABLE_SCHEDULER_JOB_KINDS as readonly string[]).includes(kindParam)
       ? (kindParam as SchedulerJobKind)
       : undefined;
   const state =
@@ -53,7 +55,10 @@ export default async function AdminSchedulerPage({
       ? (stateParam as (typeof STATES)[number])
       : undefined;
 
-  const all = await listSchedulerStatusRows({ limit: 200 });
+  const [all, schedules] = await Promise.all([
+    listSchedulerStatusRows({ limit: 200 }),
+    listSchedulerRunScheduleOverviewRows({ limit: 200 }),
+  ]);
   const filtered = all.filter((job) => {
     if (jobKind && job.jobKind !== jobKind) return false;
     if (state === "active" && job.disabledAt !== null) return false;
@@ -65,6 +70,8 @@ export default async function AdminSchedulerPage({
   const rows: SchedulerJobRow[] = filtered.map((job) => ({
     id: job.id,
     projectId: job.projectId,
+    projectName: job.projectName,
+    projectSlug: job.projectSlug,
     jobKind: job.jobKind,
     target: job.target,
     cadenceIntervalSeconds: job.cadenceIntervalSeconds,
@@ -77,6 +84,32 @@ export default async function AdminSchedulerPage({
     lastFinishedAt: job.lastFinishedAt?.toISOString() ?? null,
     lastErrorCode: job.lastErrorCode,
   }));
+  const scheduleRows: SchedulerRunScheduleOverviewRow[] = schedules.map(
+    (schedule) => ({
+      scheduleId: schedule.scheduleId,
+      scheduleName: schedule.scheduleName,
+      projectId: schedule.projectId,
+      projectSlug: schedule.projectSlug,
+      projectName: schedule.projectName,
+      taskId: schedule.taskId,
+      taskNumber: schedule.taskNumber,
+      taskTitle: schedule.taskTitle,
+      taskStatus: schedule.taskStatus,
+      cronExpr: schedule.cronExpr,
+      timezone: schedule.timezone,
+      overlapPolicy: schedule.overlapPolicy,
+      runnerId: schedule.runnerId,
+      enabled: schedule.enabled,
+      nextFireAt: schedule.nextFireAt.toISOString(),
+      queueOnePending: schedule.queueOnePending,
+      queuedFireAt: schedule.queuedFireAt?.toISOString() ?? null,
+      lastFiredAt: schedule.lastFiredAt?.toISOString() ?? null,
+      lastFireOutcome: schedule.lastFireOutcome,
+      lastFireError: schedule.lastFireError,
+      lastRunId: schedule.lastRunId,
+      lastRunStatus: schedule.lastRunStatus,
+    }),
+  );
 
   return (
     <div className="flex w-full flex-col gap-6">
@@ -101,6 +134,7 @@ export default async function AdminSchedulerPage({
         }}
         jobs={rows}
       />
+      <SchedulerRunSchedulesOverview schedules={scheduleRows} />
     </div>
   );
 }

@@ -76,7 +76,16 @@
       "nameLabel": "Name",
       "taskLabel": "Task",
       "taskPlaceholder": "Select a task…",
+      "presetLabel": "Preset",
+      "presets": {
+        "hourly": "Hourly",
+        "dailyMorning": "Daily at 09:00",
+        "weekdayMorning": "Weekdays at 09:00",
+        "weekly": "Weekly on Monday",
+        "custom": "Custom"
+      },
       "cronLabel": "Cron expression",
+      "cronPreview": "Cron",
       "timezoneLabel": "Timezone",
       "overlapLabel": "Overlap policy",
       "overlapHint": {
@@ -499,6 +508,63 @@
       "busy": "Saving…",
       "cancel": "Cancel",
       "error": "Rename failed"
+    }
+  },
+  "runsList": {
+    "eyebrow": "Execution ledger",
+    "title": "Runs",
+    "sub": "Recent flow, agent, scratch, scheduled, and external launches across visible projects.",
+    "page": "Page {page}",
+    "previous": "Previous",
+    "next": "Next",
+    "end": "End of list",
+    "tokens": "{count, number} tokens",
+    "filters": {
+      "project": "Project",
+      "allProjects": "All projects",
+      "state": "State",
+      "allStates": "All states",
+      "source": "Source",
+      "allSources": "All sources",
+      "runner": "Runner",
+      "allRunners": "All runners",
+      "from": "From",
+      "to": "To",
+      "apply": "Apply",
+      "reset": "Reset"
+    },
+    "table": {
+      "title": "Run history",
+      "sub": "{count, plural, one {# run on this page} other {# runs on this page}}",
+      "run": "Run",
+      "project": "Project",
+      "state": "State",
+      "source": "Source",
+      "started": "Started",
+      "duration": "Duration",
+      "runner": "Runner",
+      "cost": "Tokens",
+      "empty": "No runs match the current filters."
+    },
+    "status": {
+      "Pending": "Pending",
+      "Running": "Running",
+      "NeedsInput": "Needs input",
+      "NeedsInputIdle": "Needs input idle",
+      "HumanWorking": "Human working",
+      "Review": "Review",
+      "Crashed": "Crashed",
+      "Done": "Done",
+      "Abandoned": "Abandoned",
+      "Failed": "Failed"
+    },
+    "source": {
+      "manual": "Manual",
+      "scheduled": "Scheduled",
+      "scratch": "Scratch",
+      "domain_event": "Domain event",
+      "webhook": "Webhook",
+      "flow": "Flow"
     }
   },
   "observatory": {
@@ -1577,14 +1643,18 @@
   "adminScheduler": {
     "eyebrow": "Admin",
     "title": "Scheduler",
-    "sub": "Manage background scheduler jobs: system sweeps, commands, agent ticks, and scheduled Flow runs.",
-    "tableTitle": "Scheduler jobs",
-    "tableSub": "Jobs are claimed on each /api/cron/tick. Disabled jobs are skipped.",
+    "sub": "Manage background scheduler jobs and inspect project task schedules.",
+    "tableTitle": "Engine jobs",
+    "tableSub": "Platform jobs are claimed on each /api/cron/tick. Disabled jobs are skipped.",
     "newJob": "New job",
     "filterKindAll": "All kinds",
     "filterStateAll": "All states",
     "job": "Job",
+    "projectLabel": "Project",
+    "globalProjectLabel": "Global",
     "kindLabel": "Kind",
+    "targetLabel": "Target",
+    "invalidTarget": "Invalid target",
     "cadence": "Cadence",
     "secondsSuffix": "s",
     "nextRun": "Next run",
@@ -1600,11 +1670,26 @@
     "idLabel": "ID",
     "idPlaceholder": "auto",
     "maxFailures": "Max failures",
-    "target": "Target (JSON)",
+    "target": {
+      "noTarget": "This job kind has no editable target.",
+      "commandKindLabel": "Command",
+      "httpPing": "HTTP ping",
+      "consolePing": "Host ping",
+      "urlLabel": "URL",
+      "hostLabel": "Host",
+      "timeoutMsLabel": "Timeout (ms)",
+      "taskIdLabel": "Task ID",
+      "runnerIdLabel": "Runner ID",
+      "baseBranchLabel": "Base branch",
+      "targetBranchLabel": "Target branch"
+    },
     "enabledLabel": "Enabled",
     "save": "Save",
     "saving": "Saving…",
     "cancel": "Cancel",
+    "deleteConfirm": "Delete this job?",
+    "deleteConfirmYes": "Delete",
+    "deleteConfirmNo": "Keep",
     "targetInvalidJson": "Target must be valid JSON.",
     "targetMustBeObject": "Target must be a JSON object.",
     "cadenceInvalid": "Cadence must be a positive whole number of seconds.",
@@ -1628,6 +1713,37 @@
       "agent_tick": "Free-form target passed to the agent launcher.",
       "flow_run": "{ \"taskId\": \"…\", \"runnerId\"?: \"…\" }",
       "webhook_delivery": "No target needed; use {}."
+    },
+    "schedules": {
+      "tableTitle": "Task schedules",
+      "tableSub": "Read-only overview of project schedules. Edit schedules from the owning project.",
+      "schedule": "Schedule",
+      "task": "Task",
+      "cron": "Cron",
+      "nextFire": "Next fire",
+      "lastOutcome": "Last outcome",
+      "noResults": "No project schedules found.",
+      "queuedCatchUp": "Catch-up queued",
+      "openLastRun": "Open run",
+      "openProjectSchedules": "Open schedules",
+      "overlap": {
+        "skip": "Skip",
+        "queue_one": "Queue one",
+        "start_anyway": "Start anyway"
+      },
+      "outcome": {
+        "launched": "Launched",
+        "queued_pending": "Queued (cap)",
+        "catchup_queued": "Catch-up queued",
+        "skipped_task_busy": "Skipped — task busy",
+        "skipped_cap": "Skipped — at capacity",
+        "skipped_target_terminal": "Skipped — task terminal",
+        "skipped_crashed": "Skipped — last run crashed",
+        "skipped_blocked": "Skipped — blocked by relations",
+        "launch_failed": "Launch failed",
+        "dispatching": "Dispatching…",
+        "skipped_unconfigured": "Skipped — no flow configured"
+      }
     }
   },
   "adminUsers": {

@@ -18,7 +18,7 @@ erDiagram
     PROJECTS ||--o{ SCHEDULER_JOBS : "optional project scope"
     SCHEDULER_JOBS ||--o{ SCHEDULER_JOB_RUNS : "attempts"
     PROJECTS ||--o{ AGENT_SCHEDULES : "project agent schedules"
-    SCHEDULER_JOBS ||--o| AGENT_SCHEDULES : "agent tick bridge"
+    AGENTS ||--o{ AGENT_SCHEDULES : "trigger bindings"
     PROJECTS ||--o{ RUN_SCHEDULES : "project schedules (M28)"
     TASKS ||--o{ RUN_SCHEDULES : "target task"
     RUNS ||--o{ RUN_SCHEDULES : "last launched run (nullable)"
@@ -28,7 +28,7 @@ erDiagram
     SCHEDULER_JOBS {
         text id PK
         text project_id FK "nullable projects(id) ON DELETE CASCADE"
-        text job_kind "system_sweep|command|agent_tick|flow_run|run_schedule"
+        text job_kind "system_sweep|command|agent_tick|flow_run|run_schedule|webhook_delivery|domain_event_dispatch"
         jsonb target "validated per job_kind"
         integer cadence_interval_seconds
         timestamp next_run_at
@@ -60,11 +60,13 @@ erDiagram
     AGENT_SCHEDULES {
         text id PK
         text project_id FK "projects(id) ON DELETE CASCADE"
-        text agent_ref "typed text; no M25 FK"
-        text scheduler_job_id FK "scheduler_jobs(id) ON DELETE CASCADE"
-        text trigger_type "cron|manual|event|continuous"
-        text desired_state "running|stopped"
-        jsonb event_match
+        text agent_id FK "agents(id) ON DELETE CASCADE"
+        text trigger_type "cron|event"
+        text cron_expr "cron rows only"
+        text timezone "cron rows only"
+        timestamp next_fire_at "cron rows only"
+        timestamp last_fired_at
+        jsonb event_match "{ kinds: string[] } for event rows"
         boolean enabled
         timestamp created_at
         timestamp updated_at
@@ -84,7 +86,7 @@ erDiagram
         boolean queue_one_pending "non-stacking catch-up flag"
         timestamp queued_fire_at
         timestamp last_fired_at
-        text last_fire_outcome "launched|queued_pending|catchup_queued|skipped_task_busy|skipped_cap|skipped_target_terminal|skipped_crashed|launch_failed|dispatching"
+        text last_fire_outcome "launched|queued_pending|catchup_queued|skipped_task_busy|skipped_cap|skipped_target_terminal|skipped_crashed|skipped_blocked|skipped_unconfigured|launch_failed|dispatching"
         text last_fire_error "CODE: message, max 500 chars"
         text last_run_id FK "runs(id) ON DELETE SET NULL"
         text created_by_user_id FK "users(id) ON DELETE SET NULL"
@@ -102,8 +104,8 @@ erDiagram
 | `scheduler_jobs_project_kind_idx`   | `(project_id, job_kind)`     | Project-scoped job read model          |
 | `scheduler_job_runs_job_idx`        | `(job_id)`                   | Job attempt history                    |
 | `scheduler_job_runs_lease_idx`      | `(status, lease_expires_at)` | Stuck-attempt reaper                   |
-| `agent_schedules_project_agent_idx` | `(project_id, agent_ref)`    | Project agent schedule lookup          |
-| `agent_schedules_scheduler_job_idx` | `(scheduler_job_id)`         | Agent schedule to scheduler job bridge |
+| `agent_schedules_project_agent_idx` | `(project_id, agent_id)`     | Project agent schedule lookup          |
+| `agent_schedules_due_cron_idx`      | `(trigger_type, enabled, next_fire_at)` | Due cron schedule scan        |
 | `run_schedules_project_idx` (M28)   | `(project_id)`               | Project schedules list                 |
 | `run_schedules_task_idx` (M28)      | `(task_id)`                  | Per-task schedule lookup               |
 | `run_schedules_due_idx` (M28)       | `(enabled, next_fire_at)`    | Dispatcher due-scan                    |
@@ -114,4 +116,6 @@ erDiagram
 - Process flows: [`../system-analytics/scheduler.md`](../system-analytics/scheduler.md).
 - Global ERD: [`erd.md`](erd.md).
 - Narrative: [`../database-schema.md`](../database-schema.md).
-- ADR: [ADR-060](../decisions.md#adr-060-unified-scheduler-clock-and-polymorphic-job-budgets).
+- ADR: [ADR-060](../decisions.md#adr-060-unified-scheduler-clock-and-polymorphic-job-budgets),
+  [ADR-071](../decisions.md#adr-071-user-facing-run-schedules-on-the-m24-clock),
+  [ADR-089](../decisions.md#adr-089-platform-agent-catalog-with-per-agent-runner-and-a-five-source-trigger-model).

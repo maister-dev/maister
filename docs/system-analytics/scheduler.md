@@ -52,8 +52,10 @@ without turning recovery sweeps into live-path polling.
   user-creatable — `createSchedulerJobSchema` rejects it (`run_schedule`
   precedent). See [domain-events.md](domain-events.md).
 - **Scheduler admin** (`/admin/scheduler` page + `/api/admin/scheduler-jobs[/{jobId}]`,
-  Implemented, M24) — admin-only CRUD (create / list / update / enable-disable /
-  delete) for scheduler jobs.
+  Implemented, M24/M28) — admin-only scheduler
+  management. The refined surface separates Engine jobs from Task schedules,
+  keeps task schedules read-only with project links, and edits scheduler
+  targets through typed fields instead of a primary raw-JSON textarea.
 - **Run-schedule dispatcher** (`run_schedule.dispatcher` job, `job_kind =
   'run_schedule'`, Implemented, M28) — the ONE seeded job whose handler claims due
   `run_schedules` rows and fires them through `launchRun`. Cron expressions and
@@ -61,6 +63,13 @@ without turning recovery sweeps into live-path polling.
   see [`run-schedules.md`](run-schedules.md). `createSchedulerJobSchema`
   deliberately rejects this kind (the seeded singleton is the only instance;
   disabling it on `/admin/scheduler` is the global kill switch).
+- **Target payloads** (`scheduler_jobs.target`, Implemented, M24/M28) —
+  per-kind JSON payload persisted for engine handlers. `command`
+  targets are either `http_ping` (`url`, optional `timeoutMs`) or
+  `console_ping` (`host`, optional `timeoutMs`). `flow_run` targets use a
+  required task id plus optional `runnerId`, `baseBranch`, and `targetBranch`.
+  `system_sweep`, `run_schedule`, `webhook_delivery`,
+  `domain_event_dispatch`, and `agent_tick` use `{}` in the seeded rows.
 
 ## State machine
 
@@ -127,6 +136,23 @@ flowchart TD
     CapCleanup --> Summary
 ```
 
+### Admin cockpit and typed target editing
+
+The admin screen is an operator cockpit over two related but distinct stores:
+fixed-interval engine jobs and user-facing cron schedules.
+
+```mermaid
+flowchart TD
+    Admin["Global admin opens /admin/scheduler"] --> Jobs["Engine jobs table<br/>scheduler_jobs + last attempt"]
+    Admin --> Schedules["Task schedules overview<br/>run_schedules joined to project/task/run"]
+    Jobs --> Edit["Edit scheduler job modal"]
+    Edit --> TargetKind{"job kind"}
+    TargetKind -- command --> Cmd["Typed command target<br/>http URL or console host"]
+    TargetKind -- flow_run --> Flow["Typed flow_run target<br/>task id + optional runner/branches"]
+    TargetKind -- seeded singleton --> NoTarget["No target editor<br/>pause/resume/cadence only"]
+    Schedules --> Link["Open owning project<br/>/projects/{slug}?tab=schedules"]
+```
+
 ## Expectations
 
 - The tick route MUST be stateless; all idempotence comes from DB claims and
@@ -170,6 +196,28 @@ flowchart TD
 - `/api/cron/gc` MUST keep its existing auth and response contract and run the
   shared GC bundle (workspace + revision GC + capabilities cleanup) only; it MUST
   NOT run the keepalive or reconcile sweeps that `system_sweep` performs.
+- `/admin/scheduler` MUST treat `scheduler_jobs` and `run_schedules` as
+  separate concepts: Engine jobs are fixed-interval clock work; Task schedules
+  are cron rows owned by projects and fired through the single
+  `run_schedule.dispatcher` job.
+- Scheduler job kind lists MUST share one catalog across parsing, filtering,
+  creation, and editing. All DB-supported kinds are visible/filterable:
+  `system_sweep`, `command`, `agent_tick`, `flow_run`, `run_schedule`,
+  `webhook_delivery`, and `domain_event_dispatch`.
+- Custom job creation MUST match the admin API schema. The seeded singleton
+  kinds `agent_tick`, `run_schedule`, and `domain_event_dispatch` are not
+  creatable as duplicates. `webhook_delivery` policy MUST stay consistent
+  across schema, catalog, docs, and UI.
+- The admin editor MUST build `scheduler_jobs.target` from typed fields.
+  Raw JSON MUST NOT be the primary write UI; a read-only advanced preview is
+  acceptable for diagnostics.
+- Engine `flow_run` jobs use a required task id field. Friendly task selection
+  stays on the user-facing project schedules tab.
+- Seeded singleton rows MUST NOT expose destructive delete in the admin UI.
+  Custom/deletable rows require delete confirmation.
+- Operator-visible execution failures on the screen MUST come from the last
+  `scheduler_job_runs` status/error and existing structured scheduler logs;
+  the UI should not invent a second error channel.
 
 ## Edge cases
 
@@ -181,6 +229,14 @@ flowchart TD
   kind and never consumes a different kind's cap.
 - Handler failure records `Failed` with bounded error context and contributes to
   the route's 207 summary.
+- Invalid per-kind admin target payloads return `MaisterError("CONFIG")` as a
+  422 route response. The typed editor should prevent common shape errors, but
+  `web/lib/scheduler/job-admin.ts` remains the server boundary.
+- Attempting to create seeded-only dispatcher kinds through the admin API
+  returns `CONFIG`/422; the UI should not present those options.
+- Deleting a seeded row through a non-UI client removes the row under the
+  current route contract; the tick re-seeds known default jobs. The designed UI
+  avoids that sharp path by hiding destructive actions on seeded singletons.
 
 ## Linked artifacts
 
@@ -198,4 +254,6 @@ flowchart TD
 - Source seams: `web/app/api/cron/gc/route.ts`, `web/lib/scheduler.ts`,
   `web/lib/reconcile.ts`, `web/lib/gc/sweeper.ts`,
   `web/lib/runs/keepalive-sweeper.ts`,
-  `web/lib/capabilities/cleanup.ts`.
+  `web/lib/capabilities/cleanup.ts`, `web/lib/scheduler/job-admin.ts`,
+  `web/lib/scheduler/job-admin-schema.ts`, and
+  `web/app/(app)/admin/scheduler/page.tsx`.

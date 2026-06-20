@@ -79,6 +79,25 @@ describe("ScheduleEditModal", () => {
     expect(markup).not.toContain("modal.delete");
   });
 
+  it("renders schedule cadence presets around the cron expression", () => {
+    const markup = renderToStaticMarkup(
+      createElement(ScheduleEditModal, {
+        schedule: null,
+        slug: "proj",
+        tasks: [{ id: "task-1", title: "Fix flaky tests", status: "Backlog" }],
+        onClose: () => {},
+        onSaved: () => {},
+      }),
+    );
+
+    expect(markup).toContain("modal.presetLabel");
+    expect(markup).toContain("modal.presets.weekdayMorning");
+    expect(markup).toContain("modal.presets.dailyMorning");
+    expect(markup).toContain("modal.presets.hourly");
+    expect(markup).toContain("modal.presets.custom");
+    expect(markup).toContain("modal.cronPreview");
+  });
+
   it("hides terminal (Done/Abandoned) tasks from the create picker", () => {
     const markup = renderToStaticMarkup(
       createElement(ScheduleEditModal, {

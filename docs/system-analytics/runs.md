@@ -44,6 +44,19 @@ diff, and lifecycle read models into three stable regions:
   change size, branch/worktree facts, run status, Flow/session mini-map, and
   server-derived action availability.
 
+## Runs ledger UI (Implemented)
+
+`/runs` is the read-only run ledger reached from the Active workspaces rail
+**See all** link. It does not create a new state machine or write model. It
+projects existing rows from `runs`, `projects`, optional `tasks`, `flows`,
+`workspaces`, `run_cost_rollups`, and the `run_schedules.last_run_id` link into
+a URL-filtered table.
+
+Filters are project, state, source, runner, and inclusive start-date range.
+Global admins see every non-archived project's runs; other users see only runs
+for projects where they have `project_members` visibility. Flow and standalone
+agent rows open `/runs/{runId}`; scratch rows open `/scratch-runs/{runId}`.
+
 ## State machine — execution axis
 
 ```mermaid

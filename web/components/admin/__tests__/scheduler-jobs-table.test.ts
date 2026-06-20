@@ -41,7 +41,15 @@ describe("SchedulerJobsTable", () => {
         filters: { jobKind: "all", state: "all" },
         jobs: [
           job(),
-          job({ id: "ping-1", jobKind: "command", maxFailures: 5 }),
+          job({
+            id: "ping-1",
+            jobKind: "command",
+            maxFailures: 5,
+            target: {
+              commandKind: "http_ping",
+              url: "https://example.com",
+            },
+          }),
         ],
       }),
     );
@@ -63,7 +71,7 @@ describe("SchedulerJobsTable", () => {
     expect(markup).toContain("noResults");
   });
 
-  it("offers run_schedule in the kind filter", () => {
+  it("offers every scheduler job kind in the kind filter", () => {
     const markup = renderToStaticMarkup(
       createElement(SchedulerJobsTable, {
         filters: { jobKind: "all", state: "all" },
@@ -72,5 +80,71 @@ describe("SchedulerJobsTable", () => {
     );
 
     expect(markup).toContain("kind.run_schedule");
+    expect(markup).toContain("kind.domain_event_dispatch");
+  });
+
+  it("renders typed target summaries and project links", () => {
+    const projectJob = {
+      ...job({
+        id: "flow-run.project",
+        jobKind: "flow_run",
+        projectId: "project-1",
+        target: {
+          taskId: "task-1",
+          runnerId: "codex-default",
+        },
+      }),
+      projectName: "mAIster",
+      projectSlug: "maister",
+    } as SchedulerJobRow;
+
+    const markup = renderToStaticMarkup(
+      createElement(SchedulerJobsTable, {
+        filters: { jobKind: "all", state: "all" },
+        jobs: [
+          job({
+            id: "ping-1",
+            jobKind: "command",
+            target: {
+              commandKind: "http_ping",
+              timeoutMs: 5000,
+              url: "https://example.com/healthz",
+            },
+          }),
+          projectJob,
+        ],
+      }),
+    );
+
+    expect(markup).toContain("targetLabel");
+    expect(markup).toContain("HTTP ping https://example.com/healthz · 5000ms");
+    expect(markup).toContain("Flow run task task-1 · runner codex-default");
+    expect(markup).toContain('href="/projects/maister"');
+    expect(markup).toContain("mAIster");
+  });
+
+  it("renders a fallback instead of throwing for legacy invalid targets", () => {
+    let markup = "";
+
+    expect(() => {
+      markup = renderToStaticMarkup(
+        createElement(SchedulerJobsTable, {
+          filters: { jobKind: "all", state: "all" },
+          jobs: [
+            job({
+              id: "legacy-ping",
+              jobKind: "command",
+              target: {
+                commandKind: "http_ping",
+                url: "example.com",
+              },
+            }),
+          ],
+        }),
+      );
+    }).not.toThrow();
+
+    expect(markup).toContain("legacy-ping");
+    expect(markup).toContain("invalidTarget");
   });
 });
