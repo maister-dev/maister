@@ -97,7 +97,7 @@ Agent bundles/subdirs (agents stay single-file); editable on-canvas node popup (
 
 > Builds the Phase C UI + actions on the salvaged substrate. Docs-first; one migration (0056). UI tasks keep en/ru parity.
 
-- [ ] **T2.1 — Docs-first: local-package editing + fork + cut-version.**
+- [x] **T2.1 — Docs-first: local-package editing + fork + cut-version.**
   Extend `docs/system-analytics/local-packages.md` (fork both-grain incl. **element-fork project selection**, `is_default` virtual package, cut-version+attach, lock, read-only enforcement) per R5; ERD updates in `docs/db/projects-domain.md` + `docs/database-schema.md` for the 0056 columns; OpenAPI for new routes (fork, fork-element, cut-version, file CRUD) in `docs/api/web.openapi.yaml`; ADR-095 body (extend). Decide + document whether MCP-template provenance (`platform_mcp_server_id`, T2.5) is persisted (schema delta) or display-only. Tag statuses.
   Acceptance: docs validators + ADR anchors green; every new route/column/error has a spec entry (contract→spec table in this task); MCP-provenance persistence decision recorded.
 
@@ -136,7 +136,7 @@ Agent bundles/subdirs (agents stay single-file); editable on-canvas node popup (
   Acceptance (spec §6.4): immutable `local-<digest>` reflects the working dir at cut; later edits don't mutate it; attach gated by `manageLocalPackages: member`; git-package gates stay admin; crash between export+install leaves no half-registered revision.
   Logging: INFO `[localPkg.cutVersion] {id, digest, attached}`; DEBUG step-by-step.
 
-- [ ] **T2.8 — Deployment wiring + tests + Phase 2 green.** (depends on T2.7)
+- [x] **T2.8 — Deployment wiring + tests + Phase 2 green.** (depends on T2.7)
   Deployment touchpoints (repo rule — name the compose decision explicitly): `MAISTER_LOCAL_PACKAGES_ROOT` + `MAISTER_LOCAL_PACKAGE_LOCK_MINUTES` in `.env.example` (Phase C added); state in `docs/deployment.md` + `docs/configuration.md` that the local-root is **host-only / NOT a compose mount per ADR-023** (doc the gap — do not silently skew). Tests: integration (real PG) for file routes + lock + fork (both grains incl. project-validation) + cut-version crash windows; e2e `studio-local-edit.spec.ts` (fork→edit→cut→attach) JOIN AUTHED_SPEC. Contract surfaces table (routes→OpenAPI, columns→ERD). Per-phase green (incl. i18n parity) + Commit 3.
   Acceptance: deployment task names which file each env lands in AND the explicit "not mounted" gap line; cut-version crash-window tests pass; suite green.
 

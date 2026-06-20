@@ -7184,6 +7184,20 @@ per-instance stop to wire a UI button to.
 - **Self-contained MCP templates only (no catalog link):** not chosen — sourcing from the platform MCP catalog avoids re-entering server config and keeps one source of truth.
 - **Extend `authored_capabilities` with `agent`/`mcp` kinds:** rejected (ADR-092) — Variant B keeps platform scope clean; files in a working dir, not project-keyed draft rows.
 
+**M36 extension (Flow Package Viewer + Local Editing).** The salvaged substrate
+is extended without re-scoping it: (1) **both-grain fork** — a package-level
+fork (whole bundle → a new `<source>-local` package) AND an element-level fork
+(one flow/skill/agent/rule → the project's default package); (2) a **per-project
+default "virtual" local package** (`local_packages.is_default` + nullable
+`project_id`, migration `0056`, partial-unique `(project_id) WHERE is_default`)
+that element-forks land in, created on first use (race-safe); (3) the
+**MCP-template editor** sources the platform MCP catalog but persists no
+provenance column — the catalog pick is **display-only**, materializing
+`env:NAME` references only (no schema delta, no secret values). Fork copies the
+installed bundle's bytes (excluding `.git`) and executes nothing; cut-version is
+two-phase (export+install before the durable stamp/attach, crash-window
+recoverable). See [`system-analytics/local-packages.md`](system-analytics/local-packages.md).
+
 > **Numbering note.** Renumbered from the Phase C draft to **ADR-095** when the
 > two Phase C commits were salvaged onto `main` (the onboarding and CCR ADRs had
 > already taken the prior numbers); the substrate migration was likewise
