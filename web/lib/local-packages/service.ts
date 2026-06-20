@@ -19,7 +19,7 @@ import path from "node:path";
 import { and, desc, eq, sql } from "drizzle-orm";
 import pino from "pino";
 
-import { gitInitWithCommit } from "./git";
+import { gitCommitWorkingDir, gitDiscardPaths, gitInitWithCommit } from "./git";
 import {
   localPackageWorkingDir,
   resolveWithinWorkingDir,
@@ -30,6 +30,12 @@ import { atomicWriteText } from "@/lib/atomic";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import {
+  prepareDiff,
+  prepareDiffSummary,
+  type DiffPrepResult,
+} from "@/lib/diff/prepare";
+import { diffWorkingTree } from "@/lib/worktree";
 
 const log = pino({
   name: "local-packages/service",
@@ -430,6 +436,88 @@ export async function deleteWorkingDirFile(
   const abs = await resolveWithinWorkingDir(pkg.workingDir, relPath);
 
   await rm(abs, { force: true });
+}
+
+// The git-backed working-tree diff of a local package (M36 T4.1): every
+// uncommitted edit (tracked changes + new files) vs the current branch HEAD.
+// `changedCount` = the number of changed paths (drives the editor's `⎇ N
+// changed` badge).
+export type WorkingDirDiff = DiffPrepResult & { changedCount: number };
+
+// HEAD-vs-working-tree (2-dot): `diffWorkingTree` runs `git diff HEAD` against a
+// throwaway intent-to-add index, so it captures committed-but-unstaged edits AND
+// untracked files WITHOUT touching the real index. This is the uncommitted-work
+// diff — NOT a 3-dot merge-base diff — exactly what the editor needs to show and
+// commit/discard. `truncated` is threaded end-to-end so a diff cut at the buffer
+// bound is flagged, never silently dropped (prepare degrades to summary-only).
+export async function diffWorkingDir(
+  pkg: LocalPackage,
+): Promise<WorkingDirDiff> {
+  const wt = await diffWorkingTree(pkg.workingDir);
+  const changedCount = wt.nameStatus.length;
+
+  try {
+    const prepared = await prepareDiff(wt.text, wt.truncated);
+
+    return { ...prepared, changedCount };
+  } catch (err) {
+    // git-diff-view preparation (Shiki highlight) failed — degrade to the
+    // file-summary projection so the count + truncated flag still surface.
+    log.warn(
+      {
+        slug: pkg.slug,
+        err: err instanceof Error ? err.message : String(err),
+      },
+      "working-dir diff prepare failed — summary only",
+    );
+    const summary = prepareDiffSummary(wt.text, wt.truncated);
+
+    return {
+      files: summary.files,
+      perFile: [],
+      truncated: summary.truncated,
+      changedCount,
+    };
+  }
+}
+
+// Commit every working-tree change to the local-package branch (M36 T4.1). The
+// caller MUST have asserted the session edit-lock first; this is the git side
+// only.
+export async function commitWorkingDir(
+  pkg: LocalPackage,
+  message?: string,
+): Promise<void> {
+  await gitCommitWorkingDir(
+    pkg.workingDir,
+    message?.trim() ? message.trim() : "maister: edit local package",
+  );
+}
+
+// Discard working-tree edits, restoring to HEAD (M36 T4.1). `paths` (when given)
+// are each confined via `resolveWithinWorkingDir` BEFORE git sees them — a
+// raw body path never reaches `git checkout`. Omitted → restore the whole tree.
+// Lock-asserted by the caller.
+export async function discardWorkingDir(
+  pkg: LocalPackage,
+  paths?: readonly string[],
+): Promise<void> {
+  if (!paths || paths.length === 0) {
+    await gitDiscardPaths(pkg.workingDir);
+
+    return;
+  }
+
+  // Confine each path lexically + against the realpath BEFORE git. Pass git the
+  // ORIGINAL working-dir-relative path (not the resolved absolute) so it stays a
+  // pathspec relative to the repo root.
+  for (const relPath of paths) {
+    await resolveWithinWorkingDir(pkg.workingDir, relPath);
+  }
+  await gitDiscardPaths(
+    pkg.workingDir,
+    paths.map((p) => p.split(path.sep).join("/")),
+  );
 }
 
 // Client-safe projection: working_dir + locked_by_session are server-only and

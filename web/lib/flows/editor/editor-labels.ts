@@ -7,12 +7,57 @@ import type { McpTemplateEditorLabels } from "@/components/flows/artifact-editor
 import type { ScriptArtifactEditorLabels } from "@/components/flows/artifact-editors/script-artifact-editor";
 import type { AuthoredFlowPackageFileKind } from "@/lib/catalog/authored-types";
 import type { PackageFilesEditorLabels } from "@/components/flows/package-files-editor";
+import type { LocalPackageDiffLabels } from "@/components/studio/local-package-diff-drawer";
+import type { DiffViewLabels } from "@/components/workbench/diff-view";
 
 // Shared label builders for the flow editor surfaces, reused by the authored-flow
 // editor page and the local-package editor page (M36). Each takes a next-intl
 // translator (`t` for the `flows` namespace, `te` for `flowEditor`) so it is
 // framework-agnostic and callable from either an RSC or a client boundary.
 type T = (key: string, values?: Record<string, string | number>) => string;
+
+// The shared <DiffView> labels, from the `workbench.diff` namespace (`td`). The
+// M36 local-package git-diff drawer reuses the run-diff renderer verbatim.
+export function diffViewLabels(td: T): DiffViewLabels {
+  return {
+    empty: td("empty"),
+    bodyUnavailable: td("bodyUnavailable"),
+    added: td("added"),
+    removed: td("removed"),
+    displayMode: td("displayMode"),
+    rich: td("rich"),
+    raw: td("raw"),
+    filterFiles: td("filterFiles"),
+    filterFilesPlaceholder: td("filterFilesPlaceholder"),
+    filterNoMatches: td("filterNoMatches"),
+    showFiles: td("showFiles"),
+    hideFiles: td("hideFiles"),
+    refresh: td("refresh"),
+    viewMode: td("viewMode"),
+    split: td("split"),
+    unified: td("unified"),
+    truncated: td("truncated"),
+  };
+}
+
+// The git-diff drawer's commit/discard top-bar labels (`studio.local.diff`).
+export function localPackageDiffLabels(tld: T): LocalPackageDiffLabels {
+  return {
+    title: tld("title"),
+    changed: tld("changed"),
+    clean: tld("clean"),
+    error: tld("error"),
+    commit: tld("commit"),
+    commitMessagePlaceholder: tld("commitMessagePlaceholder"),
+    discard: tld("discard"),
+    discardConfirm: tld("discardConfirm"),
+    committing: tld("committing"),
+    discarding: tld("discarding"),
+    committed: tld("committed"),
+    discarded: tld("discarded"),
+    actionFailed: tld("actionFailed"),
+  };
+}
 
 export function packageFileKindLabels(
   t: T,

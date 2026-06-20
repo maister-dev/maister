@@ -6,6 +6,8 @@ import type {
   AuthoredFlowPackageFileKind,
 } from "@/lib/catalog/authored-types";
 import type { PackageFilesEditorLabels } from "@/components/flows/package-files-editor";
+import type { LocalPackageDiffLabels } from "@/components/studio/local-package-diff-drawer";
+import type { DiffViewLabels } from "@/components/workbench/diff-view";
 import type { FlowYamlV1 } from "@/lib/config.schema";
 import type { FlowLayout } from "@/lib/flows/graph/presentation-layout";
 import type { GraphTopology } from "@/lib/queries/flow-graph-view";
@@ -19,6 +21,7 @@ import { useTranslations } from "next-intl";
 
 import { FlowEditorTabs } from "@/components/flows/flow-editor-tabs";
 import { PackageFilesEditor } from "@/components/flows/package-files-editor";
+import { LocalPackageDiffDrawer } from "@/components/studio/local-package-diff-drawer";
 import {
   buildImportDialogLabels,
   ImportDialog,
@@ -47,6 +50,9 @@ export type LocalPackageEditorLabels = {
   saving: string;
   saved: string;
   saveFailed: string;
+  // The git-backed [Diff] drawer (working-tree-vs-HEAD + Commit/Discard).
+  diff: LocalPackageDiffLabels;
+  diffView: DiffViewLabels;
 };
 
 // Keep-alive cadence. The server lock TTL defaults to 30 min
@@ -139,6 +145,9 @@ export function LocalPackageEditor({
   const [lockHeldByMe, setLockHeldByMe] = useState(initialLock.heldByMe);
   const [holderLabel, setHolderLabel] = useState(initialLock.holderLabel);
   const [status, setStatus] = useState<SaveStatus>({ kind: "idle" });
+  // Bumped after a successful save or import so the git-diff drawer re-fetches
+  // the working-tree diff + its changed-count.
+  const [diffRefresh, setDiffRefresh] = useState(0);
 
   const applyLock = useCallback((lock: LockState | LockSnapshot): void => {
     setLockHeldByMe(lock.heldByMe);
@@ -272,6 +281,7 @@ export function LocalPackageEditor({
         }
 
         setStatus({ kind: "saved" });
+        setDiffRefresh((n) => n + 1);
         router.refresh();
       } catch (err) {
         setStatus({
@@ -317,7 +327,10 @@ export function LocalPackageEditor({
           packageId={packageId}
           sessionId={sessionIdRef.current}
           onClose={() => setImporting(false)}
-          onImported={() => router.refresh()}
+          onImported={() => {
+            setDiffRefresh((n) => n + 1);
+            router.refresh();
+          }}
         />
       ) : null}
 
@@ -327,6 +340,16 @@ export function LocalPackageEditor({
           canvasAvailable={canvasAvailable}
           capId={identity.slug}
           diff={diff}
+          diffDrawer={
+            <LocalPackageDiffDrawer
+              canManage={!readOnly}
+              diffViewLabels={labels.diffView}
+              labels={labels.diff}
+              packageId={packageId}
+              refreshSignal={diffRefresh}
+              sessionId={sessionIdRef.current}
+            />
+          }
           draftVersion={0}
           filesDrawer={
             <PackageFilesEditor

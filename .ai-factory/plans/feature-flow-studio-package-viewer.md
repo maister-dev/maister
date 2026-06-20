@@ -159,19 +159,19 @@ Agent bundles/subdirs (agents stay single-file); editable on-canvas node popup (
 
 ### Phase 4 — Git-backed diff + Commit/Discard (spec §6.5)
 
-- [ ] **T4.1 — Docs + working-tree diff route.**
+- [x] **T4.1 — Docs + working-tree diff route.**
   Docs: OpenAPI for diff/commit/discard; note in `local-packages.md`. `GET /api/studio/local-packages/[id]/diff` reusing `web/lib/worktree.ts` `diffWorkingTree` + `diffNameStatus` on the working dir → `prepareDiff` (`web/lib/diff/prepare.ts`) → `@git-diff-view` DTO. `POST .../commit` (`git commit`, optional message) + `POST .../discard` (`git checkout -- <paths>`), lock-guarded. **Identifiers**: `id`=url→server-state working_dir; `paths`=body → confine before the git call.
   Files: `web/app/api/studio/local-packages/[id]/{diff,commit,discard}/route.ts`, reuse `web/lib/worktree.ts`, `web/lib/diff/prepare.ts`.
   Acceptance (spec §6.5): diff reflects real `git status`/`git diff`; commit resets changed-count to 0; discard restores to HEAD; works with NO AI session present.
   Logging: DEBUG `[localPkg.diff] {id, changed}`; INFO `[localPkg.commit] {id, files}`.
 
-- [ ] **T4.2 — Editor diff drawer + changed-count + Commit/Discard.** (depends on T4.1)
+- [x] **T4.2 — Editor diff drawer + changed-count + Commit/Discard.** (depends on T4.1)
   Extend the existing `[Diff]` drawer (`flow-editor-tabs.tsx`) with a local-package git mode rendering the `@git-diff-view` `DiffView` (reuse `web/components/workbench/diff-view.tsx`); top-bar `⎇ N changed · Commit · Discard`. en + ru keys.
   Files: `web/components/flows/flow-editor-tabs.tsx`, reuse `diff-view.tsx`, `messages/{en,ru}.json`.
   Acceptance: changed-count live after any save/import; Commit/Discard wired to T4.1; en/ru parity.
   Logging: DEBUG `[studio.edit.diff] {id, changed}`.
 
-- [ ] **T4.3 — Tests + Phase 4 green.** (depends on T4.2)
+- [x] **T4.3 — Tests + Phase 4 green.** (depends on T4.2)
   Integration: edit→diff shows change; commit→clean; discard→restored. e2e join AUTHED_SPEC. Per-phase green + Commit 5.
 
 ### Phase 5 — Docked AI authoring assistant (spec §7, ADR-096)

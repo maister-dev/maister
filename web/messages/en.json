@@ -252,7 +252,22 @@
       "reload": "Reload",
       "saving": "Saving…",
       "saved": "Saved",
-      "saveFailed": "Save failed"
+      "saveFailed": "Save failed",
+      "diff": {
+        "title": "Working-tree changes",
+        "changed": "$count changed",
+        "clean": "No uncommitted changes.",
+        "error": "Could not load the diff.",
+        "commit": "Commit",
+        "commitMessagePlaceholder": "Commit message (optional)",
+        "discard": "Discard",
+        "discardConfirm": "Discard all uncommitted changes? This cannot be undone.",
+        "committing": "Committing…",
+        "discarding": "Discarding…",
+        "committed": "Committed",
+        "discarded": "Discarded",
+        "actionFailed": "Action failed"
+      }
     },
     "import": {
       "action": "Import",

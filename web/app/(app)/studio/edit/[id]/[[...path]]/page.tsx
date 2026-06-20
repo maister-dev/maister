@@ -15,6 +15,8 @@ import { requireSession } from "@/lib/authz";
 import { flowYamlV1Schema } from "@/lib/config.schema";
 import {
   buildFlowEditorTabsLabels,
+  diffViewLabels,
+  localPackageDiffLabels,
   packageFileKindLabels,
   packageFilesEditorLabels,
 } from "@/lib/flows/editor/editor-labels";
@@ -62,6 +64,8 @@ export default async function StudioEditPage({
   const t = await getTranslations("flows");
   const te = await getTranslations("flowEditor");
   const ts = await getTranslations("studio");
+  const td = await getTranslations("workbench.diff");
+  const tld = await getTranslations("studio.local.diff");
 
   const fileMetas = await listFiles(pkg);
   const files: AuthoredFlowPackageFile[] = await Promise.all(
@@ -124,6 +128,8 @@ export default async function StudioEditPage({
     saving: ts("local.saving"),
     saved: ts("local.saved"),
     saveFailed: ts("local.saveFailed"),
+    diff: localPackageDiffLabels(tld),
+    diffView: diffViewLabels(td),
   };
 
   return (

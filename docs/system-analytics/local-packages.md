@@ -198,6 +198,16 @@ defense). A single violation rejects the whole import pre-write, so the working
 dir is left UNCHANGED. Only regular files are written — tar dirs/symlinks/devices
 are skipped at the source, closing the tar-symlink escape vector.
 
+**Git-backed diff + Commit/Discard (M36).** The working dir is a git repo, so
+every edit (form / YAML / import / AI) is a working-tree change. `GET
+/api/studio/local-packages/:id/diff` returns the uncommitted
+working-tree-vs-`HEAD` diff (2-dot, incl. untracked) as a `@git-diff-view` DTO +
+a changed-count (a `truncated` flag degrades an oversized diff to summary-only —
+never silently). `POST .../commit` (lock-guarded; `git add -A` + `git commit`,
+optional message) clears the count; `POST .../discard` (lock-guarded; body
+`paths[]` confined BEFORE git, omitted → all) restores to `HEAD`. All three work
+with NO AI session present.
+
 ## Expectations
 
 - A `local_packages` row MUST have a UNIQUE `slug`; its `working_dir` MUST

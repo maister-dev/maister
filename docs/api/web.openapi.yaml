@@ -7140,6 +7140,98 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/Config" }
 
+  /api/studio/local-packages/{id}/diff:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [flow-packages]
+      summary: (M36, ADR-095 — Designed) Working-tree-vs-HEAD diff
+      description: |
+        (M36, ADR-095.) The local package's working dir is git-backed; this is the
+        uncommitted working-tree-vs-`HEAD` diff (2-dot, incl. untracked) as a
+        `@git-diff-view` DTO + `changedCount`. `truncated` flags an oversized diff.
+        Read — `requireSession`, no lock. `working_dir` never returned.
+      operationId: getStudioLocalPackageDiff
+      responses:
+        "200":
+          description: The working-tree diff DTO.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  changedCount: { type: integer }
+                  truncated: { type: boolean }
+                  files: { type: array, items: { type: object } }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/studio/local-packages/{id}/commit:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [flow-packages]
+      summary: (M36, ADR-095 — Designed) Commit working-dir changes
+      description: |
+        (M36, ADR-095.) Asserts the session edit-lock, then `git add -A` +
+        `git commit` the working dir (changed-count → 0). Body `{ sessionId,
+        message? }`.
+      operationId: commitStudioLocalPackage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                sessionId: { type: string }
+                message: { type: string }
+              required: [sessionId]
+      responses:
+        "200": { description: Committed; returns the now-clean diff. }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+
+  /api/studio/local-packages/{id}/discard:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [flow-packages]
+      summary: (M36, ADR-095 — Designed) Discard working-dir changes
+      description: |
+        (M36, ADR-095.) Asserts the session edit-lock, then restores the working
+        dir to `HEAD` (`git checkout HEAD -- <paths>` + `git clean`). Body
+        `{ sessionId, paths? }` — each `paths[]` entry is path-confined BEFORE git
+        (reject `..`/abs/`.git`); omitted → discard all.
+      operationId: discardStudioLocalPackage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                sessionId: { type: string }
+                paths: { type: array, items: { type: string } }
+              required: [sessionId]
+      responses:
+        "200": { description: Discarded; returns the now-clean diff. }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+
   /api/studio/packages/{ref}/fork:
     parameters:
       - name: ref
