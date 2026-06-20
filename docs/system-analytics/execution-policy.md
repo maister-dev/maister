@@ -4,7 +4,7 @@
 > immutable launch snapshot (`runs.execution_policy`), the fail-closed
 > `*FromSnapshot` resolvers, the no-blind-ship guard, and all A/B/C axis
 > mechanisms are shipped. Locked decision:
-> [ADR-094](../decisions.md#adr-094-flow-execution-control-policy--snapshotted-preset--composable-autonomy-axes-fail-closed-no-blind-ship).
+> [ADR-095](../decisions.md#adr-095-flow-execution-control-policy--snapshotted-preset--composable-autonomy-axes-fail-closed-no-blind-ship).
 > Migrations `0055` (policy columns) + `0056` (`run.escalated` kind).
 
 ## Purpose
@@ -179,7 +179,7 @@ flowchart TD
 
 ## Linked artifacts
 
-- ADR: [ADR-094](../decisions.md#adr-094-flow-execution-control-policy--snapshotted-preset--composable-autonomy-axes-fail-closed-no-blind-ship).
+- ADR: [ADR-095](../decisions.md#adr-095-flow-execution-control-policy--snapshotted-preset--composable-autonomy-axes-fail-closed-no-blind-ship).
 - Source: `web/lib/runs/execution-policy.ts` (types + preset table + resolvers +
   `assertNoBlindShip`), `web/lib/runs/exec-policy-audit.ts` (audit boundary),
   `web/lib/flows/graph/runner-graph.ts` (A1/A3/B2/B3/C3 sites + the A2
