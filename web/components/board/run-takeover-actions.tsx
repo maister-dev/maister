@@ -13,6 +13,7 @@ export interface RunTakeoverActionsProps {
   // "working" → run is HumanWorking; show checkout context + Return.
   mode: "claimable" | "working";
   worktreePath: string;
+  displayWorktreePath?: string;
   branch: string;
   // Whether the current session user owns the active claim (gates Return).
   isOwner: boolean;
@@ -23,6 +24,7 @@ export function RunTakeoverActions({
   runId,
   mode,
   worktreePath,
+  displayWorktreePath,
   branch,
   isOwner,
   canAct,
@@ -74,6 +76,7 @@ export function RunTakeoverActions({
   }
 
   const disabled = busy || pending || !canAct;
+  const worktreeDisplayValue = displayWorktreePath ?? worktreePath;
 
   if (mode === "claimable") {
     return (
@@ -121,7 +124,7 @@ export function RunTakeoverActions({
             <input
               readOnly
               className="min-w-0 flex-1 rounded-[6px] border border-line-soft bg-paper px-2 py-1 font-mono text-[11px] text-ink-2"
-              value={worktreePath}
+              value={worktreeDisplayValue}
               onFocus={(e) => e.currentTarget.select()}
             />
             <button

@@ -20,6 +20,8 @@ import { WorkbenchPanel } from "@/components/workbench/workbench-panel";
 import { type WorkbenchTabsLabels } from "@/components/workbench/workbench-tabs";
 import { getProjectRole, getSessionUser } from "@/lib/authz";
 import { isMaisterError } from "@/lib/errors";
+import { worktreesRoot } from "@/lib/instance-config";
+import { formatRunWorktreePath } from "@/lib/project-path-display";
 import { getRunDetail } from "@/lib/queries/run";
 import { getRunChangeSummary } from "@/lib/runs/change-summary";
 import {
@@ -151,6 +153,10 @@ export default async function ScratchRunDetailLayout({
     unified: tWorkbench("diff.unified"),
     truncated: tWorkbench("diff.truncated"),
   };
+  const displayWorktreePath = formatRunWorktreePath(
+    detail.worktreePath,
+    worktreesRoot(),
+  );
 
   const inspectorFacts = [
     { label: t("flowCenterStatus"), value: detail.status },
@@ -161,10 +167,10 @@ export default async function ScratchRunDetailLayout({
     {
       label: t("inspectorWorktree"),
       value: detail.pruned
-        ? `${detail.worktreePath} (${t("inspectorWorktreeRemoved")})`
+        ? `${displayWorktreePath} (${t("inspectorWorktreeRemoved")})`
         : detail.archived
-          ? `${detail.worktreePath} (${t("inspectorWorktreeArchived")})`
-          : detail.worktreePath,
+          ? `${displayWorktreePath} (${t("inspectorWorktreeArchived")})`
+          : displayWorktreePath,
     },
   ];
   const inspectorActions: RunInspectorAction[] = [

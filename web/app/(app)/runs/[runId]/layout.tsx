@@ -69,6 +69,11 @@ import { type WorkbenchTabsLabels } from "@/components/workbench/workbench-tabs"
 import { getProjectRole, getSessionUser } from "@/lib/authz";
 import { isMaisterError } from "@/lib/errors";
 import { prepareDiff } from "@/lib/diff/prepare";
+import { reposRoot, worktreesRoot } from "@/lib/instance-config";
+import {
+  formatProjectRepoPath,
+  formatRunWorktreePath,
+} from "@/lib/project-path-display";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { isHumanReviewGate } from "@/lib/flows/review-gate";
 import {
@@ -795,6 +800,14 @@ export default async function RunDetailLayout({
     ? Math.max(0, detail.endedAt.getTime() - detail.startedAt.getTime())
     : Math.max(0, Date.now() - detail.startedAt.getTime());
   const policy = detail.deliveryPolicySnapshot;
+  const displayWorktreePath = formatRunWorktreePath(
+    detail.worktreePath,
+    worktreesRoot(),
+  );
+  const displayParentRepoPath = formatProjectRepoPath(
+    detail.parentRepoPath,
+    reposRoot(),
+  );
   const dirtyDiffHref = `/runs/${detail.runId}?wb=diff&scope=uncommitted`;
   const inspectorChangeScope = dirtySummary ? "uncommitted" : "run";
   let changeSummary: RunInspectorChangeSummary | null = null;
@@ -842,10 +855,10 @@ export default async function RunDetailLayout({
     {
       label: t("inspectorWorktree"),
       value: detail.pruned
-        ? `${detail.worktreePath} (${t("inspectorWorktreeRemoved")})`
+        ? `${displayWorktreePath} (${t("inspectorWorktreeRemoved")})`
         : detail.archived
-          ? `${detail.worktreePath} (${t("inspectorWorktreeArchived")})`
-          : detail.worktreePath,
+          ? `${displayWorktreePath} (${t("inspectorWorktreeArchived")})`
+          : displayWorktreePath,
     },
     ...(detail.prNumber !== null || detail.prUrl
       ? [
@@ -1312,6 +1325,7 @@ export default async function RunDetailLayout({
                     <RunTakeoverActions
                       branch={detail.branch}
                       canAct={canAct}
+                      displayWorktreePath={displayWorktreePath}
                       isOwner={false}
                       mode="claimable"
                       runId={detail.runId}
@@ -1336,6 +1350,7 @@ export default async function RunDetailLayout({
             <RunTakeoverActions
               branch={detail.branch}
               canAct={canAct}
+              displayWorktreePath={displayWorktreePath}
               isOwner={detail.takeoverOwnerUserId === user.id}
               mode="working"
               runId={detail.runId}
@@ -1437,6 +1452,7 @@ export default async function RunDetailLayout({
             canPromote={canAct}
             deliveryPolicy={reviewData.deliveryPolicy}
             diff={reviewData.diff}
+            displayParentRepoPath={displayParentRepoPath}
             driftDetected={reviewData.driftDetected}
             labels={reviewLabels}
             legacyNeedsRelaunch={reviewData.legacyNeedsRelaunch}
