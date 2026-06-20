@@ -61,35 +61,35 @@ Agent bundles/subdirs (agents stay single-file); editable on-canvas node popup (
 
 > Reuses existing data/readers (no migration, no new route except RSC page params). Docs-first per repo rule. UI tasks: maintain **en/ru i18n parity**.
 
-- [ ] **T1.1 — Docs-first: viewer surfaces.**
+- [x] **T1.1 — Docs-first: viewer surfaces.**
   Update `docs/screens/studio/README.md` + add/extend `docs/screens/studio/package-viewer.md` (tabbed groups, cards+paging, flow/skill/agent detail), tag `(Designed→Implemented on merge)`. Cite ADR-092 (Studio IA) + ADR-075 (viewer/fork). No new ADR.
   Acceptance: `pnpm validate:docs` green; screen doc lists each surface + states + links behavior to system-analytics (R7).
 
-- [ ] **T1.2 — Rich BOM queries (+ rules inventory).** (depends on T1.1)
+- [x] **T1.2 — Rich BOM queries (+ rules inventory).** (depends on T1.1)
   Extend `web/lib/queries/packages.ts`: per-flow node/gate counts (compile `flow.yaml` from `installedPath` — reuse `getStudioPackageFlowGraphs` compile), per-skill file/subfolder counts (reuse `listInstalledPackageFiles` in `web/lib/flows/package-content.ts`), per-agent metadata (`parseAgentDefinition` in `web/lib/agents/definition.ts` → description, triggers, riskTier, workspace — NO runner). **NEW: inventory `rules/` from disk** — `getStudioPackageBom` currently returns `rules: []`, so the Rules tab would be permanently empty; enumerate rule files (or, if there are none, the Rules tab MUST hide rather than render empty). Return enriched `PackageBomItem` shapes.
   Files: `web/lib/queries/packages.ts`, types co-located.
   Acceptance: each kind's items carry their meta; **the Rules tab shows real rule files OR is hidden when empty (no empty tab)**; missing-on-disk degrades to id-only, never throws; **`installedPath` never appears in any returned DTO** (server-only).
   Logging: DEBUG `[packages.bom] {installId, kind, count}`; WARN on per-element disk-read failure (degrade).
 
-- [ ] **T1.3 — Tabbed package screen.** (depends on T1.2)
+- [x] **T1.3 — Tabbed package screen.** (depends on T1.2)
   Rewrite `web/components/studio/package-detail.tsx` (+ `web/app/(app)/studio/packages/[ref]/page.tsx`) from chip lists → tab bar (Flows/Skills/Agents/MCPs/Rules with counts; **hide a kind's tab when count = 0**) + per-tab cards grid + paging; `?tab=` + page state in the URL (deep-linkable per web/CLAUDE.md). Keep header + Fork-to-local (wired in Phase 2; render disabled-with-hint until then). Add `studio.*` keys to **both** `messages/en.json` AND `messages/ru.json`.
   Files: `web/components/studio/package-detail.tsx`, new `package-tabs.tsx` / `element-card.tsx`, `web/app/(app)/studio/packages/[ref]/page.tsx`, `messages/{en,ru}.json` (studio.*).
   Acceptance (spec §5.1–5.2): no bare id chips; tab+page state in URL; Import affordance absent on installed packages; counts equal totals across pages; **en/ru key parity holds (i18n parity check green)**.
   Logging: DEBUG `[studio.packageDetail] {ref, tab, page}`.
 
-- [ ] **T1.4 — Flow detail (canvas + read-only node inspector).** (depends on T1.3)
+- [x] **T1.4 — Flow detail (canvas + read-only node inspector).** (depends on T1.3)
   New read-only flow detail route/page (sub-route of the package screen). Static `FlowGraphView` (no `runContext`) + reuse `NodeSideForm` in a NEW read-only mode (no mutation controls, no save) showing full prompt/gates/routes/enforcement/artifacts. Compile-fail → YAML fallback + notice (no 500).
   Files: `web/app/(app)/studio/packages/[ref]/flows/[flowId]/page.tsx`, `web/components/flows/node-form/node-side-form.tsx` (add `readOnly`), reuse `flow-graph-view.tsx`.
   Acceptance (spec §5.3): full per-node config rendered (not truncated); no SSE/`/graph-status`/status-ring; read-only emits no mutation controls.
   Logging: DEBUG `[studio.flowDetail] {flowId, nodeSelected}`.
 
-- [ ] **T1.5 — Skill bundle detail + Agent detail.** (depends on T1.3)
+- [x] **T1.5 — Skill bundle detail + Agent detail.** (depends on T1.3)
   Skill: master–detail bundle browser reusing `listInstalledPackageFiles` + the confined `readInstalledPackageFile` (`web/lib/flows/package-content.ts`) + `PackageFileView` (markdown render / code / **image+binary preview** / typed placeholder) + SKILL.md frontmatter header. Agent: metadata panel (description, triggers/when-to-call, riskTier, workspace+ref, mode, capability profile, recommended cron/events — **NO runner**) + rendered prompt body (`parseAgentDefinition`). Add keys to en + ru.
   Files: `web/app/(app)/studio/packages/[ref]/skills/[...path]/page.tsx`, `.../agents/[stem]/page.tsx`, `web/components/studio/{skill-bundle-view,agent-view}.tsx`, reuse `package-viewer.tsx`/`package-content.ts`, `messages/{en,ru}.json`.
   Acceptance (spec §5.4–5.5): nested files all listed + rendered by type; every `?file=` path-confined before fs; agent view never shows a runner; missing bundle degrades; en/ru parity holds.
   Logging: DEBUG `[studio.skillDetail]`/`[studio.agentDetail]`.
 
-- [ ] **T1.6 — Migrate existing tests + new tests + Phase 1 green.** (depends on T1.4, T1.5)
+- [x] **T1.6 — Migrate existing tests + new tests + Phase 1 green.** (depends on T1.4, T1.5)
   **Assertion migration (repo rule — name the breakers):** T1.3 removes the chip BoM + `data-testid="package-preview"` layout — migrate every test asserting the old `package-detail` chips / BoM section / preview testid to the tabbed layout (search `package-detail`, `package-preview`, `bomTitle`, `kindFlows` in `web/**/__tests__` + `web/e2e`). New unit: BOM enrichment, agent-metadata projection (no runner), rules inventory/hide, path-confinement reuse. e2e: `studio-package-viewer.spec.ts` (tab nav incl. hidden-empty-tab, card→detail, read-only flow inspector, skill bundle tree, agent metadata) — JOIN the playwright `AUTHED_SPEC` regex; free :3000 before run. Contract surfaces: none new (RSC page params). Per-phase green (incl. i18n parity) + Commit 2.
   Acceptance: named migrated tests updated (not deleted); new tests EXECUTE (confirm runner glob matches) and pass; suite + i18n parity green.
 

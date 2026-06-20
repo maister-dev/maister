@@ -96,11 +96,16 @@ export interface PackageFileViewLabels {
   notFound: string;
   bundleMissing: string;
   emptyPrompt: string;
+  // Image preview alt text (M36 T1.5). Optional so existing callers that never
+  // produce the `image` state need not supply it.
+  imageAlt?: string;
 }
 
-// Mirrors readInstalledPackageFile's ReadResult union, minus the disk handle.
+// Mirrors readInstalledPackageFile's ReadResult union (+ the data-URI image
+// preview), minus the disk handle.
 export type PackageFileReadState =
   | { state: "text"; content: string; kind: string }
+  | { state: "image"; dataUri: string }
   | { state: "binary" }
   | { state: "too-large" }
   | { state: "not-found" }
@@ -153,6 +158,21 @@ export function PackageFileView({
               {state.content}
             </pre>
           )}
+        </div>
+      );
+    case "image":
+      return (
+        <div
+          className="overflow-auto rounded-lg border border-line bg-ivory p-3"
+          data-file-state="image"
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element -- a confined
+              data-URI preview, not a remote/optimizable asset. */}
+          <img
+            alt={labels.imageAlt ?? relPath}
+            className="mx-auto max-h-[480px] max-w-full object-contain"
+            src={state.dataUri}
+          />
         </div>
       );
     case "binary":

@@ -97,12 +97,14 @@ function TextField({
   label,
   value,
   type = "text",
+  readOnly = false,
   onChange,
 }: {
   testid: string;
   label: string;
   value: string;
   type?: "text" | "number";
+  readOnly?: boolean;
   onChange: (value: string) => void;
 }): ReactElement {
   return (
@@ -111,6 +113,7 @@ function TextField({
       <input
         className={FIELD_CLS}
         data-testid={testid}
+        readOnly={readOnly}
         type={type}
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -124,12 +127,14 @@ function SelectField({
   label,
   value,
   options,
+  readOnly = false,
   onChange,
 }: {
   testid: string;
   label: string;
   value: string;
   options: readonly string[];
+  readOnly?: boolean;
   onChange: (value: string) => void;
 }): ReactElement {
   return (
@@ -138,6 +143,7 @@ function SelectField({
       <select
         className={FIELD_CLS}
         data-testid={testid}
+        disabled={readOnly}
         value={value}
         onChange={(e) => onChange(e.target.value)}
       >
@@ -162,12 +168,17 @@ export function NodeSideForm({
   node,
   labels,
   presentation,
+  readOnly = false,
   onChange,
   onPresentationChange,
 }: {
   node: NodeDef | null;
   labels: NodeSideFormLabels;
   presentation?: NodePresentationStyle;
+  // Read-only (package viewer T1.4): every field renders as a disabled/read-only
+  // value, add/remove controls are dropped, and edits are no-ops. DEFAULTS to
+  // false so the live Flow Studio editor render + behavior is byte-identical.
+  readOnly?: boolean;
   onChange: (next: NodeDef) => void;
   onPresentationChange?: (patch: NodePresentationStyle) => void;
 }): ReactElement {
@@ -190,7 +201,12 @@ export function NodeSideForm({
   const result = asRec(asRec(n.output).result);
   const gates = (asRec(n.pre_finish).gates as GateDraft[] | undefined) ?? [];
 
-  const emit = (next: Rec): void => onChange(next as unknown as NodeDef);
+  // In read-only mode every setter is a no-op (defense in depth — the inputs are
+  // already disabled/read-only, but a synthetic change must not mutate either).
+  const emit = (next: Rec): void => {
+    if (readOnly) return;
+    onChange(next as unknown as NodeDef);
+  };
   const setSetting = (key: string, value: unknown): void =>
     emit({ ...n, settings: { ...settings, [key]: value } });
   const setEnforcement = (cls: string, value: string): void => {
@@ -275,6 +291,7 @@ export function NodeSideForm({
             <textarea
               className={`${FIELD_CLS} min-h-[90px] resize-y`}
               data-testid="node-action-prompt"
+              readOnly={readOnly}
               spellCheck={false}
               value={str(action.prompt)}
               onChange={(e) => setAction("prompt", e.target.value)}
@@ -284,6 +301,7 @@ export function NodeSideForm({
         {isCommandType ? (
           <TextField
             label={labels.command}
+            readOnly={readOnly}
             testid="node-action-command"
             value={str(action.command)}
             onChange={(v) => setAction("command", v)}
@@ -297,6 +315,7 @@ export function NodeSideForm({
           <>
             <TextField
               label={labels.model}
+              readOnly={readOnly}
               testid="node-model"
               value={str(settings.model)}
               onChange={(v) => setSetting("model", v || undefined)}
@@ -304,6 +323,7 @@ export function NodeSideForm({
             <SelectField
               label={labels.thinkingEffort}
               options={["low", "medium", "high"]}
+              readOnly={readOnly}
               testid="node-thinking-effort"
               value={str(settings.thinkingEffort)}
               onChange={(v) => setSetting("thinkingEffort", v || undefined)}
@@ -311,12 +331,14 @@ export function NodeSideForm({
             <SelectField
               label={labels.permissionMode}
               options={["ask", "allow", "deny"]}
+              readOnly={readOnly}
               testid="node-permission-mode"
               value={str(settings.permissionMode)}
               onChange={(v) => setSetting("permissionMode", v || undefined)}
             />
             <TextField
               label={labels.skills}
+              readOnly={readOnly}
               testid="node-skills"
               value={joinList(settings.skills)}
               onChange={(v) =>
@@ -328,6 +350,7 @@ export function NodeSideForm({
             />
             <TextField
               label={labels.restrictions}
+              readOnly={readOnly}
               testid="node-restrictions"
               value={joinList(settings.restrictions)}
               onChange={(v) =>
@@ -339,6 +362,7 @@ export function NodeSideForm({
             />
             <TextField
               label={labels.mcps}
+              readOnly={readOnly}
               testid="node-mcps"
               value={joinList(settings.mcps)}
               onChange={(v) =>
@@ -364,6 +388,7 @@ export function NodeSideForm({
                   key={cls}
                   label={labels.enforcement[cls]}
                   options={["strict", "instruct", "off"]}
+                  readOnly={readOnly}
                   testid={`node-enforcement-${cls}`}
                   value={str(
                     (
@@ -382,6 +407,7 @@ export function NodeSideForm({
           <SelectField
             label={labels.workspaceAccess}
             options={["read", "write", "none"]}
+            readOnly={readOnly}
             testid="node-workspace-access"
             value={str(settings.workspaceAccess)}
             onChange={(v) => setSetting("workspaceAccess", v || undefined)}
@@ -391,6 +417,7 @@ export function NodeSideForm({
           <>
             <TextField
               label={labels.timeoutMs}
+              readOnly={readOnly}
               testid="node-timeout-ms"
               type="number"
               value={str(settings.timeoutMs)}
@@ -401,6 +428,7 @@ export function NodeSideForm({
             <SelectField
               label={labels.environmentPolicy}
               options={["inherit", "clean", "whitelist"]}
+              readOnly={readOnly}
               testid="node-environment-policy"
               value={str(settings.environmentPolicy)}
               onChange={(v) => setSetting("environmentPolicy", v || undefined)}
@@ -408,6 +436,7 @@ export function NodeSideForm({
             <SelectField
               label={labels.failureClass}
               options={["blocking", "advisory", "retryable"]}
+              readOnly={readOnly}
               testid="node-failure-class"
               value={str(settings.failureClass)}
               onChange={(v) => setSetting("failureClass", v || undefined)}
@@ -418,6 +447,7 @@ export function NodeSideForm({
           <>
             <TextField
               label={labels.decisions}
+              readOnly={readOnly}
               testid="node-decisions"
               value={joinList(settings.decisions)}
               onChange={(v) =>
@@ -430,12 +460,14 @@ export function NodeSideForm({
             <SelectField
               label={labels.criticality}
               options={["low", "medium", "high", "critical"]}
+              readOnly={readOnly}
               testid="node-criticality"
               value={str(settings.criticality)}
               onChange={(v) => setSetting("criticality", v || undefined)}
             />
             <TextField
               label={labels.roles}
+              readOnly={readOnly}
               testid="node-roles"
               value={joinList(settings.roles)}
               onChange={(v) =>
@@ -447,6 +479,7 @@ export function NodeSideForm({
             />
             <TextField
               label={labels.assignees}
+              readOnly={readOnly}
               testid="node-assignees"
               value={joinList(settings.assignees)}
               onChange={(v) =>
@@ -460,6 +493,7 @@ export function NodeSideForm({
               <input
                 checked={Boolean(settings.allowTakeover)}
                 data-testid="node-allow-takeover"
+                disabled={readOnly}
                 type="checkbox"
                 onChange={(e) => setSetting("allowTakeover", e.target.checked)}
               />
@@ -479,6 +513,7 @@ export function NodeSideForm({
               key={gate.id}
               gate={gate}
               labels={labels.gate}
+              readOnly={readOnly}
               onChange={(next) => setGate(index, next)}
               onRemove={() => removeGateAt(index)}
             />
@@ -489,14 +524,16 @@ export function NodeSideForm({
       <section className="grid gap-2">
         <div className="flex items-center justify-between">
           <h3 className={SECTION_CLS}>{labels.transitions}</h3>
-          <button
-            className="rounded-md border border-line px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-ink-2 hover:bg-paper"
-            data-testid="add-transition"
-            type="button"
-            onClick={addTransitionRow}
-          >
-            {labels.addTransition}
-          </button>
+          {readOnly ? null : (
+            <button
+              className="rounded-md border border-line px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-ink-2 hover:bg-paper"
+              data-testid="add-transition"
+              type="button"
+              onClick={addTransitionRow}
+            >
+              {labels.addTransition}
+            </button>
+          )}
         </div>
         <div className="grid gap-2" data-testid="node-transitions">
           {transitionRows.length === 0 ? (
@@ -514,6 +551,7 @@ export function NodeSideForm({
                   <input
                     className={FIELD_CLS}
                     data-testid={`transition-outcome-${index}`}
+                    readOnly={readOnly}
                     value={outcome}
                     onChange={(e) =>
                       setTransitionRow(index, e.target.value, target)
@@ -525,20 +563,23 @@ export function NodeSideForm({
                   <input
                     className={FIELD_CLS}
                     data-testid={`transition-target-${index}`}
+                    readOnly={readOnly}
                     value={target}
                     onChange={(e) =>
                       setTransitionRow(index, outcome, e.target.value)
                     }
                   />
                 </label>
-                <button
-                  className="h-[34px] rounded-md border border-line px-2 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-ink-2 hover:bg-paper"
-                  data-testid={`transition-remove-${index}`}
-                  type="button"
-                  onClick={() => removeTransitionRow(index)}
-                >
-                  {labels.removeTransition}
-                </button>
+                {readOnly ? null : (
+                  <button
+                    className="h-[34px] rounded-md border border-line px-2 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-ink-2 hover:bg-paper"
+                    data-testid={`transition-remove-${index}`}
+                    type="button"
+                    onClick={() => removeTransitionRow(index)}
+                  >
+                    {labels.removeTransition}
+                  </button>
+                )}
               </div>
             ))
           )}
@@ -549,6 +590,7 @@ export function NodeSideForm({
         <h3 className={SECTION_CLS}>{labels.rework}</h3>
         <TextField
           label={labels.reworkAllowedTargets}
+          readOnly={readOnly}
           testid="node-rework-allowed-targets"
           value={joinList(rework.allowedTargets)}
           onChange={(v) =>
@@ -563,6 +605,7 @@ export function NodeSideForm({
         />
         <TextField
           label={labels.reworkMaxLoops}
+          readOnly={readOnly}
           testid="node-rework-max-loops"
           type="number"
           value={str(rework.maxLoops)}
@@ -572,6 +615,7 @@ export function NodeSideForm({
         />
         <TextField
           label={labels.reworkWorkspacePolicies}
+          readOnly={readOnly}
           testid="node-rework-workspace-policies"
           value={joinList(rework.workspacePolicies)}
           onChange={(v) =>
@@ -585,6 +629,7 @@ export function NodeSideForm({
         />
         <TextField
           label={labels.reworkCommentsVar}
+          readOnly={readOnly}
           testid="node-rework-comments-var"
           value={str(rework.commentsVar)}
           onChange={(v) => setRework({ commentsVar: v || undefined })}
@@ -595,6 +640,7 @@ export function NodeSideForm({
         <h3 className={SECTION_CLS}>{labels.output}</h3>
         <TextField
           label={labels.outputSchema}
+          readOnly={readOnly}
           testid="node-output-schema"
           value={str(result.schema)}
           onChange={(v) => setResult({ schema: v })}
@@ -603,6 +649,7 @@ export function NodeSideForm({
           <input
             checked={Boolean(result.required)}
             data-testid="node-output-required"
+            disabled={readOnly}
             type="checkbox"
             onChange={(e) => setResult({ required: e.target.checked })}
           />
