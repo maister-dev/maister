@@ -7154,6 +7154,87 @@ per-instance stop to wire a UI button to.
 
 ---
 
+### ADR-095: Flow execution-control policy — snapshotted preset + composable autonomy axes, fail-closed, no-blind-ship
+
+**Date:** 2026-06-20
+**Status:** Accepted
+**Context:** A flow run's autonomy was implicit (always-supervised: every gate
+blocks, every permission asks, every promote is manual). Driving runs
+unattended needs explicit, composable control over *where the machine acts on
+its own* — across machine self-correction, human escalation, and output shaping —
+without ever silently shipping unvalidated work.
+
+**Decision:** Introduce a per-run **execution policy** — a `preset`
+(`supervised | assisted | unattended`) that expands to nine composable axes,
+each overridable, snapshotted onto `runs.execution_policy` at launch (immutable
+for the run's life; resume/recover/finalize read the snapshot, never a mutable
+catalog row — same discipline as `runner_snapshot` / `deliveryPolicySnapshot`).
+The axes, grouped:
+- **A (self-correction):** `reworkExhaustion` (escalate | ship_with_warning |
+  fail) at the rework-cap; `crashRetry` (fail | ralph_loop | auto_retry) bounded
+  auto-relaunch on Failed; `checks` (strict | advisory | skip) non-review
+  check-gate promotion-strictness.
+- **B (escalation):** `permissions` (ask | auto_approve) supervisor-side inline
+  L3 below the read-only layers; `humanGate` (stop | auto_pass) auto-resolve a
+  human gate only after `assertEvidenceReady`; `onStuck` (escalate |
+  ship_with_warning | notify_only) routes the can't-auto-pass branch.
+- **C (output shaping):** `promotion` (manual | auto_on_ready) OR-combined with
+  the delivery-policy trigger; `commits` (keep_all | squash_rework |
+  squash_on_promote | defer) deterministic tree-preserving squash-on-promote;
+  `dirtyResolve` (ask | commit | proceed) auto-resolve a dirty worktree at a
+  review gate (`discard` never automatic).
+
+Two cross-cutting invariants are load-bearing:
+1. **Fail closed.** Every axis is read back from the open jsonb snapshot through
+   a `*FromSnapshot` resolver that defaults to the SAFE value on a null / absent /
+   malformed policy (`checks→strict`, `crashRetry→fail`, `reworkExhaustion→escalate`,
+   `permissions→ask`, `humanGate→stop`, `onStuck→escalate`, `promotion→manual`,
+   `commits→keep_all`, `dirtyResolve→ask`). A corrupt policy can never silently
+   relax validation, ship, or auto-act.
+2. **No blind ship.** Relaxing the check gates (`checks` advisory/skip) is
+   forbidden in combination with EITHER auto-passing the human gate OR
+   auto-promotion — at least one validation floor (strict checks, a human review,
+   or a manual promote) always remains. Enforced client-side (the launch dialog
+   disables the conflicting option) AND server-side (`assertNoBlindShip` at
+   launch, `code: PRECONDITION`). `unattended` keeps `checks: strict`, so its
+   auto-pass + auto-promote always sit behind the machine judge/check loop.
+
+`onStuck`/`reworkExhaustion` stay **separate** axes (not unified): rework-cap
+exhaustion is `reworkExhaustion`; the human-gate-can't-auto-pass branch is
+`onStuck`. `squash_rework` is reinterpreted as **squash-on-promote** (collapse
+`base..branch` into one commit pre-merge, tree-preserving — there are no
+per-node-attempt commits to collapse) with a guard that reverts to `keep_all` on
+any tree drift or git failure. See
+[`system-analytics/execution-policy.md`](system-analytics/execution-policy.md)
+for the per-axis mechanisms and call sites.
+
+**Consequences:**
+- One snapshot column drives all autonomy; resume/recover are deterministic.
+- Every autonomy action funnels through `logExecPolicyAction` (a typed audit
+  boundary) and, for on-stuck, a new `run.escalated` domain-event + webhook kind
+  (migration `0056`).
+- The privileged `launchUnattended` project action gates any policy that lowers
+  oversight below the supervised floor (auto_pass / auto_on_ready / relaxed
+  checks / non-escalate on-stuck).
+- Squash/auto-promote/auto-resolve are best-effort and never fail their host
+  operation — a botched history or a git error degrades to the safe default.
+
+**Alternatives Considered:**
+- **A single boolean "autonomous" flag:** rejected — autonomy is not one
+  dimension; teams need to relax permissions without auto-shipping, or
+  auto-promote while keeping human review.
+- **Embed numeric bounds (rework cap, max attempts) in the policy:** rejected —
+  the author's `rework.maxLoops` is authoritative (policy picks only the
+  on-exhaustion action), and ralph `maxAttempts` is a host env knob
+  (`MAISTER_RALPH_MAX_ATTEMPTS`); embedding numbers would reopen the schema.
+- **Re-validate the no-blind-ship guard at promote time:** rejected — the policy
+  is an immutable launch snapshot, so launch-time validation is sufficient;
+  promote already re-gates on `assertEvidenceReady`.
+- **Unify `reworkExhaustion` into `onStuck`:** rejected — they fire at distinct,
+  separately-tested engine sites; one axis would churn shipped code for no gain.
+
+---
+
 ## Template for New Decisions
 
 ```markdown
