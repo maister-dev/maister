@@ -106,7 +106,7 @@ export async function countLiveRuns(
     .from(runs)
     .where(
       and(
-        // M36 (ADR-095 §3): WaitingOnChildren is intentionally EXCLUDED — a
+        // M37 (ADR-098 §3): WaitingOnChildren is intentionally EXCLUDED — a
         // parked orchestrator is checkpointed (its agent-pool slot already
         // released via releaseSlotOnIdle), so like NeedsInputIdle it must NOT
         // count against the concurrency cap. Adding it would starve the pool.
@@ -118,7 +118,7 @@ export async function countLiveRuns(
   return Number(liveRows[0]?.count ?? 0);
 }
 
-// M36 Phase 10 (ADR-096): one active WRITER per shared worktree. A shared-mode
+// M37 Phase 10 (ADR-099): one active WRITER per shared worktree. A shared-mode
 // sibling holds the writer slot while it could be writing — the same
 // Running/NeedsInput/HumanWorking set countLiveRuns uses (a parked / idle /
 // WaitingOnChildren sibling has yielded). Excludes the candidate itself. Called
@@ -391,7 +391,7 @@ export async function promoteNextPending(
     // M19 Phase 1 (T1.B, Codex F2): fetch acp_session_id alongside the id so
     // a checkpointed Pending row (queued after an idle-resume claim) is
     // resumed via --resume rather than re-run from the start of the flow.
-    // M36 Phase 10 (ADR-096): also fetch workspace_mode + root_run_id so a
+    // M37 Phase 10 (ADR-099): also fetch workspace_mode + root_run_id so a
     // shared-mode candidate can be SKIPPED while a writer sibling in its tree is
     // active (one active writer per shared tree). The whole scan + flip runs
     // under the advisory lock, so the sibling-active read is consistent — no

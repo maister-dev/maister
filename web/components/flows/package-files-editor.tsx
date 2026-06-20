@@ -8,6 +8,7 @@ import type {
   FileTreeNode,
   PathEditValidation,
 } from "@/lib/flows/editor/package-file-tree";
+import type { PlatformMcpCatalogEntry } from "@/lib/queries/platform-mcp-catalog";
 import type { ReactElement, ReactNode } from "react";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -18,6 +19,10 @@ import {
   type FrontmatterArtifactEditorLabels,
   FrontmatterArtifactEditor,
 } from "@/components/flows/artifact-editors/frontmatter-artifact-editor";
+import {
+  type McpTemplateEditorLabels,
+  McpTemplateEditor,
+} from "@/components/flows/artifact-editors/mcp-template-editor";
 import {
   type ScriptArtifactEditorLabels,
   ScriptArtifactEditor,
@@ -55,7 +60,16 @@ export type PackageFilesEditorLabels = {
   script: ScriptArtifactEditorLabels;
   formSchema: FormSchemaBuilderLabels;
   contentIssues: ArtifactContentIssuesLabels;
+  // Optional: present only when the editor wires the `mcps/` template surface
+  // (the local-package editor). Absent on the authored-flow mount.
+  mcp?: McpTemplateEditorLabels;
 };
+
+// A working-dir `mcps/<id>` template file. The inferred authored kind for this
+// path is `asset`, so the template surface is keyed on the path prefix.
+function isMcpTemplatePath(path: string): boolean {
+  return path.startsWith("mcps/");
+}
 
 export function PackageFilesEditor({
   disabled,
@@ -63,12 +77,15 @@ export function PackageFilesEditor({
   kindLabels,
   labels,
   manifest = null,
+  mcpCatalog = null,
 }: {
   disabled: boolean;
   files: AuthoredFlowPackageFile[];
   kindLabels: Record<AuthoredFlowPackageFileKind, string>;
   labels: PackageFilesEditorLabels;
   manifest?: Record<string, unknown> | null;
+  // Optional platform MCP catalog; enables the `mcps/` template surface.
+  mcpCatalog?: PlatformMcpCatalogEntry[] | null;
 }): ReactElement {
   const [draftFiles, setDraftFiles] = useState(files);
   const [selectedPath, setSelectedPath] = useState<string | null>(
@@ -152,6 +169,7 @@ export function PackageFilesEditor({
                 file={selectedFile}
                 kindLabels={kindLabels}
                 labels={labels}
+                mcpCatalog={mcpCatalog}
                 onChangeContent={(next) =>
                   setDraftFiles((current) =>
                     current.map((file) =>
@@ -256,6 +274,7 @@ function SelectedFileEditor({
   file,
   kindLabels,
   labels,
+  mcpCatalog,
   onChangeContent,
   onRemove,
   onRename,
@@ -264,6 +283,7 @@ function SelectedFileEditor({
   file: AuthoredFlowPackageFile;
   kindLabels: Record<AuthoredFlowPackageFileKind, string>;
   labels: PackageFilesEditorLabels;
+  mcpCatalog: PlatformMcpCatalogEntry[] | null;
   onChangeContent: (next: string) => void;
   onRemove: () => void;
   onRename: () => void;
@@ -315,6 +335,7 @@ function SelectedFileEditor({
           file={file}
           inferredKind={inferredKind}
           labels={labels}
+          mcpCatalog={mcpCatalog}
           onChangeContent={onChangeContent}
         />
       </div>
@@ -327,14 +348,29 @@ function ContentEditor({
   file,
   inferredKind,
   labels,
+  mcpCatalog,
   onChangeContent,
 }: {
   disabled: boolean;
   file: AuthoredFlowPackageFile;
   inferredKind: AuthoredFlowPackageFileKind;
   labels: PackageFilesEditorLabels;
+  mcpCatalog: PlatformMcpCatalogEntry[] | null;
   onChangeContent: (next: string) => void;
 }): ReactElement {
+  if (mcpCatalog && labels.mcp && isMcpTemplatePath(file.path)) {
+    return (
+      <McpTemplateEditor
+        catalog={mcpCatalog}
+        content={file.content}
+        fileName={file.path}
+        labels={labels.mcp}
+        readOnly={disabled}
+        onChange={onChangeContent}
+      />
+    );
+  }
+
   if (
     inferredKind === "skill" ||
     inferredKind === "agent_definition" ||

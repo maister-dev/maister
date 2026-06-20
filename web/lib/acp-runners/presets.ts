@@ -168,16 +168,13 @@ export function platformRunnerPresetRows(): PlatformRunnerPresetRow[] {
       adapter: "gemini",
       capabilityAgent: "gemini",
       model: "gemini-2.5-pro",
-      provider: {
-        kind: "google_gemini",
-        apiKey: "env:GEMINI_API_KEY",
-      },
+      // Keyless by default: the Gemini CLI's ambient login supplies credentials
+      // and advertises its model list over ACP. A keyed google_gemini runner is
+      // still creatable for headless/CI hosts without a CLI login.
+      provider: { kind: "google_gemini" },
       permissionPolicy: "default",
       readinessStatus: "NotReady",
-      readinessReasons: [
-        "GEMINI_API_KEY must be configured in supervisor environment",
-        notReadyGeminiSmokeReason,
-      ],
+      readinessReasons: [notReadyGeminiSmokeReason],
       enabled: true,
     },
     {

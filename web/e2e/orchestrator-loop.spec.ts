@@ -1,4 +1,4 @@
-// M36 (ADR-095) — the orchestrator delegate→park→resume loop, end-to-end in the
+// M37 (ADR-098) — the orchestrator delegate→park→resume loop, end-to-end in the
 // browser against the REAL HTTP stack. The board Launch creates an orchestrator
 // FLOW run; the test supervisor (e2e/_seed/test-supervisor.ts, wired in
 // global-setup) simulates the coordinator's agent session and spawns 2 children

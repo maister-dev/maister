@@ -124,6 +124,18 @@ import { checkpointSession, listSessions } from "@/lib/supervisor-client";
 import { deliverRunIfAutoReady } from "@/lib/runs/auto-delivery";
 import { SETTLED_RUN_STATUSES } from "@/lib/runs/run-status-sets";
 import {
+  dirtyResolveFromSnapshot,
+  humanGateFromSnapshot,
+  onStuckFromSnapshot,
+  permissionsFromSnapshot,
+  resolveAutoRetryPolicy,
+  resolveHumanGateDisposition,
+  reworkExhaustionFromSnapshot,
+} from "@/lib/runs/execution-policy";
+import { autoResolveDirtyAtReview } from "@/lib/runs/dirty-resolution";
+import { autoRetryMaxAttempts } from "@/lib/instance-config";
+import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
+import {
   isMaisterError,
   MaisterError,
   type MaisterErrorCode,
@@ -171,7 +183,7 @@ function runDir(
   return path.join(runtimeRoot, ".maister", projectSlug, "runs", runId);
 }
 
-// M36 (ADR-095) T5.1 / ADR-097: count an orchestrator run's PENDING (non-SETTLED)
+// M37 (ADR-098) T5.1 / ADR-100: count an orchestrator run's PENDING (non-SETTLED)
 // children — the rows whose `parent_run_id` is this run and whose status is not
 // yet settled. SETTLED = terminal OR Review (C-2): a child in Review has produced
 // a diff and is the coordinator's to promote/rework, so it no longer blocks node
@@ -192,7 +204,7 @@ async function countPendingChildren(db: Db, runId: string): Promise<number> {
   return Number(rows[0]?.n ?? 0);
 }
 
-// M36 (ADR-095) T5.1: the orchestrator node action. Runs the agent turn exactly
+// M37 (ADR-098) T5.1: the orchestrator node action. Runs the agent turn exactly
 // like an ai_coding node (reuses runAgentStep via executeNodeAction), then
 // decides park-vs-complete from the run's PENDING children:
 //   - the turn already parked (an in-node HITL, rare) or failed → pass through;
@@ -231,7 +243,7 @@ async function runOrchestratorStep(
   return agentResult;
 }
 
-// M36 (ADR-095) T5.1: park an orchestrator's ACP session and free its slot.
+// M37 (ADR-098) T5.1: park an orchestrator's ACP session and free its slot.
 // Called from the needsInput park branch AFTER the run is flipped to
 // WaitingOnChildren. Two side-effects, both best-effort and idempotent:
 //   1. SIGTERM the live supervisor session (looked up by acpSessionId via
@@ -335,6 +347,154 @@ async function tryReadInputArtifact(
   }
 }
 
+// B3 (execution-policy onStuck): emit the run.escalated signal — the domain
+// fact log (internal consumers / audit) + the outbound webhook (external
+// notify). Best-effort notification: run.escalated drives no idempotent state
+// transition, so it is not transactionally bound to the pause/ship write that
+// follows.
+async function emitRunEscalated(args: {
+  db: Db;
+  projectId: string;
+  runId: string;
+  taskId: string | null;
+  nodeId: string;
+  onStuck: "escalate" | "ship_with_warning" | "notify_only";
+}): Promise<void> {
+  await emitDomainEvent({
+    db: args.db,
+    kind: "run.escalated",
+    projectId: args.projectId,
+    runId: args.runId,
+    taskId: args.taskId,
+    actor: { type: "system", id: null },
+    payload: { runId: args.runId, nodeId: args.nodeId, onStuck: args.onStuck },
+  });
+  await emitWebhookEvent({
+    db: args.db,
+    type: "run.escalated",
+    projectId: args.projectId,
+    runId: args.runId,
+    data: { nodeId: args.nodeId, onStuck: args.onStuck },
+  });
+}
+
+// A2 (crashRetry=auto_retry) work-preserving recovery: when the SYNTHESIZED
+// auto_retry policy exhausts its bound on a transient code, pause the run for a
+// human INSTEAD of failing — the worktree (and all prior nodes' work) is kept.
+// The failed node's attempt is marked NeedsInput so a resume RE-RUNS it
+// (resumingThisNode → reusesCurrentAttempt); the human's Retry/Abandon arrives on
+// an `infra_recovery` HITL. Honors the run's onStuck axis: escalate /
+// ship_with_warning → an assigned HITL ("Needs you"); notify_only → a HITL with
+// NO assignment (emit-and-don't-route). Always emits run.escalated.
+async function escalateAutoRetryExhaustion(args: {
+  db: Db;
+  loaded: LoadedRun;
+  node: CompiledNode;
+  code: MaisterErrorCode;
+  nodeAttemptId: string;
+  attemptNumber: number;
+  runtimeRoot: string;
+}): Promise<void> {
+  const { db, loaded, node, code, nodeAttemptId, attemptNumber, runtimeRoot } =
+    args;
+  const runId = loaded.run.id;
+  const onStuck = onStuckFromSnapshot(loaded.run.executionPolicy ?? null);
+  const assign = onStuck !== "notify_only";
+  const prompt = `Node "${node.id}" failed after ${attemptNumber} auto-retries (transient: ${code}). Retry once infrastructure has recovered, or abandon the run.`;
+  const schema = {
+    kind: "infra_recovery",
+    code,
+    attempts: attemptNumber,
+    decisions: ["retry", "abandon"],
+  };
+  const needsInputPath = path.join(
+    runDir(runtimeRoot, loaded.projectSlug, runId),
+    "needs-input.json",
+  );
+
+  await atomicWriteJson(needsInputPath, {
+    nodeId: node.id,
+    kind: "infra_recovery",
+    schema,
+    prompt,
+    requestedAt: new Date().toISOString(),
+  });
+
+  const hitlRequestId = randomUUID();
+
+  try {
+    await db.transaction(async (tx: Db) => {
+      await markNodeNeedsInput(nodeAttemptId, tx);
+      await tx.insert(hitlRequests).values({
+        id: hitlRequestId,
+        runId,
+        stepId: node.id,
+        kind: "infra_recovery",
+        schema,
+        prompt,
+      });
+      if (assign) {
+        await createHitlAssignmentForRun({
+          db: tx,
+          runId,
+          hitlRequestId,
+          nodeId: node.id,
+          actionKind: "infra_recovery",
+          roleRefs: [],
+          title: prompt,
+        });
+        await emitWebhookEvent({
+          db: tx,
+          type: "hitl.requested",
+          projectId: loaded.run.projectId,
+          runId,
+          data: { hitlRequestId, kind: "infra_recovery", nodeId: node.id },
+        });
+      }
+      await tx
+        .update(runs)
+        .set({ status: "NeedsInput", currentStepId: node.id })
+        .where(eq(runs.id, runId));
+      await emitWebhookEvent({
+        db: tx,
+        type: "run.needs_input",
+        projectId: loaded.run.projectId,
+        runId,
+        data: { reason: "infra_recovery", nodeId: node.id },
+      });
+    });
+  } catch (err) {
+    await unlink(needsInputPath).catch(() => undefined);
+    throw err;
+  }
+
+  await emitRunEscalated({
+    db,
+    projectId: loaded.run.projectId,
+    runId,
+    taskId: loaded.run.taskId ?? null,
+    nodeId: node.id,
+    onStuck,
+  });
+
+  logExecPolicyAction({
+    runId,
+    kind: "escalated",
+    detail: {
+      nodeId: node.id,
+      reason: "auto_retry_exhausted",
+      code,
+      onStuck,
+      assign,
+    },
+  });
+
+  log.info(
+    { runId, nodeId: node.id, code, onStuck, assign },
+    "[auto_retry] exhausted → escalated (work-preserving NeedsInput)",
+  );
+}
+
 // Human review node: on resume read the operator's decision from the input
 // artifact; on first visit create the review HITL (with the manifest-derived
 // allow-list in `schema`) and pause. Full decision validation + rework
@@ -343,7 +503,17 @@ export async function runReviewHuman(
   node: CompiledNode,
   loaded: LoadedRun,
   prompt: string,
-  ctx: { runtimeRoot: string; db: Db; gateAttempt: number },
+  ctx: {
+    runtimeRoot: string;
+    db: Db;
+    gateAttempt: number;
+    // forcePause (rework-exhaustion escalate): always create the HITL pause,
+    // bypassing the B2/B3 auto-pass short-circuit below. The machine is stuck
+    // (rework cap spent) so it must reach a human even under humanGate=auto_pass
+    // — without this the caller would flip the run to NeedsInput while this
+    // function auto-passed and created no HITL request (an unresolvable orphan).
+    forcePause?: boolean;
+  },
 ): Promise<NodeResult> {
   const startedAt = Date.now();
   const dir = runDir(ctx.runtimeRoot, loaded.projectSlug, loaded.run.id);
@@ -385,6 +555,113 @@ export async function runReviewHuman(
       decision,
       workspacePolicy,
     };
+  }
+
+  // B2/B3 (execution-policy human-gate auto-pass + on-stuck routing): under the
+  // `unattended` preset (humanGate=auto_pass), resolve this human gate WITHOUT a
+  // human once Group-A machine review has passed (assertEvidenceReady). When it
+  // cannot auto-pass (review not ready, or no safe-default decision), route per
+  // the onStuck axis. Inert (the normal HITL pause) for supervised/assisted
+  // (humanGate=stop) — fail-closed on a null/malformed policy snapshot.
+  let assignHitl = true;
+  const humanGate = humanGateFromSnapshot(loaded.run.executionPolicy ?? null);
+
+  if (humanGate === "auto_pass" && ctx.forcePause !== true) {
+    // Safe-default = the forward (non-rework) decision (mirrors A.2's rule).
+    const reworkTargets = node.rework?.allowedTargets ?? [];
+    const safeDefault = (node.finishHuman?.decisions ?? []).find(
+      (d) =>
+        node.transitions[d] !== undefined &&
+        !reworkTargets.includes(node.transitions[d]),
+    );
+    const evidenceReady =
+      safeDefault !== undefined
+        ? (await assertEvidenceReady(loaded.run.id, "review", ctx.db)).ready
+        : false;
+    const disposition = resolveHumanGateDisposition({
+      humanGate,
+      onStuck: onStuckFromSnapshot(loaded.run.executionPolicy ?? null),
+      hasSafeDefault: safeDefault !== undefined,
+      evidenceReady,
+    });
+
+    if (disposition.action === "auto_pass" && safeDefault !== undefined) {
+      logExecPolicyAction({
+        runId: loaded.run.id,
+        kind: "human_gate_auto_passed",
+        detail: { nodeId: node.id, decision: safeDefault },
+      });
+      log.info(
+        { runId: loaded.run.id, nodeId: node.id, decision: safeDefault },
+        "[human-gate.auto-pass] machine review ready → auto-resolved",
+      );
+
+      return {
+        ok: true,
+        stdout: "",
+        vars: {},
+        durationMs: Date.now() - startedAt,
+        needsInput: false,
+        decision: safeDefault,
+      };
+    }
+
+    if (
+      disposition.action === "ship_with_warning" &&
+      safeDefault !== undefined
+    ) {
+      logExecPolicyAction({
+        runId: loaded.run.id,
+        kind: "escalated",
+        detail: { nodeId: node.id, onStuck: "ship_with_warning" },
+      });
+      await emitRunEscalated({
+        db: ctx.db,
+        projectId: loaded.run.projectId,
+        runId: loaded.run.id,
+        taskId: loaded.run.taskId ?? null,
+        nodeId: node.id,
+        onStuck: "ship_with_warning",
+      });
+      log.info(
+        { runId: loaded.run.id, nodeId: node.id, decision: safeDefault },
+        "[on-stuck] ship_with_warning → forward past the human gate",
+      );
+
+      return {
+        ok: true,
+        stdout: "",
+        vars: {
+          execPolicyWarning:
+            "shipped past an unresolved human gate (machine review not ready)",
+        },
+        durationMs: Date.now() - startedAt,
+        needsInput: false,
+        decision: safeDefault,
+      };
+    }
+
+    // Pause route — escalate (assign a human) or notify_only (pause WITHOUT an
+    // assignment: emit the signal, don't actively route to "Needs you").
+    const notifyOnly =
+      disposition.action === "pause" && disposition.assign === false;
+
+    assignHitl = !notifyOnly;
+    const onStuck = notifyOnly ? "notify_only" : "escalate";
+
+    logExecPolicyAction({
+      runId: loaded.run.id,
+      kind: "escalated",
+      detail: { nodeId: node.id, onStuck },
+    });
+    await emitRunEscalated({
+      db: ctx.db,
+      projectId: loaded.run.projectId,
+      runId: loaded.run.id,
+      taskId: loaded.run.taskId ?? null,
+      nodeId: node.id,
+      onStuck,
+    });
   }
 
   // Server-state allow-list stored on the row at creation (Phase 5 validates
@@ -448,6 +725,24 @@ export async function runReviewHuman(
       )
     : null;
 
+  // C3 (execution-policy dirtyResolve): when pausing at a review gate, a policy
+  // of commit/proceed auto-resolves a dirty worktree AT creation (no interactive
+  // prompt) and records it on the HITL row; `ask` (supervised default) keeps the
+  // banner; `discard` is NEVER automatic. Best-effort (git error → interactive).
+  const dirtyResolution = await autoResolveDirtyAtReview({
+    worktreePath: loaded.workspace?.worktreePath ?? null,
+    policy: dirtyResolveFromSnapshot(loaded.run.executionPolicy ?? null),
+    nodeId: node.id,
+  });
+
+  if (dirtyResolution) {
+    logExecPolicyAction({
+      runId: loaded.run.id,
+      kind: "dirty_auto_resolved",
+      detail: { nodeId: node.id, dirtyResolution },
+    });
+  }
+
   const persistHitlRequestAndAssignment = async (tx: Db): Promise<void> => {
     await tx.insert(hitlRequests).values({
       id: hitlRequestId,
@@ -458,27 +753,34 @@ export async function runReviewHuman(
       prompt,
       criticality: nodeCriticality,
       reviewTipSha,
+      dirtyResolution,
     });
     log.debug(
       { runId: loaded.run.id, nodeId: node.id, criticality: nodeCriticality },
       "criticality resolved at creation",
     );
-    await createHitlAssignmentForRun({
-      db: tx,
-      runId: loaded.run.id,
-      hitlRequestId,
-      nodeId: node.id,
-      actionKind: "human_review",
-      roleRefs,
-      title: prompt,
-    });
-    await emitWebhookEvent({
-      db: tx,
-      type: "hitl.requested",
-      projectId: loaded.run.projectId,
-      runId: loaded.run.id,
-      data: { hitlRequestId, kind: "human", nodeId: node.id },
-    });
+    // B3 notify_only (assignHitl=false): the HITL request row is still written
+    // so a response CAN resolve the run, but no assignment is created and no
+    // hitl.requested fires — the run pauses without routing to "Needs you" (the
+    // run.escalated signal already notified externally).
+    if (assignHitl) {
+      await createHitlAssignmentForRun({
+        db: tx,
+        runId: loaded.run.id,
+        hitlRequestId,
+        nodeId: node.id,
+        actionKind: "human_review",
+        roleRefs,
+        title: prompt,
+      });
+      await emitWebhookEvent({
+        db: tx,
+        type: "hitl.requested",
+        projectId: loaded.run.projectId,
+        runId: loaded.run.id,
+        data: { hitlRequestId, kind: "human", nodeId: node.id },
+      });
+    }
   };
 
   try {
@@ -700,7 +1002,7 @@ async function executeNodeAction(
       );
     case "ai_coding":
     case "judge":
-    // M36 (ADR-095): an orchestrator runs as an ACP session exactly like an
+    // M37 (ADR-098): an orchestrator runs as an ACP session exactly like an
     // ai_coding node; it carries NO catalog-agent binding (agentBinding stays
     // undefined below — the ai_coding-only guard short-circuits) and reaches
     // the maister MCP facade via the run-bound token appended at the
@@ -747,11 +1049,16 @@ async function executeNodeAction(
             ),
             mcpServers: ctx.mcpServers,
             profileDigest: ctx.profileDigest,
+            // B1 (execution-policy permissions=auto_approve): fail-closed to
+            // `ask`; threaded to the supervisor session for inline L3 auto-approve.
+            autoApprovePermissions:
+              permissionsFromSnapshot(loaded.run.executionPolicy ?? null) ===
+              "auto_approve",
           },
           ctx.supervisorApi,
         );
 
-      // M36 (ADR-095) T5.1: an orchestrator's turn is followed by the
+      // M37 (ADR-098) T5.1: an orchestrator's turn is followed by the
       // park-vs-complete decision (pending children ⇒ park on WaitingOnChildren);
       // ai_coding/judge return the agent result unchanged.
       if (def.type === "orchestrator") {
@@ -1215,7 +1522,7 @@ export async function runGraph(
     loaded.run.status === "Running" &&
     loaded.run.currentStepId !== null;
 
-  // M36 (ADR-095) T5.2: a parked orchestrator woken by a child-terminal event.
+  // M37 (ADR-098) T5.2: a parked orchestrator woken by a child-terminal event.
   // The consumer ALREADY won the single-winner CAS (markResumedFromWait flipped
   // WaitingOnChildren → Running), so the run is `Running` with current_step_id at
   // the parked orchestrator node and its NeedsInput ledger attempt intact — like
@@ -1473,7 +1780,7 @@ export async function runGraph(
   let checkpointed = false;
   let failed = false;
   let runErrorCode: MaisterErrorCode | null = null;
-  // M36 (ADR-095): set once any orchestrator node in this run is issued its
+  // M37 (ADR-098): set once any orchestrator node in this run is issued its
   // run-bound facade token. The post-loop terminal section revokes it on a
   // non-park terminal (Review/Failed/Crashed); the NeedsInput/checkpoint park
   // paths return BEFORE that section, so the token survives WaitingOnChildren.
@@ -1489,28 +1796,42 @@ export async function runGraph(
   let pendingSessionPolicy: { nodeId: string; policy: SessionPolicy } | null =
     null;
 
-  // M30 (ADR-080): auto-retry decision for a failed ai_coding/cli attempt.
-  // True → the caller `continue`s on the SAME node (a fresh attempt with a
-  // fresh session — dispatch is hard-coded new-session). The workspace policy
-  // applies via the ADR-079 engine BEFORE the retry; with no checkpoint
-  // (degraded capture) it degrades to keep with a WARN. `attempts` bounds the
-  // node's TOTAL ledger attempts — rework re-visits consume the same budget
-  // by design (the bound is the observable ledger row count). An apply
-  // failure abandons the retry (normal failure path), never corrupts.
+  // M30 (ADR-080): auto-retry decision for a failed ai_coding/cli attempt:
+  //  - "retry"    → the caller `continue`s on the SAME node (fresh new-session
+  //                 dispatch; the ADR-079 workspace policy applies first — no
+  //                 checkpoint degrades to keep with a WARN).
+  //  - "escalate" → the SYNTHESIZED auto_retry policy (crashRetry=auto_retry,
+  //                 retry_safe, no author retry_policy) exhausted its bound:
+  //                 pause for a human WITHOUT discarding the worktree.
+  //  - "fail"     → normal failure path (non-retryable code, no policy, or an
+  //                 author retry_policy exhausting per ADR-080).
+  // `attempts` bounds the node's TOTAL ledger attempts — rework re-visits consume
+  // the same budget. An apply failure abandons the retry (fails), never corrupts.
+  type AutoRetryDecision = "retry" | "escalate" | "fail";
   const scheduleAutoRetry = async (
     node: CompiledNode,
     code: MaisterErrorCode,
     state: { nodeAttemptNumber: number; attemptCheckpointRef: string | null },
-  ): Promise<boolean> => {
-    if (node.nodeType !== "ai_coding" && node.nodeType !== "cli") return false;
-    if (node.source.kind !== "node") return false;
+  ): Promise<AutoRetryDecision> => {
+    if (node.nodeType !== "ai_coding" && node.nodeType !== "cli") return "fail";
+    if (node.source.kind !== "node") return "fail";
 
-    const retryPolicy = (node.source.node as { retry_policy?: RetryPolicy })
+    // Author's explicit per-node retry_policy wins; otherwise the run's
+    // execution-policy crashRetry=auto_retry synthesizes one for a retry_safe
+    // node (transient codes, workspace=keep, MAISTER_AUTO_RETRY_MAX_ATTEMPTS).
+    const explicit = (node.source.node as { retry_policy?: RetryPolicy })
       .retry_policy;
+    const retryPolicy =
+      explicit ??
+      resolveAutoRetryPolicy({
+        retrySafe: node.retrySafe,
+        executionPolicy: loaded.run.executionPolicy ?? null,
+        maxAttempts: autoRetryMaxAttempts(),
+      });
 
-    if (!retryPolicy) return false;
+    if (!retryPolicy) return "fail";
     if (!(retryPolicy.on_errors as readonly string[]).includes(code)) {
-      return false;
+      return "fail";
     }
     if (state.nodeAttemptNumber >= retryPolicy.attempts) {
       log2.warn(
@@ -1518,7 +1839,10 @@ export async function runGraph(
         "[retry] exhausted",
       );
 
-      return false;
+      // Synthesized auto_retry (no explicit author retry_policy) escalates to a
+      // human on exhaustion to PRESERVE the worktree; an author retry_policy
+      // keeps ADR-080's fail-on-exhaustion (the author owns that node's contract).
+      return explicit ? "fail" : "escalate";
     }
 
     if (retryPolicy.workspace !== "keep") {
@@ -1550,9 +1874,25 @@ export async function runGraph(
             "[retry] workspace apply failed — retry abandoned (normal failure)",
           );
 
-          return false;
+          return "fail";
         }
       }
+    }
+
+    // Funnel the policy-driven retry (no explicit author retry_policy) through
+    // the exec-policy audit boundary; an author retry_policy is ADR-080's own
+    // mechanism and is not an execution-policy autonomy action.
+    if (!explicit) {
+      logExecPolicyAction({
+        runId,
+        kind: "auto_retried",
+        detail: {
+          nodeId: node.id,
+          code,
+          attempt: state.nodeAttemptNumber,
+          maxAttempts: retryPolicy.attempts,
+        },
+      });
     }
 
     log2.info(
@@ -1564,7 +1904,7 @@ export async function runGraph(
       "[retry] scheduling auto-retry",
     );
 
-    return true;
+    return "retry";
   };
 
   try {
@@ -1664,7 +2004,7 @@ export async function runGraph(
       } else if (resumingThisNode && lastForNode) {
         nodeAttemptId = lastForNode.id;
         nodeAttemptNumber = lastForNode.attempt;
-        // M36 (ADR-095) T5.2: on an orchestrator wake, restore the coordinator's
+        // M37 (ADR-098) T5.2: on an orchestrator wake, restore the coordinator's
         // context — thread the retained acp_session_id as the resume handle so
         // runAgentStep respawns via session/resume (a gone/unresumable session
         // degrades OBSERVABLY to a fresh one + sessionFallback).
@@ -1899,7 +2239,7 @@ export async function runGraph(
             await setMaterializationPlan(nodeAttemptId, materialized.plan, db);
           }
 
-          // M36 (ADR-095): an orchestrator delegates through the maister MCP
+          // M37 (ADR-098): an orchestrator delegates through the maister MCP
           // facade, so issue its run-bound token and inject the facade server
           // into the materialized mcpServers handed to createSession.
           if (node.nodeType === "orchestrator" && materialized) {
@@ -1966,14 +2306,28 @@ export async function runGraph(
           "node action threw — Failed",
         );
         await markNodeFailed(nodeAttemptId, { errorCode: e.code }, db);
-        if (
-          await scheduleAutoRetry(node, e.code, {
-            nodeAttemptNumber,
-            attemptCheckpointRef,
-          })
-        ) {
+
+        const threwRetry = await scheduleAutoRetry(node, e.code, {
+          nodeAttemptNumber,
+          attemptCheckpointRef,
+        });
+
+        if (threwRetry === "retry") {
           pendingAutoRetryNodeId = node.id;
           continue;
+        }
+        if (threwRetry === "escalate") {
+          await escalateAutoRetryExhaustion({
+            db,
+            loaded,
+            node,
+            code: e.code,
+            nodeAttemptId,
+            attemptNumber: nodeAttemptNumber,
+            runtimeRoot,
+          });
+          needsInput = true;
+          break;
         }
         failed = true;
         runErrorCode = e.code;
@@ -1981,7 +2335,7 @@ export async function runGraph(
       }
 
       if (result.needsInput) {
-        // M36 (ADR-095): an orchestrator parks on WaitingOnChildren (it yields
+        // M37 (ADR-098): an orchestrator parks on WaitingOnChildren (it yields
         // awaiting its delegated children), NOT NeedsInput (a HITL signal). The
         // ledger NeedsInput mark is kept either way — the attempt is paused — but
         // the RUN status and the outbox diverge: no run.needs_input webhook fires
@@ -2019,7 +2373,7 @@ export async function runGraph(
             .where(eq(runs.id, runId));
           loaded.run.acpSessionId = result.acpSessionId;
         }
-        // M36 (ADR-095) T5.1: an orchestrator park checkpoints its (usually
+        // M37 (ADR-098) T5.1: an orchestrator park checkpoints its (usually
         // already-exited) supervisor session and releases its scheduler slot —
         // WaitingOnChildren is not cap-counted, so the parked coordinator must
         // not keep a slot. A human/form NeedsInput keeps its slot (an operator
@@ -2101,14 +2455,27 @@ export async function runGraph(
           { errorCode: code, exitCode: result.exitCode, stdout: result.stdout },
           db,
         );
-        if (
-          await scheduleAutoRetry(node, code, {
-            nodeAttemptNumber,
-            attemptCheckpointRef,
-          })
-        ) {
+        const failRetry = await scheduleAutoRetry(node, code, {
+          nodeAttemptNumber,
+          attemptCheckpointRef,
+        });
+
+        if (failRetry === "retry") {
           pendingAutoRetryNodeId = node.id;
           continue;
+        }
+        if (failRetry === "escalate") {
+          await escalateAutoRetryExhaustion({
+            db,
+            loaded,
+            node,
+            code,
+            nodeAttemptId,
+            attemptNumber: nodeAttemptNumber,
+            runtimeRoot,
+          });
+          needsInput = true;
+          break;
         }
         failed = true;
         runErrorCode = code;
@@ -2532,6 +2899,156 @@ export async function runGraph(
         }
       }
 
+      // A.2 (axis A1): rework cap exhausted. The review wants rework again but
+      // the author's maxLoops is spent — apply the run's execution-policy action
+      // instead of looping. nodeAttemptNumber is the 1-based visit count of this
+      // review node (maxLoops reworks = visits 1..maxLoops+1), so deciding rework
+      // at visit > maxLoops is the overrun. Fail-closed default is `escalate`.
+      // The loop-top rework.maxLoops backstop stays as defense-in-depth.
+      if (
+        isRework &&
+        node.rework !== undefined &&
+        nodeAttemptNumber > node.rework.maxLoops
+      ) {
+        const action = reworkExhaustionFromSnapshot(
+          loaded.run.executionPolicy ?? null,
+        );
+
+        logExecPolicyAction({
+          runId,
+          kind: "rework_exhausted",
+          detail: {
+            nodeId: node.id,
+            action,
+            maxLoops: node.rework.maxLoops,
+            attempt: nodeAttemptNumber,
+          },
+        });
+        log2.info(
+          { runId, nodeId: node.id, attempts: nodeAttemptNumber, action },
+          "[rework.exhausted]",
+        );
+
+        if (action === "fail") {
+          // Mark the overrun attempt Failed + fail the run (same in-loop
+          // pattern as the evidence-readiness refusal above), rather than throw
+          // and leave the attempt dangling NeedsInput on a Failed run.
+          const msg = `node "${node.id}" exhausted rework.maxLoops (${node.rework.maxLoops}) for run ${runId} (execution-policy reworkExhaustion=fail)`;
+
+          await markNodeFailed(
+            nodeAttemptId,
+            { errorCode: "CONFIG", stdout: msg },
+            db,
+          );
+          failed = true;
+          runErrorCode = "CONFIG";
+          break;
+        }
+
+        if (action === "escalate") {
+          // Reuse the review HITL substrate: re-pause for a human to make the
+          // terminal call (approve or end the run). This visit's decision
+          // artifact was consumed on read, so runReviewHuman creates a fresh
+          // HITL request + assignment. forcePause overrides humanGate=auto_pass
+          // (an unattended run): the cap is spent, so the machine MUST reach a
+          // human here — without it runReviewHuman could auto-pass/ship and
+          // create no HITL row while we flip NeedsInput below (orphaned run).
+          // The attempt row stays NeedsInput — a re-decided rework re-exhausts
+          // here, so only a non-rework decision moves the run forward.
+          logExecPolicyAction({
+            runId,
+            kind: "escalated",
+            detail: { nodeId: node.id, reason: "rework_exhausted" },
+          });
+          await runReviewHuman(
+            node,
+            loaded,
+            `Rework limit (${node.rework.maxLoops}) reached for "${node.id}". A human must approve or end the run.`,
+            {
+              runtimeRoot,
+              db,
+              gateAttempt: nodeAttemptNumber,
+              forcePause: true,
+            },
+          );
+          await db.transaction(async (tx: Db) => {
+            await markNodeNeedsInput(nodeAttemptId, tx);
+            const flipped = await tx
+              .update(runs)
+              .set({ status: "NeedsInput", currentStepId: node.id })
+              .where(eq(runs.id, runId))
+              .returning({ projectId: runs.projectId });
+
+            if (flipped.length > 0) {
+              await emitWebhookEvent({
+                db: tx,
+                type: "run.needs_input",
+                projectId: flipped[0].projectId,
+                runId,
+                data: { reason: "human", nodeId: node.id },
+              });
+            }
+          });
+          needsInput = true;
+          log2.info(
+            { nodeId: node.id },
+            "rework exhausted → escalated to human (NeedsInput)",
+          );
+          break;
+        }
+
+        // ship_with_warning: ship past the loop on the node's forward
+        // (non-rework) transition — its `success`/approve edge — recording the
+        // warning on the attempt rather than jumping back or failing.
+        const reworkTargets = node.rework.allowedTargets;
+        const forwardOutcome =
+          "success" in node.transitions
+            ? "success"
+            : Object.keys(node.transitions).find(
+                (o) => !reworkTargets.includes(node.transitions[o]),
+              );
+
+        await markNodeSucceeded(
+          nodeAttemptId,
+          {
+            stdout: result.stdout,
+            vars: {
+              ...(result.vars as Record<string, unknown>),
+              execPolicyWarning: `shipped past rework cap (${node.rework.maxLoops}) without resolving the review`,
+            },
+            exitCode: result.exitCode,
+            decision: forwardOutcome,
+            acpSessionId: result.acpSessionId,
+          },
+          db,
+        );
+        if (materialized) {
+          await cleanupNodeMaterialization({
+            nodeAttemptId,
+            runId: loaded.run.id,
+            worktreePath,
+            db,
+          });
+        }
+
+        const next = forwardOutcome
+          ? resolveTransition(node, forwardOutcome)
+          : null;
+
+        log2.info(
+          {
+            from: node.id,
+            outcome: forwardOutcome ?? "(terminal)",
+            to: next ?? "(terminal)",
+            shipWithWarning: true,
+          },
+          "rework exhausted → ship_with_warning (forward transition)",
+        );
+        await safeProject();
+        currentNodeId = next;
+        continue;
+      }
+
       if (isRework) {
         // Record the operator's chosen workspacePolicy from the artifact (Issue
         // 3 fix). M30 (ADR-079) executes it for real — closing the M11b
@@ -2925,7 +3442,7 @@ export async function runGraph(
     await deliverRunIfAutoReady(runId, db);
   }
 
-  // M36 (ADR-095): revoke the orchestrator's run-bound facade token on a
+  // M37 (ADR-098): revoke the orchestrator's run-bound facade token on a
   // NON-park terminal (Review/Failed/Crashed). The NeedsInput/checkpoint park
   // paths returned above, so reaching here means the coordinator finished or
   // died — its token is no longer needed. Best-effort; the 48h TTL backs up any

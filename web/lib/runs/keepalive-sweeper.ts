@@ -146,7 +146,7 @@ async function fetchPass2Candidates(
         eq(runs.status, "NeedsInputIdle"),
         isNotNull(runs.checkpointAt),
         lt(runs.checkpointAt, cutoff),
-        // M36 Phase 8 (ADR-096): a persistent swarm member parks INDEFINITELY
+        // M37 Phase 8 (ADR-099): a persistent swarm member parks INDEFINITELY
         // until re-messaged or its tree terminates — never TTL-abandoned here.
         eq(runs.persistent, false),
       ),
@@ -330,30 +330,35 @@ export async function runPass2(db: Db): Promise<number> {
           and(eq(hitlRequests.runId, row.id), isNull(hitlRequests.respondedAt)),
         );
 
-      await emitWebhookEvent({
-        db: tx,
-        type: "run.abandoned",
-        projectId: updated[0].projectId,
-        runId: row.id,
-        data: { source: "ttl" },
-      });
+      // ADR-097: a project-less local-package run has no project to attribute
+      // these project-scoped events to — skip the emits (its terminal row is
+      // the record).
+      if (updated[0].projectId) {
+        await emitWebhookEvent({
+          db: tx,
+          type: "run.abandoned",
+          projectId: updated[0].projectId,
+          runId: row.id,
+          data: { source: "ttl" },
+        });
 
-      await emitDomainEvent({
-        db: tx,
-        kind: "run.abandoned",
-        projectId: updated[0].projectId,
-        runId: row.id,
-        taskId: updated[0].taskId,
-        actor: { type: "system", id: null },
-        parentRunId: updated[0].parentRunId,
-        payload: {
+        await emitDomainEvent({
+          db: tx,
+          kind: "run.abandoned",
+          projectId: updated[0].projectId,
           runId: row.id,
           taskId: updated[0].taskId,
-          flowId: updated[0].flowId,
-          runKind: updated[0].runKind,
-          reason: "ttl",
-        },
-      });
+          actor: { type: "system", id: null },
+          parentRunId: updated[0].parentRunId,
+          payload: {
+            runId: row.id,
+            taskId: updated[0].taskId,
+            flowId: updated[0].flowId,
+            runKind: updated[0].runKind,
+            reason: "ttl",
+          },
+        });
+      }
 
       return true;
     });

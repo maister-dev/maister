@@ -75,13 +75,13 @@ async function pendingChildCount(db: Db, parentRunId: string): Promise<number> {
   return Number(rows[0]?.n ?? 0);
 }
 
-// M36 (ADR-095) T5.2: the orchestrator_resume outbox consumer. A child-terminal
+// M37 (ADR-098) T5.2: the orchestrator_resume outbox consumer. A child-terminal
 // event wakes a PARKED orchestrator (run_kind='flow', status='WaitingOnChildren')
 // once the batch needs the coordinator's attention. Kept SEPARATE from the
 // auto_launch_run_plan consumer so the two concerns — launch the next as-plan
 // tasks vs wake the coordinator — stay independent.
 //
-// Wake policy (ADR-097 — reacts to the SETTLED set: terminal kinds + run.review):
+// Wake policy (ADR-100 — reacts to the SETTLED set: terminal kinds + run.review):
 //   - a child that ended run.failed/run.crashed/run.abandoned ALWAYS wakes the
 //     parent (deferred-release: the coordinator must handle a failed child even
 //     if other children are still pending);

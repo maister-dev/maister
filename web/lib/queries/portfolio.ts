@@ -33,6 +33,7 @@ import { resolveStages } from "@/lib/queries/hitl-stage";
 import * as schema from "@/lib/db/schema";
 import { computeReadinessByRun } from "@/lib/queries/readiness-batch";
 import { runnerAgentFromFields } from "@/lib/queries/runner-agent";
+import { requireRunProjectId } from "@/lib/runs/run-kind-invariants";
 import {
   deriveWorkbenchLifecycleActions,
   type WorkbenchLifecycleActionId,
@@ -69,7 +70,7 @@ export const ACTIVE_RUN_STATUSES = [
   // worktree + a concurrency slot, so it counts as an active workspace —
   // mirroring lib/board.ts (which buckets HumanWorking into the in-flight set).
   "HumanWorking",
-  // M36 (ADR-095): a parked orchestrator (checkpointed, slot released) still
+  // M37 (ADR-098): a parked orchestrator (checkpointed, slot released) still
   // holds a worktree → counts as an active workspace.
   "WaitingOnChildren",
 ] as const;
@@ -494,7 +495,12 @@ export async function getPortfolio(
   const workspacesByProject = new Map<string, PortfolioWorkspace[]>();
 
   for (const row of activeRunRows) {
-    const list = workspacesByProject.get(row.projectId) ?? [];
+    // The query filters by inArray(runs.projectId, projectIds), so a
+    // project-less local-package run (ADR-097) never appears; the guard narrows
+    // the now-nullable column and is a defensive skip if one ever slips through.
+    if (!row.projectId) continue;
+    const projectId = row.projectId;
+    const list = workspacesByProject.get(projectId) ?? [];
 
     // A claimed run is human-driven, not agent-driven — surface the `dev` pill
     // instead of the run's executor agent (mirrors lib/board.ts takeover cards).
@@ -540,13 +546,16 @@ export async function getPortfolio(
       // non-terminal; a run with no gates/artifacts rolls up to "ready".
       readiness: readinessByRun.get(row.runId) ?? "ready",
     });
-    workspacesByProject.set(row.projectId, list);
+    workspacesByProject.set(projectId, list);
   }
 
   const mergesByProject = new Map<string, PortfolioRecentMerge[]>();
 
   for (const row of recentMergeRows) {
-    const list = mergesByProject.get(row.projectId) ?? [];
+    // Project-scoped query (inArray projectIds) ⇒ non-null; defensive narrow.
+    if (!row.projectId) continue;
+    const projectId = row.projectId;
+    const list = mergesByProject.get(projectId) ?? [];
 
     if (list.length >= 2) continue;
     list.push({
@@ -558,7 +567,7 @@ export async function getPortfolio(
       }),
       time: row.endedAt ? relativeTime(row.endedAt, now) : "—",
     });
-    mergesByProject.set(row.projectId, list);
+    mergesByProject.set(projectId, list);
   }
 
   const needCountByProject = new Map<string, number>();
@@ -570,12 +579,16 @@ export async function getPortfolio(
   ];
 
   for (const row of effectiveNeedRows) {
+    // Project-scoped query (inArray projectIds) ⇒ non-null; defensive narrow.
+    if (!row.projectId) continue;
+    const projectId = row.projectId;
+
     needCountByProject.set(
-      row.projectId,
-      (needCountByProject.get(row.projectId) ?? 0) + 1,
+      projectId,
+      (needCountByProject.get(projectId) ?? 0) + 1,
     );
-    if (!firstNeedByProject.has(row.projectId)) {
-      firstNeedByProject.set(row.projectId, {
+    if (!firstNeedByProject.has(projectId)) {
+      firstNeedByProject.set(projectId, {
         runId: row.runId,
         prompt: row.prompt,
         agent:
@@ -1155,7 +1168,9 @@ export async function getCrossProjectHitlInbox(
   );
 
   const items: CrossProjectHitlItem[] = baseItems.map((item, idx) => {
-    const projId = rows[idx].projectId;
+    // The hitl query inner-joins projects + filters inArray(projectIds), so
+    // projectId is non-null (a project-less run has no hitl_requests, ADR-097).
+    const projId = requireRunProjectId(rows[idx].projectId);
     const proj = projectById.get(projId) ?? { slug: projId, name: projId };
 
     return {

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The orchestrator engine (**Implemented**, ADR-095/ADR-096, M36) gives a running
+The orchestrator engine (**Implemented**, ADR-098/ADR-099, M37) gives a running
 agent governed **dynamic delegation**: an `orchestrator` flow node is a
 long-lived supervisory step that spawns and coordinates child Runs, parks
 (idle-checkpoints) while they execute, and reaches a terminal verdict only when
@@ -56,8 +56,8 @@ ADR-041/ADR-043 — [flow-settings.md](flow-settings.md)).
   (never gates). See [social-board.md](social-board.md).
 - **Delegation toolset** (Implemented) — `run_delegate` / `run_plan` /
   `run_collect` / `run_cancel`, plus `run_message` (re-message a persistent
-  swarm child, ADR-096) and `run_promote` / `run_rework` (resolve a reviewed
-  child, ADR-097), exposed over the maister MCP facade and reachable only from an
+  swarm child, ADR-099) and `run_promote` / `run_rework` (resolve a reviewed
+  child, ADR-100), exposed over the maister MCP facade and reachable only from an
   `orchestrator` session via a per-launch ephemeral run-bound token carrying
   `ORCHESTRATOR_TOKEN_SCOPES`
   (`runs:delegate`+`runs:collect`+`runs:cancel`+`runs:promote`). See
@@ -67,7 +67,7 @@ ADR-041/ADR-043 — [flow-settings.md](flow-settings.md)).
 ## State machine
 
 The orchestrator-run execution axis. The base run FSM is in [runs.md](runs.md);
-this diagram shows only the `WaitingOnChildren` wait/resume cycle that M36 adds.
+this diagram shows only the `WaitingOnChildren` wait/resume cycle that M37 adds.
 All transitions Implemented.
 
 ```mermaid
@@ -186,7 +186,7 @@ flowchart TD
     THREE --> SLOT[every cascaded terminal -> promoteNextPending<br/>no orphan holds a slot]
 ```
 
-### (e) reviewed-child settle → promote / rework / auto-promote (Implemented, ADR-097)
+### (e) reviewed-child settle → promote / rework / auto-promote (Implemented, ADR-100)
 
 A `worktree` child runs to `Review` (a diff), not straight to `Done`. Reaching
 `Review` emits `run.review` (only when the child has a parent; `acp_session_id`
@@ -278,34 +278,34 @@ flowchart TD
   `spawnedAt` is the AFTER-side idempotency mark).
 - **`strict` path-scoped write declaration** → `MaisterError("CONFIG")` at launch
   — real path-scoped enforcement needs the policy layer **(Phase 2)**; maister
-  enforces read-only-vs-full only, so path-scope ships `instructed`-only (ADR-096).
+  enforces read-only-vs-full only, so path-scope ships `instructed`-only (ADR-099).
 - **Reviewer read-only child** (`workspace: repo_read` delegation) reuses the
   L1/L2/L3 read-only enforcement free via `launchAgentRun` (supervisor
   `readOnlySession` + materialized deny rules + dirty-watchdog quarantine,
   ADR-041/ADR-090 untouched) — no orchestrator-specific enforcement code.
 - **`workspace_mode: shared` with no `root_run_id`** (a top-level run) →
   `MaisterError("CONFIG")` at launch — a shared tree is keyed by the tree root,
-  so only a delegated child can join one (ADR-096).
+  so only a delegated child can join one (ADR-099).
 - **Merge conflict on promote** (`run_promote` or the as-plan auto-promote) →
   `MaisterError("CONFLICT")` (HTTP 409); the child STAYS in `Review`, never
-  auto-resolved — a human resolves it, then re-promotes (ADR-097, §8).
+  auto-resolved — a human resolves it, then re-promotes (ADR-100, §8).
 - **`run_promote` from a child agent token** → 403 by scope (`runs:promote` is
   held only by the run-bound orchestrator token, not child agent tokens).
 
 ## Linked artifacts
 
-- **Decisions:** [ADR-095](../decisions.md#adr-095-orchestrator-engine--supervisory-node-governed-run-tree-delegation-toolset-success-gated-task-dag-idle-checkpoint-waitresume),
-  [ADR-096](../decisions.md#adr-096-persistent-swarm-layer-2--addressable-sessions-star-routed-messaging-worktree-modes-per-agent-read-only),
-  [ADR-097](../decisions.md#adr-097-delegated-child-review-settle--promoterework)
+- **Decisions:** [ADR-098](../decisions.md#adr-098-orchestrator-engine--supervisory-node-governed-run-tree-delegation-toolset-success-gated-task-dag-idle-checkpoint-waitresume),
+  [ADR-099](../decisions.md#adr-099-persistent-swarm-layer-2--addressable-sessions-star-routed-messaging-worktree-modes-per-agent-read-only),
+  [ADR-100](../decisions.md#adr-100-delegated-child-review-settle--promoterework)
   (delegated-child `Review` settle + promote/rework, the `run.review` kind);
   boundary kept from ADR-041/ADR-043 (materialize-only) and ADR-008 (closed error
   union — no new code).
 - **Flow DSL + engine:** [`../flow-dsl.md`](../flow-dsl.md) (`orchestrator` node
   type, `1.6.0` floor, delegation semantics).
-- **DB:** [`../database-schema.md`](../database-schema.md) (migration `0055`:
+- **DB:** [`../database-schema.md`](../database-schema.md) (migration `0060`:
   run-tree columns, `WaitingOnChildren`, `node_attempts.node_type` value,
-  `requires` kind; migration `0059`: the `run.review` `domain_events_kind` CHECK,
-  ADR-097), [`db/runs-domain.md`](../db/runs-domain.md) (run-tree ERD),
+  `requires` kind; migration `0060`: the `run.review` `domain_events_kind` CHECK,
+  ADR-100), [`db/runs-domain.md`](../db/runs-domain.md) (run-tree ERD),
   [`social-board.md`](social-board.md) (`requires` relation).
 - **HTTP + SSE:** [`../api/external/operations.openapi.yaml`](../api/external/operations.openapi.yaml)
   (`/api/v1/ext/runs/*` delegation routes — incl. `message`/`promote`/`rework`),
@@ -314,7 +314,7 @@ flowchart TD
 - **Triggers:** [`domain-events.md`](domain-events.md) (the `auto_launch_run_plan`
   + `orchestrator_resume` sibling consumers reacting to the SETTLED set;
   `run.done/failed/crashed/abandoned` payload widened with `parent_run_id`; the
-  new `run.review` settled-not-terminal kind, ADR-097),
+  new `run.review` settled-not-terminal kind, ADR-100),
   [`db/domain-events.md`](../db/domain-events.md).
 - **Errors:** [`../error-taxonomy.md`](../error-taxonomy.md) (`PRECONDITION`,
   `CONFIG`, `CONFLICT`, `CHECKPOINT`, `EXECUTOR_UNAVAILABLE` callers).

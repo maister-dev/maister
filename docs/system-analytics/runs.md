@@ -10,7 +10,16 @@ domain projects state onto it.
 ## Domain entities
 
 - **Run** — `runs` row. FK to `tasks`, `projects`, `flows`,
-  `executors`.
+  `executors`. `run_kind ∈ {flow, scratch, agent}`.
+  - **`run_kind = scratch` — project-less local-package variant** (M36 Phase 5,
+    ADR-097): a scratch run rooted at a local-package `working_dir` with **no
+    project and no `workspaces` row**. `runs.project_id` is **NULL** and
+    `runs.local_package_id` is the launch snapshot; `scratch_runs` carries the
+    owner under a DB CHECK (exactly one of `project_id` / `local_package_id`).
+    Every project-scoped consumer either excludes it by query construction or
+    narrows `project_id` via `requireRunProjectId`. See
+    [`studio-ai-assistant.md`](studio-ai-assistant.md) and the consumer
+    checklist in [`../decisions.md#adr-096`](../decisions.md).
 - **Assignment** — M13 ownership row for pending human-visible work. It points
   at a run for inbox/read-model purposes but does not add run statuses and does
   not participate in scheduler caps.
@@ -43,6 +52,19 @@ diff, and lifecycle read models into three stable regions:
 - **Right inspector** is shared by Flow, agent, and scratch runs. It summarizes
   change size, branch/worktree facts, run status, Flow/session mini-map, and
   server-derived action availability.
+
+## Runs ledger UI (Implemented)
+
+`/runs` is the read-only run ledger reached from the Active workspaces rail
+**See all** link. It does not create a new state machine or write model. It
+projects existing rows from `runs`, `projects`, optional `tasks`, `flows`,
+`workspaces`, `run_cost_rollups`, and the `run_schedules.last_run_id` link into
+a URL-filtered table.
+
+Filters are project, state, source, runner, and inclusive start-date range.
+Global admins see every non-archived project's runs; other users see only runs
+for projects where they have `project_members` visibility. Flow and standalone
+agent rows open `/runs/{runId}`; scratch rows open `/scratch-runs/{runId}`.
 
 ## State machine — execution axis
 

@@ -185,14 +185,16 @@ async function applyDialogStatus(args: {
   db: DbClientLike;
   runId: string;
   dialogStatus: ScratchDialogStatus;
-}): Promise<{ projectId: string } | null> {
+  // ADR-097: null for a project-less local-package assistant run — callers
+  // guard the project-scoped emits on a non-null projectId.
+}): Promise<{ projectId: string | null } | null> {
   const now = new Date();
 
   await args.db
     .update(scratchRuns)
     .set({ dialogStatus: args.dialogStatus, updatedAt: now })
     .where(eq(scratchRuns.runId, args.runId));
-  const runRows: Array<{ projectId: string }> = await args.db
+  const runRows: Array<{ projectId: string | null }> = await args.db
     .update(runs)
     .set({ status: runStatusForDialogStatus(args.dialogStatus) })
     .where(eq(runs.id, args.runId))
@@ -256,18 +258,23 @@ async function persistPermissionRequest(args: {
         supervisorEventId: String(args.event.monotonicId),
       });
 
-      if (applied) {
+      // ADR-097: a project-less local-package run has no project to attribute
+      // these project-scoped webhooks to — skip them (the HITL row + scratch
+      // dialog status are the live record; the assistant has no webhook subs).
+      if (applied?.projectId) {
+        const projectId = applied.projectId;
+
         await emitWebhookEvent({
           db: tx,
           type: "hitl.requested",
-          projectId: applied.projectId,
+          projectId,
           runId: args.runId,
           data: { hitlRequestId, kind: "permission", nodeId: null },
         });
         await emitWebhookEvent({
           db: tx,
           type: "run.needs_input",
-          projectId: applied.projectId,
+          projectId,
           runId: args.runId,
           data: { reason: "permission", nodeId: null },
         });
@@ -538,7 +545,9 @@ function startScratchEventConsumer(args: {
                 // Live scratch terminal path (not reconcile/markScratchCrashed):
                 // emit on the CAS winner only. Done/Abandoned arrive via
                 // promote/drop and are wired there; here only Crashed/Review.
-                if (applied && dialogStatus === "Crashed") {
+                // ADR-097: a project-less local-package run skips these
+                // project-scoped emits (no project to attribute them to).
+                if (applied?.projectId && dialogStatus === "Crashed") {
                   await emitWebhookEvent({
                     db: tx,
                     type: "run.crashed",
@@ -562,7 +571,7 @@ function startScratchEventConsumer(args: {
                       reason: "CRASH",
                     },
                   });
-                } else if (applied && dialogStatus === "Review") {
+                } else if (applied?.projectId && dialogStatus === "Review") {
                   await emitWebhookEvent({
                     db: tx,
                     type: "run.review",

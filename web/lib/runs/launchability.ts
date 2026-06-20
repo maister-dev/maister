@@ -37,7 +37,7 @@ const RUN_STATUS_LAUNCHABILITY = {
   NeedsInput: "busy",
   NeedsInputIdle: "busy",
   HumanWorking: "busy",
-  // M36 (ADR-095): a parked orchestrator is active (task in-flight) — the task
+  // M37 (ADR-098): a parked orchestrator is active (task in-flight) — the task
   // is not relaunchable while it awaits its children.
   WaitingOnChildren: "busy",
   Review: "busy",

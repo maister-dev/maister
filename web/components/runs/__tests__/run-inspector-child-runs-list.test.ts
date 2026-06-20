@@ -1,4 +1,4 @@
-// M36 Phase 6 (ADR-095): render tests for the inspector "Spawned runs (N)"
+// M37 Phase 6 (ADR-098): render tests for the inspector "Spawned runs (N)"
 // list. renderToStaticMarkup (no jsdom); labels passed as props. Asserts the
 // data-* contract, status dot tone, the KEY-N vs as-run row, and the link.
 

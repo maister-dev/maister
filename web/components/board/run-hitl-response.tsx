@@ -34,7 +34,7 @@ const KNOWN_ERROR_CODES = new Set([
 export interface RunHitlResponseProps {
   runId: string;
   hitlRequestId: string;
-  kind: "permission" | "form" | "human";
+  kind: "permission" | "form" | "human" | "infra_recovery";
   options: HitlOption[];
   schema: unknown;
   canAct: boolean;
@@ -214,8 +214,9 @@ export function RunHitlResponse({
     handleDecision(reworkDecision);
   }
 
-  // Confidence applies to form/human/review; NOT permission.
-  const showConfidence = kind !== "permission";
+  // Confidence applies to form/human/review; NOT permission or infra_recovery
+  // (a binary retry/abandon choice carries no confidence).
+  const showConfidence = kind !== "permission" && kind !== "infra_recovery";
 
   const labels = {
     criticalityLabel: t("criticalityLabel"),
@@ -240,6 +241,8 @@ export function RunHitlResponse({
     reviewLoopChip: t("reviewLoopChip"),
     reviewApproveOpenWarn: t("reviewApproveOpenWarn"),
     reviewReworkExhausted: t("reviewReworkExhausted"),
+    infraRecoveryRetry: t("infraRecoveryRetry"),
+    infraRecoveryAbandon: t("infraRecoveryAbandon"),
   };
 
   return (

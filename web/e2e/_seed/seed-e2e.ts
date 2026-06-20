@@ -451,7 +451,7 @@ const E2E_HELPER_AGENT = "e2e-agents-pkg:e2e-helper";
 const E2E_AUDITOR_AGENT = "e2e-agents-pkg:e2e-auditor";
 const AGENT_BODY_MARKER = "E2E-HELPER-SYSTEM-PROMPT-MARKER";
 
-// --- M36 orchestrator-loop fixture (ADR-095) --------------------------------
+// --- M37 orchestrator-loop fixture (ADR-098) --------------------------------
 // One launchable project carrying a Backlog task bound to a graph flow whose
 // single node is an `orchestrator` (engine_min 1.6.0) + a catalog `worker`
 // agent (workspace=none, so a delegated child finalizes Done) attached to the
@@ -5274,7 +5274,7 @@ async function seedPlatformAgentsFixture(
   };
 }
 
-// M36 (ADR-095): a launchable orchestrator flow + its delegate-target agent.
+// M37 (ADR-098): a launchable orchestrator flow + its delegate-target agent.
 async function seedOrchestratorE2EFixture(
   pool: Pool,
   adminId: string,

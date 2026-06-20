@@ -20,7 +20,7 @@ export const TOKEN_SCOPES = [
   "runs:delegate",
   "runs:collect",
   "runs:cancel",
-  // M36 (ADR-097): the orchestrator's promote-a-reviewed-child privilege.
+  // M37 (ADR-100): the orchestrator's promote-a-reviewed-child privilege.
   "runs:promote",
 ] as const;
 

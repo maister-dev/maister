@@ -18,6 +18,8 @@ export interface RunShellProps {
   subtitle?: string;
   keyRef?: string | null;
   taskHref?: string | null;
+  projectHref?: string | null;
+  projectLabel?: string | null;
   taskPrompt?: string | null;
   status: string;
   branch?: string | null;
@@ -34,6 +36,8 @@ export function RunShell({
   subtitle,
   keyRef,
   taskHref,
+  projectHref,
+  projectLabel,
   taskPrompt,
   status,
   branch,
@@ -58,6 +62,8 @@ export function RunShell({
         inspectorOpen={inspectorOpen}
         keyRef={keyRef}
         labels={labels}
+        projectHref={projectHref}
+        projectLabel={projectLabel}
         status={status}
         subtitle={subtitle}
         targetBranch={targetBranch}

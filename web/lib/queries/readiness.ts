@@ -18,6 +18,7 @@ import {
   liveBlockingGates,
   rollupReadiness,
 } from "@/lib/flows/graph/readiness-core";
+import { checksFromSnapshot } from "@/lib/runs/execution-policy";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { artifactInstances, gateResults, runs } =
@@ -119,11 +120,16 @@ export async function getRunReadiness(
 
   // Confirm the run exists and belongs to the project.
   const runRows = await d
-    .select({ id: runs.id })
+    .select({ id: runs.id, executionPolicy: runs.executionPolicy })
     .from(runs)
     .where(and(eq(runs.id, runId), eq(runs.projectId, projectId)));
 
   if (runRows.length === 0) return null;
+
+  // Execution-policy check-strictness (axis A3): under advisory/skip the
+  // non-review check gates drop out of the blocking set (badge consistency with
+  // the merge guard). Fail-closed to strict on a null/malformed snapshot.
+  const checks = checksFromSnapshot(runRows[0].executionPolicy ?? null);
 
   // Gather live attempt ids (latest attempt per node).
   const liveAttemptIds = new Set(
@@ -177,7 +183,7 @@ export async function getRunReadiness(
   // blockingGates feeds the readiness rollup. liveBlockingGates handles the
   // live-attempt filter, mode=blocking filter, and external_check collapse to
   // latest-per-gateId in one pass (SSOT from readiness-core).
-  const blockingGates = liveBlockingGates(allGateRows, liveAttemptIds);
+  const blockingGates = liveBlockingGates(allGateRows, liveAttemptIds, checks);
 
   // Build externalGates projection. `description` is sourced from the flow
   // manifest gates[].external.description (M16 §F); url/commit come from the

@@ -1,13 +1,22 @@
 "use client";
 
-import type { FlowGraphViewLabels } from "@/components/board/flow-graph-view";
-import type { PackageBom, StudioFlowGraph } from "@/lib/queries/packages";
+import type { ElementCardLabels } from "@/components/studio/element-card";
+import type { PackageTabDescriptor } from "@/components/studio/package-tabs";
+import type { PackageBom } from "@/lib/queries/packages";
 import type { PackageVersion } from "@/lib/studio/group-packages";
+import type { ReactElement, ReactNode } from "react";
 
 import Link from "next/link";
+import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
-import { FlowGraphViewSection } from "@/components/board/flow-graph-view-section";
+import { ElementCard } from "@/components/studio/element-card";
+import {
+  PACKAGE_TAB_PAGE_SIZE,
+  PackageTabs,
+} from "@/components/studio/package-tabs";
+import { readApiError } from "@/lib/api-error";
 
 export type PackageDetailView = {
   name: string;
@@ -17,30 +26,94 @@ export type PackageDetailView = {
   bom: PackageBom;
 };
 
-const BOM_KINDS: { key: keyof PackageBom; label: string }[] = [
-  { key: "flows", label: "kindFlows" },
-  { key: "agents", label: "kindAgents" },
-  { key: "skills", label: "kindSkills" },
-  { key: "mcps", label: "kindMcps" },
-  { key: "rules", label: "kindRules" },
-];
+// Tab kinds in fixed display order. A kind whose count is 0 is dropped by
+// PackageTabs (never rendered as an empty tab).
+const TAB_KINDS = ["flows", "skills", "agents", "mcps", "rules"] as const;
+
+type TabKind = (typeof TAB_KINDS)[number];
+
+const TAB_LABEL_KEY: Record<TabKind, string> = {
+  flows: "viewer.tabFlows",
+  skills: "viewer.tabSkills",
+  agents: "viewer.tabAgents",
+  mcps: "viewer.tabMcps",
+  rules: "viewer.tabRules",
+};
+
+function isTabKind(value: string): value is TabKind {
+  return (TAB_KINDS as readonly string[]).includes(value);
+}
 
 export function PackageDetail({
   pkg,
   canManage,
   canTrust,
-  flowGraphs,
-  graphLabels,
+  basePath,
+  activeTab,
+  page,
 }: {
   pkg: PackageDetailView;
   canManage: boolean;
   canTrust: boolean;
-  flowGraphs: StudioFlowGraph[];
-  graphLabels: FlowGraphViewLabels;
+  // The package-detail route base (no query), e.g. `/studio/packages/aif`. Card
+  // and tab links are built relative to it; no disk handle ever reaches here.
+  basePath: string;
+  activeTab: string;
+  page: number;
 }) {
   const t = useTranslations("studio");
   const newest = pkg.versions[0];
-  const nonEmptyKinds = BOM_KINDS.filter(({ key }) => pkg.bom[key].length > 0);
+
+  const cardLabels: ElementCardLabels = {
+    view: t("viewer.view"),
+    fork: t("viewer.fork"),
+    forkPhase2Hint: t("viewer.forkPhase2Hint"),
+  };
+
+  const counts: Record<TabKind, number> = {
+    flows: pkg.bom.flows.length,
+    skills: pkg.bom.skills.length,
+    agents: pkg.bom.agents.length,
+    mcps: pkg.bom.mcps.length,
+    rules: pkg.bom.rules.length,
+  };
+
+  const tabs: PackageTabDescriptor[] = TAB_KINDS.map((kind) => ({
+    id: kind,
+    label: t(TAB_LABEL_KEY[kind]),
+    count: counts[kind],
+  }));
+
+  // Resolved active tab: the requested one if it has members, else the first
+  // non-empty kind (so a deep-link to an emptied tab still shows content).
+  const resolvedTab: TabKind =
+    isTabKind(activeTab) && counts[activeTab] > 0
+      ? activeTab
+      : (TAB_KINDS.find((kind) => counts[kind] > 0) ?? "flows");
+
+  const totalForActive = counts[resolvedTab];
+  const safePage = Math.max(1, page);
+  const start = (safePage - 1) * PACKAGE_TAB_PAGE_SIZE;
+  const end = start + PACKAGE_TAB_PAGE_SIZE;
+
+  const hrefFor = (tab: string, targetPage: number): string => {
+    const params = new URLSearchParams();
+
+    params.set("tab", tab);
+    if (targetPage > 1) params.set("page", String(targetPage));
+
+    return `${basePath}?${params.toString()}`;
+  };
+
+  const cards = buildCards({
+    pkg,
+    kind: resolvedTab,
+    start,
+    end,
+    basePath,
+    labels: cardLabels,
+    t,
+  });
 
   return (
     <div className="flex flex-col gap-6">
@@ -76,70 +149,31 @@ export function PackageDetail({
               {t("trust")}
             </Link>
           ) : null}
-          {canManage ? (
-            <span
-              className="cursor-default rounded-[10px] border border-dashed border-line px-3 py-1.5 text-[12.5px] text-mute"
-              title={t("reworkHint")}
-            >
-              {t("rework")}
-            </span>
-          ) : null}
+          {/* Fork-to-local (M36 T2.4): clones the package into a new local
+              package and opens the editor. Import (⤓) stays ABSENT here:
+              installed packages are immutable. */}
+          {canManage ? <ForkButton refName={pkg.name} /> : null}
         </div>
       </div>
 
-      <section className="flex flex-col gap-3" data-testid="package-preview">
-        <h3 className="font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-mute">
-          {t("previewTitle")}
-        </h3>
-        {flowGraphs.length > 0 ? (
-          flowGraphs.map((graph) => (
-            <div key={graph.flowId} className="flex flex-col gap-1.5">
-              <div className="font-mono text-[11px] text-ink-2">
-                {graph.flowId}
-              </div>
-              <div className="h-[340px] overflow-hidden rounded-[14px] border border-line bg-paper">
-                <FlowGraphViewSection
-                  labels={graphLabels}
-                  layout={graph.layout}
-                  topology={graph.topology}
-                />
-              </div>
-            </div>
-          ))
-        ) : (
-          <p className="rounded-[14px] border border-dashed border-line bg-paper px-5 py-8 text-center text-[12.5px] text-mute">
-            {t("previewEmpty")}
-          </p>
-        )}
-      </section>
-
-      <section className="flex flex-col gap-3">
+      <section className="flex flex-col gap-3" data-testid="package-bom">
         <h3 className="font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-mute">
           {t("bomTitle")}
         </h3>
-        {nonEmptyKinds.length > 0 ? (
-          <div className="flex flex-col gap-4">
-            {nonEmptyKinds.map(({ key, label }) => (
-              <div key={key} className="flex flex-col gap-1.5">
-                <div className="font-mono text-[11px] uppercase tracking-[0.1em] text-mute">
-                  {t(label)} ({pkg.bom[key].length})
-                </div>
-                <ul className="flex flex-wrap gap-1.5">
-                  {pkg.bom[key].map((item) => (
-                    <li
-                      key={item.id}
-                      className="rounded-full bg-ivory px-2.5 py-1 font-mono text-[11.5px] text-ink-2"
-                    >
-                      {item.id}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p className="text-[13px] text-mute">{t("bomEmpty")}</p>
-        )}
+        <PackageTabs
+          activeTab={resolvedTab}
+          cards={cards}
+          hrefFor={hrefFor}
+          labels={{
+            loadMore: t("viewer.loadMore"),
+            showingCount: t("viewer.showingCount"),
+            tabEmpty: t("viewer.tabEmpty"),
+          }}
+          page={safePage}
+          pageSize={PACKAGE_TAB_PAGE_SIZE}
+          tabs={tabs}
+          totalForActive={totalForActive}
+        />
       </section>
 
       <section className="flex flex-col gap-2">
@@ -164,4 +198,180 @@ export function PackageDetail({
       </section>
     </div>
   );
+}
+
+// Forks an installed package into a fresh local package, then opens the editor.
+// The package `ref` is the package name (Phase A ref); fork resolution happens
+// server-side — no disk handle crosses the wire.
+function ForkButton({ refName }: { refName: string }): ReactElement {
+  const t = useTranslations("studio");
+  const tApiErrors = useTranslations("apiErrors");
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function fork(): Promise<void> {
+    setBusy(true);
+    setError(null);
+
+    try {
+      const res = await fetch(
+        `/api/studio/packages/${encodeURIComponent(refName)}/fork`,
+        { method: "POST" },
+      );
+
+      if (!res.ok) {
+        setError(await readApiError(res, tApiErrors));
+
+        return;
+      }
+
+      const result = (await res.json()) as { localPackageId: string };
+
+      router.push(`/studio/edit/${result.localPackageId}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <span className="inline-flex flex-col gap-1">
+      <button
+        className="rounded-[10px] border border-line bg-ivory px-3 py-1.5 text-[12.5px] font-semibold text-ink transition-colors hover:border-amber disabled:opacity-60"
+        data-testid="package-fork"
+        disabled={busy}
+        title={t("reworkHint")}
+        type="button"
+        onClick={() => void fork()}
+      >
+        {t("rework")}
+      </button>
+      {error ? (
+        <span className="font-mono text-[10.5px] text-danger" role="alert">
+          {error}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+type TFn = ReturnType<typeof useTranslations>;
+
+// Renders the page slice of cards for the active kind. Each member is a card
+// (never a bare id chip); degraded members (empty meta) omit the meta line.
+function buildCards({
+  pkg,
+  kind,
+  start,
+  end,
+  basePath,
+  labels,
+  t,
+}: {
+  pkg: PackageDetailView;
+  kind: TabKind;
+  start: number;
+  end: number;
+  basePath: string;
+  labels: ElementCardLabels;
+  t: TFn;
+}): ReactNode {
+  switch (kind) {
+    case "flows":
+      return pkg.bom.flows.slice(start, end).map((flow) => (
+        <ElementCard
+          key={flow.id}
+          href={`${basePath}/flows/${encodeURIComponent(flow.id)}`}
+          labels={labels}
+          meta={
+            flow.engine
+              ? t("viewer.flowMeta", {
+                  nodes: flow.nodeCount,
+                  gates: flow.gateCount,
+                  engine: flow.engine,
+                })
+              : t("viewer.flowMetaNoEngine", {
+                  nodes: flow.nodeCount,
+                  gates: flow.gateCount,
+                })
+          }
+          name={flow.id}
+        />
+      ));
+    case "skills":
+      return pkg.bom.skills.slice(start, end).map((skill) => (
+        <ElementCard
+          key={skill.id}
+          href={`${basePath}/skills/${skill.id
+            .split("/")
+            .map(encodeURIComponent)
+            .join("/")}`}
+          labels={labels}
+          meta={t("viewer.skillMeta", {
+            files: skill.fileCount,
+            subfolders: skill.subfolderCount,
+          })}
+          name={skill.id}
+        />
+      ));
+    case "agents":
+      return pkg.bom.agents.slice(start, end).map((agent) => (
+        <ElementCard
+          key={agent.id}
+          description={
+            agent.triggers.length > 0
+              ? agent.triggers
+                  .map((trigger) => t(`viewer.trigger${capitalize(trigger)}`))
+                  .join(" · ")
+              : t("viewer.agentNoTriggers")
+          }
+          href={`${basePath}/agents/${encodeURIComponent(agent.id)}`}
+          labels={labels}
+          meta={
+            agent.riskTier || agent.workspace
+              ? t("viewer.agentRiskWorkspace", {
+                  risk: agent.riskTier
+                    ? t(`viewer.risk${capitalize(agent.riskTier)}`)
+                    : "—",
+                  workspace: agent.workspace
+                    ? t(`viewer.workspace${capitalize(agent.workspace)}`)
+                    : "—",
+                })
+              : null
+          }
+          name={agent.id}
+        />
+      ));
+    case "mcps":
+      return pkg.bom.mcps
+        .slice(start, end)
+        .map((mcp) => (
+          <ElementCard
+            key={mcp.id}
+            href={basePath}
+            labels={labels}
+            name={mcp.id}
+          />
+        ));
+    case "rules":
+      return pkg.bom.rules
+        .slice(start, end)
+        .map((rule) => (
+          <ElementCard
+            key={rule.id}
+            href={basePath}
+            labels={labels}
+            meta={`${t("viewer.rulePath")}: ${rule.path}`}
+            name={rule.id}
+          />
+        ));
+  }
+}
+
+// Maps an enum value (`read_only`, `repo_read`, `manual`) to its title-cased key
+// suffix (`Read_only`, `Repo_read`, `Manual`) so it joins the `viewer.*` keys.
+function capitalize(value: string): string {
+  return value.length > 0 ? value[0].toUpperCase() + value.slice(1) : value;
 }

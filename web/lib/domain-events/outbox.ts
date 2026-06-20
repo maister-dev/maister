@@ -36,7 +36,7 @@ interface BaseDomainEventInput {
   occurredAt?: Date;
 }
 
-// M36 (ADR-095/097): a discriminated union on `kind`. Run-SETTLED events
+// M37 (ADR-098/097): a discriminated union on `kind`. Run-SETTLED events
 // (terminal kinds + `run.review`) MUST carry `parentRunId` (null for a top-level
 // run) — the compiler refuses a settled emit that omits it, so a new settled
 // path cannot silently drop the routing key the orchestrator auto-launcher +

@@ -11,6 +11,8 @@
 //   - exhaustion → normal failure (run Failed, no extra attempts);
 //   - an off-list code never retries.
 
+import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
+
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -153,6 +155,7 @@ function retryManifest(
   retryPolicy: Record<string, unknown> | undefined,
   opts: {
     gate?: boolean;
+    retrySafe?: boolean;
   } = {},
 ) {
   return {
@@ -165,6 +168,7 @@ function retryManifest(
         type: "ai_coding",
         action: { prompt: "/impl" },
         transitions: { success: "done" },
+        ...(opts.retrySafe ? { retry_safe: true } : {}),
         ...(retryPolicy ? { retry_policy: retryPolicy } : {}),
         ...(opts.gate
           ? {
@@ -185,7 +189,10 @@ function retryManifest(
   };
 }
 
-async function seedRun(manifest: Record<string, unknown>): Promise<{
+async function seedRun(
+  manifest: Record<string, unknown>,
+  opts: { executionPolicy?: ExecutionPolicy } = {},
+): Promise<{
   loaded: Record<string, unknown>;
   runId: string;
   worktree: string;
@@ -254,6 +261,7 @@ async function seedRun(manifest: Record<string, unknown>): Promise<{
     runnerSnapshot: testRunnerSnapshot(executorId),
     flowVersion: "v1.0.0",
     status: "Running",
+    ...(opts.executionPolicy ? { executionPolicy: opts.executionPolicy } : {}),
   });
   await db.insert(schema.workspaces).values({
     id: randomUUID(),
@@ -275,6 +283,9 @@ async function seedRun(manifest: Record<string, unknown>): Promise<{
       flowId,
       taskId,
       runKind: "flow",
+      ...(opts.executionPolicy
+        ? { executionPolicy: opts.executionPolicy }
+        : {}),
     },
     task: { id: taskId, title: "t", prompt: "p" },
     flow: { id: flowId },
@@ -439,5 +450,222 @@ describe("retry_policy auto-retry (ADR-080)", () => {
 
     expect(await attemptsFor(runId)).toHaveLength(1);
     expect(await runStatus(runId)).toBe("Failed");
+  }, 120_000);
+});
+
+// Execution-policy axis A2 (crashRetry=auto_retry): the run policy synthesizes
+// an ADR-080 retry for a retry_safe node lacking an explicit retry_policy.
+const AUTO_RETRY: ExecutionPolicy = {
+  preset: "supervised",
+  overrides: { crashRetry: "auto_retry" },
+};
+
+describe("execution-policy crashRetry=auto_retry (A2 in-run re-dispatch)", () => {
+  it("retries a retry_safe node (no retry_policy) on a transient failure, then succeeds", async () => {
+    const { runGraph } = await import("@/lib/flows/graph/runner-graph");
+    // No per-node retry_policy; retry_safe + the run's auto_retry policy drives
+    // the re-dispatch, bounded by MAISTER_AUTO_RETRY_MAX_ATTEMPTS (default 3).
+    const manifest = retryManifest(undefined, { retrySafe: true });
+    const { loaded, runId } = await seedRun(manifest, {
+      executionPolicy: AUTO_RETRY,
+    });
+
+    agentScript = [
+      { ok: false, errorCode: "EXECUTOR_UNAVAILABLE" },
+      { ok: false, errorCode: "EXECUTOR_UNAVAILABLE" },
+      { ok: true },
+    ];
+
+    await runGraph(loaded as never, { db, runtimeRoot: createdPaths[0] });
+
+    const attempts = await attemptsFor(runId);
+
+    expect(attempts).toHaveLength(3);
+    expect(attempts[0].auto_retry).toBe(false);
+    expect(attempts[1].auto_retry).toBe(true);
+    expect(attempts[2].auto_retry).toBe(true);
+    expect(attempts[2].status).toBe("Succeeded");
+    expect(agentCalls).toHaveLength(3);
+    expect(await runStatus(runId)).toBe("Review");
+  }, 120_000);
+
+  it("does NOT retry a NON-retry_safe node even under auto_retry (opt-in gate)", async () => {
+    const { runGraph } = await import("@/lib/flows/graph/runner-graph");
+    const manifest = retryManifest(undefined, { retrySafe: false });
+    const { loaded, runId } = await seedRun(manifest, {
+      executionPolicy: AUTO_RETRY,
+    });
+
+    agentScript = [{ ok: false, errorCode: "SPAWN" }];
+
+    await runGraph(loaded as never, { db, runtimeRoot: createdPaths[0] });
+
+    expect(await attemptsFor(runId)).toHaveLength(1);
+    expect(await runStatus(runId)).toBe("Failed");
+  }, 120_000);
+
+  it("does NOT retry a deterministic (off-list) code under auto_retry", async () => {
+    const { runGraph } = await import("@/lib/flows/graph/runner-graph");
+    const manifest = retryManifest(undefined, { retrySafe: true });
+    const { loaded, runId } = await seedRun(manifest, {
+      executionPolicy: AUTO_RETRY,
+    });
+
+    // PRECONDITION is off the transient allow-list → no retry even under policy.
+    agentScript = [{ ok: false, errorCode: "PRECONDITION" }];
+
+    await runGraph(loaded as never, { db, runtimeRoot: createdPaths[0] });
+
+    expect(await attemptsFor(runId)).toHaveLength(1);
+    expect(await runStatus(runId)).toBe("Failed");
+  }, 120_000);
+
+  it("an explicit per-node retry_policy WINS over the policy default (author authoritative)", async () => {
+    const { runGraph } = await import("@/lib/flows/graph/runner-graph");
+    // Author cap = 2 (< the env default 3); on_errors = SPAWN only. retry_safe +
+    // auto_retry are also set, but the author policy must govern the bound.
+    const manifest = retryManifest(
+      { attempts: 2, on_errors: ["SPAWN"] },
+      { retrySafe: true },
+    );
+    const { loaded, runId } = await seedRun(manifest, {
+      executionPolicy: AUTO_RETRY,
+    });
+
+    agentScript = [
+      { ok: false, errorCode: "SPAWN" },
+      { ok: false, errorCode: "SPAWN" },
+      { ok: false, errorCode: "SPAWN" },
+    ];
+
+    await runGraph(loaded as never, { db, runtimeRoot: createdPaths[0] });
+
+    // Exactly 2 attempts (author cap), NOT 3 (policy default) → author won.
+    expect(await attemptsFor(runId)).toHaveLength(2);
+    expect(agentCalls).toHaveLength(2);
+    expect(await runStatus(runId)).toBe("Failed");
+  }, 120_000);
+
+  // Work-preserving escalation: on exhaustion the run pauses for a human
+  // (NeedsInput) instead of failing, keeping the worktree + all prior work.
+  it("exhaustion → escalates: NeedsInput + infra_recovery HITL + assignment + run.escalated, worktree preserved", async () => {
+    const { runGraph } = await import("@/lib/flows/graph/runner-graph");
+    const manifest = retryManifest(undefined, { retrySafe: true });
+    const { loaded, runId, worktree } = await seedRun(manifest, {
+      executionPolicy: AUTO_RETRY,
+    });
+
+    agentScript = [
+      { ok: false, errorCode: "SPAWN" },
+      { ok: false, errorCode: "SPAWN" },
+      { ok: false, errorCode: "SPAWN" },
+    ];
+
+    await runGraph(loaded as never, { db, runtimeRoot: createdPaths[0] });
+
+    // Paused, NOT failed.
+    expect(await runStatus(runId)).toBe("NeedsInput");
+
+    const attempts = await attemptsFor(runId);
+
+    expect(attempts).toHaveLength(3);
+    expect(attempts[2].status).toBe("NeedsInput");
+
+    const hitl = await pool.query(
+      `SELECT kind, step_id FROM hitl_requests WHERE run_id = $1`,
+      [runId],
+    );
+
+    expect(hitl.rows).toHaveLength(1);
+    expect(hitl.rows[0].kind).toBe("infra_recovery");
+    expect(hitl.rows[0].step_id).toBe("implement");
+
+    const assignments = await pool.query(
+      `SELECT 1 FROM assignments WHERE run_id = $1 AND action_kind = 'infra_recovery'`,
+      [runId],
+    );
+
+    expect(assignments.rows.length).toBeGreaterThanOrEqual(1);
+
+    const escalated = await pool.query(
+      `SELECT 1 FROM domain_events WHERE run_id = $1 AND kind = 'run.escalated'`,
+      [runId],
+    );
+
+    expect(escalated.rows.length).toBeGreaterThanOrEqual(1);
+
+    // Worktree preserved (a Failed run would be GC-eligible; NeedsInput keeps it).
+    const { stat } = await import("node:fs/promises");
+
+    expect((await stat(worktree)).isDirectory()).toBe(true);
+  }, 120_000);
+
+  it("retry resume re-runs the failed node with the worktree intact → Review", async () => {
+    const { runGraph } = await import("@/lib/flows/graph/runner-graph");
+    const manifest = retryManifest(undefined, { retrySafe: true });
+    const { loaded, runId } = await seedRun(manifest, {
+      executionPolicy: AUTO_RETRY,
+    });
+
+    agentScript = [
+      { ok: false, errorCode: "SPAWN" },
+      { ok: false, errorCode: "SPAWN" },
+      { ok: false, errorCode: "SPAWN" },
+    ];
+    await runGraph(loaded as never, { db, runtimeRoot: createdPaths[0] });
+    expect(await runStatus(runId)).toBe("NeedsInput");
+
+    // Human clicks Retry → the runner resumes and RE-RUNS the SAME node (the
+    // exhausted attempt is NeedsInput → reusesCurrentAttempt). Infra recovered,
+    // so the re-run succeeds and the run reaches Review with NO new attempt row.
+    (loaded.run as { status: string }).status = "NeedsInput";
+    (loaded.run as { currentStepId: string | null }).currentStepId =
+      "implement";
+    agentScript = [{ ok: true }];
+    await runGraph(loaded as never, { db, runtimeRoot: createdPaths[0] });
+
+    expect(await runStatus(runId)).toBe("Review");
+    expect(await attemptsFor(runId)).toHaveLength(3);
+  }, 120_000);
+
+  it("onStuck=notify_only → escalates WITHOUT an assignment (HITL still resolvable)", async () => {
+    const { runGraph } = await import("@/lib/flows/graph/runner-graph");
+    const manifest = retryManifest(undefined, { retrySafe: true });
+    const { loaded, runId } = await seedRun(manifest, {
+      executionPolicy: {
+        preset: "supervised",
+        overrides: { crashRetry: "auto_retry", onStuck: "notify_only" },
+      },
+    });
+
+    agentScript = [
+      { ok: false, errorCode: "SPAWN" },
+      { ok: false, errorCode: "SPAWN" },
+      { ok: false, errorCode: "SPAWN" },
+    ];
+    await runGraph(loaded as never, { db, runtimeRoot: createdPaths[0] });
+
+    expect(await runStatus(runId)).toBe("NeedsInput");
+
+    const hitl = await pool.query(
+      `SELECT 1 FROM hitl_requests WHERE run_id = $1`,
+      [runId],
+    );
+
+    expect(hitl.rows.length).toBe(1); // a response CAN still resolve the run
+
+    const assignments = await pool.query(
+      `SELECT 1 FROM assignments WHERE run_id = $1`,
+      [runId],
+    );
+
+    expect(assignments.rows.length).toBe(0); // but no "Needs you" routing
+
+    const escalated = await pool.query(
+      `SELECT 1 FROM domain_events WHERE run_id = $1 AND kind = 'run.escalated'`,
+      [runId],
+    );
+
+    expect(escalated.rows.length).toBeGreaterThanOrEqual(1);
   }, 120_000);
 });

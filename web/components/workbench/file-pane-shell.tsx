@@ -41,8 +41,8 @@ export function FilePaneShell({
   }
 
   return (
-    <div data-testid="file-pane-shell">
-      <div className="mb-2 flex items-center justify-between gap-2 rounded-[8px] border border-line bg-paper px-3 py-1.5">
+    <div className="flex h-full flex-col" data-testid="file-pane-shell">
+      <div className="mb-2 flex flex-none items-center justify-between gap-2 rounded-[8px] border border-line bg-paper px-3 py-1.5">
         <span className="min-w-0 truncate font-mono text-[11px] text-mute">
           {path}
         </span>
@@ -61,7 +61,7 @@ export function FilePaneShell({
           {copied ? labels.copied : labels.copy}
         </button>
       </div>
-      {children}
+      <div className="min-h-0 flex-1">{children}</div>
     </div>
   );
 }

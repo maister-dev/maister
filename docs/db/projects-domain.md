@@ -26,6 +26,7 @@ erDiagram
         text default_runner_id "platform runner override"
         text promotion_mode "M18: project-default promotion mode (local_merge|pull_request); override-chain source (§3.4)"
         jsonb delivery_policy_default "ADR-085 Designed: strategy/push/trigger/targetBranch"
+        jsonb execution_policy_default "migration 0055: default execution policy {preset,overrides}, nullable"
         timestamp created_at
         timestamp archived_at "soft archive"
     }
@@ -99,6 +100,8 @@ erDiagram
     PROJECTS ||--o{ PROJECT_PACKAGE_ATTACHMENTS : "enablement"
     PACKAGE_INSTALLS ||--o{ FLOWS : "package_install_id (nullable FK)"
     PACKAGE_INSTALLS ||--o{ CAPABILITY_IMPORTS : "package_install_id (nullable FK)"
+    PACKAGE_INSTALLS ||--o{ LOCAL_PACKAGES : "source_install_id + last_cut_install_id (nullable)"
+    USERS ||--o{ LOCAL_PACKAGES : "created_by / locked_by_user_id"
 
     PACKAGE_SOURCES {
         text id PK
@@ -133,7 +136,34 @@ erDiagram
         text package_name "denormalized for uniqueness"
         timestamp attached_at
     }
+
+    LOCAL_PACKAGES {
+        text id PK
+        text name
+        text slug UK "kebab; working-dir name"
+        text working_dir "abs path under localPackagesRoot(); server-only"
+        text status "active|archived (DEFAULT active)"
+        text source_install_id FK "nullable; fork lineage (SET NULL)"
+        text source_repo_url "nullable; fork git source (Phase-2 PR)"
+        text source_ref "nullable; base commit/tag forked from"
+        text branch_name "nullable; fork branch in working_dir"
+        text last_cut_install_id FK "nullable; latest cut revision (SET NULL)"
+        text locked_by_user_id FK "nullable; current editor (SET NULL)"
+        text locked_by_session "nullable; session holding the lock"
+        timestamp lock_expires_at "nullable; lock TTL (mirrors runs.keepalive_until)"
+        text created_by FK "nullable; author (SET NULL)"
+        timestamp created_at
+        timestamp updated_at
+    }
 ```
+
+Editable **local packages** **(Designed, ADR-096 — Phase C)** add a platform-scoped,
+git-backed working directory you author/fork artifacts in and **cut versions** from
+(the cut exports the dir cleanly and calls the same installer →
+a `local-<digest>` `package_installs` revision, which a project `member` then
+attaches). `working_dir` is server-only; the `locked_*`/`lock_expires_at` columns
+mirror `runs.keepalive_until` for a session-scoped edit lock; `source_*` +
+`branch_name` capture fork lineage for the Phase-2 PR-back.
 
 ## Constraints
 
@@ -151,6 +181,15 @@ erDiagram
 - **(Implemented, ADR-088)** `project_package_attachments` UNIQUE on
   `(project_id, package_name)` — at most one attached version of a package per
   project.
+- **(Designed, ADR-096)** `local_packages.slug` UNIQUE — platform-scoped
+  working-package identity; the working-dir name derives from it. `working_dir`
+  is never exposed to the client; `source_install_id` / `last_cut_install_id`
+  FKs are `SET NULL` on install delete (lineage is advisory, not load-bearing).
+- **(M36, migration `0058`)** `local_packages_default_per_project` — a
+  **partial-unique** index on `(project_id) WHERE is_default` enforcing at most
+  one default "virtual" local package per project. `project_id` (FK `projects`,
+  CASCADE) is **nullable**: NULL for named, platform-scoped local packages; set
+  only on the per-project default that element-level forks land in.
 
 ## Notes
 
@@ -169,6 +208,10 @@ erDiagram
   stores the project default `DeliveryPolicy`. Null rows map from the legacy
   `promotion_mode` value, and project settings writes use one aggregate PATCH so
   partial settings updates cannot apply after another sub-section fails.
+- `projects.execution_policy_default` **(Implemented, migration `0055`)** stores
+  the project default execution-control policy (`{preset, overrides?}`). Null
+  resolves through launch override → task → project → `supervised`; the resolved
+  policy is snapshotted on `runs.execution_policy` at launch.
 - `flows.manifest` stores the **parsed** `flow.yaml` — full step DSL,
   portable runner profiles, etc. Source of truth for the runtime step
   loader; the on-disk `flow.yaml` is only read on install / refresh.

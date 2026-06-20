@@ -51,7 +51,7 @@ afterEach(() => {
 });
 
 describe("TOOL_SPECS registry", () => {
-  it("registers all 23 external tools (incl. ADR-089 triage_set + relation ops + M36 delegation/plan/message/promote/rework toolset)", () => {
+  it("registers all 23 external tools (incl. ADR-089 triage_set + relation ops + M37 delegation/plan/message/promote/rework toolset)", () => {
     expect(Object.keys(TOOL_SPECS).sort()).toEqual(
       [
         "comment_create",

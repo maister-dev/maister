@@ -36,7 +36,7 @@ function statusLabel(
   return labels.status[status as RunStatusKey] ?? status;
 }
 
-// M36 Phase 6 (ADR-095): the dynamic run-tree subtree shown BELOW the flow
+// M37 Phase 6 (ADR-098): the dynamic run-tree subtree shown BELOW the flow
 // graph on an orchestrator run's workbench. Each child is a visually
 // subordinate (dashed, soft) sub-node card carrying its RUN-status dot/badge,
 // task ref (KEY-N) or the as-run fallback, the delegation target agent id, and

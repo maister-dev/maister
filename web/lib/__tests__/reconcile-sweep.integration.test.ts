@@ -209,7 +209,7 @@ type SeedRunOpts = {
   currentStepId?: string | null;
   resumeStartedAt?: Date | null;
   startedAt?: Date;
-  // M36 (ADR-095) T7.1: the delegator run id (orphan detection / cascade).
+  // M37 (ADR-098) T7.1: the delegator run id (orphan detection / cascade).
   parentRunId?: string | null;
 };
 
@@ -781,7 +781,7 @@ describe("runReconcileSweep (integration)", () => {
     expect((await readRun(orphan)).status).toBe("Running");
   }, 60_000);
 
-  // M36 (ADR-095) T7.1: seed an agent child under a parent run (orphan/cascade).
+  // M37 (ADR-098) T7.1: seed an agent child under a parent run (orphan/cascade).
   async function seedChildRun(
     parentRunId: string,
     status: string,

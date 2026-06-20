@@ -38,7 +38,7 @@ export interface FlightCardLabels {
   unconfigured: string;
   needsAttention: string;
   openRun: string;
-  // M36 Phase 6 (ADR-095): localized labels for the orchestrator decomposition
+  // M37 Phase 6 (ADR-098): localized labels for the orchestrator decomposition
   // group rendered under a parent task's flight card.
   decomposition: TaskDecompositionLabels;
 }

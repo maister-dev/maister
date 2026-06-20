@@ -4,7 +4,6 @@ import type { ReactElement, ReactNode } from "react";
 
 import { getTranslations } from "next-intl/server";
 import { notFound, redirect } from "next/navigation";
-import Link from "next/link";
 
 import { AssignmentActions } from "@/components/board/assignment-actions";
 import { EvidenceGraphSection } from "@/components/board/evidence-graph-section";
@@ -56,6 +55,7 @@ import {
   type ResolvedCapabilitySetLabels,
 } from "@/components/runs/resolved-capability-set-panel";
 import { RunShell, type RunShellLabels } from "@/components/runs/run-shell";
+import { ExecutionPolicyBadge } from "@/components/runs/execution-policy-badge";
 import {
   ReviewPanel,
   type ReviewPanelDiff,
@@ -75,6 +75,11 @@ import { type WorkbenchTabsLabels } from "@/components/workbench/workbench-tabs"
 import { getProjectRole, getSessionUser } from "@/lib/authz";
 import { isMaisterError } from "@/lib/errors";
 import { prepareDiff } from "@/lib/diff/prepare";
+import { reposRoot, worktreesRoot } from "@/lib/instance-config";
+import {
+  formatProjectRepoPath,
+  formatRunWorktreePath,
+} from "@/lib/project-path-display";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { isHumanReviewGate } from "@/lib/flows/review-gate";
 import {
@@ -333,7 +338,7 @@ export default async function RunDetailLayout({
   const resolvedSet = await getRunResolvedCapabilitySet(runId);
   const evidence = await buildEvidenceGraph(runId);
   const readiness = await getRunReadiness(runId, detail.projectId);
-  // M36 Phase 6 (ADR-095): the orchestrator run-tree children. Empty for an
+  // M37 Phase 6 (ADR-098): the orchestrator run-tree children. Empty for an
   // ordinary run — the subtree/inspector sections then render nothing.
   const childRuns = await getChildRuns(runId);
   const tRunStatus = await getTranslations("run.runStatus");
@@ -478,7 +483,7 @@ export default async function RunDetailLayout({
     diffLabels: RunDiffLabels;
   } | null = null;
 
-  // M36 Phase 6 (ADR-095): true when the run's current node is an orchestrator —
+  // M37 Phase 6 (ADR-098): true when the run's current node is an orchestrator —
   // drives the run-tree subtree even before the first child spawns.
   let currentNodeIsOrchestrator = false;
 
@@ -842,6 +847,14 @@ export default async function RunDetailLayout({
     ? Math.max(0, detail.endedAt.getTime() - detail.startedAt.getTime())
     : Math.max(0, Date.now() - detail.startedAt.getTime());
   const policy = detail.deliveryPolicySnapshot;
+  const displayWorktreePath = formatRunWorktreePath(
+    detail.worktreePath,
+    worktreesRoot(),
+  );
+  const displayParentRepoPath = formatProjectRepoPath(
+    detail.parentRepoPath,
+    reposRoot(),
+  );
   const dirtyDiffHref = `/runs/${detail.runId}?wb=diff&scope=uncommitted`;
   const inspectorChangeScope = dirtySummary ? "uncommitted" : "run";
   let changeSummary: RunInspectorChangeSummary | null = null;
@@ -889,10 +902,10 @@ export default async function RunDetailLayout({
     {
       label: t("inspectorWorktree"),
       value: detail.pruned
-        ? `${detail.worktreePath} (${t("inspectorWorktreeRemoved")})`
+        ? `${displayWorktreePath} (${t("inspectorWorktreeRemoved")})`
         : detail.archived
-          ? `${detail.worktreePath} (${t("inspectorWorktreeArchived")})`
-          : detail.worktreePath,
+          ? `${displayWorktreePath} (${t("inspectorWorktreeArchived")})`
+          : displayWorktreePath,
     },
     ...(detail.prNumber !== null || detail.prUrl
       ? [
@@ -916,6 +929,12 @@ export default async function RunDetailLayout({
       value: policy
         ? `${policy.strategy} / ${policy.push} / ${policy.trigger}`
         : t("policyLegacy"),
+    },
+    {
+      label: t("executionPolicyTitle"),
+      value: detail.executionPolicy
+        ? `${detail.executionPolicy.preset}${detail.executionPolicy.overrides ? " *" : ""}`
+        : "supervised",
     },
     {
       label: t("settingsTitle"),
@@ -1092,6 +1111,8 @@ export default async function RunDetailLayout({
       }
       keyRef={detail.taskRef}
       labels={shellLabels}
+      projectHref={`/projects/${detail.projectSlug}`}
+      projectLabel={t("backToBoard")}
       status={detail.status}
       subtitle={shellSubtitle}
       targetBranch={detail.targetBranch}
@@ -1104,12 +1125,17 @@ export default async function RunDetailLayout({
       title={shellTitle}
     >
       <div className="grid gap-5">
-        <Link
-          className="font-mono text-[11px] text-mute hover:text-ink"
-          href={`/projects/${detail.projectSlug}`}
-        >
-          {t("backToBoard")}
-        </Link>
+        <div className="flex flex-wrap items-center gap-3">
+          <ExecutionPolicyBadge
+            labels={{
+              supervised: t("execPolicySupervised"),
+              assisted: t("execPolicyAssisted"),
+              unattended: t("execPolicyUnattended"),
+              custom: t("execPolicyCustom"),
+            }}
+            policy={detail.executionPolicy}
+          />
+        </div>
 
         {detail.lifecycleActions.length > 0 ? (
           <WorkbenchLifecycleActions
@@ -1367,6 +1393,7 @@ export default async function RunDetailLayout({
                     <RunTakeoverActions
                       branch={detail.branch}
                       canAct={canAct}
+                      displayWorktreePath={displayWorktreePath}
                       isOwner={false}
                       mode="claimable"
                       runId={detail.runId}
@@ -1391,6 +1418,7 @@ export default async function RunDetailLayout({
             <RunTakeoverActions
               branch={detail.branch}
               canAct={canAct}
+              displayWorktreePath={displayWorktreePath}
               isOwner={detail.takeoverOwnerUserId === user.id}
               mode="working"
               runId={detail.runId}
@@ -1492,6 +1520,7 @@ export default async function RunDetailLayout({
             canPromote={canAct}
             deliveryPolicy={reviewData.deliveryPolicy}
             diff={reviewData.diff}
+            displayParentRepoPath={displayParentRepoPath}
             driftDetected={reviewData.driftDetected}
             labels={reviewLabels}
             legacyNeedsRelaunch={reviewData.legacyNeedsRelaunch}

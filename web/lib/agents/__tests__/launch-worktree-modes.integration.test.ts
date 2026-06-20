@@ -1,4 +1,4 @@
-// M36 Phase 10/11 (ADR-096): worktree allocation modes (own | shared) and the
+// M37 Phase 10/11 (ADR-099): worktree allocation modes (own | shared) and the
 // reviewer read-only reuse, exercised end-to-end through launchAgentRun against
 // a real git repo. tryStartRun is stubbed so no supervisor session spawns — the
 // assertions are on the worktree/branch allocation and the persisted run row.
@@ -257,7 +257,7 @@ async function workspaceRows(
   return res.rows;
 }
 
-describe("M36 Phase 10 — worktree allocation modes via launchAgentRun", () => {
+describe("M37 Phase 10 — worktree allocation modes via launchAgentRun", () => {
   it("two shared-mode children of one root resolve to the SAME tree (2nd reuses, no duplicate workspaces row)", async () => {
     const ids = await seedPackageWithAgents([
       { stem: "coordinator", workspace: "worktree" },
@@ -414,7 +414,7 @@ describe("M36 Phase 10 — worktree allocation modes via launchAgentRun", () => 
   });
 });
 
-describe("M36 Phase 11 — reviewer read-only child reuses L1/L2/L3", () => {
+describe("M37 Phase 11 — reviewer read-only child reuses L1/L2/L3", () => {
   it("a workspace:repo_read delegated child records agent_workspace='repo_read' (read-only path engaged)", async () => {
     const ids = await seedPackageWithAgents([
       { stem: "coordinator", workspace: "worktree" },

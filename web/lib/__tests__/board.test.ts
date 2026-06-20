@@ -110,7 +110,7 @@ describe("InProduction run statuses", () => {
     expect(deriveStage(s("HumanWorking"))).toBe("InProduction");
   });
 
-  // M36 (ADR-095): a parked orchestrator awaiting its children stays in-flight.
+  // M37 (ADR-098): a parked orchestrator awaiting its children stays in-flight.
   it("WaitingOnChildren → InProduction (orchestrator parked on children)", () => {
     expect(deriveStage(s("WaitingOnChildren"))).toBe("InProduction");
   });

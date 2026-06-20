@@ -156,7 +156,7 @@ export async function markResumed(
   return await transition(db);
 }
 
-// M36 (ADR-095): Running → WaitingOnChildren. The orchestrator node yields
+// M37 (ADR-098): Running → WaitingOnChildren. The orchestrator node yields
 // awaiting its delegated children; the run is checkpointed (the agent process
 // is SIGTERMed, acp_session_id retained) and the caller releases its agent-pool
 // slot so a parked coordinator never starves the cap. Status-guarded: a
@@ -193,7 +193,7 @@ export async function markWaitingOnChildren(
   return { ok: true };
 }
 
-// M36 (ADR-095): WaitingOnChildren → Running. A child-terminal domain event (or
+// M37 (ADR-098): WaitingOnChildren → Running. A child-terminal domain event (or
 // a manual resume) wakes the parked orchestrator; the supervisor respawns +
 // session/resume restores context. Status-guarded so a concurrent event-resume
 // + manual-resume converge to a single winner (the loser → 409); clears
@@ -236,7 +236,7 @@ export async function markResumedFromWait(
   return await transition(db);
 }
 
-// M36 (ADR-095) T5.2: Running → WaitingOnChildren rollback. After the resume
+// M37 (ADR-098) T5.2: Running → WaitingOnChildren rollback. After the resume
 // consumer wins markResumedFromWait but the re-drive's session respawn fails
 // RETRYABLY (supervisor 5xx / EXECUTOR_UNAVAILABLE), flip the run back to the
 // parked state so a LATER child-terminal event can retry the wake. Status-guarded
@@ -275,7 +275,7 @@ export async function rollbackResumeFromWait(
   return { ok: true };
 }
 
-// M36 (ADR-097): Review → Running. `run_rework` re-opens a DELEGATED child whose
+// M37 (ADR-100): Review → Running. `run_rework` re-opens a DELEGATED child whose
 // turn produced a diff (Review) for another turn against its intact worktree.
 // Status-guarded on Review so a concurrent promote (Review → Done) or a duplicate
 // rework converges to ONE winner (loser → CONFLICT). Deliberately does NOT null
@@ -584,7 +584,7 @@ const ABANDONABLE_STATUSES = [
   "Running",
   "NeedsInput",
   "NeedsInputIdle",
-  // M36 (ADR-095): a parked orchestrator is directly abandonable; abandon
+  // M37 (ADR-098): a parked orchestrator is directly abandonable; abandon
   // cascades to its run-tree (T7.4).
   "WaitingOnChildren",
   "Review",
@@ -765,9 +765,9 @@ export type CrashReason =
   // gate/human node — no graph mid-flow resume, so reconcile crashes it and
   // Recover resumes from resume_target_step_id (window-(c)).
   | "linear-gate-orphan"
-  // M36 (ADR-095) T7.1: a Running child whose coordinator parent is gone.
+  // M37 (ADR-098) T7.1: a Running child whose coordinator parent is gone.
   | "orphaned-child"
-  // M36 (ADR-095) T7.1: a parked orchestrator with no resumable wake left.
+  // M37 (ADR-098) T7.1: a parked orchestrator with no resumable wake left.
   | "orchestrator-stuck";
 
 export async function crashRunningRun(
@@ -852,7 +852,7 @@ export async function crashRunningRun(
   return { ok: true };
 }
 
-// M36 (ADR-095) T7.1: WaitingOnChildren → Crashed when reconcile finds a parked
+// M37 (ADR-098) T7.1: WaitingOnChildren → Crashed when reconcile finds a parked
 // orchestrator that is genuinely stuck — no live session, no non-terminal
 // children, past the grace window. Mirrors crashRunningRun (retains the parked
 // node in resume_target_step_id, nulls current_step_id + resume_started_at,

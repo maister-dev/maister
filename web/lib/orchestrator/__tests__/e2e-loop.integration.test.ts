@@ -1,4 +1,4 @@
-// M36 (ADR-095) — the FULL orchestrator loop, delegate→park→resume→complete,
+// M37 (ADR-098) — the FULL orchestrator loop, delegate→park→resume→complete,
 // driven through the REAL supervisor-client HTTP wire (lib/supervisor-client.ts).
 // Unlike the sibling unit integration tests that mock the supervisor seam
 // (orchestrator-park / orchestrator-resume / delegate), this test stands up a
@@ -284,7 +284,7 @@ Do the delegated sub-task.
 }
 
 // The orchestrator flow run, seeded directly as Running with a REAL git
-// worktree (the proven M36 orchestrator-integration-test pattern —
+// worktree (the proven M37 orchestrator-integration-test pattern —
 // orchestrator-park.integration.test.ts — bypasses the launchRun precondition
 // gauntlet, which is covered by other suites; the orchestration LOOP is what
 // this test drives, through the real supervisor wire).
@@ -402,7 +402,7 @@ async function poll(
   throw new Error(`poll timed out after ${timeoutMs}ms waiting for: ${label}`);
 }
 
-describe("M36 orchestrator full loop through the real supervisor-client wire", () => {
+describe("M37 orchestrator full loop through the real supervisor-client wire", () => {
   it("delegate → park (WaitingOnChildren) → children Done → resume → terminal Review", async () => {
     // Project first (the child agent's package flow FKs the project), then the
     // child catalog agent attached to it.

@@ -394,7 +394,15 @@ paths:
     post:
       tags: [admin]
       summary: (M24) Create a scheduler job
-      description: Admin-only. Creates a scheduler job. Per-kind `target` shape is validated (command requires `commandKind` + url/host; flow_run requires `taskId`). `run_schedule`, `domain_event_dispatch`, and `agent_tick` are deliberately NOT creatable here — the singletons `run_schedule.dispatcher` (M28, ADR-071), `domain_event_dispatch.default` (ADR-086), and `agent_tick.dispatcher` (M34 — Implemented, ADR-089) are seeded by the tick; all three kinds are rejected at the schema.
+      description: |
+        Admin-only. Creates a scheduler job. Per-kind `target` shape is
+        validated: `command` uses `http_ping` or `console_ping`; `flow_run`
+        requires `taskId`; no-target jobs use `{}`. `run_schedule`,
+        `domain_event_dispatch`, and `agent_tick` are deliberately NOT
+        creatable here — the singletons `run_schedule.dispatcher` (M28,
+        ADR-071), `domain_event_dispatch.default` (ADR-086), and
+        `agent_tick.dispatcher` (M34 — Implemented, ADR-089) are seeded by
+        the tick; all three kinds are rejected at the schema.
       operationId: postAdminSchedulerJob
       requestBody:
         required: true
@@ -417,11 +425,41 @@ paths:
                         webhook_delivery,
                       ],
                   }
-                target: { type: object }
+                target:
+                  $ref: "#/components/schemas/SchedulerJobTarget"
                 cadenceIntervalSeconds: { type: integer, minimum: 1 }
                 maxFailures: { type: integer, minimum: 1 }
                 nextRunAt: { type: string, format: date-time }
                 projectId: { type: string, nullable: true }
+            examples:
+              command-http:
+                value:
+                  id: healthcheck
+                  jobKind: command
+                  target:
+                    commandKind: http_ping
+                    url: https://example.com/healthz
+                    timeoutMs: 5000
+                  cadenceIntervalSeconds: 300
+              command-console:
+                value:
+                  jobKind: command
+                  target:
+                    commandKind: console_ping
+                    host: example.com
+                  cadenceIntervalSeconds: 300
+              flow-run:
+                value:
+                  jobKind: flow_run
+                  target:
+                    taskId: 7f6f7c99-4f47-4dc3-9e31-dca2044d1c5b
+                    runnerId: codex-default
+                  cadenceIntervalSeconds: 900
+              webhook-delivery:
+                value:
+                  jobKind: webhook_delivery
+                  target: {}
+                  cadenceIntervalSeconds: 60
       responses:
         "201":
           description: Scheduler job created.
@@ -449,7 +487,12 @@ paths:
     patch:
       tags: [admin]
       summary: (M24) Update a scheduler job
-      description: Admin-only. Mutates cadence, target, maxFailures, nextRunAt, or enabled state. `enabled=true` clears `disabledAt` and resets `consecutiveFailures`.
+      description: |
+        Admin-only. Mutates cadence, target, maxFailures, nextRunAt, or
+        enabled state. `enabled=true` clears `disabledAt` and resets
+        `consecutiveFailures`. The refined `/admin/scheduler` UI builds
+        `target` through typed controls; raw JSON is not the primary write
+        path.
       operationId: patchAdminSchedulerJob
       parameters:
         - name: jobId
@@ -465,7 +508,8 @@ paths:
               additionalProperties: false
               minProperties: 1
               properties:
-                target: { type: object }
+                target:
+                  $ref: "#/components/schemas/SchedulerJobTarget"
                 cadenceIntervalSeconds: { type: integer, minimum: 1 }
                 maxFailures: { type: integer, minimum: 1 }
                 nextRunAt: { type: string, format: date-time }
@@ -495,7 +539,11 @@ paths:
     delete:
       tags: [admin]
       summary: (M24) Delete a scheduler job
-      description: Admin-only. Deletes the job and cascades its attempt ledger. The default system_sweep job is re-seeded on the next tick.
+      description: |
+        Admin-only. Deletes the job and cascades its attempt ledger. The
+        default seeded jobs are re-seeded on the next tick. The designed
+        `/admin/scheduler` UI hides delete on seeded singleton rows and
+        confirmation-gates delete for custom jobs.
       operationId: deleteAdminSchedulerJob
       parameters:
         - name: jobId
@@ -6795,6 +6843,559 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /api/studio/local-packages:
+    get:
+      tags: [flow-packages]
+      summary: (ADR-096 — Designed) List local packages
+      description: |
+        (ADR-096 — Designed, Flow Studio Phase C.) Authenticated users only
+        (`requireSession`). Lists `active` local packages. `working_dir` is
+        server-only and never returned.
+      operationId: getStudioLocalPackages
+      responses:
+        "200":
+          description: Local packages.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [localPackages]
+                properties:
+                  localPackages:
+                    type: array
+                    items: { $ref: "#/components/schemas/LocalPackage" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+    post:
+      tags: [flow-packages]
+      summary: (ADR-096 — Designed) Create (or fork) a local package
+      description: |
+        (ADR-096 — Designed.) Creates a `local_packages` row and scaffolds a
+        git-backed working directory (`git init` + initial commit). With
+        `sourceInstallId`, seeds the working dir from that git-package install
+        (fork). Authenticated users only.
+      operationId: createStudioLocalPackage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LocalPackageCreateBody" }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LocalPackage" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+
+  /api/studio/local-packages/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+        description: "`local_packages.id` (url-param; the editor route key)."
+    get:
+      tags: [flow-packages]
+      summary: (ADR-096 — Designed) Get a local package + its working-dir files
+      operationId: getStudioLocalPackage
+      responses:
+        "200":
+          description: The local package, its file list, and the lock state.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [localPackage, files, lock]
+                properties:
+                  localPackage: { $ref: "#/components/schemas/LocalPackage" }
+                  files:
+                    type: array
+                    items: { $ref: "#/components/schemas/LocalPackageFile" }
+                  lock: { $ref: "#/components/schemas/LocalPackageLock" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [flow-packages]
+      summary: (ADR-096 — Designed) Rename / archive a local package
+      operationId: patchStudioLocalPackage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LocalPackagePatchBody" }
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LocalPackage" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+    delete:
+      tags: [flow-packages]
+      summary: (ADR-096 — Designed) Delete a local package + its working dir
+      operationId: deleteStudioLocalPackage
+      responses:
+        "204": { description: Deleted (row + working_dir removed). }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/studio/local-packages/{id}/lock-refresh:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [flow-packages]
+      summary: (ADR-096 — Designed) Refresh the session edit-lock
+      description: |
+        (ADR-096 — Designed.) Editor keep-alive; mirrors
+        `POST /api/runs/{runId}/activity`. Extends `lock_expires_at` for the
+        caller's session iff it holds the live lock.
+      operationId: refreshStudioLocalPackageLock
+      responses:
+        "200":
+          description: Lock extended.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LocalPackageLock" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/studio/local-packages/{id}/files/{path}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: path
+        in: path
+        required: true
+        schema: { type: string }
+        description: |
+          Artifact path RELATIVE to the working dir (**url-controlled —
+          UNTRUSTED**). Resolved within `working_dir` via realpath containment;
+          `..`, absolute paths, symlink escape, and any `.git/` path are rejected
+          with `PRECONDITION` (409).
+    get:
+      tags: [flow-packages]
+      summary: (ADR-096 — Designed) Read a working-dir file
+      operationId: getStudioLocalPackageFile
+      responses:
+        "200":
+          description: File content + content hash.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LocalPackageFile" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    put:
+      tags: [flow-packages]
+      summary: (ADR-096 — Designed) Write a working-dir file (under the lock)
+      description: |
+        (ADR-096 — Designed.) Atomic, path-confined write. Requires the caller's
+        session to hold the live edit-lock → else `CONFLICT` (409). A path that
+        escapes the working dir → `PRECONDITION` (409).
+      operationId: putStudioLocalPackageFile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LocalPackageFileWriteBody" }
+      responses:
+        "200": { description: Written. }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+    delete:
+      tags: [flow-packages]
+      summary: (ADR-096 — Designed) Delete a working-dir file (under the lock)
+      operationId: deleteStudioLocalPackageFile
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/studio/local-packages/{id}/files/{path}/move:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: path
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [flow-packages]
+      summary: (ADR-096 — Designed) Move an artifact to another local package
+      description: |
+        (ADR-096 — Designed.) Relocates a file to a target local package's
+        working dir. Both source and target paths are confined; both require a
+        live lock.
+      operationId: moveStudioLocalPackageFile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LocalPackageMoveBody" }
+      responses:
+        "200": { description: Moved. }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+
+  /api/studio/local-packages/{id}/cut-version:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [flow-packages]
+      summary: (ADR-096 — Designed) Cut an immutable version (+ optional attach)
+      description: |
+        (ADR-096 — Designed.) Exports the working dir cleanly (excluding `.git`)
+        and installs it via the existing installer as a `local-<digest>`
+        `package_installs` revision (`trusted_by_policy`); optionally attaches it
+        to a project the caller is a **member** of (`manageLocalPackages`).
+        Stamps `last_cut_install_id` after success.
+      operationId: cutStudioLocalPackageVersion
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CutVersionBody" }
+      responses:
+        "201":
+          description: Cut (and optionally attached).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CutVersionResult" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+
+  /api/studio/local-packages/{id}/import:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [flow-packages]
+      summary: (M36, ADR-096 — Designed) Batch-import a folder or zip/tar.gz
+      description: |
+        (M36, ADR-096.) `multipart/form-data`: `mode` (`preview` | `commit`),
+        `sessionId` (required for `commit`), and either a set of files with
+        relative paths (folder) or one `.zip`/`.tar.gz` archive. `preview`
+        returns the resolved tree without writing (no lock). `commit` asserts the
+        session edit-lock, then writes — but only after EVERY entry passes
+        confinement (zip-slip rejected on the original path segments, then
+        `resolveWithinWorkingDir`) and the caps
+        (`MAISTER_IMPORT_MAX_{BYTES,ENTRIES,FILE_BYTES}`); a single violation
+        rejects the whole import PRE-WRITE (nothing persisted).
+      operationId: importStudioLocalPackage
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                mode: { type: string, enum: [preview, commit] }
+                sessionId: { type: string }
+                archive: { type: string, format: binary }
+                files:
+                  type: array
+                  items: { type: string, format: binary }
+              required: [mode]
+      responses:
+        "200":
+          description: Resolved import plan (preview tree or committed files).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  files:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        path: { type: string }
+                        size: { type: integer }
+                  totalBytes: { type: integer }
+                  mode: { type: string }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+
+  /api/studio/local-packages/{id}/diff:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [flow-packages]
+      summary: (M36, ADR-096 — Designed) Working-tree-vs-HEAD diff
+      description: |
+        (M36, ADR-096.) The local package's working dir is git-backed; this is the
+        uncommitted working-tree-vs-`HEAD` diff (2-dot, incl. untracked) as a
+        `@git-diff-view` DTO + `changedCount`. `truncated` flags an oversized diff.
+        Read — `requireSession`, no lock. `working_dir` never returned.
+      operationId: getStudioLocalPackageDiff
+      responses:
+        "200":
+          description: The working-tree diff DTO.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  changedCount: { type: integer }
+                  truncated: { type: boolean }
+                  files: { type: array, items: { type: object } }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/studio/local-packages/{id}/commit:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [flow-packages]
+      summary: (M36, ADR-096 — Designed) Commit working-dir changes
+      description: |
+        (M36, ADR-096.) Asserts the session edit-lock, then `git add -A` +
+        `git commit` the working dir (changed-count → 0). Body `{ sessionId,
+        message? }`.
+      operationId: commitStudioLocalPackage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                sessionId: { type: string }
+                message: { type: string }
+              required: [sessionId]
+      responses:
+        "200": { description: Committed; returns the now-clean diff. }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+
+  /api/studio/local-packages/{id}/discard:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [flow-packages]
+      summary: (M36, ADR-096 — Designed) Discard working-dir changes
+      description: |
+        (M36, ADR-096.) Asserts the session edit-lock, then restores the working
+        dir to `HEAD` (`git checkout HEAD -- <paths>` + `git clean`). Body
+        `{ sessionId, paths? }` — each `paths[]` entry is path-confined BEFORE git
+        (reject `..`/abs/`.git`); omitted → discard all.
+      operationId: discardStudioLocalPackage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                sessionId: { type: string }
+                paths: { type: array, items: { type: string } }
+              required: [sessionId]
+      responses:
+        "200": { description: Discarded; returns the now-clean diff. }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+
+  /api/studio/local-packages/{id}/assistant:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [flow-packages]
+      summary: (M36 Phase 5, ADR-097 — backend foundation Implemented) Launch the docked AI authoring assistant
+      description: |
+        (M36 Phase 5, ADR-097.) Launch a **project-less scratch run** rooted at
+        the local package's `working_dir` (`launchLocalPackageAssistant`). There
+        is NO project and NO managed git worktree: `runs.project_id` /
+        `scratch_runs.project_id` stay NULL and `local_package_id` carries the
+        owner (DB CHECK = exactly one of project / local-package); the supervisor
+        session confines content-block file URIs to the `working_dir`
+        (`confineRoot`). Member-level RBAC (`requireActiveSession`, ADR-096).
+        Counts against the scratch (flow-pool) concurrency cap. The right-panel
+        AI tab + the working-dir lock coordination are a separate task.
+      operationId: launchStudioLocalPackageAssistant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                prompt: { type: string, maxLength: 60000 }
+                runnerId: { type: string, minLength: 1 }
+                workMode:
+                  type: string
+                  enum: [auto, plan_first, manual_approval]
+                reasoningEffort:
+                  type: string
+                  enum: [low, high, extra, ultra]
+                planMode: { type: string, enum: [off, plan-first] }
+              required: [prompt]
+      responses:
+        "201":
+          description: Assistant run launched (project-less scratch run).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ScratchRunResponse" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+        "503":
+          description: Supervisor readiness or executor unavailable (`EXECUTOR_UNAVAILABLE`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
+  /api/studio/local-packages/{id}/assistant/{runId}/messages:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: runId
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [flow-packages]
+      summary: (M36 Phase 5, ADR-097 — Designed) Send a turn to the docked assistant
+      description: |
+        (M36 Phase 5, ADR-097 — Designed.) Continue the assistant conversation —
+        reuses the scratch message substrate (`sendScratchUserMessage`) on a
+        project-less run; RBAC falls back to `requireActiveSession` (member-level)
+        when the run is project-less. Implemented as part of the separate AI-tab
+        task; documented here for contract completeness.
+      operationId: sendStudioLocalPackageAssistantMessage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                content: { type: string, minLength: 1, maxLength: 60000 }
+              required: [content]
+      responses:
+        "200": { description: Turn sent; returns the dialog status + stop reason. }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+        "503":
+          description: Supervisor readiness or executor unavailable (`EXECUTOR_UNAVAILABLE`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
+  /api/studio/packages/{ref}/fork:
+    parameters:
+      - name: ref
+        in: path
+        required: true
+        schema: { type: string }
+        description: "Package name (url-param). Resolved server-side to its newest install; the body controls nothing."
+    post:
+      tags: [flow-packages]
+      summary: (ADR-096 — Designed) Fork a whole package to a local package
+      description: |
+        (ADR-096 — Designed, Flow Studio Phase C.) Resolves the installed
+        package by `ref` server-side, then clean-copies ALL of that install's
+        working files (excluding `.git`) into a fresh git-init'd local package
+        auto-named `<ref>-local`, recording `source_install_id` + `source_ref`.
+        Executes NOTHING (no `setup.sh`, no MCP). A missing/unreadable source
+        bundle → `CONFIG` (400) with nothing persisted. Authenticated users only
+        (`requireSession`; Studio authoring is member-accessible).
+      operationId: forkStudioPackage
+      responses:
+        "201":
+          description: Forked.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ForkResult" }
+        "400": { $ref: "#/components/responses/Config" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/studio/packages/{ref}/fork-element:
+    parameters:
+      - name: ref
+        in: path
+        required: true
+        schema: { type: string }
+        description: "Package name (url-param). Resolved server-side to its newest install."
+    post:
+      tags: [flow-packages]
+      summary: (ADR-096 — Designed) Fork ONE element into a project default
+      description: |
+        (ADR-096 — Designed, Flow Studio Phase C.) Copies EXACTLY ONE element (a
+        flow dir / skill bundle / agent `.md` / rule file at `elementPath`) from
+        the package `ref` into the caller-project's per-project default
+        ("virtual") local package, created on first use (race-safe on the
+        partial-unique `(project_id) WHERE is_default`). The body `projectId` is
+        validated against the caller's accessible projects — an inaccessible /
+        unknown project → 404 with NO write. `elementPath` is confined inside the
+        source bundle AND the destination working dir; an escape → `PRECONDITION`
+        (409). Copying the rest of the source is forbidden. Executes NOTHING.
+      operationId: forkStudioPackageElement
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ForkElementBody" }
+      responses:
+        "201":
+          description: Element forked into the project default.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ForkResult" }
+        "400": { $ref: "#/components/responses/Config" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+
   /api/admin/package-installs:
     get:
       tags: [flow-packages, admin]
@@ -9652,6 +10253,58 @@ components:
           nullable: true
           minLength: 1
           maxLength: 255
+    ExecutionPolicyOverrides:
+      type: object
+      additionalProperties: false
+      description: |
+        Sparse per-axis overrides. Keys map to the execution-control axes
+        (A1 reworkExhaustion / A2 crashRetry / A3 checks / B1 permissions /
+        B2 humanGate / B3 onStuck / C1 promotion / C2 commits / C3 dirtyResolve).
+        Unset keys inherit the preset baseline.
+      properties:
+        reworkExhaustion:
+          type: string
+          enum: [escalate, ship_with_warning, fail]
+        crashRetry:
+          type: string
+          enum: [fail, ralph_loop, auto_retry]
+        checks:
+          type: string
+          enum: [strict, advisory, skip]
+        permissions:
+          type: string
+          enum: [ask, auto_approve]
+        humanGate:
+          type: string
+          enum: [stop, auto_pass]
+        onStuck:
+          type: string
+          enum: [escalate, ship_with_warning, notify_only]
+        promotion:
+          type: string
+          enum: [manual, auto_on_ready]
+        commits:
+          type: string
+          enum: [keep_all, squash_rework, squash_on_promote, defer]
+        dirtyResolve:
+          type: string
+          enum: [ask, commit, proceed]
+    ExecutionPolicy:
+      type: object
+      required: [preset]
+      additionalProperties: false
+      description: |
+        Flow execution-control policy snapshotted on the run (migration 0055).
+        A preset sets every axis; `overrides` tune individual axes. The server
+        rejects blind-ship combos (relaxed checks + auto-passed human gate or
+        auto-promotion) with `PRECONDITION`, and a non-supervised resolved
+        policy requires the `launchUnattended` project action.
+      properties:
+        preset:
+          type: string
+          enum: [supervised, assisted, unattended]
+        overrides:
+          $ref: "#/components/schemas/ExecutionPolicyOverrides"
     ProjectSettingsPatchBody:
       type: object
       additionalProperties: false
@@ -9727,6 +10380,13 @@ components:
             Optional per-launch policy override. Omitted means the project
             default. Any field differing from the default is shown as an
             override in the launch dialog and snapshotted on the run.
+        executionPolicy:
+          allOf: [{ $ref: "#/components/schemas/ExecutionPolicy" }]
+          description: |
+            Optional per-launch execution-control policy. Omitted resolves
+            through task -> project defaults -> `supervised`. A blind-ship combo
+            is refused `PRECONDITION` (409); a non-supervised resolved policy
+            requires the `launchUnattended` action (403).
     PostRunResponse:
       type: object
       required: [runId, status]
@@ -9782,6 +10442,70 @@ components:
           type: array
           description: Per-row skip reasons when a sub-sweep partially failed (207).
           items: { type: string }
+    SchedulerCommandHttpPingTarget:
+      type: object
+      additionalProperties: false
+      required: [commandKind, url]
+      properties:
+        commandKind:
+          type: string
+          enum: [http_ping]
+        url:
+          type: string
+          format: uri
+          description: HTTP or HTTPS URL checked with a HEAD request.
+        timeoutMs:
+          type: number
+          minimum: 1
+          description: Optional request timeout in milliseconds.
+    SchedulerCommandConsolePingTarget:
+      type: object
+      additionalProperties: false
+      required: [commandKind, host]
+      properties:
+        commandKind:
+          type: string
+          enum: [console_ping]
+        host:
+          type: string
+          description: Hostname or IP literal passed to `ping`.
+        timeoutMs:
+          type: number
+          minimum: 1
+          description: Optional process timeout in milliseconds.
+    SchedulerFlowRunTarget:
+      type: object
+      additionalProperties: false
+      required: [taskId]
+      properties:
+        taskId:
+          type: string
+          minLength: 1
+          description: Engine jobs use an explicit task id; friendly task selection belongs to project `run_schedules`.
+        runnerId:
+          type: string
+          minLength: 1
+        baseBranch:
+          type: string
+          minLength: 1
+        targetBranch:
+          type: string
+          minLength: 1
+    SchedulerNoTarget:
+      type: object
+      additionalProperties: false
+      maxProperties: 0
+      description: Empty target for seeded/no-target jobs.
+    SchedulerJobTarget:
+      oneOf:
+        - $ref: "#/components/schemas/SchedulerCommandHttpPingTarget"
+        - $ref: "#/components/schemas/SchedulerCommandConsolePingTarget"
+        - $ref: "#/components/schemas/SchedulerFlowRunTarget"
+        - $ref: "#/components/schemas/SchedulerNoTarget"
+      description: |
+        Per-kind scheduler target payload. `command` jobs use one of the
+        command shapes, `flow_run` uses `SchedulerFlowRunTarget`, and
+        no-target jobs use `{}`.
     SchedulerTickSummary:
       type: object
       description: |
@@ -9806,7 +10530,16 @@ components:
         jobKind:
           type: string
           nullable: true
-          enum: [system_sweep, command, agent_tick, flow_run, run_schedule]
+          enum:
+            [
+              system_sweep,
+              command,
+              agent_tick,
+              flow_run,
+              run_schedule,
+              webhook_delivery,
+              domain_event_dispatch,
+            ]
         attempts:
           type: array
           items:
@@ -9817,7 +10550,16 @@ components:
               attemptId: { type: string, nullable: true }
               jobKind:
                 type: string
-                enum: [system_sweep, command, agent_tick, flow_run, run_schedule]
+                enum:
+                  [
+                    system_sweep,
+                    command,
+                    agent_tick,
+                    flow_run,
+                    run_schedule,
+                    webhook_delivery,
+                    domain_event_dispatch,
+                  ]
               status:
                 type: string
                 enum: [Claimed, Running, Succeeded, Failed, Skipped]
@@ -10264,6 +11006,7 @@ components:
         defaultBaseBranch: { type: string, nullable: true }
         defaultTargetBranch: { type: string, nullable: true }
         deliveryPolicyDefault: { $ref: "#/components/schemas/DeliveryPolicy" }
+        executionPolicyDefault: { $ref: "#/components/schemas/ExecutionPolicy" }
     ScratchLaunchOptionsResponse:
       type: object
       required:
@@ -12250,6 +12993,89 @@ components:
         `exec_trust` of the owning revision.
         `sse` / `http` — connects to a remote endpoint; `url` required.
 
+    LocalPackage:
+      type: object
+      description: |
+        (ADR-096 — Designed) A `local_packages` row (Flow Studio Phase C).
+        `working_dir` is server-only and intentionally absent.
+      required: [id, name, slug, status, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        slug: { type: string }
+        status: { type: string, enum: [active, archived] }
+        sourceInstallId: { type: string, nullable: true, description: "Fork lineage: the git-package install this was forked from." }
+        sourceRepoUrl: { type: string, nullable: true }
+        sourceRef: { type: string, nullable: true }
+        branchName: { type: string, nullable: true }
+        lastCutInstallId: { type: string, nullable: true }
+        lockedByUserId: { type: string, nullable: true, description: "Current lock holder; null when unlocked." }
+        lockExpiresAt: { type: string, format: date-time, nullable: true }
+        createdBy: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    LocalPackageLock:
+      type: object
+      description: "(ADR-096 — Designed) Session edit-lock state for a local package."
+      required: [held, heldByMe]
+      properties:
+        held: { type: boolean, description: "True if a live (non-expired) lock exists." }
+        heldByMe: { type: boolean, description: "True if the caller's session holds it." }
+        holderLabel: { type: string, nullable: true, description: "Display name of the holder (never the session id)." }
+        expiresAt: { type: string, format: date-time, nullable: true }
+    LocalPackageFile:
+      type: object
+      description: "(ADR-096 — Designed) A file inside the working dir."
+      required: [path, kind]
+      properties:
+        path: { type: string, description: "Relative to the working dir." }
+        kind: { type: string, description: "Inferred kind (flow|skill|agent|mcp|rule|schema|script|asset|readme)." }
+        content: { type: string, nullable: true, description: "Present on single-file GET only." }
+        contentHash: { type: string, nullable: true, description: "sha256 of content (informational)." }
+    LocalPackageCreateBody:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        sourceInstallId: { type: string, nullable: true, description: "Fork: seed the working dir from this git-package install." }
+    LocalPackagePatchBody:
+      type: object
+      properties:
+        name: { type: string }
+        status: { type: string, enum: [active, archived] }
+    LocalPackageFileWriteBody:
+      type: object
+      required: [content]
+      properties:
+        content: { type: string }
+    LocalPackageMoveBody:
+      type: object
+      required: [targetLocalPackageId]
+      properties:
+        targetLocalPackageId: { type: string }
+        targetPath: { type: string, nullable: true, description: "Defaults to the same relative path in the target." }
+    CutVersionBody:
+      type: object
+      properties:
+        attachToProjectId: { type: string, minLength: 1, description: "Attach the cut version to this project id (caller must be a member; manageLocalPackages). Validated server-side before any irreversible side-effect." }
+    CutVersionResult:
+      type: object
+      required: [installId, versionLabel]
+      properties:
+        installId: { type: string, description: "The immutable package_installs id the cut produced." }
+        versionLabel: { type: string, description: "e.g. local-<digest12>." }
+        attachmentId: { type: string, description: "Present only when attachToProjectId was supplied and the attach succeeded." }
+    ForkElementBody:
+      type: object
+      required: [projectId, elementPath]
+      properties:
+        projectId: { type: string, minLength: 1, description: "Target project (body-controlled; validated against the caller's accessible projects). Its default local package receives the element." }
+        elementPath: { type: string, minLength: 1, description: "Working-dir-relative path of the ONE element to copy (flow dir / skill bundle / agent .md / rule file). Confined; `..`/abs/`.git` rejected." }
+    ForkResult:
+      type: object
+      required: [localPackageId]
+      properties:
+        localPackageId: { type: string, description: "The local package the fork landed in (a new `<ref>-local` for a package fork; the project default for an element fork)." }
     PackageSource:
       type: object
       description: |

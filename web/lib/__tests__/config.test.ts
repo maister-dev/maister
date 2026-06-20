@@ -368,7 +368,7 @@ describe("loadFlowManifest — graph (nodes[])", () => {
     });
   });
 
-  // M36 (ADR-095): the orchestrator node debuts at engine floor 1.6.0.
+  // M37 (ADR-098): the orchestrator node debuts at engine floor 1.6.0.
   it("rejects an orchestrator node when engine_min < 1.6.0", async () => {
     const path = await writeGraph("graph-orchestrator-old-engine.yaml", (m) => {
       m.compat.engine_min = "1.5.0";

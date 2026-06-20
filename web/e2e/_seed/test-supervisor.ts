@@ -1,5 +1,5 @@
 /* eslint-disable no-console */
-// M36 (ADR-095) — a REAL HTTP test supervisor that drives the orchestrator
+// M37 (ADR-098) — a REAL HTTP test supervisor that drives the orchestrator
 // engine's full delegate→park→resume→complete loop through the REAL
 // supervisor-client HTTP wire (lib/supervisor-client.ts). Unlike the unit
 // integration tests that mock the supervisor seam, this server is hit over

@@ -580,7 +580,7 @@ const POLICY_ENGINE_MIN = "1.4.0";
 // (`settings.agent`) must declare engine_min >= this value.
 const AGENT_BINDING_ENGINE_MIN = "1.5.0";
 
-// M36 floor (ADR-095): manifests declaring an `orchestrator` node must declare
+// M37 floor (ADR-098): manifests declaring an `orchestrator` node must declare
 // engine_min >= this value.
 const ORCHESTRATOR_ENGINE_MIN = "1.6.0";
 
@@ -757,7 +757,7 @@ export function validateGraphManifest(
     );
   }
 
-  // M36 (ADR-095): an orchestrator node requires the 1.6.0 floor. Manifests
+  // M37 (ADR-098): an orchestrator node requires the 1.6.0 floor. Manifests
   // without an orchestrator node stay valid at any engine_min.
   if (
     declaresOrchestratorNode(nodes) &&

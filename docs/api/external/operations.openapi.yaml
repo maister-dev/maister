@@ -548,9 +548,9 @@ paths:
   /api/v1/ext/runs/delegate:
     post:
       tags: [runs]
-      summary: (M36 — Implemented) Delegate a child unit from an orchestrator
+      summary: (M37 — Implemented) Delegate a child unit from an orchestrator
       description: |
-        (M36 — Implemented, ADR-095.) Scope `runs:delegate`. Spawns ONE governed
+        (M37 — Implemented, ADR-098.) Scope `runs:delegate`. Spawns ONE governed
         child unit from the calling orchestrator run. Backs the `run_delegate`
         delegation tool exposed over the maister MCP facade to `orchestrator`
         nodes only.
@@ -618,7 +618,7 @@ paths:
             Request body failed schema validation, or a `CONFIG` precondition was
             violated — over-depth (`MAISTER_ORCHESTRATOR_MAX_DEPTH`), engine floor
             below `1.6.0`, or a `strict` path-scope declaration (refused until the
-            deferred policy layer lands, ADR-096).
+            deferred policy layer lands, ADR-099).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ExtErrorBody" }
@@ -634,9 +634,9 @@ paths:
   /api/v1/ext/runs/plan:
     post:
       tags: [runs]
-      summary: (M36 — Implemented) Submit a success-gated task DAG from an orchestrator
+      summary: (M37 — Implemented) Submit a success-gated task DAG from an orchestrator
       description: |
-        (M36 — Implemented, ADR-095.) Scope `runs:delegate`. Writes a DAG of child
+        (M37 — Implemented, ADR-098.) Scope `runs:delegate`. Writes a DAG of child
         tasks wired by the success-gated `requires` relation in ONE transaction.
         Backs the `run_plan` delegation tool. `requires` releases a dependent
         ONLY on a producer's `Done` (Failed/Abandoned keeps dependents blocked and
@@ -712,9 +712,9 @@ paths:
   /api/v1/ext/runs/collect:
     post:
       tags: [runs]
-      summary: (M36 — Implemented) Collect terminal results of orchestrator children
+      summary: (M37 — Implemented) Collect terminal results of orchestrator children
       description: |
-        (M36 — Implemented, ADR-095.) Scope `runs:collect`. Returns
+        (M37 — Implemented, ADR-098.) Scope `runs:collect`. Returns
         terminal-result summaries for the calling orchestrator's children. Backs
         the `run_collect` delegation tool. Reads each child's `RunDTO` projection plus
         its produced-artifact manifest (`artifact_instances`) and the base→run
@@ -757,9 +757,9 @@ paths:
   /api/v1/ext/runs/cancel:
     post:
       tags: [runs]
-      summary: (M36 — Implemented) Cancel an orchestrator child run
+      summary: (M37 — Implemented) Cancel an orchestrator child run
       description: |
-        (M36 — Implemented, ADR-095.) Scope `runs:cancel`. Cancels one child run
+        (M37 — Implemented, ADR-098.) Scope `runs:cancel`. Cancels one child run
         of the calling orchestrator. Backs the `run_cancel` delegation tool.
 
         **Identifiers (trust contour).** The `projectId` and the parent `runId`
@@ -809,9 +809,9 @@ paths:
   /api/v1/ext/runs/message:
     post:
       tags: [runs]
-      summary: (M36 — Implemented) Re-message a persistent swarm child
+      summary: (M37 — Implemented) Re-message a persistent swarm child
       description: |
-        (M36 — Implemented, ADR-096.) Scope `runs:delegate`. Sends a follow-up
+        (M37 — Implemented, ADR-099.) Scope `runs:delegate`. Sends a follow-up
         prompt to a PERSISTENT addressable child in the calling orchestrator's
         run-tree. Backs the `run_message` delegation tool. If the child is parked
         between turns it is respawned and resumed with prior context
@@ -886,9 +886,9 @@ paths:
   /api/v1/ext/runs/promote:
     post:
       tags: [runs]
-      summary: (M36 — Implemented) Promote a reviewed delegated child to Done
+      summary: (M37 — Implemented) Promote a reviewed delegated child to Done
       description: |
-        (M36 — Implemented, ADR-097.) Scope `runs:promote` — held ONLY by the
+        (M37 — Implemented, ADR-100.) Scope `runs:promote` — held ONLY by the
         orchestrator's run-bound token (a child agent token does not), so a
         child→child promote is a 403 by scope. Merges a reviewed child's branch
         into its target and flips the child `Done`. Backs the `run_promote`
@@ -958,9 +958,9 @@ paths:
   /api/v1/ext/runs/rework:
     post:
       tags: [runs]
-      summary: (M36 — Implemented) Re-open a reviewed delegated child for another turn
+      summary: (M37 — Implemented) Re-open a reviewed delegated child for another turn
       description: |
-        (M36 — Implemented, ADR-097.) Scope `runs:delegate` (a run-bound
+        (M37 — Implemented, ADR-100.) Scope `runs:delegate` (a run-bound
         orchestrator addressing its own child). CAS-flips a reviewed child
         `Review → Running` and resumes its session (`session/resume` on the
         retained `acp_session_id`) with the coordinator's override `prompt`
@@ -1959,7 +1959,7 @@ components:
     ExtDelegationTarget:
       type: object
       description: |
-        (M36 — Implemented, ADR-095) The catalog-resolved child to spawn. Exactly
+        (M37 — Implemented, ADR-098) The catalog-resolved child to spawn. Exactly
         one of `agentId` / `flowId` is supplied; both are body-controlled and
         resolved through the project's enabled + trusted catalog (pinned
         revision). A target not resolvable through that catalog is refused
@@ -1978,7 +1978,7 @@ components:
     ExtRunDelegateBody:
       type: object
       description: |
-        (M36 — Implemented, ADR-095) `run_delegate` payload. `projectId` and the
+        (M37 — Implemented, ADR-098) `run_delegate` payload. `projectId` and the
         parent `runId` are token-derived, never carried here.
       required: [target, mode, prompt]
       additionalProperties: false
@@ -2009,7 +2009,7 @@ components:
           type: string
           enum: [own, shared]
           description: |
-            (M36 Phase 10 — ADR-096) Worktree allocation mode for a
+            (M37 Phase 10 — ADR-099) Worktree allocation mode for a
             `workspace: worktree` child. `own` (default) = a per-run worktree;
             `shared` = all children of this orchestrator tree share one
             pre-allocated tree with serialized writers (one active writer per
@@ -2018,7 +2018,7 @@ components:
         persistent:
           type: boolean
           description: |
-            (M36 Phase 8 — ADR-096) Spawn a PERSISTENT addressable swarm member
+            (M37 Phase 8 — ADR-099) Spawn a PERSISTENT addressable swarm member
             that parks (`NeedsInputIdle`, ACP session retained) between turns
             instead of running to terminal; re-message it via `run_message` by its
             `addressableKey`. Requires `addressableKey`.
@@ -2028,7 +2028,7 @@ components:
           maxLength: 128
           pattern: "^[A-Za-z0-9._-]+$"
           description: |
-            (M36 Phase 8 — ADR-096) Stable key, unique within the orchestrator
+            (M37 Phase 8 — ADR-099) Stable key, unique within the orchestrator
             tree (`root_run_id`), used to address a persistent child via
             `run_message`. Required when `persistent` is true.
         runnerOverride:
@@ -2042,7 +2042,7 @@ components:
     ExtRunPlanTask:
       type: object
       description: |
-        (M36 — Implemented, ADR-095) One node of a submitted task DAG. `key` is the
+        (M37 — Implemented, ADR-098) One node of a submitted task DAG. `key` is the
         in-batch identifier referenced by other tasks' `dependsOn`.
       required: [key, target, prompt, dependsOn]
       additionalProperties: false
@@ -2080,7 +2080,7 @@ components:
     ExtRunPlanBody:
       type: object
       description: |
-        (M36 — Implemented, ADR-095) `run_plan` payload. `projectId` and the parent
+        (M37 — Implemented, ADR-098) `run_plan` payload. `projectId` and the parent
         `runId` are token-derived. The batch size is bounded by
         `MAISTER_MAX_ORCHESTRATOR_FANOUT`.
       required: [tasks]
@@ -2094,7 +2094,7 @@ components:
     ExtRunPlanResultItem:
       type: object
       description: |
-        (M36 — Implemented, ADR-095) Per-task result of a submitted DAG. `childRunId`
+        (M37 — Implemented, ADR-098) Per-task result of a submitted DAG. `childRunId`
         is present only for a task that was immediately launchable (its
         dependencies were already clear) and folded into `promoteNextPending`.
       required: [key, taskId]
@@ -2115,7 +2115,7 @@ components:
     ExtRunCollectBody:
       type: object
       description: |
-        (M36 — Implemented, ADR-095) `run_collect` selector. Exactly one of
+        (M37 — Implemented, ADR-098) `run_collect` selector. Exactly one of
         `childRunId` / `all` MUST be supplied.
       additionalProperties: false
       properties:
@@ -2130,7 +2130,7 @@ components:
     ExtChildRunSummary:
       type: object
       description: |
-        (M36 — Implemented, ADR-095) Terminal-result summary for one orchestrator
+        (M37 — Implemented, ADR-098) Terminal-result summary for one orchestrator
         child. `artifacts` is the produced-artifact manifest from
         `artifact_instances`; `diffRef` locates the base→run diff. NEVER exposes
         the child worktree, `acp_session_id`, or any supervisor-internal handle.
@@ -2176,7 +2176,7 @@ components:
     ExtRunCancelBody:
       type: object
       description: |
-        (M36 — Implemented, ADR-095) `run_cancel` payload. `childRunId` must be a
+        (M37 — Implemented, ADR-098) `run_cancel` payload. `childRunId` must be a
         child of the calling orchestrator.
       required: [childRunId]
       additionalProperties: false

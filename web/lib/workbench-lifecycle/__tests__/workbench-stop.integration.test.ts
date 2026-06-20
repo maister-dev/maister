@@ -364,7 +364,7 @@ describe("workbench stop — scratch runs", () => {
   });
 });
 
-describe("workbench stop — orchestrator cascade (M36 T7.4)", () => {
+describe("workbench stop — orchestrator cascade (M37 T7.4)", () => {
   async function seedFlow(projectId: string): Promise<string> {
     const flowId = randomUUID();
 

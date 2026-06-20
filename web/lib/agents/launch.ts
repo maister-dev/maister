@@ -111,25 +111,25 @@ export type LaunchAgentRunInput = {
     eventId?: number | null;
     payload?: Record<string, unknown> | null;
   };
-  // M36 (ADR-095): orchestrator run-tree linkage. Set when this run is a
+  // M37 (ADR-098): orchestrator run-tree linkage. Set when this run is a
   // delegated child — parentRunId is the delegator, rootRunId the tree root,
   // launchMode distinguishes auto-DAG launches from manual delegations.
   parentRunId?: string | null;
   rootRunId?: string | null;
   launchMode?: "auto" | "manual";
-  // M36 Phase 8 (ADR-096): a persistent child parks between turns and is
+  // M37 Phase 8 (ADR-099): a persistent child parks between turns and is
   // re-addressable by `addressableKey` within its orchestrator tree (unique on
   // (root_run_id, addressable_key) among persistent rows). `addressableKey` is
   // REQUIRED when `persistent` is set.
   persistent?: boolean;
   addressableKey?: string | null;
-  // M36 Phase 10 (ADR-096): worktree allocation mode for a delegated child.
+  // M37 Phase 10 (ADR-099): worktree allocation mode for a delegated child.
   // `own` (default/null) = a per-run worktree; `shared` = all children of one
   // rootRunId point at a single pre-allocated tree (serialized writers via the
   // scheduler promote-time guard). A `shared` request with no rootRunId is
   // refused (CONFIG) — a top-level run has no tree to share.
   workspaceMode?: "own" | "shared" | null;
-  // M36 (ADR-097): an explicit per-child workspace axis OVERRIDE. When set by a
+  // M37 (ADR-100): an explicit per-child workspace axis OVERRIDE. When set by a
   // delegation (run_delegate / run_plan), it wins over the agent definition's
   // declared `workspace` — so a coordinator can request a `none`/`repo_read`
   // child (exits Done, no Review round-trip) or a `worktree` child (produces a
@@ -400,7 +400,7 @@ export function agentWorkdirPath(projectSlug: string, runId: string): string {
   return path.join(worktreesRoot(), projectSlug, runId);
 }
 
-// M36 Phase 10 (ADR-096): the SHARED worktree for an orchestrator tree —
+// M37 Phase 10 (ADR-099): the SHARED worktree for an orchestrator tree —
 // keyed by the tree root, so every shared-mode child of the same rootRunId
 // resolves to one tree. Deterministic from rootRunId, so the 2nd shared child
 // recomputes the same path and reuses the tree the 1st allocated.
@@ -542,11 +542,11 @@ export async function launchAgentRun(
   );
 
   const runId = randomUUID();
-  // M36 (ADR-097): an explicit delegation `workspace` overrides the agent-def
+  // M37 (ADR-100): an explicit delegation `workspace` overrides the agent-def
   // axis; absent ⇒ the agent's declared default.
   const workspace = input.workspace ?? ctx.effective.parsed.workspace;
 
-  // M36 Phase 8 (ADR-096): a persistent child must carry an addressable_key —
+  // M37 Phase 8 (ADR-099): a persistent child must carry an addressable_key —
   // it is the re-message handle. Uniqueness within the tree is enforced by the
   // partial index (mapped to CONFLICT below); this guards the NOT-NULL contract
   // before any side effect.
@@ -557,7 +557,7 @@ export async function launchAgentRun(
     );
   }
 
-  // M36 Phase 10 (ADR-096): a shared worktree is keyed by the tree root, so a
+  // M37 Phase 10 (ADR-099): a shared worktree is keyed by the tree root, so a
   // top-level run (no rootRunId) has no tree to share. Refuse before any side
   // effect.
   if (input.workspaceMode === "shared" && !input.rootRunId) {
@@ -590,7 +590,7 @@ export async function launchAgentRun(
     }
   }
 
-  // M36 Phase 8 (ADR-096): the addressable_key must be free within the
+  // M37 Phase 8 (ADR-099): the addressable_key must be free within the
   // orchestrator tree. The child's tree root is rootRunId (always set for a
   // delegated persistent child) else its own id. This pre-check is the common
   // path; the partial unique index is the race backstop (23505 → CONFLICT).
@@ -644,7 +644,7 @@ export async function launchAgentRun(
   let worktreePath: string | null = null;
   let branch: string | null = null;
   let baseCommit: string | null = null;
-  // M36 Phase 10 (ADR-096): a shared-mode child whose tree a sibling already
+  // M37 Phase 10 (ADR-099): a shared-mode child whose tree a sibling already
   // allocated reuses that tree — it gets NO workspaces row of its own (the
   // worktree_path column is UNIQUE; the allocating sibling owns the record).
   // startAgentSession recomputes the shared cwd from workspace_mode + rootRunId.
@@ -680,7 +680,7 @@ export async function launchAgentRun(
             startPoint: ctx.project.mainBranch,
           });
         } catch (err) {
-          // M36 (ADR-097): a concurrent shared-mode sibling can allocate the tree
+          // M37 (ADR-100): a concurrent shared-mode sibling can allocate the tree
           // between the listWorktrees check and this add (TOCTOU). Re-check the
           // registry: if the path now exists, the sibling won the race — reuse it
           // (no workspaces row of our own). Otherwise it is a genuine git failure
@@ -739,7 +739,7 @@ export async function launchAgentRun(
     currentStepId: "agent",
     flowVersion: "agent",
     flowRevision: "manual",
-    // M36 (ADR-095): run-tree linkage. delegation_snapshot records the CHILD's
+    // M37 (ADR-098): run-tree linkage. delegation_snapshot records the CHILD's
     // launch-time effective agent-def (skill-context rule 207 — id + pinned
     // revision only; the resolved runner stays in runner_snapshot above). Set
     // only for a delegated child (parentRunId present).
@@ -752,10 +752,10 @@ export async function launchAgentRun(
           revisionId: ctx.effective.revisionId,
         }
       : null,
-    // M36 Phase 8 (ADR-096): persistent swarm-member flags.
+    // M37 Phase 8 (ADR-099): persistent swarm-member flags.
     persistent: input.persistent ?? false,
     addressableKey: input.addressableKey ?? null,
-    // M36 Phase 10 (ADR-096): worktree allocation mode — read by the scheduler
+    // M37 Phase 10 (ADR-099): worktree allocation mode — read by the scheduler
     // serialization guard and by startAgentSession's shared-cwd resolution.
     workspaceMode: input.workspaceMode ?? null,
   };
@@ -1171,7 +1171,7 @@ export async function finalizeAgentRun(
     null;
 
   const finalizeResult = await _db.transaction(async (tx: Db) => {
-    // M36 (ADR-097): parent_run_id is immutable — read it up front so a DELEGATED
+    // M37 (ADR-100): parent_run_id is immutable — read it up front so a DELEGATED
     // child reaching Review can KEEP its acp_session_id (the resume handle
     // run_rework needs). The CAS below still gates on status.
     const preRows = await tx
@@ -1193,7 +1193,7 @@ export async function finalizeAgentRun(
         : outcome;
     const endedAt = new Date();
 
-    // M36 (ADR-097): a delegated child reaching Review keeps its session handle so
+    // M37 (ADR-100): a delegated child reaching Review keeps its session handle so
     // run_rework can session/resume with prior context; every other terminal (and
     // a top-level Review with no parent) nulls it.
     const preserveSessionForRework =
@@ -1254,7 +1254,7 @@ export async function finalizeAgentRun(
       // back to the index only for rows that predate agent_workspace.
       const ranAs = row.agentWorkspace ?? wsCtx?.workspace;
 
-      // M36 Phase 10 (ADR-096): L3 guards repo_read ONLY. A shared WRITE tree
+      // M37 Phase 10 (ADR-099): L3 guards repo_read ONLY. A shared WRITE tree
       // (workspace=worktree, workspace_mode='shared') is intentionally dirtied
       // by multiple children, so the dirty-watchdog does not apply — never
       // quarantine a shared write child.
@@ -1327,7 +1327,7 @@ export async function finalizeAgentRun(
       },
     });
 
-    // M36 (ADR-095/097): a DELEGATED child reaching Review emits `run.review` so
+    // M37 (ADR-098/097): a DELEGATED child reaching Review emits `run.review` so
     // the parked coordinator wakes to promote/rework the diff (and as-plan
     // auto-promote fires). A top-level Review (no parent) emits nothing — there is
     // no orchestrator to route to. Terminal outcomes emit their terminal kind.
@@ -1406,7 +1406,7 @@ export async function finalizeAgentRun(
   return finalizeResult !== false ? finalizeResult : { finalized: false };
 }
 
-// M36 Phase 8 (ADR-096): a persistent swarm member PARKS on a clean end_turn
+// M37 Phase 8 (ADR-099): a persistent swarm member PARKS on a clean end_turn
 // instead of finalizing — it stays addressable for the next re-message. The
 // CAS Running → NeedsInputIdle keeps acp_session_id (the resume handle), stamps
 // checkpoint_at, refreshes acp_session_id if the latest turn produced a newer
@@ -1467,7 +1467,7 @@ export type SendAgentMessageResult = {
   status: "Running";
 };
 
-// M36 Phase 8 (ADR-096): re-message a persistent child agent. A parked child
+// M37 Phase 8 (ADR-099): re-message a persistent child agent. A parked child
 // (NeedsInputIdle) is woken — CAS NeedsInputIdle → Running, then
 // startAgentSession respawns + session/resumes (run.acpSessionId) and delivers
 // the override prompt as a fresh turn; the consume loop re-parks it on the next
@@ -1571,7 +1571,7 @@ export type ReworkChildRunResult = {
   status: "Running";
 };
 
-// M36 (ADR-097): re-open a DELEGATED child whose turn produced a diff (Review)
+// M37 (ADR-100): re-open a DELEGATED child whose turn produced a diff (Review)
 // for another turn with the coordinator's rework prompt. CAS Review → Running
 // (single-winner — a concurrent promote/rework loses → CONFLICT), then
 // startAgentSession respawns + session/resumes (run.acpSessionId, preserved on
@@ -1753,7 +1753,7 @@ const defaultSupervisorApi: AgentSupervisorApi = {
 // prompt, then consume supervisor events until a terminal transition.
 export async function startAgentSession(
   runId: string,
-  // M36 Phase 8 (ADR-096): overridePrompt re-messages a parked persistent
+  // M37 Phase 8 (ADR-099): overridePrompt re-messages a parked persistent
   // child with a fresh turn instead of rebuilding the definition prompt. The
   // session resumes via run.acpSessionId and re-parks on the next end_turn.
   opts: {
@@ -1819,7 +1819,7 @@ export async function startAgentSession(
     return;
   }
 
-  // M36 (ADR-097): use the workspace axis the run ACTUALLY launched with
+  // M37 (ADR-100): use the workspace axis the run ACTUALLY launched with
   // (persisted at insert — a delegation override OR the agent-def default), not a
   // re-derivation from the agent def, which would diverge from an overriding
   // delegation (wrong cwd / readOnlySession). Falls back to the def for rows that
@@ -1871,7 +1871,7 @@ export async function startAgentSession(
   } else if (workspace === "repo_read") {
     cwd = project.repoPath;
   } else if (workspace === "worktree") {
-    // M36 Phase 10 (ADR-096): a shared-mode child resolves the tree from its
+    // M37 Phase 10 (ADR-099): a shared-mode child resolves the tree from its
     // root_run_id (a reusing sibling has NO workspaces row of its own — the
     // allocator owns it under the UNIQUE worktree_path), so the shared path is
     // computed deterministically rather than read back.
@@ -2040,7 +2040,7 @@ export async function consumeAgentSession(args: {
           return;
         }
 
-        // M36 Phase 8 (ADR-096): a persistent swarm member PARKS on a NATURAL
+        // M37 Phase 8 (ADR-099): a persistent swarm member PARKS on a NATURAL
         // clean end_turn (exitCode 0, no reason) instead of finalizing — it
         // stays addressable for the next re-message. An `intentional` DELETE
         // (explicit cancel/stop) or any non-zero exit is a genuine teardown and

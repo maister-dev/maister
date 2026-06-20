@@ -87,6 +87,10 @@ export type RunAgentStepCtx = {
   // prior attempt's conversation via the ACP session/resume protocol call.
   // Unresumable → fall back to a fresh session and flag sessionFallback.
   resumeSessionId?: string;
+  // B1 (execution-policy permissions=auto_approve): resolved from the run's
+  // execution_policy snapshot in runGraph; threaded to the supervisor session
+  // so the requestPermission handler auto-approves inline (L3).
+  autoApprovePermissions?: boolean;
   db?: DbClientLike;
 };
 
@@ -710,6 +714,7 @@ async function runNewSession(
       capabilityProfilePath: ctx.capabilityProfilePath,
       adapterLaunch: ctx.adapterLaunch,
       mcpServers: ctx.mcpServers,
+      autoApprovePermissions: ctx.autoApprovePermissions,
     };
 
     if (ctx.resumeSessionId) {
@@ -855,6 +860,7 @@ async function runSlashInExisting(
       capabilityProfilePath: ctx.capabilityProfilePath,
       adapterLaunch: ctx.adapterLaunch,
       mcpServers: ctx.mcpServers,
+      autoApprovePermissions: ctx.autoApprovePermissions,
     });
 
     ctx.sessionState.currentSessionId = session.sessionId;

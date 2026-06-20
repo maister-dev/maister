@@ -15,6 +15,7 @@ import type {
   ResolvedCapabilitySet,
 } from "@/lib/db/schema";
 import type { DeliveryPolicy } from "@/lib/runs/delivery-policy";
+import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
 import type { SettingsNodeView } from "@/lib/flows/settings-view";
 import type { HitlOption } from "@/lib/queries/hitl";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
@@ -36,6 +37,7 @@ import pino from "pino";
 import { getDb } from "@/lib/db/client";
 import { deriveTtlInfo } from "@/lib/gc/ttl";
 import { classifyRecover } from "@/lib/runs/recover-classify";
+import { requireRunProjectId } from "@/lib/runs/run-kind-invariants";
 import * as schema from "@/lib/db/schema";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { resolveNodeRecoverInfo } from "@/lib/flows/graph/current-node-kind";
@@ -134,6 +136,7 @@ export interface RunDetail {
   prUrl: string | null;
   prNumber: number | null;
   deliveryPolicySnapshot: DeliveryPolicy | null;
+  executionPolicy: ExecutionPolicy | null;
   pendingHitl: RunPendingHitl | null;
   // M11b (ADR-030): the user holding an active takeover claim (null unless a
   // takeover node_attempts row is open). Drives the owner-gated Return action.
@@ -217,6 +220,7 @@ export const getRunDetail = cache(async function getRunDetail(
       prUrl: workspaces.prUrl,
       prNumber: workspaces.prNumber,
       deliveryPolicySnapshot: runs.deliveryPolicySnapshot,
+      executionPolicy: runs.executionPolicy,
       capabilityAgent: runs.capabilityAgent,
       runnerSnapshot: runs.runnerSnapshot,
       endedAt: runs.endedAt,
@@ -315,7 +319,10 @@ export const getRunDetail = cache(async function getRunDetail(
 
   return {
     runId: row.runId,
-    projectId: row.projectId,
+    // The inner join on projects guarantees a project here; a project-less
+    // local-package run (ADR-097) matches zero rows and getRunDetail returns
+    // null above, so this narrowing never throws on a real row.
+    projectId: requireRunProjectId(row.projectId, row.runId),
     projectSlug: row.projectSlug,
     taskNumber: row.taskNumber,
     taskRef:
@@ -342,6 +349,7 @@ export const getRunDetail = cache(async function getRunDetail(
     prUrl: row.prUrl,
     prNumber: row.prNumber,
     deliveryPolicySnapshot: row.deliveryPolicySnapshot ?? null,
+    executionPolicy: row.executionPolicy ?? null,
     agent: runnerAgentFromFields({
       capabilityAgent: row.capabilityAgent,
       runnerSnapshot: row.runnerSnapshot,
@@ -387,7 +395,7 @@ export const getRunDetail = cache(async function getRunDetail(
   };
 });
 
-// --- M36 Phase 6 (ADR-095): orchestrator run-tree children -----------------
+// --- M37 Phase 6 (ADR-098): orchestrator run-tree children -----------------
 
 export interface ChildRunRef {
   runId: string;
@@ -448,7 +456,7 @@ export async function getChildRuns(
   }));
 }
 
-// --- M36 Phase 7 (T7.4): orchestrator cancel/abandon cascade walks ----------
+// --- M37 Phase 7 (T7.4): orchestrator cancel/abandon cascade walks ----------
 
 // The non-terminal run statuses an abandon-cascade flips. WaitingOnChildren is
 // included so a re-rooted cascade also releases a parked descendant coordinator.
@@ -1035,6 +1043,10 @@ export async function getRunCapabilityProfiles(
   const run = runRows[0];
 
   if (!run) return null;
+  // A project-less local-package run (ADR-097) has no project-scoped capability
+  // imports/trust to attach — no capability-profile view applies.
+  if (!run.projectId) return null;
+  const projectId = run.projectId;
 
   const attemptRows = await client
     .select({
@@ -1063,7 +1075,7 @@ export async function getRunCapabilityProfiles(
       trustStatus: capabilityImports.trustStatus,
     })
     .from(capabilityImports)
-    .where(eq(capabilityImports.projectId, run.projectId));
+    .where(eq(capabilityImports.projectId, projectId));
 
   const trustByRevision = new Map<string, CapabilityImport["trustStatus"]>();
 

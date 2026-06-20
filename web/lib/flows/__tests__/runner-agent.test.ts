@@ -447,6 +447,38 @@ describe("runner-agent — session.permission_request handling", () => {
   });
 });
 
+describe("runner-agent — B1 autoApprovePermissions threading", () => {
+  it("threads ctx.autoApprovePermissions into createSession (new-session)", async () => {
+    const db = makeFakeDb();
+    const api = makeApi({ events: [update(1, "hi"), exited(2)] });
+
+    await runAgentStep(
+      { id: "plan", type: "agent", mode: "new-session", prompt: "go" },
+      makeCtx(db, { autoApprovePermissions: true }),
+      api,
+    );
+
+    expect(api.createSession).toHaveBeenCalledWith(
+      expect.objectContaining({ autoApprovePermissions: true }),
+    );
+  });
+
+  it("leaves autoApprovePermissions undefined when the ctx omits it", async () => {
+    const db = makeFakeDb();
+    const api = makeApi({ events: [update(1, "hi"), exited(2)] });
+
+    await runAgentStep(
+      { id: "plan", type: "agent", mode: "new-session", prompt: "go" },
+      makeCtx(db),
+      api,
+    );
+
+    expect(api.createSession).toHaveBeenCalledWith(
+      expect.objectContaining({ autoApprovePermissions: undefined }),
+    );
+  });
+});
+
 // M8 Codex review fix #1: when the supervisor checkpoints the agent
 // mid-permission, the adapter cancels the pending requestPermission with
 // `{outcome: "cancelled"}` and the prompt returns with

@@ -1,4 +1,4 @@
-// M36 (ADR-095) T5.2: the orchestrator_resume consumer. A child-terminal event
+// M37 (ADR-098) T5.2: the orchestrator_resume consumer. A child-terminal event
 // wakes a PARKED flow coordinator (run_kind='flow', status='WaitingOnChildren').
 // The re-drive is injected (synchronous resumeFlow spy) so the test asserts the
 // wake DECISION + the single-winner CAS without spawning a real ACP session.
@@ -140,7 +140,7 @@ async function seedParkedOrchestrator(runKind = "flow"): Promise<string> {
 // A child run under the orchestrator + its emitted run-terminal event.
 async function seedChildTerminal(args: {
   parentRunId: string;
-  // M36 (ADR-097): "Review" emits run.review (settled, not terminal) — the child
+  // M37 (ADR-100): "Review" emits run.review (settled, not terminal) — the child
   // produced a worktree diff and the coordinator must be woken to act on it.
   outcome: "Done" | "Failed" | "Crashed" | "Abandoned" | "Review";
 }): Promise<DomainEventRow> {
@@ -230,7 +230,7 @@ async function statusOf(runId: string): Promise<string> {
   return rows[0].status;
 }
 
-describe("orchestrator_resume consumer (M36 T5.2)", () => {
+describe("orchestrator_resume consumer (M37 T5.2)", () => {
   it("(2) last child done → wakes the parent exactly once; redelivery is a no-op (CAS)", async () => {
     const parentRunId = await seedParkedOrchestrator();
     const event = await seedChildTerminal({ parentRunId, outcome: "Done" });
@@ -360,11 +360,11 @@ describe("orchestrator_resume consumer (M36 T5.2)", () => {
     expect(resumed).toEqual([parentRunId]);
   }, 60_000);
 
-  // M36 (ADR-097): the headline fix — a delegated child reaching REVIEW (a
+  // M37 (ADR-100): the headline fix — a delegated child reaching REVIEW (a
   // worktree diff, the path the e2e skips with workspace=none) emits run.review
   // and wakes the parked coordinator so it can collect/promote/rework. Before
-  // ADR-097 this child emitted nothing and counted as pending forever → deadlock.
-  it("(6) a child reaching Review wakes the parked parent (ADR-097)", async () => {
+  // ADR-100 this child emitted nothing and counted as pending forever → deadlock.
+  it("(6) a child reaching Review wakes the parked parent (ADR-100)", async () => {
     const parentRunId = await seedParkedOrchestrator();
     const event = await seedChildTerminal({ parentRunId, outcome: "Review" });
 

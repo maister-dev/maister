@@ -170,6 +170,11 @@ export const StartSessionRequestSchema = z
     // references a repo-absolute path (web-confined to repo OR worktree) is not
     // rejected. Absent for runs that never send file references.
     repoPath: worktreePathSchema.optional(),
+    // M36 Phase 5 (ADR-097): SOLE content-block file-URI confinement root for a
+    // project-less local-package assistant session (the local-package working
+    // dir). When set it replaces worktree ∪ repo as the allow-set. The cwd is
+    // still `worktreePath` (= the working dir for these sessions).
+    confineRoot: worktreePathSchema.optional(),
     stepId: z
       .string()
       .min(1)
@@ -200,6 +205,11 @@ export const StartSessionRequestSchema = z
     // read-safe allow-list for the WHOLE session. Used for none/repo_read
     // platform-agent runs (headless: no HITL inbox exists for them).
     readOnlySession: z.boolean().optional(),
+    // B1 (execution-policy permissions=auto_approve): the requestPermission
+    // handler auto-selects the allow option for every request in this session
+    // (L3, below the read-only layers — read-only always wins). Resolved from
+    // the run's execution_policy snapshot at launch.
+    autoApprovePermissions: z.boolean().optional(),
   })
   .strict()
   .superRefine((value, ctx) => {
@@ -386,6 +396,8 @@ export type SessionRecord = {
   // creation; a per-prompt caller cannot change them). See prompt-confinement.ts.
   worktreePath: string;
   repoPath?: string;
+  // ADR-097: project-less local-package session — the sole confinement root.
+  confineRoot?: string;
   monotonicId: number;
   acpSessionId?: string;
   // M30 (ADR-078 L2): true while a read-only gate-chat prompt is in flight on
@@ -395,6 +407,10 @@ export type SessionRecord = {
   // request is decided inline (write-class denied, read-safe approved); no
   // pending-permission deferred is ever created.
   readOnlySession?: boolean;
+  // B1 (execution-policy permissions=auto_approve): auto-select the allow
+  // option for every permission request in this session, BELOW the read-only
+  // layers. Resolved from the run's execution_policy snapshot in spawn.ts.
+  autoApprovePermissions?: boolean;
 };
 
 export type PermissionOptionDescriptor = {

@@ -27,7 +27,7 @@ export interface RunInspectorChildRunsListProps {
   labels: RunInspectorChildRunsLabels;
 }
 
-// M36 Phase 6 (ADR-095): the expandable "Spawned runs (N)" section in the
+// M37 Phase 6 (ADR-098): the expandable "Spawned runs (N)" section in the
 // run-detail inspector. Each row is a status dot + the child's task ref (or the
 // as-run fallback) + a link to the child run. The parent renders nothing when
 // there are no children, so this component assumes a non-empty list.

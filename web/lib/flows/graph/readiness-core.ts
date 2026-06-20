@@ -3,6 +3,41 @@
 // board queries, and portfolio queries. (ADR-048, M15)
 
 import type { GateKind, GateResultStatus } from "@/lib/db/schema";
+import type { CheckStrictness } from "@/lib/runs/execution-policy";
+
+// The non-review check gates that the execution-policy check-strictness axis (A3)
+// may relax. The review gates (ai_judgment | human_review) drive the rework loop
+// and are NEVER relaxed by check strictness — only these promotion-readiness
+// checks are.
+export const NON_REVIEW_CHECK_KINDS: ReadonlySet<string> = new Set([
+  "command_check",
+  "skill_check",
+  "artifact_required",
+  "external_check",
+]);
+
+// `skip` (axis A3) means a non-review check gate is not evaluated at all. The
+// review gates (ai_judgment | human_review) are never skipped by policy.
+export function isPolicySkippedGate(
+  checks: CheckStrictness,
+  kind: GateKind | string,
+): boolean {
+  return checks === "skip" && NON_REVIEW_CHECK_KINDS.has(kind);
+}
+
+// Whether a gate effectively blocks the node finish, given the run's check
+// strictness. An author-`blocking` non-review check gate is downgraded to
+// non-blocking under advisory/skip; review gates and the strict default keep
+// their author-declared mode. An author-`advisory` gate is never blocking.
+export function isEffectivelyBlockingGate(
+  checks: CheckStrictness,
+  kind: GateKind | string,
+  mode: string,
+): boolean {
+  if (mode !== "blocking") return false;
+
+  return !(checks !== "strict" && NON_REVIEW_CHECK_KINDS.has(kind));
+}
 
 // An external_check gate blocks review/merge unless its latest live report is
 // `passed` or human-`overridden`. `pending`/`failed`/`stale`/`skipped` all
@@ -200,6 +235,12 @@ export function latestAttemptIdsByNode(
 // collapseLatestExternalPerGate; all other kinds pass through as-is.
 // The result is the set of gate rows that the readiness classifier evaluates.
 // `kind` accepts string to allow test rows typed as `GateKind | string`.
+//
+// `checks` is the run's resolved execution-policy check-strictness axis (A3).
+// When it is not `strict`, the non-review check gates (NON_REVIEW_CHECK_KINDS)
+// are dropped from the blocking set — they ran (advisory) or were not evaluated
+// (skip) but no longer block promotion-readiness. The review gates and the
+// `strict` default are untouched, so existing callers keep today's behavior.
 export function liveBlockingGates<
   T extends {
     id: string;
@@ -210,9 +251,15 @@ export function liveBlockingGates<
     nodeAttemptId: string;
     createdAt: Date;
   },
->(gateRows: T[], liveAttemptIds: Set<string>): T[] {
+>(
+  gateRows: T[],
+  liveAttemptIds: Set<string>,
+  checks: CheckStrictness = "strict",
+): T[] {
   const liveBlocking = gateRows.filter(
-    (g) => g.mode === "blocking" && liveAttemptIds.has(g.nodeAttemptId),
+    (g) =>
+      isEffectivelyBlockingGate(checks, g.kind, g.mode) &&
+      liveAttemptIds.has(g.nodeAttemptId),
   );
 
   const nonExternal = liveBlocking.filter((g) => g.kind !== "external_check");

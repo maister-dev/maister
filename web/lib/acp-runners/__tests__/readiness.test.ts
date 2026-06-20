@@ -112,7 +112,10 @@ describe("evaluateRunnerReadiness", () => {
     ).toEqual({ status: "Ready", reasons: [] });
   });
 
-  it("keeps supported Gemini, OpenCode, and MiMo runners NotReady until smoke is cached", () => {
+  it("marks Gemini, OpenCode, and MiMo runners Ready even when smoke is pending (smoke is advisory)", () => {
+    // `diagnostics` carries smoke=pending for all three; readiness must not gate
+    // on it. A genuine handshake failure is already folded into adapter
+    // `available` (supervisor side), so pending/skipped smoke no longer blocks.
     expect(
       evaluateRunnerReadiness({
         runner: {
@@ -124,12 +127,20 @@ describe("evaluateRunnerReadiness", () => {
         },
         diagnostics,
       }),
-    ).toEqual({
-      status: "NotReady",
-      reasons: [
-        "adapter smoke is not ready: gemini (gemini ACP compatibility smoke has not been cached)",
-      ],
-    });
+    ).toEqual({ status: "Ready", reasons: [] });
+
+    expect(
+      evaluateRunnerReadiness({
+        runner: {
+          adapter: "gemini",
+          capabilityAgent: "gemini",
+          enabled: true,
+          permissionPolicy: "default",
+          provider: { kind: "google_gemini" },
+        },
+        diagnostics,
+      }),
+    ).toEqual({ status: "Ready", reasons: [] });
 
     expect(
       evaluateRunnerReadiness({
@@ -142,12 +153,7 @@ describe("evaluateRunnerReadiness", () => {
         },
         diagnostics,
       }),
-    ).toEqual({
-      status: "NotReady",
-      reasons: [
-        "adapter smoke is not ready: opencode (opencode ACP compatibility smoke has not been cached)",
-      ],
-    });
+    ).toEqual({ status: "Ready", reasons: [] });
 
     expect(
       evaluateRunnerReadiness({
@@ -160,12 +166,22 @@ describe("evaluateRunnerReadiness", () => {
         },
         diagnostics,
       }),
-    ).toEqual({
-      status: "NotReady",
-      reasons: [
-        "adapter smoke is not ready: mimo (mimo ACP compatibility smoke has not been cached)",
-      ],
-    });
+    ).toEqual({ status: "Ready", reasons: [] });
+  });
+
+  it("marks a keyless (ambient) Gemini runner Ready without an API-key env ref", () => {
+    expect(
+      evaluateRunnerReadiness({
+        runner: {
+          adapter: "gemini",
+          capabilityAgent: "gemini",
+          enabled: true,
+          permissionPolicy: "default",
+          provider: { kind: "google_gemini" },
+        },
+        diagnostics,
+      }),
+    ).toEqual({ status: "Ready", reasons: [] });
   });
 
   it("marks Gemini, OpenCode, and MiMo runners Ready when smoke is cached", () => {

@@ -125,7 +125,7 @@ describe("emitDomainEvent — same-transaction capture (AC1)", () => {
 
     expect(row.actorType).toBe("system");
     expect(row.actorId).toBeNull();
-    // M36 (ADR-095): run-terminal kinds fold parent_run_id into the payload;
+    // M37 (ADR-098): run-terminal kinds fold parent_run_id into the payload;
     // a top-level run serializes parentRunId: null.
     expect(row.payload).toEqual({
       runId: "r-1",

@@ -982,6 +982,18 @@ components:
             attachment that references a repo-absolute path is accepted. Same
             shape as `worktreePath` (absolute, no `..`). Sent only by runs that
             can carry file content-blocks (scratch).
+        confineRoot:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          description: |
+            (Implemented — M36 Phase 5, ADR-097) SOLE content-block file-URI
+            confinement root for a **project-less local-package assistant
+            session** (the local package's `working_dir`). When set it REPLACES
+            the worktree ∪ repo allow-set (the run dir stays allowed for
+            uploads); a `file:` URI outside it is rejected with `PRECONDITION`.
+            `cwd` is still `worktreePath` (= the working dir for these sessions).
+            Same shape as `worktreePath` (absolute, no `..`).
         stepId:
           type: string
           minLength: 1

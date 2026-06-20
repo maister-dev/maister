@@ -1,4 +1,4 @@
-// M36 (ADR-095) T2.4/T2.5: the orchestrator node's supervisory lifecycle,
+// M37 (ADR-098) T2.4/T2.5: the orchestrator node's supervisory lifecycle,
 // end-to-end through the real graph runner. ONLY the agent action is scripted
 // (runAgentStep returns needsInput=true, as a real coordinator would when it
 // parks awaiting its delegated children). Asserts:
@@ -104,7 +104,7 @@ beforeEach(() => {
 });
 
 // A single orchestrator node that transitions to `done` on success. Engine
-// floor 1.6.0 — the orchestrator node's version floor (M36, ADR-095).
+// floor 1.6.0 — the orchestrator node's version floor (M37, ADR-098).
 const orchestratorFlow = {
   schemaVersion: 1,
   name: "Orchestrator",
@@ -211,7 +211,7 @@ async function getRun(runId: string): Promise<any> {
   return rows[0];
 }
 
-describe("orchestrator node — supervisory lifecycle (M36)", () => {
+describe("orchestrator node — supervisory lifecycle (M37)", () => {
   it("parks on WaitingOnChildren (not NeedsInput), no run.needs_input webhook, token survives", async () => {
     const { runId, runtimeRoot } = await seedOrchestratorRun();
 

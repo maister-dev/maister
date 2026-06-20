@@ -18,6 +18,7 @@ export function httpStatusForCode(code: string): number {
       return 401;
     case "UNAUTHORIZED":
     case "PASSWORD_CHANGE_REQUIRED":
+    case "ACCOUNT_INACTIVE":
       return 403;
     case "PRECONDITION":
     case "CONFLICT":

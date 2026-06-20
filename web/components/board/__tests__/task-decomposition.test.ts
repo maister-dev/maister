@@ -1,4 +1,4 @@
-// M36 Phase 6 (ADR-095): render tests for the board decomposition group.
+// M37 Phase 6 (ADR-098): render tests for the board decomposition group.
 // renderToStaticMarkup (no jsdom); labels passed as props. Asserts the data-*
 // contract, the per-child status dot/label, the KEY-N row + task link, and the
 // no-run case.

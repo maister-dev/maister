@@ -41,7 +41,7 @@ export type E2EPlatformAgentsFixture = E2EProjectFixture & {
   };
 };
 
-// M36 (ADR-095) orchestrator-loop fixture: a launchable orchestrator flow + its
+// M37 (ADR-098) orchestrator-loop fixture: a launchable orchestrator flow + its
 // delegate-target worker agent.
 export type E2EOrchestratorFixture = E2EProjectFixture & {
   workerAgentId: string;

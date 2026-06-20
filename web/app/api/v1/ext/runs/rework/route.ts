@@ -33,7 +33,7 @@ export async function POST(
 ): Promise<NextResponse> {
   const db = getDb() as Db;
 
-  // M36 (ADR-097): re-open a reviewed child for another turn. Reuses the
+  // M37 (ADR-100): re-open a reviewed child for another turn. Reuses the
   // runs:delegate scope — a run-bound orchestrator addressing its own child.
   return handleExt(
     req,

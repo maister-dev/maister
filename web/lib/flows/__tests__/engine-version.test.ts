@@ -7,7 +7,7 @@ import {
 } from "@/lib/flows/engine-version";
 
 describe("MAISTER_ENGINE_VERSION", () => {
-  it("is 1.6.0 (M36 orchestrator node bump)", () => {
+  it("is 1.6.0 (M37 orchestrator node bump)", () => {
     expect(MAISTER_ENGINE_VERSION).toBe("1.6.0");
   });
 });
@@ -27,7 +27,7 @@ describe("isEngineCompatible", () => {
   });
 
   it("is incompatible when engine is below engine_min", () => {
-    // Engine is 1.6.0 (M36 bump); a min above it must be rejected.
+    // Engine is 1.6.0 (M37 bump); a min above it must be rejected.
     const r = isEngineCompatible("1.7.0");
 
     expect(r.compatible).toBe(false);

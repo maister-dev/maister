@@ -100,7 +100,7 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
   // The test supervisor (a SUPERSET of the stub) must be up BEFORE the webServer
   // boots: it answers /health ready (the M11c launch-refusal + board Launch
   // gate), serves the stub-compat /sessions hold-until-`.release` path for the
-  // platform-agents `agent` specs, AND drives the M36 orchestrator
+  // platform-agents `agent` specs, AND drives the M37 orchestrator
   // delegate→park→resume loop for the orchestrator-loop spec (its coordinator
   // session spawns children through the REAL ext delegate HTTP route). It binds
   // STUB_SUPERVISOR_PORT so playwright.config.ts's MAISTER_SUPERVISOR_URL

@@ -1,4 +1,4 @@
-// M36 Phase 9 (ADR-096): star-routed messaging is a PROPERTY enforced by token
+// M37 Phase 9 (ADR-099): star-routed messaging is a PROPERTY enforced by token
 // scoping — a regular agent CHILD token (issueAgentRunToken, AGENT_TOKEN_SCOPES)
 // lacks `runs:delegate`, so it CANNOT message OR delegate to any run. Only the
 // orchestrator (issueOrchestratorRunToken, ORCHESTRATOR_TOKEN_SCOPES) holds the
@@ -286,7 +286,7 @@ async function auditRowsFor(
   return res.rows;
 }
 
-describe("M36 Phase 9 — star-routed messaging (no mesh)", () => {
+describe("M37 Phase 9 — star-routed messaging (no mesh)", () => {
   it("a regular agent CHILD token cannot message another run → 403 + audited", async () => {
     const worker = await seedAgent("worker-agent");
     const { secret } = await seedChildWithAgentToken(worker);

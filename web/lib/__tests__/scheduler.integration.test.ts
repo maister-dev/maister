@@ -178,7 +178,7 @@ describe("scheduler — M8 cap semantics", () => {
     expect(after[0].status).toBe("Running");
   }, 60_000);
 
-  // M36 (ADR-095 §3): a parked orchestrator is checkpointed — its agent-pool
+  // M37 (ADR-098 §3): a parked orchestrator is checkpointed — its agent-pool
   // slot is released, so it must NOT count against the cap (like NeedsInputIdle).
   it("WaitingOnChildren does NOT count toward the cap (parked orchestrator)", async () => {
     // Three would fill the cap-3 if they counted; the Pending still starts.

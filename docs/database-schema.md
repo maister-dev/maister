@@ -42,7 +42,7 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `tasks`                       | Board cards. Status `Backlog\|InFlight\|Done\|Abandoned`. Stage `Backlog\|Prepare`.                                                                                                                                                                                                                                        | `projects.id`                                                              |
 | `runs`                        | Execution attempts. Flow runs are task attempts; scratch runs are manual coding-agent sessions with `run_kind = "scratch"`. New launches store `runner_id`, `runner_resolution_tier`, `capability_agent`, and `runner_snapshot` for historical display/resume. **(ADR-085 — Designed, migration `0047`)** snapshots resolved delivery policy. | `tasks.id`, `projects.id`, `flows.id`, optional `platform_acp_runners.id` |
 | `workspaces`                  | `git worktree` instances tied to a run.                                                                                                                                                                                                                                                                                    | `runs.id`, `projects.id`                                                   |
-| `scratch_runs`                | Scratch-only metadata: dialog status, name, plan mode, links, branch base, target, and supervisor session.                                                                                                                                                                                                                 | `runs.id`, `projects.id`, `users.id`, optional `tasks.id`                  |
+| `scratch_runs`                | Scratch-only metadata: dialog status, name, plan mode, links, branch base, target, and supervisor session. **(M36 `0059`, ADR-097)** `project_id` is NULLABLE; `local_package_id` is the project-less owner of a docked-assistant run (CHECK: exactly one of the two).                                                          | `runs.id`, optional `projects.id`, `local_packages.id`, `users.id`, optional `tasks.id` |
 | `scratch_messages`            | Append-only dialog message ledger with monotonic sequence per scratch run.                                                                                                                                                                                                                                                 | `scratch_runs.run_id`                                                      |
 | `scratch_attachments`         | Text note, file path, or issue URL attachments attached to a scratch run or message.                                                                                                                                                                                                                                       | `scratch_runs.run_id`, optional `scratch_messages.id`                      |
 | `scratch_capability_profiles` | Launch-time MCP/skill/rule/settings/restriction snapshot and materialized profile path.                                                                                                                                                                                                                                    | `scratch_runs.run_id`                                                      |
@@ -62,6 +62,7 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `package_sources`             | **(Implemented — ADR-088, migration `0048`)** Platform package-source catalog: git monorepo URL (UNIQUE), enabled flag, cached `discovered` snapshot jsonb, `last_checked_at`.                                                                              | —                                                                          |
 | `package_installs`            | **(Implemented — ADR-088, migration `0048`)** Immutable installed package revisions. UNIQUE `(source_url, name, resolved_revision)`. Manifest + content inventory jsonb; two-phase `package_status`; package-level `trust_status`.                                                                              | —                                                                          |
 | `project_package_attachments` | **(Implemented — ADR-088, migration `0048`)** Per-project package enablement. UNIQUE `(project_id, package_name)`. FK to `package_installs` (restrict) + `projects` (cascade).                                                                              | `projects.id`, `package_installs.id`                                       |
+| `local_packages`              | **(Designed — ADR-096, migration `0057`)** Flow Studio Phase C editable local packages (Variant B): git-backed `working_dir` (server-only), `slug` UNIQUE, `status`, fork lineage (`source_install_id`/`source_repo_url`/`source_ref`/`branch_name`), `last_cut_install_id`, session lock (`locked_by_*`/`lock_expires_at`). **(M36, migration `0058`)** `project_id` (FK `projects`, CASCADE, nullable) + `is_default` for the per-project default virtual package (partial-unique `(project_id) WHERE is_default`). | `package_installs.id`, `users.id`, `projects.id`                           |
 | `flow_graph_layouts`          | **(Removed — migration `0030`, ADR-064.)** Was a per-project graph-view position store (M22, migration `0024`); superseded by the authored `flow.yaml` `presentation` section. No table.                                                                                            | —                             |
 | `scheduler_jobs`              | **(M24 — Implemented, migration `0027`)** Durable fixed-interval scheduler job definitions for `system_sweep`, `command`, `agent_tick`, and `flow_run`. Atomic due-job claim advances `next_run_at` and creates one attempt.                                                                                                      | optional `projects.id`                                                     |
 | `scheduler_job_runs`          | **(M24 — Implemented, migration `0027`)** Scheduler attempt ledger with status, lease expiry, summary, and error fields. Expired `Claimed`/`Running` attempts are reaped before new claims.                                                                                                                                         | `scheduler_jobs.id`                                                        |
@@ -537,6 +538,37 @@ Multi-flow package grouping above the per-revision substrate. Process contract:
   in an attached package group. Attach/detach manage the group in one
   transaction; standalone rows keep the column null.
 
+## Local package tables (Designed — ADR-096, migration `0057`)
+
+Editable local packages (Flow Studio Phase C, Variant B). Process contract:
+[`system-analytics/local-packages.md`](system-analytics/local-packages.md); ERD:
+[`db/projects-domain.md`](db/projects-domain.md).
+
+- **`local_packages`** — a platform-scoped, git-backed **working directory** you
+  author/fork artifacts in and **cut versions** from: `id`, `name`, `slug`
+  (UNIQUE — working-dir name), `working_dir` (absolute path under
+  `localPackagesRoot()` = `MAISTER_LOCAL_PACKAGES_ROOT` ?? `~/.maister/local`;
+  **server-only, never sent to the client**, mirroring
+  `package_installs.installed_path`), `status` (`active|archived`, default
+  `active`). Fork lineage / cut output: `source_install_id` (FK
+  `package_installs`, SET NULL — the git package this was forked from),
+  `source_repo_url` / `source_ref` / `branch_name` (the fork's git source +
+  base + branch, for the Phase-2 PR-back), `last_cut_install_id` (FK
+  `package_installs`, SET NULL — the most-recent cut revision). Session-scoped
+  edit lock (mirrors `runs.keepalive_until`): `locked_by_user_id` (FK `users`,
+  SET NULL), `locked_by_session`, `lock_expires_at` (nullable; acquired on
+  editor open, refreshed by keep-alive, lazy stale-takeover, no sweeper).
+  `created_by` (FK `users`, SET NULL), timestamps. **(M36, migration `0058`)**
+  `project_id` (FK `projects`, CASCADE; **nullable** — NULL for named,
+  platform-scoped packages) + `is_default` (bool, default `false`): the
+  per-project default "virtual" local package element-level forks land in. A
+  partial-unique index `local_packages_default_per_project` on `(project_id)
+  WHERE is_default` enforces at most one default per project.
+- **Cut version** reuses the installer: a clean export of `working_dir` →
+  `installPackageRevision({ version: "local" })` → a `local-<digest>`
+  `package_installs` row (cut versions reuse the package substrate above); a
+  project `member` then attaches it via the `manageLocalPackages` action.
+
 ## `capability_records`
 
 Project-visible catalog entries used by scratch launch options and capability
@@ -601,9 +633,9 @@ scheduler_jobs {
 scheduler_job_runs {
   id, jobId,
   jobKind,
-  claimToken,
   status: 'Claimed' | 'Running' | 'Succeeded' | 'Failed' | 'Skipped',
-  startedAt, leaseExpiresAt, endedAt?,
+  claimedAt,
+  startedAt?, leaseExpiresAt, finishedAt?,
   summary?,
   errorCode?, errorMessage?
 }
@@ -628,7 +660,9 @@ See [`db/agents-domain.md`](db/agents-domain.md).
 `scheduler_jobs` is indexed on `(disabled_at, next_run_at)` and
 `(job_kind, next_run_at)`. `scheduler_job_runs` is indexed on
 `(status, lease_expires_at)` so the tick can reap expired attempts before
-claiming new work.
+claiming new work. `agent_schedules` is indexed on `(project_id, agent_id)` and
+`(trigger_type, enabled, next_fire_at)` for project lookups and the cron
+dispatcher scan.
 
 ## Run schedule tables (Implemented, M28)
 
@@ -653,7 +687,8 @@ run_schedules {
   lastFiredAt?,
   lastFireOutcome?: 'launched' | 'queued_pending' | 'catchup_queued'
     | 'skipped_task_busy' | 'skipped_cap' | 'skipped_target_terminal'
-    | 'skipped_crashed' | 'launch_failed' | 'dispatching',
+    | 'skipped_crashed' | 'skipped_blocked' | 'skipped_unconfigured'
+    | 'launch_failed' | 'dispatching',
   lastFireError?,                   // "CODE: message", bounded ≤500 chars
   lastRunId?,                       // runs FK, SET NULL
   createdByUserId?,                 // users FK, SET NULL
@@ -780,11 +815,11 @@ draft updates increment `draft_version` and stale callers receive `CONFLICT`.
                                  //   board Launch passes it as launchOverride
   targetBranch?,                 // M34: verdict target branch (text)
   promotionMode?,                // M34: 'local_merge' | 'pull_request'
-  launchMode?,                   // M36 (Implemented, ADR-095, migration 0056):
+  launchMode?,                   // M37 (Implemented, ADR-098, migration 0060):
                                  //   'auto' | 'manual'; nullable. Stamped on
                                  //   `run_plan`-emitted as-plan child tasks so the
                                  //   auto-launcher and cancel-cascade key on it.
-  delegationSpec?,               // M36 (Implemented, ADR-095, migration 0056): jsonb
+  delegationSpec?,               // M37 (Implemented, ADR-098, migration 0060): jsonb
                                  //   NULL. The as-plan delegation spec (target +
                                  //   resolved settings) captured for a child task
                                  //   submitted via `run_plan`.
@@ -939,7 +974,13 @@ unread badge and inbox panel.
                                  //   terminal L3 enforcement gates off this,
                                  //   not the mutable catalog index
   taskId?,                       // nullable for scratch runs
-  projectId,
+  projectId?,                    // M36 (migration 0059): NULLABLE — NULL for the
+                                 //   project-less local-package assistant run
+                                 //   (ADR-097); set for every other run
+  localPackageId?,               // M36 (migration 0059): FK -> local_packages.id
+                                 //   CASCADE; set iff project-less scratch run
+                                 //   (launch-time snapshot read by terminal/read
+                                 //   paths)
   flowId?,                       // nullable for scratch runs
   runnerId,
   runnerResolutionTier,
@@ -947,7 +988,7 @@ unread badge and inbox panel.
   runnerSnapshot,
   status: 'Pending' | 'Running' | 'NeedsInput' | 'NeedsInputIdle'
         | 'HumanWorking'         // M11b manual-takeover claim (migration 0011, additive)
-        | 'WaitingOnChildren'    // M36 (Implemented, ADR-095, migration 0055) orchestrator
+        | 'WaitingOnChildren'    // M37 (Implemented, ADR-098, migration 0060) orchestrator
                                  //   parked on children; holds NO scheduler slot
         | 'Review' | 'Crashed' | 'Done' | 'Abandoned' | 'Failed',
   acpSessionId?,                 // resume handle for the ACP session/resume call
@@ -985,31 +1026,31 @@ unread badge and inbox panel.
   deliveryPolicySnapshot?,       // ADR-085 (jsonb, migration 0047)
                                  //   immutable resolved DeliveryPolicy at launch;
                                  //   cancel may change trigger auto_on_ready -> manual
-  parentRunId?,                  // M36 (Implemented, ADR-095, migration 0055):
+  parentRunId?,                  // M37 (Implemented, ADR-098, migration 0060):
                                  //   FK -> runs.id ON DELETE SET NULL; the
                                  //   orchestrator run that delegated this child
                                  //   (as-run / as-task). NULL for top-level runs.
-  rootRunId?,                    // M36 (Implemented, ADR-095, migration 0055):
+  rootRunId?,                    // M37 (Implemented, ADR-098, migration 0060):
                                  //   FK -> runs.id; the run-tree root (self for a
                                  //   top-level run). NULL on pre-migration rows.
-  delegationSnapshot?,           // M36 (Implemented, ADR-095, migration 0055): jsonb
+  delegationSnapshot?,           // M37 (Implemented, ADR-098, migration 0060): jsonb
                                  //   NULL. Launch-time effective agent-definition of
                                  //   the catalog-resolved child — ONLY
                                  //   { agentDefinitionId, revisionId }. The resolved
                                  //   runner stays in runnerSnapshot, never duplicated
                                  //   here (skill-context rule 207).
-  launchMode?,                   // M36 (Implemented, ADR-095, migration 0055):
+  launchMode?,                   // M37 (Implemented, ADR-098, migration 0060):
                                  //   'auto' | 'manual'; nullable
-  persistent,                    // M36 (Implemented, ADR-096, migration 0057):
+  persistent,                    // M37 (Implemented, ADR-099, migration 0060):
                                  //   boolean NOT NULL DEFAULT false; an addressable
                                  //   long-lived child kept alive across child-terminal
                                  //   events for star-routed messaging (Phase 2 swarm
                                  //   layer-2 substrate).
-  addressableKey?,               // M36 (Implemented, ADR-096, migration 0057):
+  addressableKey?,               // M37 (Implemented, ADR-099, migration 0060):
                                  //   text NULL; the star-routing address. UNIQUE per
                                  //   run-tree via the partial index
                                  //   runs_root_addressable_key_uq (WHERE persistent).
-  workspaceMode?,                // M36 (Implemented, ADR-096, migration 0058):
+  workspaceMode?,                // M37 (Implemented, ADR-099, migration 0060):
                                  //   'own' | 'shared'; nullable. 'shared' joins the
                                  //   run-tree root worktree (delegated child only —
                                  //   a top-level 'shared' run is refused CONFIG).
@@ -1229,7 +1270,12 @@ workspace and are needed by diff, promote, discard, and recovery.
 ```ts
 {
   runId,                         // PK + FK -> runs.id
-  projectId,                     // FK -> projects.id
+  projectId?,                    // FK -> projects.id; M36 (migration 0059)
+                                 //   NULLABLE — NULL for a project-less
+                                 //   local-package assistant run (ADR-097)
+  localPackageId?,               // M36 (migration 0059): FK -> local_packages.id
+                                 //   CASCADE; the project-less owner. CHECK:
+                                 //   exactly one of projectId / localPackageId
   name?,
   initialPrompt,
   workMode: 'auto' | 'plan_first' | 'manual_approval',
@@ -1257,6 +1303,17 @@ workspace and are needed by diff, promote, discard, and recovery.
 `dialogStatus` is the scratch-specific conversation axis. It carries
 `WaitingForUser`; `runs.status` remains the shared lifecycle enum. The mapping
 is defined in [`system-analytics/scratch-runs.md`](system-analytics/scratch-runs.md).
+
+**Project-less local-package variant (M36, migration 0059, ADR-097).** A docked
+AI authoring assistant run sets `localPackageId` and leaves `projectId` NULL —
+it is rooted at a local-package `working_dir` with no project and no
+`workspaces` row (it runs in the existing git-backed working dir;
+`baseBranch`/`baseCommit` are read from its HEAD). The
+`scratch_runs_owner_xor_check` CHECK enforces exactly one of `projectId` /
+`localPackageId`. The matching `runs.localPackageId` is the launch snapshot.
+The `scratch_runs_project_status_idx` is partial (`WHERE projectId IS NOT
+NULL`); `scratch_runs_local_package_idx` is its partial twin. See
+[`system-analytics/studio-ai-assistant.md`](system-analytics/studio-ai-assistant.md).
 
 `workMode` and `reasoningEffort` are launch-policy metadata passed into the
 scratch prompt/profile. `planMode` stays for compatibility with existing
@@ -2084,13 +2141,14 @@ only). No UPDATE/DELETE application paths; future pruning MUST honor
 {
   id,                              // bigint GENERATED ALWAYS AS IDENTITY PK —
                                    //   dispatch ordering key
-  kind,                            // one of 9 taxonomy kinds (CHECK):
+  kind,                            // one of 10 taxonomy kinds (CHECK):
                                    //   task.created | task.comment_added |
                                    //   task.triage_requeued | run.done |
                                    //   run.failed | run.crashed |
-                                   //   run.abandoned | run.review | gate.failed
-                                   //   run.review added by migration 0059
-                                   //   (M36, ADR-097): settled, NOT terminal —
+                                   //   run.abandoned | run.review |
+                                   //   run.escalated | gate.failed
+                                   //   run.review added by migration 0060
+                                   //   (M37, ADR-100): settled, NOT terminal —
                                    //   a delegated child reaching Review
   projectId,                       // NOT NULL, FK -> projects.id (cascade)
   taskId?,                         // NULL, FK -> tasks.id (cascade) — task.* kinds
@@ -2270,10 +2328,10 @@ Created via Drizzle:
 | `runs`                | `runs_task_idx`                         | `(taskId)`                        | Latest-attempt lookups                                             |
 | `runs`                | `runs_project_status_kind_idx`          | `(projectId, status, runKind)`    | Active workspace queries across Flow and scratch runs.             |
 | `runs`                | `runs_kind_task_idx`                    | `(runKind, taskId)`               | Board/latest-attempt lookups that explicitly exclude scratch runs. |
-| `runs`                | `runs_parent_run_id_idx`                | `(parentRunId)`                   | **(M36, Implemented)** orchestrator run-tree child lookups.        |
-| `runs`                | `runs_root_run_id_idx`                  | `(rootRunId)`                     | **(M36, Implemented)** whole-tree queries from the run-tree root.  |
-| `runs`                | `runs_root_addressable_key_uq`          | `(rootRunId, addressableKey)` UNIQUE WHERE `persistent` | **(M36, Implemented, migration 0057)** one persistent child per `addressableKey` within a run-tree (star-routing). |
-| `runs`                | `runs_auto_task_uq`                     | `(taskId)` UNIQUE WHERE `launch_mode='auto'` | **(M36, Implemented, migration 0060, ADR-097)** one auto-DAG run per task — the DB backstop behind the auto-launcher's `hasAnyRun` belt (concurrent dedup via `onConflictDoNothing`). |
+| `runs`                | `runs_parent_run_id_idx`                | `(parentRunId)`                   | **(M37, Implemented)** orchestrator run-tree child lookups.        |
+| `runs`                | `runs_root_run_id_idx`                  | `(rootRunId)`                     | **(M37, Implemented)** whole-tree queries from the run-tree root.  |
+| `runs`                | `runs_root_addressable_key_uq`          | `(rootRunId, addressableKey)` UNIQUE WHERE `persistent` | **(M37, Implemented, migration 0060)** one persistent child per `addressableKey` within a run-tree (star-routing). |
+| `runs`                | `runs_auto_task_uq`                     | `(taskId)` UNIQUE WHERE `launch_mode='auto'` | **(M37, Implemented, migration 0060, ADR-100)** one auto-DAG run per task — the DB backstop behind the auto-launcher's `hasAnyRun` belt (concurrent dedup via `onConflictDoNothing`). |
 | `scratch_runs`        | `scratch_runs_project_status_idx`       | `(projectId, dialogStatus)`       | Project scratch workspace lists.                                   |
 | `scratch_attachments` | `scratch_attachments_run_idx`           | `(runId)`                         | Run-level attachment lookup.                                       |
 | `scratch_attachments` | `scratch_attachments_message_idx`       | `(messageId)`                     | Message attachment lookup.                                         |

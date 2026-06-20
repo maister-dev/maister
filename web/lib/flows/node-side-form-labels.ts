@@ -1,0 +1,86 @@
+import type { GateKind } from "@/lib/flows/editor/editor-state";
+import type { NodeSideFormLabels } from "@/components/flows/node-form/node-side-form";
+import type { getTranslations } from "next-intl/server";
+
+// Builds the full NodeSideForm label bundle from the `flowEditor` next-intl
+// namespace. Extracted so both the live Flow Studio editor and the read-only
+// package-viewer flow detail (M36 T1.4) source identical labels from one place,
+// without duplicating ~50 key paths. Server-side: takes a resolved `flowEditor`
+// translator.
+export function buildNodeSideFormLabels(
+  te: Awaited<ReturnType<typeof getTranslations>>,
+): NodeSideFormLabels {
+  const gateKind: Record<GateKind, string> = {
+    command_check: te("toolbar.gateKind.command_check"),
+    skill_check: te("toolbar.gateKind.skill_check"),
+    ai_judgment: te("toolbar.gateKind.ai_judgment"),
+    artifact_required: te("toolbar.gateKind.artifact_required"),
+    external_check: te("toolbar.gateKind.external_check"),
+    human_review: te("toolbar.gateKind.human_review"),
+  };
+
+  return {
+    empty: te("nodeForm.empty"),
+    action: te("nodeForm.action"),
+    settings: te("nodeForm.settings"),
+    gates: te("nodeForm.gates"),
+    transitions: te("nodeForm.transitions"),
+    rework: te("nodeForm.rework"),
+    output: te("nodeForm.output"),
+    prompt: te("nodeForm.prompt"),
+    command: te("nodeForm.command"),
+    model: te("nodeForm.model"),
+    thinkingEffort: te("nodeForm.thinkingEffort"),
+    permissionMode: te("nodeForm.permissionMode"),
+    workspaceAccess: te("nodeForm.workspaceAccess"),
+    skills: te("nodeForm.skills"),
+    restrictions: te("nodeForm.restrictions"),
+    mcps: te("nodeForm.mcps"),
+    enforcement: {
+      title: te("nodeForm.enforcement.title"),
+      mcps: te("nodeForm.enforcement.mcps"),
+      tools: te("nodeForm.enforcement.tools"),
+      skills: te("nodeForm.enforcement.skills"),
+      restrictions: te("nodeForm.enforcement.restrictions"),
+      permissionMode: te("nodeForm.enforcement.permissionMode"),
+      workspaceAccess: te("nodeForm.enforcement.workspaceAccess"),
+    },
+    timeoutMs: te("nodeForm.timeoutMs"),
+    environmentPolicy: te("nodeForm.environmentPolicy"),
+    failureClass: te("nodeForm.failureClass"),
+    decisions: te("nodeForm.decisions"),
+    criticality: te("nodeForm.criticality"),
+    roles: te("nodeForm.roles"),
+    assignees: te("nodeForm.assignees"),
+    allowTakeover: te("nodeForm.allowTakeover"),
+    outputSchema: te("nodeForm.outputSchema"),
+    outputRequired: te("nodeForm.outputRequired"),
+    presentation: te("nodeForm.presentation"),
+    presentationWidth: te("nodeForm.presentationWidth"),
+    presentationHeight: te("nodeForm.presentationHeight"),
+    presentationColor: te("nodeForm.presentationColor"),
+    reworkAllowedTargets: te("nodeForm.reworkAllowedTargets"),
+    reworkWorkspacePolicies: te("nodeForm.reworkWorkspacePolicies"),
+    reworkMaxLoops: te("nodeForm.reworkMaxLoops"),
+    reworkCommentsVar: te("nodeForm.reworkCommentsVar"),
+    transitionOutcome: te("nodeForm.transitionOutcome"),
+    transitionTarget: te("nodeForm.transitionTarget"),
+    addTransition: te("nodeForm.addTransition"),
+    removeTransition: te("nodeForm.removeTransition"),
+    noTransitions: te("nodeForm.noTransitions"),
+    noGates: te("nodeForm.noGates"),
+    gate: {
+      mode: te("gate.mode"),
+      modeBlocking: te("gate.modeBlocking"),
+      modeAdvisory: te("gate.modeAdvisory"),
+      command: te("gate.command"),
+      prompt: te("gate.prompt"),
+      skill: te("gate.skill"),
+      confidenceMin: te("gate.confidenceMin"),
+      externalDescription: te("gate.externalDescription"),
+      staleOnNewCommit: te("gate.staleOnNewCommit"),
+      remove: te("gate.remove"),
+      kind: gateKind,
+    },
+  };
+}

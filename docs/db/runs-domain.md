@@ -24,7 +24,7 @@ erDiagram
     PLATFORM_ACP_RUNNERS ||--o{ RUNS : "launch runner"
     TASKS ||--o{ RUNS : "1:N retry loop"
     RUNS ||--|| WORKSPACES : "one worktree per run"
-    RUNS ||--o{ RUNS : "run-tree delegation (parent_run_id, M36)"
+    RUNS ||--o{ RUNS : "run-tree delegation (parent_run_id, M37)"
     RUNS ||--o{ STEP_RUNS : "per-step record (legacy)"
     RUNS ||--o{ NODE_ATTEMPTS : "per-node attempt (M11a)"
     RUNS ||--o| RUN_COST_ROLLUPS : "derived token rollup (ADR-085)"
@@ -59,8 +59,9 @@ erDiagram
         text runner_id FK "M34: verdict runner, SET NULL"
         text target_branch "M34: verdict branch, nullable"
         text promotion_mode "M34: local_merge|pull_request, nullable"
-        text launch_mode "M36: auto|manual nullable — as-plan child task (ADR-095, 0056)"
-        jsonb delegation_spec "M36: as-plan delegation spec for run_plan children (ADR-095, 0056)"
+        text launch_mode "M37: auto|manual nullable — as-plan child task (ADR-098, 0060)"
+        jsonb delegation_spec "M37: as-plan delegation spec for run_plan children (ADR-098, 0060)"
+        jsonb execution_policy "migration 0055: per-task default execution policy, nullable"
         timestamp created_at
         timestamp updated_at
     }
@@ -74,19 +75,20 @@ erDiagram
         jsonb trigger_payload "M34: webhook/event context, <= 32 KB"
         text agent_workspace "M34: none|repo_read|worktree (migration 0052) effective-axis snapshot"
         text task_id FK "nullable for scratch"
-        text project_id FK
+        text project_id FK "NULLABLE (M36 0059): NULL for the project-less local-package assistant run"
+        text local_package_id FK "M36 0059: local_packages SET via CASCADE; set iff project-less (launch snapshot)"
         text flow_id FK "nullable for scratch"
         text runner_id FK
         text runner_resolution_tier
         text capability_agent
         jsonb runner_snapshot
-        text parent_run_id FK "M36: runs(id) SET NULL — orchestrator delegator (ADR-095, 0055)"
-        text root_run_id FK "M36: runs(id) — run-tree root (ADR-095, 0055)"
-        jsonb delegation_snapshot "M36: {agentDefinitionId,revisionId} only (ADR-095, 0055)"
-        text launch_mode "M36: auto|manual nullable (ADR-095, 0055)"
-        boolean persistent "M36: addressable long-lived child, DEFAULT false (ADR-096, 0057)"
-        text addressable_key "M36: star-routing key, unique per tree when persistent (ADR-096, 0057)"
-        text workspace_mode "M36: own|shared run-tree worktree, nullable (ADR-096, 0058)"
+        text parent_run_id FK "M37: runs(id) SET NULL — orchestrator delegator (ADR-098, 0060)"
+        text root_run_id FK "M37: runs(id) — run-tree root (ADR-098, 0060)"
+        jsonb delegation_snapshot "M37: {agentDefinitionId,revisionId} only (ADR-098, 0060)"
+        text launch_mode "M37: auto|manual nullable (ADR-098, 0060)"
+        boolean persistent "M37: addressable long-lived child, DEFAULT false (ADR-099, 0060)"
+        text addressable_key "M37: star-routing key, unique per tree when persistent (ADR-099, 0060)"
+        text workspace_mode "M37: own|shared run-tree worktree, nullable (ADR-099, 0060)"
         text status "Pending|Running|NeedsInput|NeedsInputIdle|HumanWorking|WaitingOnChildren|Review|Crashed|Done|Abandoned|Failed"
         text acp_session_id "resume handle (ACP session/resume)"
         text current_step_id "runner cursor"
@@ -100,6 +102,7 @@ erDiagram
         text resume_target_step_id "node id retained at crash time for Recover; current_step_id is nulled on crash (M19, 0016)"
         jsonb resolved_capability_set "M27 Designed: frozen capability snapshot at launch; runner reads this, never live catalog"
         jsonb delivery_policy_snapshot "ADR-085 Designed: resolved policy at launch"
+        jsonb execution_policy "migration 0055: resolved execution policy {preset,overrides} at launch"
         timestamp started_at
         timestamp ended_at
     }
@@ -238,7 +241,8 @@ erDiagram
 
     SCRATCH_RUNS {
         text run_id PK
-        text project_id FK
+        text project_id FK "NULLABLE (M36 0059): exactly one of project_id / local_package_id (CHECK)"
+        text local_package_id FK "M36 0059: local_packages CASCADE; the project-less owner"
         text name
         text initial_prompt
         text work_mode "auto|plan_first|manual_approval"
@@ -400,14 +404,14 @@ BY started_at DESC LIMIT 1`; designed run-attempt schema switches to
 - `runs_kind_task_idx` on `(run_kind, task_id)` — board/latest
   attempt queries that explicitly filter `run_kind = 'flow'` and exclude
   scratch rows with nullable `task_id`.
-- `runs_parent_run_id_idx` on `(parent_run_id)` — **(M36, Implemented)**
+- `runs_parent_run_id_idx` on `(parent_run_id)` — **(M37, Implemented)**
   orchestrator run-tree child lookups (`parent_run_id` FK → `runs`,
   ON DELETE SET NULL).
-- `runs_root_run_id_idx` on `(root_run_id)` — **(M36, Implemented)**
+- `runs_root_run_id_idx` on `(root_run_id)` — **(M37, Implemented)**
   whole-tree queries from the run-tree root.
 - `runs_root_addressable_key_uq` partial UNIQUE on
   `(root_run_id, addressable_key) WHERE persistent = true` —
-  **(M36, Implemented, migration 0057, ADR-096)** one persistent child per
+  **(M37, Implemented, migration 0060, ADR-099)** one persistent child per
   `addressable_key` within a run-tree; backs star-routed messaging address
   resolution.
 - `runs_agent_trigger_event_unique` partial UNIQUE on
@@ -416,7 +420,17 @@ BY started_at DESC LIMIT 1`; designed run-attempt schema switches to
   redelivery converges to exactly one agent run (ADR-089). See
   [agents-domain.md](agents-domain.md).
 - `scratch_runs_project_status_idx` on `(project_id, dialog_status)` — active
-  scratch workspace lists. The primary key on `run_id` covers detail joins.
+  scratch workspace lists. **(M36 0057)** made **partial**
+  (`WHERE project_id IS NOT NULL`) so the project-less local-package assistant
+  rows never widen it; the primary key on `run_id` covers detail joins.
+- `scratch_runs_local_package_idx` on `(local_package_id, dialog_status)`
+  partial (`WHERE local_package_id IS NOT NULL`) — **(M36 0059)** active
+  local-package assistant lists.
+- `scratch_runs_owner_xor_check` CHECK
+  `(project_id IS NOT NULL) <> (local_package_id IS NOT NULL)` — **(M36 0059,
+  ADR-097)** a scratch run is owned by exactly one of a project / a local
+  package (never both, never neither). `runs.local_package_id` is the matching
+  launch snapshot (FK `local_packages`, `ON DELETE CASCADE`).
 - `scratch_messages_run_sequence_uq` on `(run_id, sequence)` UNIQUE —
   deterministic dialog replay.
 - Attachment indexes on `(run_id)` and `(message_id)` — run and

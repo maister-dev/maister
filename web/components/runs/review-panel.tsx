@@ -42,6 +42,7 @@ type ReviewPanelDeliveryPolicy = {
 
 export type ReviewPanelConflict = {
   parentRepoPath: string;
+  displayParentRepoPath?: string | null;
   targetBranch: string;
   runBranch: string;
   command: string;
@@ -80,6 +81,7 @@ export interface ReviewPanelProps {
   // The parent repo path, named in the conflict card so the operator can resolve
   // the merge by hand. Server-state; null on a pre-M18 row.
   parentRepoPath?: string | null;
+  displayParentRepoPath?: string | null;
   // A pre-M18 row whose branch metadata cannot be derived: the panel shows the
   // "relaunch to promote" PRECONDITION state instead of the Promote action.
   legacyNeedsRelaunch?: boolean;
@@ -119,6 +121,7 @@ export function ReviewPanel({
   prUrl,
   prNumber,
   parentRepoPath,
+  displayParentRepoPath,
   legacyNeedsRelaunch = false,
   driftDetected = false,
   conflict,
@@ -133,7 +136,15 @@ export function ReviewPanel({
   const [drift, setDrift] = useState(driftDetected);
   const [truncationAck, setTruncationAck] = useState(false);
   const [conflictState, setConflictState] =
-    useState<ReviewPanelConflict | null>(conflict ?? null);
+    useState<ReviewPanelConflict | null>(
+      conflict
+        ? {
+            ...conflict,
+            displayParentRepoPath:
+              displayParentRepoPath ?? conflict.displayParentRepoPath,
+          }
+        : null,
+    );
   const modeLabelId = useId();
 
   async function promote(allowTargetDrift: boolean): Promise<void> {
@@ -185,6 +196,7 @@ export function ReviewPanel({
 
       if (data?.code === "CONFLICT") {
         setConflictState({
+          displayParentRepoPath,
           parentRepoPath: parentRepoPath ?? "",
           targetBranch,
           runBranch,
@@ -323,7 +335,10 @@ export function ReviewPanel({
             {conflictState.parentRepoPath ? (
               <div className="break-all">
                 <dt className="inline text-mute">{t("conflictRepo")}: </dt>
-                <dd className="inline">{conflictState.parentRepoPath}</dd>
+                <dd className="inline">
+                  {conflictState.displayParentRepoPath ??
+                    conflictState.parentRepoPath}
+                </dd>
               </div>
             ) : null}
             <div className="break-all">

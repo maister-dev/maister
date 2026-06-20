@@ -44,11 +44,15 @@ export function GateForm({
   labels,
   onChange,
   onRemove,
+  readOnly = false,
 }: {
   gate: GateDraft;
   labels: GateFormLabels;
   onChange: (next: GateDraft) => void;
   onRemove: () => void;
+  // Read-only (package viewer): inputs are disabled + the remove control is
+  // dropped. DEFAULTS to false so the live editor render is byte-identical.
+  readOnly?: boolean;
 }): ReactElement {
   const patch = (next: Partial<GateDraft>): void =>
     onChange({ ...gate, ...next });
@@ -71,14 +75,16 @@ export function GateForm({
             {labels.kind[gate.kind]}
           </span>
         </span>
-        <button
-          className="rounded-md border border-line px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-ink-2 hover:bg-paper"
-          data-testid="gate-remove"
-          type="button"
-          onClick={onRemove}
-        >
-          {labels.remove}
-        </button>
+        {readOnly ? null : (
+          <button
+            className="rounded-md border border-line px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-ink-2 hover:bg-paper"
+            data-testid="gate-remove"
+            type="button"
+            onClick={onRemove}
+          >
+            {labels.remove}
+          </button>
+        )}
       </div>
 
       <label className="grid gap-1">
@@ -86,6 +92,7 @@ export function GateForm({
         <select
           className={FIELD_CLS}
           data-testid="gate-mode"
+          disabled={readOnly}
           value={gate.mode ?? "blocking"}
           onChange={(e) => patch({ mode: e.target.value as GateDraft["mode"] })}
         >
@@ -100,6 +107,7 @@ export function GateForm({
           <input
             className={FIELD_CLS}
             data-testid="gate-command"
+            readOnly={readOnly}
             value={gate.command ?? ""}
             onChange={(e) => patch({ command: e.target.value })}
           />
@@ -112,6 +120,7 @@ export function GateForm({
           <input
             className={FIELD_CLS}
             data-testid="gate-skill"
+            readOnly={readOnly}
             value={gate.skill ?? ""}
             onChange={(e) => patch({ skill: e.target.value })}
           />
@@ -124,6 +133,7 @@ export function GateForm({
           <input
             className={FIELD_CLS}
             data-testid="gate-prompt"
+            readOnly={readOnly}
             value={gate.prompt ?? ""}
             onChange={(e) => patch({ prompt: e.target.value })}
           />
@@ -138,6 +148,7 @@ export function GateForm({
             data-testid="gate-confidence-min"
             max={1}
             min={0}
+            readOnly={readOnly}
             step={0.05}
             type="number"
             value={gate.calibration?.confidence_min ?? ""}
@@ -160,6 +171,7 @@ export function GateForm({
             <input
               checked={gate.external?.staleOnNewCommit ?? true}
               data-testid="gate-stale-on-new-commit"
+              disabled={readOnly}
               type="checkbox"
               onChange={(e) =>
                 patch({
@@ -177,6 +189,7 @@ export function GateForm({
             <input
               className={FIELD_CLS}
               data-testid="gate-external-description"
+              readOnly={readOnly}
               value={gate.external?.description ?? ""}
               onChange={(e) =>
                 patch({

@@ -18,6 +18,7 @@ import pino from "pino";
 
 import { deleteSession as defaultDeleteSession } from "@/lib/supervisor-client";
 import { MaisterError } from "@/lib/errors";
+import { requireRunProjectId } from "@/lib/runs/run-kind-invariants";
 import * as schemaModule from "@/lib/db/schema";
 import { systemCachePath } from "@/lib/flow-paths";
 
@@ -54,7 +55,7 @@ export type RunFlowOptions = {
   // commits. The repark CAS is the single-winner claim; this is a soft re-entry
   // with NO additional CAS.
   reparkResume?: { targetStepId: string };
-  // M36 (ADR-095) T5.2: set by the orchestrator-resume domain-event consumer
+  // M37 (ADR-098) T5.2: set by the orchestrator-resume domain-event consumer
   // after it wins the WaitingOnChildren → Running CAS (markResumedFromWait —
   // that IS the single-winner claim). The runner re-enters the parked
   // orchestrator node, reusing its NeedsInput ledger attempt and restoring the
@@ -63,7 +64,10 @@ export type RunFlowOptions = {
 };
 
 export type LoadedRun = {
-  run: RunRow;
+  // ADR-100: the graph/linear runner only loads flow runs (loadRun requires a
+  // task + flow + project), so project_id is non-null here even though the base
+  // Run type made it nullable for the project-less local-package variant.
+  run: RunRow & { projectId: string };
   task: TaskRow;
   flow: FlowRow;
   executor: RunnerExecutor;
@@ -246,7 +250,8 @@ export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
   }
 
   return {
-    run,
+    // project_id is guaranteed (a flow run always has a project; ADR-097).
+    run: { ...run, projectId: requireRunProjectId(run.projectId, runId) },
     task,
     flow,
     manifest,

@@ -38,6 +38,15 @@ triggers, and flow-target schedules that mint a task per fire (Phase 2).
   N+1). Used by `launchRun` itself and by the dispatcher's policy decision.
 - **Schedules tab** (project board `?tab=schedules`, Implemented, M28) —
   view for `readBoard`, mutate affordances for `manageSchedules` (member).
+- **Task schedules overview** (`/admin/scheduler`, Implemented, M28) — read-only
+  global-admin overview of `run_schedules` joined to owning project, target
+  task, and last run. It links to `/runs/{lastRunId}` when a last run exists,
+  and to `/projects/{slug}?tab=schedules` for edits instead of creating global
+  schedule CRUD.
+- **Schedule presets** (project board `?tab=schedules`, Implemented, M28) — UI
+  affordance for common 5-field cron expressions (hourly, daily, weekdays,
+  weekly, custom). Presets write the same `cron_expr` string as manual input
+  and do not change dispatch semantics.
 
 ## State machine
 
@@ -159,6 +168,19 @@ fires were missed. `Pending` runs from `start_anyway` keep strict priority —
 the existing engine promotes them on slot release, before any tick-driven
 catch-up.
 
+### Admin overview to project schedule editor
+
+```mermaid
+flowchart TD
+    Admin["Global admin opens /admin/scheduler"] --> Overview["Task schedules overview<br/>project + task + cron + next fire + last outcome"]
+    Overview --> ProjectLink["Open project schedules tab"]
+    ProjectLink --> ProjectSchedules["/projects/{slug}?tab=schedules"]
+    ProjectSchedules --> Edit["Create/edit schedule modal"]
+    Edit --> Preset{"Preset"}
+    Preset -- hourly/daily/weekdays/weekly --> Cron["Write 5-field cronExpr"]
+    Preset -- custom --> Manual["Keep manual cronExpr"]
+```
+
 ## Expectations
 
 - Every fire MUST create runs only through `launchRun` with its full
@@ -197,6 +219,15 @@ catch-up.
 - Mutating routes MUST require `manageSchedules` (member); listing requires
   `readBoard`; cron fires pass `actorUserId: null`, trigger-now passes the
   clicking user's id.
+- The admin Task schedules overview is read-only. It MUST NOT add a global
+  schedule mutation route or bypass the project `manageSchedules` permission
+  model; it links operators to the existing project schedules tab.
+- Overview rows SHOULD include schedule name, project link, task number/title,
+  enabled state, cron/timezone, next fire, queued catch-up state, last
+  outcome/error, and last run status/link when available.
+- Schedule presets MUST be UI-only helpers that produce valid 5-field
+  `cron_expr` values. Unknown expressions open in custom mode and are
+  preserved unless the operator changes them.
 - `cron_expr` MUST be 5-field and `timezone` a valid IANA name, validated
   through the croner wrapper (`MaisterError("CONFIG")`); `croner` MUST be
   imported only by `web/lib/run-schedules/cron.ts` and MUST never start
@@ -281,4 +312,7 @@ catch-up.
   [`tasks.md`](tasks.md).
 - Source seams: `web/lib/run-schedules/{cron,service,queries,dispatch}.ts`,
   `web/lib/runs/launchability.ts`, `web/lib/scheduler/{jobs,tick-service,budgets}.ts`,
-  `web/lib/services/runs.ts`, `web/lib/scheduler.ts`.
+  `web/lib/services/runs.ts`, `web/lib/scheduler.ts`,
+  `web/components/schedules/schedule-edit-modal.tsx`,
+  `web/components/schedules/schedules-table.tsx`, and
+  `web/app/(app)/admin/scheduler/page.tsx`.

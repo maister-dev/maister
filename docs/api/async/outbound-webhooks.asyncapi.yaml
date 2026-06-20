@@ -305,10 +305,11 @@ components:
 
     WebhookEventType:
       type: string
-      description: The 12 curated outbound event types.
+      description: The 13 curated outbound event types.
       enum:
         - run.started
         - run.needs_input
+        - run.escalated
         - hitl.requested
         - hitl.responded
         - run.review

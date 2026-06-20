@@ -11,6 +11,7 @@ import pino from "pino";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { runtimeRoot as configuredRuntimeRoot } from "@/lib/instance-config";
+import { requireRunProjectId } from "@/lib/runs/run-kind-invariants";
 
 const { nodeAttemptCostRollups, nodeAttempts, projects, runCostRollups, runs } =
   schema;
@@ -246,6 +247,10 @@ export async function reconcileRunCostRollups(
     return { status: "missing-run", sourceEventCount: 0 };
   }
 
+  // The inner join above guarantees a project, so project_id is non-null here
+  // (a project-less local-package run matches zero rows → missing-run, ADR-097).
+  const projectId = requireRunProjectId(run.projectId, run.id);
+
   const costPath = path.join(
     opts.runtimeRoot ?? configuredRuntimeRoot(),
     ".maister",
@@ -292,7 +297,7 @@ export async function reconcileRunCostRollups(
   } else {
     const runValues = {
       runId: run.id,
-      projectId: run.projectId,
+      projectId,
       taskId: run.taskId,
       flowId: run.flowId,
       inputTokens: aggregation.run.inputTokens,
@@ -319,7 +324,7 @@ export async function reconcileRunCostRollups(
     await client.insert(nodeAttemptCostRollups).values(
       aggregation.nodeAttempts.map((attempt) => ({
         runId: run.id,
-        projectId: run.projectId,
+        projectId,
         nodeAttemptId: attempt.nodeAttemptId,
         nodeId: attempt.nodeId,
         model: attempt.model,

@@ -1,4 +1,4 @@
-// M36 Phase 7 (T7.4, ADR-095): cascadeAbandonRunTree against a real Postgres
+// M37 Phase 7 (T7.4, ADR-098): cascadeAbandonRunTree against a real Postgres
 // testcontainer — the bulk status-filtered UPDATE, the un-launched as-plan task
 // flip, the run.abandoned emits (with parentRunId), the per-pool promote of a
 // freed slot, and idempotency on a second call all depend on real SQL semantics.
@@ -236,7 +236,7 @@ async function taskStatusOf(taskId: string): Promise<string> {
   return rows[0].status;
 }
 
-describe("cascadeAbandonRunTree (M36 T7.4)", () => {
+describe("cascadeAbandonRunTree (M37 T7.4)", () => {
   it("abandons the whole sub-tree, marks the un-launched as-plan task, frees the pool, is idempotent", async () => {
     const orchTaskId = await seedTask("manual");
     const orchestratorRunId = await seedOrchestrator(orchTaskId);

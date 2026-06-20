@@ -20,6 +20,7 @@ import {
   promoteLocalMerge,
   pushBranch,
   resolveBaseCommit,
+  squashRunBranch,
 } from "@/lib/worktree";
 
 // =============================================================================
@@ -137,6 +138,7 @@ vi.mock("@/lib/worktree", () => ({
   pushBranch: vi.fn(async () => undefined),
   resolveBaseCommit: vi.fn(async () => "tip00000"),
   resolveBaseRef: vi.fn(async () => "base0000"),
+  squashRunBranch: vi.fn(async () => ({ squashed: false, collapsed: 0 })),
 }));
 
 vi.mock("@/lib/flows/graph/evidence-readiness", () => ({
@@ -240,6 +242,9 @@ beforeEach(() => {
   vi.mocked(promoteLocalMerge).mockReset().mockResolvedValue("merged00");
   vi.mocked(pushBranch).mockReset().mockResolvedValue(undefined);
   vi.mocked(resolveBaseCommit).mockReset().mockResolvedValue("tip00000");
+  vi.mocked(squashRunBranch)
+    .mockReset()
+    .mockResolvedValue({ squashed: false, collapsed: 0 });
   vi.mocked(assertEvidenceReady)
     .mockReset()
     .mockResolvedValue({ ready: true, reasons: [] });
@@ -534,5 +539,127 @@ describe("promoteRun — transient failures → EXECUTOR_UNAVAILABLE (503), no p
     expect(dbState.tables.runs[0].status).toBe("Review");
     expect(dbState.tables.workspaces[0].prUrl).toBeNull();
     expect(dbState.tables.workspaces[0].promotionState).not.toBe("done");
+  });
+});
+
+// =============================================================================
+// C2 squash-on-promote applies to PR mode — the squash runs pre-push and the PR
+// branch is force-updated (--force-with-lease) whenever the commit policy
+// squashes. The force decision is RETRY-STABLE (derived from the immutable
+// policy, not the per-attempt squash result), so a reclaim after a transient
+// push failure still force-updates the already-rewritten branch.
+// =============================================================================
+
+describe("promoteRun — pull_request + commits=squash_rework (C2)", () => {
+  it("squashes base..HEAD before the push and force-updates the PR branch", async () => {
+    const runId = seedGithubFlowRun();
+
+    // unattended preset → commits=squash_rework.
+    dbState.tables.runs[0].executionPolicy = { preset: "unattended" };
+    vi.mocked(squashRunBranch).mockResolvedValueOnce({
+      squashed: true,
+      collapsed: 3,
+    });
+
+    const res = (await callPromote(runId, {
+      mode: "pull_request",
+      reviewedTargetCommit: "tip00000",
+    })) as { ok: boolean };
+
+    // History collapsed against the snapshotted base, BEFORE the push.
+    expect(squashRunBranch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        worktreePath: "/wt/flow-1",
+        baseCommit: "base0000",
+      }),
+    );
+    const squashOrder = vi.mocked(squashRunBranch).mock.invocationCallOrder[0];
+    const pushOrder = vi.mocked(pushBranch).mock.invocationCallOrder[0];
+
+    expect(squashOrder).toBeLessThan(pushOrder);
+
+    // A rewrite happened → the (possibly already-pushed) PR branch is forced.
+    expect(pushBranch).toHaveBeenCalledWith(
+      expect.objectContaining({ branch: "maister/flow-1", force: true }),
+    );
+    expect(res.ok).toBe(true);
+    expect(dbState.tables.runs[0].status).toBe("Done");
+  });
+
+  it("still force-pushes when this attempt's squash is a no-op under a squash policy (retry-stable)", async () => {
+    // A prior attempt already squashed; this attempt's squash is a ≤1-commit
+    // no-op. The force decision is policy-derived, so it MUST stay true — a
+    // result-derived decision would drop force and risk a non-fast-forward.
+    const runId = seedGithubFlowRun();
+
+    dbState.tables.runs[0].executionPolicy = { preset: "unattended" };
+    vi.mocked(squashRunBranch).mockResolvedValueOnce({
+      squashed: false,
+      collapsed: 0,
+      reason: "no-commits",
+    });
+
+    await callPromote(runId, {
+      mode: "pull_request",
+      reviewedTargetCommit: "tip00000",
+    });
+
+    expect(pushBranch).toHaveBeenCalledWith(
+      expect.objectContaining({ branch: "maister/flow-1", force: true }),
+    );
+  });
+
+  it("never force-pushes for a non-squash policy (keep_all → plain push)", async () => {
+    const runId = seedGithubFlowRun();
+
+    // No executionPolicy → keep_all → squashRunBranch never called, no force.
+    await callPromote(runId, {
+      mode: "pull_request",
+      reviewedTargetCommit: "tip00000",
+    });
+
+    expect(squashRunBranch).not.toHaveBeenCalled();
+
+    const pushArg = vi.mocked(pushBranch).mock.calls[0][0] as {
+      force?: boolean;
+    };
+
+    expect(pushArg.force).toBeUndefined();
+  });
+
+  it("reclaim after a transient push failure still force-pushes the squashed branch (Codex regression)", async () => {
+    // The exact retry hazard: attempt 1 squashes + pushes, push throws
+    // EXECUTOR_UNAVAILABLE (claim LEFT claiming, remote not updated). The claim
+    // goes stale; a reclaim re-mints the attempt, the squash is now a no-op
+    // (branch already rewritten), and the PR push MUST still force-update the
+    // remote (which may hold the old unsquashed history) — no non-fast-forward.
+    const runId = seedGithubFlowRun({
+      promotionState: "claiming",
+      prUrl: null,
+    });
+
+    dbState.tables.runs[0].executionPolicy = { preset: "unattended" };
+    // Stale claim (past the 300s mock timeout) from the crashed first attempt.
+    dbState.tables.workspaces[0].promotionClaimedAt = new Date(
+      Date.now() - 10 * 60_000,
+    );
+    dbState.tables.workspaces[0].promotionAttemptId = "crashed-token";
+    // The reclaim's squash is a no-op — attempt 1 already rewrote base..HEAD.
+    vi.mocked(squashRunBranch).mockResolvedValueOnce({
+      squashed: false,
+      collapsed: 0,
+      reason: "no-commits",
+    });
+
+    const res = (await callPromote(runId, {
+      mode: "pull_request",
+      reviewedTargetCommit: "tip00000",
+    })) as { ok: boolean };
+
+    expect(pushBranch).toHaveBeenCalledWith(
+      expect.objectContaining({ branch: "maister/flow-1", force: true }),
+    );
+    expect(res.ok).toBe(true);
+    expect(dbState.tables.runs[0].status).toBe("Done");
   });
 });

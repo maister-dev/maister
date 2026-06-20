@@ -116,7 +116,13 @@ capability imports are cached system-wide under `~/.maister/flows/` and
 `~/.maister/capabilities/` (content-addressed by resolved git SHA); on the
 host-run deployment these live on the operator's filesystem (no container
 mount). Auto-trust policy for capability imports is set via
-`MAISTER_TRUSTED_CAPABILITY_SOURCE_PREFIXES` (see `configuration.md`). MAIster's git work (clone, worktree
+`MAISTER_TRUSTED_CAPABILITY_SOURCE_PREFIXES` (see `configuration.md`).
+**Editable local packages (M36, ADR-096)** keep their git-backed working dirs
+under `MAISTER_LOCAL_PACKAGES_ROOT` (default `~/.maister/local`) — host-only,
+**not** a container/compose mount
+([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)),
+exactly like the worktrees/flows roots; `MAISTER_LOCAL_PACKAGE_LOCK_MINUTES`
+(default `30`) tunes the editor session-lock TTL. MAIster's git work (clone, worktree
 create/remove, flow-finish merge) is **local and provider-neutral** — it never
 contacts the provider beyond the clone/fetch. GitHub, GitLab, Gitea, and
 GitVerse are all just git.

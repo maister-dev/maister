@@ -51,6 +51,29 @@ type ReadState =
 
 type ReadResult = { state: ReadState; content?: string; kind?: string };
 
+// Image preview read (M36 T1.5): a confined image file rendered as a data URI so
+// the bytes can show in an <img> without ever exposing the disk path. Non-image
+// or oversized → the same typed states as the text reader.
+type ImageReadResult =
+  | { state: "image"; dataUri: string }
+  | { state: "binary" | "too-large" | "not-found" | "bundle-missing" };
+
+const IMAGE_MIME_BY_EXT: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".svg": "image/svg+xml",
+  ".bmp": "image/bmp",
+  ".ico": "image/x-icon",
+  ".avif": "image/avif",
+};
+
+export function imageMimeForPath(relPath: string): string | null {
+  return IMAGE_MIME_BY_EXT[path.extname(relPath).toLowerCase()] ?? null;
+}
+
 function isEnoent(err: unknown): boolean {
   return (err as NodeJS.ErrnoException).code === "ENOENT";
 }
@@ -127,12 +150,19 @@ export async function listInstalledPackageFiles(
   return { bundleMissing: false, files, flowYaml };
 }
 
-export async function readInstalledPackageFile(
-  args: InstalledPackageRef,
-  relPath: string,
-): Promise<ReadResult> {
-  const { installedPath } = args;
+type ConfineResult =
+  | { ok: true; real: string }
+  | { ok: false; state: "not-found" | "too-large" | "bundle-missing" };
 
+// THE single path-confinement gate for per-file reads off an installed package.
+// Validates the untrusted rel-path, blocks lexical + symlink escape, rejects a
+// directory target, and caps size — returning the real absolute path or a typed
+// state. Both the text reader and the image reader go through here; do NOT
+// reimplement confinement at a call site.
+async function resolveConfinedFile(
+  installedPath: string,
+  relPath: string,
+): Promise<ConfineResult> {
   const parsed = relPathSchema.safeParse(relPath);
 
   if (!parsed.success) {
@@ -141,7 +171,7 @@ export async function readInstalledPackageFile(
       "package file path-confinement reject",
     );
 
-    return { state: "not-found" };
+    return { ok: false, state: "not-found" };
   }
 
   const rootResolved = path.resolve(installedPath);
@@ -156,7 +186,7 @@ export async function readInstalledPackageFile(
       "package file path-confinement reject",
     );
 
-    return { state: "not-found" };
+    return { ok: false, state: "not-found" };
   }
 
   let rootReal: string;
@@ -164,7 +194,7 @@ export async function readInstalledPackageFile(
   try {
     rootReal = await realpath(rootResolved);
   } catch (err) {
-    if (isEnoent(err)) return { state: "bundle-missing" };
+    if (isEnoent(err)) return { ok: false, state: "bundle-missing" };
     throw err;
   }
 
@@ -173,7 +203,7 @@ export async function readInstalledPackageFile(
   try {
     real = await realpath(lexical);
   } catch (err) {
-    if (isEnoent(err)) return { state: "not-found" };
+    if (isEnoent(err)) return { ok: false, state: "not-found" };
     throw err;
   }
 
@@ -183,26 +213,57 @@ export async function readInstalledPackageFile(
       "package file path-confinement reject",
     );
 
-    return { state: "not-found" };
+    return { ok: false, state: "not-found" };
   }
 
   const stats = await stat(real);
 
   // A confined path can still name a DIRECTORY (e.g. `?file=skills`) —
   // readFile would throw EISDIR and 500 the RSC instead of a typed state.
-  if (!stats.isFile()) return { state: "not-found" };
+  if (!stats.isFile()) return { ok: false, state: "not-found" };
 
-  if (stats.size > MAX_FILE_BYTES) return { state: "too-large" };
+  if (stats.size > MAX_FILE_BYTES) return { ok: false, state: "too-large" };
 
-  const bytes = await readFile(real);
+  return { ok: true, real };
+}
+
+export async function readInstalledPackageFile(
+  args: InstalledPackageRef,
+  relPath: string,
+): Promise<ReadResult> {
+  const confined = await resolveConfinedFile(args.installedPath, relPath);
+
+  if (!confined.ok) return { state: confined.state };
+
+  const bytes = await readFile(confined.real);
 
   if (bytes.includes(0)) return { state: "binary" };
 
   try {
     const content = UTF8_DECODER.decode(bytes);
 
-    return { state: "text", content, kind: classifyPackageFile(parsed.data) };
+    return { state: "text", content, kind: classifyPackageFile(relPath) };
   } catch {
     return { state: "binary" };
   }
+}
+
+export async function readInstalledPackageImage(
+  args: InstalledPackageRef,
+  relPath: string,
+): Promise<ImageReadResult> {
+  const mime = imageMimeForPath(relPath);
+
+  if (!mime) return { state: "binary" };
+
+  const confined = await resolveConfinedFile(args.installedPath, relPath);
+
+  if (!confined.ok) return { state: confined.state };
+
+  const bytes = await readFile(confined.real);
+
+  return {
+    state: "image",
+    dataUri: `data:${mime};base64,${bytes.toString("base64")}`,
+  };
 }

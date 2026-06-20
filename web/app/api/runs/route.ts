@@ -4,9 +4,14 @@ import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 import { z } from "zod";
 
-import { requireActiveSession, requireProjectAction } from "@/lib/authz";
+import {
+  requireActiveSession,
+  requireProjectAction,
+  type ProjectAction,
+} from "@/lib/authz";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { storedDeliveryPolicySchema } from "@/lib/runs/delivery-policy";
+import { executionPolicySchema } from "@/lib/runs/execution-policy";
 import {
   formatLaunchErrorFrame,
   formatLaunchProgressFrame,
@@ -28,6 +33,7 @@ const postBodySchema = z
     baseBranch: z.string().min(1).optional(),
     targetBranch: z.string().min(1).optional(),
     deliveryPolicy: storedDeliveryPolicySchema.optional(),
+    executionPolicy: executionPolicySchema.optional(),
   })
   .strict();
 
@@ -115,11 +121,15 @@ export async function POST(req: NextRequest): Promise<Response> {
     baseBranch: body.baseBranch,
     targetBranch: body.targetBranch,
     deliveryPolicy: body.deliveryPolicy,
+    executionPolicy: body.executionPolicy,
   };
   const ctx = {
     actorUserId: user.id,
-    authorize: async (projectId: string) => {
-      await requireProjectAction(projectId, "launchRun");
+    authorize: async (
+      projectId: string,
+      action: ProjectAction = "launchRun",
+    ) => {
+      await requireProjectAction(projectId, action);
     },
   };
 

@@ -44,12 +44,12 @@ const bodySchema = z
     prompt: z.string().min(1),
     title: z.string().min(1).optional(),
     workspace: z.enum(["none", "repo_read", "worktree"]).optional(),
-    // M36 Phase 10 (ADR-096): `own` (default) = per-run worktree; `shared` = N
+    // M37 Phase 10 (ADR-099): `own` (default) = per-run worktree; `shared` = N
     // children of this orchestrator tree share one pre-allocated tree (serialized
     // writers via the promote-time guard). Only meaningful for workspace=worktree.
     workspaceMode: z.enum(["own", "shared"]).optional(),
     runnerOverride: z.string().min(1).optional(),
-    // M36 Phase 8 (ADR-096): a persistent child parks between turns and is
+    // M37 Phase 8 (ADR-099): a persistent child parks between turns and is
     // re-addressable by `addressableKey`; the key is REQUIRED when persistent.
     persistent: z.boolean().optional(),
     addressableKey: z
@@ -262,7 +262,7 @@ export async function POST(
           persistent: body.persistent ?? false,
           addressableKey: body.addressableKey ?? null,
           workspaceMode: body.workspaceMode ?? null,
-          // M36 (ADR-097): honor the requested per-child workspace axis (was
+          // M37 (ADR-100): honor the requested per-child workspace axis (was
           // previously parsed then dropped).
           workspace: body.workspace ?? null,
           trigger: { source: "manual" },

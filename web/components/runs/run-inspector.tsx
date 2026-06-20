@@ -142,7 +142,7 @@ export interface RunInspectorProps {
   // T5.4: the live wrapper sets this when a change-summary re-fetch failed; the
   // changes tab then shows a "may be stale" badge over the last good snapshot.
   stale?: boolean;
-  // M36 Phase 6 (ADR-095): an orchestrator run's spawned run-tree children. The
+  // M37 Phase 6 (ADR-098): an orchestrator run's spawned run-tree children. The
   // expandable "Spawned runs (N)" section renders only when non-empty.
   childRuns?: RunInspectorChildRun[];
   childRunsLabels?: RunInspectorChildRunsLabels;

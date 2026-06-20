@@ -1,6 +1,6 @@
 import "server-only";
 
-// M36: shared run-status sets for orchestrator child accounting — the single
+// M37: shared run-status sets for orchestrator child accounting — the single
 // source of truth so the three child-pending counters (the orchestrator node's
 // completion check, the resume consumer's wake gate, and reconcile's stuck
 // detection) can never drift.
@@ -14,7 +14,7 @@ export const TERMINAL_RUN_STATUSES = [
   "Abandoned",
 ] as const;
 
-// M36 (ADR-097): the SETTLED set — terminal statuses PLUS `Review`. A delegated
+// M37 (ADR-100): the SETTLED set — terminal statuses PLUS `Review`. A delegated
 // child is no longer "pending" for its orchestrator once it is settled: it is
 // either terminal, or sitting in `Review` with a diff awaiting the coordinator's
 // promote/rework decision. The C-2 completion model uses this set so a parked

@@ -1,4 +1,4 @@
-// M36 Phase 8 (ADR-096): the run_message ext surface — re-message resolution +
+// M37 Phase 8 (ADR-099): the run_message ext surface — re-message resolution +
 // scoping + respawn, persistent uniqueness, and persistent-requires-key. The
 // supervisor seam is mocked (createSession spy + an immediately-ending stream)
 // so the parked-child respawn fires startAgentSession against the mock without a
@@ -331,7 +331,7 @@ function jsonReq(
 const MSG_URL = "http://localhost/api/v1/ext/runs/message";
 const DEL_URL = "http://localhost/api/v1/ext/runs/delegate";
 
-describe("POST /api/v1/ext/runs/message (M36 Phase 8)", () => {
+describe("POST /api/v1/ext/runs/message (M37 Phase 8)", () => {
   it("(2) re-messages a parked child by key → respawn with resumeSessionId, status Running", async () => {
     const orchestrator = await seedAgent("orchestrator");
     const worker = await seedAgent("reviewer-agent");

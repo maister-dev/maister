@@ -2,6 +2,7 @@ import type {
   DeliveryPolicy,
   StoredDeliveryPolicy,
 } from "@/lib/runs/delivery-policy";
+import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
 
 import { sql } from "drizzle-orm";
 import {
@@ -133,6 +134,9 @@ export const projects = pgTable("projects", {
   deliveryPolicyDefault: jsonb(
     "delivery_policy_default",
   ).$type<StoredDeliveryPolicy | null>(),
+  executionPolicyDefault: jsonb(
+    "execution_policy_default",
+  ).$type<ExecutionPolicy | null>(),
   taskKey: text("task_key").notNull().unique(),
   nextTaskNumber: integer("next_task_number").notNull().default(1),
   createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
@@ -1019,11 +1023,12 @@ export const tasks = pgTable(
     promotionMode: text("promotion_mode", {
       enum: ["local_merge", "pull_request"],
     }),
-    // M36 (ADR-095, migration 0056): as-plan auto-launch. launch_mode='auto'
+    // M37 (ADR-098, migration 0060): as-plan auto-launch. launch_mode='auto'
     // marks a task whose run the auto-launcher creates once its `requires`
     // blockers clear; delegation_spec carries the catalog-agent target + params.
     launchMode: text("launch_mode", { enum: ["auto", "manual"] }),
     delegationSpec: jsonb("delegation_spec").$type<TaskDelegationSpec | null>(),
+    executionPolicy: jsonb("execution_policy").$type<ExecutionPolicy | null>(),
     createdByUserId: text("created_by_user_id").references(() => users.id, {
       onDelete: "set null",
     }),
@@ -1132,7 +1137,7 @@ export type ResolvedCapabilitySet = {
   mcps: Array<{ refId: string; sha: string | null; scope: string }>;
 };
 
-// M36 (ADR-095): launch-time effective agent-definition of a catalog-resolved
+// M37 (ADR-098): launch-time effective agent-definition of a catalog-resolved
 // orchestrator child. ONLY the definition id + pinned revision — the resolved
 // runner stays in runner_snapshot (skill-context rule 207, never duplicated).
 export type DelegationSnapshot = {
@@ -1140,7 +1145,7 @@ export type DelegationSnapshot = {
   revisionId: string;
 };
 
-// M36 (ADR-095, migration 0056): an as-plan task's launch intent — the
+// M37 (ADR-098, migration 0060): an as-plan task's launch intent — the
 // catalog-agent target + params the auto-launcher uses when the task's
 // `requires` blockers clear. Distinct from runs.delegation_snapshot (what a
 // child actually launched with).
@@ -1179,9 +1184,21 @@ export const runs = pgTable(
     taskId: text("task_id").references(() => tasks.id, {
       onDelete: "cascade",
     }),
-    projectId: text("project_id")
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
+    // M36 Phase 5 (ADR-097): NULLABLE — a scratch-at-local-package assistant run
+    // has NO project (it is rooted at a local-package working dir). Every other
+    // run kind (flow/agent/project scratch) still carries a project_id; the
+    // project-less variant is the ONLY null case and carries local_package_id
+    // instead. Consumers branch on run_kind/null BEFORE dereferencing a project.
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
+    // M36 Phase 5 (ADR-097): launch-time snapshot of the local-package the
+    // assistant session is rooted at; set iff this is a project-less scratch
+    // run. Terminal/read paths read THIS snapshot, never re-deriving.
+    localPackageId: text("local_package_id").references(
+      () => localPackages.id,
+      { onDelete: "cascade" },
+    ),
     flowId: text("flow_id").references(() => flows.id, {
       onDelete: "cascade",
     }),
@@ -1266,7 +1283,7 @@ export const runs = pgTable(
     deliveryPolicySnapshot: jsonb(
       "delivery_policy_snapshot",
     ).$type<DeliveryPolicy | null>(),
-    // M36 (ADR-095, migration 0055): orchestrator run-tree. parent_run_id is the
+    // M37 (ADR-098, migration 0060): orchestrator run-tree. parent_run_id is the
     // delegator; root_run_id the tree root; delegation_snapshot the child's
     // launch-time effective agent-def; launch_mode distinguishes auto-DAG launches.
     parentRunId: text("parent_run_id").references((): AnyPgColumn => runs.id, {
@@ -1279,19 +1296,23 @@ export const runs = pgTable(
       "delegation_snapshot",
     ).$type<DelegationSnapshot | null>(),
     launchMode: text("launch_mode", { enum: ["auto", "manual"] }),
-    // M36 Phase 8 (ADR-096, migration 0057): a persistent swarm member parks
+    // M37 Phase 8 (ADR-099, migration 0060): a persistent swarm member parks
     // between turns (clean end_turn → NeedsInputIdle, acp_session_id retained)
     // instead of finalizing, and is re-messaged by addressable_key within its
     // orchestrator tree.
     persistent: boolean("persistent").notNull().default(false),
     addressableKey: text("addressable_key"),
-    // M36 Phase 10 (ADR-096, migration 0058): worktree allocation mode for a
+    // M37 Phase 10 (ADR-099, migration 0060): worktree allocation mode for a
     // delegated child. null/`own` = today's per-run worktree from the base
     // branch; `shared` = N children of one root_run_id point at a single
     // pre-allocated tree with serialized writers (the promote-time guard keeps
     // at most one shared sibling Running per root). A shared-mode delegation
     // with no root_run_id is refused at launch (CONFIG).
     workspaceMode: text("workspace_mode", { enum: ["own", "shared"] }),
+    executionPolicy: jsonb("execution_policy")
+      .$type<ExecutionPolicy>()
+      .notNull()
+      .default({ preset: "supervised" }),
   },
   (t) => ({
     idxProjectStatus: index("runs_project_status_idx").on(
@@ -1312,13 +1333,13 @@ export const runs = pgTable(
     uniqAgentTriggerEvent: uniqueIndex("runs_agent_trigger_event_uq")
       .on(t.agentId, t.triggerEventId)
       .where(sql`${t.triggerEventId} IS NOT NULL`),
-    // M36 Phase 8 (ADR-096): an addressable_key is unique within one
+    // M37 Phase 8 (ADR-099): an addressable_key is unique within one
     // orchestrator tree among persistent children — the partial-index backstop
     // behind the launch.ts pre-insert check.
     uniqRootAddressableKey: uniqueIndex("runs_root_addressable_key_uq")
       .on(t.rootRunId, t.addressableKey)
       .where(sql`${t.persistent} = true`),
-    // M36 (ADR-097): an as-plan/auto-DAG task launches EXACTLY ONCE over its
+    // M37 (ADR-100): an as-plan/auto-DAG task launches EXACTLY ONCE over its
     // lifetime. This partial unique index is the DB backstop behind the
     // auto-launcher's hasAnyRun check-then-act — under concurrent dispatch the
     // second insert hits 23505 and launchAgentRun's onConflictDoNothing() dedups
@@ -1542,9 +1563,17 @@ export const scratchRuns = pgTable(
     runId: text("run_id")
       .primaryKey()
       .references(() => runs.id, { onDelete: "cascade" }),
-    projectId: text("project_id")
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
+    // M36 Phase 5 (ADR-097): NULLABLE — exactly one of project_id /
+    // local_package_id is set (DB CHECK). A project scratch run keeps
+    // project_id; a docked-assistant run rooted at a local-package working dir
+    // sets local_package_id and leaves project_id NULL.
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
+    localPackageId: text("local_package_id").references(
+      () => localPackages.id,
+      { onDelete: "cascade" },
+    ),
     name: text("name"),
     initialPrompt: text("initial_prompt").notNull(),
     workMode: text("work_mode", {
@@ -1604,9 +1633,19 @@ export const scratchRuns = pgTable(
       .defaultNow(),
   },
   (t) => ({
-    idxProjectStatus: index("scratch_runs_project_status_idx").on(
-      t.projectId,
-      t.dialogStatus,
+    // Partial — still serves project scratch rows; the project-less
+    // (local_package_id) rows are excluded so a NULL project_id never widens it.
+    idxProjectStatus: index("scratch_runs_project_status_idx")
+      .on(t.projectId, t.dialogStatus)
+      .where(sql`${t.projectId} IS NOT NULL`),
+    idxLocalPackage: index("scratch_runs_local_package_idx")
+      .on(t.localPackageId, t.dialogStatus)
+      .where(sql`${t.localPackageId} IS NOT NULL`),
+    // ADR-097: exactly one of project_id / local_package_id (never both, never
+    // neither). Mirrors local_packages' own (project_id XOR named) intent.
+    ownerXorCheck: check(
+      "scratch_runs_owner_xor_check",
+      sql`(${t.projectId} IS NOT NULL) <> (${t.localPackageId} IS NOT NULL)`,
     ),
   }),
 );
@@ -2165,6 +2204,7 @@ export const assignments = pgTable(
         "human_review",
         "manual_takeover",
         "merge_conflict",
+        "infra_recovery",
       ],
     }).notNull(),
     status: text("status", {
@@ -2281,7 +2321,9 @@ export const hitlRequests = pgTable(
       .notNull()
       .references(() => runs.id, { onDelete: "cascade" }),
     stepId: text("step_id").notNull(),
-    kind: text("kind", { enum: ["permission", "form", "human"] }).notNull(),
+    kind: text("kind", {
+      enum: ["permission", "form", "human", "infra_recovery"],
+    }).notNull(),
     schema: jsonb("schema"),
     prompt: text("prompt").notNull(),
     response: jsonb("response"),
@@ -2644,7 +2686,68 @@ export const projectPackageAttachments = pgTable(
   }),
 );
 
+// Editable local package (Flow Studio Phase C, Variant B, ADR-096): a
+// platform-scoped, git-backed working directory authored/forked artifacts live
+// in and `cut version` installs from. `working_dir` is NEVER projected to
+// clients. The lock columns mirror runs.keepalive_until for a session edit-lock.
+export const localPackages = pgTable(
+  "local_packages",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    name: text("name").notNull(),
+    slug: text("slug").notNull().unique(),
+    workingDir: text("working_dir").notNull(),
+    status: text("status", { enum: ["active", "archived"] })
+      .notNull()
+      .default("active"),
+    sourceInstallId: text("source_install_id").references(
+      () => packageInstalls.id,
+      { onDelete: "set null" },
+    ),
+    sourceRepoUrl: text("source_repo_url"),
+    sourceRef: text("source_ref"),
+    branchName: text("branch_name"),
+    lastCutInstallId: text("last_cut_install_id").references(
+      () => packageInstalls.id,
+      { onDelete: "set null" },
+    ),
+    lockedByUserId: text("locked_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    lockedBySession: text("locked_by_session"),
+    lockExpiresAt: timestamp("lock_expires_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    createdBy: text("created_by").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    // M36 (ADR-096): per-project default "virtual" local package for element-level
+    // forks. project_id is NULL for named, platform-scoped local packages; a
+    // default always names its owning project (CASCADE: a deleted project drops
+    // its default). The partial-unique index enforces <=1 default per project.
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
+    isDefault: boolean("is_default").notNull().default(false),
+  },
+  (t) => ({
+    defaultPerProject: uniqueIndex("local_packages_default_per_project")
+      .on(t.projectId)
+      .where(sql`${t.isDefault}`),
+  }),
+);
+
 export type User = typeof users.$inferSelect;
+export type LocalPackage = typeof localPackages.$inferSelect;
 export type AccountStatus = User["accountStatus"];
 export type Account = typeof accounts.$inferSelect;
 export type Session = typeof sessions.$inferSelect;
@@ -3277,7 +3380,7 @@ export const domainEvents = pgTable(
   (t) => ({
     kindCheck: check(
       "domain_events_kind_check",
-      sql`${t.kind} in ('task.created', 'task.comment_added', 'task.triage_requeued', 'run.done', 'run.failed', 'run.crashed', 'run.abandoned', 'run.review', 'gate.failed')`,
+      sql`${t.kind} in ('task.created', 'task.comment_added', 'task.triage_requeued', 'run.done', 'run.failed', 'run.crashed', 'run.abandoned', 'run.review', 'run.escalated', 'gate.failed')`,
     ),
     actorTypeCheck: check(
       "domain_events_actor_type_check",

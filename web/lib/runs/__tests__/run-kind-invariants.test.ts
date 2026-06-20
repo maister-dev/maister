@@ -4,6 +4,7 @@ import { MaisterError } from "@/lib/errors";
 import {
   assertRunKindInvariant,
   assertRunScratchMetadataInvariant,
+  requireRunProjectId,
 } from "@/lib/runs/run-kind-invariants";
 
 describe("assertRunKindInvariant", () => {
@@ -95,5 +96,79 @@ describe("assertRunKindInvariant", () => {
         scratchRunId: "run-1",
       }),
     ).toThrow(MaisterError);
+  });
+
+  // M36 Phase 5 (ADR-097): the project / local-package XOR.
+  it("admits a project scratch run (projectId set, no local package)", () => {
+    expect(() =>
+      assertRunScratchMetadataInvariant({
+        runKind: "scratch",
+        scratchRunId: "run-1",
+        projectId: "proj-1",
+        localPackageId: null,
+      }),
+    ).not.toThrow();
+  });
+
+  it("admits a project-less local-package scratch run (localPackageId set)", () => {
+    expect(() =>
+      assertRunScratchMetadataInvariant({
+        runKind: "scratch",
+        scratchRunId: "run-1",
+        projectId: null,
+        localPackageId: "lp-1",
+      }),
+    ).not.toThrow();
+  });
+
+  it("rejects a scratch run with BOTH project and local package set", () => {
+    expect(() =>
+      assertRunScratchMetadataInvariant({
+        runKind: "scratch",
+        scratchRunId: "run-1",
+        projectId: "proj-1",
+        localPackageId: "lp-1",
+      }),
+    ).toThrow(MaisterError);
+  });
+
+  it("rejects a scratch run with NEITHER project nor local package set", () => {
+    expect(() =>
+      assertRunScratchMetadataInvariant({
+        runKind: "scratch",
+        scratchRunId: "run-1",
+        projectId: null,
+        localPackageId: null,
+      }),
+    ).toThrow(MaisterError);
+  });
+
+  it("rejects a non-scratch run that carries a localPackageId", () => {
+    expect(() =>
+      assertRunScratchMetadataInvariant({
+        runKind: "flow",
+        scratchRunId: null,
+        localPackageId: "lp-1",
+      }),
+    ).toThrow(MaisterError);
+  });
+
+  it("still admits legacy scratch calls that omit the owner pair", () => {
+    expect(() =>
+      assertRunScratchMetadataInvariant({
+        runKind: "scratch",
+        scratchRunId: "run-1",
+      }),
+    ).not.toThrow();
+  });
+});
+
+describe("requireRunProjectId", () => {
+  it("returns the project id when present", () => {
+    expect(requireRunProjectId("proj-1", "run-1")).toBe("proj-1");
+  });
+
+  it("throws CONFIG when the project id is null (project-less run)", () => {
+    expect(() => requireRunProjectId(null, "run-1")).toThrow(MaisterError);
   });
 });

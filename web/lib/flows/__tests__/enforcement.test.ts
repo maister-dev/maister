@@ -469,7 +469,7 @@ describe("assertNodeLaunchable — refusal → typed MaisterError", () => {
     expect((thrown as Error).message).toContain("verdict");
   });
 
-  // M36 (ADR-095): orchestrator nodes inherit the ai_coding capability shape, so
+  // M37 (ADR-098): orchestrator nodes inherit the ai_coding capability shape, so
   // they go through the same strict-enforcement refusal path.
   it("applies to orchestrator nodes too — strict mcps → CONFIG", () => {
     const node: LaunchableNode = {
@@ -491,7 +491,7 @@ describe("assertNodeLaunchable — refusal → typed MaisterError", () => {
     expect((thrown as Error).message).toContain("coordinate");
   });
 
-  // M36 Phase 11 (ADR-096): path-scoped writes ship INSTRUCTED-only. The
+  // M37 Phase 11 (ADR-099): path-scoped writes ship INSTRUCTED-only. The
   // `restrictions` class is no exception to the frozen table — a `strict`
   // restrictions declaration is refused at launch (CONFIG, no executor can
   // enforce it), while `restrictions: instruct` (or a plain data list, which

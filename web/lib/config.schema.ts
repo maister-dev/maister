@@ -715,7 +715,7 @@ export const aiCodingSettingsSchema = z
   })
   .strict();
 
-// M36 (ADR-095): orchestrator settings inherit the full ai_coding capability
+// M37 (ADR-098): orchestrator settings inherit the full ai_coding capability
 // shape (mcps/skills/tools/restrictions/permissionMode/enforcement) plus an
 // optional `delegation` block bounding the run-tree (defaults from the env
 // MAISTER_MAX_ORCHESTRATOR_FANOUT / MAISTER_ORCHESTRATOR_MAX_DEPTH at runtime).
@@ -819,7 +819,7 @@ const aiCodingNodeSchema = z.object({
   session_policy: sessionPolicySchema.optional(),
 });
 
-// M36 (ADR-095): a long-lived SUPERVISORY node — runs as an ACP session (like
+// M37 (ADR-098): a long-lived SUPERVISORY node — runs as an ACP session (like
 // ai_coding) but parks on `WaitingOnChildren` while its delegated child Runs
 // execute, and transitions downstream only when the agent declares the goal met.
 const orchestratorNodeSchema = z.object({

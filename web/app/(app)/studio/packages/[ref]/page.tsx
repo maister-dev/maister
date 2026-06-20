@@ -1,70 +1,39 @@
-import type { FlowGraphViewLabels } from "@/components/board/flow-graph-view";
 import type { Metadata } from "next";
 import type { ReactElement } from "react";
 
 import { getTranslations } from "next-intl/server";
 import { notFound } from "next/navigation";
 import Link from "next/link";
+import pino from "pino";
 
 import { PackageDetail } from "@/components/studio/package-detail";
 import { requireSession } from "@/lib/authz";
-import {
-  getStudioPackageBom,
-  getStudioPackageFlowGraphs,
-} from "@/lib/queries/packages";
+import { getStudioPackageBom } from "@/lib/queries/packages";
 import { getAccessibleProjects } from "@/lib/queries/platform-flows";
 import { loadStudioPackages } from "@/lib/studio/load";
 
-// Read-only flow-graph labels for the package preview: reuse the `workbench.graph.*`
-// namespace (the static viewer never overlays run status, so the node-status map is
-// supplied only for parity with the run-coupled view). Mirrors the per-project
-// package viewer's label builder.
-function buildGraphLabels(
-  t: Awaited<ReturnType<typeof getTranslations>>,
-): FlowGraphViewLabels {
-  return {
-    title: t("graph.title"),
-    empty: t("graph.empty"),
-    currentNode: t("graph.currentNode"),
-    declaredGateSummary: t("graph.declaredGateSummary"),
-    gateSummary: t("graph.gateSummary"),
-    blockingGateSummary: t("graph.blockingGateSummary"),
-    node: {
-      Pending: t("graph.node.Pending"),
-      Running: t("graph.node.Running"),
-      Succeeded: t("graph.node.Succeeded"),
-      Failed: t("graph.node.Failed"),
-      NeedsInput: t("graph.node.NeedsInput"),
-      Reworked: t("graph.node.Reworked"),
-      Stale: t("graph.node.Stale"),
-    },
-    role: {
-      agent: t("graph.role.agent"),
-      command: t("graph.role.command"),
-      check: t("graph.role.check"),
-      judge: t("graph.role.judge"),
-      human: t("graph.role.human"),
-      form: t("graph.role.form"),
-      terminal: t("graph.role.terminal"),
-      other: t("graph.role.other"),
-    },
-    edge: {
-      success: t("graph.edge.success"),
-      default: t("graph.edge.default"),
-      rework: t("graph.edge.rework"),
-      reject: t("graph.edge.reject"),
-      takeover: t("graph.edge.takeover"),
-      approve: t("graph.edge.approve"),
-      other: t("graph.edge.other"),
-    },
-  };
+const log = pino({
+  name: "studio/packages/[ref]",
+  level: process.env.LOG_LEVEL ?? "info",
+});
+
+function firstParam(raw: string | string[] | undefined): string | null {
+  const value = Array.isArray(raw) ? raw[0] : raw;
+
+  return value && value.length > 0 ? value : null;
 }
 
-type PageProps = { params: Promise<{ ref: string }> };
+type PageProps = {
+  params: Promise<{ ref: string }>;
+  searchParams: Promise<{
+    tab?: string | string[];
+    page?: string | string[];
+  }>;
+};
 
 export async function generateMetadata({
   params,
-}: PageProps): Promise<Metadata> {
+}: Pick<PageProps, "params">): Promise<Metadata> {
   const { ref } = await params;
 
   return { title: decodeURIComponent(ref) };
@@ -72,8 +41,10 @@ export async function generateMetadata({
 
 export default async function StudioPackageDetailPage({
   params,
+  searchParams,
 }: PageProps): Promise<ReactElement> {
   const { ref } = await params;
+  const { tab: rawTab, page: rawPage } = await searchParams;
   const decoded = decodeURIComponent(ref);
   const user = await requireSession();
   const groups = await loadStudioPackages(user.id, user.role);
@@ -133,17 +104,21 @@ export default async function StudioPackageDetailPage({
     mcps: [],
     rules: [],
   };
-  const flowGraphs = await getStudioPackageFlowGraphs(installId);
-  const graphLabels = buildGraphLabels(await getTranslations("workbench"));
+  const tab = firstParam(rawTab) ?? "flows";
+  const pageRaw = Number.parseInt(firstParam(rawPage) ?? "1", 10);
+  const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
+
+  log.debug({ ref: decoded, tab, page }, "[studio.packageDetail]");
 
   return (
     <div className="w-full">
       {header}
       <PackageDetail
+        activeTab={tab}
+        basePath={`/studio/packages/${encodeURIComponent(group.name)}`}
         canManage={canManage}
         canTrust={canTrust}
-        flowGraphs={flowGraphs}
-        graphLabels={graphLabels}
+        page={page}
         pkg={{
           name: group.name,
           sourceUrl: group.sourceUrl,

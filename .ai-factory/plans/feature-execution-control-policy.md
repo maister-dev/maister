@@ -114,7 +114,7 @@
 
 ## Phase A — Self-correction core (BUILD FIRST)
 
-### A.1 — Check strictness (axis A3)
+### A.1 ✅ — Check strictness (axis A3)
 - **Files:** `web/lib/flows/graph/gates-exec.ts` (blocking filter ~267, `gate.mode`),
   `web/lib/flows/graph/readiness-core.ts` (`blockingGateContribution`,
   `liveBlockingGates`).
@@ -128,7 +128,7 @@
 - **Test:** advisory check does not block promotion but the judge→rework loop
   still drives rework; skip omits the gate; review gates unaffected.
 
-### A.2 — Rework on-exhaustion (axis A1)
+### A.2 ✅ — Rework on-exhaustion (axis A1)
 - **Files:** the rework-cap enforcement path (`web/lib/flows/graph/ledger.ts`
   `markNodeReworked`, the transition/advance that counts rework against the
   flow's declared cap).
@@ -136,9 +136,45 @@
   default) · `ship_with_warning` (advisory-promote, subject to the guard) ·
   `fail`. Policy may lower the cap, never raise the author's ceiling.
 - **Log:** `INFO [rework.exhausted] { runId, nodeId, attempts, action }`.
-- **Test:** each action path; cap-lowering honored; author cap not raised.
+- **Test:** each action path; author cap not raised.
+- **Resolved (2026-06-19, owner):** (1) **cap-lowering DEFERRED** — `ExecutionPolicy`
+  carries no rework-cap number, only the action; implement only the on-exhaustion
+  ACTION and respect the author's `rework.maxLoops` as-is (a `reworkMaxLoops` field
+  would reopen Phase 0). The "cap-lowering honored" test is dropped (unmodeled).
+  (2) **`escalate` reuses the existing** human-review / `NeedsInput` HITL substrate —
+  no new escalation primitive. (3) **`ship_with_warning` = ship FORWARD past the
+  loops:** on exhaustion take the node's SUCCESS transition onward (imperfect-but-ship)
+  + record the warning, rather than jump-back or stop.
+- **Implementation map (mapped 2026-06-19, ready to build):**
+  - **Inject at the rework-decision site** `web/lib/flows/graph/runner-graph.ts:2296`
+    (`if (isRework) {`), NOT the cap backstop (~1440). In scope there: `outcome`,
+    `target`, `isRework`, `nodeAttemptNumber` (1-based review-node visit),
+    `node.rework.maxLoops`, `loaded.run.executionPolicy`, `node`, `db`, `runId`.
+  - **Exhaustion condition:** `isRework && node.rework && nodeAttemptNumber >
+    node.rework.maxLoops` — verify the off-by-one against the existing test
+    `runner-graph.integration.test.ts` (maxLoops=1: 1st rework allowed, 2nd
+    rework exhausts → today CONFIG/Failed via backstop). Resolve action via
+    `expandExecutionPolicy(loaded.run.executionPolicy).reworkExhaustion`
+    (add the import; runner-graph.ts has none yet).
+  - **`fail`:** throw the existing `CONFIG` (or fall through to the ~1440 backstop)
+    → run Failed. **`escalate` (DEFAULT for all presets):** reuse `runReviewHuman`'s
+    HITL creation (`hitl_requests` insert L315–324 + `createHitlAssignmentForRun`
+    L329–337 + needs-input artifact L271–279) → run `NeedsInput`. **`ship_with_warning`:**
+    skip the rework block, `markNodeSucceeded` + `resolveTransition` onto the node's
+    forward (success) path; record a warning artifact/event.
+  - **Audit/log:** `logExecPolicyAction({runId, kind:"rework_exhausted", detail:{nodeId,
+    action, maxLoops, attempt:nodeAttemptNumber}})` (+ `kind:"escalated"` on escalate);
+    `INFO [rework.exhausted]` per plan.
+  - **★ BEHAVIOR-CHANGE + TEST MIGRATION:** default `reworkExhaustion="escalate"`,
+    so the existing `runner-graph.integration.test.ts` "maxLoops exhaustion → Failed"
+    case now escalates → `NeedsInput`. Migrate that assertion (or seed it with
+    `overrides:{reworkExhaustion:"fail"}`) IN THIS task. Add 3 new cases (escalate /
+    ship_with_warning / fail) via `seedGraphRun(manifest, {executionPolicy})` +
+    `writeDecision` + `runFlow` (harness in `runner-graph.integration.test.ts`).
+  - **Status fan-out reminder (skill-context):** escalate adds a `NeedsInput`
+    transition from a new path — confirm HITL/inbox/board read models surface it.
 
-### A.3 — Ralph-loop (axis A2) — build now, don't defer
+### A.3 ✅ — Ralph-loop (axis A2) — build now, don't defer
 - **Files:** `web/lib/services/runs.ts` (run finalization / Failed→Backlog ~750),
   `web/lib/db/schema.ts` (`tasks.attemptNumber` ~1010 already exists).
 - **Do:** on a run reaching `Failed`, if A2 == `ralph_loop` and
@@ -152,12 +188,39 @@
 - **Log:** `INFO [ralph] { taskId, fromRunId, attempt, max, action }`.
 - **Test:** bounded relaunch count; stops at cap → Backlog hold; supervised → no
   relaunch (manual); concurrency cap respected.
+- **Resolved (2026-06-20, owner):** `maxAttempts` = **5** TOTAL attempts (original
+  launch + relaunches), env-overridable `MAISTER_RALPH_MAX_ATTEMPTS`; **backoff =
+  immediate** (smallest scope, no new scheduler job kind); only `unattended` gets
+  `ralph_loop` (already encoded in the preset table — `assisted`/`supervised` =
+  `fail`).
+- **As-built (deviates from the file pointer above):** implemented as a NEW
+  `run.failed` **domain-event consumer** (`web/lib/runs/ralph-loop.ts`, registered
+  in `DOMAIN_EVENT_CONSUMERS`) rather than inline finalization in `runs.ts` — the
+  owner-chosen mechanism. The consumer reads the FAILED run's snapshotted policy
+  (`crashRetryFromSnapshot`, fail-closed → `fail`), relaunches via the sanctioned
+  system entry `launchRun` (`{ actorUserId: null, authorize: async () => {} }`,
+  same as scheduler/run-schedule fires) carrying the run's `executionPolicy`
+  forward, and respects the global cap for free (launch always creates `Pending`).
+  **Idempotency without a migration:** `runs` has NO `attempt_number` and there is
+  NO `tasks.latest_run_id`, so the dedup/staleness key is **"the failed run is the
+  task's current latest flow run"** (max `started_at`, board.ts's rule). A relaunch
+  inserts a newer `Pending` run, so at-least-once redelivery (and any newer
+  in-flight attempt) is a no-op. The cap bounds on `tasks.attempt_number` (the
+  high-water mark = the latest attempt). `handle` never throws (a throw redelivers
+  the window forever — mirrors `agent_triggers`). Triggers on `run.failed` only,
+  flow runs only (`run_kind='flow'`, `taskId` present); `Crashed` keeps its own
+  Recover/discard UX. Worktree forensics preserved automatically (relaunch forks a
+  fresh worktree; the failed worktree persists until the 7d GC).
 
 ---
 
-## Phase B — Human escalation (outline; build after A is trustworthy)
+## Phase B — Human escalation (build after A is trustworthy)
 
-### B.1 — Permission auto-approve (axis B1), runner-agnostic
+> **Design mapped 2026-06-20** (3-agent code survey, injection points verified
+> against the current tree). B.1 is fully specified (no open decisions). B.2 and
+> B.3 carry the **owner-decision callouts** below — resolve those before building.
+
+### B.1 ✅ — Permission auto-approve (axis B1), runner-agnostic
 - **Files:** `supervisor/src/acp-client.ts` (`requestPermission` — add a 3rd
   inline arbitration **below** the ADR-090 L1 / ADR-078 L2 layers),
   `supervisor/src/types.ts` (+`autoApprovePermissions` on the session-create
@@ -170,47 +233,160 @@
 - **Log:** `INFO [perm.auto] { sessionId, toolKind, optionId }`.
 - **Test:** mock-adapter `requestPermission` auto-approves; read-only session/turn
   still wins; non-claude adapters no longer throw.
+- **★ Implementation map (verified 2026-06-20):**
+  - **Inject L3 at `supervisor/src/acp-client.ts`** inside `requestPermission`,
+    AFTER the L1 `resolveReadOnlySessionDecision` (read-only session) and L2
+    `resolveReadOnlyAutoReject` (read-only gate-chat turn) early-returns, and
+    BEFORE the `session.permission_request` SSE emit + `pendingPermissions.register`
+    deferred (~line 357). If `record.autoApprovePermissions`, call the new exported
+    `resolveAutoApproveOption(options)` and, on a hit, `return { outcome: {
+    outcome: "selected", optionId } }` — short-circuiting the HITL deferred. On NO
+    allow option, **fall through to HITL** (never blind-cancel).
+  - **`resolveAutoApproveOption(options)`** mirrors L1's allow-kind match (~line
+    139): pick the option whose `kind` starts with `allow` (e.g. `allow_once` /
+    `allow` / `allow_always`); never a `reject*` kind. `PermissionOptionDescriptor`
+    = `{ optionId, kind?, name? }`.
+  - **Contract field:** add `autoApprovePermissions?: boolean` to
+    `StartSessionRequestSchema` (after `readOnlySession`, ~202) + `SessionRecord`
+    (~397); assign onto the record in `supervisor/src/spawn.ts` where
+    `readOnlySession` is set. `http-api.ts` already threads the parsed body into
+    `spawnSession`.
+  - **Web side:** add the field to `CreateSessionInput` (`web/lib/supervisor-client.ts`
+    ~97; `createSession` already `JSON.stringify`s the input). Resolve
+    `expandExecutionPolicy(run.executionPolicy).permissions === "auto_approve"` and
+    set it on the `createInput` in `web/lib/flows/runner-agent.ts` (~700). **★ Thread
+    `executionPolicy`** from the `LoadedRun` in the runner down to `runAgentStep`'s
+    ctx (it is not carried today — extend `RunFlowOptions`/the agent step ctx; small
+    surgical change). Orthogonal to read-only: L1/L2 always win.
+  - **runner-provisioner throw:** the ~89-95 throw gates the claude-only
+    `--dangerously-skip-permissions` CLI flag — a DIFFERENT mechanism from
+    supervisor-layer auto-approve (which works for every adapter at the ACP handler
+    regardless of the flag). Dropping it is **optional for B.1** (auto-approve does
+    not depend on it); treat as a separate, low-priority cleanup unless a non-claude
+    `dangerously_skip` runner is actually configured.
 
-### B.2 — Human-gate auto-pass (axis B2), gated on machine review
+### B.2 ✅ — Human-gate auto-pass (axis B2), gated on machine review
 - **Files:** `web/lib/flows/runner-human.ts` (~216), `gates-exec.ts` (`human_review` ~559).
 - **Do:** under `unattended`, auto-resolve `human` nodes / `human_review` gates
   with a recorded system decision — **only after Group-A machine review passed**;
   if the machine is stuck (A exhausted) or a node has no safe default, **escalate
   / fail closed**, never silently pass.
 - **Test:** auto-pass only post-machine-pass; fail-closed on no-default; stuck → escalate.
+- **★ Implementation map (verified 2026-06-20):**
+  - **Inject at the human-NODE pause** in `web/lib/flows/graph/runner-graph.ts`
+    `runReviewHuman` — the first-visit `needsInput: true` return (~386, the branch
+    AFTER the `existing` input-artifact resume check ~216). Under `humanGate ===
+    "auto_pass"` AND the machine-review precondition holds, SKIP the HITL creation
+    entirely (no `hitl_requests` row, no assignment, no `needs-input.json`) and
+    return a synthetic resolved result: `{ ok: true, needsInput: false, decision:
+    <safe-default> }`. The existing post-node path then `markNodeSucceeded({
+    decision, vars })` + transitions forward. (Skipping the HITL avoids a spurious
+    inbox entry; the audit is the `logExecPolicyAction({ kind:
+    "human_gate_auto_passed" })` line — that kind already exists in the audit
+    taxonomy — plus a `task_activity`/domain-event system-actor record.)
+  - **`human_review` GATES** (`gates-exec.ts` ~615) are already recorded `skipped`
+    (deferred to the node finish) and contribute `"blocked"` to readiness — they are
+    NOT a second auto-pass site; the human NODE is the only target.
+  - **Safe-default decision** = reuse A.2's forward-outcome rule: the decision in
+    `node.finishHuman.decisions` whose `node.transitions[decision]` is NOT in
+    `node.rework.allowedTargets` (the approve/forward branch). **No safe default**
+    (empty decisions, or every declared decision targets a rework node) ⇒ do NOT
+    auto-pass → route per B.3 onStuck (default escalate).
+  - **System actor:** `actorForUserId(null)` → `{ type: "system", id: null }`; the
+    decision persists via `markNodeSucceeded({ decision })` on the attempt.
+  - **✅ Resolved (2026-06-20, owner) — precondition = `assertEvidenceReady(runId,
+    "review", db).ready`.** The single established "machine evidence is ready"
+    contract (all live blocking gates passed + required artifacts current),
+    fail-closed. A mid-flow human node auto-passes only once the whole
+    review-evidence set is green (conservative = safe). Not ready ⇒ do NOT auto-pass
+    → route per B.3 `onStuck`.
 
-### B.3 — Escalation threshold (axis B3)
+### B.3 ✅ — Escalation threshold (axis B3)
 - **Files:** domain-events/webhooks (ADR-077), inbox / "Needs you".
 - **Do:** on-stuck routing `escalate | ship_with_warning | notify_only` (the last
   two subject to the guard).
 - **Test:** each route emits the right signal.
+- **★ Survey finding (2026-06-20):** `onStuck` is type-defined + preset-configured
+  (all presets `escalate`) + privilege-gated (`requiresLaunchUnattended` trips on
+  `onStuck !== "escalate"`), but has **no engine hook site today**. The only
+  concrete "stuck" the engine detects is **rework-cap exhaustion**, and A.2 already
+  routes that via its OWN `reworkExhaustion` axis (escalate/ship_with_warning/fail),
+  NOT `onStuck`. The other candidate stuck sites are either prevented by the
+  no-blind-ship guard or are exactly **B.2's "cannot auto-pass" branch**.
+- **✅ Resolved (2026-06-20, owner) — B.3 = the routing policy for B.2's
+  can't-auto-pass branch.** When `humanGate=auto_pass` but `assertEvidenceReady`
+  is NOT ready OR the node has no safe default, the engine routes per `onStuck`
+  instead of hard-coding escalate:
+  - `escalate` (default) → reuse `runReviewHuman` → `NeedsInput` (same substrate as
+    A.2's escalate); a human resolves.
+  - `ship_with_warning` → take the forward (non-rework) transition + record the
+    warning on the attempt (the no-blind-ship guard already forbids the dangerous
+    relaxed-checks + auto-ship combo, so this stays behind strict checks).
+  - `notify_only` → emit the escalation signal and leave the run in the
+    terminal/needs-input state it would otherwise reach, **without** creating a HITL
+    assignment ("don't block on a human, just tell someone").
+  - **Add a `run.escalated` event kind** to BOTH the webhook taxonomy
+    (`web/lib/webhooks/taxonomy.ts`) and the domain-event taxonomy
+    (`web/lib/domain-events/taxonomy.ts`) so `escalate` AND `notify_only` emit an
+    auditable signal (today escalate only emits `run.needs_input`). `notify_only`
+    fires `run.escalated` only; `escalate` fires both `run.escalated` +
+    `run.needs_input`.
+  - **NOT unified with A.2's `reworkExhaustion`** — A.2 shipped + tested with its own
+    axis; the two stay separate (rework-cap exhaustion = `reworkExhaustion`;
+    human-gate-can't-auto-pass = `onStuck`). Reassess only if a single axis is wanted
+    later.
 
 ---
 
-## Phase C — Output shaping (outline)
+## Phase C — Output shaping (build)
 
-### C.1 — Auto-promote (axis C1)
+> **Design mapped 2026-06-20** (3-agent survey). Two plan premises were wrong and
+> the owner re-scoped: C.2 (no per-attempt commits exist) and C.3 (narrow — the
+> unattended human gate already auto-passes). Resolutions below.
+
+### C.1 ✅ — Auto-promote (axis C1)
 - **Files:** `web/lib/runs/promote.ts`, `web/lib/runs/delivery-policy.ts`
   (`auto_on_ready` already exists).
 - **Do:** wire `execution_policy` → the existing auto-promote trigger; enforce the
   guard interaction (non-strict checks force `manual`).
+- **✅ Resolved (2026-06-20, owner) — OR-combine.** `deliverRunIfAutoReady`
+  (`web/lib/runs/auto-delivery.ts`) already auto-promotes when
+  `deliveryPolicySnapshot.trigger === "auto_on_ready"` (called at run→Review,
+  `runner-graph.ts` + `runner.ts`). Add `executionPolicy` to its select and
+  auto-promote when EITHER the delivery trigger OR
+  `promotionFromSnapshot(executionPolicy) === "auto_on_ready"` (new fail-closed →
+  `manual` helper). Delivery policy still defines HOW (strategy/target); execution
+  policy adds WHETHER. The guard is launch-time (`isBlindShip`); promote already
+  re-gates on `assertEvidenceReady("review")` — no extra runtime check.
 
-### C.2 — Commit policy `squash_rework` (axis C2) — deterministic, guarded
-- **Files:** `web/lib/worktree.ts` (commit ~1702 — structured prefix
-  `[node:<id> attempt:<n>]`), `web/lib/runs/promote.ts` (pre-promote rewrite),
+### C.2 ✅ — Commit policy (axis C2) — squash-on-promote, deterministic, guarded
+- **Files:** `web/lib/runs/promote.ts` (pre-promote rewrite),
   new `web/lib/runs/commit-squash.ts`.
-- **Do:** `keep_all | squash_rework | squash_on_promote | defer`. `squash_rework`
-  is a **deterministic engine op** (not an agent node): rewrite history on the run
-  branch pre-promote using the prefixes. **★ Tree-preserving guard:** verify the
-  post-rewrite HEAD tree is byte-identical to pre-rewrite (`git diff` empty); any
-  failure/drift → abort, fall back to `keep_all`, surface. A botched history never
-  promotes.
-- **Test:** squash collapses rework attempts; tree-equality holds; injected drift →
-  abort + keep_all; defer/keep_all paths.
+- **✅ Resolved (2026-06-20, owner) — squash-on-promote (premise corrected).** There
+  are NO per-node-attempt commits (the runner never commits per attempt), so the
+  original "collapse rework-attempt commits by `[node:attempt]` prefix" is moot.
+  Instead: `squash_rework` AND `squash_on_promote` both collapse WHATEVER commits
+  exist on `base..run-branch` into ONE commit pre-promote; `keep_all`/`defer` =
+  no-op. Deterministic engine op via `git reset --soft <base> && git commit` (tree
+  unchanged by construction). **★ Tree-preserving guard:** verify the post-rewrite
+  HEAD tree SHA == pre-rewrite tree SHA (`git rev-parse HEAD^{tree}`); any drift →
+  `git reset --hard <oldHead>` + fall back to `keep_all`, surface. ≤1 commit on the
+  range = no-op. New fail-closed `commitsFromSnapshot` → `keep_all`.
+- **Test:** squash collapses N→1 with identical tree; injected drift → abort+keep_all;
+  ≤1-commit + keep_all/defer = no-op (real git in a tmpdir, no testcontainer).
 
-### C.3 — Dirty-worktree auto-resolution (axis C3)
-- **Files:** `web/lib/runs/dirty-resolution.ts` (`DIRTY_CHOICES`).
+### C.3 ✅ — Dirty-worktree auto-resolution (axis C3)
+- **Files:** `web/lib/flows/graph/runner-graph.ts` (`runReviewHuman` HITL creation),
+  `web/lib/runs/execution-policy.ts` (`dirtyResolveFromSnapshot`).
 - **Do:** policy-driven `ask | commit | proceed`; `discard` never automatic.
+- **✅ Resolved (2026-06-20, owner) — build it (auto-apply at review-HITL creation).**
+  When a review HITL is created (the pause path in `runReviewHuman`) and
+  `dirtyResolveFromSnapshot(executionPolicy) !== "ask"` and the worktree is dirty
+  (`statusPorcelain`): `commit` → `snapshotDirtyWorktree` then record
+  `hitl.dirty_resolution = "commit"`; `proceed` → record `"proceed"` (no git op).
+  `ask` (supervised default) keeps the interactive banner untouched. Narrow but real
+  for `assisted` (pauses at review) + the unattended-escalate edge. New fail-closed
+  `dirtyResolveFromSnapshot` → `ask`.
 
 ---
 
@@ -224,8 +400,10 @@
 
 ## Open numbers (resolve during implementation)
 
-- Ralph-loop `maxAttempts` + backoff; whether `assisted` also gets `ralph_loop`
-  (plan default: only `unattended`).
+- ✅ **Resolved (2026-06-20, A.3):** Ralph-loop `maxAttempts` = **5** total
+  (`MAISTER_RALPH_MAX_ATTEMPTS`); **backoff = immediate** (run.failed consumer, no
+  scheduler delay); only `unattended` gets `ralph_loop` (preset table). See A.3
+  as-built note above.
 
 ## Commit Plan (checkpoints every 3–5 tasks)
 

@@ -50,7 +50,7 @@ export interface SpineSegment {
   state: "done" | "now" | "skip" | "todo";
 }
 
-// M36 Phase 6 (ADR-095): a child task of a `parent_of` SOURCE (orchestrator)
+// M37 Phase 6 (ADR-098): a child task of a `parent_of` SOURCE (orchestrator)
 // task — its KEY-N ref + title + the latest run's status (null if never run).
 export interface ChildTaskRef {
   taskId: string;
@@ -79,7 +79,7 @@ export interface BacklogCard {
   runnerId: string | null;
   targetBranch: string | null;
   promotionMode: "local_merge" | "pull_request" | null;
-  // M36 Phase 6 (ADR-095): non-empty when this task is a `parent_of` SOURCE —
+  // M37 Phase 6 (ADR-098): non-empty when this task is a `parent_of` SOURCE —
   // the run-plan children rendered as a collapsible decomposition group.
   childTasks: ChildTaskRef[];
 }
@@ -131,7 +131,7 @@ export interface FlightCard {
   // only); null when no PR has been recorded.
   prNumber: number | null;
   blockedBy: Array<{ key: string; number: number }>;
-  // M36 Phase 6 (ADR-095): the orchestrator decomposition group (see BacklogCard).
+  // M37 Phase 6 (ADR-098): the orchestrator decomposition group (see BacklogCard).
   childTasks: ChildTaskRef[];
 }
 
@@ -272,7 +272,7 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
   const projectTaskKey = projectKeyRow?.taskKey ?? "";
   const openBlockers = await getOpenRelationBlockers(taskIds, client);
 
-  // M36 Phase 6 (ADR-095): the `parent_of` decomposition children of every task
+  // M37 Phase 6 (ADR-098): the `parent_of` decomposition children of every task
   // on the board, with each child's latest-run status. Zero-impact on a task
   // with no children (its map entry is absent → the card carries []).
   const childTasksByTask = new Map<string, ChildTaskRef[]>();

@@ -268,12 +268,20 @@ defined as a string union in `web/lib/errors.ts`.
 > - **`CONFLICT` → HTTP 409** — attaching an already-attached agent
 >   (`agent_project_links` uniqueness).
 
-> **The M36 orchestrator engine (ADR-095) reuses existing codes and adds none**
+> **Flow Studio Phase C (ADR-096) adds NO new `MaisterError` code** ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror) closed union). It reuses three existing codes at new call sites (Designed — editable local packages):
+>
+> - **`PRECONDITION` → HTTP 409** — a local-package file op (`GET/PUT/DELETE/move` under `/api/studio/local-packages/{id}/files/...`) whose artifact `path` escapes the row's `working_dir` (realpath containment rejecting `..`, absolute paths, symlink escape, or any `.git/` path). The `resolveWithinWorkingDir` guard throws before any write.
+> - **`CONFIG` → HTTP 422** — a local package whose `working_dir` is missing or malformed (manual deletion, bad scaffold).
+> - **`CONFLICT` → HTTP 409** — a working-dir write attempted without a live session edit-lock (the lock is held by another session, or the caller's lock expired / was taken over). The session-scoped lock mirrors `runs.keepalive_until`.
+>
+> Thrown by `web/lib/local-packages/*` (the `resolveWithinWorkingDir` confinement helper + the lock service's `assertHoldsLock`) and the `/api/studio/local-packages/*` routes. The cut-version path reuses the installer's existing `FLOW_INSTALL` on clone/install failure.
+
+> **The M37 orchestrator engine (ADR-098) reuses existing codes and adds none**
 > ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror) closed union).
 > The orchestrator / delegation paths (`run_delegate` / `run_plan` / `run_collect`
 > / `run_cancel` / `run_message` / `run_promote` / `run_rework` over the MCP
 > facade, the governed run-tree, and the idle-checkpoint wait/resume) map onto the
-> existing closed union. **(M36 — Implemented, ADR-095/096/097.)** New call sites:
+> existing closed union. **(M37 — Implemented, ADR-098/099/100.)** New call sites:
 > - **`PRECONDITION` → HTTP 409** — a `run_delegate` / `run_plan` naming an agent
 >   not resolvable through the project's enabled + trusted catalog (unresolvable /
 >   untrusted delegation target — "resolve+trust" is physically separate from
@@ -283,10 +291,10 @@ defined as a string union in `web/lib/errors.ts`.
 >   `compat.engine_min < 1.6.0` (engine floor); an over-`max_fanout` /
 >   over-`max_depth` request (bounds, enforced pre-tx); a cyclic task DAG in
 >   `run_plan`; a `strict` path-scope enforcement declaration (the Phase-2 policy
->   gap — refused until [ADR-096](decisions.md#adr-096-persistent-swarm-layer-2--addressable-sessions-star-routed-messaging-worktree-modes-per-agent-read-only) lands).
+>   gap — refused until [ADR-099](decisions.md#adr-099-persistent-swarm-layer-2--addressable-sessions-star-routed-messaging-worktree-modes-per-agent-read-only) lands).
 > - **`CONFLICT` → HTTP 409** — a concurrent orchestrator resume (two child-settle
 >   events racing the same `WaitingOnChildren → Running` wake); a merge conflict
->   promoting a reviewed child (`run_promote` or as-plan auto-promote, ADR-097) —
+>   promoting a reviewed child (`run_promote` or as-plan auto-promote, ADR-100) —
 >   the child stays in `Review`, never auto-resolved.
 > - **`CHECKPOINT`** — an orchestrator `session/resume` failure when waking from
 >   `WaitingOnChildren` (terminal resume failure, same class as the M8 idle path).

@@ -32,7 +32,7 @@ export async function POST(
 ): Promise<NextResponse> {
   const db = getDb() as Db;
 
-  // M36 (ADR-097): only an orchestrator's run-bound token holds `runs:promote`
+  // M37 (ADR-100): only an orchestrator's run-bound token holds `runs:promote`
   // (child agent tokens do not), so a child→child promote is a 403 by scope.
   return handleExt(
     req,

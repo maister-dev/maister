@@ -1,4 +1,4 @@
-// M36 Phase 8 (ADR-096): persistent park-vs-finalize at the consumeAgentSession
+// M37 Phase 8 (ADR-099): persistent park-vs-finalize at the consumeAgentSession
 // terminal seam. A persistent agent whose session ends on a clean end_turn
 // (exitCode 0, no reason) PARKS (NeedsInputIdle, acp_session_id retained, slot
 // released) — it does NOT finalize Done. A non-persistent child with the same
@@ -160,7 +160,7 @@ async function getRun(runId: string): Promise<any> {
   return rows[0];
 }
 
-describe("persistent park-vs-finalize (M36 Phase 8 T8.1)", () => {
+describe("persistent park-vs-finalize (M37 Phase 8 T8.1)", () => {
   it("a persistent agent parks on clean end_turn: NeedsInputIdle, acp_session_id retained, slot released", async () => {
     await seedProject();
     const runId = await seedRunningAgent(true);

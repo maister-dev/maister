@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { DirtyResolution } from "@/lib/runs/execution-policy";
+
 import { eq, sql } from "drizzle-orm";
 import pino from "pino";
 
@@ -8,7 +10,11 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { deleteChatCheckpoint } from "@/lib/flows/graph/workspace-checkpoint";
-import { discardWorktree, snapshotDirtyWorktree } from "@/lib/worktree";
+import {
+  discardWorktree,
+  snapshotDirtyWorktree,
+  statusPorcelain,
+} from "@/lib/worktree";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { hitlRequests, runs, workspaces } = schemaModule as unknown as Record<
@@ -36,6 +42,50 @@ export interface DirtySummary {
   unstaged: number;
   untracked: number;
   total: number;
+}
+
+// C3 (execution-policy dirtyResolve): auto-resolve a dirty worktree AT a review
+// gate's creation, per policy. `ask` (supervised default) / a clean tree / a
+// missing worktree → no auto-resolution (interactive banner, returns null).
+// `commit` → snapshot the dirt into a commit; `proceed` → record it dirty.
+// `discard` is NEVER an automatic value (it is destructive — human-only). The
+// returned value is written to hitl_requests.dirty_resolution by the caller.
+// Best-effort: a git/worktree error leaves the gate interactive (returns null).
+export async function autoResolveDirtyAtReview(args: {
+  worktreePath: string | null;
+  policy: DirtyResolution;
+  nodeId: string;
+}): Promise<"commit" | "proceed" | null> {
+  if (args.policy === "ask" || !args.worktreePath) return null;
+
+  try {
+    const porcelain = await statusPorcelain({
+      worktreePath: args.worktreePath,
+    });
+
+    if (porcelain.trim() === "") return null;
+
+    if (args.policy === "commit") {
+      await snapshotDirtyWorktree({
+        worktreePath: args.worktreePath,
+        commitMessage: `maister: auto-commit dirty worktree before review ${args.nodeId}`,
+      });
+    }
+
+    log.info(
+      { nodeId: args.nodeId, policy: args.policy },
+      "[dirty] policy auto-resolved at review gate",
+    );
+
+    return args.policy;
+  } catch (err) {
+    log.warn(
+      { nodeId: args.nodeId, err: (err as Error).message },
+      "[dirty] policy auto-resolution skipped (git error) — interactive ask",
+    );
+
+    return null;
+  }
 }
 
 // Parse `git status --porcelain=v1 --untracked-files=all` into the review

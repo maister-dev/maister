@@ -283,6 +283,78 @@ function workspaceInsert(): Record<string, unknown> | undefined {
   )?.values;
 }
 
+function runInsert(): Record<string, unknown> | undefined {
+  // The runs insert is the one carrying the execution-policy snapshot.
+  return state.inserts.find(
+    (call) => call.values && "executionPolicy" in call.values,
+  )?.values;
+}
+
+function denyUnattendedCtx() {
+  return {
+    actorUserId: "user-1",
+    authorize: async (_projectId: string, action?: string) => {
+      if (action === "launchUnattended") {
+        throw new MaisterError("UNAUTHORIZED", "launchUnattended denied");
+      }
+    },
+  };
+}
+
+describe("launchRun — execution-control policy (T0.3)", () => {
+  it("snapshots the supervised default when no policy is supplied", async () => {
+    await launchRun({ taskId: TASK_ID }, ctx(), fakeDb);
+
+    expect(runInsert()?.executionPolicy).toEqual({ preset: "supervised" });
+  });
+
+  it("snapshots the resolved launch-override policy", async () => {
+    await launchRun(
+      { taskId: TASK_ID, executionPolicy: { preset: "unattended" } },
+      ctx(),
+      fakeDb,
+    );
+
+    expect(runInsert()?.executionPolicy).toEqual({ preset: "unattended" });
+  });
+
+  it("rejects a blind-ship policy with PRECONDITION and never inserts", async () => {
+    await expect(
+      launchRun(
+        {
+          taskId: TASK_ID,
+          executionPolicy: {
+            preset: "unattended",
+            overrides: { checks: "skip" },
+          },
+        },
+        ctx(),
+        fakeDb,
+      ),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+
+    expect(runInsert()).toBeUndefined();
+  });
+
+  it("requires launchUnattended for a non-supervised policy (UNAUTHORIZED)", async () => {
+    await expect(
+      launchRun(
+        { taskId: TASK_ID, executionPolicy: { preset: "unattended" } },
+        denyUnattendedCtx(),
+        fakeDb,
+      ),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+    expect(runInsert()).toBeUndefined();
+  });
+
+  it("does not gate a supervised launch behind launchUnattended", async () => {
+    await launchRun({ taskId: TASK_ID }, denyUnattendedCtx(), fakeDb);
+
+    expect(runInsert()?.executionPolicy).toEqual({ preset: "supervised" });
+  });
+});
+
 describe("launchRun — branch targeting defaults (M18)", () => {
   it("defaults base to project.mainBranch and target to the resolved base, and passes the base commit as addWorktree startPoint", async () => {
     await launchRun({ taskId: TASK_ID }, ctx(), fakeDb);

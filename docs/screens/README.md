@@ -34,7 +34,8 @@ docs/screens/
     status-bar.md    # footer supervisor status (single source)
     top-nav.md       # breadcrumb + locale/theme/user menu
     launch-dialog.md # scratch/launch popover + Cmd/Ctrl+K
-  runs/              # run detail area (flow, scratch, shared blocks)
+  runs/              # run ledger + detail area (flow, scratch, shared blocks)
+    list.md          # /runs run ledger
     flow-run.md      # /runs/:runId flow/agent run landing surface
     scratch-run.md   # /scratch-runs/:runId conversation-first surface
     run-inspector.md # shared right sidebar for run info + actions
@@ -116,12 +117,14 @@ flowchart TD
     Rail --> Mcps["MCPs /mcps — admin"]
 
     Rail --> Users["Users /admin/users — admin"]
-    Rail --> Scheduler["Scheduler /admin/scheduler — admin"]
+    Rail --> Scheduler["admin-scheduler /admin/scheduler — admin"]
     Rail --> Settings["Settings /settings — admin"]
 
     Portfolio --> Board["Project board /projects/SLUG"]
     Portfolio --> AddProject["projects/add-project /projects/new — admin"]
     Board --> SettingsGit["projects/project-settings-git /projects/SLUG?tab=settings — admin/owner"]
+    Rail --> RunsList["Runs ledger /runs"]
+    RunsList --> FlowRun["Flow run detail /runs/ID"]
     Board --> FlowRun["Flow run detail /runs/ID"]
     Rail --> ScratchRows["Active scratch workspaces"]
     Launch --> ScratchRun["Scratch run detail /scratch-runs/ID"]
@@ -143,10 +146,12 @@ flowchart TD
 | [`chrome/launch-dialog.md`](chrome/launch-dialog.md) | Launch dialog (scratch/launch popover + Cmd/Ctrl+K) | shell | Implemented (WI-4/WI-5) |
 | [`inbox.md`](inbox.md) | Unified inbox | `/inbox` | Implemented (WI-1) |
 | [`mcps.md`](mcps.md) | Platform MCP catalog (admin) | `/mcps` | Implemented (WI-2) |
+| [`admin-scheduler.md`](admin-scheduler.md) | Scheduler cockpit (admin) | `/admin/scheduler` | Implemented (M24/M28) |
 | [`projects/add-project.md`](projects/add-project.md) | Add-project form (mode selector, prefill, classified clone errors) | `/projects/new` | Implemented (M21); modes/prefill/errors Designed (ADR-093) |
 | [`projects/project-settings-git.md`](projects/project-settings-git.md) | Project Settings → Git (remotes table + persist-config) | `/projects/{slug}?tab=settings` | Designed (ADR-093) |
 | [`studio/README.md`](studio/README.md) | Flow Studio redesign (area design: overview · sources · packages · package detail · editor · local workspace) | `/studio/*` | Implemented (Phase A: overview · sources · packages · detail); B/C Planned |
 | [`studio/editor.md`](studio/editor.md) | Flow editor (3-pane canvas + properties + drawers, node visual scheme) | `/flows/{projectSlug}/{capId}` | Implemented (Phase B) |
+| [`runs/list.md`](runs/list.md) | Runs ledger | `/runs` | Implemented |
 | [`runs/flow-run.md`](runs/flow-run.md) | Flow run detail | `/runs/{runId}` | Implemented (refinement ongoing) |
 | [`runs/scratch-run.md`](runs/scratch-run.md) | Scratch run detail | `/scratch-runs/{runId}` | Implemented |
 | [`runs/run-inspector.md`](runs/run-inspector.md) | Run inspector block | shared | Implemented |

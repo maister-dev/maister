@@ -65,15 +65,19 @@ export function WorkbenchPanel({
       />
       {tabs.includes("files") ? (
         <div
-          className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(220px,300px)_1fr]"
+          className="grid grid-cols-1 items-stretch gap-3 md:grid-cols-[minmax(220px,300px)_1fr]"
           data-testid="files-pane"
           hidden={active !== "files"}
         >
-          <div>{filesTree}</div>
+          <div className="min-h-[560px] [&>[data-testid=file-tree]]:h-full">
+            {filesTree}
+          </div>
           {/* `filesPane` is the layout `children` (an array node); rendering it
               as the sole child of its own wrapper keeps it out of a nested
               sibling array (which would trip React's missing-key warning). */}
-          <div>{filesPane}</div>
+          <div className="min-h-[560px] [&_.markdown-rich-view]:!h-full [&_.markdown-rich-view]:!max-h-full [&_[data-testid=code-view]]:!h-full [&_[data-testid=code-view]]:!max-h-full">
+            {filesPane}
+          </div>
         </div>
       ) : null}
       {tabs.includes("diff") ? (

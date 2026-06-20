@@ -1,4 +1,4 @@
-// M36 (ADR-095) T5.1: the orchestrator park-vs-complete decision + the park-time
+// M37 (ADR-098) T5.1: the orchestrator park-vs-complete decision + the park-time
 // checkpoint + slot-release, end-to-end through the real graph runner. The agent
 // turn is scripted to end NORMALLY (ok:true, needsInput unset) — so the REAL
 // `runOrchestratorStep` decision runs from the run's pending children (NOT a
@@ -282,7 +282,7 @@ async function getRun(runId: string): Promise<any> {
   return rows[0];
 }
 
-describe("orchestrator park-vs-complete (M36 T5.1)", () => {
+describe("orchestrator park-vs-complete (M37 T5.1)", () => {
   it("parks on WaitingOnChildren when a pending child exists; checkpoints + releases the slot", async () => {
     const { runId } = await seedOrchestratorRun();
 

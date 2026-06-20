@@ -782,7 +782,7 @@ describe("getBoardData — unified readiness badge (M15, T15)", () => {
   });
 });
 
-// M36 Phase 6 (ADR-095): a `parent_of` SOURCE task carries its decomposition
+// M37 Phase 6 (ADR-098): a `parent_of` SOURCE task carries its decomposition
 // children (KEY-N + title + latest-run status) on the board card; a task with
 // no children carries an empty childTasks array.
 describe("getBoardData — orchestrator decomposition (integration)", () => {

@@ -43,7 +43,7 @@ export async function POST(
 ): Promise<NextResponse> {
   const db = getDb() as Db;
 
-  // M36 Phase 8 (ADR-096): re-message reuses the runs:delegate scope — a
+  // M37 Phase 8 (ADR-099): re-message reuses the runs:delegate scope — a
   // run-bound orchestrator token addressing its own swarm member.
   return handleExt(
     req,

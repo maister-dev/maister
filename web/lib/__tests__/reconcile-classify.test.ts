@@ -430,7 +430,7 @@ describe("classifyRunReconcile — scratch runs behave as an agent node", () => 
   });
 });
 
-describe("classifyRunReconcile — M36 T7.1: orphaned child (parent gone)", () => {
+describe("classifyRunReconcile — M37 T7.1: orphaned child (parent gone)", () => {
   // A Running child whose delegator parent is Crashed/Abandoned/missing can no
   // longer be coordinated → crash. Caught BEFORE the session/grace checks, so an
   // orphan is crashed even while its OWN session still looks live or fresh.
@@ -500,7 +500,7 @@ describe("classifyRunReconcile — M36 T7.1: orphaned child (parent gone)", () =
   });
 });
 
-describe("classifyRunReconcile — M36 T7.1: parked orchestrator (WaitingOnChildren)", () => {
+describe("classifyRunReconcile — M37 T7.1: parked orchestrator (WaitingOnChildren)", () => {
   // A parked orchestrator is crashed ONLY when genuinely stuck: no live session,
   // no non-terminal children left, AND past the grace window.
   it("WaitingOnChildren + no session + no pending children + past grace → crash / orchestrator-stuck", () => {

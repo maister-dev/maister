@@ -55,12 +55,56 @@ export function runtimeRoot(): string {
   return process.env.MAISTER_RUNTIME_ROOT ?? process.cwd();
 }
 
+// (ADR-096, Flow Studio Phase C) Root for editable local-package working dirs.
+export function localPackagesRoot(): string {
+  return (
+    process.env.MAISTER_LOCAL_PACKAGES_ROOT ??
+    path.join(os.homedir(), ".maister", "local")
+  );
+}
+
+// (ADR-096) Session-scoped working-dir edit-lock TTL, in minutes.
+export function localPackageLockMinutes(): number {
+  return positiveIntFromEnv("MAISTER_LOCAL_PACKAGE_LOCK_MINUTES", 30);
+}
+
+const DEFAULT_IMPORT_MAX_BYTES = 52_428_800; // 50 MiB
+const DEFAULT_IMPORT_MAX_ENTRIES = 2000;
+const DEFAULT_IMPORT_MAX_FILE_BYTES = 10_485_760; // 10 MiB
+
+// (M36 Phase 3) Batch-import caps, enforced PRE-WRITE: total archive bytes,
+// total entry count, and per-file bytes. Host env only per ADR-023 — never
+// wired into compose (a single-host knob, not a deploy var). Invalid → default
+// + one WARN (positiveIntFromEnv).
+export function importMaxBytes(): number {
+  return positiveIntFromEnv(
+    "MAISTER_IMPORT_MAX_BYTES",
+    DEFAULT_IMPORT_MAX_BYTES,
+  );
+}
+
+export function importMaxEntries(): number {
+  return positiveIntFromEnv(
+    "MAISTER_IMPORT_MAX_ENTRIES",
+    DEFAULT_IMPORT_MAX_ENTRIES,
+  );
+}
+
+export function importMaxFileBytes(): number {
+  return positiveIntFromEnv(
+    "MAISTER_IMPORT_MAX_FILE_BYTES",
+    DEFAULT_IMPORT_MAX_FILE_BYTES,
+  );
+}
+
 const DEFAULT_GC_AGE_DAYS = 14;
 const DEFAULT_WORKBENCH_MAX_FILE_BYTES = 524_288;
 const DEFAULT_GC_WARNING_DAYS = 2;
 const DEFAULT_GC_SWEEP_INTERVAL_SECONDS = 3600;
 const DEFAULT_RECONCILE_SWEEP_INTERVAL_SECONDS = 60;
 const DEFAULT_RECONCILE_GRACE_SECONDS = 90;
+const DEFAULT_RALPH_MAX_ATTEMPTS = 5;
+const DEFAULT_AUTO_RETRY_MAX_ATTEMPTS = 3;
 const DEFAULT_PROMOTION_CLAIM_TIMEOUT_SECONDS = 300;
 const DEFAULT_ORCHESTRATOR_MAX_DEPTH = 3;
 const DEFAULT_ORCHESTRATOR_MAX_FANOUT = 16;
@@ -76,6 +120,37 @@ export function promotionClaimTimeoutSeconds(): number {
 
   if (!Number.isFinite(parsed) || parsed < 1) {
     return DEFAULT_PROMOTION_CLAIM_TIMEOUT_SECONDS;
+  }
+
+  return parsed;
+}
+
+// A.2/A1 ralph-loop (execution-policy axis A2): hard cap on TOTAL attempts per
+// task (the original launch + auto-relaunches) before the loop holds the task
+// in Backlog for a human. Env override, sane default, floor at 1.
+export function ralphMaxAttempts(): number {
+  const raw = process.env.MAISTER_RALPH_MAX_ATTEMPTS;
+
+  if (!raw) return DEFAULT_RALPH_MAX_ATTEMPTS;
+  const parsed = Number.parseInt(raw, 10);
+
+  if (!Number.isFinite(parsed) || parsed < 1) return DEFAULT_RALPH_MAX_ATTEMPTS;
+
+  return parsed;
+}
+
+// Execution-policy axis A2 (crashRetry=auto_retry): hard cap on TOTAL ledger
+// attempts for a `retry_safe` node when the run policy auto-retries transient
+// in-run failures (no per-node retry_policy declared). Mirrors the node-level
+// retry_policy.attempts bound. Env override, sane default, floor at 1.
+export function autoRetryMaxAttempts(): number {
+  const raw = process.env.MAISTER_AUTO_RETRY_MAX_ATTEMPTS;
+
+  if (!raw) return DEFAULT_AUTO_RETRY_MAX_ATTEMPTS;
+  const parsed = Number.parseInt(raw, 10);
+
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return DEFAULT_AUTO_RETRY_MAX_ATTEMPTS;
   }
 
   return parsed;
@@ -145,7 +220,7 @@ export function gcArchivePush(): boolean {
   return process.env.MAISTER_GC_ARCHIVE_PUSH === "true";
 }
 
-// M36 (ADR-095): max orchestrator delegation depth — the longest parent_run_id
+// M37 (ADR-098): max orchestrator delegation depth — the longest parent_run_id
 // chain a delegated child may sit at. Bounds runaway recursive delegation. Env
 // override, sane default, floor at 1.
 export function orchestratorMaxDepth(): number {
@@ -161,7 +236,7 @@ export function orchestratorMaxDepth(): number {
   return parsed;
 }
 
-// M36 (ADR-095): max as-plan tasks a single run_plan emit may create — the
+// M37 (ADR-098): max as-plan tasks a single run_plan emit may create — the
 // orchestrator DAG fan-out cap. Bounds runaway plan emission. Env override,
 // sane default, floor at 1.
 export function orchestratorMaxFanout(): number {

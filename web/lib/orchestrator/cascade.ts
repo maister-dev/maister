@@ -48,7 +48,7 @@ type CascadedRunRow = {
   parentRunId: string | null;
 };
 
-// M36 Phase 7 (T7.4, ADR-095): abandon the orchestrator's whole run sub-tree in
+// M37 Phase 7 (T7.4, ADR-098): abandon the orchestrator's whole run sub-tree in
 // ONE transaction. The status-filtered bulk UPDATE both cancels in-flight
 // children AND releases WaitingOnChildren descendants without per-kind dispatch;
 // an un-launched as-plan child task is also marked Abandoned so the auto-launcher

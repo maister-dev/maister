@@ -7,6 +7,7 @@ import pino from "pino";
 import { agentTriggersConsumer } from "@/lib/agents/triggers";
 import { autoLaunchRunPlanConsumer } from "@/lib/domain-events/auto-launch";
 import { orchestratorResumeConsumer } from "@/lib/domain-events/orchestrator-resume";
+import { ralphLoopConsumer } from "@/lib/runs/ralph-loop";
 
 const log = pino({
   name: "domain-events-noop",
@@ -47,12 +48,12 @@ export const noopConsumer: DomainEventConsumer = {
 // agent_triggers — the first real consumer: it matches event kind + project
 // against enabled agent_schedules event rows (with the self-exclusion
 // anti-loop guard) and claims spawns via the partial-unique Pending run
-// insert, so at-least-once redelivery converges to exactly one run. M36
-// (ADR-095) adds auto_launch_run_plan: a child terminal releases the
+// insert, so at-least-once redelivery converges to exactly one run. M37
+// (ADR-098) adds auto_launch_run_plan: a child terminal releases the
 // orchestrator's as-plan siblings whose success-gated `requires` blockers
 // have all cleared (the per-task has-any-run guard ⇒ exactly-once launch,
-// safe for one event fanning out to several same-agent dependents). M36
-// (ADR-095) ALSO adds orchestrator_resume: a SIBLING consumer that wakes the
+// safe for one event fanning out to several same-agent dependents). M37
+// (ADR-098) ALSO adds orchestrator_resume: a SIBLING consumer that wakes the
 // PARKED flow coordinator (WaitingOnChildren → Running) on a child terminal —
 // kept separate from the auto-launcher so "launch the next tasks" and "wake the
 // coordinator" stay independent.
@@ -61,4 +62,8 @@ export const DOMAIN_EVENT_CONSUMERS: DomainEventConsumer[] = [
   agentTriggersConsumer,
   autoLaunchRunPlanConsumer,
   orchestratorResumeConsumer,
+  // A.2/A1 (execution-policy axis A2): auto-relaunches a fresh attempt on
+  // run.failed when the failed run's snapshotted policy is ralph_loop, bounded
+  // by MAISTER_RALPH_MAX_ATTEMPTS. Idempotent via tasks.attempt_number.
+  ralphLoopConsumer,
 ];

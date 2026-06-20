@@ -6,6 +6,10 @@ vi.mock("next-intl", () => ({
   useTranslations: () => (key: string) => key,
 }));
 
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
+}));
+
 import { PackageDetail } from "@/components/studio/package-detail";
 
 const pkg = {
@@ -20,60 +24,54 @@ const pkg = {
     },
   ],
   bom: {
-    flows: [{ id: "aif-dev" }, { id: "aif-init" }],
+    flows: [
+      { id: "aif-dev", nodeCount: 4, gateCount: 2, engine: "1.3.0" },
+      { id: "aif-init", nodeCount: 1, gateCount: 0, engine: null },
+    ],
     agents: [],
-    skills: [{ id: "s1" }],
+    skills: [{ id: "s1", fileCount: 3, subfolderCount: 1 }],
     mcps: [],
     rules: [],
   },
 };
 
+const base = {
+  pkg: pkg as never,
+  canManage: true,
+  canTrust: false,
+  basePath: "/studio/packages/aif",
+  activeTab: "flows",
+  page: 1,
+};
+
 describe("PackageDetail", () => {
-  it("renders bill-of-materials grouped by kind + a rework action", () => {
+  it("renders the active-tab cards + non-empty tabs + a rework action", () => {
     const html = renderToStaticMarkup(
-      createElement(PackageDetail, {
-        pkg: pkg as never,
-        canManage: true,
-        canTrust: false,
-        flowGraphs: [],
-        graphLabels: {} as never,
-      }),
+      createElement(PackageDetail, base as never),
     );
 
+    // Flows is the default active tab → its cards render (no bare id chips).
+    expect(html).toContain('data-testid="element-card"');
     expect(html).toContain("aif-dev");
-    expect(html).toContain("s1");
+    expect(html).toContain("aif-init");
+    // The Skills tab is present (non-empty) even though its cards are not active.
+    expect(html).toContain('data-testid="package-tab-skills"');
     expect(html).toMatch(/rework|fork/i);
+  });
+
+  it("shows the requested tab's members when ?tab=skills", () => {
+    const html = renderToStaticMarkup(
+      createElement(PackageDetail, { ...base, activeTab: "skills" } as never),
+    );
+
+    expect(html).toContain("s1");
   });
 
   it("hides Trust for non-admins", () => {
     const html = renderToStaticMarkup(
-      createElement(PackageDetail, {
-        pkg: pkg as never,
-        canManage: true,
-        canTrust: false,
-        flowGraphs: [],
-        graphLabels: {} as never,
-      }),
+      createElement(PackageDetail, base as never),
     );
 
     expect(html).not.toMatch(/\bTrust\b/);
-  });
-
-  it("renders a titled preview region per compiled flow (no empty note)", () => {
-    const html = renderToStaticMarkup(
-      createElement(PackageDetail, {
-        pkg: pkg as never,
-        canManage: true,
-        canTrust: false,
-        flowGraphs: [
-          { flowId: "aif-dev", topology: { nodes: [], edges: [] }, layout: {} },
-        ] as never,
-        graphLabels: {} as never,
-      }),
-    );
-
-    expect(html).toContain('data-testid="package-preview"');
-    expect(html).toContain("aif-dev");
-    expect(html).not.toContain("previewEmpty");
   });
 });

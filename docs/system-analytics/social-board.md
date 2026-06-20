@@ -226,8 +226,8 @@ you (N)" badge is the single canonical `needsYou` count (see Expectations); see
 - **Mutual blocks (`A blocks B` + `B blocks A`)** — both unlaunchable until
   one relation is removed; always recoverable in UI. Owned by
   [`tasks.md`](tasks.md).
-- **`requires` success-gate (M36 — Implemented)** — the orchestrator auto-DAG
-  wires child tasks with the `requires` relation kind (ADR-095): unlike
+- **`requires` success-gate (M37 — Implemented)** — the orchestrator auto-DAG
+  wires child tasks with the `requires` relation kind (ADR-098): unlike
   `depends_on`/`blocks` (which release on `Done` **and** `Abandoned`),
   `requires` releases the dependent ONLY on `Done`; `Failed`/`Abandoned`
   keeps it blocked and wakes the orchestrator. Behavior owned by

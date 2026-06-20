@@ -29,6 +29,9 @@ export interface HitlDecisionControlsLabels {
   reviewLoopChip?: string;
   reviewApproveOpenWarn?: string;
   reviewReworkExhausted?: string;
+  // A2 infra_recovery (auto_retry exhaustion) — retry/abandon button labels.
+  infraRecoveryRetry?: string;
+  infraRecoveryAbandon?: string;
 }
 
 export interface ReviewSchema {
@@ -111,7 +114,7 @@ export function formFieldsFromSchema(
 }
 
 export interface HitlDecisionControlsProps {
-  kind: "permission" | "form" | "human";
+  kind: "permission" | "form" | "human" | "infra_recovery";
   reviewSchema: ReviewSchema | null;
   options: HitlOption[];
   schema: unknown;
@@ -476,6 +479,31 @@ export function HitlDecisionControls({
               {opt.label}
             </button>
           ))}
+        </div>
+      ) : kind === "infra_recovery" ? (
+        <div className="flex flex-wrap gap-2">
+          <button
+            className={clsx(
+              "rounded-lg border border-amber bg-amber px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-white shadow-[0_4px_12px_-6px_var(--amber)] hover:bg-amber-2",
+              disabled && "opacity-60",
+            )}
+            disabled={disabled}
+            type="button"
+            onClick={() => onOption("retry")}
+          >
+            {labels.infraRecoveryRetry ?? "Retry"}
+          </button>
+          <button
+            className={clsx(
+              "rounded-lg border border-line bg-paper px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-mute hover:border-mute hover:text-ink-2",
+              disabled && "opacity-60",
+            )}
+            disabled={disabled}
+            type="button"
+            onClick={() => onOption("abandon")}
+          >
+            {labels.infraRecoveryAbandon ?? "Abandon"}
+          </button>
         </div>
       ) : formFields ? (
         <div className={clsx("flex flex-col", compact ? "gap-2" : "gap-3")}>

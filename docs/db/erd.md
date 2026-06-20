@@ -82,7 +82,7 @@ erDiagram
     FLOWS ||--o{ PROJECT_FLOW_RUNNER_DEFAULTS : "runner default"
 
     RUNS ||--|| WORKSPACES : "one worktree per run"
-    RUNS ||--o{ RUNS : "run-tree delegation (parent_run_id, M36)"
+    RUNS ||--o{ RUNS : "run-tree delegation (parent_run_id, M37)"
     USERS ||--o{ WORKSPACES : "promotion owner (M18, nullable)"
     RUNS ||--o{ STEP_RUNS : "per-step record (legacy)"
     RUNS ||--o{ NODE_ATTEMPTS : "per-node attempt (M11a)"
@@ -212,6 +212,7 @@ erDiagram
         text default_runner_id "platform runner override"
         text promotion_mode "M18 0021 project-default local_merge|pull_request; override-chain source (§3.4)"
         jsonb delivery_policy_default "ADR-085 Designed: strategy/push/trigger/targetBranch"
+        jsonb execution_policy_default "migration 0055: default execution policy {preset,overrides}, nullable"
         text task_key UK "ADR-075 Implemented: platform-wide unique, immutable Stage 1"
         integer next_task_number "ADR-075 Implemented: allocation counter, DEFAULT 1"
         timestamp created_at
@@ -563,8 +564,9 @@ erDiagram
         text runner_id FK "M34: verdict runner, SET NULL"
         text target_branch "M34: verdict branch, nullable"
         text promotion_mode "M34: local_merge|pull_request, nullable"
-        text launch_mode "M36: auto|manual nullable — as-plan child task (ADR-095, 0056)"
-        jsonb delegation_spec "M36: as-plan delegation spec for run_plan children (ADR-095, 0056)"
+        text launch_mode "M37: auto|manual nullable — as-plan child task (ADR-098, 0060)"
+        jsonb delegation_spec "M37: as-plan delegation spec for run_plan children (ADR-098, 0060)"
+        jsonb execution_policy "migration 0055: per-task default execution policy, nullable"
         timestamp created_at
         timestamp updated_at
     }
@@ -636,13 +638,13 @@ erDiagram
         text runner_resolution_tier
         text capability_agent
         jsonb runner_snapshot
-        text parent_run_id FK "M36: runs(id) SET NULL — orchestrator delegator (ADR-095)"
-        text root_run_id FK "M36: runs(id) — run-tree root (ADR-095)"
-        jsonb delegation_snapshot "M36: {agentDefinitionId,revisionId} (ADR-095, 0055)"
-        text launch_mode "M36: auto|manual (ADR-095, 0055)"
-        boolean persistent "M36: addressable long-lived child, DEFAULT false (ADR-096, 0057)"
-        text addressable_key "M36: star-routing key, unique per tree when persistent (ADR-096, 0057)"
-        text workspace_mode "M36: own|shared run-tree worktree, nullable (ADR-096, 0058)"
+        text parent_run_id FK "M37: runs(id) SET NULL — orchestrator delegator (ADR-098)"
+        text root_run_id FK "M37: runs(id) — run-tree root (ADR-098)"
+        jsonb delegation_snapshot "M37: {agentDefinitionId,revisionId} (ADR-098, 0060)"
+        text launch_mode "M37: auto|manual (ADR-098, 0060)"
+        boolean persistent "M37: addressable long-lived child, DEFAULT false (ADR-099, 0060)"
+        text addressable_key "M37: star-routing key, unique per tree when persistent (ADR-099, 0060)"
+        text workspace_mode "M37: own|shared run-tree worktree, nullable (ADR-099, 0060)"
         text status "Pending..Done"
         text acp_session_id "resume handle"
         text current_step_id "runner cursor"
@@ -656,6 +658,7 @@ erDiagram
         text resume_target_step_id "node id retained at crash time for Recover (M19, 0016)"
         jsonb resolved_capability_set "M27 Designed: frozen capability snapshot at launch (flowRevisionId,capabilities,mcps)"
         jsonb delivery_policy_snapshot "ADR-085 Designed: resolved policy at launch"
+        jsonb execution_policy "migration 0055: resolved execution policy {preset,overrides} at launch"
         timestamp started_at
         timestamp ended_at
     }

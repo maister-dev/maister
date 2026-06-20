@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { CapabilityAgent, FlowYamlV1 } from "@/lib/config.schema";
+import type { ProjectAction } from "@/lib/authz";
 
 import { randomUUID } from "node:crypto";
 import path from "node:path";
@@ -57,6 +58,13 @@ import {
   resolveDeliveryPolicy,
   type StoredDeliveryPolicy,
 } from "@/lib/runs/delivery-policy";
+import {
+  assertNoBlindShip,
+  requiresLaunchUnattended,
+  resolveExecutionPolicy,
+  type ExecutionPolicy,
+} from "@/lib/runs/execution-policy";
+import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
 import { actorForUserId, recordTaskActivity } from "@/lib/social/activity";
 import { getOpenRelationBlockers } from "@/lib/social/relations";
 import { tryStartRun } from "@/lib/scheduler";
@@ -149,6 +157,7 @@ export type LaunchRunInput = {
   baseBranch?: string;
   targetBranch?: string;
   deliveryPolicy?: StoredDeliveryPolicy;
+  executionPolicy?: ExecutionPolicy;
 };
 
 export type PromotionMode = "local_merge" | "rebase_merge" | "pull_request";
@@ -224,7 +233,7 @@ function runnerCatalogEntry(
 
 export type LaunchRunContext = {
   actorUserId?: string | null;
-  authorize: (projectId: string) => Promise<void>;
+  authorize: (projectId: string, action?: ProjectAction) => Promise<void>;
   recordSuccessAudit?: (db: Db) => Promise<void>;
 };
 
@@ -277,6 +286,23 @@ export async function* launchRunStaged(
   // classification detail (incl. blocker KEY-N refs) must not leak to
   // callers without project access. AuthzError propagates untouched.
   await ctx.authorize(project.id);
+
+  // Execution-control policy: resolve (launch override → task → project →
+  // supervised), reject blind-ship combos, then gate non-supervised launches
+  // behind the privileged action. Snapshotted onto runs.execution_policy below;
+  // resume/recover read the snapshot, never re-resolve.
+  const executionPolicy = resolveExecutionPolicy({
+    launchOverride: input.executionPolicy ?? null,
+    taskDefault: (task.executionPolicy as ExecutionPolicy | null) ?? null,
+    projectDefault:
+      (project.executionPolicyDefault as ExecutionPolicy | null) ?? null,
+  });
+
+  assertNoBlindShip(executionPolicy);
+
+  if (requiresLaunchUnattended(executionPolicy)) {
+    await ctx.authorize(project.id, "launchUnattended");
+  }
 
   if (project.archivedAt) {
     throw new MaisterError("PRECONDITION", "project is archived");
@@ -862,6 +888,7 @@ export async function* launchRunStaged(
         runnerSnapshot: runnerResolution.runnerSnapshot,
         resolvedCapabilitySet,
         deliveryPolicySnapshot: deliveryPolicy,
+        executionPolicy,
         createdByUserId: ctx.actorUserId,
         status: "Pending",
         // Snapshot the enabled revision (M10, ADR-021). flow_revision_id is
@@ -873,6 +900,18 @@ export async function* launchRunStaged(
         flowRevision: revision.resolvedRevision,
         flowRevisionId: revision.id,
       });
+
+      if (requiresLaunchUnattended(executionPolicy)) {
+        logExecPolicyAction({
+          runId,
+          kind: "launched",
+          detail: {
+            preset: executionPolicy.preset,
+            overrides: executionPolicy.overrides ?? {},
+          },
+        });
+      }
+
       await tx.insert(workspaces).values({
         id: randomUUID(),
         runId,

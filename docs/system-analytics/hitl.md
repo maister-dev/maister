@@ -14,7 +14,7 @@ artifact protocol used when the worker is checkpointed.
 - **Assignment** — M13 `assignments` row linked by `hitl_request_id`; this is
   the inbox and ownership primitive for open HITL work. `hitl_requests` still
   owns the payload and `responded_at` marker.
-- **Kind** — `'permission' | 'form' | 'human'`:
+- **Kind** — `'permission' | 'form' | 'human' | 'infra_recovery'`:
   - `permission` — binary approve/deny via ACP
     `session/request_permission`.
   - `form` — structured form, schema declared in the Flow's
@@ -28,6 +28,14 @@ artifact protocol used when the worker is checkpointed.
     `comments_var` propagation) is implemented — `kind="human"` now
     reparks atomically to the goto target on rejection. The distinction
     is preserved on the row so the loop can be traced per-kind.
+  - `infra_recovery` — opened by the flow engine when execution-policy
+    `crashRetry=auto_retry` exhausts its in-run retries on a transient
+    code (see [`execution-policy.md`](execution-policy.md)). The failed
+    `ai_coding`/`cli` node's attempt is parked `NeedsInput` (worktree
+    preserved) and the human answers with `optionId: "retry"` (resume
+    re-runs the node) or `"abandon"` (run → `Failed`). Human-actor-only
+    (a machine token can never answer it, like `human`); honors the run's
+    `onStuck` axis (notify_only ⇒ HITL row but no assignment).
 - **Form schema** — JSON Schema-like object with required
   `schemaVersion: integer`. Field types: `string | number | boolean |
 enum | array`.

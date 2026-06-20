@@ -9,7 +9,7 @@ import {
 } from "@/lib/domain-events/taxonomy";
 
 describe("domain-event taxonomy", () => {
-  it("contains exactly the 9 ADR-086/097 kinds", () => {
+  it("contains exactly the 10 taxonomy kinds (ADR-086 + run.review + B3 run.escalated)", () => {
     expect([...DOMAIN_EVENT_KINDS]).toEqual([
       "task.created",
       "task.comment_added",
@@ -19,11 +19,12 @@ describe("domain-event taxonomy", () => {
       "run.crashed",
       "run.abandoned",
       "run.review",
+      "run.escalated",
       "gate.failed",
     ]);
   });
 
-  // M36 (ADR-097): the settled set = terminal kinds + run.review.
+  // M37 (ADR-100): the settled set = terminal kinds + run.review.
   it("run.review is settled but NOT terminal", () => {
     expect(isRunTerminalEventKind("run.review")).toBe(false);
     expect(isRunSettledEventKind("run.review")).toBe(true);

@@ -63,7 +63,7 @@ async function hasAnyRun(db: Db, taskId: string): Promise<boolean> {
   return rows.length > 0;
 }
 
-// M36 (ADR-097): an as-plan (launch_mode='auto') child reaching Review is
+// M37 (ADR-100): an as-plan (launch_mode='auto') child reaching Review is
 // auto-promoted (system actor, local_merge) so the auto-DAG flows without a live
 // coordinator. The promote flips the child Done → emits run.done → this consumer
 // (on that event) advances the task + releases dependents. Only as-plan children
@@ -116,7 +116,7 @@ async function autoPromoteAsPlanChild(
   }
 }
 
-// The auto_launch_run_plan outbox consumer (ADR-095): a child terminal event
+// The auto_launch_run_plan outbox consumer (ADR-098): a child terminal event
 // releases the orchestrator's as-plan siblings whose success-gated `requires`
 // blockers have all cleared. The dispatcher is a singleton
 // (pg_advisory_xact_lock), so the only race is at-least-once REDELIVERY —
@@ -150,7 +150,7 @@ export function buildAutoLaunchRunPlanConsumer(
           continue;
         }
 
-        // M36 (ADR-097): an as-plan child reaching Review auto-promotes; the
+        // M37 (ADR-100): an as-plan child reaching Review auto-promotes; the
         // resulting run.done re-enters this consumer to advance the task +
         // release dependents. Manual (as-run) children are skipped here — the
         // live coordinator promotes them via run_promote.
@@ -159,7 +159,7 @@ export function buildAutoLaunchRunPlanConsumer(
           continue;
         }
 
-        // M36 (ADR-095): a SUCCESSFUL as-plan child advances its OWN task to Done
+        // M37 (ADR-098): a SUCCESSFUL as-plan child advances its OWN task to Done
         // — the `requires` success-gate releases a dependent only when its
         // dependency task is Done. A failed/crashed/abandoned child leaves its
         // task non-Done, so the gate keeps dependents blocked and the
@@ -261,7 +261,7 @@ export function buildAutoLaunchRunPlanConsumer(
               projectId: candidate.projectId,
               taskId: candidate.taskId,
               launchOverrideRunnerId: spec.runnerOverride ?? null,
-              // M36 (ADR-097): honor the plan task's declared workspace axis.
+              // M37 (ADR-100): honor the plan task's declared workspace axis.
               workspace: spec.workspace ?? null,
               parentRunId,
               rootRunId,

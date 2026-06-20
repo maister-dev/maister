@@ -83,6 +83,10 @@ export type CreateSessionInput = {
   // content-block file URIs to repo ∪ worktree ∪ run dir (matches the web-side
   // attachment confinement). Only set where the run can send file references.
   repoPath?: string;
+  // M36 Phase 5 (ADR-097): SOLE content-block confinement root for a
+  // project-less local-package assistant session (the working dir). Replaces
+  // worktree ∪ repo as the supervisor allow-set; the run dir stays allowed.
+  confineRoot?: string;
   stepId: string;
   nodeAttemptId?: string;
   executor: SupervisorExecutorInput;
@@ -95,6 +99,10 @@ export type CreateSessionInput = {
   // write-class tool permission requests for the whole session. Used for
   // none/repo_read platform-agent runs.
   readOnlySession?: boolean;
+  // B1 (execution-policy permissions=auto_approve): the supervisor auto-selects
+  // the allow option for every permission request in this session (below the
+  // read-only layers). Derived from the run's execution_policy snapshot.
+  autoApprovePermissions?: boolean;
 };
 
 export type CreateSessionResult = {

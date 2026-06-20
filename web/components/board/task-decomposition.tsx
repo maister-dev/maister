@@ -25,7 +25,7 @@ export interface TaskDecompositionProps {
   labels: TaskDecompositionLabels;
 }
 
-// M36 Phase 6 (ADR-095): the collapsible decomposition group rendered UNDER a
+// M37 Phase 6 (ADR-098): the collapsible decomposition group rendered UNDER a
 // parent (orchestrator) task card. Each child is a mini-row: a RUN-status dot,
 // the child KEY-N, and the title, linking to the child task. Sibling section —
 // it does not touch the card body. The parent renders nothing when there are

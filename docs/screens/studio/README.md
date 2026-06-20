@@ -2,12 +2,18 @@
 
 - **Type:** area design doc + index (one IA area: the Studio).
 - **Routes:** `/studio`, `/studio/sources`, `/studio/packages`,
-  `/studio/packages/{ref}`, `/studio/edit/{...}`, `/studio/local`.
-- **Status:** **Phase A Implemented** (overview · sources · packages · package
-  detail); **Phase B/C Planned** (editor · local workspace). Supersedes the current `/flows`
+  `/studio/packages/{ref}` (+ `/flows/{flowId}`, `/skills/{...path}`,
+  `/agents/{stem}` detail sub-surfaces), `/studio/edit/{...}`, `/studio/local`.
+- **Status:** **Phase A Implemented** (overview · sources · packages); the
+  **package viewer is redesigned in M36 (Flow Package Viewer, Phase 1)** —
+  tabbed/paged/card bill-of-materials + read-only flow / skill / agent detail
+  (full template: [`package-viewer.md`](./package-viewer.md)); **Phase B/C
+  Planned** (editor · local workspace). Supersedes the current `/flows`
   (`web/app/(app)/flows/page.tsx`) and consolidates package management that is
   today scattered across admin `/settings`, the project board `?tab=packages`,
   and the `/projects/{slug}/packages/{flowRefId}` viewer.
+- **Per-screen templates:** [`package-viewer.md`](./package-viewer.md) (package
+  detail + flow/skill/agent detail), [`editor.md`](./editor.md) (artifact editor).
 - **Behavior SSOT:** [`../../system-analytics/flow-studio.md`](../../system-analytics/flow-studio.md),
   [`../../system-analytics/packages.md`](../../system-analytics/packages.md),
   [`../../system-analytics/agents.md`](../../system-analytics/agents.md).
@@ -172,28 +178,33 @@ palette (muted, not rainbow); these are roles, not hex.
 - **Data:** `GET /api/admin/package-installs` + per-project attachment joins;
   local packages from the new local-package store.
 
-### 4. Package detail — `/studio/packages/{ref}` (Implemented — Phase A; merges two existing screens)
+### 4. Package detail — `/studio/packages/{ref}` (Redesigned in M36 — Phase 1; full template: [`package-viewer.md`](./package-viewer.md))
 
 - **JTBD:** "When I open a package, I want its full bill-of-materials, a
   read-only preview of any flow, its versions and trust, where it's attached,
   and the actions to rework it."
-- **Layout & regions:**
+- **Layout & regions** (M36 Flow Package Viewer, Phase 1 — read-only; details +
+  states in [`package-viewer.md`](./package-viewer.md)):
   - **Header:** name · source · version(s) · trust · Local/Installed badge.
-  - **Bill-of-materials:** artifacts grouped by kind (flows · agents · skills ·
-    MCP templates · rules · restrictions) — each row opens the relevant editor
-    (read-only for installed, editable for local).
-  - **Flow preview (Phase B):** the **big read-only canvas** (same component as
-    the editor, `runContext` absent) + a YAML/files drawer. **Phase A** ships the
-    detail as header + bill-of-materials (grouped by kind) + versions + actions;
-    the embedded canvas and inline fork are project-scoped and land with the
-    editor redesign (Phase B) — until then the per-project
-    `/projects/{slug}/packages/{flowRefId}` viewer keeps the full graph/fork.
+  - **Bill-of-materials → tab bar + cards grid + paging:** one **tab per kind**
+    (flows · skills · agents · MCPs · rules), each with a count; a **0-count tab
+    is hidden**. The active tab renders a **cards grid** (no bare id chips) with a
+    kind-specific meta line, **View** into the relevant detail surface, and a
+    **disabled Fork** (Phase-2 hint). Active tab + page live in the URL
+    (`?tab=&page=`), deep-linkable and refresh-stable.
+  - **Detail sub-surfaces (shipped):** **flow** (static canvas + read-only
+    `NodeSideForm` node inspector + YAML fallback), **skill** (master–detail
+    bundle browser: file list + markdown/code/**image** preview + SKILL.md
+    frontmatter), **agent** (metadata panel — **no runner** — + rendered prompt).
   - **Lifecycle actions:** **Attach to project** (deep-links to board config),
-    **Trust** (admin), **Versions** (list + upgrade), **Fork to local / Rework**
-    (immutable git package → local editable copy; local package → edit in place).
-- **Data & APIs:** `getFlowPackageDetail`, the package-install manifest, bundle
-  file reads (`installed_path`, server-only), and the fork route
-  `POST /api/projects/{slug}/flow-packages/{flowRefId}/revisions/{revisionId}/fork`.
+    **Trust** (admin), **Versions** (list). **Fork to local / Rework** is rendered
+    **disabled with a Phase-2 hint** (the editable fork lands in Phase 2); the
+    **Import (⤓)** affordance is absent on installed (immutable) packages.
+- **Data & APIs:** the package-install manifest + the M36 bill-of-materials
+  contract (`getStudioPackageBom` / `getStudioPackageFlowGraphs`), confined bundle
+  file/image reads (`installed_path`, server-only). The fork route
+  `POST /api/projects/{slug}/flow-packages/{flowRefId}/revisions/{revisionId}/fork`
+  backs the project-scoped viewer and the Phase-2 Studio fork.
 
 ```mermaid
 stateDiagram-v2
@@ -236,7 +247,7 @@ twin (region 4) is the read-only variant of the same canvas.
   `POST .../publish-local`, `PATCH .../flows/{flowId}/version-binding`,
   `POST .../flows/{flowId}/trust-executable`.
 
-### 6. Local workspace — `/studio/local` (Planned; the "virtual package")
+### 6. Local workspace — `/studio/local` (Designed — Phase C; the "virtual package")
 
 - **JTBD:** "When I have an idea, I want to author a standalone Flow / Agent /
   Skill / MCP / Rule at instance level, edit it, and later move it into a real
@@ -246,8 +257,11 @@ twin (region 4) is the read-only variant of the same canvas.
   artifact (target = another local package, or a forked git package's local
   copy). Multiple named local packages allowed; the unnamed default is the
   virtual scratch package.
-- **Data:** the new local-package store + the authored-capability draft machinery
-  (kinds extended beyond `flow|skill|rule`).
+- **Data:** the `local_packages` store (ADR-096) — a platform-scoped, git-backed
+  working dir the file/graph editors edit in place under a session lock; cut
+  versions reuse the installer. **Not** the `authored_capabilities` draft
+  machinery (Variant B keeps platform scope clean); the authored kind enum is
+  **not** extended.
 
 ## Data-model deltas (drives the plan)
 
@@ -262,9 +276,12 @@ twin (region 4) is the read-only variant of the same canvas.
     `local-<digest>` `package_installs`. (Not an `authored_capabilities`
     extension — symmetric with the git-package → install → attach pipeline,
     matches the file-based editors, keeps platform scope clean.)
-  - **Standalone artifact kinds** — extend the authored kind enum
-    (`authored-schema.ts`: today `rule|skill|flow`) with `agent` and `mcp`, each
-    with a create form + editor.
+  - **Standalone artifact kinds** — **files** in the working dir
+    (`flows/ agents/ skills/ mcps/ rules/ schemas/`), each via its per-kind file
+    editor. **Variant B is file-based — the authored kind enum
+    (`authored-schema.ts`) is NOT extended** (ADR-096 supersedes the earlier
+    "add `agent`/`mcp` kinds" note); only the MCP-template editor is genuinely
+    new, and it sources from the platform MCP catalog (`platform_mcp_servers`).
   - **Cut local version** — install the local package working copy as a
     `local-<digest>` `package_installs` revision (reuses the installer).
   - **Move to package** — relocate an artifact between local packages.

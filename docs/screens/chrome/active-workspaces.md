@@ -44,6 +44,8 @@ project, not a creator-only check.
 
 Entry points / exits for one row:
 
+- **Block `See all`** → the runs ledger: `/runs`, including terminal,
+  scheduled, scratch, external, and active runs visible to the current user.
 - **Row body (name)** → the run workbench: `/runs/[id]` (flow / agent) or
   `/scratch-runs/[id]` (scratch).
 - **Flow chip** → no navigation. There is no installed-flow detail page — the
@@ -67,6 +69,7 @@ Entry points / exits for one row:
 
 ```mermaid
 flowchart TD
+    SeeAll["Block See all"] --> RunsLedger["Runs ledger /runs"]
     Row["Active-workspace row"] --> Run["Run workbench /runs/ID or /scratch-runs/ID"]
     Row --> Flow["Flow name — info chip, no navigation"]
     Row --> Task["Task KEY-N /projects/SLUG/tasks/NUMBER"]

@@ -1,4 +1,4 @@
-// M36 Phase 6 (ADR-095): RUN-status → tone for the orchestrator run-tree and
+// M37 Phase 6 (ADR-098): RUN-status → tone for the orchestrator run-tree and
 // the inspector spawned-runs list. This maps the full runs.status union onto a
 // small semantic tone set. It is a NEW sibling helper — the shared flow-graph
 // node-status color logic (lib/board/flow-graph-view-layout.ts,

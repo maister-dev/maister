@@ -10,6 +10,7 @@ import type { GraphTopology } from "@/lib/queries/flow-graph-view";
 import { join } from "node:path";
 
 import { eq, inArray } from "drizzle-orm";
+import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -21,10 +22,20 @@ import {
   deriveUpdateAvailable,
 } from "@/lib/packages/catalog";
 import { buildGraphTopology } from "@/lib/queries/flow-graph-view";
+import { parseAgentDefinition } from "@/lib/agents/definition";
+import {
+  listInstalledPackageFiles,
+  readInstalledPackageFile,
+} from "@/lib/flows/package-content";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { packageInstalls, packageSources, projectPackageAttachments } =
   schemaModule as unknown as Record<string, any>;
+
+const log = pino({
+  name: "queries/packages",
+  level: process.env.LOG_LEVEL ?? "info",
+});
 
 export type ProjectPackageAttachmentView = {
   id: string;
@@ -211,17 +222,45 @@ export async function loadPackageSourcesView(): Promise<{
   };
 }
 
+// Enriched per-kind bill-of-materials items (M36 T1.2). Each kind carries a
+// kind-specific meta line the viewer cards render; a member missing/unreadable
+// on disk degrades to an id-only shape, never throws. `installed_path` never
+// leaves the server.
+export type PackageBomFlow = {
+  id: string;
+  nodeCount: number;
+  gateCount: number;
+  engine: string | null;
+};
+export type PackageBomSkill = {
+  id: string;
+  fileCount: number;
+  subfolderCount: number;
+};
+// Routing-relevant agent metadata only — NEVER the runner (resolved per-project
+// at launch; design §5.5).
+export type PackageBomAgent = {
+  id: string;
+  description: string;
+  triggers: string[];
+  riskTier: string;
+  workspace: string;
+};
+export type PackageBomMcp = { id: string };
+export type PackageBomRule = { id: string; path: string };
+
 export type PackageBom = {
-  flows: { id: string }[];
-  agents: { id: string }[];
-  skills: { id: string }[];
-  mcps: { id: string }[];
-  rules: { id: string }[];
+  flows: PackageBomFlow[];
+  agents: PackageBomAgent[];
+  skills: PackageBomSkill[];
+  mcps: PackageBomMcp[];
+  rules: PackageBomRule[];
 };
 
-// Bill-of-materials (artifact ids grouped by kind) for one package install,
-// derived from the stored manifest + inventory. Rules are not inventoried
-// (see getStudioPackageInstalls) so they come back empty until Phase C.
+// Bill-of-materials for one package install. Flows compile from disk for
+// node/gate/engine counts; skills/rules come from a single confined disk walk;
+// agents parse their `agents/<stem>.md` for routing metadata (NO runner). Every
+// per-element disk failure degrades to id-only and is logged — never thrown.
 export async function getStudioPackageBom(
   installId: string,
 ): Promise<PackageBom | null> {
@@ -235,14 +274,124 @@ export async function getStudioPackageBom(
   if (!install) return null;
 
   const manifest = install.manifest as PackageInstallManifest | undefined;
+  const installedPath = install.installedPath as string;
 
-  return {
-    flows: (manifest?.spec.flows ?? []).map((f) => ({ id: f.id })),
-    agents: (manifest?.inventory.agents ?? []).map((id) => ({ id })),
-    skills: (manifest?.inventory.skills ?? []).map((id) => ({ id })),
-    mcps: (manifest?.spec.mcps ?? []).map((m) => ({ id: m.id })),
-    rules: [],
-  };
+  const flows: PackageBomFlow[] = [];
+
+  for (const flow of manifest?.spec.flows ?? []) {
+    try {
+      const parsed = await loadFlowManifest(
+        join(installedPath, flow.path, "flow.yaml"),
+      );
+      const graph = compileManifest(parsed);
+      let gateCount = 0;
+
+      for (const node of graph.nodes.values()) gateCount += node.gates.length;
+      flows.push({
+        id: flow.id,
+        nodeCount: graph.order.length,
+        gateCount,
+        engine: parsed.compat?.engine_min ?? null,
+      });
+    } catch {
+      log.warn(
+        { installId, kind: "flow", flowId: flow.id },
+        "bom flow degrade",
+      );
+      flows.push({ id: flow.id, nodeCount: 0, gateCount: 0, engine: null });
+    }
+  }
+
+  const skillIds = manifest?.inventory.skills ?? [];
+  const skills: PackageBomSkill[] = [];
+  const rules: PackageBomRule[] = [];
+  const listed = await listInstalledPackageFiles({ installedPath }).catch(
+    () => ({ bundleMissing: true as const }),
+  );
+
+  if (!listed.bundleMissing) {
+    for (const id of skillIds) {
+      const prefix = `skills/${id}/`;
+      const files = listed.files.filter((f) => f.path.startsWith(prefix));
+      const subfolders = new Set<string>();
+
+      for (const f of files) {
+        const rest = f.path.slice(prefix.length);
+        const slash = rest.indexOf("/");
+
+        if (slash > 0) subfolders.add(rest.slice(0, slash));
+      }
+      skills.push({
+        id,
+        fileCount: files.length,
+        subfolderCount: subfolders.size,
+      });
+    }
+    for (const f of listed.files) {
+      if (f.kind === "rule") {
+        rules.push({ id: f.path.slice("rules/".length), path: f.path });
+      }
+    }
+  } else {
+    log.warn(
+      { installId, kind: "skills" },
+      "bom bundle missing; skills id-only",
+    );
+    for (const id of skillIds) {
+      skills.push({ id, fileCount: 0, subfolderCount: 0 });
+    }
+  }
+
+  const agents: PackageBomAgent[] = [];
+
+  for (const stem of manifest?.inventory.agents ?? []) {
+    try {
+      const read = await readInstalledPackageFile(
+        { installedPath },
+        `agents/${stem}.md`,
+      );
+
+      if (read.state !== "text" || !read.content) {
+        throw new Error(`agent .md not readable (${read.state})`);
+      }
+      const def = parseAgentDefinition(stem, read.content);
+
+      agents.push({
+        id: stem,
+        description: def.description,
+        triggers: def.triggers,
+        riskTier: def.riskTier,
+        workspace: def.workspace,
+      });
+    } catch {
+      log.warn({ installId, kind: "agent", stem }, "bom agent degrade");
+      agents.push({
+        id: stem,
+        description: "",
+        triggers: [],
+        riskTier: "",
+        workspace: "",
+      });
+    }
+  }
+
+  const mcps: PackageBomMcp[] = (manifest?.spec.mcps ?? []).map((m) => ({
+    id: m.id,
+  }));
+
+  log.debug(
+    {
+      installId,
+      flows: flows.length,
+      skills: skills.length,
+      agents: agents.length,
+      mcps: mcps.length,
+      rules: rules.length,
+    },
+    "bom built",
+  );
+
+  return { flows, agents, skills, mcps, rules };
 }
 
 export type StudioFlowGraph = {

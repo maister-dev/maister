@@ -14,18 +14,11 @@ import {
   schedulerBudgetLimits,
   type SchedulerBudgetKey,
 } from "@/lib/scheduler/budgets";
+import { ALL_SCHEDULER_JOB_KINDS } from "@/lib/scheduler/job-catalog";
 
 export type SchedulerJobKind = DbSchedulerJobKind;
 
-export const SCHEDULER_JOB_KINDS = [
-  "system_sweep",
-  "command",
-  "agent_tick",
-  "flow_run",
-  "run_schedule",
-  "webhook_delivery",
-  "domain_event_dispatch",
-] as const satisfies readonly SchedulerJobKind[];
+export const SCHEDULER_JOB_KINDS = ALL_SCHEDULER_JOB_KINDS;
 
 export type ClaimedSchedulerJob = {
   id: string;

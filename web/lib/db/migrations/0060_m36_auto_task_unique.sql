@@ -1,1 +1,0 @@
-CREATE UNIQUE INDEX IF NOT EXISTS "runs_auto_task_uq" ON "runs" USING btree ("task_id") WHERE "runs"."launch_mode" = 'auto';

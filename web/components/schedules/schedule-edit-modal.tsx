@@ -9,6 +9,11 @@ import { useTranslations } from "next-intl";
 import clsx from "clsx";
 
 import { readApiError } from "@/lib/api-error";
+import {
+  presetForCronExpr,
+  RUN_SCHEDULE_PRESETS,
+  type RunSchedulePresetId,
+} from "@/lib/run-schedules/presets";
 
 const inputClass =
   "min-h-[36px] rounded-lg border border-line bg-paper px-3 font-mono text-[12px] text-ink outline-none focus:border-amber";
@@ -100,6 +105,9 @@ export function ScheduleEditModal({
   const [name, setName] = useState(schedule?.name ?? "");
   const [taskId, setTaskId] = useState(schedule?.taskId ?? "");
   const [cronExpr, setCronExpr] = useState(schedule?.cronExpr ?? "");
+  const [preset, setPreset] = useState<RunSchedulePresetId>(() =>
+    presetForCronExpr(schedule?.cronExpr ?? ""),
+  );
   const [timezone, setTimezone] = useState(
     () =>
       schedule?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -214,6 +222,23 @@ export function ScheduleEditModal({
     runnerId !== null && !runners.some((runner) => runner.id === runnerId)
       ? [{ id: runnerId, model: "" }, ...runners]
       : runners;
+
+  function applyPreset(nextPreset: RunSchedulePresetId): void {
+    setPreset(nextPreset);
+
+    const selected = RUN_SCHEDULE_PRESETS.find(
+      (item) => item.id === nextPreset,
+    );
+
+    if (selected && selected.id !== "custom") {
+      setCronExpr(selected.cronExpr);
+    }
+  }
+
+  function updateCronExpr(nextCronExpr: string): void {
+    setCronExpr(nextCronExpr);
+    setPreset(presetForCronExpr(nextCronExpr));
+  }
 
   async function save(): Promise<void> {
     setError(null);
@@ -402,17 +427,39 @@ export function ScheduleEditModal({
             )}
           </label>
 
-          <label className="flex flex-col gap-1.5">
-            <span className={fieldLabel}>{t("modal.cronLabel")}</span>
-            <input
-              className={inputClass}
-              disabled={busy}
-              placeholder="0 9 * * 1-5"
-              spellCheck={false}
-              value={cronExpr}
-              onChange={(e) => setCronExpr(e.target.value)}
-            />
-          </label>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="flex flex-col gap-1.5">
+              <span className={fieldLabel}>{t("modal.presetLabel")}</span>
+              <select
+                className={inputClass}
+                disabled={busy}
+                value={preset}
+                onChange={(e) =>
+                  applyPreset(e.target.value as RunSchedulePresetId)
+                }
+              >
+                {RUN_SCHEDULE_PRESETS.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {t(`modal.presets.${item.id}`)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1.5">
+              <span className={fieldLabel}>{t("modal.cronLabel")}</span>
+              <input
+                className={inputClass}
+                disabled={busy}
+                placeholder="0 9 * * 1-5"
+                spellCheck={false}
+                value={cronExpr}
+                onChange={(e) => updateCronExpr(e.target.value)}
+              />
+            </label>
+            <div className="col-span-2 font-mono text-[10px] text-mute">
+              {t("modal.cronPreview")}: {cronExpr || "—"}
+            </div>
+          </div>
 
           <div className="grid grid-cols-2 gap-3">
             <label className="flex flex-col gap-1.5">

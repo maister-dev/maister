@@ -145,7 +145,7 @@ async function readRun(runId: string): Promise<any> {
   return rows[0];
 }
 
-describe("state-transitions — markWaitingOnChildren / markResumedFromWait (M36)", () => {
+describe("state-transitions — markWaitingOnChildren / markResumedFromWait (M37)", () => {
   it("Running → WaitingOnChildren on the happy path (checkpointed, keepalive cleared)", async () => {
     const runId = await seedRun("Running");
 
@@ -258,7 +258,7 @@ describe("state-transitions — markWaitingOnChildren / markResumedFromWait (M36
     expect((await readRun(runId)).status).toBe("Running");
   }, 60_000);
 
-  it("parent_run_id is SET NULL when the parent run is deleted (FK cascade, migration 0055)", async () => {
+  it("parent_run_id is SET NULL when the parent run is deleted (FK cascade, migration 0060)", async () => {
     const parentId = await seedRun("Running");
     const childId = await seedRun("Running", {
       parentRunId: parentId,

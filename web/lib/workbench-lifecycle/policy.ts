@@ -12,7 +12,7 @@ export type WorkbenchRunStatus =
   | "NeedsInput"
   | "NeedsInputIdle"
   | "HumanWorking"
-  // M36 (ADR-095 T7.4): valid run status; a parked orchestrator is intentionally
+  // M37 (ADR-098 T7.4): valid run status; a parked orchestrator is intentionally
   // NOT in any workbench action set here — it is cancelled (sub-tree cascade) via
   // the abandon route, not workbench stop/drop, so it reads as unsupported-status.
   | "WaitingOnChildren"

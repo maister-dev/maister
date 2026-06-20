@@ -1,4 +1,4 @@
-// M36 Phase 4 (T4.3, ADR-095): the auto_launch_run_plan consumer. A child
+// M37 Phase 4 (T4.3, ADR-098): the auto_launch_run_plan consumer. A child
 // terminal event releases the orchestrator's as-plan siblings whose
 // success-gated `requires` blockers have all cleared. Exactly-once is the
 // live-run check + the (agent_id, trigger_event_id) unique index inside
@@ -264,7 +264,7 @@ async function emitChildTerminal(args: {
   // Idempotent: if the child task already has a run (e.g. a source sibling the
   // consumer auto-launched on a PRIOR event in this same test), COMPLETE that
   // existing run rather than inserting a duplicate — one auto run per task is the
-  // runs_auto_task_uq invariant (ADR-097), and a real terminal completes the
+  // runs_auto_task_uq invariant (ADR-100), and a real terminal completes the
   // run that exists, it does not spawn a new one.
   const existing = await pool.query(
     `SELECT "id" FROM "runs" WHERE "task_id" = $1 LIMIT 1`,
@@ -335,7 +335,7 @@ async function runCount(taskId: string): Promise<number> {
   return r.rows[0].n;
 }
 
-// M36 (ADR-097): a child reaching Review under the orchestrator + its run.review
+// M37 (ADR-100): a child reaching Review under the orchestrator + its run.review
 // event. The RUN's launch_mode selects as-plan ('auto', auto-promoted by this
 // consumer) vs as-run ('manual', coordinator-driven — not auto-promoted).
 async function emitChildReview(args: {
@@ -565,9 +565,9 @@ describe("auto_launch_run_plan consumer", () => {
     expect(await runCount(taskB)).toBe(0);
   });
 
-  // M36 (ADR-097): an as-plan (launch_mode='auto') child reaching Review is
+  // M37 (ADR-100): an as-plan (launch_mode='auto') child reaching Review is
   // auto-promoted (system actor) so the auto-DAG flows without a live coordinator.
-  it("(8) an as-plan child reaching Review is auto-promoted (ADR-097)", async () => {
+  it("(8) an as-plan child reaching Review is auto-promoted (ADR-100)", async () => {
     const { parentRunId, orchTaskId } = await seedOrchestrator();
     const taskA = await seedAsPlanTask({ orchTaskId, title: "A" });
     const event = await emitChildReview({

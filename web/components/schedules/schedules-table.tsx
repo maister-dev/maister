@@ -7,6 +7,8 @@ import type { ReactElement } from "react";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
 
+import { presetForCronExpr } from "@/lib/run-schedules/presets";
+
 const badgeBase =
   "rounded-full border px-2.5 py-1 font-mono text-[10px] font-bold uppercase tracking-[0.08em]";
 
@@ -122,6 +124,7 @@ function ScheduleRow({
   onTrigger: () => void;
 }): ReactElement {
   const t = useTranslations("projectSchedules");
+  const preset = presetForCronExpr(schedule.cronExpr);
 
   return (
     <tr className="border-b border-line align-middle last:border-b-0">
@@ -137,6 +140,9 @@ function ScheduleRow({
       </td>
       <td className="px-4 py-3.5 font-mono text-[11.5px] text-ink">
         {schedule.cronExpr}
+        <div className="mt-1 text-[10px] text-mute">
+          {t(`modal.presets.${preset}`)}
+        </div>
       </td>
       <td className="px-4 py-3.5 font-mono text-[10.5px] text-ink-2">
         {schedule.timezone}

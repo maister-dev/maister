@@ -27,7 +27,7 @@ const log = pino({
 // past every sweep.
 const AGENT_TOKEN_TTL_HOURS = 48;
 
-// M36 (ADR-095, Phase 3): the orchestrator's run-bound token carries the agent
+// M37 (ADR-098, Phase 3): the orchestrator's run-bound token carries the agent
 // scope set PLUS the delegation toolset (run_delegate/run_collect/run_cancel
 // over the maister MCP facade). A regular agent token keeps AGENT_TOKEN_SCOPES
 // only — delegation is the orchestrator coordinator's privilege, not every
@@ -37,7 +37,7 @@ export const ORCHESTRATOR_TOKEN_SCOPES = [
   "runs:delegate",
   "runs:collect",
   "runs:cancel",
-  // M36 (ADR-097): promote a reviewed child (merge its branch → child Done).
+  // M37 (ADR-100): promote a reviewed child (merge its branch → child Done).
   "runs:promote",
 ] as const satisfies readonly (typeof TOKEN_SCOPES)[number][];
 
@@ -77,7 +77,7 @@ export async function issueAgentRunToken(args: {
   return { tokenId, secret };
 }
 
-// M36 (ADR-095): an orchestrator is a flow NODE, not a catalog agent — it has
+// M37 (ADR-098): an orchestrator is a flow NODE, not a catalog agent — it has
 // no `agents` row to hang an agent-kind token on, and the store CHECK forbids
 // agent_id on a non-agent token. So a parked coordinator authenticates to the
 // maister MCP facade via a PROJECT-kind, run-bound token (deterministic name →
@@ -145,7 +145,7 @@ export async function revokeAgentRunTokensForRun(
     );
 }
 
-// M36 (ADR-095): terminal-transition revoke for the orchestrator's run-bound
+// M37 (ADR-098): terminal-transition revoke for the orchestrator's run-bound
 // token (matched on the deterministic `orchestrator-run:<runId>` name). Not
 // fired on the WaitingOnChildren park — the token must survive the wait so the
 // Phase-5 resume can re-authenticate the respawned coordinator.

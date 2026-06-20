@@ -1,4 +1,4 @@
-// M36 Phase 10 (ADR-096): one active WRITER per shared worktree, enforced as a
+// M37 Phase 10 (ADR-099): one active WRITER per shared worktree, enforced as a
 // promote-time guard in promoteNextPending. A shared-mode Pending child is held
 // Pending while a writer sibling (same root_run_id, workspace_mode='shared') is
 // in a slot-holding status; it promotes once the sibling parks/terminates. The
@@ -139,7 +139,7 @@ async function promoteAgent(): Promise<string | null> {
   return promoted.promotedRunId;
 }
 
-describe("M36 Phase 10 — shared-worktree write serialization", () => {
+describe("M37 Phase 10 — shared-worktree write serialization", () => {
   it("holds a 2nd shared child Pending while a writer sibling is active, then promotes it after the sibling parks", async () => {
     const root = await insertRoot();
     const writerA = await insertChild({

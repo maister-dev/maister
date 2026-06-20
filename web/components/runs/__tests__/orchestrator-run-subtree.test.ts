@@ -1,4 +1,4 @@
-// M36 Phase 6 (ADR-095): render tests for the orchestrator run-tree subtree.
+// M37 Phase 6 (ADR-098): render tests for the orchestrator run-tree subtree.
 // Uses renderToStaticMarkup (no jsdom), mirroring
 // components/board/__tests__/flow-graph-view.test.ts. Labels are passed as
 // props (no next-intl provider); the test asserts the data-* contract, the

@@ -104,7 +104,7 @@ export async function POST(
       label: user.name ?? user.email ?? user.id,
     });
 
-    // M36 (ADR-095) T7.4: abandoning a flow orchestrator (parked on
+    // M37 (ADR-098) T7.4: abandoning a flow orchestrator (parked on
     // WaitingOnChildren OR with live run-tree children) cancels its whole
     // sub-tree FIRST (children-first), then abandons the coordinator below.
     // Idempotent; touches only descendants, never the orchestrator row itself.

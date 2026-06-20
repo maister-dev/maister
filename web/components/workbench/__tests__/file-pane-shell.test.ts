@@ -25,6 +25,7 @@ describe("FilePaneShell", () => {
     const html = render();
 
     expect(html).toContain('data-testid="file-pane-shell"');
+    expect(html).toContain("flex h-full flex-col");
     expect(html).toContain('data-testid="file-copy-button"');
     expect(html).toContain("src/app.ts");
     // Initial (un-copied) state shows the copy label, not the copied label.

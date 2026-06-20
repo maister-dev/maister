@@ -1,4 +1,4 @@
-// M36 Phase 8 (ADR-096): the keep-alive sweeper Pass-2 (24h NeedsInputIdle →
+// M37 Phase 8 (ADR-099): the keep-alive sweeper Pass-2 (24h NeedsInputIdle →
 // Abandoned) EXCLUDES persistent swarm members — they park indefinitely until
 // re-messaged or their tree terminates. A non-persistent NeedsInputIdle agent
 // past the TTL still abandons. Real testcontainer so the persistent=false SQL
@@ -112,7 +112,7 @@ async function statusOf(runId: string): Promise<string> {
   return rows[0].status;
 }
 
-describe("keepalive Pass-2 persistent exclusion (M36 Phase 8 T8.1)", () => {
+describe("keepalive Pass-2 persistent exclusion (M37 Phase 8 T8.1)", () => {
   it("a persistent NeedsInputIdle past 24h is NOT abandoned; a non-persistent one IS", async () => {
     await seedProject();
     const persistentRunId = await seedIdleAgent(true);

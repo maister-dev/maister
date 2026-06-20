@@ -13,6 +13,7 @@ import { systemCloseActiveAssignmentsForRun } from "@/lib/assignments/service";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { requireRunProjectId } from "@/lib/runs/run-kind-invariants";
 import { preserveWorktree, type PreserveResult } from "@/lib/gc/preserve";
 import {
   promotionClaimTimeoutSeconds,
@@ -78,7 +79,7 @@ export type LifecycleProject = {
 export type LifecycleRun = {
   id: string;
   projectId: string;
-  // M36 (ADR-095): the launching task (null for scratch / as-run children) —
+  // M37 (ADR-098): the launching task (null for scratch / as-run children) —
   // the orchestrator cascade marks un-launched as-plan child tasks Abandoned.
   taskId: string | null;
   runKind: "flow" | "scratch" | "agent";
@@ -188,7 +189,7 @@ export type WorkbenchLifecycleDeps = {
     worktreePath: string;
     branch: string;
   }) => Promise<void>;
-  // M36 (ADR-095) T7.4: when the run is a flow orchestrator (WaitingOnChildren
+  // M37 (ADR-098) T7.4: when the run is a flow orchestrator (WaitingOnChildren
   // OR with run-tree children), abandon its sub-tree before the orchestrator
   // itself is stopped/dropped. Injectable so the unit suite (DB-less, dep-mocked)
   // never reaches the real run-tree query.
@@ -1117,7 +1118,7 @@ async function stopLiveSupervisorSession(
   return true;
 }
 
-// M36 (ADR-095) T7.4: when a FLOW run being stopped/dropped is an orchestrator
+// M37 (ADR-098) T7.4: when a FLOW run being stopped/dropped is an orchestrator
 // (status WaitingOnChildren OR it has run-tree children), abandon its whole
 // sub-tree FIRST (children-first ordering) so no in-flight or queued child
 // outlives the cancelled coordinator. Idempotent — a second call (e.g. the drop
@@ -1279,7 +1280,7 @@ export async function stopWorkbenchRun(
   return stopRunByKind(runId, ctx, deps);
 }
 
-// M36 (ADR-095): the same generalized stop, reached from the /api/v1/ext token
+// M37 (ADR-098): the same generalized stop, reached from the /api/v1/ext token
 // surface (run_cancel). There is no browser session here — authority is the
 // run-bound token, so the session check is skipped and authorization is the
 // caller's already-derived project (the run must belong to the token's
@@ -1412,6 +1413,9 @@ async function loadLifecycleContext(runId: string): Promise<LifecycleContext> {
   if (!run) {
     throw new MaisterError("PRECONDITION", `run not found: ${runId}`);
   }
+  // Workbench lifecycle ops act on a project worktree; a project-less
+  // local-package assistant run (ADR-097) has none and is not a valid target.
+  const projectId = requireRunProjectId(run.projectId, runId);
 
   const [projectRows, workspaceRows] = await Promise.all([
     client
@@ -1420,7 +1424,7 @@ async function loadLifecycleContext(runId: string): Promise<LifecycleContext> {
         mainBranch: projects.mainBranch,
       })
       .from(projects)
-      .where(eq(projects.id, run.projectId)),
+      .where(eq(projects.id, projectId)),
     client
       .select({
         id: workspaces.id,
@@ -1449,7 +1453,7 @@ async function loadLifecycleContext(runId: string): Promise<LifecycleContext> {
 
   return {
     project,
-    run,
+    run: { ...run, projectId },
     workspace: workspaceRows[0] ?? null,
   };
 }
@@ -1564,18 +1568,24 @@ export async function recordDrop(args: RecordDropInput): Promise<void> {
         }
       }
 
+      // Workbench targets always carry a project (ADR-097); narrow for emit.
+      const eventProjectId = requireRunProjectId(
+        updatedRunRows[0].projectId,
+        args.runId,
+      );
+
       if (args.nextRunStatus === "Abandoned") {
         await emitWebhookEvent({
           db: tx,
           type: "run.abandoned",
-          projectId: updatedRunRows[0].projectId,
+          projectId: eventProjectId,
           runId: args.runId,
           data: { source: "workbench" },
         });
         await emitDomainEvent({
           db: tx,
           kind: "run.abandoned",
-          projectId: updatedRunRows[0].projectId,
+          projectId: eventProjectId,
           runId: args.runId,
           taskId: updatedRunRows[0].taskId,
           actor: { type: "system", id: null },
@@ -1592,7 +1602,7 @@ export async function recordDrop(args: RecordDropInput): Promise<void> {
         await emitWebhookEvent({
           db: tx,
           type: "run.review",
-          projectId: updatedRunRows[0].projectId,
+          projectId: eventProjectId,
           runId: args.runId,
           data: { source: "workbench" },
         });
@@ -1634,7 +1644,7 @@ async function markRunStoppedAndCloseAssignments(args: {
     await emitWebhookEvent({
       db: tx,
       type: "run.review",
-      projectId: rows[0].projectId,
+      projectId: requireRunProjectId(rows[0].projectId, args.runId),
       runId: args.runId,
       data: { source: "workbench" },
     });

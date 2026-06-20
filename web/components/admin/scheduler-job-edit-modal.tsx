@@ -8,18 +8,35 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
 
+import {
+  CREATABLE_SCHEDULER_JOB_KINDS,
+  isSeededSingletonSchedulerJob,
+} from "@/lib/scheduler/job-catalog";
+import {
+  normalizeSchedulerTargetDraft,
+  type SchedulerCommandKind,
+} from "@/lib/scheduler/job-targets";
+
 const inputClass =
   "min-h-[36px] rounded-lg border border-line bg-paper px-3 font-mono text-[12px] text-ink outline-none focus:border-amber";
 
 const fieldLabel =
   "font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-mute";
 
-const JOB_KINDS: SchedulerJobKind[] = [
-  "system_sweep",
-  "command",
-  "agent_tick",
-  "flow_run",
-];
+export type CreateSchedulerJobMutationBody = {
+  cadenceIntervalSeconds: number;
+  id?: string;
+  jobKind: SchedulerJobKind;
+  maxFailures: number;
+  target: Record<string, unknown>;
+};
+
+export type UpdateSchedulerJobMutationBody = {
+  cadenceIntervalSeconds: number;
+  enabled: boolean;
+  maxFailures: number;
+  target?: Record<string, unknown>;
+};
 
 export interface SchedulerJobEditModalProps {
   job: SchedulerJobRow | null;
@@ -43,10 +60,34 @@ export function SchedulerJobEditModal({
     String(job?.cadenceIntervalSeconds ?? 60),
   );
   const [maxFailures, setMaxFailures] = useState(String(job?.maxFailures ?? 3));
-  const [targetText, setTargetText] = useState(
-    JSON.stringify(job?.target ?? {}, null, 2),
+  const [commandKind, setCommandKind] = useState<SchedulerCommandKind>(
+    job?.target.commandKind === "console_ping" ? "console_ping" : "http_ping",
+  );
+  const [commandUrl, setCommandUrl] = useState(
+    typeof job?.target.url === "string" ? job.target.url : "",
+  );
+  const [commandHost, setCommandHost] = useState(
+    typeof job?.target.host === "string" ? job.target.host : "",
+  );
+  const [commandTimeoutMs, setCommandTimeoutMs] = useState(
+    typeof job?.target.timeoutMs === "number"
+      ? String(job.target.timeoutMs)
+      : "",
+  );
+  const [flowTaskId, setFlowTaskId] = useState(
+    typeof job?.target.taskId === "string" ? job.target.taskId : "",
+  );
+  const [flowRunnerId, setFlowRunnerId] = useState(
+    typeof job?.target.runnerId === "string" ? job.target.runnerId : "",
+  );
+  const [flowBaseBranch, setFlowBaseBranch] = useState(
+    typeof job?.target.baseBranch === "string" ? job.target.baseBranch : "",
+  );
+  const [flowTargetBranch, setFlowTargetBranch] = useState(
+    typeof job?.target.targetBranch === "string" ? job.target.targetBranch : "",
   );
   const [enabled, setEnabled] = useState(job ? job.disabledAt === null : true);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -109,27 +150,24 @@ export function SchedulerJobEditModal({
     };
   }, []);
 
-  function parseTarget(): Record<string, unknown> | null {
-    const trimmed = targetText.trim();
-
-    if (trimmed.length === 0) return {};
-
+  function buildTarget(): Record<string, unknown> | null {
     try {
-      const parsed = JSON.parse(trimmed) as unknown;
-
-      if (
-        parsed === null ||
-        typeof parsed !== "object" ||
-        Array.isArray(parsed)
-      ) {
-        setError(t("targetMustBeObject"));
-
-        return null;
-      }
-
-      return parsed as Record<string, unknown>;
-    } catch {
-      setError(t("targetInvalidJson"));
+      return normalizeSchedulerTargetDraft({
+        jobKind,
+        draft: buildTargetDraft({
+          commandHost,
+          commandKind,
+          commandTimeoutMs,
+          commandUrl,
+          flowBaseBranch,
+          flowRunnerId,
+          flowTargetBranch,
+          flowTaskId,
+          jobKind,
+        }),
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
 
       return null;
     }
@@ -138,7 +176,9 @@ export function SchedulerJobEditModal({
   async function save(): Promise<void> {
     setError(null);
 
-    const target = parseTarget();
+    const shouldSendTarget =
+      isCreate || jobKind === "command" || jobKind === "flow_run";
+    const target = shouldSendTarget ? buildTarget() : undefined;
 
     if (target === null) return;
 
@@ -161,25 +201,29 @@ export function SchedulerJobEditModal({
     try {
       const res = isCreate
         ? await fetch("/api/admin/scheduler-jobs", {
-            method: "POST",
+            body: JSON.stringify(
+              buildCreateSchedulerJobMutationBody({
+                cadenceIntervalSeconds: cadenceNum,
+                id,
+                jobKind,
+                maxFailures: maxFailuresNum,
+                target: target ?? {},
+              }),
+            ),
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              id: id.trim() || undefined,
-              jobKind,
-              target,
-              cadenceIntervalSeconds: cadenceNum,
-              maxFailures: maxFailuresNum,
-            }),
+            method: "POST",
           })
         : await fetch(`/api/admin/scheduler-jobs/${job.id}`, {
-            method: "PATCH",
+            body: JSON.stringify(
+              buildUpdateSchedulerJobMutationBody({
+                cadenceIntervalSeconds: cadenceNum,
+                enabled,
+                maxFailures: maxFailuresNum,
+                target,
+              }),
+            ),
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              target,
-              cadenceIntervalSeconds: cadenceNum,
-              maxFailures: maxFailuresNum,
-              enabled,
-            }),
+            method: "PATCH",
           });
 
       if (!res.ok) {
@@ -236,6 +280,10 @@ export function SchedulerJobEditModal({
       setBusy(false);
     }
   }
+
+  const canDelete =
+    job !== null &&
+    !isSeededSingletonSchedulerJob({ id: job.id, jobKind: job.jobKind });
 
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
@@ -301,7 +349,7 @@ export function SchedulerJobEditModal({
                     setJobKind(e.target.value as SchedulerJobKind)
                   }
                 >
-                  {JOB_KINDS.map((kind) => (
+                  {CREATABLE_SCHEDULER_JOB_KINDS.map((kind) => (
                     <option key={kind} value={kind}>
                       {t(`kind.${kind}`)}
                     </option>
@@ -334,19 +382,128 @@ export function SchedulerJobEditModal({
             </label>
           </div>
 
-          <label className="flex flex-col gap-1.5">
-            <span className={fieldLabel}>{t("target")}</span>
-            <textarea
-              className={clsx(inputClass, "min-h-[120px] py-2 leading-[1.5]")}
-              disabled={busy}
-              spellCheck={false}
-              value={targetText}
-              onChange={(e) => setTargetText(e.target.value)}
-            />
-            <span className="font-mono text-[10px] text-mute">
-              {t(`targetHint.${jobKind}`)}
-            </span>
-          </label>
+          <div className="flex flex-col gap-3">
+            <span className={fieldLabel}>{t("targetLabel")}</span>
+            {jobKind === "command" ? (
+              <div className="grid grid-cols-2 gap-3">
+                <label className="flex flex-col gap-1.5">
+                  <span className={fieldLabel}>
+                    {t("target.commandKindLabel")}
+                  </span>
+                  <select
+                    className={inputClass}
+                    disabled={busy}
+                    value={commandKind}
+                    onChange={(e) =>
+                      setCommandKind(e.target.value as SchedulerCommandKind)
+                    }
+                  >
+                    <option value="http_ping">{t("target.httpPing")}</option>
+                    <option value="console_ping">
+                      {t("target.consolePing")}
+                    </option>
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1.5">
+                  <span className={fieldLabel}>
+                    {t("target.timeoutMsLabel")}
+                  </span>
+                  <input
+                    className={inputClass}
+                    disabled={busy}
+                    inputMode="numeric"
+                    placeholder="5000"
+                    value={commandTimeoutMs}
+                    onChange={(e) => setCommandTimeoutMs(e.target.value)}
+                  />
+                </label>
+                {commandKind === "http_ping" ? (
+                  <label className="col-span-2 flex flex-col gap-1.5">
+                    <span className={fieldLabel}>{t("target.urlLabel")}</span>
+                    <input
+                      className={inputClass}
+                      disabled={busy}
+                      placeholder="https://example.com/healthz"
+                      spellCheck={false}
+                      value={commandUrl}
+                      onChange={(e) => setCommandUrl(e.target.value)}
+                    />
+                  </label>
+                ) : (
+                  <label className="col-span-2 flex flex-col gap-1.5">
+                    <span className={fieldLabel}>{t("target.hostLabel")}</span>
+                    <input
+                      className={inputClass}
+                      disabled={busy}
+                      placeholder="example.com"
+                      spellCheck={false}
+                      value={commandHost}
+                      onChange={(e) => setCommandHost(e.target.value)}
+                    />
+                  </label>
+                )}
+              </div>
+            ) : null}
+            {jobKind === "flow_run" ? (
+              <div className="grid grid-cols-2 gap-3">
+                <label className="col-span-2 flex flex-col gap-1.5">
+                  <span className={fieldLabel}>{t("target.taskIdLabel")}</span>
+                  <input
+                    className={inputClass}
+                    disabled={busy}
+                    placeholder="task-id"
+                    spellCheck={false}
+                    value={flowTaskId}
+                    onChange={(e) => setFlowTaskId(e.target.value)}
+                  />
+                </label>
+                <label className="flex flex-col gap-1.5">
+                  <span className={fieldLabel}>
+                    {t("target.runnerIdLabel")}
+                  </span>
+                  <input
+                    className={inputClass}
+                    disabled={busy}
+                    placeholder="codex-default"
+                    spellCheck={false}
+                    value={flowRunnerId}
+                    onChange={(e) => setFlowRunnerId(e.target.value)}
+                  />
+                </label>
+                <label className="flex flex-col gap-1.5">
+                  <span className={fieldLabel}>
+                    {t("target.baseBranchLabel")}
+                  </span>
+                  <input
+                    className={inputClass}
+                    disabled={busy}
+                    placeholder="main"
+                    spellCheck={false}
+                    value={flowBaseBranch}
+                    onChange={(e) => setFlowBaseBranch(e.target.value)}
+                  />
+                </label>
+                <label className="col-span-2 flex flex-col gap-1.5">
+                  <span className={fieldLabel}>
+                    {t("target.targetBranchLabel")}
+                  </span>
+                  <input
+                    className={inputClass}
+                    disabled={busy}
+                    placeholder="feature/scheduler"
+                    spellCheck={false}
+                    value={flowTargetBranch}
+                    onChange={(e) => setFlowTargetBranch(e.target.value)}
+                  />
+                </label>
+              </div>
+            ) : null}
+            {jobKind !== "command" && jobKind !== "flow_run" ? (
+              <div className="rounded-lg border border-line bg-ivory px-3 py-2 font-mono text-[11px] text-mute">
+                {t("target.noTarget")}
+              </div>
+            ) : null}
+          </div>
 
           {!isCreate ? (
             <label className="flex items-center gap-2 text-[12px] text-mute">
@@ -372,16 +529,39 @@ export function SchedulerJobEditModal({
         </div>
 
         <div className="flex items-center justify-between gap-2 border-t border-line px-5 py-4">
-          <div>
-            {!isCreate ? (
+          <div className="flex items-center gap-2">
+            {canDelete && !confirmingDelete ? (
               <button
                 className="touch-manipulation rounded-lg border border-line bg-paper px-3.5 py-2 font-mono text-[11px] font-semibold tracking-[0.02em] text-danger hover:border-danger"
                 disabled={busy}
                 type="button"
-                onClick={() => void remove()}
+                onClick={() => setConfirmingDelete(true)}
               >
                 {t("delete")}
               </button>
+            ) : null}
+            {canDelete && confirmingDelete ? (
+              <>
+                <span className="font-mono text-[11px] font-semibold text-danger">
+                  {t("deleteConfirm")}
+                </span>
+                <button
+                  className="touch-manipulation rounded-lg border border-danger bg-paper px-3 py-2 font-mono text-[11px] font-semibold tracking-[0.02em] text-danger hover:bg-danger-soft"
+                  disabled={busy}
+                  type="button"
+                  onClick={() => void remove()}
+                >
+                  {t("deleteConfirmYes")}
+                </button>
+                <button
+                  className="touch-manipulation rounded-lg border border-line bg-paper px-3 py-2 font-mono text-[11px] font-semibold tracking-[0.02em] text-mute hover:border-mute hover:text-ink-2"
+                  disabled={busy}
+                  type="button"
+                  onClick={() => setConfirmingDelete(false)}
+                >
+                  {t("deleteConfirmNo")}
+                </button>
+              </>
             ) : null}
           </div>
           <div className="flex items-center gap-2">
@@ -409,4 +589,71 @@ export function SchedulerJobEditModal({
       </div>
     </div>
   );
+}
+
+export function buildCreateSchedulerJobMutationBody(args: {
+  cadenceIntervalSeconds: number;
+  id: string;
+  jobKind: SchedulerJobKind;
+  maxFailures: number;
+  target: Record<string, unknown>;
+}): CreateSchedulerJobMutationBody {
+  return {
+    cadenceIntervalSeconds: args.cadenceIntervalSeconds,
+    id: args.id.trim() || undefined,
+    jobKind: args.jobKind,
+    maxFailures: args.maxFailures,
+    target: args.target,
+  };
+}
+
+export function buildUpdateSchedulerJobMutationBody(args: {
+  cadenceIntervalSeconds: number;
+  enabled: boolean;
+  maxFailures: number;
+  target?: Record<string, unknown>;
+}): UpdateSchedulerJobMutationBody {
+  return {
+    cadenceIntervalSeconds: args.cadenceIntervalSeconds,
+    enabled: args.enabled,
+    maxFailures: args.maxFailures,
+    ...(args.target === undefined ? {} : { target: args.target }),
+  };
+}
+
+function buildTargetDraft(args: {
+  commandHost: string;
+  commandKind: SchedulerCommandKind;
+  commandTimeoutMs: string;
+  commandUrl: string;
+  flowBaseBranch: string;
+  flowRunnerId: string;
+  flowTargetBranch: string;
+  flowTaskId: string;
+  jobKind: SchedulerJobKind;
+}): Record<string, unknown> {
+  if (args.jobKind === "command") {
+    return args.commandKind === "http_ping"
+      ? {
+          commandKind: args.commandKind,
+          timeoutMs: args.commandTimeoutMs,
+          url: args.commandUrl,
+        }
+      : {
+          commandKind: args.commandKind,
+          host: args.commandHost,
+          timeoutMs: args.commandTimeoutMs,
+        };
+  }
+
+  if (args.jobKind === "flow_run") {
+    return {
+      baseBranch: args.flowBaseBranch,
+      runnerId: args.flowRunnerId,
+      targetBranch: args.flowTargetBranch,
+      taskId: args.flowTaskId,
+    };
+  }
+
+  return {};
 }

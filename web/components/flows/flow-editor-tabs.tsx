@@ -77,6 +77,7 @@ export function FlowEditorTabs({
   saveAction,
   publishAction,
   filesDrawer,
+  diffDrawer,
 }: {
   projectSlug: string;
   capId: string;
@@ -97,6 +98,10 @@ export function FlowEditorTabs({
   saveAction: ServerFormAction;
   publishAction: ServerFormAction;
   filesDrawer: ReactNode;
+  // Phase C/M36: when provided, the [Diff] drawer renders this git-backed diff
+  // (working-tree-vs-HEAD of a local package) instead of the draft-vs-published
+  // YAML text. Absent → the authored-flow path keeps `FlowDraftDiffText`.
+  diffDrawer?: ReactNode;
 }): ReactElement {
   const [yaml, setYaml] = useState(initialYaml);
   const [title, setTitle] = useState(initialTitle);
@@ -289,7 +294,9 @@ export function FlowEditorTabs({
             title={labels.topBar.diff}
             onClose={() => changeDrawer(null)}
           >
-            <FlowDraftDiffText diff={diff} emptyLabel={labels.diffEmpty} />
+            {diffDrawer ?? (
+              <FlowDraftDiffText diff={diff} emptyLabel={labels.diffEmpty} />
+            )}
           </EditorDrawer>
         ) : null}
 

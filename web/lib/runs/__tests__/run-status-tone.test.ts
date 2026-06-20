@@ -9,9 +9,9 @@ import {
   type RunStatusTone,
 } from "@/lib/runs/run-status-tone";
 
-// M36 (ADR-095/097): the run-status → tone mapping is the SSOT for the
+// M37 (ADR-098/097): the run-status → tone mapping is the SSOT for the
 // orchestrator run-tree + inspector dot/badge colors. A table over every
-// runs.status value keeps the mapping honest (esp. the M36 WaitingOnChildren →
+// runs.status value keeps the mapping honest (esp. the M37 WaitingOnChildren →
 // "waiting" tone) and proves the dot/badge Records cover every tone.
 const EXPECTED_TONE: Record<RunStatusKey, RunStatusTone> = {
   Pending: "pending",
@@ -32,7 +32,7 @@ describe("runStatusTone", () => {
     expect(runStatusTone(status)).toBe(EXPECTED_TONE[status]);
   });
 
-  it("maps the M36 WaitingOnChildren status to the dedicated 'waiting' tone", () => {
+  it("maps the M37 WaitingOnChildren status to the dedicated 'waiting' tone", () => {
     expect(runStatusTone("WaitingOnChildren")).toBe("waiting");
   });
 

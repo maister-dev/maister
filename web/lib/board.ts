@@ -75,7 +75,7 @@ const IN_PRODUCTION_STATUSES: ReadonlySet<RunStatus> = new Set([
   // M11b (ADR-030): a claimed run (manual takeover) holds a worktree and a
   // concurrency slot — it stays in the in-flight bucket like Running/NeedsInput.
   "HumanWorking",
-  // M36 (ADR-095): a parked orchestrator awaiting its children renders in
+  // M37 (ADR-098): a parked orchestrator awaiting its children renders in
   // InProduction with a "waiting on N children" affordance.
   "WaitingOnChildren",
 ]);

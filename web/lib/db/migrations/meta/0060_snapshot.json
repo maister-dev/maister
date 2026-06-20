@@ -1,6 +1,6 @@
 {
-  "id": "0ee1b3d0-dd81-498f-9980-07a46d19bd5e",
-  "prevId": "e0459546-b936-4ccf-8516-8404a38a1c98",
+  "id": "69461ade-b2e1-4350-a319-db9e043e71a6",
+  "prevId": "c0d4061c-ad8e-47a3-9709-1a6070833f37",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -2417,7 +2417,7 @@
       "checkConstraints": {
         "domain_events_kind_check": {
           "name": "domain_events_kind_check",
-          "value": "\"domain_events\".\"kind\" in ('task.created', 'task.comment_added', 'task.triage_requeued', 'run.done', 'run.failed', 'run.crashed', 'run.abandoned', 'run.review', 'gate.failed')"
+          "value": "\"domain_events\".\"kind\" in ('task.created', 'task.comment_added', 'task.triage_requeued', 'run.done', 'run.failed', 'run.crashed', 'run.abandoned', 'run.review', 'run.escalated', 'gate.failed')"
         },
         "domain_events_actor_type_check": {
           "name": "domain_events_actor_type_check",
@@ -3481,6 +3481,222 @@
           "value": "\"inbox_items\".\"event_kind\" in ('task_created', 'comment_added', 'task_mentioned', 'relation_added', 'relation_removed', 'run_launched', 'triage_set', 'triage_requeued', 'agent_quarantined')"
         }
       },
+      "isRLSEnabled": false
+    },
+    "public.local_packages": {
+      "name": "local_packages",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "slug": {
+          "name": "slug",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "working_dir": {
+          "name": "working_dir",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'active'"
+        },
+        "source_install_id": {
+          "name": "source_install_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source_repo_url": {
+          "name": "source_repo_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source_ref": {
+          "name": "source_ref",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "branch_name": {
+          "name": "branch_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_cut_install_id": {
+          "name": "last_cut_install_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "locked_by_user_id": {
+          "name": "locked_by_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "locked_by_session": {
+          "name": "locked_by_session",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "lock_expires_at": {
+          "name": "lock_expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "project_id": {
+          "name": "project_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "is_default": {
+          "name": "is_default",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        }
+      },
+      "indexes": {
+        "local_packages_default_per_project": {
+          "name": "local_packages_default_per_project",
+          "columns": [
+            {
+              "expression": "project_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"local_packages\".\"is_default\"",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "local_packages_source_install_id_package_installs_id_fk": {
+          "name": "local_packages_source_install_id_package_installs_id_fk",
+          "tableFrom": "local_packages",
+          "tableTo": "package_installs",
+          "columnsFrom": [
+            "source_install_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "local_packages_last_cut_install_id_package_installs_id_fk": {
+          "name": "local_packages_last_cut_install_id_package_installs_id_fk",
+          "tableFrom": "local_packages",
+          "tableTo": "package_installs",
+          "columnsFrom": [
+            "last_cut_install_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "local_packages_locked_by_user_id_users_id_fk": {
+          "name": "local_packages_locked_by_user_id_users_id_fk",
+          "tableFrom": "local_packages",
+          "tableTo": "users",
+          "columnsFrom": [
+            "locked_by_user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "local_packages_created_by_users_id_fk": {
+          "name": "local_packages_created_by_users_id_fk",
+          "tableFrom": "local_packages",
+          "tableTo": "users",
+          "columnsFrom": [
+            "created_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "local_packages_project_id_projects_id_fk": {
+          "name": "local_packages_project_id_projects_id_fk",
+          "tableFrom": "local_packages",
+          "tableTo": "projects",
+          "columnsFrom": [
+            "project_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "local_packages_slug_unique": {
+          "name": "local_packages_slug_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "slug"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "public.node_attempt_cost_rollups": {
@@ -5207,6 +5423,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "execution_policy_default": {
+          "name": "execution_policy_default",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
         "task_key": {
           "name": "task_key",
           "type": "text",
@@ -6056,7 +6278,13 @@
           "name": "project_id",
           "type": "text",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
+        },
+        "local_package_id": {
+          "name": "local_package_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         },
         "flow_id": {
           "name": "flow_id",
@@ -6223,6 +6451,13 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
+        },
+        "execution_policy": {
+          "name": "execution_policy",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{\"preset\":\"supervised\"}'::jsonb"
         }
       },
       "indexes": {
@@ -6449,6 +6684,19 @@
           "tableTo": "projects",
           "columnsFrom": [
             "project_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "runs_local_package_id_local_packages_id_fk": {
+          "name": "runs_local_package_id_local_packages_id_fk",
+          "tableFrom": "runs",
+          "tableTo": "local_packages",
+          "columnsFrom": [
+            "local_package_id"
           ],
           "columnsTo": [
             "id"
@@ -7206,7 +7454,13 @@
           "name": "project_id",
           "type": "text",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
+        },
+        "local_package_id": {
+          "name": "local_package_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         },
         "name": {
           "name": "name",
@@ -7353,6 +7607,29 @@
             }
           ],
           "isUnique": false,
+          "where": "\"scratch_runs\".\"project_id\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "scratch_runs_local_package_idx": {
+          "name": "scratch_runs_local_package_idx",
+          "columns": [
+            {
+              "expression": "local_package_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "dialog_status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"scratch_runs\".\"local_package_id\" IS NOT NULL",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -7378,6 +7655,19 @@
           "tableTo": "projects",
           "columnsFrom": [
             "project_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "scratch_runs_local_package_id_local_packages_id_fk": {
+          "name": "scratch_runs_local_package_id_local_packages_id_fk",
+          "tableFrom": "scratch_runs",
+          "tableTo": "local_packages",
+          "columnsFrom": [
+            "local_package_id"
           ],
           "columnsTo": [
             "id"
@@ -7415,7 +7705,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "scratch_runs_owner_xor_check": {
+          "name": "scratch_runs_owner_xor_check",
+          "value": "(\"scratch_runs\".\"project_id\" IS NOT NULL) <> (\"scratch_runs\".\"local_package_id\" IS NOT NULL)"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.sessions": {
@@ -8185,6 +8480,12 @@
         },
         "delegation_spec": {
           "name": "delegation_spec",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "execution_policy": {
+          "name": "execution_policy",
           "type": "jsonb",
           "primaryKey": false,
           "notNull": false

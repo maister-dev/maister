@@ -120,6 +120,9 @@
 | [ADR-092](#adr-092-flow-studio-redesign--unified-studio-ia--editable-local-package-model) | Flow Studio redesign — unified Studio IA + editable-local-package model | Accepted | 2026-06-15 |
 | [ADR-093](#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons) | Project onboarding — optional `maister.yaml`, host-ambient git auth, onboarding modes, advisory clone reasons | Accepted | 2026-06-17 |
 | [ADR-094](#adr-094-default-runner-materialization-honest-readiness-and-ccr-admin-lifecycle) | Default-runner materialization, honest readiness, and CCR admin lifecycle | Accepted | 2026-06-18 |
+| [ADR-095](#adr-095-flow-execution-control-policy--snapshotted-preset--composable-autonomy-axes-fail-closed-no-blind-ship) | Flow execution-control policy — snapshotted preset + composable autonomy axes, fail-closed, no-blind-ship | Accepted | 2026-06-20 |
+| [ADR-096](#adr-096-flow-studio-phase-c--editable-local-packages-variant-b-substrate-session-lock-member-rbac-git-backed-fork) | Flow Studio Phase C — editable local packages (Variant B): substrate, session lock, member RBAC, git-backed fork | Accepted | 2026-06-20 |
+| [ADR-097](#adr-097-docked-ai-authoring-assistant--project-less-scratch-at-local-package-run-m36-phase-5) | Docked AI authoring assistant — project-less scratch-at-local-package run (M36 Phase 5) | Accepted | 2026-06-20 |
 
 ---
 
@@ -7152,9 +7155,257 @@ per-instance stop to wire a UI button to.
 > `node scripts/validate-docs-adr-anchors.mjs` (`pnpm validate:docs` does not
 > resolve ADR anchors).
 
+### ADR-096: Flow Studio Phase C — editable local packages (Variant B): substrate, session lock, member RBAC, git-backed fork
+
+**Date:** 2026-06-16
+**Status:** Accepted
+**Context:** ADR-092 accepted the unified Studio IA and named the **editable local package** as the editing spine, leaving the Phase C backend *Designed* (Variant B). Phase C needs the concrete contract — how a local package is stored, edited, version-controlled, made attachable, who may do it, and how concurrent edits are guarded — without re-scoping the project-keyed `authored_capabilities` table or pulling git write-back (Phase 2) into scope. The owner answered six open questions that refine the model (member RBAC, a session lock, MCP-from-catalog, git-backed forks, no auto-GC, read-only-preview-plus-fork for git packages).
+
+**Decision:** Build the Phase C backend per Variant B (ADR-092) plus the owner's refinements:
+
+1. **Substrate (Variant B).** A platform-scoped `local_packages` table; each row points at a mutable, **git-backed working directory** under `localPackagesRoot()` (`MAISTER_LOCAL_PACKAGES_ROOT`, default `~/.maister/local`). `working_dir` is server-only (never sent to the client, mirroring `package_installs.installed_path`). Artifacts are **files** in the dir (`flows/ agents/ skills/ mcps/ rules/ schemas/`) — the authored kind enum (`rule|skill|flow`) is **NOT** extended; the file editors operate on files, not `authored_capabilities` rows.
+2. **Cut version.** "Cut version" exports a clean copy of the working dir (excluding VCS metadata) and calls the *existing* installer `installPackageRevision({ source, version: "local" })` → an immutable `local-<digest>` `package_installs` revision, then optionally `attachPackage(...)`. No new installer. Local sources are `trusted_by_policy` via `resolveTrust`, so `setup.sh` runs post-attach with no extra trust step (ADR-021 fetch-then-execute separation preserved — install never runs `setup.sh` inline).
+3. **Editor route.** `/studio/edit/{localPackageId}/{artifactPath}` — local-only, keyed on `local_packages.id` (sidesteps the deferred `base64url(source::name)` ref). Git packages get a **read-only preview + "Fork to local"**; no in-place git-package editing. Reuses the Phase B `FlowEditorTabs` seam with a working-dir-targeting save action (no `authored_capabilities` `draft_version` CAS).
+4. **Concurrency = session-scoped working-dir lock.** `local_packages` carries `locked_by_user_id` / `locked_by_session` / `lock_expires_at` (mirroring `runs.keepalive_until`). Opening the editor acquires the lock iff free or expired (lazy stale-takeover — **no sweeper**); the editor refreshes it (mirroring `POST /api/runs/{id}/activity`); every write asserts a live lock or fails `CONFLICT`; a second session is read-only.
+5. **RBAC = member-level local loop.** Creating / forking / editing / cutting a local package = any authenticated user (`requireSession`; Studio is member-accessible). **Attaching a cut version to a project** = project `member` via a new `manageLocalPackages: "member"` action. The existing **git-package** install/attach/trust gates stay **admin** (`managePackages`/`manageCatalog`) — Phase C does not widen them (asymmetry by design).
+6. **Fork = git-backed.** A from-scratch local package is `git init` + a branch; a fork of a git package seeds from the source at the installed revision and records `source_repo_url` / `source_ref` / `branch_name`. **PR-to-source is Phase 2** (`pushBranch` exists in `lib/worktree.ts`; a PR-creation helper does not).
+7. **MCP-template from the catalog.** The MCP-template editor sources from the platform MCP catalog (`platform_mcp_servers`): pick a server → materialize its template (transport/command/args/url/`env_keys`, `env:NAME` refs only). Today packages carry self-contained MCP templates with no catalog reference; this adds a catalog-pick + an optional `platform_mcp_server_id` provenance field, validated against a real `/mcps` entry.
+8. **No new `MaisterError` code** (ADR-008 closed union): path-confinement → `PRECONDITION`, invalid working-dir → `CONFIG`, lock held/expired → `CONFLICT`.
+9. **No automatic GC** (owner decision): orphaned working dirs / abandoned `Installing` installs are cleaned manually; explicit `deleteLocalPackage` removes its own dir.
+
+**Consequences:**
+- Reuses the installer, attach pipeline, trust policy, the Phase B editor seam, the run keep-alive pattern, and `lib/worktree.ts` — the genuinely-new backend is the `local_packages` table + working-dir CRUD + the lock + the MCP-template editor.
+- A member can author and apply their own forks without admin rights, while platform git-package management stays admin-gated.
+- The git-backed working dir makes a fork a real branch, so the Phase-2 PR-back is additive (the schema already stores the source repo/ref/branch).
+- Migration `0057` adds `local_packages` (incl. lock + source columns). New env vars `MAISTER_LOCAL_PACKAGES_ROOT`, `MAISTER_LOCAL_PACKAGE_LOCK_MINUTES`; `.maister` stays host-only (no Docker mount, ADR-023) — documented, not wired.
+
+**Alternatives Considered:**
+- **Content-hash ETag instead of a lock:** rejected by owner in favor of a session-scoped working-dir lock — clearer multi-tab semantics, no silent overwrite.
+- **Admin-gated cut/attach:** rejected — members own the fork-and-apply loop for their own projects.
+- **Plain copied working dir (no git):** rejected — a fork should be a branch so the Phase-2 PR-back has clean history; `git init` is cheap and adds local version control.
+- **Self-contained MCP templates only (no catalog link):** not chosen — sourcing from the platform MCP catalog avoids re-entering server config and keeps one source of truth.
+- **Extend `authored_capabilities` with `agent`/`mcp` kinds:** rejected (ADR-092) — Variant B keeps platform scope clean; files in a working dir, not project-keyed draft rows.
+
+**M36 extension (Flow Package Viewer + Local Editing).** The salvaged substrate
+is extended without re-scoping it: (1) **both-grain fork** — a package-level
+fork (whole bundle → a new `<source>-local` package) AND an element-level fork
+(one flow/skill/agent/rule → the project's default package); (2) a **per-project
+default "virtual" local package** (`local_packages.is_default` + nullable
+`project_id`, migration `0058`, partial-unique `(project_id) WHERE is_default`)
+that element-forks land in, created on first use (race-safe); (3) the
+**MCP-template editor** sources the platform MCP catalog but persists no
+provenance column — the catalog pick is **display-only**, materializing
+`env:NAME` references only (no schema delta, no secret values). Fork copies the
+installed bundle's bytes (excluding `.git`) and executes nothing; cut-version is
+two-phase (export+install before the durable stamp/attach, crash-window
+recoverable). See [`system-analytics/local-packages.md`](system-analytics/local-packages.md).
+
+> **Numbering note.** This ADR is **ADR-096** and its substrate migration is
+> **0057** after M36 was rebased onto `main`: onboarding / CCR / execution-policy
+> had taken ADR-093–095, and execution-policy + scheduler had taken migrations
+> 0055 / 0056. Run `node scripts/validate-docs-adr-anchors.mjs` after any renumber.
+
+### ADR-097: Docked AI authoring assistant — project-less scratch-at-local-package run (M36 Phase 5)
+
+**Date:** 2026-06-20
+**Status:** Accepted
+**Context:** M36 Phase 5 docks an AI authoring assistant inside the Flow Studio
+local-package editor: an ACP session that edits the local-package working-dir
+files directly, with live canvas/file refresh and inline HITL. It reuses the
+**scratch-run substrate** (`run_kind = "scratch"`, runner resolution, capability
+materialization, supervisor session, HITL, diff, the run keep-alive/recover
+plumbing) but is rooted at a **local-package working dir** that has **no project
+and no managed git worktree**. A local package is platform-scoped: a
+package-level fork (`forkPackageToLocal`) has `project_id = NULL`, while a
+per-project default fork (`forkElementToDefault`) carries a `project_id`. The
+editor opens either, so the assistant cannot always carry a project — the run
+must be genuinely **project-less**.
+
+**Decision:** Model the assistant as a **project-less scratch run** rooted at the
+local-package `working_dir`. No `git worktree add`, no `workspaces` row, no new
+`runs.status`, no engine bump, no new `MaisterError` code (reuse
+`PRECONDITION | CONFIG | CONFLICT`). The session runs IN the existing git-backed
+working dir; base branch/commit are read from it.
+
+1. **Nullable owner + launch snapshot (migration 0059).** `runs.project_id` and
+   `scratch_runs.project_id` become **nullable**. `scratch_runs.local_package_id`
+   (FK `local_packages`, `ON DELETE CASCADE`) is the project-less owner;
+   `runs.local_package_id` is the **launch-time snapshot** every terminal/read
+   path reads (never re-derived). A DB **CHECK** (`scratch_runs_owner_xor_check`)
+   enforces **exactly one of** `project_id` / `local_package_id`. The
+   `scratch_runs_project_status_idx` is made **partial**
+   (`WHERE project_id IS NOT NULL`) so it still serves project rows, plus a new
+   partial `scratch_runs_local_package_idx`.
+2. **Launch fan-out (`launchLocalPackageAssistant`).** A sibling of
+   `launchScratchRunStaged`: `worktreePath = <working_dir>`, NO worktree add, NO
+   workspace row. One launch insert writes the project-less `runs` +
+   `scratch_runs` rows (snapshotting `local_package_id`), resolves the runner via
+   launch-override → **platform default** only (no project-default tier), and
+   materializes a bare per-adapter capability profile (the flow-authoring skill
+   is seeded by the Studio surface). Member-level RBAC (`requireActiveSession`,
+   per ADR-096). Counts against the scratch (flow-pool) concurrency cap.
+3. **Supervisor working-dir confinement.** The session-create input carries an
+   optional `confineRoot`; when set it is the **SOLE** content-block file-URI
+   allow-root (the run dir stays allowed for uploads), **replacing** the
+   worktree ∪ repo allow-set. The web `createSession` passes
+   `confineRoot = working_dir`; the web tier confines too (defense in depth). A
+   `file:` URI outside the working dir is rejected (`PRECONDITION`).
+4. **No project-scoped events.** A project-less run has no project to attribute
+   domain/webhook events to (both outboxes + `domain_events.project_id` are
+   NOT NULL and project-scoped). `markScratchCrashed`, the keepalive TTL pass,
+   and the live scratch terminal emitter all **skip** the emits when
+   `project_id` is null; the run's own `runs`/`scratch_runs` terminal rows are
+   the record.
+
+**`run_kind` consumer checklist (every site grepped; how each is branched):**
+- `lib/reconcile.ts` — a project-less run has `project_id` NULL ⇒
+  `loadCandidates` (which iterates `projects`) **never selects it** → never
+  Crashed for a missing project worktree. The pure classifier already
+  `skip`s a live scratch session and **refuses `reattach`** for non-flow runs
+  (resume-driver guard). ✔ tested.
+- `lib/runs/resume-driver.ts` — only invoked via reconcile `reattach` (refused
+  for scratch) or the scratch recover route (`session/resume`, not the flow
+  `RESUME_CONTINUATION_PROMPT`). Never drives a project-less run. ✔
+- `lib/runs/keepalive-sweeper.ts` — pass1/pass2 select by status only; pass2
+  scratch branch skips the project-scoped emits when `project_id` is null. ✔
+- `lib/scheduler.ts` — scratch is in the **flow pool**; the assistant launches
+  straight to `Running` (never `Pending`), so `tryStartRun`/`promoteNextPending`
+  are not on its path; counting is status+kind based (project-agnostic). ✔
+- `lib/queries/portfolio.ts` — `getPortfolio`/rail/inbox filter
+  `inArray(runs.project_id, projectIds)` (+ rail inner-joins `workspaces`), so a
+  project-less run is **excluded** by construction; loops carry a defensive
+  null-skip. Studio surfaces it, not a project board. ✔
+- `lib/board.ts` — pure stage derivation over a task+run pair; assistant runs
+  are board-less (no task), never passed here. ✔
+- `lib/queries/run.ts` (`getRunDetail`), `lib/runs/change-summary.ts`,
+  `lib/queries/run-manifest.ts`, `lib/runs/cost-rollups.ts`,
+  `lib/queries/observatory.ts`, `lib/flows/graph/runner-core.ts`,
+  `lib/workbench-lifecycle/service.ts`, `lib/acp-runners/usage.ts`,
+  the takeover + review-comments routes, `…/diff/route.ts` — all are flow/
+  project-scratch paths that resolve a project via inner join or required
+  field. They narrow `project_id` through `requireRunProjectId(...)` (throws
+  `CONFIG` if a project-less run ever reaches a project-scoped path) or return
+  404/PRECONDITION for the project-less variant; usage-references keep the
+  project-less run (it still pins a runner → still blocks deletion). ✔
+- `components/workbench/lifecycle-actions.tsx` (`endpointFor`) — the assistant
+  is not surfaced on the rail/board (excluded above), so its `⋯` lifecycle
+  endpoints are never targeted at a project-less run.
+
+**Consequences:**
+- One internally-consistent model: the run is project-less, every automatic
+  sweep/query excludes it or narrows safely, and the launch-time snapshot keeps
+  terminal/read paths free of re-derivation.
+- `runs.project_id` becoming nullable touches ~13 flow/project-scratch consumers;
+  each narrows at its load boundary via `requireRunProjectId` (a single helper),
+  so the nullable column never silently coerces and a regression surfaces as
+  `CONFIG` rather than a crash.
+- The assistant's diff is the Studio editor's git-working-tree view (Phase 4),
+  not the project workspace diff route; the project-scoped run diff/change-summary
+  routes 404 for it.
+- The turn/recovery surface (`sendScratchUserMessage`, the scratch recover
+  route) branches RBAC to `requireActiveSession` (member-level) when the run is
+  project-less; the diff/file/lifecycle UI for the assistant is the Studio
+  editor (separate task), so the project-scoped scratch routes that require a
+  `workspaces` row stay project-only.
+
+**Alternatives Considered:**
+- **Keep `runs.project_id` NOT NULL, reuse a project:** rejected — a named
+  local package has no project; there is nothing valid to reference.
+- **Restrict the assistant to per-project default packages (always a project):**
+  rejected — contradicts the design (the editor opens any local package) and the
+  project-less framing; it would block authoring a named platform-scoped fork.
+- **A new `run_kind` for the assistant:** rejected — it reuses the entire
+  scratch substrate (runner/capabilities/session/HITL/diff/recover); a new kind
+  would fork all of it. The project-less variant is a property of a scratch run,
+  not a new kind.
+- **Emit project-scoped events with a sentinel project:** rejected — there is no
+  honest project; skipping the emit is correct (the assistant has no webhook
+  subscribers and no project board).
+
 ---
 
-### ADR-095: Orchestrator engine — supervisory node, governed run-tree, delegation toolset, success-gated task-DAG, idle-checkpoint wait/resume
+### ADR-095: Flow execution-control policy — snapshotted preset + composable autonomy axes, fail-closed, no-blind-ship
+
+**Date:** 2026-06-20
+**Status:** Accepted
+**Context:** A flow run's autonomy was implicit (always-supervised: every gate
+blocks, every permission asks, every promote is manual). Driving runs
+unattended needs explicit, composable control over *where the machine acts on
+its own* — across machine self-correction, human escalation, and output shaping —
+without ever silently shipping unvalidated work.
+
+**Decision:** Introduce a per-run **execution policy** — a `preset`
+(`supervised | assisted | unattended`) that expands to nine composable axes,
+each overridable, snapshotted onto `runs.execution_policy` at launch (immutable
+for the run's life; resume/recover/finalize read the snapshot, never a mutable
+catalog row — same discipline as `runner_snapshot` / `deliveryPolicySnapshot`).
+The axes, grouped:
+- **A (self-correction):** `reworkExhaustion` (escalate | ship_with_warning |
+  fail) at the rework-cap; `crashRetry` (fail | ralph_loop | auto_retry) bounded
+  auto-relaunch on Failed; `checks` (strict | advisory | skip) non-review
+  check-gate promotion-strictness.
+- **B (escalation):** `permissions` (ask | auto_approve) supervisor-side inline
+  L3 below the read-only layers; `humanGate` (stop | auto_pass) auto-resolve a
+  human gate only after `assertEvidenceReady`; `onStuck` (escalate |
+  ship_with_warning | notify_only) routes the can't-auto-pass branch.
+- **C (output shaping):** `promotion` (manual | auto_on_ready) OR-combined with
+  the delivery-policy trigger; `commits` (keep_all | squash_rework |
+  squash_on_promote | defer) deterministic tree-preserving squash-on-promote;
+  `dirtyResolve` (ask | commit | proceed) auto-resolve a dirty worktree at a
+  review gate (`discard` never automatic).
+
+Two cross-cutting invariants are load-bearing:
+1. **Fail closed.** Every axis is read back from the open jsonb snapshot through
+   a `*FromSnapshot` resolver that defaults to the SAFE value on a null / absent /
+   malformed policy (`checks→strict`, `crashRetry→fail`, `reworkExhaustion→escalate`,
+   `permissions→ask`, `humanGate→stop`, `onStuck→escalate`, `promotion→manual`,
+   `commits→keep_all`, `dirtyResolve→ask`). A corrupt policy can never silently
+   relax validation, ship, or auto-act.
+2. **No blind ship.** Relaxing the check gates (`checks` advisory/skip) is
+   forbidden in combination with EITHER auto-passing the human gate OR
+   auto-promotion — at least one validation floor (strict checks, a human review,
+   or a manual promote) always remains. Enforced client-side (the launch dialog
+   disables the conflicting option) AND server-side (`assertNoBlindShip` at
+   launch, `code: PRECONDITION`). `unattended` keeps `checks: strict`, so its
+   auto-pass + auto-promote always sit behind the machine judge/check loop.
+
+`onStuck`/`reworkExhaustion` stay **separate** axes (not unified): rework-cap
+exhaustion is `reworkExhaustion`; the human-gate-can't-auto-pass branch is
+`onStuck`. `squash_rework` is reinterpreted as **squash-on-promote** (collapse
+`base..branch` into one commit pre-merge, tree-preserving — there are no
+per-node-attempt commits to collapse) with a guard that reverts to `keep_all` on
+any tree drift or git failure. See
+[`system-analytics/execution-policy.md`](system-analytics/execution-policy.md)
+for the per-axis mechanisms and call sites.
+
+**Consequences:**
+- One snapshot column drives all autonomy; resume/recover are deterministic.
+- Every autonomy action funnels through `logExecPolicyAction` (a typed audit
+  boundary) and, for on-stuck, a new `run.escalated` domain-event + webhook kind
+  (migration `0056`).
+- The privileged `launchUnattended` project action gates any policy that lowers
+  oversight below the supervised floor (auto_pass / auto_on_ready / relaxed
+  checks / non-escalate on-stuck).
+- Squash/auto-promote/auto-resolve are best-effort and never fail their host
+  operation — a botched history or a git error degrades to the safe default.
+
+**Alternatives Considered:**
+- **A single boolean "autonomous" flag:** rejected — autonomy is not one
+  dimension; teams need to relax permissions without auto-shipping, or
+  auto-promote while keeping human review.
+- **Embed numeric bounds (rework cap, max attempts) in the policy:** rejected —
+  the author's `rework.maxLoops` is authoritative (policy picks only the
+  on-exhaustion action), and ralph `maxAttempts` is a host env knob
+  (`MAISTER_RALPH_MAX_ATTEMPTS`); embedding numbers would reopen the schema.
+- **Re-validate the no-blind-ship guard at promote time:** rejected — the policy
+  is an immutable launch snapshot, so launch-time validation is sufficient;
+  promote already re-gates on `assertEvidenceReady`.
+- **Unify `reworkExhaustion` into `onStuck`:** rejected — they fire at distinct,
+  separately-tested engine sites; one axis would churn shipped code for no gain.
+
+---
+
+### ADR-098: Orchestrator engine — supervisory node, governed run-tree, delegation toolset, success-gated task-DAG, idle-checkpoint wait/resume
 
 **Date:** 2026-06-20
 **Status:** Accepted
@@ -7188,7 +7439,7 @@ default 3), so a long-lived coordinator must not hold a scheduler slot while blo
    `releaseSlotOnIdle`→`promoteNextPending`) and is resumed by a child-terminal
    domain event. Allow-listed in every run-status consumer (read models,
    scheduler `countLiveRuns` exclusion, sweeps, guards, board).
-4. **Run-tree columns on `runs`** (migration 0055): `parent_run_id` (FK→runs,
+4. **Run-tree columns on `runs`** (migration 0060): `parent_run_id` (FK→runs,
    on-delete set-null), `root_run_id` (FK→runs), `delegation_snapshot` (jsonb;
    **only** the effective agent-definition id + pinned revision — the resolved
    runner stays in the existing `runner_snapshot`, never duplicated), `launch_mode`
@@ -7232,7 +7483,7 @@ default 3), so a long-lived coordinator must not hold a scheduler slot while blo
     Pending/Running decision under the global cap), so the consumer does not need
     a separate `promoteNextPending` mark; idempotency is the per-task `hasAnyRun`
     belt on the singleton dispatcher, backed at the DB by the
-    `runs_auto_task_uq` partial unique index (ADR-097, migration 0060 — one auto
+    `runs_auto_task_uq` partial unique index (ADR-100, migration 0060 — one auto
     run per task), so even concurrent dispatch can never double-launch a
     dependent. Wait/resume each close status + `node_attempts` cursor in one tx.
 11. **Bounds.** `MAISTER_MAX_ORCHESTRATOR_FANOUT` (per-plan task cap, default 16)
@@ -7246,14 +7497,14 @@ default 3), so a long-lived coordinator must not hold a scheduler slot while blo
 **Consequences:**
 - maister gains its first **dynamic-orchestration** capability while keeping every
   delegated unit governed (worktree/gates/promotion/cap/board) — the foundation for
-  the parked dynamic-flow-synthesis milestone (~M37).
+  the parked dynamic-flow-synthesis milestone (~M38).
 - The agent pool (cap 3) cannot starve: a blocked orchestrator holds **no** slot.
 - The run-tree is observable end-to-end (workbench subtree + board decomposition).
 - **Path-scoped write enforcement** ("tester edits only tests") is **not** delivered
   — read-only-vs-full is the only enforced axis; path-scope ships `instructed`-only and
-  a `strict` declaration is refused (`CONFIG`) until the policy layer lands (ADR-096).
+  a `strict` declaration is refused (`CONFIG`) until the policy layer lands (ADR-099).
 - Persistent swarm sessions, star-routed messaging, worktree modes, and per-agent
-  read-only perms are Layer 2 (**ADR-096**).
+  read-only perms are Layer 2 (**ADR-099**).
 
 **Alternatives Considered:**
 - **Run-to-terminal orchestrator that blocks on children:** rejected — it holds a
@@ -7267,36 +7518,38 @@ default 3), so a long-lived coordinator must not hold a scheduler slot while blo
 - **`depends_on` with a "success only" flag:** rejected — a boolean on an existing
   kind muddies the human-board semantics; a distinct `requires` kind keeps
   `parent_of`/`depends_on`/`blocks` intact.
-- **Mesh messaging (direct child↔child):** rejected (deferred to ADR-096 as
+- **Mesh messaging (direct child↔child):** rejected (deferred to ADR-099 as
   star-only) — star-through-orchestrator keeps every hop auditable on one node.
 
-> **Numbering note.** ADR-095/096 were the next-free ADR numbers on
-> `feature/orchestrator-engine` off main @757a5e9e (last ADR-094). The branch
-> shipped FOUR migrations as M36 grew: **0055** (run-tree foundation, ADR-095),
-> **0056** (as-plan `tasks.launch_mode`/`delegation_spec`, ADR-095), **0057**
-> (`runs.persistent`/`addressable_key`, ADR-096), **0058** (`runs.workspace_mode`,
-> ADR-096) — all still next-free vs main's HEAD at the Phase-12 check (main at
-> migration 0054 / ADR-094, advanced only by `fix(runs)` commits). A renumber pass
-> against main's HEAD at merge time remains a pre-merge deliverable IF main claims
-> 0055+/ADR-095+ first; run `node scripts/validate-docs-adr-anchors.mjs` after any
-> renumber (`pnpm validate:docs` does not resolve ADR anchors).
+> **Numbering note.** Renumbered at the merge onto main. The
+> `feature/orchestrator-engine` branch authored this as ADR-095/096 over
+> migrations 0055–0060, but main shipped ADR-095/096/097 (Flow execution-control
+> policy / Flow Studio Phase C / Docked AI assistant) and migrations 0055–0059
+> first, so this engine is **ADR-098/099/100** and milestone **M37**. The six
+> branch migrations were folded into the single consolidated
+> **migration 0060** (`0060_m37_orchestrator_engine`) at integration — the run-tree
+> columns, the `requires`/`run.review` CHECK extensions, the
+> `persistent`/`addressable_key`/`workspace_mode` columns, and the
+> `runs_auto_task_uq` index all ship in 0060. Run
+> `node scripts/validate-docs-adr-anchors.mjs` after any further renumber
+> (`pnpm validate:docs` does not resolve ADR anchors).
 
 ---
 
-### ADR-096: Persistent swarm Layer 2 — addressable sessions, star-routed messaging, worktree modes, per-agent read-only
+### ADR-099: Persistent swarm Layer 2 — addressable sessions, star-routed messaging, worktree modes, per-agent read-only
 
 **Date:** 2026-06-20
 **Status:** Accepted
-**Context:** ADR-095 ships the orchestrator foundation (run-tree + delegation +
+**Context:** ADR-098 ships the orchestrator foundation (run-tree + delegation +
 task-DAG + wait/resume). Layer 2 turns ephemeral child runs into a coordinated,
 addressable **swarm**: a child you can re-message over time, inter-agent results
 routed through the orchestrator, shared vs own worktrees, and reviewer read-only
-roles. Migrations 0057 (persistent/addressable_key) + 0058 (workspace_mode).
+roles. Migration 0060 (persistent/addressable_key + workspace_mode).
 
 **Decision:**
 1. **Persistent addressable child sessions.** Reuse the scratch-session lifecycle
    (`scratchRuns.acpSessionId`, `classifyScratchRecovery`) so an orchestrator child
-   can receive a follow-up message after it parked. Migration 0057 adds a
+   can receive a follow-up message after it parked. Migration 0060 adds a
    `persistent`/`addressable_key` axis on the child run so the orchestrator can
    address it. **Sleep = idle-checkpoint; wake = `session/resume`.**
 2. **Re-message tool.** `run_message` (or a `run_delegate` extension) sends a
@@ -7332,11 +7585,11 @@ roles. Migrations 0057 (persistent/addressable_key) + 0058 (workspace_mode).
 
 ---
 
-### ADR-097: delegated-child Review settle + promote/rework
+### ADR-100: delegated-child Review settle + promote/rework
 
 **Date:** 2026-06-20
 **Status:** Accepted
-**Context:** ADR-095/096 ship the orchestrator with a child-completion model keyed
+**Context:** ADR-098/096 ship the orchestrator with a child-completion model keyed
 on **terminal** statuses only (`run.done/failed/crashed/abandoned` wake the parent
 and release `requires` dependents). But a `worktree` child does not run straight to
 a terminal — it produces a diff and lands in `Review`, awaiting a promote/rework
@@ -7348,12 +7601,12 @@ child, and (c) an unattended auto-promote for as-plan DAGs that have no live
 coordinator.
 
 **Decision:**
-1. **New domain-event kind `run.review`** (migration 0059 extends the
-   `domain_events_kind` CHECK to 9 kinds). It is **settled but NOT terminal**
+1. **New domain-event kind `run.review`** (migration 0060 extends the
+   `domain_events_kind` CHECK to 10 kinds). It is **settled but NOT terminal**
    (`Review → Done` via promote, `Review → Running` via rework). `finalizeAgentRun`
    emits it ONLY for a **delegated** child reaching `Review` (carries
    `parent_run_id`); a top-level Review emits nothing. The exception to the
-   "no new kind, widen the payload" rule of ADR-095 is deliberate: `Review` is not a
+   "no new kind, widen the payload" rule of ADR-098 is deliberate: `Review` is not a
    run-terminal transition, so it cannot ride a run-terminal payload.
 2. **C-2 completion model: a shared `SETTLED_RUN_STATUSES` = terminal + `Review`**
    (`web/lib/runs/run-status-sets.ts`), the single source of truth for the three
@@ -7400,7 +7653,7 @@ coordinator.
   (collect → promote/rework) and, for as-plan DAGs, advances unattended.
 - The completion model can no longer deadlock on a child stuck in `Review`: `Review`
   is a settled state for the parent's completion check while still triggering a wake.
-- One new domain-event kind is added — the kind count moves 8 → 9; every
+- One new domain-event kind is added — the kind count moves 9 → 10; every
   kind-registration site is updated.
 - The auto-launcher's exactly-once `hasAnyRun` check-then-act gains a DB backstop:
   the `runs_auto_task_uq` partial unique index (`runs(task_id) WHERE
@@ -7419,14 +7672,10 @@ coordinator.
   has no live coordinator parked on it, so its `worktree` children would never leave
   `Review` and the DAG would stall.
 
-> **Numbering note.** ADR-097 was the next-free number on
-> `feature/orchestrator-engine` (after ADR-095/096 on the same branch); migrations
-> 0059 (the `run.review` kind CHECK) and 0060 (the `runs_auto_task_uq` index) the
-> next-free migrations (after 0055–0058). All still next-free vs main's HEAD at the
-> fix-commit check. A renumber pass against main at merge time remains a pre-merge
-> deliverable IF main claims these numbers first (a sibling-branch collision is
-> known); do NOT renumber here. Run `node scripts/validate-docs-adr-anchors.mjs`
-> after any renumber.
+> **Numbering note.** Renumbered to **ADR-100** at the merge onto main (see the
+> ADR-098 numbering note). The `run.review` kind CHECK and the `runs_auto_task_uq`
+> index — authored as standalone branch migrations 0059/0060 — were folded into
+> the single consolidated **migration 0060** (`0060_m37_orchestrator_engine`).
 
 ---
 

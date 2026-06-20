@@ -209,7 +209,7 @@ export async function removeTaskRelation(
 // Blocking predicate (ADR-078 D5): task T is relation-blocked iff there is a
 // relation (X blocks T) or (T depends_on Y) whose counterpart task status is
 // Backlog or InFlight — Done AND Abandoned both release. parent_of never gates.
-// M36 (ADR-095): (T requires Y) is SUCCESS-GATED — Y blocks T unless Y is Done
+// M37 (ADR-098): (T requires Y) is SUCCESS-GATED — Y blocks T unless Y is Done
 // (Failed/Abandoned keep T blocked, unlike depends_on), so an auto-DAG only
 // releases a dependent on a successful dependency.
 export async function getOpenRelationBlockers(
@@ -268,7 +268,7 @@ export async function getOpenRelationBlockers(
     key: string;
   }>;
 
-  // M36 (ADR-095): success-gated `requires` — (T requires Y) blocks T while Y
+  // M37 (ADR-098): success-gated `requires` — (T requires Y) blocks T while Y
   // is NOT Done. Unlike depends_on, an Abandoned/Failed Y keeps T blocked, so a
   // dependent in an auto-DAG only releases on a SUCCESSFUL dependency.
   const requiresOutgoing = (await _db

@@ -16,8 +16,12 @@ import {
   liveBlockingGates,
   rollupReadiness,
 } from "@/lib/flows/graph/readiness-core";
+import {
+  checksFromSnapshot,
+  type CheckStrictness,
+} from "@/lib/runs/execution-policy";
 
-const { artifactInstances, gateResults, nodeAttempts } = schema;
+const { artifactInstances, gateResults, nodeAttempts, runs } = schema;
 
 // T15/T16 (M15, ADR-048): the unified readiness state per run, batched across
 // many runs (no per-run query, no N+1) and shared verbatim by the board,
@@ -104,6 +108,21 @@ export async function computeReadinessByRun(
     .from(artifactInstances)
     .where(inArray(artifactInstances.runId, runIds));
 
+  // Execution-policy check-strictness per run (axis A3). One batched select (no
+  // N+1) — the badge classifier MUST apply the same relaxation the merge guard
+  // does, else a run "ready under advisory checks" reads as blocked on the board
+  // while assertEvidenceReady would promote it.
+  const policyRows: Array<{ id: string; executionPolicy: unknown }> =
+    await client
+      .select({ id: runs.id, executionPolicy: runs.executionPolicy })
+      .from(runs)
+      .where(inArray(runs.id, runIds));
+  const checksByRun = new Map<string, CheckStrictness>();
+
+  for (const r of policyRows) {
+    checksByRun.set(r.id, checksFromSnapshot(r.executionPolicy ?? null));
+  }
+
   const attemptsByRun = new Map<string, typeof attemptRows>();
   const gatesByRun = new Map<string, typeof gateRows>();
   const artifactsByRun = new Map<string, typeof artifactRows>();
@@ -142,6 +161,7 @@ export async function computeReadinessByRun(
     const blocking = liveBlockingGates(
       gatesByRun.get(runId) ?? [],
       liveAttemptIds,
+      checksByRun.get(runId) ?? "strict",
     );
     const gateContributions: ReadinessContribution[] = blocking.map((g) =>
       blockingGateContribution(g, presentDefIds),

@@ -10,11 +10,13 @@ export const DOMAIN_EVENT_KINDS = [
   "run.failed",
   "run.crashed",
   "run.abandoned",
-  // M36 (ADR-097): a DELEGATED child reaching Review (a diff awaiting the
+  // M37 (ADR-100): a DELEGATED child reaching Review (a diff awaiting the
   // coordinator). NOT terminal in the base FSM (Review → Done via promote) —
   // it wakes a parked orchestrator so it can collect/promote/rework, and it
   // drives as-plan auto-promote. Emitted only when the run has a parent_run_id.
   "run.review",
+  // Execution-policy axis (B3): a run escalated for human attention.
+  "run.escalated",
   "gate.failed",
 ] as const;
 
@@ -24,7 +26,7 @@ export function isDomainEventKind(value: string): value is DomainEventKind {
   return (DOMAIN_EVENT_KINDS as readonly string[]).includes(value);
 }
 
-// M36 (ADR-095): run-terminal kinds whose payload MUST carry the emitting run's
+// M37 (ADR-098): run-terminal kinds whose payload MUST carry the emitting run's
 // `parent_run_id` so the orchestrator auto-launcher + resume consumer can route
 // to the parent. Enforced at the `emitDomainEvent` type boundary.
 export const RUN_TERMINAL_EVENT_KINDS = [
@@ -42,7 +44,7 @@ export function isRunTerminalEventKind(
   return (RUN_TERMINAL_EVENT_KINDS as readonly string[]).includes(value);
 }
 
-// M36 (ADR-097): the run-terminal kinds PLUS `run.review` — the "child has
+// M37 (ADR-100): the run-terminal kinds PLUS `run.review` — the "child has
 // settled" set the orchestrator resume consumer reacts to. A child is settled
 // once it reaches a terminal state OR Review (a diff awaiting the coordinator).
 // Every settled kind carries `parent_run_id` (enforced at the emit boundary).

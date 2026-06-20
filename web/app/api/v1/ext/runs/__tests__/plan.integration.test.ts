@@ -1,4 +1,4 @@
-// M36 Phase 4 (T4.1, ADR-095): the run_plan ext route emits a task-DAG of
+// M37 Phase 4 (T4.1, ADR-098): the run_plan ext route emits a task-DAG of
 // as-plan child tasks under the calling orchestrator. Mirrors the Phase-3
 // delegate suite's container + seed helpers. tryStartRun is stubbed off so the
 // source launch leaves a stable Pending run with every delegation column set.
