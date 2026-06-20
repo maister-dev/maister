@@ -32,6 +32,15 @@ git write-back to an upstream source (a PR from the fork branch — **Phase 2**)
   (`source_install_id`, `source_repo_url`, `source_ref`, `branch_name`), the most
   recent cut (`last_cut_install_id`), and the session lock (`locked_by_user_id`,
   `locked_by_session`, `lock_expires_at`).
+- **Per-project default ("virtual") local package** (M36, ADR-095): a
+  `local_packages` row with `is_default = true` and a non-NULL `project_id`. It
+  is the landing spot for **element-level forks** — a member who forks one flow /
+  skill / agent / rule out of an installed package does not name a package; the
+  element drops into their project's single default, created on first use. The
+  partial-unique index `local_packages_default_per_project`
+  (`(project_id) WHERE is_default`) enforces at most one default per project; the
+  FK is `ON DELETE CASCADE` (a deleted project drops its default). Named,
+  platform-scoped local packages keep `project_id = NULL`, `is_default = false`.
 - **Working directory** (`working_dir`, server-only): a git-backed dir under
   `localPackagesRoot()` holding `maister-package.yaml` + the kind dirs
   (`flows/ agents/ skills/ mcps/ rules/ schemas/`). Edited in place by the Studio
@@ -52,7 +61,7 @@ Package lifecycle:
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Active: create (git init) / fork-from-git (seed + branch)
+    [*] --> Active: create (git init) / fork (copy install + git init)
     Active --> Active: edit files (under lock) · cut version · move artifact
     Active --> Archived: archive
     Archived --> Active: unarchive
@@ -75,7 +84,7 @@ stateDiagram-v2
 
 ## Process flows
 
-Create from scratch, or fork an installed git package:
+Create from scratch, or fork an installed package (two grains, M36):
 
 ```mermaid
 flowchart TD
@@ -84,10 +93,41 @@ flowchart TD
     C --> D[git init + initial commit on branch_name]
     D --> E[redirect to /studio/edit/:id/flow.yaml]
 
-    F[Fork git package to local] --> G[seed working_dir from installed revision]
-    G --> H[record source_install_id + source_repo_url + source_ref + branch_name]
+    F["Fork PACKAGE to local (POST /api/studio/packages/:ref/fork)"] --> G1[resolve :ref → newest install server-side]
+    G1 --> G2["clean-copy ALL install working files (exclude .git) → fresh working_dir"]
+    G2 --> H[record source_install_id + source_ref; name = ref-local]
     H --> D
+
+    K["Fork ONE ELEMENT (POST /api/studio/packages/:ref/fork-element)"] --> K1["validate body projectId ∈ getAccessibleProjects (else 404, no write)"]
+    K1 --> K2[ensure project default local package, race-safe]
+    K2 --> K3["confine elementPath in SOURCE bundle + DEST working_dir"]
+    K3 --> K4["copy EXACTLY that one element (flow dir / skill / agent .md / rule)"]
 ```
+
+**Fork mechanism (finalized, M36):** a fork **copies the installed revision's
+on-disk content** (`package_installs.installedPath`, server-only) excluding any
+`.git`/VCS dir, then `git init`s the destination fresh — it does NOT re-clone the
+upstream source or reuse its history (a clone-source variant was rejected: the
+install bytes are already content-addressed and present, so a copy is
+deterministic and credential-free). A package fork copies the whole bundle into
+a NEW `<ref>-local` package; an element fork copies exactly one confined element
+into the project's default. **Neither executes anything** — no `setup.sh`, no MCP
+spawn. A missing/unreadable source bundle → `CONFIG`, nothing persisted.
+
+**Element-fork project selection:** the element fork is the only fork that names
+a project, because its destination is that project's default package. The
+`projectId` is body-controlled, so it is validated against the caller's
+`getAccessibleProjects(userId, role)` set (admin → all non-archived; member →
+their memberships) — an unknown or inaccessible project is a 404 with no write,
+and the default is never created. The package fork takes no project (its output
+is platform-scoped and named).
+
+**Default-package race ("create on first use"):** the first element fork for a
+project has no default yet. The ensure step scaffolds + `git init`s a working
+dir, then `insert(...).onConflictDoNothing()` on the partial-unique
+`(project_id) WHERE is_default`; a concurrent racer that lost re-selects the
+winner's row and `rm`s its own orphan scaffold — never a read-then-write SELECT
+(no TOCTOU).
 
 Edit + save under the lock:
 
@@ -125,16 +165,24 @@ sequenceDiagram
     participant I as installer
     participant A as attachPackage
     participant DB as local_packages
-    U->>C: cut-version(P, projectId?)
-    C->>C: clean export of working_dir (exclude .git)
+    U->>C: cut-version(P, attachToProjectId?)
+    opt attachToProjectId supplied
+        C->>C: requireProjectAction(attachToProjectId, manageLocalPackages) + resolve slug/repoPath
+    end
+    C->>C: clean export of working_dir to tmp (exclude .git)
     C->>I: installPackageRevision(source=export, version=local)
     I-->>C: package_installs (local-digest, trusted_by_policy)
-    opt attach to a project the member belongs to
+    C->>DB: stamp last_cut_install_id (AFTER-side marker)
+    opt attachToProjectId supplied
         C->>A: attachPackage(projectId, packageInstallId)
         A-->>C: attached (setup.sh runs post-commit)
     end
-    C->>DB: stamp last_cut_install_id (AFTER-side marker)
+    Note over C: finally → rm tmp export dir
 ```
+
+The attach gate (`manageLocalPackages` on `attachToProjectId`) is evaluated
+**before** the irreversible export+install, so an inaccessible attach target
+never leaves a cut install behind. The tmp export dir is removed in a `finally`.
 
 ## Expectations
 
@@ -154,6 +202,21 @@ sequenceDiagram
   **attaching** a cut version to a project MUST require project `member`
   (`manageLocalPackages`). Git-package install/attach/trust MUST stay
   admin-gated (unchanged).
+- A fork MUST copy the source install's on-disk content **excluding any `.git`/
+  VCS dir** and MUST `git init` the destination fresh; it MUST execute NOTHING
+  (no `setup.sh`, no MCP). A missing/unreadable source bundle → `CONFIG`, nothing
+  persisted.
+- A package fork MUST copy the WHOLE bundle into a NEW `<ref>-local` package
+  (recording `source_install_id` + `source_ref`). An element fork MUST copy
+  EXACTLY ONE confined element into the caller-project's default package and MUST
+  NOT copy the rest of the source.
+- An element fork's body `projectId` MUST be validated against the caller's
+  `getAccessibleProjects` set; an unknown/inaccessible project MUST be rejected
+  (404) with NO write (the default MUST NOT be created).
+- A project MUST have at most one `is_default` local package; "create on first
+  use" MUST be race-safe via `insert(...).onConflictDoNothing()` on the
+  partial-unique `(project_id) WHERE is_default` + re-select (never a
+  read-then-write SELECT).
 - "Cut version" MUST install from a clean export of `working_dir` (no `.git`/VCS
   metadata) via the existing `installPackageRevision({ version: "local" })`,
   producing a `local-<digest>` `package_installs` revision; it MUST NOT introduce
@@ -180,15 +243,23 @@ sequenceDiagram
   `MaisterError("CONFLICT")` ("reload").
 - Invalid or missing working dir (manual deletion, bad scaffold) →
   `MaisterError("CONFIG")`.
-- Cut-version crash windows (ADR-095): death during install → row stuck
-  `Installing`, the next cut re-drives idempotently; death after `Installed`
-  before attach → re-attach is safe (install reused); death before the
-  `last_cut_install_id` stamp → a re-cut re-stamps. No partial state is
-  load-bearing.
-- Fork seed of a private git source may need host git credentials; a clone
-  failure surfaces as `FLOW_INSTALL` (reused). The exact fork mechanism
-  (clone-source+worktree vs copy-installed+`git init`) is finalized in
-  implementation.
+- Cut-version crash windows (ADR-095), the irreversible export+install happening
+  BEFORE the durable stamp/attach: **(a) export done, install not started** →
+  only an orphan tmp dir (the `finally` rm covers the happy path), nothing
+  persisted; **(b) install done, stamp not written** → an immutable
+  content-addressed `package_installs` row exists but `last_cut_install_id` is
+  stale — a re-cut reuses the identical install by digest and re-stamps (no
+  duplicate, no leak); **(c) stamp done, attach pending** → the package is cut +
+  recorded, only the attach did not happen — re-run with `attachToProjectId`, or
+  attach later (`attachPackage` is itself one-tx with its own windows). No
+  partial state is load-bearing.
+- Fork crash: a fork is reads + one row insert; a death after the working-dir
+  copy but before the insert leaves an orphan working dir (rolled back on a
+  failed insert; otherwise cleaned manually like any orphan). The copy executes
+  nothing, so there is no half-run side-effect.
+- A cut of a flow-less package (e.g. an element-fork default holding only a
+  skill) fails manifest validation at install (`flows` is `min(1)`) → `CONFIG`;
+  add a flow before cutting.
 - The lock holder's session dies → the lock simply expires at `lock_expires_at`;
   the next opener takes over lazily (no sweeper).
 
@@ -200,11 +271,15 @@ sequenceDiagram
 - **ERD:** [`../db/projects-domain.md`](../db/projects-domain.md),
   [`../database-schema.md`](../database-schema.md).
 - **API:** [`../api/web.openapi.yaml`](../api/web.openapi.yaml)
-  (`/api/studio/local-packages*`).
+  (`/api/studio/local-packages*` incl. `/files/{path}` CRUD + `/cut-version`;
+  `/api/studio/packages/{ref}/fork` + `/fork-element`).
 - **Reused behavior:** [`packages.md`](packages.md) (install/attach/trust),
   [`flow-studio.md`](flow-studio.md) (editor seam, fork),
   [`mcp-management.md`](mcp-management.md) (the MCP catalog the template editor
   sources from).
-- **Source (Phase C):** `web/lib/local-packages/*`,
-  `web/app/api/studio/local-packages/*`, `web/app/(app)/studio/local/`,
-  `web/app/(app)/studio/edit/[id]/`.
+- **Source (Phase C):** `web/lib/local-packages/*` (incl. `fork.ts`,
+  `service.ts` `ensureDefaultLocalPackage`/`cleanCopyExcludingGit`/
+  `exportWorkingDir`/`stampLastCutInstall`),
+  `web/app/api/studio/local-packages/*` (incl. `[id]/cut-version`),
+  `web/app/api/studio/packages/[ref]/{fork,fork-element}/`,
+  `web/app/(app)/studio/local/`, `web/app/(app)/studio/edit/[id]/`.

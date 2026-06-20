@@ -7073,13 +7073,82 @@ paths:
           application/json:
             schema: { $ref: "#/components/schemas/CutVersionBody" }
       responses:
-        "200":
+        "201":
           description: Cut (and optionally attached).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/CutVersionResult" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+
+  /api/studio/packages/{ref}/fork:
+    parameters:
+      - name: ref
+        in: path
+        required: true
+        schema: { type: string }
+        description: "Package name (url-param). Resolved server-side to its newest install; the body controls nothing."
+    post:
+      tags: [flow-packages]
+      summary: (ADR-095 — Designed) Fork a whole package to a local package
+      description: |
+        (ADR-095 — Designed, Flow Studio Phase C.) Resolves the installed
+        package by `ref` server-side, then clean-copies ALL of that install's
+        working files (excluding `.git`) into a fresh git-init'd local package
+        auto-named `<ref>-local`, recording `source_install_id` + `source_ref`.
+        Executes NOTHING (no `setup.sh`, no MCP). A missing/unreadable source
+        bundle → `CONFIG` (400) with nothing persisted. Authenticated users only
+        (`requireSession`; Studio authoring is member-accessible).
+      operationId: forkStudioPackage
+      responses:
+        "201":
+          description: Forked.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ForkResult" }
+        "400": { $ref: "#/components/responses/Config" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/studio/packages/{ref}/fork-element:
+    parameters:
+      - name: ref
+        in: path
+        required: true
+        schema: { type: string }
+        description: "Package name (url-param). Resolved server-side to its newest install."
+    post:
+      tags: [flow-packages]
+      summary: (ADR-095 — Designed) Fork ONE element into a project default
+      description: |
+        (ADR-095 — Designed, Flow Studio Phase C.) Copies EXACTLY ONE element (a
+        flow dir / skill bundle / agent `.md` / rule file at `elementPath`) from
+        the package `ref` into the caller-project's per-project default
+        ("virtual") local package, created on first use (race-safe on the
+        partial-unique `(project_id) WHERE is_default`). The body `projectId` is
+        validated against the caller's accessible projects — an inaccessible /
+        unknown project → 404 with NO write. `elementPath` is confined inside the
+        source bundle AND the destination working dir; an escape → `PRECONDITION`
+        (409). Copying the rest of the source is forbidden. Executes NOTHING.
+      operationId: forkStudioPackageElement
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ForkElementBody" }
+      responses:
+        "201":
+          description: Element forked into the project default.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ForkResult" }
+        "400": { $ref: "#/components/responses/Config" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/Config" }
 
@@ -12744,14 +12813,25 @@ components:
     CutVersionBody:
       type: object
       properties:
-        projectSlug: { type: string, nullable: true, description: "Attach the cut version to this project (caller must be a member; manageLocalPackages)." }
+        attachToProjectId: { type: string, minLength: 1, description: "Attach the cut version to this project id (caller must be a member; manageLocalPackages). Validated server-side before any irreversible side-effect." }
     CutVersionResult:
       type: object
-      required: [packageInstallId, versionLabel, attached]
+      required: [installId, versionLabel]
       properties:
-        packageInstallId: { type: string }
+        installId: { type: string, description: "The immutable package_installs id the cut produced." }
         versionLabel: { type: string, description: "e.g. local-<digest12>." }
-        attached: { type: boolean }
+        attachmentId: { type: string, description: "Present only when attachToProjectId was supplied and the attach succeeded." }
+    ForkElementBody:
+      type: object
+      required: [projectId, elementPath]
+      properties:
+        projectId: { type: string, minLength: 1, description: "Target project (body-controlled; validated against the caller's accessible projects). Its default local package receives the element." }
+        elementPath: { type: string, minLength: 1, description: "Working-dir-relative path of the ONE element to copy (flow dir / skill bundle / agent .md / rule file). Confined; `..`/abs/`.git` rejected." }
+    ForkResult:
+      type: object
+      required: [localPackageId]
+      properties:
+        localPackageId: { type: string, description: "The local package the fork landed in (a new `<ref>-local` for a package fork; the project default for an element fork)." }
     PackageSource:
       type: object
       description: |

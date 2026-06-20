@@ -124,13 +124,13 @@ Agent bundles/subdirs (agents stay single-file); editable on-canvas node popup (
   Acceptance: each kind edits via its editor; MCP editor materializes a template with `env:NAME` refs only (no secret values); unknown frontmatter keys preserved byte-stable; en/ru parity.
   Logging: DEBUG `[artifactEditor] {kind, path}`.
 
-- [ ] **T2.6 — Fork to local (both grains).** (depends on T2.4)
+- [x] **T2.6 — Fork to local (both grains).** (depends on T2.4)
   Package-level: `POST /api/studio/packages/[ref]/fork` → new local package (auto-named `<source>-local`), clean-copy all elements into a git-init'd working dir, record `source_package_install_id`/`source_ref`, return `{localPackageId}`. Element-level: `POST /api/studio/.../fork-element {projectId}` → copy one element into **that project's** `is_default` local package (create on first use). **The Studio package screen is platform-wide (not project-scoped), so element-fork MUST collect a target project** (project picker when the user has >1; auto when exactly 1) — `projectId` is `body-controlled` and MUST be validated against the caller's accessible projects (server-state), not trusted raw. **Reads precede ONE tx; execute nothing.** Source ids = url-param→server-state; never trust a body path.
   Files: `web/app/api/studio/packages/[ref]/fork/route.ts`, `.../fork-element/route.ts`, `web/lib/local-packages/fork.ts`, reuse `web/lib/local-packages/git.ts`, fork dialog component (project picker).
   Acceptance (spec §6.2): package fork copies all elements; element fork copies exactly one into the chosen project's default; `projectId` validated against accessible projects (else 403/404, no write); nothing executes; missing bundle → `CONFIG` (nothing persisted); explicit slug collision → `CONFLICT`; requires `requireSession`.
   Logging: DEBUG `[localPkg.fork] {grain, source, projectId?, localPackageId}`.
 
-- [ ] **T2.7 — Cut version + attach (two-phase / multi-store).** (depends on T2.6)
+- [x] **T2.7 — Cut version + attach (two-phase / multi-store).** (depends on T2.6)
   `POST /api/studio/local-packages/[id]/cut-version` → clean-export working dir (exclude `.git`) → `installPackageRevision({source, version:"local"})` (immutable `local-<digest>` install) → stamp `last_cut_install_id`; optional attach (`attachPackage`, member-gated). **Order**: git/export side-effects BEFORE the tx; the install/attach durable writes are the AFTER mark; enumerate crash windows (export done / install done / attach pending) each with a recovery note; the two-phase install intent rows already exist.
   Files: `web/app/api/studio/local-packages/[id]/cut-version/route.ts`, reuse `web/lib/packages/attach.ts` (`installPackageRevision`, `attachPackage`).
   Acceptance (spec §6.4): immutable `local-<digest>` reflects the working dir at cut; later edits don't mutate it; attach gated by `manageLocalPackages: member`; git-package gates stay admin; crash between export+install leaves no half-registered revision.

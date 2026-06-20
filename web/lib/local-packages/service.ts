@@ -5,15 +5,18 @@ import type { LocalPackage } from "@/lib/db/schema";
 
 import { createHash, randomUUID } from "node:crypto";
 import {
+  cp,
   mkdir,
+  mkdtemp,
   readFile as fsReadFile,
   readdir,
   rm,
   stat,
 } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { gitInitWithCommit } from "./git";
@@ -84,7 +87,12 @@ export function inferFileKind(relPath: string): string {
   }
 }
 
-async function uniqueSlug(name: string, db?: Db): Promise<string> {
+// Exported for the fork path (T2.6): a slug that does not collide with any
+// existing local-package slug, suffixed `-2..` then a uuid tail as a last resort.
+export async function uniqueSlugForName(
+  name: string,
+  db?: Db,
+): Promise<string> {
   const base = slugifyName(name);
   const existing = await resolveDb(db).select({ slug: lp.slug }).from(lp);
   const taken = new Set(existing.map((r) => r.slug));
@@ -111,13 +119,41 @@ async function scaffoldWorkingDir(
   );
 }
 
+// Recursively copy `src` into `dest` skipping every VCS `.git` entry, so a fork
+// or a cut-version export carries the package CONTENT but not the source repo
+// history (the dest is re-git-init'd fresh, or installed content-addressed).
+// `cp`'s filter receives absolute paths; we reject any whose basename is `.git`.
+export async function cleanCopyExcludingGit(
+  src: string,
+  dest: string,
+): Promise<void> {
+  await mkdir(dest, { recursive: true });
+  await cp(src, dest, {
+    recursive: true,
+    errorOnExist: false,
+    force: true,
+    filter: (source) => path.basename(source) !== ".git",
+  });
+}
+
+// Clean-export a local package's working dir (minus `.git`) into a fresh tmp
+// dir the caller MUST `rm` after use. Used by cut-version to feed an immutable,
+// content-addressed install without exposing the working dir to the installer.
+export async function exportWorkingDir(pkg: LocalPackage): Promise<string> {
+  const exportDir = await mkdtemp(path.join(os.tmpdir(), "maister-lp-export-"));
+
+  await cleanCopyExcludingGit(pkg.workingDir, exportDir);
+
+  return exportDir;
+}
+
 export async function createLocalPackage(opts: {
   name: string;
   createdBy: string;
   sourceInstallId?: string | null;
   db?: Db;
 }): Promise<LocalPackage> {
-  const slug = await uniqueSlug(opts.name, opts.db);
+  const slug = await uniqueSlugForName(opts.name, opts.db);
   const workingDir = localPackageWorkingDir(slug);
 
   log.info({ slug, workingDir }, "create local package");
@@ -171,6 +207,83 @@ export async function getLocalPackage(
   return rows[0] ?? null;
 }
 
+export async function getDefaultLocalPackage(
+  projectId: string,
+  db?: Db,
+): Promise<LocalPackage | null> {
+  const rows = await resolveDb(db)
+    .select()
+    .from(lp)
+    .where(and(eq(lp.projectId, projectId), eq(lp.isDefault, true)));
+
+  return rows[0] ?? null;
+}
+
+// (M36 ADR-095) Resolve-or-create THE per-project default ("virtual") local
+// package that element-level forks land in. Race-safe by construction: the
+// scaffold + insert race on the partial-unique `(project_id) WHERE is_default`
+// index — `onConflictDoNothing` lets the loser fall through to a re-select of
+// the winner's row (NEVER a read-then-write SELECT/TOCTOU). The loser's orphan
+// scaffold dir is rolled back.
+export async function ensureDefaultLocalPackage(opts: {
+  projectId: string;
+  projectName: string;
+  createdBy: string;
+  db?: Db;
+}): Promise<LocalPackage> {
+  const existing = await getDefaultLocalPackage(opts.projectId, opts.db);
+
+  if (existing) return existing;
+
+  const name = `${opts.projectName} (local)`;
+  const slug = await uniqueSlugForName(name, opts.db);
+  const workingDir = localPackageWorkingDir(slug);
+
+  log.info({ projectId: opts.projectId, slug }, "ensure default local package");
+  await scaffoldWorkingDir(workingDir, name);
+  await gitInitWithCommit(
+    workingDir,
+    DEFAULT_BRANCH,
+    "maister: init default local package",
+  );
+
+  const inserted = await resolveDb(opts.db)
+    .insert(lp)
+    .values({
+      name,
+      slug,
+      workingDir,
+      status: "active",
+      branchName: DEFAULT_BRANCH,
+      projectId: opts.projectId,
+      isDefault: true,
+      createdBy: opts.createdBy,
+    })
+    .onConflictDoNothing({
+      target: lp.projectId,
+      where: sql`${lp.isDefault}`,
+    })
+    .returning();
+
+  const row = inserted[0];
+
+  if (row) return row;
+
+  // Lost the race: another concurrent caller created the default first. Roll
+  // back this caller's now-orphan scaffold and return the winner's row.
+  await rm(workingDir, { recursive: true, force: true }).catch(() => undefined);
+  const winner = await getDefaultLocalPackage(opts.projectId, opts.db);
+
+  if (!winner) {
+    throw new MaisterError(
+      "CONFLICT",
+      "failed to ensure default local package",
+    );
+  }
+
+  return winner;
+}
+
 export async function renameLocalPackage(
   id: string,
   name: string,
@@ -193,6 +306,23 @@ export async function setLocalPackageStatus(
   const rows = await resolveDb(db)
     .update(lp)
     .set({ status, updatedAt: new Date() })
+    .where(eq(lp.id, id))
+    .returning();
+
+  return rows[0] ?? null;
+}
+
+// (M36 T2.7) Stamp the install a cut-version produced as this package's latest
+// cut. The cut install is a content-addressed COPY — later working-dir edits do
+// not mutate it (a fresh cut produces a new immutable revision).
+export async function stampLastCutInstall(
+  id: string,
+  installId: string,
+  db?: Db,
+): Promise<LocalPackage | null> {
+  const rows = await resolveDb(db)
+    .update(lp)
+    .set({ lastCutInstallId: installId, updatedAt: new Date() })
     .where(eq(lp.id, id))
     .returning();
 
