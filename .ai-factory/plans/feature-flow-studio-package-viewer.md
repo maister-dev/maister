@@ -106,7 +106,7 @@ Agent bundles/subdirs (agents stay single-file); editable on-canvas node popup (
   Files: `web/lib/db/schema.ts`, `web/lib/db/migrations/0056_*`.
   Acceptance: applies clean; partial-unique enforces one default per project; `db:generate` shows no stray diff.
 
-- [ ] **T2.3 — Working-dir file routes (under lock) + read-only banner.** (depends on T2.2)
+- [x] **T2.3 — Working-dir file routes (under lock) + read-only banner.** (depends on T2.2)
   `GET/PUT/DELETE /api/studio/local-packages/[id]/files/[...path]` on the Phase C working dir. **Identifiers**: `id`=url-param (server-state lookup → working_dir), `path`=url-controlled → confine via `resolveWithinWorkingDir` (reject abs/`..`/symlink/`.git`); lock `sessionId`=body token → `assertHoldsLock` before any write (else `CONFLICT`). Second tab → read-only banner.
   Files: `web/app/api/studio/local-packages/[id]/files/[...path]/route.ts`, reuse `web/lib/local-packages/{paths,lock,service}.ts`.
   Acceptance (spec §6.3): writes only under a live lock (else `CONFLICT`); path confined pre-fs; `working_dir` never client-exposed.

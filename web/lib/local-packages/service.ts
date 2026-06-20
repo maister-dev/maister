@@ -270,6 +270,38 @@ export async function readFileContent(
   };
 }
 
+// Confined atomic write of a working-dir file (M36 T2.3). The caller MUST have
+// asserted the session edit-lock first; this is the file-system side only.
+// `resolveWithinWorkingDir` rejects abs/`..`/`.git`/symlink-escape before any fs.
+export async function writeWorkingDirFile(
+  pkg: LocalPackage,
+  relPath: string,
+  content: string,
+): Promise<LocalPackageFileContent> {
+  const abs = await resolveWithinWorkingDir(pkg.workingDir, relPath);
+
+  await mkdir(path.dirname(abs), { recursive: true });
+  await atomicWriteText(abs, content);
+
+  return {
+    path: relPath.split(path.sep).join("/"),
+    kind: inferFileKind(relPath),
+    content,
+    contentHash: createHash("sha256").update(content).digest("hex"),
+  };
+}
+
+// Confined delete of a working-dir file (M36 T2.3). Idempotent (`force`); a
+// missing file is not an error. Lock-asserted by the caller.
+export async function deleteWorkingDirFile(
+  pkg: LocalPackage,
+  relPath: string,
+): Promise<void> {
+  const abs = await resolveWithinWorkingDir(pkg.workingDir, relPath);
+
+  await rm(abs, { force: true });
+}
+
 // Client-safe projection: working_dir + locked_by_session are server-only and
 // intentionally omitted (D1/D10).
 export function toLocalPackageDto(row: LocalPackage) {
