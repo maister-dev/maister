@@ -356,6 +356,63 @@ async function maybePushTargetBranch(args: {
   }
 }
 
+// Whether the run's commit policy collapses base..HEAD pre-promotion (C2). This
+// is the RETRY-STABLE force-push signal for PR mode: it derives from the
+// IMMUTABLE execution-policy snapshot, NOT from a per-attempt squash result. A
+// transient push failure leaves the local branch already rewritten and the claim
+// retryable; on the reclaim the squash is a no-op (≤1 commit), so a result-based
+// force decision would drop to a non-forced push and hit a non-fast-forward
+// against the un-updated remote. The policy predicate keeps the reclaim forcing.
+function squashesRunHistory(claim: FlowClaim): boolean {
+  if (claim.run.runKind !== "flow" || !claim.baseCommit) return false;
+  const commitPolicy = commitsFromSnapshot(claim.run.executionPolicy);
+
+  return (
+    commitPolicy === "squash_rework" || commitPolicy === "squash_on_promote"
+  );
+}
+
+// C2 (execution-policy commits): collapse the run branch's history (base..HEAD)
+// into one commit pre-promotion for flow runs whose policy is squash_rework /
+// squash_on_promote. Tree-preserving inside squashRunBranch; any drift/failure
+// silently keeps the original history (keep_all). Applies to BOTH merge and PR
+// promotions. Idempotent: a no-op (≤1 commit) on a reclaim after a prior attempt
+// already squashed. Skipped for keep_all/defer + legacy rows lacking a base
+// commit. The PR force-push decision is the policy predicate (squashesRunHistory),
+// NOT this op's result, so it survives a transient-push retry.
+async function squashForCommitPolicy(
+  claim: FlowClaim,
+  runId: string,
+): Promise<void> {
+  if (!squashesRunHistory(claim)) return;
+  const commitPolicy = commitsFromSnapshot(claim.run.executionPolicy);
+
+  try {
+    const squash = await squashRunBranch({
+      worktreePath: claim.workspace.worktreePath,
+      baseCommit: claim.baseCommit as string,
+      message: `maister: run ${runId} (history squashed for promote)`,
+    });
+
+    log.info(
+      {
+        runId,
+        commitPolicy,
+        squashed: squash.squashed,
+        collapsed: squash.collapsed,
+        reason: squash.reason,
+      },
+      "[squash] commit-policy applied pre-promote",
+    );
+  } catch (err) {
+    // Squash is best-effort; never let it fail the promote (keep_all).
+    log.error(
+      { runId, commitPolicy, err: (err as Error).message },
+      "[squash] threw — promoting original history (keep_all)",
+    );
+  }
+}
+
 // ---- workspace-backed flow/agent promotion -------------------------------
 
 async function promoteWorkspaceRun(
@@ -515,6 +572,12 @@ async function promoteWorkspaceRun(
     );
   }
 
+  // C2 (execution-policy commits): collapse the run branch's history (base..HEAD)
+  // into one commit pre-promotion for squash_rework / squash_on_promote, BEFORE
+  // either side-effect so it applies to merge AND PR promotions. Tree-preserving
+  // + best-effort inside the helper (any drift/failure keeps the full history).
+  await squashForCommitPolicy(claim, runId);
+
   // ---- Side-effects: NO lock held (§3.2 step 2).
   if (claim.resolvedMode === "pull_request") {
     return promotePullRequestSideEffect({
@@ -522,46 +585,12 @@ async function promoteWorkspaceRun(
       ctx,
       db,
       claim,
+      // Force-push (--force-with-lease) when the commit policy squashes. Derived
+      // from the immutable policy, NOT this attempt's squash result, so a reclaim
+      // after a transient push failure still force-updates the already-rewritten
+      // branch onto a remote that may hold the old history (no non-fast-forward).
+      forcePush: squashesRunHistory(claim),
     });
-  }
-
-  // C2 (execution-policy commits): collapse the run branch's history into one
-  // commit pre-merge for flow runs whose policy is squash_rework/squash_on_promote.
-  // Tree-preserving inside squashRunBranch; any drift/failure silently keeps the
-  // original history (keep_all). Skipped for PR (returned above) + legacy rows
-  // lacking a base commit.
-  if (claim.run.runKind === "flow" && claim.baseCommit) {
-    const commitPolicy = commitsFromSnapshot(claim.run.executionPolicy);
-
-    if (
-      commitPolicy === "squash_rework" ||
-      commitPolicy === "squash_on_promote"
-    ) {
-      try {
-        const squash = await squashRunBranch({
-          worktreePath: claim.workspace.worktreePath,
-          baseCommit: claim.baseCommit,
-          message: `maister: run ${runId} (history squashed for promote)`,
-        });
-
-        log.info(
-          {
-            runId,
-            commitPolicy,
-            squashed: squash.squashed,
-            collapsed: squash.collapsed,
-            reason: squash.reason,
-          },
-          "[squash] commit-policy applied pre-promote",
-        );
-      } catch (err) {
-        // Squash is best-effort; never let it fail the promote (keep_all).
-        log.error(
-          { runId, commitPolicy, err: (err as Error).message },
-          "[squash] threw — promoting original history (keep_all)",
-        );
-      }
-    }
   }
 
   let commit: string;
@@ -775,6 +804,9 @@ async function promotePullRequestSideEffect(args: {
   ctx: PromoteRunContext;
   db: Db;
   claim: FlowClaim;
+  // C2: the run branch was squash-rewritten pre-push, so an existing PR branch
+  // must be force-updated (--force-with-lease). False when no squash ran.
+  forcePush?: boolean;
 }): Promise<PromoteRunResult> {
   const { runId, ctx, db, claim } = args;
   const project = await loadProject(db, claim.run.projectId);
@@ -797,6 +829,9 @@ async function promotePullRequestSideEffect(args: {
       projectRepoPath: claim.workspace.parentRepoPath,
       remote: "origin",
       branch: claim.workspace.branch,
+      // Only force when a squash rewrote base..HEAD — keeps a plain (keep_all)
+      // PR push a non-forced fast-forward.
+      ...(args.forcePush ? { force: true } : {}),
     });
 
     const pr = await adapter.createOrUpdatePr({

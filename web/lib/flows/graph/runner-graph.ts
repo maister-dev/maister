@@ -121,10 +121,12 @@ import {
   humanGateFromSnapshot,
   onStuckFromSnapshot,
   permissionsFromSnapshot,
+  resolveAutoRetryPolicy,
   resolveHumanGateDisposition,
   reworkExhaustionFromSnapshot,
 } from "@/lib/runs/execution-policy";
 import { autoResolveDirtyAtReview } from "@/lib/runs/dirty-resolution";
+import { autoRetryMaxAttempts } from "@/lib/instance-config";
 import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
 import {
   isMaisterError,
@@ -247,7 +249,17 @@ export async function runReviewHuman(
   node: CompiledNode,
   loaded: LoadedRun,
   prompt: string,
-  ctx: { runtimeRoot: string; db: Db; gateAttempt: number },
+  ctx: {
+    runtimeRoot: string;
+    db: Db;
+    gateAttempt: number;
+    // forcePause (rework-exhaustion escalate): always create the HITL pause,
+    // bypassing the B2/B3 auto-pass short-circuit below. The machine is stuck
+    // (rework cap spent) so it must reach a human even under humanGate=auto_pass
+    // — without this the caller would flip the run to NeedsInput while this
+    // function auto-passed and created no HITL request (an unresolvable orphan).
+    forcePause?: boolean;
+  },
 ): Promise<NodeResult> {
   const startedAt = Date.now();
   const dir = runDir(ctx.runtimeRoot, loaded.projectSlug, loaded.run.id);
@@ -300,7 +312,7 @@ export async function runReviewHuman(
   let assignHitl = true;
   const humanGate = humanGateFromSnapshot(loaded.run.executionPolicy ?? null);
 
-  if (humanGate === "auto_pass") {
+  if (humanGate === "auto_pass" && ctx.forcePause !== true) {
     // Safe-default = the forward (non-rework) decision (mirrors A.2's rule).
     const reworkTargets = node.rework?.allowedTargets ?? [];
     const safeDefault = (node.finishHuman?.decisions ?? []).find(
@@ -1497,8 +1509,18 @@ export async function runGraph(
     if (node.nodeType !== "ai_coding" && node.nodeType !== "cli") return false;
     if (node.source.kind !== "node") return false;
 
-    const retryPolicy = (node.source.node as { retry_policy?: RetryPolicy })
+    // Author's explicit per-node retry_policy wins; otherwise the run's
+    // execution-policy crashRetry=auto_retry synthesizes one for a retry_safe
+    // node (transient codes, workspace=keep, MAISTER_AUTO_RETRY_MAX_ATTEMPTS).
+    const explicit = (node.source.node as { retry_policy?: RetryPolicy })
       .retry_policy;
+    const retryPolicy =
+      explicit ??
+      resolveAutoRetryPolicy({
+        retrySafe: node.retrySafe,
+        executionPolicy: loaded.run.executionPolicy ?? null,
+        maxAttempts: autoRetryMaxAttempts(),
+      });
 
     if (!retryPolicy) return false;
     if (!(retryPolicy.on_errors as readonly string[]).includes(code)) {
@@ -1545,6 +1567,22 @@ export async function runGraph(
           return false;
         }
       }
+    }
+
+    // Funnel the policy-driven retry (no explicit author retry_policy) through
+    // the exec-policy audit boundary; an author retry_policy is ADR-080's own
+    // mechanism and is not an execution-policy autonomy action.
+    if (!explicit) {
+      logExecPolicyAction({
+        runId,
+        kind: "auto_retried",
+        detail: {
+          nodeId: node.id,
+          code,
+          attempt: state.nodeAttemptNumber,
+          maxAttempts: retryPolicy.attempts,
+        },
+      });
     }
 
     log2.info(
@@ -2521,9 +2559,12 @@ export async function runGraph(
           // Reuse the review HITL substrate: re-pause for a human to make the
           // terminal call (approve or end the run). This visit's decision
           // artifact was consumed on read, so runReviewHuman creates a fresh
-          // HITL request + assignment. The attempt row stays NeedsInput — a
-          // re-decided rework re-exhausts here, so only a non-rework decision
-          // moves the run forward.
+          // HITL request + assignment. forcePause overrides humanGate=auto_pass
+          // (an unattended run): the cap is spent, so the machine MUST reach a
+          // human here — without it runReviewHuman could auto-pass/ship and
+          // create no HITL row while we flip NeedsInput below (orphaned run).
+          // The attempt row stays NeedsInput — a re-decided rework re-exhausts
+          // here, so only a non-rework decision moves the run forward.
           logExecPolicyAction({
             runId,
             kind: "escalated",
@@ -2533,7 +2574,12 @@ export async function runGraph(
             node,
             loaded,
             `Rework limit (${node.rework.maxLoops}) reached for "${node.id}". A human must approve or end the run.`,
-            { runtimeRoot, db, gateAttempt: nodeAttemptNumber },
+            {
+              runtimeRoot,
+              db,
+              gateAttempt: nodeAttemptNumber,
+              forcePause: true,
+            },
           );
           await db.transaction(async (tx: Db) => {
             await markNodeNeedsInput(nodeAttemptId, tx);

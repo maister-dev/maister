@@ -8,6 +8,7 @@
 
 import { z } from "zod";
 
+import { RETRYABLE_ERROR_CODES, type RetryPolicy } from "@/lib/config.schema";
 import { MaisterError } from "@/lib/errors-core";
 
 export type ExecutionPreset = "supervised" | "assisted" | "unattended";
@@ -16,7 +17,11 @@ export type ExecutionPreset = "supervised" | "assisted" | "unattended";
 // policy may lower it and pick what happens when it is exhausted).
 export type ReworkExhaustionAction = "escalate" | "ship_with_warning" | "fail";
 
-// A2 — crash / hard-failure handling.
+// A2 — crash / hard-failure handling. `ralph_loop` relaunches the WHOLE run on
+// Failed (the run.failed consumer); `auto_retry` re-dispatches a failed
+// `retry_safe` node IN-RUN on a transient code — synthesizing an ADR-080 retry
+// (resolveAutoRetryPolicy) bounded by MAISTER_AUTO_RETRY_MAX_ATTEMPTS, with the
+// author's per-node retry_policy taking precedence when present.
 export type CrashRetryMode = "fail" | "ralph_loop" | "auto_retry";
 
 // A3 — non-review check-gate strictness (promotion-block only; never the judge).
@@ -178,12 +183,42 @@ export function assertNoBlindShip(policy: ExecutionPolicy): void {
   }
 }
 
+// Execution-policy axis A2 (crashRetry=auto_retry): synthesize an ADR-080 retry
+// policy for a `retry_safe` node so a failed transient in-run dispatch is
+// re-dispatched within the same run (no whole-run ralph relaunch). Returns null
+// when the node is not retry_safe OR the run is not auto_retry. The caller lets
+// an explicit per-node retry_policy WIN (author authoritative) and only falls
+// back to this. on_errors is the transient allow-list (RETRYABLE_ERROR_CODES —
+// SPAWN/EXECUTOR_UNAVAILABLE/CHECKPOINT/ACP_PROTOCOL; deterministic codes never
+// retry); workspace=keep (no checkpoint dependency, mirrors the degraded path).
+export function resolveAutoRetryPolicy(args: {
+  retrySafe: boolean;
+  executionPolicy: unknown;
+  maxAttempts: number;
+}): RetryPolicy | null {
+  if (!args.retrySafe) return null;
+  if (crashRetryFromSnapshot(args.executionPolicy) !== "auto_retry") {
+    return null;
+  }
+
+  return {
+    attempts: args.maxAttempts,
+    on_errors: [...RETRYABLE_ERROR_CODES],
+    workspace: "keep",
+  };
+}
+
 // A policy needs the privileged `launchUnattended` project action when it lowers
 // human oversight or validation below the supervised floor: auto-passing the
 // human gate, auto-promoting, relaxing checks, or not escalating when stuck. The
 // `unattended` preset is always covered (it sets auto_pass + auto_on_ready);
 // `assisted` only auto-approves permissions + proceeds on a dirty tree — it
 // keeps human review and manual promotion, so it stays at the launchRun level.
+// NOTE: `reworkExhaustion=ship_with_warning` is intentionally NOT gated here.
+// It can only ship behind a remaining human floor: the no-blind-ship guard
+// forbids it with relaxed checks + auto-pass/auto-promote, so a human review or
+// a manual promote still sees the result. It is launch-level by design (owner
+// decision 2026-06-20) — revisit only if it becomes UI-reachable.
 export function requiresLaunchUnattended(policy: ExecutionPolicy): boolean {
   const r = expandExecutionPolicy(policy);
 

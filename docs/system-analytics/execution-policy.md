@@ -140,7 +140,16 @@ flowchart TD
 - `commits` squash MUST be tree-preserving: the post-rewrite `HEAD^{tree}` SHA
   equals the pre-rewrite SHA, else the branch reverts to its original HEAD and
   promotion proceeds on the unmodified history (`keep_all`). A botched history
-  NEVER promotes.
+  NEVER promotes. The squash runs pre-promotion for merge, rebase-merge, AND
+  pull-request strategies (a PR branch is force-updated with `--force-with-lease`
+  whenever the commit policy squashes — derived from the immutable policy, NOT a
+  per-attempt squash result, so a reclaim after a transient push failure still
+  force-updates the already-rewritten branch).
+- `crashRetry=auto_retry` MUST re-dispatch a failed `retry_safe` node IN-RUN on a
+  transient code (`SPAWN`/`EXECUTOR_UNAVAILABLE`/`CHECKPOINT`/`ACP_PROTOCOL`),
+  bounded by `MAISTER_AUTO_RETRY_MAX_ATTEMPTS` total ledger attempts; an explicit
+  per-node `retry_policy` takes precedence, deterministic codes never retry, and
+  exhaustion fails the run.
 - `dirtyResolve` MUST NEVER auto-`discard`; `commit`/`proceed` auto-resolve only
   at a review-gate pause when the worktree is dirty.
 - Every autonomy action MUST funnel through `logExecPolicyAction`; an on-stuck
@@ -157,6 +166,9 @@ flowchart TD
 - **Squash tree drift / git failure** → `squashRunBranch` reverts to the original
   HEAD and returns not-squashed; the promote keeps the full history. Never throws
   (`code` surfaced only in logs, not the promote result).
+- **`commits=defer` / `commits=squash_on_promote`** → `defer` behaves as
+  `keep_all` (no separate deferral step today); `squash_on_promote` is an explicit
+  alias of `squash_rework` (both collapse `base..HEAD` pre-promotion).
 - **Ralph relaunch when the global cap is full** → the new run is created
   `Pending` and auto-promotes when a slot frees (`MaisterError` never raised by
   the consumer; `handle` never throws).
@@ -170,8 +182,9 @@ flowchart TD
 - ADR: [ADR-094](../decisions.md#adr-094-flow-execution-control-policy--snapshotted-preset--composable-autonomy-axes-fail-closed-no-blind-ship).
 - Source: `web/lib/runs/execution-policy.ts` (types + preset table + resolvers +
   `assertNoBlindShip`), `web/lib/runs/exec-policy-audit.ts` (audit boundary),
-  `web/lib/flows/graph/runner-graph.ts` (A1/A3/B2/B3/C3 sites),
-  `web/lib/runs/ralph-loop.ts` (A2 consumer), `supervisor/src/acp-client.ts`
+  `web/lib/flows/graph/runner-graph.ts` (A1/A3/B2/B3/C3 sites + the A2
+  `auto_retry` `scheduleAutoRetry` synthesis via `resolveAutoRetryPolicy`),
+  `web/lib/runs/ralph-loop.ts` (A2 `ralph_loop` consumer), `supervisor/src/acp-client.ts`
   (B1 L3), `web/lib/runs/auto-delivery.ts` (C1), `web/lib/worktree.ts`
   `squashRunBranch` + `web/lib/runs/promote.ts` (C2),
   `web/lib/runs/dirty-resolution.ts` `autoResolveDirtyAtReview` (C3).

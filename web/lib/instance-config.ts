@@ -62,6 +62,7 @@ const DEFAULT_GC_SWEEP_INTERVAL_SECONDS = 3600;
 const DEFAULT_RECONCILE_SWEEP_INTERVAL_SECONDS = 60;
 const DEFAULT_RECONCILE_GRACE_SECONDS = 90;
 const DEFAULT_RALPH_MAX_ATTEMPTS = 5;
+const DEFAULT_AUTO_RETRY_MAX_ATTEMPTS = 3;
 const DEFAULT_PROMOTION_CLAIM_TIMEOUT_SECONDS = 300;
 
 // M18 Phase 2 (§3.2, Codex F1): a durable `claiming` promotion claim older than
@@ -90,6 +91,23 @@ export function ralphMaxAttempts(): number {
   const parsed = Number.parseInt(raw, 10);
 
   if (!Number.isFinite(parsed) || parsed < 1) return DEFAULT_RALPH_MAX_ATTEMPTS;
+
+  return parsed;
+}
+
+// Execution-policy axis A2 (crashRetry=auto_retry): hard cap on TOTAL ledger
+// attempts for a `retry_safe` node when the run policy auto-retries transient
+// in-run failures (no per-node retry_policy declared). Mirrors the node-level
+// retry_policy.attempts bound. Env override, sane default, floor at 1.
+export function autoRetryMaxAttempts(): number {
+  const raw = process.env.MAISTER_AUTO_RETRY_MAX_ATTEMPTS;
+
+  if (!raw) return DEFAULT_AUTO_RETRY_MAX_ATTEMPTS;
+  const parsed = Number.parseInt(raw, 10);
+
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return DEFAULT_AUTO_RETRY_MAX_ATTEMPTS;
+  }
 
   return parsed;
 }

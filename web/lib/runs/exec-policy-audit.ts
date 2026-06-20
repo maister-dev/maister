@@ -17,6 +17,7 @@ export type ExecPolicyActionKind =
   | "check_downgraded"
   | "rework_exhausted"
   | "ralph_relaunch"
+  | "auto_retried"
   | "escalated"
   | "dirty_auto_resolved"
   | "history_rewritten";

@@ -12,6 +12,7 @@ import {
   promotionFromSnapshot,
   commitsFromSnapshot,
   dirtyResolveFromSnapshot,
+  resolveAutoRetryPolicy,
   resolveHumanGateDisposition,
   defaultExecutionPolicy,
   executionPolicySchema,
@@ -180,6 +181,67 @@ describe("no-blind-ship guard", () => {
   });
 });
 
+describe("resolveAutoRetryPolicy (A2 crashRetry=auto_retry → synthesized ADR-080 retry)", () => {
+  const autoRetry: ExecutionPolicy = {
+    preset: "supervised",
+    overrides: { crashRetry: "auto_retry" },
+  };
+
+  it("synthesizes a transient-only, workspace=keep policy for a retry_safe node under auto_retry", () => {
+    const policy = resolveAutoRetryPolicy({
+      retrySafe: true,
+      executionPolicy: autoRetry,
+      maxAttempts: 3,
+    });
+
+    expect(policy).not.toBeNull();
+    expect(policy?.attempts).toBe(3);
+    expect(policy?.workspace).toBe("keep");
+    // Transient allow-list only — deterministic codes (PRECONDITION/CONFIG/CRASH)
+    // are NEVER auto-retried.
+    expect([...(policy?.on_errors ?? [])].sort()).toEqual(
+      ["ACP_PROTOCOL", "CHECKPOINT", "EXECUTOR_UNAVAILABLE", "SPAWN"].sort(),
+    );
+  });
+
+  it("returns null for a non-retry_safe node (opt-in gate)", () => {
+    expect(
+      resolveAutoRetryPolicy({
+        retrySafe: false,
+        executionPolicy: autoRetry,
+        maxAttempts: 3,
+      }),
+    ).toBeNull();
+  });
+
+  it("returns null when the run is not auto_retry (fail / ralph_loop / null)", () => {
+    for (const ep of [
+      { preset: "supervised" } as ExecutionPolicy,
+      { preset: "unattended" } as ExecutionPolicy, // ralph_loop, not auto_retry
+      null,
+      { preset: "bogus" },
+    ]) {
+      expect(
+        resolveAutoRetryPolicy({
+          retrySafe: true,
+          executionPolicy: ep,
+          maxAttempts: 3,
+        }),
+      ).toBeNull();
+    }
+  });
+
+  it("passes the caller's maxAttempts through as the bound", () => {
+    expect(
+      resolveAutoRetryPolicy({
+        retrySafe: true,
+        executionPolicy: autoRetry,
+        maxAttempts: 7,
+      })?.attempts,
+    ).toBe(7);
+  });
+});
+
 describe("requiresLaunchUnattended", () => {
   it("supervised never requires the privileged action", () => {
     expect(requiresLaunchUnattended({ preset: "supervised" })).toBe(false);
@@ -218,6 +280,15 @@ describe("requiresLaunchUnattended", () => {
         overrides: { humanGate: "auto_pass" },
       }),
     ).toBe(true);
+  });
+
+  it("does NOT require it for reworkExhaustion=ship_with_warning (owner decision; no-blind-ship keeps the human floor)", () => {
+    expect(
+      requiresLaunchUnattended({
+        preset: "supervised",
+        overrides: { reworkExhaustion: "ship_with_warning" },
+      }),
+    ).toBe(false);
   });
 });
 
@@ -583,6 +654,13 @@ describe("Phase C snapshot resolvers (fail-closed)", () => {
         overrides: { commits: "squash_on_promote" },
       }),
     ).toBe("squash_on_promote");
+    // defer is an accepted value that behaves as keep_all (no-op) at promote.
+    expect(
+      commitsFromSnapshot({
+        preset: "supervised",
+        overrides: { commits: "defer" },
+      }),
+    ).toBe("defer");
     expect(commitsFromSnapshot(null)).toBe("keep_all");
     expect(
       commitsFromSnapshot({

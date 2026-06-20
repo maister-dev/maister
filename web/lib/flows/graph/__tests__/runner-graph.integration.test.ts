@@ -1,5 +1,6 @@
 import type { NodeAttempt, Run } from "@/lib/db/schema";
 import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
+import type { FlowYamlV1 } from "@/lib/config.schema";
 
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -22,6 +23,9 @@ import {
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
 import { runFlow } from "@/lib/flows/runner";
+import { runReviewHuman } from "@/lib/flows/graph/runner-graph";
+import { loadRun } from "@/lib/flows/graph/runner-core";
+import { compileManifest } from "@/lib/flows/graph/compile";
 
 const schema = fullSchema as unknown as Record<string, any>;
 
@@ -606,5 +610,51 @@ describe("runGraph — B2/B3 human-gate auto-pass + on-stuck routing", () => {
     expect(await hitlCount(seeded.runId)).toBe(1);
     expect(await assignmentCount(seeded.runId)).toBe(0);
     expect(await escalatedEventCount(seeded.runId)).toBe(1);
+  }, 60_000);
+
+  // F1 regression: the A.2 rework-exhaustion escalate path calls runReviewHuman
+  // with forcePause=true and then flips the run to NeedsInput. Under an
+  // unattended policy (humanGate=auto_pass) a plain call would auto-pass / ship
+  // and create NO HITL row — orphaning the NeedsInput run (invisible to the
+  // inbox, unresolvable). forcePause MUST skip the auto-pass/on-stuck
+  // short-circuit and always create the HITL + assignment.
+  it("forcePause forces a real HITL pause under humanGate=auto_pass (escalate never orphans)", async () => {
+    const seeded = await seedGraphRun(reviewFlow, {
+      executionPolicy: {
+        preset: "supervised",
+        overrides: { humanGate: "auto_pass" },
+      },
+    });
+    const loaded = await loadRun(db, seeded.runId);
+    const node = compileManifest(reviewFlow as unknown as FlowYamlV1).nodes.get(
+      "review",
+    );
+
+    expect(node).toBeDefined();
+
+    // Control: WITHOUT forcePause, auto_pass + ready evidence (no attempts → no
+    // blocking gates) + safe default "approve" → auto-passes, creating NO HITL.
+    const autoPassed = await runReviewHuman(node!, loaded, "review", {
+      runtimeRoot: seeded.runtimeRoot,
+      db,
+      gateAttempt: 1,
+    });
+
+    expect(autoPassed.needsInput).toBe(false);
+    expect(autoPassed.decision).toBe("approve");
+    expect(await hitlCount(seeded.runId)).toBe(0);
+
+    // Fix: WITH forcePause, the same call creates a real HITL request +
+    // assignment, so the caller's NeedsInput flip can never orphan the run.
+    const paused = await runReviewHuman(node!, loaded, "rework limit reached", {
+      runtimeRoot: seeded.runtimeRoot,
+      db,
+      gateAttempt: 2,
+      forcePause: true,
+    });
+
+    expect(paused.needsInput).toBe(true);
+    expect(await hitlCount(seeded.runId)).toBe(1);
+    expect(await assignmentCount(seeded.runId)).toBeGreaterThanOrEqual(1);
   }, 60_000);
 });
