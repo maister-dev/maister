@@ -4,14 +4,20 @@
 // migrations (incl. M11a 0010_m11a_graph_ledger), and plants the review→rework
 // fixture. Auth (storageState) is handled separately by e2e/auth.setup.ts so
 // it runs after the webServer is ready.
-import type { Server } from "node:http";
-
 import { execSync } from "node:child_process";
 
 import { Pool } from "pg";
 
 import { E2E_DB_URL } from "./_seed/db-url";
-import { startStubSupervisor } from "./_seed/stub-supervisor";
+import {
+  STUB_SESSIONS_DIR,
+  STUB_SUPERVISOR_PORT,
+} from "./_seed/stub-supervisor";
+import { startTestSupervisor } from "./_seed/test-supervisor";
+
+// The delegate-target worker agent the orchestrator-loop spec's coordinator
+// delegates each child to (must match seed-e2e.ts E2E_WORKER_AGENT).
+const E2E_WORKER_AGENT = "e2e-orc-pkg:e2e-worker";
 
 async function ensureDatabase(url: string): Promise<void> {
   const dbName = new URL(url).pathname.replace(/^\//, "");
@@ -91,12 +97,25 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
   console.log("global-setup: seeding review→rework fixture…");
   execSync("pnpm exec tsx e2e/_seed/seed-e2e.ts", { stdio: "inherit", env });
 
-  // The stub supervisor must be up BEFORE the webServer boots so the M11c
-  // launch-refusal scenario reads the platform as ready (and the board Launch
-  // button is enabled). Returned as the Playwright global teardown.
-  const stub: Server = await startStubSupervisor();
+  // The test supervisor (a SUPERSET of the stub) must be up BEFORE the webServer
+  // boots: it answers /health ready (the M11c launch-refusal + board Launch
+  // gate), serves the stub-compat /sessions hold-until-`.release` path for the
+  // platform-agents `agent` specs, AND drives the M36 orchestrator
+  // delegate→park→resume loop for the orchestrator-loop spec (its coordinator
+  // session spawns children through the REAL ext delegate HTTP route). It binds
+  // STUB_SUPERVISOR_PORT so playwright.config.ts's MAISTER_SUPERVISOR_URL
+  // (=STUB_SUPERVISOR_URL) reaches it unchanged. Returned as the global teardown.
+  process.env.MAISTER_TEST_CHILD_AGENT_ID = E2E_WORKER_AGENT;
+  const supervisorPool = new Pool({ connectionString: E2E_DB_URL });
+  const supervisor = await startTestSupervisor({
+    pool: supervisorPool,
+    portHint: STUB_SUPERVISOR_PORT,
+    childCount: 2,
+    stubCompat: { sessionsDir: STUB_SESSIONS_DIR },
+  });
 
   return async () => {
-    await new Promise<void>((resolve) => stub.close(() => resolve()));
+    await supervisor.stop();
+    await supervisorPool.end();
   };
 }

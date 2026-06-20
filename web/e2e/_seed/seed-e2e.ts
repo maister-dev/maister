@@ -451,6 +451,41 @@ const E2E_HELPER_AGENT = "e2e-agents-pkg:e2e-helper";
 const E2E_AUDITOR_AGENT = "e2e-agents-pkg:e2e-auditor";
 const AGENT_BODY_MARKER = "E2E-HELPER-SYSTEM-PROMPT-MARKER";
 
+// --- M36 orchestrator-loop fixture (ADR-095) --------------------------------
+// One launchable project carrying a Backlog task bound to a graph flow whose
+// single node is an `orchestrator` (engine_min 1.6.0) + a catalog `worker`
+// agent (workspace=none, so a delegated child finalizes Done) attached to the
+// project. The orchestrator-loop spec launches the task from the board; the
+// test supervisor (wired in global-setup) simulates the coordinator's agent
+// session and spawns 2 children through the REAL ext delegate HTTP route, the
+// orchestrator parks on WaitingOnChildren, and the run-tree subtree renders the
+// 2 children on the orchestrator's workbench.
+const ORCHESTRATOR_SLUG = "e2e-orchestrator";
+const E2E_WORKER_AGENT = "e2e-orc-pkg:e2e-worker";
+
+const ORCHESTRATOR_MANIFEST = {
+  schemaVersion: 1,
+  name: "E2E Orchestrator",
+  compat: { engine_min: "1.6.0" },
+  nodes: [
+    {
+      id: "coordinate",
+      type: "orchestrator",
+      action: { prompt: "/coordinate the delivery into sub-tasks" },
+      transitions: { success: "done" },
+    },
+  ],
+};
+
+type OrchestratorFixture = ProjectFixture & {
+  // The catalog agent the orchestrator delegates each child to.
+  workerAgentId: string;
+  // The Backlog task's KEY-N number (the board launch target).
+  taskNumber: number;
+  // The agent-package install root the test supervisor's delegation resolves.
+  agentsRoot: string;
+};
+
 const AGENTS_BINDING_MANIFEST = {
   schemaVersion: 1,
   name: "Agent Bound (e2e)",
@@ -5239,6 +5274,102 @@ async function seedPlatformAgentsFixture(
   };
 }
 
+// M36 (ADR-095): a launchable orchestrator flow + its delegate-target agent.
+async function seedOrchestratorE2EFixture(
+  pool: Pool,
+  adminId: string,
+): Promise<OrchestratorFixture> {
+  const base = await seedLaunchableProjectFixture(pool, {
+    slug: ORCHESTRATOR_SLUG,
+    projectName: "E2E Orchestrator",
+    userId: adminId,
+    repoPath: path.join(RUNTIME_ROOT, "repos", ORCHESTRATOR_SLUG),
+    task: {
+      title: "Coordinate the delivery",
+      prompt: "Break the delivery into sub-tasks and delegate them.",
+      status: "Backlog",
+      stage: "Backlog",
+    },
+  });
+
+  // Override the default LINEAR_MANIFEST with the orchestrator-node graph on
+  // BOTH the revision and the project flow row (loadRun reads flows.manifest;
+  // the launch precondition compiles the revision manifest).
+  await pool.query(
+    `UPDATE flow_revisions SET manifest = $1, engine_min = '1.6.0'
+     WHERE flow_ref_id = 'acceptance' AND installed_path = $2`,
+    [
+      JSON.stringify(ORCHESTRATOR_MANIFEST),
+      path.join(RUNTIME_ROOT, "flows", `${ORCHESTRATOR_SLUG}-flow`),
+    ],
+  );
+  await pool.query(`UPDATE flows SET manifest = $1 WHERE id = $2`, [
+    JSON.stringify(ORCHESTRATOR_MANIFEST),
+    base.flowId,
+  ]);
+
+  // The delegate-target worker agent (workspace=none → a delegated child
+  // finalizes Done and emits run.done). Shipped as a package, pinned in the
+  // project, attached to it — the same trust contour as platform-agents.
+  const agentsRoot = path.join(RUNTIME_ROOT, "orc-agents");
+  const workerPath = writeAgentDefinition({
+    agentsRoot,
+    id: E2E_WORKER_AGENT,
+    workspace: "none",
+    triggers: ["manual"],
+    body: "You are an e2e delegated worker. Do the sub-task tersely.",
+  });
+
+  await pool.query(`DELETE FROM agents WHERE id = $1`, [E2E_WORKER_AGENT]);
+  await pool.query(
+    `INSERT INTO agents
+       (id, flow_ref_id, version_label, origin, name, description, workspace,
+        mode, triggers, risk_tier, source_path)
+     VALUES ($1, 'e2e-orc-pkg', 'v1.0.0', 'git', $1, 'e2e worker agent', 'none',
+        'session', '["manual"]'::jsonb, 'read_only', $2)`,
+    [E2E_WORKER_AGENT, workerPath],
+  );
+
+  const orcPkgRevisionId = randomUUID();
+
+  await pool.query(
+    `DELETE FROM flow_revisions WHERE flow_ref_id = 'e2e-orc-pkg'`,
+  );
+  await pool.query(
+    `INSERT INTO flow_revisions
+       (id, flow_ref_id, source, version_label, resolved_revision,
+        manifest_digest, manifest, schema_version, installed_path, package_status)
+     VALUES ($1, 'e2e-orc-pkg', 'github.com/maister/e2e-orc-pkg', 'v1.0.0',
+             'rev-e2e-orc', 'digest', '{}'::jsonb, 1, $2, 'Installed')`,
+    [orcPkgRevisionId, agentsRoot],
+  );
+  await pool.query(
+    `INSERT INTO flows
+       (id, project_id, flow_ref_id, source, version, installed_path,
+        manifest, schema_version, enabled_revision_id, enablement_state,
+        trust_status, version_binding)
+     VALUES ($1, $2, 'e2e-orc-pkg', 'github.com/maister/e2e-orc-pkg', 'v1.0.0',
+             $3, '{}'::jsonb, 1, $4, 'Enabled', 'trusted', 'pinned')`,
+    [randomUUID(), base.projectId, agentsRoot, orcPkgRevisionId],
+  );
+  await pool.query(
+    `INSERT INTO agent_project_links (id, agent_id, project_id) VALUES ($1, $2, $3)`,
+    [randomUUID(), E2E_WORKER_AGENT, base.projectId],
+  );
+
+  const taskNumber = Number(
+    (await pool.query(`SELECT number FROM tasks WHERE id = $1`, [base.taskId!]))
+      .rows[0].number,
+  );
+
+  return {
+    ...base,
+    workerAgentId: E2E_WORKER_AGENT,
+    taskNumber,
+    agentsRoot,
+  };
+}
+
 async function main(): Promise<void> {
   const url = process.env.DB_URL;
 
@@ -5452,6 +5583,7 @@ async function main(): Promise<void> {
     );
     const flowViewer = await seedInstalledPackageFixture(pool, admin.id);
     const platformAgents = await seedPlatformAgentsFixture(pool, admin.id);
+    const orchestrator = await seedOrchestratorE2EFixture(pool, admin.id);
 
     await pool.query(
       `INSERT INTO project_members (id, project_id, user_id, role)
@@ -5503,6 +5635,7 @@ async function main(): Promise<void> {
         flowStudioArtifacts,
         flowViewer,
         platformAgents,
+        orchestrator,
       },
     };
     const outDir = path.resolve("e2e/.auth");
