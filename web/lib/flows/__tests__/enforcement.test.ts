@@ -370,7 +370,7 @@ describe("evaluateNodeEnforcement — parsed-manifest sparse map", () => {
 
 type LaunchableNode = {
   id: string;
-  type: "ai_coding" | "judge" | "cli" | "check" | "human";
+  type: "ai_coding" | "judge" | "cli" | "check" | "human" | "orchestrator";
   settings?: AiCodingSettings | JudgeSettings;
 };
 
@@ -467,5 +467,27 @@ describe("assertNodeLaunchable — refusal → typed MaisterError", () => {
     expect(isMaisterError(thrown)).toBe(true);
     expect((thrown as { code: string }).code).toBe("CONFIG");
     expect((thrown as Error).message).toContain("verdict");
+  });
+
+  // M36 (ADR-095): orchestrator nodes inherit the ai_coding capability shape, so
+  // they go through the same strict-enforcement refusal path.
+  it("applies to orchestrator nodes too — strict mcps → CONFIG", () => {
+    const node: LaunchableNode = {
+      id: "coordinate",
+      type: "orchestrator",
+      settings: { enforcement: { mcps: "strict" } } as AiCodingSettings,
+    };
+
+    let thrown: unknown;
+
+    try {
+      assertNodeLaunchable(node, "claude");
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(isMaisterError(thrown)).toBe(true);
+    expect((thrown as { code: string }).code).toBe("CONFIG");
+    expect((thrown as Error).message).toContain("coordinate");
   });
 });

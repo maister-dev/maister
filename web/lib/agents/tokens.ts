@@ -63,6 +63,39 @@ export async function issueAgentRunToken(args: {
   return { tokenId, secret };
 }
 
+// M36 (ADR-095): an orchestrator is a flow NODE, not a catalog agent — it has
+// no `agents` row to hang an agent-kind token on, and the store CHECK forbids
+// agent_id on a non-agent token. So a parked coordinator authenticates to the
+// maister MCP facade via a PROJECT-kind, run-bound token (deterministic name →
+// terminal revoke matches on it). Phase 3 widens scopes with `runs:delegate`.
+export async function issueOrchestratorRunToken(args: {
+  projectId: string;
+  runId: string;
+  db?: Db;
+}): Promise<IssuedAgentToken> {
+  const _db = args.db ?? getDb();
+  const { secret, prefix, hash } = generateToken();
+  const tokenId = randomUUID();
+
+  await _db.insert(projectTokens).values({
+    id: tokenId,
+    project_id: args.projectId,
+    name: `orchestrator-run:${args.runId}`,
+    token_kind: "project",
+    prefix,
+    token_hash: hash,
+    scopes: [...AGENT_TOKEN_SCOPES],
+    expires_at: new Date(Date.now() + AGENT_TOKEN_TTL_HOURS * 3_600_000),
+  });
+
+  log.info(
+    { runId: args.runId, tokenId },
+    "ephemeral orchestrator token issued",
+  );
+
+  return { tokenId, secret };
+}
+
 export async function revokeAgentRunToken(
   tokenId: string,
   db?: Db,
@@ -92,6 +125,27 @@ export async function revokeAgentRunTokensForRun(
       and(
         eq(projectTokens.token_kind, "agent"),
         eq(projectTokens.name, `agent-run:${runId}`),
+        isNull(projectTokens.revoked_at),
+      ),
+    );
+}
+
+// M36 (ADR-095): terminal-transition revoke for the orchestrator's run-bound
+// token (matched on the deterministic `orchestrator-run:<runId>` name). Not
+// fired on the WaitingOnChildren park — the token must survive the wait so the
+// Phase-5 resume can re-authenticate the respawned coordinator.
+export async function revokeOrchestratorRunTokensForRun(
+  runId: string,
+  db?: Db,
+): Promise<void> {
+  const _db = db ?? getDb();
+
+  await _db
+    .update(projectTokens)
+    .set({ revoked_at: new Date() })
+    .where(
+      and(
+        eq(projectTokens.name, `orchestrator-run:${runId}`),
         isNull(projectTokens.revoked_at),
       ),
     );

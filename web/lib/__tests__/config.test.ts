@@ -368,6 +368,40 @@ describe("loadFlowManifest — graph (nodes[])", () => {
     });
   });
 
+  // M36 (ADR-095): the orchestrator node debuts at engine floor 1.6.0.
+  it("rejects an orchestrator node when engine_min < 1.6.0", async () => {
+    const path = await writeGraph("graph-orchestrator-old-engine.yaml", (m) => {
+      m.compat.engine_min = "1.5.0";
+      m.nodes[0] = {
+        id: "implement",
+        type: "orchestrator",
+        action: { prompt: "coordinate {{ task.prompt }}" },
+        transitions: { success: "checks" },
+      };
+    });
+
+    await expect(loadFlowManifest(path)).rejects.toMatchObject({
+      code: "CONFIG",
+    });
+  });
+
+  it("accepts an orchestrator node at engine_min >= 1.6.0", async () => {
+    const path = await writeGraph("graph-orchestrator-ok.yaml", (m) => {
+      m.compat.engine_min = "1.6.0";
+      m.nodes[0] = {
+        id: "implement",
+        type: "orchestrator",
+        action: { prompt: "coordinate {{ task.prompt }}" },
+        settings: { delegation: { max_fanout: 8 } },
+        transitions: { success: "checks" },
+      };
+    });
+
+    const manifest = await loadFlowManifest(path);
+
+    expect(manifest.nodes?.[0].type).toBe("orchestrator");
+  });
+
   it("rejects an unknown node id in a transition", async () => {
     const path = await writeGraph("graph-unknown-target.yaml", (m) => {
       (m.nodes[0].transitions as Record<string, string>).success = "ghost";

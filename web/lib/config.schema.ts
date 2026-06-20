@@ -715,6 +715,22 @@ export const aiCodingSettingsSchema = z
   })
   .strict();
 
+// M36 (ADR-095): orchestrator settings inherit the full ai_coding capability
+// shape (mcps/skills/tools/restrictions/permissionMode/enforcement) plus an
+// optional `delegation` block bounding the run-tree (defaults from the env
+// MAISTER_MAX_ORCHESTRATOR_FANOUT / MAISTER_ORCHESTRATOR_MAX_DEPTH at runtime).
+export const orchestratorSettingsSchema = aiCodingSettingsSchema
+  .extend({
+    delegation: z
+      .object({
+        max_fanout: z.number().int().positive().optional(),
+        max_depth: z.number().int().positive().optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+
 export const judgeSettingsSchema = z
   .object({
     mcps: nodeMcpsSchema.optional(),
@@ -803,6 +819,16 @@ const aiCodingNodeSchema = z.object({
   session_policy: sessionPolicySchema.optional(),
 });
 
+// M36 (ADR-095): a long-lived SUPERVISORY node — runs as an ACP session (like
+// ai_coding) but parks on `WaitingOnChildren` while its delegated child Runs
+// execute, and transitions downstream only when the agent declares the goal met.
+const orchestratorNodeSchema = z.object({
+  ...nodeCommon,
+  type: z.literal("orchestrator"),
+  action: z.object({ prompt: z.string().min(1) }).passthrough(),
+  settings: orchestratorSettingsSchema.optional(),
+});
+
 const judgeNodeSchema = z.object({
   ...nodeCommon,
   type: z.literal("judge"),
@@ -844,6 +870,7 @@ const formNodeSchema = z.object({
 
 export const nodeSchema = z.discriminatedUnion("type", [
   aiCodingNodeSchema,
+  orchestratorNodeSchema,
   judgeNodeSchema,
   cliNodeSchema,
   checkNodeSchema,

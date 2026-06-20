@@ -149,7 +149,12 @@ export function assertNodeLaunchable(
 ): void {
   const nodeType = resolveNodeType(node);
 
-  if (nodeType !== "ai_coding" && nodeType !== "judge") return;
+  if (
+    nodeType !== "ai_coding" &&
+    nodeType !== "judge" &&
+    nodeType !== "orchestrator"
+  )
+    return;
 
   const verdicts = evaluateNodeEnforcement(node.settings, agent, table);
 
@@ -181,7 +186,11 @@ export function capabilityBearingSettings(
   nodeType: NodeDef["type"] | string | undefined,
   settings: NodeDef["settings"],
 ): CapabilityBearingSettings {
-  if (nodeType === "ai_coding" || nodeType === "judge") {
+  if (
+    nodeType === "ai_coding" ||
+    nodeType === "judge" ||
+    nodeType === "orchestrator"
+  ) {
     return settings as CapabilityBearingSettings;
   }
 

@@ -19,7 +19,9 @@ const log = pino({
 // (M30, ADR-080/081); flows declaring those keys MUST `compat.engine_min >= 1.4.0`.
 // Bumped 1.4.0 -> 1.5.0 for the catalog-agent node binding (`settings.agent`)
 // (M34, ADR-089); flows declaring it MUST `compat.engine_min >= 1.5.0`.
-export const MAISTER_ENGINE_VERSION = "1.5.0";
+// Bumped 1.5.0 -> 1.6.0 for the `orchestrator` node type (M36, ADR-095); flows
+// declaring an orchestrator node MUST `compat.engine_min >= 1.6.0`.
+export const MAISTER_ENGINE_VERSION = "1.6.0";
 
 // Minimum engine version a graph (`nodes[]`) manifest must declare in
 // `compat.engine_min` (ADR-026). Enforced in `loadFlowManifest`.

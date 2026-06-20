@@ -93,6 +93,11 @@ import {
 } from "@/lib/capabilities/resolver";
 import { materializeCapabilityProfile } from "@/lib/capabilities/materialize";
 import { cleanupNodeMaterialization } from "@/lib/capabilities/cleanup";
+import { agentFacadeMcpServer } from "@/lib/agents/launch";
+import {
+  issueOrchestratorRunToken,
+  revokeOrchestratorRunTokensForRun,
+} from "@/lib/agents/tokens";
 import { atomicWriteJson } from "@/lib/atomic";
 import {
   createHitlAssignmentForRun,
@@ -563,6 +568,12 @@ async function executeNodeAction(
       );
     case "ai_coding":
     case "judge":
+    // M36 (ADR-095): an orchestrator runs as an ACP session exactly like an
+    // ai_coding node; it carries NO catalog-agent binding (agentBinding stays
+    // undefined below — the ai_coding-only guard short-circuits) and reaches
+    // the maister MCP facade via the run-bound token appended at the
+    // materialization seam.
+    case "orchestrator":
       return runAgentStep(
         {
           id: node.id,
@@ -1294,6 +1305,11 @@ export async function runGraph(
   let checkpointed = false;
   let failed = false;
   let runErrorCode: MaisterErrorCode | null = null;
+  // M36 (ADR-095): set once any orchestrator node in this run is issued its
+  // run-bound facade token. The post-loop terminal section revokes it on a
+  // non-park terminal (Review/Failed/Crashed); the NeedsInput/checkpoint park
+  // paths return BEFORE that section, so the token survives WaitingOnChildren.
+  let orchestratorTokenIssued = false;
 
   let currentNodeId: string | null = resumeNodeId ?? graph.entry;
   // M30 (ADR-080): set when a failed attempt schedules an auto-retry — the
@@ -1688,7 +1704,11 @@ export async function runGraph(
           }
         | undefined;
 
-      if (node.nodeType === "ai_coding" || node.nodeType === "judge") {
+      if (
+        node.nodeType === "ai_coding" ||
+        node.nodeType === "judge" ||
+        node.nodeType === "orchestrator"
+      ) {
         try {
           materialized = await materializeNodeCapabilities(
             node,
@@ -1702,6 +1722,26 @@ export async function runGraph(
           // T4.2: persist the run-start materialization plan (write-once).
           if (materialized) {
             await setMaterializationPlan(nodeAttemptId, materialized.plan, db);
+          }
+
+          // M36 (ADR-095): an orchestrator delegates through the maister MCP
+          // facade, so issue its run-bound token and inject the facade server
+          // into the materialized mcpServers handed to createSession.
+          if (node.nodeType === "orchestrator" && materialized) {
+            const issued = await issueOrchestratorRunToken({
+              projectId: loaded.run.projectId,
+              runId,
+              db,
+            });
+
+            materialized = {
+              ...materialized,
+              mcpServers: [
+                ...materialized.mcpServers,
+                agentFacadeMcpServer(issued.secret),
+              ],
+            };
+            orchestratorTokenIssued = true;
           }
         } catch (err) {
           const e = isMaisterError(err)
@@ -1766,17 +1806,25 @@ export async function runGraph(
       }
 
       if (result.needsInput) {
+        // M36 (ADR-095): an orchestrator parks on WaitingOnChildren (it yields
+        // awaiting its delegated children), NOT NeedsInput (a HITL signal). The
+        // ledger NeedsInput mark is kept either way — the attempt is paused — but
+        // the RUN status and the outbox diverge: no run.needs_input webhook fires
+        // for the coordinator (nobody is being asked for input).
+        const parkStatus =
+          node.nodeType === "orchestrator" ? "WaitingOnChildren" : "NeedsInput";
+
         // Ledger mark + status flip + run.needs_input outbox row are one
         // logical transition — they commit atomically or not at all.
         await db.transaction(async (tx: Db) => {
           await markNodeNeedsInput(nodeAttemptId, tx);
           const flipped = await tx
             .update(runs)
-            .set({ status: "NeedsInput", currentStepId: node.id })
+            .set({ status: parkStatus, currentStepId: node.id })
             .where(eq(runs.id, runId))
             .returning({ projectId: runs.projectId });
 
-          if (flipped.length > 0) {
+          if (flipped.length > 0 && node.nodeType !== "orchestrator") {
             await emitWebhookEvent({
               db: tx,
               type: "run.needs_input",
@@ -2686,6 +2734,15 @@ export async function runGraph(
     });
     log2.info({}, "runGraph ended Review");
     await deliverRunIfAutoReady(runId, db);
+  }
+
+  // M36 (ADR-095): revoke the orchestrator's run-bound facade token on a
+  // NON-park terminal (Review/Failed/Crashed). The NeedsInput/checkpoint park
+  // paths returned above, so reaching here means the coordinator finished or
+  // died — its token is no longer needed. Best-effort; the 48h TTL backs up any
+  // crash path that bypasses this hook (e.g. process kill before this line).
+  if (orchestratorTokenIssued) {
+    await revokeOrchestratorRunTokensForRun(runId, db).catch(() => {});
   }
 
   await safeProject();

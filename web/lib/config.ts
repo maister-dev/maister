@@ -580,6 +580,16 @@ const POLICY_ENGINE_MIN = "1.4.0";
 // (`settings.agent`) must declare engine_min >= this value.
 const AGENT_BINDING_ENGINE_MIN = "1.5.0";
 
+// M36 floor (ADR-095): manifests declaring an `orchestrator` node must declare
+// engine_min >= this value.
+const ORCHESTRATOR_ENGINE_MIN = "1.6.0";
+
+// Returns true when any node is an orchestrator node. Used to gate the 1.6.0
+// floor.
+function declaresOrchestratorNode(nodes: NodeDef[]): boolean {
+  return nodes.some((n) => n.type === "orchestrator");
+}
+
 // Returns true when any ai_coding node binds a catalog agent. Used to gate
 // the 1.5.0 floor.
 function declaresAgentBinding(nodes: NodeDef[]): boolean {
@@ -744,6 +754,18 @@ export function validateGraphManifest(
     throw new MaisterError(
       "CONFIG",
       `graph flow ${flowYamlPath} is declaring a catalog-agent binding (settings.agent) but engine_min "${engineMin}" < ${AGENT_BINDING_ENGINE_MIN} — bump compat.engine_min to ${AGENT_BINDING_ENGINE_MIN} (host engine is ${MAISTER_ENGINE_VERSION})`,
+    );
+  }
+
+  // M36 (ADR-095): an orchestrator node requires the 1.6.0 floor. Manifests
+  // without an orchestrator node stay valid at any engine_min.
+  if (
+    declaresOrchestratorNode(nodes) &&
+    !semverGte(engineMin, ORCHESTRATOR_ENGINE_MIN)
+  ) {
+    throw new MaisterError(
+      "CONFIG",
+      `graph flow ${flowYamlPath} is declaring an orchestrator node but engine_min "${engineMin}" < ${ORCHESTRATOR_ENGINE_MIN} — bump compat.engine_min to ${ORCHESTRATOR_ENGINE_MIN} (host engine is ${MAISTER_ENGINE_VERSION})`,
     );
   }
 
