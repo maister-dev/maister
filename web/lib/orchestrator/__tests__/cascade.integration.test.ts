@@ -161,6 +161,7 @@ async function seedChild(args: {
   status: string;
   startedAt?: Date;
   withWorkspace?: boolean;
+  runKind?: "agent" | "flow";
 }): Promise<string> {
   const taskId = await seedTask("auto");
   const runId = randomUUID();
@@ -168,7 +169,7 @@ async function seedChild(args: {
   await pool.query(
     `INSERT INTO "runs" ("id", "run_kind", "project_id", "task_id", "flow_id",
        "status", "flow_version", "flow_revision", "parent_run_id", "root_run_id", "runner_id", "started_at")
-     VALUES ($1, 'agent', $2, $3, $4, $5, 'v1.0.0', 'unknown', $6, $7, $8, $9)`,
+     VALUES ($1, $10, $2, $3, $4, $5, 'v1.0.0', 'unknown', $6, $7, $8, $9)`,
     [
       runId,
       projectId,
@@ -179,6 +180,7 @@ async function seedChild(args: {
       args.rootRunId,
       executorId,
       args.startedAt ?? new Date(),
+      args.runKind ?? "agent",
     ],
   );
 
@@ -330,5 +332,80 @@ describe("cascadeAbandonRunTree (M36 T7.4)", () => {
 
     expect(second.cascadedRunCount).toBe(0);
     expect(second.abandonedTaskCount).toBe(0);
+  }, 60_000);
+
+  // Coverage: a DEPTH-≥2 sub-tree (grandchild via parent_run_id) exercises the
+  // getRunSubtreeIds BFS beyond one level; a mixed flow+agent sub-tree drives the
+  // per-pool promoteNextPending fan-out (cascade.ts) for >1 pool; and the
+  // idempotent re-cascade must emit NO duplicate run.abandoned.
+  it("cascades a depth-2 mixed-pool sub-tree and re-cascade emits no duplicate run.abandoned", async () => {
+    const orchTaskId = await seedTask("manual");
+    const orchestratorRunId = await seedOrchestrator(orchTaskId);
+
+    // depth-1: one FLOW child + one AGENT child directly under the orchestrator.
+    const flowChild = await seedChild({
+      parentRunId: orchestratorRunId,
+      rootRunId: orchestratorRunId,
+      status: "Running",
+      runKind: "flow",
+    });
+    const agentChild = await seedChild({
+      parentRunId: orchestratorRunId,
+      rootRunId: orchestratorRunId,
+      status: "Running",
+    });
+    // depth-2: a grandchild whose PARENT is the agent child (root = orchestrator).
+    const grandChild = await seedChild({
+      parentRunId: agentChild,
+      rootRunId: orchestratorRunId,
+      status: "NeedsInput",
+    });
+
+    const countAbandonedEvents = async (runId: string): Promise<number> =>
+      (
+        await db
+          .select()
+          .from(schema.domainEvents)
+          .where(
+            and(
+              eq(schema.domainEvents.runId, runId),
+              eq(schema.domainEvents.kind, "run.abandoned"),
+            ),
+          )
+      ).length;
+
+    const result = await cascadeAbandonRunTree(
+      orchestratorRunId,
+      orchTaskId,
+      "user_stopped",
+      { db },
+    );
+
+    // All three descendants — including the depth-2 grandchild the BFS had to
+    // walk to — are Abandoned; the orchestrator row itself is untouched.
+    expect(result.cascadedRunCount).toBe(3);
+    expect(await statusOf(flowChild)).toBe("Abandoned");
+    expect(await statusOf(agentChild)).toBe("Abandoned");
+    expect(await statusOf(grandChild)).toBe("Abandoned");
+    expect(await statusOf(orchestratorRunId)).toBe("WaitingOnChildren");
+
+    // Exactly one run.abandoned per descendant after the first cascade.
+    for (const id of [flowChild, agentChild, grandChild]) {
+      expect(await countAbandonedEvents(id)).toBe(1);
+    }
+
+    // Idempotent: a second cascade finds everything terminal → cascades nothing
+    // AND emits no new run.abandoned (still exactly one per descendant).
+    const second = await cascadeAbandonRunTree(
+      orchestratorRunId,
+      orchTaskId,
+      "user_stopped",
+      { db },
+    );
+
+    expect(second.cascadedRunCount).toBe(0);
+    for (const id of [flowChild, agentChild, grandChild]) {
+      expect(await countAbandonedEvents(id)).toBe(1);
+    }
   }, 60_000);
 });

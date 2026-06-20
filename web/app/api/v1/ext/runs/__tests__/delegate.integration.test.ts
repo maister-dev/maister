@@ -581,6 +581,89 @@ describe("POST /api/v1/ext/runs/collect + /cancel", () => {
     expect(results.every((r) => r.childRunId !== parentRunId)).toBe(true);
   });
 
+  it("collect projects a child's CURRENT artifacts (diffRef + outputText + names; stale excluded)", async () => {
+    const orchestrator = await seedAgent({ id: "orchestrator" });
+    const worker = await seedAgent({ id: "worker" });
+    const { secret } = await seedOrchestratorRun({
+      orchestratorAgentId: orchestrator,
+      taskId: null,
+    });
+
+    const delRes = await delegatePost(
+      delegateRequest(secret, {
+        target: { agentId: worker },
+        mode: "run",
+        prompt: "child",
+      }),
+      {},
+    );
+    const childRunId = ((await delRes.json()) as { childRunId: string })
+      .childRunId;
+
+    const insertArtifact = (kind: string, locator: unknown, validity: string) =>
+      pool.query(
+        `INSERT INTO "artifact_instances" ("id", "run_id", "kind", "producer", "locator", "validity", "visibility")
+         VALUES ($1, $2, $3, 'runner', $4::jsonb, $5, 'internal')`,
+        [randomUUID(), childRunId, kind, JSON.stringify(locator), validity],
+      );
+
+    await insertArtifact(
+      "diff",
+      {
+        kind: "git-range",
+        baseCommit: "abcdef0123456789",
+        headRef: "maister/child",
+      },
+      "current",
+    );
+    await insertArtifact(
+      "log",
+      { kind: "inline", text: "the child's terminal summary" },
+      "current",
+    );
+    await insertArtifact(
+      "generic_file",
+      { kind: "file", path: "src/foo.ts" },
+      "current",
+    );
+    // A stale artifact MUST NOT be projected.
+    await insertArtifact("log", { kind: "inline", text: "stale" }, "stale");
+
+    const req = new NextRequest("http://localhost/api/v1/ext/runs/collect", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ childRunId }),
+    });
+
+    req.headers.set("authorization", `Bearer ${secret}`);
+
+    const res = await collectPost(req, {});
+
+    expect(res.status).toBe(200);
+    const results = (await res.json()) as Array<{
+      childRunId: string;
+      status: string;
+      artifacts: { id: string; kind: string; name: string }[];
+      diffRef?: string;
+      outputText?: string;
+    }>;
+
+    expect(results).toHaveLength(1);
+    const r = results[0];
+
+    expect(r.childRunId).toBe(childRunId);
+    // 3 current artifacts projected; the stale one is excluded.
+    expect(r.artifacts).toHaveLength(3);
+    // git-range diff → diffRef = headRef; inline log → outputText.
+    expect(r.diffRef).toBe("maister/child");
+    expect(r.outputText).toBe("the child's terminal summary");
+    // Projected names: file path verbatim, diff as <base12>..<headRef>.
+    const names = r.artifacts.map((a) => a.name);
+
+    expect(names).toContain("src/foo.ts");
+    expect(names).toContain("abcdef012345..maister/child");
+  });
+
   it("collect rejects a non-child run (PRECONDITION)", async () => {
     const orchestrator = await seedAgent({ id: "orchestrator" });
     const { secret } = await seedOrchestratorRun({

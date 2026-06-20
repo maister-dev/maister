@@ -239,4 +239,36 @@ describe("M36 Phase 10 — shared-worktree write serialization", () => {
     expect(await promoteAgent()).toBe(ownPending);
     expect(await runStatus(ownPending)).toBe("Running");
   });
+
+  // C3 (real two-racer): two concurrent promote workers against two shared-mode
+  // Pending siblings of one root must admit AT MOST ONE writer. The scheduler's
+  // advisory lock serializes the two promote transactions and
+  // sharedWriterSiblingActive rejects the second under that lock (one active
+  // writer per shared tree) — a single-threaded test cannot prove this.
+  it("two concurrent promotes admit exactly one shared writer", async () => {
+    const root = await insertRoot();
+    const childA = await insertChild({
+      status: "Pending",
+      rootRunId: root,
+      workspaceMode: "shared",
+      startedOffsetMs: -2_000,
+    });
+    const childB = await insertChild({
+      status: "Pending",
+      rootRunId: root,
+      workspaceMode: "shared",
+      startedOffsetMs: -1_000,
+    });
+
+    const [a, b] = await Promise.all([promoteAgent(), promoteAgent()]);
+
+    // Exactly one call promoted a child; the other was held by the writer guard.
+    expect([a, b].filter(Boolean).length).toBe(1);
+
+    // Exactly one of the two shared siblings is Running, the other still Pending.
+    const statuses = await Promise.all([runStatus(childA), runStatus(childB)]);
+
+    expect(statuses.filter((s) => s === "Running").length).toBe(1);
+    expect(statuses.filter((s) => s === "Pending").length).toBe(1);
+  }, 60_000);
 });

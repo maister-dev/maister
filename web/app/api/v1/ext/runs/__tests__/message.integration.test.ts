@@ -78,6 +78,9 @@ vi.mock("@/lib/supervisor-client", async (importOriginal) => {
 let issueOrchestratorRunToken: typeof import("@/lib/agents/tokens").issueOrchestratorRunToken;
 let messagePost: typeof import("@/app/api/v1/ext/runs/message/route").POST;
 let delegatePost: typeof import("@/app/api/v1/ext/runs/delegate/route").POST;
+let sendAgentMessage: typeof import("@/lib/agents/launch").sendAgentMessage;
+
+type AgentSupervisorApi = import("@/lib/agents/launch").AgentSupervisorApi;
 
 beforeAll(async () => {
   agentsRoot = await mkdtemp(path.join(os.tmpdir(), "maister-msg-"));
@@ -97,6 +100,7 @@ beforeAll(async () => {
   ({ POST: delegatePost } = await import(
     "@/app/api/v1/ext/runs/delegate/route"
   ));
+  ({ sendAgentMessage } = await import("@/lib/agents/launch"));
 }, 180_000);
 
 afterAll(async () => {
@@ -255,6 +259,57 @@ async function seedParkedChild(args: {
   );
 
   return childRunId;
+}
+
+// A LIVE persistent child (Running) — exercises sendAgentMessage's live-delivery
+// branch (acp_session_id may be null to hit the "no live handle" precondition).
+async function seedRunningChild(args: {
+  agentId: string;
+  parentRunId: string;
+  rootRunId: string;
+  addressableKey: string;
+  acpSessionId: string | null;
+}): Promise<string> {
+  const childRunId = randomUUID();
+
+  await pool.query(
+    `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id",
+       "status", "flow_version", "flow_revision", "parent_run_id", "root_run_id",
+       "persistent", "addressable_key", "acp_session_id", "agent_workspace",
+       "runner_snapshot", "runner_id")
+     VALUES ($1, 'agent', $2, $3, 'Running', 'agent', 'manual', $4, $5,
+             true, $6, $7, 'none', '{"capabilityAgent":"claude"}'::jsonb, $8)`,
+    [
+      childRunId,
+      args.agentId,
+      projectId,
+      args.parentRunId,
+      args.rootRunId,
+      args.addressableKey,
+      args.acpSessionId,
+      executorId,
+    ],
+  );
+
+  return childRunId;
+}
+
+// A fake supervisor API whose sendPrompt is a spy (the live branch only delivers).
+function fakeSupervisorApi(): {
+  api: AgentSupervisorApi;
+  sendPrompt: ReturnType<typeof vi.fn>;
+} {
+  const sendPrompt = vi.fn(async () => ({ stopReason: "end_turn" as const }));
+
+  return {
+    api: {
+      createSession: vi.fn(),
+      deliverPermission: vi.fn(),
+      sendPrompt,
+      streamSession: async function* () {},
+    } as unknown as AgentSupervisorApi,
+    sendPrompt,
+  };
 }
 
 function jsonReq(
@@ -444,5 +499,93 @@ describe("POST /api/v1/ext/runs/message (M36 Phase 8)", () => {
     const after = await pool.query(`SELECT count(*)::int AS n FROM "runs"`);
 
     expect(after.rows[0].n).toBe(before.rows[0].n);
+  });
+
+  // sendAgentMessage's LIVE branch: a Running child gets the prompt delivered to
+  // its already-attached supervisor session. Driven directly (the route does not
+  // inject listSessions/api) so the delivery is observable.
+  it("(5) re-messages a LIVE (Running) child → delivers the prompt to its session", async () => {
+    const orchestrator = await seedAgent("orchestrator");
+    const worker = await seedAgent("reviewer-agent");
+    const { runId: rootRunId } = await seedOrchestratorRun(orchestrator);
+    const childRunId = await seedRunningChild({
+      agentId: worker,
+      parentRunId: rootRunId,
+      rootRunId,
+      addressableKey: "live",
+      acpSessionId: "acp-live-child",
+    });
+
+    const { api, sendPrompt } = fakeSupervisorApi();
+    const listLive: typeof import("@/lib/supervisor-client").listSessions =
+      async () =>
+        [
+          {
+            sessionId: "sup-live",
+            status: "live",
+            acpSessionId: "acp-live-child",
+          },
+        ] as never;
+
+    const result = await sendAgentMessage(childRunId, "keep going", {
+      db,
+      api,
+      listSessions: listLive,
+    });
+
+    expect(result).toEqual({ childRunId, status: "Running" });
+    expect(sendPrompt).toHaveBeenCalledWith("sup-live", {
+      stepId: "agent",
+      prompt: "keep going",
+    });
+  });
+
+  it("a Running child with NO acp handle yet → PRECONDITION (no delivery)", async () => {
+    const orchestrator = await seedAgent("orchestrator");
+    const worker = await seedAgent("reviewer-agent");
+    const { runId: rootRunId } = await seedOrchestratorRun(orchestrator);
+    const childRunId = await seedRunningChild({
+      agentId: worker,
+      parentRunId: rootRunId,
+      rootRunId,
+      addressableKey: "live",
+      acpSessionId: null,
+    });
+
+    const { api, sendPrompt } = fakeSupervisorApi();
+
+    await expect(
+      sendAgentMessage(childRunId, "x", {
+        db,
+        api,
+        listSessions: async () => [] as never,
+      }),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+    expect(sendPrompt).not.toHaveBeenCalled();
+  });
+
+  it("a Running child whose session is no longer live → PRECONDITION (no delivery)", async () => {
+    const orchestrator = await seedAgent("orchestrator");
+    const worker = await seedAgent("reviewer-agent");
+    const { runId: rootRunId } = await seedOrchestratorRun(orchestrator);
+    const childRunId = await seedRunningChild({
+      agentId: worker,
+      parentRunId: rootRunId,
+      rootRunId,
+      addressableKey: "live",
+      acpSessionId: "acp-gone",
+    });
+
+    const { api, sendPrompt } = fakeSupervisorApi();
+
+    await expect(
+      sendAgentMessage(childRunId, "x", {
+        db,
+        api,
+        // No session matches acp-gone → no live supervisor session.
+        listSessions: async () => [] as never,
+      }),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+    expect(sendPrompt).not.toHaveBeenCalled();
   });
 });

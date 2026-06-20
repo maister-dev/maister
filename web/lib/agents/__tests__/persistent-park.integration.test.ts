@@ -8,6 +8,7 @@
 import type {
   AgentSupervisorApi,
   consumeAgentSession as ConsumeFn,
+  parkPersistentAgent as ParkFn,
 } from "@/lib/agents/launch";
 import type { SupervisorEvent } from "@/lib/supervisor-client";
 
@@ -43,6 +44,7 @@ let db: NodePgDatabase;
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 
 let consumeAgentSession: typeof ConsumeFn;
+let parkPersistentAgent: typeof ParkFn;
 let releaseSlotSpy: ReturnType<typeof vi.fn>;
 
 vi.mock("@/lib/scheduler", async (importOriginal) => {
@@ -69,7 +71,9 @@ beforeAll(async () => {
   db = drizzle(pool);
   await migrate(db, { migrationsFolder: "./lib/db/migrations" });
 
-  ({ consumeAgentSession } = await import("@/lib/agents/launch"));
+  ({ consumeAgentSession, parkPersistentAgent } = await import(
+    "@/lib/agents/launch"
+  ));
 }, 180_000);
 
 afterAll(async () => {
@@ -194,4 +198,36 @@ describe("persistent park-vs-finalize (M36 Phase 8 T8.1)", () => {
     // The clean-Done path never routes through releaseSlotOnIdle.
     expect(releaseSlotSpy).not.toHaveBeenCalled();
   });
+
+  // The parkPersistentAgent CAS guard directly: Running → NeedsInputIdle is
+  // status-guarded, so a non-Running row loses.
+  it("parkPersistentAgent rejects a non-Running row (CAS guard)", async () => {
+    await seedProject();
+    const runId = await seedRunningAgent(true);
+
+    await pool.query(`UPDATE "runs" SET "status" = 'Done' WHERE "id" = $1`, [
+      runId,
+    ]);
+
+    const result = await parkPersistentAgent(runId, { db });
+
+    expect(result.parked).toBe(false);
+    expect((await getRun(runId)).status).toBe("Done");
+  });
+
+  // C3 (real two-racer): two concurrent parks of one Running persistent member
+  // converge to a single winner — the Running→NeedsInputIdle CAS admits one.
+  it("concurrent parkPersistentAgent: exactly one wins", async () => {
+    await seedProject();
+    const runId = await seedRunningAgent(true);
+
+    const [a, b] = await Promise.all([
+      parkPersistentAgent(runId, { db }),
+      parkPersistentAgent(runId, { db }),
+    ]);
+
+    expect([a, b].filter((r) => r.parked).length).toBe(1);
+    expect([a, b].filter((r) => !r.parked).length).toBe(1);
+    expect((await getRun(runId)).status).toBe("NeedsInputIdle");
+  }, 60_000);
 });

@@ -381,6 +381,61 @@ describe("POST /api/v1/ext/runs/plan", () => {
     expect(await countTasks()).toBe(before);
   });
 
+  it("(3b) a plan whose orchestrator already sits at the depth limit → CONFIG, NO task rows", async () => {
+    const orchestrator = await seedAgent({ id: "orchestrator" });
+    const worker = await seedAgent({ id: "worker" });
+    const orchTaskId = await seedOrchestratorTask();
+    const { runId: parentRunId, secret } = await seedOrchestratorRun({
+      orchestratorAgentId: orchestrator,
+      taskId: orchTaskId,
+    });
+
+    // Build a run-tree ancestor chain so the orchestrator run sits at DEPTH 2.
+    // With MAISTER_ORCHESTRATOR_MAX_DEPTH=3 the route guard is `depth + 1 >= 3`,
+    // so this plan's children would land at depth 3 → refused (CONFIG) pre-tx.
+    const a1 = randomUUID(); // depth 0 (no parent)
+    const a2 = randomUUID(); // depth 1 (parent a1)
+
+    for (const [id, parent] of [
+      [a1, null],
+      [a2, a1],
+    ] as const) {
+      await pool.query(
+        `INSERT INTO "runs" ("id", "run_kind", "project_id", "status",
+           "flow_version", "flow_revision", "runner_id", "parent_run_id", "root_run_id")
+         VALUES ($1, 'agent', $2, 'Running', 'agent', 'manual', $3, $4, $5)`,
+        [id, projectId, executorId, parent, a1],
+      );
+    }
+    await pool.query(
+      `UPDATE "runs" SET "parent_run_id" = $1, "root_run_id" = $2 WHERE "id" = $3`,
+      [a2, a1, parentRunId],
+    );
+
+    const before = await countTasks();
+
+    const res = await planPost(
+      planRequest(secret, {
+        tasks: [
+          {
+            key: "X",
+            target: { agentId: worker },
+            prompt: "do X",
+            dependsOn: [],
+          },
+        ],
+      }),
+      {},
+    );
+
+    expect(res.status).toBe(422);
+    const json = (await res.json()) as { code: string; message: string };
+
+    expect(json.code).toBe("CONFIG");
+    expect(json.message).toMatch(/depth/i);
+    expect(await countTasks()).toBe(before);
+  }, 60_000);
+
   it("(4) fan-out over MAISTER_MAX_ORCHESTRATOR_FANOUT → CONFIG, NO task rows", async () => {
     process.env.MAISTER_MAX_ORCHESTRATOR_FANOUT = "2";
 
