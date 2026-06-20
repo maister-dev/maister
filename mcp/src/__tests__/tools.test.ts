@@ -51,7 +51,7 @@ afterEach(() => {
 });
 
 describe("TOOL_SPECS registry", () => {
-  it("registers all 21 external tools (incl. ADR-089 triage_set + relation ops + M36 delegation/plan/message toolset)", () => {
+  it("registers all 23 external tools (incl. ADR-089 triage_set + relation ops + M36 delegation/plan/message/promote/rework toolset)", () => {
     expect(Object.keys(TOOL_SPECS).sort()).toEqual(
       [
         "comment_create",
@@ -70,6 +70,8 @@ describe("TOOL_SPECS registry", () => {
         "run_launch",
         "run_message",
         "run_plan",
+        "run_promote",
+        "run_rework",
         "task_create",
         "task_get",
         "task_list",
@@ -336,6 +338,45 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
     expect(parsedBody(init)).toEqual({
       addressableKey: "reviewer",
       prompt: "re-review the diff",
+    });
+  });
+
+  it("run_promote → POST /api/v1/ext/runs/promote", async () => {
+    mockOnce({ childRunId: "child-1", status: "Done" }, 200);
+
+    await dispatchTool({
+      name: "run_promote",
+      args: { childRunId: "child-1" },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    const { url, init } = lastRequest();
+
+    expect(init.method).toBe("POST");
+    expect(url).toBe(`${BASE_URL}/api/v1/ext/runs/promote`);
+    expect(headerAuth(init)).toBe(AUTH);
+    expect(parsedBody(init)).toEqual({ childRunId: "child-1" });
+  });
+
+  it("run_rework → POST /api/v1/ext/runs/rework", async () => {
+    mockOnce({ childRunId: "child-1", status: "Running" }, 200);
+
+    await dispatchTool({
+      name: "run_rework",
+      args: { childRunId: "child-1", prompt: "address the review" },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    const { url, init } = lastRequest();
+
+    expect(init.method).toBe("POST");
+    expect(url).toBe(`${BASE_URL}/api/v1/ext/runs/rework`);
+    expect(headerAuth(init)).toBe(AUTH);
+    expect(parsedBody(init)).toEqual({
+      childRunId: "child-1",
+      prompt: "address the review",
     });
   });
 

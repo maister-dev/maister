@@ -45,6 +45,7 @@ import { MaisterError, type MaisterErrorCode } from "@/lib/errors";
 import { gcAgeDays, worktreesRoot } from "@/lib/instance-config";
 import { nextKeepaliveAt } from "@/lib/runs/keepalive-config";
 import { assertRunKindInvariant } from "@/lib/runs/run-kind-invariants";
+import { markReworkFromReview } from "@/lib/runs/state-transitions";
 import {
   promoteNextPending,
   releaseSlotOnIdle,
@@ -128,6 +129,12 @@ export type LaunchAgentRunInput = {
   // scheduler promote-time guard). A `shared` request with no rootRunId is
   // refused (CONFIG) — a top-level run has no tree to share.
   workspaceMode?: "own" | "shared" | null;
+  // M36 (ADR-097): an explicit per-child workspace axis OVERRIDE. When set by a
+  // delegation (run_delegate / run_plan), it wins over the agent definition's
+  // declared `workspace` — so a coordinator can request a `none`/`repo_read`
+  // child (exits Done, no Review round-trip) or a `worktree` child (produces a
+  // diff to promote/rework). Absent/null ⇒ the agent-def default (unchanged).
+  workspace?: "none" | "repo_read" | "worktree" | null;
   db?: Db;
 };
 
@@ -535,7 +542,9 @@ export async function launchAgentRun(
   );
 
   const runId = randomUUID();
-  const workspace = ctx.effective.parsed.workspace;
+  // M36 (ADR-097): an explicit delegation `workspace` overrides the agent-def
+  // axis; absent ⇒ the agent's declared default.
+  const workspace = input.workspace ?? ctx.effective.parsed.workspace;
 
   // M36 Phase 8 (ADR-096): a persistent child must carry an addressable_key —
   // it is the re-message handle. Uniqueness within the tree is enforced by the
@@ -662,12 +671,34 @@ export async function launchAgentRun(
           projectRepoPath: ctx.project.repoPath,
           baseRef: ctx.project.mainBranch,
         });
-        await addWorktree({
-          projectRepoPath: ctx.project.repoPath,
-          worktreePath,
-          branch,
-          startPoint: ctx.project.mainBranch,
-        });
+
+        try {
+          await addWorktree({
+            projectRepoPath: ctx.project.repoPath,
+            worktreePath,
+            branch,
+            startPoint: ctx.project.mainBranch,
+          });
+        } catch (err) {
+          // M36 (ADR-097): a concurrent shared-mode sibling can allocate the tree
+          // between the listWorktrees check and this add (TOCTOU). Re-check the
+          // registry: if the path now exists, the sibling won the race — reuse it
+          // (no workspaces row of our own). Otherwise it is a genuine git failure
+          // → surface as a typed CONFLICT, never a raw 500.
+          const after = await listWorktrees(ctx.project.repoPath);
+
+          if (after.some((w) => w.path === worktreePath)) {
+            reuseSharedTree = true;
+            baseCommit = null;
+          } else {
+            throw new MaisterError(
+              "CONFLICT",
+              `shared worktree allocation failed for tree ${rootRunId}: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            );
+          }
+        }
       }
     } else {
       branch = agentWorktreeBranchName({
@@ -1140,6 +1171,15 @@ export async function finalizeAgentRun(
     null;
 
   const finalizeResult = await _db.transaction(async (tx: Db) => {
+    // M36 (ADR-097): parent_run_id is immutable — read it up front so a DELEGATED
+    // child reaching Review can KEEP its acp_session_id (the resume handle
+    // run_rework needs). The CAS below still gates on status.
+    const preRows = await tx
+      .select({ parentRunId: runs.parentRunId })
+      .from(runs)
+      .where(eq(runs.id, runId));
+    const preParentRunId: string | null = preRows[0]?.parentRunId ?? null;
+
     const workspaceRows =
       outcome === "Done"
         ? await tx
@@ -1153,12 +1193,18 @@ export async function finalizeAgentRun(
         : outcome;
     const endedAt = new Date();
 
+    // M36 (ADR-097): a delegated child reaching Review keeps its session handle so
+    // run_rework can session/resume with prior context; every other terminal (and
+    // a top-level Review with no parent) nulls it.
+    const preserveSessionForRework =
+      status === "Review" && preParentRunId !== null;
+
     const rows = await tx
       .update(runs)
       .set({
         status,
         endedAt,
-        acpSessionId: null,
+        ...(preserveSessionForRework ? {} : { acpSessionId: null }),
         currentStepId: null,
       })
       .where(
@@ -1281,7 +1327,28 @@ export async function finalizeAgentRun(
       },
     });
 
-    if (status !== "Review") {
+    // M36 (ADR-095/097): a DELEGATED child reaching Review emits `run.review` so
+    // the parked coordinator wakes to promote/rework the diff (and as-plan
+    // auto-promote fires). A top-level Review (no parent) emits nothing — there is
+    // no orchestrator to route to. Terminal outcomes emit their terminal kind.
+    if (status === "Review") {
+      if (row.parentRunId) {
+        await emitDomainEvent({
+          db: tx,
+          kind: "run.review",
+          projectId: row.projectId,
+          taskId: row.taskId,
+          runId,
+          actor: { type: "agent", id: row.agentId },
+          parentRunId: row.parentRunId,
+          payload: {
+            runKind: "agent",
+            agentId: row.agentId,
+            status,
+          },
+        });
+      }
+    } else {
       await emitDomainEvent({
         db: tx,
         kind: DOMAIN_KIND_BY_OUTCOME[outcome],
@@ -1499,6 +1566,65 @@ export async function sendAgentMessage(
   );
 }
 
+export type ReworkChildRunResult = {
+  childRunId: string;
+  status: "Running";
+};
+
+// M36 (ADR-097): re-open a DELEGATED child whose turn produced a diff (Review)
+// for another turn with the coordinator's rework prompt. CAS Review → Running
+// (single-winner — a concurrent promote/rework loses → CONFLICT), then
+// startAgentSession respawns + session/resumes (run.acpSessionId, preserved on
+// the delegated Review flip) and delivers the rework prompt as a fresh turn; the
+// consume loop re-reviews on the next clean end_turn. The caller (rework route)
+// has already verified the child is a direct child of the bound orchestrator and
+// in Review. Never exposes acp_session_id. Mirrors sendAgentMessage's parked
+// claim-then-startAgentSession mechanics.
+export async function reworkChildRun(
+  childRunId: string,
+  prompt: string,
+  opts: { db?: Db; api?: AgentSupervisorApi } = {},
+): Promise<ReworkChildRunResult> {
+  const _db = opts.db ?? getDb();
+
+  const rows = await _db
+    .select({ status: runs.status, runKind: runs.runKind })
+    .from(runs)
+    .where(eq(runs.id, childRunId));
+  const run = rows[0];
+
+  if (!run || run.runKind !== "agent") {
+    throw new MaisterError(
+      "PRECONDITION",
+      `run ${childRunId} is not an agent run`,
+    );
+  }
+
+  if (run.status !== "Review") {
+    throw new MaisterError(
+      "PRECONDITION",
+      `child run ${childRunId} is not in Review (status=${run.status})`,
+    );
+  }
+
+  const claim = await markReworkFromReview(childRunId, { db: _db });
+
+  if (!claim.ok) {
+    throw new MaisterError(
+      "CONFLICT",
+      `child run ${childRunId} left Review concurrently (promoted or reworked)`,
+    );
+  }
+
+  await startAgentSession(childRunId, {
+    db: _db,
+    ...(opts.api ? { api: opts.api } : {}),
+    overridePrompt: prompt,
+  });
+
+  return { childRunId, status: "Running" };
+}
+
 async function recordAgentPermissionRequest(args: {
   db: Db;
   runId: string;
@@ -1693,7 +1819,15 @@ export async function startAgentSession(
     return;
   }
 
-  const workspace = effective.parsed.workspace;
+  // M36 (ADR-097): use the workspace axis the run ACTUALLY launched with
+  // (persisted at insert — a delegation override OR the agent-def default), not a
+  // re-derivation from the agent def, which would diverge from an overriding
+  // delegation (wrong cwd / readOnlySession). Falls back to the def for rows that
+  // predate agent_workspace.
+  const workspace = (run.agentWorkspace ?? effective.parsed.workspace) as
+    | "none"
+    | "repo_read"
+    | "worktree";
   let cwd: string;
 
   if (workspace === "repo_read" && effective.parsed.workspaceRef) {

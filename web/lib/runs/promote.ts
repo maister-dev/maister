@@ -66,7 +66,27 @@ export type PromoteRunInput = {
 export type PromoteRunContext = {
   sessionUser: { id: string; name?: string | null; email?: string | null };
   authorize: (projectId: string) => Promise<void>;
+  // M36 (ADR-097): WHO is promoting. Absent ⇒ the human session user (existing
+  // behavior). An ORCHESTRATOR-driven promote (run_promote / as-plan
+  // auto-promote) passes a non-user actor: the promotion is owner-less
+  // (promotion_owner_user_id null) and a merge conflict aborts to a typed
+  // CONFLICT instead of opening a human merge-conflict assignment — the
+  // coordinator / auto-promote leaves the child in Review for a human to resolve.
+  actor?:
+    | { kind: "user" }
+    | { kind: "agent"; agentId: string }
+    | { kind: "system" };
 };
+
+// M36 (ADR-097): the promotion owner — the session user for a human promote,
+// null for an orchestrator-driven (agent/system) promote.
+function isHumanPromotion(ctx: PromoteRunContext): boolean {
+  return ctx.actor === undefined || ctx.actor.kind === "user";
+}
+
+function resolvePromotionOwnerUserId(ctx: PromoteRunContext): string | null {
+  return isHumanPromotion(ctx) ? ctx.sessionUser.id : null;
+}
 
 export type PromoteRunResult = {
   ok: true;
@@ -477,7 +497,7 @@ async function promoteWorkspaceRun(
         promotionState: "claiming",
         promotionAttemptId: attemptId,
         promotionClaimedAt: claimedAt,
-        promotionOwnerUserId: ctx.sessionUser.id,
+        promotionOwnerUserId: resolvePromotionOwnerUserId(ctx),
         promotionMode,
         targetBranch: resolvedTarget,
       })
@@ -558,13 +578,20 @@ async function promoteWorkspaceRun(
 
         // Only the owning attempt records the failure (token-matched).
         if (ws.promotionAttemptId !== claim.attemptId) return;
-        await createMergeConflictAssignment({
-          db: tx,
-          run: claim.run,
-          workspace: claim.workspace,
-          sessionUser: ctx.sessionUser,
-          targetBranch: claim.resolvedTarget,
-        });
+
+        // M36 (ADR-097): a HUMAN promote opens a merge-conflict assignment for a
+        // reviewer to resolve; an ORCHESTRATOR-driven promote does NOT — it
+        // aborts to CONFLICT (rethrown below), leaving the child in Review for a
+        // human to resolve (no auto-resolve, §8).
+        if (isHumanPromotion(ctx)) {
+          await createMergeConflictAssignment({
+            db: tx,
+            run: claim.run,
+            workspace: claim.workspace,
+            sessionUser: ctx.sessionUser,
+            targetBranch: claim.resolvedTarget,
+          });
+        }
         await tx
           .update(workspaces)
           .set({ promotionState: "failed" })
@@ -1249,4 +1276,38 @@ export async function promoteRun(
   }
 
   return promoteWorkspaceRun(runId, input, ctx, d);
+}
+
+// M36 (ADR-097): orchestrator-driven promotion of a reviewed child. Used by the
+// run_promote ext route (agent actor) and the as-plan auto-promoter (system
+// actor). The CALLER must already have scoped the child — a direct child of the
+// bound orchestrator (run_promote) or an as-plan auto child (auto-launch) — to
+// the token's project. Reuses promoteRun's merge core with a NON-user actor:
+// owner-less, and a merge conflict aborts to CONFLICT (no human assignment),
+// leaving the child in Review. Forces `local_merge` (the autonomous mode — a
+// pull_request would not flip the child to Done). The child → Done finalize emits
+// run.done with parent_run_id, which wakes the orchestrator AND advances the
+// as-plan task + releases its `requires` dependents.
+export async function promoteChildRunForToken(
+  childRunId: string,
+  opts: {
+    projectId: string;
+    actor: { kind: "agent"; agentId: string } | { kind: "system" };
+    db?: Db;
+  },
+): Promise<PromoteRunResult> {
+  return promoteRun(
+    childRunId,
+    { mode: "local_merge" },
+    {
+      // sessionUser is never dereferenced for a non-user actor (owner → null and
+      // the conflict-assignment is skipped); a placeholder satisfies the shared
+      // context type without inventing a user row.
+      sessionUser: { id: `orchestrator:${opts.projectId}` },
+      // The caller already scoped the child to the token's project + parent.
+      authorize: async () => {},
+      actor: opts.actor,
+    },
+    opts.db,
+  );
 }

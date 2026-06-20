@@ -20,6 +20,8 @@ export const TOKEN_SCOPES = [
   "runs:delegate",
   "runs:collect",
   "runs:cancel",
+  // M36 (ADR-097): the orchestrator's promote-a-reviewed-child privilege.
+  "runs:promote",
 ] as const;
 
 // M34 (ADR-089): the fixed scope set issued to per-launch ephemeral agent

@@ -287,6 +287,8 @@ function scopeText(labels: TokenLabels, scope: TokenScope): string {
       return labels.scopeRunsCollect;
     case "runs:cancel":
       return labels.scopeRunsCancel;
+    case "runs:promote":
+      return labels.scopeRunsPromote;
   }
 }
 

@@ -99,6 +99,7 @@ const labels: TokenLabels = {
   scopeRunsDelegate: "Delegate runs",
   scopeRunsCollect: "Collect child runs",
   scopeRunsCancel: "Cancel child runs",
+  scopeRunsPromote: "Promote child runs",
   errorGeneric: "Something went wrong",
 };
 

@@ -2,7 +2,7 @@ import "server-only";
 
 import type {
   DomainEventKind,
-  RunTerminalEventKind,
+  RunSettledEventKind,
 } from "@/lib/domain-events/taxonomy";
 
 import pino from "pino";
@@ -36,18 +36,18 @@ interface BaseDomainEventInput {
   occurredAt?: Date;
 }
 
-// M36 (ADR-095): a discriminated union on `kind`. Run-terminal events MUST carry
-// `parentRunId` (null for a top-level run) — the compiler refuses a run-terminal
-// emit that omits it, so a new terminal path cannot silently drop the routing
-// key the orchestrator auto-launcher + resume consumer depend on. Other kinds
-// forbid the field.
+// M36 (ADR-095/097): a discriminated union on `kind`. Run-SETTLED events
+// (terminal kinds + `run.review`) MUST carry `parentRunId` (null for a top-level
+// run) — the compiler refuses a settled emit that omits it, so a new settled
+// path cannot silently drop the routing key the orchestrator auto-launcher +
+// resume consumer depend on. Other kinds forbid the field.
 export type EmitDomainEventInput =
   | (BaseDomainEventInput & {
-      kind: RunTerminalEventKind;
+      kind: RunSettledEventKind;
       parentRunId: string | null;
     })
   | (BaseDomainEventInput & {
-      kind: Exclude<DomainEventKind, RunTerminalEventKind>;
+      kind: Exclude<DomainEventKind, RunSettledEventKind>;
       parentRunId?: never;
     });
 

@@ -275,6 +275,41 @@ export async function rollbackResumeFromWait(
   return { ok: true };
 }
 
+// M36 (ADR-097): Review → Running. `run_rework` re-opens a DELEGATED child whose
+// turn produced a diff (Review) for another turn against its intact worktree.
+// Status-guarded on Review so a concurrent promote (Review → Done) or a duplicate
+// rework converges to ONE winner (loser → CONFLICT). Deliberately does NOT null
+// `acp_session_id` (preserved on the delegated Review flip) so startAgentSession
+// resumes with prior context; clears keepalive. The consume loop re-reviews on
+// the next end_turn.
+export async function markReworkFromReview(
+  runId: string,
+  opts: StateTransitionOptions = {},
+): Promise<StateTransitionResult> {
+  const db = opts.db ?? getDb();
+  const rows = await db
+    .update(runs)
+    .set({ status: "Running", checkpointAt: null, keepaliveUntil: null })
+    .where(and(eq(runs.id, runId), eq(runs.status, "Review")))
+    .returning({ id: runs.id });
+
+  if (rows.length === 0) {
+    log.warn(
+      { runId, from: "Review", to: "Running" },
+      "markReworkFromReview: status-guard mismatch — concurrent promote/rework won",
+    );
+
+    return { ok: false, reason: "status-guard-mismatch" };
+  }
+
+  log.info(
+    { runId, from: "Review", to: "Running" },
+    "run-state transition — child re-opened for rework",
+  );
+
+  return { ok: true };
+}
+
 // M8 T7: activity ping extends the keep-alive window without changing
 // status. Status guard: only Running and NeedsInput rows accept a bump.
 // NeedsInputIdle rows do NOT accept bumps — the activity route returns

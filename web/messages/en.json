@@ -1883,6 +1883,7 @@
     "scopeRunsDelegate": "Delegate runs",
     "scopeRunsCollect": "Collect child runs",
     "scopeRunsCancel": "Cancel child runs",
+    "scopeRunsPromote": "Promote child runs",
     "audit": {
       "title": "Token activity",
       "description": "Actions performed through API tokens — calls to the external API, not from the web UI.",

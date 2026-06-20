@@ -82,6 +82,7 @@ export interface TokenLabels {
   scopeRunsDelegate: string;
   scopeRunsCollect: string;
   scopeRunsCancel: string;
+  scopeRunsPromote: string;
   errorGeneric: string;
 }
 
@@ -150,6 +151,8 @@ function scopeLabel(labels: TokenLabels, scope: string): string {
       return labels.scopeRunsCollect;
     case "runs:cancel":
       return labels.scopeRunsCancel;
+    case "runs:promote":
+      return labels.scopeRunsPromote;
     default:
       return scope;
   }
@@ -369,6 +372,7 @@ export async function IntegrationsPanel({
     scopeRunsDelegate: t("scopeRunsDelegate"),
     scopeRunsCollect: t("scopeRunsCollect"),
     scopeRunsCancel: t("scopeRunsCancel"),
+    scopeRunsPromote: t("scopeRunsPromote"),
     errorGeneric: t("errorGeneric"),
   };
 

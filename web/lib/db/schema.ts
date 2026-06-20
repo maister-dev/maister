@@ -3269,7 +3269,7 @@ export const domainEvents = pgTable(
   (t) => ({
     kindCheck: check(
       "domain_events_kind_check",
-      sql`${t.kind} in ('task.created', 'task.comment_added', 'task.triage_requeued', 'run.done', 'run.failed', 'run.crashed', 'run.abandoned', 'gate.failed')`,
+      sql`${t.kind} in ('task.created', 'task.comment_added', 'task.triage_requeued', 'run.done', 'run.failed', 'run.crashed', 'run.abandoned', 'run.review', 'gate.failed')`,
     ),
     actorTypeCheck: check(
       "domain_events_actor_type_check",

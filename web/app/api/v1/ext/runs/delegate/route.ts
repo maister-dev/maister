@@ -262,6 +262,9 @@ export async function POST(
           persistent: body.persistent ?? false,
           addressableKey: body.addressableKey ?? null,
           workspaceMode: body.workspaceMode ?? null,
+          // M36 (ADR-097): honor the requested per-child workspace axis (was
+          // previously parsed then dropped).
+          workspace: body.workspace ?? null,
           trigger: { source: "manual" },
           db,
         });

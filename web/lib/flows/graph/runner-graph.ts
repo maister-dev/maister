@@ -122,6 +122,7 @@ import {
 import { promoteNextPending, releaseSlotOnIdle } from "@/lib/scheduler";
 import { checkpointSession, listSessions } from "@/lib/supervisor-client";
 import { deliverRunIfAutoReady } from "@/lib/runs/auto-delivery";
+import { SETTLED_RUN_STATUSES } from "@/lib/runs/run-status-sets";
 import {
   isMaisterError,
   MaisterError,
@@ -170,20 +171,13 @@ function runDir(
   return path.join(runtimeRoot, ".maister", projectSlug, "runs", runId);
 }
 
-// M36 (ADR-095): the run-terminal status set. A child no longer counts as
-// "pending" for its orchestrator once it reaches any of these.
-const TERMINAL_RUN_STATUSES = [
-  "Done",
-  "Failed",
-  "Crashed",
-  "Abandoned",
-] as const;
-
-// M36 (ADR-095) T5.1: count an orchestrator run's PENDING (non-terminal)
+// M36 (ADR-095) T5.1 / ADR-097: count an orchestrator run's PENDING (non-SETTLED)
 // children — the rows whose `parent_run_id` is this run and whose status is not
-// yet terminal. Drives the park-vs-complete decision: pending > 0 ⇒ the
-// coordinator parks awaiting them; pending == 0 ⇒ the batch is done and the node
-// completes downstream.
+// yet settled. SETTLED = terminal OR Review (C-2): a child in Review has produced
+// a diff and is the coordinator's to promote/rework, so it no longer blocks node
+// completion. Drives the park-vs-complete decision: pending > 0 ⇒ the coordinator
+// parks awaiting them; pending == 0 ⇒ every child has settled and the node
+// completes downstream (the coordinator is still woken on each child run.review).
 async function countPendingChildren(db: Db, runId: string): Promise<number> {
   const rows: Array<{ n: number }> = await db
     .select({ n: count() })
@@ -191,7 +185,7 @@ async function countPendingChildren(db: Db, runId: string): Promise<number> {
     .where(
       and(
         eq(runs.parentRunId, runId),
-        notInArray(runs.status, [...TERMINAL_RUN_STATUSES]),
+        notInArray(runs.status, [...SETTLED_RUN_STATUSES]),
       ),
     );
 

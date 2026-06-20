@@ -9,8 +9,9 @@ import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
-import { isRunTerminalEventKind } from "@/lib/domain-events/taxonomy";
+import { isRunSettledEventKind } from "@/lib/domain-events/taxonomy";
 import { isMaisterError } from "@/lib/errors";
+import { SETTLED_RUN_STATUSES } from "@/lib/runs/run-status-sets";
 import {
   markResumedFromWait,
   rollbackResumeFromWait,
@@ -26,15 +27,6 @@ const log = pino({
   name: "orchestrator-resume",
   level: process.env.LOG_LEVEL ?? "info",
 });
-
-// The run-terminal status set: a child is no longer "pending" for its
-// orchestrator once it reaches any of these.
-const TERMINAL_RUN_STATUSES = [
-  "Done",
-  "Failed",
-  "Crashed",
-  "Abandoned",
-] as const;
 
 type ResumeFlowFn = (
   runId: string,
@@ -65,7 +57,10 @@ async function loadParent(
   return rows[0] ?? null;
 }
 
-// Pending (non-terminal) children of an orchestrator run.
+// Pending (non-SETTLED) children of an orchestrator run. SETTLED = terminal OR
+// Review (C-2): a Review child has settled into a diff awaiting the coordinator,
+// so it no longer holds the batch open — the LAST child reaching Review (or a
+// terminal state) drops this to 0 and the parent is woken.
 async function pendingChildCount(db: Db, parentRunId: string): Promise<number> {
   const rows: Array<{ n: number }> = await db
     .select({ n: count() })
@@ -73,7 +68,7 @@ async function pendingChildCount(db: Db, parentRunId: string): Promise<number> {
     .where(
       and(
         eq(runs.parentRunId, parentRunId),
-        notInArray(runs.status, [...TERMINAL_RUN_STATUSES]),
+        notInArray(runs.status, [...SETTLED_RUN_STATUSES]),
       ),
     );
 
@@ -86,13 +81,14 @@ async function pendingChildCount(db: Db, parentRunId: string): Promise<number> {
 // auto_launch_run_plan consumer so the two concerns — launch the next as-plan
 // tasks vs wake the coordinator — stay independent.
 //
-// Wake policy:
+// Wake policy (ADR-097 — reacts to the SETTLED set: terminal kinds + run.review):
 //   - a child that ended run.failed/run.crashed/run.abandoned ALWAYS wakes the
 //     parent (deferred-release: the coordinator must handle a failed child even
 //     if other children are still pending);
-//   - a child that ended run.done wakes the parent ONLY when no pending
-//     (non-terminal) children remain (the batch is complete);
-//   - otherwise (done but siblings still pending) → do nothing, wait for the rest.
+//   - a child that SETTLED success-side (run.done OR run.review — a diff to
+//     promote/rework) wakes the parent ONLY when no pending (non-settled)
+//     children remain (the whole batch has settled);
+//   - otherwise (settled but siblings still pending) → wait for the rest.
 //
 // Idempotency / races: the dispatcher is a singleton, so the only race is
 // at-least-once REDELIVERY plus a concurrent manual resume. markResumedFromWait
@@ -113,7 +109,9 @@ export function buildOrchestratorResumeConsumer(
         // Each event is handled independently in try/catch: at-least-once means
         // one bad event must not abort (and thus redeliver) the whole window.
         try {
-          if (!isRunTerminalEventKind(event.kind)) continue;
+          // React to the SETTLED set (terminal kinds + run.review). A child
+          // reaching Review wakes the coordinator to promote/rework its diff.
+          if (!isRunSettledEventKind(event.kind)) continue;
 
           const payload = (event.payload ?? {}) as Record<string, unknown>;
           const parentRunId = payload.parentRunId;

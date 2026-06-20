@@ -185,6 +185,29 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
       required: ["prompt"],
     },
   },
+  run_promote: {
+    description:
+      "Promote (merge) a reviewed delegated child of the calling orchestrator — its branch is merged into its target and the child becomes Done. The child must be a direct child of the bound orchestrator run and currently in Review. A merge conflict returns CONFLICT and leaves the child in Review for a human to resolve (never auto-resolved). Returns { childRunId, status, commit? }.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        childRunId: { type: "string" },
+      },
+      required: ["childRunId"],
+    },
+  },
+  run_rework: {
+    description:
+      "Re-open a reviewed delegated child of the calling orchestrator for another turn with a rework prompt. The child must be a direct child of the bound orchestrator run and currently in Review. It is respawned and resumed with prior context against its existing worktree, then re-reviews on its next end_turn. Returns { childRunId, status }.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        childRunId: { type: "string" },
+        prompt: { type: "string" },
+      },
+      required: ["childRunId", "prompt"],
+    },
+  },
   readiness_get: {
     description: "Get the readiness status of a run",
     inputSchema: {
@@ -528,6 +551,27 @@ function resolveRouting(
       if (childRunId !== undefined) body.childRunId = childRunId;
 
       return { method: "POST", path: `/api/v1/ext/runs/message`, body };
+    }
+    case "run_promote": {
+      const { childRunId } = args as { childRunId: string };
+
+      return {
+        method: "POST",
+        path: `/api/v1/ext/runs/promote`,
+        body: { childRunId },
+      };
+    }
+    case "run_rework": {
+      const { childRunId, prompt } = args as {
+        childRunId: string;
+        prompt: string;
+      };
+
+      return {
+        method: "POST",
+        path: `/api/v1/ext/runs/rework`,
+        body: { childRunId, prompt },
+      };
     }
     case "readiness_get": {
       const { runId } = args as { runId: string };

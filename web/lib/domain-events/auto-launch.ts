@@ -9,8 +9,12 @@ import pino from "pino";
 import { launchAgentRun, type LaunchAgentRunResult } from "@/lib/agents/launch";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
-import { isRunTerminalEventKind } from "@/lib/domain-events/taxonomy";
+import { isRunSettledEventKind } from "@/lib/domain-events/taxonomy";
 import { isMaisterError } from "@/lib/errors";
+import {
+  promoteChildRunForToken,
+  type PromoteRunResult,
+} from "@/lib/runs/promote";
 import { getOpenRelationBlockers } from "@/lib/social/relations";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -30,6 +34,11 @@ const log = pino({
 type LaunchFn = (
   input: Parameters<typeof launchAgentRun>[0],
 ) => Promise<LaunchAgentRunResult>;
+
+type PromoteFn = (
+  childRunId: string,
+  opts: Parameters<typeof promoteChildRunForToken>[1],
+) => Promise<PromoteRunResult>;
 
 type CandidateRow = {
   taskId: string;
@@ -54,6 +63,59 @@ async function hasAnyRun(db: Db, taskId: string): Promise<boolean> {
   return rows.length > 0;
 }
 
+// M36 (ADR-097): an as-plan (launch_mode='auto') child reaching Review is
+// auto-promoted (system actor, local_merge) so the auto-DAG flows without a live
+// coordinator. The promote flips the child Done → emits run.done → this consumer
+// (on that event) advances the task + releases dependents. Only as-plan children
+// auto-promote; a manual (as-run) child is the live coordinator's to promote via
+// run_promote. Idempotent: the promote Review→Done CAS no-ops a redelivered
+// window; a merge CONFLICT leaves the child in Review (logged — the dependent
+// stays blocked for a human to resolve, no auto-resolve, §8).
+async function autoPromoteAsPlanChild(
+  db: Db,
+  event: DomainEventRow,
+  promote: PromoteFn,
+): Promise<void> {
+  if (typeof event.runId !== "string" || event.runId.length === 0) return;
+
+  const rows = await db
+    .select({
+      launchMode: runs.launchMode,
+      projectId: runs.projectId,
+      status: runs.status,
+    })
+    .from(runs)
+    .where(eq(runs.id, event.runId));
+  const child = rows[0];
+
+  // Only an as-plan child still in Review is a candidate.
+  if (!child || child.launchMode !== "auto" || child.status !== "Review") {
+    return;
+  }
+
+  try {
+    await promote(event.runId, {
+      projectId: child.projectId,
+      actor: { kind: "system" },
+      db,
+    });
+    log.info(
+      { eventId: event.id, childRunId: event.runId },
+      "auto-launch: as-plan child auto-promoted on Review",
+    );
+  } catch (err) {
+    log.warn(
+      {
+        eventId: event.id,
+        childRunId: event.runId,
+        code: isMaisterError(err) ? err.code : "UNKNOWN",
+        err: err instanceof Error ? err.message : String(err),
+      },
+      "auto-launch: as-plan child auto-promote refused — left in Review",
+    );
+  }
+}
+
 // The auto_launch_run_plan outbox consumer (ADR-095): a child terminal event
 // releases the orchestrator's as-plan siblings whose success-gated `requires`
 // blockers have all cleared. The dispatcher is a singleton
@@ -62,7 +124,7 @@ async function hasAnyRun(db: Db, taskId: string): Promise<boolean> {
 // exactly once over its lifetime). A redelivered window re-runs handle, sees
 // the already-created run, and skips.
 export function buildAutoLaunchRunPlanConsumer(
-  opts: { db?: Db; launch?: LaunchFn } = {},
+  opts: { db?: Db; launch?: LaunchFn; promote?: PromoteFn } = {},
 ): DomainEventConsumer {
   return {
     id: "auto_launch_run_plan",
@@ -70,19 +132,30 @@ export function buildAutoLaunchRunPlanConsumer(
     async handle(events: DomainEventRow[]): Promise<void> {
       const _db = opts.db ?? getDb();
       const launch = opts.launch ?? launchAgentRun;
+      const promote = opts.promote ?? promoteChildRunForToken;
 
       for (const event of events) {
-        if (!isRunTerminalEventKind(event.kind)) continue;
+        // React to the SETTLED set (terminal kinds + run.review).
+        if (!isRunSettledEventKind(event.kind)) continue;
 
         const payload = (event.payload ?? {}) as Record<string, unknown>;
 
         // Branch on run_kind FIRST (skill-context rule 207): only an agent
-        // child terminal carries an orchestrator parent_run_id.
+        // child settled event carries an orchestrator parent_run_id.
         if (payload.runKind !== "agent") continue;
 
         const parentRunId = payload.parentRunId;
 
         if (typeof parentRunId !== "string" || parentRunId.length === 0) {
+          continue;
+        }
+
+        // M36 (ADR-097): an as-plan child reaching Review auto-promotes; the
+        // resulting run.done re-enters this consumer to advance the task +
+        // release dependents. Manual (as-run) children are skipped here — the
+        // live coordinator promotes them via run_promote.
+        if (event.kind === "run.review") {
+          await autoPromoteAsPlanChild(_db, event, promote);
           continue;
         }
 
@@ -188,6 +261,8 @@ export function buildAutoLaunchRunPlanConsumer(
               projectId: candidate.projectId,
               taskId: candidate.taskId,
               launchOverrideRunnerId: spec.runnerOverride ?? null,
+              // M36 (ADR-097): honor the plan task's declared workspace axis.
+              workspace: spec.workspace ?? null,
               parentRunId,
               rootRunId,
               launchMode: "auto",

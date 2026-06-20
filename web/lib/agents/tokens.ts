@@ -37,6 +37,8 @@ export const ORCHESTRATOR_TOKEN_SCOPES = [
   "runs:delegate",
   "runs:collect",
   "runs:cancel",
+  // M36 (ADR-097): promote a reviewed child (merge its branch → child Done).
+  "runs:promote",
 ] as const satisfies readonly (typeof TOKEN_SCOPES)[number][];
 
 export type IssuedAgentToken = {
