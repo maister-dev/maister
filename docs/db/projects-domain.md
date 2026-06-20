@@ -185,6 +185,11 @@ mirror `runs.keepalive_until` for a session-scoped edit lock; `source_*` +
   working-package identity; the working-dir name derives from it. `working_dir`
   is never exposed to the client; `source_install_id` / `last_cut_install_id`
   FKs are `SET NULL` on install delete (lineage is advisory, not load-bearing).
+- **(M36, migration `0056`)** `local_packages_default_per_project` — a
+  **partial-unique** index on `(project_id) WHERE is_default` enforcing at most
+  one default "virtual" local package per project. `project_id` (FK `projects`,
+  CASCADE) is **nullable**: NULL for named, platform-scoped local packages; set
+  only on the per-project default that element-level forks land in.
 
 ## Notes
 

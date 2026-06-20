@@ -2584,45 +2584,61 @@ export const projectPackageAttachments = pgTable(
 // platform-scoped, git-backed working directory authored/forked artifacts live
 // in and `cut version` installs from. `working_dir` is NEVER projected to
 // clients. The lock columns mirror runs.keepalive_until for a session edit-lock.
-export const localPackages = pgTable("local_packages", {
-  id: text("id")
-    .primaryKey()
-    .$defaultFn(() => crypto.randomUUID()),
-  name: text("name").notNull(),
-  slug: text("slug").notNull().unique(),
-  workingDir: text("working_dir").notNull(),
-  status: text("status", { enum: ["active", "archived"] })
-    .notNull()
-    .default("active"),
-  sourceInstallId: text("source_install_id").references(
-    () => packageInstalls.id,
-    { onDelete: "set null" },
-  ),
-  sourceRepoUrl: text("source_repo_url"),
-  sourceRef: text("source_ref"),
-  branchName: text("branch_name"),
-  lastCutInstallId: text("last_cut_install_id").references(
-    () => packageInstalls.id,
-    { onDelete: "set null" },
-  ),
-  lockedByUserId: text("locked_by_user_id").references(() => users.id, {
-    onDelete: "set null",
+export const localPackages = pgTable(
+  "local_packages",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    name: text("name").notNull(),
+    slug: text("slug").notNull().unique(),
+    workingDir: text("working_dir").notNull(),
+    status: text("status", { enum: ["active", "archived"] })
+      .notNull()
+      .default("active"),
+    sourceInstallId: text("source_install_id").references(
+      () => packageInstalls.id,
+      { onDelete: "set null" },
+    ),
+    sourceRepoUrl: text("source_repo_url"),
+    sourceRef: text("source_ref"),
+    branchName: text("branch_name"),
+    lastCutInstallId: text("last_cut_install_id").references(
+      () => packageInstalls.id,
+      { onDelete: "set null" },
+    ),
+    lockedByUserId: text("locked_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    lockedBySession: text("locked_by_session"),
+    lockExpiresAt: timestamp("lock_expires_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    createdBy: text("created_by").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    // M36 (ADR-095): per-project default "virtual" local package for element-level
+    // forks. project_id is NULL for named, platform-scoped local packages; a
+    // default always names its owning project (CASCADE: a deleted project drops
+    // its default). The partial-unique index enforces <=1 default per project.
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
+    isDefault: boolean("is_default").notNull().default(false),
+  },
+  (t) => ({
+    defaultPerProject: uniqueIndex("local_packages_default_per_project")
+      .on(t.projectId)
+      .where(sql`${t.isDefault}`),
   }),
-  lockedBySession: text("locked_by_session"),
-  lockExpiresAt: timestamp("lock_expires_at", {
-    withTimezone: true,
-    mode: "date",
-  }),
-  createdBy: text("created_by").references(() => users.id, {
-    onDelete: "set null",
-  }),
-  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
-    .notNull()
-    .defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
-    .notNull()
-    .defaultNow(),
-});
+);
 
 export type User = typeof users.$inferSelect;
 export type LocalPackage = typeof localPackages.$inferSelect;

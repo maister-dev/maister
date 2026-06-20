@@ -62,7 +62,7 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `package_sources`             | **(Implemented — ADR-088, migration `0048`)** Platform package-source catalog: git monorepo URL (UNIQUE), enabled flag, cached `discovered` snapshot jsonb, `last_checked_at`.                                                                              | —                                                                          |
 | `package_installs`            | **(Implemented — ADR-088, migration `0048`)** Immutable installed package revisions. UNIQUE `(source_url, name, resolved_revision)`. Manifest + content inventory jsonb; two-phase `package_status`; package-level `trust_status`.                                                                              | —                                                                          |
 | `project_package_attachments` | **(Implemented — ADR-088, migration `0048`)** Per-project package enablement. UNIQUE `(project_id, package_name)`. FK to `package_installs` (restrict) + `projects` (cascade).                                                                              | `projects.id`, `package_installs.id`                                       |
-| `local_packages`              | **(Designed — ADR-095, migration `0055`)** Flow Studio Phase C editable local packages (Variant B): git-backed `working_dir` (server-only), `slug` UNIQUE, `status`, fork lineage (`source_install_id`/`source_repo_url`/`source_ref`/`branch_name`), `last_cut_install_id`, session lock (`locked_by_*`/`lock_expires_at`). | `package_installs.id`, `users.id`                                          |
+| `local_packages`              | **(Designed — ADR-095, migration `0055`)** Flow Studio Phase C editable local packages (Variant B): git-backed `working_dir` (server-only), `slug` UNIQUE, `status`, fork lineage (`source_install_id`/`source_repo_url`/`source_ref`/`branch_name`), `last_cut_install_id`, session lock (`locked_by_*`/`lock_expires_at`). **(M36, migration `0056`)** `project_id` (FK `projects`, CASCADE, nullable) + `is_default` for the per-project default virtual package (partial-unique `(project_id) WHERE is_default`). | `package_installs.id`, `users.id`, `projects.id`                           |
 | `flow_graph_layouts`          | **(Removed — migration `0030`, ADR-064.)** Was a per-project graph-view position store (M22, migration `0024`); superseded by the authored `flow.yaml` `presentation` section. No table.                                                                                            | —                             |
 | `scheduler_jobs`              | **(M24 — Implemented, migration `0027`)** Durable fixed-interval scheduler job definitions for `system_sweep`, `command`, `agent_tick`, and `flow_run`. Atomic due-job claim advances `next_run_at` and creates one attempt.                                                                                                      | optional `projects.id`                                                     |
 | `scheduler_job_runs`          | **(M24 — Implemented, migration `0027`)** Scheduler attempt ledger with status, lease expiry, summary, and error fields. Expired `Claimed`/`Running` attempts are reaped before new claims.                                                                                                                                         | `scheduler_jobs.id`                                                        |
@@ -558,7 +558,12 @@ Editable local packages (Flow Studio Phase C, Variant B). Process contract:
   edit lock (mirrors `runs.keepalive_until`): `locked_by_user_id` (FK `users`,
   SET NULL), `locked_by_session`, `lock_expires_at` (nullable; acquired on
   editor open, refreshed by keep-alive, lazy stale-takeover, no sweeper).
-  `created_by` (FK `users`, SET NULL), timestamps.
+  `created_by` (FK `users`, SET NULL), timestamps. **(M36, migration `0056`)**
+  `project_id` (FK `projects`, CASCADE; **nullable** — NULL for named,
+  platform-scoped packages) + `is_default` (bool, default `false`): the
+  per-project default "virtual" local package element-level forks land in. A
+  partial-unique index `local_packages_default_per_project` on `(project_id)
+  WHERE is_default` enforces at most one default per project.
 - **Cut version** reuses the installer: a clean export of `working_dir` →
   `installPackageRevision({ version: "local" })` → a `local-<digest>`
   `package_installs` row (cut versions reuse the package substrate above); a

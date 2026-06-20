@@ -101,7 +101,7 @@ Agent bundles/subdirs (agents stay single-file); editable on-canvas node popup (
   Extend `docs/system-analytics/local-packages.md` (fork both-grain incl. **element-fork project selection**, `is_default` virtual package, cut-version+attach, lock, read-only enforcement) per R5; ERD updates in `docs/db/projects-domain.md` + `docs/database-schema.md` for the 0056 columns; OpenAPI for new routes (fork, fork-element, cut-version, file CRUD) in `docs/api/web.openapi.yaml`; ADR-095 body (extend). Decide + document whether MCP-template provenance (`platform_mcp_server_id`, T2.5) is persisted (schema delta) or display-only. Tag statuses.
   Acceptance: docs validators + ADR anchors green; every new route/column/error has a spec entry (contract→spec table in this task); MCP-provenance persistence decision recorded.
 
-- [ ] **T2.2 — Migration 0056 (is_default + fork lineage).** (depends on T2.1)
+- [x] **T2.2 — Migration 0056 (is_default + fork lineage).** (depends on T2.1)
   `local_packages.is_default boolean` (per-project virtual package; partial-unique index on `(project_id) WHERE is_default`), `source_package_install_id`, `source_ref` (fork lineage, nullable). Drizzle schema + migration + snapshot.
   Files: `web/lib/db/schema.ts`, `web/lib/db/migrations/0056_*`.
   Acceptance: applies clean; partial-unique enforces one default per project; `db:generate` shows no stray diff.
