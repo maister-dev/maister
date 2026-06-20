@@ -7231,8 +7231,10 @@ default 3), so a long-lived coordinator must not hold a scheduler slot while blo
     unblocked dependent — that launch path does its own cap admission (a
     Pending/Running decision under the global cap), so the consumer does not need
     a separate `promoteNextPending` mark; idempotency is the per-task `hasAnyRun`
-    belt on the singleton dispatcher. Wait/resume each close status +
-    `node_attempts` cursor in one tx.
+    belt on the singleton dispatcher, backed at the DB by the
+    `runs_auto_task_uq` partial unique index (ADR-097, migration 0060 — one auto
+    run per task), so even concurrent dispatch can never double-launch a
+    dependent. Wait/resume each close status + `node_attempts` cursor in one tx.
 11. **Bounds.** `MAISTER_MAX_ORCHESTRATOR_FANOUT` (per-plan task cap, default 16)
     and `MAISTER_ORCHESTRATOR_MAX_DEPTH` (run-tree recursion bound, default 3),
     enforced pre-tx; over-limit → `CONFIG`.
@@ -7400,6 +7402,11 @@ coordinator.
   is a settled state for the parent's completion check while still triggering a wake.
 - One new domain-event kind is added — the kind count moves 8 → 9; every
   kind-registration site is updated.
+- The auto-launcher's exactly-once `hasAnyRun` check-then-act gains a DB backstop:
+  the `runs_auto_task_uq` partial unique index (`runs(task_id) WHERE
+  launch_mode='auto'`, migration 0060) makes a concurrent second insert dedup via
+  `launchAgentRun`'s `onConflictDoNothing()`, so a released dependent can never
+  double-launch even outside the singleton dispatcher.
 
 **Alternatives Considered:**
 - **Treat `Review` as terminal for the orchestrator:** rejected — the coordinator
@@ -7413,11 +7420,12 @@ coordinator.
   `Review` and the DAG would stall.
 
 > **Numbering note.** ADR-097 was the next-free number on
-> `feature/orchestrator-engine` (after ADR-095/096 on the same branch) and migration
-> 0059 the next-free migration (after 0055–0058). Both still next-free vs main's HEAD
-> at the fix-commit check. A renumber pass against main at merge time remains a
-> pre-merge deliverable IF main claims 0059/ADR-097 first (a sibling-branch collision
-> is known); do NOT renumber here. Run `node scripts/validate-docs-adr-anchors.mjs`
+> `feature/orchestrator-engine` (after ADR-095/096 on the same branch); migrations
+> 0059 (the `run.review` kind CHECK) and 0060 (the `runs_auto_task_uq` index) the
+> next-free migrations (after 0055–0058). All still next-free vs main's HEAD at the
+> fix-commit check. A renumber pass against main at merge time remains a pre-merge
+> deliverable IF main claims these numbers first (a sibling-branch collision is
+> known); do NOT renumber here. Run `node scripts/validate-docs-adr-anchors.mjs`
 > after any renumber.
 
 ---

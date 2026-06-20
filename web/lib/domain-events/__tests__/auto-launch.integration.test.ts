@@ -258,24 +258,43 @@ async function emitChildTerminal(args: {
   childTaskId: string;
   outcome: "Done" | "Failed" | "Abandoned";
 }): Promise<DomainEventRow> {
-  const childRunId = randomUUID();
   const runStatus = args.outcome;
   const taskStatus = args.outcome === "Done" ? "InFlight" : "Abandoned";
 
-  await pool.query(
-    `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id", "task_id",
-       "status", "flow_version", "flow_revision", "parent_run_id", "root_run_id", "runner_id", "launch_mode")
-     VALUES ($1, 'agent', $2, $3, $4, $5, 'agent', 'manual', $6, $6, $7, 'auto')`,
-    [
-      childRunId,
-      workerAgentId,
-      projectId,
-      args.childTaskId,
-      runStatus,
-      args.parentRunId,
-      executorId,
-    ],
+  // Idempotent: if the child task already has a run (e.g. a source sibling the
+  // consumer auto-launched on a PRIOR event in this same test), COMPLETE that
+  // existing run rather than inserting a duplicate — one auto run per task is the
+  // runs_auto_task_uq invariant (ADR-097), and a real terminal completes the
+  // run that exists, it does not spawn a new one.
+  const existing = await pool.query(
+    `SELECT "id" FROM "runs" WHERE "task_id" = $1 LIMIT 1`,
+    [args.childTaskId],
   );
+  let childRunId: string;
+
+  if (existing.rows.length > 0) {
+    childRunId = existing.rows[0].id as string;
+    await pool.query(`UPDATE "runs" SET "status" = $1 WHERE "id" = $2`, [
+      runStatus,
+      childRunId,
+    ]);
+  } else {
+    childRunId = randomUUID();
+    await pool.query(
+      `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id", "task_id",
+         "status", "flow_version", "flow_revision", "parent_run_id", "root_run_id", "runner_id", "launch_mode")
+       VALUES ($1, 'agent', $2, $3, $4, $5, 'agent', 'manual', $6, $6, $7, 'auto')`,
+      [
+        childRunId,
+        workerAgentId,
+        projectId,
+        args.childTaskId,
+        runStatus,
+        args.parentRunId,
+        executorId,
+      ],
+    );
+  }
   await pool.query(`UPDATE "tasks" SET "status" = $1 WHERE "id" = $2`, [
     taskStatus,
     args.childTaskId,
@@ -397,6 +416,29 @@ describe("auto_launch_run_plan consumer", () => {
     await consumer.handle([event]);
     expect(await runCount(taskB)).toBe(1);
   });
+
+  // C3 (real two-racer): two dispatcher workers handling the same terminal event
+  // CONCURRENTLY must launch the released dependent exactly once — the hasAnyRun
+  // guard + the (agent_id, trigger_event_id) unique index together, not in-loop
+  // sequencing, are the exactly-once belt.
+  it("(5c) concurrent handle() of the releasing event launches the dependent exactly once", async () => {
+    const { parentRunId, orchTaskId } = await seedOrchestrator();
+    const taskA = await seedAsPlanTask({ orchTaskId, title: "A" });
+    const taskB = await seedAsPlanTask({ orchTaskId, title: "B" });
+
+    await addRequires(taskB, taskA);
+    const event = await emitChildTerminal({
+      parentRunId,
+      childTaskId: taskA,
+      outcome: "Done",
+    });
+
+    const consumer = buildAutoLaunchRunPlanConsumer({ db });
+
+    await Promise.all([consumer.handle([event]), consumer.handle([event])]);
+
+    expect(await runCount(taskB)).toBe(1);
+  }, 60_000);
 
   it("one event fanning out to TWO same-agent dependents launches BOTH (no index collapse)", async () => {
     const { parentRunId, orchTaskId } = await seedOrchestrator();

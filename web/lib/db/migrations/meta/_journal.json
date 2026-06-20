@@ -421,6 +421,13 @@
       "when": 1781984941528,
       "tag": "0059_m36_run_review_event",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1781986534709,
+      "tag": "0060_m36_auto_task_unique",
+      "breakpoints": true
     }
   ]
 }

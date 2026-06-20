@@ -1318,6 +1318,14 @@ export const runs = pgTable(
     uniqRootAddressableKey: uniqueIndex("runs_root_addressable_key_uq")
       .on(t.rootRunId, t.addressableKey)
       .where(sql`${t.persistent} = true`),
+    // M36 (ADR-097): an as-plan/auto-DAG task launches EXACTLY ONCE over its
+    // lifetime. This partial unique index is the DB backstop behind the
+    // auto-launcher's hasAnyRun check-then-act — under concurrent dispatch the
+    // second insert hits 23505 and launchAgentRun's onConflictDoNothing() dedups
+    // it (returns {deduped}), so a released dependent can never double-launch.
+    uniqAutoTask: uniqueIndex("runs_auto_task_uq")
+      .on(t.taskId)
+      .where(sql`${t.launchMode} = 'auto'`),
   }),
 );
 

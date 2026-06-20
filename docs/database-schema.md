@@ -2273,6 +2273,7 @@ Created via Drizzle:
 | `runs`                | `runs_parent_run_id_idx`                | `(parentRunId)`                   | **(M36, Implemented)** orchestrator run-tree child lookups.        |
 | `runs`                | `runs_root_run_id_idx`                  | `(rootRunId)`                     | **(M36, Implemented)** whole-tree queries from the run-tree root.  |
 | `runs`                | `runs_root_addressable_key_uq`          | `(rootRunId, addressableKey)` UNIQUE WHERE `persistent` | **(M36, Implemented, migration 0057)** one persistent child per `addressableKey` within a run-tree (star-routing). |
+| `runs`                | `runs_auto_task_uq`                     | `(taskId)` UNIQUE WHERE `launch_mode='auto'` | **(M36, Implemented, migration 0060, ADR-097)** one auto-DAG run per task — the DB backstop behind the auto-launcher's `hasAnyRun` belt (concurrent dedup via `onConflictDoNothing`). |
 | `scratch_runs`        | `scratch_runs_project_status_idx`       | `(projectId, dialogStatus)`       | Project scratch workspace lists.                                   |
 | `scratch_attachments` | `scratch_attachments_run_idx`           | `(runId)`                         | Run-level attachment lookup.                                       |
 | `scratch_attachments` | `scratch_attachments_message_idx`       | `(messageId)`                     | Message attachment lookup.                                         |
