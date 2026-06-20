@@ -1,4 +1,11 @@
-import { mkdir, mkdtemp, realpath, rm, symlink } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -64,6 +71,29 @@ describe("resolveWithinWorkingDir", () => {
     await expect(
       resolveWithinWorkingDir(root, "link/secret"),
     ).rejects.toMatchObject({ code: "PRECONDITION" });
+  });
+
+  it("rejects a symlink LEAF that points to a file outside the working dir", async () => {
+    // The leaf itself is the symlink: the ancestor walk passes (its parent is a
+    // real dir), so only the final realpath-of-leaf check catches the escape.
+    // This is the readFileContent / fsReadFile-follows-symlink vector.
+    const outsideFile = path.join(outside, "secret.txt");
+
+    await writeFile(outsideFile, "secret");
+    await symlink(outsideFile, path.join(root, "leaf-escape"));
+    await expect(
+      resolveWithinWorkingDir(root, "leaf-escape"),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+  });
+
+  it("allows a symlink leaf whose real target stays within the working dir", async () => {
+    const target = path.join(root, "real.txt");
+
+    await writeFile(target, "ok");
+    await symlink(target, path.join(root, "inside-link"));
+    await expect(
+      resolveWithinWorkingDir(root, "inside-link"),
+    ).resolves.toContain("inside-link");
   });
 
   it("rejects a symlinked ancestor even when the leaf parent does not exist yet", async () => {

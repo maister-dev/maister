@@ -108,5 +108,24 @@ export async function resolveWithinWorkingDir(
     break;
   }
 
+  // Leaf-symlink guard: if the FINAL path already exists, realpath it (follows
+  // any symlink) and require the real target to stay within the root — closes
+  // symlink-LEAF read/write/copy escapes that the ancestor walk above (which
+  // only covers not-yet-created intermediates) misses. A not-yet-existing leaf
+  // (a new file / import entry) realpath-throws → skipped, which is correct
+  // (nothing to follow yet; the validated ancestor will hold it).
+  const realLeaf = await realpath(resolved).catch(() => null);
+
+  if (
+    realLeaf !== null &&
+    realLeaf !== realRoot &&
+    !realLeaf.startsWith(realRoot + path.sep)
+  ) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `artifact path escapes the working dir (symlink): ${relPath}`,
+    );
+  }
+
   return resolved;
 }

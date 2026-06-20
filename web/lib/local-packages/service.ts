@@ -6,12 +6,12 @@ import type { LocalPackage } from "@/lib/db/schema";
 import { createHash, randomUUID } from "node:crypto";
 import {
   cp,
+  lstat,
   mkdir,
   mkdtemp,
   readFile as fsReadFile,
   readdir,
   rm,
-  stat,
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -128,7 +128,10 @@ async function scaffoldWorkingDir(
 // Recursively copy `src` into `dest` skipping every VCS `.git` entry, so a fork
 // or a cut-version export carries the package CONTENT but not the source repo
 // history (the dest is re-git-init'd fresh, or installed content-addressed).
-// `cp`'s filter receives absolute paths; we reject any whose basename is `.git`.
+// `cp`'s filter receives absolute paths; we reject any whose basename is `.git`
+// AND any symlink — `cp` copies symlinks verbatim, so an escaping symlink in the
+// working dir would otherwise be carried into the fork/export and later followed
+// out of confinement.
 export async function cleanCopyExcludingGit(
   src: string,
   dest: string,
@@ -138,7 +141,9 @@ export async function cleanCopyExcludingGit(
     recursive: true,
     errorOnExist: false,
     force: true,
-    filter: (source) => path.basename(source) !== ".git",
+    filter: async (source) =>
+      path.basename(source) !== ".git" &&
+      !(await lstat(source)).isSymbolicLink(),
   });
 }
 
@@ -229,8 +234,9 @@ export async function getDefaultLocalPackage(
 // package that element-level forks land in. Race-safe by construction: the
 // scaffold + insert race on the partial-unique `(project_id) WHERE is_default`
 // index — `onConflictDoNothing` lets the loser fall through to a re-select of
-// the winner's row (NEVER a read-then-write SELECT/TOCTOU). The loser's orphan
-// scaffold dir is rolled back.
+// the winner's row (NEVER a read-then-write SELECT/TOCTOU). Each attempt derives
+// its OWN unique slug/working dir, so the loser rolls back only its OWN orphan
+// scaffold below — never the winner's adopted dir.
 export async function ensureDefaultLocalPackage(opts: {
   projectId: string;
   projectName: string;
@@ -242,7 +248,13 @@ export async function ensureDefaultLocalPackage(opts: {
   if (existing) return existing;
 
   const name = `${opts.projectName} (local)`;
-  const slug = await uniqueSlugForName(name, opts.db);
+  // A per-attempt UNIQUE slug (uuid tail) — NOT the racy read-then-act
+  // `uniqueSlugForName`. Two concurrent first-fork callers must never derive the
+  // same working dir (else the insert loser's rollback `rm` would delete the
+  // winner's repo — data loss) nor collide on the slug-unique constraint (which
+  // would raise a stray 23505 instead of the intended `(project_id)` arbiter
+  // no-op). The user-facing name stays clean; the slug is an internal handle.
+  const slug = `${slugifyName(name)}-${randomUUID().slice(0, 8)}`;
   const workingDir = localPackageWorkingDir(slug);
 
   log.info({ projectId: opts.projectId, slug }, "ensure default local package");
@@ -374,7 +386,10 @@ export async function listFiles(
     const rel = name.split(path.sep).join("/");
 
     if (rel.split("/")[0] === ".git") continue;
-    const st = await stat(path.join(pkg.workingDir, name)).catch(() => null);
+    // lstat (NOT stat): a symlink leaf must not be listed — it is not a regular
+    // file under lstat, so the isFile() gate below skips it, and a read through
+    // it would be rejected by the confinement guard anyway.
+    const st = await lstat(path.join(pkg.workingDir, name)).catch(() => null);
 
     if (!st || !st.isFile()) continue;
     files.push({ path: rel, kind: inferFileKind(rel) });

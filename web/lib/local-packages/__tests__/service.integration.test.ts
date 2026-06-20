@@ -23,6 +23,8 @@ import {
 import {
   createLocalPackage,
   deleteLocalPackage,
+  ensureDefaultLocalPackage,
+  getDefaultLocalPackage,
   getLocalPackage,
   listFiles,
   listLocalPackages,
@@ -169,5 +171,51 @@ describe("local-packages substrate (integration)", () => {
     await expect(stat(pkg.workingDir)).rejects.toBeTruthy();
     // the archived package's working dir is untouched by the active-list query
     expect((await stat(workingDir)).isDirectory()).toBe(true);
+  });
+
+  it("two concurrent default creations keep the winner's repo (no shared-dir delete)", async () => {
+    const projectId = randomUUID();
+
+    await db.insert(schema.projects).values({
+      taskKey: `T${randomUUID().slice(0, 8)}`.toUpperCase(),
+      id: projectId,
+      slug: `race-${projectId.slice(0, 8)}`,
+      name: "Race Proj",
+      repoPath: join(homeDir, `repo-race-${projectId.slice(0, 8)}`),
+    });
+
+    expect(await getDefaultLocalPackage(projectId, db)).toBeNull();
+
+    // Both racers create the project default concurrently. The fix: each derives
+    // its OWN unique working dir, so the insert loser rolls back only its own
+    // orphan — never the winner's adopted repo (the critical data-loss bug).
+    const [a, b] = await Promise.all([
+      ensureDefaultLocalPackage({
+        projectId,
+        projectName: "Race Proj",
+        createdBy: userId,
+        db,
+      }),
+      ensureDefaultLocalPackage({
+        projectId,
+        projectName: "Race Proj",
+        createdBy: userId,
+        db,
+      }),
+    ]);
+
+    // Both resolve to the same winning row, and it is the project's sole default.
+    expect(a.id).toBe(b.id);
+    expect(a.isDefault).toBe(true);
+    const rows = await db
+      .select()
+      .from(schema.localPackages)
+      .where(eq(schema.localPackages.projectId, projectId));
+
+    expect(rows.filter((r) => r.isDefault)).toHaveLength(1);
+
+    // The surviving row's repo EXISTS — the loser did not delete a shared dir.
+    expect((await stat(a.workingDir)).isDirectory()).toBe(true);
+    expect((await stat(join(a.workingDir, ".git"))).isDirectory()).toBe(true);
   });
 });

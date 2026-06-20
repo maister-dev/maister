@@ -12,6 +12,11 @@ import {
 import { requireGlobalRole } from "@/lib/authz";
 import { MaisterError } from "@/lib/errors";
 import {
+  importMaxBytes,
+  importMaxEntries,
+  importMaxFileBytes,
+} from "@/lib/instance-config";
+import {
   collectImportEntries,
   commitImport,
   previewImport,
@@ -111,6 +116,46 @@ export async function POST(
         return badBody("'paths' must be a string array aligned to 'files'");
       }
 
+      // Reject on DECLARED sizes BEFORE materializing any bytes (File.size needs
+      // no read): a member must not force large in-memory allocations ahead of
+      // the import-lib caps. Folder members are uncompressed → per-file + total.
+      const maxEntries = importMaxEntries();
+      const maxFileBytes = importMaxFileBytes();
+      const maxBytes = importMaxBytes();
+
+      if (fileParts.length > maxEntries) {
+        log.warn(
+          { id, count: fileParts.length, maxEntries },
+          "[localPkg.import] rejected: too many files (pre-materialize)",
+        );
+
+        return badBody(`too many files (max ${maxEntries})`);
+      }
+
+      let declaredBytes = 0;
+
+      for (const file of fileParts) {
+        if (file.size > maxFileBytes) {
+          log.warn(
+            { id, name: file.name, size: file.size, maxFileBytes },
+            "[localPkg.import] rejected: file over per-file cap (pre-materialize)",
+          );
+
+          return badBody(
+            `a file exceeds the per-file cap (max ${maxFileBytes})`,
+          );
+        }
+        declaredBytes += file.size;
+      }
+      if (declaredBytes > maxBytes) {
+        log.warn(
+          { id, declaredBytes, maxBytes },
+          "[localPkg.import] rejected: total upload over cap (pre-materialize)",
+        );
+
+        return badBody(`upload exceeds the total cap (max ${maxBytes})`);
+      }
+
       const files = await Promise.all(
         fileParts.map(async (file, i) => ({
           relativePath: relPaths[i] as string,
@@ -124,6 +169,20 @@ export async function POST(
         return badBody("archive import expects exactly one file");
       }
       const archive = fileParts[0];
+
+      // The archive is COMPRESSED; cap its declared size against the total cap
+      // BEFORE materializing (collectImportEntries re-checks, but only after the
+      // route has already read the whole blob into memory).
+      const maxBytes = importMaxBytes();
+
+      if (archive.size > maxBytes) {
+        log.warn(
+          { id, size: archive.size, maxBytes },
+          "[localPkg.import] rejected: archive over cap (pre-materialize)",
+        );
+
+        return badBody(`archive exceeds the cap (max ${maxBytes})`);
+      }
 
       collected = await collectImportEntries({
         kind: "archive",
