@@ -38,7 +38,9 @@ import {
   promoteRebaseMerge,
   pushBranch,
   resolveBaseCommit,
+  squashRunBranch,
 } from "@/lib/worktree";
+import { commitsFromSnapshot } from "@/lib/runs/execution-policy";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -521,6 +523,45 @@ async function promoteWorkspaceRun(
       db,
       claim,
     });
+  }
+
+  // C2 (execution-policy commits): collapse the run branch's history into one
+  // commit pre-merge for flow runs whose policy is squash_rework/squash_on_promote.
+  // Tree-preserving inside squashRunBranch; any drift/failure silently keeps the
+  // original history (keep_all). Skipped for PR (returned above) + legacy rows
+  // lacking a base commit.
+  if (claim.run.runKind === "flow" && claim.baseCommit) {
+    const commitPolicy = commitsFromSnapshot(claim.run.executionPolicy);
+
+    if (
+      commitPolicy === "squash_rework" ||
+      commitPolicy === "squash_on_promote"
+    ) {
+      try {
+        const squash = await squashRunBranch({
+          worktreePath: claim.workspace.worktreePath,
+          baseCommit: claim.baseCommit,
+          message: `maister: run ${runId} (history squashed for promote)`,
+        });
+
+        log.info(
+          {
+            runId,
+            commitPolicy,
+            squashed: squash.squashed,
+            collapsed: squash.collapsed,
+            reason: squash.reason,
+          },
+          "[squash] commit-policy applied pre-promote",
+        );
+      } catch (err) {
+        // Squash is best-effort; never let it fail the promote (keep_all).
+        log.error(
+          { runId, commitPolicy, err: (err as Error).message },
+          "[squash] threw — promoting original history (keep_all)",
+        );
+      }
+    }
   }
 
   let commit: string;

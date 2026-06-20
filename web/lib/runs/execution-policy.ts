@@ -320,6 +320,39 @@ export function onStuckFromSnapshot(snapshot: unknown): OnStuckAction {
     : "escalate";
 }
 
+// Resolve just the promotion axis (C1) from a run's execution_policy snapshot.
+// Fail closed: a null / absent / malformed snapshot resolves to `manual` — a
+// corrupt policy must NEVER silently auto-promote.
+export function promotionFromSnapshot(snapshot: unknown): PromotionTrigger {
+  const parsed = executionPolicySchema.safeParse(snapshot);
+
+  return parsed.success
+    ? expandExecutionPolicy(parsed.data).promotion
+    : "manual";
+}
+
+// Resolve just the commit-policy axis (C2) from a run's execution_policy
+// snapshot. Fail closed: a null / absent / malformed snapshot resolves to
+// `keep_all` — a corrupt policy must NEVER silently rewrite run history.
+export function commitsFromSnapshot(snapshot: unknown): CommitPolicy {
+  const parsed = executionPolicySchema.safeParse(snapshot);
+
+  return parsed.success
+    ? expandExecutionPolicy(parsed.data).commits
+    : "keep_all";
+}
+
+// Resolve just the dirty-resolution axis (C3) from a run's execution_policy
+// snapshot. Fail closed: a null / absent / malformed snapshot resolves to `ask`
+// — a corrupt policy must NEVER silently auto-commit or proceed on a dirty tree.
+export function dirtyResolveFromSnapshot(snapshot: unknown): DirtyResolution {
+  const parsed = executionPolicySchema.safeParse(snapshot);
+
+  return parsed.success
+    ? expandExecutionPolicy(parsed.data).dirtyResolve
+    : "ask";
+}
+
 // B2/B3 decision matrix for a human gate (pure). The runner computes the policy
 // axes + whether the node has a safe-default (forward, non-rework) decision +
 // whether Group-A machine review passed (assertEvidenceReady), then dispatches:

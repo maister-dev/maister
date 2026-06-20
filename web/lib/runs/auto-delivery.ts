@@ -10,6 +10,7 @@ import {
   switchDeliveryPolicyToManual,
   type DeliveryPolicy,
 } from "@/lib/runs/delivery-policy";
+import { promotionFromSnapshot } from "@/lib/runs/execution-policy";
 import { promoteRun } from "@/lib/runs/promote";
 
 const { runs } = schemaModule as unknown as Record<string, any>;
@@ -49,6 +50,7 @@ async function switchRunToManual(args: {
 export async function deliverRunIfAutoReady(
   runId: string,
   db: Db = getDb() as Db,
+  promote: typeof promoteRun = promoteRun,
 ): Promise<void> {
   const rows = await db
     .select({
@@ -57,6 +59,7 @@ export async function deliverRunIfAutoReady(
       status: runs.status,
       createdByUserId: runs.createdByUserId,
       deliveryPolicySnapshot: runs.deliveryPolicySnapshot,
+      executionPolicy: runs.executionPolicy,
     })
     .from(runs)
     .where(eq(runs.id, runId));
@@ -67,14 +70,21 @@ export async function deliverRunIfAutoReady(
         status: string;
         createdByUserId: string | null;
         deliveryPolicySnapshot: DeliveryPolicy | null;
+        executionPolicy: unknown;
       }
     | undefined;
 
-  if (
-    !run ||
-    run.status !== "Review" ||
-    run.deliveryPolicySnapshot?.trigger !== "auto_on_ready"
-  ) {
+  // C1 (execution-policy promotion=auto_on_ready): OR-combine with the existing
+  // delivery-policy trigger. Either knob auto-promotes; the delivery policy
+  // still defines HOW (strategy / target). A run with no delivery snapshot but
+  // an auto-promoting execution policy cannot resolve a target → stays manual.
+  const autoOnReady =
+    run !== undefined &&
+    run.status === "Review" &&
+    (run.deliveryPolicySnapshot?.trigger === "auto_on_ready" ||
+      promotionFromSnapshot(run.executionPolicy) === "auto_on_ready");
+
+  if (!run || !autoOnReady || !run.deliveryPolicySnapshot) {
     return;
   }
 
@@ -90,7 +100,7 @@ export async function deliverRunIfAutoReady(
   }
 
   try {
-    await promoteRun(
+    await promote(
       runId,
       {
         deliveryPolicyOverride: run.deliveryPolicySnapshot,

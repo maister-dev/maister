@@ -9,6 +9,9 @@ import {
   permissionsFromSnapshot,
   humanGateFromSnapshot,
   onStuckFromSnapshot,
+  promotionFromSnapshot,
+  commitsFromSnapshot,
+  dirtyResolveFromSnapshot,
   resolveHumanGateDisposition,
   defaultExecutionPolicy,
   executionPolicySchema,
@@ -556,5 +559,50 @@ describe("resolveHumanGateDisposition (B2/B3 decision matrix)", () => {
         evidenceReady: false,
       }),
     ).toEqual({ action: "pause", assign: false });
+  });
+});
+
+describe("Phase C snapshot resolvers (fail-closed)", () => {
+  it("promotionFromSnapshot: only unattended auto-promotes; null/malformed → manual", () => {
+    expect(promotionFromSnapshot({ preset: "supervised" })).toBe("manual");
+    expect(promotionFromSnapshot({ preset: "assisted" })).toBe("manual");
+    expect(promotionFromSnapshot({ preset: "unattended" })).toBe(
+      "auto_on_ready",
+    );
+    expect(promotionFromSnapshot(null)).toBe("manual");
+    expect(promotionFromSnapshot({ preset: "bogus" })).toBe("manual");
+    expect(promotionFromSnapshot("auto_on_ready")).toBe("manual");
+  });
+
+  it("commitsFromSnapshot: unattended squashes; null/malformed → keep_all", () => {
+    expect(commitsFromSnapshot({ preset: "supervised" })).toBe("keep_all");
+    expect(commitsFromSnapshot({ preset: "unattended" })).toBe("squash_rework");
+    expect(
+      commitsFromSnapshot({
+        preset: "supervised",
+        overrides: { commits: "squash_on_promote" },
+      }),
+    ).toBe("squash_on_promote");
+    expect(commitsFromSnapshot(null)).toBe("keep_all");
+    expect(
+      commitsFromSnapshot({
+        preset: "unattended",
+        overrides: { commits: "yolo" },
+      }),
+    ).toBe("keep_all");
+  });
+
+  it("dirtyResolveFromSnapshot: assisted/unattended proceed; null/malformed → ask", () => {
+    expect(dirtyResolveFromSnapshot({ preset: "supervised" })).toBe("ask");
+    expect(dirtyResolveFromSnapshot({ preset: "assisted" })).toBe("proceed");
+    expect(dirtyResolveFromSnapshot({ preset: "unattended" })).toBe("proceed");
+    expect(
+      dirtyResolveFromSnapshot({
+        preset: "supervised",
+        overrides: { dirtyResolve: "commit" },
+      }),
+    ).toBe("commit");
+    expect(dirtyResolveFromSnapshot(null)).toBe("ask");
+    expect(dirtyResolveFromSnapshot("proceed")).toBe("ask");
   });
 });

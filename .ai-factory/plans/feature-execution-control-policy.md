@@ -338,30 +338,55 @@
 
 ---
 
-## Phase C — Output shaping (outline)
+## Phase C — Output shaping (build)
 
-### C.1 — Auto-promote (axis C1)
+> **Design mapped 2026-06-20** (3-agent survey). Two plan premises were wrong and
+> the owner re-scoped: C.2 (no per-attempt commits exist) and C.3 (narrow — the
+> unattended human gate already auto-passes). Resolutions below.
+
+### C.1 ✅ — Auto-promote (axis C1)
 - **Files:** `web/lib/runs/promote.ts`, `web/lib/runs/delivery-policy.ts`
   (`auto_on_ready` already exists).
 - **Do:** wire `execution_policy` → the existing auto-promote trigger; enforce the
   guard interaction (non-strict checks force `manual`).
+- **✅ Resolved (2026-06-20, owner) — OR-combine.** `deliverRunIfAutoReady`
+  (`web/lib/runs/auto-delivery.ts`) already auto-promotes when
+  `deliveryPolicySnapshot.trigger === "auto_on_ready"` (called at run→Review,
+  `runner-graph.ts` + `runner.ts`). Add `executionPolicy` to its select and
+  auto-promote when EITHER the delivery trigger OR
+  `promotionFromSnapshot(executionPolicy) === "auto_on_ready"` (new fail-closed →
+  `manual` helper). Delivery policy still defines HOW (strategy/target); execution
+  policy adds WHETHER. The guard is launch-time (`isBlindShip`); promote already
+  re-gates on `assertEvidenceReady("review")` — no extra runtime check.
 
-### C.2 — Commit policy `squash_rework` (axis C2) — deterministic, guarded
-- **Files:** `web/lib/worktree.ts` (commit ~1702 — structured prefix
-  `[node:<id> attempt:<n>]`), `web/lib/runs/promote.ts` (pre-promote rewrite),
+### C.2 ✅ — Commit policy (axis C2) — squash-on-promote, deterministic, guarded
+- **Files:** `web/lib/runs/promote.ts` (pre-promote rewrite),
   new `web/lib/runs/commit-squash.ts`.
-- **Do:** `keep_all | squash_rework | squash_on_promote | defer`. `squash_rework`
-  is a **deterministic engine op** (not an agent node): rewrite history on the run
-  branch pre-promote using the prefixes. **★ Tree-preserving guard:** verify the
-  post-rewrite HEAD tree is byte-identical to pre-rewrite (`git diff` empty); any
-  failure/drift → abort, fall back to `keep_all`, surface. A botched history never
-  promotes.
-- **Test:** squash collapses rework attempts; tree-equality holds; injected drift →
-  abort + keep_all; defer/keep_all paths.
+- **✅ Resolved (2026-06-20, owner) — squash-on-promote (premise corrected).** There
+  are NO per-node-attempt commits (the runner never commits per attempt), so the
+  original "collapse rework-attempt commits by `[node:attempt]` prefix" is moot.
+  Instead: `squash_rework` AND `squash_on_promote` both collapse WHATEVER commits
+  exist on `base..run-branch` into ONE commit pre-promote; `keep_all`/`defer` =
+  no-op. Deterministic engine op via `git reset --soft <base> && git commit` (tree
+  unchanged by construction). **★ Tree-preserving guard:** verify the post-rewrite
+  HEAD tree SHA == pre-rewrite tree SHA (`git rev-parse HEAD^{tree}`); any drift →
+  `git reset --hard <oldHead>` + fall back to `keep_all`, surface. ≤1 commit on the
+  range = no-op. New fail-closed `commitsFromSnapshot` → `keep_all`.
+- **Test:** squash collapses N→1 with identical tree; injected drift → abort+keep_all;
+  ≤1-commit + keep_all/defer = no-op (real git in a tmpdir, no testcontainer).
 
-### C.3 — Dirty-worktree auto-resolution (axis C3)
-- **Files:** `web/lib/runs/dirty-resolution.ts` (`DIRTY_CHOICES`).
+### C.3 ✅ — Dirty-worktree auto-resolution (axis C3)
+- **Files:** `web/lib/flows/graph/runner-graph.ts` (`runReviewHuman` HITL creation),
+  `web/lib/runs/execution-policy.ts` (`dirtyResolveFromSnapshot`).
 - **Do:** policy-driven `ask | commit | proceed`; `discard` never automatic.
+- **✅ Resolved (2026-06-20, owner) — build it (auto-apply at review-HITL creation).**
+  When a review HITL is created (the pause path in `runReviewHuman`) and
+  `dirtyResolveFromSnapshot(executionPolicy) !== "ask"` and the worktree is dirty
+  (`statusPorcelain`): `commit` → `snapshotDirtyWorktree` then record
+  `hitl.dirty_resolution = "commit"`; `proceed` → record `"proceed"` (no git op).
+  `ask` (supervised default) keeps the interactive banner untouched. Narrow but real
+  for `assisted` (pauses at review) + the unattended-escalate edge. New fail-closed
+  `dirtyResolveFromSnapshot` → `ask`.
 
 ---
 

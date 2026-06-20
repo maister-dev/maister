@@ -2128,6 +2128,93 @@ export async function snapshotDirtyWorktree(
   return true;
 }
 
+export type SquashRunBranchArgs = {
+  worktreePath: string;
+  baseCommit: string;
+  message: string;
+};
+
+export type SquashRunBranchResult = {
+  squashed: boolean;
+  collapsed: number;
+  reason?: "no-commits" | "tree-drift" | "git-error";
+};
+
+const baseShaSchema = z
+  .string()
+  .regex(/^[0-9a-fA-F]{7,64}$/, "baseCommit must be a hex commit SHA");
+
+// C2 (execution-policy commits=squash_rework / squash_on_promote): collapse the
+// run branch's commits (base..HEAD) into ONE commit pre-promote — a deterministic
+// engine op, NOT an agent node. `git reset --soft <base>` keeps the index/worktree
+// intact, so the single re-commit records the SAME tree. The ★ tree-preserving
+// guard verifies HEAD^{tree} is byte-identical before/after; ANY drift (or any git
+// failure) reverts to the original HEAD and reports not-squashed so the caller
+// falls back to keep_all — a botched history NEVER promotes. <=1 commit is a no-op.
+export async function squashRunBranch(
+  args: SquashRunBranchArgs,
+): Promise<SquashRunBranchResult> {
+  const wt = validate(absolutePathSchema, args.worktreePath, "worktreePath");
+  const message = validate(commitMessageSchema, args.message, "squash message");
+  const base = validate(baseShaSchema, args.baseCommit, "baseCommit");
+
+  // Best-effort by contract: ANY git failure returns not-squashed so the caller
+  // promotes the original history (keep_all) — squash never fails a promote.
+  let oldHead: string | null = null;
+
+  try {
+    oldHead = (await runGit(wt, ["rev-parse", "HEAD"])).stdout.trim();
+    const oldTree = (
+      await runGit(wt, ["rev-parse", "HEAD^{tree}"])
+    ).stdout.trim();
+
+    const collapsed = Number.parseInt(
+      (
+        await runGit(wt, ["rev-list", "--count", `${base}..HEAD`])
+      ).stdout.trim(),
+      10,
+    );
+
+    if (!Number.isFinite(collapsed) || collapsed <= 1) {
+      return { squashed: false, collapsed: 0, reason: "no-commits" };
+    }
+
+    await runGit(wt, ["reset", "--soft", base]);
+    await runGit(wt, ["commit", "--no-verify", "-m", message]);
+
+    const newTree = (
+      await runGit(wt, ["rev-parse", "HEAD^{tree}"])
+    ).stdout.trim();
+
+    if (newTree !== oldTree) {
+      await runGit(wt, ["reset", "--hard", oldHead]);
+      log.error(
+        { worktreePath: wt, oldTree, newTree },
+        "[squash] tree drift after rewrite — reverted to original HEAD (keep_all)",
+      );
+
+      return { squashed: false, collapsed: 0, reason: "tree-drift" };
+    }
+
+    log.info(
+      { worktreePath: wt, collapsed },
+      "[squash] run branch collapsed to one commit (tree preserved)",
+    );
+
+    return { squashed: true, collapsed };
+  } catch (err) {
+    if (oldHead) {
+      await runGit(wt, ["reset", "--hard", oldHead]).catch(() => undefined);
+    }
+    log.error(
+      { worktreePath: wt, err: asError(err).message },
+      "[squash] rewrite failed — reverted to original HEAD (keep_all)",
+    );
+
+    return { squashed: false, collapsed: 0, reason: "git-error" };
+  }
+}
+
 // M30 (ADR-082, dirty-resolution "Discard"): drop ALL uncommitted work in the
 // worktree — staged + unstaged restored to HEAD, untracked source removed.
 // `git clean -fd`, never `-fdx` (ADR-079 §3: ignored build caches and an

@@ -18,6 +18,7 @@ export type ExecPolicyActionKind =
   | "rework_exhausted"
   | "ralph_relaunch"
   | "escalated"
+  | "dirty_auto_resolved"
   | "history_rewritten";
 
 export type ExecPolicyAuditRecord = {

@@ -117,12 +117,14 @@ import {
 import { promoteNextPending } from "@/lib/scheduler";
 import { deliverRunIfAutoReady } from "@/lib/runs/auto-delivery";
 import {
+  dirtyResolveFromSnapshot,
   humanGateFromSnapshot,
   onStuckFromSnapshot,
   permissionsFromSnapshot,
   resolveHumanGateDisposition,
   reworkExhaustionFromSnapshot,
 } from "@/lib/runs/execution-policy";
+import { autoResolveDirtyAtReview } from "@/lib/runs/dirty-resolution";
 import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
 import {
   isMaisterError,
@@ -457,6 +459,24 @@ export async function runReviewHuman(
       )
     : null;
 
+  // C3 (execution-policy dirtyResolve): when pausing at a review gate, a policy
+  // of commit/proceed auto-resolves a dirty worktree AT creation (no interactive
+  // prompt) and records it on the HITL row; `ask` (supervised default) keeps the
+  // banner; `discard` is NEVER automatic. Best-effort (git error → interactive).
+  const dirtyResolution = await autoResolveDirtyAtReview({
+    worktreePath: loaded.workspace?.worktreePath ?? null,
+    policy: dirtyResolveFromSnapshot(loaded.run.executionPolicy ?? null),
+    nodeId: node.id,
+  });
+
+  if (dirtyResolution) {
+    logExecPolicyAction({
+      runId: loaded.run.id,
+      kind: "dirty_auto_resolved",
+      detail: { nodeId: node.id, dirtyResolution },
+    });
+  }
+
   const persistHitlRequestAndAssignment = async (tx: Db): Promise<void> => {
     await tx.insert(hitlRequests).values({
       id: hitlRequestId,
@@ -467,6 +487,7 @@ export async function runReviewHuman(
       prompt,
       criticality: nodeCriticality,
       reviewTipSha,
+      dirtyResolution,
     });
     log.debug(
       { runId: loaded.run.id, nodeId: node.id, criticality: nodeCriticality },
