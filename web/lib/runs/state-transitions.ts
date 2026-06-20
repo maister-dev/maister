@@ -236,6 +236,45 @@ export async function markResumedFromWait(
   return await transition(db);
 }
 
+// M36 (ADR-095) T5.2: Running → WaitingOnChildren rollback. After the resume
+// consumer wins markResumedFromWait but the re-drive's session respawn fails
+// RETRYABLY (supervisor 5xx / EXECUTOR_UNAVAILABLE), flip the run back to the
+// parked state so a LATER child-terminal event can retry the wake. Status-guarded
+// on Running so a run that the re-drive already advanced (re-parked, terminal, or
+// concurrently resumed) is never clobbered → {ok:false}. Re-stamps checkpoint_at
+// so the row reads as parked again.
+export async function rollbackResumeFromWait(
+  runId: string,
+  opts: StateTransitionOptions = {},
+): Promise<StateTransitionResult> {
+  const db = opts.db ?? getDb();
+  const rows = await db
+    .update(runs)
+    .set({
+      status: "WaitingOnChildren",
+      checkpointAt: new Date(),
+      keepaliveUntil: null,
+    })
+    .where(and(eq(runs.id, runId), eq(runs.status, "Running")))
+    .returning({ id: runs.id });
+
+  if (rows.length === 0) {
+    log.warn(
+      { runId, from: "Running", to: "WaitingOnChildren (rollback)" },
+      "rollbackResumeFromWait: status-guard mismatch — concurrent transition won",
+    );
+
+    return { ok: false, reason: "status-guard-mismatch" };
+  }
+
+  log.info(
+    { runId, from: "Running", to: "WaitingOnChildren (rollback)" },
+    "run-state transition — resume rolled back after retryable respawn failure",
+  );
+
+  return { ok: true };
+}
+
 // M8 T7: activity ping extends the keep-alive window without changing
 // status. Status guard: only Running and NeedsInput rows accept a bump.
 // NeedsInputIdle rows do NOT accept bumps — the activity route returns

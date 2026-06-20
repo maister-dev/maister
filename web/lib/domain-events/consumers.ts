@@ -6,6 +6,7 @@ import pino from "pino";
 
 import { agentTriggersConsumer } from "@/lib/agents/triggers";
 import { autoLaunchRunPlanConsumer } from "@/lib/domain-events/auto-launch";
+import { orchestratorResumeConsumer } from "@/lib/domain-events/orchestrator-resume";
 
 const log = pino({
   name: "domain-events-noop",
@@ -50,9 +51,14 @@ export const noopConsumer: DomainEventConsumer = {
 // (ADR-095) adds auto_launch_run_plan: a child terminal releases the
 // orchestrator's as-plan siblings whose success-gated `requires` blockers
 // have all cleared (the per-task has-any-run guard ⇒ exactly-once launch,
-// safe for one event fanning out to several same-agent dependents).
+// safe for one event fanning out to several same-agent dependents). M36
+// (ADR-095) ALSO adds orchestrator_resume: a SIBLING consumer that wakes the
+// PARKED flow coordinator (WaitingOnChildren → Running) on a child terminal —
+// kept separate from the auto-launcher so "launch the next tasks" and "wake the
+// coordinator" stay independent.
 export const DOMAIN_EVENT_CONSUMERS: DomainEventConsumer[] = [
   noopConsumer,
   agentTriggersConsumer,
   autoLaunchRunPlanConsumer,
+  orchestratorResumeConsumer,
 ];

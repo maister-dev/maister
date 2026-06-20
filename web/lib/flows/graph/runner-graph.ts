@@ -21,7 +21,7 @@ import { randomUUID } from "node:crypto";
 import { access, readFile, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 
-import { and, desc, eq, isNotNull } from "drizzle-orm";
+import { and, count, desc, eq, isNotNull, notInArray } from "drizzle-orm";
 import pino from "pino";
 
 import { buildContext } from "../context";
@@ -119,7 +119,8 @@ import {
   type ComposeRootComment,
   type ComposeThread,
 } from "@/lib/review-comments/serialize";
-import { promoteNextPending } from "@/lib/scheduler";
+import { promoteNextPending, releaseSlotOnIdle } from "@/lib/scheduler";
+import { checkpointSession, listSessions } from "@/lib/supervisor-client";
 import { deliverRunIfAutoReady } from "@/lib/runs/auto-delivery";
 import {
   isMaisterError,
@@ -167,6 +168,143 @@ function runDir(
   runId: string,
 ): string {
   return path.join(runtimeRoot, ".maister", projectSlug, "runs", runId);
+}
+
+// M36 (ADR-095): the run-terminal status set. A child no longer counts as
+// "pending" for its orchestrator once it reaches any of these.
+const TERMINAL_RUN_STATUSES = [
+  "Done",
+  "Failed",
+  "Crashed",
+  "Abandoned",
+] as const;
+
+// M36 (ADR-095) T5.1: count an orchestrator run's PENDING (non-terminal)
+// children — the rows whose `parent_run_id` is this run and whose status is not
+// yet terminal. Drives the park-vs-complete decision: pending > 0 ⇒ the
+// coordinator parks awaiting them; pending == 0 ⇒ the batch is done and the node
+// completes downstream.
+async function countPendingChildren(db: Db, runId: string): Promise<number> {
+  const rows: Array<{ n: number }> = await db
+    .select({ n: count() })
+    .from(runs)
+    .where(
+      and(
+        eq(runs.parentRunId, runId),
+        notInArray(runs.status, [...TERMINAL_RUN_STATUSES]),
+      ),
+    );
+
+  return Number(rows[0]?.n ?? 0);
+}
+
+// M36 (ADR-095) T5.1: the orchestrator node action. Runs the agent turn exactly
+// like an ai_coding node (reuses runAgentStep via executeNodeAction), then
+// decides park-vs-complete from the run's PENDING children:
+//   - the turn already parked (an in-node HITL, rare) or failed → pass through;
+//   - the turn ended normally with pending children → PARK (needsInput=true ⇒ the
+//     runner-graph flips to WaitingOnChildren via the existing needsInput branch);
+//   - the turn ended normally with NO pending children → COMPLETE (the success
+//     result is returned unchanged → the node transitions downstream).
+async function runOrchestratorStep(
+  agentResult: NodeResult,
+  db: Db,
+  runId: string,
+  log2: typeof log,
+): Promise<NodeResult> {
+  // An in-node HITL pause or a failed/checkpointed turn is surfaced verbatim —
+  // the park-on-children decision only applies to a clean end_turn.
+  if (agentResult.needsInput || !agentResult.ok || agentResult.errorCode) {
+    return agentResult;
+  }
+
+  const pending = await countPendingChildren(db, runId);
+
+  if (pending > 0) {
+    log2.info(
+      { runId, pendingChildren: pending },
+      "orchestrator turn ended with pending children — parking",
+    );
+
+    return { ...agentResult, needsInput: true };
+  }
+
+  log2.info(
+    { runId },
+    "orchestrator turn ended with no pending children — completing node",
+  );
+
+  return agentResult;
+}
+
+// M36 (ADR-095) T5.1: park an orchestrator's ACP session and free its slot.
+// Called from the needsInput park branch AFTER the run is flipped to
+// WaitingOnChildren. Two side-effects, both best-effort and idempotent:
+//   1. SIGTERM the live supervisor session (looked up by acpSessionId via
+//      listSessions, exactly as the keepalive sweeper Pass-1 does) so a still-
+//      live coordinator process does not keep running while parked. In practice
+//      runAgentStep's runNewSession already DELETEd the one-shot session in its
+//      finally, so listSessions usually finds nothing here — the checkpoint is a
+//      defensive backstop for any session (e.g. a lingering slash session) still
+//      alive at park time. acp_session_id is the resume handle and is untouched.
+//   2. releaseSlotOnIdle → promoteNextPending: WaitingOnChildren does NOT count
+//      against the cap (scheduler.countLiveRuns), so the parked coordinator's
+//      agent/flow-pool slot is freed and any queued Pending run is promoted —
+//      otherwise a parked coordinator would starve the pool.
+//
+// CRASH WINDOW: the status flip to WaitingOnChildren (+ ledger NeedsInput mark)
+// already committed in the caller's transaction BEFORE this runs. If the process
+// dies between that commit and the checkpoint/slot-release here, the run is
+// durably WaitingOnChildren with acp_session_id retained — resumable. A lingering
+// supervisor session (if any) is GC'd by the supervisor's own grace timer; the
+// freed slot is reclaimed on the next promoteNextPending (any later terminal
+// transition). The reconcile/sweeper backstop for "WaitingOnChildren with no
+// live checkpoint" is Phase-7 (T7.1) — Pass-1 already EXCLUDES WaitingOnChildren
+// so it is never mis-idled here.
+async function parkOrchestratorSession(
+  db: Db,
+  runId: string,
+  acpSessionId: string | null,
+  log2: typeof log,
+): Promise<void> {
+  if (acpSessionId) {
+    try {
+      const sessions = await listSessions();
+      const live = sessions.find(
+        (s) => s.status === "live" && s.acpSessionId === acpSessionId,
+      );
+
+      if (live) {
+        await checkpointSession(live.sessionId);
+        log2.info(
+          { runId, supervisorSessionId: live.sessionId },
+          "orchestrator park — live session checkpointed (SIGTERM)",
+        );
+      }
+    } catch (err) {
+      // A 5xx / network failure (EXECUTOR_UNAVAILABLE) leaves the park intact:
+      // the run is already durably WaitingOnChildren with acp_session_id, so it
+      // stays resumable and a stray session is GC'd by the supervisor grace —
+      // never lose the park over a transient checkpoint failure.
+      log2.warn(
+        {
+          runId,
+          err: err instanceof Error ? err.message : String(err),
+          code: isMaisterError(err) ? err.code : null,
+        },
+        "orchestrator park — checkpoint best-effort failed (run stays resumable)",
+      );
+    }
+  }
+
+  try {
+    await releaseSlotOnIdle({ runId, db });
+  } catch (err) {
+    log2.warn(
+      { runId, err: err instanceof Error ? err.message : String(err) },
+      "orchestrator park — releaseSlotOnIdle failed (non-fatal)",
+    );
+  }
 }
 
 // `.for("update")` is a Postgres-only row lock; SQLite relies on its
@@ -573,47 +711,63 @@ async function executeNodeAction(
     // undefined below — the ai_coding-only guard short-circuits) and reaches
     // the maister MCP facade via the run-bound token appended at the
     // materialization seam.
-    case "orchestrator":
-      return runAgentStep(
-        {
-          id: node.id,
-          type: "agent",
-          mode: "new-session",
-          prompt: def.action.prompt,
-        },
-        {
-          ...common,
-          // M34 (ADR-089): catalog-agent binding (ai_coding only).
-          agentBinding:
-            def.type === "ai_coding" &&
-            (def.settings as { agent?: string } | undefined)?.agent
-              ? { id: (def.settings as { agent: string }).agent }
-              : undefined,
-          // M30 (ADR-081): rework `resume` — the dispatch carries the prior
-          // attempt's session handle (runner-agent falls back to a fresh
-          // session, observably, when it is unresumable).
-          resumeSessionId: ctx.resumeSessionId,
-          executor: {
-            id: loaded.executor.id,
-            agent: loaded.executor.agent,
-            model: loaded.executor.model,
-            env: (loaded.executor.env ?? undefined) as
-              | Record<string, string>
-              | undefined,
-            router: loaded.executor.router ?? undefined,
+    case "orchestrator": {
+      const dispatchAgent = (): Promise<NodeResult> =>
+        runAgentStep(
+          {
+            id: node.id,
+            type: "agent",
+            mode: "new-session",
+            prompt: def.action.prompt,
           },
-          runner: runnerSupervisorInput({ snapshot: loaded.runner }),
-          sessionState: ctx.sessionState,
-          capabilityProfilePath: ctx.capabilityProfilePath,
-          adapterLaunch: mergeRunnerAdapterLaunch(
-            loaded.runner,
-            ctx.adapterLaunch,
-          ),
-          mcpServers: ctx.mcpServers,
-          profileDigest: ctx.profileDigest,
-        },
-        ctx.supervisorApi,
-      );
+          {
+            ...common,
+            // M34 (ADR-089): catalog-agent binding (ai_coding only).
+            agentBinding:
+              def.type === "ai_coding" &&
+              (def.settings as { agent?: string } | undefined)?.agent
+                ? { id: (def.settings as { agent: string }).agent }
+                : undefined,
+            // M30 (ADR-081): rework `resume` — the dispatch carries the prior
+            // attempt's session handle (runner-agent falls back to a fresh
+            // session, observably, when it is unresumable). For an orchestrator
+            // RESUME (WaitingOnChildren → Running) this is the retained
+            // acp_session_id so the coordinator's context is restored via
+            // session/resume rather than re-run from scratch.
+            resumeSessionId: ctx.resumeSessionId,
+            executor: {
+              id: loaded.executor.id,
+              agent: loaded.executor.agent,
+              model: loaded.executor.model,
+              env: (loaded.executor.env ?? undefined) as
+                | Record<string, string>
+                | undefined,
+              router: loaded.executor.router ?? undefined,
+            },
+            runner: runnerSupervisorInput({ snapshot: loaded.runner }),
+            sessionState: ctx.sessionState,
+            capabilityProfilePath: ctx.capabilityProfilePath,
+            adapterLaunch: mergeRunnerAdapterLaunch(
+              loaded.runner,
+              ctx.adapterLaunch,
+            ),
+            mcpServers: ctx.mcpServers,
+            profileDigest: ctx.profileDigest,
+          },
+          ctx.supervisorApi,
+        );
+
+      // M36 (ADR-095) T5.1: an orchestrator's turn is followed by the
+      // park-vs-complete decision (pending children ⇒ park on WaitingOnChildren);
+      // ai_coding/judge return the agent result unchanged.
+      if (def.type === "orchestrator") {
+        const agentResult = await dispatchAgent();
+
+        return runOrchestratorStep(agentResult, ctx.db, loaded.run.id, log);
+      }
+
+      return dispatchAgent();
+    }
     case "human":
       return runReviewHuman(node, loaded, `Review "${node.id}"`, {
         runtimeRoot: ctx.runtimeRoot,
@@ -1067,14 +1221,34 @@ export async function runGraph(
     loaded.run.status === "Running" &&
     loaded.run.currentStepId !== null;
 
+  // M36 (ADR-095) T5.2: a parked orchestrator woken by a child-terminal event.
+  // The consumer ALREADY won the single-winner CAS (markResumedFromWait flipped
+  // WaitingOnChildren → Running), so the run is `Running` with current_step_id at
+  // the parked orchestrator node and its NeedsInput ledger attempt intact — like
+  // a takeover return, this is a soft re-entry with NO additional CAS here. The
+  // resumingThisNode reuse path picks up the existing NeedsInput attempt; the
+  // dispatch threads the retained acp_session_id so the coordinator resumes its
+  // context (session/resume) instead of re-running from scratch.
+  const isOrchestratorResume =
+    Boolean(opts.orchestratorResume) &&
+    !isNeedsInputResume &&
+    !isCrashResume &&
+    loaded.run.status === "Running" &&
+    loaded.run.currentStepId !== null;
+
   const isTakeoverResume =
     !isNeedsInputResume &&
     !isCrashResume &&
+    !isOrchestratorResume &&
     loaded.run.status === "Running" &&
     loaded.run.currentStepId !== null &&
     (await hasPendingTakeoverResume(runId, loaded.run.currentStepId, db));
 
-  const isResume = isNeedsInputResume || isTakeoverResume || isCrashResume;
+  const isResume =
+    isNeedsInputResume ||
+    isTakeoverResume ||
+    isCrashResume ||
+    isOrchestratorResume;
   const resumeNodeId = isResume ? (loaded.run.currentStepId as string) : null;
 
   // For a takeover resume, the claim winner appends the fresh re-entry attempt
@@ -1496,6 +1670,13 @@ export async function runGraph(
       } else if (resumingThisNode && lastForNode) {
         nodeAttemptId = lastForNode.id;
         nodeAttemptNumber = lastForNode.attempt;
+        // M36 (ADR-095) T5.2: on an orchestrator wake, restore the coordinator's
+        // context — thread the retained acp_session_id as the resume handle so
+        // runAgentStep respawns via session/resume (a gone/unresumable session
+        // degrades OBSERVABLY to a fresh one + sessionFallback).
+        if (isOrchestratorResume && node.id === resumeNodeId) {
+          attemptResumeSessionId = loaded.run.acpSessionId ?? undefined;
+        }
         log2.info(
           { nodeAttemptId, nodeId: node.id },
           "resuming existing node attempt from NeedsInput",
@@ -1842,6 +2023,20 @@ export async function runGraph(
             .update(runs)
             .set({ acpSessionId: result.acpSessionId })
             .where(eq(runs.id, runId));
+          loaded.run.acpSessionId = result.acpSessionId;
+        }
+        // M36 (ADR-095) T5.1: an orchestrator park checkpoints its (usually
+        // already-exited) supervisor session and releases its scheduler slot —
+        // WaitingOnChildren is not cap-counted, so the parked coordinator must
+        // not keep a slot. A human/form NeedsInput keeps its slot (an operator
+        // is actively expected), so only the orchestrator parks the slot.
+        if (node.nodeType === "orchestrator") {
+          await parkOrchestratorSession(
+            db,
+            runId,
+            result.acpSessionId ?? loaded.run.acpSessionId,
+            log2,
+          );
         }
         // M12 (T3.3): record defaults at pause so log/guards/diff exist for
         // the paused node even when it hasn't finished yet.

@@ -54,6 +54,12 @@ export type RunFlowOptions = {
   // commits. The repark CAS is the single-winner claim; this is a soft re-entry
   // with NO additional CAS.
   reparkResume?: { targetStepId: string };
+  // M36 (ADR-095) T5.2: set by the orchestrator-resume domain-event consumer
+  // after it wins the WaitingOnChildren → Running CAS (markResumedFromWait —
+  // that IS the single-winner claim). The runner re-enters the parked
+  // orchestrator node, reusing its NeedsInput ledger attempt and restoring the
+  // coordinator's context via session/resume on the retained acp_session_id.
+  orchestratorResume?: { targetStepId: string };
 };
 
 export type LoadedRun = {

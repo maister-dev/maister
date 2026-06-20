@@ -187,6 +187,7 @@ export async function runFlow(
       runtimeRoot,
       supervisorApi: opts.supervisorApi,
       crashResume: opts.crashResume,
+      orchestratorResume: opts.orchestratorResume,
     });
 
     return;
