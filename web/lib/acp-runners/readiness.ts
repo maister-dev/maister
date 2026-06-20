@@ -106,30 +106,6 @@ function pushMissingEnvReason(
   }
 }
 
-function pushAdapterSmokeReason(
-  reasons: string[],
-  adapter: AdapterId,
-  diagnosticAdapter:
-    | NonNullable<DiagnosticsInput["adapters"]>[number]
-    | undefined,
-): void {
-  if (adapter !== "gemini" && adapter !== "opencode" && adapter !== "mimo") {
-    return;
-  }
-
-  if (!diagnosticAdapter?.smoke) {
-    reasons.push(`adapter smoke diagnostics are unavailable: ${adapter}`);
-
-    return;
-  }
-
-  if (diagnosticAdapter.smoke.status !== "ok") {
-    reasons.push(
-      `adapter smoke is not ready: ${adapter} (${diagnosticAdapter.smoke.reason ?? diagnosticAdapter.smoke.status})`,
-    );
-  }
-}
-
 export function evaluateRunnerReadiness(args: {
   readonly runner: RunnerReadinessInput;
   readonly diagnostics?: DiagnosticsInput | null;
@@ -181,7 +157,10 @@ export function evaluateRunnerReadiness(args: {
   } else if (!diagnosticAdapter.available) {
     reasons.push(`adapter binary is unavailable: ${args.runner.adapter}`);
   }
-  pushAdapterSmokeReason(reasons, args.runner.adapter, diagnosticAdapter);
+  // ACP compatibility smoke (gemini/opencode/mimo) is advisory, not a readiness
+  // gate: a genuine handshake failure already flips `available` false on the
+  // supervisor side. Pending/skipped smoke must not hold an otherwise-usable
+  // adapter NotReady — the live model probe and launch surface real failures.
 
   if (args.runner.provider.kind === "anthropic_compatible") {
     if (!args.runner.sidecarId && !args.runner.provider.authToken) {

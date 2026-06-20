@@ -204,21 +204,6 @@ export function createAcpProbeSource(opts: AcpProbeOptions = {}): ModelSource {
       const logger: Logger = ctx.logger;
       const runtime = getAdapterRuntime(draft.adapter);
 
-      if (
-        draft.adapter === "gemini" ||
-        draft.adapter === "opencode" ||
-        draft.adapter === "mimo"
-      ) {
-        return {
-          models: [],
-          status: {
-            kind: "acp_probe" as const,
-            status: "skipped" as const,
-            reason: `${draft.adapter} ACP model probe is pending compatibility smoke`,
-          },
-        };
-      }
-
       const runner: RunnerLaunch = {
         version: 1,
         runnerId: "model-probe",

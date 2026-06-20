@@ -164,18 +164,20 @@ describe("createAcpProbeSource", () => {
     expect(children).toHaveLength(0);
   });
 
-  it("skips Gemini, OpenCode, and MiMo probes until compatibility smoke enables them", async () => {
+  it("probes Gemini, OpenCode, and MiMo now that the compatibility smoke gate is lifted", async () => {
     const { spawnImpl, children } = spyingSpawn();
     const source = createAcpProbeSource({
       spawnImpl,
       binaryOverride: "node",
       preArgs: [fixture],
+      timeoutMs: 1_000,
     });
 
+    // Keyless Gemini provisions without an env ref, so the probe runs.
     const gemini = await source.resolve(
       {
         adapter: "gemini",
-        provider: { kind: "google_gemini", apiKeyEnv: "GEMINI_API_KEY" },
+        provider: { kind: "google_gemini" },
       },
       ctx,
     );
@@ -194,24 +196,11 @@ describe("createAcpProbeSource", () => {
       ctx,
     );
 
-    expect(gemini.models).toEqual([]);
-    expect(gemini.status).toMatchObject({
-      kind: "acp_probe",
-      status: "skipped",
-      reason: "gemini ACP model probe is pending compatibility smoke",
-    });
-    expect(opencode.models).toEqual([]);
-    expect(opencode.status).toMatchObject({
-      kind: "acp_probe",
-      status: "skipped",
-      reason: "opencode ACP model probe is pending compatibility smoke",
-    });
-    expect(mimo.models).toEqual([]);
-    expect(mimo.status).toMatchObject({
-      kind: "acp_probe",
-      status: "skipped",
-      reason: "mimo ACP model probe is pending compatibility smoke",
-    });
-    expect(children).toHaveLength(0);
+    // The gate is lifted: each adapter now attempts a real spawn instead of
+    // short-circuiting to "skipped: pending compatibility smoke".
+    expect(children).toHaveLength(3);
+    for (const result of [gemini, opencode, mimo]) {
+      expect(result.status.status).not.toBe("skipped");
+    }
   });
 });

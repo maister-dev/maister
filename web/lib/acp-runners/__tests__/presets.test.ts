@@ -78,20 +78,19 @@ describe("platform ACP runner presets", () => {
     const runners = platformRunnerPresetRows();
 
     expect(defaultPlatformRunnerId).toBe("claude-code");
-    expect(runners.find((runner) => runner.id === "gemini-cli")).toMatchObject({
+    const geminiPreset = runners.find((runner) => runner.id === "gemini-cli");
+
+    expect(geminiPreset).toMatchObject({
       adapter: "gemini",
       capabilityAgent: "gemini",
-      provider: { kind: "google_gemini", apiKey: "env:GEMINI_API_KEY" },
+      provider: { kind: "google_gemini" },
       permissionPolicy: "default",
       readinessStatus: "NotReady",
     });
-    expect(
-      runners.find((runner) => runner.id === "gemini-cli")?.readinessReasons,
-    ).toEqual(
-      expect.arrayContaining([
-        "GEMINI_API_KEY must be configured in supervisor environment",
-        "Gemini ACP initialize/newSession and checkpoint smoke must be confirmed",
-      ]),
+    // Keyless by default: ambient Gemini CLI login, no API-key env ref.
+    expect(geminiPreset?.provider).not.toHaveProperty("apiKey");
+    expect(geminiPreset?.readinessReasons).not.toContain(
+      "GEMINI_API_KEY must be configured in supervisor environment",
     );
     expect(
       runners.find((runner) => runner.id === "opencode-native"),
