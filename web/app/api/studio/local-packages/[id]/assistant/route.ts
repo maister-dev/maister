@@ -8,7 +8,7 @@ import {
   errorResponse,
   notFoundResponse,
 } from "@/lib/api/project-route-helpers";
-import { requireActiveSession } from "@/lib/authz";
+import { requireGlobalRole } from "@/lib/authz";
 import { assertHoldsLock } from "@/lib/local-packages/lock";
 import { getLocalPackage } from "@/lib/local-packages/service";
 import { launchLocalPackageAssistant } from "@/lib/scratch-runs/service";
@@ -42,7 +42,7 @@ export async function POST(
   { params }: RouteParams,
 ): Promise<NextResponse> {
   try {
-    const user = await requireActiveSession();
+    const user = await requireGlobalRole("member");
     const { id } = await params;
     const parsed = bodySchema.safeParse(await req.json());
 

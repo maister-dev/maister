@@ -5,15 +5,16 @@ import pino from "pino";
 import { z } from "zod";
 
 import { errorResponse } from "@/lib/api/project-route-helpers";
-import { requireSession } from "@/lib/authz";
+import { requireActiveSession, requireGlobalRole } from "@/lib/authz";
 import {
   createLocalPackage,
   listLocalPackages,
   toLocalPackageDto,
 } from "@/lib/local-packages/service";
 
-// (ADR-093) Local-package CRUD list/create. Authoring is member-level —
-// authenticated session only (D8). `working_dir` is never projected.
+// (ADR-093) Local-package CRUD list/create. Create is member-level authoring
+// (requireGlobalRole); listing requires an active session. `working_dir` is
+// never projected.
 const log = pino({
   name: "api/studio/local-packages",
   level: process.env.LOG_LEVEL ?? "info",
@@ -28,7 +29,7 @@ const createBodySchema = z
 
 export async function GET(): Promise<NextResponse> {
   try {
-    await requireSession();
+    await requireActiveSession();
     const rows = await listLocalPackages();
 
     return NextResponse.json({ localPackages: rows.map(toLocalPackageDto) });
@@ -39,7 +40,7 @@ export async function GET(): Promise<NextResponse> {
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
-    const user = await requireSession();
+    const user = await requireGlobalRole("member");
     const parsed = createBodySchema.safeParse(await req.json());
 
     if (!parsed.success) {

@@ -8,7 +8,7 @@ import {
   errorResponse,
   notFoundResponse,
 } from "@/lib/api/project-route-helpers";
-import { requireSession } from "@/lib/authz";
+import { requireGlobalRole } from "@/lib/authz";
 import { assertHoldsLock } from "@/lib/local-packages/lock";
 import {
   diffWorkingDir,
@@ -44,7 +44,7 @@ export async function POST(
   { params }: RouteParams,
 ): Promise<NextResponse> {
   try {
-    await requireSession();
+    await requireGlobalRole("member");
     const { id } = await params;
     const parsed = bodySchema.safeParse(await req.json());
 

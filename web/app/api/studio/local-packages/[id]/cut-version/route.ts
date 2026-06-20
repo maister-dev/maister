@@ -11,7 +11,7 @@ import {
   errorResponse,
   notFoundResponse,
 } from "@/lib/api/project-route-helpers";
-import { requireProjectAction, requireSession } from "@/lib/authz";
+import { requireGlobalRole, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import {
@@ -57,7 +57,7 @@ export async function POST(
   let exportDir: string | null = null;
 
   try {
-    const user = await requireSession();
+    const user = await requireGlobalRole("member");
     const { id } = await params;
     const parsed = bodySchema.safeParse(await req.json().catch(() => ({})));
 

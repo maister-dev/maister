@@ -73,15 +73,39 @@ export async function resolveWithinWorkingDir(
     );
   }
 
-  const parentReal = await realpath(path.dirname(resolved)).catch(() =>
-    path.dirname(resolved),
-  );
+  // `mkdir(…, { recursive: true })` and the file/git write that follow will
+  // FOLLOW a symlink in any ALREADY-EXISTING path segment, so realpath-ing only
+  // the immediate parent (and lexically falling back when it does not exist yet)
+  // is insufficient: a working dir containing `link -> /outside` lets
+  // `link/newdir/file` escape — `newdir` is created UNDER the symlink target.
+  // Walk up to the NEAREST EXISTING ancestor and realpath IT; the leaf segments
+  // that do not exist yet are created fresh under a real dir, never followed.
+  // realRoot itself exists (realpath'd above), so the walk terminates inside it.
+  let ancestor = path.dirname(resolved);
 
-  if (parentReal !== realRoot && !parentReal.startsWith(realRoot + path.sep)) {
-    throw new MaisterError(
-      "PRECONDITION",
-      `artifact path escapes the working dir (symlink): ${relPath}`,
-    );
+  for (;;) {
+    let realAncestor: string;
+
+    try {
+      realAncestor = await realpath(ancestor);
+    } catch {
+      const parent = path.dirname(ancestor);
+
+      if (parent === ancestor) break; // fs root — unreachable (realRoot exists)
+      ancestor = parent;
+      continue;
+    }
+
+    if (
+      realAncestor !== realRoot &&
+      !realAncestor.startsWith(realRoot + path.sep)
+    ) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `artifact path escapes the working dir (symlink): ${relPath}`,
+      );
+    }
+    break;
   }
 
   return resolved;

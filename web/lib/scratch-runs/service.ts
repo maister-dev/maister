@@ -23,6 +23,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
+import { assertUserHoldsLock } from "@/lib/local-packages/lock";
 import {
   resolveRunner,
   type RunnerCatalogEntry,
@@ -1172,6 +1173,34 @@ export async function launchScratchRun(
 // local_package_id carries the owner (DB XOR CHECK). runs.local_package_id is
 // the launch-time snapshot every terminal/read path reads.
 
+// ADR-096 access gate for a project-less local-package assistant run. The
+// project-scoped action gate does not apply (there is no project), so the run is
+// bound to its launching user (`runs.created_by_user_id`): only that user may
+// READ it, and only that user WHILE holding a live working-dir lock may DRIVE it
+// (send a message / recover). This closes the cross-user vector where any active
+// user with a run id injects prompts into another editor's locked working dir.
+export async function assertLocalPackageAssistantActor(
+  run: { createdByUserId: string | null; localPackageId: string | null },
+  userId: string,
+  opts: { requireLock: boolean },
+  db?: Db,
+): Promise<void> {
+  if (run.createdByUserId !== userId) {
+    throw new MaisterError(
+      "UNAUTHORIZED",
+      "this assistant run belongs to another user",
+    );
+  }
+  if (!opts.requireLock) return;
+  if (!run.localPackageId) {
+    throw new MaisterError(
+      "PRECONDITION",
+      "assistant run has no local package to lock",
+    );
+  }
+  await assertUserHoldsLock(run.localPackageId, userId, db);
+}
+
 export type LocalPackageAssistantLaunchInput = {
   localPackageId: string;
   prompt: string;
@@ -1651,13 +1680,21 @@ async function appendScratchUserMessage(args: {
     throw new MaisterError("PRECONDITION", `run is not scratch: ${args.runId}`);
   }
 
-  // ADR-096: a project-less local-package assistant run carries member-level
-  // RBAC (any active user, per ADR-095); a project scratch run keeps its
-  // project-scoped action gate.
+  // ADR-096: a project scratch run keeps its project-scoped action gate; a
+  // project-less local-package assistant run is bound to its launching user AND
+  // requires a live working-dir lock to drive a turn — so no other active user
+  // (and not the launcher after a lock takeover) can write into the locked dir.
   if (run.projectId) {
     await requireProjectAction(run.projectId, "operateScratchRun");
   } else {
-    await requireActiveSession();
+    const user = await requireActiveSession();
+
+    await assertLocalPackageAssistantActor(
+      run,
+      user.id,
+      { requireLock: true },
+      args.db,
+    );
   }
 
   return args.db.transaction(async (tx: Db) => {

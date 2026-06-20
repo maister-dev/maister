@@ -66,6 +66,18 @@ describe("resolveWithinWorkingDir", () => {
     ).rejects.toMatchObject({ code: "PRECONDITION" });
   });
 
+  it("rejects a symlinked ancestor even when the leaf parent does not exist yet", async () => {
+    // The escape the previous case misses: `escdeep` exists (→ outside) but the
+    // intermediate dir does NOT. The old guard realpath'd only the immediate
+    // parent and lexically accepted the missing one, so `mkdir -p` would create
+    // `newdir` UNDER the symlink target. The fix realpaths the nearest EXISTING
+    // ancestor (`escdeep`) and rejects.
+    await symlink(outside, path.join(root, "escdeep"));
+    await expect(
+      resolveWithinWorkingDir(root, "escdeep/newdir/leaf.md"),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+  });
+
   it("throws CONFIG when the working dir is missing", async () => {
     await expect(
       resolveWithinWorkingDir(

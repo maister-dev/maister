@@ -9,6 +9,7 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { extractOptions } from "@/lib/queries/hitl";
+import { assertLocalPackageAssistantActor } from "@/lib/scratch-runs/service";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const {
@@ -248,16 +249,21 @@ export async function GET(
   const { runId } = await params;
 
   try {
-    await requireActiveSession();
+    const sessionUser = await requireActiveSession();
 
     const db = getDb() as unknown as Db;
     const { run, scratch } = await loadScratchRun(db, runId);
 
-    // ADR-096: a project-less local-package assistant run (projectId NULL)
-    // carries member-level RBAC (any active user, per ADR-095); a project
-    // scratch run keeps its project-scoped read gate.
+    // ADR-096: a project scratch run keeps its project-scoped read gate; a
+    // project-less local-package assistant run is private to its launching user
+    // (created_by_user_id) — any other active user is denied. No lock needed to
+    // READ (a crashed transcript stays viewable after the editor lock lapses).
     if (run.projectId) {
       await requireProjectAction(run.projectId, "readScratchRun");
+    } else {
+      await assertLocalPackageAssistantActor(run, sessionUser.id, {
+        requireLock: false,
+      });
     }
 
     const [

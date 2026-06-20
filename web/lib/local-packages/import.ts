@@ -126,10 +126,20 @@ export function cleanArchiveMemberPath(rawName: string): string {
   return cleaned;
 }
 
+// The UNCOMPRESSED import caps, resolved once per collection and enforced DURING
+// archive parsing — not only afterward in planImport — so a zip/tar bomb (tiny
+// compressed, huge uncompressed) is rejected before its bytes are materialized.
+type ImportCaps = {
+  maxBytes: number;
+  maxEntries: number;
+  maxFileBytes: number;
+};
+
 // Parse a zip blob into file entries WITHOUT trusting adm-zip's own extraction.
-// adm-zip loads the whole archive into memory; the byte cap is enforced on the
-// uploaded blob by the caller BEFORE this runs. Directory entries are skipped.
-function readZipEntries(bytes: Uint8Array): ImportEntry[] {
+// adm-zip loads the whole archive into memory but inflates an entry only on
+// getData(), so the UNCOMPRESSED caps are enforced BEFORE/AS each entry is
+// inflated — a zip bomb never materializes gigabytes. Directory entries skipped.
+function readZipEntries(bytes: Uint8Array, caps: ImportCaps): ImportEntry[] {
   let zip: AdmZip;
 
   try {
@@ -143,11 +153,61 @@ function readZipEntries(bytes: Uint8Array): ImportEntry[] {
     );
   }
 
-  const entries: ImportEntry[] = [];
+  const fileEntries = zip.getEntries().filter((entry) => !entry.isDirectory);
 
-  for (const entry of zip.getEntries()) {
-    if (entry.isDirectory) continue;
-    entries.push({ path: entry.entryName, bytes: toUint8(entry.getData()) });
+  if (fileEntries.length > caps.maxEntries) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `zip has ${fileEntries.length} entries (max ${caps.maxEntries})`,
+    );
+  }
+
+  // Pass 1: reject on the DECLARED uncompressed size (central-directory
+  // `header.size`) — a standard zip bomb advertises its expansion here, so no
+  // entry is inflated when the declared totals already breach the caps.
+  let declaredTotal = 0;
+
+  for (const entry of fileEntries) {
+    const declared = entry.header.size;
+
+    if (declared > caps.maxFileBytes) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `entry ${JSON.stringify(entry.entryName)} declares ${declared} uncompressed bytes (max ${caps.maxFileBytes})`,
+      );
+    }
+    declaredTotal += declared;
+    if (declaredTotal > caps.maxBytes) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `zip declares ${declaredTotal}+ uncompressed bytes (max ${caps.maxBytes})`,
+      );
+    }
+  }
+
+  // Pass 2: inflate with a running ACTUAL-bytes counter — a lying header is
+  // caught at the first entry whose real size breaches a cap, bounding peak
+  // memory to ~maxBytes + one entry rather than the full decompressed archive.
+  const entries: ImportEntry[] = [];
+  let actualTotal = 0;
+
+  for (const entry of fileEntries) {
+    const data = entry.getData();
+
+    if (data.length > caps.maxFileBytes) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `entry ${JSON.stringify(entry.entryName)} is ${data.length} bytes (max ${caps.maxFileBytes})`,
+      );
+    }
+    actualTotal += data.length;
+    if (actualTotal > caps.maxBytes) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `zip expands past the cap (max ${caps.maxBytes} uncompressed bytes)`,
+      );
+    }
+    entries.push({ path: entry.entryName, bytes: toUint8(data) });
   }
 
   return entries;
@@ -157,34 +217,92 @@ function readZipEntries(bytes: Uint8Array): ImportEntry[] {
 // collects each File entry's bytes; non-file types (dirs, symlinks, hardlinks,
 // devices) are skipped — only regular files are ever written, which also closes
 // the tar-symlink escape vector at the source.
-async function readTarGzEntries(bytes: Uint8Array): Promise<ImportEntry[]> {
+async function readTarGzEntries(
+  bytes: Uint8Array,
+  caps: ImportCaps,
+): Promise<ImportEntry[]> {
   const entries: ImportEntry[] = [];
   const parser = new tar.Parser({ gzip: true });
-
-  parser.on("entry", (entry) => {
-    if (entry.type !== "File") {
-      entry.resume();
-
-      return;
-    }
-    const chunks: Uint8Array[] = [];
-
-    entry.on("data", (chunk: Uint8Array) => chunks.push(chunk));
-    entry.on("end", () => {
-      entries.push({ path: entry.path, bytes: toUint8(Buffer.concat(chunks)) });
-    });
-  });
+  let total = 0;
+  let count = 0;
+  let aborted = false;
 
   await new Promise<void>((resolve, reject) => {
-    parser.on("end", resolve);
-    parser.on("error", (err) =>
+    // Reject AND stop accumulating immediately on the first cap breach: the
+    // running counters + `aborted` flag bound peak memory to ~maxBytes no matter
+    // how much more the gunzip stream would inflate (a tar bomb can declare
+    // nothing — only a per-chunk running count is trustworthy here).
+    const fail = (message: string) => {
+      if (aborted) return;
+      aborted = true;
+      try {
+        (parser as unknown as { abort?: (e: Error) => void }).abort?.(
+          new Error(message),
+        );
+      } catch {
+        // older tar Parser lacks abort(); the `aborted` flag still bounds memory
+      }
+      reject(new MaisterError("PRECONDITION", message));
+    };
+
+    parser.on("entry", (entry) => {
+      if (aborted || entry.type !== "File") {
+        entry.resume();
+
+        return;
+      }
+
+      count += 1;
+      if (count > caps.maxEntries) {
+        fail(`tar.gz has more than ${caps.maxEntries} entries`);
+        entry.resume();
+
+        return;
+      }
+
+      const chunks: Uint8Array[] = [];
+      let entryBytes = 0;
+
+      entry.on("data", (chunk: Uint8Array) => {
+        if (aborted) return;
+        entryBytes += chunk.length;
+        total += chunk.length;
+        if (entryBytes > caps.maxFileBytes) {
+          fail(
+            `tar.gz entry ${JSON.stringify(entry.path)} exceeds ${caps.maxFileBytes} uncompressed bytes`,
+          );
+
+          return;
+        }
+        if (total > caps.maxBytes) {
+          fail(
+            `tar.gz expands past the cap (max ${caps.maxBytes} uncompressed bytes)`,
+          );
+
+          return;
+        }
+        chunks.push(chunk);
+      });
+      entry.on("end", () => {
+        if (aborted) return;
+        entries.push({
+          path: entry.path,
+          bytes: toUint8(Buffer.concat(chunks)),
+        });
+      });
+    });
+    parser.on("end", () => {
+      if (!aborted) resolve();
+    });
+    parser.on("error", (err) => {
+      if (aborted) return;
       reject(
         new MaisterError(
           "PRECONDITION",
           `could not read the tar.gz archive: ${err.message}`,
         ),
-      ),
-    );
+      );
+    });
     parser.end(Buffer.from(bytes));
   });
 
@@ -298,28 +416,36 @@ export async function collectImportEntries(
     };
   }
 
-  // Cap the uploaded archive bytes BEFORE handing them to a parser that loads
-  // the whole thing into memory (defense against a zip-bomb's compressed size).
-  const maxBytes = importMaxBytes();
+  // Cap the uploaded (compressed) archive bytes BEFORE handing them to a parser
+  // that loads the whole thing into memory; the SAME caps are then enforced on
+  // the UNCOMPRESSED stream inside the readers (zip/tar bomb defense).
+  const caps: ImportCaps = {
+    maxBytes: importMaxBytes(),
+    maxEntries: importMaxEntries(),
+    maxFileBytes: importMaxFileBytes(),
+  };
 
-  if (input.bytes.length > maxBytes) {
+  if (input.bytes.length > caps.maxBytes) {
     log.warn(
-      { byteLength: input.bytes.length, maxBytes },
+      { byteLength: input.bytes.length, maxBytes: caps.maxBytes },
       "import rejected: archive blob over cap (pre-parse)",
     );
     throw new MaisterError(
       "PRECONDITION",
-      `archive is ${input.bytes.length} bytes (max ${maxBytes})`,
+      `archive is ${input.bytes.length} bytes (max ${caps.maxBytes})`,
     );
   }
 
   const kind = detectArchiveKind(input.fileName, input.bytes);
 
   if (kind === "zip") {
-    return { source: "zip", entries: readZipEntries(input.bytes) };
+    return { source: "zip", entries: readZipEntries(input.bytes, caps) };
   }
   if (kind === "tar.gz") {
-    return { source: "tar.gz", entries: await readTarGzEntries(input.bytes) };
+    return {
+      source: "tar.gz",
+      entries: await readTarGzEntries(input.bytes, caps),
+    };
   }
 
   throw new MaisterError(

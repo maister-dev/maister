@@ -168,6 +168,36 @@ export async function assertHoldsLock(
   }
 }
 
+// User-scoped variant of assertHoldsLock: SOME live session of `userId` holds
+// the working-dir lock. The project-less assistant turn / recover paths do not
+// carry the editor's lock session id, but the run is bound to its launching user
+// — so "this user is still the live editor" is the enforceable invariant. A
+// takeover by ANOTHER user flips `locked_by_user_id`, revoking the launcher's
+// ability to drive writes into a working dir someone else now owns.
+export async function assertUserHoldsLock(
+  id: string,
+  userId: string,
+  db?: Db,
+): Promise<void> {
+  const rows = await resolveDb(db)
+    .select({ id: lp.id })
+    .from(lp)
+    .where(
+      and(
+        eq(lp.id, id),
+        eq(lp.lockedByUserId, userId),
+        sql`${lp.lockExpiresAt} > now()`,
+      ),
+    );
+
+  if (rows.length === 0) {
+    throw new MaisterError(
+      "CONFLICT",
+      "edit-lock not held — reopen the package editor to continue",
+    );
+  }
+}
+
 export async function releaseLock(
   id: string,
   sessionId: string,

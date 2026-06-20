@@ -26,6 +26,7 @@ import {
 } from "@/lib/scratch-runs/events";
 import { scratchStepId } from "@/lib/scratch-runs/launch";
 import {
+  assertLocalPackageAssistantActor,
   completeScratchPromptTurn,
   markScratchCrashed,
 } from "@/lib/scratch-runs/service";
@@ -36,6 +37,7 @@ import {
 } from "@/lib/supervisor-client";
 
 const {
+  localPackages,
   platformAcpRunners,
   projects,
   runs,
@@ -122,19 +124,15 @@ async function loadScratchRecoveryRows(db: Db, runId: string) {
     throw new MaisterError("PRECONDITION", `run is not scratch: ${runId}`);
   }
 
-  const [scratchRows, workspaceRows, projectRows, profileRows] =
-    await Promise.all([
-      db.select().from(scratchRuns).where(eq(scratchRuns.runId, runId)),
-      db.select().from(workspaces).where(eq(workspaces.runId, runId)),
-      db.select().from(projects).where(eq(projects.id, run.projectId)),
-      db
-        .select()
-        .from(scratchCapabilityProfiles)
-        .where(eq(scratchCapabilityProfiles.runId, runId)),
-    ]);
+  const [scratchRows, workspaceRows, profileRows] = await Promise.all([
+    db.select().from(scratchRuns).where(eq(scratchRuns.runId, runId)),
+    db.select().from(workspaces).where(eq(workspaces.runId, runId)),
+    db
+      .select()
+      .from(scratchCapabilityProfiles)
+      .where(eq(scratchCapabilityProfiles.runId, runId)),
+  ]);
   const scratch = scratchRows[0];
-  const workspace = workspaceRows[0];
-  const project = projectRows[0];
   const recoveredRunner = await loadScratchLaunchExecutor(db, run, runId);
 
   if (!scratch) {
@@ -143,21 +141,63 @@ async function loadScratchRecoveryRows(db: Db, runId: string) {
       `scratch metadata not found: ${runId}`,
     );
   }
-  if (!workspace) {
-    throw new MaisterError("PRECONDITION", `workspace not found: ${runId}`);
-  }
-  if (!project) {
-    throw new MaisterError(
-      "PRECONDITION",
-      `project not found: ${run.projectId}`,
-    );
+
+  // ADR-096: a project-less local-package assistant run has NO workspace row and
+  // NO project — its cwd + sole confinement root is the local package's
+  // git-backed working_dir. Resolve a workspace-/project-SHAPED view (and carry
+  // confineRoot) so the resume path stays uniform; a project run keeps its rows.
+  let worktreePath: string;
+  let workspaceRemoved: boolean;
+  let projectSlug: string;
+  let confineRoot: string | undefined;
+
+  if (run.localPackageId) {
+    const pkgRows = await db
+      .select()
+      .from(localPackages)
+      .where(eq(localPackages.id, run.localPackageId));
+    const pkg = pkgRows[0];
+
+    if (!pkg) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `local package not found for assistant run: ${runId}`,
+      );
+    }
+    worktreePath = pkg.workingDir;
+    workspaceRemoved = false;
+    projectSlug = pkg.slug;
+    confineRoot = pkg.workingDir;
+  } else {
+    const workspace = workspaceRows[0];
+    const projectRows = await db
+      .select()
+      .from(projects)
+      .where(eq(projects.id, run.projectId));
+    const project = projectRows[0];
+
+    if (!workspace) {
+      throw new MaisterError("PRECONDITION", `workspace not found: ${runId}`);
+    }
+    if (!project) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `project not found: ${run.projectId}`,
+      );
+    }
+    worktreePath = workspace.worktreePath;
+    workspaceRemoved = Boolean(workspace.removedAt);
+    projectSlug = project.slug;
+    confineRoot = undefined;
   }
 
   return {
     run,
     scratch,
-    workspace,
-    project,
+    worktreePath,
+    workspaceRemoved,
+    projectSlug,
+    confineRoot,
     executor: recoveredRunner.executor,
     runnerSnapshot: recoveredRunner.snapshot,
     profile: profileRows[0] ?? null,
@@ -250,20 +290,31 @@ export async function POST(
   }
 
   try {
-    await requireActiveSession();
+    const user = await requireActiveSession();
 
     const db = getDb() as unknown as Db;
     const {
       run,
       scratch,
-      workspace,
-      project,
+      worktreePath,
+      workspaceRemoved,
+      projectSlug,
+      confineRoot,
       executor,
       runnerSnapshot,
       profile,
     } = await loadScratchRecoveryRows(db, runId);
 
-    await requireProjectAction(run.projectId, "operateScratchRun");
+    // ADR-096: project scratch runs keep the project-scoped operate gate; a
+    // project-less assistant run is bound to its launching user AND a live
+    // working-dir lock — driving a resume writes into the locked dir.
+    if (run.projectId) {
+      await requireProjectAction(run.projectId, "operateScratchRun");
+    } else {
+      await assertLocalPackageAssistantActor(run, user.id, {
+        requireLock: true,
+      });
+    }
 
     await assertSupervisorReady();
 
@@ -275,7 +326,7 @@ export async function POST(
       dialogStatus: scratch.dialogStatus,
       acpSessionId: run.acpSessionId,
       supervisorSessionId: scratch.supervisorSessionId,
-      workspaceRemoved: Boolean(workspace.removedAt),
+      workspaceRemoved,
       liveSupervisorSessionIds: liveSessionIds,
     });
 
@@ -307,8 +358,11 @@ export async function POST(
 
     const session = await createSession({
       runId,
-      projectSlug: project.slug,
-      worktreePath: workspace.worktreePath,
+      projectSlug,
+      worktreePath,
+      // ADR-096: re-assert the assistant's working-dir confinement on resume
+      // (undefined for project runs, preserving their prior behavior).
+      confineRoot,
       stepId: scratchStepId(),
       executor,
       runner: runnerSupervisorInput({ snapshot: runnerSnapshot }),

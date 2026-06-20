@@ -8,7 +8,7 @@ import {
   errorResponse,
   notFoundResponse,
 } from "@/lib/api/project-route-helpers";
-import { requireSession } from "@/lib/authz";
+import { requireActiveSession, requireGlobalRole } from "@/lib/authz";
 import { readLockState } from "@/lib/local-packages/lock";
 import {
   deleteLocalPackage,
@@ -38,7 +38,7 @@ export async function GET(
   { params }: RouteParams,
 ): Promise<NextResponse> {
   try {
-    await requireSession();
+    await requireActiveSession();
     const { id } = await params;
     const pkg = await getLocalPackage(id);
 
@@ -67,7 +67,7 @@ export async function PATCH(
   { params }: RouteParams,
 ): Promise<NextResponse> {
   try {
-    await requireSession();
+    await requireGlobalRole("member");
     const { id } = await params;
     const parsed = patchBodySchema.safeParse(await req.json());
 
@@ -106,7 +106,7 @@ export async function DELETE(
   { params }: RouteParams,
 ): Promise<NextResponse> {
   try {
-    await requireSession();
+    await requireGlobalRole("member");
     const { id } = await params;
 
     await deleteLocalPackage(id);

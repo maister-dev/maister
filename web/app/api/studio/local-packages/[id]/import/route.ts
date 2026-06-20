@@ -9,7 +9,7 @@ import {
   errorResponse,
   notFoundResponse,
 } from "@/lib/api/project-route-helpers";
-import { requireSession } from "@/lib/authz";
+import { requireGlobalRole } from "@/lib/authz";
 import { MaisterError } from "@/lib/errors";
 import {
   collectImportEntries,
@@ -46,7 +46,7 @@ export async function POST(
   { params }: RouteParams,
 ): Promise<NextResponse> {
   try {
-    await requireSession();
+    await requireGlobalRole("member");
     const { id } = await params;
 
     let form: FormData;

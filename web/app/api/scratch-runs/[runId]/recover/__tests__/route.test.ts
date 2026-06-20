@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  localPackages as localPackagesTable,
   projects as projectsTable,
   runs as runsTable,
   scratchCapabilityProfiles as scratchCapabilityProfilesTable,
@@ -22,6 +23,7 @@ type Tables = {
   workspaces: Row[];
   projects: Row[];
   scratch_capability_profiles: Row[];
+  local_packages: Row[];
 };
 type FakeDb = {
   select: () => ReturnType<typeof selectChain>;
@@ -36,6 +38,7 @@ const dbState: { tables: Tables } = {
     workspaces: [],
     projects: [],
     scratch_capability_profiles: [],
+    local_packages: [],
   },
 };
 
@@ -47,6 +50,7 @@ function tableOf(t: unknown): keyof Tables {
   if (t === scratchCapabilityProfilesTable) {
     return "scratch_capability_profiles";
   }
+  if (t === localPackagesTable) return "local_packages";
   throw new Error("unknown table");
 }
 
@@ -128,6 +132,7 @@ function emptyTables(): Tables {
     workspaces: [],
     projects: [],
     scratch_capability_profiles: [],
+    local_packages: [],
   };
 }
 
@@ -192,6 +197,61 @@ function seedScratchRun(
     id: "profile-1",
     runId,
     materializedPath: "/worktrees/demo/run-recover/.maister/profile.json",
+    adapterLaunch: { postArgs: ["--profile"] },
+  });
+
+  return runId;
+}
+
+// ADR-096: a project-less local-package assistant run — NO workspace row, NO
+// project row; its workspace-like view + confineRoot come from the local
+// package's working_dir. `created_by_user_id` binds it to the launching user.
+function seedAssistantRun(
+  overrides: { createdByUserId?: string } = {},
+): string {
+  const runId = "run-assistant";
+
+  dbState.tables.runs.push({
+    id: runId,
+    runKind: "scratch",
+    projectId: null,
+    localPackageId: "lp1",
+    createdByUserId: overrides.createdByUserId ?? "user-1",
+    runnerId: "claude-runner",
+    capabilityAgent: "claude",
+    runnerSnapshot: {
+      id: "claude-runner",
+      adapter: "claude",
+      capabilityAgent: "claude",
+      model: "claude-sonnet",
+      provider: { kind: "anthropic" },
+      providerKind: "anthropic",
+      permissionPolicy: "default",
+      sidecarId: null,
+    },
+    status: "Crashed",
+    acpSessionId: "acp-old",
+    currentStepId: null,
+  });
+  dbState.tables.scratch_runs.push({
+    runId,
+    projectId: null,
+    localPackageId: "lp1",
+    dialogStatus: "Crashed",
+    supervisorSessionId: "sup-old",
+    updatedAt: null,
+  });
+  // Present row ⇒ assertUserHoldsLock sees the live lock (the fake ignores the
+  // predicate); loadScratchRecoveryRows reads working_dir + slug from it.
+  dbState.tables.local_packages.push({
+    id: "lp1",
+    slug: "my-package",
+    workingDir: "/home/.maister/local/my-package",
+  });
+  dbState.tables.scratch_capability_profiles.push({
+    id: "profile-1",
+    runId,
+    materializedPath: "/home/.maister/local/my-package/.maister/profile.json",
     adapterLaunch: { postArgs: ["--profile"] },
   });
 
@@ -339,6 +399,38 @@ describe("POST /api/scratch-runs/[runId]/recover", () => {
     const res = await invokePost(runId, { prompt: "continue" });
 
     expect(res.status).toBe(409);
+    expect(createSession).not.toHaveBeenCalled();
+  });
+
+  it("recovers a project-less assistant run from the local package working dir", async () => {
+    const runId = seedAssistantRun();
+
+    const res = await invokePost(runId, { prompt: "continue authoring" });
+    const body = (await res.json()) as { action?: string };
+
+    expect(res.status).toBe(202);
+    expect(body.action).toBe("recover");
+    // No workspace/project row exists — the slug, cwd, AND confineRoot are the
+    // local package's working_dir (the assistant's sole confinement root).
+    expect(createSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId,
+        projectSlug: "my-package",
+        worktreePath: "/home/.maister/local/my-package",
+        confineRoot: "/home/.maister/local/my-package",
+        resumeSessionId: "acp-old",
+      }),
+    );
+  });
+
+  it("rejects recovery from a user who did not launch the assistant run", async () => {
+    const runId = seedAssistantRun({ createdByUserId: "someone-else" });
+
+    const res = await invokePost(runId, { prompt: "continue authoring" });
+    const body = (await res.json()) as { code?: string };
+
+    expect(res.status).toBe(403);
+    expect(body.code).toBe("UNAUTHORIZED");
     expect(createSession).not.toHaveBeenCalled();
   });
 });

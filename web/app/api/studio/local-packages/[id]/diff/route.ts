@@ -7,7 +7,7 @@ import {
   errorResponse,
   notFoundResponse,
 } from "@/lib/api/project-route-helpers";
-import { requireSession } from "@/lib/authz";
+import { requireActiveSession } from "@/lib/authz";
 import { diffWorkingDir, getLocalPackage } from "@/lib/local-packages/service";
 
 const log = pino({
@@ -18,7 +18,7 @@ const log = pino({
 // `id` is a url-param (→ server row → working_dir, never client-exposed). The
 // working-tree-vs-HEAD diff of the local package's git working dir: the
 // uncommitted edits the editor is about to commit/discard. Read-only —
-// requireSession only, NO edit-lock (a second viewer may inspect the diff).
+// requireActiveSession only, NO edit-lock (a second viewer may inspect the diff).
 type RouteParams = { params: Promise<{ id: string }> };
 
 export async function GET(
@@ -26,7 +26,7 @@ export async function GET(
   { params }: RouteParams,
 ): Promise<NextResponse> {
   try {
-    await requireSession();
+    await requireActiveSession();
     const { id } = await params;
     const pkg = await getLocalPackage(id);
 

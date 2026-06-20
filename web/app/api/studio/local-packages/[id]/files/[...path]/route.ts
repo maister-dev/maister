@@ -8,7 +8,7 @@ import {
   errorResponse,
   notFoundResponse,
 } from "@/lib/api/project-route-helpers";
-import { requireSession } from "@/lib/authz";
+import { requireActiveSession, requireGlobalRole } from "@/lib/authz";
 import { assertHoldsLock } from "@/lib/local-packages/lock";
 import {
   deleteWorkingDirFile,
@@ -49,7 +49,7 @@ export async function GET(
   { params }: RouteParams,
 ): Promise<NextResponse> {
   try {
-    await requireSession();
+    await requireActiveSession();
     const { id, path: segments } = await params;
     const pkg = await getLocalPackage(id);
 
@@ -70,7 +70,7 @@ export async function PUT(
   { params }: RouteParams,
 ): Promise<NextResponse> {
   try {
-    await requireSession();
+    await requireGlobalRole("member");
     const { id, path: segments } = await params;
     const parsed = writeBodySchema.safeParse(await req.json());
 
@@ -105,7 +105,7 @@ export async function DELETE(
   { params }: RouteParams,
 ): Promise<NextResponse> {
   try {
-    await requireSession();
+    await requireGlobalRole("member");
     const { id, path: segments } = await params;
     const parsed = deleteBodySchema.safeParse(await req.json());
 
