@@ -400,6 +400,13 @@
       "when": 1781933610399,
       "tag": "0056_m36_as_plan_task_fields",
       "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "7",
+      "when": 1781968873731,
+      "tag": "0057_m36_persistent_child",
+      "breakpoints": true
     }
   ]
 }

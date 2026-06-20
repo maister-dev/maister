@@ -146,6 +146,9 @@ async function fetchPass2Candidates(
         eq(runs.status, "NeedsInputIdle"),
         isNotNull(runs.checkpointAt),
         lt(runs.checkpointAt, cutoff),
+        // M36 Phase 8 (ADR-096): a persistent swarm member parks INDEFINITELY
+        // until re-messaged or its tree terminates — never TTL-abandoned here.
+        eq(runs.persistent, false),
       ),
     )
     .orderBy(asc(runs.checkpointAt))

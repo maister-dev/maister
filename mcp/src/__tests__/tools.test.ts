@@ -51,7 +51,7 @@ afterEach(() => {
 });
 
 describe("TOOL_SPECS registry", () => {
-  it("registers all 20 external tools (incl. ADR-089 triage_set + relation ops + M36 delegation/plan toolset)", () => {
+  it("registers all 21 external tools (incl. ADR-089 triage_set + relation ops + M36 delegation/plan/message toolset)", () => {
     expect(Object.keys(TOOL_SPECS).sort()).toEqual(
       [
         "comment_create",
@@ -68,6 +68,7 @@ describe("TOOL_SPECS registry", () => {
         "run_delegate",
         "run_get",
         "run_launch",
+        "run_message",
         "run_plan",
         "task_create",
         "task_get",
@@ -314,6 +315,28 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
     expect(url).toBe(`${BASE_URL}/api/v1/ext/runs/cancel`);
     expect(headerAuth(init)).toBe(AUTH);
     expect(parsedBody(init)).toEqual({ childRunId: "child-1" });
+  });
+
+  it("run_message → POST /api/v1/ext/runs/message with only defined keys", async () => {
+    mockOnce({ childRunId: "child-1", status: "Running" }, 200);
+
+    await dispatchTool({
+      name: "run_message",
+      args: { addressableKey: "reviewer", prompt: "re-review the diff" },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    const { url, init } = lastRequest();
+
+    expect(init.method).toBe("POST");
+    expect(url).toBe(`${BASE_URL}/api/v1/ext/runs/message`);
+    expect(headerAuth(init)).toBe(AUTH);
+    // childRunId omitted (undefined) — only defined keys ride.
+    expect(parsedBody(init)).toEqual({
+      addressableKey: "reviewer",
+      prompt: "re-review the diff",
+    });
   });
 
   it("readiness_get → GET /api/v1/ext/runs/{runId}/readiness", async () => {

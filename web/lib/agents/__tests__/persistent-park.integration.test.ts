@@ -1,0 +1,197 @@
+// M36 Phase 8 (ADR-096): persistent park-vs-finalize at the consumeAgentSession
+// terminal seam. A persistent agent whose session ends on a clean end_turn
+// (exitCode 0, no reason) PARKS (NeedsInputIdle, acp_session_id retained, slot
+// released) — it does NOT finalize Done. A non-persistent child with the same
+// exit finalizes Done (acp_session_id nulled). The supervisor stream is a fake
+// async iterator; the DB is a real testcontainer.
+
+import type {
+  AgentSupervisorApi,
+  consumeAgentSession as ConsumeFn,
+} from "@/lib/agents/launch";
+import type { SupervisorEvent } from "@/lib/supervisor-client";
+
+import { randomUUID } from "node:crypto";
+
+import {
+  PostgreSqlContainer,
+  type StartedPostgreSqlContainer,
+} from "@testcontainers/postgresql";
+import { eq } from "drizzle-orm";
+import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
+import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { Pool } from "pg";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
+
+import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
+import * as schemaModule from "@/lib/db/schema";
+
+const schema = schemaModule as unknown as Record<string, any>;
+
+let container: StartedPostgreSqlContainer;
+let pool: Pool;
+let db: NodePgDatabase;
+
+vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
+
+let consumeAgentSession: typeof ConsumeFn;
+let releaseSlotSpy: ReturnType<typeof vi.fn>;
+
+vi.mock("@/lib/scheduler", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/scheduler")>();
+
+  releaseSlotSpy = vi.fn(async () => ({ promotedRunId: null }));
+
+  return {
+    ...actual,
+    releaseSlotOnIdle: (args: { runId: string; db?: unknown }) =>
+      releaseSlotSpy(args),
+    promoteNextPending: vi.fn(async () => ({ promotedRunId: null })),
+  };
+});
+
+beforeAll(async () => {
+  container = await new PostgreSqlContainer("postgres:16-alpine")
+    .withDatabase("persistent_park_test")
+    .withUsername("test")
+    .withPassword("test")
+    .start();
+
+  pool = new Pool({ connectionString: container.getConnectionUri() });
+  db = drizzle(pool);
+  await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+
+  ({ consumeAgentSession } = await import("@/lib/agents/launch"));
+}, 180_000);
+
+afterAll(async () => {
+  await pool?.end();
+  await container?.stop();
+});
+
+let projectId: string;
+let executorId: string;
+
+afterEach(async () => {
+  await pool.query(`DELETE FROM "runs"`);
+  await pool.query(`DELETE FROM "projects"`);
+  releaseSlotSpy?.mockClear();
+});
+
+async function seedProject(): Promise<void> {
+  projectId = randomUUID();
+  executorId = randomUUID();
+
+  await pool.query(
+    `INSERT INTO "projects" ("id", "slug", "name", "repo_path", "main_branch", "branch_prefix", "maister_yaml_path", "task_key", "next_task_number")
+     VALUES ($1, $2, 'P', $3, 'main', 'maister/', '/tmp/maister.yaml', $4, 1)`,
+    [
+      projectId,
+      `p-${projectId.slice(0, 8)}`,
+      `/repos/${projectId}`,
+      `K${projectId
+        .replace(/[^0-9A-Za-z]/g, "")
+        .slice(0, 7)
+        .toUpperCase()}`,
+    ],
+  );
+  await (db as any)
+    .insert(schema.platformAcpRunners)
+    .values(testPlatformRunnerRow(executorId, "claude"));
+}
+
+// A Running agent run (workspace=none so the clean Done-path has no worktree to
+// flip into Review) with a retained acp handle.
+async function seedRunningAgent(persistent: boolean): Promise<string> {
+  const runId = randomUUID();
+
+  await pool.query(
+    `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id",
+       "status", "flow_version", "flow_revision", "agent_workspace",
+       "persistent", "addressable_key", "acp_session_id", "runner_snapshot", "runner_id")
+     VALUES ($1, 'agent', NULL, $2, 'Running', 'agent', 'manual', 'none',
+             $3, $4, 'acp-keep-me', '{"capabilityAgent":"claude"}'::jsonb, $5)`,
+    [runId, projectId, persistent, persistent ? "reviewer" : null, executorId],
+  );
+
+  return runId;
+}
+
+// A fake supervisor API that streams exactly one event then ends.
+function fakeApi(event: SupervisorEvent): AgentSupervisorApi {
+  return {
+    createSession: vi.fn(),
+    deliverPermission: vi.fn(),
+    sendPrompt: vi.fn(),
+
+    streamSession: async function* () {
+      yield event;
+    },
+  } as unknown as AgentSupervisorApi;
+}
+
+function cleanExit(sessionId: string): SupervisorEvent {
+  return {
+    type: "session.exited",
+    sessionId,
+    monotonicId: 1,
+    exitCode: 0,
+  };
+}
+
+async function getRun(runId: string): Promise<any> {
+  const rows = await db
+    .select()
+    .from(schema.runs)
+    .where(eq(schema.runs.id, runId));
+
+  return rows[0];
+}
+
+describe("persistent park-vs-finalize (M36 Phase 8 T8.1)", () => {
+  it("a persistent agent parks on clean end_turn: NeedsInputIdle, acp_session_id retained, slot released", async () => {
+    await seedProject();
+    const runId = await seedRunningAgent(true);
+
+    await consumeAgentSession({
+      db,
+      api: fakeApi(cleanExit(`sup-${runId}`)),
+      runId,
+      sessionId: `sup-${runId}`,
+    });
+
+    const run = await getRun(runId);
+
+    expect(run.status).toBe("NeedsInputIdle");
+    expect(run.acpSessionId).toBe("acp-keep-me");
+    expect(run.checkpointAt).not.toBeNull();
+    expect(releaseSlotSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("a non-persistent agent with the same exit finalizes Done, acp_session_id nulled", async () => {
+    await seedProject();
+    const runId = await seedRunningAgent(false);
+
+    await consumeAgentSession({
+      db,
+      api: fakeApi(cleanExit(`sup-${runId}`)),
+      runId,
+      sessionId: `sup-${runId}`,
+    });
+
+    const run = await getRun(runId);
+
+    expect(run.status).toBe("Done");
+    expect(run.acpSessionId).toBeNull();
+    // The clean-Done path never routes through releaseSlotOnIdle.
+    expect(releaseSlotSpy).not.toHaveBeenCalled();
+  });
+});

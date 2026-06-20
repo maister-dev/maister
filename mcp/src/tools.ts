@@ -158,6 +158,19 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
       required: ["childRunId"],
     },
   },
+  run_message: {
+    description:
+      "Re-message a PERSISTENT child agent in the calling orchestrator's run-tree by its addressableKey (or childRunId). If the child is parked between turns it is respawned and resumed with prior context; if live the prompt is delivered to the running session. The child re-parks on its next end_turn. Addressing is scoped to the caller's own tree — a child in another tree is invisible. Returns { childRunId, status }.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        addressableKey: { type: "string" },
+        childRunId: { type: "string" },
+        prompt: { type: "string" },
+      },
+      required: ["prompt"],
+    },
+  },
   readiness_get: {
     description: "Get the readiness status of a run",
     inputSchema: {
@@ -473,6 +486,19 @@ function resolveRouting(
         path: `/api/v1/ext/runs/cancel`,
         body: { childRunId },
       };
+    }
+    case "run_message": {
+      const { addressableKey, childRunId, prompt } = args as {
+        addressableKey?: string;
+        childRunId?: string;
+        prompt: string;
+      };
+      const body: Record<string, unknown> = { prompt };
+
+      if (addressableKey !== undefined) body.addressableKey = addressableKey;
+      if (childRunId !== undefined) body.childRunId = childRunId;
+
+      return { method: "POST", path: `/api/v1/ext/runs/message`, body };
     }
     case "readiness_get": {
       const { runId } = args as { runId: string };

@@ -45,10 +45,15 @@ import { MaisterError, type MaisterErrorCode } from "@/lib/errors";
 import { gcAgeDays, worktreesRoot } from "@/lib/instance-config";
 import { nextKeepaliveAt } from "@/lib/runs/keepalive-config";
 import { assertRunKindInvariant } from "@/lib/runs/run-kind-invariants";
-import { promoteNextPending, tryStartRun } from "@/lib/scheduler";
+import {
+  promoteNextPending,
+  releaseSlotOnIdle,
+  tryStartRun,
+} from "@/lib/scheduler";
 import {
   createSession,
   deliverPermission,
+  listSessions,
   sendPrompt,
   streamSession,
   type SupervisorEvent,
@@ -110,6 +115,12 @@ export type LaunchAgentRunInput = {
   parentRunId?: string | null;
   rootRunId?: string | null;
   launchMode?: "auto" | "manual";
+  // M36 Phase 8 (ADR-096): a persistent child parks between turns and is
+  // re-addressable by `addressableKey` within its orchestrator tree (unique on
+  // (root_run_id, addressable_key) among persistent rows). `addressableKey` is
+  // REQUIRED when `persistent` is set.
+  persistent?: boolean;
+  addressableKey?: string | null;
   db?: Db;
 };
 
@@ -508,6 +519,17 @@ export async function launchAgentRun(
   const runId = randomUUID();
   const workspace = ctx.effective.parsed.workspace;
 
+  // M36 Phase 8 (ADR-096): a persistent child must carry an addressable_key —
+  // it is the re-message handle. Uniqueness within the tree is enforced by the
+  // partial index (mapped to CONFLICT below); this guards the NOT-NULL contract
+  // before any side effect.
+  if (input.persistent && !input.addressableKey) {
+    throw new MaisterError(
+      "CONFIG",
+      "a persistent child requires an addressableKey",
+    );
+  }
+
   // Fast dedup pre-check before any side effect; the partial unique index
   // on (agent_id, trigger_event_id) stays the authoritative backstop.
   if (input.trigger.eventId != null) {
@@ -528,6 +550,31 @@ export async function launchAgentRun(
       );
 
       return { deduped: true, triggerEventId: input.trigger.eventId };
+    }
+  }
+
+  // M36 Phase 8 (ADR-096): the addressable_key must be free within the
+  // orchestrator tree. The child's tree root is rootRunId (always set for a
+  // delegated persistent child) else its own id. This pre-check is the common
+  // path; the partial unique index is the race backstop (23505 → CONFLICT).
+  if (input.persistent && input.addressableKey) {
+    const treeRoot = input.rootRunId ?? runId;
+    const keyClash = await _db
+      .select({ id: runs.id })
+      .from(runs)
+      .where(
+        and(
+          eq(runs.rootRunId, treeRoot),
+          eq(runs.addressableKey, input.addressableKey),
+          eq(runs.persistent, true),
+        ),
+      );
+
+    if (keyClash[0]) {
+      throw new MaisterError(
+        "CONFLICT",
+        `a persistent child with addressableKey "${input.addressableKey}" already exists in this orchestrator tree`,
+      );
     }
   }
 
@@ -612,6 +659,9 @@ export async function launchAgentRun(
           revisionId: ctx.effective.revisionId,
         }
       : null,
+    // M36 Phase 8 (ADR-096): persistent swarm-member flags.
+    persistent: input.persistent ?? false,
+    addressableKey: input.addressableKey ?? null,
   };
 
   assertRunKindInvariant({
@@ -627,7 +677,11 @@ export async function launchAgentRun(
 
   try {
     const inserted = await _db.transaction(async (tx: Db) => {
-      // Claim-first: the INSERT itself is the at-least-once dedup claim.
+      // Claim-first: the INSERT itself is the at-least-once dedup claim. The
+      // persistent addressable_key uniqueness is enforced by the pre-insert
+      // check above (the deterministic path); the partial index is the
+      // last-line backstop against a duplicate ROW (a true insert race just
+      // dedups here — no duplicate is ever written).
       const rows = await tx
         .insert(runs)
         .values(runRow)
@@ -1207,6 +1261,166 @@ export async function finalizeAgentRun(
   return finalizeResult !== false ? finalizeResult : { finalized: false };
 }
 
+// M36 Phase 8 (ADR-096): a persistent swarm member PARKS on a clean end_turn
+// instead of finalizing — it stays addressable for the next re-message. The
+// CAS Running → NeedsInputIdle keeps acp_session_id (the resume handle), stamps
+// checkpoint_at, refreshes acp_session_id if the latest turn produced a newer
+// one, and frees the agent-pool slot. NO run-terminal domain event fires (it is
+// not terminal). A genuine failure/crash still goes through finalizeAgentRun.
+export async function parkPersistentAgent(
+  runId: string,
+  opts: { db?: Db; acpSessionId?: string | null } = {},
+): Promise<{ parked: boolean }> {
+  const _db = opts.db ?? getDb();
+
+  const parked: boolean = await _db.transaction(async (tx: Db) => {
+    const rows = await tx
+      .update(runs)
+      .set({
+        status: "NeedsInputIdle",
+        checkpointAt: new Date(),
+        keepaliveUntil: null,
+        ...(opts.acpSessionId ? { acpSessionId: opts.acpSessionId } : {}),
+      })
+      .where(
+        and(
+          eq(runs.id, runId),
+          eq(runs.runKind, "agent"),
+          eq(runs.status, "Running"),
+        ),
+      )
+      .returning({ id: runs.id });
+
+    return rows.length > 0;
+  });
+
+  if (!parked) {
+    log.warn(
+      { runId, from: "Running", to: "NeedsInputIdle" },
+      "parkPersistentAgent: status-guard mismatch — concurrent transition won",
+    );
+
+    return { parked: false };
+  }
+
+  // Free the agent-pool slot the parked member no longer needs (mirrors the
+  // NeedsInputIdle checkpoint path) and promote any queued agent run.
+  await releaseSlotOnIdle({ runId, db: _db }).catch((err: unknown) => {
+    log.warn(
+      { runId, err: err instanceof Error ? err.message : String(err) },
+      "parkPersistentAgent: releaseSlotOnIdle failed",
+    );
+  });
+
+  log.info({ runId }, "persistent agent parked on clean end_turn");
+
+  return { parked: true };
+}
+
+export type SendAgentMessageResult = {
+  childRunId: string;
+  status: "Running";
+};
+
+// M36 Phase 8 (ADR-096): re-message a persistent child agent. A parked child
+// (NeedsInputIdle) is woken — CAS NeedsInputIdle → Running, then
+// startAgentSession respawns + session/resumes (run.acpSessionId) and delivers
+// the override prompt as a fresh turn; the consume loop re-parks it on the next
+// clean end_turn. A live child (Running, mid-turn) gets the prompt delivered to
+// its already-attached session. Never exposes acp_session_id. Mirrors the HITL
+// idle-resume path's claim-then-startAgentSession mechanics.
+export async function sendAgentMessage(
+  childRunId: string,
+  prompt: string,
+  opts: {
+    db?: Db;
+    api?: AgentSupervisorApi;
+    listSessions?: typeof listSessions;
+  } = {},
+): Promise<SendAgentMessageResult> {
+  const _db = opts.db ?? getDb();
+  const listSessionsFn = opts.listSessions ?? listSessions;
+
+  const rows = await _db
+    .select({
+      status: runs.status,
+      runKind: runs.runKind,
+      acpSessionId: runs.acpSessionId,
+    })
+    .from(runs)
+    .where(eq(runs.id, childRunId));
+  const run = rows[0];
+
+  if (!run || run.runKind !== "agent") {
+    throw new MaisterError(
+      "PRECONDITION",
+      `run ${childRunId} is not an agent run`,
+    );
+  }
+
+  // Parked: claim NeedsInputIdle → Running (startAgentSession early-returns on
+  // any non-Running status), then respawn + resume + deliver the new prompt.
+  // Mirrors the agent-idle HITL resume CAS in lib/services/hitl.ts.
+  if (run.status === "NeedsInputIdle") {
+    const claimed: boolean = await _db.transaction(async (tx: Db) => {
+      const updated = await tx
+        .update(runs)
+        .set({ status: "Running", keepaliveUntil: null, checkpointAt: null })
+        .where(and(eq(runs.id, childRunId), eq(runs.status, "NeedsInputIdle")))
+        .returning({ id: runs.id });
+
+      return updated.length > 0;
+    });
+
+    if (!claimed) {
+      throw new MaisterError(
+        "CONFLICT",
+        `child run ${childRunId} is being resumed concurrently`,
+      );
+    }
+
+    await startAgentSession(childRunId, {
+      db: _db,
+      ...(opts.api ? { api: opts.api } : {}),
+      overridePrompt: prompt,
+    });
+
+    return { childRunId, status: "Running" };
+  }
+
+  // Live: deliver the prompt to the running session (its consumer re-parks it).
+  if (run.status === "Running") {
+    if (!run.acpSessionId) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `child run ${childRunId} has no live session handle yet`,
+      );
+    }
+
+    const live = (await listSessionsFn()).find(
+      (s) => s.status === "live" && s.acpSessionId === run.acpSessionId,
+    );
+
+    if (!live) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `child run ${childRunId} has no live supervisor session`,
+      );
+    }
+
+    const api = opts.api ?? defaultSupervisorApi;
+
+    await api.sendPrompt(live.sessionId, { stepId: "agent", prompt });
+
+    return { childRunId, status: "Running" };
+  }
+
+  throw new MaisterError(
+    "PRECONDITION",
+    `child run ${childRunId} is not re-messageable (status=${run.status})`,
+  );
+}
+
 async function recordAgentPermissionRequest(args: {
   db: Db;
   runId: string;
@@ -1335,7 +1549,14 @@ const defaultSupervisorApi: AgentSupervisorApi = {
 // prompt, then consume supervisor events until a terminal transition.
 export async function startAgentSession(
   runId: string,
-  opts: { db?: Db; api?: AgentSupervisorApi } = {},
+  // M36 Phase 8 (ADR-096): overridePrompt re-messages a parked persistent
+  // child with a fresh turn instead of rebuilding the definition prompt. The
+  // session resumes via run.acpSessionId and re-parks on the next end_turn.
+  opts: {
+    db?: Db;
+    api?: AgentSupervisorApi;
+    overridePrompt?: string;
+  } = {},
 ): Promise<void> {
   const _db = opts.db ?? getDb();
   const api = opts.api ?? defaultSupervisorApi;
@@ -1472,7 +1693,9 @@ export async function startAgentSession(
       });
     }
 
-    const prompt = await buildAgentPrompt(_db, effective.parsed, run);
+    const prompt =
+      opts.overridePrompt ??
+      (await buildAgentPrompt(_db, effective.parsed, run));
 
     const issuedToken = await issueAgentRunToken({
       agentId: agent.id,
@@ -1596,6 +1819,25 @@ export async function consumeAgentSession(args: {
 
           return;
         }
+
+        // M36 Phase 8 (ADR-096): a persistent swarm member PARKS on a NATURAL
+        // clean end_turn (exitCode 0, no reason) instead of finalizing — it
+        // stays addressable for the next re-message. An `intentional` DELETE
+        // (explicit cancel/stop) or any non-zero exit is a genuine teardown and
+        // finalizes terminally below. Look up persistent only on the clean exit.
+        if (event.exitCode === 0 && event.reason === undefined) {
+          const persistentRows = await args.db
+            .select({ persistent: runs.persistent })
+            .from(runs)
+            .where(eq(runs.id, args.runId));
+
+          if (persistentRows[0]?.persistent === true) {
+            await parkPersistentAgent(args.runId, { db: args.db });
+
+            return;
+          }
+        }
+
         await finalizeAgentRun(
           args.runId,
           event.exitCode === 0 || event.reason === "intentional"

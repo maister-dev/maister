@@ -45,8 +45,21 @@ const bodySchema = z
     title: z.string().min(1).optional(),
     workspace: z.enum(["none", "repo_read", "worktree"]).optional(),
     runnerOverride: z.string().min(1).optional(),
+    // M36 Phase 8 (ADR-096): a persistent child parks between turns and is
+    // re-addressable by `addressableKey`; the key is REQUIRED when persistent.
+    persistent: z.boolean().optional(),
+    addressableKey: z
+      .string()
+      .min(1)
+      .max(128)
+      .regex(/^[A-Za-z0-9._-]+$/)
+      .optional(),
   })
-  .strict();
+  .strict()
+  .refine((b) => !b.persistent || b.addressableKey !== undefined, {
+    message: "addressableKey is required when persistent is true",
+    path: ["addressableKey"],
+  });
 
 type DelegateBody = z.infer<typeof bodySchema>;
 
@@ -242,6 +255,8 @@ export async function POST(
           parentRunId,
           rootRunId,
           launchMode: "manual",
+          persistent: body.persistent ?? false,
+          addressableKey: body.addressableKey ?? null,
           trigger: { source: "manual" },
           db,
         });

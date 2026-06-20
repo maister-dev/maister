@@ -1279,6 +1279,12 @@ export const runs = pgTable(
       "delegation_snapshot",
     ).$type<DelegationSnapshot | null>(),
     launchMode: text("launch_mode", { enum: ["auto", "manual"] }),
+    // M36 Phase 8 (ADR-096, migration 0057): a persistent swarm member parks
+    // between turns (clean end_turn → NeedsInputIdle, acp_session_id retained)
+    // instead of finalizing, and is re-messaged by addressable_key within its
+    // orchestrator tree.
+    persistent: boolean("persistent").notNull().default(false),
+    addressableKey: text("addressable_key"),
   },
   (t) => ({
     idxProjectStatus: index("runs_project_status_idx").on(
@@ -1299,6 +1305,12 @@ export const runs = pgTable(
     uniqAgentTriggerEvent: uniqueIndex("runs_agent_trigger_event_uq")
       .on(t.agentId, t.triggerEventId)
       .where(sql`${t.triggerEventId} IS NOT NULL`),
+    // M36 Phase 8 (ADR-096): an addressable_key is unique within one
+    // orchestrator tree among persistent children — the partial-index backstop
+    // behind the launch.ts pre-insert check.
+    uniqRootAddressableKey: uniqueIndex("runs_root_addressable_key_uq")
+      .on(t.rootRunId, t.addressableKey)
+      .where(sql`${t.persistent} = true`),
   }),
 );
 
