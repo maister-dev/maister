@@ -121,6 +121,8 @@
 | [ADR-093](#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons) | Project onboarding — optional `maister.yaml`, host-ambient git auth, onboarding modes, advisory clone reasons | Accepted | 2026-06-17 |
 | [ADR-094](#adr-094-default-runner-materialization-honest-readiness-and-ccr-admin-lifecycle) | Default-runner materialization, honest readiness, and CCR admin lifecycle | Accepted | 2026-06-18 |
 | [ADR-095](#adr-095-flow-execution-control-policy--snapshotted-preset--composable-autonomy-axes-fail-closed-no-blind-ship) | Flow execution-control policy — snapshotted preset + composable autonomy axes, fail-closed, no-blind-ship | Accepted | 2026-06-20 |
+| [ADR-096](#adr-096-flow-studio-phase-c--editable-local-packages-variant-b-substrate-session-lock-member-rbac-git-backed-fork) | Flow Studio Phase C — editable local packages (Variant B): substrate, session lock, member RBAC, git-backed fork | Accepted | 2026-06-20 |
+| [ADR-097](#adr-097-docked-ai-authoring-assistant--project-less-scratch-at-local-package-run-m36-phase-5) | Docked AI authoring assistant — project-less scratch-at-local-package run (M36 Phase 5) | Accepted | 2026-06-20 |
 
 ---
 
@@ -7153,7 +7155,7 @@ per-instance stop to wire a UI button to.
 > `node scripts/validate-docs-adr-anchors.mjs` (`pnpm validate:docs` does not
 > resolve ADR anchors).
 
-### ADR-095: Flow Studio Phase C — editable local packages (Variant B): substrate, session lock, member RBAC, git-backed fork
+### ADR-096: Flow Studio Phase C — editable local packages (Variant B): substrate, session lock, member RBAC, git-backed fork
 
 **Date:** 2026-06-16
 **Status:** Accepted
@@ -7175,7 +7177,7 @@ per-instance stop to wire a UI button to.
 - Reuses the installer, attach pipeline, trust policy, the Phase B editor seam, the run keep-alive pattern, and `lib/worktree.ts` — the genuinely-new backend is the `local_packages` table + working-dir CRUD + the lock + the MCP-template editor.
 - A member can author and apply their own forks without admin rights, while platform git-package management stays admin-gated.
 - The git-backed working dir makes a fork a real branch, so the Phase-2 PR-back is additive (the schema already stores the source repo/ref/branch).
-- Migration `0055` adds `local_packages` (incl. lock + source columns). New env vars `MAISTER_LOCAL_PACKAGES_ROOT`, `MAISTER_LOCAL_PACKAGE_LOCK_MINUTES`; `.maister` stays host-only (no Docker mount, ADR-023) — documented, not wired.
+- Migration `0057` adds `local_packages` (incl. lock + source columns). New env vars `MAISTER_LOCAL_PACKAGES_ROOT`, `MAISTER_LOCAL_PACKAGE_LOCK_MINUTES`; `.maister` stays host-only (no Docker mount, ADR-023) — documented, not wired.
 
 **Alternatives Considered:**
 - **Content-hash ETag instead of a lock:** rejected by owner in favor of a session-scoped working-dir lock — clearer multi-tab semantics, no silent overwrite.
@@ -7189,7 +7191,7 @@ is extended without re-scoping it: (1) **both-grain fork** — a package-level
 fork (whole bundle → a new `<source>-local` package) AND an element-level fork
 (one flow/skill/agent/rule → the project's default package); (2) a **per-project
 default "virtual" local package** (`local_packages.is_default` + nullable
-`project_id`, migration `0056`, partial-unique `(project_id) WHERE is_default`)
+`project_id`, migration `0058`, partial-unique `(project_id) WHERE is_default`)
 that element-forks land in, created on first use (race-safe); (3) the
 **MCP-template editor** sources the platform MCP catalog but persists no
 provenance column — the catalog pick is **display-only**, materializing
@@ -7198,13 +7200,12 @@ installed bundle's bytes (excluding `.git`) and executes nothing; cut-version is
 two-phase (export+install before the durable stamp/attach, crash-window
 recoverable). See [`system-analytics/local-packages.md`](system-analytics/local-packages.md).
 
-> **Numbering note.** Renumbered from the Phase C draft to **ADR-095** when the
-> two Phase C commits were salvaged onto `main` (the onboarding and CCR ADRs had
-> already taken the prior numbers); the substrate migration was likewise
-> renumbered to **0055**. Run `node scripts/validate-docs-adr-anchors.mjs` after
-> any renumber.
+> **Numbering note.** This ADR is **ADR-096** and its substrate migration is
+> **0057** after M36 was rebased onto `main`: onboarding / CCR / execution-policy
+> had taken ADR-093–095, and execution-policy + scheduler had taken migrations
+> 0055 / 0056. Run `node scripts/validate-docs-adr-anchors.mjs` after any renumber.
 
-### ADR-096: Docked AI authoring assistant — project-less scratch-at-local-package run (M36 Phase 5)
+### ADR-097: Docked AI authoring assistant — project-less scratch-at-local-package run (M36 Phase 5)
 
 **Date:** 2026-06-20
 **Status:** Accepted
@@ -7226,7 +7227,7 @@ local-package `working_dir`. No `git worktree add`, no `workspaces` row, no new
 `PRECONDITION | CONFIG | CONFLICT`). The session runs IN the existing git-backed
 working dir; base branch/commit are read from it.
 
-1. **Nullable owner + launch snapshot (migration 0057).** `runs.project_id` and
+1. **Nullable owner + launch snapshot (migration 0059).** `runs.project_id` and
    `scratch_runs.project_id` become **nullable**. `scratch_runs.local_package_id`
    (FK `local_packages`, `ON DELETE CASCADE`) is the project-less owner;
    `runs.local_package_id` is the **launch-time snapshot** every terminal/read
@@ -7242,7 +7243,7 @@ working dir; base branch/commit are read from it.
    launch-override → **platform default** only (no project-default tier), and
    materializes a bare per-adapter capability profile (the flow-authoring skill
    is seeded by the Studio surface). Member-level RBAC (`requireActiveSession`,
-   per ADR-095). Counts against the scratch (flow-pool) concurrency cap.
+   per ADR-096). Counts against the scratch (flow-pool) concurrency cap.
 3. **Supervisor working-dir confinement.** The session-create input carries an
    optional `confineRoot`; when set it is the **SOLE** content-block file-URI
    allow-root (the run dir stays allowed for uploads), **replacing** the

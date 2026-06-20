@@ -3,7 +3,7 @@
 - **Type:** screen (artifact editor).
 - **Route(s):** `/flows/{projectSlug}/{capId}` (Phase B, project-authored caps).
   **Phase C adds `/studio/edit/{localPackageId}/{path}`** — the same 3-pane editor
-  over a local package's git-backed working dir (ADR-095), acquired under a
+  over a local package's git-backed working dir (ADR-096), acquired under a
   session edit-lock (a second session is read-only). Git packages are NOT edited
   here — they get a read-only preview + "Fork to local" on the package detail.
 - **Status:** Implemented (Phase B). Supersedes the tabs-in-a-form editor; the
@@ -102,7 +102,7 @@ Unchanged draft/publish backend (no new route in Phase B):
   CAS) — injectable via the load/save seam (default action).
 - Publish → `publishAuthoredFlowAction` (gated on a valid package).
 - Canvas/diff are server-compiled from the draft manifest at page load.
-- **(Phase C — Designed, ADR-095)** local-package edits at
+- **(Phase C — Designed, ADR-096)** local-package edits at
   `/studio/edit/{id}/{path}` save through the working-dir seam
   (`PUT /api/studio/local-packages/{id}/files/{path}`, atomic + path-confined)
   under a session lock; **"cut version"** (`POST .../cut-version`) replaces

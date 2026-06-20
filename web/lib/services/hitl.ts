@@ -680,7 +680,7 @@ async function handlePermissionResponse(
       await completeResponseAssignment(tx, assignmentClaim, { optionId });
       await args.recordSuccessAudit?.(tx, 200);
 
-      // ADR-096: a project-less local-package assistant run has no project to
+      // ADR-097: a project-less local-package assistant run has no project to
       // attribute this webhook to (webhook_events.project_id is NOT NULL and
       // consumers are project-scoped) — skip it.
       if (stamped.length > 0 && runRow.projectId) {
@@ -755,7 +755,7 @@ async function handlePermissionResponse(
           .set({ respondedAt: new Date() })
           .where(eq(hitlRequests.id, hitlRequestId));
 
-        // ADR-096: project-less assistant run ⇒ no project to attribute the
+        // ADR-097: project-less assistant run ⇒ no project to attribute the
         // terminal outbox events to (both emits require a non-null projectId).
         if (terminalRows.length > 0 && terminalRows[0].projectId) {
           await emitWebhookEvent({
@@ -1447,8 +1447,8 @@ export async function respondToHitl(
 
   // AUTHZ branch on actor kind
   if (actor.kind === "user") {
-    // ADR-096: a project-less local-package assistant run (projectId NULL)
-    // carries member-level RBAC (any active user, per ADR-095); a project run
+    // ADR-097: a project-less local-package assistant run (projectId NULL)
+    // carries member-level RBAC (any active user, per ADR-096); a project run
     // keeps its project-scoped answerHitl gate. requireActiveSession is already
     // enforced by the calling route, so this branch only needs the project gate.
     if (runRow.projectId) {

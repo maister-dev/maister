@@ -72,8 +72,8 @@ erDiagram
         jsonb trigger_payload "M34: webhook/event context, <= 32 KB"
         text agent_workspace "M34: none|repo_read|worktree (migration 0052) effective-axis snapshot"
         text task_id FK "nullable for scratch"
-        text project_id FK "NULLABLE (M36 0057): NULL for the project-less local-package assistant run"
-        text local_package_id FK "M36 0057: local_packages SET via CASCADE; set iff project-less (launch snapshot)"
+        text project_id FK "NULLABLE (M36 0059): NULL for the project-less local-package assistant run"
+        text local_package_id FK "M36 0059: local_packages SET via CASCADE; set iff project-less (launch snapshot)"
         text flow_id FK "nullable for scratch"
         text runner_id FK
         text runner_resolution_tier
@@ -231,8 +231,8 @@ erDiagram
 
     SCRATCH_RUNS {
         text run_id PK
-        text project_id FK "NULLABLE (M36 0057): exactly one of project_id / local_package_id (CHECK)"
-        text local_package_id FK "M36 0057: local_packages CASCADE; the project-less owner"
+        text project_id FK "NULLABLE (M36 0059): exactly one of project_id / local_package_id (CHECK)"
+        text local_package_id FK "M36 0059: local_packages CASCADE; the project-less owner"
         text name
         text initial_prompt
         text work_mode "auto|plan_first|manual_approval"
@@ -404,11 +404,11 @@ BY started_at DESC LIMIT 1`; designed run-attempt schema switches to
   (`WHERE project_id IS NOT NULL`) so the project-less local-package assistant
   rows never widen it; the primary key on `run_id` covers detail joins.
 - `scratch_runs_local_package_idx` on `(local_package_id, dialog_status)`
-  partial (`WHERE local_package_id IS NOT NULL`) — **(M36 0057)** active
+  partial (`WHERE local_package_id IS NOT NULL`) — **(M36 0059)** active
   local-package assistant lists.
 - `scratch_runs_owner_xor_check` CHECK
-  `(project_id IS NOT NULL) <> (local_package_id IS NOT NULL)` — **(M36 0057,
-  ADR-096)** a scratch run is owned by exactly one of a project / a local
+  `(project_id IS NOT NULL) <> (local_package_id IS NOT NULL)` — **(M36 0059,
+  ADR-097)** a scratch run is owned by exactly one of a project / a local
   package (never both, never neither). `runs.local_package_id` is the matching
   launch snapshot (FK `local_packages`, `ON DELETE CASCADE`).
 - `scratch_messages_run_sequence_uq` on `(run_id, sequence)` UNIQUE —

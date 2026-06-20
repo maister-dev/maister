@@ -646,7 +646,7 @@ async function loadObservatoryRows(
             {
               ...run,
               flowId: run.flowId,
-              // Inner join on flows ⇒ a flow run ⇒ non-null project (ADR-096).
+              // Inner join on flows ⇒ a flow run ⇒ non-null project (ADR-097).
               projectId: requireRunProjectId(run.projectId, run.id),
             },
           ],

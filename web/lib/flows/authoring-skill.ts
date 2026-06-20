@@ -1,6 +1,6 @@
 import "server-only";
 
-// M36 Phase 5 (ADR-096) T5.3: the `flow-authoring` skill shipped INTO the docked
+// M36 Phase 5 (ADR-097) T5.3: the `flow-authoring` skill shipped INTO the docked
 // local-package AI assistant session. The content is held in-memory (not read off
 // a bundled asset path — robust against the Next/Turbopack server-bundle layout)
 // and written verbatim into the session's per-adapter skill target at launch (see

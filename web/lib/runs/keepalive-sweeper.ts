@@ -326,7 +326,7 @@ export async function runPass2(db: Db): Promise<number> {
           and(eq(hitlRequests.runId, row.id), isNull(hitlRequests.respondedAt)),
         );
 
-      // ADR-096: a project-less local-package run has no project to attribute
+      // ADR-097: a project-less local-package run has no project to attribute
       // these project-scoped events to — skip the emits (its terminal row is
       // the record).
       if (updated[0].projectId) {

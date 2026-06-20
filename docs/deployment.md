@@ -117,7 +117,7 @@ capability imports are cached system-wide under `~/.maister/flows/` and
 host-run deployment these live on the operator's filesystem (no container
 mount). Auto-trust policy for capability imports is set via
 `MAISTER_TRUSTED_CAPABILITY_SOURCE_PREFIXES` (see `configuration.md`).
-**Editable local packages (M36, ADR-095)** keep their git-backed working dirs
+**Editable local packages (M36, ADR-096)** keep their git-backed working dirs
 under `MAISTER_LOCAL_PACKAGES_ROOT` (default `~/.maister/local`) — host-only,
 **not** a container/compose mount
 ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)),

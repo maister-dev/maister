@@ -98,7 +98,7 @@ describe("contentBlockUriViolation (supervisor URI confinement)", () => {
   });
 });
 
-// M36 Phase 5 (ADR-096): a project-less local-package assistant session pins to
+// M36 Phase 5 (ADR-097): a project-less local-package assistant session pins to
 // its single working dir via confineRoot, which REPLACES worktree ∪ repo.
 describe("contentBlockUriViolation — confineRoot (local-package session)", () => {
   const lpRoots = {

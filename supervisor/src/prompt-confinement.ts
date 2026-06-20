@@ -18,7 +18,7 @@ export type ConfinementRoots = {
   /** The run's `.maister/<slug>/runs/<runId>` dir — covers uploaded files. */
   runDir: string;
   /**
-   * M36 Phase 5 (ADR-096): the SOLE filesystem root for a project-less
+   * M36 Phase 5 (ADR-097): the SOLE filesystem root for a project-less
    * local-package assistant session (the local-package working dir). When set,
    * it REPLACES worktree ∪ repo as the allow-set (the run dir stays allowed for
    * uploaded files); a `file:` URI outside it is rejected.
@@ -64,7 +64,7 @@ export function contentBlockUriViolation(
 ): string | null {
   if (!blocks || blocks.length === 0) return null;
 
-  // ADR-096: a project-less session pins to its single working dir (+ run dir
+  // ADR-097: a project-less session pins to its single working dir (+ run dir
   // for uploads); otherwise the worktree ∪ repo ∪ run-dir allow-set.
   const allowed = (
     roots.confineRoot

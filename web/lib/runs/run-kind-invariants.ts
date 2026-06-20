@@ -16,7 +16,7 @@ export type RunKindInvariantInput = {
 export type RunScratchMetadataInvariantInput = {
   runKind: RunKind;
   scratchRunId: string | null;
-  // M36 Phase 5 (ADR-096): a scratch run owner is EXACTLY ONE of project /
+  // M36 Phase 5 (ADR-097): a scratch run owner is EXACTLY ONE of project /
   // local-package. The project-less (local-package) variant is the docked
   // authoring assistant rooted at a working dir; it has projectId=null +
   // localPackageId set. Omitted (undefined) on the legacy call sites = treated
@@ -58,7 +58,7 @@ export function assertRunScratchMetadataInvariant(
     );
   }
 
-  // ADR-096 XOR: a scratch run is owned by EXACTLY ONE of project /
+  // ADR-097 XOR: a scratch run is owned by EXACTLY ONE of project /
   // local-package. Only enforced when a caller supplies the owner pair (legacy
   // call sites that pass neither are the project variant by construction and
   // skip this check; the DB CHECK is the backstop on every row).
@@ -86,7 +86,7 @@ export function assertRunScratchMetadataInvariant(
   }
 }
 
-// M36 Phase 5 (ADR-096): `runs.project_id` is nullable ONLY for the project-less
+// M36 Phase 5 (ADR-097): `runs.project_id` is nullable ONLY for the project-less
 // scratch-at-local-package assistant run. Flow/agent/project-scratch code paths
 // never see that variant, so they narrow `string | null` → `string` here. A null
 // is an internal invariant breach (a project-less run reaching a project-scoped

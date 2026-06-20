@@ -1160,7 +1160,7 @@ export const runs = pgTable(
     taskId: text("task_id").references(() => tasks.id, {
       onDelete: "cascade",
     }),
-    // M36 Phase 5 (ADR-096): NULLABLE — a scratch-at-local-package assistant run
+    // M36 Phase 5 (ADR-097): NULLABLE — a scratch-at-local-package assistant run
     // has NO project (it is rooted at a local-package working dir). Every other
     // run kind (flow/agent/project scratch) still carries a project_id; the
     // project-less variant is the ONLY null case and carries local_package_id
@@ -1168,7 +1168,7 @@ export const runs = pgTable(
     projectId: text("project_id").references(() => projects.id, {
       onDelete: "cascade",
     }),
-    // M36 Phase 5 (ADR-096): launch-time snapshot of the local-package the
+    // M36 Phase 5 (ADR-097): launch-time snapshot of the local-package the
     // assistant session is rooted at; set iff this is a project-less scratch
     // run. Terminal/read paths read THIS snapshot, never re-deriving.
     localPackageId: text("local_package_id").references(
@@ -1496,7 +1496,7 @@ export const scratchRuns = pgTable(
     runId: text("run_id")
       .primaryKey()
       .references(() => runs.id, { onDelete: "cascade" }),
-    // M36 Phase 5 (ADR-096): NULLABLE — exactly one of project_id /
+    // M36 Phase 5 (ADR-097): NULLABLE — exactly one of project_id /
     // local_package_id is set (DB CHECK). A project scratch run keeps
     // project_id; a docked-assistant run rooted at a local-package working dir
     // sets local_package_id and leaves project_id NULL.
@@ -1574,7 +1574,7 @@ export const scratchRuns = pgTable(
     idxLocalPackage: index("scratch_runs_local_package_idx")
       .on(t.localPackageId, t.dialogStatus)
       .where(sql`${t.localPackageId} IS NOT NULL`),
-    // ADR-096: exactly one of project_id / local_package_id (never both, never
+    // ADR-097: exactly one of project_id / local_package_id (never both, never
     // neither). Mirrors local_packages' own (project_id XOR named) intent.
     ownerXorCheck: check(
       "scratch_runs_owner_xor_check",
@@ -2610,7 +2610,7 @@ export const projectPackageAttachments = pgTable(
   }),
 );
 
-// Editable local package (Flow Studio Phase C, Variant B, ADR-093): a
+// Editable local package (Flow Studio Phase C, Variant B, ADR-096): a
 // platform-scoped, git-backed working directory authored/forked artifacts live
 // in and `cut version` installs from. `working_dir` is NEVER projected to
 // clients. The lock columns mirror runs.keepalive_until for a session edit-lock.
@@ -2654,7 +2654,7 @@ export const localPackages = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
-    // M36 (ADR-095): per-project default "virtual" local package for element-level
+    // M36 (ADR-096): per-project default "virtual" local package for element-level
     // forks. project_id is NULL for named, platform-scoped local packages; a
     // default always names its owning project (CASCADE: a deleted project drops
     // its default). The partial-unique index enforces <=1 default per project.

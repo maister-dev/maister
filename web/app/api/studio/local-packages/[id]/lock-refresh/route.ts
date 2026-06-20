@@ -12,7 +12,7 @@ import { requireGlobalRole } from "@/lib/authz";
 import { acquireLock } from "@/lib/local-packages/lock";
 import { getLocalPackage } from "@/lib/local-packages/service";
 
-// (ADR-093, D10) Editor keep-alive — mirrors POST /api/runs/{runId}/activity.
+// (ADR-096, D10) Editor keep-alive — mirrors POST /api/runs/{runId}/activity.
 // Acquire-or-extend: idempotent, called on editor open AND on the heartbeat.
 // `heldByMe=false` in the response means another session holds a live lock
 // (the editor renders read-only); no 409 — the state is the signal.

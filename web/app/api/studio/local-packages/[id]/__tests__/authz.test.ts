@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// (ADR-095/096) Local-package Studio routes must gate MUTATIONS at member level
+// (ADR-096/096) Local-package Studio routes must gate MUTATIONS at member level
 // (requireGlobalRole — blocks disabled / forced-password-change / viewer) and
 // READS at requireActiveSession. The cited finding: PATCH/DELETE previously used
 // requireSession, which admits a disabled or must-change session. These pin the

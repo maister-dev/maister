@@ -564,7 +564,7 @@ export async function markScratchCrashed(args: {
       .set(scratchUpdate)
       .where(eq(scratchRuns.runId, args.runId));
 
-    // ADR-096: a project-less local-package assistant run has no project to
+    // ADR-097: a project-less local-package assistant run has no project to
     // attribute domain/webhook events to (both require a non-null projectId,
     // and the consumers are project-scoped). Skip the emits for it; the run's
     // own scratch_runs/runs terminal rows are the record.
@@ -1164,7 +1164,7 @@ export async function launchScratchRun(
   return step.value;
 }
 
-// --- M36 Phase 5 (ADR-096): docked AI authoring assistant ------------------
+// --- M36 Phase 5 (ADR-097): docked AI authoring assistant ------------------
 // A scratch-run ACP session rooted at a NON-project local-package working dir.
 // There is NO project, NO managed git worktree, NO `git worktree add`, NO
 // workspace row. The session's cwd + sole confinement root is the local
@@ -1173,7 +1173,7 @@ export async function launchScratchRun(
 // local_package_id carries the owner (DB XOR CHECK). runs.local_package_id is
 // the launch-time snapshot every terminal/read path reads.
 
-// ADR-096 access gate for a project-less local-package assistant run. The
+// ADR-097 access gate for a project-less local-package assistant run. The
 // project-scoped action gate does not apply (there is no project), so the run is
 // bound to its launching user (`runs.created_by_user_id`): only that user may
 // READ it, and only that user WHILE holding a live working-dir lock may DRIVE it
@@ -1285,7 +1285,7 @@ export async function launchLocalPackageAssistant(args: {
 }): Promise<ScratchRunResponse> {
   const db = getDb() as Db;
 
-  // Member-level RBAC (ADR-095): authoring a local package is any active user.
+  // Member-level RBAC (ADR-096): authoring a local package is any active user.
   await requireActiveSession();
 
   const pkg = await loadActiveLocalPackage(db, args.body.localPackageId);
@@ -1448,7 +1448,7 @@ export async function launchLocalPackageAssistant(args: {
       // (.maister/<slug>/runs/<runId>); it is kebab-case + unique by construction.
       projectSlug: pkg.slug,
       worktreePath: workingDir,
-      // ADR-096: the SOLE confinement root is the working dir (no repo/worktree
+      // ADR-097: the SOLE confinement root is the working dir (no repo/worktree
       // widening). A `file:` URI outside it is rejected supervisor-side.
       confineRoot: workingDir,
       stepId: scratchStepId(),
@@ -1595,7 +1595,7 @@ function localPackageAssistantResponse(args: {
   };
 }
 
-// ADR-096: the turn path needs the run's working dir (for attachment URI
+// ADR-097: the turn path needs the run's working dir (for attachment URI
 // confinement) and parent repo. A project scratch run reads them from its
 // `workspaces` row; a project-less local-package assistant run has NO workspace
 // row — its working dir is the local package's git-backed `working_dir`, which
@@ -1680,7 +1680,7 @@ async function appendScratchUserMessage(args: {
     throw new MaisterError("PRECONDITION", `run is not scratch: ${args.runId}`);
   }
 
-  // ADR-096: a project scratch run keeps its project-scoped action gate; a
+  // ADR-097: a project scratch run keeps its project-scoped action gate; a
   // project-less local-package assistant run is bound to its launching user AND
   // requires a live working-dir lock to drive a turn — so no other active user
   // (and not the launcher after a lock takeover) can write into the locked dir.
@@ -1733,7 +1733,7 @@ async function appendScratchUserMessage(args: {
     const uploadedAttachments =
       args.uploadedFiles.length > 0
         ? await (async () => {
-            // ADR-096: a project-less local-package assistant run has no
+            // ADR-097: a project-less local-package assistant run has no
             // project — the runtime/cost subtree is keyed by the local package
             // slug instead (mirrors the launch's createSession projectSlug).
             const slug = lockedRun.projectId
@@ -1808,7 +1808,7 @@ async function appendScratchUserMessage(args: {
       sequence,
       supervisorSessionId: scratch.supervisorSessionId as string,
       capabilityAgent: run.capabilityAgent,
-      // ADR-096: project-less ⇒ a local-package assistant run; its turn-failure
+      // ADR-097: project-less ⇒ a local-package assistant run; its turn-failure
       // path explicitly releases the supervisor deferred (see caller).
       isLocalPackageAssistant: !run.projectId,
       uploadedAttachments,
@@ -1873,7 +1873,7 @@ export async function sendScratchUserMessage(args: {
       throw err;
     }
 
-    // ADR-096: a local-package assistant turn failure explicitly releases any
+    // ADR-097: a local-package assistant turn failure explicitly releases any
     // open permission deferred by tearing down the supervisor session
     // (purgeSession cancels all pending deferreds), THEN marks crashed —
     // idempotent on an already-gone session. Project scratch runs keep their

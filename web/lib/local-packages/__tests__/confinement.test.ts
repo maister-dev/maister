@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { resolveWithinWorkingDir } from "../paths";
 
-// (ADR-093, D5) The path-confinement guard is the security boundary for every
+// (ADR-096, D5) The path-confinement guard is the security boundary for every
 // working-dir file op — UNTRUSTED, url/body-controlled `relPath`.
 describe("resolveWithinWorkingDir", () => {
   let root: string;

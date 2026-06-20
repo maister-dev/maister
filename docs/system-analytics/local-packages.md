@@ -3,7 +3,7 @@
 > Behavior SSOT for **editable local packages** — a platform-scoped, git-backed
 > working directory a member authors/forks artifacts in, edits in Flow Studio
 > under a session lock, and **cuts versions** from into the existing
-> package-install substrate. **Status: Designed (ADR-095).** Surface:
+> package-install substrate. **Status: Designed (ADR-096).** Surface:
 > [`../screens/studio/README.md`](../screens/studio/README.md) §Local workspace +
 > [`../screens/studio/editor.md`](../screens/studio/editor.md). Data:
 > [`../db/projects-domain.md`](../db/projects-domain.md).
@@ -32,7 +32,7 @@ git write-back to an upstream source (a PR from the fork branch — **Phase 2**)
   (`source_install_id`, `source_repo_url`, `source_ref`, `branch_name`), the most
   recent cut (`last_cut_install_id`), and the session lock (`locked_by_user_id`,
   `locked_by_session`, `lock_expires_at`).
-- **Per-project default ("virtual") local package** (M36, ADR-095): a
+- **Per-project default ("virtual") local package** (M36, ADR-096): a
   `local_packages` row with `is_default = true` and a non-NULL `project_id`. It
   is the landing spot for **element-level forks** — a member who forks one flow /
   skill / agent / rule out of an installed package does not name a package; the
@@ -273,7 +273,7 @@ with NO AI session present.
   `MaisterError("CONFLICT")` ("reload").
 - Invalid or missing working dir (manual deletion, bad scaffold) →
   `MaisterError("CONFIG")`.
-- Cut-version crash windows (ADR-095), the irreversible export+install happening
+- Cut-version crash windows (ADR-096), the irreversible export+install happening
   BEFORE the durable stamp/attach: **(a) export done, install not started** →
   only an orphan tmp dir (the `finally` rm covers the happy path), nothing
   persisted; **(b) install done, stamp not written** → an immutable
@@ -295,7 +295,7 @@ with NO AI session present.
 
 ## Linked artifacts
 
-- **ADRs:** ADR-095 (this domain), ADR-092 (unified Studio + editable-local-package
+- **ADRs:** ADR-096 (this domain), ADR-092 (unified Studio + editable-local-package
   direction), ADR-088 (package management), ADR-021 (fetch-then-execute trust
   separation) — see [`../decisions.md`](../decisions.md).
 - **ERD:** [`../db/projects-domain.md`](../db/projects-domain.md),

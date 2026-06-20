@@ -12,7 +12,7 @@ domain projects state onto it.
 - **Run** — `runs` row. FK to `tasks`, `projects`, `flows`,
   `executors`. `run_kind ∈ {flow, scratch, agent}`.
   - **`run_kind = scratch` — project-less local-package variant** (M36 Phase 5,
-    ADR-096): a scratch run rooted at a local-package `working_dir` with **no
+    ADR-097): a scratch run rooted at a local-package `working_dir` with **no
     project and no `workspaces` row**. `runs.project_id` is **NULL** and
     `runs.local_package_id` is the launch snapshot; `scratch_runs` carries the
     owner under a DB CHECK (exactly one of `project_id` / `local_package_id`).

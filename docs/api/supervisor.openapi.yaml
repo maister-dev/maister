@@ -987,7 +987,7 @@ components:
           minLength: 1
           maxLength: 4096
           description: |
-            (Implemented — M36 Phase 5, ADR-096) SOLE content-block file-URI
+            (Implemented — M36 Phase 5, ADR-097) SOLE content-block file-URI
             confinement root for a **project-less local-package assistant
             session** (the local package's `working_dir`). When set it REPLACES
             the worktree ∪ repo allow-set (the run dir stays allowed for

@@ -23,7 +23,7 @@ async function git(cwd: string, args: readonly string[]): Promise<void> {
   });
 }
 
-// (ADR-093, D12) git-init a fresh working dir on `branch` with one commit, so a
+// (ADR-096, D12) git-init a fresh working dir on `branch` with one commit, so a
 // local package is a real branch — the Phase-2 PR-back is then additive. Local
 // identity only (no network); a missing global git identity must not break it.
 export async function gitInitWithCommit(

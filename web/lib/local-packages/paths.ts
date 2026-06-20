@@ -6,13 +6,13 @@ import path from "node:path";
 import { MaisterError } from "@/lib/errors";
 import { localPackagesRoot } from "@/lib/instance-config";
 
-// (ADR-093) Absolute working-dir for a local package, derived from its slug —
+// (ADR-096) Absolute working-dir for a local package, derived from its slug —
 // symmetric with the flows/worktrees roots. NEVER projected to clients.
 export function localPackageWorkingDir(slug: string): string {
   return path.join(localPackagesRoot(), slug);
 }
 
-// (ADR-093) kebab a display name into a working-dir-safe slug stem.
+// (ADR-096) kebab a display name into a working-dir-safe slug stem.
 export function slugifyName(name: string): string {
   const base = name
     .toLowerCase()
@@ -23,7 +23,7 @@ export function slugifyName(name: string): string {
   return base.length > 0 ? base : "package";
 }
 
-// (ADR-093, D5) Confine an UNTRUSTED (url/body-controlled) artifact path to the
+// (ADR-096, D5) Confine an UNTRUSTED (url/body-controlled) artifact path to the
 // package working dir. Rejects absolute, leading-dash, NUL, `..`, and `.git/`
 // segments lexically, then re-checks against the realpath of the working dir and
 // of the resolved file's parent (symlink-escape guard). Throws PRECONDITION on

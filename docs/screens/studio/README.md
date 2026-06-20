@@ -257,7 +257,7 @@ twin (region 4) is the read-only variant of the same canvas.
   artifact (target = another local package, or a forked git package's local
   copy). Multiple named local packages allowed; the unnamed default is the
   virtual scratch package.
-- **Data:** the `local_packages` store (ADR-095) — a platform-scoped, git-backed
+- **Data:** the `local_packages` store (ADR-096) — a platform-scoped, git-backed
   working dir the file/graph editors edit in place under a session lock; cut
   versions reuse the installer. **Not** the `authored_capabilities` draft
   machinery (Variant B keeps platform scope clean); the authored kind enum is
@@ -279,7 +279,7 @@ twin (region 4) is the read-only variant of the same canvas.
   - **Standalone artifact kinds** — **files** in the working dir
     (`flows/ agents/ skills/ mcps/ rules/ schemas/`), each via its per-kind file
     editor. **Variant B is file-based — the authored kind enum
-    (`authored-schema.ts`) is NOT extended** (ADR-095 supersedes the earlier
+    (`authored-schema.ts`) is NOT extended** (ADR-096 supersedes the earlier
     "add `agent`/`mcp` kinds" note); only the MCP-template editor is genuinely
     new, and it sources from the platform MCP catalog (`platform_mcp_servers`).
   - **Cut local version** — install the local package working copy as a

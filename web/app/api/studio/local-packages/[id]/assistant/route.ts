@@ -13,7 +13,7 @@ import { assertHoldsLock } from "@/lib/local-packages/lock";
 import { getLocalPackage } from "@/lib/local-packages/service";
 import { launchLocalPackageAssistant } from "@/lib/scratch-runs/service";
 
-// M36 Phase 5 (ADR-096) T5.7: launch the docked authoring assistant for a local
+// M36 Phase 5 (ADR-097) T5.7: launch the docked authoring assistant for a local
 // package. `sessionId` is the editor's working-dir lock session — `assertHoldsLock`
 // gates the launch so the assistant runs UNDER the holder's lock (the run writes
 // as the lock holder; only the holder may spawn it). One ACP run per editor tab,

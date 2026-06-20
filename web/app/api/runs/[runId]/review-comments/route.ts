@@ -101,7 +101,7 @@ async function loadRun(
   const run = rows[0];
 
   // Review comments exist only on project (flow) runs; a project-less
-  // local-package assistant run (ADR-096) is not addressable here → not-found.
+  // local-package assistant run (ADR-097) is not addressable here → not-found.
   if (!run || !run.projectId) return null;
 
   return { ...run, projectId: run.projectId };

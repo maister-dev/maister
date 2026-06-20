@@ -76,7 +76,7 @@ export interface RunChangeSummaryResponse {
 
 export interface RunChangeSummaryAccess {
   runId: string;
-  // ADR-096: null for a project-less local-package assistant run. The route
+  // ADR-097: null for a project-less local-package assistant run. The route
   // rejects such runs (the project workspace-diff summary does not apply; the
   // Studio editor renders its own git-working-tree diff).
   projectId: string | null;
@@ -90,7 +90,7 @@ type LoadedRun = {
 };
 
 // The project-narrowed run handed to the workspace-diff helpers (after
-// getRunChangeSummary rejects the project-less local-package variant, ADR-096).
+// getRunChangeSummary rejects the project-less local-package variant, ADR-097).
 type LoadedRunWithProject = LoadedRun & { projectId: string };
 
 type LoadedWorkspace = {

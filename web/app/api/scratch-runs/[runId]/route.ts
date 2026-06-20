@@ -254,7 +254,7 @@ export async function GET(
     const db = getDb() as unknown as Db;
     const { run, scratch } = await loadScratchRun(db, runId);
 
-    // ADR-096: a project scratch run keeps its project-scoped read gate; a
+    // ADR-097: a project scratch run keeps its project-scoped read gate; a
     // project-less local-package assistant run is private to its launching user
     // (created_by_user_id) — any other active user is denied. No lock needed to
     // READ (a crashed transcript stays viewable after the editor lock lapses).

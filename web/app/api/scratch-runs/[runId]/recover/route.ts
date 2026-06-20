@@ -142,7 +142,7 @@ async function loadScratchRecoveryRows(db: Db, runId: string) {
     );
   }
 
-  // ADR-096: a project-less local-package assistant run has NO workspace row and
+  // ADR-097: a project-less local-package assistant run has NO workspace row and
   // NO project — its cwd + sole confinement root is the local package's
   // git-backed working_dir. Resolve a workspace-/project-SHAPED view (and carry
   // confineRoot) so the resume path stays uniform; a project run keeps its rows.
@@ -305,7 +305,7 @@ export async function POST(
       profile,
     } = await loadScratchRecoveryRows(db, runId);
 
-    // ADR-096: project scratch runs keep the project-scoped operate gate; a
+    // ADR-097: project scratch runs keep the project-scoped operate gate; a
     // project-less assistant run is bound to its launching user AND a live
     // working-dir lock — driving a resume writes into the locked dir.
     if (run.projectId) {
@@ -360,7 +360,7 @@ export async function POST(
       runId,
       projectSlug,
       worktreePath,
-      // ADR-096: re-assert the assistant's working-dir confinement on resume
+      // ADR-097: re-assert the assistant's working-dir confinement on resume
       // (undefined for project runs, preserving their prior behavior).
       confineRoot,
       stepId: scratchStepId(),

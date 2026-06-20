@@ -1349,7 +1349,7 @@ async function loadLifecycleContext(runId: string): Promise<LifecycleContext> {
     throw new MaisterError("PRECONDITION", `run not found: ${runId}`);
   }
   // Workbench lifecycle ops act on a project worktree; a project-less
-  // local-package assistant run (ADR-096) has none and is not a valid target.
+  // local-package assistant run (ADR-097) has none and is not a valid target.
   const projectId = requireRunProjectId(run.projectId, runId);
 
   const [projectRows, workspaceRows] = await Promise.all([
@@ -1502,7 +1502,7 @@ export async function recordDrop(args: RecordDropInput): Promise<void> {
         }
       }
 
-      // Workbench targets always carry a project (ADR-096); narrow for emit.
+      // Workbench targets always carry a project (ADR-097); narrow for emit.
       const eventProjectId = requireRunProjectId(
         updatedRunRows[0].projectId,
         args.runId,

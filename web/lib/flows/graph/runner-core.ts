@@ -58,7 +58,7 @@ export type RunFlowOptions = {
 };
 
 export type LoadedRun = {
-  // ADR-096: the graph/linear runner only loads flow runs (loadRun requires a
+  // ADR-097: the graph/linear runner only loads flow runs (loadRun requires a
   // task + flow + project), so project_id is non-null here even though the base
   // Run type made it nullable for the project-less local-package variant.
   run: RunRow & { projectId: string };
@@ -244,7 +244,7 @@ export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
   }
 
   return {
-    // project_id is guaranteed (a flow run always has a project; ADR-096).
+    // project_id is guaranteed (a flow run always has a project; ADR-097).
     run: { ...run, projectId: requireRunProjectId(run.projectId, runId) },
     task,
     flow,

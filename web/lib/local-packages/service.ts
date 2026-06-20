@@ -225,7 +225,7 @@ export async function getDefaultLocalPackage(
   return rows[0] ?? null;
 }
 
-// (M36 ADR-095) Resolve-or-create THE per-project default ("virtual") local
+// (M36 ADR-096) Resolve-or-create THE per-project default ("virtual") local
 // package that element-level forks land in. Race-safe by construction: the
 // scaffold + insert race on the partial-unique `(project_id) WHERE is_default`
 // index — `onConflictDoNothing` lets the loser fall through to a re-select of

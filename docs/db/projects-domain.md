@@ -157,7 +157,7 @@ erDiagram
     }
 ```
 
-Editable **local packages** **(Designed, ADR-095 — Phase C)** add a platform-scoped,
+Editable **local packages** **(Designed, ADR-096 — Phase C)** add a platform-scoped,
 git-backed working directory you author/fork artifacts in and **cut versions** from
 (the cut exports the dir cleanly and calls the same installer →
 a `local-<digest>` `package_installs` revision, which a project `member` then
@@ -181,11 +181,11 @@ mirror `runs.keepalive_until` for a session-scoped edit lock; `source_*` +
 - **(Implemented, ADR-088)** `project_package_attachments` UNIQUE on
   `(project_id, package_name)` — at most one attached version of a package per
   project.
-- **(Designed, ADR-095)** `local_packages.slug` UNIQUE — platform-scoped
+- **(Designed, ADR-096)** `local_packages.slug` UNIQUE — platform-scoped
   working-package identity; the working-dir name derives from it. `working_dir`
   is never exposed to the client; `source_install_id` / `last_cut_install_id`
   FKs are `SET NULL` on install delete (lineage is advisory, not load-bearing).
-- **(M36, migration `0056`)** `local_packages_default_per_project` — a
+- **(M36, migration `0058`)** `local_packages_default_per_project` — a
   **partial-unique** index on `(project_id) WHERE is_default` enforcing at most
   one default "virtual" local package per project. `project_id` (FK `projects`,
   CASCADE) is **nullable**: NULL for named, platform-scoped local packages; set

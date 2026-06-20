@@ -42,7 +42,7 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `tasks`                       | Board cards. Status `Backlog\|InFlight\|Done\|Abandoned`. Stage `Backlog\|Prepare`.                                                                                                                                                                                                                                        | `projects.id`                                                              |
 | `runs`                        | Execution attempts. Flow runs are task attempts; scratch runs are manual coding-agent sessions with `run_kind = "scratch"`. New launches store `runner_id`, `runner_resolution_tier`, `capability_agent`, and `runner_snapshot` for historical display/resume. **(ADR-085 — Designed, migration `0047`)** snapshots resolved delivery policy. | `tasks.id`, `projects.id`, `flows.id`, optional `platform_acp_runners.id` |
 | `workspaces`                  | `git worktree` instances tied to a run.                                                                                                                                                                                                                                                                                    | `runs.id`, `projects.id`                                                   |
-| `scratch_runs`                | Scratch-only metadata: dialog status, name, plan mode, links, branch base, target, and supervisor session. **(M36 `0057`, ADR-096)** `project_id` is NULLABLE; `local_package_id` is the project-less owner of a docked-assistant run (CHECK: exactly one of the two).                                                          | `runs.id`, optional `projects.id`, `local_packages.id`, `users.id`, optional `tasks.id` |
+| `scratch_runs`                | Scratch-only metadata: dialog status, name, plan mode, links, branch base, target, and supervisor session. **(M36 `0059`, ADR-097)** `project_id` is NULLABLE; `local_package_id` is the project-less owner of a docked-assistant run (CHECK: exactly one of the two).                                                          | `runs.id`, optional `projects.id`, `local_packages.id`, `users.id`, optional `tasks.id` |
 | `scratch_messages`            | Append-only dialog message ledger with monotonic sequence per scratch run.                                                                                                                                                                                                                                                 | `scratch_runs.run_id`                                                      |
 | `scratch_attachments`         | Text note, file path, or issue URL attachments attached to a scratch run or message.                                                                                                                                                                                                                                       | `scratch_runs.run_id`, optional `scratch_messages.id`                      |
 | `scratch_capability_profiles` | Launch-time MCP/skill/rule/settings/restriction snapshot and materialized profile path.                                                                                                                                                                                                                                    | `scratch_runs.run_id`                                                      |
@@ -62,7 +62,7 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `package_sources`             | **(Implemented — ADR-088, migration `0048`)** Platform package-source catalog: git monorepo URL (UNIQUE), enabled flag, cached `discovered` snapshot jsonb, `last_checked_at`.                                                                              | —                                                                          |
 | `package_installs`            | **(Implemented — ADR-088, migration `0048`)** Immutable installed package revisions. UNIQUE `(source_url, name, resolved_revision)`. Manifest + content inventory jsonb; two-phase `package_status`; package-level `trust_status`.                                                                              | —                                                                          |
 | `project_package_attachments` | **(Implemented — ADR-088, migration `0048`)** Per-project package enablement. UNIQUE `(project_id, package_name)`. FK to `package_installs` (restrict) + `projects` (cascade).                                                                              | `projects.id`, `package_installs.id`                                       |
-| `local_packages`              | **(Designed — ADR-095, migration `0055`)** Flow Studio Phase C editable local packages (Variant B): git-backed `working_dir` (server-only), `slug` UNIQUE, `status`, fork lineage (`source_install_id`/`source_repo_url`/`source_ref`/`branch_name`), `last_cut_install_id`, session lock (`locked_by_*`/`lock_expires_at`). **(M36, migration `0056`)** `project_id` (FK `projects`, CASCADE, nullable) + `is_default` for the per-project default virtual package (partial-unique `(project_id) WHERE is_default`). | `package_installs.id`, `users.id`, `projects.id`                           |
+| `local_packages`              | **(Designed — ADR-096, migration `0057`)** Flow Studio Phase C editable local packages (Variant B): git-backed `working_dir` (server-only), `slug` UNIQUE, `status`, fork lineage (`source_install_id`/`source_repo_url`/`source_ref`/`branch_name`), `last_cut_install_id`, session lock (`locked_by_*`/`lock_expires_at`). **(M36, migration `0058`)** `project_id` (FK `projects`, CASCADE, nullable) + `is_default` for the per-project default virtual package (partial-unique `(project_id) WHERE is_default`). | `package_installs.id`, `users.id`, `projects.id`                           |
 | `flow_graph_layouts`          | **(Removed — migration `0030`, ADR-064.)** Was a per-project graph-view position store (M22, migration `0024`); superseded by the authored `flow.yaml` `presentation` section. No table.                                                                                            | —                             |
 | `scheduler_jobs`              | **(M24 — Implemented, migration `0027`)** Durable fixed-interval scheduler job definitions for `system_sweep`, `command`, `agent_tick`, and `flow_run`. Atomic due-job claim advances `next_run_at` and creates one attempt.                                                                                                      | optional `projects.id`                                                     |
 | `scheduler_job_runs`          | **(M24 — Implemented, migration `0027`)** Scheduler attempt ledger with status, lease expiry, summary, and error fields. Expired `Claimed`/`Running` attempts are reaped before new claims.                                                                                                                                         | `scheduler_jobs.id`                                                        |
@@ -538,7 +538,7 @@ Multi-flow package grouping above the per-revision substrate. Process contract:
   in an attached package group. Attach/detach manage the group in one
   transaction; standalone rows keep the column null.
 
-## Local package tables (Designed — ADR-095, migration `0055`)
+## Local package tables (Designed — ADR-096, migration `0057`)
 
 Editable local packages (Flow Studio Phase C, Variant B). Process contract:
 [`system-analytics/local-packages.md`](system-analytics/local-packages.md); ERD:
@@ -558,7 +558,7 @@ Editable local packages (Flow Studio Phase C, Variant B). Process contract:
   edit lock (mirrors `runs.keepalive_until`): `locked_by_user_id` (FK `users`,
   SET NULL), `locked_by_session`, `lock_expires_at` (nullable; acquired on
   editor open, refreshed by keep-alive, lazy stale-takeover, no sweeper).
-  `created_by` (FK `users`, SET NULL), timestamps. **(M36, migration `0056`)**
+  `created_by` (FK `users`, SET NULL), timestamps. **(M36, migration `0058`)**
   `project_id` (FK `projects`, CASCADE; **nullable** — NULL for named,
   platform-scoped packages) + `is_default` (bool, default `false`): the
   per-project default "virtual" local package element-level forks land in. A
@@ -966,10 +966,10 @@ unread badge and inbox panel.
                                  //   terminal L3 enforcement gates off this,
                                  //   not the mutable catalog index
   taskId?,                       // nullable for scratch runs
-  projectId?,                    // M36 (migration 0057): NULLABLE — NULL for the
+  projectId?,                    // M36 (migration 0059): NULLABLE — NULL for the
                                  //   project-less local-package assistant run
-                                 //   (ADR-096); set for every other run
-  localPackageId?,               // M36 (migration 0057): FK -> local_packages.id
+                                 //   (ADR-097); set for every other run
+  localPackageId?,               // M36 (migration 0059): FK -> local_packages.id
                                  //   CASCADE; set iff project-less scratch run
                                  //   (launch-time snapshot read by terminal/read
                                  //   paths)
@@ -1232,10 +1232,10 @@ workspace and are needed by diff, promote, discard, and recovery.
 ```ts
 {
   runId,                         // PK + FK -> runs.id
-  projectId?,                    // FK -> projects.id; M36 (migration 0057)
+  projectId?,                    // FK -> projects.id; M36 (migration 0059)
                                  //   NULLABLE — NULL for a project-less
-                                 //   local-package assistant run (ADR-096)
-  localPackageId?,               // M36 (migration 0057): FK -> local_packages.id
+                                 //   local-package assistant run (ADR-097)
+  localPackageId?,               // M36 (migration 0059): FK -> local_packages.id
                                  //   CASCADE; the project-less owner. CHECK:
                                  //   exactly one of projectId / localPackageId
   name?,
@@ -1266,7 +1266,7 @@ workspace and are needed by diff, promote, discard, and recovery.
 `WaitingForUser`; `runs.status` remains the shared lifecycle enum. The mapping
 is defined in [`system-analytics/scratch-runs.md`](system-analytics/scratch-runs.md).
 
-**Project-less local-package variant (M36, migration 0057, ADR-096).** A docked
+**Project-less local-package variant (M36, migration 0059, ADR-097).** A docked
 AI authoring assistant run sets `localPackageId` and leaves `projectId` NULL —
 it is rooted at a local-package `working_dir` with no project and no
 `workspaces` row (it runs in the existing git-backed working dir;

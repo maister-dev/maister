@@ -17,7 +17,7 @@ export type StudioAiTabLabels = {
   lockRequired: string;
 };
 
-// M36 Phase 5 (ADR-096) T5.7: the docked AI authoring assistant tab. ONE ACP run
+// M36 Phase 5 (ADR-097) T5.7: the docked AI authoring assistant tab. ONE ACP run
 // per editor tab — the run id is held in this component's state for the editor
 // mount's lifetime, so toggling Properties⇆AI never relaunches. A 2nd browser
 // tab generates a fresh lock session that does NOT hold the working-dir lock, so

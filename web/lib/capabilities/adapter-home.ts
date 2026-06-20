@@ -226,7 +226,7 @@ async function copyBundleSkills(
 }
 
 /**
- * M36 Phase 5 (ADR-096) T5.3: seed the in-memory `flow-authoring` skill into a
+ * M36 Phase 5 (ADR-097) T5.3: seed the in-memory `flow-authoring` skill into a
  * docked local-package assistant session's per-adapter skill target, so the
  * agent discovers it as `/flow-authoring`. The assistant carries NO project
  * catalog and NO installed bundles, so this is the ONLY skill materialization on

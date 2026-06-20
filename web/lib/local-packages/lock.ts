@@ -25,7 +25,7 @@ function resolveDb(db?: Db): Db {
 
 const lp = schema.localPackages;
 
-// (ADR-093, D10) Session-scoped working-dir edit-lock. Mirrors
+// (ADR-096, D10) Session-scoped working-dir edit-lock. Mirrors
 // runs.keepalive_until: acquired on editor open, refreshed by keep-alive, lazy
 // stale-takeover (no sweeper). Holder label is a display name only — never the
 // session id.

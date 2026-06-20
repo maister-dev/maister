@@ -203,7 +203,7 @@ function seedScratchRun(
   return runId;
 }
 
-// ADR-096: a project-less local-package assistant run — NO workspace row, NO
+// ADR-097: a project-less local-package assistant run — NO workspace row, NO
 // project row; its workspace-like view + confineRoot come from the local
 // package's working_dir. `created_by_user_id` binds it to the launching user.
 function seedAssistantRun(

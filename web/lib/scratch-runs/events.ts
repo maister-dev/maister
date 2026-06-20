@@ -185,7 +185,7 @@ async function applyDialogStatus(args: {
   db: DbClientLike;
   runId: string;
   dialogStatus: ScratchDialogStatus;
-  // ADR-096: null for a project-less local-package assistant run — callers
+  // ADR-097: null for a project-less local-package assistant run — callers
   // guard the project-scoped emits on a non-null projectId.
 }): Promise<{ projectId: string | null } | null> {
   const now = new Date();
@@ -258,7 +258,7 @@ async function persistPermissionRequest(args: {
         supervisorEventId: String(args.event.monotonicId),
       });
 
-      // ADR-096: a project-less local-package run has no project to attribute
+      // ADR-097: a project-less local-package run has no project to attribute
       // these project-scoped webhooks to — skip them (the HITL row + scratch
       // dialog status are the live record; the assistant has no webhook subs).
       if (applied?.projectId) {
@@ -545,7 +545,7 @@ function startScratchEventConsumer(args: {
                 // Live scratch terminal path (not reconcile/markScratchCrashed):
                 // emit on the CAS winner only. Done/Abandoned arrive via
                 // promote/drop and are wired there; here only Crashed/Review.
-                // ADR-096: a project-less local-package run skips these
+                // ADR-097: a project-less local-package run skips these
                 // project-scoped emits (no project to attribute them to).
                 if (applied?.projectId && dialogStatus === "Crashed") {
                   await emitWebhookEvent({

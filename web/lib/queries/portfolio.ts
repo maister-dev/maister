@@ -493,7 +493,7 @@ export async function getPortfolio(
 
   for (const row of activeRunRows) {
     // The query filters by inArray(runs.projectId, projectIds), so a
-    // project-less local-package run (ADR-096) never appears; the guard narrows
+    // project-less local-package run (ADR-097) never appears; the guard narrows
     // the now-nullable column and is a defensive skip if one ever slips through.
     if (!row.projectId) continue;
     const projectId = row.projectId;
@@ -1166,7 +1166,7 @@ export async function getCrossProjectHitlInbox(
 
   const items: CrossProjectHitlItem[] = baseItems.map((item, idx) => {
     // The hitl query inner-joins projects + filters inArray(projectIds), so
-    // projectId is non-null (a project-less run has no hitl_requests, ADR-096).
+    // projectId is non-null (a project-less run has no hitl_requests, ADR-097).
     const projId = requireRunProjectId(rows[idx].projectId);
     const proj = projectById.get(projId) ?? { slug: projId, name: projId };
 

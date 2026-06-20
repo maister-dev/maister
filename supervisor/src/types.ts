@@ -170,7 +170,7 @@ export const StartSessionRequestSchema = z
     // references a repo-absolute path (web-confined to repo OR worktree) is not
     // rejected. Absent for runs that never send file references.
     repoPath: worktreePathSchema.optional(),
-    // M36 Phase 5 (ADR-096): SOLE content-block file-URI confinement root for a
+    // M36 Phase 5 (ADR-097): SOLE content-block file-URI confinement root for a
     // project-less local-package assistant session (the local-package working
     // dir). When set it replaces worktree ∪ repo as the allow-set. The cwd is
     // still `worktreePath` (= the working dir for these sessions).
@@ -396,7 +396,7 @@ export type SessionRecord = {
   // creation; a per-prompt caller cannot change them). See prompt-confinement.ts.
   worktreePath: string;
   repoPath?: string;
-  // ADR-096: project-less local-package session — the sole confinement root.
+  // ADR-097: project-less local-package session — the sole confinement root.
   confineRoot?: string;
   monotonicId: number;
   acpSessionId?: string;

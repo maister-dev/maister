@@ -309,7 +309,7 @@ export const getRunDetail = cache(async function getRunDetail(
   return {
     runId: row.runId,
     // The inner join on projects guarantees a project here; a project-less
-    // local-package run (ADR-096) matches zero rows and getRunDetail returns
+    // local-package run (ADR-097) matches zero rows and getRunDetail returns
     // null above, so this narrowing never throws on a real row.
     projectId: requireRunProjectId(row.projectId, row.runId),
     projectSlug: row.projectSlug,
@@ -892,7 +892,7 @@ export async function getRunCapabilityProfiles(
   const run = runRows[0];
 
   if (!run) return null;
-  // A project-less local-package run (ADR-096) has no project-scoped capability
+  // A project-less local-package run (ADR-097) has no project-scoped capability
   // imports/trust to attach — no capability-profile view applies.
   if (!run.projectId) return null;
   const projectId = run.projectId;

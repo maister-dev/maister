@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { test, expect } from "@playwright/test";
 
-// M36 Phase 5 (ADR-096) T5.9 — the docked AI authoring assistant walk: install a
+// M36 Phase 5 (ADR-097) T5.9 — the docked AI authoring assistant walk: install a
 // package, FORK it to a local package, land in /studio/edit, switch to the AI
 // tab, start the assistant, and confirm the conversation renders. The launch +
 // turn + project-less plumbing is exhaustively integration-tested

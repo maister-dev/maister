@@ -61,7 +61,7 @@ export type RunnerUsageReference =
   | {
       readonly kind: "activeRun";
       readonly runId: string;
-      // ADR-096: null for a project-less local-package assistant run (still
+      // ADR-097: null for a project-less local-package assistant run (still
       // pins its runner → still blocks deletion).
       readonly projectId: string | null;
       readonly runnerId: string;

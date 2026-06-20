@@ -2,7 +2,7 @@ import type { NextRequest } from "next/server";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// (ADR-096) A project-less local-package assistant run is bound to its launching
+// (ADR-097) A project-less local-package assistant run is bound to its launching
 // user AND a live working-dir lock. The cited finding: follow-up messages only
 // called requireActiveSession(), so ANY active user with the run id could drive
 // prompts into another editor's locked working dir. These pin the cross-user

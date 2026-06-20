@@ -18,7 +18,7 @@ the same web, database, supervisor, and worktree contracts as Flow runs.
   `task_id`, nullable `flow_id`, nullable `flow_revision_id`,
   `flow_version = "scratch"`, `flow_revision = "manual"`, and
   `created_by_user_id`.
-- **Project-less local-package assistant run** (M36 Phase 5, ADR-096) -
+- **Project-less local-package assistant run** (M36 Phase 5, ADR-097) -
   Implemented (backend foundation). A scratch run rooted at a local-package
   `working_dir` with **no project and no managed worktree**: `runs.project_id`
   and `scratch_runs.project_id` are **NULL**, `scratch_runs.local_package_id`

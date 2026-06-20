@@ -248,7 +248,7 @@ export async function reconcileRunCostRollups(
   }
 
   // The inner join above guarantees a project, so project_id is non-null here
-  // (a project-less local-package run matches zero rows → missing-run, ADR-096).
+  // (a project-less local-package run matches zero rows → missing-run, ADR-097).
   const projectId = requireRunProjectId(run.projectId, run.id);
 
   const costPath = path.join(

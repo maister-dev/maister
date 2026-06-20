@@ -12,7 +12,7 @@ import {
   toLocalPackageDto,
 } from "@/lib/local-packages/service";
 
-// (ADR-093) Local-package CRUD list/create. Create is member-level authoring
+// (ADR-096) Local-package CRUD list/create. Create is member-level authoring
 // (requireGlobalRole); listing requires an active session. `working_dir` is
 // never projected.
 const log = pino({

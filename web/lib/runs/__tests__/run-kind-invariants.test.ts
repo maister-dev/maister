@@ -98,7 +98,7 @@ describe("assertRunKindInvariant", () => {
     ).toThrow(MaisterError);
   });
 
-  // M36 Phase 5 (ADR-096): the project / local-package XOR.
+  // M36 Phase 5 (ADR-097): the project / local-package XOR.
   it("admits a project scratch run (projectId set, no local package)", () => {
     expect(() =>
       assertRunScratchMetadataInvariant({

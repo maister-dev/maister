@@ -68,7 +68,7 @@ export async function GET(
     );
     const access = await loadRunChangeSummaryAccess(runId);
 
-    // A project-less local-package assistant run (ADR-096) is not addressable
+    // A project-less local-package assistant run (ADR-097) is not addressable
     // through this project-scoped summary route — its diff is the Studio
     // editor's git-working-tree view, not a project workspace diff.
     if (!access || !access.projectId) {

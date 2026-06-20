@@ -1,6 +1,6 @@
 {
-	"id": "f72b9b7f-22e7-4a34-a610-41c32f76c1c6",
-	"prevId": "2ca28678-1d00-4a83-b078-90e5000fa7fb",
+	"id": "c0d4061c-ad8e-47a3-9709-1a6070833f37",
+	"prevId": "ef74e187-0a35-4707-93b3-474c397f4ee3",
 	"version": "7",
 	"dialect": "postgresql",
 	"tables": {
@@ -2417,7 +2417,7 @@
 			"checkConstraints": {
 				"domain_events_kind_check": {
 					"name": "domain_events_kind_check",
-					"value": "\"domain_events\".\"kind\" in ('task.created', 'task.comment_added', 'task.triage_requeued', 'run.done', 'run.failed', 'run.crashed', 'run.abandoned', 'gate.failed')"
+					"value": "\"domain_events\".\"kind\" in ('task.created', 'task.comment_added', 'task.triage_requeued', 'run.done', 'run.failed', 'run.crashed', 'run.abandoned', 'run.escalated', 'gate.failed')"
 				},
 				"domain_events_actor_type_check": {
 					"name": "domain_events_actor_type_check",
@@ -3585,9 +3585,39 @@
 					"primaryKey": false,
 					"notNull": true,
 					"default": "now()"
+				},
+				"project_id": {
+					"name": "project_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"is_default": {
+					"name": "is_default",
+					"type": "boolean",
+					"primaryKey": false,
+					"notNull": true,
+					"default": false
 				}
 			},
-			"indexes": {},
+			"indexes": {
+				"local_packages_default_per_project": {
+					"name": "local_packages_default_per_project",
+					"columns": [
+						{
+							"expression": "project_id",
+							"isExpression": false,
+							"asc": true,
+							"nulls": "last"
+						}
+					],
+					"isUnique": true,
+					"where": "\"local_packages\".\"is_default\"",
+					"concurrently": false,
+					"method": "btree",
+					"with": {}
+				}
+			},
 			"foreignKeys": {
 				"local_packages_source_install_id_package_installs_id_fk": {
 					"name": "local_packages_source_install_id_package_installs_id_fk",
@@ -3639,6 +3669,19 @@
 						"id"
 					],
 					"onDelete": "set null",
+					"onUpdate": "no action"
+				},
+				"local_packages_project_id_projects_id_fk": {
+					"name": "local_packages_project_id_projects_id_fk",
+					"tableFrom": "local_packages",
+					"tableTo": "projects",
+					"columnsFrom": [
+						"project_id"
+					],
+					"columnsTo": [
+						"id"
+					],
+					"onDelete": "cascade",
 					"onUpdate": "no action"
 				}
 			},
@@ -5380,6 +5423,12 @@
 					"primaryKey": false,
 					"notNull": false
 				},
+				"execution_policy_default": {
+					"name": "execution_policy_default",
+					"type": "jsonb",
+					"primaryKey": false,
+					"notNull": false
+				},
 				"task_key": {
 					"name": "task_key",
 					"type": "text",
@@ -6229,7 +6278,13 @@
 					"name": "project_id",
 					"type": "text",
 					"primaryKey": false,
-					"notNull": true
+					"notNull": false
+				},
+				"local_package_id": {
+					"name": "local_package_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
 				},
 				"flow_id": {
 					"name": "flow_id",
@@ -6353,6 +6408,13 @@
 					"type": "jsonb",
 					"primaryKey": false,
 					"notNull": false
+				},
+				"execution_policy": {
+					"name": "execution_policy",
+					"type": "jsonb",
+					"primaryKey": false,
+					"notNull": true,
+					"default": "'{\"preset\":\"supervised\"}'::jsonb"
 				}
 			},
 			"indexes": {
@@ -6511,6 +6573,19 @@
 					"tableTo": "projects",
 					"columnsFrom": [
 						"project_id"
+					],
+					"columnsTo": [
+						"id"
+					],
+					"onDelete": "cascade",
+					"onUpdate": "no action"
+				},
+				"runs_local_package_id_local_packages_id_fk": {
+					"name": "runs_local_package_id_local_packages_id_fk",
+					"tableFrom": "runs",
+					"tableTo": "local_packages",
+					"columnsFrom": [
+						"local_package_id"
 					],
 					"columnsTo": [
 						"id"
@@ -7242,7 +7317,13 @@
 					"name": "project_id",
 					"type": "text",
 					"primaryKey": false,
-					"notNull": true
+					"notNull": false
+				},
+				"local_package_id": {
+					"name": "local_package_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
 				},
 				"name": {
 					"name": "name",
@@ -7389,6 +7470,29 @@
 						}
 					],
 					"isUnique": false,
+					"where": "\"scratch_runs\".\"project_id\" IS NOT NULL",
+					"concurrently": false,
+					"method": "btree",
+					"with": {}
+				},
+				"scratch_runs_local_package_idx": {
+					"name": "scratch_runs_local_package_idx",
+					"columns": [
+						{
+							"expression": "local_package_id",
+							"isExpression": false,
+							"asc": true,
+							"nulls": "last"
+						},
+						{
+							"expression": "dialog_status",
+							"isExpression": false,
+							"asc": true,
+							"nulls": "last"
+						}
+					],
+					"isUnique": false,
+					"where": "\"scratch_runs\".\"local_package_id\" IS NOT NULL",
 					"concurrently": false,
 					"method": "btree",
 					"with": {}
@@ -7414,6 +7518,19 @@
 					"tableTo": "projects",
 					"columnsFrom": [
 						"project_id"
+					],
+					"columnsTo": [
+						"id"
+					],
+					"onDelete": "cascade",
+					"onUpdate": "no action"
+				},
+				"scratch_runs_local_package_id_local_packages_id_fk": {
+					"name": "scratch_runs_local_package_id_local_packages_id_fk",
+					"tableFrom": "scratch_runs",
+					"tableTo": "local_packages",
+					"columnsFrom": [
+						"local_package_id"
 					],
 					"columnsTo": [
 						"id"
@@ -7451,7 +7568,12 @@
 			"compositePrimaryKeys": {},
 			"uniqueConstraints": {},
 			"policies": {},
-			"checkConstraints": {},
+			"checkConstraints": {
+				"scratch_runs_owner_xor_check": {
+					"name": "scratch_runs_owner_xor_check",
+					"value": "(\"scratch_runs\".\"project_id\" IS NOT NULL) <> (\"scratch_runs\".\"local_package_id\" IS NOT NULL)"
+				}
+			},
 			"isRLSEnabled": false
 		},
 		"public.sessions": {
@@ -8210,6 +8332,12 @@
 				"promotion_mode": {
 					"name": "promotion_mode",
 					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"execution_policy": {
+					"name": "execution_policy",
+					"type": "jsonb",
 					"primaryKey": false,
 					"notNull": false
 				},

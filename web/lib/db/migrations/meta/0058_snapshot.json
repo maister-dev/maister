@@ -1,6 +1,6 @@
 {
-	"id": "f72b9b7f-22e7-4a34-a610-41c32f76c1c6",
-	"prevId": "2ca28678-1d00-4a83-b078-90e5000fa7fb",
+	"id": "ef74e187-0a35-4707-93b3-474c397f4ee3",
+	"prevId": "f72b9b7f-22e7-4a34-a610-41c32f76c1c6",
 	"version": "7",
 	"dialect": "postgresql",
 	"tables": {
@@ -3585,9 +3585,39 @@
 					"primaryKey": false,
 					"notNull": true,
 					"default": "now()"
+				},
+				"project_id": {
+					"name": "project_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"is_default": {
+					"name": "is_default",
+					"type": "boolean",
+					"primaryKey": false,
+					"notNull": true,
+					"default": false
 				}
 			},
-			"indexes": {},
+			"indexes": {
+				"local_packages_default_per_project": {
+					"name": "local_packages_default_per_project",
+					"columns": [
+						{
+							"expression": "project_id",
+							"isExpression": false,
+							"asc": true,
+							"nulls": "last"
+						}
+					],
+					"isUnique": true,
+					"where": "\"local_packages\".\"is_default\"",
+					"concurrently": false,
+					"method": "btree",
+					"with": {}
+				}
+			},
 			"foreignKeys": {
 				"local_packages_source_install_id_package_installs_id_fk": {
 					"name": "local_packages_source_install_id_package_installs_id_fk",
@@ -3639,6 +3669,19 @@
 						"id"
 					],
 					"onDelete": "set null",
+					"onUpdate": "no action"
+				},
+				"local_packages_project_id_projects_id_fk": {
+					"name": "local_packages_project_id_projects_id_fk",
+					"tableFrom": "local_packages",
+					"tableTo": "projects",
+					"columnsFrom": [
+						"project_id"
+					],
+					"columnsTo": [
+						"id"
+					],
+					"onDelete": "cascade",
 					"onUpdate": "no action"
 				}
 			},

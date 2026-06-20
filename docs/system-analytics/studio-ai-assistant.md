@@ -4,7 +4,7 @@
 > scratch-run ACP session rooted at a local-package working dir**. It reuses the
 > scratch-run substrate end-to-end but has **no project and no managed git
 > worktree** — the session's cwd and sole confinement root is the local
-> package's `working_dir`. **Status: Implemented (ADR-096) — backend foundation
+> package's `working_dir`. **Status: Implemented (ADR-097) — backend foundation
 > + the right-panel Properties⇆AI tab, live refresh, inline HITL, the
 > flow-authoring skill, and editor↔assistant lock coordination.** Related:
 > [`local-packages.md`](local-packages.md), [`scratch-runs.md`](scratch-runs.md),
@@ -26,7 +26,7 @@ it cannot assume a project exists.
 
 ## Domain entities
 
-- **Local package** — `local_packages` row (ADR-095). `working_dir` is the
+- **Local package** — `local_packages` row (ADR-096). `working_dir` is the
   git-backed directory under `localPackagesRoot()`; server-only, never sent to
   the client. The assistant launches against an `active` package.
 - **Assistant run** — a `runs` row with `run_kind = "scratch"`,
@@ -48,7 +48,7 @@ it cannot assume a project exists.
   redirect env. The skill content is in-memory (`lib/flows/authoring-skill.ts`),
   not read from a bundled asset path.
 
-## Data model (migration 0057, ADR-096)
+## Data model (migration 0059, ADR-097)
 
 ```mermaid
 erDiagram
@@ -117,7 +117,7 @@ sequenceDiagram
     participant Sup as Supervisor
 
     Editor->>Web: launch (localPackageId, prompt)
-    Web->>Web: requireActiveSession (member RBAC, ADR-095)
+    Web->>Web: requireActiveSession (member RBAC, ADR-096)
     Web->>DB: load local_packages (active) + platform-default runner
     Web->>Web: supervisor health + scratch capacity (flow pool)
     Web->>Web: read base branch/commit from working_dir git HEAD
@@ -215,7 +215,7 @@ The AI tab (`studio-ai-tab.tsx`):
   that does **not** hold the working-dir lock, so its launch is refused server-
   side (`assertHoldsLock`) — there is no second assistant for the same holder.
 - **No auto-GC of the working dir.** Consistent with the Phase C local-package
-  model (ADR-095): a local package's `working_dir` is removed only on explicit
+  model (ADR-096): a local package's `working_dir` is removed only on explicit
   delete; there is no background GC. The assistant run's rows cascade away when
   the local package is deleted (`local_package_id ON DELETE CASCADE`).
 
@@ -241,7 +241,7 @@ The AI tab (`studio-ai-tab.tsx`):
   `CONFLICT` (the editor surfaces its reload banner).
 - **HITL on a project-less run.** The permission respond path
   (`respondToHitl`) skips the project authz gate when `project_id IS NULL`
-  (member RBAC, ADR-095) and skips the project-scoped webhook/domain emits;
+  (member RBAC, ADR-096) and skips the project-scoped webhook/domain emits;
   delivery to the supervisor (`deliverPermission`) is unchanged. Form/human HITL
   never occurs on an assistant run (scratch sessions only raise `permission`).
 

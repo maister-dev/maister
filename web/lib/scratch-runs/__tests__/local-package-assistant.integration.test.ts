@@ -1,4 +1,4 @@
-// M36 Phase 5 (ADR-096): the project-less scratch-at-local-package run is the
+// M36 Phase 5 (ADR-097): the project-less scratch-at-local-package run is the
 // riskiest change in the plan — a run with runs.project_id NULL must NOT crash
 // any run_kind consumer. This suite is the fan-out guard against a real
 // Postgres testcontainer:
@@ -239,7 +239,7 @@ async function seedLocalPackageRun(
   return runId;
 }
 
-describe("scratch_runs owner XOR CHECK (ADR-096)", () => {
+describe("scratch_runs owner XOR CHECK (ADR-097)", () => {
   it("accepts a project-less local-package row (local_package_id only)", async () => {
     const runId = await seedLocalPackageRun();
     const rows = await db
@@ -327,7 +327,7 @@ describe("scratch_runs owner XOR CHECK (ADR-096)", () => {
   });
 });
 
-describe("run-kind-invariants admit the project-less variant (ADR-096)", () => {
+describe("run-kind-invariants admit the project-less variant (ADR-097)", () => {
   it("admits a local-package-only scratch run", () => {
     expect(() =>
       assertRunScratchMetadataInvariant({
@@ -340,7 +340,7 @@ describe("run-kind-invariants admit the project-less variant (ADR-096)", () => {
   });
 });
 
-describe("launch snapshots runs.local_package_id (ADR-096)", () => {
+describe("launch snapshots runs.local_package_id (ADR-097)", () => {
   it("carries the local package id on the runs row", async () => {
     const runId = await seedLocalPackageRun();
     const rows = await db
@@ -360,7 +360,7 @@ describe("launch snapshots runs.local_package_id (ADR-096)", () => {
   });
 });
 
-describe("reconcile does NOT crash a project-less run (ADR-096)", () => {
+describe("reconcile does NOT crash a project-less run (ADR-097)", () => {
   it("leaves a project-less run untouched even with NO worktree and NO live session", async () => {
     const runId = await seedLocalPackageRun({ status: "Running" });
 
@@ -411,7 +411,7 @@ describe("reconcile does NOT crash a project-less run (ADR-096)", () => {
   });
 });
 
-describe("terminal transition emits nothing project-scoped (ADR-096)", () => {
+describe("terminal transition emits nothing project-scoped (ADR-097)", () => {
   it("markScratchCrashed crashes a project-less run without a domain/webhook emit", async () => {
     const runId = await seedLocalPackageRun({ status: "Running" });
 
@@ -448,7 +448,7 @@ describe("terminal transition emits nothing project-scoped (ADR-096)", () => {
   });
 });
 
-describe("project-less rows are invisible to project-scoped queries (ADR-096)", () => {
+describe("project-less rows are invisible to project-scoped queries (ADR-097)", () => {
   it("a project-less scratch run never appears with a non-null project_id", async () => {
     await seedLocalPackageRun();
 
@@ -463,7 +463,7 @@ describe("project-less rows are invisible to project-scoped queries (ADR-096)", 
 
 // --- T5.9: launch + turn at a real local-package working dir ----------------
 
-describe("launchLocalPackageAssistant + a turn (ADR-096 T5.7)", () => {
+describe("launchLocalPackageAssistant + a turn (ADR-097 T5.7)", () => {
   it("launches at the working dir, and a turn that writes a file is reflected in the diff", async () => {
     const pkg = await createLocalPackage({
       name: `assistant-launch-${randomUUID().slice(0, 8)}`,
@@ -592,7 +592,7 @@ describe("launchLocalPackageAssistant + a turn (ADR-096 T5.7)", () => {
   });
 });
 
-describe("deferred-release on a failure path (ADR-096 T5.6)", () => {
+describe("deferred-release on a failure path (ADR-097 T5.6)", () => {
   it("a launch turn failure tears down the supervisor session (releasing any deferred)", async () => {
     const pkg = await createLocalPackage({
       name: `assistant-fail-${randomUUID().slice(0, 8)}`,
