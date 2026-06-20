@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The orchestrator engine (**Designed**, ADR-095/ADR-096, M36) gives a running
+The orchestrator engine (**Implemented**, ADR-095/ADR-096, M36) gives a running
 agent governed **dynamic delegation**: an `orchestrator` flow node is a
 long-lived supervisory step that spawns and coordinates child Runs, parks
 (idle-checkpoints) while they execute, and reaches a terminal verdict only when
@@ -24,37 +24,37 @@ ADR-041/ADR-043 — [flow-settings.md](flow-settings.md)).
 
 ## Domain entities
 
-- **Orchestrator node** (Designed) — an `orchestrator` flow node (engine floor
+- **Orchestrator node** (Implemented) — an `orchestrator` flow node (engine floor
   `1.6.0`) in a `FlowGraph`. Carries `action.prompt`, inherits the `ai_coding`
   capability `settings` shape, plus a `delegation` sub-block (`max_fanout?`,
   `max_depth?`). Executes as an ACP session like an `ai_coding` node, but with a
   **supervisory** lifecycle: park → delegate → `WaitingOnChildren` → resume →
   complete → downstream transition. Recorded in the `node_attempts` ledger under
   the new `node_attempts.node_type = orchestrator`. See [flow-dsl.md](../flow-dsl.md).
-- **Run-tree** (Designed) — child Runs linked to their parent by
+- **Run-tree** (Implemented) — child Runs linked to their parent by
   `runs.parent_run_id` (FK→`runs`, on-delete set-null) and to the orchestrator at
   the top of the tree by `runs.root_run_id` (FK→`runs`). A child may itself be an
   orchestrator (bounded by `MAISTER_ORCHESTRATOR_MAX_DEPTH`). See
   [db/runs-domain.md](../db/runs-domain.md).
-- **`runs.delegation_snapshot`** (Designed) — jsonb on the child run holding
+- **`runs.delegation_snapshot`** (Implemented) — jsonb on the child run holding
   **only** the effective agent-definition id + pinned revision resolved at spawn;
   the resolved runner stays in the existing `runs.runner_snapshot` (never
   duplicated). The terminal/enforcement path reads the snapshot, never a drifting
   live projection.
-- **`runs.launch_mode`** (Designed) — `auto` | `manual`. `run_plan`-emitted child
+- **`runs.launch_mode`** (Implemented) — `auto` | `manual`. `run_plan`-emitted child
   tasks are `auto` (the auto-launcher and cancel-cascade key on this); manually
   launched runs are `manual`.
-- **`WaitingOnChildren` run status** (Designed) — a `runs.status` value for an
+- **`WaitingOnChildren` run status** (Implemented) — a `runs.status` value for an
   orchestrator that has yielded awaiting children. Holds **no** scheduler slot
   (the agent idle-checkpoints); allow-listed in every run-status consumer (read
   models, board, sweeps, guards) and **excluded** from the
   `MAISTER_MAX_CONCURRENT_AGENTS` cap. See [runs.md](runs.md).
-- **`requires` task relation** (Designed) — a success-gated `task_relations.kind`:
+- **`requires` task relation** (Implemented) — a success-gated `task_relations.kind`:
   releases a dependent **only** when the required task is `Done`; `Failed` /
   `Abandoned` keeps it blocked and wakes the orchestrator. Distinct from
   `depends_on` / `blocks` (release on Done **and** Abandoned) and `parent_of`
   (never gates). See [social-board.md](social-board.md).
-- **Delegation toolset** (Designed) — `run_delegate` / `run_plan` / `run_collect`
+- **Delegation toolset** (Implemented) — `run_delegate` / `run_plan` / `run_collect`
   / `run_cancel`, exposed over the maister MCP facade and reachable only from an
   `orchestrator` session via a per-launch ephemeral `agent:<id>` token scoped
   `runs:delegate`. See [`../api/external/operations.openapi.yaml`](../api/external/operations.openapi.yaml)
@@ -64,7 +64,7 @@ ADR-041/ADR-043 — [flow-settings.md](flow-settings.md)).
 
 The orchestrator-run execution axis. The base run FSM is in [runs.md](runs.md);
 this diagram shows only the `WaitingOnChildren` wait/resume cycle that M36 adds.
-All transitions Designed.
+All transitions Implemented.
 
 ```mermaid
 stateDiagram-v2
@@ -87,7 +87,7 @@ converge to a single resume.
 
 ## Process flows
 
-### (a) as-run / as-task delegation (Designed)
+### (a) as-run / as-task delegation (Implemented)
 
 The orchestrator calls `run_delegate` over the facade; the ext route hands the
 **web tier** the transaction (run row + task/relation rows), and the supervisor
@@ -113,7 +113,7 @@ sequenceDiagram
     Note over S: spawn failure leaves child Pending for reconcile (no stuck parent)
 ```
 
-### (b) as-plan task-DAG with `requires` success-gate + auto-launcher (Designed)
+### (b) as-plan task-DAG with `requires` success-gate + auto-launcher (Implemented)
 
 `run_plan` validates the DAG **before** any write (acyclic, fan-out, depth), then
 emits N child tasks + M `requires` relations in **one** transaction, all
@@ -135,7 +135,7 @@ flowchart TD
     Q -- a required blocker Failed/Abandoned --> WK[do NOT release - wake the orchestrator]
 ```
 
-### (c) idle-checkpoint wait then child-terminal resume — the inbox (Designed)
+### (c) idle-checkpoint wait then child-terminal resume — the inbox (Implemented)
 
 When the orchestrator yields awaiting children it transitions
 `Running → WaitingOnChildren`, checkpoints, and releases its agent-pool slot. A
@@ -161,7 +161,7 @@ sequenceDiagram
     Note over R: concurrent manual-resume + event-resume converge to one (CONFLICT on the loser)
 ```
 
-### (d) cancel / abandon cascade down the run-tree (Designed)
+### (d) cancel / abandon cascade down the run-tree (Implemented)
 
 Stopping, abandoning, or dropping an orchestrator run cascades to its children in
 one transaction; every cascaded terminal honors `promoteNextPending`.
@@ -267,7 +267,7 @@ flowchart TD
 - **Catalog/trust + run substrate:** [agents.md](agents.md)
   (`resolveEffectiveAgentDefinition`, ephemeral agent tokens), [runs.md](runs.md)
   (base FSM, `run_kind`), [scheduler.md](scheduler.md) (cap, `promoteNextPending`).
-- **Source (Designed):** `web/lib/flows/graph/runner-graph.ts` (orchestrator node
+- **Source (Implemented):** `web/lib/flows/graph/runner-graph.ts` (orchestrator node
   dispatch + supervisory lifecycle), `web/lib/social/relations.ts` (`requires`
   success-gate), `web/lib/runs/launchability.ts` (shared classifier wiring),
   `web/lib/domain-events/consumers.ts` (auto-launcher + orchestrator-resume),

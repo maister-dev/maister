@@ -59,6 +59,8 @@ erDiagram
         text runner_id FK "M34: verdict runner, SET NULL"
         text target_branch "M34: verdict branch, nullable"
         text promotion_mode "M34: local_merge|pull_request, nullable"
+        text launch_mode "M36: auto|manual nullable — as-plan child task (ADR-095, 0056)"
+        jsonb delegation_spec "M36: as-plan delegation spec for run_plan children (ADR-095, 0056)"
         timestamp created_at
         timestamp updated_at
     }
@@ -82,6 +84,9 @@ erDiagram
         text root_run_id FK "M36: runs(id) — run-tree root (ADR-095, 0055)"
         jsonb delegation_snapshot "M36: {agentDefinitionId,revisionId} only (ADR-095, 0055)"
         text launch_mode "M36: auto|manual nullable (ADR-095, 0055)"
+        boolean persistent "M36: addressable long-lived child, DEFAULT false (ADR-096, 0057)"
+        text addressable_key "M36: star-routing key, unique per tree when persistent (ADR-096, 0057)"
+        text workspace_mode "M36: own|shared run-tree worktree, nullable (ADR-096, 0058)"
         text status "Pending|Running|NeedsInput|NeedsInputIdle|HumanWorking|WaitingOnChildren|Review|Crashed|Done|Abandoned|Failed"
         text acp_session_id "resume handle (ACP session/resume)"
         text current_step_id "runner cursor"
@@ -395,11 +400,16 @@ BY started_at DESC LIMIT 1`; designed run-attempt schema switches to
 - `runs_kind_task_idx` on `(run_kind, task_id)` — board/latest
   attempt queries that explicitly filter `run_kind = 'flow'` and exclude
   scratch rows with nullable `task_id`.
-- `runs_parent_run_id_idx` on `(parent_run_id)` — **(M36, Designed)**
+- `runs_parent_run_id_idx` on `(parent_run_id)` — **(M36, Implemented)**
   orchestrator run-tree child lookups (`parent_run_id` FK → `runs`,
   ON DELETE SET NULL).
-- `runs_root_run_id_idx` on `(root_run_id)` — **(M36, Designed)**
+- `runs_root_run_id_idx` on `(root_run_id)` — **(M36, Implemented)**
   whole-tree queries from the run-tree root.
+- `runs_root_addressable_key_uq` partial UNIQUE on
+  `(root_run_id, addressable_key) WHERE persistent = true` —
+  **(M36, Implemented, migration 0057, ADR-096)** one persistent child per
+  `addressable_key` within a run-tree; backs star-routed messaging address
+  resolution.
 - `runs_agent_trigger_event_unique` partial UNIQUE on
   `(agent_id, trigger_event_id) WHERE trigger_event_id IS NOT NULL` —
   **(M34)** the outbox→spawn no-dup claim: at-least-once event

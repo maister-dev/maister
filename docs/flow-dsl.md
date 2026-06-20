@@ -462,9 +462,9 @@ nodes:
 `compat.engine_min >= 1.5.0`, else `CONFIG`; `MAISTER_ENGINE_VERSION` bumps
 `1.4.0 → 1.5.0`. Flows without the key stay valid at any `engine_min`.
 
-## Node `orchestrator` (M36 — Designed)
+## Node `orchestrator` (M36 — Implemented)
 
-**(M36 — Designed, [ADR-095](decisions.md#adr-095-orchestrator-engine--supervisory-node-governed-run-tree-delegation-toolset-success-gated-task-dag-idle-checkpoint-waitresume).)**
+**(M36 — Implemented, [ADR-095](decisions.md#adr-095-orchestrator-engine--supervisory-node-governed-run-tree-delegation-toolset-success-gated-task-dag-idle-checkpoint-waitresume).)**
 `type: orchestrator` is a long-lived **SUPERVISORY** node, not a run-to-terminal
 step. The flow **parks** on it: the node spawns and coordinates **child Runs**,
 idle-checkpoints while blocked (run status `WaitingOnChildren`, which holds **no**

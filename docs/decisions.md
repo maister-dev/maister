@@ -7266,11 +7266,16 @@ default 3), so a long-lived coordinator must not hold a scheduler slot while blo
 - **Mesh messaging (direct child↔child):** rejected (deferred to ADR-096 as
   star-only) — star-through-orchestrator keeps every hop auditable on one node.
 
-> **Numbering note.** ADR-095/096 + migrations 0055/0056 were the next-free numbers
-> on `feature/orchestrator-engine` off main @757a5e9e (last ADR-094, last migration
-> 0054). A renumber pass against main's HEAD is a Phase-12 deliverable before merge;
-> run `node scripts/validate-docs-adr-anchors.mjs` after any renumber (`pnpm
-> validate:docs` does not resolve ADR anchors).
+> **Numbering note.** ADR-095/096 were the next-free ADR numbers on
+> `feature/orchestrator-engine` off main @757a5e9e (last ADR-094). The branch
+> shipped FOUR migrations as M36 grew: **0055** (run-tree foundation, ADR-095),
+> **0056** (as-plan `tasks.launch_mode`/`delegation_spec`, ADR-095), **0057**
+> (`runs.persistent`/`addressable_key`, ADR-096), **0058** (`runs.workspace_mode`,
+> ADR-096) — all still next-free vs main's HEAD at the Phase-12 check (main at
+> migration 0054 / ADR-094, advanced only by `fix(runs)` commits). A renumber pass
+> against main's HEAD at merge time remains a pre-merge deliverable IF main claims
+> 0055+/ADR-095+ first; run `node scripts/validate-docs-adr-anchors.mjs` after any
+> renumber (`pnpm validate:docs` does not resolve ADR anchors).
 
 ---
 
@@ -7282,12 +7287,12 @@ default 3), so a long-lived coordinator must not hold a scheduler slot while blo
 task-DAG + wait/resume). Layer 2 turns ephemeral child runs into a coordinated,
 addressable **swarm**: a child you can re-message over time, inter-agent results
 routed through the orchestrator, shared vs own worktrees, and reviewer read-only
-roles. Migration 0056.
+roles. Migrations 0057 (persistent/addressable_key) + 0058 (workspace_mode).
 
 **Decision:**
 1. **Persistent addressable child sessions.** Reuse the scratch-session lifecycle
    (`scratchRuns.acpSessionId`, `classifyScratchRecovery`) so an orchestrator child
-   can receive a follow-up message after it parked. Migration 0056 adds a
+   can receive a follow-up message after it parked. Migration 0057 adds a
    `persistent`/`addressable_key` axis on the child run so the orchestrator can
    address it. **Sleep = idle-checkpoint; wake = `session/resume`.**
 2. **Re-message tool.** `run_message` (or a `run_delegate` extension) sends a

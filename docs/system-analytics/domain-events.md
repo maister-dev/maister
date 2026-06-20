@@ -37,7 +37,7 @@ borrows ([scheduler.md](scheduler.md)).
   `triage_requeued` activity in one transaction, ADR-089). Extension rule:
   one taxonomy entry + emit site(s) in the owning domain transaction + one
   doc row + a CHECK update via migration.
-  **(M36 — Designed, ADR-095)** No new kind is added for the orchestrator
+  **(M36 — Implemented, ADR-095)** No new kind is added for the orchestrator
   engine. Instead the four run-terminal kinds (`run.done`, `run.failed`,
   `run.crashed`, `run.abandoned`) have their `payload` **widened** with
   `parent_run_id` (the emitting run's `runs.parent_run_id`; `null` for a
@@ -63,7 +63,7 @@ borrows ([scheduler.md](scheduler.md)).
   the `Pending` agent run under the partial UNIQUE
   `(agent_id, trigger_event_id)` — at-least-once redelivery converges to
   exactly one run. See [agents.md](agents.md).
-- **`orchestrator_resume` consumer** (M36 — Designed, ADR-095) — the
+- **`orchestrator_resume` consumer** (M36 — Implemented, ADR-095) — the
   orchestrator-engine consumer (`startFrom: "now"`) reacting to the
   run-terminal kinds (`run.done`, `run.failed`, `run.crashed`,
   `run.abandoned`). Using the `parent_run_id` widened onto each run-terminal
@@ -193,7 +193,7 @@ flowchart TD
   at claim; a zombie advance after lease reap + reclaim MUST no-op.
 - Delivery MUST be at-least-once: a handler failure or a crash before advance
   MUST redeliver the same window on a later tick; consumers MUST be idempotent.
-  **(M36 — Designed, ADR-095)** the `orchestrator_resume` consumer MUST route a
+  **(M36 — Implemented, ADR-095)** the `orchestrator_resume` consumer MUST route a
   run-terminal fact by `parent_run_id` to resume the parent (out of
   `WaitingOnChildren`) and to clear `requires` blockers (released only on
   `Done`), and MUST fold any auto-launch into the advisory-locked
@@ -213,7 +213,7 @@ flowchart TD
   `addTaskComment`, `runPass2`) MUST emit the domain event in their existing or
   newly-wrapped transaction.
 - `domain_events.payload` MUST carry ids, keys, titles, and statuses only —
-  never secrets, env values, tokens, or raw agent output. **(M36 — Designed,
+  never secrets, env values, tokens, or raw agent output. **(M36 — Implemented,
   ADR-095)** the four run-terminal payloads MUST additionally carry
   `parent_run_id` (the emitting run's `runs.parent_run_id`, `null` when
   parentless) WITHOUT introducing a new kind.
@@ -241,7 +241,7 @@ flowchart TD
 ## Linked artifacts
 
 - **Decision:** [ADR-086](../decisions.md#adr-086-domain-event-outbox-as-the-shared-trigger-bus).
-- **Orchestrator consumer (M36 — Designed):** [ADR-095](../decisions.md#adr-095-orchestrator-engine--supervisory-node-governed-run-tree-delegation-toolset-success-gated-task-dag-idle-checkpoint-waitresume)
+- **Orchestrator consumer (M36 — Implemented):** [ADR-095](../decisions.md#adr-095-orchestrator-engine--supervisory-node-governed-run-tree-delegation-toolset-success-gated-task-dag-idle-checkpoint-waitresume)
   — the `orchestrator_resume` consumer, the run-terminal `parent_run_id`
   payload widening, the success-gated `requires` relation, and the
   `WaitingOnChildren` resume.

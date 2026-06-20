@@ -96,7 +96,7 @@ cases, process flows. One file per domain.
 | [`system-analytics/domain-events.md`](system-analytics/domain-events.md) | Domain-event outbox / shared trigger bus (ADR-086): same-transaction emission, 8-kind taxonomy v1, per-consumer cursor dispatcher with xid8 commit horizon on the M24 clock, webhooks-takeover path. |
 | [`system-analytics/packages.md`](system-analytics/packages.md) | Multi-flow package management (ADR-088, Implemented): platform package sources + discovery, `maister-package.yaml`, package installs, project attachments, package-level trust, local versions, `packages[]` write-back. |
 | [`system-analytics/agents.md`](system-analytics/agents.md) | Platform agents (ADR-089/090, Implemented): `.md` catalog + per-agent runner chain, five trigger sources, workspace axis with 3-layer read-only enforcement + quarantine, triage Q&A loop, ephemeral agent tokens. |
-| [`system-analytics/orchestrator.md`](system-analytics/orchestrator.md) | Orchestrator engine (ADR-095/096, Designed): supervisory `orchestrator` node + run-tree (`parent_run_id`/`root_run_id`) + delegation toolset + `requires` success-gated task-DAG + `WaitingOnChildren` idle-checkpoint wait/resume. |
+| [`system-analytics/orchestrator.md`](system-analytics/orchestrator.md) | Orchestrator engine (ADR-095/096, Implemented): supervisory `orchestrator` node + run-tree (`parent_run_id`/`root_run_id`) + delegation toolset + `requires` success-gated task-DAG + `WaitingOnChildren` idle-checkpoint wait/resume. |
 
 ### Screen reference (`screens/`)
 
