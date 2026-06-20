@@ -68,6 +68,17 @@ describe("RunHeader — task-first header", () => {
     expect(html).toContain("Implement fix");
   });
 
+  it("renders a project link above the run title when projectHref is set", () => {
+    const html = render({
+      projectHref: "/projects/maister",
+      projectLabel: "← Back to board",
+    });
+
+    expect(html).toContain('data-testid="run-header-project-link"');
+    expect(html).toContain('href="/projects/maister"');
+    expect(html).toContain("← Back to board");
+  });
+
   it("renders the collapsible Task block with the prompt as markdown", () => {
     const html = render({ taskPrompt: "Make the **timeout** configurable" });
 

@@ -35,6 +35,8 @@ export interface RunHeaderProps {
   keyRef?: string | null;
   // Task detail href; turns the KEY-N chip into a link to the task page.
   taskHref?: string | null;
+  projectHref?: string | null;
+  projectLabel?: string | null;
   // The launching task's prompt, rendered as a collapsible Markdown block.
   taskPrompt?: string | null;
   status: string;
@@ -75,6 +77,8 @@ export function RunHeader({
   subtitle,
   keyRef,
   taskHref,
+  projectHref,
+  projectLabel,
   taskPrompt,
   status,
   branch,
@@ -92,6 +96,15 @@ export function RunHeader({
       data-testid="run-header"
     >
       <div className="min-w-0">
+        {projectHref && projectLabel ? (
+          <Link
+            className="mb-1 inline-flex font-mono text-[11px] font-semibold text-mute transition-colors hover:text-ink"
+            data-testid="run-header-project-link"
+            href={projectHref}
+          >
+            {projectLabel}
+          </Link>
+        ) : null}
         {subtitle ? (
           <p
             className="mb-1 truncate font-mono text-[11px] uppercase tracking-[0.06em] text-mute"

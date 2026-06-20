@@ -209,6 +209,8 @@ export default async function ScratchRunDetailLayout({
         </div>
       }
       labels={shellLabels}
+      projectHref={`/projects/${detail.projectSlug}`}
+      projectLabel={t("backToBoard")}
       status={detail.status}
       subtitle={shellSubtitle}
       targetBranch={detail.targetBranch}

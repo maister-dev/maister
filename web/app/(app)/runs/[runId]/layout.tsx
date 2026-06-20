@@ -4,7 +4,6 @@ import type { ReactElement, ReactNode } from "react";
 
 import { getTranslations } from "next-intl/server";
 import { notFound, redirect } from "next/navigation";
-import Link from "next/link";
 
 import { AssignmentActions } from "@/components/board/assignment-actions";
 import { EvidenceGraphSection } from "@/components/board/evidence-graph-section";
@@ -1056,6 +1055,8 @@ export default async function RunDetailLayout({
       }
       keyRef={detail.taskRef}
       labels={shellLabels}
+      projectHref={`/projects/${detail.projectSlug}`}
+      projectLabel={t("backToBoard")}
       status={detail.status}
       subtitle={shellSubtitle}
       targetBranch={detail.targetBranch}
@@ -1068,13 +1069,6 @@ export default async function RunDetailLayout({
       title={shellTitle}
     >
       <div className="grid gap-5">
-        <Link
-          className="font-mono text-[11px] text-mute hover:text-ink"
-          href={`/projects/${detail.projectSlug}`}
-        >
-          {t("backToBoard")}
-        </Link>
-
         {detail.lifecycleActions.length > 0 ? (
           <WorkbenchLifecycleActions
             actions={detail.lifecycleActions}

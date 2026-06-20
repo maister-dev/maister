@@ -92,4 +92,25 @@ describe("RunShell", () => {
     expect(html).not.toContain('data-testid="run-shell-inspector"');
     expect(html).toContain("Open inspector");
   });
+
+  it("passes the project link into the run header", () => {
+    const html = renderToStaticMarkup(
+      createElement(
+        RunShell,
+        {
+          title: "Run result",
+          status: "Running",
+          labels: LABELS,
+          projectHref: "/projects/maister",
+          projectLabel: "Back to project",
+          inspector: createElement("div", null, "Inspector"),
+        },
+        createElement("div", null, "Main"),
+      ),
+    );
+
+    expect(html).toContain('data-testid="run-header-project-link"');
+    expect(html).toContain('href="/projects/maister"');
+    expect(html).toContain("Back to project");
+  });
 });
