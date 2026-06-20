@@ -29,6 +29,12 @@ info:
       (`Done | Abandoned | Failed | Crashed`), not by the supervisor's
       session-terminal signal. The bridge drains any trailing events
       after the terminal status is detected, then closes.
+    - **(M36 — Designed, ADR-095)** `WaitingOnChildren` joins the
+      `runs.status` union as a NON-terminal orchestrator state: the stream
+      stays OPEN across it (the parked orchestrator idle-checkpoints while
+      its child runs execute and is resumed by a child-terminal domain
+      event). It is NOT a terminal-close trigger — only
+      `Done | Abandoned | Failed | Crashed` close the stream.
     - Reconnect via `Last-Event-ID` (or `?lastEventId=` fallback) works
       across step boundaries and across web-tier restarts.
 

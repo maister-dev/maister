@@ -545,6 +545,264 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ExtErrorBody" }
 
+  /api/v1/ext/runs/delegate:
+    post:
+      tags: [runs]
+      summary: (M36 — Designed) Delegate a child unit from an orchestrator
+      description: |
+        (M36 — Designed, ADR-095.) Scope `runs:delegate`. Spawns ONE governed
+        child unit from the calling orchestrator run. Backs the `run_delegate`
+        delegation tool exposed over the maister MCP facade to `orchestrator`
+        nodes only.
+
+        **Identifiers (trust contour).** The `projectId` and the **parent**
+        `runId` are derived SERVER-SIDE from the ephemeral `agent:<id>` token
+        minted for the orchestrator launch (scoped `runs:delegate`) — NEVER body
+        fields. `target.agentId` / `target.flowId` are body-controlled and
+        resolved through that project's enabled + trusted catalog
+        (`resolveEffectiveAgentDefinition` + pinned revision); a target not
+        resolvable through the enabled+trusted catalog is refused
+        (`PRECONDITION` → 409) and **no child run is created** (resolve+trust is
+        physically separate from launch). `prompt` / `title` are body free-text.
+
+        `mode = "task"` creates a child task (Kanban card) linked by `parent_of`
+        plus a child run; `mode = "run"` creates a child run only
+        (`runs.parent_run_id`, workbench subtree, no board card). Child creation
+        funnels through `POST /api/v1/ext/runs` so the web tier owns the
+        transaction; the supervisor `POST /sessions` happens after commit, and an
+        orphan (committed run, no session) reconciles to `Crashed`. The launch
+        snapshots the resolved effective definition + runner onto the child run
+        row. Over-depth (`MAISTER_ORCHESTRATOR_MAX_DEPTH`) is rejected pre-tx
+        (`CONFIG` → 422).
+
+        Writes a `token_audit_log` row with scope `runs:delegate` (audit identity
+        `agent:<id>`) after success.
+      operationId: extDelegateRun
+      security:
+        - projectToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExtRunDelegateBody" }
+      responses:
+        "200":
+          description: |
+            Child unit created. `childTaskId` is present only for `mode = "task"`.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [childRunId]
+                properties:
+                  childRunId:
+                    type: string
+                    format: uuid
+                  childTaskId:
+                    type: string
+                    format: uuid
+                    description: Present only for `mode == "task"`.
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          description: |
+            Request body failed schema validation, or a `CONFIG` precondition was
+            violated — over-depth (`MAISTER_ORCHESTRATOR_MAX_DEPTH`), engine floor
+            below `1.6.0`, or a `strict` path-scope declaration (refused until the
+            deferred policy layer lands, ADR-096).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtErrorBody" }
+        "503":
+          description: |
+            Executor or platform unavailable (`EXECUTOR_UNAVAILABLE`) — supervisor
+            unreachable, the agent pool cap is exhausted, or the child spawn
+            failed retryably.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtErrorBody" }
+
+  /api/v1/ext/runs/plan:
+    post:
+      tags: [runs]
+      summary: (M36 — Designed) Submit a success-gated task DAG from an orchestrator
+      description: |
+        (M36 — Designed, ADR-095.) Scope `runs:delegate`. Writes a DAG of child
+        tasks wired by the success-gated `requires` relation in ONE transaction.
+        Backs the `run_plan` delegation tool. `requires` releases a dependent
+        ONLY on a producer's `Done` (Failed/Abandoned keeps dependents blocked and
+        wakes the orchestrator), unlike `depends_on`/`blocks`; it is wired into
+        the shared launchability classifier so it gates at every launch entry
+        point.
+
+        **Identifiers (trust contour).** The `projectId` and the parent `runId`
+        are derived SERVER-SIDE from the orchestrator's `agent:<id>` token — NEVER
+        body fields. Each task's `target.agentId` / `target.flowId` is
+        body-controlled and resolved through the project's enabled + trusted
+        catalog (unresolvable/untrusted → `PRECONDITION` → 409, no tasks
+        created). `dependsOn` edges are body-controlled and validated BEFORE the
+        transaction: each entry MUST reference an in-batch `key` (cross-batch or
+        unknown ref → `PRECONDITION` → 409) and the edge set MUST be acyclic.
+
+        **Pre-transaction `CONFIG` bounds (→ 422):** a cyclic `dependsOn`, a batch
+        larger than `MAISTER_MAX_ORCHESTRATOR_FANOUT`, or a run-tree depth past
+        `MAISTER_ORCHESTRATOR_MAX_DEPTH`. Validation is all-or-nothing — no
+        partial DAG is ever written. Tasks whose dependencies are already clear
+        are marked launchable and fold into the advisory-locked
+        `promoteNextPending` CAS (the route NEVER launches directly, preserving
+        the global cap), so a `childRunId` may be present for those.
+
+        Writes a `token_audit_log` row with scope `runs:delegate` after success.
+      operationId: extPlanRuns
+      security:
+        - projectToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExtRunPlanBody" }
+      responses:
+        "200":
+          description: |
+            DAG written. One result row per submitted task `key`; `childRunId` is
+            present only for tasks that were immediately launchable.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tasks]
+                properties:
+                  tasks:
+                    type: array
+                    items: { $ref: "#/components/schemas/ExtRunPlanResultItem" }
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          description: |
+            Request body failed schema validation, or a `CONFIG` precondition was
+            violated — cyclic `dependsOn`, over-fanout
+            (`MAISTER_MAX_ORCHESTRATOR_FANOUT`), or over-depth
+            (`MAISTER_ORCHESTRATOR_MAX_DEPTH`). No partial DAG is written.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtErrorBody" }
+        "503":
+          description: |
+            Executor or platform unavailable (`EXECUTOR_UNAVAILABLE`) for an
+            immediate launch; the DAG is still committed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtErrorBody" }
+
+  /api/v1/ext/runs/collect:
+    post:
+      tags: [runs]
+      summary: (M36 — Designed) Collect terminal results of orchestrator children
+      description: |
+        (M36 — Designed, ADR-095.) Scope `runs:read`. Returns terminal-result
+        summaries for the calling orchestrator's children. Backs the
+        `run_collect` delegation tool. Reads each child's `RunDTO` projection plus
+        its produced-artifact manifest (`artifact_instances`) and the base→run
+        diff ref — NEVER the child worktree directly, matching the
+        reviewer-isolation contract.
+
+        **Identifiers (trust contour).** The `projectId` and the parent `runId`
+        are derived SERVER-SIDE from the orchestrator's `agent:<id>` token. With
+        `childRunId` set, the named child MUST be a child of the calling
+        orchestrator (mismatch → 404, existence-hide); with `all: true`, every
+        child of the calling orchestrator is returned. Exactly one of
+        `childRunId` / `all` MUST be supplied.
+
+        Writes a `token_audit_log` row with scope `runs:read` after success.
+      operationId: extCollectRuns
+      security:
+        - projectToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExtRunCollectBody" }
+      responses:
+        "200":
+          description: Terminal-result summaries for the requested children.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ExtChildRunSummary" }
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /api/v1/ext/runs/cancel:
+    post:
+      tags: [runs]
+      summary: (M36 — Designed) Cancel an orchestrator child run
+      description: |
+        (M36 — Designed, ADR-095.) Scope `runs:delegate`. Cancels one child run
+        of the calling orchestrator. Backs the `run_cancel` delegation tool.
+
+        **Identifiers (trust contour).** The `projectId` and the parent `runId`
+        are derived SERVER-SIDE from the orchestrator's `agent:<id>` token; the
+        body `childRunId` MUST be a child of the calling orchestrator (mismatch →
+        404, existence-hide). The cancel funnels through the same run-stop path as
+        the session-auth surface; the returned `status` is the child's row state
+        after the cancel was applied.
+
+        Writes a `token_audit_log` row with scope `runs:delegate` after success.
+      operationId: extCancelRun
+      security:
+        - projectToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExtRunCancelBody" }
+      responses:
+        "200":
+          description: Cancel applied; the child's row state is returned.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [childRunId, status]
+                properties:
+                  childRunId:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                    description: |
+                      The child's run status after the cancel was applied (e.g.
+                      `Abandoned`). A run-status string per the run state machine.
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
   /api/v1/ext/runs/{runId}:
     get:
       tags: [runs]
@@ -1479,3 +1737,206 @@ components:
           type: string
           enum: [resume-in-progress]
           description: Present only on the 202 idle-resume branch.
+
+    ExtDelegationTarget:
+      type: object
+      description: |
+        (M36 — Designed, ADR-095) The catalog-resolved child to spawn. Exactly
+        one of `agentId` / `flowId` is supplied; both are body-controlled and
+        resolved through the project's enabled + trusted catalog (pinned
+        revision). A target not resolvable through that catalog is refused
+        (`PRECONDITION` → 409); no child run is created.
+      additionalProperties: false
+      properties:
+        agentId:
+          type: string
+          minLength: 1
+          description: Package-qualified platform-agent id (`<flowRefId>:<stem>`).
+        flowId:
+          type: string
+          minLength: 1
+          description: Flow id, resolved against the project's enabled flows.
+
+    ExtRunDelegateBody:
+      type: object
+      description: |
+        (M36 — Designed, ADR-095) `run_delegate` payload. `projectId` and the
+        parent `runId` are token-derived, never carried here.
+      required: [target, mode, prompt]
+      additionalProperties: false
+      properties:
+        target:
+          $ref: "#/components/schemas/ExtDelegationTarget"
+        mode:
+          type: string
+          enum: [task, run]
+          description: |
+            `task` = child task (`parent_of` Kanban card) + child run; `run` =
+            child run only (`runs.parent_run_id`, no board card).
+        prompt:
+          type: string
+          minLength: 1
+          description: Free-text prompt handed to the child unit.
+        title:
+          type: string
+          minLength: 1
+          description: Optional title for the child task (used only for `mode == "task"`).
+        workspace:
+          type: string
+          enum: [none, repo_read, worktree]
+          description: |
+            Workspace axis for the child run (M34). Defaults to the resolved
+            definition's recommended workspace when omitted.
+        runnerOverride:
+          type: string
+          minLength: 1
+          description: |
+            Optional per-launch platform ACP runner override; highest priority in
+            the fail-closed runner resolution chain. Snapshotted onto the child
+            run's `runner_snapshot`.
+
+    ExtRunPlanTask:
+      type: object
+      description: |
+        (M36 — Designed, ADR-095) One node of a submitted task DAG. `key` is the
+        in-batch identifier referenced by other tasks' `dependsOn`.
+      required: [key, target, prompt, dependsOn]
+      additionalProperties: false
+      properties:
+        key:
+          type: string
+          minLength: 1
+          description: |
+            In-batch unique key. Referenced by other tasks' `dependsOn`; not
+            persisted as the task identity (the task gets its own `KEY-N`).
+        target:
+          $ref: "#/components/schemas/ExtDelegationTarget"
+        prompt:
+          type: string
+          minLength: 1
+        workspace:
+          type: string
+          enum: [none, repo_read, worktree]
+          description: Optional workspace axis for the task's run.
+        runnerOverride:
+          type: string
+          minLength: 1
+          description: Optional per-launch runner override.
+        dependsOn:
+          type: array
+          description: |
+            In-batch `key`s this task `requires`. Validated acyclic and
+            in-batch BEFORE the transaction (cross-batch/unknown ref →
+            `PRECONDITION` → 409; cycle → `CONFIG` → 422). `requires` releases a
+            dependent only on the producer's `Done`.
+          items:
+            type: string
+            minLength: 1
+
+    ExtRunPlanBody:
+      type: object
+      description: |
+        (M36 — Designed, ADR-095) `run_plan` payload. `projectId` and the parent
+        `runId` are token-derived. The batch size is bounded by
+        `MAISTER_MAX_ORCHESTRATOR_FANOUT`.
+      required: [tasks]
+      additionalProperties: false
+      properties:
+        tasks:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/ExtRunPlanTask" }
+
+    ExtRunPlanResultItem:
+      type: object
+      description: |
+        (M36 — Designed, ADR-095) Per-task result of a submitted DAG. `childRunId`
+        is present only for a task that was immediately launchable (its
+        dependencies were already clear) and folded into `promoteNextPending`.
+      required: [key, taskId]
+      additionalProperties: false
+      properties:
+        key:
+          type: string
+          description: The submitted in-batch key, echoed back.
+        taskId:
+          type: string
+          format: uuid
+          description: The created task's id.
+        childRunId:
+          type: string
+          format: uuid
+          description: Present only when the task was immediately launchable.
+
+    ExtRunCollectBody:
+      type: object
+      description: |
+        (M36 — Designed, ADR-095) `run_collect` selector. Exactly one of
+        `childRunId` / `all` MUST be supplied.
+      additionalProperties: false
+      properties:
+        childRunId:
+          type: string
+          format: uuid
+          description: Collect one named child (must be a child of the caller).
+        all:
+          type: boolean
+          description: Collect every child of the calling orchestrator.
+
+    ExtChildRunSummary:
+      type: object
+      description: |
+        (M36 — Designed, ADR-095) Terminal-result summary for one orchestrator
+        child. `artifacts` is the produced-artifact manifest from
+        `artifact_instances`; `diffRef` locates the base→run diff. NEVER exposes
+        the child worktree, `acp_session_id`, or any supervisor-internal handle.
+      required: [childRunId, status, artifacts]
+      additionalProperties: false
+      properties:
+        childRunId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          description: |
+            The child's run status (a run-status string per the run state
+            machine; a nested orchestrator child may be `WaitingOnChildren`).
+        outputText:
+          type: string
+          nullable: true
+          description: |
+            The child's terminal stdout var (`{{ steps.<id>.output }}`), when
+            available.
+        artifacts:
+          type: array
+          description: Produced-artifact manifest for the child run.
+          items:
+            type: object
+            required: [id, kind, name]
+            additionalProperties: false
+            properties:
+              id:
+                type: string
+                format: uuid
+              kind:
+                type: string
+                description: Artifact kind.
+              name:
+                type: string
+                description: Artifact name / locator label.
+        diffRef:
+          type: string
+          nullable: true
+          description: Opaque ref locating the child's base→run diff (never the worktree).
+
+    ExtRunCancelBody:
+      type: object
+      description: |
+        (M36 — Designed, ADR-095) `run_cancel` payload. `childRunId` must be a
+        child of the calling orchestrator.
+      required: [childRunId]
+      additionalProperties: false
+      properties:
+        childRunId:
+          type: string
+          format: uuid

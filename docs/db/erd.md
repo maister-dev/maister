@@ -82,6 +82,7 @@ erDiagram
     FLOWS ||--o{ PROJECT_FLOW_RUNNER_DEFAULTS : "runner default"
 
     RUNS ||--|| WORKSPACES : "one worktree per run"
+    RUNS ||--o{ RUNS : "run-tree delegation (parent_run_id, M36)"
     USERS ||--o{ WORKSPACES : "promotion owner (M18, nullable)"
     RUNS ||--o{ STEP_RUNS : "per-step record (legacy)"
     RUNS ||--o{ NODE_ATTEMPTS : "per-node attempt (M11a)"
@@ -570,7 +571,7 @@ erDiagram
         text id PK
         text project_id FK
         text from_task_id FK
-        text kind "blocks|depends_on|parent_of"
+        text kind "blocks|depends_on|parent_of|requires"
         text to_task_id FK
         text actor_type "user|agent|system"
         text actor_id "NULL iff actor_type=system"
@@ -633,6 +634,10 @@ erDiagram
         text runner_resolution_tier
         text capability_agent
         jsonb runner_snapshot
+        text parent_run_id FK "M36: runs(id) SET NULL — orchestrator delegator (ADR-095)"
+        text root_run_id FK "M36: runs(id) — run-tree root (ADR-095)"
+        jsonb delegation_snapshot "M36: {agentDefinitionId,revisionId} (ADR-095)"
+        text launch_mode "M36: auto|manual (ADR-095)"
         text status "Pending..Done"
         text acp_session_id "resume handle"
         text current_step_id "runner cursor"
@@ -739,7 +744,7 @@ erDiagram
         text id PK
         text run_id FK
         text node_id "node id in compiled FlowGraph"
-        text node_type "ai_coding|cli|check|judge|human|form"
+        text node_type "ai_coding|cli|check|judge|human|form|orchestrator"
         integer attempt "auto-increment per (run,node)"
         text status "Pending|Running|Succeeded|Failed|NeedsInput|Reworked|Stale"
         text decision

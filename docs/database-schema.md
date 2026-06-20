@@ -939,6 +939,8 @@ unread badge and inbox panel.
   runnerSnapshot,
   status: 'Pending' | 'Running' | 'NeedsInput' | 'NeedsInputIdle'
         | 'HumanWorking'         // M11b manual-takeover claim (migration 0011, additive)
+        | 'WaitingOnChildren'    // M36 (Designed, ADR-095, migration 0055) orchestrator
+                                 //   parked on children; holds NO scheduler slot
         | 'Review' | 'Crashed' | 'Done' | 'Abandoned' | 'Failed',
   acpSessionId?,                 // resume handle for the ACP session/resume call
   currentStepId?,                // id of the step the runner is on
@@ -975,6 +977,21 @@ unread badge and inbox panel.
   deliveryPolicySnapshot?,       // ADR-085 (jsonb, migration 0047)
                                  //   immutable resolved DeliveryPolicy at launch;
                                  //   cancel may change trigger auto_on_ready -> manual
+  parentRunId?,                  // M36 (Designed, ADR-095, migration 0055):
+                                 //   FK -> runs.id ON DELETE SET NULL; the
+                                 //   orchestrator run that delegated this child
+                                 //   (as-run / as-task). NULL for top-level runs.
+  rootRunId?,                    // M36 (Designed, ADR-095, migration 0055):
+                                 //   FK -> runs.id; the run-tree root (self for a
+                                 //   top-level run). NULL on pre-migration rows.
+  delegationSnapshot?,           // M36 (Designed, ADR-095, migration 0055): jsonb
+                                 //   NULL. Launch-time effective agent-definition of
+                                 //   the catalog-resolved child — ONLY
+                                 //   { agentDefinitionId, revisionId }. The resolved
+                                 //   runner stays in runnerSnapshot, never duplicated
+                                 //   here (skill-context rule 207).
+  launchMode?,                   // M36 (Designed, ADR-095, migration 0055):
+                                 //   'auto' | 'manual'; nullable
   startedAt, endedAt?
 }
 ```
@@ -2229,6 +2246,8 @@ Created via Drizzle:
 | `runs`                | `runs_task_idx`                         | `(taskId)`                        | Latest-attempt lookups                                             |
 | `runs`                | `runs_project_status_kind_idx`          | `(projectId, status, runKind)`    | Active workspace queries across Flow and scratch runs.             |
 | `runs`                | `runs_kind_task_idx`                    | `(runKind, taskId)`               | Board/latest-attempt lookups that explicitly exclude scratch runs. |
+| `runs`                | `runs_parent_run_id_idx`                | `(parentRunId)`                   | **(M36, Designed)** orchestrator run-tree child lookups.           |
+| `runs`                | `runs_root_run_id_idx`                  | `(rootRunId)`                     | **(M36, Designed)** whole-tree queries from the run-tree root.     |
 | `scratch_runs`        | `scratch_runs_project_status_idx`       | `(projectId, dialogStatus)`       | Project scratch workspace lists.                                   |
 | `scratch_attachments` | `scratch_attachments_run_idx`           | `(runId)`                         | Run-level attachment lookup.                                       |
 | `scratch_attachments` | `scratch_attachments_message_idx`       | `(messageId)`                     | Message attachment lookup.                                         |

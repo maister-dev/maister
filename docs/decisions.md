@@ -7154,6 +7154,175 @@ per-instance stop to wire a UI button to.
 
 ---
 
+### ADR-095: Orchestrator engine — supervisory node, governed run-tree, delegation toolset, success-gated task-DAG, idle-checkpoint wait/resume
+
+**Date:** 2026-06-20
+**Status:** Accepted
+**Context:** MAIster executes **static** Flow graphs — a fixed `nodes[]`/`transitions`
+DAG authored ahead of time (`docs/flow-dsl.md`, `flow-graph.md`). A running agent
+cannot decide *at runtime* to decompose its work, dispatch sub-units, and
+coordinate their results: there is no governed dynamic delegation. The
+constraints earned in prior review passes bound the design: every delegated unit
+must stay a **governed Run** (worktree, gates, promotion, board visibility,
+concurrency cap); dynamism lives only in *coordination*, never in bypassing
+governance; children are **catalog-resolved** (M34 effective definition, ADR-089/090),
+never runtime-authored; and the agent pool is small (`MAISTER_MAX_CONCURRENT_AGENTS`,
+default 3), so a long-lived coordinator must not hold a scheduler slot while blocked.
+
+**Decision:**
+1. **The orchestrator is a long-lived SUPERVISORY flow node**, not a
+   run-to-terminal step. The flow *parks* on it: it spawns/coordinates children,
+   idle-checkpoints while blocked, and reaches a terminal verdict only when the
+   agent declares the goal met → normal downstream transitions
+   (judge/readiness/promote). Governance is **structural**: every delegation hop
+   routes through this one node, so policy / ensure-gate / HITL / audit attach
+   there. New node type `orchestrator` (`node_attempts.node_type`), engine floor
+   **`1.6.0`**, inherits the `ai_coding` capability shape.
+2. **Children are governed Runs; dynamism is in coordination.** `as-task` → a
+   child task via `parent_of` (Kanban card) + a run; `as-run` → a child run only
+   (`runs.parent_run_id`, workbench subtree, **no** board card); `as-plan` → a
+   DAG of child tasks wired by `requires` edges. Each child is a real Run
+   (worktree, gates, promotion, cap, snapshot).
+3. **New run status `WaitingOnChildren`** holds **no** scheduler slot — the
+   orchestrator idle-checkpoints (releasing its agent-pool slot via
+   `releaseSlotOnIdle`→`promoteNextPending`) and is resumed by a child-terminal
+   domain event. Allow-listed in every run-status consumer (read models,
+   scheduler `countLiveRuns` exclusion, sweeps, guards, board).
+4. **Run-tree columns on `runs`** (migration 0055): `parent_run_id` (FK→runs,
+   on-delete set-null), `root_run_id` (FK→runs), `delegation_snapshot` (jsonb;
+   **only** the effective agent-definition id + pinned revision — the resolved
+   runner stays in the existing `runner_snapshot`, never duplicated), `launch_mode`
+   (`auto`|`manual`). Indexed on `parent_run_id`, `root_run_id`.
+5. **Success-gated `requires` relation kind.** `depends_on`/`blocks` release on
+   Done **and** Abandoned (correct for a human board, wrong for auto-execution);
+   `requires` releases **only** on Done — Failed/Abandoned keeps dependents
+   blocked and wakes the orchestrator. `parent_of` never gates. `requires` is
+   wired into the shared launchability classifier (`web/lib/runs/launchability.ts`)
+   so it gates at **every** launch entry point, not just the board read model.
+6. **Snapshot the launch-time effective definition on the child run row**
+   (skill-context rule 207). The catalog-resolved child's effective definition +
+   resolved runner are snapshotted at spawn; the terminal/enforcement path reads
+   the snapshot, never re-derives from a drifting projection.
+7. **Branch shared dispatch on `run_kind` BEFORE routing** (skill-context rule 207).
+   The child-terminal resume consumer and the reconcile classifier MUST branch on
+   `run_kind`/parent-linkage before driving a run into the flow resume driver — an
+   orchestrator-child driven into the flow-only path `Crashes` context-less. Guard
+   at the irreversible apply site plus a test per discriminant arm.
+8. **Trust: catalog-resolved, never runtime-authored.** Child resolution goes
+   through M34 `resolveEffectiveAgentDefinition` (enablement + trust gates, pinned
+   revision) + `resolveAgentRunner`. A `run_delegate`/`run_plan` naming an agent
+   not resolvable through the project's enabled+trusted catalog is refused
+   (`PRECONDITION`) — "resolve+trust" is physically separate from "launch", and
+   **no child run is created** on refusal.
+9. **Delegation toolset over the MCP facade.** A per-launch ephemeral `agent:<id>`
+   token scoped `runs:delegate` is materialized into the orchestrator session's ACP
+   `mcpServers` (gated to `orchestrator` nodes only; revoked on terminal). Tools:
+   `run_delegate` (as-task|as-run), `run_plan` (task-DAG), `run_collect` (reads each
+   child's terminal status + `{{ steps.<id>.output }}` stdout var + a produced-artifact
+   manifest + the base→run diff ref — **never** the child worktree directly, matching
+   the reviewer-isolation contract), `run_cancel`.
+10. **Two-phase commit / multi-store atomicity.** Child run creation calls
+    `POST /api/v1/ext/runs` so the **web tier owns the transaction** (run row +
+    task/relation rows); supervisor `POST /sessions` happens **after** commit; an
+    orphan (committed run, no session) reconciles to `Crashed`. `run_plan` writes N
+    tasks + M `requires` relations in **one** `db.transaction` after pre-tx
+    cycle/depth/fanout validation (clean `CONFIG`/`PRECONDITION`, no partial DAG).
+    Auto-launch on dependency-clear marks the dependent `Pending`/launchable and
+    folds into the existing advisory-locked `promoteNextPending` CAS — the consumer
+    **never launches directly** (that would bypass the cap). Wait/resume each close
+    status + `node_attempts` cursor in one tx.
+11. **Bounds.** `MAISTER_MAX_ORCHESTRATOR_FANOUT` (per-plan task cap, default 16)
+    and `MAISTER_ORCHESTRATOR_MAX_DEPTH` (run-tree recursion bound, default 3),
+    enforced pre-tx; over-limit → `CONFIG`.
+12. **No new `MaisterError` code** (ADR-008 closed union). Reuse `PRECONDITION`
+    (unresolvable/untrusted target, cross-batch dep ref), `CONFIG` (engine floor,
+    over-fanout/over-depth, cyclic DAG, strict path-scope), `CONFLICT` (concurrent
+    resume), `CHECKPOINT` (resume failure), `EXECUTOR_UNAVAILABLE` (cap/spawn).
+
+**Consequences:**
+- maister gains its first **dynamic-orchestration** capability while keeping every
+  delegated unit governed (worktree/gates/promotion/cap/board) — the foundation for
+  the parked dynamic-flow-synthesis milestone (~M37).
+- The agent pool (cap 3) cannot starve: a blocked orchestrator holds **no** slot.
+- The run-tree is observable end-to-end (workbench subtree + board decomposition).
+- **Path-scoped write enforcement** ("tester edits only tests") is **not** delivered
+  — read-only-vs-full is the only enforced axis; path-scope ships `instructed`-only and
+  a `strict` declaration is refused (`CONFIG`) until the policy layer lands (ADR-096).
+- Persistent swarm sessions, star-routed messaging, worktree modes, and per-agent
+  read-only perms are Layer 2 (**ADR-096**).
+
+**Alternatives Considered:**
+- **Run-to-terminal orchestrator that blocks on children:** rejected — it holds a
+  scheduler slot the whole time and starves the cap-3 agent pool; the idle-checkpoint
+  wait is the entire point.
+- **Runtime-authored children (omnigent `config_path`):** rejected — bypasses the
+  trust contour; children are catalog-resolved only.
+- **A new `run.delegated`/`run.child_done` event kind:** rejected — reuse
+  `run.done/failed/crashed/abandoned` and widen the payload with `parent_run_id`;
+  fewer kinds to register across the kind-registration sites.
+- **`depends_on` with a "success only" flag:** rejected — a boolean on an existing
+  kind muddies the human-board semantics; a distinct `requires` kind keeps
+  `parent_of`/`depends_on`/`blocks` intact.
+- **Mesh messaging (direct child↔child):** rejected (deferred to ADR-096 as
+  star-only) — star-through-orchestrator keeps every hop auditable on one node.
+
+> **Numbering note.** ADR-095/096 + migrations 0055/0056 were the next-free numbers
+> on `feature/orchestrator-engine` off main @757a5e9e (last ADR-094, last migration
+> 0054). A renumber pass against main's HEAD is a Phase-12 deliverable before merge;
+> run `node scripts/validate-docs-adr-anchors.mjs` after any renumber (`pnpm
+> validate:docs` does not resolve ADR anchors).
+
+---
+
+### ADR-096: Persistent swarm Layer 2 — addressable sessions, star-routed messaging, worktree modes, per-agent read-only
+
+**Date:** 2026-06-20
+**Status:** Accepted
+**Context:** ADR-095 ships the orchestrator foundation (run-tree + delegation +
+task-DAG + wait/resume). Layer 2 turns ephemeral child runs into a coordinated,
+addressable **swarm**: a child you can re-message over time, inter-agent results
+routed through the orchestrator, shared vs own worktrees, and reviewer read-only
+roles. Migration 0056.
+
+**Decision:**
+1. **Persistent addressable child sessions.** Reuse the scratch-session lifecycle
+   (`scratchRuns.acpSessionId`, `classifyScratchRecovery`) so an orchestrator child
+   can receive a follow-up message after it parked. Migration 0056 adds a
+   `persistent`/`addressable_key` axis on the child run so the orchestrator can
+   address it. **Sleep = idle-checkpoint; wake = `session/resume`.**
+2. **Re-message tool.** `run_message` (or a `run_delegate` extension) sends a
+   follow-up to an existing addressable child by orchestrator-scoped key, via
+   supervisor input delivery. Branch on `run_kind`.
+3. **Star-routed messaging.** Inter-agent messages go A→orchestrator→B only — **no
+   mesh**, no direct child-to-child channel. Every hop is observable on the
+   orchestrator node (audit).
+4. **Worktree allocation modes.** `workspace_mode: own | shared` on the delegation
+   input, snapshotted on the child run. `own` (default) = today's per-run worktree
+   from the base branch; `shared` = N children point at one pre-allocated tree, with
+   **serialized writers** (an orchestrator-held lock; the L3 dirty-watchdog becomes
+   per-shared-tree, not per-run).
+5. **Per-agent permissions.** A `workspace: repo_read` child reuses the L1/L2/L3
+   read-only enforcement (supervisor `readOnlySession` inline arbitration +
+   materialized deny rules + dirty-watchdog quarantine; ADR-041 untouched).
+   **Path-scoped write ("tester edits only tests") is INSTRUCTED-only** — expressed as
+   a `restrictions` instruction, NOT enforced (maister enforces read-only-vs-full
+   only); a `strict` path-scope declaration is refused at launch (`CONFIG`) until the
+   deferred policy layer lands.
+
+**Consequences:**
+- The orchestrator can run a durable, addressable swarm with auditable star messaging.
+- Shared worktrees enable a coordinated team on one tree at the cost of serialized writers.
+- Path-scoped write enforcement remains genuinely blocked on the deferred policy layer
+  — shipped honestly as instructed-only; do **not** claim enforcement.
+
+**Alternatives Considered:**
+- **Mesh (direct A→B) messaging:** rejected — unauditable; star-through-orchestrator
+  keeps governance on one node.
+- **OS-sandbox `write_paths` for path-scope now:** deferred — couples to a sandbox
+  dependency; the policy layer is the chosen home for path-scoped enforcement.
+
+---
+
 ## Template for New Decisions
 
 ```markdown

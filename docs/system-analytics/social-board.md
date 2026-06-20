@@ -226,6 +226,12 @@ you (N)" badge is the single canonical `needsYou` count (see Expectations); see
 - **Mutual blocks (`A blocks B` + `B blocks A`)** — both unlaunchable until
   one relation is removed; always recoverable in UI. Owned by
   [`tasks.md`](tasks.md).
+- **`requires` success-gate (M36 — Designed)** — the orchestrator auto-DAG
+  wires child tasks with the `requires` relation kind (ADR-095): unlike
+  `depends_on`/`blocks` (which release on `Done` **and** `Abandoned`),
+  `requires` releases the dependent ONLY on `Done`; `Failed`/`Abandoned`
+  keeps it blocked and wakes the orchestrator. Behavior owned by
+  [`orchestrator.md`](orchestrator.md).
 - **Hole-y numbering** — task deletion leaves a permanent hole;
   `next_task_number` never decrements. Owned by [`tasks.md`](tasks.md).
 - **Foreign inbox item id** — `PATCH …/read` on another user's item → 404

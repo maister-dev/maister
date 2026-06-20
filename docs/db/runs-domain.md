@@ -24,6 +24,7 @@ erDiagram
     PLATFORM_ACP_RUNNERS ||--o{ RUNS : "launch runner"
     TASKS ||--o{ RUNS : "1:N retry loop"
     RUNS ||--|| WORKSPACES : "one worktree per run"
+    RUNS ||--o{ RUNS : "run-tree delegation (parent_run_id, M36)"
     RUNS ||--o{ STEP_RUNS : "per-step record (legacy)"
     RUNS ||--o{ NODE_ATTEMPTS : "per-node attempt (M11a)"
     RUNS ||--o| RUN_COST_ROLLUPS : "derived token rollup (ADR-085)"
@@ -77,7 +78,11 @@ erDiagram
         text runner_resolution_tier
         text capability_agent
         jsonb runner_snapshot
-        text status "Pending|Running|NeedsInput|NeedsInputIdle|HumanWorking|Review|Crashed|Done|Abandoned|Failed"
+        text parent_run_id FK "M36: runs(id) SET NULL — orchestrator delegator (ADR-095, 0055)"
+        text root_run_id FK "M36: runs(id) — run-tree root (ADR-095, 0055)"
+        jsonb delegation_snapshot "M36: {agentDefinitionId,revisionId} only (ADR-095, 0055)"
+        text launch_mode "M36: auto|manual nullable (ADR-095, 0055)"
+        text status "Pending|Running|NeedsInput|NeedsInputIdle|HumanWorking|WaitingOnChildren|Review|Crashed|Done|Abandoned|Failed"
         text acp_session_id "resume handle (ACP session/resume)"
         text current_step_id "runner cursor"
         text flow_version "tag snapshot; scratch sentinel"
@@ -183,7 +188,7 @@ erDiagram
         text id PK
         text run_id FK
         text node_id "node id in compiled FlowGraph"
-        text node_type "ai_coding|cli|check|judge|human"
+        text node_type "ai_coding|cli|check|judge|human|orchestrator"
         integer attempt "auto-increment per (run,node)"
         text status "Pending|Running|Succeeded|Failed|NeedsInput|Reworked|Stale"
         text decision "human decision on finish"
@@ -294,7 +299,7 @@ erDiagram
         text id PK
         text project_id FK
         text from_task_id FK
-        text kind "blocks|depends_on|parent_of"
+        text kind "blocks|depends_on|parent_of|requires"
         text to_task_id FK
         text actor_type "user|agent|system"
         text actor_id "NULL iff actor_type=system"
@@ -390,6 +395,11 @@ BY started_at DESC LIMIT 1`; designed run-attempt schema switches to
 - `runs_kind_task_idx` on `(run_kind, task_id)` — board/latest
   attempt queries that explicitly filter `run_kind = 'flow'` and exclude
   scratch rows with nullable `task_id`.
+- `runs_parent_run_id_idx` on `(parent_run_id)` — **(M36, Designed)**
+  orchestrator run-tree child lookups (`parent_run_id` FK → `runs`,
+  ON DELETE SET NULL).
+- `runs_root_run_id_idx` on `(root_run_id)` — **(M36, Designed)**
+  whole-tree queries from the run-tree root.
 - `runs_agent_trigger_event_unique` partial UNIQUE on
   `(agent_id, trigger_event_id) WHERE trigger_event_id IS NOT NULL` —
   **(M34)** the outbox→spawn no-dup claim: at-least-once event

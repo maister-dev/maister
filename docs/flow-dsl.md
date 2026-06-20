@@ -462,6 +462,88 @@ nodes:
 `compat.engine_min >= 1.5.0`, else `CONFIG`; `MAISTER_ENGINE_VERSION` bumps
 `1.4.0 → 1.5.0`. Flows without the key stay valid at any `engine_min`.
 
+## Node `orchestrator` (M36 — Designed)
+
+**(M36 — Designed, [ADR-095](decisions.md#adr-095-orchestrator-engine--supervisory-node-governed-run-tree-delegation-toolset-success-gated-task-dag-idle-checkpoint-waitresume).)**
+`type: orchestrator` is a long-lived **SUPERVISORY** node, not a run-to-terminal
+step. The flow **parks** on it: the node spawns and coordinates **child Runs**,
+idle-checkpoints while blocked (run status `WaitingOnChildren`, which holds **no**
+scheduler slot), and transitions downstream — to the normal judge / readiness /
+promote path — only when the agent declares the goal met. Governance is
+structural: every delegation hop routes through this one node, so policy, gates,
+HITL, and audit attach there.
+
+```yaml
+nodes:
+  - id: orchestrate
+    type: orchestrator
+    action:
+      prompt: "Decompose {{ task.prompt }} into child tasks, dispatch them, and merge the results."
+    settings:
+      runner: claude-code              # inherits the ai_coding capability shape
+      thinkingEffort: high
+      mcps: [github]
+      delegation:
+        max_fanout: 16                  # optional; defaults to MAISTER_MAX_ORCHESTRATOR_FANOUT
+        max_depth: 3                    # optional; defaults to MAISTER_ORCHESTRATOR_MAX_DEPTH
+    transitions:
+      success: review
+```
+
+- **`action.prompt`** — the coordinator instruction, templated like any
+  agent-executed node.
+- **Capability settings** — an `orchestrator` node **inherits the `ai_coding`
+  capability settings shape** (`runner`, `model`, `thinkingEffort`, `mcps`,
+  `tools`, `skills`, `permissionMode`, `limits`, `restrictions`, `enforcement`,
+  …); the same registry resolution (M14) and per-class `enforcement` intent
+  apply.
+- **`delegation` sub-block** (optional) — `max_fanout` (the per-plan task cap for
+  `run_plan`) and `max_depth` (the run-tree recursion bound). When omitted they
+  default to env `MAISTER_MAX_ORCHESTRATOR_FANOUT` (`16`) and
+  `MAISTER_ORCHESTRATOR_MAX_DEPTH` (`3`). An over-fanout or over-depth request is
+  refused pre-transaction with `MaisterError("CONFIG")`; no partial run-tree is
+  created.
+
+**Delegation semantics (brief; full contract in
+[ADR-095](decisions.md#adr-095-orchestrator-engine--supervisory-node-governed-run-tree-delegation-toolset-success-gated-task-dag-idle-checkpoint-waitresume)
++ [`system-analytics/orchestrator.md`](system-analytics/orchestrator.md)).** The
+orchestrator coordinates through a **delegation toolset** exposed over the MAIster
+MCP facade (a per-launch ephemeral `agent:<id>` token scoped `runs:delegate`,
+materialized into the orchestrator session's ACP `mcpServers` for
+`orchestrator` nodes only, revoked on terminal):
+
+- `run_delegate` — spawn one child as `as-task` (a child task + run, board card via
+  `parent_of`) or `as-run` (a child run only, `runs.parent_run_id`, workbench
+  subtree, **no** board card).
+- `run_plan` — write a **success-gated** task DAG (N child tasks wired by the
+  `requires` relation kind, which releases a dependent **only** on `Done` —
+  `Failed`/`Abandoned` keeps it blocked and wakes the orchestrator) in one
+  transaction after pre-tx cycle / depth / fanout validation.
+- `run_collect` — read each child's terminal status, `{{ steps.<id>.output }}`
+  stdout var, produced-artifact manifest, and base→run diff ref (never the child
+  worktree directly — the reviewer-isolation contract).
+- `run_cancel` — cancel a child run.
+
+Children are **catalog-resolved governed Runs** (M34 effective definition through
+the project's enabled + trusted catalog, ADR-089/090; never runtime-authored) —
+each is a real Run with a worktree, gates, promotion, the concurrency cap, and a
+launch-time snapshot. They form a run-tree via `runs.parent_run_id` /
+`runs.root_run_id`. As with `ai_coding`, **all capability classes resolve as
+`instructed`** (no `enforced` cell) at this milestone.
+
+**Engine floor.** A flow declaring an `orchestrator` node requires
+`compat.engine_min >= 1.6.0`, else the manifest is refused at load with
+`MaisterError("CONFIG")`; `MAISTER_ENGINE_VERSION` bumps `1.5.0 → 1.6.0` (the
+orchestrator node debuts at `1.6.0`, the new engine floor). Flows without an
+`orchestrator` node stay valid at any `engine_min`.
+
+> **Persistent-swarm pieces are Phase 2 (ADR-096).** Addressable long-lived child
+> sessions, star-routed child↔child messaging, shared-vs-own worktree modes, and
+> per-agent read-only / path-scoped write enforcement are **(Phase 2 — see
+> [ADR-096](decisions.md#adr-096-persistent-swarm-layer-2--addressable-sessions-star-routed-messaging-worktree-modes-per-agent-read-only))**.
+> M36 ships the orchestrator foundation only; a `strict` path-scope declaration is
+> refused (`CONFIG`) until that policy layer lands.
+
 ## Rework `session_policy` (M30 — Implemented)
 
 **(M30 — Implemented, [ADR-081](decisions.md#adr-081-rework-session-policy-with-resume-by-default).)**

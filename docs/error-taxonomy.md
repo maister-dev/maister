@@ -268,6 +268,29 @@ defined as a string union in `web/lib/errors.ts`.
 > - **`CONFLICT` → HTTP 409** — attaching an already-attached agent
 >   (`agent_project_links` uniqueness).
 
+> **The M36 orchestrator engine (ADR-095) reuses existing codes and adds none**
+> ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror) closed union).
+> The orchestrator / delegation paths (`run_delegate` / `run_plan` / `run_collect`
+> / `run_cancel` over the MCP facade, the governed run-tree, and the
+> idle-checkpoint wait/resume) map onto the existing closed union. New call sites
+> (all Designed, M36):
+> - **`PRECONDITION` → HTTP 409** — a `run_delegate` / `run_plan` naming an agent
+>   not resolvable through the project's enabled + trusted catalog (unresolvable /
+>   untrusted delegation target — "resolve+trust" is physically separate from
+>   "launch", and **no child run is created** on refusal); a cross-batch
+>   `dependsOn` / `requires` reference outside the plan being written.
+> - **`CONFIG` → HTTP 422** — a flow declaring an `orchestrator` node with
+>   `compat.engine_min < 1.6.0` (engine floor); an over-`max_fanout` /
+>   over-`max_depth` request (bounds, enforced pre-tx); a cyclic task DAG in
+>   `run_plan`; a `strict` path-scope enforcement declaration (the Phase-2 policy
+>   gap — refused until [ADR-096](decisions.md#adr-096-persistent-swarm-layer-2--addressable-sessions-star-routed-messaging-worktree-modes-per-agent-read-only) lands).
+> - **`CONFLICT` → HTTP 409** — a concurrent orchestrator resume (two child-terminal
+>   events racing the same `WaitingOnChildren → Running` wake).
+> - **`CHECKPOINT`** — an orchestrator `session/resume` failure when waking from
+>   `WaitingOnChildren` (terminal resume failure, same class as the M8 idle path).
+> - **`EXECUTOR_UNAVAILABLE` → HTTP 503** — a child-run spawn or concurrency-cap
+>   failure during delegation (retryable).
+
 ## Construction
 
 ```ts
