@@ -7204,14 +7204,122 @@ recoverable). See [`system-analytics/local-packages.md`](system-analytics/local-
 > renumbered to **0055**. Run `node scripts/validate-docs-adr-anchors.mjs` after
 > any renumber.
 
-### ADR-096: Docked AI authoring assistant for local-package editing (M36 Phase 5)
+### ADR-096: Docked AI authoring assistant — project-less scratch-at-local-package run (M36 Phase 5)
 
 **Date:** 2026-06-20
-**Status:** Proposed
-**Context:** Stub reserved for the docked AI authoring assistant — a scratch-run
-ACP session rooted at a non-project local-package working dir (`run_kind`
-fan-out, launch-time snapshot, supervisor working-dir confinement). Full body
-filled in M36 Phase 5 (task T5.1).
+**Status:** Accepted
+**Context:** M36 Phase 5 docks an AI authoring assistant inside the Flow Studio
+local-package editor: an ACP session that edits the local-package working-dir
+files directly, with live canvas/file refresh and inline HITL. It reuses the
+**scratch-run substrate** (`run_kind = "scratch"`, runner resolution, capability
+materialization, supervisor session, HITL, diff, the run keep-alive/recover
+plumbing) but is rooted at a **local-package working dir** that has **no project
+and no managed git worktree**. A local package is platform-scoped: a
+package-level fork (`forkPackageToLocal`) has `project_id = NULL`, while a
+per-project default fork (`forkElementToDefault`) carries a `project_id`. The
+editor opens either, so the assistant cannot always carry a project — the run
+must be genuinely **project-less**.
+
+**Decision:** Model the assistant as a **project-less scratch run** rooted at the
+local-package `working_dir`. No `git worktree add`, no `workspaces` row, no new
+`runs.status`, no engine bump, no new `MaisterError` code (reuse
+`PRECONDITION | CONFIG | CONFLICT`). The session runs IN the existing git-backed
+working dir; base branch/commit are read from it.
+
+1. **Nullable owner + launch snapshot (migration 0057).** `runs.project_id` and
+   `scratch_runs.project_id` become **nullable**. `scratch_runs.local_package_id`
+   (FK `local_packages`, `ON DELETE CASCADE`) is the project-less owner;
+   `runs.local_package_id` is the **launch-time snapshot** every terminal/read
+   path reads (never re-derived). A DB **CHECK** (`scratch_runs_owner_xor_check`)
+   enforces **exactly one of** `project_id` / `local_package_id`. The
+   `scratch_runs_project_status_idx` is made **partial**
+   (`WHERE project_id IS NOT NULL`) so it still serves project rows, plus a new
+   partial `scratch_runs_local_package_idx`.
+2. **Launch fan-out (`launchLocalPackageAssistant`).** A sibling of
+   `launchScratchRunStaged`: `worktreePath = <working_dir>`, NO worktree add, NO
+   workspace row. One launch insert writes the project-less `runs` +
+   `scratch_runs` rows (snapshotting `local_package_id`), resolves the runner via
+   launch-override → **platform default** only (no project-default tier), and
+   materializes a bare per-adapter capability profile (the flow-authoring skill
+   is seeded by the Studio surface). Member-level RBAC (`requireActiveSession`,
+   per ADR-095). Counts against the scratch (flow-pool) concurrency cap.
+3. **Supervisor working-dir confinement.** The session-create input carries an
+   optional `confineRoot`; when set it is the **SOLE** content-block file-URI
+   allow-root (the run dir stays allowed for uploads), **replacing** the
+   worktree ∪ repo allow-set. The web `createSession` passes
+   `confineRoot = working_dir`; the web tier confines too (defense in depth). A
+   `file:` URI outside the working dir is rejected (`PRECONDITION`).
+4. **No project-scoped events.** A project-less run has no project to attribute
+   domain/webhook events to (both outboxes + `domain_events.project_id` are
+   NOT NULL and project-scoped). `markScratchCrashed`, the keepalive TTL pass,
+   and the live scratch terminal emitter all **skip** the emits when
+   `project_id` is null; the run's own `runs`/`scratch_runs` terminal rows are
+   the record.
+
+**`run_kind` consumer checklist (every site grepped; how each is branched):**
+- `lib/reconcile.ts` — a project-less run has `project_id` NULL ⇒
+  `loadCandidates` (which iterates `projects`) **never selects it** → never
+  Crashed for a missing project worktree. The pure classifier already
+  `skip`s a live scratch session and **refuses `reattach`** for non-flow runs
+  (resume-driver guard). ✔ tested.
+- `lib/runs/resume-driver.ts` — only invoked via reconcile `reattach` (refused
+  for scratch) or the scratch recover route (`session/resume`, not the flow
+  `RESUME_CONTINUATION_PROMPT`). Never drives a project-less run. ✔
+- `lib/runs/keepalive-sweeper.ts` — pass1/pass2 select by status only; pass2
+  scratch branch skips the project-scoped emits when `project_id` is null. ✔
+- `lib/scheduler.ts` — scratch is in the **flow pool**; the assistant launches
+  straight to `Running` (never `Pending`), so `tryStartRun`/`promoteNextPending`
+  are not on its path; counting is status+kind based (project-agnostic). ✔
+- `lib/queries/portfolio.ts` — `getPortfolio`/rail/inbox filter
+  `inArray(runs.project_id, projectIds)` (+ rail inner-joins `workspaces`), so a
+  project-less run is **excluded** by construction; loops carry a defensive
+  null-skip. Studio surfaces it, not a project board. ✔
+- `lib/board.ts` — pure stage derivation over a task+run pair; assistant runs
+  are board-less (no task), never passed here. ✔
+- `lib/queries/run.ts` (`getRunDetail`), `lib/runs/change-summary.ts`,
+  `lib/queries/run-manifest.ts`, `lib/runs/cost-rollups.ts`,
+  `lib/queries/observatory.ts`, `lib/flows/graph/runner-core.ts`,
+  `lib/workbench-lifecycle/service.ts`, `lib/acp-runners/usage.ts`,
+  the takeover + review-comments routes, `…/diff/route.ts` — all are flow/
+  project-scratch paths that resolve a project via inner join or required
+  field. They narrow `project_id` through `requireRunProjectId(...)` (throws
+  `CONFIG` if a project-less run ever reaches a project-scoped path) or return
+  404/PRECONDITION for the project-less variant; usage-references keep the
+  project-less run (it still pins a runner → still blocks deletion). ✔
+- `components/workbench/lifecycle-actions.tsx` (`endpointFor`) — the assistant
+  is not surfaced on the rail/board (excluded above), so its `⋯` lifecycle
+  endpoints are never targeted at a project-less run.
+
+**Consequences:**
+- One internally-consistent model: the run is project-less, every automatic
+  sweep/query excludes it or narrows safely, and the launch-time snapshot keeps
+  terminal/read paths free of re-derivation.
+- `runs.project_id` becoming nullable touches ~13 flow/project-scratch consumers;
+  each narrows at its load boundary via `requireRunProjectId` (a single helper),
+  so the nullable column never silently coerces and a regression surfaces as
+  `CONFIG` rather than a crash.
+- The assistant's diff is the Studio editor's git-working-tree view (Phase 4),
+  not the project workspace diff route; the project-scoped run diff/change-summary
+  routes 404 for it.
+- The turn/recovery surface (`sendScratchUserMessage`, the scratch recover
+  route) branches RBAC to `requireActiveSession` (member-level) when the run is
+  project-less; the diff/file/lifecycle UI for the assistant is the Studio
+  editor (separate task), so the project-scoped scratch routes that require a
+  `workspaces` row stay project-only.
+
+**Alternatives Considered:**
+- **Keep `runs.project_id` NOT NULL, reuse a project:** rejected — a named
+  local package has no project; there is nothing valid to reference.
+- **Restrict the assistant to per-project default packages (always a project):**
+  rejected — contradicts the design (the editor opens any local package) and the
+  project-less framing; it would block authoring a named platform-scoped fork.
+- **A new `run_kind` for the assistant:** rejected — it reuses the entire
+  scratch substrate (runner/capabilities/session/HITL/diff/recover); a new kind
+  would fork all of it. The project-less variant is a property of a scratch run,
+  not a new kind.
+- **Emit project-scoped events with a sentinel project:** rejected — there is no
+  honest project; skipping the emit is correct (the assistant has no webhook
+  subscribers and no project board).
 
 ---
 

@@ -17,6 +17,13 @@ export type ConfinementRoots = {
   repoPath?: string;
   /** The run's `.maister/<slug>/runs/<runId>` dir — covers uploaded files. */
   runDir: string;
+  /**
+   * M36 Phase 5 (ADR-096): the SOLE filesystem root for a project-less
+   * local-package assistant session (the local-package working dir). When set,
+   * it REPLACES worktree ∪ repo as the allow-set (the run dir stays allowed for
+   * uploaded files); a `file:` URI outside it is rejected.
+   */
+  confineRoot?: string;
 };
 
 function isInside(parent: string, child: string): boolean {
@@ -57,11 +64,17 @@ export function contentBlockUriViolation(
 ): string | null {
   if (!blocks || blocks.length === 0) return null;
 
-  const allowed = [
-    roots.worktreePath,
-    roots.runDir,
-    ...(roots.repoPath ? [roots.repoPath] : []),
-  ].map((root) => path.resolve(root));
+  // ADR-096: a project-less session pins to its single working dir (+ run dir
+  // for uploads); otherwise the worktree ∪ repo ∪ run-dir allow-set.
+  const allowed = (
+    roots.confineRoot
+      ? [roots.confineRoot, roots.runDir]
+      : [
+          roots.worktreePath,
+          roots.runDir,
+          ...(roots.repoPath ? [roots.repoPath] : []),
+        ]
+  ).map((root) => path.resolve(root));
 
   for (const block of blocks) {
     const b = block as {

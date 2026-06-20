@@ -27,6 +27,7 @@ import pino from "pino";
 import { getDb } from "@/lib/db/client";
 import { deriveTtlInfo } from "@/lib/gc/ttl";
 import { classifyRecover } from "@/lib/runs/recover-classify";
+import { requireRunProjectId } from "@/lib/runs/run-kind-invariants";
 import * as schema from "@/lib/db/schema";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { resolveNodeRecoverInfo } from "@/lib/flows/graph/current-node-kind";
@@ -307,7 +308,10 @@ export const getRunDetail = cache(async function getRunDetail(
 
   return {
     runId: row.runId,
-    projectId: row.projectId,
+    // The inner join on projects guarantees a project here; a project-less
+    // local-package run (ADR-096) matches zero rows and getRunDetail returns
+    // null above, so this narrowing never throws on a real row.
+    projectId: requireRunProjectId(row.projectId, row.runId),
     projectSlug: row.projectSlug,
     taskNumber: row.taskNumber,
     taskRef:
@@ -888,6 +892,10 @@ export async function getRunCapabilityProfiles(
   const run = runRows[0];
 
   if (!run) return null;
+  // A project-less local-package run (ADR-096) has no project-scoped capability
+  // imports/trust to attach — no capability-profile view applies.
+  if (!run.projectId) return null;
+  const projectId = run.projectId;
 
   const attemptRows = await client
     .select({
@@ -916,7 +924,7 @@ export async function getRunCapabilityProfiles(
       trustStatus: capabilityImports.trustStatus,
     })
     .from(capabilityImports)
-    .where(eq(capabilityImports.projectId, run.projectId));
+    .where(eq(capabilityImports.projectId, projectId));
 
   const trustByRevision = new Map<string, CapabilityImport["trustStatus"]>();
 

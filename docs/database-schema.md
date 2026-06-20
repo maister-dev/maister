@@ -42,7 +42,7 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `tasks`                       | Board cards. Status `Backlog\|InFlight\|Done\|Abandoned`. Stage `Backlog\|Prepare`.                                                                                                                                                                                                                                        | `projects.id`                                                              |
 | `runs`                        | Execution attempts. Flow runs are task attempts; scratch runs are manual coding-agent sessions with `run_kind = "scratch"`. New launches store `runner_id`, `runner_resolution_tier`, `capability_agent`, and `runner_snapshot` for historical display/resume. **(ADR-085 — Designed, migration `0047`)** snapshots resolved delivery policy. | `tasks.id`, `projects.id`, `flows.id`, optional `platform_acp_runners.id` |
 | `workspaces`                  | `git worktree` instances tied to a run.                                                                                                                                                                                                                                                                                    | `runs.id`, `projects.id`                                                   |
-| `scratch_runs`                | Scratch-only metadata: dialog status, name, plan mode, links, branch base, target, and supervisor session.                                                                                                                                                                                                                 | `runs.id`, `projects.id`, `users.id`, optional `tasks.id`                  |
+| `scratch_runs`                | Scratch-only metadata: dialog status, name, plan mode, links, branch base, target, and supervisor session. **(M36 `0057`, ADR-096)** `project_id` is NULLABLE; `local_package_id` is the project-less owner of a docked-assistant run (CHECK: exactly one of the two).                                                          | `runs.id`, optional `projects.id`, `local_packages.id`, `users.id`, optional `tasks.id` |
 | `scratch_messages`            | Append-only dialog message ledger with monotonic sequence per scratch run.                                                                                                                                                                                                                                                 | `scratch_runs.run_id`                                                      |
 | `scratch_attachments`         | Text note, file path, or issue URL attachments attached to a scratch run or message.                                                                                                                                                                                                                                       | `scratch_runs.run_id`, optional `scratch_messages.id`                      |
 | `scratch_capability_profiles` | Launch-time MCP/skill/rule/settings/restriction snapshot and materialized profile path.                                                                                                                                                                                                                                    | `scratch_runs.run_id`                                                      |
@@ -966,7 +966,13 @@ unread badge and inbox panel.
                                  //   terminal L3 enforcement gates off this,
                                  //   not the mutable catalog index
   taskId?,                       // nullable for scratch runs
-  projectId,
+  projectId?,                    // M36 (migration 0057): NULLABLE — NULL for the
+                                 //   project-less local-package assistant run
+                                 //   (ADR-096); set for every other run
+  localPackageId?,               // M36 (migration 0057): FK -> local_packages.id
+                                 //   CASCADE; set iff project-less scratch run
+                                 //   (launch-time snapshot read by terminal/read
+                                 //   paths)
   flowId?,                       // nullable for scratch runs
   runnerId,
   runnerResolutionTier,
@@ -1226,7 +1232,12 @@ workspace and are needed by diff, promote, discard, and recovery.
 ```ts
 {
   runId,                         // PK + FK -> runs.id
-  projectId,                     // FK -> projects.id
+  projectId?,                    // FK -> projects.id; M36 (migration 0057)
+                                 //   NULLABLE — NULL for a project-less
+                                 //   local-package assistant run (ADR-096)
+  localPackageId?,               // M36 (migration 0057): FK -> local_packages.id
+                                 //   CASCADE; the project-less owner. CHECK:
+                                 //   exactly one of projectId / localPackageId
   name?,
   initialPrompt,
   workMode: 'auto' | 'plan_first' | 'manual_approval',
@@ -1254,6 +1265,17 @@ workspace and are needed by diff, promote, discard, and recovery.
 `dialogStatus` is the scratch-specific conversation axis. It carries
 `WaitingForUser`; `runs.status` remains the shared lifecycle enum. The mapping
 is defined in [`system-analytics/scratch-runs.md`](system-analytics/scratch-runs.md).
+
+**Project-less local-package variant (M36, migration 0057, ADR-096).** A docked
+AI authoring assistant run sets `localPackageId` and leaves `projectId` NULL —
+it is rooted at a local-package `working_dir` with no project and no
+`workspaces` row (it runs in the existing git-backed working dir;
+`baseBranch`/`baseCommit` are read from its HEAD). The
+`scratch_runs_owner_xor_check` CHECK enforces exactly one of `projectId` /
+`localPackageId`. The matching `runs.localPackageId` is the launch snapshot.
+The `scratch_runs_project_status_idx` is partial (`WHERE projectId IS NOT
+NULL`); `scratch_runs_local_package_idx` is its partial twin. See
+[`system-analytics/studio-ai-assistant.md`](system-analytics/studio-ai-assistant.md).
 
 `workMode` and `reasoningEffort` are launch-policy metadata passed into the
 scratch prompt/profile. `planMode` stays for compatibility with existing

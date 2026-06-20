@@ -13,6 +13,7 @@ import { systemCloseActiveAssignmentsForRun } from "@/lib/assignments/service";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { requireRunProjectId } from "@/lib/runs/run-kind-invariants";
 import { preserveWorktree, type PreserveResult } from "@/lib/gc/preserve";
 import {
   promotionClaimTimeoutSeconds,
@@ -1347,6 +1348,9 @@ async function loadLifecycleContext(runId: string): Promise<LifecycleContext> {
   if (!run) {
     throw new MaisterError("PRECONDITION", `run not found: ${runId}`);
   }
+  // Workbench lifecycle ops act on a project worktree; a project-less
+  // local-package assistant run (ADR-096) has none and is not a valid target.
+  const projectId = requireRunProjectId(run.projectId, runId);
 
   const [projectRows, workspaceRows] = await Promise.all([
     client
@@ -1355,7 +1359,7 @@ async function loadLifecycleContext(runId: string): Promise<LifecycleContext> {
         mainBranch: projects.mainBranch,
       })
       .from(projects)
-      .where(eq(projects.id, run.projectId)),
+      .where(eq(projects.id, projectId)),
     client
       .select({
         id: workspaces.id,
@@ -1384,7 +1388,7 @@ async function loadLifecycleContext(runId: string): Promise<LifecycleContext> {
 
   return {
     project,
-    run,
+    run: { ...run, projectId },
     workspace: workspaceRows[0] ?? null,
   };
 }
@@ -1498,18 +1502,24 @@ export async function recordDrop(args: RecordDropInput): Promise<void> {
         }
       }
 
+      // Workbench targets always carry a project (ADR-096); narrow for emit.
+      const eventProjectId = requireRunProjectId(
+        updatedRunRows[0].projectId,
+        args.runId,
+      );
+
       if (args.nextRunStatus === "Abandoned") {
         await emitWebhookEvent({
           db: tx,
           type: "run.abandoned",
-          projectId: updatedRunRows[0].projectId,
+          projectId: eventProjectId,
           runId: args.runId,
           data: { source: "workbench" },
         });
         await emitDomainEvent({
           db: tx,
           kind: "run.abandoned",
-          projectId: updatedRunRows[0].projectId,
+          projectId: eventProjectId,
           runId: args.runId,
           taskId: updatedRunRows[0].taskId,
           actor: { type: "system", id: null },
@@ -1525,7 +1535,7 @@ export async function recordDrop(args: RecordDropInput): Promise<void> {
         await emitWebhookEvent({
           db: tx,
           type: "run.review",
-          projectId: updatedRunRows[0].projectId,
+          projectId: eventProjectId,
           runId: args.runId,
           data: { source: "workbench" },
         });
@@ -1567,7 +1577,7 @@ async function markRunStoppedAndCloseAssignments(args: {
     await emitWebhookEvent({
       db: tx,
       type: "run.review",
-      projectId: rows[0].projectId,
+      projectId: requireRunProjectId(rows[0].projectId, args.runId),
       runId: args.runId,
       data: { source: "workbench" },
     });

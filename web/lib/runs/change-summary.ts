@@ -11,6 +11,7 @@ import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { filterReviewableChangeEntries } from "@/lib/runs/reviewable-changes";
+import { requireRunProjectId } from "@/lib/runs/run-kind-invariants";
 import {
   diffChangeStats,
   diffWorkingTreeChangeStats,
@@ -75,15 +76,22 @@ export interface RunChangeSummaryResponse {
 
 export interface RunChangeSummaryAccess {
   runId: string;
-  projectId: string;
+  // ADR-096: null for a project-less local-package assistant run. The route
+  // rejects such runs (the project workspace-diff summary does not apply; the
+  // Studio editor renders its own git-working-tree diff).
+  projectId: string | null;
   runKind: RunKind;
 }
 
 type LoadedRun = {
   id: string;
-  projectId: string;
+  projectId: string | null;
   runKind: RunKind;
 };
+
+// The project-narrowed run handed to the workspace-diff helpers (after
+// getRunChangeSummary rejects the project-less local-package variant, ADR-096).
+type LoadedRunWithProject = LoadedRun & { projectId: string };
 
 type LoadedWorkspace = {
   branch: string;
@@ -159,7 +167,7 @@ async function loadRun(client: NodePgDatabase<typeof schema>, runId: string) {
 
 async function loadWorkspaceProject(
   client: NodePgDatabase<typeof schema>,
-  run: LoadedRun,
+  run: LoadedRunWithProject,
 ): Promise<{ workspace: LoadedWorkspace; project: LoadedProject }> {
   const [workspaceRows, projectRows] = await Promise.all([
     client
@@ -398,7 +406,7 @@ function buildResponse(input: {
 
 async function getScratchChangeSummary(input: {
   client: NodePgDatabase<typeof schema>;
-  run: LoadedRun;
+  run: LoadedRunWithProject;
   scope: RunChangeSummaryScope;
 }): Promise<RunChangeSummaryResponse> {
   const { workspace } = await loadWorkspaceProject(input.client, input.run);
@@ -444,7 +452,7 @@ async function getScratchChangeSummary(input: {
 
 async function getFlowChangeSummary(input: {
   client: NodePgDatabase<typeof schema>;
-  run: LoadedRun;
+  run: LoadedRunWithProject;
   scope: RunChangeSummaryScope;
 }): Promise<RunChangeSummaryResponse> {
   const { workspace, project } = await loadWorkspaceProject(
@@ -515,12 +523,23 @@ export async function getRunChangeSummary(input: {
   const run = await loadRun(client, input.runId);
 
   if (!run) return null;
+  // A project-less local-package run has no project workspace to summarize.
+  const projectId = requireRunProjectId(run.projectId, run.id);
+  const runWithProject = { ...run, projectId };
 
   try {
     const summary =
       run.runKind === "scratch"
-        ? await getScratchChangeSummary({ client, run, scope: input.scope })
-        : await getFlowChangeSummary({ client, run, scope: input.scope });
+        ? await getScratchChangeSummary({
+            client,
+            run: runWithProject,
+            scope: input.scope,
+          })
+        : await getFlowChangeSummary({
+            client,
+            run: runWithProject,
+            scope: input.scope,
+          });
 
     log.info(
       {

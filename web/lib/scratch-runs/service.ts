@@ -22,7 +22,7 @@ import path from "node:path";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import pino from "pino";
 
-import { requireProjectAction } from "@/lib/authz";
+import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import {
   resolveRunner,
   type RunnerCatalogEntry,
@@ -90,6 +90,8 @@ import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import {
   addWorktree,
   branchExists,
+  currentBranchName,
+  headCommit,
   removeBranch,
   removeWorktree,
   resolveBaseCommit,
@@ -98,6 +100,7 @@ import {
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const {
   capabilityImports,
+  localPackages,
   platformAcpRunners,
   platformRouterSidecars,
   platformRuntimeSettings,
@@ -368,7 +371,11 @@ function resolveScratchBranch(args: {
   });
 }
 
-function scratchPolicy(body: ScratchLaunchInput): {
+function scratchPolicy(body: {
+  workMode?: ScratchWorkMode;
+  planMode?: ScratchPlanMode;
+  reasoningEffort?: ScratchReasoningEffort;
+}): {
   workMode: ScratchWorkMode;
   reasoningEffort: ScratchReasoningEffort;
   planMode: ScratchPlanMode;
@@ -553,28 +560,36 @@ export async function markScratchCrashed(args: {
       .set(scratchUpdate)
       .where(eq(scratchRuns.runId, args.runId));
 
-    await emitWebhookEvent({
-      db: tx,
-      type: "run.crashed",
-      projectId: rows[0].projectId,
-      runId: args.runId,
-      data: { errorCode },
-    });
+    // ADR-096: a project-less local-package assistant run has no project to
+    // attribute domain/webhook events to (both require a non-null projectId,
+    // and the consumers are project-scoped). Skip the emits for it; the run's
+    // own scratch_runs/runs terminal rows are the record.
+    if (rows[0].projectId) {
+      const projectId = rows[0].projectId;
 
-    await emitDomainEvent({
-      db: tx,
-      kind: "run.crashed",
-      projectId: rows[0].projectId,
-      runId: args.runId,
-      actor: { type: "system", id: null },
-      payload: {
+      await emitWebhookEvent({
+        db: tx,
+        type: "run.crashed",
+        projectId,
         runId: args.runId,
-        taskId: null,
-        flowId: null,
-        runKind: "scratch",
-        reason: errorCode ?? null,
-      },
-    });
+        data: { errorCode },
+      });
+
+      await emitDomainEvent({
+        db: tx,
+        kind: "run.crashed",
+        projectId,
+        runId: args.runId,
+        actor: { type: "system", id: null },
+        payload: {
+          runId: args.runId,
+          taskId: null,
+          flowId: null,
+          runKind: "scratch",
+          reason: errorCode ?? null,
+        },
+      });
+    }
   });
 }
 
@@ -1145,6 +1160,370 @@ export async function launchScratchRun(
   return step.value;
 }
 
+// --- M36 Phase 5 (ADR-096): docked AI authoring assistant ------------------
+// A scratch-run ACP session rooted at a NON-project local-package working dir.
+// There is NO project, NO managed git worktree, NO `git worktree add`, NO
+// workspace row. The session's cwd + sole confinement root is the local
+// package's `working_dir` (already git-backed). The run is project-less:
+// runs.project_id / scratch_runs.project_id stay NULL and scratch_runs.
+// local_package_id carries the owner (DB XOR CHECK). runs.local_package_id is
+// the launch-time snapshot every terminal/read path reads.
+
+export type LocalPackageAssistantLaunchInput = {
+  localPackageId: string;
+  prompt: string;
+  runnerId?: string;
+  workMode?: ScratchWorkMode;
+  reasoningEffort?: ScratchReasoningEffort;
+  planMode?: ScratchPlanMode;
+};
+
+// Resolve the runner for a project-less assistant launch. There is no project
+// (so no project default tier); the chain is launch-override → platform default.
+async function resolveLocalPackageAssistantRunner(
+  db: Db,
+  body: LocalPackageAssistantLaunchInput,
+): Promise<ScratchResolvedRunner> {
+  const runtimeRows = await db
+    .select()
+    .from(platformRuntimeSettings)
+    .where(eq(platformRuntimeSettings.id, "singleton"));
+  const platformRuntime = runtimeRows[0];
+
+  if (!platformRuntime) {
+    throw new MaisterError(
+      "EXECUTOR_UNAVAILABLE",
+      "platform default ACP runner is not configured",
+    );
+  }
+
+  const runnerRows = await db.select().from(platformAcpRunners);
+  const sidecarRows = await db.select().from(platformRouterSidecars);
+  const sidecarById = new Map<string, Record<string, any>>(
+    sidecarRows.map((row: Record<string, any>) => [row.id, row]),
+  );
+  const resolution = resolveRunner({
+    launchOverrideRunnerId: body.runnerId,
+    step: { runnerId: null },
+    projectFlow: { defaultRunnerId: null },
+    platformFlow: { defaultRunnerId: null },
+    project: { defaultRunnerId: null },
+    platform: { defaultRunnerId: platformRuntime.defaultRunnerId },
+    runners: runnerRows.map((row: Record<string, any>) =>
+      runnerCatalogEntry(row, sidecarById),
+    ),
+  });
+
+  return {
+    resolution,
+    executor: {
+      id: resolution.runnerId,
+      agent: resolution.capabilityAgent as CapabilityAgent,
+      model: resolution.runnerSnapshot.model,
+      executorRefId: resolution.runnerId,
+      env: null,
+      router: resolution.runnerSnapshot.sidecarId ? "ccr" : null,
+    },
+  };
+}
+
+async function loadActiveLocalPackage(db: Db, localPackageId: string) {
+  const rows = await db
+    .select()
+    .from(localPackages)
+    .where(eq(localPackages.id, localPackageId));
+  const pkg = rows[0];
+
+  if (!pkg || pkg.status !== "active") {
+    throw new MaisterError(
+      "PRECONDITION",
+      `local package not found or not active: ${localPackageId}`,
+    );
+  }
+
+  return pkg;
+}
+
+// Launch a docked AI authoring assistant session against a local-package
+// working dir. Project-less; runs IN the existing git-backed working dir (no
+// worktree add, no workspace row); base branch/commit are read from it.
+export async function launchLocalPackageAssistant(args: {
+  body: LocalPackageAssistantLaunchInput;
+  userId: string;
+}): Promise<ScratchRunResponse> {
+  const db = getDb() as Db;
+
+  // Member-level RBAC (ADR-095): authoring a local package is any active user.
+  await requireActiveSession();
+
+  const pkg = await loadActiveLocalPackage(db, args.body.localPackageId);
+  const { executor, resolution: runnerResolution } =
+    await resolveLocalPackageAssistantRunner(db, args.body);
+
+  const policy = scratchPolicy(args.body);
+  // The assistant carries no project capability catalog — an empty selectable
+  // set. The flow-authoring skill is seeded by the Studio surface (separate
+  // task); the backend foundation materializes a bare per-adapter profile.
+  const profile = resolveCapabilityProfile({
+    projectId: pkg.id,
+    executorAgent: executor.agent,
+    planMode: policy.planMode,
+    workMode: policy.workMode,
+    reasoningEffort: policy.reasoningEffort,
+    catalog: [],
+  });
+
+  const platformStatus = await checkSupervisorHealth();
+
+  if (platformStatus.kind === "unavailable") {
+    throw new MaisterError(
+      "EXECUTOR_UNAVAILABLE",
+      `supervisor unavailable (${platformStatus.reason}): ${platformStatus.message}`,
+    );
+  }
+
+  await assertScratchCapacityAvailable({ db });
+
+  const workingDir = pkg.workingDir as string;
+  // Base branch/commit are read from the EXISTING working dir — no new branch.
+  const baseBranch =
+    (await currentBranchName(workingDir)) ?? pkg.branchName ?? "main";
+  const baseCommit = await headCommit({ worktreePath: workingDir });
+
+  const runId = randomUUID();
+  const rawPrompt = args.body.prompt.trim();
+  const hasInitialPrompt = rawPrompt.length > 0;
+  const prompt = hasInitialPrompt
+    ? decoratePromptForPlanMode({
+        planMode: policy.planMode,
+        workMode: policy.workMode,
+        reasoningEffort: policy.reasoningEffort,
+        prompt: rawPrompt,
+      })
+    : "";
+  const now = new Date();
+  const name = pkg.name ? `${pkg.name} assistant` : scratchNameFallback(prompt);
+  const messageId = hasInitialPrompt ? randomUUID() : null;
+  const initialMessage = hasInitialPrompt
+    ? userScratchMessageDraft({ sequence: 1, content: rawPrompt })
+    : null;
+
+  const materialized = await materializeCapabilityProfile({
+    runId,
+    worktreePath: workingDir,
+    executor: {
+      agent: executor.agent,
+      model: executor.model,
+      executorRefId: executor.executorRefId,
+      router: executor.router ?? null,
+    },
+    workMode: policy.workMode,
+    reasoningEffort: policy.reasoningEffort,
+    profile,
+  });
+
+  // Single launch insert: project-less runs + scratch_runs rows, snapshotting
+  // local_package_id. NO workspace row (no managed worktree). The XOR CHECK on
+  // scratch_runs enforces local_package_id-set / project_id-null.
+  await db.transaction(async (tx: Db) => {
+    await assertScratchCapacityAvailableInTransaction(tx);
+
+    await tx.insert(runs).values({
+      id: runId,
+      runKind: "scratch",
+      taskId: null,
+      projectId: null,
+      localPackageId: pkg.id,
+      flowId: null,
+      runnerId: runnerResolution.runnerId,
+      runnerResolutionTier: runnerResolution.runnerResolutionTier,
+      capabilityAgent: runnerResolution.capabilityAgent,
+      runnerSnapshot: runnerResolution.runnerSnapshot,
+      status: "Running",
+      currentStepId: scratchStepId(),
+      flowVersion: "scratch",
+      flowRevision: "manual",
+      flowRevisionId: null,
+      createdByUserId: args.userId,
+      startedAt: now,
+    });
+    await tx.insert(scratchRuns).values({
+      runId,
+      projectId: null,
+      localPackageId: pkg.id,
+      name,
+      initialPrompt: args.body.prompt,
+      workMode: policy.workMode,
+      reasoningEffort: policy.reasoningEffort,
+      planMode: policy.planMode,
+      linkedTaskId: null,
+      linkedIssueUrl: null,
+      baseBranch,
+      baseCommit,
+      targetBranch: baseBranch,
+      dialogStatus: "Starting",
+      createdByUserId: args.userId,
+      lastUserMessageAt: hasInitialPrompt ? now : null,
+      updatedAt: now,
+    });
+    if (initialMessage && messageId) {
+      await tx.insert(scratchMessages).values({
+        id: messageId,
+        runId,
+        sequence: initialMessage.sequence,
+        role: initialMessage.role,
+        content: initialMessage.content,
+        supervisorEventId: initialMessage.supervisorEventId ?? null,
+        createdAt: now,
+      });
+    }
+    await tx.insert(scratchCapabilityProfiles).values({
+      id: randomUUID(),
+      runId,
+      profileDigest: profile.profileDigest,
+      materializedPath: materialized.rootPath,
+      selectedMcpIds: profile.selectedMcpIds,
+      selectedSkillIds: profile.selectedSkillIds,
+      selectedRuleIds: profile.selectedRuleIds,
+      restrictions: {
+        selectedRestrictionIds: profile.selectedRestrictionIds,
+        selectedAgentDefinitionIds: profile.selectedAgentDefinitionIds,
+      },
+      adapterLaunch: materialized.adapterLaunch,
+      downgradeNotes: downgradeNotes(profile),
+    });
+  });
+
+  try {
+    const session = await createSession({
+      runId,
+      // No project — the local-package slug names the runtime/cost subtree
+      // (.maister/<slug>/runs/<runId>); it is kebab-case + unique by construction.
+      projectSlug: pkg.slug,
+      worktreePath: workingDir,
+      // ADR-096: the SOLE confinement root is the working dir (no repo/worktree
+      // widening). A `file:` URI outside it is rejected supervisor-side.
+      confineRoot: workingDir,
+      stepId: scratchStepId(),
+      executor: runnerExecutorInput(runnerResolution.runnerSnapshot),
+      runner: runnerSupervisorInput({
+        snapshot: runnerResolution.runnerSnapshot,
+      }),
+      capabilityProfilePath: materialized.profilePath,
+      adapterLaunch: mergeRunnerAdapterLaunch(
+        runnerResolution.runnerSnapshot,
+        materialized.adapterLaunch,
+      ),
+      mcpServers: materialized.mcpServers,
+    });
+
+    await db.transaction(async (tx: Db) => {
+      const dialogStatus: ScratchDialogStatus = hasInitialPrompt
+        ? "Running"
+        : "WaitingForUser";
+
+      await tx
+        .update(runs)
+        .set({ acpSessionId: session.acpSessionId })
+        .where(eq(runs.id, runId));
+      await tx
+        .update(scratchRuns)
+        .set({
+          supervisorSessionId: session.sessionId,
+          dialogStatus,
+          updatedAt: new Date(),
+        })
+        .where(eq(scratchRuns.runId, runId));
+    });
+
+    if (!hasInitialPrompt) {
+      return localPackageAssistantResponse({
+        runId,
+        name,
+        runStatus: runStatusForDialogStatus("WaitingForUser"),
+        dialogStatus: "WaitingForUser",
+        baseBranch,
+        baseCommit,
+        policy,
+      });
+    }
+
+    const launchPrompt = normalizeScratchPrompt(prompt, executor.agent, {
+      runId,
+    });
+    const promptResult = await sendScratchPromptAndProjectEvents({
+      runId,
+      sessionId: session.sessionId,
+      stepId: scratchStepId(),
+      prompt: launchPrompt,
+    });
+    const dialogStatus = await completeScratchPromptTurn({ db, runId });
+
+    log.info(
+      {
+        runId,
+        localPackageId: pkg.id,
+        runnerId: runnerResolution.runnerId,
+        createdByUserId: args.userId,
+        dialogStatus,
+        stopReason: promptResult.stopReason,
+      },
+      "local-package assistant run launched",
+    );
+
+    return localPackageAssistantResponse({
+      runId,
+      name,
+      runStatus: runStatusForDialogStatus(dialogStatus),
+      dialogStatus,
+      baseBranch,
+      baseCommit,
+      policy,
+    });
+  } catch (err) {
+    await markScratchCrashed({ db, runId, err }).catch((markErr) =>
+      log.error(
+        {
+          runId,
+          markErr: markErr instanceof Error ? markErr.message : String(markErr),
+        },
+        "failed to mark local-package assistant run crashed",
+      ),
+    );
+    throw err;
+  }
+}
+
+function localPackageAssistantResponse(args: {
+  runId: string;
+  name: string | null;
+  runStatus: RunStatus;
+  dialogStatus: ScratchDialogStatus;
+  baseBranch: string;
+  baseCommit: string;
+  policy: ReturnType<typeof scratchPolicy>;
+}): ScratchRunResponse {
+  return {
+    runId: args.runId,
+    dialogUrl: `/scratch-runs/${args.runId}`,
+    status: {
+      runId: args.runId,
+      // Project-less: the DTO projectId field is empty for a local-package run.
+      projectId: "",
+      name: args.name,
+      runStatus: args.runStatus,
+      dialogStatus: args.dialogStatus,
+      branchName: args.baseBranch,
+      baseBranch: args.baseBranch,
+      baseCommit: args.baseCommit,
+      targetBranch: args.baseBranch,
+      workMode: args.policy.workMode,
+      reasoningEffort: args.policy.reasoningEffort,
+      planMode: args.policy.planMode,
+    },
+  };
+}
+
 async function loadScratchRows(db: Db, runId: string) {
   const runRows = await db.select().from(runs).where(eq(runs.id, runId));
   const run = runRows[0];
@@ -1195,7 +1574,14 @@ async function appendScratchUserMessage(args: {
     throw new MaisterError("PRECONDITION", `run is not scratch: ${args.runId}`);
   }
 
-  await requireProjectAction(run.projectId, "operateScratchRun");
+  // ADR-096: a project-less local-package assistant run carries member-level
+  // RBAC (any active user, per ADR-095); a project scratch run keeps its
+  // project-scoped action gate.
+  if (run.projectId) {
+    await requireProjectAction(run.projectId, "operateScratchRun");
+  } else {
+    await requireActiveSession();
+  }
 
   return args.db.transaction(async (tx: Db) => {
     await lockRunRows(tx, args.runId);

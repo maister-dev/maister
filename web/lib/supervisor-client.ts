@@ -83,6 +83,10 @@ export type CreateSessionInput = {
   // content-block file URIs to repo ∪ worktree ∪ run dir (matches the web-side
   // attachment confinement). Only set where the run can send file references.
   repoPath?: string;
+  // M36 Phase 5 (ADR-096): SOLE content-block confinement root for a
+  // project-less local-package assistant session (the working dir). Replaces
+  // worktree ∪ repo as the supervisor allow-set; the run dir stays allowed.
+  confineRoot?: string;
   stepId: string;
   nodeAttemptId?: string;
   executor: SupervisorExecutorInput;

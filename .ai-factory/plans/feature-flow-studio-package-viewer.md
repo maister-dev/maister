@@ -178,11 +178,11 @@ Agent bundles/subdirs (agents stay single-file); editable on-canvas node popup (
 
 > The hardest milestone: a scratch-style ACP session rooted at a NON-project local-package working dir. Docs-first; the run_kind fan-out + the project-less scratch model are the core risk. Needs migration 0057 AND a supervisor change.
 
-- [ ] **T5.1 — Docs-first + ADR-096.**
+- [x] **T5.1 — Docs-first + ADR-096.**
   New `docs/system-analytics/studio-ai-assistant.md` (R5: entities, state machine, process flow, expectations, edge cases) + the `run_kind = scratch-at-local-package` row in `docs/system-analytics/runs.md`; ERD for the 0057 columns in `docs/db/runs-domain.md` + `docs/database-schema.md`; OpenAPI for the assistant routes. ADR-096 body: a scratch run whose target is a `local_package` working dir (NOT a project worktree, NO managed `git worktree`, project-less); the run_kind handling decision; the launch-time snapshot; the supervisor working-dir confinement. Enumerate the **run_kind consumer set** as the T5.4 checklist.
   Acceptance: docs validators + ADR anchors green; the consumer checklist is exhaustive (cross-checked vs the grep in T5.4).
 
-- [ ] **T5.2 — Migration 0057 (local-package run linkage).** (depends on T5.1)
+- [x] **T5.2 — Migration 0057 (local-package run linkage).** (depends on T5.1)
   `scratch_runs.project_id` → **nullable**; add `scratch_runs.local_package_id` (FK `local_packages`, `ON DELETE CASCADE`) + a CHECK that exactly one of `project_id`/`local_package_id` is set; add `runs.local_package_id` (launch-time snapshot, nullable). Adjust `scratch_runs_project_status_idx` (partial / split) and the `run-kind-invariants` scratch contract to admit the project-less variant.
   Files: `web/lib/db/schema.ts`, `web/lib/db/migrations/0057_*`, `web/lib/runs/run-kind-invariants.ts`.
   Acceptance: applies clean; the XOR(project_id, local_package_id) CHECK holds; `run-kind-invariants` admits a `local_package_id`-only scratch row and still forbids `taskId`/`flowId`; `db:generate` no stray diff.
@@ -192,13 +192,13 @@ Agent bundles/subdirs (agents stay single-file); editable on-canvas node popup (
   Files: skill bundle under the assistant's seed location.
   Acceptance: skill loads in the assistant session (smoke).
 
-- [ ] **T5.4 — Scratch-at-local-package rooting + run_kind fan-out.** (depends on T5.2)
+- [x] **T5.4 — Scratch-at-local-package rooting + run_kind fan-out.** (depends on T5.2)
   Teach the scratch path a local-package target: `launchScratchRunStaged` (`web/lib/scratch-runs/service.ts`) accepts a local-package target with `worktreePath = <local_package working_dir>`, **NO project, NO `git worktree add`, NO new workspace row** (the session runs IN the existing git-backed working dir; base branch/commit read from it). Write the project-less `scratch_runs` row (0057) + snapshot `runs.local_package_id`. **Branch EVERY run_kind consumer** (verified by grepping `runKind`) so a project-less run is handled, not crashed: `reconcile.ts` (must NOT mark Crashed for a missing project worktree — it isn't in `git worktree list`), `resume-driver.ts` (must NOT drive it; recover via scratch turn), `scheduler.ts` (flow/scratch pool cap), `keepalive-sweeper.ts` (idle handling without a project worktree), `portfolio.ts`/`board.ts` (read models — surface under Studio, not a project board; `derivePortfolioWorkspaceMetadata` assumes a workspace row), `lifecycle-actions.tsx` `endpointFor`, `run-kind-invariants.ts`, `diff/route.ts`. Add a guard at the irreversible spawn site (not just the classifier).
   Files: `web/lib/scratch-runs/service.ts`, `web/lib/{reconcile,scheduler}.ts`, `web/lib/runs/{resume-driver,keepalive-sweeper,run-kind-invariants}.ts`, `web/lib/queries/portfolio.ts`, `web/lib/board.ts`, `web/components/workbench/lifecycle-actions.tsx`.
   Acceptance (repo rule): a project-less local-package scratch run is never driven into the flow resume driver AND never marked Crashed by reconcile for lack of a project worktree (tests); each consumer arm has a test; launch-time `local_package_id` is snapshotted and read by the terminal path; pool accounting correct; no NULL-deref where a workspace/project row was assumed.
   Logging: INFO `[studio.assistant.launch] {localPackageId, runId}`; DEBUG per consumer branch.
 
-- [ ] **T5.5 — Supervisor: working-dir confinement for a project-less session.** (depends on T5.4)
+- [x] **T5.5 — Supervisor: working-dir confinement for a project-less session.** (depends on T5.4)
   The supervisor confines content-block `file:` URIs to `repoPath` (`supervisor/src/prompt-confinement.ts`, `http-api.ts:539`, `spawn.ts:305`). For a local-package session pass the **working_dir** as the confinement root (set `repoPath = working_dir` on the `CreateSessionInput`/`StartSessionRequest`, or add an explicit `confineRoot`). Defense-in-depth: the web tier confines too.
   Files: `supervisor/src/{types,http-api,spawn,prompt-confinement}.ts`, the web `createSession` call in `web/lib/scratch-runs/service.ts`.
   Acceptance: a file URI outside the working_dir is rejected by the supervisor for a local-package session; `pnpm --filter @maister/supervisor test` green (supervisor suite).

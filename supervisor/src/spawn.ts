@@ -303,6 +303,7 @@ export async function spawnSession(
     logPath,
     worktreePath: request.worktreePath,
     repoPath: request.repoPath,
+    confineRoot: request.confineRoot,
     monotonicId: seedMonotonicId,
     // M34 (ADR-090 L1): session-scoped read-only permission arbitration.
     readOnlySession: request.readOnlySession === true,

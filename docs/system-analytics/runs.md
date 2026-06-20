@@ -10,7 +10,16 @@ domain projects state onto it.
 ## Domain entities
 
 - **Run** — `runs` row. FK to `tasks`, `projects`, `flows`,
-  `executors`.
+  `executors`. `run_kind ∈ {flow, scratch, agent}`.
+  - **`run_kind = scratch` — project-less local-package variant** (M36 Phase 5,
+    ADR-096): a scratch run rooted at a local-package `working_dir` with **no
+    project and no `workspaces` row**. `runs.project_id` is **NULL** and
+    `runs.local_package_id` is the launch snapshot; `scratch_runs` carries the
+    owner under a DB CHECK (exactly one of `project_id` / `local_package_id`).
+    Every project-scoped consumer either excludes it by query construction or
+    narrows `project_id` via `requireRunProjectId`. See
+    [`studio-ai-assistant.md`](studio-ai-assistant.md) and the consumer
+    checklist in [`../decisions.md#adr-096`](../decisions.md).
 - **Assignment** — M13 ownership row for pending human-visible work. It points
   at a run for inbox/read-model purposes but does not add run statuses and does
   not participate in scheduler caps.

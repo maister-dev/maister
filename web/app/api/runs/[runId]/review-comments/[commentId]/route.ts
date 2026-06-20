@@ -78,10 +78,15 @@ function db(): NodePgDatabase {
 async function loadRun(
   dbh: NodePgDatabase,
   runId: string,
-): Promise<RunRow | null> {
+): Promise<(RunRow & { projectId: string }) | null> {
   const rows = await dbh.select().from(runs).where(eq(runs.id, runId));
+  const run = rows[0];
 
-  return rows[0] ?? null;
+  // Review comments exist only on project (flow) runs; a project-less
+  // local-package assistant run (ADR-096) is not addressable here → not-found.
+  if (!run || !run.projectId) return null;
+
+  return { ...run, projectId: run.projectId };
 }
 
 export async function PATCH(

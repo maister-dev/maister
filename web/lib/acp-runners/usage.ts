@@ -61,19 +61,21 @@ export type RunnerUsageReference =
   | {
       readonly kind: "activeRun";
       readonly runId: string;
-      readonly projectId: string;
+      // ADR-096: null for a project-less local-package assistant run (still
+      // pins its runner → still blocks deletion).
+      readonly projectId: string | null;
       readonly runnerId: string;
     }
   | {
       readonly kind: "historicalRunSnapshot";
       readonly runId: string;
-      readonly projectId: string;
+      readonly projectId: string | null;
       readonly runnerId: string;
     }
   | {
       readonly kind: "scratchRun";
       readonly runId: string;
-      readonly projectId: string;
+      readonly projectId: string | null;
       readonly runnerId: string;
     };
 
@@ -109,17 +111,17 @@ type RunnerUsageInput = {
   }[];
   readonly activeRuns: readonly {
     readonly runId: string;
-    readonly projectId: string;
+    readonly projectId: string | null;
     readonly runnerId?: string | null;
   }[];
   readonly historicalRunSnapshots: readonly {
     readonly runId: string;
-    readonly projectId: string;
+    readonly projectId: string | null;
     readonly runnerSnapshot?: { readonly id?: string | null } | null;
   }[];
   readonly scratchRuns: readonly {
     readonly runId: string;
-    readonly projectId: string;
+    readonly projectId: string | null;
     readonly runnerId?: string | null;
   }[];
 };

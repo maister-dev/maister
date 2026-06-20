@@ -7232,6 +7232,102 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/Config" }
 
+  /api/studio/local-packages/{id}/assistant:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [flow-packages]
+      summary: (M36 Phase 5, ADR-096 — backend foundation Implemented) Launch the docked AI authoring assistant
+      description: |
+        (M36 Phase 5, ADR-096.) Launch a **project-less scratch run** rooted at
+        the local package's `working_dir` (`launchLocalPackageAssistant`). There
+        is NO project and NO managed git worktree: `runs.project_id` /
+        `scratch_runs.project_id` stay NULL and `local_package_id` carries the
+        owner (DB CHECK = exactly one of project / local-package); the supervisor
+        session confines content-block file URIs to the `working_dir`
+        (`confineRoot`). Member-level RBAC (`requireActiveSession`, ADR-095).
+        Counts against the scratch (flow-pool) concurrency cap. The right-panel
+        AI tab + the working-dir lock coordination are a separate task.
+      operationId: launchStudioLocalPackageAssistant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                prompt: { type: string, maxLength: 60000 }
+                runnerId: { type: string, minLength: 1 }
+                workMode:
+                  type: string
+                  enum: [auto, plan_first, manual_approval]
+                reasoningEffort:
+                  type: string
+                  enum: [low, high, extra, ultra]
+                planMode: { type: string, enum: [off, plan-first] }
+              required: [prompt]
+      responses:
+        "201":
+          description: Assistant run launched (project-less scratch run).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ScratchRunResponse" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+        "503":
+          description: Supervisor readiness or executor unavailable (`EXECUTOR_UNAVAILABLE`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
+  /api/studio/local-packages/{id}/assistant/{runId}/messages:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: runId
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [flow-packages]
+      summary: (M36 Phase 5, ADR-096 — Designed) Send a turn to the docked assistant
+      description: |
+        (M36 Phase 5, ADR-096 — Designed.) Continue the assistant conversation —
+        reuses the scratch message substrate (`sendScratchUserMessage`) on a
+        project-less run; RBAC falls back to `requireActiveSession` (member-level)
+        when the run is project-less. Implemented as part of the separate AI-tab
+        task; documented here for contract completeness.
+      operationId: sendStudioLocalPackageAssistantMessage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                content: { type: string, minLength: 1, maxLength: 60000 }
+              required: [content]
+      responses:
+        "200": { description: Turn sent; returns the dialog status + stop reason. }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+        "503":
+          description: Supervisor readiness or executor unavailable (`EXECUTOR_UNAVAILABLE`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
   /api/studio/packages/{ref}/fork:
     parameters:
       - name: ref

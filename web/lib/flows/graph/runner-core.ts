@@ -18,6 +18,7 @@ import pino from "pino";
 
 import { deleteSession as defaultDeleteSession } from "@/lib/supervisor-client";
 import { MaisterError } from "@/lib/errors";
+import { requireRunProjectId } from "@/lib/runs/run-kind-invariants";
 import * as schemaModule from "@/lib/db/schema";
 import { systemCachePath } from "@/lib/flow-paths";
 
@@ -57,7 +58,10 @@ export type RunFlowOptions = {
 };
 
 export type LoadedRun = {
-  run: RunRow;
+  // ADR-096: the graph/linear runner only loads flow runs (loadRun requires a
+  // task + flow + project), so project_id is non-null here even though the base
+  // Run type made it nullable for the project-less local-package variant.
+  run: RunRow & { projectId: string };
   task: TaskRow;
   flow: FlowRow;
   executor: RunnerExecutor;
@@ -240,7 +244,8 @@ export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
   }
 
   return {
-    run,
+    // project_id is guaranteed (a flow run always has a project; ADR-096).
+    run: { ...run, projectId: requireRunProjectId(run.projectId, runId) },
     task,
     flow,
     manifest,

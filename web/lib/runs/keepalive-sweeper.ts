@@ -326,29 +326,34 @@ export async function runPass2(db: Db): Promise<number> {
           and(eq(hitlRequests.runId, row.id), isNull(hitlRequests.respondedAt)),
         );
 
-      await emitWebhookEvent({
-        db: tx,
-        type: "run.abandoned",
-        projectId: updated[0].projectId,
-        runId: row.id,
-        data: { source: "ttl" },
-      });
+      // ADR-096: a project-less local-package run has no project to attribute
+      // these project-scoped events to — skip the emits (its terminal row is
+      // the record).
+      if (updated[0].projectId) {
+        await emitWebhookEvent({
+          db: tx,
+          type: "run.abandoned",
+          projectId: updated[0].projectId,
+          runId: row.id,
+          data: { source: "ttl" },
+        });
 
-      await emitDomainEvent({
-        db: tx,
-        kind: "run.abandoned",
-        projectId: updated[0].projectId,
-        runId: row.id,
-        taskId: updated[0].taskId,
-        actor: { type: "system", id: null },
-        payload: {
+        await emitDomainEvent({
+          db: tx,
+          kind: "run.abandoned",
+          projectId: updated[0].projectId,
           runId: row.id,
           taskId: updated[0].taskId,
-          flowId: updated[0].flowId,
-          runKind: updated[0].runKind,
-          reason: "ttl",
-        },
-      });
+          actor: { type: "system", id: null },
+          payload: {
+            runId: row.id,
+            taskId: updated[0].taskId,
+            flowId: updated[0].flowId,
+            runKind: updated[0].runKind,
+            reason: "ttl",
+          },
+        });
+      }
 
       return true;
     });

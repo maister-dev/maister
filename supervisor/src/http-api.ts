@@ -538,6 +538,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       worktreePath: entry.record.worktreePath,
       repoPath: entry.record.repoPath,
       runDir: dirname(entry.record.logPath),
+      confineRoot: entry.record.confineRoot,
     });
 
     if (uriViolation) {

@@ -9,6 +9,7 @@ import pino from "pino";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { harnessNeverFiredMin } from "@/lib/instance-config";
+import { requireRunProjectId } from "@/lib/runs/run-kind-invariants";
 import {
   buildCoverageMap,
   declaredGatesFromManifests,
@@ -645,6 +646,8 @@ async function loadObservatoryRows(
             {
               ...run,
               flowId: run.flowId,
+              // Inner join on flows ⇒ a flow run ⇒ non-null project (ADR-096).
+              projectId: requireRunProjectId(run.projectId, run.id),
             },
           ],
     )

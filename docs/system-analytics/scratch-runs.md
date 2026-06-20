@@ -18,6 +18,17 @@ the same web, database, supervisor, and worktree contracts as Flow runs.
   `task_id`, nullable `flow_id`, nullable `flow_revision_id`,
   `flow_version = "scratch"`, `flow_revision = "manual"`, and
   `created_by_user_id`.
+- **Project-less local-package assistant run** (M36 Phase 5, ADR-096) -
+  Implemented (backend foundation). A scratch run rooted at a local-package
+  `working_dir` with **no project and no managed worktree**: `runs.project_id`
+  and `scratch_runs.project_id` are **NULL**, `scratch_runs.local_package_id`
+  carries the owner, and `runs.local_package_id` is the launch snapshot. There
+  is **no `workspaces` row** (it runs IN the existing git-backed working dir).
+  A DB CHECK enforces exactly one of `project_id` / `local_package_id`. Launched
+  by `launchLocalPackageAssistant`; the supervisor session confines content-block
+  file URIs to the `working_dir` (`confineRoot`). See
+  [`studio-ai-assistant.md`](studio-ai-assistant.md). The right-panel AI tab +
+  lock coordination are a separate task.
 - **Runner profile** - Implemented. The selected runner is a
   `platform_acp_runners.id`, not the adapter/capability agent family. Multiple
   runners may use the same ACP adapter with different model, provider,

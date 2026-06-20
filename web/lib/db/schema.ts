@@ -1160,9 +1160,21 @@ export const runs = pgTable(
     taskId: text("task_id").references(() => tasks.id, {
       onDelete: "cascade",
     }),
-    projectId: text("project_id")
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
+    // M36 Phase 5 (ADR-096): NULLABLE — a scratch-at-local-package assistant run
+    // has NO project (it is rooted at a local-package working dir). Every other
+    // run kind (flow/agent/project scratch) still carries a project_id; the
+    // project-less variant is the ONLY null case and carries local_package_id
+    // instead. Consumers branch on run_kind/null BEFORE dereferencing a project.
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
+    // M36 Phase 5 (ADR-096): launch-time snapshot of the local-package the
+    // assistant session is rooted at; set iff this is a project-less scratch
+    // run. Terminal/read paths read THIS snapshot, never re-deriving.
+    localPackageId: text("local_package_id").references(
+      () => localPackages.id,
+      { onDelete: "cascade" },
+    ),
     flowId: text("flow_id").references(() => flows.id, {
       onDelete: "cascade",
     }),
@@ -1484,9 +1496,17 @@ export const scratchRuns = pgTable(
     runId: text("run_id")
       .primaryKey()
       .references(() => runs.id, { onDelete: "cascade" }),
-    projectId: text("project_id")
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
+    // M36 Phase 5 (ADR-096): NULLABLE — exactly one of project_id /
+    // local_package_id is set (DB CHECK). A project scratch run keeps
+    // project_id; a docked-assistant run rooted at a local-package working dir
+    // sets local_package_id and leaves project_id NULL.
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
+    localPackageId: text("local_package_id").references(
+      () => localPackages.id,
+      { onDelete: "cascade" },
+    ),
     name: text("name"),
     initialPrompt: text("initial_prompt").notNull(),
     workMode: text("work_mode", {
@@ -1546,9 +1566,19 @@ export const scratchRuns = pgTable(
       .defaultNow(),
   },
   (t) => ({
-    idxProjectStatus: index("scratch_runs_project_status_idx").on(
-      t.projectId,
-      t.dialogStatus,
+    // Partial — still serves project scratch rows; the project-less
+    // (local_package_id) rows are excluded so a NULL project_id never widens it.
+    idxProjectStatus: index("scratch_runs_project_status_idx")
+      .on(t.projectId, t.dialogStatus)
+      .where(sql`${t.projectId} IS NOT NULL`),
+    idxLocalPackage: index("scratch_runs_local_package_idx")
+      .on(t.localPackageId, t.dialogStatus)
+      .where(sql`${t.localPackageId} IS NOT NULL`),
+    // ADR-096: exactly one of project_id / local_package_id (never both, never
+    // neither). Mirrors local_packages' own (project_id XOR named) intent.
+    ownerXorCheck: check(
+      "scratch_runs_owner_xor_check",
+      sql`(${t.projectId} IS NOT NULL) <> (${t.localPackageId} IS NOT NULL)`,
     ),
   }),
 );

@@ -8,6 +8,7 @@ import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
+import { requireRunProjectId } from "@/lib/runs/run-kind-invariants";
 
 const { flowRevisions, flows, runs } = schema;
 
@@ -80,5 +81,11 @@ export async function loadRunManifest(
     return null;
   }
 
-  return { flowId: row.flowId, projectId: row.projectId, manifest };
+  // A row with a non-null flowId is a flow run, which always has a project
+  // (the project-less variant is scratch/flow-less, returned null above).
+  return {
+    flowId: row.flowId,
+    projectId: requireRunProjectId(row.projectId, runId),
+    manifest,
+  };
 }
