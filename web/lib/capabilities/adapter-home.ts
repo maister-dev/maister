@@ -1,7 +1,15 @@
 import "server-only";
 
-import { cp, lstat, mkdir, readdir, rm, symlink } from "node:fs/promises";
-import { homedir } from "node:os";
+import {
+  cp,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readdir,
+  rm,
+  symlink,
+} from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 
 import pino from "pino";
@@ -12,6 +20,10 @@ import {
 } from "@/lib/acp-runners/adapter-support";
 import { copyBundleArtifactsToWorktree } from "@/lib/capabilities/materialize-bundle";
 import { capabilityMaterializationRootPath } from "@/lib/capabilities/materialize";
+import {
+  FLOW_AUTHORING_SKILL_FILES,
+  FLOW_AUTHORING_SKILL_ID,
+} from "@/lib/flows/authoring-skill";
 import { atomicWriteText } from "@/lib/atomic";
 
 const log = pino({
@@ -210,5 +222,48 @@ async function copyBundleSkills(
         errorOnExist: false,
       });
     }
+  }
+}
+
+/**
+ * M36 Phase 5 (ADR-096) T5.3: seed the in-memory `flow-authoring` skill into a
+ * docked local-package assistant session's per-adapter skill target, so the
+ * agent discovers it as `/flow-authoring`. The assistant carries NO project
+ * catalog and NO installed bundles, so this is the ONLY skill materialization on
+ * its path. Reuses `materializeAdapterCapabilityHome` by staging the skill as a
+ * synthetic single-skill bundle in a tmp dir (claude → cwd `.claude/skills`,
+ * codex/gemini/… → composed home + redirect env). Returns the redirect env to
+ * merge into the session's adapterLaunch (empty for claude).
+ */
+export async function materializeFlowAuthoringSkill(args: {
+  agent: AdapterId;
+  worktreePath: string;
+  runId: string;
+}): Promise<AdapterHomeResult> {
+  const stageRoot = await mkdtemp(
+    path.join(tmpdir(), `maister-${FLOW_AUTHORING_SKILL_ID}-`),
+  );
+
+  try {
+    for (const file of FLOW_AUTHORING_SKILL_FILES) {
+      const target = path.join(stageRoot, file.relativePath);
+
+      await mkdir(path.dirname(target), { recursive: true });
+      await atomicWriteText(target, file.content);
+    }
+
+    return await materializeAdapterCapabilityHome({
+      agent: args.agent,
+      worktreePath: args.worktreePath,
+      runId: args.runId,
+      installedPaths: [stageRoot],
+    });
+  } finally {
+    await rm(stageRoot, { recursive: true, force: true }).catch((err) =>
+      log.debug(
+        { stageRoot, err: err instanceof Error ? err.message : String(err) },
+        "[capabilities.adapter-home] flow-authoring stage cleanup skipped",
+      ),
+    );
   }
 }

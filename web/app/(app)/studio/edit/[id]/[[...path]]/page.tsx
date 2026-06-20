@@ -128,6 +128,16 @@ export default async function StudioEditPage({
     saving: ts("local.saving"),
     saved: ts("local.saved"),
     saveFailed: ts("local.saveFailed"),
+    tabProperties: ts("local.tabProperties"),
+    tabAi: ts("local.tabAi"),
+    aiWorking: ts("local.aiWorking"),
+    ai: {
+      intro: ts("local.ai.intro"),
+      promptPlaceholder: ts("local.ai.promptPlaceholder"),
+      launch: ts("local.ai.launch"),
+      launching: ts("local.ai.launching"),
+      lockRequired: ts("local.ai.lockRequired"),
+    },
     diff: localPackageDiffLabels(tld),
     diffView: diffViewLabels(td),
   };

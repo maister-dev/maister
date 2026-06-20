@@ -253,6 +253,16 @@
       "saving": "Saving…",
       "saved": "Saved",
       "saveFailed": "Save failed",
+      "tabProperties": "Properties",
+      "tabAi": "AI",
+      "aiWorking": "AI working…",
+      "ai": {
+        "intro": "Ask the assistant to author or edit this package. It edits files in the working directory; the canvas and diff update as it works.",
+        "promptPlaceholder": "Describe the change — e.g. add a review gate to the bugfix flow",
+        "launch": "Start assistant",
+        "launching": "Starting…",
+        "lockRequired": "Acquire the editor lock to use the assistant."
+      },
       "diff": {
         "title": "Working-tree changes",
         "changed": "$count changed",

@@ -680,7 +680,10 @@ async function handlePermissionResponse(
       await completeResponseAssignment(tx, assignmentClaim, { optionId });
       await args.recordSuccessAudit?.(tx, 200);
 
-      if (stamped.length > 0) {
+      // ADR-096: a project-less local-package assistant run has no project to
+      // attribute this webhook to (webhook_events.project_id is NOT NULL and
+      // consumers are project-scoped) — skip it.
+      if (stamped.length > 0 && runRow.projectId) {
         await emitWebhookEvent({
           db: tx,
           type: "hitl.responded",
@@ -752,7 +755,9 @@ async function handlePermissionResponse(
           .set({ respondedAt: new Date() })
           .where(eq(hitlRequests.id, hitlRequestId));
 
-        if (terminalRows.length > 0) {
+        // ADR-096: project-less assistant run ⇒ no project to attribute the
+        // terminal outbox events to (both emits require a non-null projectId).
+        if (terminalRows.length > 0 && terminalRows[0].projectId) {
           await emitWebhookEvent({
             db: tx,
             type: runRow.runKind === "scratch" ? "run.crashed" : "run.failed",
@@ -1442,7 +1447,13 @@ export async function respondToHitl(
 
   // AUTHZ branch on actor kind
   if (actor.kind === "user") {
-    await requireProjectAction(runRow.projectId, "answerHitl");
+    // ADR-096: a project-less local-package assistant run (projectId NULL)
+    // carries member-level RBAC (any active user, per ADR-095); a project run
+    // keeps its project-scoped answerHitl gate. requireActiveSession is already
+    // enforced by the calling route, so this branch only needs the project gate.
+    if (runRow.projectId) {
+      await requireProjectAction(runRow.projectId, "answerHitl");
+    }
   } else {
     // D7 (ADR-055): a `human`-kind HITL (incl. graph human_review) is a Flow gate
     // that ONLY a human actor may satisfy. A machine token can never answer it,

@@ -32,7 +32,10 @@ import {
   runnerExecutorInput,
   runnerSupervisorInput,
 } from "@/lib/acp-runners/spawn-intent";
-import { materializeAdapterCapabilityHome } from "@/lib/capabilities/adapter-home";
+import {
+  materializeAdapterCapabilityHome,
+  materializeFlowAuthoringSkill,
+} from "@/lib/capabilities/adapter-home";
 import { materializeCapabilityProfile } from "@/lib/capabilities/materialize";
 import {
   loadSelectableCapabilities,
@@ -1322,6 +1325,16 @@ export async function launchLocalPackageAssistant(args: {
     profile,
   });
 
+  // T5.3: seed the flow-authoring skill into the session's per-adapter target
+  // (the assistant has no project catalog, so this is its only skill). The
+  // returned env (codex CODEX_HOME redirect; empty for claude) is merged into
+  // the session adapterLaunch below.
+  const authoringSkill = await materializeFlowAuthoringSkill({
+    agent: executor.agent,
+    worktreePath: workingDir,
+    runId,
+  });
+
   // Single launch insert: project-less runs + scratch_runs rows, snapshotting
   // local_package_id. NO workspace row (no managed worktree). The XOR CHECK on
   // scratch_runs enforces local_package_id-set / project_id-null.
@@ -1394,6 +1407,11 @@ export async function launchLocalPackageAssistant(args: {
     });
   });
 
+  // Tracked so a turn failure AFTER the session exists tears it down — the
+  // supervisor's session-delete purges any open permission deferred (HARD RULE:
+  // every failure path that created a deferred releases it).
+  let createdSessionId: string | null = null;
+
   try {
     const session = await createSession({
       runId,
@@ -1410,12 +1428,17 @@ export async function launchLocalPackageAssistant(args: {
         snapshot: runnerResolution.runnerSnapshot,
       }),
       capabilityProfilePath: materialized.profilePath,
-      adapterLaunch: mergeRunnerAdapterLaunch(
-        runnerResolution.runnerSnapshot,
-        materialized.adapterLaunch,
-      ),
+      adapterLaunch: mergeRunnerAdapterLaunch(runnerResolution.runnerSnapshot, {
+        ...materialized.adapterLaunch,
+        env: {
+          ...(materialized.adapterLaunch.env ?? {}),
+          ...authoringSkill.env,
+        },
+      }),
       mcpServers: materialized.mcpServers,
     });
+
+    createdSessionId = session.sessionId;
 
     await db.transaction(async (tx: Db) => {
       const dialogStatus: ScratchDialogStatus = hasInitialPrompt
@@ -1481,7 +1504,26 @@ export async function launchLocalPackageAssistant(args: {
       policy,
     });
   } catch (err) {
-    await markScratchCrashed({ db, runId, err }).catch((markErr) =>
+    // Release any open permission deferred the turn created: deleting the
+    // supervisor session purges all pending deferreds for it (purgeSession).
+    if (createdSessionId) {
+      await deleteScratchSupervisorSessionIfLive(createdSessionId, runId).catch(
+        (delErr) =>
+          log.error(
+            {
+              runId,
+              delErr: delErr instanceof Error ? delErr.message : String(delErr),
+            },
+            "failed to release supervisor session on assistant launch failure",
+          ),
+      );
+    }
+    await markScratchCrashed({
+      db,
+      runId,
+      err,
+      clearSupervisorSession: true,
+    }).catch((markErr) =>
       log.error(
         {
           runId,
@@ -1524,6 +1566,18 @@ function localPackageAssistantResponse(args: {
   };
 }
 
+// ADR-096: the turn path needs the run's working dir (for attachment URI
+// confinement) and parent repo. A project scratch run reads them from its
+// `workspaces` row; a project-less local-package assistant run has NO workspace
+// row — its working dir is the local package's git-backed `working_dir`, which
+// is both the cwd and (being its own repo root) the parent repo. This returns a
+// workspace-SHAPED value either way so callers stay uniform.
+type ScratchWorkspaceLike = {
+  worktreePath: string;
+  parentRepoPath: string;
+  removedAt: Date | null;
+};
+
 async function loadScratchRows(db: Db, runId: string) {
   const runRows = await db.select().from(runs).where(eq(runs.id, runId));
   const run = runRows[0];
@@ -1540,7 +1594,6 @@ async function loadScratchRows(db: Db, runId: string) {
     db.select().from(workspaces).where(eq(workspaces.runId, runId)),
   ]);
   const scratch = scratchRows[0];
-  const workspace = workspaceRows[0];
 
   if (!scratch) {
     throw new MaisterError(
@@ -1548,8 +1601,32 @@ async function loadScratchRows(db: Db, runId: string) {
       `scratch metadata not found: ${runId}`,
     );
   }
+
+  let workspace: ScratchWorkspaceLike | undefined = workspaceRows[0];
+
   if (!workspace) {
-    throw new MaisterError("PRECONDITION", `workspace not found: ${runId}`);
+    if (run.localPackageId) {
+      const pkgRows = await db
+        .select()
+        .from(localPackages)
+        .where(eq(localPackages.id, run.localPackageId));
+      const pkg = pkgRows[0];
+
+      if (!pkg) {
+        throw new MaisterError(
+          "PRECONDITION",
+          `local package not found for assistant run: ${runId}`,
+        );
+      }
+
+      workspace = {
+        worktreePath: pkg.workingDir,
+        parentRepoPath: pkg.workingDir,
+        removedAt: null,
+      };
+    } else {
+      throw new MaisterError("PRECONDITION", `workspace not found: ${runId}`);
+    }
   }
 
   return { run, scratch, workspace };
@@ -1619,23 +1696,34 @@ async function appendScratchUserMessage(args: {
     const uploadedAttachments =
       args.uploadedFiles.length > 0
         ? await (async () => {
-            const projectRows = await tx
-              .select()
-              .from(projects)
-              .where(eq(projects.id, lockedRun.projectId));
-            const project = projectRows[0];
+            // ADR-096: a project-less local-package assistant run has no
+            // project — the runtime/cost subtree is keyed by the local package
+            // slug instead (mirrors the launch's createSession projectSlug).
+            const slug = lockedRun.projectId
+              ? (
+                  await tx
+                    .select()
+                    .from(projects)
+                    .where(eq(projects.id, lockedRun.projectId))
+                )[0]?.slug
+              : (
+                  await tx
+                    .select()
+                    .from(localPackages)
+                    .where(eq(localPackages.id, lockedRun.localPackageId))
+                )[0]?.slug;
 
-            if (!project) {
+            if (!slug) {
               throw new MaisterError(
                 "PRECONDITION",
-                `project not found for scratch run: ${args.runId}`,
+                `owner slug not found for scratch run: ${args.runId}`,
               );
             }
 
             return storeUploadedFiles({
               runId: args.runId,
               messageId,
-              projectSlug: project.slug,
+              projectSlug: slug,
               scope: messageId,
               files: args.uploadedFiles,
             });
@@ -1683,6 +1771,9 @@ async function appendScratchUserMessage(args: {
       sequence,
       supervisorSessionId: scratch.supervisorSessionId as string,
       capabilityAgent: run.capabilityAgent,
+      // ADR-096: project-less ⇒ a local-package assistant run; its turn-failure
+      // path explicitly releases the supervisor deferred (see caller).
+      isLocalPackageAssistant: !run.projectId,
       uploadedAttachments,
       metadataAttachments,
     };
@@ -1745,7 +1836,31 @@ export async function sendScratchUserMessage(args: {
       throw err;
     }
 
-    await markScratchCrashed({ db, runId: args.runId, err }).catch((markErr) =>
+    // ADR-096: a local-package assistant turn failure explicitly releases any
+    // open permission deferred by tearing down the supervisor session
+    // (purgeSession cancels all pending deferreds), THEN marks crashed —
+    // idempotent on an already-gone session. Project scratch runs keep their
+    // prior behavior (supervisor purge on the natural session exit).
+    if (appended.isLocalPackageAssistant) {
+      await deleteScratchSupervisorSessionIfLive(
+        appended.supervisorSessionId,
+        args.runId,
+      ).catch((delErr) =>
+        log.error(
+          {
+            runId: args.runId,
+            delErr: delErr instanceof Error ? delErr.message : String(delErr),
+          },
+          "failed to release supervisor session on assistant turn failure",
+        ),
+      );
+    }
+    await markScratchCrashed({
+      db,
+      runId: args.runId,
+      err,
+      clearSupervisorSession: appended.isLocalPackageAssistant,
+    }).catch((markErr) =>
       log.error(
         {
           runId: args.runId,

@@ -187,7 +187,7 @@ Agent bundles/subdirs (agents stay single-file); editable on-canvas node popup (
   Files: `web/lib/db/schema.ts`, `web/lib/db/migrations/0057_*`, `web/lib/runs/run-kind-invariants.ts`.
   Acceptance: applies clean; the XOR(project_id, local_package_id) CHECK holds; `run-kind-invariants` admits a `local_package_id`-only scratch row and still forbids `taskId`/`flowId`; `db:generate` no stray diff.
 
-- [ ] **T5.3 — Authoring skill.** (depends on T5.1)
+- [x] **T5.3 — Authoring skill.** (depends on T5.1)
   Author a `flow-authoring` skill (flow.yaml DSL, node/route/gate semantics, package layout) shipped where the assistant materializes skills for its session.
   Files: skill bundle under the assistant's seed location.
   Acceptance: skill loads in the assistant session (smoke).
@@ -204,23 +204,23 @@ Agent bundles/subdirs (agents stay single-file); editable on-canvas node popup (
   Acceptance: a file URI outside the working_dir is rejected by the supervisor for a local-package session; `pnpm --filter @maister/supervisor test` green (supervisor suite).
   Logging: existing supervisor confinement WARN path.
 
-- [ ] **T5.6 — Lock coordination + deferred-release.** (depends on T5.4)
+- [x] **T5.6 — Lock coordination + deferred-release.** (depends on T5.4)
   The assistant run writes under the editor's working-dir lock (editor = holder; assistant writes as that holder; turn-based). On any failure path that created an ACP/HITL deferred, ensure explicit release (reuse the existing `cancelPermission` contract). While the assistant holds a turn → editor "AI working" read-only; control returns on turn end.
   Files: assistant launch/turn service, `web/lib/local-packages/lock.ts` (associate run↔lock), reuse HITL deferred-release.
   Acceptance (spec §7 + repo rule): no assistant write outside the working dir or under a stale lock; every failure path releases its deferred (regression test spies the cancel); turn hand-back works.
   Logging: DEBUG `[studio.assistant.turn] {runId, lockHeld}`; ERROR on deferred-release path.
 
-- [ ] **T5.7 — Right-panel Properties ⇆ AI tab + live refresh + inline HITL.** (depends on T5.5, T5.6)
+- [x] **T5.7 — Right-panel Properties ⇆ AI tab + live refresh + inline HITL.** (depends on T5.5, T5.6)
   Add the AI tab to the editor right panel (reuse `scratch-transcript.tsx` + the SSE `GET /api/runs/[id]/stream` hook + the HITL respond route inline). On assistant file writes, refresh the canvas/files (re-read working dir → the T4 changed-count + diff reflect it). Counts against the scratch (flow) pool cap. en + ru keys.
   Files: `web/components/flows/flow-editor-tabs.tsx` (right-panel tabs), reuse `web/components/scratch/scratch-transcript.tsx`, SSE hook, `messages/{en,ru}.json`.
   Acceptance (spec §7): agent writes appear without manual reload; permission prompts render inline + resolve; secrets never reach the client; en/ru parity.
   Logging: DEBUG `[studio.edit.ai] {runId, event}`.
 
-- [ ] **T5.8 — Concurrency / GC notes.** (depends on T5.4)
+- [x] **T5.8 — Concurrency / GC notes.** (depends on T5.4)
   Confirm the assistant run is in the flow/scratch pool (cap `MAISTER_MAX_CONCURRENT_RUNS`); no auto-GC of the working dir (manual, per Phase C). One ACP run per editor tab; lives while the tab is open; clear/refresh-session deferred.
   Acceptance: opening a 2nd editor tab does not spawn a 2nd assistant for the same lock holder; cap accounting correct.
 
-- [ ] **T5.9 — Tests + Phase 5 green.** (depends on T5.6, T5.7)
+- [x] **T5.9 — Tests + Phase 5 green.** (depends on T5.6, T5.7)
   Integration: assistant launch at a local-package working dir, a turn writes a file, diff reflects it; reconcile-no-crash + resume-driver-skip; per-consumer run_kind arm; deferred-release regression; supervisor confinement. e2e `studio-ai-assistant.spec.ts` (mock ACP adapter) JOIN AUTHED_SPEC. Per-phase green (web + supervisor + i18n parity) + Commit 6.
 
 ---

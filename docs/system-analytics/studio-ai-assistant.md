@@ -4,11 +4,11 @@
 > scratch-run ACP session rooted at a local-package working dir**. It reuses the
 > scratch-run substrate end-to-end but has **no project and no managed git
 > worktree** — the session's cwd and sole confinement root is the local
-> package's `working_dir`. **Status: backend foundation Implemented (ADR-096);
-> the right-panel AI tab, live refresh, and lock coordination are a separate
-> task.** Related: [`local-packages.md`](local-packages.md),
-> [`scratch-runs.md`](scratch-runs.md), [`runs.md`](runs.md),
-> [`../decisions.md#adr-096`](../decisions.md).
+> package's `working_dir`. **Status: Implemented (ADR-096) — backend foundation
+> + the right-panel Properties⇆AI tab, live refresh, inline HITL, the
+> flow-authoring skill, and editor↔assistant lock coordination.** Related:
+> [`local-packages.md`](local-packages.md), [`scratch-runs.md`](scratch-runs.md),
+> [`runs.md`](runs.md), [`../decisions.md#adr-096`](../decisions.md).
 
 ## Purpose
 
@@ -41,8 +41,12 @@ it cannot assume a project exists.
   whose content-block file-URI **confinement root is `working_dir`** (passed as
   `confineRoot`).
 - **Capability profile** — a `scratch_capability_profiles` row materialized from
-  a **bare** profile (no project capability catalog); the flow-authoring skill is
-  seeded by the Studio surface, not the backend launch.
+  a **bare** profile (no project capability catalog). The launch additionally
+  seeds the **`flow-authoring`** skill into the session's per-adapter target
+  (`materializeFlowAuthoringSkill`): claude gets `working_dir/.claude/skills/
+  flow-authoring/`, codex/gemini/… get the skill in a composed home + the
+  redirect env. The skill content is in-memory (`lib/flows/authoring-skill.ts`),
+  not read from a bundled asset path.
 
 ## Data model (migration 0057, ADR-096)
 
@@ -146,17 +150,74 @@ inside any project repo — is rejected with `PRECONDITION`. The web tier confin
 too (defense in depth). Source: `supervisor/src/prompt-confinement.ts`,
 `StartSessionRequestSchema.confineRoot`.
 
+## Right-panel AI tab (T5.7)
+
+The editor (`local-package-editor.tsx`) exposes a **Properties ⇆ AI** toggle.
+The AI tab (`studio-ai-tab.tsx`):
+- launches via `POST /api/studio/local-packages/{id}/assistant` (body
+  `{ sessionId, prompt }`) — the route `assertHoldsLock(id, sessionId)` so only
+  the working-dir lock holder may spawn it (the run writes **as the holder**);
+- once a run exists, renders the shared **`ScratchConversation`** (transcript +
+  composer + **inline HITL** permission panel) verbatim — same SSE stream
+  (`/api/runs/{runId}/stream`), same `GET /api/scratch-runs/{runId}` detail, same
+  `POST /api/runs/{runId}/hitl/{id}/respond`. Secrets never reach the client: the
+  reused scratch SSE/detail projections already exclude them;
+- subscribes to the run's stream (`useRunStream`, change-tick only) to **live
+  refresh** the editor on each assistant event — it bumps the editor's
+  `diffRefresh` signal and `router.refresh()`, so the T4 changed-count + git-diff
+  drawer and the server-compiled canvas re-read the working dir the assistant
+  just wrote;
+- while a turn is in flight (`dialog_status = Running/Starting`) it lifts an
+  **"AI working"** read-only state into the editor (the human editor stops
+  writing until the turn ends — no concurrent web-tier writer).
+
+## Lock coordination + deferred release (T5.6)
+
+- **Run ↔ lock.** The launch route asserts the editor's working-dir lock, tying
+  the run to the holder. The assistant's file writes go through the
+  supervisor (confined to `working_dir`), NOT the lock-guarded PUT/DELETE file
+  routes; the lock's job is to guarantee a single writer — while the assistant
+  holds a turn the editor is read-only, so the holder is never racing it.
+- **Deferred release.** Every assistant failure path that may have created an
+  ACP/HITL permission deferred releases it by tearing down the supervisor
+  session (`deleteSession` → supervisor `purgeSession` cancels all open
+  deferreds), then marks the run Crashed: the launch turn-failure catch in
+  `launchLocalPackageAssistant`, and the non-retryable turn-failure catch in
+  `sendScratchUserMessage` (assistant runs only — project scratch runs keep
+  their prior behavior). The DB-persist-failure release in the event consumer
+  (`persistPermissionRequest` → `cancelPermission`) is unchanged. The
+  `EXECUTOR_UNAVAILABLE` retryable path deliberately keeps the session.
+- **Turn-path project-less fix.** `loadScratchRows` synthesizes a
+  workspace-shaped value from the local package `working_dir` (no `workspaces`
+  row) so a turn on the assistant run does not crash.
+
 ## Expectations
 
 - Sending a message starts/continues an ACP session whose cwd is the working
-  dir; agent file writes land in the working dir (the editor refreshes them).
+  dir; agent file writes land in the working dir and the editor live-refreshes.
 - The run carries `project_id = NULL` and `local_package_id` set; the
   `scratch_runs` XOR CHECK guarantees exactly one owner.
-- The assistant counts against the scratch (flow-pool) concurrency cap.
 - A terminal transition (Crashed/Review/Abandoned) writes the `runs` +
   `scratch_runs` terminal rows but emits **no** project-scoped domain/webhook
   event (there is no project to attribute it to).
 - No assistant session can write outside the working dir.
+
+## Concurrency & GC (T5.8)
+
+- **Concurrency pool.** The assistant run is `run_kind = "scratch"`, so it counts
+  against the **flow/scratch** concurrency pool — cap
+  `MAISTER_MAX_CONCURRENT_RUNS` (default 6), enforced at launch by
+  `assertScratchCapacityAvailable`. It does **not** use the separate platform-
+  agent budget (`MAISTER_MAX_CONCURRENT_AGENTS`).
+- **One ACP run per editor tab.** The run id is held in the AI tab's component
+  state for the editor mount's lifetime, so toggling Properties⇆AI never
+  relaunches. A **second** browser tab generates a fresh client lock session
+  that does **not** hold the working-dir lock, so its launch is refused server-
+  side (`assertHoldsLock`) — there is no second assistant for the same holder.
+- **No auto-GC of the working dir.** Consistent with the Phase C local-package
+  model (ADR-095): a local package's `working_dir` is removed only on explicit
+  delete; there is no background GC. The assistant run's rows cascade away when
+  the local package is deleted (`local_package_id ON DELETE CASCADE`).
 
 ## Edge cases
 
@@ -175,13 +236,24 @@ too (defense in depth). Source: `supervisor/src/prompt-confinement.ts`,
   local_package_id` are `ON DELETE CASCADE`, so deleting a local package removes
   its assistant run history.
 - **Lock coordination.** The assistant runs under the editor's working-dir lock
-  (the editor is the lock holder; turn-based, so no concurrent writer). The lock
-  acquisition/refresh + the AI tab UI are a separate task.
+  (the editor is the lock holder; turn-based, so no concurrent writer). The
+  launch route asserts the lock; a lost/foreign lock refuses the launch with
+  `CONFLICT` (the editor surfaces its reload banner).
+- **HITL on a project-less run.** The permission respond path
+  (`respondToHitl`) skips the project authz gate when `project_id IS NULL`
+  (member RBAC, ADR-095) and skips the project-scoped webhook/domain emits;
+  delivery to the supervisor (`deliverPermission`) is unchanged. Form/human HITL
+  never occurs on an assistant run (scratch sessions only raise `permission`).
 
-## Out of scope (separate task)
+## Sources
 
-The right-panel Properties⇆AI tabs, live canvas/file refresh, inline HITL
-rendering, the flow-authoring skill seeding, and the editor↔assistant lock
-coordination. This doc + ADR-096 cover the **backend foundation**: the schema
-(0057), the launch fan-out, the `run_kind` consumer fan-out, and the supervisor
-working-dir confinement.
+- `web/lib/scratch-runs/service.ts` — `launchLocalPackageAssistant`,
+  `loadScratchRows` (project-less variant), `sendScratchUserMessage` deferred
+  release.
+- `web/lib/capabilities/adapter-home.ts` — `materializeFlowAuthoringSkill`;
+  `web/lib/flows/authoring-skill.ts` — the skill content.
+- `web/components/studio/{local-package-editor,studio-ai-tab}.tsx` — the
+  Properties⇆AI tab + the docked assistant.
+- `web/app/api/studio/local-packages/[id]/assistant/route.ts` — the lock-gated
+  launch route.
+- `web/lib/services/hitl.ts` — the project-less HITL respond guards.

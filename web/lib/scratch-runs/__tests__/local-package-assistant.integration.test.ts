@@ -17,6 +17,9 @@ import type { SupervisorSessionRecord } from "@/lib/supervisor-client";
 import type { WorktreeInfo } from "@/lib/worktree";
 
 import { randomUUID } from "node:crypto";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   PostgreSqlContainer,
@@ -55,7 +58,30 @@ vi.mock("@/lib/authz", () => ({
   requireProjectAction: vi.fn(async () => undefined),
 }));
 
+// The supervisor is stubbed: the launch + turn path never spawns a real ACP
+// session. `createSession`/`sendPrompt`/`streamSession`/`deleteSession` are
+// mutable so each test drives launch success, a file-writing "turn", or a turn
+// failure (to assert the deferred-release tears the session down). `events.ts`
+// builds its default api from these imports, so this mock covers the turn path.
+// `vi.hoisted` so the (hoisted) `vi.mock` factory below can reference it.
+const supervisorMock = vi.hoisted(() => ({
+  createSession: vi.fn(),
+  deleteSession: vi.fn(),
+  checkSupervisorHealth: vi.fn(),
+  streamSession: vi.fn(),
+  sendPrompt: vi.fn(),
+  cancelPermission: vi.fn(),
+  listSessions: vi.fn(),
+}));
+
+vi.mock("@/lib/supervisor-client", () => supervisorMock);
+
 let markScratchCrashed: typeof import("@/lib/scratch-runs/service").markScratchCrashed;
+let launchLocalPackageAssistant: typeof import("@/lib/scratch-runs/service").launchLocalPackageAssistant;
+let sendScratchUserMessage: typeof import("@/lib/scratch-runs/service").sendScratchUserMessage;
+let createLocalPackage: typeof import("@/lib/local-packages/service").createLocalPackage;
+let diffWorkingDir: typeof import("@/lib/local-packages/service").diffWorkingDir;
+let getLocalPackage: typeof import("@/lib/local-packages/service").getLocalPackage;
 
 const schema = schemaModule as unknown as Record<string, any>;
 const { domainEvents, localPackages, runs, scratchRuns, webhookEvents } =
@@ -65,6 +91,8 @@ let container: StartedPostgreSqlContainer;
 let pool: Pool;
 let db: NodePgDatabase;
 let originalDbUrl: string | undefined;
+let originalHome: string | undefined;
+let homeDir: string;
 let userId: string;
 let runnerId: string;
 let localPackageId: string;
@@ -81,10 +109,19 @@ beforeAll(async () => {
   db = drizzle(pool);
   await migrate(db, { migrationsFolder: "./lib/db/migrations" });
 
-  ({ markScratchCrashed } = await import("@/lib/scratch-runs/service"));
+  ({ markScratchCrashed, launchLocalPackageAssistant, sendScratchUserMessage } =
+    await import("@/lib/scratch-runs/service"));
+  ({ createLocalPackage, diffWorkingDir, getLocalPackage } = await import(
+    "@/lib/local-packages/service"
+  ));
 
   originalDbUrl = process.env.DB_URL;
   process.env.DB_URL = container.getConnectionUri();
+  // createLocalPackage scaffolds + git-inits a real working dir under
+  // ~/.maister/local — point HOME at a temp dir for the launch/turn tests.
+  originalHome = process.env.HOME;
+  homeDir = await mkdtemp(join(tmpdir(), "lp-assistant-home-"));
+  process.env.HOME = homeDir;
 
   userId = randomUUID();
   runnerId = randomUUID();
@@ -98,6 +135,11 @@ beforeAll(async () => {
   await db
     .insert(schema.platformAcpRunners)
     .values(testPlatformRunnerRow(runnerId, "claude"));
+  // launchLocalPackageAssistant resolves the platform-default runner.
+  await db.insert(schema.platformRuntimeSettings).values({
+    id: "singleton",
+    defaultRunnerId: runnerId,
+  });
 
   const lpRows = await db
     .insert(localPackages)
@@ -116,8 +158,11 @@ beforeAll(async () => {
 afterAll(async () => {
   if (originalDbUrl === undefined) delete process.env.DB_URL;
   else process.env.DB_URL = originalDbUrl;
+  if (originalHome === undefined) delete process.env.HOME;
+  else process.env.HOME = originalHome;
   await pool?.end();
   await container?.stop();
+  await rm(homeDir, { recursive: true, force: true }).catch(() => undefined);
 });
 
 beforeEach(async () => {
@@ -125,6 +170,27 @@ beforeEach(async () => {
   await db.delete(webhookEvents);
   await db.delete(scratchRuns);
   await db.delete(runs);
+
+  // Reset the supervisor stub to its happy-path defaults each test.
+  supervisorMock.createSession.mockReset().mockResolvedValue({
+    sessionId: "sup-1",
+    pid: 1,
+    acpSessionId: "acp-1",
+  });
+  supervisorMock.deleteSession.mockReset().mockResolvedValue(undefined);
+  supervisorMock.checkSupervisorHealth
+    .mockReset()
+    .mockResolvedValue({ kind: "ready", health: {} });
+  supervisorMock.streamSession
+    .mockReset()
+    .mockImplementation(async function* () {
+      return;
+    });
+  supervisorMock.sendPrompt
+    .mockReset()
+    .mockResolvedValue({ stopReason: "end_turn" });
+  supervisorMock.cancelPermission.mockReset().mockResolvedValue({ ok: true });
+  supervisorMock.listSessions.mockReset().mockResolvedValue([]);
 });
 
 // Insert a project-less local-package scratch run mirroring the single launch
@@ -392,5 +458,197 @@ describe("project-less rows are invisible to project-scoped queries (ADR-096)", 
       .where(and(eq(runs.runKind, "scratch"), isNull(runs.projectId)));
 
     expect(projectScoped.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// --- T5.9: launch + turn at a real local-package working dir ----------------
+
+describe("launchLocalPackageAssistant + a turn (ADR-096 T5.7)", () => {
+  it("launches at the working dir, and a turn that writes a file is reflected in the diff", async () => {
+    const pkg = await createLocalPackage({
+      name: `assistant-launch-${randomUUID().slice(0, 8)}`,
+      createdBy: userId,
+      db: db as never,
+    });
+
+    // The agent's "turn" is simulated by the stubbed sendPrompt writing a flow
+    // file into the working dir (the supervisor confines this server-side; here
+    // we just emulate the on-disk effect), then asserting the git diff shows it.
+    supervisorMock.sendPrompt.mockImplementation(async () => {
+      await writeFile(
+        join(pkg.workingDir, "flows", "new.yaml"),
+        "schemaVersion: 1\nname: new\nnodes: []\n",
+        "utf8",
+      );
+
+      return { stopReason: "end_turn" };
+    });
+
+    const result = await launchLocalPackageAssistant({
+      body: { localPackageId: pkg.id, prompt: "add a flow" },
+      userId,
+    });
+
+    expect(result.runId).toBeTruthy();
+    expect(supervisorMock.createSession).toHaveBeenCalledTimes(1);
+    // The launch confines the session to the working dir (no repo/worktree
+    // widening) — the SOLE confinement root.
+    const createArg = (
+      supervisorMock.createSession.mock.calls as unknown as Array<
+        [{ confineRoot?: string; worktreePath?: string }]
+      >
+    )[0][0];
+
+    expect(createArg).toMatchObject({
+      confineRoot: pkg.workingDir,
+      worktreePath: pkg.workingDir,
+    });
+
+    // The run is project-less and snapshots the local package id.
+    const runRows = await db
+      .select({
+        projectId: runs.projectId,
+        localPackageId: runs.localPackageId,
+      })
+      .from(runs)
+      .where(eq(runs.id, result.runId));
+
+    expect(runRows[0]).toEqual({ projectId: null, localPackageId: pkg.id });
+
+    // The assistant's write is visible in the working-tree diff (drives the
+    // editor's changed-count + canvas refresh).
+    const fresh = await getLocalPackage(pkg.id, db as never);
+    const diff = await diffWorkingDir(fresh!);
+
+    expect(diff.changedCount).toBeGreaterThanOrEqual(1);
+    expect(diff.files.some((f) => f.path.endsWith("flows/new.yaml"))).toBe(
+      true,
+    );
+  });
+
+  it("seeds the flow-authoring skill into the session working dir", async () => {
+    const pkg = await createLocalPackage({
+      name: `assistant-skill-${randomUUID().slice(0, 8)}`,
+      createdBy: userId,
+      db: db as never,
+    });
+
+    await launchLocalPackageAssistant({
+      body: { localPackageId: pkg.id, prompt: "hi" },
+      userId,
+    });
+
+    // claude (cwd-dir) materializes the skill under the working dir .claude/skills.
+    const skillMd = await readFile(
+      join(pkg.workingDir, ".claude", "skills", "flow-authoring", "SKILL.md"),
+      "utf8",
+    );
+
+    expect(skillMd).toContain("name: flow-authoring");
+  });
+
+  it("a turn on the assistant run (loadScratchRows) works WITHOUT a workspace row", async () => {
+    const pkg = await createLocalPackage({
+      name: `assistant-turn-${randomUUID().slice(0, 8)}`,
+      createdBy: userId,
+      db: db as never,
+    });
+    const launched = await launchLocalPackageAssistant({
+      body: { localPackageId: pkg.id, prompt: "first" },
+      userId,
+    });
+
+    // There is NO workspaces row for a local-package assistant run.
+    const workspaceRows = await db
+      .select({ runId: schema.workspaces.runId })
+      .from(schema.workspaces)
+      .where(eq(schema.workspaces.runId, launched.runId));
+
+    expect(workspaceRows).toHaveLength(0);
+
+    // A follow-up turn writes a second file; the turn path must read the cwd
+    // from the local package (not a workspace row) and not crash.
+    supervisorMock.sendPrompt.mockImplementation(async () => {
+      await writeFile(
+        join(pkg.workingDir, "rules", "more.md"),
+        "# more\n",
+        "utf8",
+      );
+
+      return { stopReason: "end_turn" };
+    });
+
+    const res = await sendScratchUserMessage({
+      runId: launched.runId,
+      body: { content: "do more", attachments: [] },
+    });
+
+    expect(res.ok).toBe(true);
+
+    const fresh = await getLocalPackage(pkg.id, db as never);
+    const diff = await diffWorkingDir(fresh!);
+
+    expect(diff.files.some((f) => f.path.endsWith("rules/more.md"))).toBe(true);
+  });
+});
+
+describe("deferred-release on a failure path (ADR-096 T5.6)", () => {
+  it("a launch turn failure tears down the supervisor session (releasing any deferred)", async () => {
+    const pkg = await createLocalPackage({
+      name: `assistant-fail-${randomUUID().slice(0, 8)}`,
+      createdBy: userId,
+      db: db as never,
+    });
+
+    // The turn rejects after the session exists — the launch catch MUST release
+    // it by deleting the supervisor session (purgeSession cancels open deferreds).
+    supervisorMock.sendPrompt.mockRejectedValue(new Error("turn boom"));
+
+    await expect(
+      launchLocalPackageAssistant({
+        body: { localPackageId: pkg.id, prompt: "go" },
+        userId,
+      }),
+    ).rejects.toThrow(/turn boom/);
+
+    expect(supervisorMock.deleteSession).toHaveBeenCalledWith("sup-1");
+
+    // The run lands Crashed with its supervisor session cleared.
+    const rows = await db
+      .select({
+        status: runs.status,
+        supervisorSessionId: scratchRuns.supervisorSessionId,
+      })
+      .from(runs)
+      .innerJoin(scratchRuns, eq(scratchRuns.runId, runs.id))
+      .where(eq(runs.localPackageId, pkg.id));
+
+    expect(rows[0].status).toBe("Crashed");
+    expect(rows[0].supervisorSessionId).toBeNull();
+  });
+
+  it("a follow-up turn failure also releases the supervisor session", async () => {
+    const pkg = await createLocalPackage({
+      name: `assistant-turn-fail-${randomUUID().slice(0, 8)}`,
+      createdBy: userId,
+      db: db as never,
+    });
+    const launched = await launchLocalPackageAssistant({
+      body: { localPackageId: pkg.id, prompt: "first" },
+      userId,
+    });
+
+    supervisorMock.deleteSession.mockClear();
+    // A non-retryable crash on the turn path releases the deferred.
+    supervisorMock.sendPrompt.mockRejectedValue(new Error("turn crash"));
+
+    await expect(
+      sendScratchUserMessage({
+        runId: launched.runId,
+        body: { content: "again", attachments: [] },
+      }),
+    ).rejects.toThrow(/turn crash/);
+
+    expect(supervisorMock.deleteSession).toHaveBeenCalledWith("sup-1");
   });
 });

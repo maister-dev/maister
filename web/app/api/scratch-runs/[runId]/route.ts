@@ -253,7 +253,12 @@ export async function GET(
     const db = getDb() as unknown as Db;
     const { run, scratch } = await loadScratchRun(db, runId);
 
-    await requireProjectAction(run.projectId, "readScratchRun");
+    // ADR-096: a project-less local-package assistant run (projectId NULL)
+    // carries member-level RBAC (any active user, per ADR-095); a project
+    // scratch run keeps its project-scoped read gate.
+    if (run.projectId) {
+      await requireProjectAction(run.projectId, "readScratchRun");
+    }
 
     const [
       projectRows,
@@ -264,7 +269,9 @@ export async function GET(
       pendingHitlRows,
       creatorRows,
     ] = await Promise.all([
-      db.select().from(projects).where(eq(projects.id, run.projectId)),
+      run.projectId
+        ? db.select().from(projects).where(eq(projects.id, run.projectId))
+        : Promise.resolve([]),
       db.select().from(workspaces).where(eq(workspaces.runId, runId)),
       db.select().from(scratchMessages).where(eq(scratchMessages.runId, runId)),
       db

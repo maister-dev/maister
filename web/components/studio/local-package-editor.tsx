@@ -23,6 +23,10 @@ import { FlowEditorTabs } from "@/components/flows/flow-editor-tabs";
 import { PackageFilesEditor } from "@/components/flows/package-files-editor";
 import { LocalPackageDiffDrawer } from "@/components/studio/local-package-diff-drawer";
 import {
+  StudioAiTab,
+  type StudioAiTabLabels,
+} from "@/components/studio/studio-ai-tab";
+import {
   buildImportDialogLabels,
   ImportDialog,
 } from "@/components/studio/import-dialog";
@@ -53,6 +57,11 @@ export type LocalPackageEditorLabels = {
   // The git-backed [Diff] drawer (working-tree-vs-HEAD + Commit/Discard).
   diff: LocalPackageDiffLabels;
   diffView: DiffViewLabels;
+  // M36 T5.7: Properties ⇆ AI tab toggle + the docked assistant panel.
+  tabProperties: string;
+  tabAi: string;
+  aiWorking: string;
+  ai: StudioAiTabLabels;
 };
 
 // Keep-alive cadence. The server lock TTL defaults to 30 min
@@ -148,6 +157,28 @@ export function LocalPackageEditor({
   // Bumped after a successful save or import so the git-diff drawer re-fetches
   // the working-tree diff + its changed-count.
   const [diffRefresh, setDiffRefresh] = useState(0);
+  // M36 T5.7: Properties ⇆ AI tab + the "AI working" read-only lock. While the
+  // assistant holds a turn the human editor is read-only; control returns on
+  // turn end (assistantBusy → false).
+  const [activeTab, setActiveTab] = useState<"properties" | "ai">("properties");
+  const [assistantBusy, setAssistantBusy] = useState(false);
+  // Latches once the AI tab is first opened so its panel (and its single ACP
+  // run) stays mounted while the editor is open, even when toggled back to
+  // Properties.
+  const aiOpenedRef = useRef(false);
+
+  const openTab = useCallback((tab: "properties" | "ai"): void => {
+    if (tab === "ai") aiOpenedRef.current = true;
+    setActiveTab(tab);
+  }, []);
+
+  // On any assistant stream activity, re-read the working dir: the canvas
+  // (router.refresh re-runs the server compile) and the git-diff drawer's
+  // changed-count (diffRefresh) reflect files the assistant just wrote.
+  const onAssistantActivity = useCallback((): void => {
+    setDiffRefresh((n) => n + 1);
+    router.refresh();
+  }, [router]);
 
   const applyLock = useCallback((lock: LockState | LockSnapshot): void => {
     setLockHeldByMe(lock.heldByMe);
@@ -296,11 +327,32 @@ export function LocalPackageEditor({
     [packageId, flowPath, initialTitle, router, tApiErrors],
   );
 
-  const readOnly = !canManage || !lockHeldByMe;
+  // Editing is blocked when the lock is foreign/lost OR the assistant holds a
+  // turn ("AI working"). The assistant writes as the lock holder; the human
+  // editor steps back until the turn ends.
+  const readOnly = !canManage || !lockHeldByMe || assistantBusy;
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-2">
       <div className="flex shrink-0 flex-wrap items-center gap-2">
+        <div
+          className="flex shrink-0 rounded-[10px] border border-line bg-paper p-0.5"
+          data-testid="local-editor-tabs"
+          role="tablist"
+        >
+          <TabButton
+            active={activeTab === "properties"}
+            label={labels.tabProperties}
+            testid="local-editor-tab-properties"
+            onClick={() => openTab("properties")}
+          />
+          <TabButton
+            active={activeTab === "ai"}
+            label={labels.tabAi}
+            testid="local-editor-tab-ai"
+            onClick={() => openTab("ai")}
+          />
+        </div>
         <div className="min-w-0 flex-1">
           <LockBanner
             holderLabel={holderLabel}
@@ -310,10 +362,19 @@ export function LocalPackageEditor({
             onReload={() => router.refresh()}
           />
         </div>
+        {assistantBusy ? (
+          <span
+            className="shrink-0 rounded-full border border-amber-line bg-amber-soft px-2.5 py-1 font-mono text-[10.5px] font-semibold text-amber"
+            data-testid="local-editor-ai-working"
+            role="status"
+          >
+            {labels.aiWorking}
+          </span>
+        ) : null}
         <button
           className="shrink-0 rounded-[10px] border border-line bg-ivory px-3 py-2 text-[12.5px] font-semibold text-ink transition-colors hover:border-amber disabled:opacity-50"
           data-testid="local-editor-import"
-          disabled={readOnly}
+          disabled={readOnly || activeTab !== "properties"}
           type="button"
           onClick={() => setImporting(true)}
         >
@@ -335,47 +396,98 @@ export function LocalPackageEditor({
       ) : null}
 
       <div className="min-h-0 flex-1">
-        <FlowEditorTabs
-          canManage={!readOnly}
-          canvasAvailable={canvasAvailable}
-          capId={identity.slug}
-          diff={diff}
-          diffDrawer={
-            <LocalPackageDiffDrawer
-              canManage={!readOnly}
-              diffViewLabels={labels.diffView}
-              labels={labels.diff}
+        {/* FlowEditorTabs stays MOUNTED across the tab toggle so canvas/YAML
+            edit state survives switching to AI and back; only visibility flips. */}
+        <div className={activeTab === "properties" ? "h-full" : "hidden"}>
+          <FlowEditorTabs
+            canManage={!readOnly}
+            canvasAvailable={canvasAvailable}
+            capId={identity.slug}
+            diff={diff}
+            diffDrawer={
+              <LocalPackageDiffDrawer
+                canManage={!readOnly}
+                diffViewLabels={labels.diffView}
+                labels={labels.diff}
+                packageId={packageId}
+                refreshSignal={diffRefresh}
+                sessionId={sessionIdRef.current}
+              />
+            }
+            draftVersion={0}
+            filesDrawer={
+              <PackageFilesEditor
+                disabled={readOnly}
+                files={files}
+                kindLabels={fileKindLabels}
+                labels={filesLabels}
+                mcpCatalog={mcpCatalog}
+              />
+            }
+            hasDraft={false}
+            identity={identity}
+            initialManifest={canvasAvailable ? initialManifest : null}
+            initialTitle={initialTitle}
+            initialYaml={initialYaml}
+            labels={labels.editor}
+            layout={layout}
+            lifecycleLabel={identity.kind}
+            projectSlug={identity.slug}
+            publishAction={saveAction}
+            readinessReady={false}
+            saveAction={saveAction}
+            topology={topology}
+          />
+        </div>
+        {/* The AI tab mounts on first open and stays mounted (its ACP run lives
+            while the editor tab is open); only visibility flips thereafter. */}
+        {aiOpenedRef.current ? (
+          <div
+            className={
+              activeTab === "ai"
+                ? "h-full overflow-hidden rounded-xl border border-line bg-paper"
+                : "hidden"
+            }
+          >
+            <StudioAiTab
+              canManage={canManage && lockHeldByMe}
+              labels={labels.ai}
               packageId={packageId}
-              refreshSignal={diffRefresh}
               sessionId={sessionIdRef.current}
+              onActivity={onAssistantActivity}
+              onBusyChange={setAssistantBusy}
             />
-          }
-          draftVersion={0}
-          filesDrawer={
-            <PackageFilesEditor
-              disabled={readOnly}
-              files={files}
-              kindLabels={fileKindLabels}
-              labels={filesLabels}
-              mcpCatalog={mcpCatalog}
-            />
-          }
-          hasDraft={false}
-          identity={identity}
-          initialManifest={canvasAvailable ? initialManifest : null}
-          initialTitle={initialTitle}
-          initialYaml={initialYaml}
-          labels={labels.editor}
-          layout={layout}
-          lifecycleLabel={identity.kind}
-          projectSlug={identity.slug}
-          publishAction={saveAction}
-          readinessReady={false}
-          saveAction={saveAction}
-          topology={topology}
-        />
+          </div>
+        ) : null}
       </div>
     </div>
+  );
+}
+
+function TabButton({
+  active,
+  label,
+  testid,
+  onClick,
+}: {
+  active: boolean;
+  label: string;
+  testid: string;
+  onClick: () => void;
+}): ReactElement {
+  return (
+    <button
+      aria-selected={active}
+      className={`rounded-[8px] px-3 py-1.5 text-[12px] font-semibold transition-colors ${
+        active ? "bg-ivory text-ink" : "text-mute hover:text-ink"
+      }`}
+      data-testid={testid}
+      role="tab"
+      type="button"
+      onClick={onClick}
+    >
+      {label}
+    </button>
   );
 }
 
