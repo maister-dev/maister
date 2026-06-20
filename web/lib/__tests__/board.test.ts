@@ -109,6 +109,11 @@ describe("InProduction run statuses", () => {
   it("HumanWorking → InProduction (in-flight, manual takeover)", () => {
     expect(deriveStage(s("HumanWorking"))).toBe("InProduction");
   });
+
+  // M36 (ADR-095): a parked orchestrator awaiting its children stays in-flight.
+  it("WaitingOnChildren → InProduction (orchestrator parked on children)", () => {
+    expect(deriveStage(s("WaitingOnChildren"))).toBe("InProduction");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -185,6 +190,7 @@ describe("totality — every combination returns a known column", () => {
     "NeedsInput",
     "NeedsInputIdle",
     "HumanWorking",
+    "WaitingOnChildren",
     "Review",
     "Crashed",
     "Done",

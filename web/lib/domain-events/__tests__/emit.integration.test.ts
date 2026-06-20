@@ -113,6 +113,7 @@ describe("emitDomainEvent — same-transaction capture (AC1)", () => {
         kind: "run.failed",
         projectId,
         actor: { type: "system", id: null },
+        parentRunId: null,
         payload: { runId: "r-1", runKind: "flow" },
       });
     });
@@ -124,6 +125,13 @@ describe("emitDomainEvent — same-transaction capture (AC1)", () => {
 
     expect(row.actorType).toBe("system");
     expect(row.actorId).toBeNull();
+    // M36 (ADR-095): run-terminal kinds fold parent_run_id into the payload;
+    // a top-level run serializes parentRunId: null.
+    expect(row.payload).toEqual({
+      runId: "r-1",
+      runKind: "flow",
+      parentRunId: null,
+    });
   });
 
   it("T-E2: a rolled-back caller tx leaves zero rows", async () => {

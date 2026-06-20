@@ -365,6 +365,7 @@ export async function runFlow(
           taskId: runs.taskId,
           flowId: runs.flowId,
           runKind: runs.runKind,
+          parentRunId: runs.parentRunId,
         });
 
       if (rows.length > 0) {
@@ -382,6 +383,7 @@ export async function runFlow(
           runId,
           taskId: rows[0].taskId,
           actor: { type: "system", id: null },
+          parentRunId: rows[0].parentRunId,
           payload: {
             runId,
             taskId: rows[0].taskId,
@@ -926,6 +928,7 @@ export async function runFlow(
           taskId: runs.taskId,
           flowId: runs.flowId,
           runKind: runs.runKind,
+          parentRunId: runs.parentRunId,
         });
 
       if (rows.length > 0) {
@@ -943,6 +946,7 @@ export async function runFlow(
           runId,
           taskId: rows[0].taskId,
           actor: { type: "system", id: null },
+          parentRunId: rows[0].parentRunId,
           payload: {
             runId,
             taskId: rows[0].taskId,
@@ -970,6 +974,7 @@ export async function runFlow(
           taskId: runs.taskId,
           flowId: runs.flowId,
           runKind: runs.runKind,
+          parentRunId: runs.parentRunId,
         });
 
       if (rows.length > 0) {
@@ -987,6 +992,7 @@ export async function runFlow(
           runId,
           taskId: rows[0].taskId,
           actor: { type: "system", id: null },
+          parentRunId: rows[0].parentRunId,
           payload: {
             runId,
             taskId: rows[0].taskId,

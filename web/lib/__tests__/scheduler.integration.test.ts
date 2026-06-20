@@ -76,7 +76,8 @@ beforeAll(async () => {
   projectId = randomUUID();
   executorId = randomUUID();
 
-  await db.insert(projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
+  await db.insert(projects).values({
+    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug: "sched-app",
     name: "Sched App",
@@ -134,7 +135,8 @@ async function seedRun(
   const taskId = randomUUID();
   const runId = randomUUID();
 
-  await db.insert(tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
+  await db.insert(tasks).values({
+    number: Math.trunc(Math.random() * 1e9) + 1,
     id: taskId,
     projectId,
     title: "t",
@@ -164,6 +166,25 @@ describe("scheduler — M8 cap semantics", () => {
     await seedRun("Running");
     await seedRun("NeedsInputIdle");
     await seedRun("NeedsInputIdle");
+
+    const pendingRunId = await seedRun("Pending");
+
+    const r = await tryStartRun(pendingRunId, { db });
+
+    expect(r.started).toBe(true);
+
+    const after = await db.select().from(runs).where(eq(runs.id, pendingRunId));
+
+    expect(after[0].status).toBe("Running");
+  }, 60_000);
+
+  // M36 (ADR-095 §3): a parked orchestrator is checkpointed — its agent-pool
+  // slot is released, so it must NOT count against the cap (like NeedsInputIdle).
+  it("WaitingOnChildren does NOT count toward the cap (parked orchestrator)", async () => {
+    // Three would fill the cap-3 if they counted; the Pending still starts.
+    await seedRun("WaitingOnChildren");
+    await seedRun("WaitingOnChildren");
+    await seedRun("WaitingOnChildren");
 
     const pendingRunId = await seedRun("Pending");
 

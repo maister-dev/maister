@@ -29,7 +29,9 @@ import {
   markCheckpointedFromExit,
   markHumanWorking,
   markResumed,
+  markResumedFromWait,
   markReturnedToRunning,
+  markWaitingOnChildren,
   releaseHumanWorking,
 } from "@/lib/runs/state-transitions";
 
@@ -57,7 +59,8 @@ beforeAll(async () => {
   projectId = randomUUID();
   executorId = randomUUID();
 
-  await db.insert(projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
+  await db.insert(projects).values({
+    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug: "state-app",
     name: "State App",
@@ -108,7 +111,8 @@ async function seedRun(
   const taskId = randomUUID();
   const runId = randomUUID();
 
-  await db.insert(tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
+  await db.insert(tasks).values({
+    number: Math.trunc(Math.random() * 1e9) + 1,
     id: taskId,
     projectId,
     title: "t",
@@ -139,6 +143,73 @@ async function readRun(runId: string): Promise<any> {
 
   return rows[0];
 }
+
+describe("state-transitions — markWaitingOnChildren / markResumedFromWait (M36)", () => {
+  it("Running → WaitingOnChildren on the happy path (checkpointed, keepalive cleared)", async () => {
+    const runId = await seedRun("Running");
+
+    const r = await markWaitingOnChildren(runId, { db });
+
+    expect(r.ok).toBe(true);
+
+    const after = await readRun(runId);
+
+    expect(after.status).toBe("WaitingOnChildren");
+    expect(after.checkpointAt).not.toBeNull();
+    expect(after.keepaliveUntil).toBeNull();
+  });
+
+  it("markWaitingOnChildren rejects a non-Running row (status-guard mismatch)", async () => {
+    const runId = await seedRun("NeedsInput");
+
+    const r = await markWaitingOnChildren(runId, { db });
+
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("status-guard-mismatch");
+
+    expect((await readRun(runId)).status).toBe("NeedsInput");
+  });
+
+  it("WaitingOnChildren → Running on resume (checkpoint cleared)", async () => {
+    const runId = await seedRun("WaitingOnChildren", {
+      checkpointAt: new Date(),
+    });
+
+    const r = await markResumedFromWait(runId, { db });
+
+    expect(r.ok).toBe(true);
+
+    const after = await readRun(runId);
+
+    expect(after.status).toBe("Running");
+    expect(after.checkpointAt).toBeNull();
+  });
+
+  it("markResumedFromWait rejects a non-WaitingOnChildren row (concurrent resume loses)", async () => {
+    const runId = await seedRun("Running");
+
+    const r = await markResumedFromWait(runId, { db });
+
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("status-guard-mismatch");
+
+    expect((await readRun(runId)).status).toBe("Running");
+  });
+
+  it("parent_run_id is SET NULL when the parent run is deleted (FK cascade, migration 0055)", async () => {
+    const parentId = await seedRun("Running");
+    const childId = await seedRun("Running", {
+      parentRunId: parentId,
+      rootRunId: parentId,
+    });
+
+    await db.delete(runs).where(eq(runs.id, parentId));
+
+    const after = await readRun(childId);
+
+    expect(after.parentRunId).toBeNull();
+  });
+});
 
 describe("state-transitions — markCheckpointed", () => {
   it("NeedsInput → NeedsInputIdle on the happy path", async () => {

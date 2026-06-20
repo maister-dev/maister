@@ -1167,7 +1167,10 @@ async function stopAgentAfterAuth(
     // The run reached a terminal status between auth and finalize (a lost CAS
     // race); the stop still reports ok because the outcome is identical, but
     // surface the no-op so operators can see this call was not the finalizer.
-    log.info({ runId }, "agent stop finalize was a no-op (run already terminal)");
+    log.info(
+      { runId },
+      "agent stop finalize was a no-op (run already terminal)",
+    );
   }
 
   if (ctx.workspace && ctx.workspace.removedAt === null) {
@@ -1470,6 +1473,7 @@ export async function recordDrop(args: RecordDropInput): Promise<void> {
           taskId: runs.taskId,
           flowId: runs.flowId,
           runKind: runs.runKind,
+          parentRunId: runs.parentRunId,
         });
 
       if (updatedRunRows.length === 0) {
@@ -1513,6 +1517,7 @@ export async function recordDrop(args: RecordDropInput): Promise<void> {
           runId: args.runId,
           taskId: updatedRunRows[0].taskId,
           actor: { type: "system", id: null },
+          parentRunId: updatedRunRows[0].parentRunId,
           payload: {
             runId: args.runId,
             taskId: updatedRunRows[0].taskId,

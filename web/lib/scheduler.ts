@@ -106,6 +106,10 @@ export async function countLiveRuns(
     .from(runs)
     .where(
       and(
+        // M36 (ADR-095 §3): WaitingOnChildren is intentionally EXCLUDED — a
+        // parked orchestrator is checkpointed (its agent-pool slot already
+        // released via releaseSlotOnIdle), so like NeedsInputIdle it must NOT
+        // count against the concurrency cap. Adding it would starve the pool.
         inArray(runs.status, ["Running", "NeedsInput", "HumanWorking"]),
         inArray(runs.runKind, POOL_RUN_KINDS[pool]),
       ),

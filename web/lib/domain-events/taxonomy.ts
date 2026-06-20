@@ -18,3 +18,21 @@ export type DomainEventKind = (typeof DOMAIN_EVENT_KINDS)[number];
 export function isDomainEventKind(value: string): value is DomainEventKind {
   return (DOMAIN_EVENT_KINDS as readonly string[]).includes(value);
 }
+
+// M36 (ADR-095): run-terminal kinds whose payload MUST carry the emitting run's
+// `parent_run_id` so the orchestrator auto-launcher + resume consumer can route
+// to the parent. Enforced at the `emitDomainEvent` type boundary.
+export const RUN_TERMINAL_EVENT_KINDS = [
+  "run.done",
+  "run.failed",
+  "run.crashed",
+  "run.abandoned",
+] as const satisfies readonly DomainEventKind[];
+
+export type RunTerminalEventKind = (typeof RUN_TERMINAL_EVENT_KINDS)[number];
+
+export function isRunTerminalEventKind(
+  value: string,
+): value is RunTerminalEventKind {
+  return (RUN_TERMINAL_EVENT_KINDS as readonly string[]).includes(value);
+}

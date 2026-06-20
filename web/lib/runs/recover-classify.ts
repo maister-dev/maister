@@ -12,6 +12,7 @@ export type NodeKind =
   | "guard"
   | "human"
   | "form"
+  | "orchestrator"
   | null;
 
 export type RecoverPlan = "resume-agent" | "redispatch" | "discard-only";
@@ -32,7 +33,9 @@ export function classifyRecover(
   currentNodeKind: NodeKind,
   retrySafe: boolean,
 ): RecoverPlan {
-  if (currentNodeKind === "ai_coding") {
+  // M36 (ADR-095): an orchestrator node is a long-lived agent session — it
+  // recovers via session/resume exactly like ai_coding, never re-dispatch.
+  if (currentNodeKind === "ai_coding" || currentNodeKind === "orchestrator") {
     return run.acpSessionId ? "resume-agent" : "discard-only";
   }
 

@@ -7,6 +7,7 @@ import { sql } from "drizzle-orm";
 import {
   bigint,
   boolean,
+  type AnyPgColumn,
   check,
   customType,
   index,
@@ -1126,6 +1127,14 @@ export type ResolvedCapabilitySet = {
   mcps: Array<{ refId: string; sha: string | null; scope: string }>;
 };
 
+// M36 (ADR-095): launch-time effective agent-definition of a catalog-resolved
+// orchestrator child. ONLY the definition id + pinned revision — the resolved
+// runner stays in runner_snapshot (skill-context rule 207, never duplicated).
+export type DelegationSnapshot = {
+  agentDefinitionId: string;
+  revisionId: string;
+};
+
 export const runs = pgTable(
   "runs",
   {
@@ -1188,6 +1197,7 @@ export const runs = pgTable(
         "NeedsInput",
         "NeedsInputIdle",
         "HumanWorking",
+        "WaitingOnChildren",
         "Review",
         "Crashed",
         "Done",
@@ -1241,6 +1251,19 @@ export const runs = pgTable(
     deliveryPolicySnapshot: jsonb(
       "delivery_policy_snapshot",
     ).$type<DeliveryPolicy | null>(),
+    // M36 (ADR-095, migration 0055): orchestrator run-tree. parent_run_id is the
+    // delegator; root_run_id the tree root; delegation_snapshot the child's
+    // launch-time effective agent-def; launch_mode distinguishes auto-DAG launches.
+    parentRunId: text("parent_run_id").references((): AnyPgColumn => runs.id, {
+      onDelete: "set null",
+    }),
+    rootRunId: text("root_run_id").references((): AnyPgColumn => runs.id, {
+      onDelete: "set null",
+    }),
+    delegationSnapshot: jsonb(
+      "delegation_snapshot",
+    ).$type<DelegationSnapshot | null>(),
+    launchMode: text("launch_mode", { enum: ["auto", "manual"] }),
   },
   (t) => ({
     idxProjectStatus: index("runs_project_status_idx").on(
@@ -1255,6 +1278,8 @@ export const runs = pgTable(
     idxTask: index("runs_task_idx").on(t.taskId),
     idxKindTask: index("runs_kind_task_idx").on(t.runKind, t.taskId),
     idxRunner: index("runs_runner_idx").on(t.runnerId),
+    idxParentRun: index("runs_parent_run_id_idx").on(t.parentRunId),
+    idxRootRun: index("runs_root_run_id_idx").on(t.rootRunId),
     // M34 (ADR-089): outbox→spawn no-dup claim under at-least-once redelivery.
     uniqAgentTriggerEvent: uniqueIndex("runs_agent_trigger_event_uq")
       .on(t.agentId, t.triggerEventId)
@@ -1714,7 +1739,16 @@ export const nodeAttempts = pgTable(
     // compiles to a guard node); manifest `nodes[]` use the other five. The DB
     // column is plain text (no CHECK), so this enum is TS-level only.
     nodeType: text("node_type", {
-      enum: ["ai_coding", "cli", "check", "judge", "human", "guard", "form"],
+      enum: [
+        "ai_coding",
+        "cli",
+        "check",
+        "judge",
+        "human",
+        "guard",
+        "form",
+        "orchestrator",
+      ],
     }).notNull(),
     attempt: integer("attempt").notNull().default(1),
     // PascalCase node-lifecycle vocabulary: extends step_runs (adds
@@ -2918,7 +2952,7 @@ export const taskRelations = pgTable(
       .notNull()
       .references(() => tasks.id, { onDelete: "cascade" }),
     kind: text("kind", {
-      enum: ["blocks", "depends_on", "parent_of"],
+      enum: ["blocks", "depends_on", "parent_of", "requires"],
     }).notNull(),
     toTaskId: text("to_task_id")
       .notNull()
@@ -2940,7 +2974,7 @@ export const taskRelations = pgTable(
     idxToTask: index("task_relations_to_task_idx").on(t.toTaskId),
     kindCheck: check(
       "task_relations_kind_check",
-      sql`${t.kind} in ('blocks', 'depends_on', 'parent_of')`,
+      sql`${t.kind} in ('blocks', 'depends_on', 'parent_of', 'requires')`,
     ),
     noSelfCheck: check(
       "task_relations_no_self_check",

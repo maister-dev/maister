@@ -1026,6 +1026,7 @@ export async function finalizeAgentRun(
         taskId: runs.taskId,
         agentId: runs.agentId,
         agentWorkspace: runs.agentWorkspace,
+        parentRunId: runs.parentRunId,
       });
     const row = rows[0];
 
@@ -1137,6 +1138,7 @@ export async function finalizeAgentRun(
         taskId: row.taskId,
         runId,
         actor: { type: "agent", id: row.agentId },
+        parentRunId: row.parentRunId,
         payload: {
           runKind: "agent",
           agentId: row.agentId,

@@ -382,6 +382,7 @@ async function handlePermissionRequest(
             taskId: runs.taskId,
             flowId: runs.flowId,
             runKind: runs.runKind,
+            parentRunId: runs.parentRunId,
           });
 
         if (rows.length > 0) {
@@ -399,6 +400,7 @@ async function handlePermissionRequest(
             runId: pctx.runId,
             taskId: rows[0].taskId,
             actor: { type: "system", id: null },
+            parentRunId: rows[0].parentRunId,
             payload: {
               runId: pctx.runId,
               taskId: rows[0].taskId,

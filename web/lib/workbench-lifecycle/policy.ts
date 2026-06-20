@@ -12,6 +12,10 @@ export type WorkbenchRunStatus =
   | "NeedsInput"
   | "NeedsInputIdle"
   | "HumanWorking"
+  // M36 (ADR-095): valid run status; workbench lifecycle actions for a parked
+  // orchestrator (cascade stop/abandon) land in T7.4 — for now no action set
+  // lists it, so it reads as unsupported-status.
+  | "WaitingOnChildren"
   | "Review"
   | "Crashed"
   | "Done"

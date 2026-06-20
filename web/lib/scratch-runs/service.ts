@@ -567,6 +567,8 @@ export async function markScratchCrashed(args: {
       projectId: rows[0].projectId,
       runId: args.runId,
       actor: { type: "system", id: null },
+      // scratch runs are never delegated children
+      parentRunId: null,
       payload: {
         runId: args.runId,
         taskId: null,

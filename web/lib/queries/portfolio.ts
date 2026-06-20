@@ -69,6 +69,9 @@ export const ACTIVE_RUN_STATUSES = [
   // worktree + a concurrency slot, so it counts as an active workspace —
   // mirroring lib/board.ts (which buckets HumanWorking into the in-flight set).
   "HumanWorking",
+  // M36 (ADR-095): a parked orchestrator (checkpointed, slot released) still
+  // holds a worktree → counts as an active workspace.
+  "WaitingOnChildren",
 ] as const;
 const ACTIONABLE_ASSIGNMENT_RUN_STATUSES = [
   "NeedsInput",

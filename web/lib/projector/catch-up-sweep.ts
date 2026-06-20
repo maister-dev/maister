@@ -24,6 +24,7 @@ const IN_FLIGHT_STATUSES = [
   "NeedsInput",
   "NeedsInputIdle",
   "HumanWorking",
+  "WaitingOnChildren",
   "Review",
 ];
 

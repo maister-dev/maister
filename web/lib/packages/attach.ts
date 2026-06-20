@@ -51,6 +51,7 @@ const ACTIVE_RUN_STATUSES = [
   "NeedsInput",
   "NeedsInputIdle",
   "HumanWorking",
+  "WaitingOnChildren",
   "Review",
   "Crashed",
 ] as const;

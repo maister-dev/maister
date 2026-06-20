@@ -24,7 +24,11 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-export type TaskRelationKind = "blocks" | "depends_on" | "parent_of";
+export type TaskRelationKind =
+  | "blocks"
+  | "depends_on"
+  | "parent_of"
+  | "requires";
 
 export type KeyRef = { taskId: string; key: string; number: number };
 
@@ -80,18 +84,11 @@ export async function addTaskRelation(
     throw new MaisterError("CONFIG", "a task cannot relate to itself");
   }
 
-  const { from, to } = await resolveEnds(
-    _db,
-    input.fromTaskId,
-    input.toTaskId,
-  );
+  const { from, to } = await resolveEnds(_db, input.fromTaskId, input.toTaskId);
 
   // Same-project only in Stage 1 (ADR-078 D4) — a cross-table CHECK cannot
   // express this, so the domain layer enforces it.
-  if (
-    from.projectId !== input.projectId ||
-    to.projectId !== input.projectId
-  ) {
+  if (from.projectId !== input.projectId || to.projectId !== input.projectId) {
     throw new MaisterError(
       "CONFIG",
       "relations are same-project only in Stage 1",
@@ -160,11 +157,7 @@ export async function removeTaskRelation(
   db?: Db,
 ): Promise<{ removed: boolean }> {
   const _db = db ?? getDb();
-  const { from, to } = await resolveEnds(
-    _db,
-    input.fromTaskId,
-    input.toTaskId,
-  );
+  const { from, to } = await resolveEnds(_db, input.fromTaskId, input.toTaskId);
 
   const removed = await (_db as any).transaction(async (tx: any) => {
     const deleted = await tx
@@ -242,7 +235,12 @@ export async function getOpenRelationBlockers(
         inArray(taskRelations.toTaskId, taskIds),
         or(eq(tasks.status, "Backlog"), eq(tasks.status, "InFlight")),
       ),
-    )) as Array<{ taskId: string; blockerId: string; number: number; key: string }>;
+    )) as Array<{
+    taskId: string;
+    blockerId: string;
+    number: number;
+    key: string;
+  }>;
 
   const outgoing = (await _db
     .select({
@@ -260,7 +258,12 @@ export async function getOpenRelationBlockers(
         inArray(taskRelations.fromTaskId, taskIds),
         or(eq(tasks.status, "Backlog"), eq(tasks.status, "InFlight")),
       ),
-    )) as Array<{ taskId: string; blockerId: string; number: number; key: string }>;
+    )) as Array<{
+    taskId: string;
+    blockerId: string;
+    number: number;
+    key: string;
+  }>;
 
   for (const row of [...incoming, ...outgoing]) {
     const list = blockers.get(row.taskId) ?? [];
@@ -323,18 +326,20 @@ export async function getTaskRelations(
     .innerJoin(projects, eq(tasks.projectId, projects.id))
     .where(eq(taskRelations.toTaskId, taskId))) as Array<any>;
 
-  const view = (direction: "out" | "in") => (row: any): TaskRelationView => ({
-    id: row.id,
-    direction,
-    kind: row.kind,
-    other: {
-      taskId: row.otherId,
-      key: row.key,
-      number: row.number,
-      title: row.title,
-      status: row.status,
-    },
-  });
+  const view =
+    (direction: "out" | "in") =>
+    (row: any): TaskRelationView => ({
+      id: row.id,
+      direction,
+      kind: row.kind,
+      other: {
+        taskId: row.otherId,
+        key: row.key,
+        number: row.number,
+        title: row.title,
+        status: row.status,
+      },
+    });
 
   return [...outgoing.map(view("out")), ...incoming.map(view("in"))];
 }

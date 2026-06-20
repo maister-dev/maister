@@ -310,6 +310,7 @@ export async function runPass2(db: Db): Promise<number> {
           taskId: runs.taskId,
           flowId: runs.flowId,
           runKind: runs.runKind,
+          parentRunId: runs.parentRunId,
         });
 
       if (updated.length === 0) return false;
@@ -341,6 +342,7 @@ export async function runPass2(db: Db): Promise<number> {
         runId: row.id,
         taskId: updated[0].taskId,
         actor: { type: "system", id: null },
+        parentRunId: updated[0].parentRunId,
         payload: {
           runId: row.id,
           taskId: updated[0].taskId,
@@ -583,6 +585,7 @@ async function runTimeLimitPass(db: Db): Promise<number> {
           taskId: runs.taskId,
           flowId: runs.flowId,
           runKind: runs.runKind,
+          parentRunId: runs.parentRunId,
         });
 
       if (upd.length === 0) return false;
@@ -609,6 +612,7 @@ async function runTimeLimitPass(db: Db): Promise<number> {
         runId: row.id,
         taskId: upd[0].taskId,
         actor: { type: "system", id: null },
+        parentRunId: upd[0].parentRunId,
         payload: {
           runId: row.id,
           taskId: upd[0].taskId,

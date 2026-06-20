@@ -156,6 +156,86 @@ export async function markResumed(
   return await transition(db);
 }
 
+// M36 (ADR-095): Running → WaitingOnChildren. The orchestrator node yields
+// awaiting its delegated children; the run is checkpointed (the agent process
+// is SIGTERMed, acp_session_id retained) and the caller releases its agent-pool
+// slot so a parked coordinator never starves the cap. Status-guarded: a
+// concurrent terminal/crash that moved the row off Running wins → no-op → 409.
+export async function markWaitingOnChildren(
+  runId: string,
+  opts: StateTransitionOptions = {},
+): Promise<StateTransitionResult> {
+  const db = opts.db ?? getDb();
+  const rows = await db
+    .update(runs)
+    .set({
+      status: "WaitingOnChildren",
+      checkpointAt: new Date(),
+      keepaliveUntil: null,
+    })
+    .where(and(eq(runs.id, runId), eq(runs.status, "Running")))
+    .returning({ id: runs.id });
+
+  if (rows.length === 0) {
+    log.warn(
+      { runId, from: "Running", to: "WaitingOnChildren" },
+      "markWaitingOnChildren: status-guard mismatch",
+    );
+
+    return { ok: false, reason: "status-guard-mismatch" };
+  }
+
+  log.info(
+    { runId, from: "Running", to: "WaitingOnChildren" },
+    "run-state transition",
+  );
+
+  return { ok: true };
+}
+
+// M36 (ADR-095): WaitingOnChildren → Running. A child-terminal domain event (or
+// a manual resume) wakes the parked orchestrator; the supervisor respawns +
+// session/resume restores context. Status-guarded so a concurrent event-resume
+// + manual-resume converge to a single winner (the loser → 409); clears
+// checkpoint_at so the resumed run reads as a fresh live session.
+export async function markResumedFromWait(
+  runId: string,
+  opts: StateTransitionOptions = {},
+): Promise<StateTransitionResult> {
+  const db = opts.db ?? getDb();
+  const transition = async (tx: Db): Promise<StateTransitionResult> => {
+    const rows = await tx
+      .update(runs)
+      .set({ status: "Running", checkpointAt: null })
+      .where(and(eq(runs.id, runId), eq(runs.status, "WaitingOnChildren")))
+      .returning({ id: runs.id });
+
+    if (rows.length === 0) {
+      log.warn(
+        { runId, from: "WaitingOnChildren", to: "Running" },
+        "markResumedFromWait: status-guard mismatch",
+      );
+
+      return { ok: false, reason: "status-guard-mismatch" };
+    }
+
+    await opts.recordSuccessAudit?.(tx);
+
+    log.info(
+      { runId, from: "WaitingOnChildren", to: "Running" },
+      "run-state transition",
+    );
+
+    return { ok: true };
+  };
+
+  if (opts.recordSuccessAudit) {
+    return await (db as { transaction: any }).transaction(transition);
+  }
+
+  return await transition(db);
+}
+
 // M8 T7: activity ping extends the keep-alive window without changing
 // status. Status guard: only Running and NeedsInput rows accept a bump.
 // NeedsInputIdle rows do NOT accept bumps — the activity route returns
@@ -218,6 +298,7 @@ export async function failResumedRun(
         taskId: runs.taskId,
         flowId: runs.flowId,
         runKind: runs.runKind,
+        parentRunId: runs.parentRunId,
       });
 
     if (rows.length === 0) return false;
@@ -237,6 +318,7 @@ export async function failResumedRun(
       runId,
       taskId: rows[0].taskId,
       actor: { type: "system", id: null },
+      parentRunId: rows[0].parentRunId,
       payload: {
         runId,
         taskId: rows[0].taskId,
@@ -428,6 +510,9 @@ const ABANDONABLE_STATUSES = [
   "Running",
   "NeedsInput",
   "NeedsInputIdle",
+  // M36 (ADR-095): a parked orchestrator is directly abandonable; abandon
+  // cascades to its run-tree (T7.4).
+  "WaitingOnChildren",
   "Review",
   "Crashed",
 ] as const;
@@ -455,6 +540,7 @@ export async function markAbandoned(
         taskId: runs.taskId,
         flowId: runs.flowId,
         runKind: runs.runKind,
+        parentRunId: runs.parentRunId,
       });
 
     if (rows.length === 0) return false;
@@ -491,6 +577,7 @@ export async function markAbandoned(
       runId,
       taskId: rows[0].taskId,
       actor: { type: "system", id: null },
+      parentRunId: rows[0].parentRunId,
       payload: {
         runId,
         taskId: rows[0].taskId,
@@ -539,6 +626,7 @@ export async function crashResumedRun(
         taskId: runs.taskId,
         flowId: runs.flowId,
         runKind: runs.runKind,
+        parentRunId: runs.parentRunId,
       });
 
     if (rows.length === 0) return false;
@@ -558,6 +646,7 @@ export async function crashResumedRun(
       runId,
       taskId: rows[0].taskId,
       actor: { type: "system", id: null },
+      parentRunId: rows[0].parentRunId,
       payload: {
         runId,
         taskId: rows[0].taskId,
@@ -635,6 +724,7 @@ export async function crashRunningRun(
         taskId: runs.taskId,
         flowId: runs.flowId,
         runKind: runs.runKind,
+        parentRunId: runs.parentRunId,
       });
 
     if (rows.length === 0) return false;
@@ -654,6 +744,7 @@ export async function crashRunningRun(
       runId,
       taskId: rows[0].taskId,
       actor: { type: "system", id: null },
+      parentRunId: rows[0].parentRunId,
       payload: {
         runId,
         taskId: rows[0].taskId,

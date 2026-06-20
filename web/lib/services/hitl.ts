@@ -745,6 +745,7 @@ async function handlePermissionResponse(
             taskId: runs.taskId,
             flowId: runs.flowId,
             runKind: runs.runKind,
+            parentRunId: runs.parentRunId,
           });
 
         await tx
@@ -767,6 +768,7 @@ async function handlePermissionResponse(
             runId,
             taskId: terminalRows[0].taskId,
             actor: { type: "system", id: null },
+            parentRunId: terminalRows[0].parentRunId,
             payload: {
               runId,
               taskId: terminalRows[0].taskId,

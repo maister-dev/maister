@@ -667,6 +667,7 @@ async function promoteWorkspaceRun(
       runId,
       taskId: claim.run.taskId ?? null,
       actor: { type: "system", id: null },
+      parentRunId: claim.run.parentRunId,
       payload: {
         runId,
         taskId: claim.run.taskId ?? null,
@@ -881,6 +882,7 @@ async function finalizePullRequest(args: {
       runId,
       taskId: claim.run.taskId ?? null,
       actor: { type: "system", id: null },
+      parentRunId: claim.run.parentRunId,
       payload: {
         runId,
         taskId: claim.run.taskId ?? null,
@@ -1206,6 +1208,7 @@ async function promoteScratchRun(
       runId,
       taskId: claim.run.taskId ?? null,
       actor: { type: "system", id: null },
+      parentRunId: claim.run.parentRunId,
       payload: {
         runId,
         taskId: claim.run.taskId ?? null,
