@@ -6843,6 +6843,246 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /api/studio/local-packages:
+    get:
+      tags: [flow-packages]
+      summary: (ADR-095 — Designed) List local packages
+      description: |
+        (ADR-095 — Designed, Flow Studio Phase C.) Authenticated users only
+        (`requireSession`). Lists `active` local packages. `working_dir` is
+        server-only and never returned.
+      operationId: getStudioLocalPackages
+      responses:
+        "200":
+          description: Local packages.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [localPackages]
+                properties:
+                  localPackages:
+                    type: array
+                    items: { $ref: "#/components/schemas/LocalPackage" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+    post:
+      tags: [flow-packages]
+      summary: (ADR-095 — Designed) Create (or fork) a local package
+      description: |
+        (ADR-095 — Designed.) Creates a `local_packages` row and scaffolds a
+        git-backed working directory (`git init` + initial commit). With
+        `sourceInstallId`, seeds the working dir from that git-package install
+        (fork). Authenticated users only.
+      operationId: createStudioLocalPackage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LocalPackageCreateBody" }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LocalPackage" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+
+  /api/studio/local-packages/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+        description: "`local_packages.id` (url-param; the editor route key)."
+    get:
+      tags: [flow-packages]
+      summary: (ADR-095 — Designed) Get a local package + its working-dir files
+      operationId: getStudioLocalPackage
+      responses:
+        "200":
+          description: The local package, its file list, and the lock state.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [localPackage, files, lock]
+                properties:
+                  localPackage: { $ref: "#/components/schemas/LocalPackage" }
+                  files:
+                    type: array
+                    items: { $ref: "#/components/schemas/LocalPackageFile" }
+                  lock: { $ref: "#/components/schemas/LocalPackageLock" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [flow-packages]
+      summary: (ADR-095 — Designed) Rename / archive a local package
+      operationId: patchStudioLocalPackage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LocalPackagePatchBody" }
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LocalPackage" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+    delete:
+      tags: [flow-packages]
+      summary: (ADR-095 — Designed) Delete a local package + its working dir
+      operationId: deleteStudioLocalPackage
+      responses:
+        "204": { description: Deleted (row + working_dir removed). }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/studio/local-packages/{id}/lock-refresh:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [flow-packages]
+      summary: (ADR-095 — Designed) Refresh the session edit-lock
+      description: |
+        (ADR-095 — Designed.) Editor keep-alive; mirrors
+        `POST /api/runs/{runId}/activity`. Extends `lock_expires_at` for the
+        caller's session iff it holds the live lock.
+      operationId: refreshStudioLocalPackageLock
+      responses:
+        "200":
+          description: Lock extended.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LocalPackageLock" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/studio/local-packages/{id}/files/{path}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: path
+        in: path
+        required: true
+        schema: { type: string }
+        description: |
+          Artifact path RELATIVE to the working dir (**url-controlled —
+          UNTRUSTED**). Resolved within `working_dir` via realpath containment;
+          `..`, absolute paths, symlink escape, and any `.git/` path are rejected
+          with `PRECONDITION` (409).
+    get:
+      tags: [flow-packages]
+      summary: (ADR-095 — Designed) Read a working-dir file
+      operationId: getStudioLocalPackageFile
+      responses:
+        "200":
+          description: File content + content hash.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LocalPackageFile" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    put:
+      tags: [flow-packages]
+      summary: (ADR-095 — Designed) Write a working-dir file (under the lock)
+      description: |
+        (ADR-095 — Designed.) Atomic, path-confined write. Requires the caller's
+        session to hold the live edit-lock → else `CONFLICT` (409). A path that
+        escapes the working dir → `PRECONDITION` (409).
+      operationId: putStudioLocalPackageFile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LocalPackageFileWriteBody" }
+      responses:
+        "200": { description: Written. }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+    delete:
+      tags: [flow-packages]
+      summary: (ADR-095 — Designed) Delete a working-dir file (under the lock)
+      operationId: deleteStudioLocalPackageFile
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/studio/local-packages/{id}/files/{path}/move:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: path
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [flow-packages]
+      summary: (ADR-095 — Designed) Move an artifact to another local package
+      description: |
+        (ADR-095 — Designed.) Relocates a file to a target local package's
+        working dir. Both source and target paths are confined; both require a
+        live lock.
+      operationId: moveStudioLocalPackageFile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LocalPackageMoveBody" }
+      responses:
+        "200": { description: Moved. }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+
+  /api/studio/local-packages/{id}/cut-version:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [flow-packages]
+      summary: (ADR-095 — Designed) Cut an immutable version (+ optional attach)
+      description: |
+        (ADR-095 — Designed.) Exports the working dir cleanly (excluding `.git`)
+        and installs it via the existing installer as a `local-<digest>`
+        `package_installs` revision (`trusted_by_policy`); optionally attaches it
+        to a project the caller is a **member** of (`manageLocalPackages`).
+        Stamps `last_cut_install_id` after success.
+      operationId: cutStudioLocalPackageVersion
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CutVersionBody" }
+      responses:
+        "200":
+          description: Cut (and optionally attached).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CutVersionResult" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+
   /api/admin/package-installs:
     get:
       tags: [flow-packages, admin]
@@ -12440,6 +12680,78 @@ components:
         `exec_trust` of the owning revision.
         `sse` / `http` — connects to a remote endpoint; `url` required.
 
+    LocalPackage:
+      type: object
+      description: |
+        (ADR-095 — Designed) A `local_packages` row (Flow Studio Phase C).
+        `working_dir` is server-only and intentionally absent.
+      required: [id, name, slug, status, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        slug: { type: string }
+        status: { type: string, enum: [active, archived] }
+        sourceInstallId: { type: string, nullable: true, description: "Fork lineage: the git-package install this was forked from." }
+        sourceRepoUrl: { type: string, nullable: true }
+        sourceRef: { type: string, nullable: true }
+        branchName: { type: string, nullable: true }
+        lastCutInstallId: { type: string, nullable: true }
+        lockedByUserId: { type: string, nullable: true, description: "Current lock holder; null when unlocked." }
+        lockExpiresAt: { type: string, format: date-time, nullable: true }
+        createdBy: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    LocalPackageLock:
+      type: object
+      description: "(ADR-095 — Designed) Session edit-lock state for a local package."
+      required: [held, heldByMe]
+      properties:
+        held: { type: boolean, description: "True if a live (non-expired) lock exists." }
+        heldByMe: { type: boolean, description: "True if the caller's session holds it." }
+        holderLabel: { type: string, nullable: true, description: "Display name of the holder (never the session id)." }
+        expiresAt: { type: string, format: date-time, nullable: true }
+    LocalPackageFile:
+      type: object
+      description: "(ADR-095 — Designed) A file inside the working dir."
+      required: [path, kind]
+      properties:
+        path: { type: string, description: "Relative to the working dir." }
+        kind: { type: string, description: "Inferred kind (flow|skill|agent|mcp|rule|schema|script|asset|readme)." }
+        content: { type: string, nullable: true, description: "Present on single-file GET only." }
+        contentHash: { type: string, nullable: true, description: "sha256 of content (informational)." }
+    LocalPackageCreateBody:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        sourceInstallId: { type: string, nullable: true, description: "Fork: seed the working dir from this git-package install." }
+    LocalPackagePatchBody:
+      type: object
+      properties:
+        name: { type: string }
+        status: { type: string, enum: [active, archived] }
+    LocalPackageFileWriteBody:
+      type: object
+      required: [content]
+      properties:
+        content: { type: string }
+    LocalPackageMoveBody:
+      type: object
+      required: [targetLocalPackageId]
+      properties:
+        targetLocalPackageId: { type: string }
+        targetPath: { type: string, nullable: true, description: "Defaults to the same relative path in the target." }
+    CutVersionBody:
+      type: object
+      properties:
+        projectSlug: { type: string, nullable: true, description: "Attach the cut version to this project (caller must be a member; manageLocalPackages)." }
+    CutVersionResult:
+      type: object
+      required: [packageInstallId, versionLabel, attached]
+      properties:
+        packageInstallId: { type: string }
+        versionLabel: { type: string, description: "e.g. local-<digest12>." }
+        attached: { type: boolean }
     PackageSource:
       type: object
       description: |

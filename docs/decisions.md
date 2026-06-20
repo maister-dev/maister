@@ -7153,6 +7153,52 @@ per-instance stop to wire a UI button to.
 > `node scripts/validate-docs-adr-anchors.mjs` (`pnpm validate:docs` does not
 > resolve ADR anchors).
 
+### ADR-095: Flow Studio Phase C — editable local packages (Variant B): substrate, session lock, member RBAC, git-backed fork
+
+**Date:** 2026-06-16
+**Status:** Accepted
+**Context:** ADR-092 accepted the unified Studio IA and named the **editable local package** as the editing spine, leaving the Phase C backend *Designed* (Variant B). Phase C needs the concrete contract — how a local package is stored, edited, version-controlled, made attachable, who may do it, and how concurrent edits are guarded — without re-scoping the project-keyed `authored_capabilities` table or pulling git write-back (Phase 2) into scope. The owner answered six open questions that refine the model (member RBAC, a session lock, MCP-from-catalog, git-backed forks, no auto-GC, read-only-preview-plus-fork for git packages).
+
+**Decision:** Build the Phase C backend per Variant B (ADR-092) plus the owner's refinements:
+
+1. **Substrate (Variant B).** A platform-scoped `local_packages` table; each row points at a mutable, **git-backed working directory** under `localPackagesRoot()` (`MAISTER_LOCAL_PACKAGES_ROOT`, default `~/.maister/local`). `working_dir` is server-only (never sent to the client, mirroring `package_installs.installed_path`). Artifacts are **files** in the dir (`flows/ agents/ skills/ mcps/ rules/ schemas/`) — the authored kind enum (`rule|skill|flow`) is **NOT** extended; the file editors operate on files, not `authored_capabilities` rows.
+2. **Cut version.** "Cut version" exports a clean copy of the working dir (excluding VCS metadata) and calls the *existing* installer `installPackageRevision({ source, version: "local" })` → an immutable `local-<digest>` `package_installs` revision, then optionally `attachPackage(...)`. No new installer. Local sources are `trusted_by_policy` via `resolveTrust`, so `setup.sh` runs post-attach with no extra trust step (ADR-021 fetch-then-execute separation preserved — install never runs `setup.sh` inline).
+3. **Editor route.** `/studio/edit/{localPackageId}/{artifactPath}` — local-only, keyed on `local_packages.id` (sidesteps the deferred `base64url(source::name)` ref). Git packages get a **read-only preview + "Fork to local"**; no in-place git-package editing. Reuses the Phase B `FlowEditorTabs` seam with a working-dir-targeting save action (no `authored_capabilities` `draft_version` CAS).
+4. **Concurrency = session-scoped working-dir lock.** `local_packages` carries `locked_by_user_id` / `locked_by_session` / `lock_expires_at` (mirroring `runs.keepalive_until`). Opening the editor acquires the lock iff free or expired (lazy stale-takeover — **no sweeper**); the editor refreshes it (mirroring `POST /api/runs/{id}/activity`); every write asserts a live lock or fails `CONFLICT`; a second session is read-only.
+5. **RBAC = member-level local loop.** Creating / forking / editing / cutting a local package = any authenticated user (`requireSession`; Studio is member-accessible). **Attaching a cut version to a project** = project `member` via a new `manageLocalPackages: "member"` action. The existing **git-package** install/attach/trust gates stay **admin** (`managePackages`/`manageCatalog`) — Phase C does not widen them (asymmetry by design).
+6. **Fork = git-backed.** A from-scratch local package is `git init` + a branch; a fork of a git package seeds from the source at the installed revision and records `source_repo_url` / `source_ref` / `branch_name`. **PR-to-source is Phase 2** (`pushBranch` exists in `lib/worktree.ts`; a PR-creation helper does not).
+7. **MCP-template from the catalog.** The MCP-template editor sources from the platform MCP catalog (`platform_mcp_servers`): pick a server → materialize its template (transport/command/args/url/`env_keys`, `env:NAME` refs only). Today packages carry self-contained MCP templates with no catalog reference; this adds a catalog-pick + an optional `platform_mcp_server_id` provenance field, validated against a real `/mcps` entry.
+8. **No new `MaisterError` code** (ADR-008 closed union): path-confinement → `PRECONDITION`, invalid working-dir → `CONFIG`, lock held/expired → `CONFLICT`.
+9. **No automatic GC** (owner decision): orphaned working dirs / abandoned `Installing` installs are cleaned manually; explicit `deleteLocalPackage` removes its own dir.
+
+**Consequences:**
+- Reuses the installer, attach pipeline, trust policy, the Phase B editor seam, the run keep-alive pattern, and `lib/worktree.ts` — the genuinely-new backend is the `local_packages` table + working-dir CRUD + the lock + the MCP-template editor.
+- A member can author and apply their own forks without admin rights, while platform git-package management stays admin-gated.
+- The git-backed working dir makes a fork a real branch, so the Phase-2 PR-back is additive (the schema already stores the source repo/ref/branch).
+- Migration `0055` adds `local_packages` (incl. lock + source columns). New env vars `MAISTER_LOCAL_PACKAGES_ROOT`, `MAISTER_LOCAL_PACKAGE_LOCK_MINUTES`; `.maister` stays host-only (no Docker mount, ADR-023) — documented, not wired.
+
+**Alternatives Considered:**
+- **Content-hash ETag instead of a lock:** rejected by owner in favor of a session-scoped working-dir lock — clearer multi-tab semantics, no silent overwrite.
+- **Admin-gated cut/attach:** rejected — members own the fork-and-apply loop for their own projects.
+- **Plain copied working dir (no git):** rejected — a fork should be a branch so the Phase-2 PR-back has clean history; `git init` is cheap and adds local version control.
+- **Self-contained MCP templates only (no catalog link):** not chosen — sourcing from the platform MCP catalog avoids re-entering server config and keeps one source of truth.
+- **Extend `authored_capabilities` with `agent`/`mcp` kinds:** rejected (ADR-092) — Variant B keeps platform scope clean; files in a working dir, not project-keyed draft rows.
+
+> **Numbering note.** Renumbered from the Phase C draft to **ADR-095** when the
+> two Phase C commits were salvaged onto `main` (the onboarding and CCR ADRs had
+> already taken the prior numbers); the substrate migration was likewise
+> renumbered to **0055**. Run `node scripts/validate-docs-adr-anchors.mjs` after
+> any renumber.
+
+### ADR-096: Docked AI authoring assistant for local-package editing (M36 Phase 5)
+
+**Date:** 2026-06-20
+**Status:** Proposed
+**Context:** Stub reserved for the docked AI authoring assistant — a scratch-run
+ACP session rooted at a non-project local-package working dir (`run_kind`
+fan-out, launch-time snapshot, supervisor working-dir confinement). Full body
+filled in M36 Phase 5 (task T5.1).
+
 ---
 
 ### ADR-095: Flow execution-control policy — snapshotted preset + composable autonomy axes, fail-closed, no-blind-ship

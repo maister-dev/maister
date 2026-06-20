@@ -59,6 +59,7 @@ export const PROJECT_ACTION_MIN = {
   manageTaskRelations: "member",
   answerHitl: "member",
   manageSchedules: "member",
+  manageLocalPackages: "member",
   editSettings: "admin",
   managePackages: "admin",
   manageCatalog: "admin",

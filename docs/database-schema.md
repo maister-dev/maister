@@ -62,6 +62,7 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `package_sources`             | **(Implemented — ADR-088, migration `0048`)** Platform package-source catalog: git monorepo URL (UNIQUE), enabled flag, cached `discovered` snapshot jsonb, `last_checked_at`.                                                                              | —                                                                          |
 | `package_installs`            | **(Implemented — ADR-088, migration `0048`)** Immutable installed package revisions. UNIQUE `(source_url, name, resolved_revision)`. Manifest + content inventory jsonb; two-phase `package_status`; package-level `trust_status`.                                                                              | —                                                                          |
 | `project_package_attachments` | **(Implemented — ADR-088, migration `0048`)** Per-project package enablement. UNIQUE `(project_id, package_name)`. FK to `package_installs` (restrict) + `projects` (cascade).                                                                              | `projects.id`, `package_installs.id`                                       |
+| `local_packages`              | **(Designed — ADR-095, migration `0055`)** Flow Studio Phase C editable local packages (Variant B): git-backed `working_dir` (server-only), `slug` UNIQUE, `status`, fork lineage (`source_install_id`/`source_repo_url`/`source_ref`/`branch_name`), `last_cut_install_id`, session lock (`locked_by_*`/`lock_expires_at`). | `package_installs.id`, `users.id`                                          |
 | `flow_graph_layouts`          | **(Removed — migration `0030`, ADR-064.)** Was a per-project graph-view position store (M22, migration `0024`); superseded by the authored `flow.yaml` `presentation` section. No table.                                                                                            | —                             |
 | `scheduler_jobs`              | **(M24 — Implemented, migration `0027`)** Durable fixed-interval scheduler job definitions for `system_sweep`, `command`, `agent_tick`, and `flow_run`. Atomic due-job claim advances `next_run_at` and creates one attempt.                                                                                                      | optional `projects.id`                                                     |
 | `scheduler_job_runs`          | **(M24 — Implemented, migration `0027`)** Scheduler attempt ledger with status, lease expiry, summary, and error fields. Expired `Claimed`/`Running` attempts are reaped before new claims.                                                                                                                                         | `scheduler_jobs.id`                                                        |
@@ -536,6 +537,32 @@ Multi-flow package grouping above the per-revision substrate. Process contract:
   `capability_imports.package_install_id` (both nullable): membership of a row
   in an attached package group. Attach/detach manage the group in one
   transaction; standalone rows keep the column null.
+
+## Local package tables (Designed — ADR-095, migration `0055`)
+
+Editable local packages (Flow Studio Phase C, Variant B). Process contract:
+[`system-analytics/local-packages.md`](system-analytics/local-packages.md); ERD:
+[`db/projects-domain.md`](db/projects-domain.md).
+
+- **`local_packages`** — a platform-scoped, git-backed **working directory** you
+  author/fork artifacts in and **cut versions** from: `id`, `name`, `slug`
+  (UNIQUE — working-dir name), `working_dir` (absolute path under
+  `localPackagesRoot()` = `MAISTER_LOCAL_PACKAGES_ROOT` ?? `~/.maister/local`;
+  **server-only, never sent to the client**, mirroring
+  `package_installs.installed_path`), `status` (`active|archived`, default
+  `active`). Fork lineage / cut output: `source_install_id` (FK
+  `package_installs`, SET NULL — the git package this was forked from),
+  `source_repo_url` / `source_ref` / `branch_name` (the fork's git source +
+  base + branch, for the Phase-2 PR-back), `last_cut_install_id` (FK
+  `package_installs`, SET NULL — the most-recent cut revision). Session-scoped
+  edit lock (mirrors `runs.keepalive_until`): `locked_by_user_id` (FK `users`,
+  SET NULL), `locked_by_session`, `lock_expires_at` (nullable; acquired on
+  editor open, refreshed by keep-alive, lazy stale-takeover, no sweeper).
+  `created_by` (FK `users`, SET NULL), timestamps.
+- **Cut version** reuses the installer: a clean export of `working_dir` →
+  `installPackageRevision({ version: "local" })` → a `local-<digest>`
+  `package_installs` row (cut versions reuse the package substrate above); a
+  project `member` then attaches it via the `manageLocalPackages` action.
 
 ## `capability_records`
 

@@ -1,8 +1,11 @@
 # Flow editor (Studio)
 
 - **Type:** screen (artifact editor).
-- **Route(s):** `/flows/{projectSlug}/{capId}` (Phase B keeps the existing route;
-  relocation to `/studio/edit/{...}` is **Phase C**).
+- **Route(s):** `/flows/{projectSlug}/{capId}` (Phase B, project-authored caps).
+  **Phase C adds `/studio/edit/{localPackageId}/{path}`** — the same 3-pane editor
+  over a local package's git-backed working dir (ADR-095), acquired under a
+  session edit-lock (a second session is read-only). Git packages are NOT edited
+  here — they get a read-only preview + "Fork to local" on the package detail.
 - **Status:** Implemented (Phase B). Supersedes the tabs-in-a-form editor; the
   read-only twin is the shared `FlowGraphView` (per-project package viewer + run
   workbench), which inherits the node visual scheme.
@@ -99,6 +102,12 @@ Unchanged draft/publish backend (no new route in Phase B):
   CAS) — injectable via the load/save seam (default action).
 - Publish → `publishAuthoredFlowAction` (gated on a valid package).
 - Canvas/diff are server-compiled from the draft manifest at page load.
+- **(Phase C — Designed, ADR-095)** local-package edits at
+  `/studio/edit/{id}/{path}` save through the working-dir seam
+  (`PUT /api/studio/local-packages/{id}/files/{path}`, atomic + path-confined)
+  under a session lock; **"cut version"** (`POST .../cut-version`) replaces
+  Publish — it installs the working dir as a `local-<digest>` `package_installs`
+  revision a member then attaches.
 
 Behavior SSOT: [`../../system-analytics/flow-studio.md`](../../system-analytics/flow-studio.md)
 (authored-flow lifecycle, hard-gate, CAS) — not restated here (R7).

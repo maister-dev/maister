@@ -236,7 +236,7 @@ twin (region 4) is the read-only variant of the same canvas.
   `POST .../publish-local`, `PATCH .../flows/{flowId}/version-binding`,
   `POST .../flows/{flowId}/trust-executable`.
 
-### 6. Local workspace — `/studio/local` (Planned; the "virtual package")
+### 6. Local workspace — `/studio/local` (Designed — Phase C; the "virtual package")
 
 - **JTBD:** "When I have an idea, I want to author a standalone Flow / Agent /
   Skill / MCP / Rule at instance level, edit it, and later move it into a real
@@ -246,8 +246,11 @@ twin (region 4) is the read-only variant of the same canvas.
   artifact (target = another local package, or a forked git package's local
   copy). Multiple named local packages allowed; the unnamed default is the
   virtual scratch package.
-- **Data:** the new local-package store + the authored-capability draft machinery
-  (kinds extended beyond `flow|skill|rule`).
+- **Data:** the `local_packages` store (ADR-095) — a platform-scoped, git-backed
+  working dir the file/graph editors edit in place under a session lock; cut
+  versions reuse the installer. **Not** the `authored_capabilities` draft
+  machinery (Variant B keeps platform scope clean); the authored kind enum is
+  **not** extended.
 
 ## Data-model deltas (drives the plan)
 
@@ -262,9 +265,12 @@ twin (region 4) is the read-only variant of the same canvas.
     `local-<digest>` `package_installs`. (Not an `authored_capabilities`
     extension — symmetric with the git-package → install → attach pipeline,
     matches the file-based editors, keeps platform scope clean.)
-  - **Standalone artifact kinds** — extend the authored kind enum
-    (`authored-schema.ts`: today `rule|skill|flow`) with `agent` and `mcp`, each
-    with a create form + editor.
+  - **Standalone artifact kinds** — **files** in the working dir
+    (`flows/ agents/ skills/ mcps/ rules/ schemas/`), each via its per-kind file
+    editor. **Variant B is file-based — the authored kind enum
+    (`authored-schema.ts`) is NOT extended** (ADR-095 supersedes the earlier
+    "add `agent`/`mcp` kinds" note); only the MCP-template editor is genuinely
+    new, and it sources from the platform MCP catalog (`platform_mcp_servers`).
   - **Cut local version** — install the local package working copy as a
     `local-<digest>` `package_installs` revision (reuses the installer).
   - **Move to package** — relocate an artifact between local packages.

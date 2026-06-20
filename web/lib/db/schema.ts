@@ -2580,7 +2580,52 @@ export const projectPackageAttachments = pgTable(
   }),
 );
 
+// Editable local package (Flow Studio Phase C, Variant B, ADR-093): a
+// platform-scoped, git-backed working directory authored/forked artifacts live
+// in and `cut version` installs from. `working_dir` is NEVER projected to
+// clients. The lock columns mirror runs.keepalive_until for a session edit-lock.
+export const localPackages = pgTable("local_packages", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  name: text("name").notNull(),
+  slug: text("slug").notNull().unique(),
+  workingDir: text("working_dir").notNull(),
+  status: text("status", { enum: ["active", "archived"] })
+    .notNull()
+    .default("active"),
+  sourceInstallId: text("source_install_id").references(
+    () => packageInstalls.id,
+    { onDelete: "set null" },
+  ),
+  sourceRepoUrl: text("source_repo_url"),
+  sourceRef: text("source_ref"),
+  branchName: text("branch_name"),
+  lastCutInstallId: text("last_cut_install_id").references(
+    () => packageInstalls.id,
+    { onDelete: "set null" },
+  ),
+  lockedByUserId: text("locked_by_user_id").references(() => users.id, {
+    onDelete: "set null",
+  }),
+  lockedBySession: text("locked_by_session"),
+  lockExpiresAt: timestamp("lock_expires_at", {
+    withTimezone: true,
+    mode: "date",
+  }),
+  createdBy: text("created_by").references(() => users.id, {
+    onDelete: "set null",
+  }),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+    .notNull()
+    .defaultNow(),
+});
+
 export type User = typeof users.$inferSelect;
+export type LocalPackage = typeof localPackages.$inferSelect;
 export type AccountStatus = User["accountStatus"];
 export type Account = typeof accounts.$inferSelect;
 export type Session = typeof sessions.$inferSelect;

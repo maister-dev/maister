@@ -42,19 +42,19 @@ Agent bundles/subdirs (agents stay single-file); editable on-canvas node popup (
 
 ### Phase 0 — Salvage Phase C onto this branch (numbers + green)
 
-- [ ] **T0.1 — Reserve numbers + add M36 to ROADMAP.**
+- [x] **T0.1 — Reserve numbers + add M36 to ROADMAP.**
   Verify next-free ADR (`git show main:docs/decisions.md`) and migration (`git show main:web/lib/db/migrations/meta/_journal.json`) at the CURRENT main HEAD (not this snapshot). Add the `## M36 — Flow Studio package viewer + local editing` milestone to `.ai-factory/ROADMAP.md` (unchecked, scope bullets per design §10). Add ADR-095 + ADR-096 stub headers to `docs/decisions.md` so citations resolve.
   Files: `.ai-factory/ROADMAP.md`, `docs/decisions.md`.
   Acceptance: `node scripts/validate-docs-adr-anchors.mjs` resolves ADR-095/096; ROADMAP has the M36 item.
   Logging: n/a (docs).
 
-- [ ] **T0.2 — Cherry-pick Phase C 2 commits + renumber.** (depends on T0.1)
+- [x] **T0.2 — Cherry-pick Phase C 2 commits + renumber.** (depends on T0.1)
   Cherry-pick `43aa6b78` (docs) + `e65e2364` (substrate) from `feature/flow-studio-phase-c-local-packages` onto this branch. RENUMBER: migration `0053_romantic_gorgon` → `0055_*` (rename `.sql` + `meta/0055_snapshot.json`; fix `meta/_journal.json` so `idx`/`tag` are sequential and `when` is monotonic ABOVE the current DB max — see `[[drizzle-journal-when-drift]]`); ADR-093 → ADR-095 in `docs/decisions.md` + every citing doc (`docs/system-analytics/local-packages.md`, `screens/studio/*`, `database-schema.md`, `db/projects-domain.md`, `error-taxonomy.md`, `configuration.md`, OpenAPI). Rebuild the drizzle snapshot (`pnpm --filter maister-web db:generate` then confirm no stray diff; see `[[drizzle-snapshot-custom-gotcha]]`).
   Files: `web/lib/db/migrations/0055_*.sql`, `web/lib/db/migrations/meta/{_journal.json,0055_snapshot.json}`, `web/lib/local-packages/*`, `web/app/api/studio/local-packages/**`, `web/lib/{authz,instance-config,db/schema}.ts`, `.env.example`, all Phase C docs.
   Acceptance: migration applies clean on a fresh PG (`pnpm --filter maister-web db:migrate` against testcontainer); the Phase C confinement unit test + CRUD/lock integration test (already authored) pass; `node scripts/validate-docs-adr-anchors.mjs` + `pnpm validate:docs` green; **no ADR-093 / `0053_romantic_gorgon` strings remain** (`grep -rn`).
   Logging: preserve Phase C's existing service logs.
 
-- [ ] **T0.3 — Phase 0 green gate.** (depends on T0.2)
+- [x] **T0.3 — Phase 0 green gate.** (depends on T0.2)
   `pnpm --filter maister-web typecheck` (0), `pnpm --filter maister-web test:unit` + changed-scope `test:integration` green, `eslint` (scoped) 0, docs validators green. Commit 1.
 
 ### Phase 1 — Read-only mature viewer (spec §5)

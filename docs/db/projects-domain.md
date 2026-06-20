@@ -100,6 +100,8 @@ erDiagram
     PROJECTS ||--o{ PROJECT_PACKAGE_ATTACHMENTS : "enablement"
     PACKAGE_INSTALLS ||--o{ FLOWS : "package_install_id (nullable FK)"
     PACKAGE_INSTALLS ||--o{ CAPABILITY_IMPORTS : "package_install_id (nullable FK)"
+    PACKAGE_INSTALLS ||--o{ LOCAL_PACKAGES : "source_install_id + last_cut_install_id (nullable)"
+    USERS ||--o{ LOCAL_PACKAGES : "created_by / locked_by_user_id"
 
     PACKAGE_SOURCES {
         text id PK
@@ -134,7 +136,34 @@ erDiagram
         text package_name "denormalized for uniqueness"
         timestamp attached_at
     }
+
+    LOCAL_PACKAGES {
+        text id PK
+        text name
+        text slug UK "kebab; working-dir name"
+        text working_dir "abs path under localPackagesRoot(); server-only"
+        text status "active|archived (DEFAULT active)"
+        text source_install_id FK "nullable; fork lineage (SET NULL)"
+        text source_repo_url "nullable; fork git source (Phase-2 PR)"
+        text source_ref "nullable; base commit/tag forked from"
+        text branch_name "nullable; fork branch in working_dir"
+        text last_cut_install_id FK "nullable; latest cut revision (SET NULL)"
+        text locked_by_user_id FK "nullable; current editor (SET NULL)"
+        text locked_by_session "nullable; session holding the lock"
+        timestamp lock_expires_at "nullable; lock TTL (mirrors runs.keepalive_until)"
+        text created_by FK "nullable; author (SET NULL)"
+        timestamp created_at
+        timestamp updated_at
+    }
 ```
+
+Editable **local packages** **(Designed, ADR-095 — Phase C)** add a platform-scoped,
+git-backed working directory you author/fork artifacts in and **cut versions** from
+(the cut exports the dir cleanly and calls the same installer →
+a `local-<digest>` `package_installs` revision, which a project `member` then
+attaches). `working_dir` is server-only; the `locked_*`/`lock_expires_at` columns
+mirror `runs.keepalive_until` for a session-scoped edit lock; `source_*` +
+`branch_name` capture fork lineage for the Phase-2 PR-back.
 
 ## Constraints
 
@@ -152,6 +181,10 @@ erDiagram
 - **(Implemented, ADR-088)** `project_package_attachments` UNIQUE on
   `(project_id, package_name)` — at most one attached version of a package per
   project.
+- **(Designed, ADR-095)** `local_packages.slug` UNIQUE — platform-scoped
+  working-package identity; the working-dir name derives from it. `working_dir`
+  is never exposed to the client; `source_install_id` / `last_cut_install_id`
+  FKs are `SET NULL` on install delete (lineage is advisory, not load-bearing).
 
 ## Notes
 

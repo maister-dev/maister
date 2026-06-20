@@ -55,6 +55,19 @@ export function runtimeRoot(): string {
   return process.env.MAISTER_RUNTIME_ROOT ?? process.cwd();
 }
 
+// (ADR-093, Flow Studio Phase C) Root for editable local-package working dirs.
+export function localPackagesRoot(): string {
+  return (
+    process.env.MAISTER_LOCAL_PACKAGES_ROOT ??
+    path.join(os.homedir(), ".maister", "local")
+  );
+}
+
+// (ADR-093) Session-scoped working-dir edit-lock TTL, in minutes.
+export function localPackageLockMinutes(): number {
+  return positiveIntFromEnv("MAISTER_LOCAL_PACKAGE_LOCK_MINUTES", 30);
+}
+
 const DEFAULT_GC_AGE_DAYS = 14;
 const DEFAULT_WORKBENCH_MAX_FILE_BYTES = 524_288;
 const DEFAULT_GC_WARNING_DAYS = 2;

@@ -268,6 +268,14 @@ defined as a string union in `web/lib/errors.ts`.
 > - **`CONFLICT` → HTTP 409** — attaching an already-attached agent
 >   (`agent_project_links` uniqueness).
 
+> **Flow Studio Phase C (ADR-095) adds NO new `MaisterError` code** ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror) closed union). It reuses three existing codes at new call sites (Designed — editable local packages):
+>
+> - **`PRECONDITION` → HTTP 409** — a local-package file op (`GET/PUT/DELETE/move` under `/api/studio/local-packages/{id}/files/...`) whose artifact `path` escapes the row's `working_dir` (realpath containment rejecting `..`, absolute paths, symlink escape, or any `.git/` path). The `resolveWithinWorkingDir` guard throws before any write.
+> - **`CONFIG` → HTTP 422** — a local package whose `working_dir` is missing or malformed (manual deletion, bad scaffold).
+> - **`CONFLICT` → HTTP 409** — a working-dir write attempted without a live session edit-lock (the lock is held by another session, or the caller's lock expired / was taken over). The session-scoped lock mirrors `runs.keepalive_until`.
+>
+> Thrown by `web/lib/local-packages/*` (the `resolveWithinWorkingDir` confinement helper + the lock service's `assertHoldsLock`) and the `/api/studio/local-packages/*` routes. The cut-version path reuses the installer's existing `FLOW_INSTALL` on clone/install failure.
+
 ## Construction
 
 ```ts
