@@ -765,7 +765,9 @@
     "triaged": "triaged",
     "needsAttention": "Needs you",
     "openRun": "Open run",
-    "unconfigured": "no flow"
+    "unconfigured": "no flow",
+    "decompositionTitle": "Decomposition ({count})",
+    "decompositionNoRun": "no run"
   },
   "hitl": {
     "allowRun": "allow this run",
@@ -1363,7 +1365,25 @@
     "chatToolResult": "Result",
     "chatCopy": "copy",
     "chatCopied": "copied",
-    "chatToolCount": "{name} ×{count}"
+    "chatToolCount": "{name} ×{count}",
+    "subtreeTitle": "Child runs ({count})",
+    "subtreeAgent": "agent",
+    "subtreeAsRun": "(as-run)",
+    "subtreeEmpty": "No child runs spawned yet.",
+    "spawnedRunsTitle": "Spawned runs ({count})",
+    "runStatus": {
+      "Pending": "Pending",
+      "Running": "Running",
+      "NeedsInput": "Needs input",
+      "NeedsInputIdle": "Needs input · idle",
+      "HumanWorking": "Human working",
+      "WaitingOnChildren": "Waiting on children",
+      "Review": "Review",
+      "Crashed": "Crashed",
+      "Done": "Done",
+      "Abandoned": "Abandoned",
+      "Failed": "Failed"
+    }
   },
   "evidence": {
     "title": "Evidence graph",

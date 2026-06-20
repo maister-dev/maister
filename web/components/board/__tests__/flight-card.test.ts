@@ -42,6 +42,23 @@ const labels: FlightCardLabels = {
   unconfigured: "no flow",
   needsAttention: "Needs you",
   openRun: "Open run",
+  decomposition: {
+    title: (count: number) => `Decomposition (${count})`,
+    noRun: "no run",
+    status: {
+      Pending: "Pending",
+      Running: "Running",
+      NeedsInput: "Needs input",
+      NeedsInputIdle: "Needs input · idle",
+      HumanWorking: "Human working",
+      WaitingOnChildren: "Waiting on children",
+      Review: "Review",
+      Crashed: "Crashed",
+      Done: "Done",
+      Abandoned: "Abandoned",
+      Failed: "Failed",
+    },
+  },
 };
 
 function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
@@ -68,6 +85,7 @@ function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
     readyToPromote: false,
     prNumber: null,
     blockedBy: [],
+    childTasks: [],
     ...over,
   };
 }

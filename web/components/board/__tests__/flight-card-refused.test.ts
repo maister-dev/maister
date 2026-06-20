@@ -78,6 +78,7 @@ function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
     prNumber: null,
     crashAction: null,
     blockedBy: [],
+    childTasks: [],
     ...over,
   } as FlightCardData;
 }

@@ -376,6 +376,67 @@ export const getRunDetail = cache(async function getRunDetail(
   };
 });
 
+// --- M36 Phase 6 (ADR-095): orchestrator run-tree children -----------------
+
+export interface ChildRunRef {
+  runId: string;
+  status: string;
+  currentStepId: string | null;
+  // KEY-N back-reference to the child's launching task (null for a task-less
+  // "as-run" child spawned directly into the run tree).
+  taskNumber: number | null;
+  taskKey: string | null;
+  taskTitle: string | null;
+  // The delegation target agent-definition id (the catalog agent the child was
+  // launched as). Null on a child with no recorded delegation snapshot.
+  delegationAgentId: string | null;
+  launchMode: "auto" | "manual" | null;
+  startedAt: Date;
+  endedAt: Date | null;
+}
+
+// The run-tree children of an orchestrator run, oldest-first. DTO-projected:
+// the raw `acp_session_id` and any internal handle are NEVER surfaced. A
+// non-orchestrator run (no children) yields an empty array.
+export async function getChildRuns(
+  parentRunId: string,
+  database?: NodePgDatabase<typeof schema>,
+): Promise<ChildRunRef[]> {
+  const client = database ?? db();
+
+  const rows = await client
+    .select({
+      runId: runs.id,
+      status: runs.status,
+      currentStepId: runs.currentStepId,
+      delegationSnapshot: runs.delegationSnapshot,
+      launchMode: runs.launchMode,
+      startedAt: runs.startedAt,
+      endedAt: runs.endedAt,
+      taskNumber: tasks.number,
+      taskTitle: tasks.title,
+      projectTaskKey: projects.taskKey,
+    })
+    .from(runs)
+    .innerJoin(projects, eq(projects.id, runs.projectId))
+    .leftJoin(tasks, eq(tasks.id, runs.taskId))
+    .where(eq(runs.parentRunId, parentRunId))
+    .orderBy(asc(runs.startedAt));
+
+  return rows.map((row) => ({
+    runId: row.runId,
+    status: row.status,
+    currentStepId: row.currentStepId,
+    taskNumber: row.taskNumber,
+    taskKey: row.taskNumber !== null ? row.projectTaskKey : null,
+    taskTitle: row.taskTitle,
+    delegationAgentId: row.delegationSnapshot?.agentDefinitionId ?? null,
+    launchMode: row.launchMode,
+    startedAt: row.startedAt,
+    endedAt: row.endedAt,
+  }));
+}
+
 // --- M11b: run-detail timeline read model (ADR-030) -----------------------
 
 export interface TimelineGate {

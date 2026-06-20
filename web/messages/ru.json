@@ -765,7 +765,9 @@
     "triaged": "триаж пройден",
     "needsAttention": "Нужен ответ",
     "openRun": "Открыть запуск",
-    "unconfigured": "без флоу"
+    "unconfigured": "без флоу",
+    "decompositionTitle": "Декомпозиция ({count})",
+    "decompositionNoRun": "нет запуска"
   },
   "hitl": {
     "allowRun": "разрешить на этот запуск",
@@ -1363,7 +1365,25 @@
     "chatToolResult": "Результат",
     "chatCopy": "копировать",
     "chatCopied": "скопировано",
-    "chatToolCount": "{name} ×{count}"
+    "chatToolCount": "{name} ×{count}",
+    "subtreeTitle": "Дочерние запуски ({count})",
+    "subtreeAgent": "агент",
+    "subtreeAsRun": "(как запуск)",
+    "subtreeEmpty": "Дочерние запуски ещё не созданы.",
+    "spawnedRunsTitle": "Порождённые запуски ({count})",
+    "runStatus": {
+      "Pending": "Ожидает",
+      "Running": "Выполняется",
+      "NeedsInput": "Нужен ввод",
+      "NeedsInputIdle": "Нужен ввод · ожидание",
+      "HumanWorking": "Работает человек",
+      "WaitingOnChildren": "Ждёт подзадач",
+      "Review": "На проверке",
+      "Crashed": "Сбой",
+      "Done": "Готово",
+      "Abandoned": "Заброшено",
+      "Failed": "Ошибка"
+    }
   },
   "evidence": {
     "title": "Граф свидетельств",

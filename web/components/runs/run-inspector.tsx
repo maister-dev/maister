@@ -21,9 +21,19 @@ import {
 import clsx from "clsx";
 
 import {
+  RunInspectorChildRunsList,
+  type RunInspectorChildRun,
+  type RunInspectorChildRunsLabels,
+} from "@/components/runs/run-inspector-child-runs-list";
+import {
   buildRunDiffFileHref,
   buildRunFileHref,
 } from "@/lib/runs/run-query-state";
+
+export type {
+  RunInspectorChildRun,
+  RunInspectorChildRunsLabels,
+} from "@/components/runs/run-inspector-child-runs-list";
 
 type InspectorIcon = ComponentType<{ className?: string }>;
 
@@ -132,6 +142,10 @@ export interface RunInspectorProps {
   // T5.4: the live wrapper sets this when a change-summary re-fetch failed; the
   // changes tab then shows a "may be stale" badge over the last good snapshot.
   stale?: boolean;
+  // M36 Phase 6 (ADR-095): an orchestrator run's spawned run-tree children. The
+  // expandable "Spawned runs (N)" section renders only when non-empty.
+  childRuns?: RunInspectorChildRun[];
+  childRunsLabels?: RunInspectorChildRunsLabels;
 }
 
 const TABS: readonly RunInspectorTab[] = [
@@ -225,6 +239,8 @@ export function RunInspector({
   pathname = `/runs/${runId}`,
   search = "",
   stale = false,
+  childRuns,
+  childRunsLabels,
 }: RunInspectorProps): ReactElement {
   const [activeTab, setActiveTab] = useState<RunInspectorTab>("overview");
   const changeText = summaryText(changeSummary);
@@ -263,6 +279,13 @@ export function RunInspector({
           </button>
         ))}
       </div>
+
+      {childRuns && childRuns.length > 0 && childRunsLabels ? (
+        <RunInspectorChildRunsList
+          childRuns={childRuns}
+          labels={childRunsLabels}
+        />
+      ) : null}
 
       <div hidden={activeTab !== "overview"} role="tabpanel">
         <dl className="m-0 flex flex-col gap-2">

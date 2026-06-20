@@ -25,6 +25,7 @@ const {
   projects,
   runs,
   stepRuns,
+  taskRelations,
   tasks,
   users,
   workspaces,
@@ -49,6 +50,16 @@ export interface SpineSegment {
   state: "done" | "now" | "skip" | "todo";
 }
 
+// M36 Phase 6 (ADR-095): a child task of a `parent_of` SOURCE (orchestrator)
+// task — its KEY-N ref + title + the latest run's status (null if never run).
+export interface ChildTaskRef {
+  taskId: string;
+  number: number;
+  keyRef: string;
+  title: string;
+  latestRunStatus: RunStatus | null;
+}
+
 export interface BacklogCard {
   taskId: string;
   number: number;
@@ -68,6 +79,9 @@ export interface BacklogCard {
   runnerId: string | null;
   targetBranch: string | null;
   promotionMode: "local_merge" | "pull_request" | null;
+  // M36 Phase 6 (ADR-095): non-empty when this task is a `parent_of` SOURCE —
+  // the run-plan children rendered as a collapsible decomposition group.
+  childTasks: ChildTaskRef[];
 }
 
 export interface FlightCard {
@@ -117,6 +131,8 @@ export interface FlightCard {
   // only); null when no PR has been recorded.
   prNumber: number | null;
   blockedBy: Array<{ key: string; number: number }>;
+  // M36 Phase 6 (ADR-095): the orchestrator decomposition group (see BacklogCard).
+  childTasks: ChildTaskRef[];
 }
 
 export interface BoardColumnData {
@@ -255,6 +271,59 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
     .where(eq(projects.id, projectId));
   const projectTaskKey = projectKeyRow?.taskKey ?? "";
   const openBlockers = await getOpenRelationBlockers(taskIds, client);
+
+  // M36 Phase 6 (ADR-095): the `parent_of` decomposition children of every task
+  // on the board, with each child's latest-run status. Zero-impact on a task
+  // with no children (its map entry is absent → the card carries []).
+  const childTasksByTask = new Map<string, ChildTaskRef[]>();
+  const childRelRows = await client
+    .select({
+      parentTaskId: taskRelations.fromTaskId,
+      childTaskId: tasks.id,
+      childNumber: tasks.number,
+      childTitle: tasks.title,
+    })
+    .from(taskRelations)
+    .innerJoin(tasks, eq(tasks.id, taskRelations.toTaskId))
+    .where(
+      and(
+        eq(taskRelations.kind, "parent_of"),
+        inArray(taskRelations.fromTaskId, taskIds),
+      ),
+    )
+    .orderBy(tasks.number);
+  const childTaskIds = childRelRows.map((r) => r.childTaskId);
+  const childLatestStatus = new Map<string, RunStatus>();
+
+  if (childTaskIds.length > 0) {
+    const childRunRows = await client
+      .select({
+        taskId: runs.taskId,
+        status: runs.status,
+        startedAt: runs.startedAt,
+      })
+      .from(runs)
+      .where(and(eq(runs.runKind, "flow"), inArray(runs.taskId, childTaskIds)))
+      .orderBy(desc(runs.startedAt));
+
+    for (const row of childRunRows) {
+      if (!row.taskId || childLatestStatus.has(row.taskId)) continue;
+      childLatestStatus.set(row.taskId, row.status);
+    }
+  }
+
+  for (const rel of childRelRows) {
+    const list = childTasksByTask.get(rel.parentTaskId) ?? [];
+
+    list.push({
+      taskId: rel.childTaskId,
+      number: rel.childNumber,
+      keyRef: `${projectTaskKey}-${rel.childNumber}`,
+      title: rel.childTitle,
+      latestRunStatus: childLatestStatus.get(rel.childTaskId) ?? null,
+    });
+    childTasksByTask.set(rel.parentTaskId, list);
+  }
 
   const runCountRows = await client
     .select({
@@ -439,6 +508,7 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
           | "local_merge"
           | "pull_request"
           | null,
+        childTasks: childTasksByTask.get(task.taskId) ?? [],
       });
       backlogPos += 1;
       continue;
@@ -510,6 +580,7 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
         (readinessByRun.get(run.runId) ?? "ready") === "ready",
       prNumber: run.prNumber ?? null,
       blockedBy: openBlockers.get(task.taskId) ?? [],
+      childTasks: childTasksByTask.get(task.taskId) ?? [],
     });
 
     if (

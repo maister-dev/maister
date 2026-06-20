@@ -1,10 +1,12 @@
 import type { BacklogCard } from "@/lib/queries/board";
+import type { TaskDecompositionLabels } from "@/components/board/task-decomposition";
 import type { ReactElement } from "react";
 
 import clsx from "clsx";
 import Link from "next/link";
 
 import { LaunchPopover } from "@/components/board/launch-popover";
+import { TaskDecomposition } from "@/components/board/task-decomposition";
 
 export interface TaskCardProps {
   card: BacklogCard;
@@ -17,6 +19,7 @@ export interface TaskCardProps {
   unconfiguredLabel: string;
   triagedLabel: string;
   runsCountLabel: (count: number) => string;
+  decompositionLabels: TaskDecompositionLabels;
 }
 
 const PRIO_STRIPE: Record<BacklogCard["priority"], string> = {
@@ -46,6 +49,7 @@ export function TaskCard({
   unconfiguredLabel,
   triagedLabel,
   runsCountLabel,
+  decompositionLabels,
 }: TaskCardProps): ReactElement {
   // M34: a flowless simple-intent task renders the `unconfigured` chip — the
   // launch popover collects the missing fields.
@@ -106,6 +110,13 @@ export function TaskCard({
             </Link>
           ))}
         </div>
+      ) : null}
+      {card.childTasks.length > 0 ? (
+        <TaskDecomposition
+          childTasks={card.childTasks}
+          labels={decompositionLabels}
+          slug={slug}
+        />
       ) : null}
       <div className="flex items-center justify-between gap-2 border-t border-dashed border-line-soft pt-2">
         <div className="flex items-center gap-2.5 font-mono text-[10px] tracking-[0.02em] text-mute">

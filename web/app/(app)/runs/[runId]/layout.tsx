@@ -39,8 +39,14 @@ import {
 } from "@/components/runs/flow-run-center";
 import { LiveRunInspector } from "@/components/runs/live-run-inspector";
 import {
+  OrchestratorRunSubtree,
+  type OrchestratorRunSubtreeLabels,
+} from "@/components/runs/orchestrator-run-subtree";
+import {
   type RunInspectorAction,
   type RunInspectorChangeSummary,
+  type RunInspectorChildRun,
+  type RunInspectorChildRunsLabels,
   type RunInspectorFlowSummary,
   type RunInspectorLabels,
 } from "@/components/runs/run-inspector";
@@ -83,6 +89,7 @@ import { getRunNodeStatuses } from "@/lib/queries/run-node-status";
 import { loadRunManifest } from "@/lib/queries/run-manifest";
 import { getRunReadiness } from "@/lib/queries/readiness";
 import {
+  getChildRuns,
   getRunCapabilityProfiles,
   getRunCostSummary,
   getRunDetail,
@@ -108,6 +115,7 @@ import {
   type InspectorActionId,
 } from "@/lib/runs/inspector-actions";
 import { type WorkbenchRunStatus } from "@/lib/workbench-lifecycle/policy";
+import { RUN_STATUS_KEYS, type RunStatusKey } from "@/lib/runs/run-status-tone";
 import { DirtyResolutionBanner } from "@/components/runs/dirty-resolution-banner";
 import { DeliveryPolicyCancelButton } from "@/components/runs/delivery-policy-cancel-button";
 import { GateChatPanel } from "@/components/runs/gate-chat-panel";
@@ -325,6 +333,33 @@ export default async function RunDetailLayout({
   const resolvedSet = await getRunResolvedCapabilitySet(runId);
   const evidence = await buildEvidenceGraph(runId);
   const readiness = await getRunReadiness(runId, detail.projectId);
+  // M36 Phase 6 (ADR-095): the orchestrator run-tree children. Empty for an
+  // ordinary run — the subtree/inspector sections then render nothing.
+  const childRuns = await getChildRuns(runId);
+  const tRunStatus = await getTranslations("run.runStatus");
+  const runStatusLabels = Object.fromEntries(
+    RUN_STATUS_KEYS.map((key) => [key, tRunStatus(key)]),
+  ) as Record<RunStatusKey, string>;
+  const orchestratorSubtreeLabels: OrchestratorRunSubtreeLabels = {
+    title: (count: number) => t("subtreeTitle", { count }),
+    agent: t("subtreeAgent"),
+    asRun: t("subtreeAsRun"),
+    status: runStatusLabels,
+    empty: t("subtreeEmpty"),
+  };
+  const inspectorChildRuns: RunInspectorChildRun[] = childRuns.map((child) => ({
+    runId: child.runId,
+    status: child.status,
+    taskRef:
+      child.taskKey !== null && child.taskNumber !== null
+        ? `${child.taskKey}-${child.taskNumber}`
+        : null,
+  }));
+  const inspectorChildRunsLabels: RunInspectorChildRunsLabels = {
+    title: (count: number) => t("spawnedRunsTitle", { count }),
+    asRun: t("subtreeAsRun"),
+    status: runStatusLabels,
+  };
   const tEvidence = await getTranslations("evidence");
   const tReadiness = await getTranslations("readiness");
   const tWorkbench = await getTranslations("workbench");
@@ -443,13 +478,23 @@ export default async function RunDetailLayout({
     diffLabels: RunDiffLabels;
   } | null = null;
 
+  // M36 Phase 6 (ADR-095): true when the run's current node is an orchestrator —
+  // drives the run-tree subtree even before the first child spawns.
+  let currentNodeIsOrchestrator = false;
+
   if (detail.runKind === "flow") {
     const loadedM = await loadRunManifest(runId);
 
     if (loadedM) {
-      const topology = buildGraphTopology(compileManifest(loadedM.manifest));
+      const compiled = compileManifest(loadedM.manifest);
+      const topology = buildGraphTopology(compiled);
       const graphLayout = presentationLayout(loadedM.manifest);
       const nodeStatuses = await getRunNodeStatuses(runId);
+
+      if (detail.currentStepId) {
+        currentNodeIsOrchestrator =
+          compiled.nodes.get(detail.currentStepId)?.nodeType === "orchestrator";
+      }
 
       flowGraphData = {
         topology,
@@ -462,6 +507,8 @@ export default async function RunDetailLayout({
       };
     }
   }
+
+  const isOrchestratorRun = childRuns.length > 0 || currentNodeIsOrchestrator;
 
   const settingsClassLabel: Record<EnforcementSnapshotEntry["class"], string> =
     {
@@ -1033,6 +1080,8 @@ export default async function RunDetailLayout({
           actions={inspectorActions}
           changeScope={inspectorChangeScope}
           changeSummary={changeSummary}
+          childRuns={inspectorChildRuns}
+          childRunsLabels={inspectorChildRunsLabels}
           facts={inspectorFacts}
           flowSummary={flowSummary}
           labels={inspectorLabels}
@@ -1137,6 +1186,12 @@ export default async function RunDetailLayout({
                 result={flowResultDto}
               />
             )}
+            {isOrchestratorRun ? (
+              <OrchestratorRunSubtree
+                childRuns={childRuns}
+                labels={orchestratorSubtreeLabels}
+              />
+            ) : null}
           </section>
         ) : null}
 

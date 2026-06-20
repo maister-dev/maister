@@ -781,3 +781,137 @@ describe("getBoardData — unified readiness badge (M15, T15)", () => {
     ]).toContain(card?.readiness);
   });
 });
+
+// M36 Phase 6 (ADR-095): a `parent_of` SOURCE task carries its decomposition
+// children (KEY-N + title + latest-run status) on the board card; a task with
+// no children carries an empty childTasks array.
+describe("getBoardData — orchestrator decomposition (integration)", () => {
+  // Seed an orchestrator (parent) Backlog task with two parent_of child tasks.
+  // One child has a run (status Running); the other has none.
+  async function seedDecomposition(): Promise<{
+    projectId: string;
+    taskKey: string;
+    parentTaskId: string;
+    childWithRunId: string;
+    childNoRunId: string;
+  }> {
+    const projectId = randomUUID();
+    const parentTaskId = randomUUID();
+    const childWithRunId = randomUUID();
+    const childNoRunId = randomUUID();
+    const childRunId = randomUUID();
+    const executorId = randomUUID();
+    const slug = `proj-${projectId.slice(0, 8)}`;
+    const taskKey = `ORK${projectId.slice(0, 6)}`.toUpperCase();
+
+    await db.insert(schema.projects).values({
+      taskKey,
+      id: projectId,
+      slug,
+      name: "Orchestration Test",
+      repoPath: `/tmp/${slug}`,
+      maisterYamlPath: `/tmp/${slug}/maister.yaml`,
+    });
+    await db
+      .insert(schema.platformAcpRunners)
+      .values(testPlatformRunnerRow(executorId, "claude"));
+
+    await db.insert(schema.tasks).values({
+      number: 1,
+      id: parentTaskId,
+      projectId,
+      title: "parent orchestrator task",
+      prompt: "decompose work",
+      status: "Backlog",
+      stage: "Backlog",
+    });
+    await db.insert(schema.tasks).values({
+      number: 2,
+      id: childWithRunId,
+      projectId,
+      title: "child with run",
+      prompt: "work item 1",
+      status: "InFlight",
+      stage: "Backlog",
+    });
+    await db.insert(schema.tasks).values({
+      number: 3,
+      id: childNoRunId,
+      projectId,
+      title: "child no run",
+      prompt: "work item 2",
+      status: "Backlog",
+      stage: "Backlog",
+    });
+
+    await db.insert(schema.runs).values({
+      id: childRunId,
+      taskId: childWithRunId,
+      projectId,
+      runnerId: executorId,
+      capabilityAgent: "claude",
+      runnerSnapshot: testRunnerSnapshot(executorId),
+      status: "Running",
+      flowVersion: "v1.0.0",
+    });
+
+    await db.insert(schema.taskRelations).values([
+      {
+        id: randomUUID(),
+        projectId,
+        fromTaskId: parentTaskId,
+        kind: "parent_of",
+        toTaskId: childWithRunId,
+        actorType: "system",
+        actorId: null,
+      },
+      {
+        id: randomUUID(),
+        projectId,
+        fromTaskId: parentTaskId,
+        kind: "parent_of",
+        toTaskId: childNoRunId,
+        actorType: "system",
+        actorId: null,
+      },
+    ]);
+
+    return { projectId, taskKey, parentTaskId, childWithRunId, childNoRunId };
+  }
+
+  it("the parent card carries both parent_of children with correct refs and latest-run statuses", async () => {
+    const { projectId, taskKey, parentTaskId, childWithRunId, childNoRunId } =
+      await seedDecomposition();
+
+    const board = await getBoardData(projectId);
+    const parent = board.columns.Backlog.backlog.find(
+      (c) => c.taskId === parentTaskId,
+    );
+
+    expect(parent).toBeDefined();
+    expect(parent?.childTasks).toHaveLength(2);
+
+    const withRun = parent?.childTasks.find((c) => c.taskId === childWithRunId);
+    const noRun = parent?.childTasks.find((c) => c.taskId === childNoRunId);
+
+    expect(withRun?.keyRef).toBe(`${taskKey}-2`);
+    expect(withRun?.title).toBe("child with run");
+    expect(withRun?.latestRunStatus).toBe("Running");
+
+    expect(noRun?.keyRef).toBe(`${taskKey}-3`);
+    expect(noRun?.latestRunStatus).toBeNull();
+  });
+
+  it("a task with no children carries an empty childTasks array", async () => {
+    const { projectId, childNoRunId } = await seedDecomposition();
+
+    const board = await getBoardData(projectId);
+    // childNoRunId is itself a leaf task — no parent_of children.
+    const leaf = board.columns.Backlog.backlog.find(
+      (c) => c.taskId === childNoRunId,
+    );
+
+    expect(leaf).toBeDefined();
+    expect(leaf?.childTasks).toEqual([]);
+  });
+});

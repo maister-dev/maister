@@ -10,6 +10,10 @@ import clsx from "clsx";
 
 import { FLOW_CHIP } from "@/components/board/task-card";
 import { LaunchPopover } from "@/components/board/launch-popover";
+import {
+  TaskDecomposition,
+  type TaskDecompositionLabels,
+} from "@/components/board/task-decomposition";
 import { READINESS_BADGE } from "@/components/readiness-badge";
 import { WorkbenchLifecycleActions } from "@/components/workbench/lifecycle-actions";
 
@@ -34,6 +38,9 @@ export interface FlightCardLabels {
   unconfigured: string;
   needsAttention: string;
   openRun: string;
+  // M36 Phase 6 (ADR-095): localized labels for the orchestrator decomposition
+  // group rendered under a parent task's flight card.
+  decomposition: TaskDecompositionLabels;
 }
 
 export interface FlightCardProps {
@@ -303,6 +310,16 @@ export function FlightCard({
             actions={card.lifecycleActions}
             runId={card.runId}
             runKind="flow"
+          />
+        </div>
+      ) : null}
+
+      {card.childTasks.length > 0 ? (
+        <div className="relative z-10">
+          <TaskDecomposition
+            childTasks={card.childTasks}
+            labels={labels.decomposition}
+            slug={slug}
           />
         </div>
       ) : null}

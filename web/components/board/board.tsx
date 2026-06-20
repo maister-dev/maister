@@ -1,5 +1,7 @@
 import type { BoardColumn } from "@/lib/board";
 import type { BoardData } from "@/lib/queries/board";
+import type { TaskDecompositionLabels } from "@/components/board/task-decomposition";
+import type { RunStatusKey } from "@/lib/runs/run-status-tone";
 import type { PlatformStatus } from "@/types/platform-status";
 import type { ReactElement } from "react";
 
@@ -8,6 +10,7 @@ import clsx from "clsx";
 
 import { FlightCard } from "@/components/board/flight-card";
 import { TaskCard } from "@/components/board/task-card";
+import { RUN_STATUS_KEYS } from "@/lib/runs/run-status-tone";
 
 export interface BoardProps {
   data: BoardData;
@@ -69,7 +72,16 @@ export async function Board({
   const t = await getTranslations("board");
   const tCommon = await getTranslations("common");
   const tRun = await getTranslations("run");
+  const tRunStatus = await getTranslations("run.runStatus");
   const tReadiness = await getTranslations("readiness");
+  const runStatusLabels = Object.fromEntries(
+    RUN_STATUS_KEYS.map((key) => [key, tRunStatus(key)]),
+  ) as Record<RunStatusKey, string>;
+  const decompositionLabels: TaskDecompositionLabels = {
+    title: (count: number) => t("decompositionTitle", { count }),
+    noRun: t("decompositionNoRun"),
+    status: runStatusLabels,
+  };
   const flightLabels = {
     reworking: tRun("reworking"),
     claimedBy: t("claimedBy"),
@@ -94,6 +106,7 @@ export async function Board({
     unconfigured: t("unconfigured"),
     needsAttention: t("needsAttention"),
     openRun: t("openRun"),
+    decomposition: decompositionLabels,
   };
   const launchDisabledReason =
     platformStatus.kind === "ready"
@@ -185,6 +198,7 @@ export async function Board({
                     blockedByLabel={t("launchBlocked")}
                     canAct={canAct}
                     card={card}
+                    decompositionLabels={decompositionLabels}
                     launchDisabledLabel={
                       card.blockedBy.length > 0 && !launchDisabledReason
                         ? t("launchBlockedShort")
