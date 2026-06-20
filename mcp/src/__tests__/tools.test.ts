@@ -51,7 +51,7 @@ afterEach(() => {
 });
 
 describe("TOOL_SPECS registry", () => {
-  it("registers all 19 external tools (incl. ADR-089 triage_set + relation ops + M36 delegation toolset)", () => {
+  it("registers all 20 external tools (incl. ADR-089 triage_set + relation ops + M36 delegation/plan toolset)", () => {
     expect(Object.keys(TOOL_SPECS).sort()).toEqual(
       [
         "comment_create",
@@ -68,6 +68,7 @@ describe("TOOL_SPECS registry", () => {
         "run_delegate",
         "run_get",
         "run_launch",
+        "run_plan",
         "task_create",
         "task_get",
         "task_list",
@@ -244,6 +245,39 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
       prompt: "Do the subtask",
       title: "Subtask",
     });
+  });
+
+  it("run_plan → POST /api/v1/ext/runs/plan forwarding the task DAG", async () => {
+    mockOnce({ tasks: [{ key: "a", taskId: "t1", childRunId: "r1" }] }, 202);
+
+    const planTasks = [
+      {
+        key: "a",
+        target: { agentId: "pkg:worker" },
+        prompt: "do a",
+        dependsOn: [],
+      },
+      {
+        key: "b",
+        target: { agentId: "pkg:worker" },
+        prompt: "do b",
+        dependsOn: ["a"],
+      },
+    ];
+
+    await dispatchTool({
+      name: "run_plan",
+      args: { tasks: planTasks },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    const { url, init } = lastRequest();
+
+    expect(init.method).toBe("POST");
+    expect(url).toBe(`${BASE_URL}/api/v1/ext/runs/plan`);
+    expect(headerAuth(init)).toBe(AUTH);
+    expect(parsedBody(init)).toEqual({ tasks: planTasks });
   });
 
   it("run_collect → POST /api/v1/ext/runs/collect with all:true", async () => {

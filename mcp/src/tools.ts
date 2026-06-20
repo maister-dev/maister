@@ -103,6 +103,39 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
       required: ["target", "mode", "prompt"],
     },
   },
+  run_plan: {
+    description:
+      "Emit a task-DAG of as-plan child tasks under the calling orchestrator. Each entry is a catalog-agent target with a unique `key` and a `dependsOn` list of in-batch keys; the DAG must be acyclic. Every task is created launch_mode='auto' and linked parent_of under the orchestrator's task; dependencies become success-gated `requires` relations. Source tasks (empty dependsOn) launch immediately; downstream tasks auto-launch once their requires-dependencies all complete successfully. The orchestrator run is derived from the calling token — never accepted in the body. Returns { tasks: [{ key, taskId, childRunId? }] } (childRunId only for launched sources).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tasks: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              key: { type: "string" },
+              target: {
+                type: "object",
+                properties: { agentId: { type: "string" } },
+                required: ["agentId"],
+              },
+              prompt: { type: "string" },
+              title: { type: "string" },
+              workspace: {
+                type: "string",
+                enum: ["none", "repo_read", "worktree"],
+              },
+              runnerOverride: { type: "string" },
+              dependsOn: { type: "array", items: { type: "string" } },
+            },
+            required: ["key", "target", "prompt", "dependsOn"],
+          },
+        },
+      },
+      required: ["tasks"],
+    },
+  },
   run_collect: {
     description:
       "Collect status, output, and produced artifacts from the orchestrator's delegated child runs. Pass childRunId for one child, or all:true for every child of the calling orchestrator run. Returns an array of { childRunId, status, outputText?, artifacts, diffRef? }.",
@@ -410,6 +443,15 @@ function resolveRouting(
       if (runnerOverride !== undefined) body.runnerOverride = runnerOverride;
 
       return { method: "POST", path: `/api/v1/ext/runs/delegate`, body };
+    }
+    case "run_plan": {
+      const { tasks } = args as { tasks: unknown };
+
+      return {
+        method: "POST",
+        path: `/api/v1/ext/runs/plan`,
+        body: { tasks },
+      };
     }
     case "run_collect": {
       const { childRunId, all } = args as {

@@ -446,6 +446,58 @@ describe("task relations (ADR-078 D4/D5)", () => {
     expect(blockers.get(c.taskId)).toBeUndefined();
   });
 
+  it("requires is SUCCESS-gated — only Done releases (Abandoned still blocks), unlike depends_on", async () => {
+    const { projectId, creator, a, b } = await seedPair("REQ");
+
+    // B requires A → B blocked until A is Done.
+    await addTaskRelation(
+      {
+        projectId,
+        fromTaskId: b.taskId,
+        kind: "requires",
+        toTaskId: a.taskId,
+        actor: userActor(creator),
+      },
+      db,
+    );
+
+    // Backlog (the default) blocks.
+    let blockers = await getOpenRelationBlockers([b.taskId], db);
+
+    expect(blockers.get(b.taskId)).toEqual([
+      { taskId: a.taskId, key: "REQ", number: 1 },
+    ]);
+
+    // InFlight blocks.
+    await db
+      .update(schema.tasks)
+      .set({ status: "InFlight" })
+      .where(eq(schema.tasks.id, a.taskId));
+    blockers = await getOpenRelationBlockers([b.taskId], db);
+    expect(blockers.get(b.taskId)).toEqual([
+      { taskId: a.taskId, key: "REQ", number: 1 },
+    ]);
+
+    // Abandoned STILL blocks — the success-gate keeps a failed dependency from
+    // releasing the dependent (the contrast with depends_on).
+    await db
+      .update(schema.tasks)
+      .set({ status: "Abandoned" })
+      .where(eq(schema.tasks.id, a.taskId));
+    blockers = await getOpenRelationBlockers([b.taskId], db);
+    expect(blockers.get(b.taskId)).toEqual([
+      { taskId: a.taskId, key: "REQ", number: 1 },
+    ]);
+
+    // Done is the ONLY release.
+    await db
+      .update(schema.tasks)
+      .set({ status: "Done" })
+      .where(eq(schema.tasks.id, a.taskId));
+    blockers = await getOpenRelationBlockers([b.taskId], db);
+    expect(blockers.get(b.taskId)).toBeUndefined();
+  });
+
   it("getTaskRelations returns both directions with the counterpart ref", async () => {
     const { projectId, creator, a, b } = await seedPair("DIR");
 
@@ -837,10 +889,7 @@ describe("comment pipeline (ADR-078 D6/D7/D8/D9)", () => {
       ),
     ).rejects.toThrow();
 
-    const comments = await rowsOf(
-      "task_comments",
-      `task_id = '${a.taskId}'`,
-    );
+    const comments = await rowsOf("task_comments", `task_id = '${a.taskId}'`);
     const activity = await rowsOf(
       "task_activity",
       `task_id = '${a.taskId}' and event_kind = 'comment_added'`,

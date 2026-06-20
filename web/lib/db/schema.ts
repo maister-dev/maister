@@ -1019,6 +1019,11 @@ export const tasks = pgTable(
     promotionMode: text("promotion_mode", {
       enum: ["local_merge", "pull_request"],
     }),
+    // M36 (ADR-095, migration 0056): as-plan auto-launch. launch_mode='auto'
+    // marks a task whose run the auto-launcher creates once its `requires`
+    // blockers clear; delegation_spec carries the catalog-agent target + params.
+    launchMode: text("launch_mode", { enum: ["auto", "manual"] }),
+    delegationSpec: jsonb("delegation_spec").$type<TaskDelegationSpec | null>(),
     createdByUserId: text("created_by_user_id").references(() => users.id, {
       onDelete: "set null",
     }),
@@ -1133,6 +1138,16 @@ export type ResolvedCapabilitySet = {
 export type DelegationSnapshot = {
   agentDefinitionId: string;
   revisionId: string;
+};
+
+// M36 (ADR-095, migration 0056): an as-plan task's launch intent — the
+// catalog-agent target + params the auto-launcher uses when the task's
+// `requires` blockers clear. Distinct from runs.delegation_snapshot (what a
+// child actually launched with).
+export type TaskDelegationSpec = {
+  agentId: string;
+  workspace?: "none" | "repo_read" | "worktree";
+  runnerOverride?: string;
 };
 
 export const runs = pgTable(

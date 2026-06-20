@@ -5,6 +5,7 @@ import type { DomainEventRow } from "@/lib/db/schema";
 import pino from "pino";
 
 import { agentTriggersConsumer } from "@/lib/agents/triggers";
+import { autoLaunchRunPlanConsumer } from "@/lib/domain-events/auto-launch";
 
 const log = pino({
   name: "domain-events-noop",
@@ -45,8 +46,13 @@ export const noopConsumer: DomainEventConsumer = {
 // agent_triggers — the first real consumer: it matches event kind + project
 // against enabled agent_schedules event rows (with the self-exclusion
 // anti-loop guard) and claims spawns via the partial-unique Pending run
-// insert, so at-least-once redelivery converges to exactly one run.
+// insert, so at-least-once redelivery converges to exactly one run. M36
+// (ADR-095) adds auto_launch_run_plan: a child terminal releases the
+// orchestrator's as-plan siblings whose success-gated `requires` blockers
+// have all cleared (the per-task has-any-run guard ⇒ exactly-once launch,
+// safe for one event fanning out to several same-agent dependents).
 export const DOMAIN_EVENT_CONSUMERS: DomainEventConsumer[] = [
   noopConsumer,
   agentTriggersConsumer,
+  autoLaunchRunPlanConsumer,
 ];

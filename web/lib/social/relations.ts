@@ -2,7 +2,7 @@ import "server-only";
 
 import { randomUUID } from "node:crypto";
 
-import { and, eq, inArray, or } from "drizzle-orm";
+import { and, eq, inArray, ne, or } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
@@ -209,6 +209,9 @@ export async function removeTaskRelation(
 // Blocking predicate (ADR-078 D5): task T is relation-blocked iff there is a
 // relation (X blocks T) or (T depends_on Y) whose counterpart task status is
 // Backlog or InFlight — Done AND Abandoned both release. parent_of never gates.
+// M36 (ADR-095): (T requires Y) is SUCCESS-GATED — Y blocks T unless Y is Done
+// (Failed/Abandoned keep T blocked, unlike depends_on), so an auto-DAG only
+// releases a dependent on a successful dependency.
 export async function getOpenRelationBlockers(
   taskIds: string[],
   db?: Db,
@@ -265,7 +268,33 @@ export async function getOpenRelationBlockers(
     key: string;
   }>;
 
-  for (const row of [...incoming, ...outgoing]) {
+  // M36 (ADR-095): success-gated `requires` — (T requires Y) blocks T while Y
+  // is NOT Done. Unlike depends_on, an Abandoned/Failed Y keeps T blocked, so a
+  // dependent in an auto-DAG only releases on a SUCCESSFUL dependency.
+  const requiresOutgoing = (await _db
+    .select({
+      taskId: taskRelations.fromTaskId,
+      blockerId: tasks.id,
+      number: tasks.number,
+      key: projects.taskKey,
+    })
+    .from(taskRelations)
+    .innerJoin(tasks, eq(taskRelations.toTaskId, tasks.id))
+    .innerJoin(projects, eq(tasks.projectId, projects.id))
+    .where(
+      and(
+        eq(taskRelations.kind, "requires"),
+        inArray(taskRelations.fromTaskId, taskIds),
+        ne(tasks.status, "Done"),
+      ),
+    )) as Array<{
+    taskId: string;
+    blockerId: string;
+    number: number;
+    key: string;
+  }>;
+
+  for (const row of [...incoming, ...outgoing, ...requiresOutgoing]) {
     const list = blockers.get(row.taskId) ?? [];
 
     if (!list.some((b) => b.taskId === row.blockerId)) {

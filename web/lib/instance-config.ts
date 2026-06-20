@@ -63,6 +63,7 @@ const DEFAULT_RECONCILE_SWEEP_INTERVAL_SECONDS = 60;
 const DEFAULT_RECONCILE_GRACE_SECONDS = 90;
 const DEFAULT_PROMOTION_CLAIM_TIMEOUT_SECONDS = 300;
 const DEFAULT_ORCHESTRATOR_MAX_DEPTH = 3;
+const DEFAULT_ORCHESTRATOR_MAX_FANOUT = 16;
 
 // M18 Phase 2 (§3.2, Codex F1): a durable `claiming` promotion claim older than
 // this window is considered abandoned (crashed mid-promote) and is reclaimable
@@ -155,6 +156,22 @@ export function orchestratorMaxDepth(): number {
 
   if (!Number.isFinite(parsed) || parsed < 1) {
     return DEFAULT_ORCHESTRATOR_MAX_DEPTH;
+  }
+
+  return parsed;
+}
+
+// M36 (ADR-095): max as-plan tasks a single run_plan emit may create — the
+// orchestrator DAG fan-out cap. Bounds runaway plan emission. Env override,
+// sane default, floor at 1.
+export function orchestratorMaxFanout(): number {
+  const raw = process.env.MAISTER_MAX_ORCHESTRATOR_FANOUT;
+
+  if (!raw) return DEFAULT_ORCHESTRATOR_MAX_FANOUT;
+  const parsed = Number.parseInt(raw, 10);
+
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return DEFAULT_ORCHESTRATOR_MAX_FANOUT;
   }
 
   return parsed;
