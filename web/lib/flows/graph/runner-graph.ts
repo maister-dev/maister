@@ -241,6 +241,123 @@ async function emitRunEscalated(args: {
   });
 }
 
+// A2 (crashRetry=auto_retry) work-preserving recovery: when the SYNTHESIZED
+// auto_retry policy exhausts its bound on a transient code, pause the run for a
+// human INSTEAD of failing — the worktree (and all prior nodes' work) is kept.
+// The failed node's attempt is marked NeedsInput so a resume RE-RUNS it
+// (resumingThisNode → reusesCurrentAttempt); the human's Retry/Abandon arrives on
+// an `infra_recovery` HITL. Honors the run's onStuck axis: escalate /
+// ship_with_warning → an assigned HITL ("Needs you"); notify_only → a HITL with
+// NO assignment (emit-and-don't-route). Always emits run.escalated.
+async function escalateAutoRetryExhaustion(args: {
+  db: Db;
+  loaded: LoadedRun;
+  node: CompiledNode;
+  code: MaisterErrorCode;
+  nodeAttemptId: string;
+  attemptNumber: number;
+  runtimeRoot: string;
+}): Promise<void> {
+  const { db, loaded, node, code, nodeAttemptId, attemptNumber, runtimeRoot } =
+    args;
+  const runId = loaded.run.id;
+  const onStuck = onStuckFromSnapshot(loaded.run.executionPolicy ?? null);
+  const assign = onStuck !== "notify_only";
+  const prompt = `Node "${node.id}" failed after ${attemptNumber} auto-retries (transient: ${code}). Retry once infrastructure has recovered, or abandon the run.`;
+  const schema = {
+    kind: "infra_recovery",
+    code,
+    attempts: attemptNumber,
+    decisions: ["retry", "abandon"],
+  };
+  const needsInputPath = path.join(
+    runDir(runtimeRoot, loaded.projectSlug, runId),
+    "needs-input.json",
+  );
+
+  await atomicWriteJson(needsInputPath, {
+    nodeId: node.id,
+    kind: "infra_recovery",
+    schema,
+    prompt,
+    requestedAt: new Date().toISOString(),
+  });
+
+  const hitlRequestId = randomUUID();
+
+  try {
+    await db.transaction(async (tx: Db) => {
+      await markNodeNeedsInput(nodeAttemptId, tx);
+      await tx.insert(hitlRequests).values({
+        id: hitlRequestId,
+        runId,
+        stepId: node.id,
+        kind: "infra_recovery",
+        schema,
+        prompt,
+      });
+      if (assign) {
+        await createHitlAssignmentForRun({
+          db: tx,
+          runId,
+          hitlRequestId,
+          nodeId: node.id,
+          actionKind: "infra_recovery",
+          roleRefs: [],
+          title: prompt,
+        });
+        await emitWebhookEvent({
+          db: tx,
+          type: "hitl.requested",
+          projectId: loaded.run.projectId,
+          runId,
+          data: { hitlRequestId, kind: "infra_recovery", nodeId: node.id },
+        });
+      }
+      await tx
+        .update(runs)
+        .set({ status: "NeedsInput", currentStepId: node.id })
+        .where(eq(runs.id, runId));
+      await emitWebhookEvent({
+        db: tx,
+        type: "run.needs_input",
+        projectId: loaded.run.projectId,
+        runId,
+        data: { reason: "infra_recovery", nodeId: node.id },
+      });
+    });
+  } catch (err) {
+    await unlink(needsInputPath).catch(() => undefined);
+    throw err;
+  }
+
+  await emitRunEscalated({
+    db,
+    projectId: loaded.run.projectId,
+    runId,
+    taskId: loaded.run.taskId ?? null,
+    nodeId: node.id,
+    onStuck,
+  });
+
+  logExecPolicyAction({
+    runId,
+    kind: "escalated",
+    detail: {
+      nodeId: node.id,
+      reason: "auto_retry_exhausted",
+      code,
+      onStuck,
+      assign,
+    },
+  });
+
+  log.info(
+    { runId, nodeId: node.id, code, onStuck, assign },
+    "[auto_retry] exhausted → escalated (work-preserving NeedsInput)",
+  );
+}
+
 // Human review node: on resume read the operator's decision from the input
 // artifact; on first visit create the review HITL (with the manifest-derived
 // allow-list in `schema`) and pause. Full decision validation + rework
@@ -1493,21 +1610,25 @@ export async function runGraph(
   let pendingSessionPolicy: { nodeId: string; policy: SessionPolicy } | null =
     null;
 
-  // M30 (ADR-080): auto-retry decision for a failed ai_coding/cli attempt.
-  // True → the caller `continue`s on the SAME node (a fresh attempt with a
-  // fresh session — dispatch is hard-coded new-session). The workspace policy
-  // applies via the ADR-079 engine BEFORE the retry; with no checkpoint
-  // (degraded capture) it degrades to keep with a WARN. `attempts` bounds the
-  // node's TOTAL ledger attempts — rework re-visits consume the same budget
-  // by design (the bound is the observable ledger row count). An apply
-  // failure abandons the retry (normal failure path), never corrupts.
+  // M30 (ADR-080): auto-retry decision for a failed ai_coding/cli attempt:
+  //  - "retry"    → the caller `continue`s on the SAME node (fresh new-session
+  //                 dispatch; the ADR-079 workspace policy applies first — no
+  //                 checkpoint degrades to keep with a WARN).
+  //  - "escalate" → the SYNTHESIZED auto_retry policy (crashRetry=auto_retry,
+  //                 retry_safe, no author retry_policy) exhausted its bound:
+  //                 pause for a human WITHOUT discarding the worktree.
+  //  - "fail"     → normal failure path (non-retryable code, no policy, or an
+  //                 author retry_policy exhausting per ADR-080).
+  // `attempts` bounds the node's TOTAL ledger attempts — rework re-visits consume
+  // the same budget. An apply failure abandons the retry (fails), never corrupts.
+  type AutoRetryDecision = "retry" | "escalate" | "fail";
   const scheduleAutoRetry = async (
     node: CompiledNode,
     code: MaisterErrorCode,
     state: { nodeAttemptNumber: number; attemptCheckpointRef: string | null },
-  ): Promise<boolean> => {
-    if (node.nodeType !== "ai_coding" && node.nodeType !== "cli") return false;
-    if (node.source.kind !== "node") return false;
+  ): Promise<AutoRetryDecision> => {
+    if (node.nodeType !== "ai_coding" && node.nodeType !== "cli") return "fail";
+    if (node.source.kind !== "node") return "fail";
 
     // Author's explicit per-node retry_policy wins; otherwise the run's
     // execution-policy crashRetry=auto_retry synthesizes one for a retry_safe
@@ -1522,9 +1643,9 @@ export async function runGraph(
         maxAttempts: autoRetryMaxAttempts(),
       });
 
-    if (!retryPolicy) return false;
+    if (!retryPolicy) return "fail";
     if (!(retryPolicy.on_errors as readonly string[]).includes(code)) {
-      return false;
+      return "fail";
     }
     if (state.nodeAttemptNumber >= retryPolicy.attempts) {
       log2.warn(
@@ -1532,7 +1653,10 @@ export async function runGraph(
         "[retry] exhausted",
       );
 
-      return false;
+      // Synthesized auto_retry (no explicit author retry_policy) escalates to a
+      // human on exhaustion to PRESERVE the worktree; an author retry_policy
+      // keeps ADR-080's fail-on-exhaustion (the author owns that node's contract).
+      return explicit ? "fail" : "escalate";
     }
 
     if (retryPolicy.workspace !== "keep") {
@@ -1564,7 +1688,7 @@ export async function runGraph(
             "[retry] workspace apply failed — retry abandoned (normal failure)",
           );
 
-          return false;
+          return "fail";
         }
       }
     }
@@ -1594,7 +1718,7 @@ export async function runGraph(
       "[retry] scheduling auto-retry",
     );
 
-    return true;
+    return "retry";
   };
 
   try {
@@ -1965,14 +2089,28 @@ export async function runGraph(
           "node action threw — Failed",
         );
         await markNodeFailed(nodeAttemptId, { errorCode: e.code }, db);
-        if (
-          await scheduleAutoRetry(node, e.code, {
-            nodeAttemptNumber,
-            attemptCheckpointRef,
-          })
-        ) {
+
+        const threwRetry = await scheduleAutoRetry(node, e.code, {
+          nodeAttemptNumber,
+          attemptCheckpointRef,
+        });
+
+        if (threwRetry === "retry") {
           pendingAutoRetryNodeId = node.id;
           continue;
+        }
+        if (threwRetry === "escalate") {
+          await escalateAutoRetryExhaustion({
+            db,
+            loaded,
+            node,
+            code: e.code,
+            nodeAttemptId,
+            attemptNumber: nodeAttemptNumber,
+            runtimeRoot,
+          });
+          needsInput = true;
+          break;
         }
         failed = true;
         runErrorCode = e.code;
@@ -2078,14 +2216,27 @@ export async function runGraph(
           { errorCode: code, exitCode: result.exitCode, stdout: result.stdout },
           db,
         );
-        if (
-          await scheduleAutoRetry(node, code, {
-            nodeAttemptNumber,
-            attemptCheckpointRef,
-          })
-        ) {
+        const failRetry = await scheduleAutoRetry(node, code, {
+          nodeAttemptNumber,
+          attemptCheckpointRef,
+        });
+
+        if (failRetry === "retry") {
           pendingAutoRetryNodeId = node.id;
           continue;
+        }
+        if (failRetry === "escalate") {
+          await escalateAutoRetryExhaustion({
+            db,
+            loaded,
+            node,
+            code,
+            nodeAttemptId,
+            attemptNumber: nodeAttemptNumber,
+            runtimeRoot,
+          });
+          needsInput = true;
+          break;
         }
         failed = true;
         runErrorCode = code;

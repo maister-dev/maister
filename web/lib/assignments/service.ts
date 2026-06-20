@@ -69,7 +69,7 @@ export type CreateHitlAssignmentArgs = CreateAssignmentArgs & {
   hitlRequestId: string;
   actionKind: Extract<
     Assignment["actionKind"],
-    "permission" | "form" | "human_review"
+    "permission" | "form" | "human_review" | "infra_recovery"
   >;
 };
 

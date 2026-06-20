@@ -148,8 +148,13 @@ flowchart TD
 - `crashRetry=auto_retry` MUST re-dispatch a failed `retry_safe` node IN-RUN on a
   transient code (`SPAWN`/`EXECUTOR_UNAVAILABLE`/`CHECKPOINT`/`ACP_PROTOCOL`),
   bounded by `MAISTER_AUTO_RETRY_MAX_ATTEMPTS` total ledger attempts; an explicit
-  per-node `retry_policy` takes precedence, deterministic codes never retry, and
-  exhaustion fails the run.
+  per-node `retry_policy` takes precedence and deterministic codes never retry.
+- On `auto_retry` exhaustion the run MUST escalate WITHOUT discarding the worktree
+  (the failed attempt → `NeedsInput` so a resume re-runs the node) — never fail
+  outright. It opens an `infra_recovery` HITL (Retry re-runs the node once;
+  Abandon fails the run), honors `onStuck` (escalate → assigned HITL; notify_only
+  → HITL with no assignment), and emits `run.escalated`. An explicit per-node
+  `retry_policy` keeps ADR-080's fail-on-exhaustion.
 - `dirtyResolve` MUST NEVER auto-`discard`; `commit`/`proceed` auto-resolve only
   at a review-gate pause when the worktree is dirty.
 - Every autonomy action MUST funnel through `logExecPolicyAction`; an on-stuck

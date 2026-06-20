@@ -546,14 +546,15 @@ describe("execution-policy crashRetry=auto_retry (A2 in-run re-dispatch)", () =>
     expect(await runStatus(runId)).toBe("Failed");
   }, 120_000);
 
-  it("exhaustion at the policy cap → run Failed", async () => {
+  // Work-preserving escalation: on exhaustion the run pauses for a human
+  // (NeedsInput) instead of failing, keeping the worktree + all prior work.
+  it("exhaustion → escalates: NeedsInput + infra_recovery HITL + assignment + run.escalated, worktree preserved", async () => {
     const { runGraph } = await import("@/lib/flows/graph/runner-graph");
     const manifest = retryManifest(undefined, { retrySafe: true });
-    const { loaded, runId } = await seedRun(manifest, {
+    const { loaded, runId, worktree } = await seedRun(manifest, {
       executionPolicy: AUTO_RETRY,
     });
 
-    // Three transient failures = the default cap; no fresh attempt after.
     agentScript = [
       { ok: false, errorCode: "SPAWN" },
       { ok: false, errorCode: "SPAWN" },
@@ -562,12 +563,109 @@ describe("execution-policy crashRetry=auto_retry (A2 in-run re-dispatch)", () =>
 
     await runGraph(loaded as never, { db, runtimeRoot: createdPaths[0] });
 
+    // Paused, NOT failed.
+    expect(await runStatus(runId)).toBe("NeedsInput");
+
     const attempts = await attemptsFor(runId);
 
     expect(attempts).toHaveLength(3);
-    expect(attempts[2].auto_retry).toBe(true);
-    expect(attempts[2].status).toBe("Failed");
-    expect(agentCalls).toHaveLength(3);
-    expect(await runStatus(runId)).toBe("Failed");
+    expect(attempts[2].status).toBe("NeedsInput");
+
+    const hitl = await pool.query(
+      `SELECT kind, step_id FROM hitl_requests WHERE run_id = $1`,
+      [runId],
+    );
+
+    expect(hitl.rows).toHaveLength(1);
+    expect(hitl.rows[0].kind).toBe("infra_recovery");
+    expect(hitl.rows[0].step_id).toBe("implement");
+
+    const assignments = await pool.query(
+      `SELECT 1 FROM assignments WHERE run_id = $1 AND action_kind = 'infra_recovery'`,
+      [runId],
+    );
+
+    expect(assignments.rows.length).toBeGreaterThanOrEqual(1);
+
+    const escalated = await pool.query(
+      `SELECT 1 FROM domain_events WHERE run_id = $1 AND kind = 'run.escalated'`,
+      [runId],
+    );
+
+    expect(escalated.rows.length).toBeGreaterThanOrEqual(1);
+
+    // Worktree preserved (a Failed run would be GC-eligible; NeedsInput keeps it).
+    const { stat } = await import("node:fs/promises");
+
+    expect((await stat(worktree)).isDirectory()).toBe(true);
+  }, 120_000);
+
+  it("retry resume re-runs the failed node with the worktree intact → Review", async () => {
+    const { runGraph } = await import("@/lib/flows/graph/runner-graph");
+    const manifest = retryManifest(undefined, { retrySafe: true });
+    const { loaded, runId } = await seedRun(manifest, {
+      executionPolicy: AUTO_RETRY,
+    });
+
+    agentScript = [
+      { ok: false, errorCode: "SPAWN" },
+      { ok: false, errorCode: "SPAWN" },
+      { ok: false, errorCode: "SPAWN" },
+    ];
+    await runGraph(loaded as never, { db, runtimeRoot: createdPaths[0] });
+    expect(await runStatus(runId)).toBe("NeedsInput");
+
+    // Human clicks Retry → the runner resumes and RE-RUNS the SAME node (the
+    // exhausted attempt is NeedsInput → reusesCurrentAttempt). Infra recovered,
+    // so the re-run succeeds and the run reaches Review with NO new attempt row.
+    (loaded.run as { status: string }).status = "NeedsInput";
+    (loaded.run as { currentStepId: string | null }).currentStepId =
+      "implement";
+    agentScript = [{ ok: true }];
+    await runGraph(loaded as never, { db, runtimeRoot: createdPaths[0] });
+
+    expect(await runStatus(runId)).toBe("Review");
+    expect(await attemptsFor(runId)).toHaveLength(3);
+  }, 120_000);
+
+  it("onStuck=notify_only → escalates WITHOUT an assignment (HITL still resolvable)", async () => {
+    const { runGraph } = await import("@/lib/flows/graph/runner-graph");
+    const manifest = retryManifest(undefined, { retrySafe: true });
+    const { loaded, runId } = await seedRun(manifest, {
+      executionPolicy: {
+        preset: "supervised",
+        overrides: { crashRetry: "auto_retry", onStuck: "notify_only" },
+      },
+    });
+
+    agentScript = [
+      { ok: false, errorCode: "SPAWN" },
+      { ok: false, errorCode: "SPAWN" },
+      { ok: false, errorCode: "SPAWN" },
+    ];
+    await runGraph(loaded as never, { db, runtimeRoot: createdPaths[0] });
+
+    expect(await runStatus(runId)).toBe("NeedsInput");
+
+    const hitl = await pool.query(
+      `SELECT 1 FROM hitl_requests WHERE run_id = $1`,
+      [runId],
+    );
+
+    expect(hitl.rows.length).toBe(1); // a response CAN still resolve the run
+
+    const assignments = await pool.query(
+      `SELECT 1 FROM assignments WHERE run_id = $1`,
+      [runId],
+    );
+
+    expect(assignments.rows.length).toBe(0); // but no "Needs you" routing
+
+    const escalated = await pool.query(
+      `SELECT 1 FROM domain_events WHERE run_id = $1 AND kind = 'run.escalated'`,
+      [runId],
+    );
+
+    expect(escalated.rows.length).toBeGreaterThanOrEqual(1);
   }, 120_000);
 });

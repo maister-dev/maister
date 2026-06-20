@@ -2,7 +2,7 @@ import "server-only";
 
 import path from "node:path";
 
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import pino from "pino";
 
@@ -1238,6 +1238,165 @@ async function handleFormHumanResponse(
   );
 }
 
+// infra_recovery (A2 auto_retry exhaustion escalation): a human chooses
+// `retry` or `abandon` on a run paused after the in-run auto-retries were spent.
+//  - retry   → close the assignment + wake the runner; the resume RE-RUNS the
+//              failed node with the worktree intact (one attempt per click — the
+//              human is the backoff; a repeat failure re-escalates).
+//  - abandon → fail the run terminally (run.failed); the task returns to Backlog.
+// Idempotent on a responded row. Human-actor-only (enforced in respondToHitl).
+async function handleInfraRecoveryResponse(args: {
+  db: any;
+  hitlRow: any;
+  runRow: any;
+  body: { optionId?: string };
+  runId: string;
+  hitlRequestId: string;
+  startedAt: number;
+  recordSuccessAudit?: (db: any, statusCode: number) => Promise<void>;
+}): Promise<NextResponse> {
+  const {
+    db,
+    hitlRow,
+    runRow,
+    body,
+    runId,
+    hitlRequestId,
+    startedAt,
+    recordSuccessAudit,
+  } = args;
+  const decision = body.optionId;
+
+  if (decision !== "retry" && decision !== "abandon") {
+    throw new MaisterError(
+      "PRECONDITION",
+      'infra_recovery response requires optionId "retry" or "abandon"',
+    );
+  }
+
+  const outcome = await db.transaction(async (tx: any) => {
+    const locked = await lockHitlRow(tx, hitlRequestId);
+
+    if (!locked) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `hitl request not found: ${hitlRequestId}`,
+      );
+    }
+    if (locked.respondedAt) {
+      return { transition: "already-delivered" } as const;
+    }
+
+    await tx
+      .update(hitlRequests)
+      .set({ respondedAt: new Date() })
+      .where(eq(hitlRequests.id, hitlRequestId));
+
+    if (decision === "abandon") {
+      const terminal = await tx
+        .update(runs)
+        .set({ status: "Failed", endedAt: new Date() })
+        .where(
+          and(
+            eq(runs.id, runId),
+            inArray(runs.status, ["NeedsInput", "NeedsInputIdle"]),
+          ),
+        )
+        .returning({
+          projectId: runs.projectId,
+          taskId: runs.taskId,
+          flowId: runs.flowId,
+          runKind: runs.runKind,
+        });
+
+      if (terminal.length > 0) {
+        const errorCode =
+          (hitlRow.schema as { code?: string } | null)?.code ??
+          "EXECUTOR_UNAVAILABLE";
+
+        await emitWebhookEvent({
+          db: tx,
+          type: "run.failed",
+          projectId: terminal[0].projectId,
+          runId,
+          data: { errorCode, reason: "infra_recovery_abandoned" },
+        });
+        await emitDomainEvent({
+          db: tx,
+          kind: "run.failed",
+          projectId: terminal[0].projectId,
+          runId,
+          taskId: terminal[0].taskId,
+          actor: { type: "system", id: null },
+          payload: {
+            runId,
+            taskId: terminal[0].taskId,
+            flowId: terminal[0].flowId,
+            runKind: terminal[0].runKind,
+            reason: "infra_recovery_abandoned",
+          },
+        });
+      }
+      await systemCloseActiveAssignmentsForRun({
+        db: tx,
+        runId,
+        reason: "infra-recovery abandoned",
+      });
+      await recordSuccessAudit?.(tx, 200);
+
+      return { transition: "abandoned" } as const;
+    }
+
+    // retry: close the assignment; the runner re-runs the node on resume.
+    await systemCloseActiveAssignmentsForRun({
+      db: tx,
+      runId,
+      reason: "infra-recovery retry",
+    });
+    await emitWebhookEvent({
+      db: tx,
+      type: "hitl.responded",
+      projectId: runRow.projectId,
+      runId,
+      data: { hitlRequestId, kind: "infra_recovery", via: "user" },
+    });
+    await recordSuccessAudit?.(tx, 200);
+
+    return { transition: "retry" } as const;
+  });
+
+  if (outcome.transition === "already-delivered") {
+    return NextResponse.json(
+      { ok: true, runStatus: runRow.status, idempotent: true },
+      { status: 200 },
+    );
+  }
+
+  if (outcome.transition === "abandoned") {
+    log.info(
+      { runId, hitlRequestId, decision, latencyMs: Date.now() - startedAt },
+      "infra_recovery abandoned — run Failed",
+    );
+
+    return NextResponse.json(
+      { ok: true, runStatus: "Failed" },
+      { status: 200 },
+    );
+  }
+
+  // retry → the runner re-runs the failed node (worktree preserved)
+  scheduleResume(runId);
+  log.info(
+    { runId, hitlRequestId, decision, latencyMs: Date.now() - startedAt },
+    "infra_recovery retry — resuming (re-run node)",
+  );
+
+  return NextResponse.json(
+    { ok: true, runStatus: "NeedsInput", state: "resume-in-progress" },
+    { status: 202 },
+  );
+}
+
 export async function respondToHitl(
   input: RespondInput,
   actor: HitlActor,
@@ -1290,10 +1449,10 @@ export async function respondToHitl(
     // even holding hitl:respond scope. Enforced here (the shared chokepoint),
     // BEFORE any mutation — so neither the session route nor the ext route can
     // bypass it.
-    if (hitlRow.kind === "human") {
+    if (hitlRow.kind === "human" || hitlRow.kind === "infra_recovery") {
       throw new MaisterError(
         "UNAUTHORIZED",
-        "a human-kind HITL request requires a human actor",
+        `a ${hitlRow.kind}-kind HITL request requires a human actor`,
       );
     }
     // Defense-in-depth project scope (the ext route already existence-hides a
@@ -1316,6 +1475,21 @@ export async function respondToHitl(
       hitlRequestId,
       startedAt,
       actor,
+      recordSuccessAudit,
+    });
+  }
+
+  if (hitlRow.kind === "infra_recovery") {
+    log.debug({ runId, hitlRequestId, branch: "infra_recovery" }, "dispatch");
+
+    return await handleInfraRecoveryResponse({
+      db,
+      hitlRow,
+      runRow,
+      body,
+      runId,
+      hitlRequestId,
+      startedAt,
       recordSuccessAudit,
     });
   }
