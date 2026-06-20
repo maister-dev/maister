@@ -1787,6 +1787,32 @@ components:
           description: |
             Workspace axis for the child run (M34). Defaults to the resolved
             definition's recommended workspace when omitted.
+        workspaceMode:
+          type: string
+          enum: [own, shared]
+          description: |
+            (M36 Phase 10 — ADR-096) Worktree allocation mode for a
+            `workspace: worktree` child. `own` (default) = a per-run worktree;
+            `shared` = all children of this orchestrator tree share one
+            pre-allocated tree with serialized writers (one active writer per
+            tree, enforced at promotion). `shared` requires a delegated child
+            (a `rootRunId`); a top-level run is refused with `CONFIG`.
+        persistent:
+          type: boolean
+          description: |
+            (M36 Phase 8 — ADR-096) Spawn a PERSISTENT addressable swarm member
+            that parks (`NeedsInputIdle`, ACP session retained) between turns
+            instead of running to terminal; re-message it via `run_message` by its
+            `addressableKey`. Requires `addressableKey`.
+        addressableKey:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: "^[A-Za-z0-9._-]+$"
+          description: |
+            (M36 Phase 8 — ADR-096) Stable key, unique within the orchestrator
+            tree (`root_run_id`), used to address a persistent child via
+            `run_message`. Required when `persistent` is true.
         runnerOverride:
           type: string
           minLength: 1

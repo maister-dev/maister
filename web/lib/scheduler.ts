@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, count, eq, inArray, lt, sql } from "drizzle-orm";
+import { and, asc, count, eq, inArray, lt, ne, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
@@ -116,6 +116,31 @@ export async function countLiveRuns(
     );
 
   return Number(liveRows[0]?.count ?? 0);
+}
+
+// M36 Phase 10 (ADR-096): one active WRITER per shared worktree. A shared-mode
+// sibling holds the writer slot while it could be writing — the same
+// Running/NeedsInput/HumanWorking set countLiveRuns uses (a parked / idle /
+// WaitingOnChildren sibling has yielded). Excludes the candidate itself. Called
+// only from inside promoteNextPending's advisory-locked tx.
+async function sharedWriterSiblingActive(
+  tx: Db,
+  rootRunId: string,
+  excludeRunId: string,
+): Promise<boolean> {
+  const rows: Array<{ count: number }> = await tx
+    .select({ count: count() })
+    .from(runs)
+    .where(
+      and(
+        eq(runs.rootRunId, rootRunId),
+        eq(runs.workspaceMode, "shared"),
+        ne(runs.id, excludeRunId),
+        inArray(runs.status, ["Running", "NeedsInput", "HumanWorking"]),
+      ),
+    );
+
+  return Number(rows[0]?.count ?? 0) > 0;
 }
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -366,15 +391,25 @@ export async function promoteNextPending(
     // M19 Phase 1 (T1.B, Codex F2): fetch acp_session_id alongside the id so
     // a checkpointed Pending row (queued after an idle-resume claim) is
     // resumed via --resume rather than re-run from the start of the flow.
-    const oldest: Array<{
+    // M36 Phase 10 (ADR-096): also fetch workspace_mode + root_run_id so a
+    // shared-mode candidate can be SKIPPED while a writer sibling in its tree is
+    // active (one active writer per shared tree). The whole scan + flip runs
+    // under the advisory lock, so the sibling-active read is consistent — no
+    // concurrent promote can flip a sibling to Running between the check and the
+    // claim. The window is bounded by `cap` candidates (small).
+    const candidates: Array<{
       id: string;
       acpSessionId: string | null;
       runKind: string;
+      workspaceMode: string | null;
+      rootRunId: string | null;
     }> = await tx
       .select({
         id: runs.id,
         acpSessionId: runs.acpSessionId,
         runKind: runs.runKind,
+        workspaceMode: runs.workspaceMode,
+        rootRunId: runs.rootRunId,
       })
       .from(runs)
       .where(
@@ -384,10 +419,37 @@ export async function promoteNextPending(
         ),
       )
       .orderBy(asc(runs.startedAt))
-      .limit(1)
+      .limit(cap)
       .for("update", { skipLocked: true } as never);
 
-    const target = oldest[0];
+    let target:
+      | {
+          id: string;
+          acpSessionId: string | null;
+          runKind: string;
+          workspaceMode: string | null;
+          rootRunId: string | null;
+        }
+      | undefined;
+
+    for (const candidate of candidates) {
+      if (
+        candidate.workspaceMode === "shared" &&
+        candidate.rootRunId &&
+        (await sharedWriterSiblingActive(tx, candidate.rootRunId, candidate.id))
+      ) {
+        // A writer sibling in this shared tree is active — leave this candidate
+        // Pending; it promotes when the active sibling parks or terminates.
+        log.debug(
+          { runId: candidate.id, rootRunId: candidate.rootRunId },
+          "promoteNextPending → shared-tree writer busy, skipping candidate",
+        );
+        continue;
+      }
+
+      target = candidate;
+      break;
+    }
 
     if (!target) return null;
 

@@ -98,6 +98,20 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
           type: "string",
           enum: ["none", "repo_read", "worktree"],
         },
+        workspaceMode: {
+          type: "string",
+          enum: ["own", "shared"],
+        },
+        persistent: {
+          type: "boolean",
+          description:
+            "Spawn a PERSISTENT addressable swarm member that parks between turns instead of running to terminal (re-message it later with run_message by its addressableKey). Requires addressableKey.",
+        },
+        addressableKey: {
+          type: "string",
+          description:
+            "Stable key, unique within this orchestrator tree, used to address a persistent child via run_message. Required when persistent is true.",
+        },
         runnerOverride: { type: "string" },
       },
       required: ["target", "mode", "prompt"],
@@ -440,19 +454,34 @@ function resolveRouting(
       return { method: "GET", path: `/api/v1/ext/runs/${runId}` };
     }
     case "run_delegate": {
-      const { target, mode, prompt, title, workspace, runnerOverride } =
-        args as {
-          target: { agentId?: string; flowId?: string };
-          mode: string;
-          prompt: string;
-          title?: string;
-          workspace?: string;
-          runnerOverride?: string;
-        };
+      const {
+        target,
+        mode,
+        prompt,
+        title,
+        workspace,
+        workspaceMode,
+        persistent,
+        addressableKey,
+        runnerOverride,
+      } = args as {
+        target: { agentId?: string; flowId?: string };
+        mode: string;
+        prompt: string;
+        title?: string;
+        workspace?: string;
+        workspaceMode?: string;
+        persistent?: boolean;
+        addressableKey?: string;
+        runnerOverride?: string;
+      };
       const body: Record<string, unknown> = { target, mode, prompt };
 
       if (title !== undefined) body.title = title;
       if (workspace !== undefined) body.workspace = workspace;
+      if (workspaceMode !== undefined) body.workspaceMode = workspaceMode;
+      if (persistent !== undefined) body.persistent = persistent;
+      if (addressableKey !== undefined) body.addressableKey = addressableKey;
       if (runnerOverride !== undefined) body.runnerOverride = runnerOverride;
 
       return { method: "POST", path: `/api/v1/ext/runs/delegate`, body };

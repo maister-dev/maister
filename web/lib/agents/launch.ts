@@ -62,6 +62,7 @@ import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import {
   addDetachedWorktree,
   addWorktree,
+  listWorktrees,
   removeWorktree,
   resolveBaseCommit,
   statusPorcelain,
@@ -121,6 +122,12 @@ export type LaunchAgentRunInput = {
   // REQUIRED when `persistent` is set.
   persistent?: boolean;
   addressableKey?: string | null;
+  // M36 Phase 10 (ADR-096): worktree allocation mode for a delegated child.
+  // `own` (default/null) = a per-run worktree; `shared` = all children of one
+  // rootRunId point at a single pre-allocated tree (serialized writers via the
+  // scheduler promote-time guard). A `shared` request with no rootRunId is
+  // refused (CONFIG) — a top-level run has no tree to share.
+  workspaceMode?: "own" | "shared" | null;
   db?: Db;
 };
 
@@ -386,6 +393,17 @@ export function agentWorkdirPath(projectSlug: string, runId: string): string {
   return path.join(worktreesRoot(), projectSlug, runId);
 }
 
+// M36 Phase 10 (ADR-096): the SHARED worktree for an orchestrator tree —
+// keyed by the tree root, so every shared-mode child of the same rootRunId
+// resolves to one tree. Deterministic from rootRunId, so the 2nd shared child
+// recomputes the same path and reuses the tree the 1st allocated.
+export function sharedAgentWorktreePath(
+  projectSlug: string,
+  rootRunId: string,
+): string {
+  return path.join(worktreesRoot(), projectSlug, "agents", rootRunId);
+}
+
 function branchSafeSegment(value: string): string {
   return value.replace(/[^A-Za-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "");
 }
@@ -530,6 +548,16 @@ export async function launchAgentRun(
     );
   }
 
+  // M36 Phase 10 (ADR-096): a shared worktree is keyed by the tree root, so a
+  // top-level run (no rootRunId) has no tree to share. Refuse before any side
+  // effect.
+  if (input.workspaceMode === "shared" && !input.rootRunId) {
+    throw new MaisterError(
+      "CONFIG",
+      "workspaceMode=shared requires a delegated child with a rootRunId — a top-level run cannot share a tree",
+    );
+  }
+
   // Fast dedup pre-check before any side effect; the partial unique index
   // on (agent_id, trigger_event_id) stays the authoritative backstop.
   if (input.trigger.eventId != null) {
@@ -607,24 +635,58 @@ export async function launchAgentRun(
   let worktreePath: string | null = null;
   let branch: string | null = null;
   let baseCommit: string | null = null;
+  // M36 Phase 10 (ADR-096): a shared-mode child whose tree a sibling already
+  // allocated reuses that tree — it gets NO workspaces row of its own (the
+  // worktree_path column is UNIQUE; the allocating sibling owns the record).
+  // startAgentSession recomputes the shared cwd from workspace_mode + rootRunId.
+  let reuseSharedTree = false;
+  const isShared = input.workspaceMode === "shared" && input.rootRunId != null;
 
   if (workspace === "worktree") {
-    branch = agentWorktreeBranchName({
-      prefix: ctx.project.branchPrefix ?? "maister/",
-      agentId: input.agentId,
-      runId,
-    });
-    worktreePath = agentWorkdirPath(ctx.project.slug, runId);
-    baseCommit = await resolveBaseCommit({
-      projectRepoPath: ctx.project.repoPath,
-      baseRef: ctx.project.mainBranch,
-    });
-    await addWorktree({
-      projectRepoPath: ctx.project.repoPath,
-      worktreePath,
-      branch,
-      startPoint: ctx.project.mainBranch,
-    });
+    if (isShared) {
+      const rootRunId = input.rootRunId as string;
+
+      branch = `${ctx.project.branchPrefix ?? "maister/"}agents/${rootRunId}`;
+      worktreePath = sharedAgentWorktreePath(ctx.project.slug, rootRunId);
+
+      // Idempotent allocation: a sibling may have created the shared tree
+      // already. listWorktrees is the registry of record — if the path is
+      // present, reuse it (skip addWorktree, which would fail on the existing
+      // path/branch); otherwise this child is the allocator.
+      const existing = await listWorktrees(ctx.project.repoPath);
+
+      reuseSharedTree = existing.some((w) => w.path === worktreePath);
+
+      if (!reuseSharedTree) {
+        baseCommit = await resolveBaseCommit({
+          projectRepoPath: ctx.project.repoPath,
+          baseRef: ctx.project.mainBranch,
+        });
+        await addWorktree({
+          projectRepoPath: ctx.project.repoPath,
+          worktreePath,
+          branch,
+          startPoint: ctx.project.mainBranch,
+        });
+      }
+    } else {
+      branch = agentWorktreeBranchName({
+        prefix: ctx.project.branchPrefix ?? "maister/",
+        agentId: input.agentId,
+        runId,
+      });
+      worktreePath = agentWorkdirPath(ctx.project.slug, runId);
+      baseCommit = await resolveBaseCommit({
+        projectRepoPath: ctx.project.repoPath,
+        baseRef: ctx.project.mainBranch,
+      });
+      await addWorktree({
+        projectRepoPath: ctx.project.repoPath,
+        worktreePath,
+        branch,
+        startPoint: ctx.project.mainBranch,
+      });
+    }
   }
 
   const runRow = {
@@ -662,6 +724,9 @@ export async function launchAgentRun(
     // M36 Phase 8 (ADR-096): persistent swarm-member flags.
     persistent: input.persistent ?? false,
     addressableKey: input.addressableKey ?? null,
+    // M36 Phase 10 (ADR-096): worktree allocation mode — read by the scheduler
+    // serialization guard and by startAgentSession's shared-cwd resolution.
+    workspaceMode: input.workspaceMode ?? null,
   };
 
   assertRunKindInvariant({
@@ -690,7 +755,14 @@ export async function launchAgentRun(
 
       if (rows.length === 0) return false;
 
-      if (workspace === "worktree" && worktreePath && branch) {
+      // A reused shared tree already has a workspaces row owned by its allocator
+      // (worktree_path is UNIQUE), so a reusing sibling inserts none.
+      if (
+        workspace === "worktree" &&
+        worktreePath &&
+        branch &&
+        !reuseSharedTree
+      ) {
         await tx.insert(workspaces).values({
           id: randomUUID(),
           runId,
@@ -708,7 +780,9 @@ export async function launchAgentRun(
     });
 
     if (!inserted) {
-      if (worktreePath) {
+      // Only tear down a worktree THIS launch created — never a shared tree a
+      // sibling owns.
+      if (worktreePath && !reuseSharedTree) {
         await removeWorktree({
           projectRepoPath: ctx.project.repoPath,
           worktreePath,
@@ -721,7 +795,7 @@ export async function launchAgentRun(
       };
     }
   } catch (err) {
-    if (worktreePath) {
+    if (worktreePath && !reuseSharedTree) {
       await removeWorktree({
         projectRepoPath: ctx.project.repoPath,
         worktreePath,
@@ -1134,6 +1208,10 @@ export async function finalizeAgentRun(
       // back to the index only for rows that predate agent_workspace.
       const ranAs = row.agentWorkspace ?? wsCtx?.workspace;
 
+      // M36 Phase 10 (ADR-096): L3 guards repo_read ONLY. A shared WRITE tree
+      // (workspace=worktree, workspace_mode='shared') is intentionally dirtied
+      // by multiple children, so the dirty-watchdog does not apply — never
+      // quarantine a shared write child.
       if (wsCtx && ranAs === "repo_read") {
         // workspace_ref runs leave a deterministic `-ro` checkout: when it
         // exists, the L3 target IS that ephemeral dir (the parent checkout
@@ -1659,12 +1737,20 @@ export async function startAgentSession(
   } else if (workspace === "repo_read") {
     cwd = project.repoPath;
   } else if (workspace === "worktree") {
-    const wsRows = await _db
-      .select({ worktreePath: workspaces.worktreePath })
-      .from(workspaces)
-      .where(eq(workspaces.runId, runId));
+    // M36 Phase 10 (ADR-096): a shared-mode child resolves the tree from its
+    // root_run_id (a reusing sibling has NO workspaces row of its own — the
+    // allocator owns it under the UNIQUE worktree_path), so the shared path is
+    // computed deterministically rather than read back.
+    if (run.workspaceMode === "shared" && run.rootRunId) {
+      cwd = sharedAgentWorktreePath(project.slug, run.rootRunId as string);
+    } else {
+      const wsRows = await _db
+        .select({ worktreePath: workspaces.worktreePath })
+        .from(workspaces)
+        .where(eq(workspaces.runId, runId));
 
-    cwd = wsRows[0]?.worktreePath ?? agentWorkdirPath(project.slug, runId);
+      cwd = wsRows[0]?.worktreePath ?? agentWorkdirPath(project.slug, runId);
+    }
   } else {
     cwd = agentWorkdirPath(project.slug, runId);
     await mkdir(cwd, { recursive: true });

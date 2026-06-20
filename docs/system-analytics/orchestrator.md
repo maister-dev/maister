@@ -235,6 +235,13 @@ flowchart TD
 - **`strict` path-scoped write declaration** → `MaisterError("CONFIG")` at launch
   — real path-scoped enforcement needs the policy layer **(Phase 2)**; maister
   enforces read-only-vs-full only, so path-scope ships `instructed`-only (ADR-096).
+- **Reviewer read-only child** (`workspace: repo_read` delegation) reuses the
+  L1/L2/L3 read-only enforcement free via `launchAgentRun` (supervisor
+  `readOnlySession` + materialized deny rules + dirty-watchdog quarantine,
+  ADR-041/ADR-090 untouched) — no orchestrator-specific enforcement code.
+- **`workspace_mode: shared` with no `root_run_id`** (a top-level run) →
+  `MaisterError("CONFIG")` at launch — a shared tree is keyed by the tree root,
+  so only a delegated child can join one (ADR-096).
 
 ## Linked artifacts
 

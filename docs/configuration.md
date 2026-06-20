@@ -818,6 +818,15 @@ enforced — it is NOT subject to the `strict`/`instruct` table. A run whose
 elapsed exceeds the cap is terminated `Failed` via the supervisor's existing
 `DELETE /sessions/:id`.
 
+**Per-path write scope is instructed-only (Phase 2).** A `restrictions`
+path-set ("tester edits only tests") is passed to the agent as an instruction;
+maister enforces only read-only-vs-full at the workspace axis
+(`workspace: repo_read | worktree`), never per-path writes. Real path-scoped
+enforcement needs the deferred policy layer. Consistent with the frozen table, a
+`restrictions: strict` declaration is refused at launch (`CONFIG`); a plain
+`restrictions` list or `restrictions: instruct` ships instructed-only. See
+[ADR-096](decisions.md#adr-096-persistent-swarm-layer-2--addressable-sessions-star-routed-messaging-worktree-modes-per-agent-read-only).
+
 ### Cross-reference checks
 
 `loadFlowManifest()` runs:

@@ -490,4 +490,42 @@ describe("assertNodeLaunchable — refusal → typed MaisterError", () => {
     expect((thrown as { code: string }).code).toBe("CONFIG");
     expect((thrown as Error).message).toContain("coordinate");
   });
+
+  // M36 Phase 11 (ADR-096): path-scoped writes ship INSTRUCTED-only. The
+  // `restrictions` class is no exception to the frozen table — a `strict`
+  // restrictions declaration is refused at launch (CONFIG, no executor can
+  // enforce it), while `restrictions: instruct` (or a plain data list, which
+  // defaults to instruct) passes. No new refusal code is needed.
+  it("restrictions: strict → CONFIG (path-scope ships instructed-only)", () => {
+    const node = aiNode("tester", { restrictions: "strict" });
+
+    let thrown: unknown;
+
+    try {
+      assertNodeLaunchable(node, "claude");
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(isMaisterError(thrown)).toBe(true);
+    expect((thrown as { code: string }).code).toBe("CONFIG");
+    expect((thrown as Error).message).toContain("tester");
+    expect((thrown as Error).message).toContain("restrictions");
+  });
+
+  it("restrictions: instruct → does NOT throw (instructed)", () => {
+    const node = aiNode("tester", { restrictions: "instruct" });
+
+    expect(() => assertNodeLaunchable(node, "claude")).not.toThrow();
+  });
+
+  it("a plain restrictions data list (no enforcement entry) → instructed, does NOT throw", () => {
+    const node: LaunchableNode = {
+      id: "tester",
+      type: "ai_coding",
+      settings: { restrictions: ["tests-only"] } as AiCodingSettings,
+    };
+
+    expect(() => assertNodeLaunchable(node, "claude")).not.toThrow();
+  });
 });

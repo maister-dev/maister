@@ -1285,6 +1285,13 @@ export const runs = pgTable(
     // orchestrator tree.
     persistent: boolean("persistent").notNull().default(false),
     addressableKey: text("addressable_key"),
+    // M36 Phase 10 (ADR-096, migration 0058): worktree allocation mode for a
+    // delegated child. null/`own` = today's per-run worktree from the base
+    // branch; `shared` = N children of one root_run_id point at a single
+    // pre-allocated tree with serialized writers (the promote-time guard keeps
+    // at most one shared sibling Running per root). A shared-mode delegation
+    // with no root_run_id is refused at launch (CONFIG).
+    workspaceMode: text("workspace_mode", { enum: ["own", "shared"] }),
   },
   (t) => ({
     idxProjectStatus: index("runs_project_status_idx").on(
