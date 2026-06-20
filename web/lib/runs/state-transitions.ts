@@ -729,7 +729,11 @@ export type CrashReason =
   // M17 (ADR-056): a session-less linear (flat `steps[]`) run parked on a
   // gate/human node — no graph mid-flow resume, so reconcile crashes it and
   // Recover resumes from resume_target_step_id (window-(c)).
-  | "linear-gate-orphan";
+  | "linear-gate-orphan"
+  // M36 (ADR-095) T7.1: a Running child whose coordinator parent is gone.
+  | "orphaned-child"
+  // M36 (ADR-095) T7.1: a parked orchestrator with no resumable wake left.
+  | "orchestrator-stuck";
 
 export async function crashRunningRun(
   runId: string,
@@ -808,6 +812,91 @@ export async function crashRunningRun(
   log.info(
     { runId, from: "Running", to: "Crashed", reason },
     "run-state transition — crashed (reconcile/GC)",
+  );
+
+  return { ok: true };
+}
+
+// M36 (ADR-095) T7.1: WaitingOnChildren → Crashed when reconcile finds a parked
+// orchestrator that is genuinely stuck — no live session, no non-terminal
+// children, past the grace window. Mirrors crashRunningRun (retains the parked
+// node in resume_target_step_id, nulls current_step_id + resume_started_at,
+// clears the checkpoint so the row reads as a clean terminal crash, and emits
+// run.crashed with parent_run_id). Status-guarded on WaitingOnChildren so a
+// concurrent wake (markResumedFromWait) that already moved the row to Running
+// loses → {ok:false}. The caller cascades the leftover children FIRST, then
+// crashes the coordinator, and owns the promoteNextPending follow-up.
+export async function crashWaitingOnChildren(
+  runId: string,
+  reason: CrashReason,
+  opts: StateTransitionOptions = {},
+): Promise<StateTransitionResult> {
+  const db = opts.db ?? getDb();
+
+  const crashed: boolean = await db.transaction(async (tx: Db) => {
+    const rows = await tx
+      .update(runs)
+      .set({
+        status: "Crashed",
+        endedAt: new Date(),
+        resumeTargetStepId: sql`${runs.currentStepId}`,
+        currentStepId: null,
+        resumeStartedAt: null,
+        checkpointAt: null,
+        keepaliveUntil: null,
+      })
+      .where(and(eq(runs.id, runId), eq(runs.status, "WaitingOnChildren")))
+      .returning({
+        id: runs.id,
+        projectId: runs.projectId,
+        taskId: runs.taskId,
+        flowId: runs.flowId,
+        runKind: runs.runKind,
+        parentRunId: runs.parentRunId,
+      });
+
+    if (rows.length === 0) return false;
+
+    await emitWebhookEvent({
+      db: tx,
+      type: "run.crashed",
+      projectId: rows[0].projectId,
+      runId,
+      data: { errorCode: reason ?? null },
+    });
+
+    await emitDomainEvent({
+      db: tx,
+      kind: "run.crashed",
+      projectId: rows[0].projectId,
+      runId,
+      taskId: rows[0].taskId,
+      actor: { type: "system", id: null },
+      parentRunId: rows[0].parentRunId,
+      payload: {
+        runId,
+        taskId: rows[0].taskId,
+        flowId: rows[0].flowId,
+        runKind: rows[0].runKind,
+        reason,
+      },
+    });
+
+    return true;
+  });
+
+  if (!crashed) {
+    log.warn(
+      { runId, from: "WaitingOnChildren", to: "Crashed", reason },
+      "crashWaitingOnChildren: status-guard mismatch — concurrent wake won",
+    );
+
+    return { ok: false, reason: "status-guard-mismatch" };
+  }
+
+  log.info(
+    { runId, from: "WaitingOnChildren", to: "Crashed", reason },
+    "run-state transition — orchestrator crashed (reconcile)",
   );
 
   return { ok: true };

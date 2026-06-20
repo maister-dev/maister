@@ -110,6 +110,7 @@ function lifecycleContext(workbench: GitWorkbench): LifecycleContext {
     run: {
       id: workbench.runId,
       projectId: "project-real",
+      taskId: null,
       runKind: "flow",
       status: "Review",
       acpSessionId: null,
@@ -163,6 +164,7 @@ function realGitDeps(
     localBranchHead,
     remoteBranchHead,
     createBranchAtHead,
+    cascadeOrchestratorIfNeeded: vi.fn(async () => undefined),
   };
 }
 

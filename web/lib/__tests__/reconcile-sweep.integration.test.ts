@@ -132,7 +132,8 @@ beforeAll(async () => {
     accountStatus: "active",
   });
 
-  await db.insert(projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
+  await db.insert(projects).values({
+    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug: "reconcile-app",
     name: "Reconcile App",
@@ -203,18 +204,21 @@ beforeEach(async () => {
 
 type SeedRunOpts = {
   status?: string;
-  runKind?: "flow" | "scratch";
+  runKind?: "flow" | "scratch" | "agent";
   acpSessionId?: string | null;
   currentStepId?: string | null;
   resumeStartedAt?: Date | null;
   startedAt?: Date;
+  // M36 (ADR-095) T7.1: the delegator run id (orphan detection / cascade).
+  parentRunId?: string | null;
 };
 
 async function seedRun(opts: SeedRunOpts = {}): Promise<string> {
   const taskId = randomUUID();
   const runId = randomUUID();
 
-  await db.insert(tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
+  await db.insert(tasks).values({
+    number: Math.trunc(Math.random() * 1e9) + 1,
     id: taskId,
     projectId,
     title: "t",
@@ -241,6 +245,7 @@ async function seedRun(opts: SeedRunOpts = {}): Promise<string> {
     flowVersion: "v1",
     startedAt: opts.startedAt ?? new Date(),
     resumeStartedAt: opts.resumeStartedAt ?? null,
+    parentRunId: opts.parentRunId ?? null,
   });
 
   return runId;
@@ -626,7 +631,8 @@ describe("runReconcileSweep (integration)", () => {
     const taskId = randomUUID();
     const runId = randomUUID();
 
-    await db.insert(tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
+    await db.insert(tasks).values({
+      number: Math.trunc(Math.random() * 1e9) + 1,
       id: taskId,
       projectId,
       title: "t",
@@ -773,5 +779,131 @@ describe("runReconcileSweep (integration)", () => {
       skipped: 0,
     });
     expect((await readRun(orphan)).status).toBe("Running");
+  }, 60_000);
+
+  // M36 (ADR-095) T7.1: seed an agent child under a parent run (orphan/cascade).
+  async function seedChildRun(
+    parentRunId: string,
+    status: string,
+  ): Promise<string> {
+    return seedRun({
+      runKind: "agent",
+      status,
+      parentRunId,
+      acpSessionId: null,
+      currentStepId: null,
+    });
+  }
+
+  it("crashes a parked orchestrator (WaitingOnChildren) that is stuck — no live session, all children terminal, past grace", async () => {
+    const orchestrator = await seedRun({
+      status: "WaitingOnChildren",
+      currentStepId: "coordinate",
+      acpSessionId: "acp-coord",
+    });
+
+    await seedWorkspace(orchestrator, "/worktrees/orch");
+    // A node attempt older than the 90s grace → the parked coordinator is past
+    // its wake window.
+    await seedNodeAttempt(orchestrator, {
+      nodeId: "coordinate",
+      startedAt: new Date(Date.now() - 600_000),
+    });
+    // Both children already terminal → nothing left to wake the coordinator.
+    await seedChildRun(orchestrator, "Done");
+    await seedChildRun(orchestrator, "Abandoned");
+
+    const { opts } = makeOpts({
+      worktreePaths: ["/worktrees/orch"],
+      liveSessions: [],
+    });
+
+    const summary = await runReconcileSweep(opts);
+
+    expect((await readRun(orchestrator)).status).toBe("Crashed");
+    expect(summary.crashed).toBeGreaterThanOrEqual(1);
+  }, 60_000);
+
+  it("does NOT crash a parked orchestrator that still has a pending child", async () => {
+    const orchestrator = await seedRun({
+      status: "WaitingOnChildren",
+      currentStepId: "coordinate",
+      acpSessionId: "acp-coord",
+    });
+
+    await seedWorkspace(orchestrator, "/worktrees/orch-wait");
+    await seedNodeAttempt(orchestrator, {
+      nodeId: "coordinate",
+      startedAt: new Date(Date.now() - 600_000), // past grace, but…
+    });
+    // …a still-running child keeps the batch incomplete → it will be woken.
+    await seedChildRun(orchestrator, "Running");
+    await seedChildRun(orchestrator, "Done");
+
+    const { opts } = makeOpts({
+      worktreePaths: ["/worktrees/orch-wait"],
+      liveSessions: [],
+    });
+
+    const summary = await runReconcileSweep(opts);
+
+    expect((await readRun(orchestrator)).status).toBe("WaitingOnChildren");
+    expect(summary.crashed).toBe(0);
+  }, 60_000);
+
+  it("crashes a Running child whose parent is Crashed (orphaned-child) regardless of session", async () => {
+    const deadParent = await seedRun({
+      status: "Crashed",
+      acpSessionId: null,
+      currentStepId: null,
+    });
+    const orphan = await seedChildRun(deadParent, "Running");
+
+    await seedWorkspace(orphan, "/worktrees/orphan-child");
+    // A fresh attempt would normally hold the grace window — orphan detection
+    // fires BEFORE the grace check, so the child still crashes.
+    await seedNodeAttempt(orphan, { startedAt: new Date() });
+
+    const { opts } = makeOpts({
+      worktreePaths: ["/worktrees/orphan-child"],
+      liveSessions: [],
+    });
+
+    const summary = await runReconcileSweep(opts);
+
+    expect((await readRun(orphan)).status).toBe("Crashed");
+    expect(summary.crashed).toBeGreaterThanOrEqual(1);
+  }, 60_000);
+
+  it("does NOT treat a Running child of a HEALTHY (WaitingOnChildren) parent as orphaned", async () => {
+    const liveParent = await seedRun({
+      status: "WaitingOnChildren",
+      currentStepId: "coordinate",
+      acpSessionId: "acp-parent",
+    });
+
+    await seedWorkspace(liveParent, "/worktrees/live-parent");
+
+    const child = await seedChildRun(liveParent, "Running");
+
+    await seedWorkspace(child, "/worktrees/healthy-child");
+    // The agent child has a fresh attempt (within the 90s grace) and no live
+    // session. With a HEALTHY parent the orphan short-circuit does NOT fire, so
+    // the child takes the normal agent path → grace-window → skip (survives).
+    // (An orphaned child would crash here regardless of grace.)
+    await seedNodeAttempt(child, { startedAt: new Date() });
+
+    const { opts } = makeOpts({
+      worktreePaths: ["/worktrees/live-parent", "/worktrees/healthy-child"],
+      liveSessions: [],
+    });
+
+    const summary = await runReconcileSweep(opts);
+
+    expect((await readRun(child)).status).toBe("Running");
+    // The parent (also a candidate) still has this pending child, so it too
+    // survives — neither is crashed.
+    expect((await readRun(liveParent)).status).toBe("WaitingOnChildren");
+    expect(summary.crashed).toBe(0);
   }, 60_000);
 });

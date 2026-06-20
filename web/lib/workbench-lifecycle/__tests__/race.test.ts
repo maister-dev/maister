@@ -21,6 +21,7 @@ function context(): LifecycleContext {
     run: {
       id: "run-1",
       projectId: "project-1",
+      taskId: null,
       runKind: "flow",
       status: "Review",
       acpSessionId: null,
@@ -96,6 +97,7 @@ function deps(
     localBranchHead: vi.fn(async () => null),
     remoteBranchHead: vi.fn(async () => null),
     createBranchAtHead: vi.fn(async () => undefined),
+    cascadeOrchestratorIfNeeded: vi.fn(async () => undefined),
     ...over,
   };
 }

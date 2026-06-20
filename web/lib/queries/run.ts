@@ -19,7 +19,17 @@ import type { SettingsNodeView } from "@/lib/flows/settings-view";
 import type { HitlOption } from "@/lib/queries/hitl";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
-import { and, asc, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  notInArray,
+  sql,
+} from "drizzle-orm";
 import { cache } from "react";
 import pino from "pino";
 
@@ -53,6 +63,7 @@ const {
   projects,
   runCostRollups,
   runs,
+  taskRelations,
   tasks,
   users,
   workspaces,
@@ -436,6 +447,85 @@ export async function getChildRuns(
     endedAt: row.endedAt,
   }));
 }
+
+// --- M36 Phase 7 (T7.4): orchestrator cancel/abandon cascade walks ----------
+
+// The non-terminal run statuses an abandon-cascade flips. WaitingOnChildren is
+// included so a re-rooted cascade also releases a parked descendant coordinator.
+const CASCADE_NON_TERMINAL_RUN_STATUSES = [
+  "Pending",
+  "Running",
+  "NeedsInput",
+  "NeedsInputIdle",
+  "HumanWorking",
+  "WaitingOnChildren",
+  "Review",
+  "Crashed",
+] as const;
+
+// Every descendant run id below `rootRunId` (the whole sub-tree, EXCLUDING the
+// root). Iterative BFS over `runs.parent_run_id`; a `visited` set guards against
+// a pathological cycle (parent_run_id should form a DAG-to-root, but a stray
+// self/back edge must not loop forever). Bounded by the candidate count per
+// level — each id is expanded at most once.
+export async function getRunSubtreeIds(
+  rootRunId: string,
+  database?: NodePgDatabase<typeof schema>,
+): Promise<string[]> {
+  const client = database ?? db();
+  const collected: string[] = [];
+  const visited = new Set<string>([rootRunId]);
+  let frontier: string[] = [rootRunId];
+
+  while (frontier.length > 0) {
+    const childRows = await client
+      .select({ id: runs.id, parentRunId: runs.parentRunId })
+      .from(runs)
+      .where(inArray(runs.parentRunId, frontier));
+
+    const next: string[] = [];
+
+    for (const row of childRows) {
+      if (visited.has(row.id)) continue;
+      visited.add(row.id);
+      collected.push(row.id);
+      next.push(row.id);
+    }
+
+    frontier = next;
+  }
+
+  return collected;
+}
+
+// As-plan child tasks (`task_relations` kind='parent_of' FROM the orchestrator's
+// task → tasks WHERE launch_mode='auto') that have NO run yet and are not
+// terminal. These are the un-launched dependents an abandon cascade marks
+// Abandoned so the plan does not later fire them into the cancelled tree.
+export async function getUnlaunchedAutoChildTaskIds(
+  orchestratorTaskId: string,
+  database?: NodePgDatabase<typeof schema>,
+): Promise<string[]> {
+  const client = database ?? db();
+
+  const rows = await client
+    .select({ id: tasks.id })
+    .from(taskRelations)
+    .innerJoin(tasks, eq(tasks.id, taskRelations.toTaskId))
+    .where(
+      and(
+        eq(taskRelations.kind, "parent_of"),
+        eq(taskRelations.fromTaskId, orchestratorTaskId),
+        eq(tasks.launchMode, "auto"),
+        notInArray(tasks.status, ["Done", "Abandoned"]),
+        sql`NOT EXISTS (SELECT 1 FROM ${runs} WHERE ${runs.taskId} = ${tasks.id})`,
+      ),
+    );
+
+  return rows.map((row) => row.id);
+}
+
+export { CASCADE_NON_TERMINAL_RUN_STATUSES };
 
 // --- M11b: run-detail timeline read model (ADR-030) -----------------------
 

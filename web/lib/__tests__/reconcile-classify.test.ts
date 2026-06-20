@@ -145,7 +145,9 @@ describe("classifyRunReconcile — step 3.5: live (runId,stepId) session, acp un
 
   it("acp-matched live session (reattach) wins over liveRunStepSession", () => {
     expect(
-      classifyRunReconcile(input({ liveSession: true, liveRunStepSession: true })),
+      classifyRunReconcile(
+        input({ liveSession: true, liveRunStepSession: true }),
+      ),
     ).toEqual({ action: "reattach", reason: "live-session" });
   });
 
@@ -421,6 +423,147 @@ describe("classifyRunReconcile — scratch runs behave as an agent node", () => 
         input({
           runKind: "scratch",
           currentNodeKind: "cli",
+          resumeStartedAt: ago(GRACE - 1),
+        }),
+      ),
+    ).toEqual({ action: "skip", reason: "grace-window" });
+  });
+});
+
+describe("classifyRunReconcile — M36 T7.1: orphaned child (parent gone)", () => {
+  // A Running child whose delegator parent is Crashed/Abandoned/missing can no
+  // longer be coordinated → crash. Caught BEFORE the session/grace checks, so an
+  // orphan is crashed even while its OWN session still looks live or fresh.
+  for (const parentStatus of ["Crashed", "Abandoned", null] as const) {
+    it(`Running child + parent ${String(parentStatus)} → crash / orphaned-child`, () => {
+      expect(
+        classifyRunReconcile(
+          input({
+            parentRunId: "parent-1",
+            parentStatus,
+          }),
+        ),
+      ).toEqual({ action: "crash", reason: "orphaned-child" });
+    });
+  }
+
+  it("orphan crash wins over a live session and fresh grace anchors", () => {
+    expect(
+      classifyRunReconcile(
+        input({
+          parentRunId: "parent-1",
+          parentStatus: "Crashed",
+          liveSession: true,
+          resumeStartedAt: ago(1),
+        }),
+      ),
+    ).toEqual({ action: "crash", reason: "orphaned-child" });
+  });
+
+  it("worktree-gone still wins over orphan (checked first)", () => {
+    expect(
+      classifyRunReconcile(
+        input({
+          parentRunId: "parent-1",
+          parentStatus: "Crashed",
+          worktreeExists: false,
+        }),
+      ),
+    ).toEqual({ action: "crash", reason: "worktree-gone" });
+  });
+
+  for (const parentStatus of [
+    "Running",
+    "WaitingOnChildren",
+    "NeedsInput",
+  ] as const) {
+    it(`child with a HEALTHY parent (${parentStatus}) is NOT orphaned → normal classification`, () => {
+      // A live session on a healthy-parent child reattaches as usual.
+      expect(
+        classifyRunReconcile(
+          input({
+            parentRunId: "parent-1",
+            parentStatus,
+            liveSession: true,
+          }),
+        ),
+      ).toEqual({ action: "reattach", reason: "live-session" });
+    });
+  }
+
+  it("a top-level run (no parentRunId) is never orphaned even if parentStatus is null", () => {
+    expect(
+      classifyRunReconcile(
+        input({ parentRunId: null, parentStatus: null, liveSession: true }),
+      ),
+    ).toEqual({ action: "reattach", reason: "live-session" });
+  });
+});
+
+describe("classifyRunReconcile — M36 T7.1: parked orchestrator (WaitingOnChildren)", () => {
+  // A parked orchestrator is crashed ONLY when genuinely stuck: no live session,
+  // no non-terminal children left, AND past the grace window.
+  it("WaitingOnChildren + no session + no pending children + past grace → crash / orchestrator-stuck", () => {
+    expect(
+      classifyRunReconcile(
+        input({
+          runStatus: "WaitingOnChildren",
+          liveSession: false,
+          hasPendingChildren: false,
+          resumeStartedAt: ago(GRACE + 10),
+          latestAttemptStartedAt: ago(GRACE + 10),
+        }),
+      ),
+    ).toEqual({ action: "crash", reason: "orchestrator-stuck" });
+  });
+
+  it("WaitingOnChildren + both anchors null ⇒ past grace ⇒ crash / orchestrator-stuck", () => {
+    expect(
+      classifyRunReconcile(
+        input({
+          runStatus: "WaitingOnChildren",
+          liveSession: false,
+          hasPendingChildren: false,
+          resumeStartedAt: null,
+          latestAttemptStartedAt: null,
+        }),
+      ),
+    ).toEqual({ action: "crash", reason: "orchestrator-stuck" });
+  });
+
+  it("WaitingOnChildren with a pending child → skip / orchestrator-waiting (will be woken)", () => {
+    expect(
+      classifyRunReconcile(
+        input({
+          runStatus: "WaitingOnChildren",
+          liveSession: false,
+          hasPendingChildren: true,
+          resumeStartedAt: ago(GRACE + 10),
+          latestAttemptStartedAt: ago(GRACE + 10),
+        }),
+      ),
+    ).toEqual({ action: "skip", reason: "orchestrator-waiting" });
+  });
+
+  it("WaitingOnChildren with a LIVE session → skip / orchestrator-waiting (came back)", () => {
+    expect(
+      classifyRunReconcile(
+        input({
+          runStatus: "WaitingOnChildren",
+          liveSession: true,
+          hasPendingChildren: false,
+        }),
+      ),
+    ).toEqual({ action: "skip", reason: "orchestrator-waiting" });
+  });
+
+  it("WaitingOnChildren + no pending children + WITHIN grace → skip / grace-window", () => {
+    expect(
+      classifyRunReconcile(
+        input({
+          runStatus: "WaitingOnChildren",
+          liveSession: false,
+          hasPendingChildren: false,
           resumeStartedAt: ago(GRACE - 1),
         }),
       ),

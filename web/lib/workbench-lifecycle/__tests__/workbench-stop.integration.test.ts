@@ -1,3 +1,8 @@
+import type {
+  LifecycleContext,
+  WorkbenchLifecycleDeps,
+} from "@/lib/workbench-lifecycle/service";
+
 import { randomUUID } from "node:crypto";
 
 import {
@@ -16,11 +21,6 @@ import {
   it,
   vi,
 } from "vitest";
-
-import type {
-  LifecycleContext,
-  WorkbenchLifecycleDeps,
-} from "@/lib/workbench-lifecycle/service";
 
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
@@ -260,7 +260,7 @@ describe("workbench stop — scratch runs", () => {
     const loadContext = vi.fn(
       async (rid: string): Promise<LifecycleContext> => {
         const runRows = await pool.query(
-          `SELECT "id","project_id","run_kind","status","acp_session_id","current_step_id" FROM "runs" WHERE "id" = $1`,
+          `SELECT "id","project_id","task_id","run_kind","status","acp_session_id","current_step_id" FROM "runs" WHERE "id" = $1`,
           [rid],
         );
         const run = runRows.rows[0];
@@ -280,6 +280,7 @@ describe("workbench stop — scratch runs", () => {
           run: {
             id: run.id,
             projectId: run.project_id,
+            taskId: run.task_id ?? null,
             runKind: run.run_kind,
             status: run.status,
             acpSessionId: run.acp_session_id,
@@ -333,6 +334,7 @@ describe("workbench stop — scratch runs", () => {
       localBranchHead: vi.fn(async () => null),
       remoteBranchHead: vi.fn(async () => null),
       createBranchAtHead: vi.fn(async () => undefined),
+      cascadeOrchestratorIfNeeded: vi.fn(async () => undefined),
     };
 
     const result = await stopThenArchive(runId, { deps });
@@ -359,5 +361,98 @@ describe("workbench stop — scratch runs", () => {
 
     expect(run.rows[0].status).toBe("Review");
     expect(scratch.rows[0].dialog_status).toBe("Review");
+  });
+});
+
+describe("workbench stop — orchestrator cascade (M36 T7.4)", () => {
+  async function seedFlow(projectId: string): Promise<string> {
+    const flowId = randomUUID();
+
+    await pool.query(
+      `INSERT INTO "flows" ("id", "project_id", "flow_ref_id", "source", "version", "installed_path", "manifest", "schema_version")
+       VALUES ($1, $2, 'orc', 'github.com/x/y', 'v1.0.0', '/tmp/flows/orc', '{"schemaVersion":1,"name":"Orc","nodes":[]}'::jsonb, 1)`,
+      [flowId, projectId],
+    );
+
+    return flowId;
+  }
+
+  async function seedAgentChild(args: {
+    projectId: string;
+    flowId: string;
+    parentRunId: string;
+    status: string;
+  }): Promise<string> {
+    const taskId = randomUUID();
+    const runId = randomUUID();
+
+    await pool.query(
+      `INSERT INTO "tasks" ("id", "project_id", "number", "title", "prompt", "launch_mode")
+       VALUES ($1, $2, $3, 'child', 'p', 'auto')`,
+      [taskId, args.projectId, Math.trunc(Math.random() * 1e9) + 1],
+    );
+    await pool.query(
+      `INSERT INTO "runs" ("id", "run_kind", "project_id", "task_id", "flow_id",
+         "status", "flow_version", "flow_revision", "parent_run_id", "root_run_id")
+       VALUES ($1, 'agent', $2, $3, $4, $5, 'v1.0.0', 'unknown', $6, $6)`,
+      [
+        runId,
+        args.projectId,
+        taskId,
+        args.flowId,
+        args.status,
+        args.parentRunId,
+      ],
+    );
+
+    return runId;
+  }
+
+  it("cascades the run-tree when a flow orchestrator is stopped (children Abandoned, orchestrator → Review)", async () => {
+    const projectId = await seedProject();
+    const flowId = await seedFlow(projectId);
+    const orchTaskId = randomUUID();
+    const orchestratorRunId = randomUUID();
+
+    await pool.query(
+      `INSERT INTO "tasks" ("id", "project_id", "number", "title", "prompt", "launch_mode")
+       VALUES ($1, $2, 1, 'orc', 'coordinate', 'manual')`,
+      [orchTaskId, projectId],
+    );
+    // A Running flow orchestrator (stoppable) with children; acp_session_id is
+    // NULL so no supervisor call is attempted.
+    await pool.query(
+      `INSERT INTO "runs" ("id", "run_kind", "project_id", "task_id", "flow_id",
+         "status", "current_step_id", "acp_session_id", "flow_version", "flow_revision", "root_run_id")
+       VALUES ($1, 'flow', $2, $3, $4, 'Running', 'coordinate', NULL, 'v1.0.0', 'unknown', $1)`,
+      [orchestratorRunId, projectId, orchTaskId, flowId],
+    );
+
+    const runningChild = await seedAgentChild({
+      projectId,
+      flowId,
+      parentRunId: orchestratorRunId,
+      status: "Running",
+    });
+    const needsInputChild = await seedAgentChild({
+      projectId,
+      flowId,
+      parentRunId: orchestratorRunId,
+      status: "NeedsInput",
+    });
+
+    const result = await stopWorkbenchRun(orchestratorRunId);
+
+    expect(result).toMatchObject({ ok: true, runStatus: "Review" });
+
+    const rows = await pool.query(
+      `SELECT "id", "status" FROM "runs" WHERE "id" = ANY($1)`,
+      [[orchestratorRunId, runningChild, needsInputChild]],
+    );
+    const byId = new Map(rows.rows.map((r) => [r.id, r.status]));
+
+    expect(byId.get(orchestratorRunId)).toBe("Review");
+    expect(byId.get(runningChild)).toBe("Abandoned");
+    expect(byId.get(needsInputChild)).toBe("Abandoned");
   });
 });

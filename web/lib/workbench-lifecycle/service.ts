@@ -78,6 +78,9 @@ export type LifecycleProject = {
 export type LifecycleRun = {
   id: string;
   projectId: string;
+  // M36 (ADR-095): the launching task (null for scratch / as-run children) —
+  // the orchestrator cascade marks un-launched as-plan child tasks Abandoned.
+  taskId: string | null;
   runKind: "flow" | "scratch" | "agent";
   status: WorkbenchRunStatus;
   acpSessionId: string | null;
@@ -185,6 +188,11 @@ export type WorkbenchLifecycleDeps = {
     worktreePath: string;
     branch: string;
   }) => Promise<void>;
+  // M36 (ADR-095) T7.4: when the run is a flow orchestrator (WaitingOnChildren
+  // OR with run-tree children), abandon its sub-tree before the orchestrator
+  // itself is stopped/dropped. Injectable so the unit suite (DB-less, dep-mocked)
+  // never reaches the real run-tree query.
+  cascadeOrchestratorIfNeeded: (run: LifecycleRun) => Promise<void>;
 };
 
 export type WorkbenchLifecycleOptions = {
@@ -905,6 +913,10 @@ async function dropWorkbenchForCtx(
 ): Promise<DropWorkbenchResult> {
   requireActionAllowed(ctx, "drop");
 
+  // T7.4: a direct drop of a flow orchestrator (no preceding stop) cascades the
+  // sub-tree first. After a stop (stopThenDrop) this is an idempotent no-op.
+  await deps.cascadeOrchestratorIfNeeded(ctx.run);
+
   const workspace = requireWorkspace(ctx);
   const claim = await deps.claimLifecycleOperation({
     runId,
@@ -1105,6 +1117,32 @@ async function stopLiveSupervisorSession(
   return true;
 }
 
+// M36 (ADR-095) T7.4: when a FLOW run being stopped/dropped is an orchestrator
+// (status WaitingOnChildren OR it has run-tree children), abandon its whole
+// sub-tree FIRST (children-first ordering) so no in-flight or queued child
+// outlives the cancelled coordinator. Idempotent — a second call (e.g. the drop
+// after a stop in stopThenDrop) finds every descendant already terminal and
+// cascades nothing. Lazy imports keep the cascade's scheduler/query graph out of
+// this module's static eval graph (mirrors the agent/scratch service imports).
+// The default WorkbenchLifecycleDeps wires this as cascadeOrchestratorIfNeeded.
+async function cascadeOrchestratorIfNeeded(run: LifecycleRun): Promise<void> {
+  if (run.runKind !== "flow") return;
+
+  const { getChildRuns } = await import("@/lib/queries/run");
+  const hasChildren =
+    run.status === "WaitingOnChildren"
+      ? true
+      : (await getChildRuns(run.id)).length > 0;
+
+  if (!hasChildren) return;
+
+  const { cascadeAbandonRunTree } = await import("@/lib/orchestrator/cascade");
+
+  await cascadeAbandonRunTree(run.id, run.taskId, "user_stopped", {
+    db: db(),
+  });
+}
+
 async function stopFlowAfterAuth(
   runId: string,
   ctx: LifecycleContext,
@@ -1113,6 +1151,8 @@ async function stopFlowAfterAuth(
   if (!isEnabled(ctx, "stop")) {
     requireActionAllowed(ctx, "stop");
   }
+
+  await deps.cascadeOrchestratorIfNeeded(ctx.run);
 
   const supervisorStopped = await stopLiveSupervisorSession(ctx, deps);
 
@@ -1349,6 +1389,7 @@ function defaultWorkbenchLifecycleDeps(): WorkbenchLifecycleDeps {
     localBranchHead,
     remoteBranchHead,
     createBranchAtHead,
+    cascadeOrchestratorIfNeeded,
   };
 }
 
@@ -1358,6 +1399,7 @@ async function loadLifecycleContext(runId: string): Promise<LifecycleContext> {
     .select({
       id: runs.id,
       projectId: runs.projectId,
+      taskId: runs.taskId,
       runKind: runs.runKind,
       status: runs.status,
       acpSessionId: runs.acpSessionId,
