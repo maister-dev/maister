@@ -7084,6 +7084,62 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/Config" }
 
+  /api/studio/local-packages/{id}/import:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [flow-packages]
+      summary: (M36, ADR-095 — Designed) Batch-import a folder or zip/tar.gz
+      description: |
+        (M36, ADR-095.) `multipart/form-data`: `mode` (`preview` | `commit`),
+        `sessionId` (required for `commit`), and either a set of files with
+        relative paths (folder) or one `.zip`/`.tar.gz` archive. `preview`
+        returns the resolved tree without writing (no lock). `commit` asserts the
+        session edit-lock, then writes — but only after EVERY entry passes
+        confinement (zip-slip rejected on the original path segments, then
+        `resolveWithinWorkingDir`) and the caps
+        (`MAISTER_IMPORT_MAX_{BYTES,ENTRIES,FILE_BYTES}`); a single violation
+        rejects the whole import PRE-WRITE (nothing persisted).
+      operationId: importStudioLocalPackage
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                mode: { type: string, enum: [preview, commit] }
+                sessionId: { type: string }
+                archive: { type: string, format: binary }
+                files:
+                  type: array
+                  items: { type: string, format: binary }
+              required: [mode]
+      responses:
+        "200":
+          description: Resolved import plan (preview tree or committed files).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  files:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        path: { type: string }
+                        size: { type: integer }
+                  totalBytes: { type: integer }
+                  mode: { type: string }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+
   /api/studio/packages/{ref}/fork:
     parameters:
       - name: ref

@@ -253,6 +253,23 @@
       "saving": "Saving…",
       "saved": "Saved",
       "saveFailed": "Save failed"
+    },
+    "import": {
+      "action": "Import",
+      "title": "Import files",
+      "pickFolder": "Folder",
+      "pickArchive": "Archive (.zip / .tar.gz)",
+      "folderHint": "Pick a folder — its files are imported, preserving subfolders.",
+      "archiveHint": "Upload a .zip or .tar.gz; its tree is extracted into the package.",
+      "previewTitle": "Preview",
+      "previewCount": "$count files · $bytes",
+      "empty": "No importable files found.",
+      "cancel": "Cancel",
+      "back": "Back",
+      "importBtn": "Import",
+      "importing": "Working…",
+      "done": "Imported $count files.",
+      "lockedByOther": "Another session is editing this package — try again later."
     }
   },
   "flows": {

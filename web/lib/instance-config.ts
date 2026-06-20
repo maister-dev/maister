@@ -68,6 +68,35 @@ export function localPackageLockMinutes(): number {
   return positiveIntFromEnv("MAISTER_LOCAL_PACKAGE_LOCK_MINUTES", 30);
 }
 
+const DEFAULT_IMPORT_MAX_BYTES = 52_428_800; // 50 MiB
+const DEFAULT_IMPORT_MAX_ENTRIES = 2000;
+const DEFAULT_IMPORT_MAX_FILE_BYTES = 10_485_760; // 10 MiB
+
+// (M36 Phase 3) Batch-import caps, enforced PRE-WRITE: total archive bytes,
+// total entry count, and per-file bytes. Host env only per ADR-023 — never
+// wired into compose (a single-host knob, not a deploy var). Invalid → default
+// + one WARN (positiveIntFromEnv).
+export function importMaxBytes(): number {
+  return positiveIntFromEnv(
+    "MAISTER_IMPORT_MAX_BYTES",
+    DEFAULT_IMPORT_MAX_BYTES,
+  );
+}
+
+export function importMaxEntries(): number {
+  return positiveIntFromEnv(
+    "MAISTER_IMPORT_MAX_ENTRIES",
+    DEFAULT_IMPORT_MAX_ENTRIES,
+  );
+}
+
+export function importMaxFileBytes(): number {
+  return positiveIntFromEnv(
+    "MAISTER_IMPORT_MAX_FILE_BYTES",
+    DEFAULT_IMPORT_MAX_FILE_BYTES,
+  );
+}
+
 const DEFAULT_GC_AGE_DAYS = 14;
 const DEFAULT_WORKBENCH_MAX_FILE_BYTES = 524_288;
 const DEFAULT_GC_WARNING_DAYS = 2;

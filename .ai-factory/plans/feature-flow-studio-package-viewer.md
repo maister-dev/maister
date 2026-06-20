@@ -142,19 +142,19 @@ Agent bundles/subdirs (agents stay single-file); editable on-canvas node popup (
 
 ### Phase 3 — Batch import (spec §6.6)
 
-- [ ] **T3.1 — Docs + import route.**
+- [x] **T3.1 — Docs + import route.**
   Docs: add the import route to OpenAPI + `local-packages.md`; the cap env to `configuration.md` + `.env.example` + the web service `environment:` block in `compose.yml` (+ prod overlay) OR an explicit host-only doc-gap line (name the compose decision per the deployment rule). Route `POST /api/studio/local-packages/[id]/import` accepts a folder (multipart, relative paths preserved) **and** an archive (zip/tar.gz). **Confine every entry** via `resolveWithinWorkingDir`; reject zip-slip/abs/`..`; enforce caps (**default: archive > 50 MB or > 2000 entries, or any file > 10 MB → `PRECONDITION`**; env-tunable `MAISTER_IMPORT_MAX_*`). Lock-guarded. Pre-write preview tree (dry-run mode) before commit.
   Files: `web/app/api/studio/local-packages/[id]/import/route.ts`, `web/lib/local-packages/import.ts`, `.env.example`, `compose.yml` (or doc-gap), `docs/configuration.md`, `docs/api/web.openapi.yaml`.
   Acceptance (spec §6.6): folder preserves subfolders + binary bytes; archive extracts same tree; zip-slip/over-cap rejected pre-write (nothing persisted); confined to working dir; live lock required; the `MAISTER_IMPORT_MAX_*` compose decision is named.
   Logging: INFO `[localPkg.import] {id, mode, entries, bytes}`; WARN on each rejected entry.
 
-- [ ] **T3.2 — Import UI (drop/pick + preview).** (depends on T3.1)
+- [x] **T3.2 — Import UI (drop/pick + preview).** (depends on T3.1)
   The `⤓ Import` affordance on the local-package editor + collection view: folder drag-drop / directory picker (`webkitdirectory`) + archive file input; show the preview tree; confirm → commit. en + ru keys.
   Files: `web/components/studio/import-dialog.tsx`, wire into `package-files-editor.tsx` / local list, `messages/{en,ru}.json`.
   Acceptance: import only appears on local (editable) packages; preview precedes write; en/ru parity.
   Logging: DEBUG `[studio.import] {mode, count}`.
 
-- [ ] **T3.3 — Tests + Phase 3 green.** (depends on T3.2)
+- [x] **T3.3 — Tests + Phase 3 green.** (depends on T3.2)
   Integration: folder import (subfolders + binary), archive import, zip-slip reject, cap reject — each asserts nothing-persisted on reject. e2e join AUTHED_SPEC. Per-phase green (incl. i18n parity) + Commit 4.
 
 ### Phase 4 — Git-backed diff + Commit/Discard (spec §6.5)

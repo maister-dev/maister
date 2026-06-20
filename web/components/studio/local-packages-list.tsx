@@ -7,6 +7,10 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 
+import {
+  buildImportDialogLabels,
+  ImportDialog,
+} from "@/components/studio/import-dialog";
 import { readApiError } from "@/lib/api-error";
 
 // Client-safe local-package list item. `working_dir` and the lock session are
@@ -30,6 +34,7 @@ export function LocalPackagesList({
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [importingId, setImportingId] = useState<string | null>(null);
 
   async function create(): Promise<void> {
     const trimmed = name.trim();
@@ -125,9 +130,12 @@ export function LocalPackagesList({
       {packages.length > 0 ? (
         <ul className="flex list-none flex-col gap-2" data-testid="local-list">
           {packages.map((pkg) => (
-            <li key={pkg.id}>
+            <li
+              key={pkg.id}
+              className="flex items-stretch gap-2 rounded-[14px] border border-line bg-paper transition-colors hover:border-amber"
+            >
               <Link
-                className="flex flex-wrap items-center gap-2 rounded-[14px] border border-line bg-paper px-5 py-4 transition-colors hover:border-amber"
+                className="flex flex-1 flex-wrap items-center gap-2 px-5 py-4"
                 href={`/studio/edit/${pkg.id}`}
               >
                 <span className="text-[15px] font-semibold text-ink">
@@ -142,12 +150,29 @@ export function LocalPackagesList({
                   {pkg.slug}
                 </span>
               </Link>
+              <button
+                className="my-2 mr-2 shrink-0 self-center rounded-[10px] border border-line bg-ivory px-3 py-2 text-[12.5px] font-semibold text-ink transition-colors hover:border-amber"
+                data-testid="local-import"
+                type="button"
+                onClick={() => setImportingId(pkg.id)}
+              >
+                ⤓ {t("import.action")}
+              </button>
             </li>
           ))}
         </ul>
       ) : (
         <p className="text-[13px] text-mute">{t("local.empty")}</p>
       )}
+
+      {importingId ? (
+        <ImportDialog
+          labels={buildImportDialogLabels(t)}
+          packageId={importingId}
+          onClose={() => setImportingId(null)}
+          onImported={() => router.refresh()}
+        />
+      ) : null}
     </div>
   );
 }

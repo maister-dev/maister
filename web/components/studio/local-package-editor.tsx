@@ -19,6 +19,10 @@ import { useTranslations } from "next-intl";
 
 import { FlowEditorTabs } from "@/components/flows/flow-editor-tabs";
 import { PackageFilesEditor } from "@/components/flows/package-files-editor";
+import {
+  buildImportDialogLabels,
+  ImportDialog,
+} from "@/components/studio/import-dialog";
 import { readApiError } from "@/lib/api-error";
 import { isMaisterError } from "@/lib/errors-core";
 import {
@@ -117,6 +121,8 @@ export function LocalPackageEditor({
 }): ReactElement {
   const router = useRouter();
   const tApiErrors = useTranslations("apiErrors");
+  const tStudio = useTranslations("studio");
+  const [importing, setImporting] = useState(false);
 
   // Stable per-mount session id (survives re-renders; never the lock-holder
   // label). Generated lazily so SSR and the first client render agree (the ref
@@ -284,13 +290,36 @@ export function LocalPackageEditor({
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-2">
-      <LockBanner
-        holderLabel={holderLabel}
-        labels={labels}
-        lockHeldByMe={lockHeldByMe}
-        status={status}
-        onReload={() => router.refresh()}
-      />
+      <div className="flex shrink-0 flex-wrap items-center gap-2">
+        <div className="min-w-0 flex-1">
+          <LockBanner
+            holderLabel={holderLabel}
+            labels={labels}
+            lockHeldByMe={lockHeldByMe}
+            status={status}
+            onReload={() => router.refresh()}
+          />
+        </div>
+        <button
+          className="shrink-0 rounded-[10px] border border-line bg-ivory px-3 py-2 text-[12.5px] font-semibold text-ink transition-colors hover:border-amber disabled:opacity-50"
+          data-testid="local-editor-import"
+          disabled={readOnly}
+          type="button"
+          onClick={() => setImporting(true)}
+        >
+          ⤓ {tStudio("import.action")}
+        </button>
+      </div>
+
+      {importing ? (
+        <ImportDialog
+          labels={buildImportDialogLabels(tStudio)}
+          packageId={packageId}
+          sessionId={sessionIdRef.current}
+          onClose={() => setImporting(false)}
+          onImported={() => router.refresh()}
+        />
+      ) : null}
 
       <div className="min-h-0 flex-1">
         <FlowEditorTabs

@@ -184,6 +184,20 @@ The attach gate (`manageLocalPackages` on `attachToProjectId`) is evaluated
 **before** the irreversible export+install, so an inaccessible attach target
 never leaves a cut install behind. The tmp export dir is removed in a `finally`.
 
+**Batch import (M36).** `POST /api/studio/local-packages/:id/import`
+(`multipart/form-data`) accepts a **folder** (files with relative paths) or one
+**zip / tar.gz** archive. `mode=preview` returns the resolved tree without
+writing (no lock); `mode=commit` asserts the session edit-lock, then writes.
+Safety is **validate-all-then-write**: every entry is confined — `..` rejected
+on the **original** segments (POSIX `../` + Windows `..\`, plus absolute /
+drive-letter / NUL) BEFORE normalization, then `resolveWithinWorkingDir`
+(`.git`/symlink/abs) — and the caps
+(`MAISTER_IMPORT_MAX_{BYTES,ENTRIES,FILE_BYTES}`, defaults 50 MiB / 2000 /
+10 MiB) are enforced; the archive blob is capped BEFORE parsing (zip-bomb
+defense). A single violation rejects the whole import pre-write, so the working
+dir is left UNCHANGED. Only regular files are written — tar dirs/symlinks/devices
+are skipped at the source, closing the tar-symlink escape vector.
+
 ## Expectations
 
 - A `local_packages` row MUST have a UNIQUE `slug`; its `working_dir` MUST
