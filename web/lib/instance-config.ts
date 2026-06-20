@@ -62,6 +62,7 @@ const DEFAULT_GC_SWEEP_INTERVAL_SECONDS = 3600;
 const DEFAULT_RECONCILE_SWEEP_INTERVAL_SECONDS = 60;
 const DEFAULT_RECONCILE_GRACE_SECONDS = 90;
 const DEFAULT_PROMOTION_CLAIM_TIMEOUT_SECONDS = 300;
+const DEFAULT_ORCHESTRATOR_MAX_DEPTH = 3;
 
 // M18 Phase 2 (§3.2, Codex F1): a durable `claiming` promotion claim older than
 // this window is considered abandoned (crashed mid-promote) and is reclaimable
@@ -141,6 +142,22 @@ export function gcSweepIntervalSeconds(): number {
 // branch to the remote. Only the exact value "true" enables it; default false.
 export function gcArchivePush(): boolean {
   return process.env.MAISTER_GC_ARCHIVE_PUSH === "true";
+}
+
+// M36 (ADR-095): max orchestrator delegation depth — the longest parent_run_id
+// chain a delegated child may sit at. Bounds runaway recursive delegation. Env
+// override, sane default, floor at 1.
+export function orchestratorMaxDepth(): number {
+  const raw = process.env.MAISTER_ORCHESTRATOR_MAX_DEPTH;
+
+  if (!raw) return DEFAULT_ORCHESTRATOR_MAX_DEPTH;
+  const parsed = Number.parseInt(raw, 10);
+
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return DEFAULT_ORCHESTRATOR_MAX_DEPTH;
+  }
+
+  return parsed;
 }
 
 // M19 Phase 2 (T2.3): how often the periodic reconcile sweeper ticks. Env

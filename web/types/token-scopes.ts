@@ -17,6 +17,9 @@ export const TOKEN_SCOPES = [
   "relations:create",
   "relations:delete",
   "agents:trigger",
+  "runs:delegate",
+  "runs:collect",
+  "runs:cancel",
 ] as const;
 
 // M34 (ADR-089): the fixed scope set issued to per-launch ephemeral agent

@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq, isNull } from "drizzle-orm";
 import pino from "pino";
 
-import { AGENT_TOKEN_SCOPES } from "@/types/token-scopes";
+import { AGENT_TOKEN_SCOPES, TOKEN_SCOPES } from "@/types/token-scopes";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { generateToken } from "@/lib/tokens/secret";
@@ -26,6 +26,18 @@ const log = pino({
 // on attachment detach, and by GC. Expiry is a backstop for runs that idle
 // past every sweep.
 const AGENT_TOKEN_TTL_HOURS = 48;
+
+// M36 (ADR-095, Phase 3): the orchestrator's run-bound token carries the agent
+// scope set PLUS the delegation toolset (run_delegate/run_collect/run_cancel
+// over the maister MCP facade). A regular agent token keeps AGENT_TOKEN_SCOPES
+// only — delegation is the orchestrator coordinator's privilege, not every
+// agent's.
+export const ORCHESTRATOR_TOKEN_SCOPES = [
+  ...AGENT_TOKEN_SCOPES,
+  "runs:delegate",
+  "runs:collect",
+  "runs:cancel",
+] as const satisfies readonly (typeof TOKEN_SCOPES)[number][];
 
 export type IssuedAgentToken = {
   tokenId: string;
@@ -67,7 +79,8 @@ export async function issueAgentRunToken(args: {
 // no `agents` row to hang an agent-kind token on, and the store CHECK forbids
 // agent_id on a non-agent token. So a parked coordinator authenticates to the
 // maister MCP facade via a PROJECT-kind, run-bound token (deterministic name →
-// terminal revoke matches on it). Phase 3 widens scopes with `runs:delegate`.
+// terminal revoke matches on it) carrying ORCHESTRATOR_TOKEN_SCOPES (agent
+// scopes + the Phase-3 delegation toolset).
 export async function issueOrchestratorRunToken(args: {
   projectId: string;
   runId: string;
@@ -84,7 +97,7 @@ export async function issueOrchestratorRunToken(args: {
     token_kind: "project",
     prefix,
     token_hash: hash,
-    scopes: [...AGENT_TOKEN_SCOPES],
+    scopes: [...ORCHESTRATOR_TOKEN_SCOPES],
     expires_at: new Date(Date.now() + AGENT_TOKEN_TTL_HOURS * 3_600_000),
   });
 

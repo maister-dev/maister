@@ -79,6 +79,9 @@ export interface TokenLabels {
   scopeRelationsCreate: string;
   scopeRelationsDelete: string;
   scopeAgentsTrigger: string;
+  scopeRunsDelegate: string;
+  scopeRunsCollect: string;
+  scopeRunsCancel: string;
   errorGeneric: string;
 }
 
@@ -141,6 +144,12 @@ function scopeLabel(labels: TokenLabels, scope: string): string {
       return labels.scopeRelationsDelete;
     case "agents:trigger":
       return labels.scopeAgentsTrigger;
+    case "runs:delegate":
+      return labels.scopeRunsDelegate;
+    case "runs:collect":
+      return labels.scopeRunsCollect;
+    case "runs:cancel":
+      return labels.scopeRunsCancel;
     default:
       return scope;
   }
@@ -357,6 +366,9 @@ export async function IntegrationsPanel({
     scopeRelationsCreate: t("scopeRelationsCreate"),
     scopeRelationsDelete: t("scopeRelationsDelete"),
     scopeAgentsTrigger: t("scopeAgentsTrigger"),
+    scopeRunsDelegate: t("scopeRunsDelegate"),
+    scopeRunsCollect: t("scopeRunsCollect"),
+    scopeRunsCancel: t("scopeRunsCancel"),
     errorGeneric: t("errorGeneric"),
   };
 

@@ -64,6 +64,7 @@ const actor: TokenActor = {
   agentId: null,
   actorLabel: "token:test",
   scopes: ["tasks:create"],
+  boundRunId: null,
 };
 
 function request(): Request {

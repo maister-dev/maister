@@ -78,6 +78,53 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
       required: ["runId"],
     },
   },
+  run_delegate: {
+    description:
+      "Delegate work to a governed child run spawned from a catalog agent (target.agentId, package-qualified <flowRefId>:<stem>). mode:'task' also creates a child board task linked parent_of under the orchestrator's task; mode:'run' spawns a board-less child. The parent orchestrator run is derived from the calling token — it is never accepted in the body. Delegating to an untrusted/disabled agent is refused (no child run is created).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        target: {
+          type: "object",
+          properties: {
+            agentId: { type: "string" },
+            flowId: { type: "string" },
+          },
+        },
+        mode: { type: "string", enum: ["task", "run"] },
+        prompt: { type: "string" },
+        title: { type: "string" },
+        workspace: {
+          type: "string",
+          enum: ["none", "repo_read", "worktree"],
+        },
+        runnerOverride: { type: "string" },
+      },
+      required: ["target", "mode", "prompt"],
+    },
+  },
+  run_collect: {
+    description:
+      "Collect status, output, and produced artifacts from the orchestrator's delegated child runs. Pass childRunId for one child, or all:true for every child of the calling orchestrator run. Returns an array of { childRunId, status, outputText?, artifacts, diffRef? }.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        childRunId: { type: "string" },
+        all: { type: "boolean" },
+      },
+    },
+  },
+  run_cancel: {
+    description:
+      "Cancel a delegated child run of the calling orchestrator. The child must be a direct child of the bound orchestrator run. Returns { childRunId, status }.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        childRunId: { type: "string" },
+      },
+      required: ["childRunId"],
+    },
+  },
   readiness_get: {
     description: "Get the readiness status of a run",
     inputSchema: {
@@ -345,6 +392,45 @@ function resolveRouting(
       const { runId } = args as { runId: string };
 
       return { method: "GET", path: `/api/v1/ext/runs/${runId}` };
+    }
+    case "run_delegate": {
+      const { target, mode, prompt, title, workspace, runnerOverride } =
+        args as {
+          target: { agentId?: string; flowId?: string };
+          mode: string;
+          prompt: string;
+          title?: string;
+          workspace?: string;
+          runnerOverride?: string;
+        };
+      const body: Record<string, unknown> = { target, mode, prompt };
+
+      if (title !== undefined) body.title = title;
+      if (workspace !== undefined) body.workspace = workspace;
+      if (runnerOverride !== undefined) body.runnerOverride = runnerOverride;
+
+      return { method: "POST", path: `/api/v1/ext/runs/delegate`, body };
+    }
+    case "run_collect": {
+      const { childRunId, all } = args as {
+        childRunId?: string;
+        all?: boolean;
+      };
+      const body: Record<string, unknown> = {};
+
+      if (childRunId !== undefined) body.childRunId = childRunId;
+      if (all !== undefined) body.all = all;
+
+      return { method: "POST", path: `/api/v1/ext/runs/collect`, body };
+    }
+    case "run_cancel": {
+      const { childRunId } = args as { childRunId: string };
+
+      return {
+        method: "POST",
+        path: `/api/v1/ext/runs/cancel`,
+        body: { childRunId },
+      };
     }
     case "readiness_get": {
       const { runId } = args as { runId: string };

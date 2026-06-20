@@ -1239,6 +1239,26 @@ export async function stopWorkbenchRun(
   return stopRunByKind(runId, ctx, deps);
 }
 
+// M36 (ADR-095): the same generalized stop, reached from the /api/v1/ext token
+// surface (run_cancel). There is no browser session here — authority is the
+// run-bound token, so the session check is skipped and authorization is the
+// caller's already-derived project (the run must belong to the token's
+// project). The run-kind dispatch and supervisor teardown are identical.
+export async function stopWorkbenchRunForToken(
+  runId: string,
+  args: { projectId: string },
+  options?: WorkbenchLifecycleOptions,
+): Promise<StopWorkbenchRunResult> {
+  const deps = depsFromOptions(options);
+  const ctx = await deps.loadContext(runId);
+
+  if (ctx.run.projectId !== args.projectId) {
+    throw new MaisterError("PRECONDITION", `run not found: ${runId}`);
+  }
+
+  return stopRunByKind(runId, ctx, deps);
+}
+
 // POST /api/runs/{runId}/stop-archive — flow + scratch. Stop commits the parked
 // status first; an archive failure leaves the run in Review, retryable.
 export async function stopThenArchive(

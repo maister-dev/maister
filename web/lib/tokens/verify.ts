@@ -42,7 +42,21 @@ export type TokenActor = {
   agentId: string | null;
   actorLabel: string;
   scopes: string[];
+  // M36 (ADR-095): the run a per-launch ephemeral token is bound to, derived
+  // SERVER-SIDE from the deterministic token name (`orchestrator-run:<id>` or
+  // `agent-run:<id>`). A delegation route reads the PARENT runId from here,
+  // never from the request body.
+  boundRunId: string | null;
 };
+
+// M36 (ADR-095): the run id baked into a per-launch ephemeral token's
+// deterministic name. Returns null for any other token (durable project tokens,
+// user tokens) — they are not run-bound.
+export function parseBoundRunId(name: string): string | null {
+  const match = /^(?:orchestrator-run|agent-run):(.+)$/.exec(name);
+
+  return match ? match[1] : null;
+}
 
 /**
  * Verify a presented token string against the DB.
@@ -106,6 +120,7 @@ export async function verifyToken(
         ? `agent:${agentId}`
         : `token:${row.name}`,
     scopes: (row.scopes as string[]) ?? ["*"],
+    boundRunId: parseBoundRunId(row.name ?? ""),
   };
 }
 

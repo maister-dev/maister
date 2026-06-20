@@ -104,6 +104,12 @@ export type LaunchAgentRunInput = {
     eventId?: number | null;
     payload?: Record<string, unknown> | null;
   };
+  // M36 (ADR-095): orchestrator run-tree linkage. Set when this run is a
+  // delegated child — parentRunId is the delegator, rootRunId the tree root,
+  // launchMode distinguishes auto-DAG launches from manual delegations.
+  parentRunId?: string | null;
+  rootRunId?: string | null;
+  launchMode?: "auto" | "manual";
   db?: Db;
 };
 
@@ -593,6 +599,19 @@ export async function launchAgentRun(
     currentStepId: "agent",
     flowVersion: "agent",
     flowRevision: "manual",
+    // M36 (ADR-095): run-tree linkage. delegation_snapshot records the CHILD's
+    // launch-time effective agent-def (skill-context rule 207 — id + pinned
+    // revision only; the resolved runner stays in runner_snapshot above). Set
+    // only for a delegated child (parentRunId present).
+    parentRunId: input.parentRunId ?? null,
+    rootRunId: input.rootRunId ?? null,
+    launchMode: input.launchMode ?? null,
+    delegationSnapshot: input.parentRunId
+      ? {
+          agentDefinitionId: input.agentId,
+          revisionId: ctx.effective.revisionId,
+        }
+      : null,
   };
 
   assertRunKindInvariant({

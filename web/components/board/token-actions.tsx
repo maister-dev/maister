@@ -281,6 +281,12 @@ function scopeText(labels: TokenLabels, scope: TokenScope): string {
       return labels.scopeRelationsDelete;
     case "agents:trigger":
       return labels.scopeAgentsTrigger;
+    case "runs:delegate":
+      return labels.scopeRunsDelegate;
+    case "runs:collect":
+      return labels.scopeRunsCollect;
+    case "runs:cancel":
+      return labels.scopeRunsCancel;
   }
 }
 

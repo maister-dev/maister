@@ -51,7 +51,7 @@ afterEach(() => {
 });
 
 describe("TOOL_SPECS registry", () => {
-  it("registers all 16 external tools (incl. ADR-089 triage_set + relation ops)", () => {
+  it("registers all 19 external tools (incl. ADR-089 triage_set + relation ops + M36 delegation toolset)", () => {
     expect(Object.keys(TOOL_SPECS).sort()).toEqual(
       [
         "comment_create",
@@ -63,6 +63,9 @@ describe("TOOL_SPECS registry", () => {
         "relation_add",
         "relation_list",
         "relation_remove",
+        "run_cancel",
+        "run_collect",
+        "run_delegate",
         "run_get",
         "run_launch",
         "task_create",
@@ -212,6 +215,71 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
     expect(url).toBe(`${BASE_URL}/api/v1/ext/runs/run-1`);
     expect(headerAuth(init)).toBe(AUTH);
     expect(parsedBody(init)).toBeUndefined();
+  });
+
+  it("run_delegate → POST /api/v1/ext/runs/delegate with only defined keys", async () => {
+    mockOnce({ childRunId: "child-1", childTaskId: "task-9" }, 202);
+
+    await dispatchTool({
+      name: "run_delegate",
+      args: {
+        target: { agentId: "pkg:worker" },
+        mode: "task",
+        prompt: "Do the subtask",
+        title: "Subtask",
+      },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    const { url, init } = lastRequest();
+
+    expect(init.method).toBe("POST");
+    expect(url).toBe(`${BASE_URL}/api/v1/ext/runs/delegate`);
+    expect(headerAuth(init)).toBe(AUTH);
+    // workspace + runnerOverride omitted (undefined) — only defined keys ride.
+    expect(parsedBody(init)).toEqual({
+      target: { agentId: "pkg:worker" },
+      mode: "task",
+      prompt: "Do the subtask",
+      title: "Subtask",
+    });
+  });
+
+  it("run_collect → POST /api/v1/ext/runs/collect with all:true", async () => {
+    mockOnce([], 200);
+
+    await dispatchTool({
+      name: "run_collect",
+      args: { all: true },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    const { url, init } = lastRequest();
+
+    expect(init.method).toBe("POST");
+    expect(url).toBe(`${BASE_URL}/api/v1/ext/runs/collect`);
+    expect(headerAuth(init)).toBe(AUTH);
+    expect(parsedBody(init)).toEqual({ all: true });
+  });
+
+  it("run_cancel → POST /api/v1/ext/runs/cancel", async () => {
+    mockOnce({ childRunId: "child-1", status: "Abandoned" }, 200);
+
+    await dispatchTool({
+      name: "run_cancel",
+      args: { childRunId: "child-1" },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    const { url, init } = lastRequest();
+
+    expect(init.method).toBe("POST");
+    expect(url).toBe(`${BASE_URL}/api/v1/ext/runs/cancel`);
+    expect(headerAuth(init)).toBe(AUTH);
+    expect(parsedBody(init)).toEqual({ childRunId: "child-1" });
   });
 
   it("readiness_get → GET /api/v1/ext/runs/{runId}/readiness", async () => {

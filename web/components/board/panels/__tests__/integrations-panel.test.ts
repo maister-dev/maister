@@ -96,6 +96,9 @@ const labels: TokenLabels = {
   scopeRelationsCreate: "Create relations",
   scopeRelationsDelete: "Delete relations",
   scopeAgentsTrigger: "Trigger agents",
+  scopeRunsDelegate: "Delegate runs",
+  scopeRunsCollect: "Collect child runs",
+  scopeRunsCancel: "Cancel child runs",
   errorGeneric: "Something went wrong",
 };
 
