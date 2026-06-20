@@ -19,6 +19,7 @@ import {
   type PresetRow as ModalPresetRow,
   type RunnerRow,
 } from "@/components/settings/acp-runner-modal";
+import { AddButton } from "@/components/settings/add-button";
 
 export type { RunnerRow };
 
@@ -236,16 +237,13 @@ export function AcpRunnersPanel({
           >
             {t("save")}
           </button>
-          <button
-            className="h-10 rounded-[8px] border border-amber bg-amber px-4 text-[13px] font-semibold text-white hover:bg-amber-2"
-            type="button"
+          <AddButton
+            label={t("addRunner")}
             onClick={() => {
               setUsePresetId(null);
               setCreating(true);
             }}
-          >
-            {t("addRunner")}
-          </button>
+          />
         </div>
         {error ? (
           <p className="m-0 text-[12px] leading-[1.45] text-red-700">{error}</p>

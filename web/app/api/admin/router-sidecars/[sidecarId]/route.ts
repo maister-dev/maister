@@ -5,7 +5,10 @@ import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 import { z } from "zod";
 
-import { loadSidecarUsageReferences } from "@/lib/acp-runners/usage";
+import {
+  loadSidecarUsageReferences,
+  type SidecarUsageReference,
+} from "@/lib/acp-runners/usage";
 import { evaluateSidecarReadiness } from "@/lib/acp-runners/readiness";
 import { sidecarConfigPathSchema } from "@/lib/acp-runners/sidecar-schema";
 import { requireGlobalRole } from "@/lib/authz";
@@ -14,6 +17,7 @@ import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import {
   checkSupervisorDiagnostics,
+  stopSidecar,
   type SupervisorDiagnostics,
 } from "@/lib/supervisor-client";
 
@@ -112,6 +116,76 @@ async function loadDiagnosticsForReadiness(): Promise<{
     diagnostics: null,
     unavailableReason: status.message,
   };
+}
+
+function summarizeSidecarRefs(refs: SidecarUsageReference[]): string {
+  return refs.map((ref) => `runner:${ref.runnerId}`).join(", ");
+}
+
+export async function DELETE(
+  _req: NextRequest,
+  { params }: RouteParams,
+): Promise<NextResponse> {
+  const { sidecarId } = await params;
+
+  try {
+    // Auth-first: the admin check precedes any read or side-effect.
+    await requireGlobalRole("admin");
+
+    const db = getDb() as any;
+    const rows = await db
+      .select()
+      .from(platformRouterSidecars)
+      .where(eq(platformRouterSidecars.id, sidecarId));
+    const sidecar = rows[0] as LoadedSidecar | undefined;
+
+    if (!sidecar) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `router sidecar not found: ${sidecarId}`,
+      );
+    }
+
+    // Usage-guard BEFORE any side-effect. The sidecar_id FK is onDelete:"set
+    // null", so without this a delete would silently unbind every runner that
+    // references it; refuse instead of mutating.
+    const refs = await loadSidecarUsageReferences(db, sidecarId);
+
+    if (refs.length > 0) {
+      log.info(
+        { sidecarId, refs: refs.length },
+        "router sidecar delete blocked",
+      );
+      throw new MaisterError(
+        "CONFLICT",
+        `cannot delete router sidecar ${sidecarId}; referenced by: ${summarizeSidecarRefs(refs)}`,
+      );
+    }
+
+    // A bare row delete would orphan a live managed CCR process (no row left to
+    // stop it later). Best-effort stop before the delete; a down supervisor must
+    // not block removing the config row, so the failure is logged, not fatal.
+    if (sidecar.lifecycle === "managed") {
+      try {
+        await stopSidecar(sidecarId);
+      } catch (err) {
+        log.warn(
+          { sidecarId, err: err instanceof Error ? err.message : String(err) },
+          "best-effort sidecar stop before delete failed",
+        );
+      }
+    }
+
+    await db
+      .delete(platformRouterSidecars)
+      .where(eq(platformRouterSidecars.id, sidecarId));
+
+    log.info({ sidecarId }, "router sidecar deleted");
+
+    return new NextResponse(null, { status: 204 });
+  } catch (err) {
+    return errorResponse(err);
+  }
 }
 
 export async function PATCH(

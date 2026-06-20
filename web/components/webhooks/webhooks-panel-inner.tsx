@@ -14,6 +14,7 @@ import type { ReactElement } from "react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 
+import { AddButton } from "@/components/settings/add-button";
 import { DeliveriesDrawer } from "@/components/webhooks/deliveries-drawer";
 import { SubscriptionModal } from "@/components/webhooks/subscription-modal";
 import { SubscriptionsTable } from "@/components/webhooks/subscriptions-table";
@@ -259,16 +260,13 @@ export function WebhooksPanelInner({
             {t("count", { count: subscriptions.length })}
           </span>
           {canWrite ? (
-            <button
-              className="rounded-lg border border-amber bg-amber px-2.5 py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-white hover:bg-amber-2"
-              type="button"
+            <AddButton
+              label={t("add")}
               onClick={() => {
                 setEditing(null);
                 setModalMode("create");
               }}
-            >
-              {t("add")}
-            </button>
+            />
           ) : null}
         </div>
       </div>

@@ -752,6 +752,87 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/admin/router-sidecars/{sidecarId}:
+    patch:
+      tags: [admin]
+      summary: Update a router sidecar
+      description: |
+        Admin-only. Mutates sidecar lifecycle/config/readiness/enabled fields;
+        auth tokens persist only as env references. Disabling is refused while a
+        runner references the sidecar. Readiness is recomputed server-side.
+      operationId: patchAdminRouterSidecar
+      parameters:
+        - name: sidecarId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                lifecycle: { type: string, enum: [managed, external] }
+                commandPreset: { type: string, nullable: true }
+                configPath: { type: string, nullable: true }
+                baseUrl: { type: string, nullable: true }
+                healthcheckUrl: { type: string, nullable: true }
+                authTokenRef: { type: string, nullable: true }
+                readinessStatus:
+                  { type: string, enum: [Unknown, Ready, NotReady] }
+                readinessReasons: { type: array, items: { type: string } }
+                enabled: { type: boolean }
+      responses:
+        "200":
+          description: Sidecar updated. Readiness is derived server-side (never accepted from the body).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, id]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  id: { type: string }
+                  readinessStatus:
+                    { type: string, enum: [Unknown, Ready, NotReady] }
+                  readinessReasons: { type: array, items: { type: string } }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Sidecar not found (`PRECONDITION`) or referenced while disabling (`CONFLICT`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422":
+          description: Invalid body (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+    delete:
+      tags: [admin]
+      summary: Delete a router sidecar
+      description: |
+        Admin-only. Refuses deletion (`CONFLICT`) while any runner references the
+        sidecar via `sidecar_id` (the FK is `ON DELETE SET NULL`, so the guard
+        refuses rather than silently unbinding the runner). A managed sidecar is
+        best-effort stopped before the row is removed.
+      operationId: deleteAdminRouterSidecar
+      parameters:
+        - name: sidecarId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Sidecar deleted. }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Sidecar is still referenced (`CONFLICT`) or not found (`PRECONDITION`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
   /api/admin/router-sidecars/{sidecarId}/start:
     post:
       tags: [admin]

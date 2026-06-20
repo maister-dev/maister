@@ -2,16 +2,23 @@
 
 import type { ReactElement, ReactNode } from "react";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import {
   ArrowPathIcon,
+  PencilSquareIcon,
   PlayIcon,
   PowerIcon,
   StopIcon,
 } from "@heroicons/react/24/outline";
 
+import { AddButton } from "@/components/settings/add-button";
 import { PanelSection } from "@/components/settings/panel-section";
+import {
+  SidecarModal,
+  type SidecarRow,
+} from "@/components/settings/sidecar-modal";
 
 type Sidecar = {
   id: string;
@@ -34,21 +41,9 @@ type Props = {
   processStateById?: Record<string, string>;
 };
 
-type CreateSidecarPayload = Omit<
-  Sidecar,
-  "enabled" | "readinessReasons" | "readinessStatus"
->;
-
-async function requestJson(
-  url: string,
-  method: "PATCH" | "POST",
-  body: unknown,
-): Promise<{
-  readinessStatus?: Sidecar["readinessStatus"];
-  readinessReasons?: string[];
-}> {
-  const response = await fetch(url, {
-    method,
+async function patchSidecar(sidecarId: string, body: unknown): Promise<void> {
+  const response = await fetch(`/api/admin/router-sidecars/${sidecarId}`, {
+    method: "PATCH",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
@@ -60,11 +55,6 @@ async function requestJson(
 
     throw new Error(payload?.message ?? `request failed: ${response.status}`);
   }
-
-  return (await response.json()) as {
-    readinessStatus?: Sidecar["readinessStatus"];
-    readinessReasons?: string[];
-  };
 }
 
 async function lifecycleRequest(url: string): Promise<{ state: string }> {
@@ -91,6 +81,18 @@ function processTone(state: string | undefined): string {
   if (state === "starting" || state === "stopping") return "bg-attention";
 
   return "bg-mute";
+}
+
+function toRow(sidecar: Sidecar): SidecarRow {
+  return {
+    id: sidecar.id,
+    lifecycle: sidecar.lifecycle,
+    configPath: sidecar.configPath,
+    baseUrl: sidecar.baseUrl,
+    healthcheckUrl: sidecar.healthcheckUrl,
+    authTokenRef: sidecar.authTokenRef,
+    enabled: sidecar.enabled,
+  };
 }
 
 function IconButton({
@@ -123,62 +125,17 @@ export function RouterSidecarsPanel({
   processStateById,
 }: Props): ReactElement {
   const t = useTranslations("settings");
-  const [items, setItems] = useState(sidecars);
+  const router = useRouter();
+  const [, startTransition] = useTransition();
   const [processState, setProcessState] = useState<Record<string, string>>(
     processStateById ?? {},
   );
-  const [id, setId] = useState("");
-  const [lifecycle, setLifecycle] = useState<Sidecar["lifecycle"]>("managed");
-  const [configPath, setConfigPath] = useState("");
-  const [baseUrl, setBaseUrl] = useState("");
-  const [healthcheckUrl, setHealthcheckUrl] = useState("");
-  const [authTokenRef, setAuthTokenRef] = useState("");
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState<SidecarRow | null>(null);
 
-  async function createSidecar(): Promise<void> {
-    setPending("create");
-    setError(null);
-
-    try {
-      const payload: CreateSidecarPayload = {
-        id,
-        kind: "ccr",
-        lifecycle,
-        commandPreset: lifecycle === "managed" ? "ccr_start" : null,
-        configPath: configPath || null,
-        baseUrl: baseUrl || null,
-        healthcheckUrl: healthcheckUrl || null,
-        authTokenRef: authTokenRef || null,
-      };
-
-      const result = await requestJson(
-        "/api/admin/router-sidecars",
-        "POST",
-        payload,
-      );
-
-      setItems((current) => [
-        ...current,
-        {
-          ...payload,
-          kind: "ccr",
-          readinessStatus: result.readinessStatus ?? "Unknown",
-          readinessReasons: result.readinessReasons ?? [],
-          enabled: true,
-        },
-      ]);
-      setId("");
-      setConfigPath("");
-      setBaseUrl("");
-      setHealthcheckUrl("");
-      setAuthTokenRef("");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setPending(null);
-    }
-  }
+  const refresh = (): void => startTransition(() => router.refresh());
 
   async function setEnabled(
     sidecarId: string,
@@ -188,27 +145,8 @@ export function RouterSidecarsPanel({
     setError(null);
 
     try {
-      const result = await requestJson(
-        `/api/admin/router-sidecars/${sidecarId}`,
-        "PATCH",
-        {
-          enabled,
-        },
-      );
-
-      setItems((current) =>
-        current.map((item) =>
-          item.id === sidecarId
-            ? {
-                ...item,
-                enabled,
-                readinessStatus: result.readinessStatus ?? item.readinessStatus,
-                readinessReasons:
-                  result.readinessReasons ?? item.readinessReasons,
-              }
-            : item,
-        ),
-      );
+      await patchSidecar(sidecarId, { enabled });
+      refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -221,24 +159,8 @@ export function RouterSidecarsPanel({
     setError(null);
 
     try {
-      const result = await requestJson(
-        `/api/admin/router-sidecars/${sidecarId}`,
-        "PATCH",
-        {},
-      );
-
-      setItems((current) =>
-        current.map((item) =>
-          item.id === sidecarId
-            ? {
-                ...item,
-                readinessStatus: result.readinessStatus ?? item.readinessStatus,
-                readinessReasons:
-                  result.readinessReasons ?? item.readinessReasons,
-              }
-            : item,
-        ),
-      );
+      await patchSidecar(sidecarId, {});
+      refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -268,63 +190,16 @@ export function RouterSidecarsPanel({
 
   return (
     <PanelSection title={t("routerSidecars")}>
-      <div className="mb-3 grid gap-2 rounded-[8px] border border-line bg-canvas p-3">
-        <div className="grid gap-2 md:grid-cols-2">
-          <input
-            className="h-9 rounded-[8px] border border-line bg-paper px-2.5 text-[12px] text-ink outline-none"
-            placeholder={t("sidecarId")}
-            value={id}
-            onChange={(event) => setId(event.target.value)}
-          />
-          <select
-            className="h-9 rounded-[8px] border border-line bg-paper px-2.5 text-[12px] text-ink outline-none"
-            value={lifecycle}
-            onChange={(event) =>
-              setLifecycle(event.target.value as Sidecar["lifecycle"])
-            }
-          >
-            <option value="managed">managed</option>
-            <option value="external">external</option>
-          </select>
-          <input
-            className="h-9 rounded-[8px] border border-line bg-paper px-2.5 text-[12px] text-ink outline-none"
-            placeholder={t("configPath")}
-            value={configPath}
-            onChange={(event) => setConfigPath(event.target.value)}
-          />
-          <input
-            className="h-9 rounded-[8px] border border-line bg-paper px-2.5 text-[12px] text-ink outline-none"
-            placeholder={t("baseUrl")}
-            value={baseUrl}
-            onChange={(event) => setBaseUrl(event.target.value)}
-          />
-          <input
-            className="h-9 rounded-[8px] border border-line bg-paper px-2.5 text-[12px] text-ink outline-none"
-            placeholder={t("healthcheckUrl")}
-            value={healthcheckUrl}
-            onChange={(event) => setHealthcheckUrl(event.target.value)}
-          />
-          <input
-            className="h-9 rounded-[8px] border border-line bg-paper px-2.5 text-[12px] text-ink outline-none"
-            placeholder={t("authTokenRef")}
-            value={authTokenRef}
-            onChange={(event) => setAuthTokenRef(event.target.value)}
-          />
-        </div>
-        <button
-          className="h-9 rounded-[8px] border border-line bg-ink px-3 text-[12px] font-semibold text-paper disabled:opacity-50"
-          disabled={pending !== null || !id}
-          type="button"
-          onClick={() => void createSidecar()}
-        >
-          {t("create")}
-        </button>
-        {error ? (
-          <p className="m-0 text-[12px] leading-[1.45] text-red-700">{error}</p>
-        ) : null}
+      <div className="mb-3 flex items-center justify-end">
+        <AddButton label={t("addSidecar")} onClick={() => setCreating(true)} />
       </div>
+      {error ? (
+        <p className="mb-3 m-0 text-[12px] leading-[1.45] text-red-700">
+          {error}
+        </p>
+      ) : null}
       <div className="grid gap-2">
-        {items.map((sidecar) => {
+        {sidecars.map((sidecar) => {
           const state = processState[sidecar.id];
           const stateLabel = state ?? "unknown";
           const isRunning = state === "ready" || state === "starting";
@@ -355,6 +230,13 @@ export function RouterSidecarsPanel({
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
+                  <IconButton
+                    disabled={pending !== null}
+                    title={t("editAction")}
+                    onClick={() => setEditing(toRow(sidecar))}
+                  >
+                    <PencilSquareIcon className="h-4 w-4" />
+                  </IconButton>
                   {isRunning ? (
                     <IconButton
                       disabled={pending !== null}
@@ -435,6 +317,17 @@ export function RouterSidecarsPanel({
           );
         })}
       </div>
+      {creating || editing ? (
+        <SidecarModal
+          mode={editing ? "edit" : "create"}
+          sidecar={editing ?? undefined}
+          onClose={() => {
+            setCreating(false);
+            setEditing(null);
+          }}
+          onSaved={refresh}
+        />
+      ) : null}
     </PanelSection>
   );
 }

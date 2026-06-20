@@ -2,14 +2,18 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-import { RouterSidecarsPanel } from "@/components/settings/router-sidecars-panel";
-
 vi.mock("next-intl", () => ({
   useTranslations: () => (key: string) => key,
 }));
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ refresh: vi.fn() }),
+  usePathname: () => "/settings",
+}));
+
+import { RouterSidecarsPanel } from "@/components/settings/router-sidecars-panel";
 
 describe("RouterSidecarsPanel", () => {
-  it("renders sidecar readiness details and refresh action without raw secrets", () => {
+  it("renders readiness details, an Add control, and a per-card edit action without raw secrets", () => {
     const html = renderToStaticMarkup(
       createElement(RouterSidecarsPanel, {
         sidecars: [
@@ -40,6 +44,11 @@ describe("RouterSidecarsPanel", () => {
     // With no live process state the dot is muted and Start is offered.
     expect(html).toContain("bg-mute");
     expect(html).toContain("sidecarStart");
+    // The create form is now a popup: an Add control + a per-card edit action,
+    // with the modal closed (its title absent) in the default render.
+    expect(html).toContain("addSidecar");
+    expect(html).toContain('aria-label="editAction"');
+    expect(html).not.toContain("createSidecarTitle");
   });
 
   it("shows a Stop action and a good-tone dot when the process state is ready", () => {

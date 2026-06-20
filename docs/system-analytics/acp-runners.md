@@ -246,6 +246,15 @@ sequenceDiagram
   `MaisterError("CONFLICT")` (409) and MUST NOT delete the row. (Implemented)
 - The DELETE guard MUST block on ANY usage reference kind — symmetric with the
   `assertCanDisable` guard used for `enabled=false`. (Implemented)
+- `DELETE /api/admin/router-sidecars/{sidecarId}` MUST return **204** only when
+  `loadSidecarUsageReferences` returns zero references (no runner binds it via
+  `sidecar_id`); otherwise `MaisterError("CONFLICT")` (409) with no row delete.
+  Because the `platform_acp_runners.sidecar_id` FK is `onDelete: "set null"`,
+  this guard is load-bearing — without it a delete would silently null a runner's
+  binding. A `managed` sidecar is best-effort stopped (`stopSidecar`, non-fatal
+  if the supervisor is down) before the row delete; an unknown id →
+  `MaisterError("PRECONDITION")` (409). Sidecar create/edit/delete run through
+  `sidecar-modal.tsx`, mirroring `acp-runner-modal.tsx`. (Implemented)
 - `DELETE`/`PATCH` against an unknown `runnerId` MUST return
   `MaisterError("PRECONDITION")` (409). (Implemented)
 - Every catalog write (`POST`/`PATCH`/`DELETE`) MUST require global role
@@ -306,6 +315,9 @@ sequenceDiagram
   the blocking kinds (platform/project/flow default, flow-step remap, active
   run, historical run snapshot, scratch run); the NOT-NULL FK
   `default_runner_id` is a second, DB-level guard for the platform-default case.
+- **Delete of a referenced sidecar** → `MaisterError("CONFLICT")` (409) listing
+  the binding runner ids; the `sidecar_id` FK `onDelete: "set null"` would
+  otherwise silently unbind the runner, so the guard refuses instead of mutating.
 - **Unknown runnerId** on PATCH/DELETE → `MaisterError("PRECONDITION")` (409).
 - **Adapter/provider/policy mismatch** → `MaisterError("CONFIG")` (422).
 - **Raw (non-`env:`) secret** in a provider field → `MaisterError("CONFIG")` (422).
@@ -324,7 +336,10 @@ sequenceDiagram
 
 - **API contract:** [`api/web.openapi.yaml`](../api/web.openapi.yaml) —
   `getAdminAcpRunners`, `postAdminAcpRunner`, `patchAdminAcpRunner`,
-  `deleteAdminAcpRunner`.
+  `deleteAdminAcpRunner`; router sidecars: `getAdminRouterSidecars`,
+  `postAdminRouterSidecar`, `patchAdminRouterSidecar`,
+  `deleteAdminRouterSidecar`, `startAdminRouterSidecar`,
+  `stopAdminRouterSidecar`.
 - **Decision:** [ADR-065](../decisions.md#adr-065), [ADR-084](../decisions.md#adr-084-acp-adapter-families-for-gemini-cli-and-opencode), [ADR-085](../decisions.md#adr-085-mimo-code-as-a-distinct-acp-adapter-family), [ADR-094](../decisions.md#adr-094) (default-runner materialization + honest readiness).
 - **Related domains:** [executors.md](executors.md) (resolution + routing),
   [readiness.md](readiness.md) (readiness evaluation),
@@ -349,6 +364,13 @@ sequenceDiagram
   `web/lib/acp-runners/usage.ts`, `web/lib/acp-runners/runner-form.ts`,
   `web/components/settings/acp-runners-panel.tsx`,
   `web/components/settings/acp-runner-modal.tsx`,
+  `web/app/api/admin/router-sidecars/route.ts`,
+  `web/app/api/admin/router-sidecars/[sidecarId]/route.ts` (create/edit + DELETE
+  usage-guard + best-effort stop),
+  `web/lib/acp-runners/sidecar-form.ts`,
+  `web/components/settings/router-sidecars-panel.tsx`,
+  `web/components/settings/sidecar-modal.tsx`,
+  `web/components/settings/add-button.tsx` (shared `/settings` Add button),
   `web/components/chrome/left-rail.tsx`,
   `web/components/chrome/runners-readiness-rail.tsx`,
   `web/app/(app)/settings/page.tsx`.
