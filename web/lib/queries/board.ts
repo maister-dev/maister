@@ -43,7 +43,10 @@ export type CardStatus =
   | "queued"
   | "done"
   | "crashed"
-  | "humanworking";
+  | "humanworking"
+  // M37 (ADR-098): a parked orchestrator (WaitingOnChildren) — distinct from a
+  // normal Running card so the board shows it is blocked on its children.
+  | "waiting";
 export type CardPriority = "high" | "med" | "low";
 
 export interface SpineSegment {
@@ -176,6 +179,7 @@ function runStatusToCard(status: RunStatus): CardStatus {
   if (status === "Pending") return "queued";
   if (status === "Done") return "done";
   if (status === "Crashed") return "crashed";
+  if (status === "WaitingOnChildren") return "waiting";
 
   return "running";
 }

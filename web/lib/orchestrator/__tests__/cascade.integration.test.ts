@@ -317,9 +317,12 @@ describe("cascadeAbandonRunTree (M37 T7.4)", () => {
       expect(payload.runKind).toBe("agent");
     }
 
-    // The freed agent slots let the standalone queued run promote; no orphan
-    // child is left holding a slot.
-    expect(await countLiveRuns(db, "agent")).toBeLessThanOrEqual(2);
+    // The freed agent slots let the standalone queued run promote. Post-cascade
+    // the live agent count is EXACTLY 1 — proving both that promotion actually
+    // happened (the 3 cascaded children no longer count as live; a failed
+    // promote would read 0) AND that no cascaded orphan is left holding a slot
+    // (a still-Running orphan would push this to 2).
+    expect(await countLiveRuns(db, "agent")).toBe(1);
     expect(await statusOf(standalonePending)).toBe("Running");
 
     // Idempotent: a second cascade finds everything terminal → cascades nothing.

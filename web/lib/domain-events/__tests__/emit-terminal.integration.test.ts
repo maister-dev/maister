@@ -167,6 +167,10 @@ describe("T-E5 — paired domain emission at terminal state transitions", () => 
       flowId: ids.flowId,
       runKind: "flow",
       reason: "user",
+      // M37: run-terminal payloads fold the emitting run's parent_run_id (null
+      // for a top-level/parentless run) so the orchestrator resume/auto-launch
+      // consumers can route to the parent.
+      parentRunId: null,
     });
 
     const webhookRows = await db
@@ -194,6 +198,7 @@ describe("T-E5 — paired domain emission at terminal state transitions", () => 
       flowId: ids.flowId,
       runKind: "flow",
       reason: "CHECKPOINT",
+      parentRunId: null,
     });
   });
 

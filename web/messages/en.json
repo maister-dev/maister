@@ -951,6 +951,7 @@
     "launchBlockedShort": "blocked",
     "triaged": "triaged",
     "needsAttention": "Needs you",
+    "waitingOnChildren": "Waiting on children",
     "openRun": "Open run",
     "unconfigured": "no flow",
     "decompositionTitle": "Decomposition ({count})",

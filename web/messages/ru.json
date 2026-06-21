@@ -951,6 +951,7 @@
     "launchBlockedShort": "заблокирована",
     "triaged": "триаж пройден",
     "needsAttention": "Нужен ответ",
+    "waitingOnChildren": "Ждёт дочерние",
     "openRun": "Открыть запуск",
     "unconfigured": "без флоу",
     "decompositionTitle": "Декомпозиция ({count})",

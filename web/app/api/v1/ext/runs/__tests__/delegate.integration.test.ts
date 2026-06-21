@@ -183,6 +183,86 @@ Do the thing.
   return qualifiedId;
 }
 
+// L-1: seeds an agent shipped by a SEPARATE package whose project flow row is
+// untrusted (or disabled). This is the trust contour `resolveEffectiveAgentDefinition`
+// enforces SEPARATELY from the agents-row kill switch (test 4): a catalog-enabled
+// agent whose PACKAGE is untrusted/disabled must still refuse to launch. Returns
+// the package-qualified id. `installedPath` gets its own subtree so the agent
+// `.md` is distinct from test-pkg's.
+async function seedUntrustedPackageAgent(args: {
+  id: string;
+  trustStatus?: "trusted" | "untrusted";
+  enablementState?: "Enabled" | "Disabled";
+}): Promise<string> {
+  const flowRefId = "untrusted-pkg";
+  const qualifiedId = `${flowRefId}:${args.id}`;
+  const installedPath = path.join(agentsRoot, flowRefId);
+
+  await mkdir(path.join(installedPath, "agents"), { recursive: true });
+  await writeFile(
+    path.join(installedPath, "agents", `${args.id}.md`),
+    `---
+name: ${args.id}
+description: d
+workspace: none
+mode: session
+triggers:
+  - manual
+risk_tier: read_only
+---
+Do the thing.
+`,
+    "utf8",
+  );
+
+  const revisionId = randomUUID();
+
+  await pool.query(
+    `INSERT INTO "flow_revisions"
+       ("id", "flow_ref_id", "source", "version_label", "resolved_revision",
+        "manifest_digest", "manifest", "schema_version", "installed_path", "package_status")
+     VALUES ($1, $2, 'github.com/acme/untrusted-pkg', 'v1.0.0', 'rev-untrusted',
+             'digest', '{}'::jsonb, 1, $3, 'Installed')`,
+    [revisionId, flowRefId, installedPath],
+  );
+  await pool.query(
+    `INSERT INTO "flows"
+       ("id", "project_id", "flow_ref_id", "source", "version", "installed_path",
+        "manifest", "schema_version", "enabled_revision_id", "enablement_state",
+        "trust_status", "version_binding")
+     VALUES ($1, $2, $3, 'github.com/acme/untrusted-pkg', 'v1.0.0', $4,
+             '{}'::jsonb, 1, $5, $6, $7, 'pinned')`,
+    [
+      randomUUID(),
+      projectId,
+      flowRefId,
+      installedPath,
+      revisionId,
+      args.enablementState ?? "Enabled",
+      args.trustStatus ?? "untrusted",
+    ],
+  );
+
+  // The catalog row is ENABLED (kill switch OFF) — proving it is the PACKAGE
+  // trust contour, not the agents-row flag, that refuses the launch.
+  await pool.query(
+    `INSERT INTO "agents" ("id", "flow_ref_id", "version_label", "origin", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path", "enabled")
+     VALUES ($1, $2, 'v1.0.0', 'git', $3, 'd', 'none', 'session', '["manual"]'::jsonb, 'read_only', $4, true)`,
+    [
+      qualifiedId,
+      flowRefId,
+      args.id,
+      path.join(installedPath, "agents", `${args.id}.md`),
+    ],
+  );
+  await pool.query(
+    `INSERT INTO "agent_project_links" ("id", "agent_id", "project_id") VALUES ($1, $2, $3)`,
+    [randomUUID(), qualifiedId, projectId],
+  );
+
+  return qualifiedId;
+}
+
 // Seeds an orchestrator parent run (run_kind=agent) + its run-bound token.
 async function seedOrchestratorRun(args: {
   orchestratorAgentId: string;
@@ -420,6 +500,81 @@ describe("POST /api/v1/ext/runs/delegate", () => {
 
     // No child run row was created (count unchanged).
     expect(await countRuns()).toBe(before);
+  });
+
+  it("(4b) trust separation: delegating to an agent whose PACKAGE is untrusted → PRECONDITION, NO child run", async () => {
+    const orchestrator = await seedAgent({ id: "orchestrator" });
+    // Catalog-enabled agent, but its providing package's project flow row is
+    // untrusted — the contour resolveEffectiveAgentDefinition enforces apart from
+    // the agents.enabled kill switch (test 4).
+    const untrusted = await seedUntrustedPackageAgent({
+      id: "untrusted-worker",
+      trustStatus: "untrusted",
+    });
+    const { secret } = await seedOrchestratorRun({
+      orchestratorAgentId: orchestrator,
+      taskId: null,
+    });
+
+    const before = await countRuns();
+
+    const res = await delegatePost(
+      delegateRequest(secret, {
+        target: { agentId: untrusted },
+        mode: "run",
+        prompt: "untrusted package must never launch",
+      }),
+      {},
+    );
+
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { code: string }).code).toBe("PRECONDITION");
+
+    // The launch was refused BEFORE any child run row was inserted.
+    expect(await countRuns()).toBe(before);
+    const childCount = await pool.query(
+      `SELECT count(*)::int AS n FROM "runs" WHERE "agent_id" = $1`,
+      [untrusted],
+    );
+
+    expect(childCount.rows[0].n).toBe(0);
+  });
+
+  it("(4c) trust separation: delegating to an agent whose PACKAGE is Disabled → PRECONDITION, NO child run", async () => {
+    const orchestrator = await seedAgent({ id: "orchestrator" });
+    // Package is trusted but its project flow row is Disabled (not a launchable
+    // enablement state) — the other half of the separately-enforced contour.
+    const disabledPkg = await seedUntrustedPackageAgent({
+      id: "disabled-pkg-worker",
+      trustStatus: "trusted",
+      enablementState: "Disabled",
+    });
+    const { secret } = await seedOrchestratorRun({
+      orchestratorAgentId: orchestrator,
+      taskId: null,
+    });
+
+    const before = await countRuns();
+
+    const res = await delegatePost(
+      delegateRequest(secret, {
+        target: { agentId: disabledPkg },
+        mode: "run",
+        prompt: "disabled package must never launch",
+      }),
+      {},
+    );
+
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { code: string }).code).toBe("PRECONDITION");
+
+    expect(await countRuns()).toBe(before);
+    const childCount = await pool.query(
+      `SELECT count(*)::int AS n FROM "runs" WHERE "agent_id" = $1`,
+      [disabledPkg],
+    );
+
+    expect(childCount.rows[0].n).toBe(0);
   });
 
   it("(5) depth bound: a parent chain already at MAX_DEPTH → CONFIG, no child", async () => {

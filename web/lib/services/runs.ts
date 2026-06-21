@@ -597,7 +597,16 @@ export async function* launchRunStaged(
     const requiredMcpRefs = new Set<string>();
 
     for (const node of compiled.nodes.values()) {
-      if (node.nodeType !== "ai_coding" && node.nodeType !== "judge") {
+      // M37 (ADR-098): an orchestrator inherits the ai_coding capability shape,
+      // so its mcps/skills/restrictions refs are validated AND its `enforcement`
+      // (e.g. strict mcps) is honored at launch exactly like ai_coding — without
+      // this arm the orchestrator additions to enforcement.ts were dead code and
+      // a strict orchestrator silently degraded to instructed.
+      if (
+        node.nodeType !== "ai_coding" &&
+        node.nodeType !== "judge" &&
+        node.nodeType !== "orchestrator"
+      ) {
         continue;
       }
       configuredNodes += 1;

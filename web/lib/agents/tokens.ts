@@ -92,6 +92,22 @@ export async function issueOrchestratorRunToken(args: {
   const { secret, prefix, hash } = generateToken();
   const tokenId = randomUUID();
 
+  // S-2 hygiene: the deterministic name means ONE logical orchestrator token per
+  // run, but a multi-round orchestration re-issues on every wake. Revoke any
+  // prior live token of this name first so at most one is live at a time, rather
+  // than letting N identically-scoped tokens accumulate until the terminal
+  // bulk-revoke. (The token still survives the WaitingOnChildren park — it is
+  // only superseded when the next wake re-issues.)
+  await _db
+    .update(projectTokens)
+    .set({ revoked_at: new Date() })
+    .where(
+      and(
+        eq(projectTokens.name, `orchestrator-run:${args.runId}`),
+        isNull(projectTokens.revoked_at),
+      ),
+    );
+
   await _db.insert(projectTokens).values({
     id: tokenId,
     project_id: args.projectId,

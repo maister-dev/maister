@@ -484,6 +484,30 @@ describe("auto_launch_run_plan consumer", () => {
     expect(await runCount(taskB)).toBe(0);
   });
 
+  // Sibling of (6): the OTHER non-Done terminal. The doc/ADR promise is
+  // "Failed/Abandoned keeps dependents blocked" — an Abandoned blocker (e.g. a
+  // cascade-abandoned or user-discarded child) is non-Done, so the `requires`
+  // success-gate must keep B blocked exactly as a Failed one does.
+  it("(6b) an ABANDONED blocker does NOT release the dependent (success-gate)", async () => {
+    const { parentRunId, orchTaskId } = await seedOrchestrator();
+    const taskA = await seedAsPlanTask({ orchTaskId, title: "A" });
+    const taskB = await seedAsPlanTask({ orchTaskId, title: "B" });
+
+    await addRequires(taskB, taskA);
+
+    // A terminal ABANDONED → its task goes Abandoned. The requires gate keeps B blocked.
+    const event = await emitChildTerminal({
+      parentRunId,
+      childTaskId: taskA,
+      outcome: "Abandoned",
+    });
+
+    await buildAutoLaunchRunPlanConsumer({ db }).handle([event]);
+
+    // B is NOT launched.
+    expect(await runCount(taskB)).toBe(0);
+  });
+
   it("(7) two blockers near-simultaneous: C requires A AND B → launched exactly once", async () => {
     const { parentRunId, orchTaskId } = await seedOrchestrator();
     const taskA = await seedAsPlanTask({ orchTaskId, title: "A" });

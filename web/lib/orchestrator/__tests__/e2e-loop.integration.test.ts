@@ -421,12 +421,15 @@ describe("M37 orchestrator full loop through the real supervisor-client wire", (
 
     expect(await statusOf(runId)).toBe("WaitingOnChildren");
 
-    // createSession was called for the orchestrator (turn 0, no resume).
+    // createSession was called for the orchestrator EXACTLY ONCE (turn 0, no
+    // resume). At this Stage-1 checkpoint the resume create (Stage 3) does not
+    // exist yet, so a second create here would be a leaked/double session spawn
+    // for the same coordinator turn — fail on it deterministically.
     const orchestratorCreates = supervisor
       .createdSessions()
       .filter((s) => s.runId === runId);
 
-    expect(orchestratorCreates.length).toBeGreaterThanOrEqual(1);
+    expect(orchestratorCreates).toHaveLength(1);
     expect(orchestratorCreates[0].isResume).toBe(false);
     // The maister facade token rode the createSession mcpServers payload.
     const facade = orchestratorCreates[0].mcpServers.find(

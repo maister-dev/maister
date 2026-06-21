@@ -2107,12 +2107,17 @@ export async function runGraph(
       await markNodeRunning(nodeAttemptId, db);
 
       // M11c (ADR-032): per-node enforcement gate. For capability-bearing
-      // (ai_coding/judge) nodes, record the resolved verdict snapshot on the
-      // attempt and REFUSE the node before any agent session is spawned when a
-      // strict intent cannot be honored by the resolved agent. The gate runs
-      // BEFORE executeNodeAction → no createSession, so no permission deferred
-      // can leak (3.6). The snapshot is written on BOTH paths (2.2).
-      if (node.nodeType === "ai_coding" || node.nodeType === "judge") {
+      // (ai_coding/judge/orchestrator) nodes, record the resolved verdict
+      // snapshot on the attempt and REFUSE the node before any agent session is
+      // spawned when a strict intent cannot be honored by the resolved agent. The
+      // gate runs BEFORE executeNodeAction → no createSession, so no permission
+      // deferred can leak (3.6). The snapshot is written on BOTH paths (2.2).
+      // M37 (ADR-098): orchestrator inherits the ai_coding enforcement contract.
+      if (
+        node.nodeType === "ai_coding" ||
+        node.nodeType === "judge" ||
+        node.nodeType === "orchestrator"
+      ) {
         const settings = capabilityBearingSettings(
           node.nodeType,
           node.settings,
@@ -2378,6 +2383,10 @@ export async function runGraph(
         // WaitingOnChildren is not cap-counted, so the parked coordinator must
         // not keep a slot. A human/form NeedsInput keeps its slot (an operator
         // is actively expected), so only the orchestrator parks the slot.
+        // Like the run-bound facade token, the node's capability materialization
+        // is INTENTIONALLY left on disk across the park (every NeedsInput pause
+        // does the same) so the resumed coordinator reuses it; run-level GC
+        // reclaims it at termination.
         if (node.nodeType === "orchestrator") {
           await parkOrchestratorSession(
             db,

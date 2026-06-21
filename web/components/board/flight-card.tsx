@@ -37,6 +37,10 @@ export interface FlightCardLabels {
   // accessible name for the whole-card stretched link to the run.
   unconfigured: string;
   needsAttention: string;
+  // M37 (ADR-098): badge for a parked orchestrator (WaitingOnChildren) — it sits
+  // in the InProduction column but is blocked on its run-tree children, not
+  // actively working.
+  waitingOnChildren: string;
   openRun: string;
   // M37 Phase 6 (ADR-098): localized labels for the orchestrator decomposition
   // group rendered under a parent task's flight card.
@@ -60,6 +64,9 @@ const STRIPE: Record<FlightCardData["status"], string> = {
   // M11b: a claimed run reuses the `dev`/accent-4 stripe but the card body
   // makes it unmistakably a manual-takeover surface, not a normal running task.
   humanworking: "bg-accent-3",
+  // M37 (ADR-098): a parked orchestrator — accent-2, distinct from accent-4
+  // Running, so it reads as "blocked on children" not "actively working".
+  waiting: "bg-accent-2",
 };
 
 const AGENT_PILL: Record<FlightCardData["agent"], string> = {
@@ -100,6 +107,7 @@ export function FlightCard({
   const isNeeds = card.status === "needs";
   const isRunning = card.status === "running";
   const isHumanWorking = card.status === "humanworking";
+  const isWaiting = card.status === "waiting";
   const hasLifecycleActions = card.lifecycleActions.length > 0;
   const flowChip = card.flowRef
     ? (FLOW_CHIP[card.flowRef] ?? "text-mute bg-ivory border-line")
@@ -195,6 +203,14 @@ export function FlightCard({
             data-testid="flight-card-needs"
           >
             {labels.needsAttention}
+          </span>
+        ) : null}
+        {isWaiting ? (
+          <span
+            className={clsx(BADGE, "border-line bg-paper text-accent-2")}
+            data-testid="flight-card-waiting"
+          >
+            {labels.waitingOnChildren}
           </span>
         ) : null}
         {card.refused ? (

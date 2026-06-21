@@ -282,7 +282,7 @@ export function capabilityRefIdSetsFromRecords(
  * ai_coding-only field.
  */
 export function firstUnknownCapabilityRef(
-  nodeType: "ai_coding" | "judge",
+  nodeType: "ai_coding" | "judge" | "orchestrator",
   settings:
     | {
         mcps?: NodeMcpsConfig;
@@ -308,7 +308,7 @@ export function firstUnknownCapabilityRef(
     }
   }
 
-  if (nodeType === "ai_coding") {
+  if (nodeType === "ai_coding" || nodeType === "orchestrator") {
     const profile = settings?.settingsProfile;
 
     if (profile !== undefined && !capabilityRefIds.setting.has(profile)) {
@@ -1092,7 +1092,9 @@ function validateNodeSettings(
   }
 
   if (
-    (n.type === "ai_coding" || n.type === "judge") &&
+    (n.type === "ai_coding" ||
+      n.type === "judge" ||
+      n.type === "orchestrator") &&
     n.settings?.enforcement
   ) {
     enforcementTally[n.id] = Object.keys(n.settings.enforcement).length;
@@ -1103,7 +1105,11 @@ function validateNodeSettings(
   // context), skip the check entirely.
   if (capabilityRefIds === undefined) return;
 
-  if (n.type === "ai_coding" || n.type === "judge") {
+  if (
+    n.type === "ai_coding" ||
+    n.type === "judge" ||
+    n.type === "orchestrator"
+  ) {
     const unknown = firstUnknownCapabilityRef(
       n.type,
       n.settings,

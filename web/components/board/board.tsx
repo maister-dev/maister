@@ -105,6 +105,7 @@ export async function Board({
     launchUnavailable: t("launchUnavailable"),
     unconfigured: t("unconfigured"),
     needsAttention: t("needsAttention"),
+    waitingOnChildren: t("waitingOnChildren"),
     openRun: t("openRun"),
     decomposition: decompositionLabels,
   };

@@ -41,6 +41,7 @@ const labels: FlightCardLabels = {
   launchUnavailable: "Unavailable",
   unconfigured: "no flow",
   needsAttention: "Needs you",
+  waitingOnChildren: "Waiting on children",
   openRun: "Open run",
   decomposition: {
     title: (count: number) => `Decomposition (${count})`,
@@ -150,6 +151,25 @@ describe("FlightCard — humanworking takeover surface (M11b)", () => {
     expect(html).not.toContain("Return");
     // The current node label still renders on row 2.
     expect(html).toContain("implement");
+  });
+});
+
+describe("FlightCard — WaitingOnChildren orchestrator (M37, T1.2 affordance)", () => {
+  it("renders a distinct waiting badge + accent-2 stripe, not a plain running card", () => {
+    const html = render(baseCard({ status: "waiting" }));
+
+    // The required distinct affordance: a dedicated badge + label.
+    expect(html).toContain('data-testid="flight-card-waiting"');
+    expect(html).toContain("Waiting on children");
+    // Distinct stripe tone (accent-2), not the accent-4 Running stripe.
+    expect(html).toContain("bg-accent-2");
+  });
+
+  it("a running card shows NO waiting badge (the two are visually distinct)", () => {
+    const html = render(baseCard({ status: "running" }));
+
+    expect(html).not.toContain('data-testid="flight-card-waiting"');
+    expect(html).not.toContain("Waiting on children");
   });
 });
 

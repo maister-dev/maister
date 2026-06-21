@@ -221,18 +221,44 @@ export async function tryStartRun(
   return db.transaction(async (tx: Db) => {
     await takeSchedulerLock(tx);
 
-    const targetRows: Array<{ runKind: string; startedAt: Date }> = await tx
-      .select({ runKind: runs.runKind, startedAt: runs.startedAt })
+    const targetRows: Array<{
+      runKind: string;
+      startedAt: Date;
+      workspaceMode: string | null;
+      rootRunId: string | null;
+    }> = await tx
+      .select({
+        runKind: runs.runKind,
+        startedAt: runs.startedAt,
+        workspaceMode: runs.workspaceMode,
+        rootRunId: runs.rootRunId,
+      })
       .from(runs)
       .where(eq(runs.id, runId));
     const pool = poolForRunKind(targetRows[0]?.runKind ?? "flow");
     const cap = capForPool(pool);
 
+    // M37 Phase 10 (ADR-099): a shared-mode child must NOT flip to Running while
+    // a writer sibling in its run-tree is active — one active writer per shared
+    // tree, else concurrent turns corrupt the single worktree. This is the same
+    // guard promoteNextPending applies; it MUST also gate the direct launch path
+    // (launchAgentRun → tryStartRun), which is how a delegated shared child first
+    // starts. The check rides the same advisory lock, so the sibling-active read
+    // is consistent. A blocked shared child stays Pending and is admitted by
+    // promoteNextPending once the active sibling parks or terminates.
+    const sharedBlocked =
+      targetRows[0]?.workspaceMode === "shared" &&
+      !!targetRows[0]?.rootRunId &&
+      (await sharedWriterSiblingActive(tx, targetRows[0].rootRunId, runId));
+
     const liveCount = await countLiveRuns(tx, pool);
 
-    log.debug({ runId, pool, liveCount, cap }, "tryStartRun cap-check");
+    log.debug(
+      { runId, pool, liveCount, cap, sharedBlocked },
+      "tryStartRun cap-check",
+    );
 
-    if (liveCount < cap) {
+    if (!sharedBlocked && liveCount < cap) {
       const startedRows: Array<{ projectId: string }> = await tx
         .update(runs)
         .set({ status: "Running", startedAt: new Date() })

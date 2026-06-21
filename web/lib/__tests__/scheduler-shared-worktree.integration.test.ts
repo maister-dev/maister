@@ -24,7 +24,7 @@ import {
   it,
 } from "vitest";
 
-import { promoteNextPending } from "@/lib/scheduler";
+import { promoteNextPending, tryStartRun } from "@/lib/scheduler";
 
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
@@ -271,4 +271,39 @@ describe("M37 Phase 10 — shared-worktree write serialization", () => {
     expect(statuses.filter((s) => s === "Running").length).toBe(1);
     expect(statuses.filter((s) => s === "Pending").length).toBe(1);
   }, 60_000);
+
+  // S-1 regression: the serialization guard MUST gate the DIRECT launch path
+  // (launchAgentRun → tryStartRun), not only promoteNextPending. A delegated
+  // shared child first starts through tryStartRun, and with the agent cap NOT
+  // full both shared children would otherwise race straight to Running and
+  // corrupt the single shared worktree. (The prior tests only drove
+  // promoteNextPending, masking this.)
+  it("tryStartRun admits only ONE shared writer per tree (cap not full)", async () => {
+    const root = await insertRoot();
+    const childA = await insertChild({
+      status: "Pending",
+      rootRunId: root,
+      workspaceMode: "shared",
+      startedOffsetMs: -2_000,
+    });
+    const childB = await insertChild({
+      status: "Pending",
+      rootRunId: root,
+      workspaceMode: "shared",
+      startedOffsetMs: -1_000,
+    });
+
+    // The agent cap (default 3) is NOT full, so any block here is the shared-tree
+    // writer guard — not the concurrency cap.
+    const resA = await tryStartRun(childA, { db });
+    const resB = await tryStartRun(childB, { db });
+
+    expect(resA.started).toBe(true);
+    expect(resB.started).toBe(false);
+
+    const statuses = await Promise.all([runStatus(childA), runStatus(childB)]);
+
+    expect(statuses.filter((s) => s === "Running").length).toBe(1);
+    expect(statuses.filter((s) => s === "Pending").length).toBe(1);
+  });
 });

@@ -824,6 +824,65 @@ describe("runReconcileSweep (integration)", () => {
     expect(summary.crashed).toBeGreaterThanOrEqual(1);
   }, 60_000);
 
+  it("re-converges the orchestrator after a mid-cascade crash window: children already Abandoned by the cascade, own terminal flip missing (M-2)", async () => {
+    // M37 (ADR-098) M-2: cancel/abandon cascades the children-first commit and
+    // the orchestrator's OWN terminal flip across TWO transactions. If the
+    // process dies between them, the children are already Abandoned (the cascade
+    // tx committed) but the orchestrator is still parked WaitingOnChildren (its
+    // flip never ran). The reconcile sweep is the crash-window backstop: with no
+    // live session, every child settled (here: ALL Abandoned by the cascade), and
+    // past grace, it must re-converge the coordinator to a terminal state and
+    // leave NO run in the tree holding a slot.
+    const orchestrator = await seedRun({
+      status: "WaitingOnChildren",
+      currentStepId: "coordinate",
+      acpSessionId: "acp-coord-crashwin",
+    });
+
+    await seedWorkspace(orchestrator, "/worktrees/orch-crashwin");
+    await seedNodeAttempt(orchestrator, {
+      nodeId: "coordinate",
+      startedAt: new Date(Date.now() - 600_000), // past the 90s grace
+    });
+    // The mid-cascade partial state: the children-first cascade tx already
+    // landed both children in Abandoned; the orchestrator's own flip is the part
+    // that the crashed process never reached.
+    const childA = await seedChildRun(orchestrator, "Abandoned");
+    const childB = await seedChildRun(orchestrator, "Abandoned");
+
+    const { opts } = makeOpts({
+      worktreePaths: ["/worktrees/orch-crashwin"],
+      liveSessions: [],
+    });
+
+    const summary = await runReconcileSweep(opts);
+
+    // The orchestrator re-converged to a terminal state (Crashed) — the missing
+    // own-flip is now done.
+    const orch = await readRun(orchestrator);
+
+    expect(orch.status).toBe("Crashed");
+    // The terminal flip cleared current_step_id (retained in resume_target_step_id).
+    expect(orch.currentStepId).toBeNull();
+    expect(orch.resumeTargetStepId).toBe("coordinate");
+    expect(summary.crashed).toBeGreaterThanOrEqual(1);
+
+    // No orphan holds a slot: every run in the tree is terminal — the
+    // orchestrator is no longer WaitingOnChildren and the already-Abandoned
+    // children stayed Abandoned, so the whole tree is out of any slot-holding
+    // (live / parked / queued) state.
+    const liveInTree = await pool.query(
+      `SELECT count(*)::int AS n FROM "runs"
+       WHERE ("id" = $1 OR "parent_run_id" = $1)
+         AND "status" IN ('Running','NeedsInput','NeedsInputIdle','HumanWorking','WaitingOnChildren','Pending')`,
+      [orchestrator],
+    );
+
+    expect(liveInTree.rows[0].n).toBe(0);
+    expect((await readRun(childA)).status).toBe("Abandoned");
+    expect((await readRun(childB)).status).toBe("Abandoned");
+  }, 60_000);
+
   it("does NOT crash a parked orchestrator that still has a pending child", async () => {
     const orchestrator = await seedRun({
       status: "WaitingOnChildren",

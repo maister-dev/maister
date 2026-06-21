@@ -260,6 +260,55 @@ describe("loadFlowManifest — capability ref validation (M14 T1.3)", () => {
     ).resolves.toBeTruthy();
   });
 
+  // H-1 (M37, ADR-098): an orchestrator inherits the ai_coding capability shape,
+  // so its refs MUST be validated at manifest load exactly like ai_coding. Before
+  // the fix, validateNodeSettings + firstUnknownCapabilityRef gated on
+  // `ai_coding || judge` only, so an orchestrator's mcps/skills/settingsProfile
+  // were never checked (and the strict-enforcement refusal was dead code).
+  it("orchestrator node — unknown mcp ref → CONFIG (orchestrator cap-ref gate)", async () => {
+    const path = await writeGraph("graph-orch-unknown-mcp.yaml", (m) => {
+      m.compat.engine_min = "1.6.0"; // orchestrator floor
+      m.nodes.push({
+        id: "coordinate",
+        type: "orchestrator",
+        action: { prompt: "Decompose and delegate." },
+        settings: { mcps: ["github"] },
+        transitions: { success: "done" },
+      });
+      m.nodes[1].transitions = { success: "coordinate" };
+    });
+
+    await expectCapabilityRefError(path, {
+      mcp: [], // "github" absent → must throw CONFIG via the orchestrator arm
+      skill: [],
+      restriction: [],
+      setting: [],
+    });
+  });
+
+  it("orchestrator node — unknown settingsProfile ref → CONFIG (ai_coding settingsProfile check inherited)", async () => {
+    const path = await writeGraph("graph-orch-unknown-profile.yaml", (m) => {
+      m.compat.engine_min = "1.6.0";
+      m.nodes.push({
+        id: "coordinate",
+        type: "orchestrator",
+        action: { prompt: "Decompose and delegate." },
+        settings: { settingsProfile: "ghost-profile" },
+        transitions: { success: "done" },
+      });
+      m.nodes[1].transitions = { success: "coordinate" };
+    });
+
+    // settingsProfile is checked only for ai_coding/orchestrator (not judge) —
+    // this exercises the orchestrator arm of that branch specifically.
+    await expectCapabilityRefError(path, {
+      mcp: [],
+      skill: [],
+      restriction: [],
+      setting: ["claude-profile"], // "ghost-profile" absent → CONFIG
+    });
+  });
+
   it("error message names the node id, the kind, and the ref", async () => {
     const path = await writeGraph("graph-named-error.yaml", (m) => {
       m.nodes[0].settings = { mcps: ["ghost-mcp"] };

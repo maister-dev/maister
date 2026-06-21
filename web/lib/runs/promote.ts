@@ -1374,7 +1374,14 @@ export async function promoteChildRunForToken(
 ): Promise<PromoteRunResult> {
   return promoteRun(
     childRunId,
-    { mode: "local_merge" },
+    // M37 (ADR-100) fix: an orchestrator/system promote is AUTONOMOUS — there is
+    // no human-reviewed SHA, so it must set `autoOnReady` exactly like the
+    // delivery-policy auto-promoter (auto-delivery.ts). Without it the
+    // target-drift gate throws PRECONDITION "reviewedTargetCommit is required",
+    // dead-ending BOTH run_promote AND the as-plan auto-promoter. `autoOnReady`
+    // waives ONLY the reviewed-SHA/drift check; the readiness re-gate
+    // (assertEvidenceReady) still runs, so a not-ready child still cannot promote.
+    { mode: "local_merge", autoOnReady: true },
     {
       // sessionUser is never dereferenced for a non-user actor (owner → null and
       // the conflict-assignment is skipped); a placeholder satisfies the shared
