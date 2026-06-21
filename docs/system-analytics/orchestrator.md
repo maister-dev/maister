@@ -286,6 +286,19 @@ flowchart TD
 - **`workspace_mode: shared` with no `root_run_id`** (a top-level run) →
   `MaisterError("CONFIG")` at launch — a shared tree is keyed by the tree root,
   so only a delegated child can join one (ADR-099).
+- **`workspace_mode: shared` with a writable `worktree`** → `MaisterError("CONFIG")`
+  at launch (gated, Phase 2). The shared-tree review/promote ownership model is
+  unspecified: a *reuser* shared child gets no `workspaces` row, so it would
+  finalize `Done` (not `Review`) with an unreviewable / strandable diff. Shared
+  writable mode is fail-closed until that model is designed (`workspace_mode: own`
+  is the default and unaffected; ADR-099).
+- **A run-bound ext token whose orchestrator has TERMINALIZED**
+  (`Done`/`Failed`/`Crashed`/`Abandoned`) → `MaisterError("PRECONDITION")` (HTTP
+  409) on delegate/plan/collect/cancel/promote/rework/message. Every run-bound
+  route re-checks the bound run is non-terminal (`resolveActiveBoundRun`), and the
+  orchestrator's `orchestrator-run:<id>` token is revoked in the
+  abandon/stop/drop/crash cascade — a stale or copied token cannot mutate a
+  terminal tree (ADR-098).
 - **Merge conflict on promote** (`run_promote` or the as-plan auto-promote) →
   `MaisterError("CONFLICT")` (HTTP 409); the child STAYS in `Review`, never
   auto-resolved — a human resolves it, then re-promotes (ADR-100, §8).

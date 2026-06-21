@@ -286,12 +286,18 @@ defined as a string union in `web/lib/errors.ts`.
 >   not resolvable through the project's enabled + trusted catalog (unresolvable /
 >   untrusted delegation target — "resolve+trust" is physically separate from
 >   "launch", and **no child run is created** on refusal); a cross-batch
->   `dependsOn` / `requires` reference outside the plan being written.
+>   `dependsOn` / `requires` reference outside the plan being written; **a run-bound
+>   ext token whose orchestrator has TERMINALIZED** (`Done`/`Failed`/`Crashed`/
+>   `Abandoned`) on any of delegate/plan/collect/cancel/promote/rework/message
+>   (`resolveActiveBoundRun` fail-closed — a stale token cannot mutate a terminal
+>   tree; Codex adversarial review).
 > - **`CONFIG` → HTTP 422** — a flow declaring an `orchestrator` node with
 >   `compat.engine_min < 1.6.0` (engine floor); an over-`max_fanout` /
 >   over-`max_depth` request (bounds, enforced pre-tx); a cyclic task DAG in
 >   `run_plan`; a `strict` path-scope enforcement declaration (the Phase-2 policy
->   gap — refused until [ADR-099](decisions.md#adr-099-persistent-swarm-layer-2--addressable-sessions-star-routed-messaging-worktree-modes-per-agent-read-only) lands).
+>   gap — refused until [ADR-099](decisions.md#adr-099-persistent-swarm-layer-2--addressable-sessions-star-routed-messaging-worktree-modes-per-agent-read-only) lands); a `workspace_mode: shared`
+>   delegation with a writable worktree (gated at launch pending the shared-tree
+>   review-model design; Codex adversarial review).
 > - **`CONFLICT` → HTTP 409** — a concurrent orchestrator resume (two child-settle
 >   events racing the same `WaitingOnChildren → Running` wake); a merge conflict
 >   promoting a reviewed child (`run_promote` or as-plan auto-promote, ADR-100) —

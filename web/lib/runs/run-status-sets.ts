@@ -29,3 +29,9 @@ export const SETTLED_RUN_STATUSES = [
 export function isSettledRunStatus(status: string): boolean {
   return (SETTLED_RUN_STATUSES as readonly string[]).includes(status);
 }
+
+// A run-bound ext token (orchestrator-run) may not mutate a tree whose
+// orchestrator has terminalized (Codex adversarial review, Finding 1).
+export function isTerminalRunStatus(status: string): boolean {
+  return (TERMINAL_RUN_STATUSES as readonly string[]).includes(status);
+}

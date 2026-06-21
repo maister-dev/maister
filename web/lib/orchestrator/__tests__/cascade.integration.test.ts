@@ -50,6 +50,7 @@ vi.mock("@/lib/agents/launch", () => ({
 
 let cascadeAbandonRunTree: typeof import("@/lib/orchestrator/cascade").cascadeAbandonRunTree;
 let countLiveRuns: typeof import("@/lib/scheduler").countLiveRuns;
+let issueOrchestratorRunToken: typeof import("@/lib/agents/tokens").issueOrchestratorRunToken;
 
 let projectId: string;
 let executorId: string;
@@ -71,6 +72,7 @@ beforeAll(async () => {
 
   ({ cascadeAbandonRunTree } = await import("@/lib/orchestrator/cascade"));
   ({ countLiveRuns } = await import("@/lib/scheduler"));
+  ({ issueOrchestratorRunToken } = await import("@/lib/agents/tokens"));
 }, 180_000);
 
 afterAll(async () => {
@@ -411,4 +413,41 @@ describe("cascadeAbandonRunTree (M37 T7.4)", () => {
       expect(await countAbandonedEvents(id)).toBe(1);
     }
   }, 60_000);
+
+  // Finding 1 (Codex adversarial review): the orchestrator's run-bound ext token
+  // must be revoked as part of teardown — abandon/stop/drop/crash all route
+  // through the cascade, but the normal-exit revoke (runner-graph) does not fire
+  // on these paths. Without this, a stale token would stay usable for its TTL.
+  it("revokes the orchestrator's run-bound token as part of the teardown", async () => {
+    const orchTaskId = await seedTask("manual");
+    const orchestratorRunId = await seedOrchestrator(orchTaskId);
+
+    await issueOrchestratorRunToken({
+      projectId,
+      runId: orchestratorRunId,
+      db,
+    });
+
+    const liveBefore = await pool.query(
+      `SELECT count(*)::int AS n FROM "project_tokens"
+         WHERE "name" = $1 AND "revoked_at" IS NULL`,
+      [`orchestrator-run:${orchestratorRunId}`],
+    );
+
+    expect(liveBefore.rows[0].n).toBe(1);
+
+    await cascadeAbandonRunTree(orchestratorRunId, orchTaskId, "user_stopped", {
+      db,
+    });
+
+    // The token is revoked even though this orchestrator had no children to
+    // cascade (the revoke runs before the nothing-to-cascade early-return).
+    const liveAfter = await pool.query(
+      `SELECT count(*)::int AS n FROM "project_tokens"
+         WHERE "name" = $1 AND "revoked_at" IS NULL`,
+      [`orchestrator-run:${orchestratorRunId}`],
+    );
+
+    expect(liveAfter.rows[0].n).toBe(0);
+  });
 });

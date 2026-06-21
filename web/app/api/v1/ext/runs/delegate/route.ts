@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 import { z } from "zod";
@@ -10,6 +10,7 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { orchestratorMaxDepth } from "@/lib/instance-config";
+import { resolveActiveBoundRun } from "@/lib/runs/bound-run";
 import { addTaskRelation } from "@/lib/social/relations";
 import { createTask } from "@/lib/services/tasks";
 import {
@@ -161,29 +162,24 @@ export async function POST(
 
       const agentId = body.target.agentId;
 
-      // Load the parent run scoped to the token's project — a missing/foreign
-      // parent is an unconfigured delegation surface.
-      const parentRows = await db
-        .select({
-          id: runs.id,
-          taskId: runs.taskId,
-          rootRunId: runs.rootRunId,
-        })
-        .from(runs)
-        .where(
-          and(eq(runs.id, parentRunId), eq(runs.projectId, ctx.projectId)),
-        );
-      const parent = parentRows[0];
+      // Finding 1 (Codex adversarial review): resolve the bound orchestrator
+      // scoped to the token's project AND fail closed if it is missing or has
+      // terminalized — a stale run-bound token must not delegate under a
+      // terminal tree (token revocation is best-effort on the normal exit path).
+      const boundRes = await resolveActiveBoundRun(
+        db,
+        parentRunId,
+        ctx.projectId,
+      );
 
-      if (!parent) {
+      if (!boundRes.ok) {
         return NextResponse.json(
-          {
-            code: "PRECONDITION",
-            message: "bound parent run not found in project",
-          },
-          { status: httpStatusForExtCode("PRECONDITION") },
+          { code: boundRes.code, message: boundRes.message },
+          { status: httpStatusForExtCode(boundRes.code) },
         );
       }
+
+      const parent = boundRes.run;
 
       const rootRunId = parent.rootRunId ?? parent.id;
 

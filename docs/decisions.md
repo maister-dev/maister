@@ -7560,9 +7560,14 @@ roles. Migration 0060 (persistent/addressable_key + workspace_mode).
    orchestrator node (audit).
 4. **Worktree allocation modes.** `workspace_mode: own | shared` on the delegation
    input, snapshotted on the child run. `own` (default) = today's per-run worktree
-   from the base branch; `shared` = N children point at one pre-allocated tree, with
-   **serialized writers** (an orchestrator-held lock; the L3 dirty-watchdog becomes
-   per-shared-tree, not per-run).
+   from the base branch. `shared` (N children → one pre-allocated tree) is **GATED
+   at launch** (`MaisterError("CONFIG")`, Phase 2) pending the shared-tree
+   review/promote ownership design (Codex adversarial review): a *reuser* shared
+   child has no `workspaces` row, so finalization lands it `Done` not `Review` (an
+   unreviewable / strandable diff). The serialized-writer guard (one active writer
+   per shared tree, enforced in BOTH `tryStartRun` and `promoteNextPending`) and the
+   idempotent shared-allocation path stay in code but dormant for that redesign;
+   `own` is unaffected.
 5. **Per-agent permissions.** A `workspace: repo_read` child reuses the L1/L2/L3
    read-only enforcement (supervisor `readOnlySession` inline arbitration +
    materialized deny rules + dirty-watchdog quarantine; ADR-041 untouched).

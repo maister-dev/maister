@@ -3,6 +3,7 @@ import "server-only";
 import { and, inArray } from "drizzle-orm";
 import pino from "pino";
 
+import { revokeOrchestratorRunTokensForRun } from "@/lib/agents/tokens";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
@@ -66,6 +67,18 @@ export async function cascadeAbandonRunTree(
   opts: CascadeAbandonOptions = {},
 ): Promise<CascadeAbandonResult> {
   const database = opts.db ?? getDb();
+
+  // Finding 1 (Codex adversarial review): revoke the orchestrator's run-bound
+  // ext token as part of its teardown. abandon / stop / drop / reconcile-crash
+  // all route through this cascade, but the normal-exit revoke
+  // (runner-graph.ts) does NOT fire on these paths — so without this a stale
+  // `orchestrator-run:<id>` token would stay usable under the terminal tree for
+  // its TTL. Best-effort + idempotent (revoke-by-name); a no-op for a run that
+  // never held an orchestrator token. Runs before the nothing-to-cascade
+  // early-return so a childless orchestrator's token is still revoked.
+  await revokeOrchestratorRunTokensForRun(orchestratorRunId, database).catch(
+    () => {},
+  );
 
   const subtreeIds = await getRunSubtreeIds(orchestratorRunId, database);
   const unlaunchedTaskIds = orchestratorTaskId

@@ -8,6 +8,7 @@ import { sendAgentMessage } from "@/lib/agents/launch";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
+import { resolveActiveBoundRun } from "@/lib/runs/bound-run";
 import { handleExt, httpStatusForExtCode } from "@/lib/tokens/ext-handler";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches lib/services/tasks.ts).
@@ -81,27 +82,25 @@ export async function POST(
         );
       }
 
-      // Derive the caller orchestrator's tree root (root_run_id, else its own
-      // id). Addressing is SCOPED to the caller's own tree — a persistent child
-      // in another tree is invisible (resolved to PRECONDITION below).
-      const callerRows = await db
-        .select({ id: runs.id, rootRunId: runs.rootRunId })
-        .from(runs)
-        .where(
-          and(eq(runs.id, callerRunId), eq(runs.projectId, ctx.projectId)),
-        );
-      const caller = callerRows[0];
+      // Finding 1 (Codex adversarial review): resolve the caller orchestrator
+      // scoped to the token's project AND fail closed if it is missing or has
+      // terminalized — a stale run-bound token must not re-message children under
+      // a terminal tree. Addressing is SCOPED to the caller's own tree (root_run_id,
+      // else its own id) — a persistent child in another tree is invisible.
+      const boundRes = await resolveActiveBoundRun(
+        db,
+        callerRunId,
+        ctx.projectId,
+      );
 
-      if (!caller) {
+      if (!boundRes.ok) {
         return NextResponse.json(
-          {
-            code: "PRECONDITION",
-            message: "bound orchestrator run not found in project",
-          },
-          { status: httpStatusForExtCode("PRECONDITION") },
+          { code: boundRes.code, message: boundRes.message },
+          { status: httpStatusForExtCode(boundRes.code) },
         );
       }
 
+      const caller = boundRes.run;
       const treeRoot = caller.rootRunId ?? caller.id;
 
       // Resolve the persistent child by key OR id, within the caller's tree and

@@ -8,6 +8,7 @@ import { z } from "zod";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
+import { resolveActiveBoundRun } from "@/lib/runs/bound-run";
 import { handleExt, httpStatusForExtCode } from "@/lib/tokens/ext-handler";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches lib/services/tasks.ts).
@@ -174,6 +175,22 @@ export async function POST(
             message: "collect requires a run-bound orchestrator token",
           },
           { status: httpStatusForExtCode("PRECONDITION") },
+        );
+      }
+
+      // Finding 1 (Codex adversarial review): fail closed if the bound
+      // orchestrator has terminalized — a stale run-bound token must not read its
+      // children's results under a terminal tree.
+      const boundRes = await resolveActiveBoundRun(
+        db,
+        parentRunId,
+        ctx.projectId,
+      );
+
+      if (!boundRes.ok) {
+        return NextResponse.json(
+          { code: boundRes.code, message: boundRes.message },
+          { status: httpStatusForExtCode(boundRes.code) },
         );
       }
 

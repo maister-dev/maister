@@ -577,6 +577,47 @@ describe("POST /api/v1/ext/runs/delegate", () => {
     expect(childCount.rows[0].n).toBe(0);
   });
 
+  // Finding 1 (Codex adversarial review): a run-bound token outlives its
+  // orchestrator on abandon/crash (revocation is best-effort on the normal-exit
+  // path only). Every run-bound ext route MUST re-check the bound run is still
+  // active via resolveActiveBoundRun, so a stale/copied token cannot mutate a
+  // TERMINAL tree. delegate exercises the shared guard for all 7 routes.
+  it("(4d) Finding 1: a token whose orchestrator has TERMINALIZED → PRECONDITION, NO child", async () => {
+    const orchestrator = await seedAgent({ id: "orchestrator" });
+    const worker = await seedAgent({ id: "worker" });
+    const { runId: parentRunId, secret } = await seedOrchestratorRun({
+      orchestratorAgentId: orchestrator,
+      taskId: null,
+    });
+
+    // The orchestrator reaches a terminal state — its run-bound token is NOT
+    // revoked on this path, so the route's active-parent guard is the defense.
+    await pool.query(
+      `UPDATE "runs" SET "status" = 'Abandoned', "ended_at" = now() WHERE "id" = $1`,
+      [parentRunId],
+    );
+
+    const before = await countRuns();
+
+    const res = await delegatePost(
+      delegateRequest(secret, {
+        target: { agentId: worker },
+        mode: "run",
+        prompt: "a stale token must not delegate under a terminal tree",
+      }),
+      {},
+    );
+
+    expect(res.status).toBe(409);
+    const json = (await res.json()) as { code: string; message: string };
+
+    expect(json.code).toBe("PRECONDITION");
+    expect(json.message).toContain("no longer active");
+
+    // Fail-closed: no child run created under the terminal tree.
+    expect(await countRuns()).toBe(before);
+  });
+
   it("(5) depth bound: a parent chain already at MAX_DEPTH → CONFIG, no child", async () => {
     process.env.MAISTER_ORCHESTRATOR_MAX_DEPTH = "2";
 

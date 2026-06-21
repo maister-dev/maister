@@ -567,6 +567,22 @@ export async function launchAgentRun(
     );
   }
 
+  // Codex adversarial review (Finding 2): the shared WRITABLE-worktree
+  // review/promote ownership model is under-specified. A reuser shared child
+  // gets NO `workspaces` row (the allocator owns the UNIQUE worktree_path), so
+  // finalizeAgentRun lands it Done (not Review) and its diff is never
+  // individually reviewed or promotable — it can be stranded or merged via a
+  // sibling's promote. Until that model is designed, refuse shared mode for a
+  // WRITABLE worktree at launch (fail-closed). This is opt-in Part-B swarm L2;
+  // `workspaceMode=own` (default) and read-only (`repo_read`) children are
+  // unaffected. The shared-allocation path below stays dormant for the redesign.
+  if (input.workspaceMode === "shared" && workspace === "worktree") {
+    throw new MaisterError(
+      "CONFIG",
+      "workspaceMode=shared with a writable worktree is not yet supported — the shared-tree review/promote model is unspecified; use workspaceMode=own",
+    );
+  }
+
   // Fast dedup pre-check before any side effect; the partial unique index
   // on (agent_id, trigger_event_id) stays the authoritative backstop.
   if (input.trigger.eventId != null) {

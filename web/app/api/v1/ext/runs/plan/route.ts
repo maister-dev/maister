@@ -14,6 +14,7 @@ import {
   orchestratorMaxDepth,
   orchestratorMaxFanout,
 } from "@/lib/instance-config";
+import { resolveActiveBoundRun } from "@/lib/runs/bound-run";
 import { addTaskRelation } from "@/lib/social/relations";
 import { createTask } from "@/lib/services/tasks";
 import {
@@ -156,6 +157,22 @@ export async function POST(
             message: "run_plan requires a run-bound orchestrator token",
           },
           { status: httpStatusForExtCode("PRECONDITION") },
+        );
+      }
+
+      // Finding 1 (Codex adversarial review): fail closed if the bound
+      // orchestrator has terminalized — a stale run-bound token must not write a
+      // new task-DAG under a terminal tree.
+      const boundRes = await resolveActiveBoundRun(
+        db,
+        parentRunId,
+        ctx.projectId,
+      );
+
+      if (!boundRes.ok) {
+        return NextResponse.json(
+          { code: boundRes.code, message: boundRes.message },
+          { status: httpStatusForExtCode(boundRes.code) },
         );
       }
 

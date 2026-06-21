@@ -7,6 +7,7 @@ import { z } from "zod";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
+import { resolveActiveBoundRun } from "@/lib/runs/bound-run";
 import { promoteChildRunForToken } from "@/lib/runs/promote";
 import { handleExt, httpStatusForExtCode } from "@/lib/tokens/ext-handler";
 
@@ -66,6 +67,22 @@ export async function POST(
             message: "promote requires a run-bound orchestrator token",
           },
           { status: httpStatusForExtCode("PRECONDITION") },
+        );
+      }
+
+      // Finding 1 (Codex adversarial review): fail closed if the bound
+      // orchestrator has terminalized — a stale run-bound token must not promote
+      // children under a terminal tree.
+      const boundRes = await resolveActiveBoundRun(
+        db,
+        parentRunId,
+        ctx.projectId,
+      );
+
+      if (!boundRes.ok) {
+        return NextResponse.json(
+          { code: boundRes.code, message: boundRes.message },
+          { status: httpStatusForExtCode(boundRes.code) },
         );
       }
 
