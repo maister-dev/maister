@@ -274,7 +274,10 @@ async function makeRunningWithSession(
   );
 }
 
-async function reviewEventCount(runId: string, parentRunId: string): Promise<number> {
+async function reviewEventCount(
+  runId: string,
+  parentRunId: string,
+): Promise<number> {
   const r = await pool.query(
     `SELECT count(*)::int AS n FROM "domain_events"
        WHERE "run_id" = $1 AND "kind" = 'run.review'

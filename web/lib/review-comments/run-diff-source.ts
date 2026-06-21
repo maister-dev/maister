@@ -8,11 +8,11 @@ import type {
   ReviewCommentThread,
 } from "@/lib/review-comments/service";
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
-import { projects, workspaces } from "@/lib/db/schema";
+import { projects, runs, workspaces } from "@/lib/db/schema";
 import { filterDiffByPath, prepareDiff } from "@/lib/diff/prepare";
 import { MaisterError } from "@/lib/errors";
 import { computePlacement } from "@/lib/review-comments/anchor";
@@ -66,19 +66,79 @@ export function reviewCommentScopeOrDefault(
   throw new MaisterError("CONFIG", `unsupported review-comment scope: ${raw}`);
 }
 
+// M37 (ADR-101): resolve the shared TREE workspace for a writable shared child
+// (READ path). A shared writable tree is ONE git worktree owned by the ALLOCATOR
+// child's `workspaces` row; a REUSER child of the same tree (`root_run_id`)
+// carries NO row of its own. Find the allocator's row by joining `runs` on
+// `(root_run_id, workspace_mode='shared', agent_workspace='worktree')` so the
+// gate-diff renders the one shared diff. No FOR UPDATE — read-only.
+async function resolveSharedTreeWorkspaceForRead(
+  dbh: NodePgDatabase,
+  rootRunId: string,
+): Promise<WorkspaceRow | undefined> {
+  const rows = await dbh
+    .select()
+    .from(workspaces)
+    .innerJoin(runs, eq(runs.id, workspaces.runId))
+    .where(
+      and(
+        eq(runs.rootRunId, rootRunId),
+        eq(runs.workspaceMode, "shared"),
+        eq(runs.agentWorkspace, "worktree"),
+      ),
+    );
+
+  return rows[0]?.workspaces;
+}
+
 async function loadReviewDiffRows(
   dbh: NodePgDatabase,
   run: RunDiffSourceRef,
 ): Promise<ReviewDiffRows> {
-  const [workspaceRows, projectRows] = await Promise.all([
-    dbh.select().from(workspaces).where(eq(workspaces.runId, run.id)),
+  // RunDiffSourceRef carries only id+projectId — load the run row to learn
+  // whether it is a shared writable agent child (a reuser owns no workspaces
+  // row of its own → tree-resolve), vs an own/scratch/flow run (run-id lookup).
+  const runRows = await dbh
+    .select({
+      runKind: runs.runKind,
+      workspaceMode: runs.workspaceMode,
+      agentWorkspace: runs.agentWorkspace,
+      rootRunId: runs.rootRunId,
+    })
+    .from(runs)
+    .where(eq(runs.id, run.id));
+  const runRow = runRows[0];
+  const isSharedTreeChild =
+    runRow?.runKind === "agent" &&
+    runRow.workspaceMode === "shared" &&
+    runRow.agentWorkspace === "worktree" &&
+    runRow.rootRunId !== null;
+
+  const [workspace, projectRows] = await Promise.all([
+    isSharedTreeChild
+      ? resolveSharedTreeWorkspaceForRead(dbh, runRow.rootRunId as string)
+      : dbh
+          .select()
+          .from(workspaces)
+          .where(eq(workspaces.runId, run.id))
+          .then((rows) => rows[0]),
     dbh.select().from(projects).where(eq(projects.id, run.projectId)),
   ]);
-  const workspace = workspaceRows[0];
   const project = projectRows[0];
 
   if (!workspace) {
     throw new MaisterError("PRECONDITION", `workspace not found: ${run.id}`);
+  }
+  if (isSharedTreeChild) {
+    log.debug(
+      {
+        runId: run.id,
+        rootRunId: runRow.rootRunId,
+        workspaceId: workspace.id,
+        worktreePath: workspace.worktreePath,
+      },
+      "[review-diff] resolved shared tree workspace for reuser child",
+    );
   }
   if (workspace.removedAt) {
     throw new MaisterError(

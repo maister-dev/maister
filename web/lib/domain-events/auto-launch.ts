@@ -83,6 +83,7 @@ async function autoPromoteAsPlanChild(
       launchMode: runs.launchMode,
       projectId: runs.projectId,
       status: runs.status,
+      rootRunId: runs.rootRunId,
     })
     .from(runs)
     .where(eq(runs.id, event.runId));
@@ -104,6 +105,29 @@ async function autoPromoteAsPlanChild(
       "auto-launch: as-plan child auto-promoted on Review",
     );
   } catch (err) {
+    // T13 (ADR-101): the promote-time settled-gate (T9) refuses a shared-tree
+    // promote with PRECONDITION while ANY shared sibling is still writable. That
+    // is the BENIGN "not yet — wait for the last sibling" path: the LAST
+    // sibling's run.review drives the single tree-promote. Log it distinctly (a
+    // debug, not a warn) so it never reads as a real failure; every other
+    // refusal stays a warn.
+    if (
+      isMaisterError(err) &&
+      err.code === "PRECONDITION" &&
+      err.message.startsWith("shared-tree promote blocked")
+    ) {
+      log.debug(
+        {
+          childRunId: event.runId,
+          rootRunId: child.rootRunId ?? null,
+          reason: "shared-tree not settled",
+        },
+        "auto-launch: shared-tree not settled — waiting for the last sibling",
+      );
+
+      return;
+    }
+
     log.warn(
       {
         eventId: event.id,

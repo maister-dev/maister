@@ -47,19 +47,23 @@ import { listThreads } from "@/lib/review-comments/service";
 
 type Row = Record<string, unknown>;
 
-const dbState: { workspaces: Row[]; projects: Row[] } = {
+const dbState: { runs: Row[]; workspaces: Row[]; projects: Row[] } = {
+  runs: [],
   workspaces: [],
   projects: [],
 };
 
 // Minimal drizzle-shaped fake: table identity is resolved through the real
-// schema objects, mirroring the route tests' fake.
+// schema objects, mirroring the route tests' fake. `loadReviewDiffRows` now
+// reads the `runs` row first (to detect a shared writable agent child); the
+// default fixture is an `own` run so the run-id workspace lookup is preserved.
 const fakeDb = {
   select: () => ({
     from: (table: unknown) => ({
       where: async () => {
-        const { workspaces, projects } = await import("@/lib/db/schema");
+        const { runs, workspaces, projects } = await import("@/lib/db/schema");
 
+        if (table === runs) return dbState.runs;
         if (table === workspaces) return dbState.workspaces;
         if (table === projects) return dbState.projects;
         throw new Error("unexpected table");
@@ -150,6 +154,15 @@ function thread(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  dbState.runs = [
+    {
+      id: "run-1",
+      runKind: "flow",
+      workspaceMode: "own",
+      agentWorkspace: null,
+      rootRunId: null,
+    },
+  ];
   dbState.workspaces = [
     {
       id: "ws-1",

@@ -5,7 +5,20 @@ import type { RemoveOwnedWorktreeArgs } from "@/lib/worktree";
 
 import { access } from "node:fs/promises";
 
-import { and, eq, inArray, isNull, isNotNull, lte, or } from "drizzle-orm";
+import {
+  and,
+  eq,
+  exists,
+  inArray,
+  isNull,
+  isNotNull,
+  lte,
+  notExists,
+  notInArray,
+  or,
+  sql,
+} from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
@@ -14,6 +27,7 @@ import { gcAgeDays, gcArchivePush, worktreesRoot } from "@/lib/instance-config";
 import { deleteRunCheckpointRefs } from "@/lib/flows/graph/workspace-checkpoint";
 import { preserveWorktree } from "@/lib/gc/preserve";
 import { removeOwnedWorktree } from "@/lib/worktree";
+import { TERMINAL_RUN_STATUSES } from "@/lib/runs/run-status-sets";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { projects, runs, workspaces } = schemaModule as unknown as Record<
@@ -70,6 +84,7 @@ type CandidateRow = {
   branch: string;
   runId: string;
   projectId: string;
+  rootRunId: string | null;
 };
 
 // Default §3.3 recovery probe: does the worktree path still exist on disk?
@@ -126,6 +141,36 @@ async function runWithConcurrency<T>(
 async function loadCandidates(db: Db, now: Date): Promise<CandidateRow[]> {
   const endedCutoff = new Date(now.getTime() - gcAgeDays() * 86_400_000);
 
+  // T16 (ADR-101): a shared writable tree is ONE worktree owned by the
+  // ALLOCATOR child's `workspaces` row; N reuser siblings of the same
+  // orchestrator tree (root_run_id) write into it but own no row. The owning
+  // run terminating does NOT make the worktree collectable while a sibling is
+  // still writing — collecting it would pull the directory out from under a
+  // live agent. So a shared-writable allocator is EXCLUDED while any shared
+  // sibling of its tree is still non-terminal; once every shared sibling is
+  // terminal the workspace becomes a candidate. Non-shared workspaces are
+  // unaffected (the OR short-circuits on the first leg).
+  const sibling = alias(runs, "shared_sibling");
+  const treeNotBlocked = or(
+    notInArray(runs.workspaceMode, ["shared"]),
+    isNull(runs.workspaceMode),
+    isNull(runs.rootRunId),
+    notInArray(runs.agentWorkspace, ["worktree"]),
+    notExists(
+      db
+        .select({ one: sibling.id })
+        .from(sibling)
+        .where(
+          and(
+            eq(sibling.rootRunId, runs.rootRunId),
+            eq(sibling.workspaceMode, "shared"),
+            eq(sibling.agentWorkspace, "worktree"),
+            notInArray(sibling.status, [...TERMINAL_RUN_STATUSES]),
+          ),
+        ),
+    ),
+  );
+
   const rows = await db
     .select({
       workspaceId: workspaces.id,
@@ -134,6 +179,7 @@ async function loadCandidates(db: Db, now: Date): Promise<CandidateRow[]> {
       branch: workspaces.branch,
       runId: workspaces.runId,
       projectId: workspaces.projectId,
+      rootRunId: runs.rootRunId,
     })
     .from(workspaces)
     .innerJoin(runs, eq(runs.id, workspaces.runId))
@@ -151,11 +197,86 @@ async function loadCandidates(db: Db, now: Date): Promise<CandidateRow[]> {
             lte(runs.endedAt, endedCutoff),
           ),
         ),
+        treeNotBlocked,
       ),
     )
     .limit(PER_TICK_LIMIT);
 
   return rows;
+}
+
+// T16 observability: emit one debug line per workspace that WOULD be due but is
+// held back solely by the shared-tree guard (its owning shared-writable
+// allocator is terminal/past-deadline while ≥1 shared sibling of the same tree
+// is still non-terminal). Reports the live-sibling count. Best-effort — never
+// blocks the sweep.
+async function logTreeBlockedSkips(db: Db, now: Date): Promise<void> {
+  const endedCutoff = new Date(now.getTime() - gcAgeDays() * 86_400_000);
+  const sibling = alias(runs, "blocking_sibling");
+
+  // Live-sibling predicate, reused as both the COUNT column (scalar subquery)
+  // and the EXISTS row-gate. Hand-built `db.select().from(sibling)` subqueries
+  // each emit their own `from "runs" "blocking_sibling"` in their own scope, so
+  // the shared alias name is safe (unlike `$count`, which mis-nests the alias).
+  const liveSiblingWhere = and(
+    eq(sibling.rootRunId, runs.rootRunId),
+    eq(sibling.workspaceMode, "shared"),
+    eq(sibling.agentWorkspace, "worktree"),
+    notInArray(sibling.status, [...TERMINAL_RUN_STATUSES]),
+  );
+  const countSubquery = db
+    .select({ c: sql<number>`count(*)::int` })
+    .from(sibling)
+    .where(liveSiblingWhere);
+  const presenceSubquery = db
+    .select({ one: sql`1` })
+    .from(sibling)
+    .where(liveSiblingWhere);
+
+  const blocked = await db
+    .select({
+      workspaceId: workspaces.id,
+      rootRunId: runs.rootRunId,
+      blockingSiblingCount: sql<number>`(${countSubquery})`,
+    })
+    .from(workspaces)
+    .innerJoin(runs, eq(runs.id, workspaces.runId))
+    .where(
+      and(
+        isNull(workspaces.removedAt),
+        inArray(runs.status, ["Abandoned", "Done"]),
+        eq(runs.workspaceMode, "shared"),
+        eq(runs.agentWorkspace, "worktree"),
+        isNotNull(runs.rootRunId),
+        or(
+          and(
+            isNotNull(workspaces.scheduledRemovalAt),
+            lte(workspaces.scheduledRemovalAt, now),
+          ),
+          and(
+            isNull(workspaces.scheduledRemovalAt),
+            lte(runs.endedAt, endedCutoff),
+          ),
+        ),
+        exists(presenceSubquery),
+      ),
+    )
+    .limit(PER_TICK_LIMIT);
+
+  for (const row of blocked as Array<{
+    workspaceId: string;
+    rootRunId: string | null;
+    blockingSiblingCount: number;
+  }>) {
+    log.debug(
+      {
+        workspaceId: row.workspaceId,
+        rootRunId: row.rootRunId,
+        blockingSiblingCount: Number(row.blockingSiblingCount),
+      },
+      "[gc] shared-tree workspace held back — non-terminal sibling(s) still writing",
+    );
+  }
 }
 
 // Graceful workspace GC (Codex F1: preserve-then-prune). For each past-deadline
@@ -193,6 +314,17 @@ export async function runWorkspaceGcSweep(
   };
 
   const candidates = await loadCandidates(db, now());
+
+  // Best-effort observability: report shared-tree workspaces held back by a
+  // still-writing sibling. A failure here must never block the sweep.
+  try {
+    await logTreeBlockedSkips(db, now());
+  } catch (err) {
+    log.warn(
+      { err: err instanceof Error ? err.message : String(err) },
+      "[gc] shared-tree skip diagnostics failed (non-fatal)",
+    );
+  }
 
   log.info({ scanned: candidates.length }, "workspace GC sweep start");
 

@@ -227,21 +227,82 @@ async function loadLastNodeCheckpointRef(
   return rows[0]?.checkpointRef ?? null;
 }
 
+// M37 (ADR-101): resolve the shared TREE workspace for a writable shared child
+// (READ path). A shared writable tree is ONE git worktree owned by the ALLOCATOR
+// child's `workspaces` row; a REUSER child of the same tree (`root_run_id`)
+// carries NO row of its own. Find the allocator's row by joining `runs` on
+// `(root_run_id, workspace_mode='shared', agent_workspace='worktree')` so every
+// shared child renders the one shared diff. No FOR UPDATE — read-only.
+async function resolveSharedTreeWorkspaceForRead(
+  db: Db,
+  run: { rootRunId?: string | null },
+) {
+  if (!run.rootRunId) {
+    throw new MaisterError(
+      "PRECONDITION",
+      "shared-tree diff: run has no root_run_id",
+    );
+  }
+
+  const rows = await db
+    .select()
+    .from(workspaces)
+    .innerJoin(runs, eq(runs.id, workspaces.runId))
+    .where(
+      and(
+        eq(runs.rootRunId, run.rootRunId),
+        eq(runs.workspaceMode, "shared"),
+        eq(runs.agentWorkspace, "worktree"),
+      ),
+    );
+
+  return rows[0]?.workspaces ?? null;
+}
+
 // The run is already loaded + authorized by the caller; this only fetches the
 // workspace + project (no redundant run round-trip).
 async function loadFlowDiffRows(
   db: Db,
-  run: { id: string; projectId: string },
+  run: {
+    id: string;
+    projectId: string;
+    runKind?: string;
+    workspaceMode?: string | null;
+    agentWorkspace?: string | null;
+    rootRunId?: string | null;
+  },
 ) {
-  const [workspaceRows, projectRows] = await Promise.all([
-    db.select().from(workspaces).where(eq(workspaces.runId, run.id)),
+  const isSharedTreeChild =
+    run.runKind === "agent" &&
+    run.workspaceMode === "shared" &&
+    run.agentWorkspace === "worktree" &&
+    run.rootRunId != null;
+
+  const [workspace, projectRows] = await Promise.all([
+    isSharedTreeChild
+      ? resolveSharedTreeWorkspaceForRead(db, run)
+      : db
+          .select()
+          .from(workspaces)
+          .where(eq(workspaces.runId, run.id))
+          .then((rows: any[]) => rows[0] ?? null),
     db.select().from(projects).where(eq(projects.id, run.projectId)),
   ]);
-  const workspace = workspaceRows[0];
   const project = projectRows[0];
 
   if (!workspace) {
     throw new MaisterError("PRECONDITION", `workspace not found: ${run.id}`);
+  }
+  if (isSharedTreeChild) {
+    log.debug(
+      {
+        runId: run.id,
+        rootRunId: run.rootRunId,
+        workspaceId: workspace.id,
+        worktreePath: workspace.worktreePath,
+      },
+      "[diff] resolved shared tree workspace for reuser child",
+    );
   }
   if (workspace.removedAt) {
     throw new MaisterError(

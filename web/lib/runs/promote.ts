@@ -2,7 +2,7 @@ import "server-only";
 
 import { randomUUID } from "node:crypto";
 
-import { and, eq } from "drizzle-orm";
+import { and, count, eq, notInArray } from "drizzle-orm";
 import pino from "pino";
 
 import {
@@ -31,6 +31,7 @@ import {
   type StoredDeliveryPolicy,
 } from "@/lib/runs/delivery-policy";
 import { selectPrAdapter } from "@/lib/runs/pr-adapter";
+import { SETTLED_RUN_STATUSES } from "@/lib/runs/run-status-sets";
 import { detectProvider, readRemoteOrigin } from "@/lib/repo-source";
 import {
   branchExists,
@@ -236,6 +237,29 @@ async function loadPromotionWorkspaceForUpdate(db: Db, run: any): Promise<any> {
   }
 
   return loadWorkspaceForUpdate(db, run.id);
+}
+
+// M37 (ADR-101): the settled-gate predicate — count shared siblings of a tree NOT
+// in SETTLED_RUN_STATUSES (terminal + Review), i.e. still in a writable status.
+// Used at BOTH promote-time guards (the claim-tx gate AND the finalize-tx re-check)
+// so the two can never drift.
+async function countUnsettledSharedSiblings(
+  db: Db,
+  rootRunId: string,
+): Promise<number> {
+  const rows = await db
+    .select({ c: count() })
+    .from(runs)
+    .where(
+      and(
+        eq(runs.rootRunId, rootRunId),
+        eq(runs.workspaceMode, "shared"),
+        eq(runs.agentWorkspace, "worktree"),
+        notInArray(runs.status, [...SETTLED_RUN_STATUSES]),
+      ),
+    );
+
+  return Number(rows[0]?.c ?? 0);
 }
 
 async function loadProject(db: Db, projectId: string): Promise<any> {
@@ -540,6 +564,32 @@ async function promoteWorkspaceRun(
 
     await ctx.authorize(run.projectId);
 
+    // T9 (ADR-101): promote-time settled-gate (defense in depth with the
+    // orchestrator_resume wake). A shared tree is ONE branch — refuse to merge a
+    // half-built tree while ANY shared sibling of the tree (same root_run_id) is
+    // still in a writable status (the complement of SETTLED_RUN_STATUSES). This
+    // claim-tx gate is the FIRST line; its allocator-workspace lock is released at
+    // commit, so the finalize tx RE-RUNS this same check under its own lock (C1) to
+    // catch a sibling that re-opens (rework) during the lockless merge. own/scratch
+    // skip it.
+    if (run.workspaceMode === "shared" && run.agentWorkspace === "worktree") {
+      const blockingSiblingCount = await countUnsettledSharedSiblings(
+        tx,
+        run.rootRunId,
+      );
+
+      if (blockingSiblingCount > 0) {
+        log.info(
+          { runId, rootRunId: run.rootRunId, blockingSiblingCount },
+          "shared-tree promote refused — a sibling is still writable",
+        );
+        throw new MaisterError(
+          "PRECONDITION",
+          `shared-tree promote blocked — ${blockingSiblingCount} shared sibling(s) of the tree still writable`,
+        );
+      }
+    }
+
     // Legacy-row fallback (§3.6): derive a missing target branch from the
     // project's main branch, never a silent null into git. Policy-era rows use
     // the run snapshot; pre-policy rows keep the old workspace/request mode.
@@ -791,17 +841,113 @@ async function promoteWorkspaceRun(
       now.getTime() + gcAgeDays() * 86_400_000,
     );
 
-    // Every finalize write is token-scoped (§3.2): defense-in-depth so the Done
-    // flip fails closed even if the lock/assert above is ever removed.
-    await tx
-      .update(runs)
-      .set({
-        status: "Done",
-        acpSessionId: null,
-        currentStepId: null,
-        endedAt: now,
-      })
-      .where(eq(runs.id, runId));
+    // M37 (ADR-101): a shared writable tree is ONE branch, reviewed + promoted
+    // ONCE. The Done flip is the CROSS-TREE settle: ALL shared children of the tree
+    // currently in `Review` flip → Done in THIS one tx (status-scoped, so a sibling
+    // reworked back to `Running` is never clobbered). For own/scratch the set is
+    // just the promoting run. Exactly-once falls out of two checks that prevent any
+    // second tx from flipping again: the M18 durable-claim CAS rejects a CONCURRENT
+    // racer (CONFLICT, in the claim tx via canReclaim) and the `status='Review'`
+    // claim check rejects a SEQUENTIAL re-promote (PRECONDITION). Every finalize
+    // write is also token-scoped (§3.2): the flip fails closed even if the lock/
+    // assert above is ever removed.
+    const isSharedTree =
+      claim.run.workspaceMode === "shared" &&
+      claim.run.agentWorkspace === "worktree";
+
+    // C1 (ADR-101 defense-in-depth): the claim-tx settled-gate held the allocator
+    // workspace lock, but that lock released at claim-commit and the merge ran
+    // lockless. Re-verify under THIS finalize lock that no shared sibling left
+    // `Review` (e.g. a concurrent run_rework Review→Running) during the merge window
+    // — settling a half-rebuilt tree would strand the reworked sibling's new work.
+    // On a resettle, reset the claim to a reclaimable state and abort CONFLICT; a
+    // re-promote after the sibling re-settles re-merges (git up-to-date/idempotent).
+    if (isSharedTree) {
+      const resettled = await countUnsettledSharedSiblings(
+        tx,
+        claim.run.rootRunId,
+      );
+
+      if (resettled > 0) {
+        await tx
+          .update(workspaces)
+          .set({ promotionState: "failed" })
+          .where(
+            and(
+              eq(workspaces.id, claim.workspace.id),
+              eq(workspaces.promotionAttemptId, claim.attemptId),
+            ),
+          );
+        log.warn(
+          {
+            runId,
+            rootRunId: claim.run.rootRunId,
+            resettledSiblingCount: resettled,
+          },
+          "shared-tree finalize aborted — a sibling left Review during the merge window",
+        );
+
+        return { aborted: true as const };
+      }
+    }
+
+    // own/scratch keep the ORIGINAL no-`returning()` UPDATE — the promote-service
+    // unit-test fake DB does not implement `.returning()` on the update chain — and
+    // their single settled child is built from the loaded claim.run. The shared tree
+    // uses a status-scoped CAS WITH `returning` (real Postgres) to fan out per child.
+    let settledChildren: Array<{
+      id: string;
+      taskId: string | null;
+      flowId: string | null;
+      runKind: string;
+      parentRunId: string | null;
+    }>;
+
+    if (isSharedTree) {
+      settledChildren = await tx
+        .update(runs)
+        .set({
+          status: "Done",
+          acpSessionId: null,
+          currentStepId: null,
+          endedAt: now,
+        })
+        .where(
+          and(
+            eq(runs.rootRunId, claim.run.rootRunId),
+            eq(runs.workspaceMode, "shared"),
+            eq(runs.agentWorkspace, "worktree"),
+            eq(runs.status, "Review"),
+          ),
+        )
+        .returning({
+          id: runs.id,
+          taskId: runs.taskId,
+          flowId: runs.flowId,
+          runKind: runs.runKind,
+          parentRunId: runs.parentRunId,
+        });
+    } else {
+      await tx
+        .update(runs)
+        .set({
+          status: "Done",
+          acpSessionId: null,
+          currentStepId: null,
+          endedAt: now,
+        })
+        .where(eq(runs.id, runId));
+      settledChildren = [
+        {
+          id: runId,
+          taskId: claim.run.taskId ?? null,
+          flowId: claim.run.flowId ?? null,
+          runKind: claim.run.runKind,
+          parentRunId: claim.run.parentRunId ?? null,
+        },
+      ];
+    }
+
     await tx
       .update(workspaces)
       .set({
@@ -815,12 +961,9 @@ async function promoteWorkspaceRun(
           eq(workspaces.promotionAttemptId, claim.attemptId),
         ),
       );
-    await systemCloseActiveAssignmentsForRun({
-      db: tx,
-      runId,
-      reason: "run promoted to Done",
-    });
 
+    // The promotion ACTION (one merge) happened once → one run.promoted, keyed on
+    // the promoting run.
     await emitWebhookEvent({
       db: tx,
       type: "run.promoted",
@@ -833,38 +976,53 @@ async function promoteWorkspaceRun(
         pullRequestUrl: null,
       },
     });
-    await emitWebhookEvent({
-      db: tx,
-      type: "run.done",
-      projectId: claim.run.projectId,
-      runId,
-      data: {},
-    });
-    await emitDomainEvent({
-      db: tx,
-      kind: "run.done",
-      projectId: claim.run.projectId,
-      runId,
-      taskId: claim.run.taskId ?? null,
-      actor: { type: "system", id: null },
-      parentRunId: claim.run.parentRunId,
-      payload: {
-        runId,
-        taskId: claim.run.taskId ?? null,
-        flowId: claim.run.flowId ?? null,
-        runKind: claim.run.runKind,
-      },
-    });
+
+    // Each settled child reached Done → close its assignments + emit run.done with
+    // ITS OWN parent_run_id + task_id, so the orchestrator advances each child's
+    // task and releases each child's `requires` dependents.
+    for (const child of settledChildren) {
+      await systemCloseActiveAssignmentsForRun({
+        db: tx,
+        runId: child.id,
+        reason: "run promoted to Done",
+      });
+      await emitWebhookEvent({
+        db: tx,
+        type: "run.done",
+        projectId: claim.run.projectId,
+        runId: child.id,
+        data: {},
+      });
+      await emitDomainEvent({
+        db: tx,
+        kind: "run.done",
+        projectId: claim.run.projectId,
+        runId: child.id,
+        taskId: child.taskId ?? null,
+        actor: { type: "system", id: null },
+        parentRunId: child.parentRunId,
+        payload: {
+          runId: child.id,
+          taskId: child.taskId ?? null,
+          flowId: child.flowId ?? null,
+          runKind: child.runKind,
+        },
+      });
+    }
 
     log.info(
       {
         runId,
+        rootRunId: claim.run.rootRunId ?? null,
+        settledChildIds: settledChildren.map((c) => c.id),
         mode: claim.responseMode,
         commit,
         targetBranch: claim.resolvedTarget,
         deliveryPolicy: claim.policy,
       },
-      "workspace run promoted to Done",
+      isSharedTree
+        ? "shared tree promoted to Done (all settled children)"
+        : "workspace run promoted to Done",
     );
 
     return {
@@ -876,6 +1034,18 @@ async function promoteWorkspaceRun(
       prNumber: null,
     };
   });
+
+  // C1 (ADR-101): a shared-tree finalize that detected a sibling re-opening (rework)
+  // during the merge window reset the claim to reclaimable and aborted the settle —
+  // surface CONFLICT. The merge is already in the target; a re-promote re-merges
+  // idempotently (git up-to-date) once the sibling re-settles. No artifact for an
+  // aborted settle.
+  if ("aborted" in result) {
+    throw new MaisterError(
+      "CONFLICT",
+      "shared-tree promote aborted — a sibling re-opened (rework) during the merge; retry after it re-settles",
+    );
+  }
 
   // ---- Artifact AFTER the finalize commit (fix #1). The promotion diff is
   // observability — fully reconstructable from git — so a failed artifact INSERT
