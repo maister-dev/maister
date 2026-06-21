@@ -61,6 +61,16 @@ The execution-policy snapshot is immutable (written once at services/runs.ts:900
 ### D6 — Per-task TOKEN enforcement IS in v1
 `budget.task.maxTokens` is enforced (owner confirmed). Task spend = `SUM` of the four token columns over `runs WHERE task_id = T` (the full 1:N ralph/retry chain). Plus `task.consecutiveFailures` = trailing streak of `Failed|Crashed|Abandoned` runs for the task.
 
+### D7 — `run_kind` dispatch: per-kind terminate/escalate adapters (project rule)
+The watchdog candidate set is multi-kind, but the breach **mechanism branches on `run_kind` BEFORE routing** — a flow-only path applied to an agent/scratch run silently misbehaves (agent/scratch runs have no `node_attempts`/`current_step_id`). Verified adapters:
+
+| | `flow` | `agent` | `scratch` |
+| --- | --- | --- | --- |
+| **TERMINATE** (after `deleteSession`) | inline CAS `status=Failed` + `markNodeFailed(BUDGET_EXCEEDED)` | `finalizeAgentRun(runId,"Failed",{reason:"budget_breach"})` (no ledger) | `markScratchCrashed` / `applyDialogStatus(Failed-equiv)` |
+| **ESCALATE** (halt session first) | idle-checkpoint path + `markNodeNeedsInput` | checkpoint + `hitl_requests` insert + CAS `status=NeedsInput` (no `nodeAttemptId`) | checkpoint + `applyDialogStatus("NeedsInput")` |
+
+A test exercises EACH arm (project rule: half-A + half-B ≠ A∘B). **No branch for cost** — `reconcileRunCostRollups` is kind-agnostic (keyed on runId, processes `cost.jsonl` even with no node_attempts), so per-task/per-tree token sums over agent children are correct.
+
 ### Contract surfaces → spec files (project rule)
 | Surface that changes | Spec file the plan's docs phase MUST touch |
 | --- | --- |
@@ -103,7 +113,7 @@ Because of D2, the surface is small. Update **only** these:
 
 ### Phase 1 — Token aggregation foundation
 
-- **T1.1 Aggregation helpers + migration 0061.** `queryRunTokens(runId)`, `queryTaskTokens(taskId)`, `queryRunTreeTokens(rootRunId)` (SUM of the four token columns over `run_cost_rollups` joined on `runs.task_id` / `runs.root_run_id`) in `web/lib/runs/cost-rollups.ts`. Migration `0061`: `runs_root_run_id_idx` index + `runs.budget_ceiling_override jsonb`. Verbose DEBUG of each scope's token total.
+- **T1.1 Aggregation helpers + migration 0061.** `queryRunTokens(runId)`, `queryTaskTokens(taskId)`, `queryRunTreeTokens(rootRunId)` (SUM of the four token columns over `run_cost_rollups` joined on `runs.task_id` / `runs.root_run_id`) in `web/lib/runs/cost-rollups.ts`. Migration `0061`: `runs_root_run_id_idx` index + `runs.budget_ceiling_override jsonb` (run `pnpm db:generate`; ensure the journal `when` is monotonic above the DB max — known drizzle footgun). Verbose DEBUG of each scope's token total.
 - **T1.2 Failure + wall-clock helpers.** `consecutiveFailedAttempts(runId)` (node_attempts), `consecutiveFailedRuns(taskId|rootRunId)` (runs ordered by `startedAt`), `treeWallClockMinutes(rootRunId)` (`now - root.startedAt`).
 
 ### Phase 2 — The axis (execution-policy.ts)
@@ -116,18 +126,18 @@ Because of D2, the surface is small. Update **only** these:
 
 ### Phase 3 — Enforcement watchdog (keepalive-sweeper.ts)
 
-- **T3.1 Budget candidate selection.** New `runBudgetPass(db)` registered in `runSweepTick` beside `runTimeLimitPass`. Candidates = active runs (`Running`) across `run_kind` (broader than the time pass's `flow`-only) + tree evaluation keyed on `root_run_id` so a `WaitingOnChildren` orchestrator's tree is evaluated while children spend. Force `reconcileRunCostRollups` for the run (and tree/task members) before reading. Resolve `budgetFromSnapshot` (+`budget_ceiling_override` top-up); skip when no set, non-zero limit.
-- **T3.2 Ladder evaluation.** Per active scope (run, task, tree), sum tokens / count consecutive failures / compute tree wall-clock, pick the highest rung crossed (warn/escalate/terminate), idempotent (status + audit). Verbose DEBUG of every evaluation. A meter that is unset or `0` is skipped.
+- **T3.1 Budget candidate selection.** New `runBudgetPass(db)` registered in `runSweepTick` beside `runTimeLimitPass`. Candidates = active runs (`Running`) across `run_kind` (broader than the time pass's `flow`-only) + tree evaluation keyed on `root_run_id` so a `WaitingOnChildren` orchestrator's tree is evaluated while children spend. Force `reconcileRunCostRollups` for the run (and tree/task members) before reading. Resolve `budgetFromSnapshot` (+`budget_ceiling_override` top-up); skip when no set, non-zero limit. **Throttle the forced reconcile** — only re-reconcile a run whose `run_cost_rollups.sourceCursor` is stale — to avoid per-tick disk I/O across a large tree.
+- **T3.2 Ladder evaluation.** Per active scope (run, task, tree), sum tokens / count consecutive failures / compute tree wall-clock, pick the highest rung crossed (warn/escalate/terminate), idempotent (status + audit). Verbose DEBUG of every evaluation. A meter that is unset or `0` is skipped. **Tree scope has no ESCALATE rung** — a parked `WaitingOnChildren` root has no `→ NeedsInput` transition (the orchestrator-resume consumer only drives `→ Running`) — so a tree breach goes straight to TERMINATE-cascade; ESCALATE applies to run/task scope with a `Running` root.
 - **T3.3 WARN rung.** `logExecPolicyAction('budget_warned')` once per threshold crossing; surfaced via Observatory/run badge (read-only).
-- **T3.4 ESCALATE rung.** Mirror `escalateAutoRetryExhaustion` (runner-graph.ts:389): one tx → `needs-input.json` (`kind:"budget_breach"`) + `hitl_requests` row (decisions `["raise","abandon"]`) + optional assignment + `runs.status=NeedsInput`; AFTER tx → `emitRunEscalated(reason:"budget_exceeded")` + `logExecPolicyAction('budget_escalated')`. Worktree kept. Two-phase/idempotent.
-- **T3.5 TERMINATE rung.** Run scope: mirror `runTimeLimitPass` kill tx (`deleteSession` → guarded `status=Failed` + `markNodeFailed(BUDGET_EXCEEDED)` + close assignments + emit webhook+domain `run.failed` + `promoteNextPending`). Tree scope: `cascadeAbandonRunTree(rootRunId, …, reason:"budget_exceeded")` first, then terminate the root. Enumerate crash windows; `deleteSession` failure handling per the two-phase rule.
+- **T3.4 ESCALATE rung (run/task scope).** The watchdog fires MID-RUN while the agent is spending, so escalate must FIRST **halt the live session** (reuse the idle-checkpoint path so spending stops), THEN open the breach HITL — per `run_kind` (D7): flow uses `escalateAutoRetryExhaustion`-style `markNodeNeedsInput`; agent/scratch checkpoint + insert `hitl_requests` + CAS `status=NeedsInput` (no `nodeAttemptId`). One tx → `needs-input.json` (`kind:"budget_breach"`) + `hitl_requests` row + optional assignment + `runs.status=NeedsInput`; AFTER tx → `emitRunEscalated(reason:"budget_exceeded")` + `logExecPolicyAction('budget_escalated')`. Worktree kept. Two-phase/idempotent.
+- **T3.5 TERMINATE rung.** Run scope: `deleteSession`, then the per-`run_kind` adapter (D7) — flow = guarded `status=Failed` + `markNodeFailed(BUDGET_EXCEEDED)`; agent = `finalizeAgentRun(runId,"Failed",{reason:"budget_breach"})`; scratch = `markScratchCrashed`/`applyDialogStatus` — then close assignments + emit `run.failed` + `promoteNextPending`. Tree scope: `cascadeAbandonRunTree(rootRunId, …, reason:"budget_exceeded")` first, then terminate the root. Enumerate crash windows; `deleteSession` `EXECUTOR_UNAVAILABLE` → skip+retry next tick (NOT terminal), 404 → proceed.
 
 > **Commit checkpoint C** (after T3.5): `feat(runs): budget watchdog — warn/escalate/terminate at run/task/tree scope`.
 
 ### Phase 4 — HITL response + raise-and-resume
 
-- **T4.1 `budget_breach` HITL kind.** Add to `schema.ts:2207` action_kind enum + `assignments/service.ts:72` union (verify no DB CHECK migration). Confirm `queries/hitl.ts` inbox surfaces it.
-- **T4.2 Response handler.** `handleBudgetBreachResponse` (mirror `handleInfraRecoveryResponse:1255`): **Abandon** → `runs.status=Failed` (errorCode `BUDGET_EXCEEDED`) + close assignments + emit `run.failed`; **Raise** → write `runs.budget_ceiling_override` (additive token top-up) + `logExecPolicyAction('budget_raised')` + `scheduleResume`. `runId` derived from the HITL row (server-state), not the body. Route in `respondToHitl`. Two-phase commit for the resume side-effect.
+- **T4.1 `budget_breach` HITL kind.** Add to the `action_kind` TS-enum (`schema.ts`) + `assignments/service.ts:72` union. **Confirmed: no DB CHECK on `action_kind`** (grep of migrations) — pure TS change, no migration ALTER (rides `db:generate`). Confirm `queries/hitl.ts` inbox surfaces it.
+- **T4.2 Response handler.** `handleBudgetBreachResponse` (mirror `handleInfraRecoveryResponse:1255`): **Abandon** → `runs.status=Failed` (errorCode `BUDGET_EXCEEDED`) + close assignments + emit `run.failed`; **Raise** takes a **form input** — the new token ceiling (or a fixed `× multiplier` bump); the `budget_breach` HITL schema carries a number field, NOT a bare `["raise","abandon"]` decision — and writes it to `runs.budget_ceiling_override` (additive top-up) + `logExecPolicyAction('budget_raised')` + `scheduleResume`. `runId` derived from the HITL row (server-state), not the body. Route in `respondToHitl`. Two-phase commit for the resume side-effect.
 - **T4.3 Top-up read path.** `runBudgetPass` reads `budget_ceiling_override` ON TOP of the snapshot ceiling so a raised run doesn't immediately re-escalate.
 
 ### Phase 5 — UI surfacing (EN/RU)
@@ -139,7 +149,7 @@ Because of D2, the surface is small. Update **only** these:
 
 ### Phase 6 — Tests + docs checkpoint
 
-- **T6.1 Integration + unit tests** (runner project named per test; per-phase green): warn/escalate/terminate per scope; tree aggregation + cascade terminate; task tokens + task consecutive-failure; **no-refusal** behavior (unattended + no budget + no env-default → launches unbounded; with env-default → `tree.maxTokens` auto-filled; `maxTokens: 0` → unlimited, no kill); fail-open null snapshot → unlimited; raise-and-resume top-up; idempotency (no double-escalate / re-warn); **the D2 invariant test** asserting no new `runs.status` value was introduced. Migrate any assertions the new behavior invalidates (enumerate by file).
+- **T6.1 Integration + unit tests** (runner project named per test; per-phase green): warn/escalate/terminate per scope; tree aggregation + cascade terminate; task tokens + task consecutive-failure; **no-refusal** behavior (unattended + no budget + no env-default → launches unbounded; with env-default → `tree.maxTokens` auto-filled; `maxTokens: 0` → unlimited, no kill); fail-open null snapshot → unlimited; raise-and-resume top-up; idempotency (no double-escalate / re-warn); **the D2 invariant test** asserting no new `runs.status` value was introduced; **a per-`run_kind` arm test** (flow / agent / scratch) for BOTH terminate and escalate (D7 — half-A + half-B ≠ A∘B). Migrate any assertions the new behavior invalidates (enumerate by file).
 - **T6.2 Docs checkpoint** via `/aif-docs` (mandatory): reconcile execution-policy.md, error-taxonomy.md, hitl.md, domain-events.md, configuration.md, database-schema.md + db/runs-domain.md against the diff; confirm every contract surface above is covered.
 
 > **Commit checkpoint E** (after T6.2): `test+docs: budget governance coverage + as-built reconcile`.
