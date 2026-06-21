@@ -455,6 +455,48 @@ export function budgetFromSnapshot(snapshot: unknown): BudgetAxis {
   return parsed.success ? expandExecutionPolicy(parsed.data).budget : {};
 }
 
+// Default warn band when warnAtPct is unset — mirrors the watchdog's
+// DEFAULT_BUDGET_WARN_PCT (keepalive-sweeper.ts). Kept here (client-safe) so the
+// run-detail badge derives the SAME threshold the server enforces.
+const DEFAULT_BUDGET_WARN_PCT = 80;
+
+// Derived run-scope warn signal for the run-detail badge (AC-BADGE-1). Given the
+// current live run-scope token sum, the run-scope effective maxTokens (snapshot ⊕
+// raise-and-resume ceilingOverride) and warnAtPct, returns the consumed percent
+// and whether the run is at/over the warn band. Mirrors the watchdog's run-scope
+// math: warn fires at `maxTokens × warnAtPct%`. Returns null when the run scope
+// has no positive maxTokens ceiling (fail-open: nothing to warn about) so the
+// badge disappears once a Raise lifts the ceiling above the current sum.
+export function budgetWarnStatus(args: {
+  currentTokens: number;
+  snapshotBudget: BudgetAxis;
+  ceilingOverride?: BudgetAxis;
+}): { warn: boolean; pct: number } | null {
+  const overrideLimit = args.ceilingOverride?.run?.maxTokens;
+  const snapshotLimit = args.snapshotBudget.run?.maxTokens;
+  const limit =
+    typeof overrideLimit === "number" && overrideLimit > 0
+      ? overrideLimit
+      : typeof snapshotLimit === "number" && snapshotLimit > 0
+        ? snapshotLimit
+        : null;
+
+  if (limit === null) return null;
+
+  const overridePct = args.ceilingOverride?.run?.warnAtPct;
+  const snapshotPct = args.snapshotBudget.run?.warnAtPct;
+  const warnPct =
+    typeof overridePct === "number" && overridePct > 0
+      ? overridePct
+      : typeof snapshotPct === "number" && snapshotPct > 0
+        ? snapshotPct
+        : DEFAULT_BUDGET_WARN_PCT;
+
+  const pct = Math.round((args.currentTokens / limit) * 100);
+
+  return { warn: args.currentTokens >= (limit * warnPct) / 100, pct };
+}
+
 // B2/B3 decision matrix for a human gate (pure). The runner computes the policy
 // axes + whether the node has a safe-default (forward, non-rework) decision +
 // whether Group-A machine review passed (assertEvidenceReady), then dispatches:

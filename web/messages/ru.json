@@ -1320,7 +1320,22 @@
     "runner": "Раннер",
     "runnerDefault": "Раннер по умолчанию",
     "promotionMode": "Промоушен",
-    "promotionPullRequest": "Pull request"
+    "promotionPullRequest": "Pull request",
+    "budgetTitle": "Бюджет",
+    "budgetHint": "Лимиты токенов / сбоев / времени. Пусто = без лимита.",
+    "budgetScope": {
+      "run": "Запуск",
+      "task": "Задача",
+      "tree": "Дерево"
+    },
+    "budgetMaxTokens": "Макс. токенов",
+    "budgetHardMaxTokens": "Жёсткий максимум токенов",
+    "budgetHardMaxHint": "по умолч. ×1.25",
+    "budgetWarnPct": "Предупр. %",
+    "budgetConsecutiveFailures": "Сбоев подряд",
+    "budgetWallClockMinutes": "Минут реального времени",
+    "budgetInvalid": "Только положительное целое",
+    "budgetUnattendedHint": "Запуск без контроля и без бюджета — будет работать без ограничений. Задайте бюджет токенов или настройте MAISTER_DEFAULT_UNATTENDED_BUDGET_TOKENS."
   },
   "run": {
     "eyebrow": "запуск",
@@ -1545,6 +1560,23 @@
     "reviewReworkExhausted": "Лимит доработок исчерпан — использованы все $m визитов ревью. Доступны только решения без возврата на доработку.",
     "infraRecoveryRetry": "Повторить",
     "infraRecoveryAbandon": "Прекратить",
+    "headerBudgetWarn": "бюджет $pct%",
+    "budgetBreachTitle": "Превышение бюджета",
+    "budgetNewCeiling": "Новый лимит",
+    "budgetRaiseResume": "Поднять и продолжить",
+    "budgetAbandon": "Прекратить",
+    "budgetBreachSummary": "$scope · $meter: достигнуто $current из $limit.",
+    "budgetRaiseInvalid": "Введите целое число больше текущего лимита.",
+    "budgetScope": {
+      "run": "Запуск",
+      "task": "Задача",
+      "tree": "Дерево"
+    },
+    "budgetMeter": {
+      "tokens": "токены",
+      "failures": "сбои",
+      "wallclock": "время"
+    },
     "error": {
       "generic": "Что-то пошло не так. Попробуйте ещё раз.",
       "CRASH": "Что-то пошло не так. Попробуйте ещё раз.",

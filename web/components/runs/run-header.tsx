@@ -2,6 +2,7 @@ import type { ReactElement } from "react";
 
 import Link from "next/link";
 import clsx from "clsx";
+import { CurrencyDollarIcon } from "@heroicons/react/24/outline";
 
 import { MarkdownBody } from "@/components/social/markdown-body";
 
@@ -25,6 +26,9 @@ export interface RunHeaderLabels {
   closeInspector: string;
   // The collapsible "Task" disclosure summary (task prompt block).
   task: string;
+  // Cost-budget governance warn badge — `$pct`-token template (house pattern).
+  // Optional so non-run-detail consumers (no budget signal) keep compiling.
+  budgetWarn?: string;
 }
 
 export interface RunHeaderProps {
@@ -43,6 +47,8 @@ export interface RunHeaderProps {
   branch?: string | null;
   targetBranch?: string | null;
   changeSummary?: RunHeaderChangeSummary | null;
+  // Derived run-scope budget warn signal (null = no badge).
+  budgetStatus?: { warn: boolean; pct: number } | null;
   inspectorOpen: boolean;
   labels: RunHeaderLabels;
   onToggleInspector?: () => void;
@@ -84,11 +90,16 @@ export function RunHeader({
   branch,
   targetBranch,
   changeSummary,
+  budgetStatus,
   inspectorOpen,
   labels,
   onToggleInspector,
 }: RunHeaderProps): ReactElement {
   const changes = formatRunChangeSummary(changeSummary, labels);
+  const budgetBadge =
+    budgetStatus?.warn && labels.budgetWarn
+      ? labels.budgetWarn.replace("$pct", String(budgetStatus.pct))
+      : null;
 
   return (
     <header
@@ -148,6 +159,15 @@ export function RunHeader({
             >
               {labels.branch}: {branch}
               {targetBranch ? ` -> ${targetBranch}` : ""}
+            </span>
+          ) : null}
+          {budgetBadge ? (
+            <span
+              className="inline-flex items-center gap-1 rounded-full border border-amber-line bg-amber-soft px-2 py-0.5 font-mono text-[11px] font-semibold text-amber"
+              data-testid="run-header-budget-warn"
+            >
+              <CurrencyDollarIcon aria-hidden="true" className="h-3.5 w-3.5" />
+              {budgetBadge}
             </span>
           ) : null}
         </div>

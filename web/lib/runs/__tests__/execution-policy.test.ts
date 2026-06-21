@@ -5,6 +5,7 @@ import {
   assertNoBlindShip,
   blindShipLockedOptions,
   budgetFromSnapshot,
+  budgetWarnStatus,
   checksFromSnapshot,
   crashRetryFromSnapshot,
   permissionsFromSnapshot,
@@ -744,6 +745,63 @@ describe("budgetFromSnapshot (run snapshot → budget axis, fail-OPEN)", () => {
         overrides: { budget: { run: { warnAtPct: 200 } } },
       }),
     ).toEqual({});
+  });
+});
+
+describe("budgetWarnStatus (run-detail badge — derived warn signal, AC-BADGE-1)", () => {
+  it("returns null when the run scope has no positive maxTokens ceiling", () => {
+    expect(
+      budgetWarnStatus({ currentTokens: 999, snapshotBudget: {} }),
+    ).toBeNull();
+    expect(
+      budgetWarnStatus({
+        currentTokens: 999,
+        snapshotBudget: { run: { maxTokens: 0 } },
+      }),
+    ).toBeNull();
+    // A task/tree ceiling without a run ceiling is not the run-scope badge.
+    expect(
+      budgetWarnStatus({
+        currentTokens: 999,
+        snapshotBudget: { tree: { maxTokens: 1000 } },
+      }),
+    ).toBeNull();
+  });
+
+  it("warns at the default 80% band and reports the consumed percent", () => {
+    expect(
+      budgetWarnStatus({
+        currentTokens: 800,
+        snapshotBudget: { run: { maxTokens: 1000 } },
+      }),
+    ).toEqual({ warn: true, pct: 80 });
+    expect(
+      budgetWarnStatus({
+        currentTokens: 799,
+        snapshotBudget: { run: { maxTokens: 1000 } },
+      }),
+    ).toEqual({ warn: false, pct: 80 });
+  });
+
+  it("honours a custom warnAtPct", () => {
+    expect(
+      budgetWarnStatus({
+        currentTokens: 500,
+        snapshotBudget: { run: { maxTokens: 1000, warnAtPct: 50 } },
+      }),
+    ).toEqual({ warn: true, pct: 50 });
+  });
+
+  it("prefers the raise-and-resume ceilingOverride so the badge clears after a raise", () => {
+    // Snapshot limit 1000 would warn at 800; a raise to 2000 lifts the band so
+    // the same 800 tokens are now below warn (disappears).
+    expect(
+      budgetWarnStatus({
+        currentTokens: 800,
+        snapshotBudget: { run: { maxTokens: 1000 } },
+        ceilingOverride: { run: { maxTokens: 2000 } },
+      }),
+    ).toEqual({ warn: false, pct: 40 });
   });
 });
 

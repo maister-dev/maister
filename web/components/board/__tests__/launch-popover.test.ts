@@ -25,7 +25,13 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }),
 }));
 
-import { LaunchPopover } from "@/components/board/launch-popover";
+import {
+  BudgetScopeFields,
+  LaunchPopover,
+  budgetTextHasInvalid,
+  isBudgetFieldInvalid,
+  pruneBudgetText,
+} from "@/components/board/launch-popover";
 
 function render(over: Partial<Record<string, string>> = {}): string {
   return renderToStaticMarkup(
@@ -64,5 +70,151 @@ describe("LaunchPopover — modal-first launch", () => {
 
     expect(html).toContain("unavailable");
     expect(html.match(/disabled=""/g)?.length).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cost-budget governance — launch budget inputs (T5.1).
+//
+// The numeric budget inputs are pure: validated positive-int-only (empty =
+// unlimited) and pruned into a sparse BudgetAxis that folds into the execution
+// policy. The unattended-unbounded hint shows iff preset=unattended AND the
+// pruned axis is null (no field set) — that derived condition is exactly
+// `preset === "unattended" && pruneBudgetText(text) === null`.
+// ---------------------------------------------------------------------------
+
+const BUDGET_FIELD_LABELS = {
+  maxTokens: "Max tokens",
+  hardMaxTokens: "Hard max tokens",
+  warnAtPct: "Warn %",
+  consecutiveFailures: "Consecutive failures",
+  wallClockMinutes: "Wall-clock minutes",
+};
+
+describe("LaunchPopover budget — field validation (AC-UI-2)", () => {
+  it("accepts a positive integer", () => {
+    expect(isBudgetFieldInvalid("maxTokens", "1000")).toBe(false);
+  });
+
+  it("allows an empty value (unlimited)", () => {
+    expect(isBudgetFieldInvalid("maxTokens", "")).toBe(false);
+    expect(isBudgetFieldInvalid("maxTokens", "   ")).toBe(false);
+  });
+
+  it("rejects a negative, zero, or non-numeric value", () => {
+    expect(isBudgetFieldInvalid("maxTokens", "-5")).toBe(true);
+    expect(isBudgetFieldInvalid("maxTokens", "0")).toBe(true);
+    expect(isBudgetFieldInvalid("maxTokens", "1.5")).toBe(true);
+    expect(isBudgetFieldInvalid("maxTokens", "abc")).toBe(true);
+  });
+
+  it("caps warnAtPct at 100", () => {
+    expect(isBudgetFieldInvalid("warnAtPct", "80")).toBe(false);
+    expect(isBudgetFieldInvalid("warnAtPct", "100")).toBe(false);
+    expect(isBudgetFieldInvalid("warnAtPct", "101")).toBe(true);
+  });
+
+  it("flags an axis as invalid when any field is invalid", () => {
+    expect(budgetTextHasInvalid({ run: { maxTokens: "1000" } })).toBe(false);
+    expect(budgetTextHasInvalid({ run: { maxTokens: "-1" } })).toBe(true);
+    expect(budgetTextHasInvalid({ tree: { wallClockMinutes: "x" } })).toBe(
+      true,
+    );
+    expect(budgetTextHasInvalid({})).toBe(false);
+  });
+});
+
+describe("LaunchPopover budget — prune to sparse axis (fold)", () => {
+  it("returns null when every field is empty (unlimited)", () => {
+    expect(pruneBudgetText({})).toBeNull();
+    expect(pruneBudgetText({ run: { maxTokens: "" } })).toBeNull();
+  });
+
+  it("keeps only positive-int fields and non-empty scopes", () => {
+    expect(
+      pruneBudgetText({
+        run: { maxTokens: "1000", hardMaxTokens: "", warnAtPct: "0" },
+        task: {},
+        tree: { wallClockMinutes: "30" },
+      }),
+    ).toEqual({
+      run: { maxTokens: 1000 },
+      tree: { wallClockMinutes: 30 },
+    });
+  });
+
+  it("drops a scope whose every field is empty/invalid", () => {
+    expect(
+      pruneBudgetText({ task: { maxTokens: "abc", consecutiveFailures: "0" } }),
+    ).toBeNull();
+  });
+});
+
+describe("LaunchPopover budget — unattended-unbounded hint gate (AC-UI-3)", () => {
+  // The component renders the hint iff preset === "unattended" AND the pruned
+  // axis is null; these assert the load-bearing predicate.
+  it("is unbounded (hint shows) only when no budget field is set", () => {
+    expect(pruneBudgetText({}) === null).toBe(true);
+  });
+
+  it("is bounded (hint hidden) once any positive field is set", () => {
+    expect(pruneBudgetText({ run: { maxTokens: "500" } }) === null).toBe(false);
+  });
+});
+
+describe("BudgetScopeFields — input group render", () => {
+  function renderScope(scope: "run" | "task" | "tree"): string {
+    return renderToStaticMarkup(
+      createElement(BudgetScopeFields, {
+        scope,
+        heading: scope.toUpperCase(),
+        values: {},
+        fieldLabels: BUDGET_FIELD_LABELS,
+        fieldPlaceholders: { hardMaxTokens: "default ×1.25", warnAtPct: "80" },
+        invalidLabel: "Positive integer only",
+        onChange: vi.fn(),
+      }),
+    );
+  }
+
+  it("renders the four token/failure inputs for the run scope", () => {
+    const html = renderScope("run");
+
+    expect(html).toContain('data-testid="budget-run-maxTokens"');
+    expect(html).toContain('data-testid="budget-run-hardMaxTokens"');
+    expect(html).toContain('data-testid="budget-run-warnAtPct"');
+    expect(html).toContain('data-testid="budget-run-consecutiveFailures"');
+    // Run scope has NO wall-clock field (tree only).
+    expect(html).not.toContain('data-testid="budget-run-wallClockMinutes"');
+  });
+
+  it("adds the wall-clock input only for the tree scope", () => {
+    const html = renderScope("tree");
+
+    expect(html).toContain('data-testid="budget-tree-wallClockMinutes"');
+  });
+
+  it("hints the ×1.25 default on the hard-max placeholder", () => {
+    const html = renderScope("run");
+
+    expect(html).toContain("default ×1.25");
+  });
+
+  it("marks an invalid field with an aria error", () => {
+    const html = renderToStaticMarkup(
+      createElement(BudgetScopeFields, {
+        scope: "run",
+        heading: "RUN",
+        values: { maxTokens: "-1" },
+        fieldLabels: BUDGET_FIELD_LABELS,
+        fieldPlaceholders: {},
+        invalidLabel: "Positive integer only",
+        onChange: vi.fn(),
+      }),
+    );
+
+    expect(html).toContain('aria-invalid="true"');
+    expect(html).toContain('role="alert"');
+    expect(html).toContain("Positive integer only");
   });
 });

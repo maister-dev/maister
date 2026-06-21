@@ -49,7 +49,14 @@ import {
   type WorkbenchLifecycleAction,
 } from "@/lib/queries/portfolio";
 import { runnerAgentFromFields } from "@/lib/queries/runner-agent";
-import { reconcileRunCostRollups } from "@/lib/runs/cost-rollups";
+import {
+  queryRunTokens,
+  reconcileRunCostRollups,
+} from "@/lib/runs/cost-rollups";
+import {
+  budgetFromSnapshot,
+  budgetWarnStatus,
+} from "@/lib/runs/execution-policy";
 
 const {
   actorIdentities,
@@ -137,6 +144,10 @@ export interface RunDetail {
   prNumber: number | null;
   deliveryPolicySnapshot: DeliveryPolicy | null;
   executionPolicy: ExecutionPolicy | null;
+  // Cost-budget governance (AC-BADGE-1): derived run-scope warn signal — the
+  // live token sum vs the run-scope effective maxTokens × warnAtPct. Null when
+  // the run scope carries no positive token ceiling (nothing to warn about).
+  budgetStatus: { warn: boolean; pct: number } | null;
   pendingHitl: RunPendingHitl | null;
   // M11b (ADR-030): the user holding an active takeover claim (null unless a
   // takeover node_attempts row is open). Drives the owner-gated Return action.
@@ -221,6 +232,7 @@ export const getRunDetail = cache(async function getRunDetail(
       prNumber: workspaces.prNumber,
       deliveryPolicySnapshot: runs.deliveryPolicySnapshot,
       executionPolicy: runs.executionPolicy,
+      budgetState: runs.budgetState,
       capabilityAgent: runs.capabilityAgent,
       runnerSnapshot: runs.runnerSnapshot,
       endedAt: runs.endedAt,
@@ -317,6 +329,24 @@ export const getRunDetail = cache(async function getRunDetail(
       : [];
   const pendingAssignee = pendingAssigneeRows[0] ?? null;
 
+  // Derived run-scope budget warn signal (AC-BADGE-1). Fail-open fast path: only
+  // query the live token sum when the run scope carries a positive maxTokens
+  // ceiling (snapshot ⊕ raise-and-resume override) — the common no-budget run
+  // skips the extra read entirely. Single-run query (run-detail only, not the
+  // board list) so no N+1.
+  const snapshotBudget = budgetFromSnapshot(row.executionPolicy);
+  const ceilingOverride = row.budgetState?.ceilingOverride;
+  const runCeiling =
+    ceilingOverride?.run?.maxTokens ?? snapshotBudget.run?.maxTokens;
+  const budgetStatus =
+    typeof runCeiling === "number" && runCeiling > 0
+      ? budgetWarnStatus({
+          currentTokens: await queryRunTokens(row.runId, { client }),
+          snapshotBudget,
+          ceilingOverride,
+        })
+      : null;
+
   return {
     runId: row.runId,
     // The inner join on projects guarantees a project here; a project-less
@@ -350,6 +380,7 @@ export const getRunDetail = cache(async function getRunDetail(
     prNumber: row.prNumber,
     deliveryPolicySnapshot: row.deliveryPolicySnapshot ?? null,
     executionPolicy: row.executionPolicy ?? null,
+    budgetStatus,
     agent: runnerAgentFromFields({
       capabilityAgent: row.capabilityAgent,
       runnerSnapshot: row.runnerSnapshot,

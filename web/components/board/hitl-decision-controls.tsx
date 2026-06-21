@@ -32,6 +32,20 @@ export interface HitlDecisionControlsLabels {
   // A2 infra_recovery (auto_retry exhaustion) — retry/abandon button labels.
   infraRecoveryRetry?: string;
   infraRecoveryAbandon?: string;
+  // Cost-budget governance budget_breach card (ESCALATE rung). Optional so
+  // pre-feature consumers keep compiling without them.
+  budgetBreachTitle?: string;
+  budgetNewCeiling?: string;
+  budgetRaiseResume?: string;
+  budgetAbandon?: string;
+  // `$scope`/`$meter`/`$current`/`$limit` template (house `$`-token pattern).
+  budgetBreachSummary?: string;
+  "budgetScope.run"?: string;
+  "budgetScope.task"?: string;
+  "budgetScope.tree"?: string;
+  "budgetMeter.tokens"?: string;
+  "budgetMeter.failures"?: string;
+  "budgetMeter.wallclock"?: string;
 }
 
 export interface ReviewSchema {
@@ -127,6 +141,9 @@ export interface HitlDecisionControlsProps {
   comments: string;
   jsonValue: string;
   formValues: Record<string, string>;
+  // budget_breach: controlled "new ceiling" value (raw text — positive-int
+  // enforced at submit, mirrors the server's fail-closed raise validation).
+  budgetCeiling?: string;
   disabled: boolean;
   compact?: boolean;
   error: string | null;
@@ -135,11 +152,62 @@ export interface HitlDecisionControlsProps {
   onCommentsChange: (v: string) => void;
   onJsonChange: (v: string) => void;
   onFormFieldChange: (name: string, value: string) => void;
+  onBudgetCeilingChange?: (v: string) => void;
+  onBudgetRaise?: () => void;
   onDecision: (decision: string) => void;
   onSendBack: () => void;
   onOption: (optionId: string) => void;
   onSubmitJson: () => void;
   onSubmitForm: () => void;
+}
+
+// Structural view of the watchdog-stamped budget_breach `schema` (LOCKED in the
+// spec): { kind, scope, meter, current, limit, decisions }. Narrowed here so the
+// pure card stays decoupled from the server type. Returns null for any other
+// schema (the branch only renders for a real budget_breach row).
+export interface BudgetBreachView {
+  scope: "run" | "task" | "tree";
+  meter: "tokens" | "failures" | "wallclock";
+  current: number;
+  limit: number;
+}
+
+export function budgetBreachFromSchema(
+  schema: unknown,
+): BudgetBreachView | null {
+  if (!schema || typeof schema !== "object") return null;
+  const s = schema as Record<string, unknown>;
+
+  if (s.kind !== "budget_breach") return null;
+  if (
+    (s.scope !== "run" && s.scope !== "task" && s.scope !== "tree") ||
+    (s.meter !== "tokens" &&
+      s.meter !== "failures" &&
+      s.meter !== "wallclock") ||
+    typeof s.current !== "number" ||
+    typeof s.limit !== "number"
+  ) {
+    return null;
+  }
+
+  return {
+    scope: s.scope,
+    meter: s.meter,
+    current: s.current,
+    limit: s.limit,
+  };
+}
+
+// String-token variant of fillTemplate for the breach summary (scope/meter are
+// localized words, current/limit are numbers stringified by the caller).
+function fillStringTemplate(
+  template: string,
+  tokens: Record<string, string>,
+): string {
+  return Object.entries(tokens).reduce(
+    (out, [token, value]) => out.replace(token, value),
+    template,
+  );
 }
 
 // `$`-token label templates (house pattern — see flow-graph-view
@@ -293,6 +361,7 @@ export function HitlDecisionControls({
   comments,
   jsonValue,
   formValues,
+  budgetCeiling,
   disabled,
   compact,
   error,
@@ -301,6 +370,8 @@ export function HitlDecisionControls({
   onCommentsChange,
   onJsonChange,
   onFormFieldChange,
+  onBudgetCeilingChange,
+  onBudgetRaise,
   onDecision,
   onSendBack,
   onOption,
@@ -308,6 +379,8 @@ export function HitlDecisionControls({
   onSubmitForm,
 }: HitlDecisionControlsProps): ReactElement {
   const formFields = kind === "form" ? formFieldsFromSchema(schema) : null;
+  const budgetBreach =
+    kind === "budget_breach" ? budgetBreachFromSchema(schema) : null;
   const decisionLabel = (d: string): string => {
     if (d === "approve") return labels.decisionApprove;
     if (d === "rework") return labels.decisionRework;
@@ -504,6 +577,75 @@ export function HitlDecisionControls({
           >
             {labels.infraRecoveryAbandon ?? "Abandon"}
           </button>
+        </div>
+      ) : kind === "budget_breach" && budgetBreach ? (
+        <div className="flex flex-col gap-3" data-testid="budget-breach-card">
+          <p className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-amber">
+            {labels.budgetBreachTitle ?? "Budget breach"}
+          </p>
+          <p
+            className="rounded-[8px] border border-amber-line bg-amber-soft px-3 py-2 text-[12.5px] leading-[1.5] text-ink-2"
+            data-testid="budget-breach-summary"
+          >
+            {fillStringTemplate(
+              labels.budgetBreachSummary ??
+                "$scope $meter reached $current of $limit.",
+              {
+                $scope:
+                  labels[
+                    `budgetScope.${budgetBreach.scope}` as keyof HitlDecisionControlsLabels
+                  ] ?? budgetBreach.scope,
+                $meter:
+                  labels[
+                    `budgetMeter.${budgetBreach.meter}` as keyof HitlDecisionControlsLabels
+                  ] ?? budgetBreach.meter,
+                $current: String(budgetBreach.current),
+                $limit: String(budgetBreach.limit),
+              },
+            )}
+          </p>
+          <label
+            className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute"
+            htmlFor="hitl-budget-ceiling"
+          >
+            {labels.budgetNewCeiling ?? "New ceiling"}
+          </label>
+          <input
+            className="w-40 rounded-[7px] border border-line bg-paper px-2 py-1.5 font-mono text-[12.5px] text-ink outline-none focus:border-amber"
+            data-testid="budget-breach-ceiling"
+            disabled={disabled}
+            id="hitl-budget-ceiling"
+            inputMode="numeric"
+            type="text"
+            value={budgetCeiling ?? ""}
+            onChange={(e) => onBudgetCeilingChange?.(e.target.value)}
+          />
+          <div className="flex flex-wrap gap-2">
+            <button
+              className={clsx(
+                "rounded-lg border border-amber bg-amber px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-white shadow-[0_4px_12px_-6px_var(--amber)] hover:bg-amber-2",
+                disabled && "opacity-60",
+              )}
+              data-testid="budget-breach-raise"
+              disabled={disabled}
+              type="button"
+              onClick={() => onBudgetRaise?.()}
+            >
+              {labels.budgetRaiseResume ?? "Raise & resume"}
+            </button>
+            <button
+              className={clsx(
+                "rounded-lg border border-rose-300 bg-paper px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-rose-600 hover:border-rose-400 hover:bg-rose-50",
+                disabled && "opacity-60",
+              )}
+              data-testid="budget-breach-abandon"
+              disabled={disabled}
+              type="button"
+              onClick={() => onOption("abandon")}
+            >
+              {labels.budgetAbandon ?? "Abandon"}
+            </button>
+          </div>
         </div>
       ) : formFields ? (
         <div className={clsx("flex flex-col", compact ? "gap-2" : "gap-3")}>

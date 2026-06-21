@@ -142,8 +142,8 @@ Because of D2, the surface is small. Update **only** these:
 
 ### Phase 5 — UI surfacing (EN/RU)
 
-- **T5.1 Launch dialog budget inputs.** Optional per-run/task/tree budget (token) fields in the launch/execution-policy UI; a soft hint when `unattended` is left unbounded (informational only — no disable, no refusal). EN+RU labels.
-- **T5.2 Budget-breach HITL card + badges.** Inbox card for `budget_breach` (Raise / Abandon), a warn badge on the run, Observatory read-only budget-breach surfacing. EN+RU.
+- **T5.1 ✅ Launch dialog budget inputs.** Optional per-run/task/tree budget (token) fields in the launch/execution-policy UI; a soft hint when `unattended` is left unbounded (informational only — no disable, no refusal). EN+RU labels.
+- **T5.2 ✅ Budget-breach HITL card + badges.** Inbox card for `budget_breach` (Raise / Abandon), a warn badge on the run, Observatory read-only budget-breach surfacing. EN+RU.
 
 > **Commit checkpoint D** (after T5.2): `feat(web): budget launch inputs + breach HITL card + badges (EN/RU)`.
 

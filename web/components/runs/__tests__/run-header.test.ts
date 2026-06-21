@@ -14,6 +14,7 @@ const labels: RunHeaderLabels = {
   openInspector: "Open inspector",
   closeInspector: "Close inspector",
   task: "Task",
+  budgetWarn: "budget $pct%",
 };
 
 function render(over: Partial<RunHeaderProps> = {}): string {
@@ -107,5 +108,26 @@ describe("RunHeader — task-first header", () => {
     expect(html).toContain('data-testid="run-header-branch"');
     expect(html).toContain("maister/task-1/attempt-2");
     expect(html).toContain('data-testid="run-header-change-summary"');
+  });
+});
+
+describe("RunHeader — budget warn badge (AC-BADGE-1)", () => {
+  it("renders the amber budget badge with the consumed percent when warn", () => {
+    const html = render({ budgetStatus: { warn: true, pct: 85 } });
+
+    expect(html).toContain('data-testid="run-header-budget-warn"');
+    expect(html).toContain("budget 85%");
+  });
+
+  it("omits the badge when the run is below the warn band", () => {
+    const html = render({ budgetStatus: { warn: false, pct: 40 } });
+
+    expect(html).not.toContain('data-testid="run-header-budget-warn"');
+  });
+
+  it("omits the badge when there is no budget signal (null)", () => {
+    const html = render({ budgetStatus: null });
+
+    expect(html).not.toContain('data-testid="run-header-budget-warn"');
   });
 });

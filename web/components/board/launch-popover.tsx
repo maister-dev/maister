@@ -3,6 +3,9 @@
 import type { Key, ReactElement } from "react";
 import type { LaunchStage } from "@/lib/runs/launch-progress";
 import type {
+  BudgetAxis,
+  BudgetLimits,
+  BudgetScope,
   CheckStrictness,
   ExecutionPolicy,
   ExecutionPolicyOverrides,
@@ -12,6 +15,7 @@ import type {
 } from "@/lib/runs/execution-policy";
 
 import { Button, ListBox, Select } from "@heroui/react";
+import { ExclamationTriangleIcon } from "@heroicons/react/24/outline";
 import { useRouter } from "next/navigation";
 import {
   useEffect,
@@ -174,6 +178,127 @@ function policyChanged(
   );
 }
 
+// Budget inputs are held as raw text so an in-progress / invalid value can be
+// rejected inline (positive int only) before it is pruned into a BudgetAxis.
+type BudgetField = keyof BudgetLimits;
+type BudgetTextLimits = Partial<Record<BudgetField, string>>;
+type BudgetTextAxis = Partial<Record<BudgetScope, BudgetTextLimits>>;
+
+// Run/Task share the four token/failure fields; Tree adds wall-clock minutes.
+const BUDGET_SCOPE_FIELDS: Record<BudgetScope, BudgetField[]> = {
+  run: ["maxTokens", "hardMaxTokens", "warnAtPct", "consecutiveFailures"],
+  task: ["maxTokens", "hardMaxTokens", "warnAtPct", "consecutiveFailures"],
+  tree: [
+    "maxTokens",
+    "hardMaxTokens",
+    "warnAtPct",
+    "consecutiveFailures",
+    "wallClockMinutes",
+  ],
+};
+
+// A field value is "invalid" when it is non-empty and not a positive integer
+// (empty = unlimited, allowed). warnAtPct additionally caps at 100.
+export function isBudgetFieldInvalid(field: BudgetField, raw: string): boolean {
+  const trimmed = raw.trim();
+
+  if (trimmed === "") return false;
+  const n = Number(trimmed);
+
+  if (!Number.isInteger(n) || n <= 0) return true;
+
+  return field === "warnAtPct" && n > 100;
+}
+
+export function budgetTextHasInvalid(text: BudgetTextAxis): boolean {
+  return (Object.keys(BUDGET_SCOPE_FIELDS) as BudgetScope[]).some((scope) =>
+    BUDGET_SCOPE_FIELDS[scope].some((field) =>
+      isBudgetFieldInvalid(field, text[scope]?.[field] ?? ""),
+    ),
+  );
+}
+
+// Prune the raw text axis to a sparse BudgetAxis: only positive-int fields
+// survive, only non-empty scopes are emitted — so the snapshot stays minimal.
+export function pruneBudgetText(text: BudgetTextAxis): BudgetAxis | null {
+  const axis: BudgetAxis = {};
+
+  for (const scope of Object.keys(BUDGET_SCOPE_FIELDS) as BudgetScope[]) {
+    const limits: BudgetLimits = {};
+
+    for (const field of BUDGET_SCOPE_FIELDS[scope]) {
+      const raw = (text[scope]?.[field] ?? "").trim();
+
+      if (raw === "") continue;
+      const n = Number(raw);
+
+      if (Number.isInteger(n) && n > 0) limits[field] = n;
+    }
+
+    if (Object.keys(limits).length > 0) axis[scope] = limits;
+  }
+
+  return Object.keys(axis).length > 0 ? axis : null;
+}
+
+export function BudgetScopeFields(props: {
+  scope: BudgetScope;
+  heading: string;
+  values: BudgetTextLimits;
+  fieldLabels: Record<BudgetField, string>;
+  fieldPlaceholders: Partial<Record<BudgetField, string>>;
+  invalidLabel: string;
+  onChange: (field: BudgetField, value: string) => void;
+}): ReactElement {
+  const inputId = useId();
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="font-mono text-[9.5px] font-bold uppercase tracking-[0.06em] text-mute">
+        {props.heading}
+      </span>
+      <div className="grid gap-2 md:grid-cols-2">
+        {BUDGET_SCOPE_FIELDS[props.scope].map((field) => {
+          const raw = props.values[field] ?? "";
+          const invalid = isBudgetFieldInvalid(field, raw);
+          const fieldId = `${inputId}-${field}`;
+
+          return (
+            <label key={field} className="flex flex-col gap-0.5">
+              <span className="font-mono text-[9px] uppercase tracking-[0.05em] text-mute">
+                {props.fieldLabels[field]}
+              </span>
+              <input
+                aria-invalid={invalid}
+                className={clsx(
+                  "h-8 rounded-md border bg-paper px-2 font-mono text-[11px] text-ink outline-none focus:border-amber",
+                  invalid ? "border-red-300" : "border-line-soft",
+                )}
+                data-testid={`budget-${props.scope}-${field}`}
+                id={fieldId}
+                inputMode="numeric"
+                placeholder={props.fieldPlaceholders[field] ?? ""}
+                type="text"
+                value={raw}
+                onChange={(e) => props.onChange(field, e.target.value)}
+              />
+              {invalid ? (
+                <span
+                  className="font-mono text-[9px] text-red-500"
+                  id={`${fieldId}-error`}
+                  role="alert"
+                >
+                  {props.invalidLabel}
+                </span>
+              ) : null}
+            </label>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export function LaunchPopover({
   taskId,
   label,
@@ -207,6 +332,11 @@ export function LaunchPopover({
   const [execPromotion, setExecPromotion] =
     useState<PromotionTrigger>("manual");
   const [execAdvancedOpen, setExecAdvancedOpen] = useState(false);
+  // Budget axis raw text per scope/field (empty = unlimited). Kept as strings so
+  // a half-typed / invalid value is rejected inline before it folds into the
+  // policy; the prune step coerces to positive ints (NaN / ≤0 dropped).
+  const [execBudget, setExecBudget] = useState<BudgetTextAxis>({});
+  const [execBudgetOpen, setExecBudgetOpen] = useState(false);
   const dialogId = useId();
   const openerRef = useRef<HTMLButtonElement | null>(null);
   const closeRef = useRef<HTMLButtonElement | null>(null);
@@ -303,6 +433,7 @@ export function LaunchPopover({
     setExecPromotion(eff.promotion);
   }
 
+  const budgetAxis = useMemo(() => pruneBudgetText(execBudget), [execBudget]);
   const currentExecutionPolicy = useMemo<ExecutionPolicy>(() => {
     const base = expandExecutionPolicy({ preset: execPreset });
     const overrides: ExecutionPolicyOverrides = {};
@@ -310,11 +441,23 @@ export function LaunchPopover({
     if (execChecks !== base.checks) overrides.checks = execChecks;
     if (execHumanGate !== base.humanGate) overrides.humanGate = execHumanGate;
     if (execPromotion !== base.promotion) overrides.promotion = execPromotion;
+    if (budgetAxis) overrides.budget = budgetAxis;
 
     return Object.keys(overrides).length > 0
       ? { preset: execPreset, overrides }
       : { preset: execPreset };
-  }, [execChecks, execHumanGate, execPreset, execPromotion]);
+  }, [budgetAxis, execChecks, execHumanGate, execPreset, execPromotion]);
+
+  // AC-UI-2: a non-numeric / negative token value blocks Create (positive ints
+  // only; empty stays allowed). The hint below is informational only.
+  const budgetInvalid = useMemo(
+    () => budgetTextHasInvalid(execBudget),
+    [execBudget],
+  );
+  // AC-UI-3: soft amber note when an unattended run carries no budget at all —
+  // never disables Launch.
+  const unattendedUnbounded =
+    execPreset === "unattended" && budgetAxis === null;
 
   // M34 (ADR-089): a flowless simple-intent task classifies `unconfigured` —
   // the user's flow pick is the set-up step and clears the gate locally.
@@ -511,7 +654,30 @@ export function LaunchPopover({
     optionsError ||
     !(options?.launchability.launchable || setUpReady) ||
     !flowId ||
-    !baseBranch;
+    !baseBranch ||
+    budgetInvalid;
+  const budgetFieldLabels: Record<BudgetField, string> = {
+    maxTokens: t("budgetMaxTokens"),
+    hardMaxTokens: t("budgetHardMaxTokens"),
+    warnAtPct: t("budgetWarnPct"),
+    consecutiveFailures: t("budgetConsecutiveFailures"),
+    wallClockMinutes: t("budgetWallClockMinutes"),
+  };
+  const budgetFieldPlaceholders: Partial<Record<BudgetField, string>> = {
+    hardMaxTokens: t("budgetHardMaxHint"),
+    warnAtPct: "80",
+  };
+
+  function onBudgetChange(
+    scope: BudgetScope,
+    field: BudgetField,
+    value: string,
+  ): void {
+    setExecBudget((prev) => ({
+      ...prev,
+      [scope]: { ...(prev[scope] ?? {}), [field]: value },
+    }));
+  }
 
   return (
     <>
@@ -803,6 +969,58 @@ export function LaunchPopover({
                       {execAdvancedOpen && execGuardActive ? (
                         <p className="mt-2 font-mono text-[10px] text-mute">
                           {t("execNoBlindShip")}
+                        </p>
+                      ) : null}
+                    </div>
+
+                    <div className="rounded-[10px] border border-line-soft bg-ivory/50 p-3">
+                      <div className="mb-2 flex items-center justify-between gap-3">
+                        <h3 className="text-[13px] font-semibold text-ink">
+                          {t("budgetTitle")}
+                        </h3>
+                        <button
+                          aria-expanded={execBudgetOpen}
+                          className="font-mono text-[10.5px] text-mute hover:text-ink"
+                          type="button"
+                          onClick={() => setExecBudgetOpen((v) => !v)}
+                        >
+                          {execBudgetOpen
+                            ? t("execAdvancedHide")
+                            : t("execAdvancedShow")}
+                        </button>
+                      </div>
+                      <p className="font-mono text-[10px] text-mute">
+                        {t("budgetHint")}
+                      </p>
+                      {execBudgetOpen ? (
+                        <div className="mt-3 flex flex-col gap-3">
+                          {(["run", "task", "tree"] as const).map((scope) => (
+                            <BudgetScopeFields
+                              key={scope}
+                              fieldLabels={budgetFieldLabels}
+                              fieldPlaceholders={budgetFieldPlaceholders}
+                              heading={t(`budgetScope.${scope}`)}
+                              invalidLabel={t("budgetInvalid")}
+                              scope={scope}
+                              values={execBudget[scope] ?? {}}
+                              onChange={(field, value) =>
+                                onBudgetChange(scope, field, value)
+                              }
+                            />
+                          ))}
+                        </div>
+                      ) : null}
+                      {unattendedUnbounded ? (
+                        <p
+                          className="mt-2 flex items-start gap-1.5 rounded-[8px] border border-amber-line bg-amber-soft px-2.5 py-2 font-mono text-[10.5px] leading-[1.5] text-amber"
+                          data-testid="budget-unattended-hint"
+                          role="note"
+                        >
+                          <ExclamationTriangleIcon
+                            aria-hidden="true"
+                            className="mt-px h-3.5 w-3.5 shrink-0"
+                          />
+                          {t("budgetUnattendedHint")}
                         </p>
                       ) : null}
                     </div>

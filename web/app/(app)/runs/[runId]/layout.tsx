@@ -878,6 +878,7 @@ export default async function RunDetailLayout({
     openInspector: t("headerOpenInspector"),
     closeInspector: t("headerCloseInspector"),
     task: t("headerTask"),
+    budgetWarn: t("headerBudgetWarn"),
   };
   const inspectorLabels: RunInspectorLabels = {
     overview: t("inspectorOverview"),
@@ -1093,6 +1094,7 @@ export default async function RunDetailLayout({
   return (
     <RunShell
       branch={detail.branch}
+      budgetStatus={detail.budgetStatus}
       changeSummary={changeSummary}
       inspector={
         <LiveRunInspector

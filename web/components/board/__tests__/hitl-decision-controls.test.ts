@@ -42,6 +42,7 @@ vi.mock("next-intl", () => ({
 
 import {
   HitlDecisionControls,
+  budgetBreachFromSchema,
   reviewLoopInfo,
 } from "@/components/board/hitl-decision-controls";
 
@@ -63,6 +64,21 @@ const LABELS = {
   reviewCommentsPlaceholder: "run.reviewCommentsPlaceholder",
   formInstructions: "run.formInstructions",
   formCustomPlaceholder: "run.formCustomPlaceholder",
+};
+
+const BUDGET_LABELS = {
+  ...LABELS,
+  budgetBreachTitle: "Budget breach",
+  budgetNewCeiling: "New ceiling",
+  budgetRaiseResume: "Raise & resume",
+  budgetAbandon: "Abandon",
+  budgetBreachSummary: "$scope $meter reached $current of $limit.",
+  "budgetScope.run": "Run",
+  "budgetScope.task": "Task",
+  "budgetScope.tree": "Tree",
+  "budgetMeter.tokens": "tokens",
+  "budgetMeter.failures": "failures",
+  "budgetMeter.wallclock": "wall-clock",
 };
 
 type ControlsProps = Parameters<typeof HitlDecisionControls>[0];
@@ -781,5 +797,143 @@ describe("reviewLoopInfo — pure boundary helper (mirrors hitl-validate)", () =
     expect(
       reviewLoopInfo({ ...REVIEW_SCHEMA_BASE, maxLoops: 2, gateAttempt: 3 }),
     ).toEqual({ gateAttempt: 3, totalVisits: 3, exhausted: true });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cost-budget governance — budget_breach card (ESCALATE rung).
+//
+// The card renders for kind="budget_breach" with the LOCKED watchdog schema
+// { kind, scope, meter, current, limit, decisions }: a breach summary, a "New
+// ceiling" number input, a primary "Raise & resume" button, and a destructive
+// "Abandon" button. Mirrors the infra_recovery card pattern; confidence is
+// never shown (a raise/abandon choice carries no confidence — enforced in
+// run-hitl-response, which passes showConfidence=false here).
+// ---------------------------------------------------------------------------
+
+const BUDGET_BREACH_SCHEMA = {
+  kind: "budget_breach",
+  scope: "run",
+  meter: "tokens",
+  current: 1200,
+  limit: 1000,
+  decisions: ["raise", "abandon"],
+};
+
+describe("HitlDecisionControls — budget_breach card", () => {
+  it("renders the breach summary with scope, meter, current and limit", () => {
+    const html = render({
+      kind: "budget_breach",
+      schema: BUDGET_BREACH_SCHEMA,
+      labels: BUDGET_LABELS,
+    });
+
+    expect(html).toContain('data-testid="budget-breach-card"');
+    expect(html).toContain("Run tokens reached 1200 of 1000.");
+  });
+
+  it("renders the New ceiling input carrying the controlled value", () => {
+    const html = render({
+      kind: "budget_breach",
+      schema: BUDGET_BREACH_SCHEMA,
+      labels: BUDGET_LABELS,
+      budgetCeiling: "2400",
+    });
+
+    expect(html).toContain("New ceiling");
+    expect(html).toContain('data-testid="budget-breach-ceiling"');
+    expect(html).toContain('value="2400"');
+  });
+
+  it("renders both the Raise and Abandon buttons", () => {
+    const html = render({
+      kind: "budget_breach",
+      schema: BUDGET_BREACH_SCHEMA,
+      labels: BUDGET_LABELS,
+    });
+
+    expect(html).toContain('data-testid="budget-breach-raise"');
+    expect(html).toContain("Raise &amp; resume");
+    expect(html).toContain('data-testid="budget-breach-abandon"');
+    expect(html).toContain(">Abandon<");
+  });
+
+  it("never renders a confidence input for budget_breach", () => {
+    const html = render({
+      kind: "budget_breach",
+      schema: BUDGET_BREACH_SCHEMA,
+      labels: BUDGET_LABELS,
+      // Even if a caller forced showConfidence, the breach branch ignores it.
+      showConfidence: true,
+      confidence: "0.9",
+    });
+
+    expect(html).not.toContain("run.confidenceLabel");
+  });
+
+  it("localizes the task-scope failures meter in the summary", () => {
+    const html = render({
+      kind: "budget_breach",
+      schema: {
+        ...BUDGET_BREACH_SCHEMA,
+        scope: "task",
+        meter: "failures",
+        current: 3,
+        limit: 3,
+      },
+      labels: BUDGET_LABELS,
+    });
+
+    expect(html).toContain("Task failures reached 3 of 3.");
+  });
+
+  it("disables both buttons and the input when disabled", () => {
+    const html = render({
+      kind: "budget_breach",
+      schema: BUDGET_BREACH_SCHEMA,
+      labels: BUDGET_LABELS,
+      disabled: true,
+    });
+
+    expect(buttonTagFor(html, "Raise &amp; resume")).toContain("disabled");
+    expect(buttonTagFor(html, ">Abandon<")).toContain("disabled");
+  });
+});
+
+describe("budgetBreachFromSchema — pure schema narrowing", () => {
+  it("parses a well-formed budget_breach schema", () => {
+    expect(budgetBreachFromSchema(BUDGET_BREACH_SCHEMA)).toEqual({
+      scope: "run",
+      meter: "tokens",
+      current: 1200,
+      limit: 1000,
+    });
+  });
+
+  it("returns null for a non-budget_breach schema", () => {
+    expect(budgetBreachFromSchema({ kind: "permission" })).toBeNull();
+    expect(budgetBreachFromSchema(null)).toBeNull();
+    expect(budgetBreachFromSchema("nope")).toBeNull();
+  });
+
+  it("returns null when a required field is missing or mistyped", () => {
+    expect(
+      budgetBreachFromSchema({
+        kind: "budget_breach",
+        scope: "run",
+        meter: "tokens",
+        current: 1200,
+        // limit missing
+      }),
+    ).toBeNull();
+    expect(
+      budgetBreachFromSchema({
+        kind: "budget_breach",
+        scope: "galaxy",
+        meter: "tokens",
+        current: 1,
+        limit: 2,
+      }),
+    ).toBeNull();
   });
 });

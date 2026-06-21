@@ -13,6 +13,7 @@ import { useTranslations } from "next-intl";
 
 import {
   HitlDecisionControls,
+  budgetBreachFromSchema,
   formFieldsFromSchema,
 } from "@/components/board/hitl-decision-controls";
 
@@ -68,6 +69,7 @@ export function RunHitlResponse({
   const [formValues, setFormValues] = useState<Record<string, string>>({});
   const [comments, setComments] = useState("");
   const [confidence, setConfidence] = useState("");
+  const [budgetCeiling, setBudgetCeiling] = useState("");
 
   // Map a typed MaisterError `code` to a localized message. Unknown codes fall
   // back to the generic message so the user never sees a raw code like CONFLICT.
@@ -214,9 +216,35 @@ export function RunHitlResponse({
     handleDecision(reworkDecision);
   }
 
-  // Confidence applies to form/human/review; NOT permission or infra_recovery
-  // (a binary retry/abandon choice carries no confidence).
-  const showConfidence = kind !== "permission" && kind !== "infra_recovery";
+  // budget_breach raise: POST { optionId: "raise", raiseTo: <int> }. The ceiling
+  // must be a positive integer GREATER than the breached limit (mirrors the
+  // server's fail-closed validation); rejected inline otherwise. The breached
+  // limit is read from the row's schema — never a user-entered field.
+  function handleBudgetRaise(): void {
+    const breach = budgetBreachFromSchema(schema);
+    const trimmed = budgetCeiling.trim();
+    const n = Number(trimmed);
+
+    if (
+      trimmed === "" ||
+      !Number.isInteger(n) ||
+      n <= 0 ||
+      (breach && n <= breach.limit)
+    ) {
+      setError(t("budgetRaiseInvalid"));
+
+      return;
+    }
+
+    void post({ optionId: "raise", raiseTo: n });
+  }
+
+  // Confidence applies to form/human/review; NOT permission, infra_recovery, or
+  // budget_breach (a raise/abandon choice carries no confidence).
+  const showConfidence =
+    kind !== "permission" &&
+    kind !== "infra_recovery" &&
+    kind !== "budget_breach";
 
   const labels = {
     criticalityLabel: t("criticalityLabel"),
@@ -243,10 +271,22 @@ export function RunHitlResponse({
     reviewReworkExhausted: t("reviewReworkExhausted"),
     infraRecoveryRetry: t("infraRecoveryRetry"),
     infraRecoveryAbandon: t("infraRecoveryAbandon"),
+    budgetBreachTitle: t("budgetBreachTitle"),
+    budgetNewCeiling: t("budgetNewCeiling"),
+    budgetRaiseResume: t("budgetRaiseResume"),
+    budgetAbandon: t("budgetAbandon"),
+    budgetBreachSummary: t("budgetBreachSummary"),
+    "budgetScope.run": t("budgetScope.run"),
+    "budgetScope.task": t("budgetScope.task"),
+    "budgetScope.tree": t("budgetScope.tree"),
+    "budgetMeter.tokens": t("budgetMeter.tokens"),
+    "budgetMeter.failures": t("budgetMeter.failures"),
+    "budgetMeter.wallclock": t("budgetMeter.wallclock"),
   };
 
   return (
     <HitlDecisionControls
+      budgetCeiling={budgetCeiling}
       comments={comments}
       compact={compact}
       confidence={confidence}
@@ -262,6 +302,8 @@ export function RunHitlResponse({
       reviewSchema={reviewSchema}
       schema={schema}
       showConfidence={showConfidence}
+      onBudgetCeilingChange={setBudgetCeiling}
+      onBudgetRaise={handleBudgetRaise}
       onCommentsChange={setComments}
       onConfidenceChange={setConfidence}
       onDecision={handleDecision}

@@ -25,6 +25,7 @@ export interface RunShellProps {
   branch?: string | null;
   targetBranch?: string | null;
   changeSummary?: RunHeaderProps["changeSummary"];
+  budgetStatus?: RunHeaderProps["budgetStatus"];
   labels: RunShellLabels;
   defaultInspectorOpen?: boolean;
   inspector: ReactNode;
@@ -43,6 +44,7 @@ export function RunShell({
   branch,
   targetBranch,
   changeSummary,
+  budgetStatus,
   labels,
   defaultInspectorOpen = true,
   inspector,
@@ -58,6 +60,7 @@ export function RunShell({
     >
       <RunHeader
         branch={branch}
+        budgetStatus={budgetStatus}
         changeSummary={changeSummary}
         inspectorOpen={inspectorOpen}
         keyRef={keyRef}
