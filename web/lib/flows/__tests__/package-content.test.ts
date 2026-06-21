@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   listInstalledPackageFiles,
   readInstalledPackageFile,
+  resolveBundledAgentPath,
+  resolveBundledSkillPrefix,
 } from "@/lib/flows/package-content";
 
 async function seedBundle(root: string): Promise<void> {
@@ -263,5 +265,72 @@ describe("readInstalledPackageFile", () => {
     );
 
     expect(result).toEqual({ state: "bundle-missing" });
+  });
+});
+
+// Real packages nest skills/agents under a capability bundle
+// (`<capability>/skills/<id>/`, see lib/packages/attach.ts collectInventory),
+// while the legacy/authored layout puts them at the bundle root. These resolvers
+// locate the real on-disk path from the file listing so the viewer reads either.
+describe("resolveBundledSkillPrefix", () => {
+  it("resolves a capability-nested skill bundle prefix", () => {
+    const files = [
+      { path: "capability/skills/aif-commit/SKILL.md" },
+      { path: "capability/skills/aif-commit/refs/extra.md" },
+      { path: "capability/agents/loop.md" },
+    ];
+
+    expect(resolveBundledSkillPrefix(files, "aif-commit")).toBe(
+      "capability/skills/aif-commit/",
+    );
+  });
+
+  it("resolves a flat (legacy) skill bundle prefix", () => {
+    const files = [{ path: "skills/demo/SKILL.md" }];
+
+    expect(resolveBundledSkillPrefix(files, "demo")).toBe("skills/demo/");
+  });
+
+  it("does not match a skill id that is a prefix of another id", () => {
+    const files = [{ path: "capability/skills/aif-commit/SKILL.md" }];
+
+    expect(resolveBundledSkillPrefix(files, "aif")).toBeNull();
+  });
+
+  it("returns null when no file belongs to the skill", () => {
+    const files = [{ path: "capability/skills/other/SKILL.md" }];
+
+    expect(resolveBundledSkillPrefix(files, "demo")).toBeNull();
+  });
+});
+
+describe("resolveBundledAgentPath", () => {
+  it("resolves a capability-nested agent definition path", () => {
+    const files = [
+      { path: "capability/agents/loop-critic.md" },
+      { path: "capability/skills/x/SKILL.md" },
+    ];
+
+    expect(resolveBundledAgentPath(files, "loop-critic")).toBe(
+      "capability/agents/loop-critic.md",
+    );
+  });
+
+  it("resolves a flat (legacy) agent definition path", () => {
+    const files = [{ path: "agents/solo.md" }];
+
+    expect(resolveBundledAgentPath(files, "solo")).toBe("agents/solo.md");
+  });
+
+  it("does not match an agent stem that is a suffix of another file", () => {
+    const files = [{ path: "capability/agents/my-loop-critic.md" }];
+
+    expect(resolveBundledAgentPath(files, "loop-critic")).toBeNull();
+  });
+
+  it("returns null when no agent file matches", () => {
+    const files = [{ path: "capability/agents/other.md" }];
+
+    expect(resolveBundledAgentPath(files, "missing")).toBeNull();
   });
 });

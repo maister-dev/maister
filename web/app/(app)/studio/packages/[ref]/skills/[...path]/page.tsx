@@ -22,6 +22,7 @@ import {
   listInstalledPackageFiles,
   readInstalledPackageFile,
   readInstalledPackageImage,
+  resolveBundledSkillPrefix,
 } from "@/lib/flows/package-content";
 import { getStudioPackageInstalledPath } from "@/lib/studio/package-path";
 import { resolveStudioPackageByRef } from "@/lib/studio/load";
@@ -104,7 +105,14 @@ export default async function StudioSkillDetailPage({
   const listing = await listInstalledPackageFiles({ installedPath });
   const bundleMissing = listing.bundleMissing;
 
-  const prefix = `skills/${skillId}/`;
+  // Skills nest under the package's capability bundle (`<capability>/skills/<id>/`);
+  // resolve the real on-disk prefix from the listing, falling back to the flat
+  // layout. Without this the file list + SKILL.md read come back empty.
+  const prefix =
+    (listing.bundleMissing
+      ? null
+      : resolveBundledSkillPrefix(listing.files, skillId)) ??
+    `skills/${skillId}/`;
   const files: SkillBundleFile[] = bundleMissing
     ? []
     : listing.files

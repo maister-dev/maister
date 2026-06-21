@@ -150,6 +150,45 @@ export async function listInstalledPackageFiles(
   return { bundleMissing: false, files, flowYaml };
 }
 
+// Real packages nest skills/agents under a capability bundle
+// (`<capability>/skills/<id>/`, `<capability>/agents/<stem>.md` — see
+// lib/packages/attach.ts collectInventory); the authored/legacy layout puts them
+// at the bundle root. These resolvers locate the member's real on-disk location
+// from the file listing so the viewer reads either layout. The `skills/<id>/`
+// (resp. `agents/<stem>.md`) match is anchored to a path-segment boundary so a
+// shorter id never matches a longer sibling. `null` = no file for the member.
+export function resolveBundledSkillPrefix(
+  files: { path: string }[],
+  skillId: string,
+): string | null {
+  const segment = `skills/${skillId}/`;
+
+  for (const file of files) {
+    const idx = file.path.indexOf(segment);
+
+    if (idx === 0 || (idx > 0 && file.path[idx - 1] === "/")) {
+      return file.path.slice(0, idx + segment.length);
+    }
+  }
+
+  return null;
+}
+
+export function resolveBundledAgentPath(
+  files: { path: string }[],
+  stem: string,
+): string | null {
+  const suffix = `agents/${stem}.md`;
+
+  for (const file of files) {
+    if (file.path === suffix || file.path.endsWith(`/${suffix}`)) {
+      return file.path;
+    }
+  }
+
+  return null;
+}
+
 type ConfineResult =
   | { ok: true; real: string }
   | { ok: false; state: "not-found" | "too-large" | "bundle-missing" };
