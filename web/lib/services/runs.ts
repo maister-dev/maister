@@ -64,6 +64,7 @@ import {
   resolveExecutionPolicy,
   type ExecutionPolicy,
 } from "@/lib/runs/execution-policy";
+import { applyDefaultBudgetForUnattended } from "@/lib/runs/budget-default";
 import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
 import { actorForUserId, recordTaskActivity } from "@/lib/social/activity";
 import { getOpenRelationBlockers } from "@/lib/social/relations";
@@ -291,12 +292,14 @@ export async function* launchRunStaged(
   // supervised), reject blind-ship combos, then gate non-supervised launches
   // behind the privileged action. Snapshotted onto runs.execution_policy below;
   // resume/recover read the snapshot, never re-resolve.
-  const executionPolicy = resolveExecutionPolicy({
-    launchOverride: input.executionPolicy ?? null,
-    taskDefault: (task.executionPolicy as ExecutionPolicy | null) ?? null,
-    projectDefault:
-      (project.executionPolicyDefault as ExecutionPolicy | null) ?? null,
-  });
+  const executionPolicy = applyDefaultBudgetForUnattended(
+    resolveExecutionPolicy({
+      launchOverride: input.executionPolicy ?? null,
+      taskDefault: (task.executionPolicy as ExecutionPolicy | null) ?? null,
+      projectDefault:
+        (project.executionPolicyDefault as ExecutionPolicy | null) ?? null,
+    }),
+  );
 
   assertNoBlindShip(executionPolicy);
 

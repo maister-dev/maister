@@ -20,7 +20,11 @@ export type ExecPolicyActionKind =
   | "auto_retried"
   | "escalated"
   | "dirty_auto_resolved"
-  | "history_rewritten";
+  | "history_rewritten"
+  | "budget_warned"
+  | "budget_escalated"
+  | "budget_terminated"
+  | "budget_raised";
 
 export type ExecPolicyAuditRecord = {
   runId: string;

@@ -5,7 +5,7 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
@@ -400,4 +400,72 @@ export async function reconcileProjectScopeCostRollups(
     rows.map((run) => run.id),
     { client, runtimeRoot: opts.runtimeRoot },
   );
+}
+
+// Cost-budget governance: the budget token total is the SUM of the four BASE
+// token columns (the resume* columns are a subset already folded into the base
+// by addRecord, so they are NOT added here — adding them would double-count the
+// resume tax). COALESCE(..., 0) covers the no-rows case (missing run / empty
+// task / empty tree). Returned as a JS number (token counts are well within
+// Number.MAX_SAFE_INTEGER for any realistic spend).
+const baseTokenSumExpr = sql<number>`coalesce(sum(
+  ${runCostRollups.inputTokens}
+  + ${runCostRollups.outputTokens}
+  + ${runCostRollups.cacheReadTokens}
+  + ${runCostRollups.cacheCreationTokens}
+), 0)`;
+
+// PG returns bigint sums as a string; coerce to a JS number at the boundary.
+function asTokenNumber(value: number | string | null): number {
+  return Number(value ?? 0);
+}
+
+export async function queryRunTokens(
+  runId: string,
+  opts: { client?: DbClient } = {},
+): Promise<number> {
+  const client = opts.client ?? db();
+  const [row] = await client
+    .select({ total: baseTokenSumExpr })
+    .from(runCostRollups)
+    .where(eq(runCostRollups.runId, runId));
+  const total = asTokenNumber(row?.total ?? 0);
+
+  log.debug({ runId, scope: "run", total }, "budget token total");
+
+  return total;
+}
+
+export async function queryTaskTokens(
+  taskId: string,
+  opts: { client?: DbClient } = {},
+): Promise<number> {
+  const client = opts.client ?? db();
+  const [row] = await client
+    .select({ total: baseTokenSumExpr })
+    .from(runCostRollups)
+    .innerJoin(runs, eq(runs.id, runCostRollups.runId))
+    .where(eq(runs.taskId, taskId));
+  const total = asTokenNumber(row?.total ?? 0);
+
+  log.debug({ taskId, scope: "task", total }, "budget token total");
+
+  return total;
+}
+
+export async function queryRunTreeTokens(
+  rootRunId: string,
+  opts: { client?: DbClient } = {},
+): Promise<number> {
+  const client = opts.client ?? db();
+  const [row] = await client
+    .select({ total: baseTokenSumExpr })
+    .from(runCostRollups)
+    .innerJoin(runs, eq(runs.id, runCostRollups.runId))
+    .where(eq(runs.rootRunId, rootRunId));
+  const total = asTokenNumber(row?.total ?? 0);
+
+  log.debug({ rootRunId, scope: "tree", total }, "budget token total");
+
+  return total;
 }

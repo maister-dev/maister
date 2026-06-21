@@ -59,6 +59,7 @@ export type ExecutionPolicyOverrides = {
   promotion?: PromotionTrigger;
   commits?: CommitPolicy;
   dirtyResolve?: DirtyResolution;
+  budget?: BudgetAxis;
 };
 
 export type ExecutionPolicy = {
@@ -78,6 +79,7 @@ export type ResolvedExecutionPolicy = {
   promotion: PromotionTrigger;
   commits: CommitPolicy;
   dirtyResolve: DirtyResolution;
+  budget: BudgetAxis;
 };
 
 type PresetAxes = Omit<ResolvedExecutionPolicy, "preset">;
@@ -96,6 +98,7 @@ const PRESET_AXES: Record<ExecutionPreset, PresetAxes> = {
     promotion: "manual",
     commits: "keep_all",
     dirtyResolve: "ask",
+    budget: {},
   },
   assisted: {
     reworkExhaustion: "escalate",
@@ -107,6 +110,7 @@ const PRESET_AXES: Record<ExecutionPreset, PresetAxes> = {
     promotion: "manual",
     commits: "keep_all",
     dirtyResolve: "proceed",
+    budget: {},
   },
   unattended: {
     reworkExhaustion: "escalate",
@@ -118,6 +122,7 @@ const PRESET_AXES: Record<ExecutionPreset, PresetAxes> = {
     promotion: "auto_on_ready",
     commits: "squash_rework",
     dirtyResolve: "proceed",
+    budget: {},
   },
 };
 
@@ -138,6 +143,7 @@ export function expandExecutionPolicy(
     promotion: o.promotion ?? base.promotion,
     commits: o.commits ?? base.commits,
     dirtyResolve: o.dirtyResolve ?? base.dirtyResolve,
+    budget: o.budget ?? base.budget,
   };
 }
 
@@ -262,6 +268,54 @@ export const executionPresetSchema = z.enum([
   "unattended",
 ]);
 
+// ── Budget axis (cost-budget governance, 10th execution-policy axis) ──────────
+// Token / consecutive-failure / wall-clock ceilings at run + task + tree scope.
+// Fail-OPEN: absent OR 0 ⇒ unlimited ("run, don't constrain"). The axis itself
+// rides the existing runs.execution_policy jsonb snapshot; the per-run mutable
+// budget state (raise-and-resume ceiling + per-scope notified rung) is persisted
+// separately as runs.budget_state (migration 0061).
+export type BudgetScope = "run" | "task" | "tree";
+export type BudgetRung = "warn" | "escalate" | "terminate";
+export type BudgetLimits = {
+  maxTokens?: number | null;
+  hardMaxTokens?: number | null;
+  consecutiveFailures?: number | null;
+  wallClockMinutes?: number | null;
+  warnAtPct?: number | null;
+};
+export type BudgetAxis = {
+  run?: BudgetLimits;
+  task?: BudgetLimits;
+  tree?: BudgetLimits;
+};
+export type BudgetState = {
+  ceilingOverride?: BudgetAxis;
+  notified?: Partial<Record<BudgetScope, BudgetRung>>;
+};
+
+// Sink-invariant validation: token/failure/minute fields are positive ints (a
+// non-positive token ceiling makes no sense and `0` already means unlimited);
+// warnAtPct is a 1..100 percentage.
+const tokenLimitField = z.number().int().positive().nullable().optional();
+
+export const budgetLimitsSchema = z
+  .object({
+    maxTokens: tokenLimitField,
+    hardMaxTokens: tokenLimitField,
+    consecutiveFailures: tokenLimitField,
+    wallClockMinutes: tokenLimitField,
+    warnAtPct: z.number().int().min(1).max(100).nullable().optional(),
+  })
+  .strict();
+
+export const budgetAxisSchema = z
+  .object({
+    run: budgetLimitsSchema.optional(),
+    task: budgetLimitsSchema.optional(),
+    tree: budgetLimitsSchema.optional(),
+  })
+  .strict();
+
 export const executionPolicyOverridesSchema = z
   .object({
     reworkExhaustion: z.enum(["escalate", "ship_with_warning", "fail"]),
@@ -278,6 +332,7 @@ export const executionPolicyOverridesSchema = z
       "defer",
     ]),
     dirtyResolve: z.enum(["ask", "commit", "proceed"]),
+    budget: budgetAxisSchema.optional(),
   })
   .partial()
   .strict();
@@ -386,6 +441,18 @@ export function dirtyResolveFromSnapshot(snapshot: unknown): DirtyResolution {
   return parsed.success
     ? expandExecutionPolicy(parsed.data).dirtyResolve
     : "ask";
+}
+
+// Resolve just the budget axis from a run's execution_policy snapshot. NOTE the
+// inversion: the safety axes fail-closed to a strict scalar; budget fails OPEN
+// to all-unset (unlimited), because "no limit ⇒ don't constrain" and a
+// malformed snapshot must never ADD a constraint (ADR-101, spec §8 E2). A
+// present-but-invalid budget value fails the strict parse → {}, never a partial
+// limit.
+export function budgetFromSnapshot(snapshot: unknown): BudgetAxis {
+  const parsed = executionPolicySchema.safeParse(snapshot);
+
+  return parsed.success ? expandExecutionPolicy(parsed.data).budget : {};
 }
 
 // B2/B3 decision matrix for a human gate (pure). The runner computes the policy

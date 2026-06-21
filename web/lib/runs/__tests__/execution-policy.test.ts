@@ -1,9 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { isMaisterError } from "@/lib/errors-core";
 import {
   assertNoBlindShip,
   blindShipLockedOptions,
+  budgetFromSnapshot,
   checksFromSnapshot,
   crashRetryFromSnapshot,
   permissionsFromSnapshot,
@@ -23,6 +24,7 @@ import {
   reworkExhaustionFromSnapshot,
   type ExecutionPolicy,
 } from "@/lib/runs/execution-policy";
+import { applyDefaultBudgetForUnattended } from "@/lib/runs/budget-default";
 
 describe("expandExecutionPolicy — preset → axes", () => {
   it("supervised expands to the all-stop baseline", () => {
@@ -37,6 +39,7 @@ describe("expandExecutionPolicy — preset → axes", () => {
       promotion: "manual",
       commits: "keep_all",
       dirtyResolve: "ask",
+      budget: {},
     });
   });
 
@@ -62,6 +65,7 @@ describe("expandExecutionPolicy — preset → axes", () => {
       promotion: "auto_on_ready",
       commits: "squash_rework",
       dirtyResolve: "proceed",
+      budget: {},
     });
   });
 
@@ -76,6 +80,22 @@ describe("expandExecutionPolicy — preset → axes", () => {
     // untouched axes keep the supervised base
     expect(resolved.humanGate).toBe("stop");
     expect(resolved.checks).toBe("strict");
+  });
+
+  it("every preset defaults budget → all-unset (unlimited)", () => {
+    for (const preset of ["supervised", "assisted", "unattended"] as const) {
+      expect(expandExecutionPolicy({ preset }).budget).toEqual({});
+    }
+  });
+
+  it("folds a budget override over the all-unset base", () => {
+    const resolved = expandExecutionPolicy({
+      preset: "supervised",
+      overrides: { budget: { run: { maxTokens: 100 } } },
+    });
+
+    expect(resolved.budget).toEqual({ run: { maxTokens: 100 } });
+    expect(resolved.budget.run?.maxTokens).toBe(100);
   });
 });
 
@@ -682,5 +702,124 @@ describe("Phase C snapshot resolvers (fail-closed)", () => {
     ).toBe("commit");
     expect(dirtyResolveFromSnapshot(null)).toBe("ask");
     expect(dirtyResolveFromSnapshot("proceed")).toBe("ask");
+  });
+});
+
+describe("budgetFromSnapshot (run snapshot → budget axis, fail-OPEN)", () => {
+  it("null / undefined / garbage snapshot → {} (unlimited, the safety-axis inversion)", () => {
+    expect(budgetFromSnapshot(null)).toEqual({});
+    expect(budgetFromSnapshot(undefined)).toEqual({});
+    expect(budgetFromSnapshot({})).toEqual({});
+    expect(budgetFromSnapshot("budget")).toEqual({});
+    expect(budgetFromSnapshot({ preset: "bogus" })).toEqual({});
+  });
+
+  it("every preset with no budget override resolves to {} (all-unset)", () => {
+    expect(budgetFromSnapshot({ preset: "supervised" })).toEqual({});
+    expect(budgetFromSnapshot({ preset: "assisted" })).toEqual({});
+    expect(budgetFromSnapshot({ preset: "unattended" })).toEqual({});
+  });
+
+  it("a valid snapshot with a budget override resolves through", () => {
+    expect(
+      budgetFromSnapshot({
+        preset: "unattended",
+        overrides: { budget: { tree: { maxTokens: 5000, warnAtPct: 75 } } },
+      }),
+    ).toEqual({ tree: { maxTokens: 5000, warnAtPct: 75 } });
+  });
+
+  it("a present-but-invalid budget value fails OPEN to {} (never ADDS a constraint)", () => {
+    // A non-positive token ceiling is rejected by budgetAxisSchema; the whole
+    // snapshot fails the strict parse → {} (unlimited), never a partial limit.
+    expect(
+      budgetFromSnapshot({
+        preset: "supervised",
+        overrides: { budget: { run: { maxTokens: -1 } } },
+      }),
+    ).toEqual({});
+    expect(
+      budgetFromSnapshot({
+        preset: "supervised",
+        overrides: { budget: { run: { warnAtPct: 200 } } },
+      }),
+    ).toEqual({});
+  });
+});
+
+describe("applyDefaultBudgetForUnattended (launch auto-fill, never throws)", () => {
+  const ENV = "MAISTER_DEFAULT_UNATTENDED_BUDGET_TOKENS";
+  let prior: string | undefined;
+
+  beforeEach(() => {
+    prior = process.env[ENV];
+  });
+
+  afterEach(() => {
+    if (prior === undefined) delete process.env[ENV];
+    else process.env[ENV] = prior;
+  });
+
+  it("unattended + no budget + env set → fills tree.maxTokens", () => {
+    process.env[ENV] = "250000";
+
+    const out = applyDefaultBudgetForUnattended({ preset: "unattended" });
+
+    expect(out.overrides?.budget?.tree?.maxTokens).toBe(250000);
+    // does not clobber the preset
+    expect(out.preset).toBe("unattended");
+  });
+
+  it("preserves existing non-budget overrides while merging the budget fill", () => {
+    process.env[ENV] = "100";
+
+    const out = applyDefaultBudgetForUnattended({
+      preset: "unattended",
+      overrides: { commits: "defer" },
+    });
+
+    expect(out.overrides?.commits).toBe("defer");
+    expect(out.overrides?.budget?.tree?.maxTokens).toBe(100);
+  });
+
+  it("unattended + a budget already set (any scope) → unchanged", () => {
+    process.env[ENV] = "999";
+
+    const policy: ExecutionPolicy = {
+      preset: "unattended",
+      overrides: { budget: { run: { maxTokens: 42 } } },
+    };
+
+    expect(applyDefaultBudgetForUnattended(policy)).toBe(policy);
+  });
+
+  it("non-unattended + env set → unchanged", () => {
+    process.env[ENV] = "999";
+
+    const supervised: ExecutionPolicy = { preset: "supervised" };
+    const assisted: ExecutionPolicy = { preset: "assisted" };
+
+    expect(applyDefaultBudgetForUnattended(supervised)).toBe(supervised);
+    expect(applyDefaultBudgetForUnattended(assisted)).toBe(assisted);
+  });
+
+  it("unattended but env unset / 0 / negative / non-numeric → unchanged", () => {
+    const policy: ExecutionPolicy = { preset: "unattended" };
+
+    delete process.env[ENV];
+    expect(applyDefaultBudgetForUnattended(policy)).toBe(policy);
+
+    for (const raw of ["0", "-5", "abc", "", "12.5"]) {
+      process.env[ENV] = raw;
+      expect(applyDefaultBudgetForUnattended(policy)).toBe(policy);
+    }
+  });
+
+  it("never throws on a malformed env value", () => {
+    process.env[ENV] = "not-a-number";
+
+    expect(() =>
+      applyDefaultBudgetForUnattended({ preset: "unattended" }),
+    ).not.toThrow();
   });
 });

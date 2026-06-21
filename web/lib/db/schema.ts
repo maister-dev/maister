@@ -2,7 +2,7 @@ import type {
   DeliveryPolicy,
   StoredDeliveryPolicy,
 } from "@/lib/runs/delivery-policy";
-import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
+import type { BudgetState, ExecutionPolicy } from "@/lib/runs/execution-policy";
 
 import { sql } from "drizzle-orm";
 import {
@@ -1313,6 +1313,10 @@ export const runs = pgTable(
       .$type<ExecutionPolicy>()
       .notNull()
       .default({ preset: "supervised" }),
+    // Cost-budget governance (migration 0061): per-run mutable budget state —
+    // raise-and-resume ceiling override + per-scope notified rung (idempotency).
+    // Nullable: a run with no budget interaction never writes this column.
+    budgetState: jsonb("budget_state").$type<BudgetState>(),
   },
   (t) => ({
     idxProjectStatus: index("runs_project_status_idx").on(

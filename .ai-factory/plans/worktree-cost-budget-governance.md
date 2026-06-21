@@ -113,14 +113,14 @@ Because of D2, the surface is small. Update **only** these:
 
 ### Phase 1 — Token aggregation foundation
 
-- **T1.1 Aggregation helpers + migration 0061.** `queryRunTokens(runId)`, `queryTaskTokens(taskId)`, `queryRunTreeTokens(rootRunId)` (SUM of the four token columns over `run_cost_rollups` joined on `runs.task_id` / `runs.root_run_id`) in `web/lib/runs/cost-rollups.ts`. Migration `0061`: `runs_root_run_id_idx` index + `runs.budget_ceiling_override jsonb` (run `pnpm db:generate`; ensure the journal `when` is monotonic above the DB max — known drizzle footgun). Verbose DEBUG of each scope's token total.
-- **T1.2 Failure + wall-clock helpers.** `consecutiveFailedAttempts(runId)` (node_attempts), `consecutiveFailedRuns(taskId|rootRunId)` (runs ordered by `startedAt`), `treeWallClockMinutes(rootRunId)` (`now - root.startedAt`).
+- **T1.1 ✅ Aggregation helpers + migration 0061.** `queryRunTokens(runId)`, `queryTaskTokens(taskId)`, `queryRunTreeTokens(rootRunId)` (SUM of the four token columns over `run_cost_rollups` joined on `runs.task_id` / `runs.root_run_id`) in `web/lib/runs/cost-rollups.ts`. Migration `0061`: `runs_root_run_id_idx` index + `runs.budget_ceiling_override jsonb` (run `pnpm db:generate`; ensure the journal `when` is monotonic above the DB max — known drizzle footgun). Verbose DEBUG of each scope's token total.
+- **T1.2 ✅ Failure + wall-clock helpers.** `consecutiveFailedAttempts(runId)` (node_attempts), `consecutiveFailedRuns(taskId|rootRunId)` (runs ordered by `startedAt`), `treeWallClockMinutes(rootRunId)` (`now - root.startedAt`).
 
 ### Phase 2 — The axis (execution-policy.ts)
 
-- **T2.1 Axis type + schema + preset table.** `BudgetLimits` type + `budgetLimitsSchema` (Zod, token fields); wire into `ExecutionPolicyOverrides`/`ResolvedExecutionPolicy`/`PRESET_AXES`/`expandExecutionPolicy`/`executionPolicyOverridesSchema` at the exact lines in D1. Default in all three presets = all-unset (unlimited).
-- **T2.2 `budgetFromSnapshot` resolver** (fail-OPEN all-unset) mirroring the nine resolvers (after execution-policy.ts:388).
-- **T2.3 `applyDefaultBudgetForUnattended` + audit kinds.** Launch-resolution helper (no guard, never throws) wired into `services/runs.ts` around the policy snapshot: unattended + no budget + `MAISTER_DEFAULT_UNATTENDED_BUDGET_TOKENS` set ⇒ fill `tree.maxTokens`. Add the four `budget_*` `ExecPolicyActionKind` members.
+- **T2.1 ✅ Axis type + schema + preset table.** `BudgetLimits` type + `budgetLimitsSchema` (Zod, token fields); wire into `ExecutionPolicyOverrides`/`ResolvedExecutionPolicy`/`PRESET_AXES`/`expandExecutionPolicy`/`executionPolicyOverridesSchema` at the exact lines in D1. Default in all three presets = all-unset (unlimited).
+- **T2.2 ✅ `budgetFromSnapshot` resolver** (fail-OPEN all-unset) mirroring the nine resolvers (after execution-policy.ts:388).
+- **T2.3 ✅ `applyDefaultBudgetForUnattended` + audit kinds.** Launch-resolution helper (no guard, never throws) wired into `services/runs.ts` around the policy snapshot: unattended + no budget + `MAISTER_DEFAULT_UNATTENDED_BUDGET_TOKENS` set ⇒ fill `tree.maxTokens`. Add the four `budget_*` `ExecPolicyActionKind` members.
 
 > **Commit checkpoint B** (after T2.3): `feat(runs): execution-policy budget axis (tokens) + default auto-fill + aggregation`.
 
