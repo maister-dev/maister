@@ -34,7 +34,7 @@ const KNOWN_ERROR_CODES = new Set([
 export interface RunHitlResponseProps {
   runId: string;
   hitlRequestId: string;
-  kind: "permission" | "form" | "human" | "infra_recovery";
+  kind: "permission" | "form" | "human" | "infra_recovery" | "budget_breach";
   options: HitlOption[];
   schema: unknown;
   canAct: boolean;

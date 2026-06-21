@@ -17,6 +17,7 @@ export type MaisterErrorCode =
   | "FLOW_INSTALL"
   | "ACP_PROTOCOL"
   | "CHECKPOINT"
+  | "BUDGET_EXCEEDED"
   | "STEP_CHECKPOINTED"
   | "UNAUTHENTICATED"
   | "UNAUTHORIZED"

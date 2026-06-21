@@ -2209,6 +2209,7 @@ export const assignments = pgTable(
         "manual_takeover",
         "merge_conflict",
         "infra_recovery",
+        "budget_breach",
       ],
     }).notNull(),
     status: text("status", {
@@ -2326,7 +2327,7 @@ export const hitlRequests = pgTable(
       .references(() => runs.id, { onDelete: "cascade" }),
     stepId: text("step_id").notNull(),
     kind: text("kind", {
-      enum: ["permission", "form", "human", "infra_recovery"],
+      enum: ["permission", "form", "human", "infra_recovery", "budget_breach"],
     }).notNull(),
     schema: jsonb("schema"),
     prompt: text("prompt").notNull(),

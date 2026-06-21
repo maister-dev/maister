@@ -29,7 +29,10 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-export type CascadeReason = "user_stopped" | "orchestrator-stuck";
+export type CascadeReason =
+  | "user_stopped"
+  | "orchestrator-stuck"
+  | "budget_exceeded";
 
 export interface CascadeAbandonOptions {
   db?: Db;
