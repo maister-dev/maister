@@ -243,6 +243,10 @@ E1–E12 invariants.)
   `notified[scope]`, and the resumed run MUST NOT immediately re-escalate.
 - The breach mechanism MUST branch on `runs.run_kind` (`flow | agent | scratch`)
   BEFORE routing; each kind has a verified terminate AND escalate adapter.
+  Terminate per kind: flow → `markNodeFailed` + run `Failed`; agent →
+  `finalizeAgentRun("Failed")`; scratch → `markScratchCrashed` → run `Crashed`
+  (the scratch dialog FSM has no `Failed` state, so `Crashed` is the
+  kind-faithful terminal — still a valid `RunStatus`, so no new status is added).
 
 ## Edge cases
 

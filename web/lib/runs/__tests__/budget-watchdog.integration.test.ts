@@ -556,6 +556,41 @@ describe("budget watchdog — ESCALATE ladder (E4, D7 each arm)", () => {
     expect(run.status).toBe("Running");
     expect(await getHitl(runId)).toHaveLength(0);
   }, 60_000);
+
+  it("HONORS budget_state.ceilingOverride — a raised run does not re-escalate (E10 read side)", async () => {
+    // The raise-and-resume top-up: budget_state.ceilingOverride.run.maxTokens
+    // OVERRIDES the snapshot ceiling. A run whose token sum is past the SNAPSHOT
+    // escalate (1000) AND its snapshot hardMax (1250) but BELOW the RAISED
+    // ceiling (100000) and its raised hardMax (125000) must NOT re-escalate or
+    // terminate — effectiveLimit reads ceilingOverride on top of the snapshot.
+    const taskId = await seedTask();
+    const sup = `sup-${randomUUID().slice(0, 8)}`;
+    const runId = await seedRun({
+      taskId,
+      executionPolicy: policyWithBudget({ run: { maxTokens: 1000 } }),
+      budgetState: { ceilingOverride: { run: { maxTokens: 100000 } } },
+      acpSessionId: "acp-raised",
+    });
+
+    await seedAttempt({ runId, attempt: 1, status: "Running" });
+    // ~50000: above snapshot 1000/1250, below raised 100000/125000.
+    await seedRollup(runId, taskId, 50000);
+
+    listSessionsSpy.mockResolvedValue([
+      liveSessionRecord(runId, sup, "implement"),
+    ]);
+
+    await runSweepTick({ db });
+
+    const run = await getRun(runId);
+
+    expect(run.status).toBe("Running");
+    expect(deleteSessionSpy).not.toHaveBeenCalled();
+    expect(checkpointSessionSpy).not.toHaveBeenCalled();
+    expect(await getHitl(runId)).toHaveLength(0);
+    // The raise top-up is preserved (not clobbered by any notified write).
+    expect(run.budgetState?.ceilingOverride?.run?.maxTokens).toBe(100000);
+  }, 60_000);
 });
 
 describe("budget watchdog — TERMINATE ladder (E5, D7 each arm)", () => {

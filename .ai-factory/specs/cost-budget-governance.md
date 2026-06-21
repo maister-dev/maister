@@ -173,6 +173,13 @@ arm** (project rule: half-A + half-B ≠ A∘B).
   tokens ≥ `warnAtPct` (no persisted UI flag).
 - Observatory read-only surfacing of budget breaches (warn / escalate /
   terminate counts), consistent with its existing read-only metric style.
+  **DEFERRED (as-built): not shipped in v1.** Observatory's query
+  (`getPortfolioObservatory`) does not read `domain_events`, and
+  `logExecPolicyAction` is a log boundary (not a table), so surfacing budget
+  counts needs new data wiring — out of scope for v1 per simplicity-first.
+  Visibility for v1 is covered by the run-detail warn badge (6.3 below), the
+  `budget_*` exec-policy audit log lines, and the `run.escalated`
+  (`reason=budget_exceeded`) domain events + webhooks.
 - **Acceptance criteria:**
   - AC-BADGE-1: badge appears iff the run's live token sum ≥ warn threshold and
     disappears if a Raise lifts the ceiling above the current sum.
