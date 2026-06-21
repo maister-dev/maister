@@ -136,9 +136,9 @@ Because of D2, the surface is small. Update **only** these:
 
 ### Phase 4 — HITL response + raise-and-resume
 
-- **T4.1 `budget_breach` HITL kind.** Add to the `action_kind` TS-enum (`schema.ts`) + `assignments/service.ts:72` union. **Confirmed: no DB CHECK on `action_kind`** (grep of migrations) — pure TS change, no migration ALTER (rides `db:generate`). Confirm `queries/hitl.ts` inbox surfaces it.
-- **T4.2 Response handler.** `handleBudgetBreachResponse` (mirror `handleInfraRecoveryResponse:1255`): **Abandon** → `runs.status=Failed` (errorCode `BUDGET_EXCEEDED`) + close assignments + emit `run.failed`; **Raise** takes a **form input** — the new token ceiling (or a fixed `× multiplier` bump); the `budget_breach` HITL schema carries a number field, NOT a bare `["raise","abandon"]` decision — and writes it to `runs.budget_ceiling_override` (additive top-up) + `logExecPolicyAction('budget_raised')` + `scheduleResume`. `runId` derived from the HITL row (server-state), not the body. Route in `respondToHitl`. Two-phase commit for the resume side-effect.
-- **T4.3 Top-up read path.** `runBudgetPass` reads `budget_ceiling_override` ON TOP of the snapshot ceiling so a raised run doesn't immediately re-escalate.
+- **T4.1 ✅ `budget_breach` HITL kind.** Add to the `action_kind` TS-enum (`schema.ts`) + `assignments/service.ts:72` union. **Confirmed: no DB CHECK on `action_kind`** (grep of migrations) — pure TS change, no migration ALTER (rides `db:generate`). Confirm `queries/hitl.ts` inbox surfaces it.
+- **T4.2 ✅ Response handler.** `handleBudgetBreachResponse` (mirror `handleInfraRecoveryResponse:1255`): **Abandon** → `runs.status=Failed` (errorCode `BUDGET_EXCEEDED`) + close assignments + emit `run.failed`; **Raise** takes a **form input** — the new token ceiling (or a fixed `× multiplier` bump); the `budget_breach` HITL schema carries a number field, NOT a bare `["raise","abandon"]` decision — and writes it to `runs.budget_ceiling_override` (additive top-up) + `logExecPolicyAction('budget_raised')` + `scheduleResume`. `runId` derived from the HITL row (server-state), not the body. Route in `respondToHitl`. Two-phase commit for the resume side-effect.
+- **T4.3 ✅ Top-up read path.** `runBudgetPass` reads `budget_ceiling_override` ON TOP of the snapshot ceiling so a raised run doesn't immediately re-escalate.
 
 ### Phase 5 — UI surfacing (EN/RU)
 

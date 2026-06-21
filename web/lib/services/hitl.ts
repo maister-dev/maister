@@ -1,5 +1,11 @@
 import "server-only";
 
+import type {
+  BudgetAxis,
+  BudgetScope,
+  BudgetState,
+} from "@/lib/runs/execution-policy";
+
 import path from "node:path";
 
 import { and, eq, inArray, isNull } from "drizzle-orm";
@@ -25,6 +31,7 @@ import {
 } from "@/lib/flows/hitl-validate";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { runFlow } from "@/lib/flows/runner";
+import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
 import { cancelPermission, deliverPermission } from "@/lib/supervisor-client";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
@@ -138,6 +145,9 @@ export type RespondInput = {
     response?: unknown;
     // M17 ADR-054: responder self-reported confidence in [0,1].
     confidence?: unknown;
+    // Cost-budget governance: the raised token ceiling for a budget_breach
+    // raise (validated fail-closed at the sink). May also ride `response`.
+    raiseTo?: unknown;
   };
 };
 
@@ -1406,6 +1416,252 @@ async function handleInfraRecoveryResponse(args: {
   );
 }
 
+// Maps the breached meter to the BudgetLimits field a raise writes. tokens →
+// maxTokens (escalate ceiling), failures → consecutiveFailures, wallclock →
+// wallClockMinutes (tree only). hardMaxTokens is left untouched — the raise
+// lifts the escalate ceiling; the terminate band re-derives from it.
+const BUDGET_METER_FIELD = {
+  tokens: "maxTokens",
+  failures: "consecutiveFailures",
+  wallclock: "wallClockMinutes",
+} as const;
+
+type BudgetBreachSchema = {
+  scope: BudgetScope;
+  meter: keyof typeof BUDGET_METER_FIELD;
+  limit: number;
+};
+
+// budget_breach (cost-budget governance ESCALATE rung): a human chooses
+// `raise` or `abandon` on a run paused at a token/failure/wall-clock ceiling.
+//  - abandon → fail the run terminally (run.failed, BUDGET_EXCEEDED); the task
+//              returns to Backlog.
+//  - raise   → write budget_state.ceilingOverride[scope] (additive — the
+//              execution snapshot stays immutable), clear notified[scope] so the
+//              raised band re-warns (E10), log budget_raised, then resume. The
+//              raise amount is validated fail-CLOSED (positive int > the breached
+//              limit) even though the budget axis itself fails open.
+// Idempotent on a responded row. Human-actor-only (enforced in respondToHitl).
+async function handleBudgetBreachResponse(args: {
+  db: any;
+  hitlRow: any;
+  runRow: any;
+  body: { optionId?: string; raiseTo?: unknown; response?: unknown };
+  runId: string;
+  hitlRequestId: string;
+  startedAt: number;
+  recordSuccessAudit?: (db: any, statusCode: number) => Promise<void>;
+}): Promise<NextResponse> {
+  const {
+    db,
+    hitlRow,
+    body,
+    runId,
+    hitlRequestId,
+    startedAt,
+    recordSuccessAudit,
+  } = args;
+  const decision = body.optionId;
+
+  if (decision !== "raise" && decision !== "abandon") {
+    throw new MaisterError(
+      "PRECONDITION",
+      'budget_breach response requires optionId "raise" or "abandon"',
+    );
+  }
+
+  const breach = (hitlRow.schema ?? {}) as BudgetBreachSchema;
+  const scope = breach.scope;
+  const meter = breach.meter;
+
+  // Validate the raise amount at the sink BEFORE opening the transaction.
+  // Out-of-range ≠ missing: a present-but-invalid raise is fail-closed
+  // (PRECONDITION), never silently dropped. raiseTo OR response carries it.
+  let raiseTo = 0;
+
+  if (decision === "raise") {
+    const raw = body.raiseTo ?? body.response;
+    const candidate = typeof raw === "number" ? raw : Number(raw);
+
+    if (
+      !Number.isInteger(candidate) ||
+      candidate <= 0 ||
+      candidate <= breach.limit
+    ) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `budget_breach raise requires a positive integer greater than the breached limit (${breach.limit})`,
+      );
+    }
+    raiseTo = candidate;
+  }
+
+  const outcome = await db.transaction(async (tx: any) => {
+    const locked = await lockHitlRow(tx, hitlRequestId);
+
+    if (!locked) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `hitl request not found: ${hitlRequestId}`,
+      );
+    }
+    if (locked.respondedAt) {
+      return { transition: "already-delivered" } as const;
+    }
+
+    await tx
+      .update(hitlRequests)
+      .set({ respondedAt: new Date() })
+      .where(eq(hitlRequests.id, hitlRequestId));
+
+    if (decision === "abandon") {
+      const terminal = await tx
+        .update(runs)
+        .set({ status: "Failed", endedAt: new Date() })
+        .where(
+          and(
+            eq(runs.id, runId),
+            inArray(runs.status, ["NeedsInput", "NeedsInputIdle"]),
+          ),
+        )
+        .returning({
+          projectId: runs.projectId,
+          taskId: runs.taskId,
+          flowId: runs.flowId,
+          runKind: runs.runKind,
+          parentRunId: runs.parentRunId,
+        });
+
+      if (terminal.length > 0) {
+        await emitWebhookEvent({
+          db: tx,
+          type: "run.failed",
+          projectId: terminal[0].projectId,
+          runId,
+          data: { errorCode: "BUDGET_EXCEEDED", reason: "budget_abandoned" },
+        });
+        await emitDomainEvent({
+          db: tx,
+          kind: "run.failed",
+          projectId: terminal[0].projectId,
+          runId,
+          taskId: terminal[0].taskId,
+          actor: { type: "system", id: null },
+          parentRunId: terminal[0].parentRunId,
+          payload: {
+            runId,
+            taskId: terminal[0].taskId,
+            flowId: terminal[0].flowId,
+            runKind: terminal[0].runKind,
+            errorCode: "BUDGET_EXCEEDED",
+            reason: "budget_abandoned",
+          },
+        });
+      }
+      await systemCloseActiveAssignmentsForRun({
+        db: tx,
+        runId,
+        reason: "budget breach abandoned",
+      });
+      await recordSuccessAudit?.(tx, 200);
+
+      return { transition: "abandoned" } as const;
+    }
+
+    // raise: merge the per-scope ceiling override + clear the per-scope notified
+    // rung, CAS-guarded on the still-pausable status so a moved run is not raised.
+    // Re-read budget_state under the lock so a concurrent warn-rung write is not
+    // clobbered (the run is locked transitively via the hitl row + status CAS).
+    const [current] = await tx
+      .select({ budgetState: runs.budgetState })
+      .from(runs)
+      .where(eq(runs.id, runId));
+    const prior = (current?.budgetState ?? null) as BudgetState | null;
+    const priorOverride: BudgetAxis = prior?.ceilingOverride ?? {};
+    const field = BUDGET_METER_FIELD[meter];
+    const nextOverride: BudgetAxis = {
+      ...priorOverride,
+      [scope]: { ...(priorOverride[scope] ?? {}), [field]: raiseTo },
+    };
+    const nextNotified = { ...(prior?.notified ?? {}) };
+
+    delete nextNotified[scope];
+
+    const nextState: BudgetState = {
+      ceilingOverride: nextOverride,
+      notified: nextNotified,
+    };
+
+    const raised = await tx
+      .update(runs)
+      .set({ budgetState: nextState })
+      .where(
+        and(
+          eq(runs.id, runId),
+          inArray(runs.status, ["NeedsInput", "NeedsInputIdle"]),
+        ),
+      )
+      .returning({ id: runs.id });
+
+    if (raised.length === 0) {
+      throw new MaisterError(
+        "CONFLICT",
+        `run ${runId} is no longer awaiting a budget-breach response`,
+      );
+    }
+
+    await systemCloseActiveAssignmentsForRun({
+      db: tx,
+      runId,
+      reason: "budget breach raised",
+    });
+    logExecPolicyAction({
+      runId,
+      kind: "budget_raised",
+      detail: { scope, meter, raiseTo },
+    });
+    await recordSuccessAudit?.(tx, 200);
+
+    return { transition: "raised" } as const;
+  });
+
+  if (outcome.transition === "already-delivered") {
+    return NextResponse.json({ ok: true, idempotent: true }, { status: 200 });
+  }
+
+  if (outcome.transition === "abandoned") {
+    log.info(
+      { runId, hitlRequestId, decision, latencyMs: Date.now() - startedAt },
+      "budget_breach abandoned — run Failed",
+    );
+
+    return NextResponse.json(
+      { ok: true, runStatus: "Failed" },
+      { status: 200 },
+    );
+  }
+
+  // raise → resume the run (worktree preserved, effective ceiling lifted)
+  scheduleResume(runId);
+  log.info(
+    {
+      runId,
+      hitlRequestId,
+      decision,
+      scope,
+      meter,
+      raiseTo,
+      latencyMs: Date.now() - startedAt,
+    },
+    "budget_breach raised — resuming",
+  );
+
+  return NextResponse.json(
+    { ok: true, runStatus: "NeedsInput", state: "resume-in-progress" },
+    { status: 202 },
+  );
+}
+
 export async function respondToHitl(
   input: RespondInput,
   actor: HitlActor,
@@ -1464,7 +1720,11 @@ export async function respondToHitl(
     // even holding hitl:respond scope. Enforced here (the shared chokepoint),
     // BEFORE any mutation — so neither the session route nor the ext route can
     // bypass it.
-    if (hitlRow.kind === "human" || hitlRow.kind === "infra_recovery") {
+    if (
+      hitlRow.kind === "human" ||
+      hitlRow.kind === "infra_recovery" ||
+      hitlRow.kind === "budget_breach"
+    ) {
       throw new MaisterError(
         "UNAUTHORIZED",
         `a ${hitlRow.kind}-kind HITL request requires a human actor`,
@@ -1498,6 +1758,21 @@ export async function respondToHitl(
     log.debug({ runId, hitlRequestId, branch: "infra_recovery" }, "dispatch");
 
     return await handleInfraRecoveryResponse({
+      db,
+      hitlRow,
+      runRow,
+      body,
+      runId,
+      hitlRequestId,
+      startedAt,
+      recordSuccessAudit,
+    });
+  }
+
+  if (hitlRow.kind === "budget_breach") {
+    log.debug({ runId, hitlRequestId, branch: "budget_breach" }, "dispatch");
+
+    return await handleBudgetBreachResponse({
       db,
       hitlRow,
       runRow,
