@@ -7,11 +7,10 @@ import { getTranslations } from "next-intl/server";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 
-import { FlowGraphViewSection } from "@/components/board/flow-graph-view-section";
-import { CodeEditor } from "@/components/flows/code-editor";
-import { FlowNodeInspector } from "@/components/studio/flow-node-inspector";
+import { StudioFlowViewer } from "@/components/studio/studio-flow-viewer";
 import { requireSession } from "@/lib/authz";
 import { buildNodeSideFormLabels } from "@/lib/flows/node-side-form-labels";
+import { getAccessibleProjects } from "@/lib/queries/platform-flows";
 import { getStudioFlowDetail } from "@/lib/studio/flow-detail";
 import { resolveStudioPackageByRef } from "@/lib/studio/load";
 
@@ -114,9 +113,16 @@ export default async function StudioFlowDetailPage({
   };
 
   const compiled = detail?.compiled ?? null;
+  const graphAvailable = Boolean(
+    compiled && compiled.topology.nodes.length > 0,
+  );
+  // Edit = fork-to-local (installed packages are immutable). Surface it only to
+  // catalog managers, mirroring the package-detail gate.
+  const projects = await getAccessibleProjects(user.id, user.role);
+  const canManage = projects.some((project) => project.canManageCatalog);
 
   return (
-    <div className="mx-auto w-full max-w-[1120px]">
+    <div className="w-full">
       <Link
         className="mb-4 inline-flex font-mono text-[11px] font-semibold uppercase tracking-[0.08em] text-mute hover:text-ink"
         href={packageHref}
@@ -133,45 +139,19 @@ export default async function StudioFlowDetailPage({
         </h1>
       </header>
 
-      <section className="mb-6">
-        <h2 className="mb-3 text-[14px] font-bold tracking-[-0.01em] text-ink">
-          {t("viewer.flowGraphTitle")}
-        </h2>
-        {compiled && compiled.topology.nodes.length > 0 ? (
-          <FlowGraphViewSection
-            labels={buildGraphLabels(tWorkbench)}
-            layout={compiled.layout}
-            topology={compiled.topology}
-          />
-        ) : (
-          <p
-            className="rounded-lg border border-dashed border-line bg-paper px-4 py-6 text-center font-mono text-[12px] text-mute"
-            data-testid="flow-graph-unavailable"
-          >
-            {t("viewer.flowGraphUnavailable")}
-          </p>
-        )}
-      </section>
-
-      {compiled ? (
-        <section className="mb-6" data-testid="flow-node-inspector">
-          <FlowNodeInspector labels={inspectorLabels} nodes={compiled.nodes} />
-        </section>
-      ) : null}
-
-      {detail?.flowYaml ? (
-        <section>
-          <h2 className="mb-3 text-[14px] font-bold tracking-[-0.01em] text-ink">
-            {t("viewer.flowYamlTitle")}
-          </h2>
-          <CodeEditor
-            readOnly
-            ariaLabel={t("viewer.flowYamlTitle")}
-            kind="flow"
-            value={detail.flowYaml}
-          />
-        </section>
-      ) : null}
+      <StudioFlowViewer
+        flowYaml={detail?.flowYaml ?? null}
+        forkRef={canManage ? decodedRef : undefined}
+        graphAvailable={graphAvailable}
+        graphLabels={buildGraphLabels(tWorkbench)}
+        graphTitle={t("viewer.flowGraphTitle")}
+        graphUnavailableLabel={t("viewer.flowGraphUnavailable")}
+        inspectorLabels={inspectorLabels}
+        layout={compiled?.layout ?? null}
+        nodes={compiled?.nodes ?? []}
+        topology={compiled?.topology ?? null}
+        yamlTitle={t("viewer.flowYamlTitle")}
+      />
     </div>
   );
 }

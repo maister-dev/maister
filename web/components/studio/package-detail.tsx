@@ -12,6 +12,7 @@ import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
 import { ElementCard } from "@/components/studio/element-card";
+import { ForkToEditButton } from "@/components/studio/fork-to-edit-button";
 import {
   PACKAGE_TAB_PAGE_SIZE,
   PackageTabs,
@@ -141,18 +142,13 @@ export function PackageDetail({
               {t("attach")}
             </Link>
           ) : null}
-          {canTrust ? (
-            <Link
-              className="rounded-[10px] border border-line bg-ivory px-3 py-1.5 text-[12.5px] font-semibold text-ink transition-colors hover:border-amber"
-              href="/studio/sources"
-            >
-              {t("trust")}
-            </Link>
+          {canTrust && newest && newest.trustStatus === "untrusted" ? (
+            <TrustButton installId={newest.installId} />
           ) : null}
           {/* Fork-to-local (M36 T2.4): clones the package into a new local
               package and opens the editor. Import (⤓) stays ABSENT here:
               installed packages are immutable. */}
-          {canManage ? <ForkButton refName={pkg.name} /> : null}
+          {canManage ? <ForkToEditButton refName={pkg.name} /> : null}
         </div>
       </div>
 
@@ -166,7 +162,10 @@ export function PackageDetail({
           hrefFor={hrefFor}
           labels={{
             loadMore: t("viewer.loadMore"),
-            showingCount: t("viewer.showingCount"),
+            // `t.raw` returns the un-interpolated template; PackageTabs fills
+            // {shown}/{total} via formatTemplate. Plain `t()` would error on the
+            // unprovided ICU args and fall back to the raw key path.
+            showingCount: t.raw("viewer.showingCount"),
             tabEmpty: t("viewer.tabEmpty"),
           }}
           page={safePage}
@@ -200,23 +199,24 @@ export function PackageDetail({
   );
 }
 
-// Forks an installed package into a fresh local package, then opens the editor.
-// The package `ref` is the package name (Phase A ref); fork resolution happens
-// server-side — no disk handle crosses the wire.
-function ForkButton({ refName }: { refName: string }): ReactElement {
+// One-click platform trust from the package card (admin only). POSTs the newest
+// install to the trust route and refreshes. Only rendered for an untrusted
+// revision, so a trusted package shows no button (its versions list reads
+// "trusted").
+function TrustButton({ installId }: { installId: string }): ReactElement {
   const t = useTranslations("studio");
   const tApiErrors = useTranslations("apiErrors");
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function fork(): Promise<void> {
+  async function trust(): Promise<void> {
     setBusy(true);
     setError(null);
 
     try {
       const res = await fetch(
-        `/api/studio/packages/${encodeURIComponent(refName)}/fork`,
+        `/api/admin/package-installs/${encodeURIComponent(installId)}/trust`,
         { method: "POST" },
       );
 
@@ -226,9 +226,7 @@ function ForkButton({ refName }: { refName: string }): ReactElement {
         return;
       }
 
-      const result = (await res.json()) as { localPackageId: string };
-
-      router.push(`/studio/edit/${result.localPackageId}`);
+      router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -240,13 +238,12 @@ function ForkButton({ refName }: { refName: string }): ReactElement {
     <span className="inline-flex flex-col gap-1">
       <button
         className="rounded-[10px] border border-line bg-ivory px-3 py-1.5 text-[12.5px] font-semibold text-ink transition-colors hover:border-amber disabled:opacity-60"
-        data-testid="package-fork"
+        data-testid="package-trust"
         disabled={busy}
-        title={t("reworkHint")}
         type="button"
-        onClick={() => void fork()}
+        onClick={() => void trust()}
       >
-        {t("rework")}
+        {t("trust")}
       </button>
       {error ? (
         <span className="font-mono text-[10.5px] text-danger" role="alert">

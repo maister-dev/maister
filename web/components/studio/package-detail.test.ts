@@ -3,7 +3,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("next-intl", () => ({
-  useTranslations: () => (key: string) => key,
+  // Mirror next-intl's `t` shape: a callable with a `.raw` escape hatch
+  // (PackageDetail fetches the showingCount template via `t.raw`).
+  useTranslations: () =>
+    Object.assign((key: string) => key, { raw: (key: string) => key }),
 }));
 
 vi.mock("next/navigation", () => ({

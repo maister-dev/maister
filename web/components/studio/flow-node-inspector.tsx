@@ -26,9 +26,13 @@ export interface FlowNodeInspectorLabels {
 export function FlowNodeInspector({
   nodes,
   labels,
+  // "auto" = picker beside the form on wide viewports (the stacked-section
+  // layout). "stacked" = always picker-over-form, for a narrow right rail.
+  orientation = "auto",
 }: {
   nodes: NodeDef[];
   labels: FlowNodeInspectorLabels;
+  orientation?: "auto" | "stacked";
 }): ReactElement {
   const [selectedId, setSelectedId] = useState<string | null>(
     nodes[0] ? String((nodes[0] as { id?: unknown }).id ?? "") : null,
@@ -40,7 +44,13 @@ export function FlowNodeInspector({
     ) ?? null;
 
   return (
-    <div className="grid grid-cols-1 gap-4 lg:grid-cols-[200px_minmax(0,1fr)]">
+    <div
+      className={
+        orientation === "stacked"
+          ? "flex flex-col gap-4"
+          : "grid grid-cols-1 gap-4 lg:grid-cols-[200px_minmax(0,1fr)]"
+      }
+    >
       <div className="flex flex-col gap-2">
         <h3 className="font-mono text-[10px] font-bold uppercase tracking-[0.1em] text-ink">
           {labels.listTitle}
