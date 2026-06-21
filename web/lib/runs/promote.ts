@@ -158,6 +158,86 @@ async function loadWorkspaceForUpdate(db: Db, runId: string): Promise<any> {
   return workspace;
 }
 
+// M37 (ADR-101): resolve + lock the shared TREE workspace for a writable shared
+// child. Only the allocator owns a `workspaces` row (`worktree_path` is UNIQUE,
+// keyed by the tree root); a reuser child has none. Find the allocator's row by
+// joining `runs` on `(root_run_id, workspace_mode='shared', agent_workspace=
+// 'worktree')`, then lock THAT row FOR UPDATE — so every shared child (allocator
+// OR reuser) promotes the one tree workspace and concurrent tree-promotes
+// serialize on the same row (the exactly-once handle).
+async function resolveSharedTreeWorkspaceForUpdate(
+  db: Db,
+  run: { rootRunId?: string | null },
+): Promise<any> {
+  if (!run.rootRunId) {
+    throw new MaisterError(
+      "PRECONDITION",
+      "shared-tree promote: run has no root_run_id",
+    );
+  }
+
+  const found = await db
+    .select({ id: workspaces.id })
+    .from(workspaces)
+    .innerJoin(runs, eq(runs.id, workspaces.runId))
+    .where(
+      and(
+        eq(runs.rootRunId, run.rootRunId),
+        eq(runs.workspaceMode, "shared"),
+        eq(runs.agentWorkspace, "worktree"),
+      ),
+    );
+  const allocatorWorkspaceId = found[0]?.id;
+
+  if (!allocatorWorkspaceId) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `shared-tree workspace not found for root ${run.rootRunId}`,
+    );
+  }
+
+  const rows = await db
+    .select()
+    .from(workspaces)
+    .where(eq(workspaces.id, allocatorWorkspaceId))
+    .for("update");
+  const workspace = rows[0];
+
+  if (!workspace) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `shared-tree workspace not found for root ${run.rootRunId}`,
+    );
+  }
+  if (workspace.removedAt) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `shared-tree workspace already removed for root ${run.rootRunId}`,
+    );
+  }
+
+  log.debug(
+    {
+      rootRunId: run.rootRunId,
+      workspaceId: workspace.id,
+      worktreePath: workspace.worktreePath,
+    },
+    "resolved shared tree workspace for promote",
+  );
+
+  return workspace;
+}
+
+// Route the promote workspace load through the shared-tree resolver for a shared
+// writable child; `own` / scratch / PR runs keep the run-id-scoped lookup.
+async function loadPromotionWorkspaceForUpdate(db: Db, run: any): Promise<any> {
+  if (run.workspaceMode === "shared" && run.agentWorkspace === "worktree") {
+    return resolveSharedTreeWorkspaceForUpdate(db, run);
+  }
+
+  return loadWorkspaceForUpdate(db, run.id);
+}
+
 async function loadProject(db: Db, projectId: string): Promise<any> {
   const rows = await db
     .select()
@@ -445,8 +525,11 @@ async function promoteWorkspaceRun(
   // SELECT … FOR UPDATE row lock serializes concurrent claims: the second waits
   // for the first to commit, then sees a fresh `claiming` and is refused.
   const claim = await db.transaction(async (tx: Db) => {
-    const workspace = await loadWorkspaceForUpdate(tx, runId);
+    // M37 (ADR-101): load the run FIRST so a shared writable child resolves + locks
+    // the shared TREE workspace by `(root_run_id, workspace_mode='shared')`, not its
+    // own (absent) row. `own` / scratch keep the run-id lookup.
     const run = await loadRun(tx, runId);
+    const workspace = await loadPromotionWorkspaceForUpdate(tx, run);
 
     if (run.status !== "Review") {
       throw new MaisterError(
@@ -644,7 +727,7 @@ async function promoteWorkspaceRun(
       }
 
       await db.transaction(async (tx: Db) => {
-        const ws = await loadWorkspaceForUpdate(tx, runId);
+        const ws = await loadPromotionWorkspaceForUpdate(tx, claim.run);
 
         // Only the owning attempt records the failure (token-matched).
         if (ws.promotionAttemptId !== claim.attemptId) return;
@@ -679,7 +762,7 @@ async function promoteWorkspaceRun(
 
   // ---- Finalize tx: assert the attempt token still matches (§3.2 step 3).
   const result = await db.transaction(async (tx: Db) => {
-    const ws = await loadWorkspaceForUpdate(tx, runId);
+    const ws = await loadPromotionWorkspaceForUpdate(tx, claim.run);
 
     if (
       ws.promotionState !== "claiming" ||

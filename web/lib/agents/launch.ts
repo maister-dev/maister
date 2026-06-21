@@ -567,21 +567,14 @@ export async function launchAgentRun(
     );
   }
 
-  // Codex adversarial review (Finding 2): the shared WRITABLE-worktree
-  // review/promote ownership model is under-specified. A reuser shared child
-  // gets NO `workspaces` row (the allocator owns the UNIQUE worktree_path), so
-  // finalizeAgentRun lands it Done (not Review) and its diff is never
-  // individually reviewed or promotable — it can be stranded or merged via a
-  // sibling's promote. Until that model is designed, refuse shared mode for a
-  // WRITABLE worktree at launch (fail-closed). This is opt-in Part-B swarm L2;
-  // `workspaceMode=own` (default) and read-only (`repo_read`) children are
-  // unaffected. The shared-allocation path below stays dormant for the redesign.
-  if (input.workspaceMode === "shared" && workspace === "worktree") {
-    throw new MaisterError(
-      "CONFIG",
-      "workspaceMode=shared with a writable worktree is not yet supported — the shared-tree review/promote model is unspecified; use workspaceMode=own",
-    );
-  }
+  // M37 follow-up (ADR-101): the shared WRITABLE-worktree review/promote model is
+  // now specified — per-tree Review + an orchestrator-driven tree-promote that
+  // resolves the tree workspace by (root_run_id, workspace_mode='shared'), merges
+  // once, and settles ALL shared siblings Review→Done. The former launch gate is
+  // therefore removed: the shared-allocation block below allocates (or reuses) the
+  // tree, finalizeAgentRun lands every shared writable child in Review, and promote
+  // settles the tree. The `!input.rootRunId` gate above still stands (a top-level
+  // run has no tree to share). `workspaceMode=own` (default) is unaffected.
 
   // Fast dedup pre-check before any side effect; the partial unique index
   // on (agent_id, trigger_event_id) stays the authoritative backstop.
@@ -716,6 +709,21 @@ export async function launchAgentRun(
           }
         }
       }
+
+      // M37 (ADR-101): record the allocator-vs-reuser decision for the shared
+      // tree. The allocator owns the single `workspaces` row (UNIQUE worktree_path);
+      // a reuser child gets none and the tree is resolved by root_run_id at promote.
+      log.info(
+        {
+          rootRunId: input.rootRunId,
+          worktreePath,
+          branch,
+          decision: reuseSharedTree ? "reuse" : "allocate",
+        },
+        reuseSharedTree
+          ? "shared worktree tree reused by sibling (no workspaces row of its own)"
+          : "shared worktree tree allocated (this child owns the workspaces row)",
+      );
     } else {
       branch = agentWorktreeBranchName({
         prefix: ctx.project.branchPrefix ?? "maister/",
@@ -1191,10 +1199,21 @@ export async function finalizeAgentRun(
     // child reaching Review can KEEP its acp_session_id (the resume handle
     // run_rework needs). The CAS below still gates on status.
     const preRows = await tx
-      .select({ parentRunId: runs.parentRunId })
+      .select({
+        parentRunId: runs.parentRunId,
+        workspaceMode: runs.workspaceMode,
+        agentWorkspace: runs.agentWorkspace,
+      })
       .from(runs)
       .where(eq(runs.id, runId));
     const preParentRunId: string | null = preRows[0]?.parentRunId ?? null;
+    // M37 (ADR-101): a shared writable-worktree child finalizes to Review even
+    // when it owns no `workspaces` row (a reuser child — the allocator owns the
+    // UNIQUE worktree_path). The shared tree is one branch = one diff, reviewed and
+    // promoted once; a shared writable child is NEVER auto-Done on a clean exit.
+    const isSharedWritableExit =
+      preRows[0]?.workspaceMode === "shared" &&
+      preRows[0]?.agentWorkspace === "worktree";
 
     const workspaceRows =
       outcome === "Done"
@@ -1205,8 +1224,23 @@ export async function finalizeAgentRun(
         : [];
     const status =
       outcome === "Done"
-        ? finalStatusForCleanAgentExit(workspaceRows.length > 0)
+        ? isSharedWritableExit
+          ? "Review"
+          : finalStatusForCleanAgentExit(workspaceRows.length > 0)
         : outcome;
+
+    if (outcome === "Done") {
+      log.debug(
+        {
+          runId,
+          workspaceMode: preRows[0]?.workspaceMode ?? null,
+          agentWorkspace: preRows[0]?.agentWorkspace ?? null,
+          hasWorkspace: workspaceRows.length > 0,
+          status,
+        },
+        "agent clean-exit final status",
+      );
+    }
     const endedAt = new Date();
 
     // M37 (ADR-100): a delegated child reaching Review keeps its session handle so
