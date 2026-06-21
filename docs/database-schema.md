@@ -1026,6 +1026,19 @@ unread badge and inbox panel.
   deliveryPolicySnapshot?,       // ADR-085 (jsonb, migration 0047)
                                  //   immutable resolved DeliveryPolicy at launch;
                                  //   cancel may change trigger auto_on_ready -> manual
+  budgetState?,                  // ADR-101 (Implemented, jsonb NULL, migration 0061):
+                                 //   per-run MUTABLE budget state — distinct from the
+                                 //   immutable execution_policy snapshot. Shape:
+                                 //   { ceilingOverride?: BudgetAxis,   // raise-and-resume
+                                 //     notified?: Partial<Record<            // top-up
+                                 //       'run'|'task'|'tree',
+                                 //       'warn'|'escalate'|'terminate'>> }.
+                                 //   ceilingOverride OVERRIDES the snapshot per
+                                 //   scope/meter; notified[scope] makes WARN once-per
+                                 //   -band idempotent (escalate/terminate idempotency
+                                 //   is runs.status-derived). The run-tree index
+                                 //   runs_root_run_id_idx already exists (M37) — 0061
+                                 //   adds ONLY this column.
   parentRunId?,                  // M37 (Implemented, ADR-098, migration 0060):
                                  //   FK -> runs.id ON DELETE SET NULL; the
                                  //   orchestrator run that delegated this child

@@ -24,9 +24,9 @@ throw new MaisterError("CONFIG", "DB_URL env is required");
 
 ## Codes
 
-Sixteen codes (M8 added `STEP_CHECKPOINTED`; M9 added `UNAUTHENTICATED`,
-`UNAUTHORIZED`, `PASSWORD_CHANGE_REQUIRED`, and `ACCOUNT_INACTIVE`), all
-defined as a string union in `web/lib/errors.ts`.
+Seventeen codes (M8 added `STEP_CHECKPOINTED`; M9 added `UNAUTHENTICATED`,
+`UNAUTHORIZED`, `PASSWORD_CHANGE_REQUIRED`, and `ACCOUNT_INACTIVE`; ADR-101 added
+`BUDGET_EXCEEDED`), all defined as a string union in `web/lib/errors.ts`.
 
 | Code | Meaning | Where thrown | UI action |
 | ---- | ------- | ------------ | --------- |
@@ -46,6 +46,7 @@ defined as a string union in `web/lib/errors.ts`.
 | `UNAUTHORIZED` | Session is valid but the caller's role (global or project) is below the required minimum. Maps to **HTTP 403**. | `lib/authz.ts:requireGlobalRole()`, `requireProjectRole()`, `requireProjectAction()`. Also (ADR-062): role gate on `POST /api/admin/users`, `PATCH /api/admin/users/{userId}`, `DELETE /api/admin/users/{userId}`, `GET /api/projects/{slug}/members`, `GET /api/projects/{slug}/members/candidates`, `POST /api/projects/{slug}/members`, `PATCH /api/projects/{slug}/members/{memberId}`, `DELETE /api/projects/{slug}/members/{memberId}`. | Show "Access denied" with the required role; do not expose the project/resource name to the caller. |
 | `PASSWORD_CHANGE_REQUIRED` | Session is valid but the account still has `users.must_change_password = true` (seeded admin / admin-forced reset). Maps to **HTTP 403**. Fails closed on every role-gated API. | `lib/authz.ts:requireActiveSession()` (called by `requireGlobalRole()` / `requireProjectRole()`). `requireSession()` / `getSessionUser()` stay permissive so the change-password flow itself works. | Route the user to `/change-password`; block all other actions until cleared. |
 | `ACCOUNT_INACTIVE` | Session is valid but `users.account_status != 'active'` (pending approval or disabled after an old session was issued). Maps to **HTTP 403**. Credentials sign-in also rejects pending/disabled accounts before session creation. | `lib/authz.ts:requireActiveSession()`; credentials preflight in `web/app/(auth)/actions.ts` and provider verification in `web/auth.ts`. | Show pending-approval or disabled-account guidance; block protected app/API actions until an admin activates or re-enables the account. |
+| `BUDGET_EXCEEDED` | **(ADR-101 — Implemented.)** The execution-policy `budget` axis hard-cap was breached: a run's token spend reached `hardMaxTokens` (= `maxTokens × MAISTER_BUDGET_HARD_MULTIPLIER` when unset) at `run`/`task` scope, or a `tree`-scope token/wall-clock breach cascade-terminated the run-tree. The budget watchdog calls `deleteSession`, then marks the run terminal `Failed` with this code — NEVER before the session is confirmed stopped/absent (a kill that returns `EXECUTOR_UNAVAILABLE` leaves the run live to retry next tick; a `404` proceeds). Not a thrown 4xx from a route — it is recorded as the run's terminal `errorCode`. | The budget watchdog pass in `web/lib/runs/keepalive-sweeper.ts` (per `runs.run_kind`: flow `markNodeFailed`, agent `finalizeAgentRun`, scratch dialog finalizer); a `tree` breach goes through `cascadeAbandonRunTree` first. | Run is terminal `Failed` with the node attempt recording `errorCode = BUDGET_EXCEEDED` — same Failed-run remediation surface as a crashed/failed run. The task auto-returns to `Backlog` and the Launch button reappears; the operator may Raise the ceiling at the `budget_breach` escalate HITL (before hard-cap) or relaunch. |
 
 > **M12 adds NO new `MaisterError` code** ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror) closed union). Beyond the `CONFIG` / `PRECONDITION` reuses above, two M12 outcomes have **no thrown code at all**: an unsatisfied `artifact_required` gate records `gate_results.status = "failed"` (the gate-result lifecycle, not an exception); a `human_review` refusal driven by a failed blocking gate is a blocking gate failure (no HTTP code). Neither maps to an HTTP status.
 

@@ -14,7 +14,8 @@ artifact protocol used when the worker is checkpointed.
 - **Assignment** — M13 `assignments` row linked by `hitl_request_id`; this is
   the inbox and ownership primitive for open HITL work. `hitl_requests` still
   owns the payload and `responded_at` marker.
-- **Kind** — `'permission' | 'form' | 'human' | 'infra_recovery'`:
+- **Kind** — `'permission' | 'form' | 'human' | 'infra_recovery' | 'budget_breach'`
+  (on `hitl_requests.kind`):
   - `permission` — binary approve/deny via ACP
     `session/request_permission`.
   - `form` — structured form, schema declared in the Flow's
@@ -36,6 +37,18 @@ artifact protocol used when the worker is checkpointed.
     re-runs the node) or `"abandon"` (run → `Failed`). Human-actor-only
     (a machine token can never answer it, like `human`); honors the run's
     `onStuck` axis (notify_only ⇒ HITL row but no assignment).
+  - `budget_breach` — **(ADR-101 — Implemented)** opened by the execution-policy
+    `budget` axis watchdog when a run/task-scope token spend reaches 100%
+    `maxTokens` (the ESCALATE rung, see [`execution-policy.md`](execution-policy.md)).
+    The live session is halted (idle-checkpoint, so spend stops) and the run is
+    parked `NeedsInput` with the **worktree KEPT**; the card shows the breached
+    *scope* (Run/Task/Tree), *meter*, and *current vs limit*. The human answers
+    **Raise & resume** (writes `runs.budget_state.ceilingOverride` for the breached
+    scope, clears `notified[scope]`, and resumes) or **Abandon** (run → `Failed`
+    with `BUDGET_EXCEEDED`). Human-actor-only (like `human`/`infra_recovery`); the
+    `runId` is derived server-side from the HITL row, never a body field. A
+    `tree`-scope breach has NO escalate rung — it terminates without a
+    `budget_breach` HITL.
 - **Form schema** — JSON Schema-like object with required
   `schemaVersion: integer`. Field types: `string | number | boolean |
 enum | array`.
@@ -625,8 +638,11 @@ fields:
 
 ## Expectations
 
-- HITL kind is exactly `permission | form | human`; mapping to wire
-  matches the three-kinds table verbatim.
+- HITL kind is exactly `permission | form | human | infra_recovery |
+  budget_breach` (on `hitl_requests.kind`); the three core kinds map to wire per
+  the three-kinds table verbatim, and the two engine-opened kinds
+  (`infra_recovery`, `budget_breach` — ADR-101) park `NeedsInput` with the
+  worktree kept and are Human-actor-only (a token actor NEVER answers them).
 - Every HITL request is persisted as a `hitl_requests` row before the
   run transitions to `NeedsInput`; UI never derives HITL state from
   supervisor in-memory state.

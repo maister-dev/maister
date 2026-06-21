@@ -35,7 +35,10 @@ borrows ([scheduler.md](scheduler.md)).
   `gate.failed`. `run.review` (M37, ADR-100) is the settled-not-terminal signal a
   delegated child emits on reaching Review (wakes a parked orchestrator).
   `run.escalated` is the execution-policy B3 on-stuck signal (emitted when a
-  human gate cannot auto-pass; migration `0056`).
+  human gate cannot auto-pass; migration `0056`). **(ADR-101 — Implemented)** the
+  budget axis reuses this SAME kind (no new kind) with `reason=budget_exceeded`
+  in its `payload` when a run/task-scope budget escalates to a `budget_breach`
+  HITL.
   `task.triage_requeued` was registered with no emitter; its emitter is the
   M34 "Send to triage" action (Implemented — `triage_status = NULL` + emit +
   `triage_requeued` activity in one transaction, ADR-089). Extension rule:

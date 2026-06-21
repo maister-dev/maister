@@ -103,6 +103,7 @@ erDiagram
         jsonb resolved_capability_set "M27 Designed: frozen capability snapshot at launch; runner reads this, never live catalog"
         jsonb delivery_policy_snapshot "ADR-085 Designed: resolved policy at launch"
         jsonb execution_policy "migration 0055: resolved execution policy {preset,overrides} at launch"
+        jsonb budget_state "ADR-101 0061: per-run mutable {ceilingOverride?,notified?} raise-and-resume override + per-scope warn rung, nullable"
         timestamp started_at
         timestamp ended_at
     }

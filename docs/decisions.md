@@ -123,6 +123,7 @@
 | [ADR-095](#adr-095-flow-execution-control-policy--snapshotted-preset--composable-autonomy-axes-fail-closed-no-blind-ship) | Flow execution-control policy — snapshotted preset + composable autonomy axes, fail-closed, no-blind-ship | Accepted | 2026-06-20 |
 | [ADR-096](#adr-096-flow-studio-phase-c--editable-local-packages-variant-b-substrate-session-lock-member-rbac-git-backed-fork) | Flow Studio Phase C — editable local packages (Variant B): substrate, session lock, member RBAC, git-backed fork | Accepted | 2026-06-20 |
 | [ADR-097](#adr-097-docked-ai-authoring-assistant--project-less-scratch-at-local-package-run-m36-phase-5) | Docked AI authoring assistant — project-less scratch-at-local-package run (M36 Phase 5) | Accepted | 2026-06-20 |
+| [ADR-101](#adr-101-cost-budget-governance--budget-execution-policy-axis-token-metered-warn-escalate-terminate-ladder-fail-open) | Cost-budget governance — budget execution-policy axis, token-metered, warn-escalate-terminate ladder, fail-open | Accepted | 2026-06-22 |
 
 ---
 
@@ -7684,6 +7685,73 @@ coordinator.
 
 ---
 
+### ADR-101: Cost-budget governance — budget execution-policy axis, token-metered, warn-escalate-terminate ladder, fail-open
+
+**Date:** 2026-06-22
+**Status:** Accepted
+**Context:** The execution-control policy (ADR-095), `ralph_loop` auto-relaunch,
+and the M37 orchestrator swarm (ADR-098/099/100) let a run drive itself
+unattended — but the only spend-shaped bounds are **count** caps
+(`MAISTER_RALPH_MAX_ATTEMPTS`, `MAISTER_AUTO_RETRY_MAX_ATTEMPTS`,
+`MAISTER_ORCHESTRATOR_MAX_DEPTH/FANOUT`). There is **no token ceiling**: an
+`unattended` orchestrator can fan out an as-plan DAG and ralph-loop on crashes
+with no spend rail, and `limits.maxCostUsd` is record-only by design. This is the
+"генератор счёта" gap.
+
+**Decision:** Add a tenth execution-policy axis **`budget`** (`BudgetAxis = {run?,
+task?, tree?}` of `BudgetLimits`) enforcing **token / consecutive-failure /
+wall-clock** ceilings at **run / task / tree** scope via a **warn → escalate →
+terminate** ladder evaluated each keepalive sweep tick. The meter is **tokens**
+(sum of the four `run_cost_rollups` token columns, resume tax included) — **no
+USD, no price table**. Enforcement is **opt-in, fail-OPEN**: absent or `0` ⇒
+unlimited; `budgetFromSnapshot` resolves a null/absent/malformed snapshot to
+all-unset (the deliberate inversion of ADR-095's fail-closed-to-`strict`
+resolvers, because "no limit ⇒ don't constrain" and a corrupt snapshot must never
+*add* a constraint). There is **no launch refusal** — a convenience
+`applyDefaultBudgetForUnattended` may fill `tree.maxTokens` from
+`MAISTER_DEFAULT_UNATTENDED_BUDGET_TOKENS` for an `unattended` launch, never a
+`PRECONDITION`. The ladder reuses existing machinery and introduces **no new
+`runs.status`**: ESCALATE → `NeedsInput` with a new `hitl_requests.kind =
+budget_breach` (mirrors `infra_recovery`), worktree kept, `run.escalated`
+(`reason=budget_exceeded`); TERMINATE → `deleteSession` then terminal `Failed`
+with a new error code `BUDGET_EXCEEDED`, tree breach via `cascadeAbandonRunTree`.
+The breach mechanism **branches on `run_kind`** (flow/agent/scratch) before
+routing. Raise-and-resume writes an additive `runs.budget_state.ceilingOverride`
+(migration 0061) the watchdog reads ON TOP of the immutable snapshot; idempotency
+is `runs.status` (escalate/terminate) + `runs.budget_state.notified[scope]`
+(warn-once).
+
+**Consequences:**
+- One enforcing spend rail closes the unattended/swarm cost gap; the warn rung
+  surfaces the approach ~a tick before the hard kill (≤60s overshoot bound by a
+  forced, cursor-throttled `reconcileRunCostRollups`).
+- New audit kinds `budget_warned | budget_escalated | budget_terminated |
+  budget_raised` on `ExecPolicyActionKind`; new error `BUDGET_EXCEEDED`; new env
+  vars `MAISTER_BUDGET_HARD_MULTIPLIER` (default 1.25) +
+  `MAISTER_DEFAULT_UNATTENDED_BUDGET_TOKENS`.
+- Migration 0061 adds only `runs.budget_state jsonb` —
+  `runs_root_run_id_idx` already exists (M37).
+- Tree scope has no escalate rung (a parked `WaitingOnChildren` root has no
+  `→ NeedsInput` transition) — a tree breach terminates the tree.
+
+**Alternatives Considered:**
+- **Meter in USD with a model-price table:** rejected — prices drift and are
+  costly to maintain; tokens are a stable proxy and already on disk.
+- **Fail-closed budget resolver (like the safety axes):** rejected — a malformed
+  snapshot adding a spend constraint contradicts "no limit ⇒ don't constrain" and
+  would change behaviour for existing unbudgeted launches.
+- **A new `runs.status` (e.g. `BudgetExceeded`):** rejected — a ~17-site status
+  fan-out for no semantic gain; `NeedsInput` + `Failed` already model pause and
+  terminal-fail.
+- **A `budget_ceiling_override`-only column with audit-row idempotency:** rejected
+  — `logExecPolicyAction` is a log boundary, not a queryable table, so warn-once
+  needs persisted state; `runs.budget_state` carries both the override and the
+  per-scope `notified` rung in one column.
+- **Supervisor-side inline per-step enforcement:** rejected — over-built for a
+  token ceiling; the ~60s sweep with a warn rung is sufficient.
+
+---
+
 ## Template for New Decisions
 
 ```markdown
@@ -7732,3 +7800,7 @@ coordinator.
   `skipped + WARN + TODO(M12)`, but the executor shipped with M12 (`gates-exec.ts` checks
   `inputArtifacts` currency). The M11a-era diagram branch should be redrawn to the implemented
   dispatch when that file is next reworked.
+- **Missing Index rows for ADR-098/099/100 (filed 2026-06-22).** The M37 merge added the
+  ADR-098/099/100 bodies but not their rows in the `## Index` table (which jumps 097 → 101 after
+  the ADR-101 row was added). Backfill the three rows with correct anchor slugs when decisions.md
+  is next edited; ADR-101 was placed without backfilling to stay surgical (docs R9).
