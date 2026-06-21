@@ -23,9 +23,12 @@ import {
 } from "@/lib/packages/catalog";
 import { buildGraphTopology } from "@/lib/queries/flow-graph-view";
 import { parseAgentDefinition } from "@/lib/agents/definition";
+import { splitFrontmatter } from "@/lib/flows/artifact-frontmatter";
 import {
   listInstalledPackageFiles,
   readInstalledPackageFile,
+  resolveBundledAgentPath,
+  resolveBundledSkillPrefix,
 } from "@/lib/flows/package-content";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -145,7 +148,8 @@ export type StudioPackageInstallView = {
   counts: {
     flows: number;
     skills: number;
-    agents: number;
+    platformAgents: number;
+    subagents: number;
     mcps: number;
     rules: number;
   };
@@ -175,7 +179,8 @@ export async function getStudioPackageInstalls(): Promise<
       counts: {
         flows: manifest?.spec.flows.length ?? 0,
         skills: manifest?.inventory.skills.length ?? 0,
-        agents: manifest?.inventory.agents.length ?? 0,
+        platformAgents: manifest?.inventory.platformAgents?.length ?? 0,
+        subagents: manifest?.inventory.agents.length ?? 0,
         mcps: manifest?.spec.mcps.length ?? 0,
         // Rules live inside capability bundles and are not inventoried in the
         // manifest (only skills/agents are); a real count needs Phase C disk reads.
@@ -248,10 +253,15 @@ export type PackageBomAgent = {
 };
 export type PackageBomMcp = { id: string };
 export type PackageBomRule = { id: string; path: string };
+// Capability subagents (capability/**/agents) — raw Claude-subagent .md, never
+// strict-parsed: lenient id + description only (materialized into `.claude/` at
+// run, NOT platform-agents).
+export type PackageBomSubagent = { id: string; description: string };
 
 export type PackageBom = {
   flows: PackageBomFlow[];
-  agents: PackageBomAgent[];
+  platformAgents: PackageBomAgent[];
+  subagents: PackageBomSubagent[];
   skills: PackageBomSkill[];
   mcps: PackageBomMcp[];
   rules: PackageBomRule[];
@@ -311,7 +321,8 @@ export async function getStudioPackageBom(
 
   if (!listed.bundleMissing) {
     for (const id of skillIds) {
-      const prefix = `skills/${id}/`;
+      const prefix =
+        resolveBundledSkillPrefix(listed.files, id) ?? `skills/${id}/`;
       const files = listed.files.filter((f) => f.path.startsWith(prefix));
       const subfolders = new Set<string>();
 
@@ -329,7 +340,12 @@ export async function getStudioPackageBom(
     }
     for (const f of listed.files) {
       if (f.kind === "rule") {
-        rules.push({ id: f.path.slice("rules/".length), path: f.path });
+        const at = f.path.lastIndexOf("rules/");
+
+        rules.push({
+          id: at >= 0 ? f.path.slice(at + "rules/".length) : f.path,
+          path: f.path,
+        });
       }
     }
   } else {
@@ -342,21 +358,23 @@ export async function getStudioPackageBom(
     }
   }
 
-  const agents: PackageBomAgent[] = [];
+  // Platform-agents: package-root `maister-agents/<stem>.md`, strict-parsed for
+  // the rich card; any failure degrades to an id-only card (never throws).
+  const platformAgents: PackageBomAgent[] = [];
 
-  for (const stem of manifest?.inventory.agents ?? []) {
+  for (const stem of manifest?.inventory.platformAgents ?? []) {
     try {
       const read = await readInstalledPackageFile(
         { installedPath },
-        `agents/${stem}.md`,
+        `maister-agents/${stem}.md`,
       );
 
       if (read.state !== "text" || !read.content) {
-        throw new Error(`agent .md not readable (${read.state})`);
+        throw new Error(`platform agent .md not readable (${read.state})`);
       }
       const def = parseAgentDefinition(stem, read.content);
 
-      agents.push({
+      platformAgents.push({
         id: stem,
         description: def.description,
         triggers: def.triggers,
@@ -364,8 +382,11 @@ export async function getStudioPackageBom(
         workspace: def.workspace,
       });
     } catch {
-      log.warn({ installId, kind: "agent", stem }, "bom agent degrade");
-      agents.push({
+      log.warn(
+        { installId, kind: "platformAgent", stem },
+        "bom platform-agent degrade",
+      );
+      platformAgents.push({
         id: stem,
         description: "",
         triggers: [],
@@ -373,6 +394,36 @@ export async function getStudioPackageBom(
         workspace: "",
       });
     }
+  }
+
+  // Capability subagents: capability/**/agents/<stem>.md. NEVER strict-parsed
+  // (they are Claude-subagent .md); lenient description only, never throws.
+  const subagents: PackageBomSubagent[] = [];
+  const agentFiles = listed.bundleMissing ? [] : listed.files;
+
+  for (const stem of manifest?.inventory.agents ?? []) {
+    let description = "";
+
+    try {
+      const agentPath = resolveBundledAgentPath(agentFiles, stem);
+
+      if (agentPath) {
+        const read = await readInstalledPackageFile(
+          { installedPath },
+          agentPath,
+        );
+
+        if (read.state === "text" && read.content) {
+          const split = splitFrontmatter(read.content);
+          const desc = split.ok ? split.frontmatter?.description : undefined;
+
+          if (typeof desc === "string") description = desc;
+        }
+      }
+    } catch {
+      log.warn({ installId, kind: "subagent", stem }, "bom subagent degrade");
+    }
+    subagents.push({ id: stem, description });
   }
 
   const mcps: PackageBomMcp[] = (manifest?.spec.mcps ?? []).map((m) => ({
@@ -384,14 +435,15 @@ export async function getStudioPackageBom(
       installId,
       flows: flows.length,
       skills: skills.length,
-      agents: agents.length,
+      platformAgents: platformAgents.length,
+      subagents: subagents.length,
       mcps: mcps.length,
       rules: rules.length,
     },
     "bom built",
   );
 
-  return { flows, agents, skills, mcps, rules };
+  return { flows, platformAgents, subagents, skills, mcps, rules };
 }
 
 export type StudioFlowGraph = {

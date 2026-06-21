@@ -34,6 +34,7 @@ const labels: FrontmatterArtifactEditorLabels = {
   malformedNotice:
     "The frontmatter could not be parsed. Fix it in the raw view below.",
   rawHeading: "Raw content",
+  agentSchemaWarning: "Platform-agent frontmatter has issues.",
 };
 
 const SKILL_CONTENT = `---

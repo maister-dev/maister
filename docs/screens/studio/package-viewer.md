@@ -44,9 +44,16 @@ Replaces the flat chip lists with a **tabbed, paged, card-based** bill-of-materi
   (`FlowGraphViewSection`, `runContext` omitted → pure topology + presentation
   layout, no status ring), or a "nothing to preview" note.
 - **Bill-of-materials → tab bar + cards grid + paging:**
-  - One **tab per kind** — Flows · Skills · Agents · MCPs · Rules — each with a
-    member **count**. A kind whose count is **0 is hidden** (never an empty tab).
-    All counts hidden ⇒ a single "nothing to browse" empty state.
+  - One **tab per kind** — Flows · Skills · Agents · Subagents · MCPs · Rules —
+    each with a member **count**. A kind whose count is **0 is hidden** (never an
+    empty tab). All counts hidden ⇒ a single "nothing to browse" empty state.
+    **Agents** are platform-agents from the package-root `maister-agents/`
+    (`inventory.platformAgents`, strict platform-agent frontmatter, rich view).
+    **Subagents** are the flow-internal Claude subagents from
+    `capability/**/agents/` (`inventory.agents`) — materialized into the run's
+    `.claude/agents/` at launch, NOT platform-agents. This split is
+    package-viewer-scoped; the standalone `/agents` catalog (ADR-089) is a
+    separate subsystem and unchanged.
   - The active tab renders a **cards grid** (no bare id chips). Each card carries a
     name, a kind-specific meta line, a **View** link into the relevant detail
     surface, and a **disabled Fork** chip (Phase-2 hint).
@@ -59,8 +66,13 @@ Replaces the flat chip lists with a **tabbed, paged, card-based** bill-of-materi
 - **Card meta per kind:**
   - **Flow:** `N nodes · M gates · graph <engine>` (engine omitted when absent).
   - **Skill:** `K files · S subfolders`.
-  - **Agent:** when-to-call (trigger labels) as the card description +
-    `risk_tier · workspace` as the meta line — **never the runner**.
+  - **Agent (platform):** when-to-call (trigger labels) as the card description +
+    `risk_tier · workspace` as the meta line — **never the runner**. Links to the
+    rich platform-agent detail (`/agents/<stem>`, reads `maister-agents/<stem>.md`;
+    invalid frontmatter degrades to the raw `.md`).
+  - **Subagent:** the lenient frontmatter `description` + a "materialized into
+    .claude/ at run" meta line. Links to the raw-`.md` subagent detail
+    (`/subagents/<stem>`) — never strict-parsed.
   - **MCP / Rule:** name (+ the rule file path for rules).
 - **Degraded members:** a member unreadable on disk comes back id-only (empty
   meta / zero counts); the card renders the name and **omits** the meta line

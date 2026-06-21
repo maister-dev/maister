@@ -29,7 +29,14 @@ export type PackageDetailView = {
 
 // Tab kinds in fixed display order. A kind whose count is 0 is dropped by
 // PackageTabs (never rendered as an empty tab).
-const TAB_KINDS = ["flows", "skills", "agents", "mcps", "rules"] as const;
+const TAB_KINDS = [
+  "flows",
+  "skills",
+  "agents",
+  "subagents",
+  "mcps",
+  "rules",
+] as const;
 
 type TabKind = (typeof TAB_KINDS)[number];
 
@@ -37,6 +44,7 @@ const TAB_LABEL_KEY: Record<TabKind, string> = {
   flows: "viewer.tabFlows",
   skills: "viewer.tabSkills",
   agents: "viewer.tabAgents",
+  subagents: "viewer.tabSubagents",
   mcps: "viewer.tabMcps",
   rules: "viewer.tabRules",
 };
@@ -74,7 +82,8 @@ export function PackageDetail({
   const counts: Record<TabKind, number> = {
     flows: pkg.bom.flows.length,
     skills: pkg.bom.skills.length,
-    agents: pkg.bom.agents.length,
+    agents: pkg.bom.platformAgents.length,
+    subagents: pkg.bom.subagents.length,
     mcps: pkg.bom.mcps.length,
     rules: pkg.bom.rules.length,
   };
@@ -314,7 +323,7 @@ function buildCards({
         />
       ));
     case "agents":
-      return pkg.bom.agents.slice(start, end).map((agent) => (
+      return pkg.bom.platformAgents.slice(start, end).map((agent) => (
         <ElementCard
           key={agent.id}
           description={
@@ -341,6 +350,21 @@ function buildCards({
           name={agent.id}
         />
       ));
+    case "subagents":
+      return pkg.bom.subagents
+        .slice(start, end)
+        .map((subagent) => (
+          <ElementCard
+            key={subagent.id}
+            description={
+              subagent.description || t("viewer.subagentNoDescription")
+            }
+            href={`${basePath}/subagents/${encodeURIComponent(subagent.id)}`}
+            labels={labels}
+            meta={t("viewer.subagentMeta")}
+            name={subagent.id}
+          />
+        ));
     case "mcps":
       return pkg.bom.mcps
         .slice(start, end)

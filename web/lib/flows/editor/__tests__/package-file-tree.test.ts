@@ -24,6 +24,20 @@ describe("classifyPackageFilePath", () => {
     expect(classifyPackageFilePath("templates/t.hbs")).toBe("template");
     expect(classifyPackageFilePath("notes.txt")).toBe("asset");
   });
+
+  it("treats maister-agents/ as platform-agent definitions (structural editor)", () => {
+    expect(classifyPackageFilePath("maister-agents/triager.md")).toBe(
+      "agent_definition",
+    );
+  });
+
+  it("leaves capability subagents as raw assets (not the platform-agent form)", () => {
+    // capability/**/agents/*.md are Claude subagents materialized into .claude
+    // at run — they are NOT platform-agents and must not reach the agent form.
+    expect(classifyPackageFilePath("capability/agents/loop-critic.md")).toBe(
+      "asset",
+    );
+  });
 });
 
 describe("buildFileTree", () => {

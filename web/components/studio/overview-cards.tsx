@@ -22,7 +22,8 @@ export function OverviewCards({
       sum +
       group.counts.flows +
       group.counts.skills +
-      group.counts.agents +
+      group.counts.platformAgents +
+      group.counts.subagents +
       group.counts.mcps +
       group.counts.rules,
     0,

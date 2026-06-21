@@ -3,6 +3,7 @@
 import type { ReactElement } from "react";
 
 import { CodeEditor } from "@/components/flows/code-editor";
+import { agentDefinitionFrontmatterSchema } from "@/lib/agents/definition";
 import {
   serializeFrontmatter,
   splitFrontmatter,
@@ -38,6 +39,7 @@ export interface FrontmatterArtifactEditorLabels {
   guardrailNotice: string;
   malformedNotice: string;
   rawHeading: string;
+  agentSchemaWarning: string;
 }
 
 type FieldValue =
@@ -235,6 +237,13 @@ export function FrontmatterArtifactEditor({
 
   const fm = split.frontmatter ?? {};
 
+  // Lenient platform-agent validation: surface a ⚠ badge for incomplete/invalid
+  // agent frontmatter, but keep every field editable (never block the save).
+  const agentSchema =
+    kind === "agent_definition"
+      ? agentDefinitionFrontmatterSchema.safeParse(fm)
+      : null;
+
   const editField = (key: string, value: FieldValue): void => {
     onChange(applyFrontmatterFieldEdit(content, key, value));
   };
@@ -252,6 +261,25 @@ export function FrontmatterArtifactEditor({
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-3 rounded-lg border border-line bg-ivory/40 px-3.5 py-3">
         <span className={labelClass}>{labels.frontmatterHeading}</span>
+
+        {agentSchema && !agentSchema.success ? (
+          <div
+            className="rounded-lg border border-amber-line bg-amber-soft px-3 py-2 font-mono text-[10.5px] leading-snug text-amber"
+            data-testid="agent-schema-warning"
+            role="alert"
+          >
+            ⚠ {labels.agentSchemaWarning}
+            <ul className="mt-1 list-disc pl-4">
+              {agentSchema.error.issues.slice(0, 6).map((issue) => (
+                <li key={`${issue.path.join(".")}:${issue.message}`}>
+                  {(issue.path.join(".") || "frontmatter") +
+                    ": " +
+                    issue.message}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
 
         {kind === "rule" ? (
           <RuleFields

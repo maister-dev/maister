@@ -40,6 +40,7 @@ const FRONTMATTER_LABELS = {
   guardrailNotice: "Guardrails are advisory.",
   malformedNotice: "The frontmatter could not be parsed.",
   rawHeading: "Raw content",
+  agentSchemaWarning: "Platform-agent frontmatter has issues.",
 };
 
 const SCRIPT_LABELS = {

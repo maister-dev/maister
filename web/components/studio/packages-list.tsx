@@ -12,7 +12,8 @@ const KIND_LABEL_KEYS: { key: keyof PackageGroup["counts"]; label: string }[] =
   [
     { key: "flows", label: "kindFlows" },
     { key: "skills", label: "kindSkills" },
-    { key: "agents", label: "kindAgents" },
+    { key: "platformAgents", label: "kindAgents" },
+    { key: "subagents", label: "kindSubagents" },
     { key: "mcps", label: "kindMcps" },
     { key: "rules", label: "kindRules" },
   ];

@@ -21,7 +21,7 @@ import { getStudioPackageBom } from "@/lib/queries/packages";
 
 const manifest = {
   spec: { flows: [{ id: "dev", path: "flows/dev" }], mcps: [] },
-  inventory: { skills: ["s1"], agents: ["a1"] },
+  inventory: { skills: ["s1"], agents: ["a1"], platformAgents: ["p1"] },
 };
 
 let root: string;
@@ -59,6 +59,7 @@ async function seedPackage(): Promise<void> {
     "---\nname: s1\n---\nx\n",
   );
   await writeFile(join(root, "skills", "s1", "references", "a.md"), "ref\n");
+  // Capability subagent (inventory.agents) — read leniently for its description.
   await mkdir(join(root, "agents"), { recursive: true });
   await writeFile(
     join(root, "agents", "a1.md"),
@@ -66,6 +67,21 @@ async function seedPackage(): Promise<void> {
       "---",
       "name: a1",
       "description: An agent",
+      "tools: Read, Bash",
+      "model: inherit",
+      "---",
+      "Subagent prompt body.",
+      "",
+    ].join("\n"),
+  );
+  // Platform-agent (inventory.platformAgents) at the package-root maister-agents/.
+  await mkdir(join(root, "maister-agents"), { recursive: true });
+  await writeFile(
+    join(root, "maister-agents", "p1.md"),
+    [
+      "---",
+      "name: p1",
+      "description: A platform agent",
       "runner: claude-code",
       "workspace: none",
       "mode: session",
@@ -73,7 +89,7 @@ async function seedPackage(): Promise<void> {
       "  - manual",
       "risk_tier: read_only",
       "---",
-      "Agent prompt body.",
+      "Platform agent prompt body.",
       "",
     ].join("\n"),
   );
@@ -99,16 +115,21 @@ describe("getStudioPackageBom enrichment (M36 T1.2)", () => {
     // Skills — SKILL.md + references/a.md ⇒ 2 files, 1 subfolder.
     expect(bom.skills).toEqual([{ id: "s1", fileCount: 2, subfolderCount: 1 }]);
 
-    // Agents — routing metadata only; the runner is NEVER projected (design §5.5).
-    expect(bom.agents).toHaveLength(1);
-    expect(bom.agents[0]).toMatchObject({
-      id: "a1",
-      description: "An agent",
+    // Platform-agents — from maister-agents/, routing metadata only; the runner
+    // is NEVER projected (design §5.5).
+    expect(bom.platformAgents).toHaveLength(1);
+    expect(bom.platformAgents[0]).toMatchObject({
+      id: "p1",
+      description: "A platform agent",
       triggers: ["manual"],
       riskTier: "read_only",
       workspace: "none",
     });
-    expect("runner" in bom.agents[0]).toBe(false);
+    expect("runner" in bom.platformAgents[0]).toBe(false);
+
+    // Subagents — capability agents (here agents/a1.md): lenient id +
+    // description only, NEVER strict-parsed (Claude-subagent format).
+    expect(bom.subagents).toEqual([{ id: "a1", description: "An agent" }]);
 
     // Rules — inventoried from disk (was permanently [] before M36).
     expect(bom.rules).toEqual([{ id: "r1.md", path: "rules/r1.md" }]);
@@ -139,9 +160,10 @@ describe("getStudioPackageBom enrichment (M36 T1.2)", () => {
       { id: "dev", nodeCount: 0, gateCount: 0, engine: null },
     ]);
     expect(bom.skills).toEqual([{ id: "s1", fileCount: 0, subfolderCount: 0 }]);
-    expect(bom.agents).toEqual([
-      { id: "a1", description: "", triggers: [], riskTier: "", workspace: "" },
+    expect(bom.platformAgents).toEqual([
+      { id: "p1", description: "", triggers: [], riskTier: "", workspace: "" },
     ]);
+    expect(bom.subagents).toEqual([{ id: "a1", description: "" }]);
     expect(bom.rules).toEqual([]);
   });
 });

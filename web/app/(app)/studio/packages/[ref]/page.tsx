@@ -99,7 +99,8 @@ export default async function StudioPackageDetailPage({
   const installId = group.versions[0]?.installId ?? "";
   const bom = (await getStudioPackageBom(installId)) ?? {
     flows: [],
-    agents: [],
+    platformAgents: [],
+    subagents: [],
     skills: [],
     mcps: [],
     rules: [],

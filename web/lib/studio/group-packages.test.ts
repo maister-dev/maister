@@ -9,7 +9,14 @@ function base() {
     sourceUrl: "github.com/org/aif",
     versionLabel: "v1.0.0",
     trustStatus: "trusted_by_policy",
-    counts: { flows: 2, skills: 1, agents: 0, mcps: 0, rules: 0 },
+    counts: {
+      flows: 2,
+      skills: 1,
+      platformAgents: 0,
+      subagents: 0,
+      mcps: 0,
+      rules: 0,
+    },
   };
 }
 
@@ -34,7 +41,8 @@ describe("groupPackages", () => {
     expect(groups[0].counts).toEqual({
       flows: 2,
       skills: 1,
-      agents: 0,
+      platformAgents: 0,
+      subagents: 0,
       mcps: 0,
       rules: 0,
     });

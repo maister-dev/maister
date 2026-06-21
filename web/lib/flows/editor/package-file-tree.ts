@@ -15,6 +15,11 @@ export function classifyPackageFilePath(
   if (relativePath.startsWith("schemas/")) return "schema";
   if (relativePath.startsWith("skills/")) return "skill";
   if (relativePath.startsWith("rules/")) return "rule";
+  // Package-root `maister-agents/` are platform-agent definitions (structural
+  // editor + rich view). Capability subagents at `capability/**/agents/` are NOT
+  // matched here (they fall through to "asset" = raw) — they are Claude
+  // subagents materialized into `.claude/` at run, not platform-agents.
+  if (relativePath.startsWith("maister-agents/")) return "agent_definition";
   if (relativePath.startsWith("agents/")) return "agent_definition";
   if (relativePath.startsWith("scripts/")) return "script";
   if (relativePath.startsWith("templates/")) return "template";

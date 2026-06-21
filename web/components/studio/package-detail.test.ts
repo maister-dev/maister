@@ -31,7 +31,8 @@ const pkg = {
       { id: "aif-dev", nodeCount: 4, gateCount: 2, engine: "1.3.0" },
       { id: "aif-init", nodeCount: 1, gateCount: 0, engine: null },
     ],
-    agents: [],
+    platformAgents: [],
+    subagents: [{ id: "sub1", description: "a subagent" }],
     skills: [{ id: "s1", fileCount: 3, subfolderCount: 1 }],
     mcps: [],
     rules: [],
@@ -59,6 +60,8 @@ describe("PackageDetail", () => {
     expect(html).toContain("aif-init");
     // The Skills tab is present (non-empty) even though its cards are not active.
     expect(html).toContain('data-testid="package-tab-skills"');
+    // The Subagents tab (capability subagents) is present and distinct from Agents.
+    expect(html).toContain('data-testid="package-tab-subagents"');
     expect(html).toMatch(/rework|fork/i);
   });
 

@@ -60,7 +60,11 @@ const ACTIVE_RUN_STATUSES = [
 // inventory (spec stays strict-schema-parseable on its own).
 export type PackageInstallManifest = {
   spec: MaisterPackageManifest;
-  inventory: { skills: string[]; agents: string[] };
+  // `agents` = capability subagents (capability/**/agents, materialized into
+  // `.claude/` at run). `platformAgents` = package-root `maister-agents/`
+  // platform-agent definitions. Old installs predate `platformAgents` → readers
+  // default it to `[]`.
+  inventory: { skills: string[]; agents: string[]; platformAgents: string[] };
   // Install coordinate (packages[] `path` subdir) — needed by the
   // maister.yaml write-back to reproduce the pin.
   sourceSubpath?: string;
@@ -93,6 +97,7 @@ async function collectInventory(
 ): Promise<PackageInstallManifest["inventory"]> {
   const skills = new Set<string>();
   const agents = new Set<string>();
+  const platformAgents = new Set<string>();
 
   for (const cap of manifest.capabilities) {
     const skillsDir = join(pkgRoot, cap.path, "skills");
@@ -116,7 +121,26 @@ async function collectInventory(
     }
   }
 
-  return { skills: [...skills].sort(), agents: [...agents].sort() };
+  // Platform-agents live at the package root `maister-agents/` — distinct from
+  // the capability subagents scanned above (which materialize into `.claude/`
+  // at run and are NOT platform-agents).
+  try {
+    for (const entry of await readdir(join(pkgRoot, "maister-agents"), {
+      withFileTypes: true,
+    })) {
+      if (entry.isFile() && entry.name.endsWith(".md")) {
+        platformAgents.add(entry.name.replace(/\.md$/, ""));
+      }
+    }
+  } catch {
+    // package without maister-agents/ — fine
+  }
+
+  return {
+    skills: [...skills].sort(),
+    agents: [...agents].sort(),
+    platformAgents: [...platformAgents].sort(),
+  };
 }
 
 export type InstallPackageRevisionResult = {

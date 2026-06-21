@@ -1,7 +1,8 @@
 export type PackageMemberCounts = {
   flows: number;
   skills: number;
-  agents: number;
+  platformAgents: number;
+  subagents: number;
   mcps: number;
   rules: number;
 };

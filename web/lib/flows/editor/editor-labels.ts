@@ -102,6 +102,7 @@ export function frontmatterArtifactEditorLabels(
     guardrailNotice: te("artifacts.guardrailNotice"),
     malformedNotice: te("artifacts.malformedNotice"),
     rawHeading: te("artifacts.rawHeading"),
+    agentSchemaWarning: te("artifacts.agentSchemaWarning"),
   };
 }
 
