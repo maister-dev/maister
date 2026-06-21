@@ -890,17 +890,34 @@ paths:
       description: |
         (M37 — Implemented, ADR-100.) Scope `runs:promote` — held ONLY by the
         orchestrator's run-bound token (a child agent token does not), so a
-        child→child promote is a 403 by scope. Merges a reviewed child's branch
-        into its target and flips the child `Done`. Backs the `run_promote`
-        delegation tool.
+        child→child promote is a 403 by scope. For an `own`-mode child this merges
+        the reviewed child's branch into its target and flips that child `Done`.
+        Backs the `run_promote` delegation tool.
 
-        **Identifiers (trust contour).** The `projectId` and the **parent**
-        `runId` are derived SERVER-SIDE from the run-bound orchestrator token —
-        NEVER body fields. `childRunId` MUST be a direct child of the bound
-        orchestrator, in the token's project, and currently in `Review`
-        (otherwise `PRECONDITION` → 409). A merge CONFLICT returns `CONFLICT` →
-        409 and leaves the child in `Review` for a human to resolve — the
-        orchestrator NEVER auto-resolves (§8).
+        **Shared-tree promote (Designed — ADR-101).** When `childRunId` is a
+        `workspace_mode='shared'` child, this is a TREE promote, not a per-child
+        promote: the operation resolves the shared TREE workspace by the orchestrator
+        tree root (`rootRunId`, server-derived) and the
+        `workspace_mode='shared'` marker — NOT by the promoting child's own row
+        (reuser children have none) — merges the single tree branch ONCE, and settles
+        ALL `workspace_mode='shared'` children of that tree `Review → Done` in one
+        transaction. It is gated by a promote-time settled re-check: while ANY shared
+        sibling is still in a writable status (`Running | NeedsInput | NeedsInputIdle
+        | HumanWorking | Pending | WaitingOnChildren`), the promote is refused
+        `PRECONDITION` → 409 and merges nothing. Exactly-once: a concurrent shared
+        tree-promote that loses the durable-claim CAS, or a re-promote that finds
+        nothing in `Review`, is an idempotent no-op (`CONFLICT` / `PRECONDITION` →
+        409). This supersedes ADR-099 §4's launch gate for shared writable worktrees.
+
+        **Identifiers (trust contour).** `childRunId` is the ONLY body-controlled
+        identifier; it is validated against the bound-run scope — it MUST be a direct
+        child of the bound orchestrator, in the token's project, and currently in
+        `Review` (otherwise `PRECONDITION` → 409). The `projectId`, the **parent**
+        `runId`, and the tree `rootRunId` (used to resolve the shared tree workspace)
+        are server-derived run state from the run-bound orchestrator token — NEVER
+        body fields. A merge CONFLICT returns `CONFLICT` → 409 and leaves the child
+        (and, for a shared tree, ALL shared siblings) in `Review` for a human to
+        resolve — the orchestrator NEVER auto-resolves (§8).
 
         Writes a `token_audit_log` row with scope `runs:promote` after success.
       operationId: extPromoteRun
@@ -921,7 +938,12 @@ paths:
                   description: The reviewed child run to promote.
       responses:
         "200":
-          description: Child merged to its target; the child is now `Done`.
+          description: |
+            Merged to the target; the child is now `Done`. For a
+            `workspace_mode='shared'` child (Designed — ADR-101) the single tree
+            branch is merged once and ALL shared siblings of the tree are settled
+            `Review → Done` in the same transaction; the echoed `childRunId` is the
+            one promoted.
           content:
             application/json:
               schema:
@@ -947,8 +969,13 @@ paths:
         "409":
           description: |
             A `PRECONDITION` (child is not a direct child of the bound
-            orchestrator, or not in `Review`, or the token is not run-bound) or a
-            merge `CONFLICT` (the child stays in `Review`; no auto-resolve).
+            orchestrator, or not in `Review`, or the token is not run-bound;
+            **shared-tree, Designed — ADR-101**: the settled-gate is unmet because a
+            shared sibling is still in a writable status, the target is not a shared
+            child / has no resolvable tree workspace, or nothing is in `Review`
+            because the tree was already promoted) or a merge `CONFLICT` (the child —
+            and, for a shared tree, ALL shared siblings — stay in `Review`; no
+            auto-resolve; a lost shared durable-claim CAS is also `CONFLICT`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ExtErrorBody" }
@@ -2009,12 +2036,15 @@ components:
           type: string
           enum: [own, shared]
           description: |
-            (M37 Phase 10 — ADR-099) Worktree allocation mode for a
+            (M37 — ADR-099) Worktree allocation mode for a
             `workspace: worktree` child. `own` (default) = a per-run worktree;
             `shared` = all children of this orchestrator tree share one
             pre-allocated tree with serialized writers (one active writer per
-            tree, enforced at promotion). `shared` requires a delegated child
-            (a `rootRunId`); a top-level run is refused with `CONFIG`.
+            tree). `shared` requires a delegated child (a `rootRunId`); a top-level
+            run is refused with `CONFIG`. A `shared` writable tree is ONE branch =
+            ONE Review = ONE tree-level promote that settles all shared siblings
+            (Designed — ADR-101, via `POST /api/v1/ext/runs/promote`); ADR-101
+            supersedes ADR-099 §4's launch gate for shared writable worktrees.
         persistent:
           type: boolean
           description: |

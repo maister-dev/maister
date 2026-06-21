@@ -123,7 +123,11 @@
 | [ADR-095](#adr-095-flow-execution-control-policy--snapshotted-preset--composable-autonomy-axes-fail-closed-no-blind-ship) | Flow execution-control policy — snapshotted preset + composable autonomy axes, fail-closed, no-blind-ship | Accepted | 2026-06-20 |
 | [ADR-096](#adr-096-flow-studio-phase-c--editable-local-packages-variant-b-substrate-session-lock-member-rbac-git-backed-fork) | Flow Studio Phase C — editable local packages (Variant B): substrate, session lock, member RBAC, git-backed fork | Accepted | 2026-06-20 |
 | [ADR-097](#adr-097-docked-ai-authoring-assistant--project-less-scratch-at-local-package-run-m36-phase-5) | Docked AI authoring assistant — project-less scratch-at-local-package run (M36 Phase 5) | Accepted | 2026-06-20 |
+| [ADR-098](#adr-098-orchestrator-engine--supervisory-node-governed-run-tree-delegation-toolset-success-gated-task-dag-idle-checkpoint-waitresume) | Orchestrator engine — supervisory node, governed run-tree, delegation toolset, success-gated task-DAG, idle-checkpoint wait/resume | Accepted | 2026-06-20 |
+| [ADR-099](#adr-099-persistent-swarm-layer-2--addressable-sessions-star-routed-messaging-worktree-modes-per-agent-read-only) | Persistent swarm Layer 2 — addressable sessions, star-routed messaging, worktree modes, per-agent read-only | Accepted | 2026-06-20 |
+| [ADR-100](#adr-100-delegated-child-review-settle--promoterework) | Delegated-child Review settle + promote/rework | Accepted | 2026-06-20 |
 | [ADR-101](#adr-101-cost-budget-governance--budget-execution-policy-axis-token-metered-warn-escalate-terminate-ladder-fail-open) | Cost-budget governance — budget execution-policy axis, token-metered, warn-escalate-terminate ladder, fail-open | Accepted | 2026-06-22 |
+| [ADR-101](#adr-101-shared-worktree-tree-level-reviewpromote-ownership) | Shared-worktree tree-level review/promote ownership | Accepted | 2026-06-21 |
 
 ---
 
@@ -7540,7 +7544,7 @@ default 3), so a long-lived coordinator must not hold a scheduler slot while blo
 ### ADR-099: Persistent swarm Layer 2 — addressable sessions, star-routed messaging, worktree modes, per-agent read-only
 
 **Date:** 2026-06-20
-**Status:** Accepted
+**Status:** Accepted — §4's shared writable-worktree GATE superseded by [ADR-101](#adr-101-shared-worktree-tree-level-reviewpromote-ownership)
 **Context:** ADR-098 ships the orchestrator foundation (run-tree + delegation +
 task-DAG + wait/resume). Layer 2 turns ephemeral child runs into a coordinated,
 addressable **swarm**: a child you can re-message over time, inter-agent results
@@ -7749,6 +7753,91 @@ is `runs.status` (escalate/terminate) + `runs.budget_state.notified[scope]`
   per-scope `notified` rung in one column.
 - **Supervisor-side inline per-step enforcement:** rejected — over-built for a
   token ceiling; the ~60s sweep with a warn rung is sufficient.
+
+---
+
+### ADR-101: Shared-worktree tree-level review/promote ownership
+
+**Date:** 2026-06-21
+**Status:** Accepted
+**Context:** ADR-099 §4 added `workspace_mode: own | shared` on a delegation but
+**GATED `shared` for a writable `worktree`** at launch (`MaisterError("CONFIG")`,
+Phase 2) because the tree-level review/promote ownership model was unspecified.
+The open problem (Codex adversarial review): N children share **one** pre-allocated
+worktree = **one** branch = **one** cumulative diff, but only the FIRST ("allocator")
+child gets a `workspaces` row; a *reuser* shared child has no row, so with the M34
+finalize path it would land `Done` (not `Review`) with an unreviewable / strandable
+diff, and per-child review of the same cumulative diff would be wrong. This ADR
+specifies that model and **re-enables** shared writable worktrees. It does NOT
+re-open the serialized-writer guard (ADR-099 §4), `own` mode, `repo_read`, or the
+ADR-041/043 enforcement boundary — those stand. The serialized-writer guard
+(`sharedWriterSiblingActive`, one active writer per shared tree, wired into both
+`tryStartRun` and `promoteNextPending`) is RETAINED unchanged; this ADR governs
+the *review/promote* axis on top of it. **No migration** (reuses
+`runs.root_run_id`, `runs.workspace_mode`, `runs.agent_workspace`,
+`runs.parent_run_id`, and the allocator's existing `workspaces` row). **No new
+`MaisterError` code** (ADR-008 closed union).
+
+**Decision:**
+1. **Review granularity is per-tree.** A shared tree is ONE branch with ONE
+   cumulative diff → exactly ONE Review and ONE promote for the whole tree. Per-child
+   review of the same cumulative diff is rejected as wrong; every shared writable
+   child finalizes to `Review` (never straight to `Done`).
+2. **Ownership = allocator row + orchestrator-driven tree promote.** The FIRST shared
+   child to allocate keeps its existing `workspaces` row (`worktree_path` UNIQUE) as
+   the tree handle; reuser children get NO row (accepted). The orchestrator drives a
+   single tree-level promote — it alone holds `runs:promote` in
+   `ORCHESTRATOR_TOKEN_SCOPES`. Promote resolves the tree workspace by
+   `(root_run_id, workspace_mode='shared')`, NOT by the promoting child's own (absent)
+   row. No schema change, no migration.
+3. **Ordering = wake + promote-time settled re-check (defense in depth).** The existing
+   `orchestrator_resume` wake (success-side settle waits for the last non-settled
+   sibling) is KEPT, AND a promote-time guard re-checks under lock that NO shared
+   sibling (same `root_run_id`) is in a writable status before merging. Reuses
+   `SETTLED_RUN_STATUSES` (terminal + `Review`) and the `sharedWriterSiblingActive`
+   shape; a still-writable sibling (`Running | NeedsInput | NeedsInputIdle |
+   HumanWorking | Pending | WaitingOnChildren`) refuses the promote with
+   `PRECONDITION` (409) and merges nothing.
+4. **Promotable handle = uniform Review + idempotent tree-promote settling all
+   siblings.** `run_promote` on ANY shared child resolves the tree workspace by
+   `root_run_id`, merges the tree branch ONCE, and flips ALL shared children of that
+   tree `Review → Done` in one transaction. Exactly-once falls out of two mechanisms:
+   (a) the M18 durable-claim CAS on the shared `workspaces` row — concurrent promotes
+   → one wins, the losers get `CONFLICT` (409); and (b) the `status === 'Review'`
+   re-check at promote load — a sequential re-promote finds nothing in `Review` and
+   refuses `PRECONDITION` (409), a no-op. The cross-tree `Review → Done` CAS is the
+   single settle. Crash window (merge committed, finalize tx not): re-promote is safe
+   because `git merge` is idempotent / already-up-to-date and the finalize then flips
+   the tree. A tree merge conflict (`local_merge`) returns `CONFLICT` (409), leaves
+   ALL shared children in `Review`, flips no sibling (the conflict path runs BEFORE
+   the tree-settle flip) — never auto-resolved (§8).
+
+**Consequences:**
+- Shared writable worktrees are usable: a coordinated team on one tree produces one
+  reviewable diff and one promote, with siblings settled atomically.
+- Opening ANY shared child's diff resolves the shared TREE workspace by `root_run_id`
+  and shows the one shared diff — never an empty diff or a `PRECONDITION` "workspace
+  not found"; this applies to the run-diff route and the review-comments gate-diff
+  source.
+- Portfolio / board / activity / inbox read-models that `innerJoin workspaces` stay
+  as-is: reuser shared children remain absent from those worktree-bearing rows
+  (accepted — they are visible through the tree, the run row, and the board task).
+- GC must be tree-aware: the shared worktree is NEVER GC-removed while any shared
+  sibling (same `root_run_id`) is still non-terminal.
+- ADR-099 §4's "GATED / Phase-2" status for shared writable worktrees is superseded;
+  ADR-100's promote/rework is extended with the shared-tree variant (single tree
+  promote settling all siblings, vs the `own`-mode per-child promote).
+
+**Alternatives Considered:**
+- **Per-child Review + per-child promote of the shared tree:** rejected — N children
+  share one cumulative diff, so N reviews of the same diff is redundant and N promotes
+  of one branch race / double-merge; one tree-level Review + promote is correct.
+- **A new "tree owner" / allocator schema column (migration):** rejected — the FIRST
+  child's `workspaces` row + `(root_run_id, workspace_mode='shared')` resolution is a
+  sufficient handle with no migration.
+- **A new `MaisterError` code for the settled-gate refusal:** rejected — ADR-008 is a
+  closed union; the settled-gate and the "nothing in `Review`" refusals reuse
+  `PRECONDITION`, the merge conflict reuses `CONFLICT`.
 
 ---
 
