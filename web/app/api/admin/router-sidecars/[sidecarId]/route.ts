@@ -43,8 +43,6 @@ const patchBodySchema = z
     baseUrl: z.string().url().nullable().optional(),
     healthcheckUrl: z.string().url().nullable().optional(),
     authTokenRef: secretRefSchema.nullable().optional(),
-    readinessStatus: z.enum(["Unknown", "Ready", "NotReady"]).optional(),
-    readinessReasons: z.array(z.string().min(1)).optional(),
     enabled: z.boolean().optional(),
   })
   .strict();
@@ -75,6 +73,8 @@ function statusForCode(code: string): number {
     case "PRECONDITION":
     case "CONFLICT":
       return 409;
+    case "EXECUTOR_UNAVAILABLE":
+      return 503;
     default:
       return 500;
   }
@@ -133,52 +133,66 @@ export async function DELETE(
     await requireGlobalRole("admin");
 
     const db = getDb() as any;
-    const rows = await db
-      .select()
-      .from(platformRouterSidecars)
-      .where(eq(platformRouterSidecars.id, sidecarId));
-    const sidecar = rows[0] as LoadedSidecar | undefined;
 
-    if (!sidecar) {
-      throw new MaisterError(
-        "PRECONDITION",
-        `router sidecar not found: ${sidecarId}`,
-      );
-    }
+    // The usage-guard, the managed stop, and the row delete run as ONE
+    // serialized transaction. The `FOR UPDATE` lock on the sidecar row is
+    // load-bearing: a runner binding to this sidecar takes a `FOR KEY SHARE`
+    // lock on the same row (FK enforcement), which conflicts with `FOR UPDATE`
+    // — so no runner can be bound between the usage-guard read and the delete.
+    // Without it the sidecar_id FK (onDelete:"set null") would let a racing
+    // bind be silently unbound by the delete. (`for("update")` is a
+    // Postgres-only row lock; SQLite relies on its own write serialization.)
+    await db.transaction(async (tx: any) => {
+      const rows = await tx
+        .select()
+        .from(platformRouterSidecars)
+        .where(eq(platformRouterSidecars.id, sidecarId))
+        .for("update");
+      const sidecar = rows[0] as LoadedSidecar | undefined;
 
-    // Usage-guard BEFORE any side-effect. The sidecar_id FK is onDelete:"set
-    // null", so without this a delete would silently unbind every runner that
-    // references it; refuse instead of mutating.
-    const refs = await loadSidecarUsageReferences(db, sidecarId);
-
-    if (refs.length > 0) {
-      log.info(
-        { sidecarId, refs: refs.length },
-        "router sidecar delete blocked",
-      );
-      throw new MaisterError(
-        "CONFLICT",
-        `cannot delete router sidecar ${sidecarId}; referenced by: ${summarizeSidecarRefs(refs)}`,
-      );
-    }
-
-    // A bare row delete would orphan a live managed CCR process (no row left to
-    // stop it later). Best-effort stop before the delete; a down supervisor must
-    // not block removing the config row, so the failure is logged, not fatal.
-    if (sidecar.lifecycle === "managed") {
-      try {
-        await stopSidecar(sidecarId);
-      } catch (err) {
-        log.warn(
-          { sidecarId, err: err instanceof Error ? err.message : String(err) },
-          "best-effort sidecar stop before delete failed",
+      if (!sidecar) {
+        throw new MaisterError(
+          "PRECONDITION",
+          `router sidecar not found: ${sidecarId}`,
         );
       }
-    }
 
-    await db
-      .delete(platformRouterSidecars)
-      .where(eq(platformRouterSidecars.id, sidecarId));
+      const refs = await loadSidecarUsageReferences(tx, sidecarId);
+
+      if (refs.length > 0) {
+        log.info(
+          { sidecarId, refs: refs.length },
+          "router sidecar delete blocked",
+        );
+        throw new MaisterError(
+          "CONFLICT",
+          `cannot delete router sidecar ${sidecarId}; referenced by: ${summarizeSidecarRefs(refs)}`,
+        );
+      }
+
+      // A bare row delete would orphan a live managed CCR process (no row left
+      // to stop it later). The stop must be CONFIRMED before the row — the only
+      // handle to the process — is removed: an unconfirmed stop (supervisor
+      // down/timeout) aborts the transaction so the row survives for a retry.
+      if (sidecar.lifecycle === "managed") {
+        try {
+          await stopSidecar(sidecarId);
+        } catch (err) {
+          log.error(
+            {
+              sidecarId,
+              err: err instanceof Error ? err.message : String(err),
+            },
+            "router sidecar delete aborted: managed stop not confirmed",
+          );
+          throw err;
+        }
+      }
+
+      await tx
+        .delete(platformRouterSidecars)
+        .where(eq(platformRouterSidecars.id, sidecarId));
+    });
 
     log.info({ sidecarId }, "router sidecar deleted");
 

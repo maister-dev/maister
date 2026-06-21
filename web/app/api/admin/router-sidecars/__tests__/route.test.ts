@@ -214,12 +214,12 @@ describe("admin router sidecar API", () => {
     ];
 
     const { PATCH } = await import("../[sidecarId]/route");
-    const res = await PATCH(
-      request({ readinessStatus: "Ready", configPath: null }),
-      {
-        params: Promise.resolve({ sidecarId: "ccr-default" }),
-      },
-    );
+    // The body carries only a config change; readiness is NOT a caller input —
+    // the server recomputes it (NotReady here: a managed CCR needs a config path
+    // and diagnostics are offline).
+    const res = await PATCH(request({ configPath: null }), {
+      params: Promise.resolve({ sidecarId: "ccr-default" }),
+    });
 
     expect(res.status).toBe(200);
     expect(state.tables.platform_router_sidecars[0]).toMatchObject({
@@ -230,6 +230,19 @@ describe("admin router sidecar API", () => {
         "supervisor diagnostics unavailable: supervisor is offline",
       ]),
     });
+  });
+
+  it("rejects a PATCH body carrying server-authoritative readiness fields (422)", async () => {
+    state.tables.platform_router_sidecars = [{ id: "ccr-default" }];
+
+    const { PATCH } = await import("../[sidecarId]/route");
+    const res = await PATCH(request({ readinessStatus: "Ready" }), {
+      params: Promise.resolve({ sidecarId: "ccr-default" }),
+    });
+    const body = (await res.json()) as { code?: string };
+
+    expect(res.status).toBe(422);
+    expect(body.code).toBe("CONFIG");
   });
 
   it("refuses to disable a sidecar referenced by ACP runners", async () => {

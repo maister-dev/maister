@@ -4,11 +4,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MaisterError } from "@/lib/errors";
 
-// DELETE /api/admin/router-sidecars/[sidecarId] — usage-guarded hard delete with
-// a best-effort stop for managed sidecars. Mocks auth + db + the usage-guard +
-// the supervisor stop boundary. The usage-guard is mocked directly (not driven
-// through fakeDb) because the route's loadSidecarUsageReferences query shape
-// differs from the simple select().from().where() the fakeDb models.
+// DELETE /api/admin/router-sidecars/[sidecarId] — usage-guard + managed stop +
+// row delete run as one serialized transaction (a FOR UPDATE lock on the
+// sidecar row); a managed stop that the supervisor cannot confirm aborts the
+// transaction so the row survives. Mocks auth + db + the usage-guard + the
+// supervisor stop boundary. The transaction is mocked as a pass-through that
+// runs the callback against the same chainable; the FOR UPDATE row-lock and the
+// race it closes are exercised against real Postgres in delete.integration.test.
+// The usage-guard is mocked directly (not driven through fakeDb) because the
+// route's loadSidecarUsageReferences query shape differs from the simple
+// select().from().where() the fakeDb models.
 const mocks = vi.hoisted(() => ({
   requireGlobalRole: vi.fn(),
   loadSidecarUsageReferences: vi.fn(),
@@ -18,11 +23,25 @@ const mocks = vi.hoisted(() => ({
 
 type Row = Record<string, unknown>;
 const state = { sidecars: [] as Row[] };
-const fakeDb = {
-  select: () => ({
-    from: () => ({ where: async () => state.sidecars }),
+// select().from().where() resolves to the rows AND carries .for("update") for
+// the route's FOR UPDATE lock form (mirrors the takeover test's mock shape).
+const selectChain = {
+  from: () => ({
+    where: () =>
+      Object.assign(Promise.resolve(state.sidecars), {
+        for: async () => state.sidecars,
+      }),
   }),
+};
+const txLike = {
+  select: () => selectChain,
   delete: () => ({ where: mocks.deleteWhere }),
+};
+const fakeDb = {
+  select: () => selectChain,
+  delete: () => ({ where: mocks.deleteWhere }),
+  transaction: async (fn: (tx: typeof txLike) => Promise<unknown>) =>
+    fn(txLike),
 };
 
 vi.mock("@/lib/authz", () => ({ requireGlobalRole: mocks.requireGlobalRole }));
@@ -102,16 +121,17 @@ describe("admin router sidecar DELETE", () => {
     expect(mocks.stopSidecar).not.toHaveBeenCalled();
   });
 
-  it("still deletes (204) when best-effort stop rejects for a managed sidecar", async () => {
+  it("refuses the delete (503) and keeps the row when a managed stop is not confirmed", async () => {
     mocks.stopSidecar.mockRejectedValue(
       new MaisterError("EXECUTOR_UNAVAILABLE", "supervisor down"),
     );
     const { DELETE } = await import("../route");
     const res = await DELETE(req(), ctx("ccr-default"));
 
-    expect(res.status).toBe(204);
+    expect(res.status).toBe(503);
+    expect((await res.json()).code).toBe("EXECUTOR_UNAVAILABLE");
     expect(mocks.stopSidecar).toHaveBeenCalledWith("ccr-default");
-    expect(mocks.deleteWhere).toHaveBeenCalledTimes(1);
+    expect(mocks.deleteWhere).not.toHaveBeenCalled();
   });
 
   it("does not call stopSidecar for an external sidecar", async () => {

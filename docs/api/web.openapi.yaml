@@ -757,9 +757,10 @@ paths:
       tags: [admin]
       summary: Update a router sidecar
       description: |
-        Admin-only. Mutates sidecar lifecycle/config/readiness/enabled fields;
-        auth tokens persist only as env references. Disabling is refused while a
-        runner references the sidecar. Readiness is recomputed server-side.
+        Admin-only. Mutates sidecar lifecycle/config/enabled fields; auth tokens
+        persist only as env references. Disabling is refused while a runner
+        references the sidecar. Readiness is recomputed server-side and is never
+        accepted from the request body.
       operationId: patchAdminRouterSidecar
       parameters:
         - name: sidecarId
@@ -780,9 +781,6 @@ paths:
                 baseUrl: { type: string, nullable: true }
                 healthcheckUrl: { type: string, nullable: true }
                 authTokenRef: { type: string, nullable: true }
-                readinessStatus:
-                  { type: string, enum: [Unknown, Ready, NotReady] }
-                readinessReasons: { type: array, items: { type: string } }
                 enabled: { type: boolean }
       responses:
         "200":
@@ -814,10 +812,14 @@ paths:
       tags: [admin]
       summary: Delete a router sidecar
       description: |
-        Admin-only. Refuses deletion (`CONFLICT`) while any runner references the
-        sidecar via `sidecar_id` (the FK is `ON DELETE SET NULL`, so the guard
-        refuses rather than silently unbinding the runner). A managed sidecar is
-        best-effort stopped before the row is removed.
+        Admin-only. The usage-guard, the managed stop, and the row delete run in
+        one serialized transaction holding a `FOR UPDATE` lock on the sidecar
+        row. Refuses deletion (`CONFLICT`) while any runner references the sidecar
+        via `sidecar_id`; the FK is `ON DELETE SET NULL`, and the lock prevents a
+        concurrent runner bind from being silently unbound by the delete. A
+        managed sidecar is stopped before the row is removed; an unconfirmed stop
+        aborts the delete with `503` so the config row — the only handle to stop
+        the process — survives for a retry.
       operationId: deleteAdminRouterSidecar
       parameters:
         - name: sidecarId
@@ -830,6 +832,11 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "409":
           description: Sidecar is still referenced (`CONFLICT`) or not found (`PRECONDITION`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "503":
+          description: Managed sidecar stop not confirmed (`EXECUTOR_UNAVAILABLE`); the row was not deleted.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }

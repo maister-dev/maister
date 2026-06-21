@@ -249,11 +249,17 @@ sequenceDiagram
 - `DELETE /api/admin/router-sidecars/{sidecarId}` MUST return **204** only when
   `loadSidecarUsageReferences` returns zero references (no runner binds it via
   `sidecar_id`); otherwise `MaisterError("CONFLICT")` (409) with no row delete.
-  Because the `platform_acp_runners.sidecar_id` FK is `onDelete: "set null"`,
-  this guard is load-bearing — without it a delete would silently null a runner's
-  binding. A `managed` sidecar is best-effort stopped (`stopSidecar`, non-fatal
-  if the supervisor is down) before the row delete; an unknown id →
-  `MaisterError("PRECONDITION")` (409). Sidecar create/edit/delete run through
+  The usage-guard, the managed stop, and the row delete MUST run in ONE
+  transaction holding a `FOR UPDATE` lock on the sidecar row, so a concurrent
+  runner bind cannot slip between the guard and the delete and be silently
+  unbound (the `platform_acp_runners.sidecar_id` FK is `onDelete: "set null"`).
+  A `managed` sidecar MUST be stopped (`stopSidecar`) and the stop CONFIRMED
+  before the row is removed — an unconfirmed stop MUST abort the transaction with
+  `MaisterError("EXECUTOR_UNAVAILABLE")` (503) and keep the row; an unknown id →
+  `MaisterError("PRECONDITION")` (409). The `PATCH` body MUST NOT accept
+  `readinessStatus`/`readinessReasons` — readiness is recomputed by
+  `evaluateSidecarReadiness`, and a body carrying them is rejected with
+  `MaisterError("CONFIG")` (422). Sidecar create/edit/delete run through
   `sidecar-modal.tsx`, mirroring `acp-runner-modal.tsx`. (Implemented)
 - `DELETE`/`PATCH` against an unknown `runnerId` MUST return
   `MaisterError("PRECONDITION")` (409). (Implemented)
@@ -318,6 +324,13 @@ sequenceDiagram
 - **Delete of a referenced sidecar** → `MaisterError("CONFLICT")` (409) listing
   the binding runner ids; the `sidecar_id` FK `onDelete: "set null"` would
   otherwise silently unbind the runner, so the guard refuses instead of mutating.
+- **Runner binds to a sidecar mid-delete** → the delete's `FOR UPDATE` lock on
+  the sidecar row serializes the bind behind the transaction; the bind either
+  commits first (then the guard refuses with `CONFLICT`) or blocks until the row
+  is deleted and then fails its FK — never a dangling/nulled binding.
+- **Managed sidecar stop unconfirmed during delete** (supervisor down/timeout)
+  → `MaisterError("EXECUTOR_UNAVAILABLE")` (503); the transaction rolls back so
+  the config row — the only handle to stop the process — survives for a retry.
 - **Unknown runnerId** on PATCH/DELETE → `MaisterError("PRECONDITION")` (409).
 - **Adapter/provider/policy mismatch** → `MaisterError("CONFIG")` (422).
 - **Raw (non-`env:`) secret** in a provider field → `MaisterError("CONFIG")` (422).
