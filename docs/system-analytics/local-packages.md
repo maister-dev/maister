@@ -209,6 +209,58 @@ optional message) clears the count; `POST .../discard` (lock-guarded; body
 `paths[]` confined BEFORE git, omitted → all) restores to `HEAD`. All three work
 with NO AI session present.
 
+## M39 Stream A — first-class authoring (Designed, ADR-105)
+
+Stream A is **web-only** (no migration, no new `MaisterError` code) and finishes
+the in-app authoring surface M36 started.
+
+**Centralized model + per-project version pins.** Packages stay **instance-level**
+and Studio-edited (M36 platform-scoping, ADR-096/097, stands — project-scoping was
+evaluated and rejected: it fights reuse). A project consumes a package at a **cut
+version** (a pin), never a live edit; editing in Studio produces new cuts, and at
+launch a project adopts a newer cut or keeps its pin (the adopt path is **Stream
+B**, [`../decisions.md`](../decisions.md) ADR-106). Cross-project divergence is
+rare + explicit — see "Customize for this project" below — so conflicts never
+arise in the default flow.
+
+**Package manifest form (`manifest` kind).** `maister-package.yaml` becomes a
+first-class authored kind with a `PackageManifestForm` (name/description/version +
+the kind lists) plus a raw-YAML toggle; a strict parse failure → `CONFIG`. Adding
+`manifest` to `AuthoredFlowPackageFileKind` is an **8-site union fan-out** (label
+map, en/ru `flows.packageFileKind`, content-editor dispatch, code-editor kind +
+language, `SUPPORTED_FILE_KINDS`, the path classifier, `artifact-validate`). The
+editor lands on a **package-home** overview (manifest form + file tree) when no
+flow file is selected — not the empty flow canvas — which removes the spurious
+"YAML is invalid" banner and the rework-empty symptom, with a real **End edit**
+(release lock + navigate) and a correct initial `heldByMe`.
+
+**Fork dedup + "Customize for this project."** `forkPackageToLocal` checks for an
+existing fork by `source_install_id` before INSERTing: an existing fork returns
+`{ localPackageId, alreadyExists: true }` (HTTP **200**) and the UI navigates to it
+(+ an explicit "Fork a new copy"); a fresh fork is **201**. "Customize for this
+project" is the same whole-package fork with an origin-reflecting auto-name
+(`P (for <project>)`, editable — a name convention, **no schema field**) reusing
+the dedup path, so a project's copy is never duplicated. The project-side attach of
+the copy is Stream B.
+
+**List management.** The local-packages list gains Delete (confirm; also `rm`s the
+working dir), Rename, Archive/unarchive (archived hidden behind a toggle), Open,
+and Cut-version — all over routes that already exist; the `LocalPackageListItem`
+DTO is extended to carry the needed state.
+
+**Commit is the validation gate.** A prominent top-bar **"Commit state"** action +
+dirty indicator; **every** commit entry point (the diff-drawer Commit and
+Commit-state) routes through `validatePackageArtifacts` (NEW
+`web/lib/local-packages/validate.ts`), which validates the **changed** artifacts in
+the commit — already-committed artifacts are assumed valid — covering flow.yaml
+parse+compile, manifest parse, platform-agent strict frontmatter, subagent lenient
+frontmatter, and skill `SKILL.md` presence, and **hard-blocks** the commit on any
+invalid artifact (`PRECONDITION`/`CONFIG`) with an error list. Because a launch
+needs a committed state, an invalid artifact is inherently un-launchable; WIP lives
+in the uncommitted, lock-preserved working dir. A shared `ChangeReviewDialog` (diff
++ editable, prefilled commit message) is introduced here and **reused by Stream B**
+for the PR flow.
+
 ## Expectations
 
 - A `local_packages` row MUST have a UNIQUE `slug`; its `working_dir` MUST
@@ -260,10 +312,23 @@ with NO AI session present.
 - Deleting a `local_packages` row MUST remove its `working_dir`; orphaned dirs
   and abandoned `Installing` installs are NOT auto-GC'd (manual cleanup, owner
   decision).
-- Phase C MUST NOT extend the authored kind enum (`rule|skill|flow`) and MUST NOT
-  add a new `MaisterError` code (ADR-008 closed union).
-- (Phase 2) PR-to-source is NOT implemented; `source_repo_url`/`source_ref`/
-  `branch_name` are stored only to enable it later.
+- Phase C MUST NOT extend the authored CAPABILITY enum (`rule|skill|flow`,
+  `authored_capabilities`) and MUST NOT add a new `MaisterError` code (ADR-008
+  closed union). *(M39 note: the **file-kind** classifier union
+  `AuthoredFlowPackageFileKind` is a DIFFERENT type — Stream A DOES extend it with
+  `manifest` + `subagent` (file-based, Variant B), which is not a capability-enum
+  change.)*
+- (M39 Stream A, ADR-105) A package commit MUST validate the **changed** artifacts
+  (flow parse+compile, manifest parse, platform-agent strict frontmatter, subagent
+  lenient frontmatter, skill `SKILL.md` presence) and MUST **hard-block** on any
+  invalid artifact (`PRECONDITION`/`CONFIG`) — no "commit anyway" override;
+  already-committed artifacts are assumed valid, WIP stays in the working dir.
+- (M39 Stream A, ADR-105) `forkPackageToLocal` MUST dedup by `source_install_id`
+  (existing fork → 200 `{ alreadyExists: true }`; fresh fork → 201);
+  "Customize for this project" MUST reuse that path and name the copy by
+  convention (`P (for <project>)`) with NO schema field.
+- (Phase 2 / Stream B) PR-to-source is NOT implemented in Stream A;
+  `source_repo_url`/`source_ref`/`branch_name` are stored only to enable it later.
 
 ## Edge cases
 

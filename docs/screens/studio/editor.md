@@ -115,6 +115,37 @@ declared `output` transition keys; these are already transition keys, compile-en
 rework amber-dashed, a `deny`/`fail` verdict branch red). The read-only
 `FlowGraphView` twin inherits the same outcome-labeled edges.
 
+### Package authoring IA (M39 Stream A — Designed, ADR-105)
+
+Stream A reworks the `/studio/edit/{id}/{path}` local-package editor for
+correctness and first-class kinds (behavior SSOT:
+[`../../system-analytics/local-packages.md`](../../system-analytics/local-packages.md)
+§"M39 Stream A"). Deltas over the Phase B/C editor above:
+
+- **Package-home landing.** With no flow file selected, the editor shows a package
+  **overview** — the `PackageManifestForm` (`maister-package.yaml`, new `manifest`
+  kind, + raw-YAML toggle) + the file tree + orientation — instead of an empty flow
+  canvas. This removes the spurious "YAML is invalid" banner (and the
+  rework→empty-yaml symptom) that fired when `syncYamlToCanvas("")` ran on a
+  pathless open.
+- **Real ownership + End edit.** `heldByMe` is computed from real lock ownership
+  (no read-only flash), and a **Done / End edit** action releases the session lock
+  and navigates back to `/studio/local`.
+- **Commit state.** A top-bar **"Commit state"** action + dirty indicator opens the
+  shared `ChangeReviewDialog` (diff + prefilled commit message); the commit
+  **validates the changed artifacts and hard-blocks on invalid** (see
+  local-packages §"Commit is the validation gate").
+- **Canvas selection + node tooltip.** The read-only `FlowGraphView` gains
+  click-to-select (canvas → inspector, with the node picker as the a11y fallback)
+  and a node property tooltip/popover (type · prompt/model summary · transitions ·
+  gates) sourced from `FlowNodeData`, mirrored in the editor.
+- **First-class kinds + create wizards.** Each of the four authorable kinds
+  (flows / platform agents / subagents / skills) gets a per-kind form editor + a
+  raw-file view + a create affordance even when the kind dir is empty (New Flow /
+  Platform Agent / Subagent / Skill, with templates). Platform agents live at
+  package-root `maister-agents/`; subagents at `capability/<id>/agents/` (lenient
+  schema) — see [`../../system-analytics/agents.md`](../../system-analytics/agents.md).
+
 ## States
 
 ```mermaid

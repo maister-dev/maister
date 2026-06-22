@@ -20,16 +20,26 @@ the social substrate it writes through ([social-board.md](social-board.md)),
 the clock ([scheduler.md](scheduler.md)), or capability enforcement
 (materialize-only per ADR-041/ADR-043 — [flow-settings.md](flow-settings.md)).
 
-**Package-viewer agents are a separate surface, NOT this catalog.** The Flow
-Studio package viewer ([package-viewer.md](../screens/studio/package-viewer.md))
-splits a package's `.md` agents into package-root `maister-agents/<stem>.md`
-(platform-agent definitions — rich view + structural editor) and
-`capability/**/agents/*.md` (Claude subagents materialized into the run's
-`.claude/agents/` at launch — NOT platform-agents). That split is
-package-viewer-only: it does NOT feed this `/agents` catalog or its
-`<flowRefId>:<stem>` projection (which still reads the flow's `agents/<stem>.md`).
-Wiring `maister-agents/` into the catalog/registry is a non-goal of the current
-change (**Phase 2**).
+**Platform agents vs Claude subagents — two kinds.** A package's `.md` agents
+split into package-root `maister-agents/<stem>.md` (**platform-agent**
+definitions — strict frontmatter, rich view + structural editor, catalogued) and
+`capability/**/agents/*.md` (**Claude subagents** — lenient + open frontmatter,
+materialized into the run's `.claude/agents/` at launch, NOT catalogued). The
+subagent schema types the known Claude-Code fields
+(`name`/`description`/`tools`/`model`/`color`) AND preserves unknown/custom keys as
+passthrough (contrast the strict platform-agent schema, where unknown → `CONFIG`);
+the New-Subagent template uses `model: inherit` with `tools` omitted.
+
+**Canonical platform-agent directory (M39 Stream A — Designed, ADR-105).** The
+catalog/registry/effective-definition read paths converge from the historical M34
+`agents/<stem>.md` onto package-root `maister-agents/<stem>.md` — the same
+directory the Studio viewer/BOM/attach already read. This **closes** the split
+this doc previously deferred (the viewer read `maister-agents/` while the catalog
+read `agents/`); after Stream A, all readers agree on `maister-agents/`, and root
+`agents/` is no longer a platform-agent location. Subagents keep
+`capability/<id>/agents/` and are path-distinguishable by depth. *(Until Stream A
+lands, the implemented catalog still reads `agents/<stem>.md` — the convergence is
+Designed, implemented in M39 Phase A4.)*
 
 ## Domain entities
 

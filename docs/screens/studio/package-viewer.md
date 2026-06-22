@@ -161,8 +161,8 @@ may contain `/`).
 
 ## 4. Agent detail — `/studio/packages/{ref}/agents/{stem}`
 
-A read-only agent surface parsed from `agents/<stem>.md` via the shared
-`parseAgentDefinition`.
+A read-only agent surface parsed from the package-root `maister-agents/<stem>.md`
+via the shared `parseAgentDefinition` (the canonical platform-agent dir — ADR-105).
 
 - **Metadata panel:** description · when-to-call (trigger labels) · risk_tier ·
   workspace (+ workspace_ref) · mode · capability profile · recommended cron /

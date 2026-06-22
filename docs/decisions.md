@@ -130,6 +130,7 @@
 | [ADR-102](#adr-102-shared-worktree-tree-level-reviewpromote-ownership) | Shared-worktree tree-level review/promote ownership | Accepted | 2026-06-21 |
 | [ADR-103](#adr-103-output-driven-dynamic-routing-decide--onmismatch-rework--engine-170) | Output-driven dynamic routing (`decide`) + `on_mismatch` rework + engine 1.7.0 | Accepted | 2026-06-22 |
 | [ADR-104](#adr-104-global-personal-api-tokens-via-nullable-project-token-binding) | Global personal API tokens via nullable project token binding | Accepted | 2026-06-23 |
+| [ADR-105](#adr-105-first-class-authored-package-kinds-and-centralized-studio-package-model) | First-class authored package kinds and centralized Studio package model | Accepted | 2026-06-22 |
 | [ADR-108](#adr-108-declarative-guardrailhook-engine--universal-supervisor-acp-seam-interceptor-native-materializer-seam-and-hook-trip-hitl-escalation) | Declarative guardrail/hook engine — universal supervisor ACP-seam interceptor (3 rules), native materializer seam, `hook_trip` HITL, engine 1.8.0 | Accepted | 2026-06-23 |
 
 ---
@@ -8083,6 +8084,113 @@ authority. Human-only HITL responses (`human`, `infra_recovery`,
 - **Skip nullable `token_audit_log.project_id`:** rejected because
   cross-project inbox reads have no single target project and target-project
   hard-delete should not erase the existence of an identified external call.
+
+### ADR-105: First-class authored package kinds and centralized Studio package model
+
+**Date:** 2026-06-22
+**Status:** Accepted
+**Context:** M36 (ADR-096/097) shipped editable local packages — create/fork, edit
+flows/agents/skills/rules/MCP/schemas, file CRUD, git diff/commit/discard,
+cut-version→attach, a docked AI assistant, and the `/studio/{local,edit}` routes
+under a session lock. Dogfooding surfaced the authoring gaps this change closes:
+(1) the editor lands on an empty flow canvas with a spurious "YAML is invalid"
+banner when no flow file is selected, is stuck read-only (`heldByMe` hardcoded
+false), and has no real "End edit"; (2) `maister-package.yaml` has no form
+(classified `asset`); (3) the four authorable kinds are not all first-class —
+Claude **subagents** (`capability/<id>/agents/`) and platform **agents**
+(package-root) are conflated by the path classifier, and there is no per-kind
+create wizard; (4) `forkPackageToLocal` always INSERTs (fork spam, no dedup);
+(5) commit is buried in the diff drawer with no validation; (6) the
+platform-agent directory diverges — the Studio viewer/BOM read package-root
+`maister-agents/<stem>.md` while the M34 catalog/registry (ADR-089) read
+`agents/<stem>.md`, a split [agents.md](system-analytics/agents.md) flagged as a
+Phase-2 non-goal. This ADR also locks the **package ownership model** after
+several rounds: project-scoping was evaluated and **rejected**; M36's
+platform-scoping (ADR-096/097) **stands**.
+
+This is **Stream A** of the M39 "Flow Studio package authoring" work (the
+editor/kinds half) — **web-only, NO migration**. Stream B (version-adopt launch +
+PR-to-source) is a separate branch (ADR-106/107, migration 0062).
+
+**Decision:**
+1. **Centralized packages + per-project version pins.** Packages are
+   instance-level and Studio-edited (serialized by the M36 session lock); a
+   project consumes a package at a **cut version** (a pin). Editing in Studio
+   produces new cuts; at launch a project adopts a newer cut or keeps its pin (the
+   adopt path is Stream B). Cross-project divergence is rare and explicit:
+   **"Customize for this project"** forks the whole package into a labeled copy
+   (auto-named `P (for <project>)`, editable — a name convention, **NO schema
+   field**), attached and PR'd independently. No auto-merge, ever.
+2. **Two new first-class authored file kinds — `manifest` and `subagent`** — added
+   to `AuthoredFlowPackageFileKind` (an 8-site union fan-out). `maister-package.yaml`
+   gets a `PackageManifestForm` (+ raw-YAML toggle; strict parse → `CONFIG`).
+   Claude subagents become a distinct kind from platform agents: the path
+   classifier splits `capability/<id>/agents/` → `subagent` (**lenient + open**
+   frontmatter — the known Claude-Code fields `name`/`description`/`tools`/`model`/
+   `color` typed AND unknown/custom keys preserved as passthrough; New-template
+   `model: inherit`, `tools` omitted) from package-root → platform
+   `agent_definition` (the existing strict schema, unknown → `CONFIG`). Subagents
+   materialize into the run's `.claude/agents/` (M34, unchanged) and are EXCLUDED
+   from the `/agents` catalog projection.
+3. **`maister-agents/` is the canonical platform-agent directory.** The M34
+   catalog / registry / effective-definition read paths move from `agents/<stem>.md`
+   to package-root `maister-agents/<stem>.md`, converging with the Studio
+   viewer/BOM/attach (which already read `maister-agents/`) — closing the split
+   agents.md deferred to Phase 2. Subagents keep `capability/<id>/agents/`
+   (path-distinguishable by depth).
+4. **Commit is the validation gate.** A prominent top-bar "Commit state" action +
+   dirty indicator; ALL commit entry points route through
+   `validatePackageArtifacts`, which validates the **changed** artifacts in the
+   commit — already-committed artifacts are assumed valid — covering flow.yaml
+   parse+compile, manifest parse, platform-agent strict frontmatter, subagent
+   lenient frontmatter, and skill `SKILL.md` presence, and **hard-blocks** the
+   commit on any invalid artifact (`PRECONDITION`/`CONFIG`, error list). Since a
+   launch needs a committed state, an invalid artifact is inherently
+   un-launchable; WIP lives in the uncommitted, lock-preserved working dir. A
+   shared `ChangeReviewDialog` (diff + editable, prefilled commit message) is
+   introduced here and reused by Stream B for the PR flow.
+5. **Fork dedup.** `forkPackageToLocal` checks for an existing fork by
+   `source_install_id` and returns `{ localPackageId, alreadyExists: true }` (HTTP
+   200) instead of a duplicate INSERT (201 for a fresh fork); the element fork
+   stays idempotent on the project default. "Customize for this project" reuses
+   this dedup path so a project's copy is not duplicated.
+
+**Consequences:**
+- The editor opens on a **package-home** landing (overview + manifest form + file
+  tree) when no flow file is selected — eliminating the empty-canvas /
+  invalid-YAML banner and the rework-empty symptom — with a real End-edit (lock
+  release + navigate) and a correct initial `heldByMe`.
+- All four authorable kinds (flows / platform agents / subagents / skills) get a
+  per-kind form editor + raw view + a create wizard, even when the kind dir is
+  empty.
+- Changing the canonical platform-agent dir to `maister-agents/` is a breaking
+  change for any installed package that ships platform agents at
+  `agents/<stem>.md`; authors must use `maister-agents/`. Accepted (owner) for the
+  disambiguation from subagents' `capability/<id>/agents/`.
+- NO migration, NO new `MaisterError` code (reuses the ADR-008 closed union
+  `PRECONDITION | CONFLICT | CONFIG`), NO `authored_capabilities` enum change
+  (subagents stay file-based, Variant B). RBAC stays the M36 model (Studio-member
+  authoring; project-member attach).
+
+**Alternatives Considered:**
+- **Project-scoped (project-owned) packages:** rejected — per-project editing
+  fights reuse and creates cross-project merge conflicts; central editing +
+  per-project version pins is both manageable and reuse-friendly (M36 ADR-096/097
+  stands).
+- **Canonical `agents/` (align Studio down to the M34 runtime):** rejected by the
+  owner in favor of `maister-agents/` — the louder disambiguation from subagents
+  is worth changing the (merged) runtime read paths.
+- **"Commit anyway (WIP)" override on invalid artifacts:** rejected — it would let
+  an invalid artifact become a cut → un-launchable version, defeating the gate;
+  WIP already survives in the uncommitted working dir.
+- **A schema field for the "Customize for project" copy:** rejected — a name
+  convention keeps Stream A web-only (no migration); the copy is just another
+  instance-level local package.
+
+**Numbering note.** ADR-103 (flow-routing, M38) is merged; ADR-104 (G4
+guardrail-hooks) is reserved by an implemented-but-unmerged sibling
+(`.ai-factory/requests/2026-06-22-g4-guardrail-hooks.md`). This ADR takes **105**
+to avoid squatting 104; a renumber pass may run at merge if the ordering changes.
 
 ### ADR-108: Declarative guardrail/hook engine — universal supervisor ACP-seam interceptor, native materializer seam, and hook-trip HITL escalation
 

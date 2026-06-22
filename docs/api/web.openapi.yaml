@@ -7628,10 +7628,21 @@ paths:
         Executes NOTHING (no `setup.sh`, no MCP). A missing/unreadable source
         bundle → `CONFIG` (400) with nothing persisted. Authenticated users only
         (`requireSession`; Studio authoring is member-accessible).
+
+        (ADR-105 — Designed, M39 Stream A.) **Fork dedup:** if a fork of the same
+        `source_install_id` already exists, no new package is created — the existing
+        one is returned as `{ localPackageId, alreadyExists: true }` with status
+        **200**. A fresh fork returns **201**. ("Customize for this project" reuses
+        this path with an auto-named copy.)
       operationId: forkStudioPackage
       responses:
+        "200":
+          description: (ADR-105) An existing fork of this `source_install_id` was returned (dedup); nothing was created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ForkResult" }
         "201":
-          description: Forked.
+          description: A fresh fork was created.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ForkResult" }
@@ -13476,6 +13487,7 @@ components:
       required: [localPackageId]
       properties:
         localPackageId: { type: string, description: "The local package the fork landed in (a new `<ref>-local` for a package fork; the project default for an element fork)." }
+        alreadyExists: { type: boolean, description: "(ADR-105 — Designed) True when fork dedup returned a pre-existing fork of the same `source_install_id` (HTTP 200) instead of creating a new one (201). Absent/false on a fresh fork." }
     PackageSource:
       type: object
       description: |
