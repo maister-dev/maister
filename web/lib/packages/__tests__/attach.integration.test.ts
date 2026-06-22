@@ -210,6 +210,11 @@ describe("package attach lifecycle (integration)", () => {
       );
     const byRef = new Map(records.map((r: any) => [r.capabilityRefId, r]));
 
+    expect(byRef.get("skill-one")?.kind).toBe("skill");
+    expect(byRef.get("skill-one")?.material).toMatchObject({
+      origin: "package-attachment",
+      packageInstallId: installV1,
+    });
     expect(byRef.get("att-mcp")?.kind).toBe("mcp");
     expect(byRef.get("att-mcp")?.material).toMatchObject({
       origin: "package-attachment",
@@ -424,6 +429,7 @@ describe("package attach lifecycle (integration)", () => {
     expect(records.map((r: any) => r.capabilityRefId).sort()).toEqual([
       "att-mcp",
       "att-protect",
+      "skill-one",
     ]);
   });
 });

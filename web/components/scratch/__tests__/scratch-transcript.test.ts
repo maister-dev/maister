@@ -26,6 +26,7 @@ const labels: TranscriptLabels = {
   copy: "copy",
   copied: "copied",
   toolCount: (name, count) => `${name} x${count}`,
+  clearedHistory: (count) => `Cleared history ${count}`,
 };
 
 function render(messages: TranscriptMessage[], running = false): string {
@@ -157,5 +158,21 @@ describe("ScratchTranscript render", () => {
 
     expect(html).not.toContain("100");
     expect(html).not.toContain("200");
+  });
+
+  it("collapses messages before the latest clear command into history", () => {
+    const html = render([
+      message({ id: "u1", role: "user", content: "old request" }),
+      message({ id: "a1", role: "assistant", content: "old answer" }),
+      message({ id: "u2", role: "user", content: "/clear" }),
+      message({ id: "a2", role: "assistant", content: "fresh greeting" }),
+    ]);
+
+    expect(html).toContain('data-testid="scratch-cleared-history"');
+    expect(html).toContain("Cleared history 3");
+    expect(html).toContain("fresh greeting");
+    expect(html).not.toContain("old request");
+    expect(html).not.toContain("old answer");
+    expect(html).not.toContain("&sol;clear");
   });
 });

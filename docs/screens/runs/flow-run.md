@@ -48,7 +48,8 @@ evidence.
   comments.
 - **Primary landing:** the Flow result surface, with the current node selected.
   Standalone agent runs land on an agent activity/result center.
-- **Within:** node selection changes the result panel; workbench tabs open
+- **Within:** node selection changes the result panel; Timeline/Evidence
+  workbench tabs and the collapsed Files/Diff disclosure open
   [`workbench.md`](workbench.md); the right inspector opens
   [`run-inspector.md`](run-inspector.md).
 - **Deep links:** node, workbench, file, diff, inspector, and fullscreen Flow
@@ -61,7 +62,7 @@ flowchart TD
     Board["Project board"] --> Run["Flow run detail"]
     Inbox["Inbox HITL item"] --> Run
     Run --> Flow["Flow result"]
-    Run --> Workbench["Workbench tabs"]
+    Run --> Workbench["Workbench"]
     Run --> Inspector["Run inspector"]
     Flow --> Node["Selected node result"]
     Node --> Diff["Review changes"]
@@ -94,9 +95,11 @@ still a later responsive pass.
 3. **Review entry point** - when the selected node is a review or human gate,
    the node result shows open threads, dirty-state warnings, readiness status,
    and a clear **Review changes** action that opens the Diff tab.
-4. **Secondary workbench** - Files, Diff, Evidence, and Timeline remain one click
-   away through [`workbench.md`](workbench.md). They support inspection but do
-   not replace the Flow result as the landing view.
+4. **Secondary workbench** - Timeline and Evidence remain one click away through
+   [`workbench.md`](workbench.md). Files and Diff are available in a single
+   collapsed-by-default **Files / Diff** disclosure below the Flow result; deep
+   links open it directly. They support inspection but do not replace the Flow
+   result as the landing view.
 5. **Run inspector** - a collapsible right sidebar documented in
    [`run-inspector.md`](run-inspector.md). It stays available across Flow,
    Files, Diff, Evidence, and Timeline.

@@ -19,7 +19,7 @@ launch — so I can navigate and start work without leaving the current screen.
 
 | Role | Sees | Notes |
 | --- | --- | --- |
-| Global viewer / member | Projects, Inbox, Studio nav; active workspaces; runners readiness; launch | `Agents` / `MCPs` / `Users` / `Scheduler` / `Settings` are hidden (admin-only) |
+| Global viewer / member | Projects, Inbox, Flow Studio nav; active workspaces; runners readiness; launch | `Agents` / `MCPs` / `Users` / `Scheduler` / `Settings` are hidden (admin-only) |
 | Global admin | All of the above plus `Agents`, `MCPs`, `Users`, `Scheduler`, `Settings` | Hidden nav is convenience only; `Agents`/`MCPs`/`Users`/`Scheduler` re-check `requireGlobalRole("admin")`, while `/settings` renders a forbidden panel and loads no admin data for non-admins |
 
 The hidden admin nav is never the authorization boundary — the route enforces it.
@@ -46,7 +46,7 @@ See [`../README.md`](../README.md) for the global IA map.
 
 Expanded mode, top to bottom:
 
-1. **Section nav** — Projects, Inbox (badge), Studio, then the admin block
+1. **Section nav** — Projects, Inbox (badge), Flow Studio, then the admin block
    (Agents, MCPs, Users, Scheduler, Settings). The Inbox badge shows the
    canonical `needsYou` count (WI-1; see [`../inbox.md`](../inbox.md)). Section
    icons come from `@heroicons/react`; Settings uses the gear icon and the
@@ -87,7 +87,7 @@ the async Server Component.
 
 Collapsed mode order:
 
-1. **Section icon stack** — Projects, Inbox (badge), Studio, then the admin
+1. **Section icon stack** — Projects, Inbox (badge), Flow Studio, then the admin
    icons when allowed (Agents, MCPs, Users, Scheduler, Settings). These packaged
    icons are the same destinations as expanded mode, not a separate compact menu.
 2. **Active workspaces flyout** — one icon opens the same per-project live-run

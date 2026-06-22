@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { isScratchTranscriptClearCommand } from "@/lib/scratch-runs/commands";
 import { normalizeScratchPrompt } from "@/lib/scratch-runs/events";
 
 describe("normalizeScratchPrompt — scratch send seam (FR-E2/E5, T1.4)", () => {
@@ -16,6 +17,21 @@ describe("normalizeScratchPrompt — scratch send seam (FR-E2/E5, T1.4)", () => 
     expect(
       normalizeScratchPrompt("run @skill:plan", "claude", { runId: "r1" }),
     ).toBe("run /plan");
+  });
+
+  it("forwards plain slash commands verbatim", () => {
+    expect(normalizeScratchPrompt("/clear", "claude", { runId: "r1" })).toBe(
+      "/clear",
+    );
+    expect(normalizeScratchPrompt("/compact now", "claude", { runId: "r1" }))
+      .toBe("/compact now");
+  });
+
+  it("recognizes only the exact clear command as a transcript reset", () => {
+    expect(isScratchTranscriptClearCommand("/clear")).toBe(true);
+    expect(isScratchTranscriptClearCommand(" /clear ")).toBe(true);
+    expect(isScratchTranscriptClearCommand("/clear now")).toBe(false);
+    expect(isScratchTranscriptClearCommand("please /clear")).toBe(false);
   });
 
   it("defaults a null/undefined runner to claude (tolerant)", () => {

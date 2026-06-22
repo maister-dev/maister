@@ -6,7 +6,7 @@ import { surfaceFormForSkill } from "@/lib/capabilities/token-normalizer";
 // catalog (FR-B2/B3). The browser re-runs these on a runner switch to recompute
 // surface forms without refetching (FR-D10/E2). DB loading lives in catalog.ts.
 
-export type ProjectCapabilityKind = "skill" | "subagent";
+export type ProjectCapabilityKind = "skill" | "subagent" | "command";
 
 export type ProjectCapabilityCatalogEntry = {
   kind: ProjectCapabilityKind;

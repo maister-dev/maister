@@ -15,7 +15,7 @@ vi.mock("next-intl/server", () => ({
       "nav.expandRail": "Expand sidebar",
       "nav.projects": "Projects",
       "nav.inbox": "Inbox",
-      "nav.studio": "Studio",
+      "nav.studio": "Flow Studio",
       "portfolio.activeWorkspaces": "Active workspaces",
       "portfolio.launchHint": "Launch hint",
       "portfolio.launchRun": "Launch run",

@@ -360,6 +360,19 @@ function ingestionRecords(
     });
   }
 
+  for (const skill of manifest.inventory.skills) {
+    records.push({
+      capabilityRefId: skill,
+      kind: "skill",
+      label: skill,
+      material: {
+        origin: ATTACHMENT_ORIGIN,
+        packageInstallId: install.id,
+        hasContent: true,
+      },
+    });
+  }
+
   return records;
 }
 
@@ -407,7 +420,7 @@ async function writeIngestionRecords(
 
     throw new MaisterError(
       "CONFLICT",
-      `package "${install.name}" ships mcp/restriction id(s) ${ids} already provided by another attached package`,
+      `package "${install.name}" ships capability id(s) ${ids} already provided by another attached package`,
     );
   }
 
@@ -462,6 +475,7 @@ async function deleteIngestionRecords(
   const refIds = [
     ...manifest.spec.mcps.map((m) => m.id),
     ...manifest.spec.restrictions.map((r) => r.id),
+    ...manifest.inventory.skills,
   ];
 
   if (refIds.length === 0) return;

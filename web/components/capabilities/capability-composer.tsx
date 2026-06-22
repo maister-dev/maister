@@ -1,7 +1,10 @@
 "use client";
 
 import type { AdapterId } from "@/lib/acp-runners/adapter-support";
-import type { ProjectCapabilityCatalogEntry } from "@/lib/capabilities/project-catalog";
+import type {
+  ProjectCapabilityCatalogEntry,
+  ProjectCapabilityKind,
+} from "@/lib/capabilities/project-catalog";
 
 import {
   Extension,
@@ -167,7 +170,7 @@ function buildSuggestionExtension(args: {
     name: "capabilitySuggestions",
     addProseMirrorPlugins() {
       const editor = this.editor;
-      const make = (char: string, kinds: Array<"skill" | "subagent">) =>
+      const make = (char: string, kinds: ProjectCapabilityKind[]) =>
         Suggestion<ProjectCapabilityCatalogEntry>({
           editor,
           // Each trigger needs a distinct ProseMirror plugin key — the default
@@ -262,8 +265,8 @@ function buildSuggestionExtension(args: {
         });
 
       return [
-        make("/", ["skill"]),
-        make("$", ["skill"]),
+        make("/", ["skill", "command"]),
+        make("$", ["skill", "command"]),
         make("@", ["subagent"]),
       ];
     },
@@ -275,6 +278,16 @@ function insertChip(
   range: Range,
   entry: ProjectCapabilityCatalogEntry,
 ): void {
+  if (entry.kind === "command") {
+    editor
+      .chain()
+      .focus()
+      .insertContentAt(range, `${entry.canonicalToken} `)
+      .run();
+
+    return;
+  }
+
   editor
     .chain()
     .focus()

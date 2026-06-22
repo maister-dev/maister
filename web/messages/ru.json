@@ -112,7 +112,7 @@
     "projects": "Проекты",
     "inbox": "Инбокс",
     "flows": "Флоу",
-    "studio": "Студия",
+    "studio": "Флоу-студия",
     "repo": "Репозиторий",
     "agents": "Агенты",
     "mcps": "MCP",
@@ -886,6 +886,7 @@
     "copy": "копировать",
     "copied": "скопировано",
     "toolCount": "{name} ×{count}",
+    "clearedHistory": "Очищенная история · {count, plural, one {# элемент} few {# элемента} many {# элементов} other {# элемента}}",
     "tokens": "Токены контекста",
     "status": {
       "Starting": "Запускается",

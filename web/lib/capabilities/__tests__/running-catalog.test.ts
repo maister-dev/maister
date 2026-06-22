@@ -62,20 +62,29 @@ describe("buildRunningCommandCatalog — live ∪ subagents (FR-A3 / source #3)"
     expect(skill?.canonicalToken).toBe("@skill:aif-plan");
   });
 
-  it("excludes a native/built-in live command with no static match (D8: typed raw, not a chip)", () => {
+  it("surfaces a native/built-in live command with no static match as a raw command", () => {
     const out = buildRunningCommandCatalog(
       [{ name: "compact", description: "Compact the context", hint: null }],
       staticCatalog,
       "claude",
     );
 
-    expect(out.some((e) => e.slug === "compact")).toBe(false);
+    expect(out.find((e) => e.slug === "compact")).toMatchObject({
+      kind: "command",
+      slug: "compact",
+      displayName: "/compact",
+      description: "Compact the context",
+      canonicalToken: "/compact",
+      surfaceForm: "/compact",
+      supported: true,
+    });
   });
 
-  it("never re-sigils a codex `/`-built-in into the wrong `$` skill form (regression)", () => {
+  it("keeps a codex `/` built-in as its exact raw command form (regression)", () => {
     // codex emits skills as `$slug` but native built-ins as `/status`. A built-in
-    // is not a project skill → it must NOT become a chip; chipifying it would
-    // serialize `@skill:status` → `$status`, which codex does not recognize.
+    // is not a project skill → it must keep `/status`; serializing it as
+    // `@skill:status` would normalize to `$status`, which codex does not
+    // recognize.
     const out = buildRunningCommandCatalog(
       [
         { name: "/status", description: "Session status", hint: null },
@@ -85,7 +94,11 @@ describe("buildRunningCommandCatalog — live ∪ subagents (FR-A3 / source #3)"
       "codex",
     );
 
-    expect(out.some((e) => e.slug === "status")).toBe(false);
+    expect(out.find((e) => e.slug === "status")).toMatchObject({
+      kind: "command",
+      canonicalToken: "/status",
+      surfaceForm: "/status",
+    });
     expect(out.some((e) => e.surfaceForm === "$status")).toBe(false);
     // the real project skill still surfaces with the correct codex wire form
     expect(out.find((e) => e.slug === "aif-plan")?.surfaceForm).toBe(
@@ -105,15 +118,18 @@ describe("buildRunningCommandCatalog — live ∪ subagents (FR-A3 / source #3)"
     expect(skill?.argHint).toBe("live hint");
   });
 
-  it("skips mcp: commands (MCP built-ins are not capability chips)", () => {
+  it("surfaces mcp: commands exactly as ACP emitted them", () => {
     const out = buildRunningCommandCatalog(
       [{ name: "mcp:github", description: null, hint: null }],
       staticCatalog,
       "claude",
     );
 
-    expect(out.some((e) => e.slug.includes("github"))).toBe(false);
-    expect(out.some((e) => e.kind === "skill")).toBe(false);
+    expect(out.find((e) => e.slug === "mcp:github")).toMatchObject({
+      kind: "command",
+      canonicalToken: "mcp:github",
+      surfaceForm: "mcp:github",
+    });
   });
 
   it("dedupes the same project skill arriving via both sigils", () => {

@@ -5,12 +5,12 @@ import { test, expect } from "@playwright/test";
 // surface. No package is seeded — the package-grouping + detail data walk is
 // covered by unit tests (components/studio/*, lib/studio/*) and the install/
 // attach path by package-management.spec.ts.
-test("admin walks the Studio shell from the renamed rail item", async ({
+test("admin walks the Studio shell from the Flow Studio rail item", async ({
   page,
 }) => {
   await page.goto("/");
 
-  // The rail "Flows" item is renamed to "Studio" and points at /studio.
+  // The rail item is named "Flow Studio" and points at /studio.
   await page.locator('nav[aria-label="Sections"] a[href="/studio"]').click();
   await expect(page).toHaveURL(/\/studio$/);
   await expect(

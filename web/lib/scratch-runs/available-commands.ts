@@ -43,6 +43,26 @@ function toDto(cmd: unknown): AvailableCommandDto | null {
   };
 }
 
+function sessionUpdateFromEvent(parsed: any): any {
+  if (parsed?.type === "session.update") return parsed.update;
+
+  if (parsed?.type !== "session.line" || typeof parsed.line !== "string") {
+    return null;
+  }
+
+  let rpc: any;
+
+  try {
+    rpc = JSON.parse(parsed.line);
+  } catch {
+    return null;
+  }
+
+  if (rpc?.method !== "session/update") return null;
+
+  return rpc?.params?.update ?? null;
+}
+
 /**
  * Extract the LATEST `available_commands_update` snapshot from a run's
  * `run.events.jsonl` content (FR-A1 last-write-wins). Pure — no fs. The supervisor
@@ -67,10 +87,9 @@ export function extractLatestAvailableCommands(
       continue;
     }
 
-    const update = parsed?.update;
+    const update = sessionUpdateFromEvent(parsed);
 
     if (
-      parsed?.type === "session.update" &&
       update?.sessionUpdate === "available_commands_update" &&
       Array.isArray(update.availableCommands)
     ) {

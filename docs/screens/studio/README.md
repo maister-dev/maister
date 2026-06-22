@@ -78,13 +78,13 @@ Where each capability lives **today** (all Implemented):
 
 ## Information architecture
 
-The Studio is a new top-level rail destination (the rail's **"Флоу / Flows"**
-item becomes **"Студия / Studio"**). It is a member-level surface for anyone with
+The Studio is a new top-level rail destination (the rail item is
+**"Флоу-студия / Flow Studio"**). It is a member-level surface for anyone with
 `manageCatalog` on at least one project; **Sources** stays global-admin-gated.
 
 ```mermaid
 flowchart TD
-    Rail["Left rail — Studio"] --> Overview["Studio overview /studio"]
+    Rail["Left rail — Flow Studio"] --> Overview["Studio overview /studio"]
     Overview --> Sources["Sources /studio/sources — admin"]
     Overview --> Packages["Packages /studio/packages"]
     Overview --> Local["Local workspace /studio/local"]

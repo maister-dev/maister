@@ -3,7 +3,8 @@
 - **Type:** block.
 - **Routes:** shared by `/runs/{runId}` and `/scratch-runs/{runId}`.
 - **Status:** Implemented for flow/agent and scratch run detail: Markdown
-  (+Mermaid) preview, directory-grouped changed files, and a file copy control.
+  (+Mermaid) preview, directory-grouped changed files, a file copy control, and
+  a collapsed-by-default Files/Diff disclosure below the primary run work.
 - **Source:** current components
   `web/components/workbench/workbench-panel.tsx`,
   `web/components/workbench/workbench-tabs.tsx`,
@@ -41,9 +42,11 @@ design explicitly changes that trust boundary.
   [`scratch-run.md`](scratch-run.md), changed-file clicks from
   [`run-inspector.md`](run-inspector.md), review-node calls to action, and
   deep links carrying query state.
-- **Within:** tabs switch between Timeline, Diff, Files, and Evidence. Flow runs
-  may also expose Graph as a fullscreen or main-page view; Graph should not
-  compete with the main Flow landing.
+- **Within:** Timeline and Evidence remain regular secondary tabs. Files and
+  Diff live inside one **Files / Diff** disclosure, collapsed by default; opening
+  `?wb=files` or `?wb=diff` expands the block and selects the requested inner
+  tab. Flow runs may also expose Graph as a fullscreen or main-page view; Graph
+  should not compete with the main Flow landing.
 - **Exit:** back to the primary run center, inspector actions, or linked
   artifacts.
 
@@ -54,7 +57,7 @@ contract:
 
 | Param | Owner | Meaning |
 | --- | --- | --- |
-| `wb=files\|diff\|evidence\|timeline` | Workbench | Selected secondary tab. Invalid values fall back to the route default. |
+| `wb=files\|diff\|evidence\|timeline` | Workbench | Selected workbench surface. `files` and `diff` open the Files/Diff disclosure and select its inner tab; `timeline` and `evidence` select the regular secondary tab. Invalid values fall back to the route default. |
 | `file=<repo-relative-path>` | Files | Selected tracked file for Files source/preview only. This path triggers `readRepoFiles`. |
 | `fileView=preview\|source` | Files | Preview/source mode for the selected file. |
 | `diffFile=<repo-relative-path>` | Diff | Selected changed file in the Diff tab. This must not trigger source-file reads. |
@@ -74,8 +77,9 @@ may not have source browsing access; the Diff tab must not route through
 flowchart TD
     Run["Run detail"] --> Workbench["Run workbench"]
     Inspector["Inspector Changes"] --> Workbench
-    Workbench --> Files["Files"]
-    Workbench --> Diff["Diff"]
+    Workbench --> Disclosure["Files / Diff disclosure"]
+    Disclosure --> Files["Files"]
+    Disclosure --> Diff["Diff"]
     Workbench --> Evidence["Evidence"]
     Workbench --> Timeline["Timeline"]
     Files --> Preview["Preview"]
@@ -85,11 +89,20 @@ flowchart TD
 
 ## Layout & regions
 
-The workbench has a stable tab bar and preserves selection state across tabs.
+The workbench keeps run work secondary to the conversation/result center. Its
+regular tab bar covers surfaces that are useful as lightweight context, while
+large code-review surfaces sit in one expandable block.
 
 1. **Timeline** - chronological run ledger: node attempts, assignments, HITL,
    crashes, recoveries, promotions, token/cost chunks, and returned human work.
-2. **Diff** - a code-review-style pane with a fixed-height scroll frame:
+2. **Evidence** - artifact graph, logs, reports, AI judgments, human notes,
+   commit sets, checkpoints, previews, payload states, and filters. Evidence
+   explains why a run is ready or blocked.
+3. **Files / Diff disclosure** - one collapsed-by-default block below the regular
+   tabs. It mounts both the Files and Diff panes so file-tree expansion, selected
+   file, and diff selection survive collapse and inner-tab switches. Deep links
+   with `?wb=files` or `?wb=diff` open the disclosure automatically.
+4. **Diff** - a code-review-style pane with a fixed-height scroll frame:
    changed-file rail on the left, selected file body on the right, sticky
    icon controls, additions / deletions, rich/raw body toggle, split/unified
    toggle for rich mode, show/hide file-rail control, refresh control on live
@@ -100,14 +113,11 @@ The workbench has a stable tab bar and preserves selection state across tabs.
    warning but must not remove the root-comment affordance. The current
    implementation shows one selected file at a time; grouped/collapsible
    multi-file sections are a later refinement.
-3. **Files** - git-tracked file tree, search/filter, file-type icons, selected
+5. **Files** - git-tracked file tree, search/filter, file-type icons, selected
    file header, copy/open controls, and `Preview / Source` toggle where a
    preview exists. Markdown preview supports GFM, Mermaid, syntax-highlighted
    code blocks, anchors, and copy buttons. Source mode uses server-rendered
    Shiki highlighting and line numbers.
-4. **Evidence** - artifact graph, logs, reports, AI judgments, human notes,
-   commit sets, checkpoints, previews, payload states, and filters. Evidence
-   explains why a run is ready or blocked.
 
 The workbench should coordinate with the inspector: selecting a changed file in
 the inspector selects the same file in Files or Diff; selecting a file in Files
@@ -118,18 +128,18 @@ shows its change status and review comments.
 ```mermaid
 stateDiagram-v2
     [*] --> Timeline
-    Timeline --> Diff: tab
-    Timeline --> Files: tab
     Timeline --> Evidence: tab
-    Diff --> Timeline: tab
-    Diff --> Files: tab
-    Diff --> Evidence: tab
-    Files --> Timeline: tab
-    Files --> Diff: tab
-    Files --> Evidence: tab
     Evidence --> Timeline: tab
-    Evidence --> Diff: tab
-    Evidence --> Files: tab
+    Timeline --> Collapsed: disclosure closed
+    Evidence --> Collapsed: disclosure closed
+    Collapsed --> Files: open files
+    Collapsed --> Diff: open diff
+    Files --> Diff: inner tab
+    Diff --> Files: inner tab
+    Files --> Collapsed: collapse
+    Diff --> Collapsed: collapse
+    Files --> Timeline: close or deep link
+    Diff --> Timeline: close or deep link
 ```
 
 Content-level states:

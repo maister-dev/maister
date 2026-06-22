@@ -46,6 +46,35 @@ describe("extractLatestAvailableCommands (FR-A1/A2/A3)", () => {
     ]);
   });
 
+  it("extracts available commands from raw JSON-RPC session.line entries", () => {
+    const log = JSON.stringify({
+      type: "session.line",
+      line: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: {
+          sessionId: "agent-session",
+          update: {
+            sessionUpdate: "available_commands_update",
+            availableCommands: [
+              {
+                name: "aif-plan",
+                description: "Plan a feature",
+                input: { hint: "<feature>" },
+              },
+              { name: "compact", description: "Compact context" },
+            ],
+          },
+        },
+      }),
+    });
+
+    expect(extractLatestAvailableCommands(log)).toEqual([
+      { name: "aif-plan", description: "Plan a feature", hint: "<feature>" },
+      { name: "compact", description: "Compact context", hint: null },
+    ]);
+  });
+
   it("is latest-wins across multiple snapshots", () => {
     const log = [
       ev(1, [{ name: "old", description: "old" }]),

@@ -112,7 +112,7 @@
     "projects": "Projects",
     "inbox": "Inbox",
     "flows": "Flows",
-    "studio": "Studio",
+    "studio": "Flow Studio",
     "repo": "Repo",
     "agents": "Agents",
     "mcps": "MCPs",
@@ -886,6 +886,7 @@
     "copy": "copy",
     "copied": "copied",
     "toolCount": "{name} ×{count}",
+    "clearedHistory": "Cleared history · {count, plural, one {# item} other {# items}}",
     "tokens": "Context tokens",
     "status": {
       "Starting": "Starting",

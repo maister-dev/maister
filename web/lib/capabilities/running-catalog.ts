@@ -16,6 +16,18 @@ export type RunningLiveCommand = {
   hint?: string | null;
 };
 
+function slugForSkillMatch(name: string): string {
+  return name.replace(/^[/$]/, "");
+}
+
+function surfaceFormForCommand(name: string, agent: AdapterId): string {
+  if (name.startsWith("/") || name.startsWith("$") || name.includes(":")) {
+    return name;
+  }
+
+  return surfaceFormForSkill(name, agent);
+}
+
 /**
  * Build the running-scratch composer catalog from the live `availableCommands`
  * snapshot (FR-A3 / lifecycle source #3): the live list is authoritative for
@@ -30,13 +42,11 @@ export type RunningLiveCommand = {
  * running runner, and the chip serializes to `@skill:<slug>` so the existing
  * send-time normalizer round-trips it back to the runner's wire form.
  *
- * `mcp:` commands are MCP built-ins, and a live command with NO static match is
- * a native/built-in command (claude `/compact`, codex `/status`) — neither is a
- * capability chip (D8: native = typed raw). Chipifying a built-in would re-derive
- * its wire form via the skill sigil and CORRUPT it on codex (`/status` → the
- * skill form `$status`); excluding it keeps it typeable as literal text the agent
- * resolves natively. A chipped live command is supported by definition — it is a
- * known project skill present in the live session.
+ * A live command with NO static match is a native/built-in command (claude
+ * `/compact`, codex `/status`, MCP command handles, etc.). Those are still shown
+ * in autocomplete, but as raw `command` entries: picking one inserts the exact
+ * command text instead of a canonical `@skill:` token. That preserves adapter
+ * wire forms like codex `/status` instead of corrupting them to `$status`.
  */
 export function buildRunningCommandCatalog(
   live: RunningLiveCommand[],
@@ -48,39 +58,53 @@ export function buildRunningCommandCatalog(
       .filter((entry) => entry.kind === "skill")
       .map((entry) => [entry.slug, entry] as const),
   );
-  const skills: ProjectCapabilityCatalogEntry[] = [];
+  const liveEntries: ProjectCapabilityCatalogEntry[] = [];
   const seen = new Set<string>();
 
   for (const cmd of live) {
-    if (cmd.name.startsWith("mcp:")) continue;
+    const name = cmd.name.trim();
 
-    const slug = cmd.name.replace(/^[/$]/, "");
+    if (!name) continue;
 
-    if (!SLUG_PATTERN.test(slug) || seen.has(slug)) continue;
+    const slug = slugForSkillMatch(name);
 
-    // A live command with no static match is a native/built-in (not a project
-    // skill) → not a chip: it stays typeable as raw text. This is also the
-    // codex correctness guard — re-sigiling a built-in `/status` would emit the
-    // wrong `$status` skill form (see the function doc).
+    if (seen.has(slug)) continue;
     const fromStatic = staticSkillBySlug.get(slug);
 
-    if (!fromStatic) continue;
     seen.add(slug);
 
-    skills.push({
-      kind: "skill",
-      refId: fromStatic.refId,
+    if (fromStatic && SLUG_PATTERN.test(slug)) {
+      liveEntries.push({
+        kind: "skill",
+        refId: fromStatic.refId,
+        slug,
+        displayName: fromStatic.displayName,
+        description: cmd.description ?? fromStatic.description ?? null,
+        argHint: cmd.hint ?? fromStatic.argHint ?? null,
+        canonicalToken: `@skill:${slug}`,
+        surfaceForm: surfaceFormForSkill(slug, agent),
+        supported: true,
+      });
+
+      continue;
+    }
+
+    const surfaceForm = surfaceFormForCommand(name, agent);
+
+    liveEntries.push({
+      kind: "command",
+      refId: `command:${name}`,
       slug,
-      displayName: fromStatic.displayName,
-      description: cmd.description ?? fromStatic.description ?? null,
-      argHint: cmd.hint ?? fromStatic.argHint ?? null,
-      canonicalToken: `@skill:${slug}`,
-      surfaceForm: surfaceFormForSkill(slug, agent),
+      displayName: surfaceForm,
+      description: cmd.description ?? null,
+      argHint: cmd.hint ?? null,
+      canonicalToken: surfaceForm,
+      surfaceForm,
       supported: true,
     });
   }
 
   const subagents = staticCatalog.filter((entry) => entry.kind === "subagent");
 
-  return [...skills, ...subagents];
+  return [...liveEntries, ...subagents];
 }

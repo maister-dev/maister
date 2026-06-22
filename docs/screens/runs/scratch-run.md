@@ -42,7 +42,8 @@ prompt instead of a normal message.
   scratch `+`, or direct link.
 - **Primary landing:** conversation transcript.
 - **Within:** inspector tabs show run info, changes, and actions; secondary
-  workbench tabs open Timeline, Diff, Files, and Evidence.
+  workbench tabs open Timeline/Evidence, while Files and Diff sit in one
+  collapsed-by-default disclosure.
 - **Deep links:** workbench, file, diff, inspector, and source/preview state
   follow the shared URL contract in [`workbench.md`](workbench.md).
 - **Exit:** project board, promoted branch/PR link, or archive/drop flow.
@@ -53,7 +54,7 @@ flowchart TD
     Workspace["Active workspace row"] --> Scratch
     Scratch --> Conversation["Conversation"]
     Scratch --> Inspector["Run inspector"]
-    Scratch --> Workbench["Workbench tabs"]
+    Scratch --> Workbench["Workbench"]
     Conversation --> Message["Send message / recover prompt"]
     Conversation --> Permission["Permission or HITL response"]
     Inspector --> Actions["Stop / snapshot / export / promote / discard"]
@@ -69,19 +70,26 @@ The scratch screen uses the conversation as the primary center:
    mode, reasoning effort, and token/context meter.
 2. **Conversation transcript** - user and assistant turns, Markdown rendering,
    tool-call groups, thought blocks, permission prompts, copied assistant output,
-   message-level attachments, and raw legacy events behind disclosure controls.
+   message-level attachments, raw legacy events behind disclosure controls, and
+   a collapsed **cleared history** block when the latest exact `/clear` command
+   moves earlier transcript entries out of the current view without deleting
+   them from the audit trail.
 3. **Composer** - fixed at the bottom of the conversation. It sends a normal
    message while the run waits for the user, and a recover prompt when the run
    is crashed and resumable. It supports structured attachments and uploaded
-   files.
+   files. Slash suggestions include package skills plus the live ACP session's
+   available commands; native runner commands are inserted as their exact raw
+   command text rather than converted into capability chips.
 4. **Inline HITL** - permission/form/human responses appear in the conversation
    path instead of a separate workflow page.
 5. **Run inspector** - a collapsible right sidebar documented in
    [`run-inspector.md`](run-inspector.md). It shows branch/worktree, change size,
    action shortcuts, attachments, capability profile, and promotion state.
-6. **Secondary workbench** - Files, Diff, Evidence, and Timeline are available
-   below or beside the conversation, but they do not replace it as the scratch
-   landing surface.
+6. **Secondary workbench** - Timeline and Evidence are available as lightweight
+   secondary tabs. Files and Diff are grouped inside one collapsed-by-default
+   **Files / Diff** disclosure below the run interaction surface, and deep links
+   open it directly. They do not replace the conversation as the scratch landing
+   surface.
 
 On mobile, the inspector collapses behind a button in the run header, and the
 composer remains reachable after the transcript.
@@ -108,7 +116,7 @@ stateDiagram-v2
 | State | Main focus |
 | --- | --- |
 | `Starting` / `Running` | Transcript with latest tool group expanded |
-| `WaitingForUser` | Transcript plus enabled composer |
+| `WaitingForUser` | Transcript plus enabled composer and live slash-command suggestions |
 | `NeedsInput` | Pending permission/HITL prompt in the conversation |
 | `Review` | Transcript plus inspector action shortcuts and change size |
 | `Crashed` | Transcript plus recover composer and failure context |
@@ -117,10 +125,13 @@ stateDiagram-v2
 ## Data & APIs
 
 - `GET /api/scratch-runs/{runId}` loads run metadata, scratch metadata,
-  workspace, messages, attachments, pending HITL, and capability profile.
+  workspace, messages, attachments, pending HITL, capability profile, and the
+  latest live available-command snapshot extracted from the run event log.
 - `GET /api/runs/{runId}/stream` triggers live transcript refreshes.
 - `POST /api/scratch-runs/{runId}/messages` sends follow-up messages and
-  message attachments.
+  message attachments. Exact slash commands are forwarded as prompt text; the UI
+  may collapse local transcript history after `/clear`, but it does not filter
+  the command or delete stored messages.
 - `POST /api/scratch-runs/{runId}/recover` resumes a crashed scratch session
   with a user prompt.
 - `POST /api/scratch-runs/{runId}/stop` moves a live scratch run to review.

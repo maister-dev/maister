@@ -220,6 +220,7 @@ export function ScratchConversation({
     copy: t("copy"),
     copied: t("copied"),
     toolCount: (name, count) => t("toolCount", { name, count }),
+    clearedHistory: (count) => t("clearedHistory", { count }),
   };
   const quickReplies = useMemo(() => {
     if (!canCompose(status)) return [];

@@ -12,6 +12,7 @@ import clsx from "clsx";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+import { isScratchTranscriptClearCommand } from "@/lib/scratch-runs/commands";
 import { parseScratchMessageContent } from "@/lib/scratch-runs/transcript";
 
 export type TranscriptRole = "user" | "assistant" | "tool" | "system";
@@ -36,6 +37,7 @@ export type TranscriptLabels = {
   copy: string;
   copied: string;
   toolCount: (name: string, count: number) => string;
+  clearedHistory?: (count: number) => string;
 };
 
 const markdownComponents: Components = {
@@ -327,6 +329,38 @@ type TranscriptBlock =
   | { kind: "message"; message: TranscriptMessage }
   | { kind: "tools"; key: string; tools: ScratchToolPayload[] };
 
+function splitBlocksOnLatestClear(blocks: TranscriptBlock[]): {
+  historyBlocks: TranscriptBlock[];
+  currentBlocks: TranscriptBlock[];
+} {
+  const clearIndex = blocks.findLastIndex(
+    (block) =>
+      block.kind === "message" &&
+      block.message.role === "user" &&
+      isScratchTranscriptClearCommand(block.message.content),
+  );
+
+  if (clearIndex < 0) {
+    return { historyBlocks: [], currentBlocks: blocks };
+  }
+
+  return {
+    historyBlocks: blocks.slice(0, clearIndex + 1),
+    currentBlocks: blocks.slice(clearIndex + 1),
+  };
+}
+
+function historyBlockCount(blocks: readonly TranscriptBlock[]): number {
+  return blocks.reduce(
+    (count, block) => count + (block.kind === "tools" ? block.tools.length : 1),
+    0,
+  );
+}
+
+function clearedHistoryLabel(labels: TranscriptLabels, count: number): string {
+  return labels.clearedHistory?.(count) ?? `Cleared history · ${count}`;
+}
+
 export function ScratchTranscript({
   messages,
   labels,
@@ -368,100 +402,119 @@ export function ScratchTranscript({
 
     return result;
   }, [messages]);
+  const { historyBlocks, currentBlocks } = useMemo(
+    () => splitBlocksOnLatestClear(blocks),
+    [blocks],
+  );
+  const [historyOpen, setHistoryOpen] = useState(false);
   const lastToolGroupKey = useMemo(() => {
-    for (let index = blocks.length - 1; index >= 0; index -= 1) {
-      const block = blocks[index];
+    for (let index = currentBlocks.length - 1; index >= 0; index -= 1) {
+      const block = currentBlocks[index];
 
       if (block.kind === "tools") return block.key;
     }
 
     return null;
-  }, [blocks]);
+  }, [currentBlocks]);
+
+  function renderBlock(block: TranscriptBlock): ReactElement | null {
+    if (block.kind === "tools") {
+      return (
+        <ToolGroup
+          key={block.key}
+          autoOpen={running && block.key === lastToolGroupKey}
+          labels={labels}
+          tools={block.tools}
+        />
+      );
+    }
+
+    const message = block.message;
+    const parsed = parseScratchMessageContent(message.role, message.content);
+    const attachments = renderAttachments?.(message.id) ?? null;
+
+    if (parsed.kind === "thought") {
+      return <ThoughtBlock key={message.id} labels={labels} text={parsed.text} />;
+    }
+
+    if (parsed.kind === "permission") {
+      return (
+        <div
+          key={message.id}
+          className="rounded-lg border border-amber-line bg-amber-soft px-3 py-2 font-mono text-[11.5px] text-amber"
+        >
+          {parsed.prompt}
+        </div>
+      );
+    }
+
+    if (parsed.kind === "legacy") {
+      return <LegacyRow key={message.id} labels={labels} text={parsed.text} />;
+    }
+
+    if (parsed.kind !== "text") return null;
+
+    const isUser = message.role === "user";
+
+    return (
+      <article
+        key={message.id}
+        className={clsx(
+          "group max-w-[88%] rounded-lg border px-3 py-2.5",
+          isUser
+            ? "ml-auto border-amber-line bg-amber-soft text-ink"
+            : "border-line bg-paper text-ink",
+        )}
+      >
+        <div className="mb-1 flex items-center justify-between gap-3 font-mono text-[10px] uppercase tracking-[0.08em] text-mute">
+          <span>
+            {isUser
+              ? (userLabel ?? message.role)
+              : (assistantLabel ?? message.role)}
+          </span>
+          <div className="flex items-center gap-2">
+            {!isUser ? <CopyButton labels={labels} text={parsed.text} /> : null}
+            <span suppressHydrationWarning>
+              {new Date(message.createdAt).toLocaleString()}
+            </span>
+          </div>
+        </div>
+        {parsed.markdown ? (
+          <Markdown text={parsed.text} />
+        ) : (
+          <p className="whitespace-pre-wrap text-[13px] leading-[1.55]">
+            {parsed.text}
+          </p>
+        )}
+        {attachments}
+      </article>
+    );
+  }
 
   return (
     <div className="flex flex-1 flex-col gap-3 overflow-y-auto px-4 py-4">
-      {blocks.map((block) => {
-        if (block.kind === "tools") {
-          return (
-            <ToolGroup
-              key={block.key}
-              autoOpen={running && block.key === lastToolGroupKey}
-              labels={labels}
-              tools={block.tools}
-            />
-          );
-        }
-
-        const message = block.message;
-        const parsed = parseScratchMessageContent(
-          message.role,
-          message.content,
-        );
-        const attachments = renderAttachments?.(message.id) ?? null;
-
-        if (parsed.kind === "thought") {
-          return (
-            <ThoughtBlock key={message.id} labels={labels} text={parsed.text} />
-          );
-        }
-
-        if (parsed.kind === "permission") {
-          return (
-            <div
-              key={message.id}
-              className="rounded-lg border border-amber-line bg-amber-soft px-3 py-2 font-mono text-[11.5px] text-amber"
-            >
-              {parsed.prompt}
-            </div>
-          );
-        }
-
-        if (parsed.kind === "legacy") {
-          return (
-            <LegacyRow key={message.id} labels={labels} text={parsed.text} />
-          );
-        }
-
-        if (parsed.kind !== "text") return null;
-
-        const isUser = message.role === "user";
-
-        return (
-          <article
-            key={message.id}
-            className={clsx(
-              "group max-w-[88%] rounded-lg border px-3 py-2.5",
-              isUser
-                ? "ml-auto border-amber-line bg-amber-soft text-ink"
-                : "border-line bg-paper text-ink",
-            )}
+      {historyBlocks.length > 0 ? (
+        <div
+          className="rounded-lg border border-dashed border-line bg-ivory/40 px-3 py-2"
+          data-testid="scratch-cleared-history"
+        >
+          <button
+            aria-expanded={historyOpen}
+            className="flex w-full items-center gap-2 text-left font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-mute"
+            type="button"
+            onClick={() => setHistoryOpen((open) => !open)}
           >
-            <div className="mb-1 flex items-center justify-between gap-3 font-mono text-[10px] uppercase tracking-[0.08em] text-mute">
-              <span>
-                {isUser
-                  ? (userLabel ?? message.role)
-                  : (assistantLabel ?? message.role)}
-              </span>
-              <div className="flex items-center gap-2">
-                {!isUser ? (
-                  <CopyButton labels={labels} text={parsed.text} />
-                ) : null}
-                <span suppressHydrationWarning>
-                  {new Date(message.createdAt).toLocaleString()}
-                </span>
-              </div>
+            <span>{historyOpen ? "▾" : "▸"}</span>
+            {clearedHistoryLabel(labels, historyBlockCount(historyBlocks))}
+          </button>
+          {historyOpen ? (
+            <div className="mt-3 flex flex-col gap-3">
+              {historyBlocks.map(renderBlock)}
             </div>
-            {parsed.markdown ? (
-              <Markdown text={parsed.text} />
-            ) : (
-              <p className="whitespace-pre-wrap text-[13px] leading-[1.55]">
-                {parsed.text}
-              </p>
-            )}
-            {attachments}
-          </article>
-        );
-      })}
+          ) : null}
+        </div>
+      ) : null}
+      {currentBlocks.map(renderBlock)}
     </div>
   );
 }

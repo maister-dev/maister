@@ -112,7 +112,7 @@ flowchart TD
 
     Rail --> Portfolio["Portfolio /"]
     Rail --> Inbox["Inbox /inbox — needs-you HITL plus mentions"]
-    Rail --> Flows["Flows /flows"]
+    Rail --> FlowStudio["Flow Studio /studio"]
     Rail --> Agents["Agents /agents — admin"]
     Rail --> Mcps["MCPs /mcps — admin"]
 
@@ -131,7 +131,7 @@ flowchart TD
     ScratchRows --> ScratchRun
     FlowRun --- RunInspector["runs/run-inspector - overview, changes, flow/session, actions"]
     ScratchRun --- RunInspector
-    FlowRun --> Workbench["runs/workbench - files, diff, evidence, timeline"]
+    FlowRun --> Workbench["runs/workbench - timeline/evidence + collapsible files/diff"]
     ScratchRun --> Workbench
 ```
 
@@ -155,7 +155,7 @@ flowchart TD
 | [`runs/flow-run.md`](runs/flow-run.md) | Flow run detail | `/runs/{runId}` | Implemented (refinement ongoing) |
 | [`runs/scratch-run.md`](runs/scratch-run.md) | Scratch run detail | `/scratch-runs/{runId}` | Implemented |
 | [`runs/run-inspector.md`](runs/run-inspector.md) | Run inspector block | shared | Implemented |
-| [`runs/workbench.md`](runs/workbench.md) | Run workbench block | shared | Implemented (rework planned) |
+| [`runs/workbench.md`](runs/workbench.md) | Run workbench block | shared | Implemented (Timeline/Evidence tabs + collapsible Files/Diff) |
 
 Going forward, **each screen work-item updates its screens doc** in the same
 phase that ships the screen. New screens add a row here and a file following the
