@@ -1,8 +1,17 @@
 import type { NodeAttemptType } from "@/lib/db/schema";
 import type { FlowYamlV1, GateDef, NodeDef, Step } from "@/lib/config.schema";
 
+import pino from "pino";
+
 import { TERMINAL_TRANSITION_TARGET } from "@/lib/config.schema";
 import { MaisterError } from "@/lib/errors-core";
+
+import { parseWhen } from "./when-grammar";
+
+const log = pino({
+  name: "flow-compile",
+  level: process.env.LOG_LEVEL ?? "info",
+});
 
 // A node in the compiled graph. It carries either the original linear `Step`
 // (compiled-linear back-compat — executed via the existing per-step runners) or
@@ -30,6 +39,10 @@ export type CompiledNode = {
   // these undefined for backward compat.
   input?: NodeDef["input"];
   output?: NodeDef["output"];
+  // M38 (ADR-103): node-level dynamic-routing table. Present only for graph nodes
+  // declaring `decide`; the runtime outcome site reads it. Compiled-linear nodes
+  // leave it undefined (always "success"-routed).
+  decide?: NodeDef["decide"];
 };
 
 export type FlowGraph = {
@@ -69,6 +82,78 @@ function compileLinear(steps: Step[]): FlowGraph {
   return { entry: steps[0].id, order, nodes };
 }
 
+// M38 (ADR-103): compile/load-time verification of a node's `decide` table and
+// `output.result.on_mismatch`. Throws MaisterError("CONFIG") on any violation.
+// The dot-path syntax of `decide.from: output.<path>` is already enforced by the
+// zod schema; the produced value set is data-dependent → checked at runtime by
+// the allow-list guard (T2.4). Here we enforce the parts that need the node's
+// transitions/rework context.
+function verifyDecideAndOnMismatch(node: NodeDef): void {
+  const transitions = node.transitions ?? {};
+  const transitionKeys = Object.keys(transitions);
+
+  const decide = node.decide;
+
+  if (decide && decide.from === "verdict") {
+    const producible: string[] = [];
+
+    for (const c of decide.cases ?? []) {
+      if ("when" in c) {
+        const parsed = parseWhen(c.when);
+
+        if (!parsed.ok) {
+          throw new MaisterError(
+            "CONFIG",
+            `node "${node.id}" decide case has an invalid \`when\` predicate: ${parsed.error}`,
+          );
+        }
+      }
+
+      producible.push(c.target);
+
+      if (!transitionKeys.includes(c.target)) {
+        throw new MaisterError(
+          "CONFIG",
+          `node "${node.id}" decide case target "${c.target}" is not a declared transition outcome (transition keys: ${transitionKeys.join(", ") || "(none)"})`,
+        );
+      }
+    }
+
+    log.debug(
+      { nodeId: node.id, from: decide.from, producible, transitionKeys },
+      "[decide] verified producible outcomes ⊆ transition keys",
+    );
+  }
+
+  const onMismatch = node.output?.result?.on_mismatch;
+
+  if (onMismatch !== undefined) {
+    if (node.rework === undefined) {
+      throw new MaisterError(
+        "CONFIG",
+        `node "${node.id}" declares output.result.on_mismatch but no \`rework\` block (required for maxLoops/commentsVar/workspace policy)`,
+      );
+    }
+
+    if (onMismatch !== "retry") {
+      const target = transitions[onMismatch];
+
+      if (target === undefined) {
+        throw new MaisterError(
+          "CONFIG",
+          `node "${node.id}" on_mismatch "${onMismatch}" has no declared transition`,
+        );
+      }
+      if (!node.rework.allowedTargets.includes(target)) {
+        throw new MaisterError(
+          "CONFIG",
+          `node "${node.id}" on_mismatch "${onMismatch}" routes to "${target}" which is not in rework.allowedTargets [${node.rework.allowedTargets.join(", ")}]`,
+        );
+      }
+    }
+  }
+}
+
 function compileGraph(
   graphNodes: NodeDef[],
   flowVerdictCalibration: FlowYamlV1["verdict_calibration"],
@@ -78,6 +163,8 @@ function compileGraph(
   const flowConfidenceMin = flowVerdictCalibration?.confidence_min;
 
   for (const node of graphNodes) {
+    verifyDecideAndOnMismatch(node);
+
     const rawGates = node.pre_finish?.gates ?? [];
     const gates: GateDef[] = rawGates.map((g) => {
       const isCalibrationKind =
@@ -111,6 +198,7 @@ function compileGraph(
       retrySafe: node.retry_safe ?? false,
       input: node.input,
       output: node.output,
+      decide: node.decide,
     });
   }
 

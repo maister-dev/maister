@@ -584,6 +584,10 @@ const AGENT_BINDING_ENGINE_MIN = "1.5.0";
 // engine_min >= this value.
 const ORCHESTRATOR_ENGINE_MIN = "1.6.0";
 
+// M38 floor (ADR-103): manifests declaring node `decide` routing or
+// `output.result.on_mismatch` must declare engine_min >= this value.
+const DECIDE_ENGINE_MIN = "1.7.0";
+
 // Returns true when any node is an orchestrator node. Used to gate the 1.6.0
 // floor.
 function declaresOrchestratorNode(nodes: NodeDef[]): boolean {
@@ -630,6 +634,17 @@ function declaresArtifacts(nodes: NodeDef[]): boolean {
 function declaresOutputResult(nodes: NodeDef[]): boolean {
   for (const n of nodes) {
     if (n.output?.result) return true;
+  }
+
+  return false;
+}
+
+// Returns true when any node declares the M38 `decide` routing table or
+// `output.result.on_mismatch` rework. Used to gate the 1.7.0 floor.
+function declaresDecideOrOnMismatch(nodes: NodeDef[]): boolean {
+  for (const n of nodes) {
+    if ((n as { decide?: unknown }).decide !== undefined) return true;
+    if (n.output?.result?.on_mismatch !== undefined) return true;
   }
 
   return false;
@@ -767,6 +782,23 @@ export function validateGraphManifest(
       "CONFIG",
       `graph flow ${flowYamlPath} is declaring an orchestrator node but engine_min "${engineMin}" < ${ORCHESTRATOR_ENGINE_MIN} — bump compat.engine_min to ${ORCHESTRATOR_ENGINE_MIN} (host engine is ${MAISTER_ENGINE_VERSION})`,
     );
+  }
+
+  // M38 (ADR-103): node `decide` routing or `output.result.on_mismatch` requires
+  // the 1.7.0 floor. Manifests declaring neither stay valid at any engine_min.
+  if (declaresDecideOrOnMismatch(nodes)) {
+    const ok = semverGte(engineMin, DECIDE_ENGINE_MIN);
+
+    log.debug(
+      { flowYamlPath, declared: engineMin || "(unset)", required: DECIDE_ENGINE_MIN, ok },
+      "[engine-gate] decide/on_mismatch floor",
+    );
+    if (!ok) {
+      throw new MaisterError(
+        "CONFIG",
+        `graph flow ${flowYamlPath} is declaring decide/on_mismatch but engine_min "${engineMin}" < ${DECIDE_ENGINE_MIN} — bump compat.engine_min to ${DECIDE_ENGINE_MIN} (host engine is ${MAISTER_ENGINE_VERSION})`,
+      );
+    }
   }
 
   const nodeIds = new Set<string>();

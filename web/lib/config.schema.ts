@@ -552,6 +552,13 @@ export const nodeOutputSchema = z
       .object({
         schema: z.string().min(1),
         required: z.boolean().optional(),
+        // M38 (ADR-103): opt-in malformed-output rework. `retry` (reserved
+        // literal) = self-target re-run; any other string = a transition outcome
+        // routed via transitions[<outcome>] (∈ rework.allowedTargets). Both require
+        // a `rework` block (compile-enforced). Absent = today's hard CONFIG fail.
+        on_mismatch: z
+          .union([z.literal("retry"), z.string().min(1)])
+          .optional(),
       })
       .strict()
       .optional(),
@@ -804,10 +811,72 @@ export const cliCheckSettingsSchema = z
   })
   .strict();
 
+// M38 (ADR-103): node-level dynamic routing table. `from` selects the routing
+// signal — `verdict` (a verdict-producing gate) or `output.<dot.path>` (a nested
+// path into the node's validated structured output). `cases` (verdict only) are
+// evaluated in order at the outcome site, first `when`-match wins, else the single
+// `default`. Cross-references (case.target ∈ transitions, `when` parses,
+// engine_min floor) are enforced at compile/load — see compile.ts / config.ts.
+const DECIDE_OUTPUT_FROM_RE =
+  /^output\.[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/;
+
+const decideCaseSchema = z.union([
+  z.object({ when: z.string().min(1), target: z.string().min(1) }).strict(),
+  z.object({ default: z.literal(true), target: z.string().min(1) }).strict(),
+]);
+
+export const decideSchema = z
+  .object({
+    from: z
+      .string()
+      .min(1)
+      .refine((s) => s === "verdict" || DECIDE_OUTPUT_FROM_RE.test(s), {
+        message:
+          'decide.from must be "verdict" or "output.<dot.path>" (e.g. output.triage.outcome)',
+      }),
+    cases: z.array(decideCaseSchema).optional(),
+  })
+  .strict()
+  .superRefine((d, ctx) => {
+    const isVerdict = d.from === "verdict";
+
+    if (!isVerdict) {
+      // `from: output.<path>` routes on the raw resolved value — no `cases` table.
+      if (d.cases !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["cases"],
+          message: "decide.cases is only valid for `from: verdict`",
+        });
+      }
+
+      return;
+    }
+
+    // `from: verdict` requires a `cases` table with EXACTLY ONE `default`.
+    const cases = d.cases ?? [];
+    const defaults = cases.filter(
+      (c) => (c as { default?: unknown }).default === true,
+    ).length;
+
+    if (defaults !== 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["cases"],
+        message: `decide.cases (from: verdict) must contain exactly one \`default\` case (got ${defaults})`,
+      });
+    }
+  });
+
+export type DecideDef = z.infer<typeof decideSchema>;
+
 // Fields common to every node type. `settings` is NOT here — it is typed per
 // node-type member below (M11c).
 const nodeCommon = {
   id: z.string().min(1),
+  // M38 (ADR-103): optional dynamic-routing table (any node declaring
+  // output.result for `from: output`, or a verdict gate for `from: verdict`).
+  decide: decideSchema.optional(),
   input: nodeInputSchema.optional(),
   output: nodeOutputSchema.optional(),
   pre_finish: z
