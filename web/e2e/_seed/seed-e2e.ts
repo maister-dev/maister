@@ -1121,6 +1121,164 @@ const M22_MANIFEST = {
   },
 };
 
+// --- M38 fixture: decide/on_mismatch routing (ADR-103, engine 1.7.0) ---------
+// TWO launchable projects, each carrying ONE Backlog task wired to an
+// ALL-`cli` graph flow (no ai_coding/judge → background runFlow runs to a
+// terminal state with NO supervisor session, only the GET /health gate). The
+// e2e spec launches each from the board and asserts the routed run-detail:
+//   • HAPPY (`e2e-m38-route`): a `cli` `classify` node writes
+//     {"verdict":"bug"} to $MAISTER_OUTPUT_FILE, `decide:{from:"output.verdict"}`
+//     routes to `fixit` (not `designit`). The run reaches Review; the timeline
+//     ledger shows classify+fixit Succeeded and designit ABSENT; the P7 writer
+//     leaves `<worktree>/.maister/run.json`.
+//   • NEGATIVE (`e2e-m38-mismatch`): a `cli` `classify` node emits {"score":1}
+//     (missing required `verdict`) with `output.result` but NO `on_mismatch` →
+//     structured-output validation CONFIG-fails → run ends Failed, never
+//     promotes.
+// Both flows declare `output.result.schema: ./schemas/result.json`; the schema
+// doc is written into each flow's installed_path so resolveOutputResultSchema
+// reads it at runtime (the m26 fixture grammar: verdict string required, score
+// number). The launch snapshots flow.enabledRevisionId → runs.flow_revision_id,
+// so the runtime resolves the manifest + install dir from the flow_revisions
+// row this fixture overrides.
+
+const M38_ROUTE_SLUG = "e2e-m38-route";
+const M38_MISMATCH_SLUG = "e2e-m38-mismatch";
+const M38_ROUTE_TASK_TITLE = "Classify and route the change";
+const M38_MISMATCH_TASK_TITLE = "Emit malformed structured output";
+const M38_OUTPUT_SCHEMA_REL = "./schemas/result.json";
+
+// The m26 structured-output schema doc (verdict required, score optional),
+// written to each flow's install dir so the runtime resolver can read it.
+const M38_RESULT_SCHEMA_DOC = {
+  schemaVersion: 1,
+  fields: [
+    { name: "verdict", type: "string", required: true },
+    { name: "score", type: "number" },
+  ],
+};
+
+// Happy path: from:output routing. `classify` emits verdict "bug" → the
+// allow-listed `bug` transition routes to `fixit`; `designit` never runs.
+const M38_ROUTE_MANIFEST = {
+  schemaVersion: 1,
+  name: "AIF Decide Route (e2e)",
+  compat: { engine_min: "1.7.0" },
+  nodes: [
+    {
+      id: "classify",
+      type: "cli",
+      action: {
+        command: `echo '{"verdict":"bug","score":1}' > "$MAISTER_OUTPUT_FILE"`,
+      },
+      output: { result: { schema: M38_OUTPUT_SCHEMA_REL } },
+      decide: { from: "output.verdict" },
+      transitions: { bug: "fixit", feature: "designit" },
+    },
+    {
+      id: "fixit",
+      type: "cli",
+      action: { command: "echo fixing" },
+      transitions: { success: "done" },
+    },
+    {
+      id: "designit",
+      type: "cli",
+      action: { command: "echo designing" },
+      transitions: { success: "done" },
+    },
+  ],
+};
+
+// Negative path: malformed output (missing required `verdict`) with NO
+// on_mismatch → structured-output validation CONFIG-fails → run ends Failed.
+const M38_MISMATCH_MANIFEST = {
+  schemaVersion: 1,
+  name: "AIF Mismatch Fail (e2e)",
+  compat: { engine_min: "1.7.0" },
+  nodes: [
+    {
+      id: "classify",
+      type: "cli",
+      action: {
+        command: `echo '{"score":1}' > "$MAISTER_OUTPUT_FILE"`,
+      },
+      output: { result: { schema: M38_OUTPUT_SCHEMA_REL } },
+      transitions: { success: "done" },
+    },
+  ],
+};
+
+// --- M38 Flow Studio fixture: an authored DRAFT flow whose `classify` node
+// declares `output.result` + a `decide.from` block, so selecting it in the
+// Studio graph editor renders the new Routing panel (node-decide /
+// node-decide-source / node-decide-path) populated. The editor reads the
+// manifest from authored_capability_revisions.body — the schema file does NOT
+// need to exist on disk (showRouting keys on `typeof result.schema === string`).
+const M38_STUDIO_SLUG = "e2e-m38-studio";
+const M38_STUDIO_NODE = "classify";
+
+const M38_STUDIO_MANIFEST = {
+  schemaVersion: 1,
+  name: "M38 Decide Studio",
+  compat: { engine_min: "1.7.0" },
+  nodes: [
+    {
+      id: M38_STUDIO_NODE,
+      type: "cli",
+      action: {
+        command: `echo '{"verdict":"bug"}' > "$MAISTER_OUTPUT_FILE"`,
+      },
+      output: { result: { schema: M38_OUTPUT_SCHEMA_REL } },
+      decide: { from: "output.verdict" },
+      transitions: { bug: "fixit", feature: "designit" },
+    },
+    {
+      id: "fixit",
+      type: "cli",
+      action: { command: "echo fixing" },
+      transitions: { success: "done" },
+    },
+    {
+      id: "designit",
+      type: "cli",
+      action: { command: "echo designing" },
+      transitions: { success: "done" },
+    },
+  ],
+};
+
+const M38_STUDIO_FLOW_YAML = `schemaVersion: 1
+name: M38 Decide Studio
+compat:
+  engine_min: "1.7.0"
+nodes:
+  - id: ${M38_STUDIO_NODE}
+    type: cli
+    action:
+      command: echo '{"verdict":"bug"}' > "$MAISTER_OUTPUT_FILE"
+    output:
+      result:
+        schema: ${M38_OUTPUT_SCHEMA_REL}
+    decide:
+      from: output.verdict
+    transitions:
+      bug: fixit
+      feature: designit
+  - id: fixit
+    type: cli
+    action:
+      command: echo fixing
+    transitions:
+      success: done
+  - id: designit
+    type: cli
+    action:
+      command: echo designing
+    transitions:
+      success: done
+`;
+
 function resetDir(dir: string): void {
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
@@ -5370,6 +5528,177 @@ async function seedOrchestratorE2EFixture(
   };
 }
 
+type M38DecideCase = {
+  projectSlug: string;
+  taskTitle: string;
+  taskId: string;
+  repoPath: string;
+};
+
+type M38DecideFixtureRecord = {
+  route: M38DecideCase;
+  mismatch: M38DecideCase;
+  studio: { projectSlug: string; capId: string; nodeLabel: string };
+};
+
+// Seeds ONE launchable all-cli project per routing case. Reuses
+// seedLaunchableProjectFixture (real git repo + Enabled/trusted/Installed
+// `acceptance` flow + Backlog task), then overrides the flow manifest to the
+// M38 decide/on_mismatch shape on BOTH the flow_revisions row (the launch
+// precondition + runtime read it) and the flows row (loadRun/board read it),
+// and writes the output schema doc into the flow's install dir.
+async function seedM38DecideFixture(
+  pool: Pool,
+  adminId: string,
+): Promise<M38DecideFixtureRecord> {
+  async function seedCase(args: {
+    slug: string;
+    projectName: string;
+    taskTitle: string;
+    manifest: unknown;
+  }): Promise<M38DecideCase> {
+    const repoPath = path.join(RUNTIME_ROOT, "repos", args.slug);
+    const base = await seedLaunchableProjectFixture(pool, {
+      slug: args.slug,
+      projectName: args.projectName,
+      userId: adminId,
+      repoPath,
+      task: {
+        title: args.taskTitle,
+        prompt: "Exercise M38 decide/on_mismatch routing.",
+        status: "Backlog",
+        stage: "Backlog",
+      },
+    });
+
+    const flowSource = path.join(RUNTIME_ROOT, "flows", `${args.slug}-flow`);
+
+    // The output schema doc the runtime resolves relative to the flow install
+    // dir (= flow_revisions.installed_path = flowSource).
+    mkdirSync(path.join(flowSource, "schemas"), { recursive: true });
+    writeFileSync(
+      path.join(flowSource, "schemas", "result.json"),
+      `${JSON.stringify(M38_RESULT_SCHEMA_DOC, null, 2)}\n`,
+      "utf8",
+    );
+
+    // Override the LINEAR_MANIFEST default with the M38 graph on the enabled
+    // revision (compiled by the launch precondition + read at runtime) and the
+    // project flow row (read by loadRun + the board).
+    await pool.query(
+      `UPDATE flow_revisions SET manifest = $1, engine_min = '1.7.0'
+       WHERE flow_ref_id = 'acceptance' AND installed_path = $2`,
+      [JSON.stringify(args.manifest), flowSource],
+    );
+    await pool.query(`UPDATE flows SET manifest = $1 WHERE id = $2`, [
+      JSON.stringify(args.manifest),
+      base.flowId,
+    ]);
+
+    return {
+      projectSlug: args.slug,
+      taskTitle: args.taskTitle,
+      taskId: base.taskId!,
+      repoPath,
+    };
+  }
+
+  const route = await seedCase({
+    slug: M38_ROUTE_SLUG,
+    projectName: "E2E M38 Decide Route",
+    taskTitle: M38_ROUTE_TASK_TITLE,
+    manifest: M38_ROUTE_MANIFEST,
+  });
+  const mismatch = await seedCase({
+    slug: M38_MISMATCH_SLUG,
+    projectName: "E2E M38 Mismatch Fail",
+    taskTitle: M38_MISMATCH_TASK_TITLE,
+    manifest: M38_MISMATCH_MANIFEST,
+  });
+
+  // Studio: a DRAFT authored flow (no repo/run) opened in the graph editor so
+  // selecting the `classify` node renders the new Routing panel (the editor
+  // reads the manifest from the authored revision; mirrors seedM27FlowEditorFixture).
+  const studioIds = {
+    project: randomUUID(),
+    member: randomUUID(),
+    cap: randomUUID(),
+    revision: randomUUID(),
+  };
+  const studioRepoPath = `/tmp/maister-e2e/${studioIds.project}`;
+
+  await pool.query(`DELETE FROM projects WHERE slug = $1`, [M38_STUDIO_SLUG]);
+  await pool.query(
+    `INSERT INTO projects (id, slug, name, repo_path, maister_yaml_path, task_key)
+     VALUES ($1, $2, $3, $4, $5, 'E' || upper(substr(md5(random()::text), 1, 8)))`,
+    [
+      studioIds.project,
+      M38_STUDIO_SLUG,
+      "M38 Decide Studio (e2e)",
+      studioRepoPath,
+      `${studioRepoPath}/maister.yaml`,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO project_members (id, project_id, user_id, role)
+     VALUES ($1, $2, $3, 'owner')`,
+    [studioIds.member, studioIds.project, adminId],
+  );
+
+  const studioBody = {
+    flowYaml: M38_STUDIO_FLOW_YAML,
+    manifest: M38_STUDIO_MANIFEST,
+    packageMetadata: { slug: M38_STUDIO_SLUG, name: "M38 Decide Studio" },
+    files: [],
+    validation: {
+      status: "valid",
+      issueCount: 0,
+      issues: [],
+      manifestDigest: null,
+      contentHash: null,
+    },
+  };
+
+  await pool.query(
+    `INSERT INTO authored_capabilities
+       (id, project_id, kind, slug, title, lifecycle, draft_version,
+        current_draft_revision_id)
+     VALUES ($1, $2, 'flow', $3, $4, 'DRAFT', 1, $5)`,
+    [
+      studioIds.cap,
+      studioIds.project,
+      M38_STUDIO_SLUG,
+      "M38 Decide Studio",
+      studioIds.revision,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO authored_capability_revisions
+       (id, capability_id, project_id, kind, revision_number, lifecycle,
+        draft_version, title, body, manifest, schema_version, content_hash)
+     VALUES ($1, $2, $3, 'flow', 1, 'DRAFT', 1, $4, $5::jsonb, $6::jsonb, 1, $7)`,
+    [
+      studioIds.revision,
+      studioIds.cap,
+      studioIds.project,
+      "M38 Decide Studio",
+      JSON.stringify(studioBody),
+      JSON.stringify(M38_STUDIO_MANIFEST),
+      "m38-studio-seed",
+    ],
+  );
+
+  return {
+    route,
+    mismatch,
+    studio: {
+      projectSlug: M38_STUDIO_SLUG,
+      capId: studioIds.cap,
+      nodeLabel: "Classify",
+    },
+  };
+}
+
 async function main(): Promise<void> {
   const url = process.env.DB_URL;
 
@@ -5404,6 +5733,9 @@ async function main(): Promise<void> {
         RC_SLUG,
         FLOW_STUDIO_ARTIFACTS_SLUG,
         FLOW_VIEWER_SLUG,
+        M38_ROUTE_SLUG,
+        M38_MISMATCH_SLUG,
+        M38_STUDIO_SLUG,
       ],
     ]);
     await pool.query(`DELETE FROM users WHERE email = ANY($1::text[])`, [
@@ -5584,6 +5916,7 @@ async function main(): Promise<void> {
     const flowViewer = await seedInstalledPackageFixture(pool, admin.id);
     const platformAgents = await seedPlatformAgentsFixture(pool, admin.id);
     const orchestrator = await seedOrchestratorE2EFixture(pool, admin.id);
+    const m38 = await seedM38DecideFixture(pool, admin.id);
 
     await pool.query(
       `INSERT INTO project_members (id, project_id, user_id, role)
@@ -5636,6 +5969,7 @@ async function main(): Promise<void> {
         flowViewer,
         platformAgents,
         orchestrator,
+        m38,
       },
     };
     const outDir = path.resolve("e2e/.auth");

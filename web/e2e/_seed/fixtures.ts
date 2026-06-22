@@ -95,6 +95,26 @@ export type E2EM23Fixture = {
   nodeId: string;
 };
 
+// M38 (ADR-103) decide/on_mismatch routing fixture: two launchable all-cli
+// projects — `route` (from:output routing → fixit, not designit; reaches
+// Review) and `mismatch` (malformed output, no on_mismatch → Failed). Each
+// carries the Backlog task title the board Launch targets + the repo path the
+// spec reads `<worktree>/.maister/run.json` under.
+type E2EM38Case = {
+  projectSlug: string;
+  taskTitle: string;
+  taskId: string;
+  repoPath: string;
+};
+
+export type E2EM38Fixture = {
+  route: E2EM38Case;
+  mismatch: E2EM38Case;
+  // A DRAFT authored flow whose `classify` node declares output.result +
+  // decide, opened in the Studio graph editor to assert the Routing panel.
+  studio: { projectSlug: string; capId: string; nodeLabel: string };
+};
+
 // M19 Phase 5: reconcile + GC UI fixture. One project carrying:
 //   • a Crashed flow run with an acpSessionId checkpoint + an ai_coding current
 //     node → recoverable: true (run-detail crashed section + board Crashed col);
@@ -163,6 +183,7 @@ export type E2EFixtures = {
     m23: E2EM23Fixture;
     platformAgents: E2EPlatformAgentsFixture;
     orchestrator: E2EOrchestratorFixture;
+    m38: E2EM38Fixture;
   };
 };
 

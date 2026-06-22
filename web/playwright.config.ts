@@ -23,7 +23,7 @@ const MAISTER_CRON_TOKEN =
 const WH_E2E_SECRET = process.env.WH_E2E_SECRET ?? "whsec_e2e_0123456789abcdef";
 const AUTH_FILE = "e2e/.auth/admin.json";
 const AUTHED_SPEC =
-  /.*(active-workspaces|m11[abc]-.*|m12-evidence-graph|m13-assignments|m15-.*|m16-.*|m17-.*|m18-.*|m19-.*|m22-.*|m23-.*|m27-.*|multi-run-cost-policy|run-task-context|portfolio-board|task-launch-gating|project-registration|project-onboarding|admin-users|project-members|review-comments|review-diff-scopes|gate-chat|social-board|scratch-launch|scratch-detail|scratch-composer|platform-acp-runners|model-suggestions|flows-authoring|flow-editor|run-schedules|flow-package-viewer|flow-studio-artifacts|outbound-webhooks|package-management|platform-agents-.*|orchestrator-loop|inbox|mcps|studio-local-edit|studio-package-viewer|studio-import|studio-diff|studio-ai-assistant|studio)\.spec\.ts$/;
+  /.*(active-workspaces|m11[abc]-.*|m12-evidence-graph|m13-assignments|m15-.*|m16-.*|m17-.*|m18-.*|m19-.*|m22-.*|m23-.*|m27-.*|multi-run-cost-policy|run-task-context|portfolio-board|task-launch-gating|project-registration|project-onboarding|admin-users|project-members|review-comments|review-diff-scopes|gate-chat|social-board|scratch-launch|scratch-detail|scratch-composer|platform-acp-runners|model-suggestions|flows-authoring|flow-editor|run-schedules|flow-package-viewer|flow-studio-artifacts|outbound-webhooks|package-management|platform-agents-.*|orchestrator-loop|m38-decide-routing|inbox|mcps|studio-local-edit|studio-package-viewer|studio-import|studio-diff|studio-ai-assistant|studio)\.spec\.ts$/;
 
 export default defineConfig({
   testDir: "./e2e",
@@ -91,6 +91,16 @@ export default defineConfig({
       // which the SSRF egress policy blocks — exempt it the way an operator
       // exempts a local consumer.
       MAISTER_WEBHOOK_ALLOW_HOSTS: "127.0.0.1",
+      // m38-decide-routing.spec.ts launches an ALL-cli flow from the board and
+      // drives the REAL background runFlow to a terminal state. The default cap
+      // (6) is permanently saturated by the seeded fixtures' >6 live flow runs,
+      // so a launched run would queue Pending forever and never execute. Raise
+      // the flow concurrency cap so admitted launches actually run. This is
+      // safe for the rest of the suite: it does not change any seeded run's
+      // state (the cap only gates Pending→Running promotion of NEW launches),
+      // and platform-agents-binding.spec.ts already tolerates `Running` as well
+      // as `Pending` for its launched run.
+      MAISTER_MAX_CONCURRENT_RUNS: "64",
     },
   },
 });

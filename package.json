@@ -9,7 +9,8 @@
     "validate:docs": "node scripts/validate-docs-mermaid.mjs && node scripts/validate-docs-adr-anchors.mjs",
     "validate:docs:all": "node scripts/validate-docs-mermaid.mjs --all && node scripts/validate-docs-adr-anchors.mjs --all",
     "validate:docs:adr": "node scripts/validate-docs-adr-anchors.mjs",
-    "validate:docs:adr:all": "node scripts/validate-docs-adr-anchors.mjs --all"
+    "validate:docs:adr:all": "node scripts/validate-docs-adr-anchors.mjs --all",
+    "verify:m38": "node scripts/verify-m38-surface.mjs"
   },
   "devDependencies": {
     "jsdom": "^25.0.1",
