@@ -9,36 +9,14 @@
 // the read-only `GraphEdgeRole` alike. Pure — no canvas context needed.
 //
 // M38 (ADR-103): `decide`/verdict tables route on arbitrary outcome strings.
-// `deny`/`denied` (a verdict reject-to-fail) join the failure bucket. Forward
+// `deny`/`denied` (a verdict reject-to-fail) join the failure bucket; forward
 // verdict branches (`approve`/`review`/`pass`/`default`) stay in the calm green
-// default bucket — but `isConditionalOutcome` flags every decide-specific branch
-// key so a renderer can mark conditional edges distinctly from a plain `success`.
+// default bucket.
 const BACK_EDGE_KEYS = new Set(["rework", "takeover", "reject"]);
 const FAILURE_KEYS = new Set(["failure", "fail", "failed", "deny", "denied"]);
-const FORWARD_DECISION_KEYS = new Set([
-  "approve",
-  "approved",
-  "review",
-  "pass",
-  "passed",
-  "default",
-]);
 
 export function isBackEdgeOutcome(outcome: string): boolean {
   return BACK_EDGE_KEYS.has(outcome.trim().toLowerCase());
-}
-
-// True when the outcome names a `decide`/verdict branch (a back-edge, a failure,
-// or a forward decision such as approve/review/default) rather than the plain
-// linear `success`/empty edge. Used by the canvas to mark conditional edges.
-export function isConditionalOutcome(outcome: string): boolean {
-  const key = outcome.trim().toLowerCase();
-
-  return (
-    BACK_EDGE_KEYS.has(key) ||
-    FAILURE_KEYS.has(key) ||
-    FORWARD_DECISION_KEYS.has(key)
-  );
 }
 
 export type EdgeOutcomeStyle = {

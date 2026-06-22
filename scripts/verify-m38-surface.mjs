@@ -7,7 +7,7 @@
 // Exit 2 on any violation so /aif-verify (or a CI gate) can block.
 
 import { execSync } from "node:child_process";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -66,16 +66,6 @@ assert(
   "ADR-103 header present (docs/decisions.md)",
 );
 
-// No DB migration numbered 0062+ (M38 is migration-free; max committed = 0061).
-const migrations = readdirSync(resolve(repoRoot, "web/lib/db/migrations")).filter(
-  (f) => /^\d{4}_.*\.sql$/.test(f),
-);
-const maxMigration = migrations
-  .map((f) => Number(f.slice(0, 4)))
-  .reduce((a, b) => Math.max(a, b), 0);
-
-assert(maxMigration <= 61, `no migration > 0061 (max = ${maxMigration})`);
-
 // --- Additive-vs-base diff checks (skipped when base is unavailable) ---
 const baseExists = git(`rev-parse --verify --quiet ${base}`) !== null;
 
@@ -99,7 +89,7 @@ if (!baseExists) {
 
   assert(schemaDiff.trim() === "", "no DB schema change (runs.status enum etc.)");
 
-  const envDiff = git(`diff ${base} -- web/.env.example .env.example`) ?? "";
+  const envDiff = git(`diff ${base} -- .env.example deploy/maister.env.example`) ?? "";
   const newEnv = envDiff
     .split("\n")
     .some((l) => /^\+[A-Z][A-Z0-9_]+=/.test(l));
@@ -109,6 +99,30 @@ if (!baseExists) {
   const composeChanged = (git(`diff --name-only ${base} -- "*compose*.yml" "*compose*.yaml"`) ?? "").trim();
 
   assert(composeChanged === "", "no compose change");
+
+  // M38 added no event surface — any change under docs/api whose filename names
+  // an AsyncAPI doc is a new wire surface to scrutinize.
+  const asyncApiChanged = (git(`diff --name-only ${base} -- docs/api`) ?? "")
+    .split("\n")
+    .filter((l) => /asyncapi/i.test(l));
+
+  assert(
+    asyncApiChanged.length === 0,
+    `no AsyncAPI change (found ${asyncApiChanged.length})`,
+  );
+
+  // Migration-free vs the base specifically (not a global ceiling, which would
+  // false-red the moment an unrelated branch lands the next migration number).
+  const newMigrations = (
+    git(`diff --name-only --diff-filter=A ${base} -- web/lib/db/migrations`) ?? ""
+  )
+    .split("\n")
+    .filter((l) => /\.sql$/.test(l));
+
+  assert(
+    newMigrations.length === 0,
+    `no new migration vs ${base} (found ${newMigrations.length})`,
+  );
 }
 
 for (const label of ok) console.log(`  ✓ ${label}`);

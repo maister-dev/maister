@@ -10,6 +10,7 @@ import type { ReactElement } from "react";
 import { PlusIcon, TrashIcon } from "@heroicons/react/24/outline";
 
 import { GateForm } from "@/components/flows/node-form/gate-form";
+import { blankDecide } from "@/lib/flows/editor/node-form";
 
 type NodeDef = NonNullable<FlowYamlV1["nodes"]>[number];
 
@@ -339,13 +340,8 @@ export function NodeSideForm({
   const setDecideSource = (source: "" | "output" | "verdict"): void => {
     if (source === "") {
       setDecide(undefined);
-    } else if (source === "output") {
-      setDecide({ from: "output.outcome" });
     } else {
-      setDecide({
-        from: "verdict",
-        cases: [{ default: true, target: "done" }],
-      });
+      setDecide(blankDecide(source) as Rec);
     }
   };
   const writeDecideCases = (cases: Rec[]): void =>

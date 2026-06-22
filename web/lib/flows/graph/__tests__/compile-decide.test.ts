@@ -5,12 +5,24 @@ import { describe, expect, it } from "vitest";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { isMaisterError } from "@/lib/errors";
 
+// A from:verdict node routes on the verdict surfaced by exactly one
+// ai_judgment/skill_check gate (compile-enforced), so the valid fixtures carry it.
+const VERDICT_GATE = { id: "q", kind: "ai_judgment", prompt: "judge it" };
+
 function manifest(node: Record<string, unknown>): FlowYamlV1 {
   return {
     schemaVersion: 1,
     name: "f",
     compat: { engine_min: "1.7.0" },
-    nodes: [node, { id: "other", type: "cli", action: { command: "true" }, transitions: { success: "done" } }],
+    nodes: [
+      node,
+      {
+        id: "other",
+        type: "cli",
+        action: { command: "true" },
+        transitions: { success: "done" },
+      },
+    ],
   } as unknown as FlowYamlV1;
 }
 
@@ -31,6 +43,7 @@ describe("compile-time decide verification (M38, ADR-103)", () => {
         id: "j",
         type: "judge",
         action: { prompt: "x" },
+        pre_finish: { gates: [VERDICT_GATE] },
         decide: {
           from: "verdict",
           cases: [
@@ -49,6 +62,7 @@ describe("compile-time decide verification (M38, ADR-103)", () => {
         id: "j",
         type: "judge",
         action: { prompt: "x" },
+        pre_finish: { gates: [VERDICT_GATE] },
         decide: {
           from: "verdict",
           cases: [
@@ -61,12 +75,49 @@ describe("compile-time decide verification (M38, ADR-103)", () => {
     ).toBe("CONFIG");
   });
 
+  it("rejects a from:verdict node with no verdict-producing gate (CONFIG)", () => {
+    expect(
+      compileErr({
+        id: "j",
+        type: "judge",
+        action: { prompt: "x" },
+        decide: {
+          from: "verdict",
+          cases: [{ default: true, target: "review" }],
+        },
+        transitions: { review: "other" },
+      }),
+    ).toBe("CONFIG");
+  });
+
+  it("rejects a from:verdict node with more than one verdict gate (CONFIG)", () => {
+    expect(
+      compileErr({
+        id: "j",
+        type: "judge",
+        action: { prompt: "x" },
+        pre_finish: {
+          gates: [
+            { id: "q1", kind: "ai_judgment", prompt: "a" },
+            { id: "q2", kind: "skill_check", skill: "b" },
+          ],
+        },
+        decide: {
+          from: "verdict",
+          cases: [{ default: true, target: "review" }],
+        },
+        transitions: { review: "other" },
+      }),
+    ).toBe("CONFIG");
+  });
+
   it("compiles a valid from:verdict decide and threads it onto the node", () => {
     const g = compileManifest(
       manifest({
         id: "j",
         type: "judge",
         action: { prompt: "x" },
+        pre_finish: { gates: [VERDICT_GATE] },
         decide: {
           from: "verdict",
           cases: [
@@ -102,6 +153,18 @@ describe("compile-time decide verification (M38, ADR-103)", () => {
     expect(g.nodes.get("a")!.decide).toEqual({ from: "output.triage.outcome" });
   });
 
+  it("rejects a from:output decide with no output.result declared (CONFIG)", () => {
+    expect(
+      compileErr({
+        id: "a",
+        type: "ai_coding",
+        action: { prompt: "x" },
+        decide: { from: "output.triage.outcome" },
+        transitions: { bug: "other" },
+      }),
+    ).toBe("CONFIG");
+  });
+
   it("rejects on_mismatch without a rework block (CONFIG)", () => {
     expect(
       compileErr({
@@ -114,6 +177,23 @@ describe("compile-time decide verification (M38, ADR-103)", () => {
     ).toBe("CONFIG");
   });
 
+  it("rejects on_mismatch with a rework block missing commentsVar (CONFIG)", () => {
+    expect(
+      compileErr({
+        id: "a",
+        type: "ai_coding",
+        action: { prompt: "x" },
+        output: { result: { schema: "./s.json", on_mismatch: "retry" } },
+        rework: {
+          allowedTargets: ["other"],
+          workspacePolicies: ["keep"],
+          maxLoops: 2,
+        },
+        transitions: { success: "other" },
+      }),
+    ).toBe("CONFIG");
+  });
+
   it("compiles on_mismatch: retry with a rework block (no own-id in allowedTargets needed)", () => {
     expect(
       compileErr({
@@ -121,7 +201,12 @@ describe("compile-time decide verification (M38, ADR-103)", () => {
         type: "ai_coding",
         action: { prompt: "x" },
         output: { result: { schema: "./s.json", on_mismatch: "retry" } },
-        rework: { allowedTargets: ["other"], workspacePolicies: ["keep"], maxLoops: 2 },
+        rework: {
+          allowedTargets: ["other"],
+          workspacePolicies: ["keep"],
+          maxLoops: 2,
+          commentsVar: "notes",
+        },
         transitions: { success: "other" },
       }),
     ).toBe(null);
@@ -134,7 +219,12 @@ describe("compile-time decide verification (M38, ADR-103)", () => {
         type: "ai_coding",
         action: { prompt: "x" },
         output: { result: { schema: "./s.json", on_mismatch: "redo" } },
-        rework: { allowedTargets: ["other"], workspacePolicies: ["keep"], maxLoops: 2 },
+        rework: {
+          allowedTargets: ["other"],
+          workspacePolicies: ["keep"],
+          maxLoops: 2,
+          commentsVar: "notes",
+        },
         transitions: { redo: "done" }, // "done" terminal, not in allowedTargets
       }),
     ).toBe("CONFIG");
@@ -147,7 +237,12 @@ describe("compile-time decide verification (M38, ADR-103)", () => {
         type: "ai_coding",
         action: { prompt: "x" },
         output: { result: { schema: "./s.json", on_mismatch: "redo" } },
-        rework: { allowedTargets: ["other"], workspacePolicies: ["keep"], maxLoops: 2 },
+        rework: {
+          allowedTargets: ["other"],
+          workspacePolicies: ["keep"],
+          maxLoops: 2,
+          commentsVar: "notes",
+        },
         transitions: { redo: "other" },
       }),
     ).toBe(null);

@@ -143,8 +143,8 @@ lives in the worktree.
 cleared, or resumed session reconstructs identical state from the ledger + worktree.
 
 **Access.** The runner appends a one-line pointer `[Run context: <abs run.json path>]` to each agent
-node's resolved prompt (after `renderStrict`, before dispatch — both `new-session` and
-`slash-in-existing`); the agent reads the file from its own worktree on demand.
+node's resolved prompt (after `renderStrict`, before dispatch; graph agent nodes dispatch
+`new-session`); the agent reads the file from its own worktree on demand.
 
 **Secret-safety.** `run.json` is built only from `vars` + gate results + `task.prompt` — **never** from
 `context.env`. No env secret can enter the file.
@@ -189,7 +189,7 @@ wired into `.env.example` + the `docs/configuration.md` env table **only** — *
   projection regenerated from the ledger; a fresh/cleared/resumed session MUST reconstruct identical
   content with no dependency on prior in-process state.
 - `run.json` MUST NOT contain any value sourced from `context.env`.
-- Each agent node's prompt MUST carry the `[Run context: <abs path>]` pointer in both session modes.
+- Each agent node's prompt MUST carry the `[Run context: <abs path>]` pointer on its `new-session` dispatch.
 - A manifest declaring `output.result` without `compat.engine_min >= 1.3.0` MUST be rejected
   (`CONFIG`); a manifest without `output.result` MUST stay valid at any `engine_min`.
 - `MAISTER_NODE_OUTPUT_MAX_BYTES` MUST default to 256 KiB and MUST be wired into `.env.example` +
@@ -217,8 +217,8 @@ wired into `.env.example` + the `docs/configuration.md` env table **only** — *
 - AC9 — `run.json` lives at `<worktree>/.maister/run.json`; `.maister/` is appended to the repo's git
   exclude (`$(git rev-parse --git-path info/exclude)`, repo-wide) so `run.json` is absent from
   `git status` and the base→run diff, and it is readable from the agent's cwd.
-- AC10 — Every agent node's dispatched prompt contains `[Run context: <abs run.json path>]` in both
-  `new-session` and `slash-in-existing` modes.
+- AC10 — Every agent node's dispatched prompt contains `[Run context: <abs run.json path>]` on its
+  `new-session` dispatch (the only mode graph agent nodes use).
 - AC11 — A flow declaring `output.result` without `compat.engine_min >= 1.3.0` is rejected (`CONFIG`);
   a flow without `output.result` validates at `engine_min: 1.2.0`.
 - AC12 — `MAISTER_NODE_OUTPUT_MAX_BYTES` unset → 256 KiB default applied; set → override honored;
@@ -253,7 +253,7 @@ wired into `.env.example` + the `docs/configuration.md` env table **only** — *
 | AC7 | `run-context` unit: projection shape incl. gate `status` (command_check null verdict) + idempotent regen (Phase 3) |
 | AC8 | `run-context` unit: no `context.env` value in `run.json` (Phase 3) |
 | AC9 | `run-context` integration: worktree location + `.maister/` git-excluded (clean `git status`) (Phase 3) |
-| AC10 | `runner-agent` unit: pointer present, both session modes (Phase 3) |
+| AC10 | `runner-agent` unit: pointer present on `new-session` dispatch (Phase 3) |
 | AC11 | `config`/`engine-version` unit: engine gate accept/reject (Phase 1) |
 | AC12 | config + grep: env default/override + `.env.example`/`configuration.md` wiring, no compose (Phase 2) |
 | AC13 | repo-level assertion in `/aif-verify`: no migration/route/status/error-code (Phase 5) |
@@ -418,7 +418,7 @@ same order, run stays `Running`, identical recovery profile. A crash between `ma
 - AC14 — A node with `decide:{from:output.outcome}` whose validated output is `{outcome:"x"}` routes via
   `transitions.x`; a nested `decide:{from:output.a.b}` routes on the nested value.
 - AC15 — A node with `decide:{from:verdict, cases:[{when:"confidence >= 0.8", target:approve},
-  {default:true, target:review}]}` routes by the calibrated verdict; the verdict gate does NOT hard-fail.
+  {default:true, target:review}]}` routes by the raw parsed verdict (calibration bypassed); the verdict gate does NOT hard-fail.
 - AC16 — A `confidence_min`-as-`decide` 2-case sugar selects the same branch a legacy `confidence_min`
   would.
 - AC17 — A `decide` outcome ∉ transitions keys → runtime `CONFIG`; a compile-time producible outcome ∉

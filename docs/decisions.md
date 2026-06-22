@@ -7921,7 +7921,8 @@ transition + rework + ledger machinery with **no DB migration** and **no new
    so the verdict never reaches routing. When `node.decide.from === "verdict"` the
    **engine itself** treats that gate as routing-input (not a hard-fail) — **no
    author-declared `mode: advisory` is required** (keeps the YAML clean). The
-   gate's `calibrateVerdict` result is surfaced out of gate execution and the
+   gate's **raw parsed** verdict (calibration is bypassed under `decide` — the
+   `when` predicates do the thresholding) is surfaced out of gate execution; the
    `decide.cases` are evaluated against the verdict object (`verdict`,
    `confidence`, nested fields via `getPath`): first `when`-matching case wins,
    else the single `default`. `confidence_min` **without** `decide` keeps today's
@@ -7932,8 +7933,10 @@ transition + rework + ledger machinery with **no DB migration** and **no new
    Ops: `>= > <= < == !=`. `<field>` may be a nested dot-path (e.g.
    `verdict.confidence`) resolved by the same `getPath`. AND/OR compound
    predicates are explicit future headroom, not v1. A malformed predicate, a
-   `case.outcome` ∉ `transitions` keys, zero or >1 `default`, or a malformed
-   `from` dot-path is refused at compile/load with `CONFIG`.
+   `case.outcome` ∉ `transitions` keys, zero or >1 `default`, a malformed
+   `from` dot-path, a `from: verdict` node without exactly one verdict-producing
+   gate, a `from: output` node without `output.result`, or `on_mismatch` without
+   `rework.commentsVar` is refused at compile/load with `CONFIG`.
 5. **`on_mismatch` = engine-initiated rework on validation failure.** A node's
    `output.result.on_mismatch` (opt-in; default-absent = today's `CONFIG`-fail)
    drives the **existing rework path from a non-`human` node** when structured-output
@@ -7941,9 +7944,10 @@ transition + rework + ledger machinery with **no DB migration** and **no new
    validation-error text (`structuredOutput.reason`) injected via `commentsVar`. Two
    readable forms — node ids are human-readable slugs (verified, not UUIDs):
    - **`on_mismatch: retry`** — reserved literal = self-target re-run of the same
-     node with the error fed back. Requires a `rework` block (for
-     `maxLoops`/`commentsVar`/workspace/session policy) but does NOT require the
-     node's own id in `transitions`/`rework.allowedTargets`. The common case.
+     node with the error fed back. Requires a `rework` block **with `commentsVar`**
+     (the validation error is injected there; the block also carries
+     `maxLoops`/workspace/session policy) but does NOT require the node's own id
+     in `transitions`/`rework.allowedTargets`. The common case.
    - **`on_mismatch: <outcome>`** — a transition outcome routed via
      `transitions[outcome]` to another node, which MUST be ∈
      `rework.allowedTargets`.
@@ -7985,6 +7989,14 @@ transition + rework + ledger machinery with **no DB migration** and **no new
   rework: same writes, same order, run stays `Running`, identical recovery profile.
   A crash between `markNodeReworked` and `markDownstreamStale` leaves the same
   recoverable state as a human rework.
+- **Known limitation (tech debt):** `on_mismatch` exhaustion fails the run
+  `CONFIG` via the loop-top `maxLoops` backstop, abandoning the worktree's
+  accumulated work — unlike `escalateAutoRetryExhaustion` it does not pause
+  work-preserving for a human, so the next attempt starts from a fresh worktree.
+  Fail-closed is intentional for v1 (unfixable malformed output is an author bug,
+  not a stuck review); routing exhaustion through the execution-policy axis
+  (escalate/ship) or resuming the failed node from the existing worktree is
+  deferred.
 - P7 `run.json` is a pure projection — a crash mid-write leaves a stale/absent file
   the next terminal transition regenerates; no two-phase commit (`atomicWriteJson`
   is tmp+rename, so no torn file).

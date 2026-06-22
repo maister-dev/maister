@@ -323,8 +323,8 @@ Because it is derived, it is **idempotent and self-healing**: a missing/stale
 file is regenerated on the next node, and **correctness never depends on it** — a
 fresh, cleared, or resumed session reconstructs identical state from the ledger +
 worktree. The runner appends a one-line pointer `[Run context: <abs run.json path>]`
-to each agent node's resolved prompt (after `renderStrict`, before dispatch — both
-`new-session` and `slash-in-existing`). `run.json` is built only from `vars` +
+to each agent node's resolved prompt (after `renderStrict`, before dispatch; graph
+agent nodes dispatch `new-session`). `run.json` is built only from `vars` +
 gate results + `task.prompt` — **never** from `context.env`, so no env secret can
 enter the file.
 
@@ -560,20 +560,24 @@ flows write `node_attempts` and behave identically to the pre-M11a runner.
   `task.prompt` (`{intent, nodes(summary+vars), gates(status+verdict?), promoted}`)
   that a fresh/cleared/resumed session reconstructs identically; correctness MUST
   never depend on it, every agent node's prompt MUST carry the `[Run context: <abs
-  path>]` pointer in both session modes, and it MUST NOT contain any value sourced
-  from `context.env`.
+  path>]` pointer on its `new-session` dispatch, and it MUST NOT contain any value
+  sourced from `context.env`.
 - **(M38 — Implemented, ADR-103)** A node with no `decide` MUST route
   byte-identically to today (`"success"` / human decision); a `decide:{from:output.<path>}`
-  routes on `String(getPath(vars, <path>))`; a `decide:{from:verdict}` routes via the
-  `cases`/`default` table, and the engine MUST surface the verdict (not hard-fail) on
-  such a node with NO author `mode: advisory`. A `decide`-chosen outcome ∉
-  `node.transitions` keys MUST be refused at runtime with `MaisterError("CONFIG")`.
-- **(M38 — Implemented, ADR-103)** A node declaring `output.result.on_mismatch` MUST,
-  on structured-output validation failure, enter the bounded rework path
+  routes on `String(getPath(vars, <path>))` and MUST declare `output.result`; a
+  `decide:{from:verdict}` routes via the `cases`/`default` table and MUST declare
+  exactly one `ai_judgment`/`skill_check` gate, which the engine surfaces as the
+  routing verdict (not hard-fail) with NO author `mode: advisory`. A `decide`-chosen
+  outcome ∉ `node.transitions` keys MUST be refused at runtime with
+  `MaisterError("CONFIG")`; the missing-producer cases are refused at compile/load.
+- **(M38 — Implemented, ADR-103)** A node declaring `output.result.on_mismatch` MUST
+  also declare `rework.commentsVar` (compile-enforced — the error is injected there)
+  and, on structured-output validation failure, enter the bounded rework path
   (`on_mismatch: retry` = self-target; `<outcome>` = `transitions[<outcome>]` ∈
   `rework.allowedTargets`) with `structuredOutput.reason` injected via `commentsVar`;
-  a node WITHOUT `on_mismatch` MUST still `CONFIG`-fail. A flow declaring `decide` or
-  `on_mismatch` MUST declare `compat.engine_min >= 1.7.0`.
+  exhausting `rework.maxLoops` MUST fail the run `CONFIG` (→ `Failed`). A node WITHOUT
+  `on_mismatch` MUST still `CONFIG`-fail. A flow declaring `decide` or `on_mismatch`
+  MUST declare `compat.engine_min >= 1.7.0`.
 
 ## Edge cases
 
@@ -583,6 +587,14 @@ flows write `node_attempts` and behave identically to the pre-M11a runner.
 - **Unknown gate kind** → `CONFIG`.
 - **Cycle without `rework.maxLoops`** (graph cycle detection) → `CONFIG`.
 - **Unsupported workspace policy** → `CONFIG`.
+- **(M38 — Implemented, ADR-103) `decide:{from:verdict}` node with zero or >1
+  `ai_judgment`/`skill_check` gate** → `CONFIG` at compile/load (no verdict to
+  route on, or an ambiguous last-gate-wins verdict).
+- **(M38 — Implemented, ADR-103) `decide:{from:output.<path>}` node without
+  `output.result`** → `CONFIG` at compile/load (no `vars` for the path to resolve).
+- **(M38 — Implemented, ADR-103) `output.result.on_mismatch` without
+  `rework.commentsVar`** → `CONFIG` at compile/load (the validation error would
+  have nowhere to inject — the rework would re-run blind).
 - **(M30 — Implemented, ADR-079) Crash between checkpoint capture and attempt** → the
   dangling `refs/maister/checkpoints/*` ref is orphaned; harmless and GC'd by the
   worktree sweeper, reconcile tolerates it.

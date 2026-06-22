@@ -1,7 +1,7 @@
 # /aif-plan request — Plan 2: Vendor-neutral guardrail/hook engine at the supervisor ACP seam (G4)
 
 > **Sequencing:** run this AFTER Plan 1 (`decide` routing + P7) lands — it can
-> reference the routing/`on_stuck` plumbing. Run `/aif-plan` (full mode) with this
+> reference the routing/`on_mismatch` plumbing. Run `/aif-plan` (full mode) with this
 > file as the brief, in its own branch/worktree.
 > **Workflow mandate:** SDD-first (ADR + domain doc + UI design), then strict TDD.
 

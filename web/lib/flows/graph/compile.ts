@@ -95,6 +95,22 @@ function verifyDecideAndOnMismatch(node: NodeDef): void {
   const decide = node.decide;
 
   if (decide && decide.from === "verdict") {
+    // A verdict-routing node routes on the verdict surfaced by its
+    // verdict-producing gate. Without exactly one ai_judgment/skill_check gate
+    // there is no verdict (every `when` misses → routing silently falls to
+    // `default`); with more than one the surfaced verdict is ambiguous
+    // (last-gate-wins at runtime). Require exactly one.
+    const verdictGates = (node.pre_finish?.gates ?? []).filter(
+      (g) => g.kind === "ai_judgment" || g.kind === "skill_check",
+    );
+
+    if (verdictGates.length !== 1) {
+      throw new MaisterError(
+        "CONFIG",
+        `node "${node.id}" decide:{from:verdict} needs exactly one ai_judgment/skill_check gate to route on (found ${verdictGates.length})`,
+      );
+    }
+
     const producible: string[] = [];
 
     for (const c of decide.cases ?? []) {
@@ -123,6 +139,16 @@ function verifyDecideAndOnMismatch(node: NodeDef): void {
       { nodeId: node.id, from: decide.from, producible, transitionKeys },
       "[decide] verified producible outcomes ⊆ transition keys",
     );
+  } else if (decide) {
+    // from: output.<path> routes on the node's validated structured output, so
+    // output.result must be declared — otherwise `vars` is empty and routing
+    // always resolves to undefined (a silent terminal).
+    if (node.output?.result === undefined) {
+      throw new MaisterError(
+        "CONFIG",
+        `node "${node.id}" decide:{from:${decide.from}} needs output.result declared (the structured output the path resolves against)`,
+      );
+    }
   }
 
   const onMismatch = node.output?.result?.on_mismatch;
@@ -132,6 +158,16 @@ function verifyDecideAndOnMismatch(node: NodeDef): void {
       throw new MaisterError(
         "CONFIG",
         `node "${node.id}" declares output.result.on_mismatch but no \`rework\` block (required for maxLoops/commentsVar/workspace policy)`,
+      );
+    }
+
+    // The structured-output validation error is injected into rework.commentsVar
+    // for the next attempt's prompt; without it the rework re-runs blind (a
+    // deterministic node then just re-fails to maxLoops).
+    if (node.rework.commentsVar === undefined) {
+      throw new MaisterError(
+        "CONFIG",
+        `node "${node.id}" declares output.result.on_mismatch but rework.commentsVar is unset — the validation error is injected there, so the rework needs it`,
       );
     }
 

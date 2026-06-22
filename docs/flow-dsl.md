@@ -611,9 +611,11 @@ nodes:
 nested dot-path (e.g. `verdict.confidence`). One predicate per case; AND/OR compound
 is future headroom, not v1.
 
-**Verification.** Compile-time: for `from: verdict` every `case.target` ⊆
-`transitions` keys, exactly one `default`, each `when` parses; for `from: output`
-only the `from` syntax is checked (the value set is data-dependent). Runtime: an
+**Verification.** Compile-time: a `from: verdict` node MUST declare exactly one
+`ai_judgment`/`skill_check` gate (the verdict it routes on), every `case.target` ⊆
+`transitions` keys, exactly one `default`, each `when` parses; a `from: output` node
+MUST declare `output.result` (else `vars` is empty and routing always terminates),
+and only its `from` syntax is checked (the value set is data-dependent). Runtime: an
 allow-list guard refuses a `decide`-chosen outcome ∉ `transitions` keys with
 `CONFIG` (defense in depth).
 
@@ -647,9 +649,10 @@ nodes:
 ```
 
 - **`on_mismatch: retry`** — self-target re-run of the same node with
-  `structuredOutput.reason` in `commentsVar`. Requires a `rework` block (for
-  `maxLoops`/`commentsVar`/workspace/session policy) but **not** the node's own id
-  in `transitions`/`rework.allowedTargets`.
+  `structuredOutput.reason` in `commentsVar`. Requires a `rework` block **with
+  `commentsVar`** (compile-enforced — the error injects there; the block also carries
+  `maxLoops`/workspace/session policy) but **not** the node's own id in
+  `transitions`/`rework.allowedTargets`.
 - **`on_mismatch: <outcome>`** — routes via `transitions[<outcome>]` to another node
   that MUST be ∈ `rework.allowedTargets`; requires a `rework` block.
 - **Absent (default)** — today's M26 hard `CONFIG` fail, unchanged.

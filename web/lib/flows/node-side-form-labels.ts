@@ -1,15 +1,19 @@
 import type { GateKind } from "@/lib/flows/editor/editor-state";
 import type { NodeSideFormLabels } from "@/components/flows/node-form/node-side-form";
-import type { getTranslations } from "next-intl/server";
+
+// A resolved next-intl translator narrowed to the call shape this builder uses
+// (string key → string). Both a real `getTranslations` result and the editor's
+// `flowEditor` translator are assignable, so the live Flow Studio editor and the
+// read-only package-viewer flow detail (M36 T1.4) source identical labels here.
+type Translator = (
+  key: string,
+  values?: Record<string, string | number>,
+) => string;
 
 // Builds the full NodeSideForm label bundle from the `flowEditor` next-intl
-// namespace. Extracted so both the live Flow Studio editor and the read-only
-// package-viewer flow detail (M36 T1.4) source identical labels from one place,
-// without duplicating ~50 key paths. Server-side: takes a resolved `flowEditor`
-// translator.
-export function buildNodeSideFormLabels(
-  te: Awaited<ReturnType<typeof getTranslations>>,
-): NodeSideFormLabels {
+// namespace — the ONE place these ~60 key paths live (the editor tabs builder
+// calls this rather than re-listing them).
+export function buildNodeSideFormLabels(te: Translator): NodeSideFormLabels {
   const gateKind: Record<GateKind, string> = {
     command_check: te("toolbar.gateKind.command_check"),
     skill_check: te("toolbar.gateKind.skill_check"),

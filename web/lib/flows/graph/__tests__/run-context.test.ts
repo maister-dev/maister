@@ -12,14 +12,16 @@ function na(
   stdout: string,
   vars: Record<string, unknown>,
 ): NodeAttempt {
-  return { nodeId, attempt, stdout, vars, exitCode: 0 } as unknown as NodeAttempt;
+  return {
+    nodeId,
+    attempt,
+    stdout,
+    vars,
+    exitCode: 0,
+  } as unknown as NodeAttempt;
 }
 
-function gr(
-  gateId: string,
-  status: string,
-  verdict: unknown,
-): GateResult {
+function gr(gateId: string, status: string, verdict: unknown): GateResult {
   return { gateId, status, verdict } as unknown as GateResult;
 }
 
@@ -88,7 +90,10 @@ describe("buildRunContext (P7, ADR-103)", () => {
       ],
     });
 
-    expect(ctx.gates.q).toEqual({ status: "passed", verdict: { verdict: "pass" } });
+    expect(ctx.gates.q).toEqual({
+      status: "passed",
+      verdict: { verdict: "pass" },
+    });
   });
 
   it("is idempotent — same ledger yields byte-identical JSON", () => {
@@ -106,16 +111,24 @@ describe("buildRunContext (P7, ADR-103)", () => {
     );
   });
 
-  it("never includes a value the caller did not put in vars (secret-safety)", () => {
-    // buildRunContext only reads taskPrompt + vars + gate verdicts — never env.
+  it("projects ONLY ledger + gate + prompt data — no side channel adds a key (secret-safety)", () => {
+    // buildRunContext reads taskPrompt + node vars + gate verdicts and nothing
+    // else (never context.env), so the output is closed over its inputs: exactly
+    // these four top-level sections carrying only the vars the caller passed. A
+    // regression that pulled in another source would add a key or a value here.
     const ctx = buildRunContext({
       taskPrompt: "x",
       nodeAttempts: [na("a", 1, "out", { safe: "ok" })],
       gateResults: [],
     });
-    const serialized = JSON.stringify(ctx);
 
-    expect(serialized).not.toContain("SECRET");
-    expect(serialized).toContain("safe");
+    expect(Object.keys(ctx).sort()).toEqual([
+      "gates",
+      "intent",
+      "nodes",
+      "promoted",
+    ]);
+    expect(ctx.nodes.a.vars).toEqual({ safe: "ok" });
+    expect(ctx.promoted).toEqual({ safe: "ok" });
   });
 });
