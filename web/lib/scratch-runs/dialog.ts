@@ -1,3 +1,4 @@
+import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { WorkbenchLifecycleActionId } from "@/lib/workbench-lifecycle/policy";
 import type { WorkbenchRunStatus } from "@/lib/workbench-lifecycle/policy";
 
@@ -51,6 +52,10 @@ export type HitlOption = {
 export type ScratchDetail = {
   run: {
     id: string;
+    projectId: string | null;
+    projectSlug: string | null;
+    capabilityAgent: AdapterId | null;
+    runnerSnapshot: { capabilityAgent: AdapterId } | null;
     status: WorkbenchRunStatus;
     currentStepId: string | null;
     startedAt: string;

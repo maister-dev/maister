@@ -1,17 +1,20 @@
 "use client";
 
-import type { QuickReply } from "@/lib/scratch-runs/transcript";
+import type { AdapterId } from "@/lib/acp-runners/adapter-support";
+import type { ProjectCapabilityCatalogEntry } from "@/lib/capabilities/project-catalog";
 import type {
   AttachmentKind,
   ComposerAttachment,
   ScratchDialogStatus,
 } from "@/lib/scratch-runs/dialog";
+import type { QuickReply } from "@/lib/scratch-runs/transcript";
 import type { ReactElement } from "react";
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
 
+import { CapabilityComposer } from "@/components/capabilities/capability-composer";
 import { canCompose, canRecover, canSend } from "@/lib/scratch-runs/dialog";
 
 const inputBase =
@@ -21,6 +24,8 @@ export interface ScratchComposerProps {
   status: ScratchDialogStatus;
   pending: boolean;
   quickReplies: QuickReply[];
+  agent?: AdapterId;
+  catalog?: ProjectCapabilityCatalogEntry[];
   // Returns true when the message landed (the composer clears its draft);
   // false keeps the draft so the user can retry without retyping.
   onSend: (payload: {
@@ -31,13 +36,16 @@ export interface ScratchComposerProps {
   onRecover: (prompt: string) => Promise<boolean>;
 }
 
-// The scratch message composer (M35 T3.2): textarea + structured attachments +
-// file upload + quick replies, with Send routed to /recover for a Crashed run.
+// The scratch message composer (M35 T3.2): capability-aware prompt editor +
+// structured attachments + file upload + quick replies, with Send routed to
+// /recover for a Crashed run.
 // Owns its own draft state and clears only on a successful submit.
 export function ScratchComposer({
   status,
   pending,
   quickReplies,
+  agent = "claude",
+  catalog = [],
   onSend,
   onRecover,
 }: ScratchComposerProps): ReactElement {
@@ -47,7 +55,6 @@ export function ScratchComposer({
     ComposerAttachment[]
   >([]);
   const [composerFiles, setComposerFiles] = useState<File[]>([]);
-  const composerRef = useRef<HTMLTextAreaElement>(null);
   const composerFileBytes = useMemo(
     () => composerFiles.reduce((sum, file) => sum + file.size, 0),
     [composerFiles],
@@ -67,7 +74,6 @@ export function ScratchComposer({
 
   function applyQuickReply(value: string): void {
     setContent(value);
-    composerRef.current?.focus();
   }
 
   async function submit(): Promise<void> {
@@ -118,21 +124,23 @@ export function ScratchComposer({
           ))}
         </div>
       ) : null}
-      <textarea
-        ref={composerRef}
-        aria-label={t("composerMessageAria")}
-        className={clsx(inputBase, "min-h-[110px] resize-y")}
-        data-testid="scratch-composer-input"
+      <CapabilityComposer
+        agent={agent}
+        ariaLabel={t("composerMessageAria")}
+        catalog={catalog}
+        className={clsx(inputBase, "min-h-[110px]")}
         disabled={!canCompose(status)}
-        placeholder={
-          canSend(status)
+        labels={{
+          placeholder: canSend(status)
             ? t("messagePlaceholder")
             : canRecover(status)
               ? t("recoverPlaceholder")
-              : t("messageDisabled")
-        }
+              : t("messageDisabled"),
+          unsupportedBadge: t("composerUnsupported"),
+        }}
+        testId="scratch-message-composer"
         value={content}
-        onChange={(event) => setContent(event.target.value)}
+        onChange={setContent}
       />
       {composerAttachments.length > 0 ? (
         <div className="mt-2 flex flex-col gap-2">

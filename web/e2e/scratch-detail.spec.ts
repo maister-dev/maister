@@ -39,10 +39,12 @@ test("scratch detail lands on the conversation with an enabled composer", async 
   await expect(conversation).toContainText("Please tweak the README.");
 
   // WaitingForUser → the composer is primary and enabled.
-  const composer = page.locator('[data-testid="scratch-composer-input"]');
+  const composer = page.locator(
+    '[data-testid="scratch-message-composer"] [data-testid="capability-composer-input"]',
+  );
 
   await expect(composer).toBeVisible();
-  await expect(composer).toBeEnabled();
+  await expect(composer).toBeEditable();
 });
 
 test("scratch inspector toggles and surfaces change size + actions", async ({

@@ -5,6 +5,9 @@ import type {
   ScratchDetail,
   ScratchDialogStatus,
 } from "@/lib/scratch-runs/dialog";
+import type { AdapterId } from "@/lib/acp-runners/adapter-support";
+import type { ProjectCapabilityCatalogEntry } from "@/lib/capabilities/project-catalog";
+import type { RunningLiveCommand } from "@/lib/capabilities/running-catalog";
 import type { ReactElement } from "react";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -22,6 +25,8 @@ import {
   canCompose,
   errorText,
 } from "@/lib/scratch-runs/dialog";
+import { buildRunningCommandCatalog } from "@/lib/capabilities/running-catalog";
+import { getAdapterSupportById } from "@/lib/acp-runners/adapter-support";
 import {
   parseQuickReplies,
   parseScratchMessageContent,
@@ -64,6 +69,10 @@ export function ScratchConversation({
   const [loading, setLoading] = useState(true);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [detailRevision, setDetailRevision] = useState(0);
+  const [commandCatalog, setCommandCatalog] = useState<
+    ProjectCapabilityCatalogEntry[]
+  >([]);
 
   const loadDetail = useCallback(async (): Promise<void> => {
     setLoading(true);
@@ -79,6 +88,7 @@ export function ScratchConversation({
       }
 
       setDetail((await response.json()) as ScratchDetail);
+      setDetailRevision((current) => current + 1);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -89,6 +99,69 @@ export function ScratchConversation({
   useEffect(() => {
     void loadDetail();
   }, [loadDetail]);
+
+  const composerAgent: AdapterId = useMemo(() => {
+    const rawAgent =
+      detail?.run.capabilityAgent ??
+      detail?.run.runnerSnapshot?.capabilityAgent ??
+      "claude";
+
+    return getAdapterSupportById(rawAgent)?.id ?? "claude";
+  }, [
+    detail?.run.capabilityAgent,
+    detail?.run.runnerSnapshot?.capabilityAgent,
+  ]);
+
+  useEffect(() => {
+    const projectSlug = detail?.run.projectSlug;
+
+    if (!projectSlug) {
+      setCommandCatalog([]);
+
+      return;
+    }
+
+    const encodedProjectSlug = encodeURIComponent(projectSlug);
+    const controller = new AbortController();
+
+    async function loadCommandCatalog(): Promise<void> {
+      const [catalogResponse, commandsResponse] = await Promise.all([
+        fetch(
+          `/api/projects/${encodedProjectSlug}/capability-catalog?agent=${encodeURIComponent(composerAgent)}`,
+          { signal: controller.signal },
+        ),
+        fetch(`/api/scratch-runs/${runId}/commands`, {
+          signal: controller.signal,
+        }),
+      ]);
+      const catalogPayload = catalogResponse.ok
+        ? ((await catalogResponse.json()) as {
+            capabilities?: ProjectCapabilityCatalogEntry[];
+          })
+        : { capabilities: [] };
+      const commandsPayload = commandsResponse.ok
+        ? ((await commandsResponse.json()) as {
+            commands?: RunningLiveCommand[];
+          })
+        : { commands: [] };
+
+      setCommandCatalog(
+        buildRunningCommandCatalog(
+          commandsPayload.commands ?? [],
+          catalogPayload.capabilities ?? [],
+          composerAgent,
+        ),
+      );
+    }
+
+    void loadCommandCatalog().catch((err) => {
+      if (controller.signal.aborted) return;
+      setCommandCatalog([]);
+      setError(err instanceof Error ? err.message : String(err));
+    });
+
+    return () => controller.abort();
+  }, [composerAgent, detail?.run.projectSlug, detailRevision, runId]);
 
   useEffect(() => {
     const source = new EventSource(`/api/runs/${runId}/stream`);
@@ -415,6 +488,8 @@ export function ScratchConversation({
       ) : null}
 
       <ScratchComposer
+        agent={composerAgent}
+        catalog={commandCatalog}
         pending={pendingAction === "send"}
         quickReplies={quickReplies}
         status={status}

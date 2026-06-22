@@ -14,6 +14,23 @@ vi.mock("next-intl", () => ({
     `${namespace}.${key}`,
 }));
 
+vi.mock("@/components/capabilities/capability-composer", () => ({
+  CapabilityComposer: (props: {
+    agent: string;
+    catalog: readonly unknown[];
+    disabled?: boolean;
+    testId?: string;
+    value: string;
+  }) =>
+    createElement("div", {
+      "data-agent": props.agent,
+      "data-catalog-count": props.catalog.length,
+      "data-disabled": String(Boolean(props.disabled)),
+      "data-testid": props.testId,
+      "data-value": props.value,
+    }),
+}));
+
 import { ScratchComposer } from "@/components/scratch/scratch-composer";
 
 async function noop(): Promise<boolean> {
@@ -26,6 +43,20 @@ function render(status: ScratchDialogStatus, quickReplies: QuickReply[] = []) {
       status,
       pending: false,
       quickReplies,
+      agent: "codex",
+      catalog: [
+        {
+          kind: "skill",
+          refId: "aif-plan",
+          slug: "aif-plan",
+          displayName: "AIF Plan",
+          description: "Plan",
+          argHint: null,
+          canonicalToken: "@skill:aif-plan",
+          surfaceForm: "$aif-plan",
+          supported: true,
+        },
+      ],
       onSend: noop,
       onRecover: noop,
     }),
@@ -33,22 +64,24 @@ function render(status: ScratchDialogStatus, quickReplies: QuickReply[] = []) {
 }
 
 describe("ScratchComposer", () => {
-  it("shows Send and an enabled textarea for WaitingForUser", () => {
+  it("shows Send and an enabled capability composer for WaitingForUser", () => {
     const html = render("WaitingForUser");
 
-    expect(html).toContain('data-testid="scratch-composer-input"');
+    expect(html).toContain('data-testid="scratch-message-composer"');
+    expect(html).toContain('data-agent="codex"');
+    expect(html).toContain('data-catalog-count="1"');
+    expect(html).toContain('data-disabled="false"');
     expect(html).toContain('data-testid="scratch-composer-send"');
     expect(html).toContain("scratch.send");
-    // The textarea is composable, so it is NOT disabled.
-    expect(html).not.toMatch(/<textarea[^>]*disabled/);
+    expect(html).not.toContain("<textarea");
   });
 
   it("shows Recover for a Crashed run", () => {
     expect(render("Crashed")).toContain("scratch.recover");
   });
 
-  it("disables the textarea when the dialog is not composable", () => {
-    expect(render("Running")).toMatch(/<textarea[^>]*disabled/);
+  it("disables the capability composer when the dialog is not composable", () => {
+    expect(render("Running")).toContain('data-disabled="true"');
   });
 
   it("renders quick replies when present", () => {

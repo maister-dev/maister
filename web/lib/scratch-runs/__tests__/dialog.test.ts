@@ -19,6 +19,10 @@ function detail(over: {
   return {
     run: {
       id: "run-1",
+      projectId: "project-1",
+      projectSlug: "project",
+      capabilityAgent: "claude",
+      runnerSnapshot: { capabilityAgent: "claude" },
       status: over.runStatus ?? "Running",
       currentStepId: null,
       startedAt: "2026-06-16T09:00:00.000Z",
