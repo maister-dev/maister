@@ -132,7 +132,7 @@ export async function POST(
         );
       }
 
-      // FIX A (Codex re-review, ADR-101): a shared writable tree is ONE branch
+      // FIX A (Codex re-review, ADR-102): a shared writable tree is ONE branch
       // settled ONCE by promoteWorkspaceRun's cross-tree finalize, which flips
       // EVERY shared child of `root_run_id` in Review → Done. Every descendant of
       // a tree shares the SAME root_run_id (delegate route), so a token bound to a

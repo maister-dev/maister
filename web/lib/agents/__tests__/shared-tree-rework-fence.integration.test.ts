@@ -1,4 +1,4 @@
-// F1 (ADR-101): the rework path must be FENCED on the shared TREE's
+// F1 (ADR-102): the rework path must be FENCED on the shared TREE's
 // promotion_state. markReworkFromReview is a pure Review→Running status CAS with
 // no promotion_state guard, and reworkChildRun previously only checked the
 // child's status==='Review'. So a shared sibling could re-open during the
@@ -300,7 +300,7 @@ async function setTreePromotionState(
   );
 }
 
-describe("F1 (ADR-101) — rework is fenced on the shared tree promotion_state", () => {
+describe("F1 (ADR-102) — rework is fenced on the shared tree promotion_state", () => {
   it("refuses CONFLICT (no session spawned, child stays Review) while a tree promote is claiming", async () => {
     const agentId = await seedWorkerAgent();
     const root = await insertRoot();

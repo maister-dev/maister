@@ -557,7 +557,7 @@ async function closeTerminalRunAssignments(db: Db): Promise<number> {
   return runIds.length;
 }
 
-// F3 (ADR-101): recover ORPHAN shared trees. A crash between addWorktree (git,
+// F3 (ADR-102): recover ORPHAN shared trees. A crash between addWorktree (git,
 // outside the runs+workspaces tx) and the workspaces insert can leave a shared
 // tree (root_run_id with shared writable children) carrying NO workspaces row,
 // while the deterministic path is on disk. Such a tree is unresolvable for
@@ -693,7 +693,7 @@ export async function runReconcileSweep(
 
   await closeTerminalRunAssignments(db);
 
-  // F3 (ADR-101): recover any orphan shared tree (path on disk, no workspaces
+  // F3 (ADR-102): recover any orphan shared tree (path on disk, no workspaces
   // row) BEFORE classifying — a recovered row makes the tree resolvable for the
   // rest of the sweep + later promote/diff/GC. Best-effort: a failure here must
   // not abort the whole tick.

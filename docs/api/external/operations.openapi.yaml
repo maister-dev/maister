@@ -894,7 +894,7 @@ paths:
         the reviewed child's branch into its target and flips that child `Done`.
         Backs the `run_promote` delegation tool.
 
-        **Shared-tree promote (Implemented — ADR-101).** When `childRunId` is a
+        **Shared-tree promote (Implemented — ADR-102).** When `childRunId` is a
         `workspace_mode='shared'` child, this is a TREE promote, not a per-child
         promote: the operation resolves the shared TREE workspace by the orchestrator
         tree root (`rootRunId`, server-derived) and the
@@ -940,7 +940,7 @@ paths:
         "200":
           description: |
             Merged to the target; the child is now `Done`. For a
-            `workspace_mode='shared'` child (Implemented — ADR-101) the single tree
+            `workspace_mode='shared'` child (Implemented — ADR-102) the single tree
             branch is merged once and ALL shared siblings of the tree are settled
             `Review → Done` in the same transaction; the echoed `childRunId` is the
             one promoted.
@@ -970,7 +970,7 @@ paths:
           description: |
             A `PRECONDITION` (child is not a direct child of the bound
             orchestrator, or not in `Review`, or the token is not run-bound;
-            **shared-tree, Implemented — ADR-101**: the settled-gate is unmet because a
+            **shared-tree, Implemented — ADR-102**: the settled-gate is unmet because a
             shared sibling is still in a writable status, the target is not a shared
             child / has no resolvable tree workspace, or nothing is in `Review`
             because the tree was already promoted) or a merge `CONFLICT` (the child —
@@ -1000,7 +1000,7 @@ paths:
         orchestrator, in the token's project, and currently in `Review`
         (otherwise `PRECONDITION` → 409).
 
-        **(Implemented — ADR-101.)** Reworking a `workspace_mode='shared'` child
+        **(Implemented — ADR-102.)** Reworking a `workspace_mode='shared'` child
         is refused `CONFLICT` → 409 while the tree promote is in progress / done
         (the rework fences on the allocator workspace's `promotion_state`), so a
         rework cannot mutate the shared branch during the tree-promote merge.
@@ -2048,7 +2048,7 @@ components:
             tree). `shared` requires a delegated child (a `rootRunId`); a top-level
             run is refused with `CONFIG`. A `shared` writable tree is ONE branch =
             ONE Review = ONE tree-level promote that settles all shared siblings
-            (Implemented — ADR-101, via `POST /api/v1/ext/runs/promote`); ADR-101
+            (Implemented — ADR-102, via `POST /api/v1/ext/runs/promote`); ADR-102
             supersedes ADR-099 §4's launch gate for shared writable worktrees.
         persistent:
           type: boolean

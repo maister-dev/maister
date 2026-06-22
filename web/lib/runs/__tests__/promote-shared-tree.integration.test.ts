@@ -1,4 +1,4 @@
-// M37 follow-up (ADR-101): tree-promote on a REUSER shared child. A shared
+// M37 follow-up (ADR-102): tree-promote on a REUSER shared child. A shared
 // writable tree is ONE git worktree = ONE branch = ONE cumulative diff owned by
 // the ALLOCATOR child's `workspaces` row; the REUSER children of the same
 // orchestrator tree (root_run_id) carry NO workspaces row of their own. A
@@ -336,7 +336,7 @@ async function runDoneEvents(): Promise<
   return r.rows;
 }
 
-describe("ADR-101 — promoteChildRunForToken resolves the tree workspace for a REUSER shared child", () => {
+describe("ADR-102 — promoteChildRunForToken resolves the tree workspace for a REUSER shared child", () => {
   it("a REUSER shared child (no workspaces row of its own) does NOT dead-end with PRECONDITION 'workspace not found' — the tree workspace is resolved and the merge runs", async () => {
     const root = await seedRoot();
 
@@ -378,7 +378,7 @@ describe("ADR-101 — promoteChildRunForToken resolves the tree workspace for a 
 });
 
 // ---------------------------------------------------------------------------
-// T9 (Phase 2, ADR-101) — promote-time SETTLED-GATE.
+// T9 (Phase 2, ADR-102) — promote-time SETTLED-GATE.
 //
 // A shared tree = ONE branch = ONE diff. A run_promote on ANY shared child must
 // be REFUSED (PRECONDITION) while ANY shared sibling of the tree (same
@@ -392,7 +392,7 @@ describe("ADR-101 — promoteChildRunForToken resolves the tree workspace for a 
 // (run.status !== "Review"); it never inspects siblings, so a tree-promote runs
 // the merge with a Running sibling. The settled-gate is Phase 2.
 // ---------------------------------------------------------------------------
-describe("ADR-101 T9 — promote-time settled-gate (refuse while any shared sibling is writable)", () => {
+describe("ADR-102 T9 — promote-time settled-gate (refuse while any shared sibling is writable)", () => {
   for (const writableStatus of ["Running", "NeedsInput", "WaitingOnChildren"]) {
     it(`refuses PRECONDITION (no merge) while a shared sibling is ${writableStatus}`, async () => {
       const root = await seedRoot();
@@ -466,7 +466,7 @@ describe("ADR-101 T9 — promote-time settled-gate (refuse while any shared sibl
 });
 
 // ---------------------------------------------------------------------------
-// T10 (Phase 2, ADR-101) — idempotent tree-settle (exactly-once).
+// T10 (Phase 2, ADR-102) — idempotent tree-settle (exactly-once).
 //
 // One tree-promote on ANY shared child merges the ONE branch ONCE and flips ALL
 // shared children of the tree (root_run_id) that were in Review → Done in ONE
@@ -480,7 +480,7 @@ describe("ADR-101 T9 — promote-time settled-gate (refuse while any shared sibl
 // runId) → Done and emits ONE run.done. The sibling stays Review; no per-child
 // fan-out emission. The tree-settle is Phase 2.
 // ---------------------------------------------------------------------------
-describe("ADR-101 T10 — idempotent tree-settle (merge once, settle all shared children)", () => {
+describe("ADR-102 T10 — idempotent tree-settle (merge once, settle all shared children)", () => {
   it("(a) one tree-promote merges ONCE and flips ALL shared Review children to Done", async () => {
     const root = await seedRoot();
     const allocator = await seedSharedChild({
@@ -622,7 +622,7 @@ describe("ADR-101 T10 — idempotent tree-settle (merge once, settle all shared 
 });
 
 // ---------------------------------------------------------------------------
-// T11 (Phase 2, ADR-101) — tree merge CONFLICT.
+// T11 (Phase 2, ADR-102) — tree merge CONFLICT.
 //
 // A local_merge tree conflict aborts the WHOLE settle: the promote rejects
 // CONFLICT, ALL shared children STAY Review (none flipped to Done), and the
@@ -635,7 +635,7 @@ describe("ADR-101 T10 — idempotent tree-settle (merge once, settle all shared 
 // rethrows). This test additionally pins that NO SIBLING is flipped — the
 // Phase-2 tree-settle must run AFTER a successful merge, never before.
 // ---------------------------------------------------------------------------
-describe("ADR-101 T11 — tree merge conflict aborts the whole settle (no partial flip)", () => {
+describe("ADR-102 T11 — tree merge conflict aborts the whole settle (no partial flip)", () => {
   it("a local_merge conflict → CONFLICT; all shared children stay Review; workspace not 'done'", async () => {
     const root = await seedRoot();
     const allocator = await seedSharedChild({
@@ -674,7 +674,7 @@ describe("ADR-101 T11 — tree merge conflict aborts the whole settle (no partia
 });
 
 // ---------------------------------------------------------------------------
-// C1 (Phase 2, ADR-101 defense-in-depth) — rework RACES the finalize flip.
+// C1 (Phase 2, ADR-102 defense-in-depth) — rework RACES the finalize flip.
 //
 // The claim-tx settled-gate holds the allocator-workspace lock, but that lock is
 // RELEASED at claim-commit and the merge runs lockless; the cross-tree flip is a
@@ -688,7 +688,7 @@ describe("ADR-101 T11 — tree merge conflict aborts the whole settle (no partia
 // promoting child + allocator settle Done while the reworked sibling is stranded
 // Running on a merged + GC-scheduled branch.
 // ---------------------------------------------------------------------------
-describe("ADR-101 C1 — a sibling reworked during the merge window aborts the settle", () => {
+describe("ADR-102 C1 — a sibling reworked during the merge window aborts the settle", () => {
   it("aborts CONFLICT, leaves all children unsettled (Review/Running), workspace reclaimable (not 'done')", async () => {
     const root = await seedRoot();
     const allocator = await seedSharedChild({
@@ -748,7 +748,7 @@ describe("ADR-101 C1 — a sibling reworked during the merge window aborts the s
 });
 
 // ---------------------------------------------------------------------------
-// FIX B (Codex re-review, ADR-101) — finalize-time FAILURE-terminal re-check for
+// FIX B (Codex re-review, ADR-102) — finalize-time FAILURE-terminal re-check for
 // the UNATTENDED auto-DAG shared-tree promote (launch_mode='auto').
 //
 // The auto-promoter's F2 PRE-check (autoPromoteAsPlanChild) skips a tree with a
@@ -767,7 +767,7 @@ describe("ADR-101 C1 — a sibling reworked during the merge window aborts the s
 // re-check; an Abandoned sibling counts as settled, so the auto promote settles
 // the tree (promoting child + allocator → Done) despite the failed sibling.
 // ---------------------------------------------------------------------------
-describe("ADR-101 FIX B — finalize aborts an unattended auto-promote when a sibling failure-terminalizes in the merge window", () => {
+describe("ADR-102 FIX B — finalize aborts an unattended auto-promote when a sibling failure-terminalizes in the merge window", () => {
   it("(auto path) a sibling Abandoned during the merge window → CONFLICT, no child Done, workspace not 'done', no run.done", async () => {
     const root = await seedRoot();
     const allocator = await seedSharedChild({
@@ -859,7 +859,7 @@ describe("ADR-101 FIX B — finalize aborts an unattended auto-promote when a si
 });
 
 // ---------------------------------------------------------------------------
-// FIX C (Codex adversarial review, ADR-101) — claim-tx PRE-merge failure-terminal
+// FIX C (Codex adversarial review, ADR-102) — claim-tx PRE-merge failure-terminal
 // guard for a NON-human shared-tree promote.
 //
 // The settled-gate (countUnsettledSharedSiblings) treats Failed | Crashed |
@@ -879,7 +879,7 @@ describe("ADR-101 FIX B — finalize aborts an unattended auto-promote when a si
 // RED before the fix: the merge spy is called once and the promote aborts CONFLICT
 // from the finalize FIX B re-check — i.e. the target was already mutated.
 // ---------------------------------------------------------------------------
-describe("ADR-101 FIX C — claim-tx guard refuses a non-human promote (no merge) when a shared sibling is ALREADY failure-terminal", () => {
+describe("ADR-102 FIX C — claim-tx guard refuses a non-human promote (no merge) when a shared sibling is ALREADY failure-terminal", () => {
   for (const failedStatus of ["Failed", "Crashed", "Abandoned"]) {
     it(`(non-human) refuses PRECONDITION and never merges while a shared sibling is already ${failedStatus}`, async () => {
       const root = await seedRoot();

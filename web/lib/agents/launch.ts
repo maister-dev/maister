@@ -574,7 +574,7 @@ export async function launchAgentRun(
     );
   }
 
-  // M37 follow-up (ADR-101): the shared WRITABLE-worktree review/promote model is
+  // M37 follow-up (ADR-102): the shared WRITABLE-worktree review/promote model is
   // now specified — per-tree Review + an orchestrator-driven tree-promote that
   // resolves the tree workspace by (root_run_id, workspace_mode='shared'), merges
   // once, and settles ALL shared siblings Review→Done. The former launch gate is
@@ -665,7 +665,7 @@ export async function launchAgentRun(
   // worktree_path column is UNIQUE; the allocating sibling owns the record).
   // startAgentSession recomputes the shared cwd from workspace_mode + rootRunId.
   let reuseSharedTree = false;
-  // F3 (ADR-101): true ONLY when THIS launch actually ran addWorktree (an
+  // F3 (ADR-102): true ONLY when THIS launch actually ran addWorktree (an
   // allocator). The teardown on a deduped/failed insert must remove only a dir we
   // created — never a reused tree (sibling-owned) NOR an orphan dir we merely
   // claimed (a crashed prior launch's work).
@@ -679,7 +679,7 @@ export async function launchAgentRun(
       branch = `${ctx.project.branchPrefix ?? "maister/"}agents/${rootRunId}`;
       worktreePath = sharedAgentWorktreePath(ctx.project.slug, rootRunId);
 
-      // F3 (ADR-101): the allocator-vs-reuser decision is DB-truth, NOT a bare
+      // F3 (ADR-102): the allocator-vs-reuser decision is DB-truth, NOT a bare
       // filesystem observation. A crash between addWorktree (git, outside the tx)
       // and the workspaces insert leaves an ORPHAN path on disk with no row;
       // trusting listWorktrees there made every later sibling "reuse" the path and
@@ -744,7 +744,7 @@ export async function launchAgentRun(
         }
       }
 
-      // M37 (ADR-101): record the allocator-vs-reuser decision for the shared
+      // M37 (ADR-102): record the allocator-vs-reuser decision for the shared
       // tree. The allocator/claimer owns the single `workspaces` row (UNIQUE
       // worktree_path, inserted with onConflictDoNothing); a reuser child gets none
       // and the tree is resolved by root_run_id at promote.
@@ -848,7 +848,7 @@ export async function launchAgentRun(
 
       // A reused shared tree already has a workspaces row owned by its allocator
       // (worktree_path is UNIQUE), so a reusing sibling inserts none. F3
-      // (ADR-101): the allocator/orphan-claimer insert is onConflictDoNothing on
+      // (ADR-102): the allocator/orphan-claimer insert is onConflictDoNothing on
       // worktree_path so two concurrent allocators/claimers don't 23505 — one
       // inserts, the other no-ops (its run still launches; the tree keeps exactly
       // one row).
@@ -1250,7 +1250,7 @@ export async function finalizeAgentRun(
       .from(runs)
       .where(eq(runs.id, runId));
     const preParentRunId: string | null = preRows[0]?.parentRunId ?? null;
-    // M37 (ADR-101): a shared writable-worktree child finalizes to Review even
+    // M37 (ADR-102): a shared writable-worktree child finalizes to Review even
     // when it owns no `workspaces` row (a reuser child — the allocator owns the
     // UNIQUE worktree_path). The shared tree is one branch = one diff, reviewed and
     // promoted once; a shared writable child is NEVER auto-Done on a clean exit.

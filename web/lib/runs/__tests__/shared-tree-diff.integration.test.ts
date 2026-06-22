@@ -1,4 +1,4 @@
-// T12 (Phase 2, ADR-101): a reviewable diff for a REUSER shared child resolves
+// T12 (Phase 2, ADR-102): a reviewable diff for a REUSER shared child resolves
 // the TREE workspace, not the child's own (absent) workspaces row.
 //
 // A shared writable tree is ONE git worktree = ONE branch = ONE cumulative diff
@@ -226,7 +226,7 @@ async function getDiff(runId: string): Promise<Response> {
   } as never);
 }
 
-describe("ADR-101 T12 — reviewable diff resolves the TREE workspace for a reuser shared child", () => {
+describe("ADR-102 T12 — reviewable diff resolves the TREE workspace for a reuser shared child", () => {
   it("GET /api/runs/[runId]/diff for a reuser shared child resolves the shared tree diff (not 'workspace not found')", async () => {
     const root = await seedRoot();
     const fx = await buildSharedTree(root);

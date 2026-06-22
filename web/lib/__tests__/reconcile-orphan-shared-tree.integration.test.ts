@@ -1,4 +1,4 @@
-// F3 part 2 (ADR-101): reconcile recovery for an ORPHAN shared tree. A crash
+// F3 part 2 (ADR-102): reconcile recovery for an ORPHAN shared tree. A crash
 // between addWorktree (git) and the workspaces insert can leave a shared tree
 // with runs but NO workspaces row, while the deterministic path exists on disk.
 // recoverOrphanSharedTrees re-creates the missing row (owned by the EARLIEST
@@ -151,7 +151,7 @@ async function workspaceRowsForRoot(rootRunId: string): Promise<
   return r.rows;
 }
 
-describe("F3 (ADR-101) — reconcile recovers an orphan shared tree (path on disk, no workspaces row)", () => {
+describe("F3 (ADR-102) — reconcile recovers an orphan shared tree (path on disk, no workspaces row)", () => {
   it("inserts a synthetic workspaces row owned by the EARLIEST shared child when the deterministic path exists on disk", async () => {
     const root = await seedRoot();
     const sharedPath = sharedAgentWorktreePath(projectSlug, root);

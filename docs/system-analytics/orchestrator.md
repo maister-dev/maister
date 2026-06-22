@@ -22,7 +22,7 @@ through ([social-board.md](social-board.md)), the scheduler cap
 ([agents.md](agents.md)), or capability enforcement (materialize-only per
 ADR-041/ADR-043 — [flow-settings.md](flow-settings.md)). The shared-worktree
 tree-level review/promote ownership model (re-enabling `workspace_mode: shared` for
-writable worktrees) is **Implemented — ADR-101**; flow (f) and its
+writable worktrees) is **Implemented — ADR-102**; flow (f) and its
 Expectations/Edge-cases carry that tag.
 
 ## Domain entities
@@ -214,7 +214,7 @@ flowchart TD
     AP -. merge conflict .-> CONF
 ```
 
-### (f) shared-tree review/promote — one tree, one Review, one promote (Implemented — ADR-101)
+### (f) shared-tree review/promote — one tree, one Review, one promote (Implemented — ADR-102)
 
 A `workspace_mode='shared'` writable tree is ONE branch with ONE cumulative diff, so
 every shared writable child finalizes to `Review` (not `Done`) and the WHOLE tree is
@@ -276,7 +276,7 @@ flowchart TD
   `run_rework` (`Review → Running` + resume), while a `launch_mode='auto'` child
   MUST instead be auto-promoted (system actor, `local_merge`) by
   `auto_launch_run_plan`.
-- **(Implemented — ADR-101)** A `workspace_mode='shared'` writable tree MUST be ONE
+- **(Implemented — ADR-102)** A `workspace_mode='shared'` writable tree MUST be ONE
   Review and ONE promote: every shared writable child MUST finalize to `Review`
   (never straight to `Done`); the allocator (first) child's `workspaces` row
   (`worktree_path` UNIQUE) is the tree handle and reuser children get NO row;
@@ -329,7 +329,7 @@ flowchart TD
 - **`workspace_mode: shared` with no `root_run_id`** (a top-level run) →
   `MaisterError("CONFIG")` at launch — a shared tree is keyed by the tree root,
   so only a delegated child can join one (ADR-099).
-- **`workspace_mode: shared` with a writable `worktree`** **(Implemented — ADR-101)** →
+- **`workspace_mode: shared` with a writable `worktree`** **(Implemented — ADR-102)** →
   one tree-level Review + one tree-level promote (NO launch gate, NOT fail-closed):
   every shared writable child finalizes to `Review`; the allocator child's
   `workspaces` row (`worktree_path` UNIQUE) is the tree handle and reuser children
@@ -337,7 +337,7 @@ flowchart TD
   `(root_run_id, workspace_mode='shared')`, merges the tree branch once, and flips
   ALL shared children `Review → Done` in one transaction. Supersedes ADR-099 §4's
   GATED/Phase-2 decision; `workspace_mode: own` is the default and unchanged.
-- **Shared tree-promote with a still-writable sibling** **(Implemented — ADR-101)** →
+- **Shared tree-promote with a still-writable sibling** **(Implemented — ADR-102)** →
   `MaisterError("PRECONDITION")` (409): the promote-time settled re-check refuses
   while ANY shared sibling is in a writable status (the complement of
   `SETTLED_RUN_STATUSES` — `Running | NeedsInput | NeedsInputIdle | HumanWorking |
@@ -345,13 +345,13 @@ flowchart TD
   `PRECONDITION` also covers a promote target that is not a shared child / has no
   resolvable tree workspace, and a re-promote that finds nothing in `Review`
   (already promoted — an idempotent no-op).
-- **Shared tree-promote merge conflict** **(Implemented — ADR-101)** →
+- **Shared tree-promote merge conflict** **(Implemented — ADR-102)** →
   `MaisterError("CONFLICT")` (409): the `local_merge` tree merge conflicts; ALL
   shared children STAY `Review`, no sibling is flipped (the conflict path runs
   BEFORE the tree-settle flip), never auto-resolved — a human resolves, then
   re-promotes (§8).
 - **Shared sibling re-opened (rework) during the tree-promote merge window**
-  **(Implemented — ADR-101)** → `MaisterError("CONFLICT")` (409) REFUSED AT THE
+  **(Implemented — ADR-102)** → `MaisterError("CONFLICT")` (409) REFUSED AT THE
   SOURCE: `reworkChildRun` on a shared writable child opens a tx that locks the
   tree allocator `workspaces` row FOR UPDATE — the SAME row the promote
   claim/finalize locks — and refuses the rework while `promotion_state ∈
@@ -368,7 +368,7 @@ flowchart TD
   the no-status-guard non-shared finalize (both reported success; Codex adversarial
   review).
 - **Shared tree with a failure-terminal sibling (non-human promote)** **(Implemented —
-  ADR-101)** → any NON-human promote is refused BEFORE the merge when a shared sibling
+  ADR-102)** → any NON-human promote is refused BEFORE the merge when a shared sibling
   is in a FAILURE-terminal status (`Failed | Crashed | Abandoned`, the
   `FAILURE_TERMINAL_RUN_STATUSES` set = TERMINAL minus `Done`): the AUTO-promoter
   (`autoPromoteAsPlanChild`) SKIPS the tree (benign log) via its pre-check, and the
@@ -381,7 +381,7 @@ flowchart TD
   (`SETTLED_RUN_STATUSES`, which counts a failure-terminal sibling as settled) is
   UNCHANGED.
 - **Shared-tree allocation is DB-truth + orphan recovery** **(Implemented —
-  ADR-101)** → `launchAgentRun` decides allocator-vs-reuser from the `workspaces`
+  ADR-102)** → `launchAgentRun` decides allocator-vs-reuser from the `workspaces`
   row (`(root_run_id, workspace_mode='shared', agent_workspace='worktree')`), NOT
   from `listWorktrees`: a row ⇒ reuser; no row + path on disk ⇒ ORPHAN-CLAIM (reuse
   the dir, insert the row, `base_commit=null`); no row + no path ⇒ allocator. The
@@ -391,11 +391,11 @@ flowchart TD
   into the reconcile sweep) re-creates the missing row per project (synthetic row
   owned by the earliest shared child, `base_commit=null`) for a tree whose
   deterministic path is on disk.
-- **Shared child diff with no own `workspaces` row** **(Implemented — ADR-101)** → the
+- **Shared child diff with no own `workspaces` row** **(Implemented — ADR-102)** → the
   run-diff route and the review-comments gate-diff source MUST resolve the shared
   TREE workspace by `(root_run_id, workspace_mode='shared')` and render the one
   shared diff — NEVER an empty diff or `PRECONDITION` "workspace not found" (the
-  pre-ADR-101 reuser behavior).
+  pre-ADR-102 reuser behavior).
 - **A run-bound ext token whose orchestrator has TERMINALIZED**
   (`Done`/`Failed`/`Crashed`/`Abandoned`) → `MaisterError("PRECONDITION")` (HTTP
   409) on delegate/plan/collect/cancel/promote/rework/message. Every run-bound
@@ -415,7 +415,7 @@ flowchart TD
   [ADR-099](../decisions.md#adr-099-persistent-swarm-layer-2--addressable-sessions-star-routed-messaging-worktree-modes-per-agent-read-only),
   [ADR-100](../decisions.md#adr-100-delegated-child-review-settle--promoterework)
   (delegated-child `Review` settle + promote/rework, the `run.review` kind),
-  [ADR-101](../decisions.md#adr-101-shared-worktree-tree-level-reviewpromote-ownership)
+  [ADR-102](../decisions.md#adr-102-shared-worktree-tree-level-reviewpromote-ownership)
   (shared-worktree tree-level review/promote: allocator-row handle, per-tree Review,
   settled-gate, idempotent tree-promote settling all siblings — Designed, supersedes
   ADR-099 §4); boundary kept from ADR-041/ADR-043 (materialize-only) and ADR-008
@@ -453,7 +453,7 @@ flowchart TD
   `web/lib/agents/launch.ts` (`finalizeAgentRun` `run.review` emit +
   `reworkChildRun`), `mcp/src/tools.ts`
   (`run_delegate`/`run_plan`/`run_collect`/`run_cancel`/`run_message`/`run_promote`/`run_rework`).
-- **Source (Implemented — ADR-101):** the shared-tree review/promote model threads
+- **Source (Implemented — ADR-102):** the shared-tree review/promote model threads
   through `web/lib/runs/shared-tree.ts` (the extracted resolver/predicate module —
   `resolveSharedTreeWorkspaceForUpdate` by `(root_run_id, workspace_mode='shared')`,
   the failure-terminal predicate), `web/lib/runs/run-status-sets.ts`

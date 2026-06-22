@@ -1,4 +1,4 @@
-// T16 (Phase 2, ADR-101): workspace GC must be SHARED-TREE-aware.
+// T16 (Phase 2, ADR-102): workspace GC must be SHARED-TREE-aware.
 //
 // A shared writable tree is ONE git worktree owned by the ALLOCATOR child's
 // `workspaces` row; the REUSER siblings of the same orchestrator tree
@@ -226,7 +226,7 @@ function makeOpts() {
   };
 }
 
-describe("ADR-101 T16 — workspace GC is shared-tree-aware", () => {
+describe("ADR-102 T16 — workspace GC is shared-tree-aware", () => {
   for (const liveStatus of ["Running", "Review"]) {
     it(`does NOT collect a terminal allocator while a shared sibling is still ${liveStatus}`, async () => {
       const root = await seedRoot();

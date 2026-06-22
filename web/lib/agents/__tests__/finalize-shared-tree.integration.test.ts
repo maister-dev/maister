@@ -1,4 +1,4 @@
-// M37 follow-up (ADR-101): a shared WRITABLE worktree is ONE tree = ONE branch =
+// M37 follow-up (ADR-102): a shared WRITABLE worktree is ONE tree = ONE branch =
 // ONE cumulative diff shared by N children of one orchestrator tree. The FIRST
 // ("allocator") child owns the `workspaces` row (worktree_path is UNIQUE); a
 // "reuser" child gets NO row of its own. Every shared writable child must
@@ -288,7 +288,7 @@ async function reviewEventCount(
   return r.rows[0].n;
 }
 
-describe("ADR-101 — shared writable child finalizes to Review regardless of hasWorkspace", () => {
+describe("ADR-102 — shared writable child finalizes to Review regardless of hasWorkspace", () => {
   it("BOTH the allocator AND the reuser shared child settle Review (not Done) on a clean Done exit, emit run.review(parent), keep acp_session_id", async () => {
     const ids = await seedPackageWithAgents([
       { stem: "coordinator", workspace: "worktree" },

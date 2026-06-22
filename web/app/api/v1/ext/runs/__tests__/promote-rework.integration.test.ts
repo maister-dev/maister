@@ -560,7 +560,7 @@ describe("POST /api/v1/ext/runs/promote", () => {
   });
 });
 
-// FIX A (Codex re-review, ADR-101): a shared writable tree is ONE branch settled
+// FIX A (Codex re-review, ADR-102): a shared writable tree is ONE branch settled
 // ONCE by the TREE-ROOT orchestrator's token. Because every descendant of a tree
 // shares root_run_id=R (delegate route), a token bound to a NESTED coordinator C
 // (≠ R) would, via promoteWorkspaceRun's cross-tree finalize, settle children

@@ -22,7 +22,7 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-// M37 (ADR-101): resolve + lock the shared TREE workspace for a writable shared
+// M37 (ADR-102): resolve + lock the shared TREE workspace for a writable shared
 // child. Only the allocator owns a `workspaces` row (`worktree_path` is UNIQUE,
 // keyed by the tree root); a reuser child has none. Find the allocator's row by
 // joining `runs` on `(root_run_id, workspace_mode='shared', agent_workspace=
@@ -92,7 +92,7 @@ export async function resolveSharedTreeWorkspaceForUpdate(
   return workspace;
 }
 
-// M37 (ADR-101): a READ-only lookup of the shared tree's allocator `workspaces`
+// M37 (ADR-102): a READ-only lookup of the shared tree's allocator `workspaces`
 // row (NO FOR UPDATE). Used by the launch allocator decision (F3): a row means
 // the tree already exists in the DB (genuine reuser), absence means THIS child
 // owns the row (allocator or orphan-claim). Returns null when no row exists.
@@ -116,7 +116,7 @@ export async function findSharedTreeWorkspace(
   return rows[0] ?? null;
 }
 
-// M37 (ADR-101): the settled-gate predicate — count shared siblings of a tree NOT
+// M37 (ADR-102): the settled-gate predicate — count shared siblings of a tree NOT
 // in SETTLED_RUN_STATUSES (terminal + Review), i.e. still in a writable status.
 // Used at BOTH promote-time guards (the claim-tx gate AND the finalize-tx re-check)
 // so the two can never drift.
@@ -139,7 +139,7 @@ export async function countUnsettledSharedSiblings(
   return Number(rows[0]?.c ?? 0);
 }
 
-// M37 (ADR-101) F2: count shared siblings of a tree in a FAILURE-terminal status
+// M37 (ADR-102) F2: count shared siblings of a tree in a FAILURE-terminal status
 // (Failed | Crashed | Abandoned). The auto-promoter uses this to SKIP an
 // unattended tree-merge that would absorb a failed sibling's partial, unreviewed
 // commits — leaving the tree for a human (manual promote stays allowed; a human

@@ -97,7 +97,7 @@ async function autoPromoteAsPlanChild(
     return;
   }
 
-  // F2 (ADR-101, Option B): a shared tree is ONE branch = ONE cumulative diff. A
+  // F2 (ADR-102, Option B): a shared tree is ONE branch = ONE cumulative diff. A
   // failure-terminal shared sibling (Failed|Crashed|Abandoned) IS settled for the
   // writer-safety gate, so the settled-gate does NOT block — but its partial,
   // unreviewed commits are on the branch. An UNATTENDED auto-merge would absorb
@@ -139,7 +139,7 @@ async function autoPromoteAsPlanChild(
       "auto-launch: as-plan child auto-promoted on Review",
     );
   } catch (err) {
-    // T13 (ADR-101): the promote-time settled-gate (T9) refuses a shared-tree
+    // T13 (ADR-102): the promote-time settled-gate (T9) refuses a shared-tree
     // promote with PRECONDITION while ANY shared sibling is still writable. That
     // is the BENIGN "not yet — wait for the last sibling" path: the LAST
     // sibling's run.review drives the single tree-promote. Log it distinctly (a

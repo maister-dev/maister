@@ -460,7 +460,7 @@ async function promoteWorkspaceRun(
   // SELECT … FOR UPDATE row lock serializes concurrent claims: the second waits
   // for the first to commit, then sees a fresh `claiming` and is refused.
   const claim = await db.transaction(async (tx: Db) => {
-    // M37 (ADR-101): load the run FIRST so a shared writable child resolves + locks
+    // M37 (ADR-102): load the run FIRST so a shared writable child resolves + locks
     // the shared TREE workspace by `(root_run_id, workspace_mode='shared')`, not its
     // own (absent) row. `own` / scratch keep the run-id lookup.
     const run = await loadRun(tx, runId);
@@ -490,7 +490,7 @@ async function promoteWorkspaceRun(
 
     await ctx.authorize(run.projectId);
 
-    // T9 (ADR-101): promote-time settled-gate (defense in depth with the
+    // T9 (ADR-102): promote-time settled-gate (defense in depth with the
     // orchestrator_resume wake). A shared tree is ONE branch — refuse to merge a
     // half-built tree while ANY shared sibling of the tree (same root_run_id) is
     // still in a writable status (the complement of SETTLED_RUN_STATUSES). This
@@ -515,7 +515,7 @@ async function promoteWorkspaceRun(
         );
       }
 
-      // F2 (ADR-101) — claim-tx PRE-merge twin of the finalize FIX B failure-terminal
+      // F2 (ADR-102) — claim-tx PRE-merge twin of the finalize FIX B failure-terminal
       // gate (Codex adversarial review). The settled-gate above treats Failed | Crashed
       // | Abandoned as SETTLED, so it does NOT block a tree whose shared sibling reached
       // a failure-terminal status with partial, unreviewed commits on the ONE shared
@@ -794,7 +794,7 @@ async function promoteWorkspaceRun(
       now.getTime() + gcAgeDays() * 86_400_000,
     );
 
-    // M37 (ADR-101): a shared writable tree is ONE branch, reviewed + promoted
+    // M37 (ADR-102): a shared writable tree is ONE branch, reviewed + promoted
     // ONCE. The Done flip is the CROSS-TREE settle: ALL shared children of the tree
     // currently in `Review` flip → Done in THIS one tx (status-scoped, so a sibling
     // reworked back to `Running` is never clobbered). For own/scratch the set is
@@ -808,7 +808,7 @@ async function promoteWorkspaceRun(
       claim.run.workspaceMode === "shared" &&
       claim.run.agentWorkspace === "worktree";
 
-    // C1 (ADR-101 defense-in-depth): the claim-tx settled-gate held the allocator
+    // C1 (ADR-102 defense-in-depth): the claim-tx settled-gate held the allocator
     // workspace lock, but that lock released at claim-commit and the merge ran
     // lockless. Re-verify under THIS finalize lock that no shared sibling left
     // `Review` (e.g. a concurrent run_rework Review→Running) during the merge window
@@ -843,7 +843,7 @@ async function promoteWorkspaceRun(
         return { aborted: true as const };
       }
 
-      // FIX B (ADR-101 F2, defense-in-depth): the C1 re-check above counts only
+      // FIX B (ADR-102 F2, defense-in-depth): the C1 re-check above counts only
       // NON-settled siblings, but Abandoned | Failed | Crashed are settled — so a
       // Review sibling that failure-terminalizes during the lockless merge window
       // would otherwise be absorbed into the tree-settle. This is the under-lock
@@ -1028,7 +1028,7 @@ async function promoteWorkspaceRun(
     };
   });
 
-  // C1 (ADR-101): a shared-tree finalize that detected a sibling re-opening (rework)
+  // C1 (ADR-102): a shared-tree finalize that detected a sibling re-opening (rework)
   // during the merge window reset the claim to reclaimable and aborted the settle —
   // surface CONFLICT. The merge is already in the target; a re-promote re-merges
   // idempotently (git up-to-date) once the sibling re-settles. No artifact for an

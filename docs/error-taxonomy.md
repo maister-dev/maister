@@ -291,7 +291,7 @@ Seventeen codes (M8 added `STEP_CHECKPOINTED`; M9 added `UNAUTHENTICATED`,
 >   ext token whose orchestrator has TERMINALIZED** (`Done`/`Failed`/`Crashed`/
 >   `Abandoned`) on any of delegate/plan/collect/cancel/promote/rework/message
 >   (`resolveActiveBoundRun` fail-closed — a stale token cannot mutate a terminal
->   tree; Codex adversarial review). **(Implemented — ADR-101)** Three shared-tree
+>   tree; Codex adversarial review). **(Implemented — ADR-102)** Three shared-tree
 >   `run_promote` refusals: the promote-time **settled-gate** is not met (a shared
 >   sibling, same `root_run_id`, is still in a writable status — the complement of
 >   `SETTLED_RUN_STATUSES`); the promote target is **not a shared child / has no
@@ -305,13 +305,13 @@ Seventeen codes (M8 added `STEP_CHECKPOINTED`; M9 added `UNAUTHENTICATED`,
 >   gap — refused until [ADR-099](decisions.md#adr-099-persistent-swarm-layer-2--addressable-sessions-star-routed-messaging-worktree-modes-per-agent-read-only) lands). A `workspace_mode: shared`
 >   delegation with a writable worktree is NO LONGER a `CONFIG` launch gate — the
 >   shared-tree review/promote model is specified in
->   [ADR-101](decisions.md#adr-101-shared-worktree-tree-level-reviewpromote-ownership)
+>   [ADR-102](decisions.md#adr-102-shared-worktree-tree-level-reviewpromote-ownership)
 >   (Designed); see the shared-tree promote refusals under `PRECONDITION`/`CONFLICT`
 >   below.
 > - **`CONFLICT` → HTTP 409** — a concurrent orchestrator resume (two child-settle
 >   events racing the same `WaitingOnChildren → Running` wake); a merge conflict
 >   promoting a reviewed child (`run_promote` or as-plan auto-promote, ADR-100) —
->   the child stays in `Review`, never auto-resolved. **(Implemented — ADR-101)** A
+>   the child stays in `Review`, never auto-resolved. **(Implemented — ADR-102)** A
 >   shared-tree `local_merge` conflict on the single tree-promote: ALL shared
 >   children of the tree STAY `Review`, no sibling is flipped (the conflict path
 >   runs BEFORE the cross-tree settle flip), never auto-resolved. A concurrent
@@ -327,9 +327,9 @@ Seventeen codes (M8 added `STEP_CHECKPOINTED`; M9 added `UNAUTHENTICATED`,
 > - **`EXECUTOR_UNAVAILABLE` → HTTP 503** — a child-run spawn or concurrency-cap
 >   failure during delegation (retryable).
 
-> **The shared-worktree tree-level review/promote model (ADR-101) adds NO new
+> **The shared-worktree tree-level review/promote model (ADR-102) adds NO new
 > `MaisterError` code** ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror)
-> closed union; **Implemented — ADR-101**, supersedes ADR-099 §4's launch gate). The
+> closed union; **Implemented — ADR-102**, supersedes ADR-099 §4's launch gate). The
 > single tree-level `run_promote` for a `workspace_mode='shared'` writable tree
 > reuses two existing codes at new call sites (folded into the M37 block above):
 > **`PRECONDITION` → 409** for the promote-time settled-gate, a target that is not a

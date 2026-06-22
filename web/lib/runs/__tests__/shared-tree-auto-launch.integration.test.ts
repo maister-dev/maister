@@ -1,4 +1,4 @@
-// T13 (Phase 2, ADR-101): the auto-promoter treats the settled-gate PRECONDITION
+// T13 (Phase 2, ADR-102): the auto-promoter treats the settled-gate PRECONDITION
 // as a BENIGN "wait for the last sibling", and a rework re-opens the gate.
 //
 // In an as-plan (launch_mode='auto') shared tree, EACH child reaching Review
@@ -265,7 +265,7 @@ async function runStatus(runId: string): Promise<string | null> {
   return r.rows[0]?.status ?? null;
 }
 
-describe("ADR-101 T13 — auto-launch benign settled-gate wait + rework regression", () => {
+describe("ADR-102 T13 — auto-launch benign settled-gate wait + rework regression", () => {
   it("an EARLY run.review (a sibling still writable) makes the auto-promoter SKIP: no merge, child stays Review, no throw", async () => {
     const root = await seedRoot();
 
@@ -376,7 +376,7 @@ describe("ADR-101 T13 — auto-launch benign settled-gate wait + rework regressi
 });
 
 // ---------------------------------------------------------------------------
-// F2 (ADR-101, Option B) — the AUTO-promoter skips a tree with a FAILURE-terminal
+// F2 (ADR-102, Option B) — the AUTO-promoter skips a tree with a FAILURE-terminal
 // shared sibling.
 //
 // SETTLED_RUN_STATUSES includes Failed|Crashed|Abandoned, so the settled-gate
@@ -392,7 +392,7 @@ describe("ADR-101 T13 — auto-launch benign settled-gate wait + rework regressi
 // Review sibling's run.review drives a merge (promoteLocalMerge called) even
 // though a sibling Failed.
 // ---------------------------------------------------------------------------
-describe("F2 (ADR-101) — auto-promote skips a tree with a failure-terminal sibling; manual stays allowed", () => {
+describe("F2 (ADR-102) — auto-promote skips a tree with a failure-terminal sibling; manual stays allowed", () => {
   it("a Failed shared sibling makes the auto-promoter SKIP: no merge, the Review child stays Review, no throw", async () => {
     const root = await seedRoot();
 

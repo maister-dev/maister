@@ -30,7 +30,7 @@ export function isSettledRunStatus(status: string): boolean {
   return (SETTLED_RUN_STATUSES as readonly string[]).includes(status);
 }
 
-// M37 (ADR-101) F2: the FAILURE-terminal statuses — TERMINAL minus `Done`. A
+// M37 (ADR-102) F2: the FAILURE-terminal statuses — TERMINAL minus `Done`. A
 // shared sibling in any of these reached a non-success end with potentially
 // partial, unreviewed work on the shared branch. The auto-promoter SKIPS a tree
 // containing one (an unattended merge would absorb that work); a human manual

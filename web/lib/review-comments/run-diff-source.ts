@@ -66,7 +66,7 @@ export function reviewCommentScopeOrDefault(
   throw new MaisterError("CONFIG", `unsupported review-comment scope: ${raw}`);
 }
 
-// M37 (ADR-101): resolve the shared TREE workspace for a writable shared child
+// M37 (ADR-102): resolve the shared TREE workspace for a writable shared child
 // (READ path). A shared writable tree is ONE git worktree owned by the ALLOCATOR
 // child's `workspaces` row; a REUSER child of the same tree (`root_run_id`)
 // carries NO row of its own. Find the allocator's row by joining `runs` on

@@ -355,7 +355,7 @@ describe("M37 Phase 10 — worktree allocation modes via launchAgentRun", () => 
     expect(trees.filter((w) => w.path === sharedPath)).toHaveLength(1);
   }, 60_000);
 
-  // F3 (ADR-101): the allocator decision is DB-truth, not a bare filesystem
+  // F3 (ADR-102): the allocator decision is DB-truth, not a bare filesystem
   // observation. A crash between addWorktree (git, outside the tx) and the
   // workspaces insert leaves an ORPHAN path on disk with NO workspaces row. The
   // old code (reuseSharedTree = listWorktrees().some(path)) saw that path and set

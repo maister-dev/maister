@@ -127,7 +127,7 @@
 | [ADR-099](#adr-099-persistent-swarm-layer-2--addressable-sessions-star-routed-messaging-worktree-modes-per-agent-read-only) | Persistent swarm Layer 2 — addressable sessions, star-routed messaging, worktree modes, per-agent read-only | Accepted | 2026-06-20 |
 | [ADR-100](#adr-100-delegated-child-review-settle--promoterework) | Delegated-child Review settle + promote/rework | Accepted | 2026-06-20 |
 | [ADR-101](#adr-101-cost-budget-governance--budget-execution-policy-axis-token-metered-warn-escalate-terminate-ladder-fail-open) | Cost-budget governance — budget execution-policy axis, token-metered, warn-escalate-terminate ladder, fail-open | Accepted | 2026-06-22 |
-| [ADR-101](#adr-101-shared-worktree-tree-level-reviewpromote-ownership) | Shared-worktree tree-level review/promote ownership | Accepted | 2026-06-21 |
+| [ADR-102](#adr-102-shared-worktree-tree-level-reviewpromote-ownership) | Shared-worktree tree-level review/promote ownership | Accepted | 2026-06-21 |
 
 ---
 
@@ -7544,7 +7544,7 @@ default 3), so a long-lived coordinator must not hold a scheduler slot while blo
 ### ADR-099: Persistent swarm Layer 2 — addressable sessions, star-routed messaging, worktree modes, per-agent read-only
 
 **Date:** 2026-06-20
-**Status:** Accepted — §4's shared writable-worktree GATE superseded by [ADR-101](#adr-101-shared-worktree-tree-level-reviewpromote-ownership)
+**Status:** Accepted — §4's shared writable-worktree GATE superseded by [ADR-102](#adr-102-shared-worktree-tree-level-reviewpromote-ownership)
 **Context:** ADR-098 ships the orchestrator foundation (run-tree + delegation +
 task-DAG + wait/resume). Layer 2 turns ephemeral child runs into a coordinated,
 addressable **swarm**: a child you can re-message over time, inter-agent results
@@ -7756,7 +7756,7 @@ is `runs.status` (escalate/terminate) + `runs.budget_state.notified[scope]`
 
 ---
 
-### ADR-101: Shared-worktree tree-level review/promote ownership
+### ADR-102: Shared-worktree tree-level review/promote ownership
 
 **Date:** 2026-06-21
 **Status:** Accepted
@@ -7925,7 +7925,7 @@ it; re-reading would turn a concurrent-promote loser's `CONFLICT` into `PRECONDI
   `skipped + WARN + TODO(M12)`, but the executor shipped with M12 (`gates-exec.ts` checks
   `inputArtifacts` currency). The M11a-era diagram branch should be redrawn to the implemented
   dispatch when that file is next reworked.
-- **Missing Index rows for ADR-098/099/100 (filed 2026-06-22).** The M37 merge added the
-  ADR-098/099/100 bodies but not their rows in the `## Index` table (which jumps 097 → 101 after
-  the ADR-101 row was added). Backfill the three rows with correct anchor slugs when decisions.md
-  is next edited; ADR-101 was placed without backfilling to stay surgical (docs R9).
+- **Missing Index rows for ADR-098/099/100 (filed 2026-06-22, RESOLVED 2026-06-22).** The M37 merge
+  added the ADR-098/099/100 bodies but not their `## Index` rows; the shared-worktree branch
+  (ADR-102) backfilled them during its rebase onto the cost-budget-merged main — the Index now lists
+  097 → 098 → 099 → 100 → 101 → 102 with correct anchor slugs.

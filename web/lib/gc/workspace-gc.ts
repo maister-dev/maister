@@ -141,7 +141,7 @@ async function runWithConcurrency<T>(
 async function loadCandidates(db: Db, now: Date): Promise<CandidateRow[]> {
   const endedCutoff = new Date(now.getTime() - gcAgeDays() * 86_400_000);
 
-  // T16 (ADR-101): a shared writable tree is ONE worktree owned by the
+  // T16 (ADR-102): a shared writable tree is ONE worktree owned by the
   // ALLOCATOR child's `workspaces` row; N reuser siblings of the same
   // orchestrator tree (root_run_id) write into it but own no row. The owning
   // run terminating does NOT make the worktree collectable while a sibling is
