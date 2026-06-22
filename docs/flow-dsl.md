@@ -654,9 +654,11 @@ nodes:
   that MUST be ∈ `rework.allowedTargets`; requires a `rework` block.
 - **Absent (default)** — today's M26 hard `CONFIG` fail, unchanged.
 
-`maxLoops` exhaustion behaves like human-rework exhaustion (the run's execution
-policy: `fail` / `escalate` / `ship_with_warning`). Declaring `on_mismatch` (like
-`decide`) requires `compat.engine_min >= 1.7.0`.
+`maxLoops` exhaustion **fails closed**: an always-malformed node halts at
+`maxLoops + 1` attempts with a `Failed` run (`CONFIG`, via the loop-top
+`rework.maxLoops` backstop). The escalate/ship execution-policy arms are NOT applied
+to malformed-output exhaustion — shipping invalid structured output is unsafe.
+Declaring `on_mismatch` (like `decide`) requires `compat.engine_min >= 1.7.0`.
 
 ## Rework `session_policy` (M30 — Implemented)
 

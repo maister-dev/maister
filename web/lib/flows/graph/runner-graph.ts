@@ -2511,6 +2511,84 @@ export async function runGraph(
       });
 
       if (!structuredOutput.ok) {
+        // M38 (ADR-103): engine-initiated rework on malformed structured output.
+        // `on_mismatch: retry` re-runs THIS node (self-target); any other value
+        // routes via transitions[onMismatch] to a rework target (∈
+        // rework.allowedTargets, compile-enforced). The validation-error text is
+        // injected into the node's commentsVar so the next attempt's prompt shows
+        // what to fix. Reuses the human-rework write sequence (markNodeReworked →
+        // session-policy → markDownstreamStale → pendingInjectedVars), bounded by
+        // the loop-top rework.maxLoops backstop — an infinite-mismatch node halts
+        // at maxLoops (CONFIG). Default-absent on_mismatch → today's hard CONFIG.
+        const onMismatch = node.output?.result?.on_mismatch;
+        const reworkTarget =
+          onMismatch === undefined
+            ? undefined
+            : onMismatch === "retry"
+              ? node.id
+              : node.transitions[onMismatch];
+
+        if (
+          onMismatch !== undefined &&
+          node.rework !== undefined &&
+          reworkTarget !== undefined
+        ) {
+          await markNodeReworked(
+            nodeAttemptId,
+            { decision: onMismatch, workspacePolicy: "keep" },
+            db,
+          );
+
+          const targetDef =
+            graph.nodes.get(reworkTarget)?.source.kind === "node"
+              ? (
+                  graph.nodes.get(reworkTarget)?.source as {
+                    node: { session_policy?: SessionPolicy };
+                  }
+                ).node
+              : undefined;
+          const resolved = resolveSessionPolicy({
+            reworkPolicy: node.rework.session_policy,
+            nodePolicy: targetDef?.session_policy,
+            flowDefault: (
+              loaded.manifest as {
+                defaults?: { session_policy?: SessionPolicy };
+              }
+            ).defaults?.session_policy,
+          });
+
+          pendingSessionPolicy = {
+            nodeId: reworkTarget,
+            policy: resolved.policy,
+          };
+
+          const downstream = downstreamOf(graph, reworkTarget);
+
+          if (downstream.length > 0) {
+            await markDownstreamStale(runId, downstream, db);
+          }
+
+          const commentsVar = node.rework.commentsVar;
+
+          if (commentsVar) {
+            pendingInjectedVars = { [commentsVar]: structuredOutput.reason };
+          }
+
+          log2.debug(
+            {
+              nodeId: node.id,
+              reason: structuredOutput.reason,
+              on_mismatch: onMismatch,
+              target: reworkTarget,
+              attempt: nodeAttemptCount + 1,
+            },
+            "[on_mismatch] engine-initiated rework",
+          );
+          await safeProject();
+          currentNodeId = reworkTarget;
+          continue;
+        }
+
         failed = true;
         runErrorCode = "CONFIG";
         log2.warn(

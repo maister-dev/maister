@@ -404,8 +404,10 @@ same order, run stays `Running`, identical recovery profile. A crash between `ma
   `rework.maxLoops`.
 - A node WITHOUT `on_mismatch` MUST still `CONFIG`-fail on structured-output validation failure
   (M26 regression).
-- `on_mismatch` `maxLoops` exhaustion MUST behave like human-rework exhaustion (execution-policy
-  `fail`/`escalate`/`ship_with_warning`).
+- `on_mismatch` `maxLoops` exhaustion MUST halt the run with `CONFIG` via the loop-top `rework.maxLoops`
+  backstop (initial visit + `maxLoops` reworks = `maxLoops + 1` attempts, then `CONFIG`). It **fails
+  closed** — the escalate/ship execution-policy arms are deliberately NOT applied to malformed-output
+  exhaustion, because shipping invalid structured output is unsafe.
 - A manifest declaring `decide` or `on_mismatch` without `compat.engine_min >= 1.7.0` MUST be rejected
   (`CONFIG`); a manifest declaring neither MUST stay valid at its pinned floor.
 - M38 MUST add no migration, no HTTP route, no `runs.status`/enum value, no new `MaisterError` code, no
@@ -422,7 +424,8 @@ same order, run stays `Running`, identical recovery profile. A crash between `ma
 - AC17 — A `decide` outcome ∉ transitions keys → runtime `CONFIG`; a compile-time producible outcome ∉
   transitions keys (verdict cases) → load `CONFIG`.
 - AC18 — `on_mismatch: retry` on a malformed-output node re-runs the same node with the validation error
-  in `commentsVar`, bounded by `maxLoops`; exhaustion applies the execution policy.
+  in `commentsVar`, bounded by `maxLoops`; an always-malformed node halts at `maxLoops + 1` attempts with
+  a `Failed` run (`CONFIG`).
 - AC19 — `on_mismatch: <outcome>` routes to the redirect target (∈ `allowedTargets`); a node without
   `on_mismatch` still `CONFIG`-fails (regression).
 - AC20 — A flow declaring `decide`/`on_mismatch` without `compat.engine_min >= 1.7.0` is rejected

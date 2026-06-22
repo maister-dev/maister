@@ -261,10 +261,12 @@ validation-error text (`structuredOutput.reason`) injected via `commentsVar`.
 `on_mismatch: retry` re-targets the **same** node (self re-run, no own-id in
 `transitions`/`allowedTargets` needed); `on_mismatch: <outcome>` routes via
 `transitions[<outcome>]` (∈ `rework.allowedTargets`). Absent → today's M26 hard
-`CONFIG` fail. Exhaustion follows the execution policy exactly like human-rework
-exhaustion. **Crash-window parity:** the write sequence is unchanged from
-human-rework, so a crash between `markNodeReworked` and `markDownstreamStale` leaves
-the same recoverable state.
+`CONFIG` fail. Exhaustion **fails closed**: an always-malformed node halts at
+`maxLoops + 1` attempts with a `Failed` run (`CONFIG`) via the loop-top
+`rework.maxLoops` backstop — the escalate/ship execution-policy arms are NOT applied
+(shipping invalid structured output is unsafe). **Crash-window parity:** the write
+sequence is unchanged from human-rework, so a crash between `markNodeReworked` and
+`markDownstreamStale` leaves the same recoverable state.
 
 **Engine floor.** A flow declaring `decide` or `on_mismatch` requires
 `compat.engine_min >= 1.7.0` (`MAISTER_ENGINE_VERSION` `1.6.0 → 1.7.0`); flows
