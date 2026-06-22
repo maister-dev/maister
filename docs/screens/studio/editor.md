@@ -15,7 +15,9 @@
   `web/components/flows/flow-graph-editor.tsx`,
   `web/components/flows/node-form/node-side-form.tsx`,
   `web/components/board/flow-graph-view.tsx` (shared node body),
-  `web/lib/flows/node-visuals.ts`.
+  `web/lib/flows/node-visuals.ts`,
+  `web/lib/flows/editor/node-form.ts` (`validateDecideDraft`),
+  `web/lib/flows/edge-style.ts` (outcome edge roles).
 
 ## JTBD
 
@@ -63,8 +65,9 @@ collapsible app rail ([`../chrome/left-rail.md`](../chrome/left-rail.md)):
    chip), named-outcome handles, dashed amber rework edges, `<MiniMap>` +
    `<Controls>`. Drag persists `presentation` x/y (ADR-064).
 3. **Right properties panel (collapsible, ~320–360 px)** — `NodeSideForm` grouped
-   under **Identity · Behavior · Runner · Gates · Transitions · Presentation** +
-   `EditorValidationSummary`. Nothing selected → empty hint.
+   under **Identity · Behavior · Runner · Gates · Routing · Transitions ·
+   Presentation** + `EditorValidationSummary`. Nothing selected → empty hint. The
+   **Routing** group is the M38 `decide` sub-panel (below).
 4. **Drawers (overlay)** — `[YAML]` (CodeEditor), `[Diff]` (FlowDraftDiffText),
    `[Files]` (the existing `PackageFilesEditor`, re-homed not redesigned — Phase C
    redesigns it). The canvas stays mounted while a drawer is open.
@@ -78,6 +81,34 @@ scheme (icon + hue → `--cv-*` canvas-palette token) lives in
 icon shape is the primary type signal; the status chip (run/preview only) composes
 with it. Blocking gates render a solid chip, advisory an outline; rework /
 back-edges render dashed + amber.
+
+### Dynamic routing — `decide` sub-panel (M38 — Implemented)
+
+The **Routing** group in the properties panel edits the node's `decide` table
+(ADR-103). It is offered when the node can produce a routable signal — it declares
+`output.result` **or** carries a verdict-producing gate (`ai_judgment`/`skill_check`).
+
+- **Source select** — `none` (plain routing) · `output` · `verdict`.
+  - `output` reveals a **nested dot-path** text field (e.g. `output.triage.outcome`).
+  - `verdict` reveals the **cases table**.
+- **Cases table** (verdict only) — an ordered, add/remove list of rows, each a
+  `when` predicate (`<field> <op> <number>`, e.g. `confidence >= 0.8`) → **target
+  outcome**; plus exactly one **default → target** row. Rows mirror the transitions
+  table affordances (icon add/remove, danger-toned remove glyph per the
+  `web/CLAUDE.md` UI-affordance conventions).
+- **`on_mismatch` control** — offered when the node declares `output.result`:
+  `none` (hard `CONFIG`-fail) · `retry` (self re-run) · a transition outcome →
+  target. Inline help notes `retry`/`<outcome>` requires a `rework` block.
+- **Validation** — `validateDecideDraft` surfaces issues (bad dot-path, missing
+  default, duplicate default, target ∉ transitions, `on_mismatch` without `rework`)
+  in `EditorValidationSummary`, mapped to the node id.
+
+**Canvas rendering.** A node with **no** `decide` (plain routing) renders its single
+`success` edge as today. A node **with** `decide` renders a compact **decision table
+glyph** on the card and **outcome-labeled edges** — one labeled edge per producible
+outcome (the verdict cases/default targets, or the declared `output` transition
+keys), styled via `edge-style.ts` (success/forward green-gray, rework amber-dashed).
+The read-only `FlowGraphView` twin inherits the same outcome-labeled edges.
 
 ## States
 
@@ -115,14 +146,17 @@ Behavior SSOT: [`../../system-analytics/flow-studio.md`](../../system-analytics/
 ## i18n
 
 `flowEditor` (top-bar labels, drawer labels, rail toggle, node/gate visual
-labels, the existing node-form / toolbar / validation keys), `flows` (page header
-+ save hint). EN + RU parity required.
+labels, the existing node-form / toolbar / validation keys, plus the M38
+`flowEditor.nodeForm.decide*` routing-panel keys), `flows` (page header + save
+hint). EN + RU parity required.
 
 ## Linked artifacts
 
 - ADRs: [#adr-064](../../decisions.md#adr-064) (authored `presentation` layout),
   [#adr-092](../../decisions.md#adr-092) (unified Studio + editable-local-package
-  direction).
+  direction),
+  [#adr-103](../../decisions.md#adr-103-output-driven-dynamic-routing-decide--onmismatch-rework--engine-170)
+  (M38 `decide` routing panel + outcome-labeled edges).
 - Spec: [`../../../.ai-factory/specs/feature-flow-studio-editor.md`](../../../.ai-factory/specs/feature-flow-studio-editor.md).
 - Behavior: [`../../system-analytics/flow-studio.md`](../../system-analytics/flow-studio.md).
 - Area: [`README.md`](README.md).

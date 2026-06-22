@@ -548,6 +548,116 @@ orchestrator node debuts at `1.6.0`, the new engine floor). Flows without an
 > deferred policy layer lands — maister enforces read-only-vs-full only, so
 > path-scope ships `instructed`-only **(Phase 2)**.
 
+## Node `decide` dynamic routing (M38 — Implemented)
+
+**(M38 — Implemented, [ADR-103](decisions.md#adr-103-output-driven-dynamic-routing-decide--onmismatch-rework--engine-170).)**
+By default a non-`human` node finishes with the outcome `"success"` and follows
+`transitions.success`. A node-level **`decide`** block lets it instead route on
+**its own structured output** (`from: output.<dot.path>`) or on a gate/judge
+**verdict** (`from: verdict`). When `decide` is absent, routing is byte-identical
+to today (action → `"success"`; `human` → its chosen decision).
+
+```yaml
+# Route on the node's own validated structured output (nested dot-path).
+nodes:
+  - id: triage
+    type: ai_coding
+    action: { prompt: "Classify {{ task.prompt }}; end with a maister:output block." }
+    output:
+      result: { schema: ./schemas/triage.json }   # must declare output.result
+    decide:
+      from: output.triage.outcome                  # nested path into the validated vars
+    transitions:                                   # every PRODUCIBLE outcome needs a target
+      bug: fix
+      feature: design
+      question: answer
+
+  # Route on a verdict-producing gate (ai_judgment / skill_check).
+  - id: review
+    type: judge
+    action: { prompt: "Judge the diff. Emit { verdict, confidence }." }
+    pre_finish:
+      gates:
+        - { id: q, kind: ai_judgment, mode: blocking }
+    decide:
+      from: verdict
+      cases:
+        - { when: "confidence >= 0.8", target: approve }   # one predicate per case
+        - { when: "confidence < 0.4",  target: rework }
+        - { default: true,             target: human }     # EXACTLY ONE default
+    transitions:
+      approve: promote
+      rework: implement
+      human: gate
+    rework:
+      allowedTargets: [implement]
+      workspacePolicies: [keep]
+      maxLoops: 3
+```
+
+- **`from`** — `verdict` **or** `output.<dot.path>` (`^output\.<seg>(\.<seg>)*$`,
+  `seg = [A-Za-z_][A-Za-z0-9_]*`). Any other value is refused at load (`CONFIG`).
+- **`from: output.<path>`** — outcome = `String(getPath(vars, <path>))` resolved by
+  a safe nested getter (missing → no transition → terminal/Review, never a throw).
+  Works on any node declaring `output.result` (`ai_coding | cli | check | judge`).
+- **`from: verdict`** — outcome = the first `cases` entry whose `when` matches the
+  verdict object (`verdict`, `confidence`, nested fields), else the `default`.
+  Works on any node with a verdict-producing gate. The **engine** makes that gate
+  **routing-input** (it no longer hard-fails the node) — **no `mode: advisory`
+  needed**. A `confidence_min`-only node (no `decide`) keeps today's blocking
+  behavior; it is also expressible as a 2-case `decide:{from:verdict}` (sugar).
+
+**`when` grammar v1.** `"<field> <op> <number>"`, ops `>= > <= < == !=`, `<field>` a
+nested dot-path (e.g. `verdict.confidence`). One predicate per case; AND/OR compound
+is future headroom, not v1.
+
+**Verification.** Compile-time: for `from: verdict` every `case.target` ⊆
+`transitions` keys, exactly one `default`, each `when` parses; for `from: output`
+only the `from` syntax is checked (the value set is data-dependent). Runtime: an
+allow-list guard refuses a `decide`-chosen outcome ∉ `transitions` keys with
+`CONFIG` (defense in depth).
+
+**Engine floor.** A flow declaring `decide` requires `compat.engine_min >= 1.7.0`,
+else the manifest is refused at load (`CONFIG`); `MAISTER_ENGINE_VERSION` bumps
+`1.6.0 → 1.7.0`. Flows without `decide` (and without `on_mismatch`) stay valid at
+any `engine_min`.
+
+## `output.result.on_mismatch` malformed-output rework (M38 — Implemented)
+
+**(M38 — Implemented, [ADR-103](decisions.md#adr-103-output-driven-dynamic-routing-decide--onmismatch-rework--engine-170).)**
+When a node's structured output fails validation (M26 P1), the default is a hard
+`CONFIG` fail. `output.result.on_mismatch` opts the node into an **engine-initiated
+rework loop** instead — bounded by `rework.maxLoops`, with the validation-error text
+injected into the node's `commentsVar` so the agent's next attempt sees what to fix.
+
+```yaml
+nodes:
+  - id: extract
+    type: ai_coding
+    action: { prompt: "Extract fields. {{ fix_notes }}" }
+    output:
+      result:
+        schema: ./schemas/extract.json
+        on_mismatch: retry          # reserved literal = re-run THIS node with the error fed back
+    rework:
+      allowedTargets: [extract]      # not required for `retry`, but `rework` block IS
+      workspacePolicies: [keep]
+      maxLoops: 2
+      commentsVar: fix_notes
+```
+
+- **`on_mismatch: retry`** — self-target re-run of the same node with
+  `structuredOutput.reason` in `commentsVar`. Requires a `rework` block (for
+  `maxLoops`/`commentsVar`/workspace/session policy) but **not** the node's own id
+  in `transitions`/`rework.allowedTargets`.
+- **`on_mismatch: <outcome>`** — routes via `transitions[<outcome>]` to another node
+  that MUST be ∈ `rework.allowedTargets`; requires a `rework` block.
+- **Absent (default)** — today's M26 hard `CONFIG` fail, unchanged.
+
+`maxLoops` exhaustion behaves like human-rework exhaustion (the run's execution
+policy: `fail` / `escalate` / `ship_with_warning`). Declaring `on_mismatch` (like
+`decide`) requires `compat.engine_min >= 1.7.0`.
+
 ## Rework `session_policy` (M30 — Implemented)
 
 **(M30 — Implemented, [ADR-081](decisions.md#adr-081-rework-session-policy-with-resume-by-default).)**

@@ -128,6 +128,7 @@
 | [ADR-100](#adr-100-delegated-child-review-settle--promoterework) | Delegated-child Review settle + promote/rework | Accepted | 2026-06-20 |
 | [ADR-101](#adr-101-cost-budget-governance--budget-execution-policy-axis-token-metered-warn-escalate-terminate-ladder-fail-open) | Cost-budget governance — budget execution-policy axis, token-metered, warn-escalate-terminate ladder, fail-open | Accepted | 2026-06-22 |
 | [ADR-102](#adr-102-shared-worktree-tree-level-reviewpromote-ownership) | Shared-worktree tree-level review/promote ownership | Accepted | 2026-06-21 |
+| [ADR-103](#adr-103-output-driven-dynamic-routing-decide--onmismatch-rework--engine-170) | Output-driven dynamic routing (`decide`) + `on_mismatch` rework + engine 1.7.0 | Accepted | 2026-06-22 |
 
 ---
 
@@ -7874,6 +7875,139 @@ it; re-reading would turn a concurrent-promote loser's `CONFLICT` into `PRECONDI
 - **A new `MaisterError` code for the settled-gate refusal:** rejected — ADR-008 is a
   closed union; the settled-gate and the "nothing in `Review`" refusals reuse
   `PRECONDITION`, the merge conflict reuses `CONFLICT`.
+
+---
+
+### ADR-103: Output-driven dynamic routing (`decide`) + `on_mismatch` rework + engine 1.7.0
+
+**Date:** 2026-06-22
+**Status:** Accepted
+**Context:** M26 (ADR-063) shipped P1 — a graph node may emit a schema-validated
+structured result into `node_attempts.vars` — but the engine still routes every
+non-`human` node on the hardcoded outcome `"success"` (`runner-graph.ts`, the
+single outcome site), so a node cannot branch on *its own* output or on a
+gate/judge **verdict**. Two consequences fall out: (1) a flow that wants
+triage/classification routing must encode it as separate human-decision nodes or
+as N parallel flows; and (2) a node whose structured output fails validation
+hard-fails the run with `CONFIG` — there is no in-flow "the output was malformed,
+try again with the error" loop, even though the rework machinery (feedback via
+`commentsVar`, `maxLoops` bound, workspace/session policy) already exists for
+human-driven rework. M26 also left **P7** (the `<worktree>/.maister/run.json`
+run-context blackboard) **Designed but unbuilt** — `buildRunContext` does not
+exist anywhere in `web/`. This ADR adds output/verdict-driven dynamic routing
+(P4), an opt-in malformed-output rework loop, and lands P7, reusing the existing
+transition + rework + ledger machinery with **no DB migration** and **no new
+`MaisterError` code** (ADR-008 closed union — every new refusal reuses `CONFIG`).
+
+**Decision:**
+1. **`decide` is a node-level routing table.** A node may declare
+   `decide: { from, cases?, default? }`. `from` is either `verdict` (route on the
+   node's verdict-producing gate — `ai_judgment | skill_check`) or
+   `output.<dot.path>` (route on a nested path into the node's validated
+   structured output — M26's `object`-with-`fields` grammar, e.g.
+   `output.triage.outcome`). When `node.decide` is present it **replaces** the
+   hardcoded `"success"` at the single outcome site; when absent the outcome is
+   byte-identical to today (action → `"success"`, `human` → `result.decision`).
+   `decide` works on **any** node that declares `output.result`
+   (`ai_coding | cli | check | judge`) for `from: output`, or any node with a
+   verdict-producing gate for `from: verdict` — NOT judge-only.
+2. **`from: output.<path>`** resolves the outcome to the value at the `vars`
+   dot-path via a shared safe getter `getPath(obj, dotpath)` (missing →
+   `undefined`, never throws), coerced to string for the transition key. A
+   missing/`undefined` value yields no transition (terminal/Review), surfaced by
+   the runtime allow-list guard, never a thrown getter.
+3. **`from: verdict` makes the verdict gate routing-input, engine-owned.** Today a
+   blocking verdict gate `markNodeFailed`s + `break`s *before* the outcome site,
+   so the verdict never reaches routing. When `node.decide.from === "verdict"` the
+   **engine itself** treats that gate as routing-input (not a hard-fail) — **no
+   author-declared `mode: advisory` is required** (keeps the YAML clean). The
+   gate's `calibrateVerdict` result is surfaced out of gate execution and the
+   `decide.cases` are evaluated against the verdict object (`verdict`,
+   `confidence`, nested fields via `getPath`): first `when`-matching case wins,
+   else the single `default`. `confidence_min` **without** `decide` keeps today's
+   blocking behavior; it is also expressible as a 2-case `decide:{from:verdict}`
+   (sugar). This is the highest-risk seam and is frozen in the M26 spec.
+4. **`when` grammar v1 = one predicate + exactly one `default`.** A case is
+   `{ when: "<field> <op> <number>", target }` or `{ default: true, target }`.
+   Ops: `>= > <= < == !=`. `<field>` may be a nested dot-path (e.g.
+   `verdict.confidence`) resolved by the same `getPath`. AND/OR compound
+   predicates are explicit future headroom, not v1. A malformed predicate, a
+   `case.outcome` ∉ `transitions` keys, zero or >1 `default`, or a malformed
+   `from` dot-path is refused at compile/load with `CONFIG`.
+5. **`on_mismatch` = engine-initiated rework on validation failure.** A node's
+   `output.result.on_mismatch` (opt-in; default-absent = today's `CONFIG`-fail)
+   drives the **existing rework path from a non-`human` node** when structured-output
+   validation fails (`!structuredOutput.ok`), bounded by `rework.maxLoops`, with the
+   validation-error text (`structuredOutput.reason`) injected via `commentsVar`. Two
+   readable forms — node ids are human-readable slugs (verified, not UUIDs):
+   - **`on_mismatch: retry`** — reserved literal = self-target re-run of the same
+     node with the error fed back. Requires a `rework` block (for
+     `maxLoops`/`commentsVar`/workspace/session policy) but does NOT require the
+     node's own id in `transitions`/`rework.allowedTargets`. The common case.
+   - **`on_mismatch: <outcome>`** — a transition outcome routed via
+     `transitions[outcome]` to another node, which MUST be ∈
+     `rework.allowedTargets`.
+6. **ADR-080 auto-retry is rejected for `on_mismatch`.** `CONFIG ∉
+   RETRYABLE_ERROR_CODES` and `scheduleAutoRetry` injects no error feedback. The
+   rework machinery (feedback + `maxLoops` + workspace/session policy) is the only
+   fit for both the `retry` self-target and the `<outcome>` redirect — a uniform
+   path, no `scheduleAutoRetry` change.
+7. **Engine `1.6.0 → 1.7.0`.** A manifest declaring `decide` or
+   `output.result.on_mismatch` on any node MUST declare `compat.engine_min >=
+   1.7.0`; `validateGraphManifest` rejects otherwise (`CONFIG`), mirroring the
+   `OUTPUT_ENGINE_MIN` gate. Manifests declaring neither stay valid at their
+   pinned floor.
+8. **P7 run-context blackboard lands.** `buildRunContext(...)` is a pure
+   projection of `node_attempts` + `gate_results` + `task.prompt` (reuses
+   `reduceLedger`), `atomicWriteJson`'d to `<worktree>/.maister/run.json` at run
+   start and after every `node_attempts` terminal transition, with a
+   `[Run context: <abs>]` pointer appended to each agent prompt. `.maister/` is
+   git-excluded by extending `WORKTREE_EXCLUDE_PATTERNS` (materialized before the
+   first write). Secret-safe (never from `context.env`), idempotent, self-healing —
+   run correctness never depends on it (ledger + worktree are the source of truth).
+
+**Consequences:**
+- A single node now expresses triage/classification/confidence routing inline;
+  the transition fan-out (`resolveTransition`, review-readiness guard, loop-advance,
+  `isRework`) is unchanged — it already maps any outcome string → target/terminal.
+- Defense in depth on outcome strings: a **runtime allow-list guard** asserts the
+  `decide`-chosen outcome ∈ `node.transitions` keys (else `CONFIG`), on top of the
+  compile-time check that every *producible* outcome ⊆ transitions keys. `decide`
+  introduces arbitrary outcome strings, so the guard prevents a silent dead-end.
+- A malformed-output node can self-correct in-flow instead of dead-ending the run,
+  but only when the author opts in with `on_mismatch` + a `rework` block; the
+  default stays the M26 `CONFIG`-fail.
+- **Crash-window parity:** `on_mismatch` reuses the *existing* human-rework write
+  sequence (`markNodeReworked` → `markDownstreamStale` → `pendingInjectedVars`),
+  which is not a single transaction today and is the established contract. This
+  change does NOT refactor it into a transaction (surgical — untouched code,
+  separate concern); it introduces **no new partial state** beyond human-triggered
+  rework: same writes, same order, run stays `Running`, identical recovery profile.
+  A crash between `markNodeReworked` and `markDownstreamStale` leaves the same
+  recoverable state as a human rework.
+- P7 `run.json` is a pure projection — a crash mid-write leaves a stale/absent file
+  the next terminal transition regenerates; no two-phase commit (`atomicWriteJson`
+  is tmp+rename, so no torn file).
+- **No migration, no new env var, no new HTTP route, no SSE/AsyncAPI event, no
+  `runs.status`/enum value, no new `MaisterError` code, no `compose.yml` change.**
+  Reuses `node_attempts.vars` + the rework machinery; `MAISTER_NODE_OUTPUT_MAX_BYTES`
+  already shipped with M26.
+
+**Alternatives Considered:**
+- **`route` field name / reuse the flow-level `route_when` hint:** rejected — the
+  field is named **`decide`** (a node-level routing table); the flow-level
+  `flowMetadataSchema.route_when` NL hint stays runner-ignored and untouched.
+- **An explicit author-declared `mode: advisory` to make the verdict gate
+  routing-input:** rejected — the engine owns this when `decide:{from:verdict}` is
+  present (cleaner YAML; the table owns approve/review/rework).
+- **`scheduleAutoRetry` (ADR-080) for malformed output:** rejected — `CONFIG` is not
+  retryable and auto-retry injects no error feedback (see Decision §6).
+- **AND/OR compound `when` predicates in v1:** rejected — one predicate + one
+  `default` covers triage/confidence routing; compound grammar is explicit future
+  headroom.
+- **A config-driven P7 projection selector:** rejected for v1 — M26's hardcoded
+  "all" (intent + every node's vars + every gate result) stands; a selector is a
+  later wave.
 
 ---
 

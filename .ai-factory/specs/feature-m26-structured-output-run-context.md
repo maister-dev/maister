@@ -2,10 +2,16 @@
 
 ## Status
 
-Designed, Wave 1. Frozen SSOT for `feature/m26-structured-output-run-context`.
-Plan: `.ai-factory/plans/feature-m26-structured-output-run-context.md`. ADR: `docs/decisions.md` ADR-063.
+Wave 1 (P1) **Implemented**; P7 + Wave-2 routing **delivered this milestone (M38)** — see
+"## Wave 2 (M38)" below. Frozen SSOT, extended on `feature/flow-routing-runcontext`.
+Plan (Wave 1): `.ai-factory/plans/feature-m26-structured-output-run-context.md`.
+Plan (M38): `.ai-factory/plans/feature-flow-routing-runcontext.md`.
+ADRs: `docs/decisions.md` ADR-063 (Wave 1), **ADR-103 (M38: `decide` routing + `on_mismatch` +
+engine 1.7.0 + P7)**.
 Re-frozen 2026-06-07 after the Phase-0 adversarial gate (resolves A1 compose, B1 stdout cap, B2
 vacuous deferred, B3 read-scope, B4 gate status, B5 nested-grammar, cli-attempt threading).
+Extended 2026-06-22 (M38) with the **P4 `decide` table**, **`on_mismatch` rework**, **engine
+`1.6.0 → 1.7.0`**, and the **P7 run-context file** (Designed → built this milestone).
 
 ## Value
 
@@ -30,8 +36,8 @@ with **no DB migration and no new dependency**.
 
 - No legacy linear `steps[]` support — graph engine (`web/lib/flows/graph/runner-graph.ts` /
   `node_attempts`) only.
-- No P2 (prompt content injection), P4 (`decide` table), P6 (session continuity), or P3 (diff-path
-  assertions / `hash`·`size_bytes`).
+- No P2 (prompt content injection), P6 (session continuity), or P3 (diff-path assertions /
+  `hash`·`size_bytes`). **P4 (`decide` table) is delivered in M38 — see "## Wave 2 (M38)".**
 - No config-driven P7 projection selector — M26 hardcodes "all" (intent + every node's vars + every
   gate result).
 - No new JSON-Schema dependency (`ajv`) — extend the existing `formSchemaSchema` grammar.
@@ -265,6 +271,162 @@ Plus Phase-4 Playwright e2e: happy (AC1+AC3+AC7) and negative (AC4 surfaced in r
 - Gate `status` is read from `gate_results.status` (always set); `verdict` from `gate_results.verdict`
   (nullable) for the `gates` projection.
 - `attempt` is threaded into `RunCliStepCtx` (new field) for the per-attempt cli output filename.
+
+## Wave 2 (M38) — output/verdict-driven routing (`decide`) + malformed-output rework (`on_mismatch`)
+
+ADR-103. Engine `1.6.0 → 1.7.0`. **No migration, no new `MaisterError` code** (every refusal reuses
+`CONFIG`), no new HTTP route / SSE event / `runs.status` value / env var / compose change. Reuses
+`node_attempts.vars` (P1), the transition machinery (`resolveTransition`), and the rework machinery
+(`markNodeReworked` → `markDownstreamStale` → `pendingInjectedVars`).
+
+### P4 — the `decide` routing table
+
+**Opt-in, node-level.** A node may declare a `decide` block. When absent, routing is byte-identical to
+M26/today (action node → `"success"`; `human` → `result.decision`). When present, `decide` **replaces**
+the hardcoded `"success"` at the single outcome site (`runner-graph.ts`, the `const outcome = …` site).
+
+**Frozen schema (`decideSchema`, node-level — added to `nodeCommon`):**
+
+```yaml
+decide:
+  from: verdict | output.<dot.path>     # required
+  cases:                                # for from: verdict — ordered, optional
+    - when: "<field> <op> <number>"     # exactly one predicate per case
+      target: <outcome>                 # an outcome string ∈ this node's transitions keys
+    - default: true                     # EXACTLY ONE default case required when `cases` present
+      target: <outcome>
+```
+
+- `from` matches `verdict` **or** the regex `^output\.<dotpath>$` where
+  `dotpath = seg('.'seg)*`, `seg = [A-Za-z_][A-Za-z0-9_]*`. Any other `from` value is a compile/load
+  `CONFIG`.
+- `cases` is meaningful for `from: verdict` only. Each case is **either** `{ when, target }`
+  **or** `{ default: true, target }`. The block MUST contain **exactly one** `default` case.
+- The `decide` object is `.strict()` (unknown keys rejected).
+
+**D1 — applicability.** `from: output.<path>` works on any node declaring `output.result`
+(`ai_coding | cli | check | judge`). `from: verdict` works on any node with a verdict-producing gate
+(`ai_judgment | skill_check`). NOT judge-only. `<path>` is a **nested dot-path** into the validated
+structured-output object (M26's `object`-with-`fields` grammar), e.g. `output.triage.outcome`.
+
+**D2 — outcome computation.**
+- `from: output.<path>`: `outcome = String(getPath(vars, <dotpath>))`, where `getPath` is the shared
+  safe nested getter (missing → `undefined`, never throws). A missing/`undefined` value yields no
+  transition (terminal/Review), surfaced by the runtime allow-list guard.
+- `from: verdict`: evaluate `cases` in order against the verdict object via the `when` grammar; first
+  match wins, else the `default` case. The verdict object exposes `verdict` (string), `confidence`
+  (number, optional), and nested fields via `getPath`.
+
+**D3 — `from: verdict` makes the verdict gate routing-input (engine-owned).** Today a blocking verdict
+gate `markNodeFailed`s + `break`s *before* the outcome site (`runner-graph.ts`, the
+`if (!gateOutcome.ok)` branch), so the verdict never reaches routing. When `node.decide.from ===
+"verdict"`, **the engine** treats the verdict-producing gate as routing-input: its `calibrateVerdict`
+result is surfaced out of `runNodeGates` (`GateRunResult.verdict`) instead of hard-failing the node, and
+the node always reaches the outcome site with the verdict. **No author-declared `mode: advisory` is
+required.** `confidence_min` **without** `decide` keeps today's blocking behavior; it is also
+expressible as a 2-case `decide:{from:verdict}` (sugar). This is the highest-risk seam.
+
+### `when` grammar v1 (frozen)
+
+`web/lib/flows/graph/when-grammar.ts` — a pure module, no I/O:
+
+- `parseWhen(s) → Predicate | { error }`: `s = "<field> <op> <number>"`, ops `>= > <= < == !=`,
+  whitespace-tolerant. `<field>` is a nested dot-path resolved by `getPath`. Malformed → typed error.
+- `evalWhen(pred, ctx) → boolean`: resolves `getPath(ctx, pred.field)`; a missing/non-numeric lhs →
+  **no-match** (`false`), never throws.
+- `getPath(obj, dotpath) → unknown`: shared safe getter (also used by D2's `from: output.<path>`).
+- AND/OR compound predicates are explicit future headroom, NOT v1.
+
+### `on_mismatch` — engine-initiated rework on structured-output validation failure
+
+**Opt-in on `output.result`.** The strict `output.result` sub-object gains
+`on_mismatch?: "retry" | <outcome>`. When **absent** (default), a structured-output validation failure
+(`!structuredOutput.ok`) hard-fails the attempt with `CONFIG` exactly as M26 today. When **present**, the
+failure instead drives the **existing rework path from a non-`human` node**, bounded by
+`rework.maxLoops`, with the validation-error text (`structuredOutput.reason`) injected via `commentsVar`:
+
+- **`on_mismatch: retry`** (reserved literal) — self-target re-run of the **same node** with the error
+  fed back. Requires a `rework` block (for `maxLoops`/`commentsVar`/workspace/session policy) but does
+  NOT require the node's own id in `transitions`/`rework.allowedTargets`. `retry` is special **only**
+  inside `on_mismatch` (no collision with transition keys).
+- **`on_mismatch: <outcome>`** — a transition outcome routed via `transitions[outcome]` to another node,
+  which MUST be ∈ `rework.allowedTargets`. Requires a `rework` block.
+
+**D5 — ADR-080 retry rejected.** `CONFIG ∉ RETRYABLE_ERROR_CODES` and `scheduleAutoRetry` injects no
+error feedback; the rework machinery is the only fit. No `scheduleAutoRetry` change.
+
+### Verifiability (compile + runtime)
+
+- **Compile/load (`compile.ts`, `CONFIG` on violation):** for `from: verdict`, every `case.target` ⊆
+  `node.transitions` keys, exactly one `default`, each `when` parses; for `from: output.<path>`, only the
+  `from` dot-path **syntax** is checked (the value set is data-dependent → enforced at runtime); for
+  `on_mismatch: retry`, a `rework` block is required (NOT the node's own id in `allowedTargets`); for
+  `on_mismatch: <outcome>`, `transitions[outcome]` ∈ `rework.allowedTargets` AND `rework` declared.
+- **Runtime allow-list guard (`runner-graph.ts`, `CONFIG`):** after `decide` picks an outcome, assert it
+  ∈ `node.transitions` keys (defense in depth beyond compile-time), else `CONFIG`. An allow-list, not a
+  deny-list.
+
+### Engine gate (Wave 2)
+
+`MAISTER_ENGINE_VERSION` bumps `1.6.0 → 1.7.0`. A manifest declaring `decide` **or**
+`output.result.on_mismatch` on any node MUST declare `compat.engine_min >= 1.7.0`; otherwise
+`validateGraphManifest` rejects it (`CONFIG`), mirroring the `OUTPUT_ENGINE_MIN = "1.3.0"` gate. Manifests
+declaring neither stay valid at their pinned floor.
+
+### Crash-window parity (Wave 2)
+
+`on_mismatch` rework reuses the **existing** human-rework write sequence (`markNodeReworked` →
+`markDownstreamStale` → `pendingInjectedVars`), which is not a single transaction today and is the
+established contract. This milestone does NOT refactor it into a transaction (surgical — untouched code,
+separate concern). It introduces **no new partial state** beyond human-triggered rework: same writes,
+same order, run stays `Running`, identical recovery profile. A crash between `markNodeReworked` and
+`markDownstreamStale` leaves the same recoverable state as a human rework.
+
+### Wave-2 Expectations
+
+- A node with no `decide` MUST route byte-identically to M26 (action → `"success"`, `human` →
+  `result.decision`).
+- `decide.from: output.<path>` MUST route on `String(getPath(vars, <dotpath>))`; a missing path MUST
+  yield no transition (terminal/Review), never a thrown getter.
+- `decide.from: verdict` MUST evaluate `cases` first-match-else-`default`, and the engine MUST surface
+  the verdict (not hard-fail) for a verdict-producing gate on such a node, with NO author `mode:
+  advisory`.
+- A `confidence_min`-only node (no `decide`) MUST keep today's blocking verdict-gate behavior.
+- A `decide`-chosen outcome ∉ `node.transitions` keys MUST be refused at runtime with `CONFIG`
+  (allow-list guard); a producible `decide` outcome with no transition MUST fail to compile.
+- `on_mismatch: retry` MUST re-run the same node (self-target) with `structuredOutput.reason` in
+  `commentsVar`, bounded by `rework.maxLoops`, with NO own-id in `transitions`/`allowedTargets` required.
+- `on_mismatch: <outcome>` MUST route to `transitions[outcome]` (∈ `rework.allowedTargets`), bounded by
+  `rework.maxLoops`.
+- A node WITHOUT `on_mismatch` MUST still `CONFIG`-fail on structured-output validation failure
+  (M26 regression).
+- `on_mismatch` `maxLoops` exhaustion MUST behave like human-rework exhaustion (execution-policy
+  `fail`/`escalate`/`ship_with_warning`).
+- A manifest declaring `decide` or `on_mismatch` without `compat.engine_min >= 1.7.0` MUST be rejected
+  (`CONFIG`); a manifest declaring neither MUST stay valid at its pinned floor.
+- M38 MUST add no migration, no HTTP route, no `runs.status`/enum value, no new `MaisterError` code, no
+  new env var, no `compose.yml` change; `MAISTER_ENGINE_VERSION === "1.7.0"`.
+
+### Wave-2 Acceptance criteria
+
+- AC14 — A node with `decide:{from:output.outcome}` whose validated output is `{outcome:"x"}` routes via
+  `transitions.x`; a nested `decide:{from:output.a.b}` routes on the nested value.
+- AC15 — A node with `decide:{from:verdict, cases:[{when:"confidence >= 0.8", target:approve},
+  {default:true, target:review}]}` routes by the calibrated verdict; the verdict gate does NOT hard-fail.
+- AC16 — A `confidence_min`-as-`decide` 2-case sugar selects the same branch a legacy `confidence_min`
+  would.
+- AC17 — A `decide` outcome ∉ transitions keys → runtime `CONFIG`; a compile-time producible outcome ∉
+  transitions keys (verdict cases) → load `CONFIG`.
+- AC18 — `on_mismatch: retry` on a malformed-output node re-runs the same node with the validation error
+  in `commentsVar`, bounded by `maxLoops`; exhaustion applies the execution policy.
+- AC19 — `on_mismatch: <outcome>` routes to the redirect target (∈ `allowedTargets`); a node without
+  `on_mismatch` still `CONFIG`-fails (regression).
+- AC20 — A flow declaring `decide`/`on_mismatch` without `compat.engine_min >= 1.7.0` is rejected
+  (`CONFIG`); a flow without them validates at its old floor.
+- AC21 — A crash between `markNodeReworked` and `markDownstreamStale` on an `on_mismatch` rework leaves
+  the same recoverable state as a human rework.
+- AC22 — `git grep` confirms no new migration/route/`runs.status`/`MaisterError` code/env-key/compose
+  service for M38; `MAISTER_ENGINE_VERSION === "1.7.0"`.
 
 ## Known limitations (Phase 1)
 

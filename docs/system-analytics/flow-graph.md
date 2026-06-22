@@ -208,11 +208,75 @@ folds the validated object into the attempt's `vars`. A node **without**
    `markNodeFailed` here leaks nothing. Payload absent while `required: false` →
    `vars` stays `{}` and the node proceeds.
 
-### Run-context file (M26 — Designed)
+### Dynamic routing — `decide` + `on_mismatch` (M38 — Implemented)
 
-> **Status (M26 — Designed.)** A session-independent JSON blackboard projecting
-> run-level state, injected as a pointer into each agent node's prompt. Decision:
-> [ADR-063](../decisions.md#adr-063-structured-node-output-channel-p1--run-context-file-p7).
+> **Status (M38 — Implemented.)** Output/verdict-driven outcome at the single
+> transition site + an opt-in malformed-output rework loop. Decision:
+> [ADR-103](../decisions.md#adr-103-output-driven-dynamic-routing-decide--onmismatch-rework--engine-170);
+> frozen SSOT: `../../.ai-factory/specs/feature-m26-structured-output-run-context.md`
+> ("Wave 2 (M38)"). DSL: [`../flow-dsl.md`](../flow-dsl.md) §decide/§on_mismatch.
+
+At the **single outcome site** (the `Pick[evaluate transitions]` step above), the
+runner computes the transition outcome. Without `decide` the outcome is the
+hardcoded `"success"` (action) or the human decision — byte-identical to M11a. With
+a node-level `decide` block the outcome is computed dynamically, then fed to the
+**unchanged** `resolveTransition` / staleness / rework fan-out:
+
+```mermaid
+flowchart TD
+    Pick[evaluate outcome] --> HasDecide{node.decide?}
+    HasDecide -- no --> Legacy[outcome = success / human decision]
+    HasDecide -- "from: output.path" --> GetOut["outcome = String(getPath(vars, path))<br/>missing -> undefined -> terminal"]
+    HasDecide -- "from: verdict" --> Cases["first when-match in cases, else default<br/>(verdict gate is routing-input, not hard-fail)"]
+    Legacy --> Guard
+    GetOut --> Guard
+    Cases --> Guard
+    Guard{outcome in transitions keys?}
+    Guard -- yes --> Resolve[resolveTransition -> target / terminal]
+    Guard -- "no (decide only)" --> FailGuard[markNodeFailed CONFIG<br/>runtime allow-list guard]
+```
+
+- **`from: output.<path>`** resolves the outcome to the value at a nested `vars`
+  dot-path via a shared safe getter (`getPath`, missing → `undefined`, never
+  throws). Valid on any node declaring `output.result`.
+- **`from: verdict`** evaluates the `cases` (one `when` predicate each + exactly one
+  `default`) against the verdict object. When a node declares `decide:{from:verdict}`
+  the **engine** treats the verdict-producing gate (`ai_judgment`/`skill_check`) as
+  **routing-input** — `runNodeGates` surfaces the calibrated verdict
+  (`GateRunResult.verdict`) instead of hard-failing the node — with **no author
+  `mode: advisory`**. A `confidence_min`-only node (no `decide`) keeps today's
+  blocking behavior.
+- **Runtime allow-list guard.** After `decide` picks an outcome the runner asserts it
+  ∈ `node.transitions` keys; otherwise `markNodeFailed` + `MaisterError("CONFIG")`
+  (defense in depth over the compile-time check that every *producible* outcome ⊆
+  transitions keys).
+
+**`on_mismatch` — engine-initiated rework on validation failure.** When the M26
+structured-output validate seam fails (`!structuredOutput.ok`) AND the node declares
+`output.result.on_mismatch`, the runner drives the **existing rework path** (same
+`markNodeReworked` → `markDownstreamStale` → `pendingInjectedVars` sequence as
+human-driven rework) from a non-`human` node, bounded by `rework.maxLoops`, with the
+validation-error text (`structuredOutput.reason`) injected via `commentsVar`.
+`on_mismatch: retry` re-targets the **same** node (self re-run, no own-id in
+`transitions`/`allowedTargets` needed); `on_mismatch: <outcome>` routes via
+`transitions[<outcome>]` (∈ `rework.allowedTargets`). Absent → today's M26 hard
+`CONFIG` fail. Exhaustion follows the execution policy exactly like human-rework
+exhaustion. **Crash-window parity:** the write sequence is unchanged from
+human-rework, so a crash between `markNodeReworked` and `markDownstreamStale` leaves
+the same recoverable state.
+
+**Engine floor.** A flow declaring `decide` or `on_mismatch` requires
+`compat.engine_min >= 1.7.0` (`MAISTER_ENGINE_VERSION` `1.6.0 → 1.7.0`); flows
+declaring neither stay valid at any `engine_min`.
+
+### Run-context file (M26 — Implemented M38)
+
+> **Status (P7 — Implemented in M38.)** A session-independent JSON blackboard
+> projecting run-level state, injected as a pointer into each agent node's prompt.
+> Decisions:
+> [ADR-063](../decisions.md#adr-063-structured-node-output-channel-p1--run-context-file-p7)
+> (Designed), [ADR-103](../decisions.md#adr-103-output-driven-dynamic-routing-decide--onmismatch-rework--engine-170)
+> (built this milestone).
 
 `run.json` lives at `<worktreePath>/.maister/run.json`, written via
 `atomicWriteJson` **inside the agent's worktree cwd** so both `claude` and `codex`
@@ -483,17 +547,30 @@ flows write `node_attempts` and behave identically to the pre-M11a runner.
   `EXECUTOR_UNAVAILABLE` before spawn. See
   [`../flow-dsl.md`](../flow-dsl.md) §Node `agent` binding and
   [`agents.md`](agents.md).
-- **(M26 — Designed)** `run.json` MUST exist per run at
+- **(P7 — Implemented M38, ADR-103)** `run.json` MUST exist per run at
   `<worktreePath>/.maister/run.json`, separate from logs (which stay at `<runDir>`),
-  with `.maister/` appended to the repo's git exclude
-  (`$(git rev-parse --git-path info/exclude)`, repo-wide and benign) so `run.json`
-  is absent from `git status` and the base→run diff, as a pure idempotent projection
-  of `node_attempts` + `gate_results` +
+  with `.maister/` in `WORKTREE_EXCLUDE_PATTERNS` (materialized into the repo's git
+  exclude `$(git rev-parse --git-path info/exclude)` **before** the first write,
+  repo-wide and benign) so `run.json` is absent from `git status` and the base→run
+  diff, built by `buildRunContext(...)` as a pure idempotent projection of
+  `node_attempts` + `gate_results` +
   `task.prompt` (`{intent, nodes(summary+vars), gates(status+verdict?), promoted}`)
   that a fresh/cleared/resumed session reconstructs identically; correctness MUST
   never depend on it, every agent node's prompt MUST carry the `[Run context: <abs
   path>]` pointer in both session modes, and it MUST NOT contain any value sourced
   from `context.env`.
+- **(M38 — Implemented, ADR-103)** A node with no `decide` MUST route
+  byte-identically to today (`"success"` / human decision); a `decide:{from:output.<path>}`
+  routes on `String(getPath(vars, <path>))`; a `decide:{from:verdict}` routes via the
+  `cases`/`default` table, and the engine MUST surface the verdict (not hard-fail) on
+  such a node with NO author `mode: advisory`. A `decide`-chosen outcome ∉
+  `node.transitions` keys MUST be refused at runtime with `MaisterError("CONFIG")`.
+- **(M38 — Implemented, ADR-103)** A node declaring `output.result.on_mismatch` MUST,
+  on structured-output validation failure, enter the bounded rework path
+  (`on_mismatch: retry` = self-target; `<outcome>` = `transitions[<outcome>]` ∈
+  `rework.allowedTargets`) with `structuredOutput.reason` injected via `commentsVar`;
+  a node WITHOUT `on_mismatch` MUST still `CONFIG`-fail. A flow declaring `decide` or
+  `on_mismatch` MUST declare `compat.engine_min >= 1.7.0`.
 
 ## Edge cases
 
@@ -599,12 +676,13 @@ flows write `node_attempts` and behave identically to the pre-M11a runner.
   [ADR-027 node_attempts ledger](../decisions.md#adr-027-append-only-node_attempts-run-ledger),
   [ADR-028 Gate execution](../decisions.md#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped),
   [ADR-029 M11 split](../decisions.md#adr-029-split-m11-into-m11a--m11b--m11c),
-  [ADR-063 Structured output + run-context (M26 — P1 Implemented, P7 Designed)](../decisions.md#adr-063-structured-node-output-channel-p1--run-context-file-p7),
+  [ADR-063 Structured output + run-context (M26 — P1 Implemented, P7 Designed→Implemented M38)](../decisions.md#adr-063-structured-node-output-channel-p1--run-context-file-p7),
+  [ADR-103 Output-driven dynamic routing (`decide`) + `on_mismatch` + engine 1.7.0 + P7 (M38 — Implemented)](../decisions.md#adr-103-output-driven-dynamic-routing-decide--onmismatch-rework--engine-170),
   [ADR-074 Mutation sensor on `artifact_required` (M29 — Implemented)](../decisions.md#adr-074-artifact-post-conditions--deterministic-mutation-sensor-on-artifact_required-gates),
   [ADR-079 workspacePolicy execution + node checkpoints (M30 — Implemented)](../decisions.md#adr-079-node-workspacepolicy-execution-and-checkpoint-capture),
   [ADR-080 Node-level retry policy (M30 — Implemented)](../decisions.md#adr-080-node-level-retry-policy),
   [ADR-081 Rework session policy (M30 — Implemented)](../decisions.md#adr-081-rework-session-policy-with-resume-by-default).
-- Spec (M26 — P1 Implemented, P7 Designed):
+- Spec (M26 — P1 Implemented, P7 + Wave-2 routing Implemented M38):
   `../../.ai-factory/specs/feature-m26-structured-output-run-context.md` (frozen SSOT).
 - ERD: [`../db/runs-domain.md`](../db/runs-domain.md),
   narrative [`../database-schema.md`](../database-schema.md).
