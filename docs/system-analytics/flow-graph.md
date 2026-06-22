@@ -242,10 +242,11 @@ flowchart TD
 - **`from: verdict`** evaluates the `cases` (one `when` predicate each + exactly one
   `default`) against the verdict object. When a node declares `decide:{from:verdict}`
   the **engine** treats the verdict-producing gate (`ai_judgment`/`skill_check`) as
-  **routing-input** — `runNodeGates` surfaces the calibrated verdict
-  (`GateRunResult.verdict`) instead of hard-failing the node — with **no author
-  `mode: advisory`**. A `confidence_min`-only node (no `decide`) keeps today's
-  blocking behavior.
+  **routing-input** — `runNodeGates` surfaces the verdict (`GateRunResult.verdict`)
+  and a parseable verdict gate is recorded `passed` (verdict retained for routing +
+  audit), so it never hard-fails the node finish **or** blocks review-readiness —
+  with **no author `mode: advisory`**. A `confidence_min`-only node (no `decide`)
+  keeps today's blocking behavior.
 - **Runtime allow-list guard.** After `decide` picks an outcome the runner asserts it
   ∈ `node.transitions` keys; otherwise `markNodeFailed` + `MaisterError("CONFIG")`
   (defense in depth over the compile-time check that every *producible* outcome ⊆

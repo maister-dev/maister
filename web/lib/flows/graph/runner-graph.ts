@@ -30,6 +30,7 @@ import { runCliStep } from "../runner-cli";
 
 import { cleanupSlashSession, asError } from "./runner-core";
 import { compileManifest, resolveTransition } from "./compile";
+import { computeDecideOutcome, type DecideVerdict } from "./decide-eval";
 import { runNodeGates } from "./gates-exec";
 import { validateNodeStructuredOutput } from "./node-output";
 import {
@@ -2534,6 +2535,10 @@ export async function runGraph(
       // blocking gate failure aborts the finish: the node goes Failed -> run
       // Failed. Advisory gates record + continue. M11a gate results FEED but do
       // NOT gate promotion (M15/M18).
+      // M38 (ADR-103): the verdict a `decide:{from:verdict}` node routes on,
+      // surfaced by the verdict-producing gate below (undefined otherwise).
+      let decideVerdict: DecideVerdict | undefined;
+
       if (node.gates.length > 0) {
         const gateOutcome = await runNodeGates(
           node,
@@ -2566,6 +2571,8 @@ export async function runGraph(
           );
           break;
         }
+
+        decideVerdict = gateOutcome.verdict as DecideVerdict | undefined;
       }
 
       // M12 (T3.2): output artifact recording — path/diff/commit_set kinds plus
@@ -2863,14 +2870,60 @@ export async function runGraph(
         );
       });
 
-      // Determine the outcome that drives the transition. Action nodes finish
-      // with "success"; a human review node finishes with its chosen decision.
-      const outcome =
+      // Determine the outcome that drives the transition. Without `decide` an
+      // action node finishes with "success" and a human review node with its
+      // chosen decision (byte-identical to pre-M38). With a `decide` table the
+      // outcome is computed from the node's own structured output
+      // (from: output.<path>) or its gate verdict (from: verdict) — M38, ADR-103.
+      const legacyOutcome =
         node.source.kind === "node" && node.source.node.type === "human"
           ? (result.decision ?? "success")
           : "success";
+      const outcome = computeDecideOutcome({
+        decide: node.decide,
+        vars: (result.vars ?? {}) as Record<string, unknown>,
+        verdict: decideVerdict,
+        legacy: legacyOutcome,
+      });
 
-      const target = node.transitions[outcome];
+      if (node.decide !== undefined) {
+        log2.debug(
+          {
+            nodeId: node.id,
+            from: node.decide.from,
+            confidence: decideVerdict?.confidence,
+            chosenOutcome: outcome ?? "(no-match → terminal)",
+          },
+          "[decide] outcome computed",
+        );
+      }
+
+      // T2.4 allow-list guard: a PRESENT decide outcome MUST be a declared
+      // transition key (defense in depth beyond the compile-time check). A
+      // missing (undefined) from:output value is a graceful terminal, not CONFIG.
+      if (
+        node.decide !== undefined &&
+        outcome !== undefined &&
+        !Object.hasOwn(node.transitions, outcome)
+      ) {
+        const msg = `node "${node.id}" decide produced outcome "${outcome}" with no declared transition (keys: ${Object.keys(node.transitions).join(", ") || "(none)"})`;
+
+        log2.warn(
+          { nodeId: node.id, outcome },
+          "[decide] outcome not in transitions — CONFIG",
+        );
+        await markNodeFailed(
+          nodeAttemptId,
+          { errorCode: "CONFIG", stdout: msg },
+          db,
+        );
+        failed = true;
+        runErrorCode = "CONFIG";
+        break;
+      }
+
+      const target =
+        outcome === undefined ? undefined : node.transitions[outcome];
       const isRework =
         node.rework !== undefined &&
         target !== undefined &&
@@ -2887,7 +2940,10 @@ export async function runGraph(
       // all of them must satisfy the evidence contract before the run is Review.
       // Refusal mirrors a blocking gate failure: node Failed → run Failed; the
       // reviewer re-attempts after refreshing evidence.
-      if (!isRework && resolveTransition(node, outcome) === null) {
+      if (
+        !isRework &&
+        (outcome === undefined || resolveTransition(node, outcome) === null)
+      ) {
         const readiness = await assertEvidenceReady(runId, "review", db);
 
         if (!readiness.ready) {
@@ -3143,7 +3199,8 @@ export async function runGraph(
 
         await markNodeReworked(
           nodeAttemptId,
-          { decision: outcome, workspacePolicy: chosenPolicy },
+          // outcome is defined here: isRework ⟹ target defined ⟹ outcome defined.
+          { decision: outcome!, workspacePolicy: chosenPolicy },
           db,
         );
 
@@ -3284,10 +3341,16 @@ export async function runGraph(
         }
       }
 
-      const next = resolveTransition(node, outcome);
+      const next =
+        outcome === undefined ? null : resolveTransition(node, outcome);
 
       log2.info(
-        { from: node.id, outcome, to: next ?? "(terminal)", rework: isRework },
+        {
+          from: node.id,
+          outcome: outcome ?? "(no-match → terminal)",
+          to: next ?? "(terminal)",
+          rework: isRework,
+        },
         "node transition",
       );
       await safeProject();

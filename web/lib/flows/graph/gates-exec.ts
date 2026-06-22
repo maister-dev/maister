@@ -69,6 +69,11 @@ export type GateRunResult = {
   // true if no blocking gate failed (the node may proceed to finish).
   ok: boolean;
   blockingFailedGateId?: string;
+  // M38 (ADR-103): the calibrated verdict surfaced by the verdict-producing gate
+  // (ai_judgment/skill_check). Present only for a node declaring
+  // `decide:{from:verdict}`, where the engine treats that gate as routing-input
+  // (it does NOT hard-fail the node) and feeds this verdict to the decide table.
+  verdict?: GateVerdict;
 };
 
 const PASS_VERDICTS = new Set([
@@ -249,6 +254,11 @@ export async function runNodeGates(
   ctx: GateRunContext,
 ): Promise<GateRunResult> {
   let blockingFailedGateId: string | undefined;
+  // M38 (ADR-103): when the node routes on a verdict, the verdict-producing gate
+  // is routing-input — it never sets blockingFailedGateId, and its calibrated
+  // verdict is surfaced to the caller for the `decide` table.
+  const verdictRouting = node.decide?.from === "verdict";
+  let routedVerdict: GateVerdict | undefined;
 
   // Execution-policy check-strictness (axis A3): advisory/skip relax the
   // non-review check gates so a failed one no longer aborts the node finish.
@@ -257,6 +267,7 @@ export async function runNodeGates(
   const checks = checksFromSnapshot(loaded.run.executionPolicy ?? null);
 
   for (const gate of node.gates) {
+    const verdictSink: { verdict?: GateVerdict } = {};
     const status = await runOneGate(
       gate,
       node,
@@ -265,7 +276,15 @@ export async function runNodeGates(
       context,
       ctx,
       checks,
+      verdictSink,
     );
+
+    const isVerdictGate =
+      gate.kind === "ai_judgment" || gate.kind === "skill_check";
+
+    if (verdictRouting && isVerdictGate && verdictSink.verdict !== undefined) {
+      routedVerdict = verdictSink.verdict;
+    }
 
     log.info(
       {
@@ -303,14 +322,29 @@ export async function runNodeGates(
       });
     }
 
-    if (effectiveBlocking && status === "failed" && !blockingFailedGateId) {
+    // M38: a verdict-producing gate on a `decide:{from:verdict}` node is
+    // routing-input — its (possibly low-confidence) verdict drives the decide
+    // table, so it MUST NOT abort the node finish. The decide table owns the
+    // approve/review/rework decision; the verdict is surfaced above.
+    const routingInput = verdictRouting && isVerdictGate;
+
+    if (
+      effectiveBlocking &&
+      status === "failed" &&
+      !blockingFailedGateId &&
+      !routingInput
+    ) {
       blockingFailedGateId = gate.id;
       // Keep running the remaining gates so all verdicts are recorded for the
       // attempt, but the node will not finish (caller aborts).
     }
   }
 
-  return { ok: blockingFailedGateId === undefined, blockingFailedGateId };
+  return {
+    ok: blockingFailedGateId === undefined,
+    blockingFailedGateId,
+    verdict: routedVerdict,
+  };
 }
 
 async function runOneGate(
@@ -321,6 +355,10 @@ async function runOneGate(
   context: FlowContext,
   ctx: GateRunContext,
   checks: CheckStrictness,
+  // M38 (ADR-103): a mutable sink the ai_judgment/skill_check arm writes the
+  // parsed verdict into, so `runNodeGates` can surface it for a `decide` table
+  // WITHOUT a gate_results re-read. Undefined for callers that don't route.
+  verdictSink?: { verdict?: GateVerdict },
 ): Promise<"passed" | "failed" | "skipped" | "pending"> {
   const base = {
     runId: loaded.run.id,
@@ -469,6 +507,23 @@ async function runOneGate(
         );
 
         return "failed";
+      }
+
+      // M38 (ADR-103): surface the parsed verdict (pass OR fail, with confidence)
+      // so a `decide:{from:verdict}` node can route on it even when calibration
+      // would otherwise have failed the gate.
+      if (verdictSink) verdictSink.verdict = verdict;
+
+      // M38 (ADR-103): under `decide:{from:verdict}` the gate is ROUTING-INPUT —
+      // producing a parseable verdict IS success. Record it `passed` (the verdict
+      // value is retained in gate_results.verdict for routing + audit) so it never
+      // hard-fails the node finish OR blocks review-readiness; the decide table
+      // owns the approve/review/rework decision. confidence_min calibration is
+      // irrelevant here — the `when` predicates do the thresholding.
+      if (node.decide?.from === "verdict") {
+        await markGatePassed(id, verdict, ctx.db);
+
+        return "passed";
       }
 
       if (isPassVerdict(verdict.verdict ?? "")) {

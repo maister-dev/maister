@@ -320,9 +320,13 @@ structured-output object (M26's `object`-with-`fields` grammar), e.g. `output.tr
 **D3 — `from: verdict` makes the verdict gate routing-input (engine-owned).** Today a blocking verdict
 gate `markNodeFailed`s + `break`s *before* the outcome site (`runner-graph.ts`, the
 `if (!gateOutcome.ok)` branch), so the verdict never reaches routing. When `node.decide.from ===
-"verdict"`, **the engine** treats the verdict-producing gate as routing-input: its `calibrateVerdict`
-result is surfaced out of `runNodeGates` (`GateRunResult.verdict`) instead of hard-failing the node, and
-the node always reaches the outcome site with the verdict. **No author-declared `mode: advisory` is
+"verdict"`, **the engine** treats the verdict-producing gate as routing-input: its parsed verdict
+is surfaced out of `runNodeGates` (`GateRunResult.verdict`) instead of hard-failing the node, and
+the node always reaches the outcome site with the verdict. A parseable verdict gate under routing is
+recorded **`passed`** (the verdict value retained in `gate_results.verdict` for routing + audit), so it
+never hard-fails the node finish AND never blocks review-readiness — the decide table owns
+approve/review/rework, and `confidence_min` calibration is bypassed (the `when` predicates threshold).
+**No author-declared `mode: advisory` is
 required.** `confidence_min` **without** `decide` keeps today's blocking behavior; it is also
 expressible as a 2-case `decide:{from:verdict}` (sugar). This is the highest-risk seam.
 
