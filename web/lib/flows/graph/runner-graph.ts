@@ -31,6 +31,11 @@ import { runCliStep } from "../runner-cli";
 import { cleanupSlashSession, asError } from "./runner-core";
 import { compileManifest, resolveTransition } from "./compile";
 import { computeDecideOutcome, type DecideVerdict } from "./decide-eval";
+import {
+  ensureRunContextExcluded,
+  runContextPath,
+  writeRunContext,
+} from "./run-context";
 import { runNodeGates } from "./gates-exec";
 import { validateNodeStructuredOutput } from "./node-output";
 import {
@@ -1015,7 +1020,12 @@ async function executeNodeAction(
             id: node.id,
             type: "agent",
             mode: "new-session",
-            prompt: def.action.prompt,
+            // P7 (ADR-103): point the agent at the run-context blackboard. The
+            // pointer is literal (no `{{ }}`), so it passes through renderStrict
+            // unchanged; the agent reads <worktree>/.maister/run.json on demand.
+            prompt: `${def.action.prompt}\n\n[Run context: ${runContextPath(
+              ctx.worktreePath,
+            )}]`,
           },
           {
             ...common,
@@ -1908,8 +1918,33 @@ export async function runGraph(
     return "retry";
   };
 
+  // P7 (ADR-103, Q3): ensure `.maister/` is git-excluded BEFORE the first
+  // run.json write (capability materialization is per-node, so a capability-less
+  // flow would otherwise never set it). Idempotent + best-effort.
+  await ensureRunContextExcluded(worktreePath).catch((err) =>
+    log2.debug(
+      { err: asError(err).message },
+      "[run-context] exclude ensure skipped",
+    ),
+  );
+
   try {
     while (currentNodeId !== null) {
+      // P7 (ADR-103): rewrite run.json from the ledger before processing this
+      // node, so an agent node reads the latest run-context (every prior terminal
+      // transition). Best-effort — run correctness never depends on it.
+      await writeRunContext({
+        runId,
+        worktreePath,
+        taskPrompt: loaded.task.prompt,
+        db,
+      }).catch((err) =>
+        log2.debug(
+          { err: asError(err).message },
+          "[run-context] write skipped",
+        ),
+      );
+
       const node = graph.nodes.get(currentNodeId);
 
       if (!node) {
@@ -3434,6 +3469,17 @@ export async function runGraph(
       await safeProject();
       currentNodeId = next;
     }
+
+    // P7 (ADR-103): final rewrite after the loop, capturing the last node's
+    // terminal transition (no next iteration would otherwise project it).
+    await writeRunContext({
+      runId,
+      worktreePath,
+      taskPrompt: loaded.task.prompt,
+      db,
+    }).catch((err) =>
+      log2.debug({ err: asError(err).message }, "[run-context] write skipped"),
+    );
   } catch (err) {
     const e = isMaisterError(err)
       ? err

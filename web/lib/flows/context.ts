@@ -17,7 +17,7 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-const DEFAULT_OUTPUT_TRUNCATION = 8 * 1024;
+export const DEFAULT_OUTPUT_TRUNCATION = 8 * 1024;
 
 const DENY_PATTERNS: RegExp[] = [
   /TOKEN/i,
@@ -117,7 +117,7 @@ function reduceStepRuns(
 // the base (legacy rows); node_attempts (graph runner) overlay it and WIN per
 // id (a graph run has no step_runs; a legacy run has no node_attempts — so they
 // are disjoint in practice, but the union is correct for any mix).
-function reduceLedger(
+export function reduceLedger(
   stepRuns: StepRunRow[],
   nodeAttempts: NodeAttemptRow[],
   cap: number,

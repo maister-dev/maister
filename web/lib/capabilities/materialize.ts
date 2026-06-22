@@ -30,6 +30,10 @@ const WORKTREE_EXCLUDE_PATTERNS = [
   ".claude/settings.local.json",
   "*.maister-bak",
   "*.maister-owned",
+  // M38 (ADR-103): the run-context blackboard lives at
+  // <worktree>/.maister/run.json — keep MAIster's whole runtime subtree out of
+  // git so run.json never appears in `git status` or the base→run diff.
+  ".maister/",
 ] as const;
 
 // Sibling marker written next to a materialized settings.local.json. Its presence
@@ -161,7 +165,13 @@ async function fileExists(filePath: string): Promise<boolean> {
 // captures or trips on them. Writes to the worktree's own info/exclude (resolved
 // via git so linked worktrees land on the right file). A git failure must NEVER
 // break materialization — this is hardening, not a precondition.
-async function ensureWorktreeGitExclude(worktreePath: string): Promise<void> {
+// M38 (ADR-103): exported so the graph runner can idempotently ensure the
+// exclude at run start, BEFORE the first `.maister/run.json` write — capability
+// materialization is per-node, so a capability-less flow would otherwise never
+// set it.
+export async function ensureWorktreeGitExclude(
+  worktreePath: string,
+): Promise<void> {
   try {
     // Gate on this being a worktree root — a linked worktree has a `.git` file,
     // the main checkout a `.git` dir. Without this, a worktreePath nested inside
