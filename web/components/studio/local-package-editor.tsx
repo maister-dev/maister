@@ -17,10 +17,15 @@ import type { ReactElement, ReactNode } from "react";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useTranslations } from "next-intl";
 
 import { FlowEditorTabs } from "@/components/flows/flow-editor-tabs";
 import { PackageFilesEditor } from "@/components/flows/package-files-editor";
+import {
+  PackageHome,
+  type PackageHomeLabels,
+} from "@/components/studio/package-home";
 import { LocalPackageDiffDrawer } from "@/components/studio/local-package-diff-drawer";
 import {
   StudioAiTab,
@@ -62,6 +67,11 @@ export type LocalPackageEditorLabels = {
   tabAi: string;
   aiWorking: string;
   ai: StudioAiTabLabels;
+  // M39 (ADR-105): the package-home landing + breadcrumb + End-edit.
+  home: PackageHomeLabels;
+  crumbStudio: string;
+  crumbLocal: string;
+  endEdit: string;
 };
 
 // Keep-alive cadence. The server lock TTL defaults to 30 min
@@ -210,6 +220,13 @@ export function LocalPackageEditor({
     setLockHeldByMe(lock.heldByMe);
     setHolderLabel(lock.holderLabel ?? null);
   }, []);
+
+  // M39: explicit "Done / End edit" — release the lock now (the unmount cleanup
+  // also releases, idempotently) and return to the local-package list.
+  const endEdit = useCallback((): void => {
+    releaseEditorLock(packageId, sessionIdRef.current);
+    router.push("/studio/local");
+  }, [packageId, router]);
 
   // Acquire on open + keep-alive heartbeat. A failed refresh degrades to
   // read-only rather than throwing — the next write's lock assertion is the
@@ -368,6 +385,35 @@ export function LocalPackageEditor({
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-2">
+      <nav
+        aria-label="breadcrumb"
+        className="flex shrink-0 items-center justify-between gap-2"
+      >
+        <div className="flex min-w-0 items-center gap-1.5 font-mono text-[11px] text-mute">
+          <Link className="hover:text-ink" href="/studio">
+            {labels.crumbStudio}
+          </Link>
+          <span aria-hidden>›</span>
+          <Link className="hover:text-ink" href="/studio/local">
+            {labels.crumbLocal}
+          </Link>
+          <span aria-hidden>›</span>
+          <span
+            className="truncate text-ink"
+            data-testid="local-editor-crumb-name"
+          >
+            {initialTitle}
+          </span>
+        </div>
+        <button
+          className="shrink-0 rounded-[10px] border border-line bg-ivory px-3 py-1.5 font-mono text-[11px] font-semibold text-ink transition-colors hover:border-amber"
+          data-testid="local-editor-end-edit"
+          type="button"
+          onClick={endEdit}
+        >
+          {labels.endEdit}
+        </button>
+      </nav>
       <div className="flex shrink-0 flex-wrap items-center gap-2">
         <div
           className="flex shrink-0 rounded-[10px] border border-line bg-paper p-0.5"
@@ -433,45 +479,59 @@ export function LocalPackageEditor({
         {/* FlowEditorTabs stays MOUNTED across the tab toggle so canvas/YAML
             edit state survives switching to AI and back; only visibility flips. */}
         <div className={activeTab === "properties" ? "h-full" : "hidden"}>
-          <FlowEditorTabs
-            canManage={!readOnly}
-            canvasAvailable={canvasAvailable}
-            capId={identity.slug}
-            diff={diff}
-            diffDrawer={
-              <LocalPackageDiffDrawer
-                canManage={!readOnly}
-                diffViewLabels={labels.diffView}
-                labels={labels.diff}
-                packageId={packageId}
-                refreshSignal={diffRefresh}
-                sessionId={sessionIdRef.current}
-              />
-            }
-            draftVersion={0}
-            filesDrawer={
-              <PackageFilesEditor
-                disabled={readOnly}
-                files={files}
-                kindLabels={fileKindLabels}
-                labels={filesLabels}
-                mcpCatalog={mcpCatalog}
-              />
-            }
-            hasDraft={false}
-            identity={identity}
-            initialManifest={canvasAvailable ? initialManifest : null}
-            initialTitle={initialTitle}
-            initialYaml={initialYaml}
-            labels={labels.editor}
-            layout={layout}
-            lifecycleLabel={identity.kind}
-            projectSlug={identity.slug}
-            publishAction={saveAction}
-            readinessReady={false}
-            saveAction={saveAction}
-            topology={topology}
-          />
+          {flowPath === null ? (
+            <PackageHome
+              fileKindLabels={fileKindLabels}
+              files={files}
+              filesLabels={filesLabels}
+              labels={labels.home}
+              mcpCatalog={mcpCatalog}
+              name={identity.project}
+              packageId={packageId}
+              readOnly={readOnly}
+              saveAction={saveAction}
+            />
+          ) : (
+            <FlowEditorTabs
+              canManage={!readOnly}
+              canvasAvailable={canvasAvailable}
+              capId={identity.slug}
+              diff={diff}
+              diffDrawer={
+                <LocalPackageDiffDrawer
+                  canManage={!readOnly}
+                  diffViewLabels={labels.diffView}
+                  labels={labels.diff}
+                  packageId={packageId}
+                  refreshSignal={diffRefresh}
+                  sessionId={sessionIdRef.current}
+                />
+              }
+              draftVersion={0}
+              filesDrawer={
+                <PackageFilesEditor
+                  disabled={readOnly}
+                  files={files}
+                  kindLabels={fileKindLabels}
+                  labels={filesLabels}
+                  mcpCatalog={mcpCatalog}
+                />
+              }
+              hasDraft={false}
+              identity={identity}
+              initialManifest={canvasAvailable ? initialManifest : null}
+              initialTitle={initialTitle}
+              initialYaml={initialYaml}
+              labels={labels.editor}
+              layout={layout}
+              lifecycleLabel={identity.kind}
+              projectSlug={identity.slug}
+              publishAction={saveAction}
+              readinessReady={false}
+              saveAction={saveAction}
+              topology={topology}
+            />
+          )}
         </div>
         {/* The AI tab mounts on first open and stays mounted (its ACP run lives
             while the editor tab is open); only visibility flips thereafter. */}

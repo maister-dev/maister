@@ -280,6 +280,15 @@
       "saving": "Saving…",
       "saved": "Saved",
       "saveFailed": "Save failed",
+      "crumbStudio": "Studio",
+      "crumbLocal": "Local",
+      "endEdit": "End edit",
+      "home": {
+        "orientation": "Package home — edit the manifest below, open a flow on the canvas, or pick a file to edit.",
+        "flowsHeading": "Flows",
+        "noFlows": "No flows yet.",
+        "save": "Save changes"
+      },
       "tabProperties": "Properties",
       "tabAi": "AI",
       "aiWorking": "AI working…",
@@ -449,6 +458,7 @@
     "packageFileKind": {
       "asset": "Asset",
       "agent_definition": "Agent definition",
+      "manifest": "Package manifest",
       "readme": "README",
       "rule": "Rule",
       "schema": "Schema",
@@ -457,6 +467,20 @@
       "skill": "Skill",
       "template": "Template",
       "unsupported": "Unsupported"
+    },
+    "manifestForm": {
+      "heading": "Package manifest",
+      "name": "Name",
+      "displayTitle": "Title",
+      "summary": "Summary",
+      "flows": "Flows",
+      "capabilities": "Capabilities",
+      "mcps": "MCP servers",
+      "restrictions": "Restrictions",
+      "formMode": "Form",
+      "rawMode": "Raw",
+      "parseError": "The manifest could not be parsed",
+      "empty": "None"
     }
   },
   "auth": {

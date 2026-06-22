@@ -16,7 +16,8 @@ export type AuthoredFlowPackageFileKind =
   | "schema"
   | "template"
   | "readme"
-  | "setup";
+  | "setup"
+  | "manifest";
 
 export type AuthoredFlowPackageFile = {
   kind: AuthoredFlowPackageFileKind;

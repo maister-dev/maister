@@ -105,6 +105,7 @@ function forestTheme(mode: "light" | "dark"): Extension {
 function languageExtension(kind: CodeEditorKind): Extension | null {
   switch (kind) {
     case "flow":
+    case "manifest":
       return yaml();
     case "schema":
       return json();

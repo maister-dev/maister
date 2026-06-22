@@ -6,6 +6,7 @@ import type { FrontmatterArtifactEditorLabels } from "@/components/flows/artifac
 import type { McpTemplateEditorLabels } from "@/components/flows/artifact-editors/mcp-template-editor";
 import type { ScriptArtifactEditorLabels } from "@/components/flows/artifact-editors/script-artifact-editor";
 import type { AuthoredFlowPackageFileKind } from "@/lib/catalog/authored-types";
+import type { PackageManifestFormLabels } from "@/lib/local-packages/manifest";
 import type { PackageFilesEditorLabels } from "@/components/flows/package-files-editor";
 import type { LocalPackageDiffLabels } from "@/components/studio/local-package-diff-drawer";
 import type { DiffViewLabels } from "@/components/workbench/diff-view";
@@ -67,6 +68,7 @@ export function packageFileKindLabels(
   return {
     asset: t("packageFileKind.asset"),
     agent_definition: t("packageFileKind.agent_definition"),
+    manifest: t("packageFileKind.manifest"),
     readme: t("packageFileKind.readme"),
     rule: t("packageFileKind.rule"),
     schema: t("packageFileKind.schema"),
@@ -228,7 +230,26 @@ export function packageFilesEditorLabels(
     script: scriptArtifactEditorLabels(te),
     formSchema: formSchemaBuilderLabels(te),
     contentIssues: artifactContentIssuesLabels(te),
+    manifest: manifestFormLabels(t),
     ...(includeMcp ? { mcp: mcpTemplateEditorLabels(te) } : {}),
+  };
+}
+
+// The `maister-package.yaml` form labels (`flows.manifestForm.*`). ADR-105.
+export function manifestFormLabels(t: T): PackageManifestFormLabels {
+  return {
+    heading: t("manifestForm.heading"),
+    name: t("manifestForm.name"),
+    displayTitle: t("manifestForm.displayTitle"),
+    summary: t("manifestForm.summary"),
+    flows: t("manifestForm.flows"),
+    capabilities: t("manifestForm.capabilities"),
+    mcps: t("manifestForm.mcps"),
+    restrictions: t("manifestForm.restrictions"),
+    formMode: t("manifestForm.formMode"),
+    rawMode: t("manifestForm.rawMode"),
+    parseError: t("manifestForm.parseError"),
+    empty: t("manifestForm.empty"),
   };
 }
 

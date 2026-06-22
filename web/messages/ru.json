@@ -280,6 +280,15 @@
       "saving": "Сохранение…",
       "saved": "Сохранено",
       "saveFailed": "Ошибка сохранения",
+      "crumbStudio": "Студия",
+      "crumbLocal": "Локальные",
+      "endEdit": "Завершить",
+      "home": {
+        "orientation": "Главная пакета — отредактируйте манифест ниже, откройте флоу на холсте или выберите файл.",
+        "flowsHeading": "Флоу",
+        "noFlows": "Пока нет флоу.",
+        "save": "Сохранить изменения"
+      },
       "tabProperties": "Свойства",
       "tabAi": "ИИ",
       "aiWorking": "ИИ работает…",
@@ -449,6 +458,7 @@
     "packageFileKind": {
       "asset": "Файл",
       "agent_definition": "Профиль агента",
+      "manifest": "Манифест пакета",
       "readme": "README",
       "rule": "Правило",
       "schema": "Схема",
@@ -457,6 +467,20 @@
       "skill": "Skill",
       "template": "Шаблон",
       "unsupported": "Не поддерживается"
+    },
+    "manifestForm": {
+      "heading": "Манифест пакета",
+      "name": "Имя",
+      "displayTitle": "Заголовок",
+      "summary": "Описание",
+      "flows": "Флоу",
+      "capabilities": "Возможности",
+      "mcps": "MCP-серверы",
+      "restrictions": "Ограничения",
+      "formMode": "Форма",
+      "rawMode": "Текст",
+      "parseError": "Не удалось разобрать манифест",
+      "empty": "Нет"
     }
   },
   "auth": {

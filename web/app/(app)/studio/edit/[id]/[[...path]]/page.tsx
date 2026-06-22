@@ -181,6 +181,15 @@ export default async function StudioEditPage({
     },
     diff: localPackageDiffLabels(tld),
     diffView: diffViewLabels(td),
+    home: {
+      orientation: ts("local.home.orientation"),
+      flowsHeading: ts("local.home.flowsHeading"),
+      noFlows: ts("local.home.noFlows"),
+      save: ts("local.home.save"),
+    },
+    crumbStudio: ts("local.crumbStudio"),
+    crumbLocal: ts("local.crumbLocal"),
+    endEdit: ts("local.endEdit"),
   };
 
   return (
@@ -196,7 +205,11 @@ export default async function StudioEditPage({
         identity={{ project: pkg.name, slug: pkg.slug, kind: "package" }}
         initialLock={{
           held: lock.held,
-          heldByMe: false,
+          // Optimistic: a free lock means the opener (canManage) will acquire it
+          // on mount — render editable to avoid a read-only flash. A lock held by
+          // someone else stays read-only until the client acquire round-trips
+          // (which takes over for the same user). ADR-105.
+          heldByMe: !lock.held,
           holderLabel: lock.holderLabel,
         }}
         initialManifest={initialManifest}

@@ -83,4 +83,18 @@ test("fork an installed package to local → land in the /studio/edit editor", a
   await page.getByTestId("package-fork").click();
   await page.waitForURL(/\/studio\/edit\//, { timeout: 30_000 });
   expect(page.url()).toMatch(/\/studio\/edit\//);
+
+  // M39 (ADR-105): the no-path editor lands on the package HOME (overview +
+  // manifest form), NOT an empty flow canvas — so there is no spurious
+  // "YAML is invalid" sync banner. End-edit releases the lock and returns to the
+  // local list.
+  const editId = page.url().match(/\/studio\/edit\/([^/?#]+)/)?.[1];
+
+  expect(editId).toBeTruthy();
+  await page.goto(`/studio/edit/${editId}`);
+  await expect(page.getByTestId("package-home")).toBeVisible();
+  await expect(page.getByTestId("package-manifest-form")).toBeVisible();
+  await expect(page.getByTestId("flow-yaml-sync-error")).toHaveCount(0);
+  await page.getByTestId("local-editor-end-edit").click();
+  await page.waitForURL(/\/studio\/local$/, { timeout: 15_000 });
 });

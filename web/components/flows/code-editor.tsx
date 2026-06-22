@@ -24,7 +24,8 @@ export type CodeEditorKind =
   | "script"
   | "setup"
   | "asset"
-  | "template";
+  | "template"
+  | "manifest";
 
 export interface CodeEditorProps {
   value: string;

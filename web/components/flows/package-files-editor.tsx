@@ -35,6 +35,10 @@ import {
   type ArtifactContentIssuesLabels,
   ArtifactContentIssues,
 } from "@/components/flows/editor-validation-summary";
+import {
+  type PackageManifestFormLabels,
+  PackageManifestForm,
+} from "@/components/studio/package-manifest-form";
 import { validateArtifactContent } from "@/lib/flows/artifact-validate";
 import {
   buildFileTree,
@@ -60,6 +64,9 @@ export type PackageFilesEditorLabels = {
   script: ScriptArtifactEditorLabels;
   formSchema: FormSchemaBuilderLabels;
   contentIssues: ArtifactContentIssuesLabels;
+  // The `maister-package.yaml` form labels (ADR-105); always built — the
+  // authored-flow mount simply never classifies a file as `manifest`.
+  manifest: PackageManifestFormLabels;
   // Optional: present only when the editor wires the `mcps/` template surface
   // (the local-package editor). Absent on the authored-flow mount.
   mcp?: McpTemplateEditorLabels;
@@ -76,6 +83,7 @@ export function PackageFilesEditor({
   files,
   kindLabels,
   labels,
+  initialSelectedPath = null,
   manifest = null,
   mcpCatalog = null,
 }: {
@@ -83,13 +91,19 @@ export function PackageFilesEditor({
   files: AuthoredFlowPackageFile[];
   kindLabels: Record<AuthoredFlowPackageFileKind, string>;
   labels: PackageFilesEditorLabels;
+  // Initial tree selection (M39: package-home lands on `maister-package.yaml`).
+  // Falls back to the first file when absent or not present.
+  initialSelectedPath?: string | null;
   manifest?: Record<string, unknown> | null;
   // Optional platform MCP catalog; enables the `mcps/` template surface.
   mcpCatalog?: PlatformMcpCatalogEntry[] | null;
 }): ReactElement {
   const [draftFiles, setDraftFiles] = useState(files);
   const [selectedPath, setSelectedPath] = useState<string | null>(
-    files[0]?.path ?? null,
+    (initialSelectedPath !== null &&
+    files.some((file) => file.path === initialSelectedPath)
+      ? initialSelectedPath
+      : files[0]?.path) ?? null,
   );
   const [editPath, setEditPath] = useState<string | null>(null);
 
@@ -358,6 +372,17 @@ function ContentEditor({
   mcpCatalog: PlatformMcpCatalogEntry[] | null;
   onChangeContent: (next: string) => void;
 }): ReactElement {
+  if (inferredKind === "manifest") {
+    return (
+      <PackageManifestForm
+        content={file.content}
+        labels={labels.manifest}
+        readOnly={disabled}
+        onChange={onChangeContent}
+      />
+    );
+  }
+
   if (mcpCatalog && labels.mcp && isMcpTemplatePath(file.path)) {
     return (
       <McpTemplateEditor

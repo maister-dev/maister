@@ -11,6 +11,7 @@ export function classifyPackageFilePath(
   relativePath: string,
 ): AuthoredFlowPackageFileKind {
   if (relativePath === "README.md") return "readme";
+  if (relativePath === "maister-package.yaml") return "manifest";
   if (relativePath === "setup.sh") return "setup";
   if (relativePath.startsWith("schemas/")) return "schema";
   if (relativePath.startsWith("skills/")) return "skill";

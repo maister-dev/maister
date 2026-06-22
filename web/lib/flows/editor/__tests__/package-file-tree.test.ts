@@ -15,6 +15,7 @@ function file(path: string): AuthoredFlowPackageFile {
 describe("classifyPackageFilePath", () => {
   it("infers kind strictly from the path", () => {
     expect(classifyPackageFilePath("README.md")).toBe("readme");
+    expect(classifyPackageFilePath("maister-package.yaml")).toBe("manifest");
     expect(classifyPackageFilePath("setup.sh")).toBe("setup");
     expect(classifyPackageFilePath("schemas/review.json")).toBe("schema");
     expect(classifyPackageFilePath("skills/x/SKILL.md")).toBe("skill");

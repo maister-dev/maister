@@ -48,6 +48,7 @@ const SUPPORTED_FILE_KINDS = new Set<AuthoredFlowPackageFileKind>([
   "template",
   "readme",
   "setup",
+  "manifest",
 ]);
 
 const AUTHORED_FLOW_PACKAGE_SLUG_PATTERN = /^[a-z0-9][a-z0-9._-]*$/;

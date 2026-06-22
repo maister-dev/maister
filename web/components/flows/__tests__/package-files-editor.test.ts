@@ -7,6 +7,7 @@ import { PackageFilesEditor } from "@/components/flows/package-files-editor";
 const KIND_LABELS = {
   asset: "Asset",
   agent_definition: "Agent definition",
+  manifest: "Package manifest",
   readme: "README",
   rule: "Rule",
   schema: "Schema",
@@ -102,6 +103,21 @@ const CONTENT_ISSUES_LABELS = {
   warnTitle: "Warnings",
 };
 
+const MANIFEST_LABELS = {
+  heading: "Package manifest",
+  name: "Name",
+  displayTitle: "Title",
+  summary: "Summary",
+  flows: "Flows",
+  capabilities: "Capabilities",
+  mcps: "MCP servers",
+  restrictions: "Restrictions",
+  formMode: "Form",
+  rawMode: "Raw",
+  parseError: "The manifest could not be parsed.",
+  empty: "None",
+};
+
 const LABELS = {
   addFile: "Add file",
   cancel: "Cancel",
@@ -122,6 +138,7 @@ const LABELS = {
   script: SCRIPT_LABELS,
   formSchema: FORM_SCHEMA_LABELS,
   contentIssues: CONTENT_ISSUES_LABELS,
+  manifest: MANIFEST_LABELS,
 };
 
 describe("PackageFilesEditor", () => {
