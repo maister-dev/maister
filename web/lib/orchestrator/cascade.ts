@@ -41,6 +41,11 @@ export interface CascadeAbandonOptions {
 export interface CascadeAbandonResult {
   cascadedRunCount: number;
   abandonedTaskCount: number;
+  // Ids of the runs this cascade actually flipped to Abandoned. The budget
+  // tree-terminate path uses these to tear down each cascaded child's live ACP
+  // session so the swarm actually stops spending — the cascade only mutates DB
+  // rows; sessions live in the supervisor.
+  cascadedRunIds: string[];
 }
 
 type CascadedRunRow = {
@@ -94,7 +99,7 @@ export async function cascadeAbandonRunTree(
       "cascadeAbandonRunTree: nothing to cascade",
     );
 
-    return { cascadedRunCount: 0, abandonedTaskCount: 0 };
+    return { cascadedRunCount: 0, abandonedTaskCount: 0, cascadedRunIds: [] };
   }
 
   const cascaded: CascadedRunRow[] = await database.transaction(
@@ -193,5 +198,6 @@ export async function cascadeAbandonRunTree(
   return {
     cascadedRunCount: cascaded.length,
     abandonedTaskCount: unlaunchedTaskIds.length,
+    cascadedRunIds: cascaded.map((row) => row.id),
   };
 }

@@ -906,6 +906,65 @@ describe("budget watchdog — TREE scope (E6)", () => {
     expect(await getHitl(rootId)).toHaveLength(0);
     expect(await getHitl(childA)).toHaveLength(0);
   }, 60_000);
+
+  it("kills the root + every child live ACP session so the swarm stops spending (H1)", async () => {
+    // Same tree breach, but with LIVE supervisor sessions for the root (Running
+    // mid-plan) and both children. The tree-terminate must tear them all down —
+    // marking DB rows terminal without killing sessions leaves the agents
+    // spending past the hard ceiling (the tree cap would be soft).
+    const rootId = randomUUID();
+
+    await db.insert(schema.runs).values({
+      id: rootId,
+      runKind: "flow",
+      projectId,
+      rootRunId: rootId,
+      status: "Running",
+      currentStepId: "plan",
+      acpSessionId: "acp-root",
+      runnerId: executorId,
+      capabilityAgent: "claude",
+      runnerSnapshot: testRunnerSnapshot(executorId),
+      flowVersion: "v1.0.0",
+      executionPolicy: policyWithBudget({ tree: { maxTokens: 1000 } }),
+      startedAt: new Date(Date.now() - 60_000),
+    });
+    const childA = await seedRun({
+      rootRunId: rootId,
+      parentRunId: rootId,
+      status: "Running",
+      acpSessionId: "acp-child-a",
+    });
+    const childB = await seedRun({
+      rootRunId: rootId,
+      parentRunId: rootId,
+      status: "Running",
+      acpSessionId: "acp-child-b",
+    });
+
+    await seedRollup(rootId, null, 400);
+    await seedRollup(childA, null, 400);
+    await seedRollup(childB, null, 400); // tree sum 1200 ≥ 1000
+
+    listSessionsSpy.mockResolvedValue([
+      liveSessionRecord(rootId, "sup-root", "plan"),
+      liveSessionRecord(childA, "sup-a", "implement"),
+      liveSessionRecord(childB, "sup-b", "implement"),
+    ]);
+
+    await runSweepTick({ db });
+
+    expect((await getRun(rootId)).status).toBe("Failed");
+    expect((await getRun(childA)).status).toBe("Abandoned");
+    expect((await getRun(childB)).status).toBe("Abandoned");
+
+    // Every live session in the tree was torn down (root + both children).
+    const killed = deleteSessionSpy.mock.calls.map((c) => c[0]);
+
+    expect(killed).toContain("sup-root");
+    expect(killed).toContain("sup-a");
+    expect(killed).toContain("sup-b");
+  }, 60_000);
 });
 
 describe("budget watchdog — TASK scope (E7)", () => {
@@ -948,30 +1007,29 @@ describe("budget watchdog — TASK scope (E7)", () => {
     expect(hitl[0].schema.scope).toBe("task");
   }, 60_000);
 
-  it("task.consecutiveFailures trips escalate", async () => {
+  it("task.consecutiveFailures trips escalate — counts failures BEFORE the live run (realistic ordering)", async () => {
     const taskId = await seedTask();
     const sup = `sup-${randomUUID().slice(0, 8)}`;
 
-    // Two trailing failed runs satisfy a consecutiveFailures:2 ceiling. They
-    // must be OLDER than the live run so the trailing streak (newest→oldest)
-    // counts them; the live Running run does not break the streak only if it is
-    // the most recent — but a Running run is not a failure, so it WOULD break
-    // the streak. The meter counts failures BEFORE the current run; seed the
-    // live run as the newest and the failures just under it. Since the live run
-    // is Running (not a failure), the streak from newest is 0. So instead the
-    // ceiling must be measured over the failed runs alone: set the live run's
-    // started_at OLDER so the two failures are newest.
+    // Realistic retry chain: two prior attempts FAILED, then the current attempt
+    // relaunched and is Running. started_at is monotonic — the live run is the
+    // NEWEST. The task-scope streak excludes the live candidate run
+    // (consecutiveFailedRuns excludeRunId), so the two prior failures satisfy a
+    // consecutiveFailures:2 ceiling. (Before the fix the live Running run headed
+    // the newest→oldest streak and broke it at 0 — the meter was dead, and the
+    // old test only "passed" by seeding the live run OLDER than its own retries,
+    // a causally impossible state.)
     await seedRun({
       taskId,
       status: "Failed",
       currentStepId: null,
-      startedAt: new Date(Date.now() - 1000),
+      startedAt: new Date(Date.now() - 120_000),
     });
     await seedRun({
       taskId,
       status: "Crashed",
       currentStepId: null,
-      startedAt: new Date(Date.now() - 500),
+      startedAt: new Date(Date.now() - 90_000),
     });
     const liveRun = await seedRun({
       taskId,
@@ -979,7 +1037,7 @@ describe("budget watchdog — TASK scope (E7)", () => {
         task: { consecutiveFailures: 2 },
       }),
       acpSessionId: "acp-task-fail",
-      startedAt: new Date(Date.now() - 120_000),
+      startedAt: new Date(Date.now() - 1000),
     });
 
     await seedAttempt({ runId: liveRun, attempt: 1, status: "Running" });
@@ -999,6 +1057,41 @@ describe("budget watchdog — TASK scope (E7)", () => {
 
     expect(hitl[0].schema.scope).toBe("task");
     expect(hitl[0].schema.meter).toBe("failures");
+  }, 60_000);
+
+  it("task.consecutiveFailures does NOT trip on only ONE prior failure (the live run is excluded, not miscounted)", async () => {
+    const taskId = await seedTask();
+    const sup = `sup-${randomUUID().slice(0, 8)}`;
+
+    // One prior failed attempt + the current Running attempt. With the live run
+    // excluded, the streak is 1 < the consecutiveFailures:2 ceiling → no breach.
+    // This locks the exclude: the live Running run must never be counted as a
+    // failure toward its own task streak.
+    await seedRun({
+      taskId,
+      status: "Failed",
+      currentStepId: null,
+      startedAt: new Date(Date.now() - 90_000),
+    });
+    const liveRun = await seedRun({
+      taskId,
+      executionPolicy: policyWithBudget({
+        task: { consecutiveFailures: 2 },
+      }),
+      acpSessionId: "acp-task-fail-1",
+      startedAt: new Date(Date.now() - 1000),
+    });
+
+    await seedAttempt({ runId: liveRun, attempt: 1, status: "Running" });
+
+    listSessionsSpy.mockResolvedValue([
+      liveSessionRecord(liveRun, sup, "implement"),
+    ]);
+
+    await runSweepTick({ db });
+
+    expect((await getRun(liveRun)).status).toBe("Running");
+    expect(await getHitl(liveRun)).toHaveLength(0);
   }, 60_000);
 
   it("a parked WaitingOnChildren non-root run is NOT touched even when its task is over hardMax; enforcement relocates to the Running sibling", async () => {
@@ -1193,5 +1286,104 @@ describe("budget watchdog — status invariant (E9 / D2)", () => {
     }
     expect((await getRun(escRun)).status).toBe("NeedsInput");
     expect((await getRun(termRun)).status).toBe("Failed");
+  }, 60_000);
+});
+
+describe("budget watchdog — concurrency (two-racer CAS, H2)", () => {
+  it("two concurrent ticks escalate a run exactly once — single budget_breach HITL", async () => {
+    const taskId = await seedTask();
+    const runId = await seedRun({
+      taskId,
+      executionPolicy: policyWithBudget({ run: { maxTokens: 1000 } }),
+      acpSessionId: "acp-race-esc",
+    });
+
+    await seedAttempt({ runId, attempt: 1, status: "Running" });
+    await seedRollup(runId, taskId, 1000); // 100% → escalate
+
+    listSessionsSpy.mockResolvedValue([
+      liveSessionRecord(runId, "sup-race-esc", "implement"),
+    ]);
+
+    // Two overlapping ticks race the SAME Running candidate (real concurrency —
+    // separate pool connections). The status CAS (WHERE status='Running'
+    // RETURNING) lets exactly one win; the loser matches 0 rows, inserts no
+    // second HITL row, and (post-fix) does NOT unlink the winner's
+    // needs-input.json.
+    await Promise.all([runSweepTick({ db }), runSweepTick({ db })]);
+
+    const run = await getRun(runId);
+
+    expect(run.status).toBe("NeedsInput");
+    expect(run.budgetState?.notified?.run).toBe("escalate");
+
+    const hitl = await getHitl(runId);
+
+    expect(hitl).toHaveLength(1);
+    expect(hitl[0].kind).toBe("budget_breach");
+  }, 60_000);
+
+  it("two concurrent ticks terminate a run exactly once — single run.failed event", async () => {
+    const taskId = await seedTask();
+    const runId = await seedRun({
+      taskId,
+      executionPolicy: policyWithBudget({
+        run: { maxTokens: 1000, hardMaxTokens: 1000 },
+      }),
+      acpSessionId: "acp-race-term",
+    });
+
+    await seedAttempt({ runId, attempt: 1, status: "Running" });
+    await seedRollup(runId, taskId, 1000); // ≥ hardMaxTokens → terminate
+
+    listSessionsSpy.mockResolvedValue([
+      liveSessionRecord(runId, "sup-race-term", "implement"),
+    ]);
+
+    await Promise.all([runSweepTick({ db }), runSweepTick({ db })]);
+
+    expect((await getRun(runId)).status).toBe("Failed");
+
+    // Exactly one run.failed domain event — the loser's CAS matched 0 rows and
+    // emitted nothing (no double-emit under the race).
+    const events = await db
+      .select()
+      .from(schema.domainEvents)
+      .where(eq(schema.domainEvents.runId, runId));
+    const failed = events.filter((e: any) => e.kind === "run.failed");
+
+    expect(failed).toHaveLength(1);
+  }, 60_000);
+});
+
+describe("budget watchdog — raise re-derives the hard ceiling (M2)", () => {
+  it("a raise lifting maxTokens above an explicit launch hardMaxTokens does NOT hard-terminate at the stale ceiling", async () => {
+    const taskId = await seedTask();
+    // Launched with an explicit run.hardMaxTokens=1200 (terminate band just
+    // above the 1000 escalate ceiling). A raise-and-resume lifted
+    // run.maxTokens to 5000 via budget_state.ceilingOverride.
+    const runId = await seedRun({
+      taskId,
+      executionPolicy: policyWithBudget({
+        run: { maxTokens: 1000, hardMaxTokens: 1200 },
+      }),
+      budgetState: { ceilingOverride: { run: { maxTokens: 5000 } } },
+      acpSessionId: "acp-reraise",
+    });
+
+    await seedAttempt({ runId, attempt: 1, status: "Running" });
+    await seedRollup(runId, taskId, 1500); // > stale hard 1200, < raised 5000
+
+    listSessionsSpy.mockResolvedValue([
+      liveSessionRecord(runId, "sup-reraise", "implement"),
+    ]);
+
+    await runSweepTick({ db });
+
+    // The hard band re-derives from the RAISED maxTokens (5000 × 1.25 = 6250),
+    // and 1500 is below the 80% warn of 5000 (=4000) — the run keeps Running,
+    // NOT terminated at the stale 1200 ceiling (the pre-fix bug).
+    expect((await getRun(runId)).status).toBe("Running");
+    expect(deleteSessionSpy).not.toHaveBeenCalled();
   }, 60_000);
 });

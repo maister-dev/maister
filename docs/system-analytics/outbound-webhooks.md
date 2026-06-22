@@ -197,7 +197,7 @@ cheap). (All Implemented.)
 | ---- | -------------- | ----------------------- |
 | `run.started` | `Pending → Running` (direct start and queue-promote) | `scheduler.ts` (`tryStartRun`, `promoteNextPending`) |
 | `run.needs_input` | `→ NeedsInput` (permission / form / human / `budget_breach`) | `flows/runner.ts`, `flows/runner-human.ts`, `flows/runner-agent.ts`, `flows/graph/runner-graph.ts`, `scratch-runs/events.ts`, `runs/keepalive-sweeper.ts` (budget escalate) |
-| `run.escalated` | execution-policy B3 on-stuck (human gate can't auto-pass: `escalate` / `notify_only`) OR a budget escalate (`reason=budget_exceeded`, ADR-101 — same kind, no new type) | `flows/graph/runner-graph.ts` (`emitRunEscalated`), `runs/keepalive-sweeper.ts` (budget watchdog, flow run/task escalate) |
+| `run.escalated` | execution-policy B3 on-stuck (human gate can't auto-pass: `escalate` / `ship_with_warning` / `notify_only`) OR a budget escalate (`reason=budget_exceeded`, ADR-101 — same kind, no new type) | `flows/graph/runner-graph.ts` (`emitRunEscalated`), `runs/keepalive-sweeper.ts` (budget watchdog, flow run/task escalate) |
 | `hitl.requested` | `hitl_requests` INSERT | `flows/runner-agent.ts`, `flows/runner-human.ts`, `flows/graph/runner-graph.ts` (persist writepoint), `scratch-runs/events.ts` |
 | `hitl.responded` | `hitl_requests.responded_at` write (incl. idle-resume + auto-deliver) | `services/hitl.ts` (permission / form / human review), `flows/runner-agent.ts` (auto-deliver), `runs/resume-driver.ts` (idle-resume) |
 | `run.review` | `Running → Review` (runner and workbench paths) | `flows/runner.ts`, `flows/graph/runner-graph.ts`, `workbench-lifecycle/service.ts` (stop / drop→Review), `runs/resume-driver.ts`, `scratch-runs/events.ts` |
@@ -275,7 +275,7 @@ the 12), `occurredAt` (ISO-8601 UTC), `deliveryId`, `attempt` (int `≥1`),
 | `hitl.requested` | `{ hitlRequestId: string, kind: "permission" \| "form" \| "human", nodeId: string \| null }` |
 | `hitl.responded` | `{ hitlRequestId: string, kind: "permission" \| "form" \| "human", via: "user" \| "auto" }` |
 | `run.review` | `{ source: "runner" \| "workbench" }` |
-| `run.escalated` | two variants on the SAME kind (never a new type): B3 on-stuck `{ nodeId: string \| null, onStuck: "escalate" \| "notify_only" }`; budget escalate (ADR-101) `{ reason: "budget_exceeded", scope: "run" \| "task" \| "tree", meter: "tokens" \| "failures" \| "wallclock" }` |
+| `run.escalated` | two variants on the SAME kind (never a new type): B3 on-stuck `{ nodeId: string \| null, onStuck: "escalate" \| "ship_with_warning" \| "notify_only" }`; budget escalate (ADR-101) `{ reason: "budget_exceeded", scope: "run" \| "task" \| "tree", meter: "tokens" \| "failures" \| "wallclock" }` |
 | `run.promoted` | `{ mode: "local_merge" \| "pull_request", target: string, pullRequestUrl: string \| null }` |
 | `run.done` | `{}` |
 | `run.failed` | `{ errorCode: string \| null }` |

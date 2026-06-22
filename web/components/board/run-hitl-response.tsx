@@ -69,7 +69,14 @@ export function RunHitlResponse({
   const [formValues, setFormValues] = useState<Record<string, string>>({});
   const [comments, setComments] = useState("");
   const [confidence, setConfidence] = useState("");
-  const [budgetCeiling, setBudgetCeiling] = useState("");
+  // Pre-fill the raise input with the suggested ceiling = breached current × 2
+  // (spec §6.2). `current` ≥ the breached limit at escalate, so current × 2 is
+  // always a valid suggestion (> limit). Empty for non-budget kinds.
+  const [budgetCeiling, setBudgetCeiling] = useState(() => {
+    const breach = budgetBreachFromSchema(schema);
+
+    return breach ? String(breach.current * 2) : "";
+  });
 
   // Map a typed MaisterError `code` to a localized message. Unknown codes fall
   // back to the generic message so the user never sees a raw code like CONFLICT.

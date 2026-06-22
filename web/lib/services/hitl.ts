@@ -1418,8 +1418,11 @@ async function handleInfraRecoveryResponse(args: {
 
 // Maps the breached meter to the BudgetLimits field a raise writes. tokens →
 // maxTokens (escalate ceiling), failures → consecutiveFailures, wallclock →
-// wallClockMinutes (tree only). hardMaxTokens is left untouched — the raise
-// lifts the escalate ceiling; the terminate band re-derives from it.
+// wallClockMinutes (tree only). hardMaxTokens is left untouched — the watchdog's
+// tokenCeilings() re-derives the terminate band from the RAISED maxTokens
+// (× MAISTER_BUDGET_HARD_MULTIPLIER) whenever a raise lifted maxTokens without
+// also setting an explicit hard, so a raised run is not hard-terminated at the
+// stale snapshot hard ceiling.
 const BUDGET_METER_FIELD = {
   tokens: "maxTokens",
   failures: "consecutiveFailures",

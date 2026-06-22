@@ -476,7 +476,7 @@ components:
           description: Budget meter that breached (budget variant).
         onStuck:
           type: string
-          enum: [escalate, notify_only]
+          enum: [escalate, ship_with_warning, notify_only]
           description: onStuck disposition (B3 on-stuck variant).
         nodeId:
           type: string

@@ -822,6 +822,52 @@ function isSetLimit(value: number | null): value is number {
   return value !== null && Number.isFinite(value) && value > 0;
 }
 
+// Token escalate + terminate ceilings for one scope, accounting for a
+// raise-and-resume override. The terminate (hard) ceiling RE-DERIVES from the
+// effective maxTokens × multiplier whenever the winning maxTokens came from a
+// raise override that did NOT also set hardMaxTokens — otherwise a run whose
+// escalate ceiling was raised would still hard-terminate at the stale snapshot
+// hard band, so the raise would buy almost nothing. Precedence for hard:
+//   1. an explicit override hardMaxTokens (a raise that set it) always wins;
+//   2. else, if a raise lifted maxTokens, hard = raised × multiplier;
+//   3. else (maxTokens from the snapshot) the snapshot hardMaxTokens, or the
+//      computed maxTokens × multiplier when no explicit hard exists.
+// Returns null when the scope has no positive maxTokens (nothing to enforce).
+function tokenCeilings(
+  snapshotBudget: BudgetAxis,
+  override: BudgetAxis | undefined,
+  scope: BudgetScope,
+  multiplier: number,
+): { escalateLimit: number; hardLimit: number } | null {
+  const escalateLimit = effectiveLimit(
+    snapshotBudget,
+    override,
+    scope,
+    "maxTokens",
+  );
+
+  if (!isSetLimit(escalateLimit)) return null;
+
+  const overrideHardRaw = override?.[scope]?.hardMaxTokens;
+  const overrideHard =
+    typeof overrideHardRaw === "number" ? overrideHardRaw : null;
+  const overrideMaxRaw = override?.[scope]?.maxTokens;
+  const raisedMax = typeof overrideMaxRaw === "number" && overrideMaxRaw > 0;
+  const snapshotHardRaw = snapshotBudget[scope]?.hardMaxTokens;
+  const snapshotHard =
+    typeof snapshotHardRaw === "number" ? snapshotHardRaw : null;
+
+  const hardLimit = isSetLimit(overrideHard)
+    ? overrideHard
+    : raisedMax
+      ? escalateLimit * multiplier
+      : isSetLimit(snapshotHard)
+        ? snapshotHard
+        : escalateLimit * multiplier;
+
+  return { escalateLimit, hardLimit };
+}
+
 type BudgetMeter = "tokens" | "failures" | "wallclock";
 
 type BudgetVerdict = {
@@ -907,20 +953,14 @@ async function evaluateBudgetForCandidate(
   const runTaskActive = candidate.status === "Running";
 
   // --- run scope (Running candidate only) -----------------------------------
-  const runTokenLimit = effectiveLimit(
+  const runTokenCeilings = tokenCeilings(
     snapshotBudget,
     override,
     "run",
-    "maxTokens",
+    multiplier,
   );
 
-  if (runTaskActive && isSetLimit(runTokenLimit)) {
-    const hard = effectiveLimit(
-      snapshotBudget,
-      override,
-      "run",
-      "hardMaxTokens",
-    );
+  if (runTaskActive && runTokenCeilings) {
     const current = await queryRunTokens(candidate.id, { client: db });
 
     verdict = pickHigher(
@@ -929,8 +969,8 @@ async function evaluateBudgetForCandidate(
         scope: "run",
         meter: "tokens",
         current,
-        escalateLimit: runTokenLimit,
-        hardLimit: isSetLimit(hard) ? hard : runTokenLimit * multiplier,
+        escalateLimit: runTokenCeilings.escalateLimit,
+        hardLimit: runTokenCeilings.hardLimit,
         warnPct: warnPct("run"),
       }),
     );
@@ -963,20 +1003,14 @@ async function evaluateBudgetForCandidate(
 
   // --- task scope (Running candidate with a task_id) ------------------------
   if (runTaskActive && candidate.taskId) {
-    const taskTokenLimit = effectiveLimit(
+    const taskTokenCeilings = tokenCeilings(
       snapshotBudget,
       override,
       "task",
-      "maxTokens",
+      multiplier,
     );
 
-    if (isSetLimit(taskTokenLimit)) {
-      const hard = effectiveLimit(
-        snapshotBudget,
-        override,
-        "task",
-        "hardMaxTokens",
-      );
+    if (taskTokenCeilings) {
       const current = await queryTaskTokens(candidate.taskId, { client: db });
 
       verdict = pickHigher(
@@ -985,8 +1019,8 @@ async function evaluateBudgetForCandidate(
           scope: "task",
           meter: "tokens",
           current,
-          escalateLimit: taskTokenLimit,
-          hardLimit: isSetLimit(hard) ? hard : taskTokenLimit * multiplier,
+          escalateLimit: taskTokenCeilings.escalateLimit,
+          hardLimit: taskTokenCeilings.hardLimit,
           warnPct: warnPct("task"),
         }),
       );
@@ -1002,7 +1036,7 @@ async function evaluateBudgetForCandidate(
     if (isSetLimit(taskFailLimit)) {
       const current = await consecutiveFailedRuns(
         { taskId: candidate.taskId },
-        { client: db },
+        { client: db, excludeRunId: candidate.id },
       );
 
       verdict = pickHigher(
@@ -1021,20 +1055,14 @@ async function evaluateBudgetForCandidate(
 
   // --- tree scope (only at the tree root: rootRunId === own id) --------------
   if (candidate.rootRunId === candidate.id) {
-    const treeTokenLimit = effectiveLimit(
+    const treeTokenCeilings = tokenCeilings(
       snapshotBudget,
       override,
       "tree",
-      "maxTokens",
+      multiplier,
     );
 
-    if (isSetLimit(treeTokenLimit)) {
-      const hard = effectiveLimit(
-        snapshotBudget,
-        override,
-        "tree",
-        "hardMaxTokens",
-      );
+    if (treeTokenCeilings) {
       const current = await queryRunTreeTokens(candidate.id, { client: db });
 
       verdict = pickHigher(
@@ -1043,8 +1071,8 @@ async function evaluateBudgetForCandidate(
           scope: "tree",
           meter: "tokens",
           current,
-          escalateLimit: treeTokenLimit,
-          hardLimit: isSetLimit(hard) ? hard : treeTokenLimit * multiplier,
+          escalateLimit: treeTokenCeilings.escalateLimit,
+          hardLimit: treeTokenCeilings.hardLimit,
           warnPct: warnPct("tree"),
         }),
       );
@@ -1060,7 +1088,7 @@ async function evaluateBudgetForCandidate(
     if (isSetLimit(treeFailLimit)) {
       const current = await consecutiveFailedRuns(
         { rootRunId: candidate.id },
-        { client: db },
+        { client: db, excludeRunId: candidate.id },
       );
 
       verdict = pickHigher(
@@ -1383,9 +1411,13 @@ async function actBudgetEscalate(
   }
 
   if (!paused) {
-    if (needsInputPath) {
-      await unlink(needsInputPath).catch(() => undefined);
-    }
+    // Claim lost — the run advanced concurrently (a racing escalate won, or it
+    // completed). Do NOT unlink needs-input.json here: if a concurrent escalate
+    // WON, the committed NeedsInput run depends on this file, and the loser
+    // deleting it (overlapping ticks / multiple web instances) would strip the
+    // winner's artifact. An orphaned file on a non-paused run is harmless —
+    // nobody reads it unless the run is NeedsInput, and the run dir is GC'd. The
+    // catch above still unlinks when the pause tx itself threw.
     log.debug(
       { runId: candidate.id },
       "[budget] escalate claim lost — run advanced concurrently",
@@ -1594,21 +1626,78 @@ async function actBudgetTerminateRun(
   return true;
 }
 
-// TREE-scope TERMINATE: cascade-abandon the whole sub-tree (children-first, one
-// tx, per-pool promote) then flip the root terminal. cascadeAbandonRunTree does
-// NOT touch the root, so the root is flipped here (Failed for flow/agent; the
-// scratch finalizer is never a tree root).
+// TREE-scope TERMINATE: stop every live session in the tree (so the swarm
+// actually stops spending past the hard ceiling), cascade-abandon the whole
+// sub-tree (children-first, one tx, per-pool promote), then flip the root
+// terminal. cascadeAbandonRunTree does NOT touch the root or the supervisor
+// sessions, so the root session + each child session are killed here and the
+// root row is flipped here (Failed for flow/agent; the scratch finalizer is
+// never a tree root).
 async function actBudgetTerminateTree(
   db: Db,
+  records: SupervisorSessionRecord[],
   candidate: BudgetCandidate,
   verdict: BudgetVerdict,
 ): Promise<boolean> {
-  await cascadeAbandonRunTree(
+  // Stop the spend BEFORE flipping rows terminal (E5 discipline). The root may
+  // be Running mid-plan with its own live session; kill it first. An
+  // EXECUTOR_UNAVAILABLE (supervisor 5xx) means we cannot confirm it stopped —
+  // leave the tree for the next tick rather than mark it Failed with the agent
+  // still spending. A terminal (non-5xx) failure means the session is already
+  // gone; proceed.
+  const rootLive = liveRecordFor(records, candidate);
+
+  if (rootLive) {
+    try {
+      await deleteSession(rootLive.sessionId);
+    } catch (err) {
+      if (isMaisterError(err) && err.code === "EXECUTOR_UNAVAILABLE") {
+        log.warn(
+          { runId: candidate.id, err: err.message },
+          "[budget] tree-terminate root deleteSession 5xx — leaving tree for next tick",
+        );
+
+        return false;
+      }
+      log.warn(
+        {
+          runId: candidate.id,
+          err: err instanceof Error ? err.message : String(err),
+        },
+        "[budget] tree-terminate root deleteSession terminal failure — proceeding",
+      );
+    }
+  }
+
+  const { cascadedRunIds } = await cascadeAbandonRunTree(
     candidate.id,
     candidate.taskId,
     "budget_exceeded",
     { db },
   );
+
+  // Best-effort teardown of each cascaded child's live ACP session. The cascade
+  // only flipped DB rows; without this the child agents keep running to
+  // completion and the tree token cap stays soft. Teardown errors are tolerated
+  // (the child is already Abandoned; supervisor-side reconcile reaps any
+  // orphan). Match by runId — a running child has one live session.
+  for (const childId of cascadedRunIds) {
+    const childLive = records.find(
+      (r) => r.status === "live" && r.runId === childId,
+    );
+
+    if (childLive) {
+      await deleteSession(childLive.sessionId).catch((err: unknown) => {
+        log.warn(
+          {
+            runId: childId,
+            err: err instanceof Error ? err.message : String(err),
+          },
+          "[budget] tree-terminate child session teardown failed — continuing",
+        );
+      });
+    }
+  }
 
   const notified = mergedBudgetState(
     candidate.budgetState,
@@ -1802,7 +1891,7 @@ async function runBudgetPass(db: Db): Promise<number> {
         // terminate in evaluateBudgetForCandidate).
         didAct = await actBudgetEscalate(db, records, candidate, verdict);
       } else if (verdict.scope === "tree") {
-        didAct = await actBudgetTerminateTree(db, candidate, verdict);
+        didAct = await actBudgetTerminateTree(db, records, candidate, verdict);
       } else {
         didAct = await actBudgetTerminateRun(db, records, candidate, verdict);
       }
@@ -1859,6 +1948,7 @@ export async function runSweepTick(
 type GlobalSweeperState = {
   handle: NodeJS.Timeout | null;
   intervalSeconds: number;
+  running: boolean;
 };
 
 const SWEEPER_GLOBAL_KEY = Symbol.for("maister.keepalive-sweeper.v1");
@@ -1867,7 +1957,11 @@ function globalState(): GlobalSweeperState {
   const g = globalThis as unknown as Record<symbol, GlobalSweeperState>;
 
   if (!g[SWEEPER_GLOBAL_KEY]) {
-    g[SWEEPER_GLOBAL_KEY] = { handle: null, intervalSeconds: 0 };
+    g[SWEEPER_GLOBAL_KEY] = {
+      handle: null,
+      intervalSeconds: 0,
+      running: false,
+    };
   }
 
   return g[SWEEPER_GLOBAL_KEY];
@@ -1899,12 +1993,29 @@ export function startKeepaliveSweeper(): void {
 
   state.intervalSeconds = intervalSeconds;
   state.handle = setInterval(() => {
-    void runSweepTick().catch((err: unknown) => {
-      log.error(
-        { err: err instanceof Error ? err.message : String(err) },
-        "sweeper tick threw — continuing on next interval",
-      );
-    });
+    // Re-entrancy guard: setInterval fires every N s regardless of whether the
+    // previous tick's promise resolved. A slow tick (many candidates, heavy DB)
+    // could otherwise overlap with the next — two ticks racing the SAME run. The
+    // per-row CAS keeps that correct, but overlap wastes work and would let an
+    // escalate loser delete the winner's needs-input.json. Skip while a tick is
+    // in flight. (Cross-PROCESS overlap on a multi-instance web tier is still
+    // possible — the per-row CAS + the no-unlink-on-loss path above cover it.)
+    if (state.running) {
+      log.debug({}, "sweeper tick still running — skipping this interval");
+
+      return;
+    }
+    state.running = true;
+    void runSweepTick()
+      .catch((err: unknown) => {
+        log.error(
+          { err: err instanceof Error ? err.message : String(err) },
+          "sweeper tick threw — continuing on next interval",
+        );
+      })
+      .finally(() => {
+        state.running = false;
+      });
   }, intervalSeconds * 1_000);
   state.handle.unref?.();
   log.info(

@@ -818,11 +818,15 @@ describe("applyDefaultBudgetForUnattended (launch auto-fill, never throws)", () 
     else process.env[ENV] = prior;
   });
 
-  it("unattended + no budget + env set → fills tree.maxTokens", () => {
+  it("unattended + no budget + env set → fills BOTH run.maxTokens and tree.maxTokens", () => {
     process.env[ENV] = "250000";
 
     const out = applyDefaultBudgetForUnattended({ preset: "unattended" });
 
+    // run scope is load-bearing: a standalone run has root_run_id=NULL, so the
+    // watchdog's tree scope never evaluates for it — run scope always does. The
+    // tree seed still bounds an orchestrator swarm's total spend at the root.
+    expect(out.overrides?.budget?.run?.maxTokens).toBe(250000);
     expect(out.overrides?.budget?.tree?.maxTokens).toBe(250000);
     // does not clobber the preset
     expect(out.preset).toBe("unattended");
@@ -837,6 +841,7 @@ describe("applyDefaultBudgetForUnattended (launch auto-fill, never throws)", () 
     });
 
     expect(out.overrides?.commits).toBe("defer");
+    expect(out.overrides?.budget?.run?.maxTokens).toBe(100);
     expect(out.overrides?.budget?.tree?.maxTokens).toBe(100);
   });
 

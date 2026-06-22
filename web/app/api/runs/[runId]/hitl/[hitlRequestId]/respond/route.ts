@@ -20,6 +20,13 @@ const bodySchema = z.object({
   // M17 ADR-054: responder self-reported confidence in [0,1].
   // Validation happens in the service layer (resolveConfidence → 422 NEEDS_INPUT).
   confidence: z.unknown().optional(),
+  // Cost-budget governance (ADR-101): raised token ceiling for a budget_breach
+  // "raise" decision. Transport-only — re-validated fail-closed (positive int >
+  // breached limit) in handleBudgetBreachResponse. Omitting it here lets
+  // z.object() strip the client's field, so the service sees undefined and every
+  // Raise fails PRECONDITION. (budget_breach is human-actor-only, so the ext
+  // route never reaches this branch and needs no equivalent field.)
+  raiseTo: z.number().int().positive().optional(),
 });
 
 function errorResponse(

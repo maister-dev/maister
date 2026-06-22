@@ -415,6 +415,41 @@ describe("respondToHitl budget_breach integration — raise (invalid, fail-close
   });
 });
 
+describe("respondToHitl budget_breach integration — human-actor-only (D7)", () => {
+  it("a machine api_token actor is rejected UNAUTHORIZED before any mutation", async () => {
+    const projectId = await seedProject("budget-human-only");
+    const runId = await seedRun(projectId);
+    const hitlRequestId = await seedBudgetBreachHitl(runId, { limit: 1000 });
+
+    const machineActor: HitlActor = {
+      kind: "api_token",
+      tokenId: "tok-1",
+      projectId,
+      label: "CI token",
+    };
+
+    // budget_breach joins human / infra_recovery as a human-only gate: a machine
+    // token (even with hitl:respond scope) can never raise or abandon it.
+    await expect(
+      respondToHitl(
+        { runId, hitlRequestId, body: { optionId: "raise", raiseTo: 5000 } },
+        machineActor,
+        { db },
+      ),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+    // No mutation — the row stays unanswered.
+    const hitlRow = (
+      await (db as any)
+        .select()
+        .from(schema.hitlRequests)
+        .where(eq(schema.hitlRequests.id, hitlRequestId))
+    )[0];
+
+    expect(hitlRow.respondedAt).toBeNull();
+  });
+});
+
 describe("respondToHitl budget_breach integration — idempotency", () => {
   it("responded-row second response is a no-op {ok:true, idempotent:true}", async () => {
     const projectId = await seedProject("budget-idem");

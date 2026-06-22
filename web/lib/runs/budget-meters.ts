@@ -70,7 +70,7 @@ export async function consecutiveFailedAttempts(
 // DESC. Exactly one of taskId / rootRunId must be provided.
 export async function consecutiveFailedRuns(
   key: { taskId?: string; rootRunId?: string },
-  opts: { client?: DbClient } = {},
+  opts: { client?: DbClient; excludeRunId?: string } = {},
 ): Promise<number> {
   if ((key.taskId == null) === (key.rootRunId == null)) {
     throw new MaisterError(
@@ -85,15 +85,23 @@ export async function consecutiveFailedRuns(
       ? eq(runs.taskId, key.taskId)
       : eq(runs.rootRunId, key.rootRunId as string);
   const rows = await client
-    .select({ status: runs.status })
+    .select({ id: runs.id, status: runs.status })
     .from(runs)
     .where(scope)
     .orderBy(desc(runs.startedAt));
   const failed = new Set<string>(FAILED_RUN_STATUSES);
-  const streak = leadingStreak(
-    rows.map((row) => row.status),
-    (status) => failed.has(status),
-  );
+  // Exclude the live candidate run from the trailing streak. A task's currently
+  // Running run is its NEWEST by started_at and is not a failure, so leaving it
+  // in breaks the streak at 0 — task-scope consecutiveFailures would never trip
+  // (spec E7). Counting failures strictly BEFORE the live run gives the intended
+  // "N prior attempts failed" signal. (A tree root is the OLDEST member, so
+  // excluding it is a no-op there — kept for uniformity.)
+  const statuses = (
+    opts.excludeRunId
+      ? rows.filter((row) => row.id !== opts.excludeRunId)
+      : rows
+  ).map((row) => row.status);
+  const streak = leadingStreak(statuses, (status) => failed.has(status));
 
   log.debug(
     {
