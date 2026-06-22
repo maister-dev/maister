@@ -1,23 +1,28 @@
 import "server-only";
 
-import { join } from "node:path";
-
-import pino from "pino";
-
 import type { GateResult, NodeAttempt, StepRun } from "@/lib/db/schema";
 import type { Db } from "./runner-core";
 
-import { atomicWriteJson } from "@/lib/atomic";
-import { ensureWorktreeGitExclude } from "@/lib/capabilities/materialize";
+import { execFile } from "node:child_process";
+import { join } from "node:path";
+import { promisify } from "node:util";
+
+import pino from "pino";
+
 import { DEFAULT_OUTPUT_TRUNCATION, reduceLedger } from "../context";
 
 import { getGateResultsForRun } from "./gate-store";
 import { getNodeAttemptsForRun } from "./ledger";
 
+import { atomicWriteJson } from "@/lib/atomic";
+import { ensureWorktreeGitExclude } from "@/lib/capabilities/materialize";
+
 const log = pino({
   name: "run-context",
   level: process.env.LOG_LEVEL ?? "info",
 });
+
+const execFileAsync = promisify(execFile);
 
 // P7 (M26/ADR-103): the session-independent run-context blackboard. A PURE
 // projection of node_attempts + gate_results + task.prompt — a fresh, cleared, or
@@ -108,11 +113,47 @@ export async function writeRunContext(args: {
   );
 }
 
+// Whether writing <worktree>/.maister/run.json is safe from a git leak. Safe when
+// the worktree is NOT a git work tree (no leak surface) OR git confirms
+// `.maister/run.json` is ignored. The ONLY unsafe case is a git work tree where
+// the path is NOT ignored: there run.json (task prompt + node vars + gate
+// verdicts) would surface in `git status` and the agent's `git add -A` / the
+// promoted diff, so the caller MUST skip the write. `git check-ignore` is ground
+// truth — it honors info/exclude (our run-start append) AND the repo's own
+// .gitignore / global excludes. Never throws; an indeterminate result inside a
+// git tree fails closed to unsafe (skip), never to a thrown error.
+export async function isRunContextWriteSafe(
+  worktreePath: string,
+): Promise<boolean> {
+  const insideWorkTree = await execFileAsync(
+    "git",
+    ["-C", worktreePath, "rev-parse", "--is-inside-work-tree"],
+    { cwd: worktreePath },
+  )
+    .then(({ stdout }) => stdout.trim() === "true")
+    .catch(() => false);
+
+  if (!insideWorkTree) return true;
+
+  return execFileAsync(
+    "git",
+    ["-C", worktreePath, "check-ignore", "-q", ".maister/run.json"],
+    { cwd: worktreePath },
+  )
+    .then(() => true)
+    .catch(() => false);
+}
+
 // Idempotent run-start ensure of the `.maister/` git-exclude, BEFORE the first
-// run.json write (Q3 ordering invariant). Best-effort — a non-git worktree
-// degrades silently (the exclude is informational; run.json still writes).
+// run.json write (Q3 ordering invariant). Returns whether the subsequent
+// run.json writes are git-leak-safe (see isRunContextWriteSafe) so the caller can
+// gate them. Best-effort throughout: a false return means "skip the write", NOT
+// "fail the run" — run-context correctness never depends on the file, so a git
+// worktree we cannot confirm-exclude must degrade to no-blackboard, never abort.
 export async function ensureRunContextExcluded(
   worktreePath: string,
-): Promise<void> {
+): Promise<boolean> {
   await ensureWorktreeGitExclude(worktreePath);
+
+  return isRunContextWriteSafe(worktreePath);
 }

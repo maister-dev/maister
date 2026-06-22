@@ -185,7 +185,8 @@ function makeAgentSupervisor(text: string): SupervisorApi {
     sendPrompt: (async () => ({
       stopReason: "end_turn" as const,
     })) as unknown as SupervisorApi["sendPrompt"],
-    streamSession: (() => stream()) as unknown as SupervisorApi["streamSession"],
+    streamSession: (() =>
+      stream()) as unknown as SupervisorApi["streamSession"],
     cancelPermission: (async () => ({
       ok: true,
     })) as unknown as SupervisorApi["cancelPermission"],
@@ -239,7 +240,9 @@ describe("runGraph — M38 decide routing (from: output)", () => {
     expect(attempts.find((a) => a.nodeId === "classify")?.status).toBe(
       "Succeeded",
     );
-    expect(attempts.find((a) => a.nodeId === "fixit")?.status).toBe("Succeeded");
+    expect(attempts.find((a) => a.nodeId === "fixit")?.status).toBe(
+      "Succeeded",
+    );
     expect(attempts.find((a) => a.nodeId === "designit")).toBeUndefined();
   }, 60_000);
 
@@ -281,7 +284,9 @@ describe("runGraph — M38 decide routing (from: output)", () => {
 
     const attempts = await getAttempts(seeded.runId);
 
-    expect(attempts.find((a) => a.nodeId === "classify")?.status).toBe("Failed");
+    expect(attempts.find((a) => a.nodeId === "classify")?.status).toBe(
+      "Failed",
+    );
     expect(attempts.find((a) => a.nodeId === "fixit")).toBeUndefined();
   }, 60_000);
 });
@@ -328,7 +333,9 @@ describe("runGraph — M38 decide routing (from: verdict, D3 routing-input)", ()
     // A "fail" verdict (which would normally fail a blocking ai_judgment gate)
     // with high confidence — decide must route on the confidence (→ approve),
     // proving the gate is routing-input, not a hard-fail.
-    const api = makeAgentSupervisor('Reviewed. {"verdict":"fail","confidence":0.95}');
+    const api = makeAgentSupervisor(
+      'Reviewed. {"verdict":"fail","confidence":0.95}',
+    );
 
     await runFlow(seeded.runId, {
       db,
@@ -386,7 +393,9 @@ describe("runGraph — M38 decide routing (from: verdict, D3 routing-input)", ()
       ],
     };
     const seeded = await seedGraphRun(manifest);
-    const api = makeAgentSupervisor('Reviewed. {"verdict":"pass","confidence":0.5}');
+    const api = makeAgentSupervisor(
+      'Reviewed. {"verdict":"pass","confidence":0.5}',
+    );
 
     await runFlow(seeded.runId, {
       db,
@@ -403,5 +412,131 @@ describe("runGraph — M38 decide routing (from: verdict, D3 routing-input)", ()
     expect(attempts.find((a) => a.nodeId === "escalate")?.status).toBe(
       "Succeeded",
     );
+  }, 60_000);
+
+  it("fails closed when the routing-input verdict gate produces NO parseable verdict (no silent default-route)", async () => {
+    const manifest = {
+      schemaVersion: 1,
+      name: "g",
+      compat: { engine_min: "1.7.0" },
+      nodes: [
+        {
+          id: "review",
+          type: "check",
+          action: { command: "true" },
+          pre_finish: {
+            gates: [
+              {
+                id: "q",
+                kind: "ai_judgment",
+                mode: "blocking",
+                prompt: "judge it",
+              },
+            ],
+          },
+          decide: {
+            from: "verdict",
+            cases: [
+              { when: "confidence >= 0.8", target: "approve" },
+              { default: true, target: "human" },
+            ],
+          },
+          transitions: { approve: "done", human: "escalate" },
+        },
+        {
+          id: "escalate",
+          type: "cli",
+          action: { command: "echo escalating" },
+          transitions: { success: "done" },
+        },
+      ],
+    };
+    const seeded = await seedGraphRun(manifest);
+    // The agent emits prose with NO JSON verdict object — parseVerdict returns
+    // null, so the routing-input gate is `failed` and surfaces NO verdict. A
+    // broken producer must NOT fall through to the decide `default` (human →
+    // escalate); the node fails closed (PRECONDITION) instead.
+    const api = makeAgentSupervisor(
+      "Reviewed it thoroughly but forgot to emit any JSON.",
+    );
+
+    await runFlow(seeded.runId, {
+      db,
+      runtimeRoot: seeded.runtimeRoot,
+      supervisorApi: api,
+    });
+
+    expect((await getRun(seeded.runId)).status).toBe("Failed");
+
+    const attempts = await getAttempts(seeded.runId);
+
+    expect(attempts.find((a) => a.nodeId === "review")?.status).toBe("Failed");
+    // The default branch (human → escalate) MUST NOT have run.
+    expect(attempts.find((a) => a.nodeId === "escalate")).toBeUndefined();
+  }, 60_000);
+
+  it("fails closed when an ADVISORY routing-input verdict gate produces NO verdict (advisory must not defeat the fail-closed)", async () => {
+    const manifest = {
+      schemaVersion: 1,
+      name: "g",
+      compat: { engine_min: "1.7.0" },
+      nodes: [
+        {
+          id: "review",
+          type: "check",
+          action: { command: "true" },
+          pre_finish: {
+            gates: [
+              {
+                id: "q",
+                kind: "ai_judgment",
+                // The hole Codex found: a non-blocking routing gate. compile
+                // requires exactly one ai_judgment/skill_check gate but does NOT
+                // constrain its mode, and isEffectivelyBlockingGate is false for
+                // advisory — so the per-gate fail-closed never fired.
+                mode: "advisory",
+                prompt: "judge it",
+              },
+            ],
+          },
+          decide: {
+            from: "verdict",
+            cases: [
+              { when: "confidence >= 0.8", target: "approve" },
+              { default: true, target: "human" },
+            ],
+          },
+          transitions: { approve: "done", human: "escalate" },
+        },
+        {
+          id: "escalate",
+          type: "cli",
+          action: { command: "echo escalating" },
+          transitions: { success: "done" },
+        },
+      ],
+    };
+    const seeded = await seedGraphRun(manifest);
+    // Agent emits prose with NO JSON verdict object → parseVerdict returns null →
+    // the advisory routing gate surfaces NO verdict. The node MUST fail closed
+    // (PRECONDITION) rather than silently route the default branch
+    // (human → escalate).
+    const api = makeAgentSupervisor(
+      "Reviewed it thoroughly but forgot to emit any JSON.",
+    );
+
+    await runFlow(seeded.runId, {
+      db,
+      runtimeRoot: seeded.runtimeRoot,
+      supervisorApi: api,
+    });
+
+    expect((await getRun(seeded.runId)).status).toBe("Failed");
+
+    const attempts = await getAttempts(seeded.runId);
+
+    expect(attempts.find((a) => a.nodeId === "review")?.status).toBe("Failed");
+    // The default branch (human → escalate) MUST NOT have run.
+    expect(attempts.find((a) => a.nodeId === "escalate")).toBeUndefined();
   }, 60_000);
 });

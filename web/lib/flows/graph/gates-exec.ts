@@ -326,18 +326,44 @@ export async function runNodeGates(
     // routing-input — its (possibly low-confidence) verdict drives the decide
     // table, so it MUST NOT abort the node finish. The decide table owns the
     // approve/review/rework decision; the verdict is surfaced above.
-    const routingInput = verdictRouting && isVerdictGate;
+    //
+    // BUT only when it actually PRODUCED a verdict. A failed routing-input gate
+    // (no prompt, or unparseable agent output) surfaced none — `routedVerdict`
+    // stays undefined, so `computeDecideOutcome` would fall through to the
+    // decide `default` branch and let a broken producer drive business routing
+    // (e.g. an approve/promote default). With no verdict there is nothing to
+    // route on, so fail closed: a failed routing-input gate is a blocking gate
+    // failure (the node Fails) exactly like any other unproducible blocking gate.
+    const routingInputWithVerdict =
+      verdictRouting && isVerdictGate && verdictSink.verdict !== undefined;
 
     if (
       effectiveBlocking &&
       status === "failed" &&
       !blockingFailedGateId &&
-      !routingInput
+      !routingInputWithVerdict
     ) {
       blockingFailedGateId = gate.id;
       // Keep running the remaining gates so all verdicts are recorded for the
       // attempt, but the node will not finish (caller aborts).
     }
+  }
+
+  // M38 (ADR-103) fail-closed invariant: a `decide:{from:verdict}` node MUST
+  // surface a verdict to route on. If the gate loop produced none, there is
+  // nothing to route on and `computeDecideOutcome` would fall through to the
+  // decide `default` branch (often an approve/promote) — a broken/relaxed
+  // producer driving business routing. The per-gate guard above only fires for
+  // an effectively-blocking gate, so on its own it misses a verdict gate that is
+  // `advisory`, downgraded by execution-policy check-strictness, or skipped
+  // entirely (a blocking `skill_check` under checks=advisory/skip). Close every
+  // no-verdict vector here uniformly: fail the node closed, exactly as the
+  // blocking path does. (verifyDecideAndOnMismatch guarantees exactly one
+  // verdict gate on a from:verdict node, so this find is always defined.)
+  if (verdictRouting && routedVerdict === undefined && !blockingFailedGateId) {
+    blockingFailedGateId = node.gates.find(
+      (g) => g.kind === "ai_judgment" || g.kind === "skill_check",
+    )?.id;
   }
 
   return {

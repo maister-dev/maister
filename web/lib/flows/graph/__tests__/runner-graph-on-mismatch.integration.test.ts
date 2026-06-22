@@ -314,4 +314,53 @@ describe("runGraph — M38 on_mismatch rework", () => {
     expect(attempts).toHaveLength(3);
     expect(attempts.every((a) => a.status === "Reworked")).toBe(true);
   }, 60_000);
+
+  it("records the manifest workspacePolicy (non-keep) on the reworked attempt, not a hardcoded keep", async () => {
+    // The flow allows ONLY rewind-to-node-checkpoint (no "keep"). The engine must
+    // derive the rework policy from rework.workspacePolicies[0] and record
+    // "rewind-to-node-checkpoint" on the reworked attempt — never a silent "keep".
+    // The non-git fixture worktree captures no checkpoint, so the apply degrades
+    // to keep with a WARN (which is why the marker survives and attempt 2
+    // succeeds); the LEDGER still reflects the author's chosen policy, exactly as
+    // the human-rework path records its chosen policy on degrade.
+    const manifest = {
+      schemaVersion: 1,
+      name: "g",
+      compat: { engine_min: "1.7.0" },
+      nodes: [
+        {
+          id: "extract",
+          type: "cli",
+          action: {
+            command:
+              `if [ -f once.marker ]; then echo '{"verdict":"ok","score":1}' > "$MAISTER_OUTPUT_FILE"; ` +
+              `else echo '{"score":1}' > "$MAISTER_OUTPUT_FILE"; touch once.marker; fi`,
+          },
+          output: { result: { schema: SCHEMA, on_mismatch: "retry" } },
+          rework: {
+            allowedTargets: ["extract"],
+            workspacePolicies: ["rewind-to-node-checkpoint"],
+            maxLoops: 3,
+            commentsVar: "fix_notes",
+          },
+          transitions: { success: "done" },
+        },
+      ],
+    };
+    const seeded = await seedGraphRun(manifest);
+
+    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+
+    expect((await getRun(seeded.runId)).status).toBe("Review");
+
+    const attempts = (await getAttempts(seeded.runId))
+      .filter((a) => a.nodeId === "extract")
+      .sort((a, b) => a.attempt - b.attempt);
+
+    expect(attempts).toHaveLength(2);
+    expect(attempts[0].status).toBe("Reworked");
+    // The fix: the engine records the author's declared policy, NOT "keep".
+    expect(attempts[0].workspacePolicy).toBe("rewind-to-node-checkpoint");
+    expect(attempts[1].status).toBe("Succeeded");
+  }, 60_000);
 });

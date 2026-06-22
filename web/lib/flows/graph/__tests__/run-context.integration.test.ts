@@ -3,7 +3,7 @@ import type { SupervisorApi } from "@/lib/flows/runner-agent";
 import type { SupervisorEvent } from "@/lib/supervisor-client";
 
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { appendFile, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -24,6 +24,7 @@ import {
   testPlatformRunnerRow,
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
+import { isRunContextWriteSafe } from "@/lib/flows/graph/run-context";
 import { runFlow } from "@/lib/flows/runner";
 
 const execFileAsync = promisify(execFile);
@@ -57,7 +58,12 @@ afterAll(async () => {
   await container?.stop();
 });
 
-type Seeded = { runId: string; slug: string; runtimeRoot: string; worktreePath: string };
+type Seeded = {
+  runId: string;
+  slug: string;
+  runtimeRoot: string;
+  worktreePath: string;
+};
 
 async function seedGraphRun(manifest: unknown): Promise<Seeded> {
   const projectId = randomUUID();
@@ -183,7 +189,8 @@ function makeAgentSupervisor(text: string): SupervisorApi {
     sendPrompt: (async () => ({
       stopReason: "end_turn" as const,
     })) as unknown as SupervisorApi["sendPrompt"],
-    streamSession: (() => stream()) as unknown as SupervisorApi["streamSession"],
+    streamSession: (() =>
+      stream()) as unknown as SupervisorApi["streamSession"],
     cancelPermission: (async () => ({
       ok: true,
     })) as unknown as SupervisorApi["cancelPermission"],
@@ -324,6 +331,42 @@ describe("runGraph — P7 run-context (ADR-103)", () => {
     );
     const expectedPath = join(seeded.worktreePath, ".maister", "run.json");
 
-    expect(judge?.resolvedPrompt ?? "").toContain(`[Run context: ${expectedPath}]`);
+    expect(judge?.resolvedPrompt ?? "").toContain(
+      `[Run context: ${expectedPath}]`,
+    );
   }, 60_000);
+});
+
+describe("isRunContextWriteSafe — P7 git-leak gate (ADR-103)", () => {
+  it("is safe (true) for a non-git worktree — no leak surface", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "rc-nongit-"));
+
+    expect(await isRunContextWriteSafe(dir)).toBe(true);
+  });
+
+  it("is UNSAFE (false) in a git worktree where .maister/ is NOT ignored — the leak Codex flagged", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "rc-unignored-"));
+
+    await execFileAsync("git", ["-C", dir, "init", "-q"]);
+    // Neutralize any developer-global excludesFile so the assertion is hermetic:
+    // the ONLY thing that could ignore .maister/ here is what the test sets.
+    await execFileAsync("git", [
+      "-C",
+      dir,
+      "config",
+      "core.excludesFile",
+      "/dev/null",
+    ]);
+
+    expect(await isRunContextWriteSafe(dir)).toBe(false);
+  });
+
+  it("is safe (true) in a git worktree where .maister/ is excluded via info/exclude", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "rc-ignored-"));
+
+    await execFileAsync("git", ["-C", dir, "init", "-q"]);
+    await appendFile(join(dir, ".git", "info", "exclude"), "\n.maister/\n");
+
+    expect(await isRunContextWriteSafe(dir)).toBe(true);
+  });
 });

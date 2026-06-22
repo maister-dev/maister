@@ -1920,30 +1920,43 @@ export async function runGraph(
 
   // P7 (ADR-103, Q3): ensure `.maister/` is git-excluded BEFORE the first
   // run.json write (capability materialization is per-node, so a capability-less
-  // flow would otherwise never set it). Idempotent + best-effort.
-  await ensureRunContextExcluded(worktreePath).catch((err) =>
+  // flow would otherwise never set it), then confirm the write is git-leak-safe.
+  // run.json carries the task prompt + node vars + gate verdicts; writing it into
+  // a git worktree where `.maister/` is NOT ignored would leak it into
+  // `git status` and the agent's `git add -A` / the promoted diff. Gate every
+  // write on this — a false result (exclude failed / unignored worktree) skips
+  // the blackboard silently; it NEVER fails the run (correctness never depends on
+  // run.json).
+  const runContextWriteSafe = await ensureRunContextExcluded(
+    worktreePath,
+  ).catch((err) => {
     log2.debug(
       { err: asError(err).message },
       "[run-context] exclude ensure skipped",
-    ),
-  );
+    );
+
+    return false;
+  });
 
   try {
     while (currentNodeId !== null) {
       // P7 (ADR-103): rewrite run.json from the ledger before processing this
       // node, so an agent node reads the latest run-context (every prior terminal
-      // transition). Best-effort — run correctness never depends on it.
-      await writeRunContext({
-        runId,
-        worktreePath,
-        taskPrompt: loaded.task.prompt,
-        db,
-      }).catch((err) =>
-        log2.debug(
-          { err: asError(err).message },
-          "[run-context] write skipped",
-        ),
-      );
+      // transition). Best-effort — run correctness never depends on it; skipped
+      // entirely when the worktree cannot be confirmed git-leak-safe.
+      if (runContextWriteSafe) {
+        await writeRunContext({
+          runId,
+          worktreePath,
+          taskPrompt: loaded.task.prompt,
+          db,
+        }).catch((err) =>
+          log2.debug(
+            { err: asError(err).message },
+            "[run-context] write skipped",
+          ),
+        );
+      }
 
       const node = graph.nodes.get(currentNodeId);
 
@@ -2568,9 +2581,89 @@ export async function runGraph(
           node.rework !== undefined &&
           reworkTarget !== undefined
         ) {
+          // M38 (ADR-103): honor the author's declared rework.workspacePolicies
+          // instead of hardcoding "keep". workspacePolicies is min(1) (schema),
+          // so [0] is the engine's default choice — the same fallback the
+          // human-rework path uses when no operator choice applies. Apply it for
+          // real against the rework TARGET's pre-attempt checkpoint BEFORE the
+          // ledger writes (X-ATOMIC: a crash after the git mutation leaves the
+          // workspace rewound with this attempt still open — re-running the node
+          // re-applies idempotently). "keep" is a no-op; a non-keep policy with
+          // no captured checkpoint degrades to keep with a WARN (pre-M30 rows /
+          // non-git fixtures); a git failure fails the node (CHECKPOINT), same
+          // as the human-review and auto-retry apply paths.
+          const onMismatchPolicy: WorkspacePolicy =
+            node.rework.workspacePolicies[0] ?? "keep";
+
+          if (onMismatchPolicy !== "keep") {
+            const targetAttempt = await latestAttemptForNode(
+              runId,
+              reworkTarget,
+              db,
+            );
+            const checkpointRef = targetAttempt?.checkpointRef ?? null;
+
+            if (!checkpointRef) {
+              log2.warn(
+                {
+                  nodeId: node.id,
+                  reworkTarget,
+                  workspacePolicy: onMismatchPolicy,
+                },
+                "[checkpoint] no checkpoint_ref on on_mismatch rework target — policy degraded to keep",
+              );
+            } else {
+              try {
+                await applyWorkspacePolicy({
+                  policy: onMismatchPolicy,
+                  worktreePath,
+                  checkpointRef,
+                  rematerialize:
+                    onMismatchPolicy === "fresh-attempt"
+                      ? () =>
+                          materializeProjectBundlesIntoWorktree({
+                            projectId: loaded.run.projectId,
+                            worktreePath,
+                            baseBranch: loaded.workspace.baseBranch ?? "main",
+                            db,
+                          })
+                      : undefined,
+                });
+                log2.info(
+                  {
+                    nodeId: node.id,
+                    reworkTarget,
+                    workspacePolicy: onMismatchPolicy,
+                    checkpointRef,
+                  },
+                  "[checkpoint] on_mismatch apply policy",
+                );
+              } catch (err) {
+                const e = isMaisterError(err)
+                  ? err
+                  : new MaisterError("CHECKPOINT", asError(err).message, {
+                      cause: asError(err),
+                    });
+
+                log2.error(
+                  { nodeId: node.id, code: e.code, err: e.message },
+                  "[checkpoint] git failed — on_mismatch workspacePolicy apply aborted, node Failed",
+                );
+                await markNodeFailed(
+                  nodeAttemptId,
+                  { errorCode: e.code, stdout: e.message },
+                  db,
+                );
+                failed = true;
+                runErrorCode = e.code;
+                break;
+              }
+            }
+          }
+
           await markNodeReworked(
             nodeAttemptId,
-            { decision: onMismatch, workspacePolicy: "keep" },
+            { decision: onMismatch, workspacePolicy: onMismatchPolicy },
             db,
           );
 
