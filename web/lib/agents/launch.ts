@@ -1664,6 +1664,22 @@ export type ReworkChildRunResult = {
   status: "Running";
 };
 
+// FOR UPDATE load of an OWN (non-shared) child's `workspaces` row promotion_state —
+// the row the promote claim/finalize lock. Returns null for a workspace-less child
+// (workspace 'none'/'repo_read', no row), which can't be promoted (no branch).
+async function loadOwnWorkspacePromotionStateForUpdate(
+  db: Db,
+  runId: string,
+): Promise<{ promotionState: string | null } | null> {
+  const rows = await db
+    .select({ promotionState: workspaces.promotionState })
+    .from(workspaces)
+    .where(eq(workspaces.runId, runId))
+    .for("update");
+
+  return rows[0] ?? null;
+}
+
 // M37 (ADR-100): re-open a DELEGATED child whose turn produced a diff (Review)
 // for another turn with the coordinator's rework prompt. CAS Review → Running
 // (single-winner — a concurrent promote/rework loses → CONFLICT), then
@@ -1706,16 +1722,19 @@ export async function reworkChildRun(
     );
   }
 
-  // F1 (ADR-101): a shared writable tree is ONE branch promoted ONCE. The
-  // promote runs its merge LOCKLESS between the claim and finalize tx; the
-  // finalize re-checks the settled-gate, but only AFTER the irreversible git
-  // merge. Fence the rework BEFORE the CAS + respawn: open a tx that resolves +
-  // locks the tree allocator workspace FOR UPDATE — the SAME row the promote
-  // claim/finalize lock — so rework and promote serialize on it. Refuse CONFLICT
-  // when a promote is claiming or already done; otherwise CAS Review→Running in
-  // the same tx (the loser of a concurrent rework/promote → CONFLICT below). The
-  // lock order is single-row (allocator workspace) and consistent → no deadlock.
-  // own/scratch take the existing unfenced CAS.
+  // F1 + F1-twin (Codex adversarial review): a worktree-backed child (shared OR own)
+  // is promotable — the promote claim mints promotion_state='claiming' under the
+  // workspaces-row FOR UPDATE lock, runs its merge LOCKLESS between the claim and
+  // finalize tx, then the finalize flips → Done. An UNFENCED rework that CASes
+  // Review→Running in that claim→finalize window is clobbered back to Done by the
+  // finalize (a lost update — both report success). Fence the rework on the SAME row
+  // the promote claim/finalize lock: refuse CONFLICT while a promote is claiming/done,
+  // else CAS Review→Running in the same tx. The promote claim ALSO re-reads run.status
+  // under this lock (see promoteWorkspaceRun), so a rework that wins the lock FIRST
+  // makes the promote abort instead of clobber. Single consistent single-row lock
+  // (shared: tree allocator row; own: this run's row) → no deadlock. A workspace-less
+  // child (workspace 'none'/'repo_read', no row) can't be promoted → unfenced CAS.
+  // F1 shipped the shared half; this adds the own half (sibling-sweep miss).
   let claim: StateTransitionResult;
 
   if (run.workspaceMode === "shared" && run.agentWorkspace === "worktree") {
@@ -1740,7 +1759,25 @@ export async function reworkChildRun(
       return markReworkFromReview(childRunId, { db: tx });
     });
   } else {
-    claim = await markReworkFromReview(childRunId, { db: _db });
+    claim = await _db.transaction(async (tx: Db) => {
+      const ws = await loadOwnWorkspacePromotionStateForUpdate(tx, childRunId);
+
+      if (
+        ws &&
+        (ws.promotionState === "claiming" || ws.promotionState === "done")
+      ) {
+        log.info(
+          { childRunId, promotionState: ws.promotionState },
+          "rework refused — promote in progress",
+        );
+        throw new MaisterError(
+          "CONFLICT",
+          `child run ${childRunId} rework refused — a promote is in progress / the run is already promoted`,
+        );
+      }
+
+      return markReworkFromReview(childRunId, { db: tx });
+    });
   }
 
   if (!claim.ok) {

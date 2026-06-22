@@ -361,16 +361,25 @@ flowchart TD
   during the lockless merge window — the git target is never mutated before the
   settle is confirmed. The finalize-tx settled re-check under the same lock remains
   as a BACKSTOP (defense-in-depth), not the primary protection. No stranded
-  sibling work.
-- **Shared tree with a failure-terminal sibling (auto-promote)** **(Implemented —
-  ADR-101)** → the AUTO-promoter (`autoPromoteAsPlanChild`) SKIPS the tree (benign
-  log, no merge) when any shared sibling is in a FAILURE-terminal status
-  (`Failed | Crashed | Abandoned`, the `FAILURE_TERMINAL_RUN_STATUSES` set =
-  TERMINAL minus `Done`), leaving the tree for human attention so an unattended
-  merge cannot absorb partial / unreviewed work. A MANUAL `run_promote` stays
-  allowed (the human reviews the whole tree-diff first). The writer-safety
-  settled-gate (`SETTLED_RUN_STATUSES`, which counts a failure-terminal sibling as
-  settled) is UNCHANGED — only the auto path adds the failure check.
+  sibling work. The SAME fence covers an OWN (non-shared) worktree child on its own
+  `workspaces` row, and the promote claim RE-READS `run.status` under that lock —
+  together they close the non-shared promote-vs-rework lost-update where an unfenced
+  rework that won `Review → Running` in the window was clobbered back to `Done` by
+  the no-status-guard non-shared finalize (both reported success; Codex adversarial
+  review).
+- **Shared tree with a failure-terminal sibling (non-human promote)** **(Implemented —
+  ADR-101)** → any NON-human promote is refused BEFORE the merge when a shared sibling
+  is in a FAILURE-terminal status (`Failed | Crashed | Abandoned`, the
+  `FAILURE_TERMINAL_RUN_STATUSES` set = TERMINAL minus `Done`): the AUTO-promoter
+  (`autoPromoteAsPlanChild`) SKIPS the tree (benign log) via its pre-check, and the
+  orchestrator's `run_promote` is refused `PRECONDITION` by the promote CLAIM-tx guard
+  (`!isHumanPromotion`) — so an unattended merge never absorbs partial / unreviewed
+  work and the target is never mutated before the gate. The finalize-tx re-check
+  (`countFailureTerminalSharedSiblings`) remains the under-lock BACKSTOP for a sibling
+  that fails DURING the lockless merge window. A MANUAL (human) `run_promote` stays
+  allowed (the human reviews the whole tree-diff first). The writer-safety settled-gate
+  (`SETTLED_RUN_STATUSES`, which counts a failure-terminal sibling as settled) is
+  UNCHANGED.
 - **Shared-tree allocation is DB-truth + orphan recovery** **(Implemented —
   ADR-101)** → `launchAgentRun` decides allocator-vs-reuser from the `workspaces`
   row (`(root_run_id, workspace_mode='shared', agent_workspace='worktree')`), NOT

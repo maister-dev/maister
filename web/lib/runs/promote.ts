@@ -466,10 +466,25 @@ async function promoteWorkspaceRun(
     const run = await loadRun(tx, runId);
     const workspace = await loadPromotionWorkspaceForUpdate(tx, run);
 
-    if (run.status !== "Review") {
+    // Re-read run.status UNDER the workspace lock for a NON-shared promote (the row the
+    // rework fence also locks — see reworkChildRun). The loadRun above is lock-free, so
+    // a concurrent rework that wins the workspace lock and CASes Review→Running while
+    // this claim waited would leave the first read stale-`Review`, and the non-shared
+    // lockless-merge finalize (no status re-guard) would clobber the rework's work back
+    // to Done (a lost update — Codex adversarial review). A SHARED tree relies on the C1
+    // finalize re-check (countUnsettledSharedSiblings) + the F1 rework fence instead, so
+    // it keeps the first read — re-reading there would turn a concurrent-promote loser's
+    // CONFLICT (canReclaim) into PRECONDITION. Immutable run fields keep the first read.
+    const isSharedTreeClaim =
+      run.workspaceMode === "shared" && run.agentWorkspace === "worktree";
+    const liveStatus = isSharedTreeClaim
+      ? run.status
+      : (await loadRun(tx, runId)).status;
+
+    if (liveStatus !== "Review") {
       throw new MaisterError(
         "PRECONDITION",
-        `${run.runKind} run must be Review before promotion: ${run.status}`,
+        `${run.runKind} run must be Review before promotion: ${liveStatus}`,
       );
     }
 
@@ -498,6 +513,33 @@ async function promoteWorkspaceRun(
           "PRECONDITION",
           `shared-tree promote blocked — ${blockingSiblingCount} shared sibling(s) of the tree still writable`,
         );
+      }
+
+      // F2 (ADR-101) — claim-tx PRE-merge twin of the finalize FIX B failure-terminal
+      // gate (Codex adversarial review). The settled-gate above treats Failed | Crashed
+      // | Abandoned as SETTLED, so it does NOT block a tree whose shared sibling reached
+      // a failure-terminal status with partial, unreviewed commits on the ONE shared
+      // branch. Catching that only in the finalize tx (post-merge) would already have
+      // mutated the target before the abort. For a NON-human promote (the orchestrator's
+      // run_promote AND the as-plan auto-promoter — neither reviews the tree-diff) refuse
+      // HERE, before any git side-effect, so an already-failed sibling never reaches the
+      // merge. A human manual promote stays allowed (the whole tree-diff, incl. the
+      // failed sibling's work, was reviewed — F2 Option B). The finalize FIX B stays the
+      // under-lock backstop for a sibling that fails DURING the lockless merge window.
+      if (!isHumanPromotion(ctx)) {
+        const failureTerminalSiblingCount =
+          await countFailureTerminalSharedSiblings(tx, run.rootRunId);
+
+        if (failureTerminalSiblingCount > 0) {
+          log.info(
+            { runId, rootRunId: run.rootRunId, failureTerminalSiblingCount },
+            "shared-tree promote refused — a sibling is failure-terminal (tree needs human attention)",
+          );
+          throw new MaisterError(
+            "PRECONDITION",
+            `shared-tree promote refused — ${failureTerminalSiblingCount} shared sibling(s) of the tree reached a failure-terminal status; tree needs human attention`,
+          );
+        }
       }
     }
 

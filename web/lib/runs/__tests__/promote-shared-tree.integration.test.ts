@@ -857,3 +857,78 @@ describe("ADR-101 FIX B — finalize aborts an unattended auto-promote when a si
     expect(await workspacePromotionState(root)).toBe("done");
   });
 });
+
+// ---------------------------------------------------------------------------
+// FIX C (Codex adversarial review, ADR-101) — claim-tx PRE-merge failure-terminal
+// guard for a NON-human shared-tree promote.
+//
+// The settled-gate (countUnsettledSharedSiblings) treats Failed | Crashed |
+// Abandoned as SETTLED, so it does NOT block a tree whose shared sibling is
+// ALREADY failure-terminal. The only failure-terminal gate used to be the finalize
+// FIX B re-check — which runs AFTER the lockless merge, so a non-human promote
+// (orchestrator run_promote / as-plan auto-promoter) with an already-failed sibling
+// would merge (MUTATING the target) and only THEN abort CONFLICT. The orchestrator
+// run_promote route had no pre-check at all (only the auto-launcher did).
+//
+// The claim-tx guard refuses such a promote with PRECONDITION BEFORE any git
+// side-effect. Proof of "target unchanged" in this stubbed harness: the merge fn
+// (promoteLocalMergeSpy) is NEVER invoked, and the claim is never minted
+// (promotion_state stays 'none'). A human manual promote is exempt (the pre-existing
+// failure-terminal case is covered by FIX B's human test above).
+//
+// RED before the fix: the merge spy is called once and the promote aborts CONFLICT
+// from the finalize FIX B re-check — i.e. the target was already mutated.
+// ---------------------------------------------------------------------------
+describe("ADR-101 FIX C — claim-tx guard refuses a non-human promote (no merge) when a shared sibling is ALREADY failure-terminal", () => {
+  for (const failedStatus of ["Failed", "Crashed", "Abandoned"]) {
+    it(`(non-human) refuses PRECONDITION and never merges while a shared sibling is already ${failedStatus}`, async () => {
+      const root = await seedRoot();
+      const allocator = await seedSharedChild({
+        rootRunId: root,
+        withWorkspace: true,
+      });
+      const promoting = await seedSharedChild({
+        rootRunId: root,
+        withWorkspace: false,
+      });
+
+      // A sibling of the SAME tree is ALREADY failure-terminal BEFORE the promote
+      // (seedWritableSibling = a sibling run with the given status, no workspace).
+      await seedWritableSibling({ rootRunId: root, status: failedStatus });
+
+      let thrown: unknown;
+
+      try {
+        await promoteChildRunForToken(promoting, {
+          projectId,
+          actor: { kind: "system" },
+          db,
+        });
+      } catch (err) {
+        thrown = err;
+      }
+
+      // Refused at the claim tx with a failure-terminal PRECONDITION (NOT the
+      // settled-gate "still writable" message, NOT a post-merge CONFLICT).
+      expect(isMaisterError(thrown)).toBe(true);
+      expect((thrown as MaisterError).code).toBe("PRECONDITION");
+      expect((thrown as MaisterError).message).toMatch(
+        /failure-terminal status; tree needs human attention/,
+      );
+
+      // The target was NEVER touched — the merge fn was not even reached.
+      expect(promoteLocalMergeSpy).not.toHaveBeenCalled();
+
+      // No partial settle: the promoting child + allocator stay Review.
+      expect(await runStatus(promoting)).toBe("Review");
+      expect(await runStatus(allocator)).toBe("Review");
+
+      // The claim was never minted — the workspace stays 'none' (not 'claiming',
+      // 'failed', or 'done').
+      expect(await workspacePromotionState(root)).toBe("none");
+
+      // Nothing settled → no run.done.
+      expect(await runDoneEvents()).toHaveLength(0);
+    });
+  }
+});

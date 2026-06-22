@@ -811,4 +811,65 @@ describe("run_promote + run_rework race the same Review child", () => {
     expect(((await loser.json()) as { code: string }).code).toBe("CONFLICT");
     expect(await runStatus(childRunId)).toBe("Running");
   }, 60_000);
+
+  // F1-twin (Codex adversarial review) — DETERMINISTIC variant of the (f) race for an
+  // OWN (non-shared) child. The promote claim mints promotion_state='claiming' and
+  // commits, then runs the merge LOCKLESS; the finalize flips → Done WITHOUT re-guarding
+  // run.status. An UNFENCED rework that wins Review→Running in that window is clobbered
+  // back to Done (both report success — the [200,200] lost-update that flakes (f)). The
+  // fix fences the own-child rework on the workspaces-row promotion_state. Here we hold
+  // the merge open to PIN the window and assert the rework is refused CONFLICT.
+  //
+  // RED before the fix: the unfenced CAS returns 200 (Running), then the finalize
+  // clobbers it to Done.
+  it("(f3) own-child rework DURING the promote merge window is refused CONFLICT — no double-win", async () => {
+    const orchestrator = await seedAgent("orchestrator");
+    const worker = await seedAgent("worker");
+    const { runId: parentRunId, secret } =
+      await seedOrchestratorRun(orchestrator);
+    const childRunId = await seedChildRun({
+      agentId: worker,
+      parentRunId,
+      rootRunId: parentRunId,
+      status: "Review",
+      acpSessionId: "acp-merge-window",
+    });
+
+    // Hold the promote's merge open AFTER the claim committed (promotion_state=
+    // 'claiming', lock released) and BEFORE the finalize flips → Done.
+    let releaseMerge!: (commit: string) => void;
+    const mergeGate = new Promise<string>((resolve) => {
+      releaseMerge = resolve;
+    });
+
+    promoteLocalMergeSpy.mockImplementationOnce(() => mergeGate);
+
+    const promoteP = promotePost(
+      jsonReq(PROMOTE_URL, secret, { childRunId }),
+      {},
+    );
+
+    await vi.waitFor(() =>
+      expect(promoteLocalMergeSpy).toHaveBeenCalledTimes(1),
+    );
+
+    // The rework in the window must be REFUSED (the fence sees promotion_state=
+    // 'claiming') — never win the CAS and get clobbered.
+    const reworkRes = await reworkPost(
+      jsonReq(REWORK_URL, secret, { childRunId, prompt: "rework in window" }),
+      {},
+    );
+
+    expect(reworkRes.status).toBe(409);
+    expect(((await reworkRes.json()) as { code: string }).code).toBe(
+      "CONFLICT",
+    );
+
+    // Let the promote finish — it settles the child to Done, unclobbered.
+    releaseMerge("mergedcommit00");
+    const promoteRes = await promoteP;
+
+    expect(promoteRes.status).toBe(200);
+    expect(await runStatus(childRunId)).toBe("Done");
+  }, 60_000);
 });

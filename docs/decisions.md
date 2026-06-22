@@ -7846,6 +7846,24 @@ orphan-claimed on the next shared launch (insert is `onConflictDoNothing(worktre
 `base_commit=null`) and recovered by `recoverOrphanSharedTrees` in the reconcile sweep
 (synthetic row on the earliest shared child).
 
+**Later-round hardening (Codex adversarial review, migration-free, no new error code):**
+(FIX C) The failure-terminal check (F2's twin) is ALSO enforced in the promote CLAIM
+tx, before any git side-effect: a NON-human promote (the orchestrator's `run_promote`
+AND the as-plan auto-promoter — neither reviews the tree-diff) is refused `PRECONDITION`
+when a shared sibling is already in `FAILURE_TERMINAL_RUN_STATUSES`, so the target is
+never merged/pushed before the gate (the earlier finalize-tx re-check ran only AFTER the
+lockless merge, and the `run_promote` route had no pre-check — so a pre-existing failed
+sibling would mutate the target, then abort `CONFLICT`). The finalize re-check stays the
+under-lock backstop for a sibling that fails DURING the merge window; a human manual
+promote stays allowed (Option B). (F1-twin) The F1 rework fence is extended to OWN
+(non-shared) worktree children — `reworkChildRun` locks the child's own `workspaces` row
+and refuses `CONFLICT` while `promotion_state ∈ {'claiming','done'}` — and the non-shared
+promote CLAIM re-reads `run.status` under that lock; together they close the non-shared
+promote-vs-rework lost-update (an unfenced rework that won `Review → Running` in the merge
+window was clobbered back to `Done` by the no-status-guard non-shared finalize, both
+reporting success). The shared path keeps its first read (the C1 finalize re-check covers
+it; re-reading would turn a concurrent-promote loser's `CONFLICT` into `PRECONDITION`).
+
 **Alternatives Considered:**
 - **Per-child Review + per-child promote of the shared tree:** rejected — N children
   share one cumulative diff, so N reviews of the same diff is redundant and N promotes
