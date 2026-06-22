@@ -32,6 +32,8 @@ const FRONTMATTER_LABELS = {
   agentRecommendedCronExpr: "Recommended cron expression",
   agentRecommendedCronTz: "Recommended cron timezone",
   agentRecommendedEvents: "Recommended event kinds",
+  agentCapabilityProfile: "Capability profile (JSON object)",
+  agentCapabilityProfileInvalid: "Invalid JSON object",
   allowedPaths: "Allowed paths",
   forbiddenPaths: "Forbidden paths",
   allowedCommands: "Allowed commands",

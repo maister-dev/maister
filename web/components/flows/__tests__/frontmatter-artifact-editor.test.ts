@@ -25,6 +25,8 @@ const labels: FrontmatterArtifactEditorLabels = {
   agentRecommendedCronExpr: "Recommended cron expression",
   agentRecommendedCronTz: "Recommended cron timezone",
   agentRecommendedEvents: "Recommended event kinds",
+  agentCapabilityProfile: "Capability profile (JSON object)",
+  agentCapabilityProfileInvalid: "Invalid JSON object",
   allowedPaths: "Allowed paths",
   forbiddenPaths: "Forbidden paths",
   allowedCommands: "Allowed commands",
@@ -69,6 +71,9 @@ recommended:
     timezone: UTC
   events:
     - run.failed
+capability_profile:
+  mcp:
+    - github
 ---
 You are a reviewer.
 `;
@@ -184,6 +189,19 @@ describe("applyFrontmatterFieldEdit", () => {
       });
     }
   });
+
+  it("round-trips a capability_profile object edit", () => {
+    const next = applyFrontmatterFieldEdit(AGENT_CONTENT, "capability_profile", {
+      mcp: ["linear"],
+    });
+
+    const fm = splitFrontmatter(next);
+
+    expect(fm.ok).toBe(true);
+    if (fm.ok) {
+      expect(fm.frontmatter?.capability_profile).toEqual({ mcp: ["linear"] });
+    }
+  });
 });
 
 describe("FrontmatterArtifactEditor — skill", () => {
@@ -229,6 +247,9 @@ describe("FrontmatterArtifactEditor — agent_definition", () => {
     expect(html).toContain('value="*/30 * * * *"');
     expect(html).toContain('value="UTC"');
     expect(html).toContain("run.failed");
+    // capability_profile renders as a JSON object field (label + serialized value).
+    expect(html).toContain("Capability profile");
+    expect(html).toContain("github");
   });
 });
 

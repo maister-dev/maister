@@ -2,6 +2,8 @@
 
 import type { ReactElement } from "react";
 
+import { useState } from "react";
+
 import { CodeEditor } from "@/components/flows/code-editor";
 import { agentDefinitionFrontmatterSchema } from "@/lib/agents/definition";
 import {
@@ -31,6 +33,8 @@ export interface FrontmatterArtifactEditorLabels {
   agentRecommendedCronExpr: string;
   agentRecommendedCronTz: string;
   agentRecommendedEvents: string;
+  agentCapabilityProfile: string;
+  agentCapabilityProfileInvalid: string;
   allowedPaths: string;
   forbiddenPaths: string;
   allowedCommands: string;
@@ -181,6 +185,81 @@ function ListField({
         value={value}
         onChange={(event) => onValue(event.target.value)}
       />
+    </label>
+  );
+}
+
+interface CapabilityProfileFieldProps {
+  label: string;
+  invalidLabel: string;
+  readOnly: boolean;
+  value: Record<string, unknown> | undefined;
+  onCommit: (value: Record<string, unknown>) => void;
+  onClear: () => void;
+}
+
+// `capability_profile` is an arbitrary JSON object. Edited as raw JSON with a
+// local draft so intermediate invalid text survives while typing: a valid object
+// commits to frontmatter, an invalid one shows a notice and is NOT saved (the
+// field stays editable — never blocks). The ContentEditor `key={file.path}`
+// remounts this on file switch, so the draft re-seeds for each artifact.
+function CapabilityProfileField({
+  label,
+  invalidLabel,
+  readOnly,
+  value,
+  onCommit,
+  onClear,
+}: CapabilityProfileFieldProps): ReactElement {
+  const [draft, setDraft] = useState(
+    value ? JSON.stringify(value, null, 2) : "",
+  );
+  const [error, setError] = useState<string | null>(null);
+
+  const handle = (text: string): void => {
+    setDraft(text);
+
+    if (text.trim() === "") {
+      setError(null);
+      onClear();
+
+      return;
+    }
+
+    try {
+      const parsed: unknown = JSON.parse(text);
+
+      if (
+        parsed === null ||
+        typeof parsed !== "object" ||
+        Array.isArray(parsed)
+      ) {
+        setError(invalidLabel);
+
+        return;
+      }
+      setError(null);
+      onCommit(parsed as Record<string, unknown>);
+    } catch {
+      setError(invalidLabel);
+    }
+  };
+
+  return (
+    <label className={fieldClass}>
+      <span className={labelClass}>{label}</span>
+      <textarea
+        className={textareaClass}
+        readOnly={readOnly}
+        spellCheck={false}
+        value={draft}
+        onChange={(event) => handle(event.target.value)}
+      />
+      {error ? (
+        <span className="font-mono text-[10px] text-danger" role="alert">
+          {error}
+        </span>
+      ) : null}
     </label>
   );
 }
@@ -446,6 +525,14 @@ function SkillAgentFields({
             readOnly={readOnly}
             value={listToLines(recommended.events)}
             onValue={(next) => editRecommended({ events: linesToList(next) })}
+          />
+          <CapabilityProfileField
+            invalidLabel={labels.agentCapabilityProfileInvalid}
+            label={labels.agentCapabilityProfile}
+            readOnly={readOnly}
+            value={fm.capability_profile as Record<string, unknown> | undefined}
+            onClear={() => editField("capability_profile", undefined)}
+            onCommit={(next) => editField("capability_profile", next)}
           />
         </>
       ) : null}

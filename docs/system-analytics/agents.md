@@ -20,6 +20,17 @@ the social substrate it writes through ([social-board.md](social-board.md)),
 the clock ([scheduler.md](scheduler.md)), or capability enforcement
 (materialize-only per ADR-041/ADR-043 — [flow-settings.md](flow-settings.md)).
 
+**Package-viewer agents are a separate surface, NOT this catalog.** The Flow
+Studio package viewer ([package-viewer.md](../screens/studio/package-viewer.md))
+splits a package's `.md` agents into package-root `maister-agents/<stem>.md`
+(platform-agent definitions — rich view + structural editor) and
+`capability/**/agents/*.md` (Claude subagents materialized into the run's
+`.claude/agents/` at launch — NOT platform-agents). That split is
+package-viewer-only: it does NOT feed this `/agents` catalog or its
+`<flowRefId>:<stem>` projection (which still reads the flow's `agents/<stem>.md`).
+Wiring `maister-agents/` into the catalog/registry is a non-goal of the current
+change (**Phase 2**).
+
 ## Domain entities
 
 - **`agents`** (Implemented) — catalog projection over `agents/<stem>.md`

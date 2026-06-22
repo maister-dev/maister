@@ -57,7 +57,7 @@ const installPackageRevision = vi.fn(
         mcps: [],
         restrictions: [],
       },
-      inventory: { skills: [], agents: [] },
+      inventory: { skills: [], agents: [], platformAgents: [] },
     },
   }),
 );
@@ -489,7 +489,7 @@ describe("POST /api/projects — packages[] bootstrap (ADR-088, integration)", (
           mcps: [],
           restrictions: [],
         },
-        inventory: { skills: [], agents: [] },
+        inventory: { skills: [], agents: [], platformAgents: [] },
       },
     });
 

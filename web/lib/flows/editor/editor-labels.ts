@@ -94,6 +94,10 @@ export function frontmatterArtifactEditorLabels(
     agentRecommendedCronExpr: te("artifacts.agentRecommendedCronExpr"),
     agentRecommendedCronTz: te("artifacts.agentRecommendedCronTz"),
     agentRecommendedEvents: te("artifacts.agentRecommendedEvents"),
+    agentCapabilityProfile: te("artifacts.agentCapabilityProfile"),
+    agentCapabilityProfileInvalid: te(
+      "artifacts.agentCapabilityProfileInvalid",
+    ),
     allowedPaths: te("artifacts.allowedPaths"),
     forbiddenPaths: te("artifacts.forbiddenPaths"),
     allowedCommands: te("artifacts.allowedCommands"),

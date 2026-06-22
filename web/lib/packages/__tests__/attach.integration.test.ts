@@ -51,6 +51,10 @@ async function buildPackage(
   await mkdir(join(root, "capability/agents"), { recursive: true });
   await writeFile(join(root, "capability/skills/skill-one/SKILL.md"), "s\n");
   await writeFile(join(root, "capability/agents/agent-one.md"), "a\n");
+  // Package-root maister-agents/ → inventory.platformAgents (distinct from the
+  // capability subagents above).
+  await mkdir(join(root, "maister-agents"), { recursive: true });
+  await writeFile(join(root, "maister-agents/triager.md"), "t\n");
   await writeFile(
     join(root, "maister-package.yaml"),
     `schemaVersion: 1
@@ -146,6 +150,7 @@ describe("package attach lifecycle (integration)", () => {
     expect(row.manifest.inventory).toEqual({
       skills: ["skill-one"],
       agents: ["agent-one"],
+      platformAgents: ["triager"],
     });
 
     const second = await installPackageRevision({

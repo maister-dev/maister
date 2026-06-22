@@ -2431,6 +2431,8 @@
       "agentRecommendedCronExpr": "Рекомендованное cron-выражение",
       "agentRecommendedCronTz": "Рекомендованный часовой пояс cron",
       "agentRecommendedEvents": "Рекомендованные события",
+      "agentCapabilityProfile": "Профиль возможностей (JSON-объект)",
+      "agentCapabilityProfileInvalid": "Невалидный JSON-объект — не сохранится, пока не исправите",
       "allowedPaths": "Разрешённые пути",
       "forbiddenPaths": "Запрещённые пути",
       "allowedCommands": "Разрешённые команды",
