@@ -83,11 +83,20 @@ Set at least:
 - `AUTH_URL` — your public HTTPS URL.
 - `POSTGRES_PASSWORD` / `DB_URL` — keep `@localhost:5432`.
 
+The supervisor unit reads its own env file instead of the shared one — seed it:
+
+```bash
+sudo -u maister cp supervisor/.env.sample supervisor/.env
+sudo chmod 600 supervisor/.env
+sudo -u maister "$EDITOR" supervisor/.env   # set MAISTER_RUNTIME_ROOT=/opt/maister
+```
+
 Agent CLIs are configured separately on the supervisor host. Use their native
 login/config flows for `claude-agent-acp`, `codex-acp`, `gemini --acp`, and
-`opencode acp`, and `mimo acp`; put provider env vars in `/etc/maister/maister.env` only when
-you intentionally want MAIster to supply an explicit compatible-provider,
-gateway, model-discovery, or sidecar override.
+`opencode acp`, and `mimo acp`; put provider env vars in `supervisor/.env` only
+when you intentionally want MAIster to supply an explicit compatible-provider,
+gateway, model-discovery, or sidecar override (the supervisor spawns the
+adapters, so its env is what they inherit).
 
 `MAISTER_RUNTIME_ROOT` MUST equal the checkout dir (`/opt/maister`) for both
 services — supervisor and web resolve `.maister/` from it, so a mismatch breaks
@@ -178,10 +187,11 @@ configured above is what authorizes that clone.
 ## 6. Agent CLI configuration
 
 Configure each ACP tool on the supervisor host using that tool's own supported
-auth flow before marking it ready in MAIster. Environment variables in
-`maister.env` are optional overrides: they are inherited by spawned adapters
-and should be used for explicit compatible-provider routing, gateway config,
-model discovery, or sidecars rather than as the default source of truth for
+auth flow before marking it ready in MAIster. Environment variables in the
+supervisor's `supervisor/.env` are optional overrides: they are inherited by
+spawned adapters (the supervisor process owns the spawn) and should be used for
+explicit compatible-provider routing, gateway config, model discovery, or
+sidecars rather than as the default source of truth for
 Claude/Codex/Gemini/OpenCode/MiMo auth.
 
 ## 7. systemd services
@@ -194,10 +204,13 @@ sudo systemctl enable --now maister-web
 journalctl -u maister-supervisor -u maister-web -f      # pino logs land in journald
 ```
 
-Both units run as `maister`, `WorkingDirectory=/opt/maister`, read
-`/etc/maister/maister.env`, and start through `pnpm` so `node_modules/.bin`
-(the agent adapters) is on `PATH`. Edit the unit `PATH=` / paths if your layout
-differs.
+Both units run as `maister`, `WorkingDirectory=/opt/maister`, and start through
+`pnpm` so `node_modules/.bin` (the agent adapters) is on `PATH`. They read
+**different** env files: `maister-web.service` reads the shared
+`/etc/maister/maister.env`; `maister-supervisor.service` reads its own
+`/opt/maister/supervisor/.env` (seed it from `supervisor/.env.sample`; keep
+`MAISTER_RUNTIME_ROOT` equal to the web unit's). Edit the unit `PATH=` / paths
+if your layout differs.
 
 ## 8. Reverse proxy + TLS
 
@@ -253,8 +266,8 @@ session registry, so `Running` runs orphan until startup reconciliation lands
 docker compose exec -T postgres pg_dump -U maister maister | gzip > maister-$(date +%F).sql.gz
 ```
 
-Also back up `/etc/maister/maister.env` (secrets) and the project repos /
-`.maister/` run artifacts as needed.
+Also back up `/etc/maister/maister.env` and `supervisor/.env` (secrets) and the
+project repos / `.maister/` run artifacts as needed.
 
 ## Operational caveats
 
