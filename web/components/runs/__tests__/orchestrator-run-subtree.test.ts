@@ -17,7 +17,8 @@ import {
 } from "@/components/runs/orchestrator-run-subtree";
 
 const labels: OrchestratorRunSubtreeLabels = {
-  title: (count: number) => `Child runs (${count})`,
+  // Pre-pluralized string (the caller counts; the component renders it verbatim).
+  title: "Child runs (2)",
   agent: "agent",
   asRun: "(as-run)",
   empty: "No child runs spawned yet.",
@@ -104,6 +105,7 @@ describe("OrchestratorRunSubtree", () => {
 
     expect(html).toContain('data-testid="orchestrator-run-subtree-empty"');
     expect(html).toContain("No child runs spawned yet.");
-    expect(html).toContain("Child runs (0)");
+    // The pre-pluralized title prop renders verbatim (the caller owns the count).
+    expect(html).toContain("Child runs (2)");
   });
 });

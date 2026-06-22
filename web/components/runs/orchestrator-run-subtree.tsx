@@ -11,8 +11,11 @@ import {
 } from "@/lib/runs/run-status-tone";
 
 export interface OrchestratorRunSubtreeLabels {
-  // Section title, e.g. "Child runs ({count})".
-  title: (count: number) => string;
+  // Section title, e.g. "Child runs (2)" — already pluralized for the child
+  // count by the (server) caller. A STRING, not a function: this label is built
+  // server-side and crosses the RSC → Client boundary, where a function prop is
+  // not serializable.
+  title: string;
   // Accessible name + visible eyebrow describing the delegation target column.
   agent: string;
   // Fallback ref shown for a task-less ("as-run") child.
@@ -48,12 +51,12 @@ export function OrchestratorRunSubtree({
 }: OrchestratorRunSubtreeProps): ReactElement {
   return (
     <section
-      aria-label={labels.title(childRuns.length)}
+      aria-label={labels.title}
       className="mt-3 rounded-[12px] border border-dashed border-line bg-[color-mix(in_oklab,var(--ivory)_40%,var(--paper))] p-4"
       data-testid="orchestrator-run-subtree"
     >
       <h2 className="m-0 mb-3 inline-flex items-center gap-2 font-sans text-[13px] font-bold tracking-[-0.01em] text-ink">
-        {labels.title(childRuns.length)}
+        {labels.title}
       </h2>
       {childRuns.length === 0 ? (
         <p

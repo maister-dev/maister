@@ -346,7 +346,11 @@ export default async function RunDetailLayout({
     RUN_STATUS_KEYS.map((key) => [key, tRunStatus(key)]),
   ) as Record<RunStatusKey, string>;
   const orchestratorSubtreeLabels: OrchestratorRunSubtreeLabels = {
-    title: (count: number) => t("subtreeTitle", { count }),
+    // Pre-pluralize server-side: a function prop is not serializable across the
+    // RSC → Client boundary into the OrchestratorRunSubtree client subtree, and
+    // `childRuns` is the same static list the subtree renders (so the count is
+    // exact). next-intl evaluates the ICU plural here (locale-correct incl. RU).
+    title: t("subtreeTitle", { count: childRuns.length }),
     agent: t("subtreeAgent"),
     asRun: t("subtreeAsRun"),
     status: runStatusLabels,
@@ -361,7 +365,9 @@ export default async function RunDetailLayout({
         : null,
   }));
   const inspectorChildRunsLabels: RunInspectorChildRunsLabels = {
-    title: (count: number) => t("spawnedRunsTitle", { count }),
+    // Pre-pluralize server-side (same RSC→Client serialization reason): the
+    // inspector renders `inspectorChildRuns` (length === childRuns.length).
+    title: t("spawnedRunsTitle", { count: childRuns.length }),
     asRun: t("subtreeAsRun"),
     status: runStatusLabels,
   };

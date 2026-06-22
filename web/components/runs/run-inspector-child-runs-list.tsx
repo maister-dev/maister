@@ -16,8 +16,11 @@ export interface RunInspectorChildRun {
 }
 
 export interface RunInspectorChildRunsLabels {
-  // Section title, e.g. "Spawned runs ({count})".
-  title: (count: number) => string;
+  // Section title, e.g. "Spawned runs (2)" — already pluralized for the child
+  // count by the (server) caller. A STRING, not a function: this label crosses
+  // the RSC → Client boundary (LiveRunInspector is a Client Component) and a
+  // function prop is not serializable across it.
+  title: string;
   asRun: string;
   status: Record<RunStatusKey, string>;
 }
@@ -42,7 +45,7 @@ export function RunInspectorChildRunsList({
       data-testid="run-inspector-child-runs"
     >
       <summary className="cursor-pointer list-none px-2 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.04em] text-mute marker:hidden">
-        {labels.title(childRuns.length)}
+        {labels.title}
       </summary>
       <ul className="m-0 flex list-none flex-col gap-1 p-2 pt-0">
         {childRuns.map((child) => {

@@ -14,7 +14,8 @@ import {
 } from "@/components/runs/run-inspector-child-runs-list";
 
 const labels: RunInspectorChildRunsLabels = {
-  title: (count: number) => `Spawned runs (${count})`,
+  // Pre-pluralized string (the caller counts; the component renders it verbatim).
+  title: "Spawned runs (2)",
   asRun: "(as-run)",
   status: {
     Pending: "Pending",
