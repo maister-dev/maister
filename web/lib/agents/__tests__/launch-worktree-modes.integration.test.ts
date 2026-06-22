@@ -355,6 +355,81 @@ describe("M37 Phase 10 — worktree allocation modes via launchAgentRun", () => 
     expect(trees.filter((w) => w.path === sharedPath)).toHaveLength(1);
   }, 60_000);
 
+  // F3 (ADR-101): the allocator decision is DB-truth, not a bare filesystem
+  // observation. A crash between addWorktree (git, outside the tx) and the
+  // workspaces insert leaves an ORPHAN path on disk with NO workspaces row. The
+  // old code (reuseSharedTree = listWorktrees().some(path)) saw that path and set
+  // reuseSharedTree=true → skipped the insert → the tree NEVER got a row (promote/
+  // diff/GC could not resolve it). The fix: decide reuse from a DB row; when the
+  // path exists but no row does, CLAIM the orphan (insert the row, reuse the dir).
+  //
+  // RED before the fix: launching a shared child of a root whose path is already
+  // on disk (no row) leaves the tree with ZERO workspaces rows.
+  it("(F3) a shared worktree path on disk with NO workspaces row is CLAIMED by the next shared child (exactly one row results)", async () => {
+    const ids = await seedPackageWithAgents([
+      { stem: "coordinator", workspace: "worktree" },
+      { stem: "worker", workspace: "worktree" },
+    ]);
+    const root = await insertRoot();
+    const sharedPath = sharedAgentWorktreePath(projectSlug, root);
+    const sharedBranch = `maister/agents/${root}`;
+
+    // Simulate the crash window: the git worktree exists on disk (addWorktree
+    // ran) but the runs+workspaces tx never committed — NO workspaces row.
+    const { addWorktree } = await import("@/lib/worktree");
+
+    await addWorktree({
+      projectRepoPath: repoPath,
+      worktreePath: sharedPath,
+      branch: sharedBranch,
+      startPoint: "main",
+    });
+    expect(await workspaceRows(sharedPath)).toHaveLength(0);
+
+    // The next shared child of the same root CLAIMS the orphan: reuses the dir,
+    // inserts the missing workspaces row — never throws.
+    const result = await launchAgentRun({
+      agentId: ids.worker,
+      projectId,
+      parentRunId: root,
+      rootRunId: root,
+      launchMode: "manual",
+      workspaceMode: "shared",
+      trigger: { source: "manual" },
+      db,
+    });
+
+    if ("deduped" in result) throw new Error("unexpected dedup");
+
+    // Exactly ONE workspaces row now owns the tree, pointing at the existing dir
+    // and owned by the claiming child — so promote/diff/GC can resolve the tree.
+    const wsRows = await workspaceRows(sharedPath);
+
+    expect(wsRows).toHaveLength(1);
+    expect(wsRows[0].run_id).toBe(result.runId);
+    expect(wsRows[0].branch).toBe(sharedBranch);
+
+    // The shared worktree still exists exactly once in the git registry (the
+    // claimer reused it, did not re-add).
+    const { listWorktrees } = await import("@/lib/worktree");
+    const trees = await listWorktrees(repoPath);
+
+    expect(trees.filter((w) => w.path === sharedPath)).toHaveLength(1);
+
+    // The tree is now resolvable for a promote (the resolver keys on the row).
+    const { resolveSharedTreeWorkspaceForUpdate } = await import(
+      "@/lib/runs/shared-tree"
+    );
+
+    await db.transaction(async (tx) => {
+      const ws = await resolveSharedTreeWorkspaceForUpdate(tx, {
+        rootRunId: root,
+      });
+
+      expect(ws.worktreePath).toBe(sharedPath);
+    });
+  });
+
   it("an own-mode (default) child gets a per-run worktree and no serialization linkage", async () => {
     const ids = await seedPackageWithAgents([
       { stem: "coordinator", workspace: "worktree" },

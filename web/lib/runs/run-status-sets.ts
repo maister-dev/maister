@@ -30,6 +30,21 @@ export function isSettledRunStatus(status: string): boolean {
   return (SETTLED_RUN_STATUSES as readonly string[]).includes(status);
 }
 
+// M37 (ADR-101) F2: the FAILURE-terminal statuses — TERMINAL minus `Done`. A
+// shared sibling in any of these reached a non-success end with potentially
+// partial, unreviewed work on the shared branch. The auto-promoter SKIPS a tree
+// containing one (an unattended merge would absorb that work); a human manual
+// promote stays allowed (the whole tree-diff is reviewed first).
+export const FAILURE_TERMINAL_RUN_STATUSES = [
+  "Failed",
+  "Crashed",
+  "Abandoned",
+] as const;
+
+export function isFailureTerminalRunStatus(status: string): boolean {
+  return (FAILURE_TERMINAL_RUN_STATUSES as readonly string[]).includes(status);
+}
+
 // A run-bound ext token (orchestrator-run) may not mutate a tree whose
 // orchestrator has terminalized (Codex adversarial review, Finding 1).
 export function isTerminalRunStatus(status: string): boolean {

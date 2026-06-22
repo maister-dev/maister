@@ -45,7 +45,14 @@ import { MaisterError, type MaisterErrorCode } from "@/lib/errors";
 import { gcAgeDays, worktreesRoot } from "@/lib/instance-config";
 import { nextKeepaliveAt } from "@/lib/runs/keepalive-config";
 import { assertRunKindInvariant } from "@/lib/runs/run-kind-invariants";
-import { markReworkFromReview } from "@/lib/runs/state-transitions";
+import {
+  findSharedTreeWorkspace,
+  resolveSharedTreeWorkspaceForUpdate,
+} from "@/lib/runs/shared-tree";
+import {
+  markReworkFromReview,
+  type StateTransitionResult,
+} from "@/lib/runs/state-transitions";
 import {
   promoteNextPending,
   releaseSlotOnIdle,
@@ -658,6 +665,11 @@ export async function launchAgentRun(
   // worktree_path column is UNIQUE; the allocating sibling owns the record).
   // startAgentSession recomputes the shared cwd from workspace_mode + rootRunId.
   let reuseSharedTree = false;
+  // F3 (ADR-101): true ONLY when THIS launch actually ran addWorktree (an
+  // allocator). The teardown on a deduped/failed insert must remove only a dir we
+  // created — never a reused tree (sibling-owned) NOR an orphan dir we merely
+  // claimed (a crashed prior launch's work).
+  let allocatedWorktree = false;
   const isShared = input.workspaceMode === "shared" && input.rootRunId != null;
 
   if (workspace === "worktree") {
@@ -667,52 +679,75 @@ export async function launchAgentRun(
       branch = `${ctx.project.branchPrefix ?? "maister/"}agents/${rootRunId}`;
       worktreePath = sharedAgentWorktreePath(ctx.project.slug, rootRunId);
 
-      // Idempotent allocation: a sibling may have created the shared tree
-      // already. listWorktrees is the registry of record — if the path is
-      // present, reuse it (skip addWorktree, which would fail on the existing
-      // path/branch); otherwise this child is the allocator.
-      const existing = await listWorktrees(ctx.project.repoPath);
+      // F3 (ADR-101): the allocator-vs-reuser decision is DB-truth, NOT a bare
+      // filesystem observation. A crash between addWorktree (git, outside the tx)
+      // and the workspaces insert leaves an ORPHAN path on disk with no row;
+      // trusting listWorktrees there made every later sibling "reuse" the path and
+      // skip the insert, so the tree NEVER got a row (unresolvable for promote/diff/
+      // GC). The `workspaces` row is the source of truth.
+      const treeRow = await findSharedTreeWorkspace(_db, rootRunId);
 
-      reuseSharedTree = existing.some((w) => w.path === worktreePath);
+      if (treeRow) {
+        // A row exists ⇒ a sibling genuinely allocated the tree. Reuse the dir,
+        // own no row.
+        reuseSharedTree = true;
+      } else {
+        // No row ⇒ THIS child owns the tree's row. Branch on whether the dir is
+        // already present.
+        const existing = await listWorktrees(ctx.project.repoPath);
 
-      if (!reuseSharedTree) {
-        baseCommit = await resolveBaseCommit({
-          projectRepoPath: ctx.project.repoPath,
-          baseRef: ctx.project.mainBranch,
-        });
-
-        try {
-          await addWorktree({
+        if (existing.some((w) => w.path === worktreePath)) {
+          // ORPHAN-CLAIM: the path exists from a crashed prior allocation with no
+          // surviving row. Reuse the dir (do NOT addWorktree — it would fail on the
+          // existing path/branch) and claim the row below. The true base is lost;
+          // promote/diff tolerate base_commit=null.
+          baseCommit = null;
+          log.warn(
+            { rootRunId, worktreePath },
+            "shared tree orphan path claimed — no prior workspaces row",
+          );
+        } else {
+          // ALLOCATOR: create the worktree.
+          baseCommit = await resolveBaseCommit({
             projectRepoPath: ctx.project.repoPath,
-            worktreePath,
-            branch,
-            startPoint: ctx.project.mainBranch,
+            baseRef: ctx.project.mainBranch,
           });
-        } catch (err) {
-          // M37 (ADR-100): a concurrent shared-mode sibling can allocate the tree
-          // between the listWorktrees check and this add (TOCTOU). Re-check the
-          // registry: if the path now exists, the sibling won the race — reuse it
-          // (no workspaces row of our own). Otherwise it is a genuine git failure
-          // → surface as a typed CONFLICT, never a raw 500.
-          const after = await listWorktrees(ctx.project.repoPath);
 
-          if (after.some((w) => w.path === worktreePath)) {
-            reuseSharedTree = true;
-            baseCommit = null;
-          } else {
-            throw new MaisterError(
-              "CONFLICT",
-              `shared worktree allocation failed for tree ${rootRunId}: ${
-                err instanceof Error ? err.message : String(err)
-              }`,
-            );
+          try {
+            await addWorktree({
+              projectRepoPath: ctx.project.repoPath,
+              worktreePath,
+              branch,
+              startPoint: ctx.project.mainBranch,
+            });
+            allocatedWorktree = true;
+          } catch (err) {
+            // M37 (ADR-100): a concurrent shared-mode sibling can allocate the tree
+            // between the listWorktrees check and this add (TOCTOU). Re-check the
+            // registry: if the path now exists, the sibling won the race — reuse the
+            // dir and claim-as-orphan (base lost), letting the insert's
+            // onConflictDoNothing arbitrate the single row. Otherwise it is a genuine
+            // git failure → surface as a typed CONFLICT, never a raw 500.
+            const after = await listWorktrees(ctx.project.repoPath);
+
+            if (after.some((w) => w.path === worktreePath)) {
+              baseCommit = null;
+            } else {
+              throw new MaisterError(
+                "CONFLICT",
+                `shared worktree allocation failed for tree ${rootRunId}: ${
+                  err instanceof Error ? err.message : String(err)
+                }`,
+              );
+            }
           }
         }
       }
 
       // M37 (ADR-101): record the allocator-vs-reuser decision for the shared
-      // tree. The allocator owns the single `workspaces` row (UNIQUE worktree_path);
-      // a reuser child gets none and the tree is resolved by root_run_id at promote.
+      // tree. The allocator/claimer owns the single `workspaces` row (UNIQUE
+      // worktree_path, inserted with onConflictDoNothing); a reuser child gets none
+      // and the tree is resolved by root_run_id at promote.
       log.info(
         {
           rootRunId: input.rootRunId,
@@ -741,6 +776,7 @@ export async function launchAgentRun(
         branch,
         startPoint: ctx.project.mainBranch,
       });
+      allocatedWorktree = true;
     }
   }
 
@@ -811,24 +847,31 @@ export async function launchAgentRun(
       if (rows.length === 0) return false;
 
       // A reused shared tree already has a workspaces row owned by its allocator
-      // (worktree_path is UNIQUE), so a reusing sibling inserts none.
+      // (worktree_path is UNIQUE), so a reusing sibling inserts none. F3
+      // (ADR-101): the allocator/orphan-claimer insert is onConflictDoNothing on
+      // worktree_path so two concurrent allocators/claimers don't 23505 — one
+      // inserts, the other no-ops (its run still launches; the tree keeps exactly
+      // one row).
       if (
         workspace === "worktree" &&
         worktreePath &&
         branch &&
         !reuseSharedTree
       ) {
-        await tx.insert(workspaces).values({
-          id: randomUUID(),
-          runId,
-          projectId: input.projectId,
-          branch,
-          worktreePath,
-          parentRepoPath: ctx.project.repoPath,
-          baseBranch: ctx.project.mainBranch,
-          baseCommit,
-          targetBranch: ctx.project.mainBranch,
-        });
+        await tx
+          .insert(workspaces)
+          .values({
+            id: randomUUID(),
+            runId,
+            projectId: input.projectId,
+            branch,
+            worktreePath,
+            parentRepoPath: ctx.project.repoPath,
+            baseBranch: ctx.project.mainBranch,
+            baseCommit,
+            targetBranch: ctx.project.mainBranch,
+          })
+          .onConflictDoNothing({ target: workspaces.worktreePath });
       }
 
       return true;
@@ -836,8 +879,8 @@ export async function launchAgentRun(
 
     if (!inserted) {
       // Only tear down a worktree THIS launch created — never a shared tree a
-      // sibling owns.
-      if (worktreePath && !reuseSharedTree) {
+      // sibling owns, nor an orphan dir we merely claimed (F3).
+      if (worktreePath && allocatedWorktree) {
         await removeWorktree({
           projectRepoPath: ctx.project.repoPath,
           worktreePath,
@@ -850,7 +893,7 @@ export async function launchAgentRun(
       };
     }
   } catch (err) {
-    if (worktreePath && !reuseSharedTree) {
+    if (worktreePath && allocatedWorktree) {
       await removeWorktree({
         projectRepoPath: ctx.project.repoPath,
         worktreePath,
@@ -1638,7 +1681,13 @@ export async function reworkChildRun(
   const _db = opts.db ?? getDb();
 
   const rows = await _db
-    .select({ status: runs.status, runKind: runs.runKind })
+    .select({
+      status: runs.status,
+      runKind: runs.runKind,
+      workspaceMode: runs.workspaceMode,
+      agentWorkspace: runs.agentWorkspace,
+      rootRunId: runs.rootRunId,
+    })
     .from(runs)
     .where(eq(runs.id, childRunId));
   const run = rows[0];
@@ -1657,7 +1706,42 @@ export async function reworkChildRun(
     );
   }
 
-  const claim = await markReworkFromReview(childRunId, { db: _db });
+  // F1 (ADR-101): a shared writable tree is ONE branch promoted ONCE. The
+  // promote runs its merge LOCKLESS between the claim and finalize tx; the
+  // finalize re-checks the settled-gate, but only AFTER the irreversible git
+  // merge. Fence the rework BEFORE the CAS + respawn: open a tx that resolves +
+  // locks the tree allocator workspace FOR UPDATE — the SAME row the promote
+  // claim/finalize lock — so rework and promote serialize on it. Refuse CONFLICT
+  // when a promote is claiming or already done; otherwise CAS Review→Running in
+  // the same tx (the loser of a concurrent rework/promote → CONFLICT below). The
+  // lock order is single-row (allocator workspace) and consistent → no deadlock.
+  // own/scratch take the existing unfenced CAS.
+  let claim: StateTransitionResult;
+
+  if (run.workspaceMode === "shared" && run.agentWorkspace === "worktree") {
+    claim = await _db.transaction(async (tx: Db) => {
+      const ws = await resolveSharedTreeWorkspaceForUpdate(tx, run);
+
+      if (ws.promotionState === "claiming" || ws.promotionState === "done") {
+        log.info(
+          {
+            childRunId,
+            rootRunId: run.rootRunId ?? null,
+            promotionState: ws.promotionState,
+          },
+          "rework refused — shared tree promote in progress",
+        );
+        throw new MaisterError(
+          "CONFLICT",
+          `child run ${childRunId} rework refused — a tree promote is in progress / the tree is already promoted`,
+        );
+      }
+
+      return markReworkFromReview(childRunId, { db: tx });
+    });
+  } else {
+    claim = await markReworkFromReview(childRunId, { db: _db });
+  }
 
   if (!claim.ok) {
     throw new MaisterError(

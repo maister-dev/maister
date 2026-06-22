@@ -1000,6 +1000,11 @@ paths:
         orchestrator, in the token's project, and currently in `Review`
         (otherwise `PRECONDITION` → 409).
 
+        **(Implemented — ADR-101.)** Reworking a `workspace_mode='shared'` child
+        is refused `CONFLICT` → 409 while the tree promote is in progress / done
+        (the rework fences on the allocator workspace's `promotion_state`), so a
+        rework cannot mutate the shared branch during the tree-promote merge.
+
         Writes a `token_audit_log` row with scope `runs:delegate` after success.
       operationId: extReworkRun
       security:

@@ -357,3 +357,78 @@ describe("ADR-101 T13 — auto-launch benign settled-gate wait + rework regressi
     expect(promoteLocalMergeSpy).toHaveBeenCalledTimes(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// F2 (ADR-101, Option B) — the AUTO-promoter skips a tree with a FAILURE-terminal
+// shared sibling.
+//
+// SETTLED_RUN_STATUSES includes Failed|Crashed|Abandoned, so the settled-gate
+// (countUnsettledSharedSiblings) does NOT block a tree whose only non-Review
+// sibling failed. The auto-promoter would then MERGE that tree UNATTENDED,
+// absorbing the failed sibling's partial, unreviewed commits. Option B: only the
+// AUTO path (autoPromoteAsPlanChild) skips when any shared sibling is
+// failure-terminal; a human MANUAL promoteChildRunForToken stays allowed (the
+// whole tree-diff is reviewed first).
+//
+// RED before the fix: with no failure-terminal check on the auto path, the
+// Review sibling's run.review drives a merge (promoteLocalMerge called) even
+// though a sibling Failed.
+// ---------------------------------------------------------------------------
+describe("F2 (ADR-101) — auto-promote skips a tree with a failure-terminal sibling; manual stays allowed", () => {
+  it("a Failed shared sibling makes the auto-promoter SKIP: no merge, the Review child stays Review, no throw", async () => {
+    const root = await seedRoot();
+
+    // Allocator owns the tree workspace.
+    await seedSharedAutoChild({ rootRunId: root, withWorkspace: true });
+    // A shared sibling FAILED (terminal but non-success) — partial work on the
+    // shared branch. It is SETTLED for the writer-safety gate, so it does NOT
+    // block the settled-gate.
+    await seedSharedAutoChild({
+      rootRunId: root,
+      withWorkspace: false,
+      status: "Failed",
+    });
+    // The child that reached Review and drives the auto-promote.
+    const reviewChild = await seedSharedAutoChild({
+      rootRunId: root,
+      withWorkspace: false,
+    });
+
+    const event = await emitReview({
+      parentRunId: root,
+      childRunId: reviewChild,
+    });
+    const consumer = buildAutoLaunchRunPlanConsumer({ db });
+
+    await expect(consumer.handle([event])).resolves.toBeUndefined();
+
+    // Option B: the auto path skips — NO unattended merge, the Review child
+    // stays Review for a human to look at the tree.
+    expect(promoteLocalMergeSpy).not.toHaveBeenCalled();
+    expect(await runStatus(reviewChild)).toBe("Review");
+  });
+
+  it("a MANUAL promote on the same tree (a Failed sibling present) STILL merges (Option B leaves manual allowed)", async () => {
+    const root = await seedRoot();
+
+    await seedSharedAutoChild({ rootRunId: root, withWorkspace: true });
+    await seedSharedAutoChild({
+      rootRunId: root,
+      withWorkspace: false,
+      status: "Failed",
+    });
+    const reviewChild = await seedSharedAutoChild({
+      rootRunId: root,
+      withWorkspace: false,
+    });
+
+    // A human reviews the whole tree-diff then promotes manually — allowed.
+    await promoteChildRunForToken(reviewChild, {
+      projectId,
+      actor: { kind: "system" },
+      db,
+    });
+
+    expect(promoteLocalMergeSpy).toHaveBeenCalledTimes(1);
+  });
+});

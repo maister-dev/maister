@@ -7828,6 +7828,24 @@ the *review/promote* axis on top of it. **No migration** (reuses
   ADR-100's promote/rework is extended with the shared-tree variant (single tree
   promote settling all siblings, vs the `own`-mode per-child promote).
 
+**As-built hardening (Codex adversarial-review follow-up):** three fixes landed on
+the shared-tree branch, all migration-free and adding NO new `MaisterError` code.
+(F1) A `run_rework` on a shared writable child now fences on the tree allocator
+`workspaces` row (`promotion_state ∈ {'claiming','done'}` under FOR UPDATE — the same
+row the promote claim/finalize locks) and is refused `CONFLICT` while a promote is in
+progress / done; this closes the target-mutation-before-fence window (a rework could
+previously open during the lockless merge), with the finalize-tx settled re-check kept
+as a backstop. (F2) The as-plan AUTO-promoter SKIPS a tree containing a failure-terminal
+shared sibling (`FAILURE_TERMINAL_RUN_STATUSES` = `Failed | Crashed | Abandoned` =
+TERMINAL minus `Done`), leaving it for human attention so an unattended merge cannot
+absorb partial work; a MANUAL `run_promote` stays allowed and the writer-safety
+settled-gate (`SETTLED_RUN_STATUSES`, which still counts a failure as settled) is
+unchanged. (F3) Shared-tree allocator-vs-reuser is decided from the `workspaces` row
+(DB-truth), NOT the filesystem; a crashed allocation (dir on disk, no row) is
+orphan-claimed on the next shared launch (insert is `onConflictDoNothing(worktree_path)`,
+`base_commit=null`) and recovered by `recoverOrphanSharedTrees` in the reconcile sweep
+(synthetic row on the earliest shared child).
+
 **Alternatives Considered:**
 - **Per-child Review + per-child promote of the shared tree:** rejected — N children
   share one cumulative diff, so N reviews of the same diff is redundant and N promotes

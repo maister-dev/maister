@@ -317,7 +317,11 @@ Seventeen codes (M8 added `STEP_CHECKPOINTED`; M9 added `UNAUTHENTICATED`,
 >   runs BEFORE the cross-tree settle flip), never auto-resolved. A concurrent
 >   shared tree-promote that loses the M18 durable-claim CAS on the shared
 >   `workspaces` row also resolves `CONFLICT` (one winner merges; the losers are
->   no-ops).
+>   no-ops). A `run_rework` on a shared child is refused `CONFLICT` while the tree
+>   promote is in progress / done (the rework fences on the allocator-`workspaces`
+>   row's `promotion_state ∈ {'claiming','done'}` under FOR UPDATE — `reworkChildRun`
+>   serializes with the promote claim/finalize so the git target is never mutated
+>   before the settle).
 > - **`CHECKPOINT`** — an orchestrator `session/resume` failure when waking from
 >   `WaitingOnChildren` (terminal resume failure, same class as the M8 idle path).
 > - **`EXECUTOR_UNAVAILABLE` → HTTP 503** — a child-run spawn or concurrency-cap

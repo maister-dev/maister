@@ -351,13 +351,37 @@ flowchart TD
   BEFORE the tree-settle flip), never auto-resolved — a human resolves, then
   re-promotes (§8).
 - **Shared sibling re-opened (rework) during the tree-promote merge window**
-  **(Implemented — ADR-101)** → `MaisterError("CONFLICT")` (409): the finalize tx
-  RE-RUNS the settled-gate under the allocator-`workspaces` lock; if a shared
-  sibling left `Review` (e.g. `run_rework` `Review→Running`) after the claim
-  committed and during the lockless merge, the settle ABORTS — NO shared child is
-  flipped, the allocator `workspaces` row is reset to a reclaimable state, and a
-  re-promote after the sibling re-settles re-merges (git up-to-date / idempotent).
-  No stranded sibling work.
+  **(Implemented — ADR-101)** → `MaisterError("CONFLICT")` (409) REFUSED AT THE
+  SOURCE: `reworkChildRun` on a shared writable child opens a tx that locks the
+  tree allocator `workspaces` row FOR UPDATE — the SAME row the promote
+  claim/finalize locks — and refuses the rework while `promotion_state ∈
+  {'claiming','done'}` (a tree promote is in progress / the tree is already
+  promoted), else CASes that child `Review → Running` in that tx. Rework and the
+  promote claim/finalize thus serialize on one row, so a rework can NO LONGER open
+  during the lockless merge window — the git target is never mutated before the
+  settle is confirmed. The finalize-tx settled re-check under the same lock remains
+  as a BACKSTOP (defense-in-depth), not the primary protection. No stranded
+  sibling work.
+- **Shared tree with a failure-terminal sibling (auto-promote)** **(Implemented —
+  ADR-101)** → the AUTO-promoter (`autoPromoteAsPlanChild`) SKIPS the tree (benign
+  log, no merge) when any shared sibling is in a FAILURE-terminal status
+  (`Failed | Crashed | Abandoned`, the `FAILURE_TERMINAL_RUN_STATUSES` set =
+  TERMINAL minus `Done`), leaving the tree for human attention so an unattended
+  merge cannot absorb partial / unreviewed work. A MANUAL `run_promote` stays
+  allowed (the human reviews the whole tree-diff first). The writer-safety
+  settled-gate (`SETTLED_RUN_STATUSES`, which counts a failure-terminal sibling as
+  settled) is UNCHANGED — only the auto path adds the failure check.
+- **Shared-tree allocation is DB-truth + orphan recovery** **(Implemented —
+  ADR-101)** → `launchAgentRun` decides allocator-vs-reuser from the `workspaces`
+  row (`(root_run_id, workspace_mode='shared', agent_workspace='worktree')`), NOT
+  from `listWorktrees`: a row ⇒ reuser; no row + path on disk ⇒ ORPHAN-CLAIM (reuse
+  the dir, insert the row, `base_commit=null`); no row + no path ⇒ allocator. The
+  insert is `onConflictDoNothing(worktree_path)` (concurrent-claimer safe), so a
+  crash between `addWorktree` and the insert no longer permanently orphans the
+  tree — the next shared launch claims it, and `recoverOrphanSharedTrees` (wired
+  into the reconcile sweep) re-creates the missing row per project (synthetic row
+  owned by the earliest shared child, `base_commit=null`) for a tree whose
+  deterministic path is on disk.
 - **Shared child diff with no own `workspaces` row** **(Implemented — ADR-101)** → the
   run-diff route and the review-comments gate-diff source MUST resolve the shared
   TREE workspace by `(root_run_id, workspace_mode='shared')` and render the one
@@ -421,12 +445,19 @@ flowchart TD
   `reworkChildRun`), `mcp/src/tools.ts`
   (`run_delegate`/`run_plan`/`run_collect`/`run_cancel`/`run_message`/`run_promote`/`run_rework`).
 - **Source (Implemented — ADR-101):** the shared-tree review/promote model threads
-  through `web/lib/runs/promote.ts` (`promoteChildRunForToken` — resolve the tree
-  workspace by `(root_run_id, workspace_mode='shared')`, promote-time settled
-  re-check over `SETTLED_RUN_STATUSES`, merge-once + cross-tree `Review → Done`
-  settle), `web/lib/agents/launch.ts` (`finalizeAgentRun` — shared writable child →
-  `Review`), the run-diff route + review-comments gate-diff source (tree-workspace
-  resolution), and the workspace GC (tree-aware — never remove while a shared sibling
-  is non-terminal). The serialized-writer guard in `web/lib/scheduler.ts`
-  (`sharedWriterSiblingActive`, wired into `tryStartRun` + `promoteNextPending`) is
-  reused unchanged.
+  through `web/lib/runs/shared-tree.ts` (the extracted resolver/predicate module —
+  `resolveSharedTreeWorkspaceForUpdate` by `(root_run_id, workspace_mode='shared')`,
+  the failure-terminal predicate), `web/lib/runs/run-status-sets.ts`
+  (`FAILURE_TERMINAL_RUN_STATUSES` = TERMINAL minus `Done`), `web/lib/runs/promote.ts`
+  (`promoteChildRunForToken` — promote-time settled re-check over
+  `SETTLED_RUN_STATUSES`, merge-once + cross-tree `Review → Done` settle),
+  `web/lib/agents/launch.ts` (`finalizeAgentRun` — shared writable child → `Review`;
+  `launchAgentRun` — DB-truth allocator-vs-reuser + orphan-claim;
+  `reworkChildRun` — the promotion-state rework fence under the allocator-workspace
+  lock), `web/lib/domain-events/auto-launch.ts` (`autoPromoteAsPlanChild` —
+  failure-terminal-sibling skip), `web/lib/reconcile.ts` (`recoverOrphanSharedTrees`,
+  wired into the reconcile sweep), the run-diff route + review-comments gate-diff
+  source (tree-workspace resolution), and the workspace GC (tree-aware — never remove
+  while a shared sibling is non-terminal). The serialized-writer guard in
+  `web/lib/scheduler.ts` (`sharedWriterSiblingActive`, wired into `tryStartRun` +
+  `promoteNextPending`) is reused unchanged.

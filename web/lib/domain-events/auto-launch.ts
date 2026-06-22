@@ -15,6 +15,7 @@ import {
   promoteChildRunForToken,
   type PromoteRunResult,
 } from "@/lib/runs/promote";
+import { countFailureTerminalSharedSiblings } from "@/lib/runs/shared-tree";
 import { getOpenRelationBlockers } from "@/lib/social/relations";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -84,6 +85,8 @@ async function autoPromoteAsPlanChild(
       projectId: runs.projectId,
       status: runs.status,
       rootRunId: runs.rootRunId,
+      workspaceMode: runs.workspaceMode,
+      agentWorkspace: runs.agentWorkspace,
     })
     .from(runs)
     .where(eq(runs.id, event.runId));
@@ -92,6 +95,37 @@ async function autoPromoteAsPlanChild(
   // Only an as-plan child still in Review is a candidate.
   if (!child || child.launchMode !== "auto" || child.status !== "Review") {
     return;
+  }
+
+  // F2 (ADR-101, Option B): a shared tree is ONE branch = ONE cumulative diff. A
+  // failure-terminal shared sibling (Failed|Crashed|Abandoned) IS settled for the
+  // writer-safety gate, so the settled-gate does NOT block — but its partial,
+  // unreviewed commits are on the branch. An UNATTENDED auto-merge would absorb
+  // them. Skip the auto path and leave the tree for human attention (a manual
+  // promote, where the whole tree-diff is reviewed, stays allowed). Benign — same
+  // shape as the settled-gate skip below.
+  if (
+    child.rootRunId &&
+    child.workspaceMode === "shared" &&
+    child.agentWorkspace === "worktree"
+  ) {
+    const failedSiblings = await countFailureTerminalSharedSiblings(
+      db,
+      child.rootRunId,
+    );
+
+    if (failedSiblings > 0) {
+      log.info(
+        {
+          childRunId: event.runId,
+          rootRunId: child.rootRunId,
+          reason: "shared-tree has a failure-terminal sibling",
+        },
+        "auto-promote skipped — tree needs human attention",
+      );
+
+      return;
+    }
   }
 
   try {
