@@ -104,11 +104,12 @@ The **Routing** group in the properties panel edits the node's `decide` table
   in `EditorValidationSummary`, mapped to the node id.
 
 **Canvas rendering.** A node with **no** `decide` (plain routing) renders its single
-`success` edge as today. A node **with** `decide` renders a compact **decision table
-glyph** on the card and **outcome-labeled edges** — one labeled edge per producible
-outcome (the verdict cases/default targets, or the declared `output` transition
-keys), styled via `edge-style.ts` (success/forward green-gray, rework amber-dashed).
-The read-only `FlowGraphView` twin inherits the same outcome-labeled edges.
+`success` edge as today. A node **with** `decide` renders **outcome-labeled edges** —
+one labeled edge per producible outcome (the verdict cases/default targets, or the
+declared `output` transition keys; these are already transition keys, compile-enforced)
+— styled via `edge-style.ts` / `topology.ts` outcome roles (forward green-gray,
+rework amber-dashed, a `deny`/`fail` verdict branch red). The read-only
+`FlowGraphView` twin inherits the same outcome-labeled edges.
 
 ## States
 

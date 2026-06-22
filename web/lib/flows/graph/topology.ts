@@ -28,6 +28,8 @@ export type GraphEdgeRole =
   | "reject"
   | "takeover"
   | "approve"
+  // M38 (ADR-103): a decide/verdict failure branch (deny/fail) — painted red.
+  | "failure"
   | "other";
 
 export interface DeclaredGateSummary {
@@ -124,6 +126,13 @@ function edgeRoleForOutcome(outcome: string): GraphEdgeRole {
       return "takeover";
     case "approve":
       return "approve";
+    // M38 (ADR-103): decide/verdict failure outcomes route a red edge.
+    case "failure":
+    case "fail":
+    case "failed":
+    case "deny":
+    case "denied":
+      return "failure";
     default:
       return "other";
   }

@@ -5,8 +5,10 @@ import {
   GATE_KINDS,
   validateNodeDraft,
   validateGateDraft,
+  validateDecideDraft,
   blankNode,
   blankGate,
+  blankDecide,
 } from "@/lib/flows/editor/node-form";
 
 // ─── blankNode round-trips ────────────────────────────────────────────────────
@@ -449,6 +451,120 @@ describe("validateGateDraft — invalid gates", () => {
     const result = validateGateDraft("not-a-gate");
 
     expect(result.ok).toBe(false);
+  });
+});
+
+// ─── decide (M38, ADR-103) ───────────────────────────────────────────────────
+
+describe("blankDecide + validateDecideDraft", () => {
+  it("blankDecide('output') round-trips as valid", () => {
+    expect(validateDecideDraft(blankDecide("output"))).toEqual({ ok: true });
+  });
+
+  it("blankDecide('verdict') round-trips as valid", () => {
+    expect(validateDecideDraft(blankDecide("verdict"))).toEqual({ ok: true });
+  });
+
+  it("from: output.<dotpath> (top-level) → ok", () => {
+    expect(validateDecideDraft({ from: "output.outcome" })).toEqual({
+      ok: true,
+    });
+  });
+
+  it("from: output.<dotpath> (nested) → ok", () => {
+    expect(validateDecideDraft({ from: "output.triage.outcome" })).toEqual({
+      ok: true,
+    });
+  });
+
+  it("from: verdict with one default + a parseable when → ok", () => {
+    const result = validateDecideDraft({
+      from: "verdict",
+      cases: [
+        { when: "confidence >= 0.8", target: "approve" },
+        { default: true, target: "review" },
+      ],
+    });
+
+    expect(result).toEqual({ ok: true });
+  });
+});
+
+describe("validateDecideDraft — invalid decide", () => {
+  it("malformed `from` (not verdict, not output.<path>) → error on from", () => {
+    const result = validateDecideDraft({ from: "verd" });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors.some((e) => e.path.includes("from"))).toBe(true);
+    }
+  });
+
+  it("from: output with a `cases` table → error", () => {
+    const result = validateDecideDraft({
+      from: "output.outcome",
+      cases: [{ default: true, target: "x" }],
+    });
+
+    expect(result.ok).toBe(false);
+  });
+
+  it("from: verdict with two defaults → error", () => {
+    const result = validateDecideDraft({
+      from: "verdict",
+      cases: [
+        { default: true, target: "a" },
+        { default: true, target: "b" },
+      ],
+    });
+
+    expect(result.ok).toBe(false);
+  });
+
+  it("from: verdict with zero defaults → error", () => {
+    const result = validateDecideDraft({
+      from: "verdict",
+      cases: [{ when: "confidence >= 0.8", target: "approve" }],
+    });
+
+    expect(result.ok).toBe(false);
+  });
+
+  it("from: verdict with an unparseable when → error", () => {
+    const result = validateDecideDraft({
+      from: "verdict",
+      cases: [
+        { when: "confidence is high", target: "approve" },
+        { default: true, target: "review" },
+      ],
+    });
+
+    expect(result.ok).toBe(false);
+  });
+
+  it("from: verdict with an empty target → error", () => {
+    const result = validateDecideDraft({
+      from: "verdict",
+      cases: [
+        { when: "confidence >= 0.8", target: "" },
+        { default: true, target: "review" },
+      ],
+    });
+
+    expect(result.ok).toBe(false);
+  });
+
+  it("unknown top-level key → error (strict)", () => {
+    const result = validateDecideDraft({
+      from: "output.outcome",
+      unknownKey: true,
+    });
+
+    expect(result.ok).toBe(false);
+  });
+
+  it("non-object input → error", () => {
+    expect(validateDecideDraft(null).ok).toBe(false);
   });
 });
 

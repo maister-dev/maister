@@ -2389,7 +2389,25 @@
       "addTransition": "Добавить переход",
       "removeTransition": "Удалить",
       "noTransitions": "Нет переходов",
-      "noGates": "Нет гейтов"
+      "noGates": "Нет гейтов",
+      "decide": {
+        "title": "Маршрутизация",
+        "source": "Источник",
+        "sourceNone": "Нет",
+        "sourceOutput": "Поле вывода",
+        "sourceVerdict": "Вердикт",
+        "path": "Путь вывода",
+        "when": "Условие",
+        "target": "Цель",
+        "default": "Цель по умолчанию",
+        "addCase": "Добавить случай",
+        "removeCase": "Удалить случай",
+        "noCases": "Нет случаев",
+        "onMismatch": "При несоответствии",
+        "onMismatchNone": "Сбой (CONFIG)",
+        "onMismatchRetry": "Повтор (себя)",
+        "hint": "Для retry / исхода нужен блок rework."
+      }
     },
     "gate": {
       "mode": "Режим",

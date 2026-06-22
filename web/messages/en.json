@@ -2389,7 +2389,25 @@
       "addTransition": "Add transition",
       "removeTransition": "Remove",
       "noTransitions": "No transitions",
-      "noGates": "No gates"
+      "noGates": "No gates",
+      "decide": {
+        "title": "Routing",
+        "source": "Source",
+        "sourceNone": "None",
+        "sourceOutput": "Output field",
+        "sourceVerdict": "Verdict",
+        "path": "Output path",
+        "when": "When",
+        "target": "Target",
+        "default": "Default target",
+        "addCase": "Add case",
+        "removeCase": "Remove case",
+        "noCases": "No cases",
+        "onMismatch": "On mismatch",
+        "onMismatchNone": "Fail (CONFIG)",
+        "onMismatchRetry": "Retry (self)",
+        "hint": "retry / an outcome requires a rework block."
+      }
     },
     "gate": {
       "mode": "Mode",

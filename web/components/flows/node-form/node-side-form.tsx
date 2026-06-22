@@ -7,6 +7,8 @@ import type {
 import type { FlowYamlV1 } from "@/lib/config.schema";
 import type { ReactElement } from "react";
 
+import { PlusIcon, TrashIcon } from "@heroicons/react/24/outline";
+
 import { GateForm } from "@/components/flows/node-form/gate-form";
 
 type NodeDef = NonNullable<FlowYamlV1["nodes"]>[number];
@@ -61,7 +63,27 @@ export type NodeSideFormLabels = {
   removeTransition: string;
   noTransitions: string;
   noGates: string;
+  decide: DecideFormLabels;
   gate: GateFormLabels;
+};
+
+export type DecideFormLabels = {
+  title: string;
+  source: string;
+  sourceNone: string;
+  sourceOutput: string;
+  sourceVerdict: string;
+  path: string;
+  when: string;
+  target: string;
+  default: string;
+  addCase: string;
+  removeCase: string;
+  noCases: string;
+  onMismatch: string;
+  onMismatchNone: string;
+  onMismatchRetry: string;
+  hint: string;
 };
 
 const FIELD_CLS =
@@ -273,6 +295,101 @@ export function NodeSideForm({
 
   const isPromptType = type === "ai_coding" || type === "judge";
   const isCommandType = type === "cli" || type === "check";
+
+  // M38 (ADR-103) — Routing (`decide`) sub-panel. Offered when the node can
+  // produce a routable signal: it declares `output.result` (→ from: output) OR
+  // carries a verdict-producing gate (ai_judgment / skill_check → from: verdict).
+  const hasOutputResult = typeof result.schema === "string";
+  const hasVerdictGate = gates.some(
+    (g) => g.kind === "ai_judgment" || g.kind === "skill_check",
+  );
+  const decide = asRec(n.decide);
+  const hasDecide = n.decide !== undefined && n.decide !== null;
+  // Always offer the panel for a routable node; also keep it visible when a
+  // `decide` already exists so a misconfigured table stays editable/removable.
+  const showRouting = hasOutputResult || hasVerdictGate || hasDecide;
+
+  const decideFrom = str(decide.from);
+  const decideSource: "" | "output" | "verdict" =
+    decideFrom === "verdict"
+      ? "verdict"
+      : decideFrom.startsWith("output.")
+        ? "output"
+        : "";
+  const decideCases = Array.isArray(decide.cases)
+    ? (decide.cases as Rec[])
+    : [];
+  const whenCases = decideCases
+    .map((c, i) => ({ c, i }))
+    .filter(({ c }) => typeof c.when === "string");
+  const defaultCase = decideCases.find((c) => c.default === true);
+
+  const setDecide = (next: Rec | undefined): void => {
+    if (next === undefined) {
+      const rest = { ...n };
+
+      delete rest.decide;
+      emit(rest);
+
+      return;
+    }
+
+    emit({ ...n, decide: next });
+  };
+  const setDecideSource = (source: "" | "output" | "verdict"): void => {
+    if (source === "") {
+      setDecide(undefined);
+    } else if (source === "output") {
+      setDecide({ from: "output.outcome" });
+    } else {
+      setDecide({
+        from: "verdict",
+        cases: [{ default: true, target: "done" }],
+      });
+    }
+  };
+  const writeDecideCases = (cases: Rec[]): void =>
+    setDecide({ from: "verdict", cases });
+  const setVerdictCase = (
+    caseIndex: number,
+    when: string,
+    target: string,
+  ): void => {
+    const next = decideCases.map((c, i) =>
+      i === caseIndex ? { when, target } : c,
+    );
+
+    writeDecideCases(next);
+  };
+  const removeVerdictCase = (caseIndex: number): void =>
+    writeDecideCases(decideCases.filter((_, i) => i !== caseIndex));
+  const addVerdictCase = (): void => {
+    const idx = defaultCase
+      ? decideCases.indexOf(defaultCase)
+      : decideCases.length;
+    const next = [...decideCases];
+
+    next.splice(idx, 0, { when: "confidence >= 0.8", target: "done" });
+    writeDecideCases(next);
+  };
+  const setDefaultTarget = (target: string): void => {
+    const withoutDefault = decideCases.filter((c) => c.default !== true);
+
+    writeDecideCases([...withoutDefault, { default: true, target }]);
+  };
+  const onMismatch = str(result.on_mismatch);
+  const setOnMismatch = (value: string): void => {
+    if (value === "") {
+      const restResult = { ...result };
+
+      delete restResult.on_mismatch;
+      emit({ ...n, output: { ...asRec(n.output), result: restResult } });
+
+      return;
+    }
+
+    setResult({ on_mismatch: value });
+  };
 
   return (
     <div
@@ -520,6 +637,137 @@ export function NodeSideForm({
           ))
         )}
       </section>
+
+      {showRouting ? (
+        <section className="grid gap-2" data-testid="node-decide">
+          <h3 className={SECTION_CLS}>{labels.decide.title}</h3>
+          <label className="grid gap-1">
+            <span className={LABEL_CLS}>{labels.decide.source}</span>
+            <select
+              className={FIELD_CLS}
+              data-testid="node-decide-source"
+              disabled={readOnly}
+              value={decideSource}
+              onChange={(e) =>
+                setDecideSource(e.target.value as "" | "output" | "verdict")
+              }
+            >
+              <option value="">{labels.decide.sourceNone}</option>
+              <option value="output">{labels.decide.sourceOutput}</option>
+              <option value="verdict">{labels.decide.sourceVerdict}</option>
+            </select>
+          </label>
+          {decideSource === "output" ? (
+            <TextField
+              label={labels.decide.path}
+              readOnly={readOnly}
+              testid="node-decide-path"
+              value={decideFrom}
+              onChange={(v) => setDecide({ from: v })}
+            />
+          ) : null}
+          {decideSource === "verdict" ? (
+            <div className="grid gap-2">
+              <div className="flex items-center justify-between">
+                <span className={LABEL_CLS}>{labels.decide.title}</span>
+                {readOnly ? null : (
+                  <button
+                    aria-label={labels.decide.addCase}
+                    className="inline-flex items-center gap-1 rounded-md border border-line px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-ink-2 hover:bg-paper"
+                    data-testid="node-decide-add-case"
+                    type="button"
+                    onClick={addVerdictCase}
+                  >
+                    <PlusIcon aria-hidden="true" className="h-3 w-3" />
+                    {labels.decide.addCase}
+                  </button>
+                )}
+              </div>
+              {whenCases.length === 0 ? (
+                <p className="font-mono text-[10px] text-mute">
+                  {labels.decide.noCases}
+                </p>
+              ) : (
+                whenCases.map(({ c, i }, row) => (
+                  <div
+                    key={i}
+                    className="grid grid-cols-[1fr_1fr_auto] items-end gap-2"
+                    data-testid={`node-decide-case-${row}`}
+                  >
+                    <label className="grid gap-1">
+                      <span className={LABEL_CLS}>{labels.decide.when}</span>
+                      <input
+                        className={FIELD_CLS}
+                        data-testid={`node-decide-when-${row}`}
+                        readOnly={readOnly}
+                        value={str(c.when)}
+                        onChange={(e) =>
+                          setVerdictCase(i, e.target.value, str(c.target))
+                        }
+                      />
+                    </label>
+                    <label className="grid gap-1">
+                      <span className={LABEL_CLS}>{labels.decide.target}</span>
+                      <input
+                        className={FIELD_CLS}
+                        data-testid={`node-decide-case-target-${row}`}
+                        readOnly={readOnly}
+                        value={str(c.target)}
+                        onChange={(e) =>
+                          setVerdictCase(i, str(c.when), e.target.value)
+                        }
+                      />
+                    </label>
+                    {readOnly ? null : (
+                      <button
+                        aria-label={labels.decide.removeCase}
+                        className="inline-flex h-[34px] items-center rounded-md border border-danger-line px-2 text-danger hover:bg-danger-soft"
+                        data-testid={`node-decide-remove-case-${row}`}
+                        type="button"
+                        onClick={() => removeVerdictCase(i)}
+                      >
+                        <TrashIcon aria-hidden="true" className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+                ))
+              )}
+              <TextField
+                label={labels.decide.default}
+                readOnly={readOnly}
+                testid="node-decide-default"
+                value={str(defaultCase?.target)}
+                onChange={(v) => setDefaultTarget(v)}
+              />
+            </div>
+          ) : null}
+          {hasOutputResult ? (
+            <>
+              <label className="grid gap-1">
+                <span className={LABEL_CLS}>{labels.decide.onMismatch}</span>
+                <select
+                  className={FIELD_CLS}
+                  data-testid="node-decide-onmismatch"
+                  disabled={readOnly}
+                  value={onMismatch}
+                  onChange={(e) => setOnMismatch(e.target.value)}
+                >
+                  <option value="">{labels.decide.onMismatchNone}</option>
+                  <option value="retry">{labels.decide.onMismatchRetry}</option>
+                  {Object.keys(transitions).map((outcome) => (
+                    <option key={outcome} value={outcome}>
+                      {outcome}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <p className="font-mono text-[10px] text-mute">
+                {labels.decide.hint}
+              </p>
+            </>
+          ) : null}
+        </section>
+      ) : null}
 
       <section className="grid gap-2">
         <div className="flex items-center justify-between">

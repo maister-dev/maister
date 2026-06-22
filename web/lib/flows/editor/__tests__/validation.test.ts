@@ -51,6 +51,28 @@ describe("validateEditorManifest", () => {
     expect(result.issues.some((i) => i.nodeId === "plan")).toBe(true);
   });
 
+  it("maps a decide error (verdict, no default) to the nodeId (no gateId)", () => {
+    const result = validateEditorManifest(
+      manifest([
+        {
+          id: "triage",
+          type: "judge",
+          action: { prompt: "p" },
+          decide: {
+            from: "verdict",
+            cases: [{ when: "confidence >= 0.8", target: "approve" }],
+          },
+        },
+      ]),
+    );
+
+    expect(result.ok).toBe(false);
+    const issue = result.issues.find((i) => i.nodeId === "triage");
+
+    expect(issue).toBeDefined();
+    expect(issue?.gateId).toBeUndefined();
+  });
+
   it("maps a human_review-blocking gate error to nodeId + gateId", () => {
     const result = validateEditorManifest(
       manifest([

@@ -252,6 +252,34 @@ describe("buildGraphTopology — visual metadata", () => {
     expect(byId.get("plan-work:custom_exit")?.edgeRole).toBe("other");
   });
 
+  // M38 (ADR-103): a decide/verdict failure outcome (deny) gets the `failure`
+  // role so the canvas paints it red, not the calm `other` green.
+  it("maps a deny outcome to the failure edge role", () => {
+    const denyGraph: FlowYamlV1 = {
+      schemaVersion: 1,
+      name: "deny-aif",
+      nodes: [
+        {
+          id: "triage",
+          type: "judge",
+          action: { prompt: "judge" },
+          transitions: { approve: "plan", deny: "plan" },
+        },
+        {
+          id: "plan",
+          type: "ai_coding",
+          action: { prompt: "/aif-plan" },
+          transitions: { success: "done" },
+        },
+      ],
+    } as FlowYamlV1;
+    const topo = buildGraphTopology(compileManifest(denyGraph));
+    const byId = new Map(topo.edges.map((e) => [e.id, asRecord(e)]));
+
+    expect(byId.get("triage:deny")?.edgeRole).toBe("failure");
+    expect(byId.get("triage:approve")?.edgeRole).toBe("approve");
+  });
+
   it("keeps terminal done transitions omitted from topology edges", () => {
     const topo = buildGraphTopology(compileManifest(visualGraph));
 

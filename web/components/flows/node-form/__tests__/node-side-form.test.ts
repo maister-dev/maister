@@ -59,6 +59,32 @@ const MANIFEST: FlowYamlV1 = flowYamlV1Schema.parse({
       type: "human",
       settings: { decisions: ["approve", "reject"], criticality: "high" },
     },
+    {
+      id: "triage",
+      type: "judge",
+      action: { prompt: "judge it" },
+      transitions: { approve: "build", review: "review" },
+      decide: {
+        from: "verdict",
+        cases: [
+          { when: "confidence >= 0.8", target: "approve" },
+          { default: true, target: "review" },
+        ],
+      },
+    },
+    {
+      id: "classify",
+      type: "ai_coding",
+      action: { prompt: "classify" },
+      transitions: { bug: "build", feature: "build" },
+      output: { result: { schema: "./s.json", on_mismatch: "retry" } },
+      rework: {
+        allowedTargets: ["build"],
+        workspacePolicies: ["keep"],
+        maxLoops: 2,
+      },
+      decide: { from: "output.triage.outcome" },
+    },
   ],
 });
 
@@ -120,6 +146,24 @@ const labels: NodeSideFormProps["labels"] = {
   removeTransition: "Remove",
   noTransitions: "No transitions",
   noGates: "No gates",
+  decide: {
+    title: "Routing",
+    source: "Source",
+    sourceNone: "None",
+    sourceOutput: "Output field",
+    sourceVerdict: "Verdict",
+    path: "Output path",
+    when: "When",
+    target: "Target",
+    default: "Default target",
+    addCase: "Add case",
+    removeCase: "Remove case",
+    noCases: "No cases",
+    onMismatch: "On mismatch",
+    onMismatchNone: "Fail (CONFIG)",
+    onMismatchRetry: "Retry (self)",
+    hint: "retry/<outcome> requires a rework block.",
+  },
   gate: {
     mode: "Mode",
     modeBlocking: "Blocking",
@@ -218,6 +262,47 @@ describe("NodeSideForm — human", () => {
     expect(html).toContain('data-testid="node-allow-takeover"');
     expect(html).not.toContain('data-testid="node-action-prompt"');
     expect(html).not.toContain('data-testid="node-action-command"');
+  });
+});
+
+describe("NodeSideForm — decide routing (M38)", () => {
+  it("judge + decide:{from:verdict} renders the verdict cases table + default", () => {
+    const html = render(nodeById("triage"));
+
+    expect(html).toContain('data-testid="node-decide-source"');
+    expect(html).toContain('data-testid="node-decide-add-case"');
+    expect(html).toContain('data-testid="node-decide-case-0"');
+    expect(html).toContain('data-testid="node-decide-default"');
+    // the verdict source is selected
+    expect(html).toContain('value="verdict"');
+    // it is NOT an output-path field
+    expect(html).not.toContain('data-testid="node-decide-path"');
+  });
+
+  it("ai_coding + decide:{from:output.x} renders the dot-path field + on_mismatch", () => {
+    const html = render(nodeById("classify"));
+
+    expect(html).toContain('data-testid="node-decide-source"');
+    expect(html).toContain('data-testid="node-decide-path"');
+    expect(html).toContain('data-testid="node-decide-onmismatch"');
+    expect(html).toContain("output.triage.outcome");
+    // output source has no cases table
+    expect(html).not.toContain('data-testid="node-decide-case-0"');
+  });
+
+  it("omits the Routing section for a node with no output.result and no verdict gate", () => {
+    // `build` is a cli node with no output.result and no verdict-producing gate.
+    const html = render(nodeById("build"));
+
+    expect(html).not.toContain('data-testid="node-decide-source"');
+  });
+
+  it("offers the Routing source for a node that declares output.result (plan)", () => {
+    // `plan` declares output.result → can route from output; source select shows.
+    const html = render(nodeById("plan"));
+
+    expect(html).toContain('data-testid="node-decide-source"');
+    expect(html).toContain('data-testid="node-decide-onmismatch"');
   });
 });
 

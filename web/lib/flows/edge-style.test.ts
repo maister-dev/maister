@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { edgeOutcomeStyle, isBackEdgeOutcome } from "@/lib/flows/edge-style";
+import {
+  edgeOutcomeStyle,
+  isBackEdgeOutcome,
+  isConditionalOutcome,
+} from "@/lib/flows/edge-style";
 
 describe("edgeOutcomeStyle", () => {
   it("renders back-edge outcomes dashed + animated + amber (--attention)", () => {
@@ -48,5 +52,39 @@ describe("isBackEdgeOutcome", () => {
     expect(isBackEdgeOutcome("success")).toBe(false);
     expect(isBackEdgeOutcome("approve")).toBe(false);
     expect(isBackEdgeOutcome("failure")).toBe(false);
+  });
+});
+
+// M38 (ADR-103): decide/verdict reject/deny outcomes are failures (solid red),
+// not success — without colliding with the existing back-edge `reject` (which
+// the topology may model as a rework loop). `deny`/`denied` are new failure keys.
+describe("decide/verdict outcomes (M38)", () => {
+  it("deny/denied render as failures (solid red)", () => {
+    for (const outcome of ["deny", "DENIED"]) {
+      const s = edgeOutcomeStyle(outcome);
+
+      expect(s.animated).toBe(false);
+      expect(s.style.strokeDasharray).toBeUndefined();
+      expect(s.style.stroke).toContain("danger");
+    }
+  });
+
+  it("verdict approve/review remain solid forward green", () => {
+    for (const outcome of ["approve", "review", "pass"]) {
+      const s = edgeOutcomeStyle(outcome);
+
+      expect(s.animated).toBe(false);
+      expect(s.style.stroke).toContain("edge-success");
+    }
+  });
+
+  it("isConditionalOutcome flags decide-specific branch keys, not plain success", () => {
+    expect(isConditionalOutcome("approve")).toBe(true);
+    expect(isConditionalOutcome("review")).toBe(true);
+    expect(isConditionalOutcome("reject")).toBe(true);
+    expect(isConditionalOutcome("deny")).toBe(true);
+    expect(isConditionalOutcome("default")).toBe(true);
+    expect(isConditionalOutcome("success")).toBe(false);
+    expect(isConditionalOutcome("")).toBe(false);
   });
 });

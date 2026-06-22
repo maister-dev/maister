@@ -1,6 +1,7 @@
 import { z } from "zod";
 
-import { gateSchema, nodeSchema } from "@/lib/config.schema";
+import { decideSchema, gateSchema, nodeSchema } from "@/lib/config.schema";
+import { parseWhen } from "@/lib/flows/graph/when-grammar";
 
 export const NODE_TYPES = [
   "ai_coding",
@@ -66,6 +67,40 @@ export function validateGateDraft(gate: unknown): NodeFormResult {
   return { ok: false, errors: zodIssuesToErrors(result.error.issues) };
 }
 
+// The decideSchema already enforces (M38, ADR-103): a well-formed `from`
+// ("verdict" or "output.<dot.path>"), no `cases` for `from: output`, and
+// exactly one `default` case for `from: verdict`. We add the one rule the
+// schema defers to compile-time (T1.4): each `when` predicate must parse via the
+// shared `parseWhen` grammar. The cross-node rules (case target ∈ transitions,
+// on_mismatch ∈ rework.allowedTargets) need the surrounding node and live in
+// `verifyDecideAndOnMismatch` (compile.ts) — not in this isolated draft check.
+const decideSchemaWithWhenRule = decideSchema.superRefine((decide, ctx) => {
+  if (decide.from !== "verdict") return;
+
+  (decide.cases ?? []).forEach((c, index) => {
+    if (!("when" in c)) return;
+    const parsed = parseWhen(c.when);
+
+    if (!parsed.ok) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["cases", index, "when"],
+        message: parsed.error,
+      });
+    }
+  });
+});
+
+export function validateDecideDraft(decide: unknown): NodeFormResult {
+  const result = decideSchemaWithWhenRule.safeParse(decide);
+
+  if (result.success) {
+    return { ok: true };
+  }
+
+  return { ok: false, errors: zodIssuesToErrors(result.error.issues) };
+}
+
 export function blankNode(
   type: (typeof NODE_TYPES)[number],
   id: string,
@@ -103,4 +138,15 @@ export function blankGate(
       // human_review must NOT be mode: blocking; advisory is the safe default.
       return { id, kind: "human_review", mode: "advisory" };
   }
+}
+
+// M38 (ADR-103): a blank `decide` table for the chosen source. `output` seeds a
+// placeholder dot-path the author edits; `verdict` seeds a single `default` case
+// (the minimum a verdict table needs to be schema-valid).
+export function blankDecide(source: "output" | "verdict"): unknown {
+  if (source === "verdict") {
+    return { from: "verdict", cases: [{ default: true, target: "done" }] };
+  }
+
+  return { from: "output.outcome" };
 }
