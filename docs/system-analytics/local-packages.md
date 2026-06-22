@@ -76,8 +76,9 @@ stateDiagram-v2
     [*] --> Unlocked
     Unlocked --> Locked: open editor (acquire, session + TTL)
     Locked --> Locked: keep-alive refresh (extend TTL)
+    Locked --> Locked: same user reopens (take over old session)
     Locked --> Unlocked: release (navigate away) or TTL expiry
-    Locked --> ReadOnly: another session opens while lock live
+    Locked --> ReadOnly: another user opens while lock live
     ReadOnly --> Unlocked: holder releases or TTL expiry
     Unlocked --> Locked: open after expiry (lazy stale-takeover)
 ```

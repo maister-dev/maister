@@ -75,8 +75,9 @@ export async function readLockState(
   };
 }
 
-// Acquire iff free, mine, or expired (lazy stale-takeover). heldByMe=false means
-// another session holds a live lock (the editor renders read-only).
+// Acquire iff free, this session, this user, or expired (lazy stale-takeover).
+// heldByMe=false means another user holds a live lock (the editor renders
+// read-only).
 export async function acquireLock(
   id: string,
   userId: string,
@@ -98,6 +99,7 @@ export async function acquireLock(
         or(
           isNull(lp.lockedBySession),
           eq(lp.lockedBySession, sessionId),
+          eq(lp.lockedByUserId, userId),
           isNull(lp.lockExpiresAt),
           lt(lp.lockExpiresAt, sql`now()`),
         ),

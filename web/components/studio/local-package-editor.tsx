@@ -69,6 +69,29 @@ export type LocalPackageEditorLabels = {
 // a wide safety margin and is cheap (one row UPDATE).
 const LOCK_REFRESH_MS = 60_000;
 
+function releaseEditorLock(packageId: string, sessionId: string): void {
+  const url = `/api/studio/local-packages/${packageId}/lock-release`;
+  const body = JSON.stringify({ sessionId });
+
+  if (typeof navigator.sendBeacon === "function") {
+    const queued = navigator.sendBeacon(
+      url,
+      new Blob([body], { type: "application/json" }),
+    );
+
+    if (queued) return;
+  }
+
+  void fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body,
+    keepalive: true,
+  }).catch((err: unknown) => {
+    console.warn("local-package lock release failed", { packageId, err });
+  });
+}
+
 type SaveStatus =
   | { kind: "idle" }
   | { kind: "saving" }
@@ -83,11 +106,14 @@ type SaveStatus =
  *
  * Lock flow:
  *  - a per-mount `sessionId` is generated client-side and acquired on open via
- *    POST /lock-refresh (acquire-or-extend); a keep-alive timer re-POSTs it.
- *  - `heldByMe === false` (a second tab / another user holds a live lock) →
- *    read-only banner + the editor renders with `canManage=false`.
+ *    POST /lock-refresh (mode=acquire); a keep-alive timer refreshes only that
+ *    same session.
+ *  - `heldByMe === false` (another user holds a live lock) → read-only banner
+ *    + the editor renders with `canManage=false`.
  *  - every write goes through PUT/DELETE /files, which asserts the lock; a
  *    CONFLICT (expired / taken over) surfaces a "reload" banner.
+ *  - unmount/pagehide releases the lock; same-user reopen can also take over a
+ *    stale tab session.
  *
  * `working_dir` never reaches this client — only the file list/content DTOs do.
  */
@@ -190,15 +216,16 @@ export function LocalPackageEditor({
   // hard gate.
   useEffect(() => {
     let cancelled = false;
+    const sessionId = sessionIdRef.current;
 
-    const refresh = async (): Promise<void> => {
+    const syncLock = async (mode: "acquire" | "refresh"): Promise<void> => {
       try {
         const res = await fetch(
           `/api/studio/local-packages/${packageId}/lock-refresh`,
           {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ sessionId: sessionIdRef.current }),
+            body: JSON.stringify({ sessionId, mode }),
           },
         );
 
@@ -213,13 +240,20 @@ export function LocalPackageEditor({
         if (!cancelled) setLockHeldByMe(false);
       }
     };
+    const release = (): void => releaseEditorLock(packageId, sessionId);
+    const releaseOnPageHide = (event: PageTransitionEvent): void => {
+      if (!event.persisted) release();
+    };
 
-    void refresh();
-    const handle = setInterval(() => void refresh(), LOCK_REFRESH_MS);
+    window.addEventListener("pagehide", releaseOnPageHide);
+    void syncLock("acquire");
+    const handle = setInterval(() => void syncLock("refresh"), LOCK_REFRESH_MS);
 
     return () => {
       cancelled = true;
       clearInterval(handle);
+      window.removeEventListener("pagehide", releaseOnPageHide);
+      release();
     };
   }, [packageId, applyLock]);
 

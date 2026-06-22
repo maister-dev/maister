@@ -41,6 +41,7 @@ let db: NodePgDatabase<typeof schemaModule>;
 let homeDir: string;
 let originalHome: string | undefined;
 let userId: string;
+let otherUserId: string;
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:16-alpine")
@@ -58,9 +59,17 @@ beforeAll(async () => {
   process.env.HOME = homeDir;
 
   userId = randomUUID();
+  otherUserId = randomUUID();
   await db
     .insert(schema.users)
-    .values({ id: userId, email: `u-${userId}@x.test`, name: "Local Author" });
+    .values([
+      { id: userId, email: `u-${userId}@x.test`, name: "Local Author" },
+      {
+        id: otherUserId,
+        email: `u-${otherUserId}@x.test`,
+        name: "Other Author",
+      },
+    ]);
 }, 180_000);
 
 afterAll(async () => {
@@ -117,7 +126,7 @@ describe("local-packages substrate (integration)", () => {
     await deleteLocalPackage(dup.id, db);
   });
 
-  it("session lock: acquire, hold, read-only for others, lazy stale-takeover", async () => {
+  it("session lock: acquire, hold, same-user takeover, read-only for other users, lazy stale-takeover", async () => {
     const s1 = await acquireLock(pkgId, userId, "session-1", db);
 
     expect(s1.heldByMe).toBe(true);
@@ -125,30 +134,37 @@ describe("local-packages substrate (integration)", () => {
       assertHoldsLock(pkgId, "session-1", db),
     ).resolves.toBeUndefined();
 
-    // a different live session cannot acquire — read-only, write guard fails
+    // The same user can reopen the editor and reclaim their own stale tab lock.
     const s2 = await acquireLock(pkgId, userId, "session-2", db);
 
     expect(s2.held).toBe(true);
-    expect(s2.heldByMe).toBe(false);
-    await expect(assertHoldsLock(pkgId, "session-2", db)).rejects.toMatchObject(
+    expect(s2.heldByMe).toBe(true);
+    await expect(assertHoldsLock(pkgId, "session-1", db)).rejects.toMatchObject(
+      { code: "CONFLICT" },
+    );
+    await expect(
+      assertHoldsLock(pkgId, "session-2", db),
+    ).resolves.toBeUndefined();
+
+    // Another user still cannot acquire a live lock.
+    const other = await acquireLock(pkgId, otherUserId, "session-3", db);
+
+    expect(other.held).toBe(true);
+    expect(other.heldByMe).toBe(false);
+    await expect(assertHoldsLock(pkgId, "session-3", db)).rejects.toMatchObject(
       { code: "CONFLICT" },
     );
 
-    // re-acquire from the holder is idempotent
-    expect((await acquireLock(pkgId, userId, "session-1", db)).heldByMe).toBe(
-      true,
-    );
-
-    // expire session-1's lock, then session-2 takes over (lazy stale-takeover)
+    // expire session-2's lock, then another user takes over (lazy stale-takeover)
     await db
       .update(schema.localPackages)
       .set({ lockExpiresAt: new Date(Date.now() - 1000) })
       .where(eq(schema.localPackages.id, pkgId));
-    expect((await acquireLock(pkgId, userId, "session-2", db)).heldByMe).toBe(
-      true,
-    );
+    expect(
+      (await acquireLock(pkgId, otherUserId, "session-3", db)).heldByMe,
+    ).toBe(true);
 
-    await releaseLock(pkgId, "session-2", db);
+    await releaseLock(pkgId, "session-3", db);
     expect((await readLockState(pkgId, "session-1", db)).held).toBe(false);
   });
 

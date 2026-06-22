@@ -9,34 +9,24 @@ import {
   notFoundResponse,
 } from "@/lib/api/project-route-helpers";
 import { requireGlobalRole } from "@/lib/authz";
-import { acquireLock, refreshLock } from "@/lib/local-packages/lock";
+import { releaseLock } from "@/lib/local-packages/lock";
 import { getLocalPackage } from "@/lib/local-packages/service";
 
-// (ADR-096, D10) Editor keep-alive — mirrors POST /api/runs/{runId}/activity.
-// Acquire on editor open, refresh on heartbeat. `heldByMe=false` in an acquire
-// response means another user holds a live lock (the editor renders read-only);
-// no 409 — the state is the signal. A failed refresh is a 409 because this
-// session was expired or taken over.
 const log = pino({
-  name: "api/studio/local-packages/[id]/lock-refresh",
+  name: "api/studio/local-packages/[id]/lock-release",
   level: process.env.LOG_LEVEL ?? "info",
 });
 
 type RouteParams = { params: Promise<{ id: string }> };
 
-const bodySchema = z
-  .object({
-    sessionId: z.string().min(1).max(200),
-    mode: z.enum(["acquire", "refresh"]).default("acquire"),
-  })
-  .strict();
+const bodySchema = z.object({ sessionId: z.string().min(1).max(200) }).strict();
 
 export async function POST(
   req: NextRequest,
   { params }: RouteParams,
 ): Promise<NextResponse> {
   try {
-    const user = await requireGlobalRole("member");
+    await requireGlobalRole("member");
     const { id } = await params;
     const parsed = bodySchema.safeParse(await req.json());
 
@@ -53,13 +43,10 @@ export async function POST(
       return notFoundResponse("local package not found");
     }
 
-    const lock =
-      parsed.data.mode === "refresh"
-        ? await refreshLock(id, parsed.data.sessionId)
-        : await acquireLock(id, user.id, parsed.data.sessionId);
+    await releaseLock(id, parsed.data.sessionId);
 
-    return NextResponse.json(lock);
+    return NextResponse.json({ released: true });
   } catch (err) {
-    return errorResponse(err, log, "studio/local-packages/[id]/lock-refresh");
+    return errorResponse(err, log, "studio/local-packages/[id]/lock-release");
   }
 }
