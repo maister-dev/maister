@@ -32,6 +32,7 @@ import {
 } from "@/lib/runs/delivery-policy";
 import { selectPrAdapter } from "@/lib/runs/pr-adapter";
 import {
+  countFailureTerminalSharedSiblings,
   countUnsettledSharedSiblings,
   resolveSharedTreeWorkspaceForUpdate,
 } from "@/lib/runs/shared-tree";
@@ -798,6 +799,46 @@ async function promoteWorkspaceRun(
         );
 
         return { aborted: true as const };
+      }
+
+      // FIX B (ADR-101 F2, defense-in-depth): the C1 re-check above counts only
+      // NON-settled siblings, but Abandoned | Failed | Crashed are settled — so a
+      // Review sibling that failure-terminalizes during the lockless merge window
+      // would otherwise be absorbed into the tree-settle. This is the under-lock
+      // twin of the auto-promoter's F2 PRE-check (auto-launch.ts
+      // autoPromoteAsPlanChild): the pre-check skips a tree with a failure-terminal
+      // sibling BEFORE promote; this closes the race where it flips DURING the merge
+      // window. Scoped to NON-human promotes (`!isHumanPromotion` — the unattended
+      // auto-launcher AND an orchestrator's run_promote, neither of which reviews the
+      // tree-diff like a human); a HUMAN manual promote stays allowed (F2 Option B —
+      // the human reviewed the whole tree-diff, including the failed sibling's work).
+      if (!isHumanPromotion(ctx)) {
+        const failureTerminal = await countFailureTerminalSharedSiblings(
+          tx,
+          claim.run.rootRunId,
+        );
+
+        if (failureTerminal > 0) {
+          await tx
+            .update(workspaces)
+            .set({ promotionState: "failed" })
+            .where(
+              and(
+                eq(workspaces.id, claim.workspace.id),
+                eq(workspaces.promotionAttemptId, claim.attemptId),
+              ),
+            );
+          log.warn(
+            {
+              runId,
+              rootRunId: claim.run.rootRunId,
+              failureTerminalSiblingCount: failureTerminal,
+            },
+            "shared-tree auto-promote aborted — a sibling reached a failure-terminal status during the merge window",
+          );
+
+          return { aborted: true as const };
+        }
       }
     }
 

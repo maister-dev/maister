@@ -61,6 +61,7 @@ let pool: Pool;
 let db: NodePgDatabase;
 
 let promoteChildRunForToken: typeof import("@/lib/runs/promote").promoteChildRunForToken;
+let promoteRun: typeof import("@/lib/runs/promote").promoteRun;
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:16-alpine")
@@ -73,7 +74,9 @@ beforeAll(async () => {
   db = drizzle(pool);
   await migrate(db, { migrationsFolder: "./lib/db/migrations" });
 
-  ({ promoteChildRunForToken } = await import("@/lib/runs/promote"));
+  ({ promoteChildRunForToken, promoteRun } = await import(
+    "@/lib/runs/promote"
+  ));
 }, 180_000);
 
 afterAll(async () => {
@@ -92,7 +95,9 @@ beforeEach(async () => {
   await pool.query(`DELETE FROM "runs"`);
   await pool.query(`DELETE FROM "agents"`);
   await pool.query(`DELETE FROM "platform_acp_runners"`);
+  await pool.query(`DELETE FROM "assignments"`);
   await pool.query(`DELETE FROM "projects"`);
+  await pool.query(`DELETE FROM "users"`);
 
   projectId = randomUUID();
   executorId = randomUUID();
@@ -148,10 +153,12 @@ async function seedRoot(): Promise<string> {
 // A shared-mode delegated child (run_kind=agent, workspace_mode='shared'), in
 // Review. `withWorkspace` selects the ALLOCATOR (owns the one shared workspaces
 // row) vs a REUSER (no row of its own — the tree workspace is resolved by
-// (root_run_id, workspace_mode='shared')).
+// (root_run_id, workspace_mode='shared')). `launchMode` selects the unattended
+// auto-DAG path ('auto') vs the orchestrator/manual path ('manual', default).
 async function seedSharedChild(args: {
   rootRunId: string;
   withWorkspace: boolean;
+  launchMode?: "auto" | "manual";
 }): Promise<string> {
   const childRunId = randomUUID();
 
@@ -160,8 +167,14 @@ async function seedSharedChild(args: {
        "status", "flow_version", "flow_revision", "parent_run_id", "root_run_id",
        "launch_mode", "agent_workspace", "workspace_mode", "runner_snapshot", "runner_id")
      VALUES ($1, 'agent', 'test-pkg:worker', $2, 'Review', 'agent', 'manual', $3, $3,
-             'manual', 'worktree', 'shared', '{"capabilityAgent":"claude"}'::jsonb, $4)`,
-    [childRunId, projectId, args.rootRunId, executorId],
+             $5, 'worktree', 'shared', '{"capabilityAgent":"claude"}'::jsonb, $4)`,
+    [
+      childRunId,
+      projectId,
+      args.rootRunId,
+      executorId,
+      args.launchMode ?? "manual",
+    ],
   );
 
   if (args.withWorkspace) {
@@ -270,6 +283,19 @@ async function setRunStatus(runId: string, status: string): Promise<void> {
     status,
     runId,
   ]);
+}
+
+// A real users row (the human-promote finalize stamps promotion_owner_user_id,
+// an FK to users). Returns the user id for the human ctx's sessionUser.
+async function seedUser(): Promise<string> {
+  const userId = randomUUID();
+
+  await pool.query(
+    `INSERT INTO "users" ("id", "email", "role") VALUES ($1, $2, 'admin')`,
+    [userId, `u-${userId.slice(0, 8)}@test.com`],
+  );
+
+  return userId;
 }
 
 async function workspacePromotionState(
@@ -718,5 +744,116 @@ describe("ADR-101 C1 — a sibling reworked during the merge window aborts the s
 
     // Nothing settled → no run.done.
     expect(await runDoneEvents()).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FIX B (Codex re-review, ADR-101) — finalize-time FAILURE-terminal re-check for
+// the UNATTENDED auto-DAG shared-tree promote (launch_mode='auto').
+//
+// The auto-promoter's F2 PRE-check (autoPromoteAsPlanChild) skips a tree with a
+// failure-terminal shared sibling BEFORE promote. The C1 finalize re-check counts
+// only NON-settled siblings — but Abandoned | Failed | Crashed ARE settled, so a
+// Review sibling that abandons/fails DURING the lockless merge window slips past
+// C1 and gets absorbed into the tree-settle. That re-opens the F2 gap on the
+// unattended path (an autonomous merge must not absorb a failed sibling's partial,
+// unreviewed work). The finalize re-runs countFailureTerminalSharedSiblings under
+// its lock — scoped to the auto path (launch_mode='auto'), the under-lock twin of
+// the F2 pre-check — and aborts CONFLICT. An orchestrator's explicit run_promote
+// and a human manual promote are NOT subject to it (the whole tree-diff was
+// reviewed — F2 Option B: manual stays allowed).
+//
+// RED before the fix: the finalize's only shared-tree gate is the C1 unsettled
+// re-check; an Abandoned sibling counts as settled, so the auto promote settles
+// the tree (promoting child + allocator → Done) despite the failed sibling.
+// ---------------------------------------------------------------------------
+describe("ADR-101 FIX B — finalize aborts an unattended auto-promote when a sibling failure-terminalizes in the merge window", () => {
+  it("(auto path) a sibling Abandoned during the merge window → CONFLICT, no child Done, workspace not 'done', no run.done", async () => {
+    const root = await seedRoot();
+    const allocator = await seedSharedChild({
+      rootRunId: root,
+      withWorkspace: true,
+    });
+    // The promoting child came through the unattended auto-DAG path.
+    const promoting = await seedSharedChild({
+      rootRunId: root,
+      withWorkspace: false,
+      launchMode: "auto",
+    });
+    const sibling = await seedSharedChild({
+      rootRunId: root,
+      withWorkspace: false,
+    });
+
+    // Block the merge until signalled — AFTER the claim tx committed (lock
+    // released), BEFORE the finalize tx.
+    let releaseMerge!: (commit: string) => void;
+    const mergeGate = new Promise<string>((resolve) => {
+      releaseMerge = resolve;
+    });
+
+    promoteLocalMergeSpy.mockImplementationOnce(() => mergeGate);
+
+    const promoteP = promoteChildRunForToken(promoting, {
+      projectId,
+      actor: { kind: "system" },
+      db,
+    });
+
+    await vi.waitFor(() =>
+      expect(promoteLocalMergeSpy).toHaveBeenCalledTimes(1),
+    );
+
+    // A sibling reaches a FAILURE-terminal status (Abandoned) during the window —
+    // settled for the C1 gate, but it carries partial unreviewed work.
+    await setRunStatus(sibling, "Abandoned");
+
+    releaseMerge("mergedcommit00");
+
+    await expect(promoteP).rejects.toMatchObject({ code: "CONFLICT" });
+
+    // No partial settle: the promoting child + allocator stay Review (NOT Done).
+    expect(await runStatus(promoting)).toBe("Review");
+    expect(await runStatus(allocator)).toBe("Review");
+    // The abandoned sibling is untouched.
+    expect(await runStatus(sibling)).toBe("Abandoned");
+
+    // The allocator workspace is reclaimable, not 'done'.
+    expect(await workspacePromotionState(root)).not.toBe("done");
+
+    // Nothing settled → no run.done.
+    expect(await runDoneEvents()).toHaveLength(0);
+  });
+
+  it("(human) a pre-existing Abandoned sibling does NOT abort a manual promote — it proceeds to Done", async () => {
+    const userId = await seedUser();
+    const root = await seedRoot();
+    const allocator = await seedSharedChild({
+      rootRunId: root,
+      withWorkspace: true,
+    });
+
+    // A sibling already failure-terminal BEFORE the human promote (the human
+    // reviewed the whole tree-diff and chose to promote anyway).
+    await seedWritableSibling({ rootRunId: root, status: "Abandoned" });
+
+    // A human manual promote: user actor (isHumanPromotion true), local_merge with
+    // the reviewed target SHA (the stubbed resolveBaseCommit tip).
+    const result = await promoteRun(
+      allocator,
+      { mode: "local_merge", reviewedTargetCommit: "targettip000000" },
+      {
+        sessionUser: { id: userId, name: "U", email: "u@test.com" },
+        authorize: async () => {},
+        actor: { kind: "user" },
+      },
+      db,
+    );
+
+    // The human promote is NOT aborted by the failure-terminal re-check.
+    expect(result.ok).toBe(true);
+    expect(promoteLocalMergeSpy).toHaveBeenCalledTimes(1);
+    expect(await runStatus(allocator)).toBe("Done");
+    expect(await workspacePromotionState(root)).toBe("done");
   });
 });

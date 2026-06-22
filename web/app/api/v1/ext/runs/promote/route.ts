@@ -2,6 +2,7 @@ import "server-only";
 
 import { and, eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
+import pino from "pino";
 import { z } from "zod";
 
 import { getDb } from "@/lib/db/client";
@@ -13,6 +14,11 @@ import { handleExt, httpStatusForExtCode } from "@/lib/tokens/ext-handler";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches lib/services/tasks.ts).
 const { runs } = schemaModule as unknown as Record<string, any>;
+
+const log = pino({
+  name: "ext-runs-promote",
+  level: process.env.LOG_LEVEL ?? "info",
+});
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
@@ -89,7 +95,13 @@ export async function POST(
       // Only a direct child of the bound orchestrator, in the token's project,
       // and currently in Review may be promoted.
       const rows = await db
-        .select({ id: runs.id, status: runs.status })
+        .select({
+          id: runs.id,
+          status: runs.status,
+          workspaceMode: runs.workspaceMode,
+          agentWorkspace: runs.agentWorkspace,
+          rootRunId: runs.rootRunId,
+        })
         .from(runs)
         .where(
           and(
@@ -115,6 +127,39 @@ export async function POST(
           {
             code: "PRECONDITION",
             message: `child run is not in Review (status=${child.status})`,
+          },
+          { status: httpStatusForExtCode("PRECONDITION") },
+        );
+      }
+
+      // FIX A (Codex re-review, ADR-101): a shared writable tree is ONE branch
+      // settled ONCE by promoteWorkspaceRun's cross-tree finalize, which flips
+      // EVERY shared child of `root_run_id` in Review → Done. Every descendant of
+      // a tree shares the SAME root_run_id (delegate route), so a token bound to a
+      // NESTED coordinator (≠ the tree root) would settle children OUTSIDE its own
+      // subtree — privilege escalation. Refuse unless the bound run IS the tree
+      // root (`child.rootRunId === parentRunId`). The system/auto path
+      // (auto-launch → promoteChildRunForToken, actor=system) is tree-wide by
+      // design and never reaches this route.
+      if (
+        child.workspaceMode === "shared" &&
+        child.agentWorkspace === "worktree" &&
+        child.rootRunId !== parentRunId
+      ) {
+        log.info(
+          {
+            childRunId: body.childRunId,
+            boundRunId: parentRunId,
+            rootRunId: child.rootRunId,
+          },
+          "shared-tree promote refused — bound run is not the tree root",
+        );
+
+        return NextResponse.json(
+          {
+            code: "PRECONDITION",
+            message:
+              "shared-tree promote must be driven by the tree-root orchestrator",
           },
           { status: httpStatusForExtCode("PRECONDITION") },
         );

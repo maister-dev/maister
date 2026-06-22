@@ -318,6 +318,89 @@ async function seedChildRun(args: {
   return childRunId;
 }
 
+// A NESTED coordinator run: a child of the tree root (parent_run_id=rootRunId,
+// root_run_id=rootRunId) that ALSO carries its OWN run-bound orchestrator token.
+// Used to prove FIX A — a token bound to a nested coordinator (≠ the tree root)
+// must NOT drive a shared-tree promote.
+async function seedNestedCoordinator(args: {
+  agentId: string;
+  rootRunId: string;
+}): Promise<{ runId: string; secret: string }> {
+  const runId = randomUUID();
+
+  await pool.query(
+    `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id",
+       "status", "flow_version", "flow_revision", "parent_run_id", "root_run_id",
+       "launch_mode", "runner_snapshot", "runner_id")
+     VALUES ($1, 'agent', $2, $3, 'Running', 'agent', 'manual', $4, $5,
+             'manual', '{"capabilityAgent":"claude"}'::jsonb, $6)`,
+    [
+      runId,
+      args.agentId,
+      projectId,
+      args.rootRunId,
+      args.rootRunId,
+      executorId,
+    ],
+  );
+
+  const { secret } = await issueOrchestratorRunToken({
+    projectId,
+    runId,
+    db,
+  });
+
+  return { runId, secret };
+}
+
+// A SHARED writable child (workspace_mode='shared', agent_workspace='worktree')
+// in Review, parented under `parentRunId` but rooted at the tree `rootRunId`.
+// `withWorkspace` makes it the ALLOCATOR (owns the one shared tree workspaces
+// row, keyed by the tree root); a reuser carries none.
+async function seedSharedChild(args: {
+  agentId: string;
+  parentRunId: string;
+  rootRunId: string;
+  withWorkspace: boolean;
+}): Promise<string> {
+  const childRunId = randomUUID();
+
+  await pool.query(
+    `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id",
+       "status", "flow_version", "flow_revision", "parent_run_id", "root_run_id",
+       "launch_mode", "agent_workspace", "workspace_mode", "runner_snapshot", "runner_id")
+     VALUES ($1, 'agent', $2, $3, 'Review', 'agent', 'manual', $4, $5,
+             'manual', 'worktree', 'shared', '{"capabilityAgent":"claude"}'::jsonb, $6)`,
+    [
+      childRunId,
+      args.agentId,
+      projectId,
+      args.parentRunId,
+      args.rootRunId,
+      executorId,
+    ],
+  );
+
+  if (args.withWorkspace) {
+    // The single shared tree: ONE worktree = ONE branch, keyed by the tree root.
+    await pool.query(
+      `INSERT INTO "workspaces" ("id", "run_id", "project_id", "branch", "worktree_path", "parent_repo_path",
+         "base_commit", "base_branch", "target_branch", "promotion_mode", "promotion_state")
+       VALUES ($1, $2, $3, $4, $5, $6, 'base000', 'main', 'main', 'local_merge', 'none')`,
+      [
+        randomUUID(),
+        childRunId,
+        projectId,
+        `maister/agents/${args.rootRunId}`,
+        `/tmp/shared-wt-${args.rootRunId}`,
+        `/repos/${projectId}`,
+      ],
+    );
+  }
+
+  return childRunId;
+}
+
 function jsonReq(
   url: string,
   secret: string | null,
@@ -474,6 +557,83 @@ describe("POST /api/v1/ext/runs/promote", () => {
     expect(ev.rows).toHaveLength(1);
     expect(ev.rows[0].parent_run_id).toBe(parentRunId);
     expect(ev.rows[0].actor_type).toBe("system");
+  });
+});
+
+// FIX A (Codex re-review, ADR-101): a shared writable tree is ONE branch settled
+// ONCE by the TREE-ROOT orchestrator's token. Because every descendant of a tree
+// shares root_run_id=R (delegate route), a token bound to a NESTED coordinator C
+// (≠ R) would, via promoteWorkspaceRun's cross-tree finalize, settle children
+// OUTSIDE C's subtree — privilege escalation. The ext promote route must REFUSE a
+// shared-tree promote unless child.rootRunId === boundRunId (the bound run IS the
+// tree root). The root's own token still promotes.
+describe("FIX A — shared-tree promote is driven by the tree-root orchestrator only", () => {
+  it("a token bound to a NESTED coordinator (≠ tree root) is REFUSED PRECONDITION on a shared child — no merge, child stays Review", async () => {
+    const orchestrator = await seedAgent("orchestrator");
+    const worker = await seedAgent("worker");
+
+    // Tree root R (its own root) — the legitimate tree-promote authority.
+    const { runId: rootRunId } = await seedOrchestratorRun(orchestrator);
+
+    // Nested coordinator C: a child of R rooted at R, with its OWN bound token.
+    const { runId: nestedRunId, secret: nestedSecret } =
+      await seedNestedCoordinator({ agentId: orchestrator, rootRunId });
+
+    // The shared tree under C: an allocator (owns the tree workspace) + the
+    // reviewed child C delegated. Both carry root_run_id=R.
+    await seedSharedChild({
+      agentId: worker,
+      parentRunId: nestedRunId,
+      rootRunId,
+      withWorkspace: true,
+    });
+    const sharedChildOfC = await seedSharedChild({
+      agentId: worker,
+      parentRunId: nestedRunId,
+      rootRunId,
+      withWorkspace: false,
+    });
+
+    const res = await promotePost(
+      jsonReq(PROMOTE_URL, nestedSecret, { childRunId: sharedChildOfC }),
+      {},
+    );
+
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { code: string }).code).toBe("PRECONDITION");
+
+    // The nested coordinator's token never reached the merge — the whole tree is
+    // untouched.
+    expect(promoteLocalMergeSpy).not.toHaveBeenCalled();
+    expect(await runStatus(sharedChildOfC)).toBe("Review");
+  });
+
+  it("the TREE-ROOT orchestrator's own token DOES promote a direct shared child → Done", async () => {
+    const orchestrator = await seedAgent("orchestrator");
+    const worker = await seedAgent("worker");
+
+    // Tree root R with its bound token.
+    const { runId: rootRunId, secret: rootSecret } =
+      await seedOrchestratorRun(orchestrator);
+
+    // A direct shared child of R (parent=R, root=R): the allocator IS this child
+    // (it owns the single tree workspace).
+    const directSharedChild = await seedSharedChild({
+      agentId: worker,
+      parentRunId: rootRunId,
+      rootRunId,
+      withWorkspace: true,
+    });
+
+    const res = await promotePost(
+      jsonReq(PROMOTE_URL, rootSecret, { childRunId: directSharedChild }),
+      {},
+    );
+
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { status: string }).status).toBe("Done");
+    expect(promoteLocalMergeSpy).toHaveBeenCalledTimes(1);
+    expect(await runStatus(directSharedChild)).toBe("Done");
   });
 });
 

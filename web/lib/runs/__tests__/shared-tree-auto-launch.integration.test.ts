@@ -84,6 +84,7 @@ let pool: Pool;
 let buildAutoLaunchRunPlanConsumer: typeof import("@/lib/domain-events/auto-launch").buildAutoLaunchRunPlanConsumer;
 let emitDomainEvent: typeof import("@/lib/domain-events/outbox").emitDomainEvent;
 let promoteChildRunForToken: typeof import("@/lib/runs/promote").promoteChildRunForToken;
+let promoteRun: typeof import("@/lib/runs/promote").promoteRun;
 let markReworkFromReview: typeof import("@/lib/runs/state-transitions").markReworkFromReview;
 
 beforeAll(async () => {
@@ -101,7 +102,9 @@ beforeAll(async () => {
     "@/lib/domain-events/auto-launch"
   ));
   ({ emitDomainEvent } = await import("@/lib/domain-events/outbox"));
-  ({ promoteChildRunForToken } = await import("@/lib/runs/promote"));
+  ({ promoteChildRunForToken, promoteRun } = await import(
+    "@/lib/runs/promote"
+  ));
   ({ markReworkFromReview } = await import("@/lib/runs/state-transitions"));
 }, 180_000);
 
@@ -122,6 +125,7 @@ beforeEach(async () => {
   await pool.query(`DELETE FROM "agents"`);
   await pool.query(`DELETE FROM "platform_acp_runners"`);
   await pool.query(`DELETE FROM "projects"`);
+  await pool.query(`DELETE FROM "users"`);
 
   projectId = randomUUID();
   executorId = randomUUID();
@@ -166,6 +170,19 @@ async function seedRoot(): Promise<string> {
   );
 
   return runId;
+}
+
+// A real users row (the human-promote finalize stamps promotion_owner_user_id,
+// an FK to users). Returns the user id for the human ctx's sessionUser.
+async function seedUser(): Promise<string> {
+  const userId = randomUUID();
+
+  await pool.query(
+    `INSERT INTO "users" ("id", "email", "role") VALUES ($1, $2, 'admin')`,
+    [userId, `u-${userId.slice(0, 8)}@test.com`],
+  );
+
+  return userId;
 }
 
 // A shared as-plan (launch_mode='auto') child. `withWorkspace` selects the
@@ -365,10 +382,11 @@ describe("ADR-101 T13 — auto-launch benign settled-gate wait + rework regressi
 // SETTLED_RUN_STATUSES includes Failed|Crashed|Abandoned, so the settled-gate
 // (countUnsettledSharedSiblings) does NOT block a tree whose only non-Review
 // sibling failed. The auto-promoter would then MERGE that tree UNATTENDED,
-// absorbing the failed sibling's partial, unreviewed commits. Option B: only the
-// AUTO path (autoPromoteAsPlanChild) skips when any shared sibling is
-// failure-terminal; a human MANUAL promoteChildRunForToken stays allowed (the
-// whole tree-diff is reviewed first).
+// absorbing the failed sibling's partial, unreviewed commits. Option B: the
+// NON-human paths refuse when any shared sibling is failure-terminal — the
+// auto-launcher's autoPromoteAsPlanChild pre-skip AND the promote finalize-tx
+// re-check for any system/agent actor (FIX B); a human MANUAL promote (promoteRun
+// with a user actor) stays allowed (the whole tree-diff is reviewed first).
 //
 // RED before the fix: with no failure-terminal check on the auto path, the
 // Review sibling's run.review drives a merge (promoteLocalMerge called) even
@@ -408,7 +426,8 @@ describe("F2 (ADR-101) — auto-promote skips a tree with a failure-terminal sib
     expect(await runStatus(reviewChild)).toBe("Review");
   });
 
-  it("a MANUAL promote on the same tree (a Failed sibling present) STILL merges (Option B leaves manual allowed)", async () => {
+  it("a MANUAL (human) promote on the same tree (a Failed sibling present) STILL merges (Option B leaves manual allowed)", async () => {
+    const userId = await seedUser();
     const root = await seedRoot();
 
     await seedSharedAutoChild({ rootRunId: root, withWorkspace: true });
@@ -422,13 +441,23 @@ describe("F2 (ADR-101) — auto-promote skips a tree with a failure-terminal sib
       withWorkspace: false,
     });
 
-    // A human reviews the whole tree-diff then promotes manually — allowed.
-    await promoteChildRunForToken(reviewChild, {
-      projectId,
-      actor: { kind: "system" },
+    // A human reviews the whole tree-diff then promotes manually. The
+    // failure-terminal re-check (FIX B) is scoped to NON-human promotes, so a
+    // user actor (isHumanPromotion true) is NOT aborted by the Failed sibling —
+    // it merges. (The system/auto path that promoteChildRunForToken drives IS
+    // gated; that abort is covered in promote-shared-tree.integration.test.ts.)
+    const result = await promoteRun(
+      reviewChild,
+      { mode: "local_merge", reviewedTargetCommit: "targettip000000" },
+      {
+        sessionUser: { id: userId, name: "U", email: "u@test.com" },
+        authorize: async () => {},
+        actor: { kind: "user" },
+      },
       db,
-    });
+    );
 
+    expect(result.ok).toBe(true);
     expect(promoteLocalMergeSpy).toHaveBeenCalledTimes(1);
   });
 });
