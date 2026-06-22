@@ -1478,11 +1478,13 @@ async function actBudgetTerminateRun(
     return true;
   }
 
-  // scratch: no `Failed` run/dialog status exists; markScratchCrashed is the
-  // only finalizer that sets runs.status + scratch_runs.dialog_status together
-  // for a non-success terminal (Crashed). Reused as the kill-equivalent. Its own
-  // CAS (Running/NeedsInput/… → Crashed) is the idempotency — no budget_state
-  // pre-stamp (terminal status is never re-evaluated).
+  // scratch: a budget-kill is a DELIBERATE terminal, so it must be
+  // NON-recoverable — `terminal:"failed"` sets runs.status=`Failed` (Recover
+  // gates on runs.status='Crashed', so Failed structurally disables it) and emits
+  // run.failed, matching flow/agent. The scratch dialog FSM has no Failed state,
+  // so scratch_runs.dialog_status stays `Crashed` (the scratch-UI terminal) with
+  // error_code=BUDGET_EXCEEDED. markScratchCrashed's own CAS is the idempotency
+  // — no budget_state pre-stamp (terminal status is never re-evaluated).
   if (candidate.runKind === "scratch") {
     const { markScratchCrashed } = await import("@/lib/scratch-runs/service");
 
@@ -1491,6 +1493,7 @@ async function actBudgetTerminateRun(
       runId: candidate.id,
       err: new MaisterError("BUDGET_EXCEEDED", budgetBreachPrompt(verdict)),
       clearSupervisorSession: true,
+      terminal: "failed",
     });
     await promoteAfterTimeoutKill(db);
     logBudgetTerminated(candidate, verdict);

@@ -3,7 +3,7 @@ import "server-only";
 import type { GlobalRole } from "@/lib/db/schema";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
-import { and, eq, gte, inArray, isNull, type SQL } from "drizzle-orm";
+import { and, eq, gte, inArray, isNull, lte, sql, type SQL } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
@@ -46,6 +46,7 @@ import {
 
 const {
   artifactInstances,
+  domainEvents,
   flowRevisions,
   flows,
   gateResults,
@@ -120,6 +121,11 @@ export interface ObservatoryCostSummary {
   nodeCount: number;
 }
 
+export interface ObservatoryBudgetSummary {
+  budgetEscalations: number;
+  budgetTerminations: number;
+}
+
 export interface ObservatoryTotals {
   correction: CorrectionMetric;
   autonomy: AutonomyMetric;
@@ -132,6 +138,7 @@ export interface ObservatoryPortfolio {
   nodes: ObservatoryNodeSummary[];
   artifacts: ObservatoryArtifactSummary[];
   cost: ObservatoryCostSummary;
+  budget: ObservatoryBudgetSummary;
   topSignals: SignalCluster[];
   harness: ObservatoryHarness;
 }
@@ -143,6 +150,7 @@ export interface ObservatoryProject {
   nodes: ObservatoryNodeSummary[];
   artifacts: ObservatoryArtifactSummary[];
   cost: ObservatoryCostSummary;
+  budget: ObservatoryBudgetSummary;
   topSignals: SignalCluster[];
   harness: ObservatoryHarness;
 }
@@ -339,6 +347,50 @@ async function getCostSummary(
   };
 }
 
+function emptyBudgetSummary(): ObservatoryBudgetSummary {
+  return { budgetEscalations: 0, budgetTerminations: 0 };
+}
+
+async function getBudgetSummary(
+  client: NodePgDatabase<typeof schema>,
+  projectScope: readonly ProjectScopeRow[],
+  filters: ObservatoryFilters,
+  now: Date,
+): Promise<ObservatoryBudgetSummary> {
+  if (projectScope.length === 0) return emptyBudgetSummary();
+
+  const projectIds = projectScope.map((project) => project.id);
+  const since = new Date(
+    now.getTime() - (filters.windowDays ?? 30) * 24 * 60 * 60 * 1000,
+  );
+
+  // Terminate emits are not normalized — flow/scratch use BUDGET_EXCEEDED, the
+  // agent finalizer uses budget_breach, the tree-root uses budget_exceeded;
+  // all three must be matched. WARN is a logExecPolicyAction log line (no
+  // domain event) so it is not surfaceable here. One grouped scan, no N+1.
+  const rows = await client
+    .select({
+      escalations: sql<number>`count(*) filter (where ${domainEvents.kind} = 'run.escalated' and ${domainEvents.payload}->>'reason' = 'budget_exceeded')::int`,
+      terminations: sql<number>`count(*) filter (where ${domainEvents.kind} = 'run.failed' and ${domainEvents.payload}->>'reason' in ('budget_exceeded', 'BUDGET_EXCEEDED', 'budget_breach'))::int`,
+    })
+    .from(domainEvents)
+    .where(
+      and(
+        inArray(domainEvents.projectId, projectIds),
+        gte(domainEvents.createdAt, since),
+        lte(domainEvents.createdAt, now),
+        inArray(domainEvents.kind, ["run.escalated", "run.failed"]),
+      ),
+    );
+
+  const row = rows[0];
+
+  return {
+    budgetEscalations: row?.escalations ?? 0,
+    budgetTerminations: row?.terminations ?? 0,
+  };
+}
+
 // FIXME(any): getDb() returns a pg|sqlite drizzle union; narrow to pg. POC = Postgres.
 function db(): NodePgDatabase<typeof schema> {
   return getDb() as unknown as NodePgDatabase<typeof schema>;
@@ -373,7 +425,10 @@ export async function getPortfolioObservatory(
     now,
     harnessNeverFiredMin(),
   );
-  const cost = await getCostSummary(client, visibleProjects, filters);
+  const [cost, budget] = await Promise.all([
+    getCostSummary(client, visibleProjects, filters),
+    getBudgetSummary(client, visibleProjects, filters, now),
+  ]);
 
   log.info(
     {
@@ -384,7 +439,7 @@ export async function getPortfolioObservatory(
     "getPortfolioObservatory aggregated",
   );
 
-  return { ...portfolio, cost };
+  return { ...portfolio, cost, budget };
 }
 
 export async function getProjectObservatory(
@@ -414,7 +469,10 @@ export async function getProjectObservatory(
     now,
     harnessNeverFiredMin(),
   );
-  const cost = await getCostSummary(client, [project], filters);
+  const [cost, budget] = await Promise.all([
+    getCostSummary(client, [project], filters),
+    getBudgetSummary(client, [project], filters, now),
+  ]);
 
   log.info(
     {
@@ -432,6 +490,7 @@ export async function getProjectObservatory(
     nodes: portfolio.nodes,
     artifacts: portfolio.artifacts,
     cost,
+    budget,
     topSignals: portfolio.topSignals,
     harness: portfolio.harness,
   };
@@ -834,7 +893,7 @@ function buildPortfolio(
   projectScope: readonly ProjectScopeRow[],
   now: Date,
   minExecutions: number,
-): Omit<ObservatoryPortfolio, "cost"> {
+): Omit<ObservatoryPortfolio, "cost" | "budget"> {
   const projectsById = new Map(
     projectScope.map((project) => [project.id, project]),
   );
@@ -1281,6 +1340,7 @@ function emptyProject(projectId: string, now: Date): ObservatoryProject {
     nodes: [],
     artifacts: [],
     cost: emptyCostSummary(),
+    budget: emptyBudgetSummary(),
     topSignals: [],
     harness: emptyHarness(),
   };

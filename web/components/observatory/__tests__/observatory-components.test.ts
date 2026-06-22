@@ -13,6 +13,7 @@ import { labelsForTest } from "./labels.fixture";
 
 import ru from "@/messages/ru.json";
 import { AutonomyScoreCard } from "@/components/observatory/autonomy-score-card";
+import { BudgetSurfaceCard } from "@/components/observatory/budget-surface-card";
 import { ControlEffectivenessCard } from "@/components/observatory/control-effectiveness-card";
 import { CorrectionHeatmap } from "@/components/observatory/correction-heatmap";
 import { CoverageMapCard } from "@/components/observatory/coverage-map-card";
@@ -78,6 +79,10 @@ function portfolio(): ObservatoryPortfolio {
       projectCount: 0,
       flowCount: 0,
       nodeCount: 0,
+    },
+    budget: {
+      budgetEscalations: 0,
+      budgetTerminations: 0,
     },
     topSignals: [
       {
@@ -477,5 +482,37 @@ describe("Observatory components", () => {
     expect(html).toContain("/runs/run-1");
     expect(html).toContain("#1 · Failed");
     expect(html).toContain("access_token=[redacted] failed");
+  });
+
+  it("renders budget escalation/termination counts read-only with warn caveat", () => {
+    const html = renderToStaticMarkup(
+      createElement(BudgetSurfaceCard, {
+        budget: { budgetEscalations: 1234, budgetTerminations: 0 },
+        labels,
+      }),
+    );
+
+    expect(html).toContain("Budget pressure");
+    expect(html).toContain("Escalations");
+    expect(html).toContain("Terminations");
+    // thousands separator proves Intl formatting; the zero state renders "0".
+    expect(html).toContain("1,234");
+    expect(html).toContain(">0<");
+    expect(html).toContain("Warn-band signals are logged, not counted here");
+    expect(html).toContain("Observations only.");
+  });
+
+  it("resolves RU labels for the budget card", () => {
+    const ruLabels = labelsForTest(ru.observatory as Record<string, unknown>);
+    const html = renderToStaticMarkup(
+      createElement(BudgetSurfaceCard, {
+        budget: { budgetEscalations: 2, budgetTerminations: 3 },
+        labels: ruLabels,
+      }),
+    );
+
+    expect(html).toContain("Давление бюджета");
+    expect(html).toContain("Эскалации");
+    expect(html).toContain("Остановки");
   });
 });

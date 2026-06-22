@@ -243,10 +243,12 @@ E1–E12 invariants.)
   `notified[scope]`, and the resumed run MUST NOT immediately re-escalate.
 - The breach mechanism MUST branch on `runs.run_kind` (`flow | agent | scratch`)
   BEFORE routing; each kind has a verified terminate AND escalate adapter.
-  Terminate per kind: flow → `markNodeFailed` + run `Failed`; agent →
-  `finalizeAgentRun("Failed")`; scratch → `markScratchCrashed` → run `Crashed`
-  (the scratch dialog FSM has no `Failed` state, so `Crashed` is the
-  kind-faithful terminal — still a valid `RunStatus`, so no new status is added).
+  Terminate per kind, ALL → run `Failed` (a budget-kill is a deliberate,
+  NON-recoverable terminal — Recover gates on `runs.status='Crashed'`): flow →
+  `markNodeFailed` + run `Failed`; agent → `finalizeAgentRun("Failed")`; scratch
+  → `markScratchCrashed(terminal:"failed")` → run `Failed` + `run.failed` event,
+  with `scratch_runs.dialog_status=Crashed` (the scratch dialog FSM has no
+  `Failed` state) + `error_code=BUDGET_EXCEEDED`. No new `runs.status` is added.
 
 ## Edge cases
 

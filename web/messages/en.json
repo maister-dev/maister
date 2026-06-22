@@ -751,6 +751,13 @@
       "flows": "{count} flows",
       "nodes": "{count} nodes"
     },
+    "budget": {
+      "title": "Budget pressure",
+      "subtitle": "Read-only count of token-budget breaches in this window — runs paused for a budget decision, and runs terminated at the hard ceiling.",
+      "escalations": "Escalations",
+      "terminations": "Terminations",
+      "warnNotSurfaced": "Warn-band signals are logged, not counted here — only escalations and terminations emit domain events."
+    },
     "harness": {
       "sectionTitle": "Harness",
       "sectionSubtitle": "Sensor firing, control effectiveness, and coverage — correlational signals, not recommendations.",

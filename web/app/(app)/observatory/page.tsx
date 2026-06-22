@@ -2,6 +2,7 @@ import type { ReactElement } from "react";
 
 import { getTranslations } from "next-intl/server";
 
+import { BudgetSurfaceCard } from "@/components/observatory/budget-surface-card";
 import { ControlEffectivenessCard } from "@/components/observatory/control-effectiveness-card";
 import { CoverageMapCard } from "@/components/observatory/coverage-map-card";
 import { labelsFromTranslations } from "@/components/observatory/labels";
@@ -115,6 +116,7 @@ export default async function ObservatoryPage({
             {t("cost.nodes", { count: data.cost.nodeCount })}
           </span>
         </div>
+        <BudgetSurfaceCard budget={data.budget} labels={labels} />
       </section>
       <section className="mt-6">
         <header className="mb-3">

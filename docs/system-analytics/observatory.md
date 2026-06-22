@@ -90,6 +90,16 @@ no Flow/package edits. Rollups may be persisted by the runs domain for
 efficient reads, but Observatory only consumes them through bulk read-model
 queries and reconciles labels/denominators with the rest of the page.
 
+The cost tab also surfaces **budget pressure** (ADR-101, Implemented): a
+read-only count of token-budget breaches in the window, sourced project-scoped
+from `domain_events` — escalations (`kind = 'run.escalated'`,
+`payload->>'reason' = 'budget_exceeded'`) and terminations (`kind =
+'run.failed'`, `payload->>'reason' in ('budget_exceeded', 'BUDGET_EXCEEDED',
+'budget_breach')` — the terminate reason is not normalized across
+flow/scratch/agent/tree-root, so all three variants are matched). The WARN rung
+is a `logExecPolicyAction` log line with no domain event and is therefore NOT
+surfaced here. One grouped scan, no per-run loop, no new route.
+
 UI/test acceptance:
 
 | Surface | Acceptance and states | Test owner |
@@ -301,6 +311,12 @@ flowchart TD
 - **(M29 — Implemented)** Every harness rate MUST render with its denominator, and
   any group with `executions < 3` MUST render as "—" (insufficient data), never
   as `0%`.
+- **(ADR-101 — Implemented)** Budget surfacing MUST read `domain_events`
+  project-scoped within the window via ONE grouped SELECT (escalations =
+  `run.escalated`/`budget_exceeded`; terminations = `run.failed`/{`budget_exceeded`,
+  `BUDGET_EXCEEDED`, `budget_breach`}); it MUST count only budget-reason events,
+  MUST NOT surface the WARN rung (no domain event), and MUST stay read-only (no
+  actions, EN+RU labels).
 
 ## Edge cases
 

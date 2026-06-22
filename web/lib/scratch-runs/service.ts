@@ -511,9 +511,17 @@ export async function markScratchCrashed(args: {
   runId: string;
   err: unknown;
   clearSupervisorSession?: boolean;
+  // Cost-budget governance: a budget-kill is a DELIBERATE terminal, not a crash,
+  // so it must be NON-recoverable (Recover gates on runs.status='Crashed'). With
+  // `terminal:"failed"` the run goes terminal `Failed` (+ emits `run.failed`),
+  // matching the flow/agent budget-terminate; the scratch dialog FSM has no
+  // `Failed` state, so `dialog_status` stays `Crashed` (the scratch-UI terminal).
+  terminal?: "crashed" | "failed";
 }): Promise<void> {
   const db = args.db ?? getDb();
   const errorCode = isMaisterError(args.err) ? args.err.code : "CRASH";
+  const runStatus = args.terminal === "failed" ? "Failed" : "Crashed";
+  const eventKind = args.terminal === "failed" ? "run.failed" : "run.crashed";
   const errorMessage =
     args.err instanceof Error ? args.err.message : String(args.err);
   const endedAt = new Date();
@@ -536,7 +544,7 @@ export async function markScratchCrashed(args: {
     // stamps the scratch metadata.
     const rows = await tx
       .update(runs)
-      .set({ status: "Crashed", endedAt, currentStepId: null })
+      .set({ status: runStatus, endedAt, currentStepId: null })
       .where(
         and(
           eq(runs.id, args.runId),
@@ -573,7 +581,7 @@ export async function markScratchCrashed(args: {
 
       await emitWebhookEvent({
         db: tx,
-        type: "run.crashed",
+        type: eventKind,
         projectId,
         runId: args.runId,
         data: { errorCode },
@@ -581,7 +589,7 @@ export async function markScratchCrashed(args: {
 
       await emitDomainEvent({
         db: tx,
-        kind: "run.crashed",
+        kind: eventKind,
         projectId,
         runId: args.runId,
         actor: { type: "system", id: null },

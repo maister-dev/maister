@@ -686,16 +686,18 @@ describe("budget watchdog — TERMINATE ladder (E5, D7 each arm)", () => {
 
     const run = await getRun(runId);
 
-    // Scratch has no `Failed` run/dialog status — its kill-equivalent terminal
-    // is exactly Crashed (markScratchCrashed is the only non-success terminal
-    // scratch finalizer that sets runs.status + scratch_runs.dialog_status
-    // together). Crashed is a valid RunStatus, so D2 holds. No budget_state
-    // notified stamp — terminal status IS the idempotency (Fix B).
-    expect(run.status).toBe("Crashed");
+    // A budget-kill is a DELIBERATE terminal → runs.status=`Failed` (NON-
+    // recoverable: Recover gates on runs.status='Crashed'), matching flow/agent.
+    // The scratch dialog FSM has no Failed state, so scratch_runs.dialog_status
+    // stays `Crashed` (the scratch-UI terminal) with error_code=BUDGET_EXCEEDED.
+    // Failed is a valid RunStatus, so D2 holds. No budget_state notified stamp —
+    // terminal status IS the idempotency (Fix B).
+    expect(run.status).toBe("Failed");
 
     const scratch = await getScratch(runId);
 
     expect(scratch.dialogStatus).toBe("Crashed");
+    expect(scratch.errorCode).toBe("BUDGET_EXCEEDED");
   }, 60_000);
 
   it("TERMINATE on EXECUTOR_UNAVAILABLE leaves the run Running for next tick (E5)", async () => {

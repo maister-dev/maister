@@ -171,15 +171,18 @@ arm** (project rule: half-A + half-B ≠ A∘B).
 - A **warn badge** on the run (run-detail header + board flight card / active-
   workspaces row) when the run is in the warn band — **derived** from current
   tokens ≥ `warnAtPct` (no persisted UI flag).
-- Observatory read-only surfacing of budget breaches (warn / escalate /
-  terminate counts), consistent with its existing read-only metric style.
-  **DEFERRED (as-built): not shipped in v1.** Observatory's query
-  (`getPortfolioObservatory`) does not read `domain_events`, and
-  `logExecPolicyAction` is a log boundary (not a table), so surfacing budget
-  counts needs new data wiring — out of scope for v1 per simplicity-first.
-  Visibility for v1 is covered by the run-detail warn badge (6.3 below), the
-  `budget_*` exec-policy audit log lines, and the `run.escalated`
-  (`reason=budget_exceeded`) domain events + webhooks.
+- Observatory read-only surfacing of budget breaches, consistent with its
+  existing read-only metric style. **Implemented (escalations + terminations
+  counts; warn not surfaced).** `getPortfolioObservatory` /
+  `getProjectObservatory` add a `budget` summary (`budgetEscalations` +
+  `budgetTerminations`) over `domain_events`, project + window scoped, via ONE
+  grouped SELECT: escalations = `run.escalated` / `payload.reason =
+  budget_exceeded`; terminations = `run.failed` / `payload.reason ∈
+  {budget_exceeded, BUDGET_EXCEEDED, budget_breach}` (the terminate reason is not
+  normalized across flow/scratch/agent/tree-root — all three matched). The
+  portfolio Observatory cost tab renders a read-only `BudgetSurfaceCard` tile
+  (EN+RU). The **WARN** rung is NOT surfaced — it is a `logExecPolicyAction` log
+  line with no domain event; warn-band visibility stays on the run-detail badge.
 - **Acceptance criteria:**
   - AC-BADGE-1: badge appears iff the run's live token sum ≥ warn threshold and
     disappears if a Raise lifts the ceiling above the current sum.

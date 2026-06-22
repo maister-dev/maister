@@ -1,5 +1,6 @@
 import type {
   ObservatoryArtifactSummary,
+  ObservatoryBudgetSummary,
   ObservatoryNodeDetail,
   ObservatoryNodeSummary,
   ObservatoryPortfolio,
@@ -49,6 +50,14 @@ export interface ObservatoryHarnessLabels {
   noCapabilities: string;
 }
 
+export interface ObservatoryBudgetLabels {
+  title: string;
+  subtitle: string;
+  escalations: string;
+  terminations: string;
+  warnNotSurfaced: string;
+}
+
 export interface ObservatoryLabels {
   title: string;
   subtitle: string;
@@ -86,6 +95,7 @@ export interface ObservatoryLabels {
   hitlWaits: string;
   kind: Record<SignalKind, string>;
   harness: ObservatoryHarnessLabels;
+  budget: ObservatoryBudgetLabels;
 }
 
 export type ObservatorySummaryData = ObservatoryPortfolio | ObservatoryProject;
@@ -137,5 +147,10 @@ export interface CoverageMapCardProps {
 
 export interface ControlEffectivenessCardProps {
   effectiveness: ObservatoryHarness["effectiveness"];
+  labels: ObservatoryLabels;
+}
+
+export interface BudgetSurfaceCardProps {
+  budget: ObservatoryBudgetSummary;
   labels: ObservatoryLabels;
 }

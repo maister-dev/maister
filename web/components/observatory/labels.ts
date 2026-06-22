@@ -79,5 +79,12 @@ export function labelsFromTranslations(
       withoutCapability: t("harness.withoutCapability"),
       noCapabilities: t("harness.noCapabilities"),
     },
+    budget: {
+      title: t("budget.title"),
+      subtitle: t("budget.subtitle"),
+      escalations: t("budget.escalations"),
+      terminations: t("budget.terminations"),
+      warnNotSurfaced: t("budget.warnNotSurfaced"),
+    },
   };
 }

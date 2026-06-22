@@ -45,6 +45,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  await db.delete(schema.domainEvents);
   await db.delete(schema.artifactInstances);
   await db.delete(schema.gateResults);
   await db.delete(schema.hitlRequests);
@@ -200,6 +201,77 @@ describe("observatory read models", () => {
     expect(result.artifacts.map((artifact) => artifact.artifactKey)).toEqual([
       "kind:log",
     ]);
+  });
+
+  it("counts budget escalations and terminations from domain_events, window+project scoped", async () => {
+    // Escalation (run paused for budget decision).
+    await seedDomainEvent({
+      projectId: visibleProjectId,
+      kind: "run.escalated",
+      reason: "budget_exceeded",
+    });
+    // The three non-normalized terminate reasons: flow/scratch, agent, tree-root.
+    await seedDomainEvent({
+      projectId: visibleProjectId,
+      kind: "run.failed",
+      reason: "BUDGET_EXCEEDED",
+    });
+    await seedDomainEvent({
+      projectId: visibleProjectId,
+      kind: "run.failed",
+      reason: "budget_breach",
+    });
+    await seedDomainEvent({
+      projectId: visibleProjectId,
+      kind: "run.failed",
+      reason: "budget_exceeded",
+    });
+    // A non-budget failure must NOT count.
+    await seedDomainEvent({
+      projectId: visibleProjectId,
+      kind: "run.failed",
+      reason: "CRASH",
+    });
+    // A non-budget escalation (e.g. auto-retry exhaustion) must NOT count.
+    await seedDomainEvent({
+      projectId: visibleProjectId,
+      kind: "run.escalated",
+      reason: "auto_retry_exhausted",
+    });
+    // Outside the lookback window must NOT count.
+    await seedDomainEvent({
+      projectId: visibleProjectId,
+      kind: "run.failed",
+      reason: "BUDGET_EXCEEDED",
+      createdAt: new Date(NOW.getTime() - 40 * 24 * 60 * 60 * 1000),
+    });
+    // A budget breach in a project the member cannot see must NOT leak.
+    await seedDomainEvent({
+      projectId: hiddenProjectId,
+      kind: "run.failed",
+      reason: "BUDGET_EXCEEDED",
+    });
+
+    const portfolio = await getPortfolioObservatory(
+      memberUserId,
+      "member",
+      { now: NOW },
+      db,
+    );
+    const project = await getProjectObservatory(
+      visibleProjectId,
+      { now: NOW },
+      db,
+    );
+
+    expect(portfolio.budget).toEqual({
+      budgetEscalations: 1,
+      budgetTerminations: 3,
+    });
+    expect(project.budget).toEqual({
+      budgetEscalations: 1,
+      budgetTerminations: 3,
+    });
   });
 
   it("returns project and node detail aggregates with constant query count", async () => {
@@ -933,6 +1005,26 @@ async function seedRun(input: {
   });
 
   return { runId, implementAttemptId };
+}
+
+async function seedDomainEvent(input: {
+  projectId: string;
+  kind: schema.DomainEventRow["kind"];
+  reason: string;
+  createdAt?: Date;
+}): Promise<void> {
+  const at = input.createdAt ?? new Date(NOW.getTime() - 60 * 60 * 1000);
+
+  await db.insert(schema.domainEvents).values({
+    kind: input.kind,
+    projectId: input.projectId,
+    runId: null,
+    actorType: "system",
+    actorId: null,
+    payload: { reason: input.reason },
+    occurredAt: at,
+    createdAt: at,
+  });
 }
 
 async function seedFlowRevision(input: {
