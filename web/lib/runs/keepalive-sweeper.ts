@@ -37,6 +37,7 @@ import {
 } from "@/lib/runs/cost-rollups";
 import {
   budgetFromSnapshot,
+  DEFAULT_BUDGET_WARN_PCT,
   type BudgetAxis,
   type BudgetLimits,
   type BudgetRung,
@@ -726,7 +727,6 @@ async function promoteAfterTimeoutKill(db: Db): Promise<void> {
 // never touched. The breach mechanism branches on run_kind BEFORE routing (D7).
 
 const DEFAULT_BUDGET_HARD_MULTIPLIER = 1.25;
-const DEFAULT_BUDGET_WARN_PCT = 80;
 
 function budgetHardMultiplier(): number {
   const raw = process.env.MAISTER_BUDGET_HARD_MULTIPLIER;
@@ -1100,10 +1100,21 @@ async function evaluateBudgetForCandidate(
     }
   }
 
-  // Tree scope has NO escalate rung — a parked WaitingOnChildren root has no
-  // → NeedsInput transition. A tree verdict at the escalate rung is promoted to
-  // terminate (spec §4: tree breach goes straight to terminate-cascade).
-  if (verdict && verdict.scope === "tree" && verdict.rung === "escalate") {
+  // Escalate (→ NeedsInput pause + raise-and-resume) is FLOW-only in v1. Two
+  // scopes/kinds have no escalate→resume route, so an escalate-rung verdict for
+  // them is promoted to terminate:
+  //   - tree scope: a parked WaitingOnChildren root has no → NeedsInput
+  //     transition (spec §4: tree breach goes straight to terminate-cascade);
+  //   - any non-flow run (agent / scratch): the raise-and-resume path is
+  //     runFlow/loadRun, which only re-enters a flow graph — a non-flow run has
+  //     flowId=null → loadRun throws, stranding the run in NeedsInput. Agent /
+  //     scratch budget escalate-raise is deferred (ADR-101, spec §5); their
+  //     budget breach terminates via the kind-dispatched terminate path.
+  if (
+    verdict &&
+    verdict.rung === "escalate" &&
+    (verdict.scope === "tree" || candidate.runKind !== "flow")
+  ) {
     return { ...verdict, rung: "terminate" };
   }
 
@@ -1209,10 +1220,13 @@ function liveRecordFor(
   );
 }
 
-// ESCALATE (run/task scope only): halt the live session so spend stops
-// (checkpoint), then pause to NeedsInput with a budget_breach HITL in ONE tx,
-// branching on run_kind. Worktree KEPT. EXECUTOR_UNAVAILABLE on the checkpoint
-// leaves the run live for the next tick (no split-brain). Returns true on pause.
+// ESCALATE (FLOW run/task scope only — non-flow is promoted to terminate
+// upstream, so this only ever runs for a flow run): halt the live session so
+// spend stops (checkpoint), then pause to NeedsInput with a budget_breach HITL —
+// status flip + node attempt + HITL row + assignment + run.needs_input +
+// run.escalated outbox all in ONE tx (ADR-086 exactly-once). Worktree KEPT.
+// EXECUTOR_UNAVAILABLE on the checkpoint leaves the run live for the next tick
+// (no split-brain). Returns true on pause.
 async function actBudgetEscalate(
   db: Db,
   records: SupervisorSessionRecord[],
@@ -1258,12 +1272,11 @@ async function actBudgetEscalate(
       )
     : null;
 
-  // For a flow run, the active node attempt is moved to NeedsInput so a resume
-  // re-enters it; agent / scratch have no node attempt.
-  const attempt =
-    candidate.runKind === "flow" && candidate.currentStepId
-      ? await fetchActiveAttempt(db, candidate.id, candidate.currentStepId)
-      : null;
+  // Escalate is flow-only (non-flow promoted to terminate upstream), so move the
+  // active node attempt to NeedsInput for a clean resume re-entry.
+  const attempt = candidate.currentStepId
+    ? await fetchActiveAttempt(db, candidate.id, candidate.currentStepId)
+    : null;
 
   if (needsInputPath) {
     await atomicWriteJson(needsInputPath, {
@@ -1311,19 +1324,11 @@ async function actBudgetEscalate(
         prompt,
       });
 
-      // Scratch dialog status moves with the run (the dialog surface reads it).
-      if (candidate.runKind === "scratch") {
-        const { scratchRuns } = schemaModule as unknown as Record<string, any>;
-
-        await tx
-          .update(scratchRuns)
-          .set({ dialogStatus: "NeedsInput", updatedAt: new Date() })
-          .where(eq(scratchRuns.runId, candidate.id));
-      }
-
-      // Route the breach to a human only when the run is project-scoped (an
-      // assignment needs a project). A project-less local-package run never
-      // reaches here (it carries no budget axis), but guard anyway.
+      // Route the breach to a human + fire the escalation outbox events, all in
+      // the SAME tx as the pause (ADR-086 exactly-once — a post-commit emit could
+      // be lost by a crash with no retry, since the paused run is no longer a
+      // watchdog candidate). Only scheduleResume is a post-commit notify. A
+      // project-less local-package run never reaches here (no budget axis).
       if (upd[0].projectId) {
         await createHitlAssignmentForRun({
           db: tx,
@@ -1340,6 +1345,31 @@ async function actBudgetEscalate(
           projectId: upd[0].projectId,
           runId: candidate.id,
           data: { reason: "budget_breach", nodeId: stepId },
+        });
+        await emitDomainEvent({
+          db: tx,
+          kind: "run.escalated",
+          projectId: upd[0].projectId,
+          runId: candidate.id,
+          taskId: candidate.taskId,
+          actor: { type: "system", id: null },
+          payload: {
+            runId: candidate.id,
+            reason: "budget_exceeded",
+            scope: verdict.scope,
+            meter: verdict.meter,
+          },
+        });
+        await emitWebhookEvent({
+          db: tx,
+          type: "run.escalated",
+          projectId: upd[0].projectId,
+          runId: candidate.id,
+          data: {
+            reason: "budget_exceeded",
+            scope: verdict.scope,
+            meter: verdict.meter,
+          },
         });
       }
 
@@ -1364,34 +1394,8 @@ async function actBudgetEscalate(
     return false;
   }
 
-  // run.escalated emitted AFTER the pause commit (best-effort notification, not
-  // bound to the idempotent state transition).
-  if (candidate.projectId) {
-    const meter = { scope: verdict.scope, meter: verdict.meter };
-
-    await emitDomainEvent({
-      db,
-      kind: "run.escalated",
-      projectId: candidate.projectId,
-      runId: candidate.id,
-      taskId: candidate.taskId,
-      actor: { type: "system", id: null },
-      payload: {
-        runId: candidate.id,
-        reason: "budget_exceeded",
-        scope: verdict.scope,
-        meter,
-      },
-    });
-    await emitWebhookEvent({
-      db,
-      type: "run.escalated",
-      projectId: candidate.projectId,
-      runId: candidate.id,
-      data: { reason: "budget_exceeded", scope: verdict.scope, meter },
-    });
-  }
-
+  // The escalation outbox events committed inside the pause tx above; only the
+  // audit log + runner wake happen post-commit.
   logExecPolicyAction({
     runId: candidate.id,
     kind: "budget_escalated",

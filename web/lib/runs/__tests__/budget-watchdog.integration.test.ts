@@ -85,6 +85,29 @@ vi.mock("@/lib/authz", () => ({
   requireProjectAction: vi.fn(async () => undefined),
 }));
 
+// E11: the budget pass force-reconciles each budgeted candidate's rollups before
+// reading its meters. Spy on reconcileRunCostRollups but call THROUGH to the real
+// impl (which returns `missing-cost-file` with no cost.jsonl on disk, so the
+// seeded rollups survive) so the call is observable without changing behavior.
+const reconcileRollupsSpy = vi.fn((_runId: string) => undefined);
+
+vi.mock("@/lib/runs/cost-rollups", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/runs/cost-rollups")>();
+
+  return {
+    ...actual,
+    reconcileRunCostRollups: (
+      runId: string,
+      opts?: Parameters<typeof actual.reconcileRunCostRollups>[1],
+    ) => {
+      reconcileRollupsSpy(runId);
+
+      return actual.reconcileRunCostRollups(runId, opts);
+    },
+  };
+});
+
 let runSweepTick: (opts?: { db?: unknown }) => Promise<unknown>;
 
 import * as schemaModule from "@/lib/db/schema";
@@ -166,6 +189,7 @@ beforeEach(async () => {
   checkpointSessionSpy.mockReset();
   checkpointSessionSpy.mockResolvedValue({});
   runFlowSpy.mockClear();
+  reconcileRollupsSpy.mockClear();
 });
 
 async function seedTask(): Promise<string> {
@@ -411,7 +435,28 @@ describe("budget watchdog — WARN ladder (E3)", () => {
   }, 60_000);
 });
 
-describe("budget watchdog — ESCALATE ladder (E4, D7 each arm)", () => {
+describe("budget watchdog — reconcile before read (E11)", () => {
+  it("force-reconciles the candidate run's rollups before reading its meters", async () => {
+    const taskId = await seedTask();
+    const runId = await seedRun({
+      taskId,
+      executionPolicy: policyWithBudget({
+        run: { maxTokens: 1000, warnAtPct: 80 },
+      }),
+    });
+
+    await seedRollup(runId, taskId, 850);
+    listSessionsSpy.mockResolvedValue([]);
+
+    await runSweepTick({ db });
+
+    // The budgeted candidate is reconciled (the fail-open fast path reconciles
+    // only AFTER confirming a positive meter, so an un-budgeted run is skipped).
+    expect(reconcileRollupsSpy).toHaveBeenCalledWith(runId);
+  }, 60_000);
+});
+
+describe("budget watchdog — ESCALATE (flow-only, E4) + non-flow promotion to terminate (E8)", () => {
   it("flow: 100% maxTokens halts session, run→NeedsInput, budget_breach HITL, run.escalated, worktree kept", async () => {
     const taskId = await seedTask();
     const sup = `sup-${randomUUID().slice(0, 8)}`;
@@ -467,7 +512,7 @@ describe("budget watchdog — ESCALATE ladder (E4, D7 each arm)", () => {
     expect(ws[0].removedAt).toBeNull();
   }, 60_000);
 
-  it("agent: 100% maxTokens halts session, run→NeedsInput, budget_breach HITL (no node attempt)", async () => {
+  it("agent: escalate-band breach is promoted to TERMINATE (escalate is flow-only) — deleteSession, run Failed, no HITL pause", async () => {
     const sup = `sup-${randomUUID().slice(0, 8)}`;
     const runId = await seedRun({
       runKind: "agent",
@@ -475,26 +520,27 @@ describe("budget watchdog — ESCALATE ladder (E4, D7 each arm)", () => {
       acpSessionId: "acp-esc-agent",
     });
 
+    // 100% maxTokens (escalate band; hard ceiling = 500 × 1.25 = 625). A flow run
+    // would pause to NeedsInput here; a non-flow run has no runFlow resume route,
+    // so the escalate verdict is promoted to terminate.
     await seedRollup(runId, null, 500);
 
     listSessionsSpy.mockResolvedValue([liveSessionRecord(runId, sup, "agent")]);
 
     await runSweepTick({ db });
 
-    expect(checkpointSessionSpy).toHaveBeenCalledWith(sup);
+    // Terminate tears the session down (deleteSession), never checkpoints, and
+    // never opens a budget_breach HITL.
+    expect(deleteSessionSpy).toHaveBeenCalledWith(sup);
+    expect(checkpointSessionSpy).not.toHaveBeenCalled();
 
     const run = await getRun(runId);
 
-    expect(run.status).toBe("NeedsInput");
-    expect(run.budgetState?.notified?.run).toBe("escalate");
-
-    const hitl = await getHitl(runId);
-
-    expect(hitl).toHaveLength(1);
-    expect(hitl[0].kind).toBe("budget_breach");
+    expect(run.status).toBe("Failed");
+    expect(await getHitl(runId)).toHaveLength(0);
   }, 60_000);
 
-  it("scratch: 100% maxTokens halts session, run→NeedsInput, dialog_status→NeedsInput, budget_breach HITL", async () => {
+  it("scratch: escalate-band breach is promoted to TERMINATE (escalate is flow-only) — deleteSession, run Failed, dialog Crashed, no HITL pause", async () => {
     const sup = `sup-${randomUUID().slice(0, 8)}`;
     const runId = await seedRun({
       runKind: "scratch",
@@ -503,6 +549,7 @@ describe("budget watchdog — ESCALATE ladder (E4, D7 each arm)", () => {
     });
 
     await seedScratch(runId, null);
+    // 100% maxTokens (escalate band; hard ceiling = 625). Promoted to terminate.
     await seedRollup(runId, null, 500);
 
     listSessionsSpy.mockResolvedValue([
@@ -511,21 +558,20 @@ describe("budget watchdog — ESCALATE ladder (E4, D7 each arm)", () => {
 
     await runSweepTick({ db });
 
-    expect(checkpointSessionSpy).toHaveBeenCalledWith(sup);
+    expect(deleteSessionSpy).toHaveBeenCalledWith(sup);
+    expect(checkpointSessionSpy).not.toHaveBeenCalled();
 
     const run = await getRun(runId);
 
-    expect(run.status).toBe("NeedsInput");
-    expect(run.budgetState?.notified?.run).toBe("escalate");
+    // Deliberate terminal → runs.status=Failed (NON-recoverable), dialog_status
+    // stays Crashed (the scratch-UI terminal) with error_code=BUDGET_EXCEEDED.
+    expect(run.status).toBe("Failed");
+    expect(await getHitl(runId)).toHaveLength(0);
 
     const scratch = await getScratch(runId);
 
-    expect(scratch.dialogStatus).toBe("NeedsInput");
-
-    const hitl = await getHitl(runId);
-
-    expect(hitl).toHaveLength(1);
-    expect(hitl[0].kind).toBe("budget_breach");
+    expect(scratch.dialogStatus).toBe("Crashed");
+    expect(scratch.errorCode).toBe("BUDGET_EXCEEDED");
   }, 60_000);
 
   it("ESCALATE on a retryable supervisor 5xx leaves the run Running (no pause this tick)", async () => {
@@ -735,6 +781,47 @@ describe("budget watchdog — TERMINATE ladder (E5, D7 each arm)", () => {
       .where(eq(schema.nodeAttempts.runId, runId));
 
     expect(attempt[0].status).toBe("Running");
+  }, 60_000);
+
+  it("TERMINATE on a terminal (non-5xx) deleteSession failure still flips the run Failed (E5 — 404 proceeds)", async () => {
+    const taskId = await seedTask();
+    const sup = `sup-${randomUUID().slice(0, 8)}`;
+    const runId = await seedRun({
+      taskId,
+      executionPolicy: policyWithBudget({
+        run: { maxTokens: 1000, hardMaxTokens: 1200 },
+      }),
+      acpSessionId: "acp-term-404",
+    });
+
+    await seedAttempt({ runId, attempt: 1, status: "Running" });
+    await seedRollup(runId, taskId, 1300);
+
+    listSessionsSpy.mockResolvedValue([
+      liveSessionRecord(runId, sup, "implement"),
+    ]);
+    // A terminal (non-EXECUTOR_UNAVAILABLE) failure means the session is already
+    // gone (e.g. supervisor 404 unknown session). Unlike the 5xx case (which
+    // leaves the run Running), the watchdog MUST proceed to the terminal flip.
+    deleteSessionSpy.mockRejectedValueOnce(
+      new MaisterError("ACP_PROTOCOL", "supervisor 404 unknown session"),
+    );
+
+    await runSweepTick({ db });
+
+    expect(deleteSessionSpy).toHaveBeenCalledTimes(1);
+
+    const run = await getRun(runId);
+
+    expect(run.status).toBe("Failed");
+
+    const attempt = await db
+      .select()
+      .from(schema.nodeAttempts)
+      .where(eq(schema.nodeAttempts.runId, runId));
+
+    expect(attempt[0].status).toBe("Failed");
+    expect(attempt[0].errorCode).toBe("BUDGET_EXCEEDED");
   }, 60_000);
 
   it("promotes a queued Pending run after a terminate frees the slot", async () => {

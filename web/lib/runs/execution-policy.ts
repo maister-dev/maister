@@ -455,10 +455,10 @@ export function budgetFromSnapshot(snapshot: unknown): BudgetAxis {
   return parsed.success ? expandExecutionPolicy(parsed.data).budget : {};
 }
 
-// Default warn band when warnAtPct is unset — mirrors the watchdog's
-// DEFAULT_BUDGET_WARN_PCT (keepalive-sweeper.ts). Kept here (client-safe) so the
-// run-detail badge derives the SAME threshold the server enforces.
-const DEFAULT_BUDGET_WARN_PCT = 80;
+// Default warn band when warnAtPct is unset. Single source of truth: this module
+// is client-safe, so the run-detail badge AND the server watchdog
+// (keepalive-sweeper.ts) both import it and derive the SAME threshold.
+export const DEFAULT_BUDGET_WARN_PCT = 80;
 
 // Derived run-scope warn signal for the run-detail badge (AC-BADGE-1). Given the
 // current live run-scope token sum, the run-scope effective maxTokens (snapshot ⊕

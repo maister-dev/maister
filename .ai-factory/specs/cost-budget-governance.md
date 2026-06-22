@@ -104,7 +104,8 @@ cleared so the raised band re-warns correctly.
 **Tree scope has NO ESCALATE rung** — a parked `WaitingOnChildren` root has no
 `→ NeedsInput` transition (the orchestrator-resume consumer only drives
 `→ Running`), so a tree breach goes straight to TERMINATE-cascade. ESCALATE
-applies to run/task scope with a `Running` root.
+applies to run/task scope with a `Running` **flow** root; a non-flow run/task
+breach is likewise promoted to terminate (the raise-resume path is flow-only).
 
 ## 5. `run_kind` dispatch (D7 — branch BEFORE routing)
 
@@ -115,7 +116,15 @@ agent/scratch run misbehaves — those have no `node_attempts`/`current_step_id`
 | | `flow` | `agent` | `scratch` |
 | --- | --- | --- | --- |
 | **TERMINATE** (after `deleteSession`) | CAS `status=Failed` + `markNodeFailed(BUDGET_EXCEEDED)` | `finalizeAgentRun(runId,"Failed",{reason:"budget_breach"})` | real `scratch_runs.dialog_status` finalizer (verify fn) |
-| **ESCALATE** (halt session first) | idle-checkpoint + `markNodeNeedsInput` | checkpoint + `hitl_requests` insert + CAS `status=NeedsInput` (no `nodeAttemptId`) | checkpoint + dialog_status `NeedsInput` |
+| **ESCALATE** (halt session first; **flow only**) | idle-checkpoint + `markNodeNeedsInput` | — promoted to TERMINATE | — promoted to TERMINATE |
+
+**ESCALATE is flow-only in v1.** The raise-and-resume path is `runFlow`/`loadRun`,
+which only re-enters a flow graph (a non-flow run has `flowId=null` → `loadRun`
+throws, stranding the run). So a non-flow (`agent`/`scratch`) run/task
+escalate-band breach is **promoted to terminate** in `evaluateBudgetForCandidate`
+(same as the tree scope). The kind-agnostic TERMINATE path still protects
+agent/scratch at the hard ceiling; agent/scratch budget escalate-raise is deferred
+to a future iteration (no extra provisioning to drive a non-flow resume today).
 
 Cost aggregation is **kind-agnostic** (`reconcileRunCostRollups` keys on runId,
 processes `cost.jsonl` with no node_attempts), so per-task/per-tree token sums
@@ -248,16 +257,22 @@ These become the Expectations bullets in
   `runs WHERE task_id = T`; `task.consecutiveFailures` = trailing streak of
   `Failed|Crashed|Abandoned` runs for the task.
 - **E8.** The breach mechanism branches on `run_kind` before routing; each of
-  flow/agent/scratch has a verified terminate AND escalate adapter.
+  flow/agent/scratch has a verified terminate adapter. ESCALATE is **flow-only**
+  in v1 — a non-flow run/task escalate-band breach is promoted to terminate
+  (`evaluateBudgetForCandidate`), since the raise-resume path (`runFlow`) only
+  re-enters a flow graph; agent/scratch budget escalate-raise is deferred.
 - **E9.** No new `runs.status` value is introduced — the ladder reuses
   `NeedsInput` + `Failed` (asserted by a dedicated test; `launchability.ts`'s
   exhaustive `satisfies Record<RunStatus,…>` stays green).
 - **E10.** Raise-and-resume writes `budget_state.ceilingOverride` (additive, the
   snapshot stays immutable), logs `budget_raised`, clears `notified[scope]`, and
   the resumed run does not immediately re-escalate (effective ceiling raised).
-- **E11.** The budget pass forces `reconcileRunCostRollups` before reading,
-  throttled to runs with a stale `run_cost_rollups.sourceCursor`, bounding
-  overshoot to ~one tick without per-tick disk I/O across a large tree.
+- **E11.** The budget pass forces `reconcileRunCostRollups` for the candidate run
+  before reading its meters, bounding overshoot to ~one tick. The reconcile is a
+  cheap no-op (`missing-cost-file`) when nothing is on disk, so it runs per
+  candidate each tick; task/tree member runs are read from their existing rollups
+  (reconciled by their own candidacy / the runner write path). A
+  `sourceCursor`-based throttle is a possible future optimization, not v1.
 - **E12.** New env vars `MAISTER_BUDGET_HARD_MULTIPLIER` and
   `MAISTER_DEFAULT_UNATTENDED_BUDGET_TOKENS` are documented in
   `docs/configuration.md` + `.env.example` (+ deployment overlays if

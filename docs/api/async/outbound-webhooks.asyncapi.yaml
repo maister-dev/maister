@@ -414,6 +414,7 @@ components:
           oneOf:
             - $ref: "#/components/schemas/DataRunStarted"
             - $ref: "#/components/schemas/DataRunNeedsInput"
+            - $ref: "#/components/schemas/DataRunEscalated"
             - $ref: "#/components/schemas/DataHitlRequested"
             - $ref: "#/components/schemas/DataHitlResponded"
             - $ref: "#/components/schemas/DataRunReview"
@@ -444,11 +445,43 @@ components:
       properties:
         reason:
           type: string
-          enum: [permission, form, human]
+          enum: [permission, form, human, budget_breach]
+          description: "`budget_breach` (ADR-101) — the budget watchdog paused the run for a Raise/Abandon HITL."
         nodeId:
           type: string
           nullable: true
           description: Graph node id that parked the input, or `null` for legacy linear steps.
+
+    DataRunEscalated:
+      type: object
+      description: >-
+        `run.escalated` — two emit sites share this kind, with per-variant fields
+        (so none is globally required): (1) execution-policy B3 on-stuck
+        (`flows/graph/runner-graph.ts`) emits `{ nodeId, onStuck }`; (2) the budget
+        watchdog (`runs/keepalive-sweeper.ts`, ADR-101) emits
+        `{ reason: "budget_exceeded", scope, meter }`.
+      additionalProperties: false
+      properties:
+        reason:
+          type: string
+          enum: [budget_exceeded]
+          description: Budget-escalate variant only.
+        scope:
+          type: string
+          enum: [run, task, tree]
+          description: Budget scope that breached (budget variant).
+        meter:
+          type: string
+          enum: [tokens, failures, wallclock]
+          description: Budget meter that breached (budget variant).
+        onStuck:
+          type: string
+          enum: [escalate, notify_only]
+          description: onStuck disposition (B3 on-stuck variant).
+        nodeId:
+          type: string
+          nullable: true
+          description: Graph node id (B3 on-stuck variant).
 
     DataHitlRequested:
       type: object

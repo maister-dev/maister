@@ -34,7 +34,7 @@ engine, the supervisor, and the promote/delivery path. Out of scope: gate
 ## Domain entities
 
 - **`ExecutionPolicy`** — `{ preset, overrides? }`; the preset expands to the
-  nine axes, overrides fold on top. Persisted as open jsonb on
+  ten axes, overrides fold on top. Persisted as open jsonb on
   `runs.execution_policy` (snapshot), `projects.execution_policy_default`,
   `tasks.execution_policy` (defaults). See
   [`db/runs-domain.md`](../db/runs-domain.md).
@@ -81,7 +81,7 @@ layer.
 The `budget` axis (Implemented, ADR-101) defaults to **all-unset (unlimited)** at
 every preset — fail-open, "run, don't constrain". `unattended` is OPTIONALLY
 env-defaulted: when `MAISTER_DEFAULT_UNATTENDED_BUDGET_TOKENS` is set it seeds a
-run-scope token ceiling for an unattended launch with no explicit budget; the
+tree-scope token ceiling for an unattended launch with no explicit budget; the
 launch dialog also shows a non-blocking hint in that case (never a refusal).
 
 ## State machine — `checks` strictness on a non-review gate (A3)
@@ -142,17 +142,21 @@ flowchart TD
 The budget axis meters token spend (`run_cost_rollups`), consecutive failures,
 and tree wall-clock against the effective per-scope limits each watchdog tick,
 and climbs a warn → escalate → terminate ladder; an unset or `0` meter is skipped
-(fail-open). `run`/`task` scope ESCALATE pauses to `NeedsInput` (a `budget_breach`
-HITL, worktree kept); `tree` scope has NO escalate rung — a `WaitingOnChildren`
-root has no `→ NeedsInput` transition, so it goes straight to a cascade-terminate.
+(fail-open). `run`/`task` scope ESCALATE pauses a **flow** run to `NeedsInput` (a
+`budget_breach` HITL, worktree kept); escalate is flow-only in v1 — a non-flow
+(`agent`/`scratch`) run/task breach has no `runFlow` resume route, so it is
+promoted to terminate (ADR-101). `tree` scope has NO escalate rung — a
+`WaitingOnChildren` root has no `→ NeedsInput` transition, so it goes straight to
+a cascade-terminate.
 
 ```mermaid
 stateDiagram-v2
     [*] --> UnderWarn: meter below warnAtPct
     UnderWarn --> Warn: spend or failures or wallclock >= warnAtPct (80%)
-    Warn --> Escalate: tokens >= 100% maxTokens (run/task scope)
-    UnderWarn --> Escalate: tokens >= 100% maxTokens (run/task scope)
-    Warn --> Terminate: tokens >= hardMaxTokens (run/task scope)
+    Warn --> Escalate: flow tokens >= 100% maxTokens (run/task scope)
+    UnderWarn --> Escalate: flow tokens >= 100% maxTokens (run/task scope)
+    Warn --> Terminate: tokens >= hardMaxTokens, OR non-flow run/task breach
+    UnderWarn --> Terminate: non-flow run/task breach (escalate is flow-only)
     Escalate --> Terminate: tokens >= hardMaxTokens after resume
     UnderWarn --> TreeTerminate: tree tokens or wallclock breach (no escalate rung)
     Warn --> TreeTerminate: tree tokens or wallclock breach (no escalate rung)
@@ -222,10 +226,14 @@ E1–E12 invariants.)
   (unlimited) — it NEVER throws and NEVER constrains a run on a corrupt snapshot.
 - WARN fires at `warnAtPct` (default 80%) WITHOUT killing and at most once per
   scope per band, idempotent via `runs.budget_state.notified[scope]`.
-- ESCALATE at 100% `maxTokens` (run/task scope) MUST halt the live session first,
-  then pause to `runs.status = 'NeedsInput'` with a `budget_breach` HITL, keep the
-  worktree, and emit `run.escalated` (`reason=budget_exceeded`) — all persistent
-  writes in ONE transaction.
+- ESCALATE at 100% `maxTokens` (run/task scope, **flow runs only**) MUST halt the
+  live session first, then pause to `runs.status = 'NeedsInput'` with a
+  `budget_breach` HITL, keep the worktree, and emit `run.escalated`
+  (`reason=budget_exceeded`) — all persistent writes (status, node attempt, HITL
+  row, assignment, `run.needs_input` + `run.escalated` outbox) in ONE transaction.
+  A non-flow (`agent`/`scratch`) run/task breach has no `runFlow` resume route, so
+  its escalate-band verdict is promoted to terminate (escalate-raise is flow-only
+  in v1).
 - TERMINATE at `hardMaxTokens` (= `maxTokens × MAISTER_BUDGET_HARD_MULTIPLIER`,
   default 1.25, when unset) MUST call `deleteSession`, then mark the run terminal
   `Failed` with `MaisterError("BUDGET_EXCEEDED")`; it NEVER marks `Failed` until
@@ -242,7 +250,9 @@ E1–E12 invariants.)
   `runs.execution_policy` snapshot stays immutable), log `budget_raised`, clear
   `notified[scope]`, and the resumed run MUST NOT immediately re-escalate.
 - The breach mechanism MUST branch on `runs.run_kind` (`flow | agent | scratch`)
-  BEFORE routing; each kind has a verified terminate AND escalate adapter.
+  BEFORE routing. TERMINATE has a verified adapter for every kind; ESCALATE is
+  flow-only in v1 (a non-flow escalate-band breach is promoted to terminate —
+  agent/scratch budget escalate-raise is deferred to a future iteration).
   Terminate per kind, ALL → run `Failed` (a budget-kill is a deliberate,
   NON-recoverable terminal — Recover gates on `runs.status='Crashed'`): flow →
   `markNodeFailed` + run `Failed`; agent → `finalizeAgentRun("Failed")`; scratch
