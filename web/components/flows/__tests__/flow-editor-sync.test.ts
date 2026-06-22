@@ -75,6 +75,55 @@ describe("syncYamlToCanvas — idempotent loop guard", () => {
 });
 
 describe("syncYamlToCanvas — genuine text edit reseeds", () => {
+  it("preserves unknown manifest, node, gate, and artifact keys when reseeding from YAML", () => {
+    const current = manifest();
+    const yaml = stringifyYaml({
+      schemaVersion: 1,
+      name: "Demo Flow",
+      "x-flow-extension": { owner: "qa" },
+      nodes: [
+        {
+          id: "plan",
+          type: "ai_coding",
+          action: { prompt: "do plan", "x-action-mode": "deep" },
+          output: {
+            produces: [
+              {
+                id: "report",
+                kind: "test_report",
+                "x-retention-note": "keep",
+              },
+            ],
+          },
+          pre_finish: {
+            gates: [
+              {
+                id: "quality",
+                kind: "artifact_required",
+                inputArtifacts: ["report"],
+                "x-gate-hint": "custom-check",
+              },
+            ],
+          },
+          "x-node-extension": { priority: "high" },
+        },
+      ],
+    });
+
+    const decision = syncYamlToCanvas(yaml, current);
+
+    expect(decision.kind).toBe("reseed");
+    if (decision.kind !== "reseed") return;
+
+    const serialized = stringifyYaml(decision.manifest);
+
+    expect(serialized).toContain("x-flow-extension");
+    expect(serialized).toContain("x-node-extension");
+    expect(serialized).toContain("x-action-mode");
+    expect(serialized).toContain("x-gate-hint");
+    expect(serialized).toContain("x-retention-note");
+  });
+
   it("reseeds with the new manifest + topology + layout when the parsed manifest DIFFERS (text editor edit)", () => {
     const current = manifest();
     const edited = manifest();

@@ -63,6 +63,31 @@ describe("parseFormSchemaJson", () => {
     }
   });
 
+  it("preserves schema and field extension keys", () => {
+    const result = parseFormSchemaJson(
+      JSON.stringify({
+        schemaVersion: 1,
+        "x-form-layout": { columns: 2 },
+        fields: [
+          {
+            name: "tests",
+            type: "enum",
+            options: ["yes", "no"],
+            "x-widget": "segmented",
+          },
+        ],
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const serialized = serializeFormSchema(result.schema);
+
+    expect(serialized).toContain('"x-form-layout"');
+    expect(serialized).toContain('"x-widget"');
+  });
+
   it("returns an error for syntactically invalid JSON", () => {
     const result = parseFormSchemaJson("{ not json");
 
@@ -258,6 +283,41 @@ describe("applyFieldEdit — update", () => {
     });
 
     expect(next.fields[0].fields?.[0].name).toBe("hostname");
+  });
+
+  it("keeps extension keys on unrelated fields when editing", () => {
+    const schema = parseFormSchemaJson(
+      JSON.stringify({
+        schemaVersion: 1,
+        fields: [
+          {
+            name: "config",
+            type: "object",
+            "x-section": "advanced",
+            fields: [
+              {
+                name: "host",
+                type: "string",
+                "x-placeholder": "localhost",
+              },
+              { name: "port", type: "number" },
+            ],
+          },
+        ],
+      }),
+    );
+
+    expect(schema.ok).toBe(true);
+    if (!schema.ok) return;
+
+    const next = applyFieldEdit(schema.schema, {
+      kind: "update",
+      path: [0, 1],
+      patch: { name: "listen_port" },
+    });
+
+    expect(serializeFormSchema(next)).toContain('"x-section"');
+    expect(serializeFormSchema(next)).toContain('"x-placeholder"');
   });
 
   it("keeps the result parseable by formSchemaSchema after an update", () => {

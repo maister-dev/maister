@@ -252,25 +252,27 @@ const PromptContentBlockSchema = z.union([
     .passthrough(),
 ]);
 
-export const SendPromptRequestSchema = z.object({
-  stepId: z
-    .string()
-    .min(1)
-    .max(128)
-    .regex(SAFE_PATH_SEGMENT, "stepId must match /^[A-Za-z0-9._-]+$/"),
-  nodeAttemptId: z
-    .string()
-    .min(1)
-    .max(128)
-    .regex(SAFE_PATH_SEGMENT, "nodeAttemptId must match /^[A-Za-z0-9._-]+$/")
-    .optional(),
-  prompt: z.string().max(1_000_000),
-  contentBlocks: z.array(PromptContentBlockSchema).max(64).optional(),
-  // M30 (ADR-078 L2): the prompt is an answer-only gate-chat turn — while it
-  // is in flight, requestPermission auto-rejects unambiguous mutating
-  // toolCall kinds BEFORE any SSE emit / pending-permission registration.
-  readOnlyTurn: z.boolean().optional(),
-});
+export const SendPromptRequestSchema = z
+  .object({
+    stepId: z
+      .string()
+      .min(1)
+      .max(128)
+      .regex(SAFE_PATH_SEGMENT, "stepId must match /^[A-Za-z0-9._-]+$/"),
+    nodeAttemptId: z
+      .string()
+      .min(1)
+      .max(128)
+      .regex(SAFE_PATH_SEGMENT, "nodeAttemptId must match /^[A-Za-z0-9._-]+$/")
+      .optional(),
+    prompt: z.string().max(1_000_000),
+    contentBlocks: z.array(PromptContentBlockSchema).max(64).optional(),
+    // M30 (ADR-078 L2): the prompt is an answer-only gate-chat turn — while it
+    // is in flight, requestPermission auto-rejects unambiguous mutating
+    // toolCall kinds BEFORE any SSE emit / pending-permission registration.
+    readOnlyTurn: z.boolean().optional(),
+  })
+  .strict();
 
 // M30 (ADR-078 DD4): gate-chat prompts are tagged with this server-derived
 // stepId marker (dash, not colon — SAFE_PATH_SEGMENT). The suffix is the web

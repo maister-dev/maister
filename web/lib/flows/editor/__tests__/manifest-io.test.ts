@@ -94,6 +94,29 @@ describe("applyPresentation", () => {
     expect(result.schemaVersion).toBe(1);
   });
 
+  it("preserves extension fields while applying presentation", () => {
+    const manifest = flowYamlV1Schema.parse({
+      schemaVersion: 1,
+      name: "extensions",
+      "x-flow-extension": { owner: "designer" },
+      nodes: [
+        {
+          id: "plan",
+          type: "ai_coding",
+          action: { prompt: "go" },
+          "x-node-extension": { lane: "custom" },
+        },
+      ],
+    });
+
+    const result = applyPresentation(manifest, [{ id: "plan", x: 1, y: 2 }]);
+
+    expect(result).toMatchObject({
+      "x-flow-extension": { owner: "designer" },
+      nodes: [{ "x-node-extension": { lane: "custom" } }],
+    });
+  });
+
   it("does not mutate the input manifest", () => {
     const original = flowYamlV1Schema.parse({
       schemaVersion: 1,

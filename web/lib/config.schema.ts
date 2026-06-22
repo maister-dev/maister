@@ -259,6 +259,7 @@ const guardConfigSchema = z
     time: z.number().optional(),
     regex: z.string().optional(),
   })
+  .passthrough()
   .refine(
     (v) =>
       v.cost !== undefined || v.time !== undefined || v.regex !== undefined,
@@ -267,49 +268,58 @@ const guardConfigSchema = z
     },
   );
 
-const cliStepSchema = z.object({
-  id: z.string().min(1),
-  type: z.literal("cli"),
-  command: z.string().min(1),
-  pre_guards: z.array(guardConfigSchema).optional(),
-  post_guards: z.array(guardConfigSchema).optional(),
-  // M19 crash-recover opt-in — see `nodeCommon.retry_safe`.
-  retry_safe: z.boolean().optional(),
-});
+const cliStepSchema = z
+  .object({
+    id: z.string().min(1),
+    type: z.literal("cli"),
+    command: z.string().min(1),
+    pre_guards: z.array(guardConfigSchema).optional(),
+    post_guards: z.array(guardConfigSchema).optional(),
+    // M19 crash-recover opt-in — see `nodeCommon.retry_safe`.
+    retry_safe: z.boolean().optional(),
+  })
+  .passthrough();
 
-const agentStepSchema = z.object({
-  id: z.string().min(1),
-  type: z.literal("agent"),
-  mode: z.enum(["new-session", "slash-in-existing"]),
-  prompt: z.string().min(1),
-  pre_guards: z.array(guardConfigSchema).optional(),
-  post_guards: z.array(guardConfigSchema).optional(),
-  retry_safe: z.boolean().optional(),
-});
+const agentStepSchema = z
+  .object({
+    id: z.string().min(1),
+    type: z.literal("agent"),
+    mode: z.enum(["new-session", "slash-in-existing"]),
+    prompt: z.string().min(1),
+    pre_guards: z.array(guardConfigSchema).optional(),
+    post_guards: z.array(guardConfigSchema).optional(),
+    retry_safe: z.boolean().optional(),
+  })
+  .passthrough();
 
-const guardStepSchema = z.object({
-  id: z.string().min(1),
-  type: z.literal("guard"),
-  cost: z.number().optional(),
-  time: z.number().optional(),
-  regex: z.string().optional(),
-  retry_safe: z.boolean().optional(),
-});
+const guardStepSchema = z
+  .object({
+    id: z.string().min(1),
+    type: z.literal("guard"),
+    cost: z.number().optional(),
+    time: z.number().optional(),
+    regex: z.string().optional(),
+    retry_safe: z.boolean().optional(),
+  })
+  .passthrough();
 
-const humanStepSchema = z.object({
-  id: z.string().min(1),
-  type: z.literal("human"),
-  form_schema: z.string().min(1),
-  on_reject: z
-    .object({
-      goto_step: z.string().min(1),
-      comments_var: z.string().min(1).optional(),
-    })
-    .optional(),
-  retry_safe: z.boolean().optional(),
-  // M17 ADR-054: flow-author-declared criticality for this HITL step.
-  criticality: z.enum(["low", "medium", "high", "critical"]).optional(),
-});
+const humanStepSchema = z
+  .object({
+    id: z.string().min(1),
+    type: z.literal("human"),
+    form_schema: z.string().min(1),
+    on_reject: z
+      .object({
+        goto_step: z.string().min(1),
+        comments_var: z.string().min(1).optional(),
+      })
+      .passthrough()
+      .optional(),
+    retry_safe: z.boolean().optional(),
+    // M17 ADR-054: flow-author-declared criticality for this HITL step.
+    criticality: z.enum(["low", "medium", "high", "critical"]).optional(),
+  })
+  .passthrough();
 
 export const stepSchema = z.discriminatedUnion("type", [
   cliStepSchema,
@@ -320,10 +330,12 @@ export const stepSchema = z.discriminatedUnion("type", [
 
 // Engine/API compatibility range a Flow package declares. Enforced (engine +
 // schemaVersion) at enablement in M10; see ADR-021.
-export const flowCompatSchema = z.object({
-  engine_min: z.string().min(1).optional(),
-  engine_max: z.string().min(1).optional(),
-});
+export const flowCompatSchema = z
+  .object({
+    engine_min: z.string().min(1).optional(),
+    engine_max: z.string().min(1).optional(),
+  })
+  .passthrough();
 
 // --- M12: typed artifact kinds (produces[]) — ADR-TBD --------------------
 // `mutation_report` added in M29 (ADR-074): the deterministic post-condition
@@ -445,6 +457,7 @@ export const gateSchema = z
     must_touch: z.array(z.string().min(1)).min(1).optional(),
     must_not_touch: z.literal("restrictions").optional(),
   })
+  .passthrough()
   .superRefine((gate, ctx) => {
     if (gate.external && gate.kind !== "external_check") {
       ctx.addIssue({
@@ -518,16 +531,18 @@ export const nodeOutputSchema = z
   .object({
     produces: z
       .array(
-        z.object({
-          id: z.string().min(1),
-          kind: z.enum(ARTIFACT_KINDS),
-          schema: z.string().min(1).optional(),
-          path: z.string().optional(),
-          ref: z.string().optional(),
-          visibility: z.enum(["internal", "shared"]).optional(),
-          retention: z.enum(["run", "ephemeral"]).optional(),
-          requiredFor: z.array(z.enum(["review", "merge"])).optional(),
-        }),
+        z
+          .object({
+            id: z.string().min(1),
+            kind: z.enum(ARTIFACT_KINDS),
+            schema: z.string().min(1).optional(),
+            path: z.string().optional(),
+            ref: z.string().optional(),
+            visibility: z.enum(["internal", "shared"]).optional(),
+            retention: z.enum(["run", "ephemeral"]).optional(),
+            requiredFor: z.array(z.enum(["review", "merge"])).optional(),
+          })
+          .passthrough(),
       )
       .optional(),
     // M26 (ADR-063): opt-in structured-output declaration. `schema` is a
@@ -545,20 +560,24 @@ export const nodeOutputSchema = z
 
 export const humanDecisionSchema = z.string().min(1);
 
-const finishHumanSchema = z.object({
-  role: z.string().min(1).optional(),
-  decisions: z.array(humanDecisionSchema).min(1),
-  commentsVar: z.string().min(1).optional(),
-});
+const finishHumanSchema = z
+  .object({
+    role: z.string().min(1).optional(),
+    decisions: z.array(humanDecisionSchema).min(1),
+    commentsVar: z.string().min(1).optional(),
+  })
+  .passthrough();
 
-const reworkSchema = z.object({
-  allowedTargets: z.array(z.string().min(1)).min(1),
-  workspacePolicies: z.array(workspacePolicySchema).min(1),
-  maxLoops: z.number().int().positive(),
-  commentsVar: z.string().min(1).optional(),
-  // M30 (ADR-081): transition-level session policy — highest precedence.
-  session_policy: sessionPolicySchema.optional(),
-});
+const reworkSchema = z
+  .object({
+    allowedTargets: z.array(z.string().min(1)).min(1),
+    workspacePolicies: z.array(workspacePolicySchema).min(1),
+    maxLoops: z.number().int().positive(),
+    commentsVar: z.string().min(1).optional(),
+    // M30 (ADR-081): transition-level session policy — highest precedence.
+    session_policy: sessionPolicySchema.optional(),
+  })
+  .passthrough();
 
 // --- M11c: typed per-node-type `settings` (replaces M11a opaque passthrough) ---
 // ADR-031/032. Each node `type` carries a distinct, strict settings shape;
@@ -791,7 +810,10 @@ const nodeCommon = {
   id: z.string().min(1),
   input: nodeInputSchema.optional(),
   output: nodeOutputSchema.optional(),
-  pre_finish: z.object({ gates: z.array(gateSchema).optional() }).optional(),
+  pre_finish: z
+    .object({ gates: z.array(gateSchema).optional() })
+    .passthrough()
+    .optional(),
   finish: z
     .object({ human: finishHumanSchema.optional() })
     .passthrough()
@@ -808,67 +830,81 @@ const nodeCommon = {
   retry_safe: z.boolean().optional(),
 };
 
-const aiCodingNodeSchema = z.object({
-  ...nodeCommon,
-  type: z.literal("ai_coding"),
-  action: z.object({ prompt: z.string().min(1) }).passthrough(),
-  settings: aiCodingSettingsSchema.optional(),
-  // M30 (ADR-080): auto-retry — agent + cli nodes only.
-  retry_policy: retryPolicySchema.optional(),
-  // M30 (ADR-081): node-level rework session policy.
-  session_policy: sessionPolicySchema.optional(),
-});
+const aiCodingNodeSchema = z
+  .object({
+    ...nodeCommon,
+    type: z.literal("ai_coding"),
+    action: z.object({ prompt: z.string().min(1) }).passthrough(),
+    settings: aiCodingSettingsSchema.optional(),
+    // M30 (ADR-080): auto-retry — agent + cli nodes only.
+    retry_policy: retryPolicySchema.optional(),
+    // M30 (ADR-081): node-level rework session policy.
+    session_policy: sessionPolicySchema.optional(),
+  })
+  .passthrough();
 
 // M37 (ADR-098): a long-lived SUPERVISORY node — runs as an ACP session (like
 // ai_coding) but parks on `WaitingOnChildren` while its delegated child Runs
 // execute, and transitions downstream only when the agent declares the goal met.
-const orchestratorNodeSchema = z.object({
-  ...nodeCommon,
-  type: z.literal("orchestrator"),
-  action: z.object({ prompt: z.string().min(1) }).passthrough(),
-  settings: orchestratorSettingsSchema.optional(),
-});
+const orchestratorNodeSchema = z
+  .object({
+    ...nodeCommon,
+    type: z.literal("orchestrator"),
+    action: z.object({ prompt: z.string().min(1) }).passthrough(),
+    settings: orchestratorSettingsSchema.optional(),
+  })
+  .passthrough();
 
-const judgeNodeSchema = z.object({
-  ...nodeCommon,
-  type: z.literal("judge"),
-  action: z.object({ prompt: z.string().min(1) }).passthrough(),
-  settings: judgeSettingsSchema.optional(),
-});
+const judgeNodeSchema = z
+  .object({
+    ...nodeCommon,
+    type: z.literal("judge"),
+    action: z.object({ prompt: z.string().min(1) }).passthrough(),
+    settings: judgeSettingsSchema.optional(),
+  })
+  .passthrough();
 
-const cliNodeSchema = z.object({
-  ...nodeCommon,
-  type: z.literal("cli"),
-  action: z.object({ command: z.string().min(1) }).passthrough(),
-  settings: cliCheckSettingsSchema.optional(),
-  // M30 (ADR-080): auto-retry — agent + cli nodes only.
-  retry_policy: retryPolicySchema.optional(),
-});
+const cliNodeSchema = z
+  .object({
+    ...nodeCommon,
+    type: z.literal("cli"),
+    action: z.object({ command: z.string().min(1) }).passthrough(),
+    settings: cliCheckSettingsSchema.optional(),
+    // M30 (ADR-080): auto-retry — agent + cli nodes only.
+    retry_policy: retryPolicySchema.optional(),
+  })
+  .passthrough();
 
-const checkNodeSchema = z.object({
-  ...nodeCommon,
-  type: z.literal("check"),
-  action: z.object({ command: z.string().min(1) }).passthrough(),
-  settings: cliCheckSettingsSchema.optional(),
-});
+const checkNodeSchema = z
+  .object({
+    ...nodeCommon,
+    type: z.literal("check"),
+    action: z.object({ command: z.string().min(1) }).passthrough(),
+    settings: cliCheckSettingsSchema.optional(),
+  })
+  .passthrough();
 
-const humanNodeSchema = z.object({
-  ...nodeCommon,
-  type: z.literal("human"),
-  action: z.object({}).passthrough().optional(),
-  settings: humanSettingsSchema.optional(),
-});
+const humanNodeSchema = z
+  .object({
+    ...nodeCommon,
+    type: z.literal("human"),
+    action: z.object({}).passthrough().optional(),
+    settings: humanSettingsSchema.optional(),
+  })
+  .passthrough();
 
 // T4: form intake node — collects values against `settings.form_schema` and
 // finishes on `transitions.success`. No `action` (it is a HITL collection node,
 // like human); `settings` is required.
-const formNodeSchema = z.object({
-  ...nodeCommon,
-  type: z.literal("form"),
-  settings: formSettingsSchema,
-});
+const formNodeSchema = z
+  .object({
+    ...nodeCommon,
+    type: z.literal("form"),
+    settings: formSettingsSchema,
+  })
+  .passthrough();
 
-export const nodeSchema = z.discriminatedUnion("type", [
+const nodeSchemaBase = z.discriminatedUnion("type", [
   aiCodingNodeSchema,
   orchestratorNodeSchema,
   judgeNodeSchema,
@@ -877,6 +913,24 @@ export const nodeSchema = z.discriminatedUnion("type", [
   humanNodeSchema,
   formNodeSchema,
 ]);
+
+type NodeSchemaBase = z.infer<typeof nodeSchemaBase>;
+
+function omitReservedPolicyKeys(node: NodeSchemaBase): NodeSchemaBase {
+  if (node.type === "ai_coding") return node;
+
+  const { session_policy: _sessionPolicy, ...withoutSessionPolicy } =
+    node as NodeSchemaBase & { session_policy?: unknown };
+
+  if (node.type === "cli") return withoutSessionPolicy;
+
+  const { retry_policy: _retryPolicy, ...withoutPolicyKeys } =
+    withoutSessionPolicy as NodeSchemaBase & { retry_policy?: unknown };
+
+  return withoutPolicyKeys;
+}
+
+export const nodeSchema = nodeSchemaBase.transform(omitReservedPolicyKeys);
 
 // M22 (ADR-064): additive, runner-ignored presentation section — per-node
 // canvas display options (position/size/color) keyed by node `id`, authored
@@ -895,13 +949,13 @@ export const flowNodePresentationSchema = z
     height: z.number().positive().optional(),
     color: z.string().min(1).optional(),
   })
-  .strict();
+  .passthrough();
 
 export const flowPresentationSchema = z
   .object({
     nodes: z.array(flowNodePresentationSchema).optional(),
   })
-  .strict();
+  .passthrough();
 
 // Optional manifest `metadata` block: routing hints + provenance links. Additive
 // and runner-ignored — stored verbatim in `flow_revisions.manifest`. Modeled
@@ -994,6 +1048,7 @@ export const flowYamlV1Schema = z
     // launch-checked (never read at compile) → no engine floor.
     requirements: z.array(flowRequirementSchema).optional(),
   })
+  .passthrough()
   .refine((d) => (d.steps ? 1 : 0) + (d.nodes ? 1 : 0) === 1, {
     message: "flow manifest must declare exactly one of steps[] or nodes[]",
   });
@@ -1012,21 +1067,25 @@ type FormFieldShape = {
 };
 
 const formFieldSchema: z.ZodType<FormFieldShape> = z.lazy(() =>
-  z.object({
-    name: z.string().min(1),
-    label: z.string().min(1).optional(),
-    type: z.enum(["string", "number", "boolean", "enum", "array", "object"]),
-    required: z.boolean().optional(),
-    default: z.unknown().optional(),
-    options: z.array(z.string()).optional(),
-    fields: z.array(formFieldSchema).optional(),
-  }),
+  z
+    .object({
+      name: z.string().min(1),
+      label: z.string().min(1).optional(),
+      type: z.enum(["string", "number", "boolean", "enum", "array", "object"]),
+      required: z.boolean().optional(),
+      default: z.unknown().optional(),
+      options: z.array(z.string()).optional(),
+      fields: z.array(formFieldSchema).optional(),
+    })
+    .passthrough(),
 );
 
-export const formSchemaSchema = z.object({
-  schemaVersion: z.number().int().positive(),
-  fields: z.array(formFieldSchema),
-});
+export const formSchemaSchema = z
+  .object({
+    schemaVersion: z.number().int().positive(),
+    fields: z.array(formFieldSchema),
+  })
+  .passthrough();
 
 export type MaisterYamlV2 = z.infer<typeof maisterYamlV2Schema>;
 export type FlowEntry = z.infer<typeof flowEntrySchema>;

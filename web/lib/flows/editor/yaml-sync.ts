@@ -34,10 +34,10 @@ export type YamlSyncDecision =
   | { kind: "error"; diagnostics: LintDiagnostic[] };
 
 // Canonical structural form of a (schema-validated) manifest: re-serialize via
-// the same `stringifyYaml` the canvas uses. The zod parse already normalized the
-// shape (unknown keys stripped, defaults applied), so two manifests with the
-// same logical content yield byte-identical canonical yaml regardless of the
-// raw text's comments/whitespace/key order. This is the loop-guard comparator.
+// the same `stringifyYaml` the canvas uses. The zod parse already normalizes
+// defaults while preserving extension keys, so two manifests with the same
+// logical content yield byte-identical canonical yaml regardless of the raw
+// text's comments/whitespace/key order. This is the loop-guard comparator.
 function canonical(manifest: FlowYamlV1): string {
   return stringifyYaml(manifest);
 }

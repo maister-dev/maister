@@ -443,6 +443,16 @@ describe("SendPromptRequestSchema", () => {
     ).toBe(true);
   });
 
+  it("rejects unknown top-level request keys instead of stripping them", () => {
+    const result = SendPromptRequestSchema.safeParse({
+      stepId: "plan",
+      prompt: "go",
+      requestId: "smuggled",
+    });
+
+    expect(result.success).toBe(false);
+  });
+
   it("rejects prompt longer than 1_000_000 chars", () => {
     const result = SendPromptRequestSchema.safeParse({
       stepId: "plan",

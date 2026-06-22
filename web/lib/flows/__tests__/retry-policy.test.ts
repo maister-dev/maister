@@ -87,10 +87,8 @@ describe("retry_policy node placement", () => {
   });
 
   it("is stripped (never honored) on human/check/judge nodes", () => {
-    // Node schemas are deliberately non-strict (unknown keys strip, matching
-    // the DSL's additive-forward philosophy) — the key is only DEFINED on
-    // ai_coding/cli, so on every other type it parses away and the engine
-    // never sees it.
+    // Extension keys are preserved for Flow Studio round-trips, but reserved
+    // MAIster policy keys are only honored on the node types that define them.
     const human = nodeSchema.safeParse({
       ...base,
       type: "human",
