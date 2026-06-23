@@ -861,7 +861,7 @@ export function TaskCardEditModal({
           <section
             aria-labelledby={dialogId}
             aria-modal="true"
-            className="relative grid max-h-[calc(100vh-32px)] w-full max-w-[1080px] grid-cols-1 overflow-hidden rounded-[14px] border border-line bg-paper shadow-[0_26px_80px_-30px_rgba(22,20,15,0.42)] lg:grid-cols-[minmax(0,1fr)_340px]"
+            className="relative grid max-h-[calc(100vh-32px)] w-full max-w-[1080px] grid-cols-1 overflow-hidden rounded-[14px] border border-line bg-paper shadow-[0_26px_80px_-30px_rgba(22,20,15,0.42)] lg:grid-cols-[minmax(0,1fr)_340px] lg:grid-rows-[minmax(0,1fr)]"
             role="dialog"
           >
             <button
@@ -874,273 +874,277 @@ export function TaskCardEditModal({
             >
               <XMarkIcon className="h-4 w-4" />
             </button>
-            <div className="flex min-h-0 flex-col gap-4 overflow-y-auto px-5 py-4">
-              <div className="min-w-0 pr-10">
-                <div className="min-w-0">
-                  <span className="font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-amber">
-                    {card.keyRef}
-                  </span>
-                  <h2
-                    className="m-0 mt-1 text-xl font-semibold leading-tight tracking-[-0.01em] text-ink"
-                    id={dialogId}
-                  >
-                    {tBoard("editTask")}
-                  </h2>
+            <div className="min-h-0 overflow-hidden">
+              <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto px-5 py-4">
+                <div className="min-w-0 pr-10">
+                  <div className="min-w-0">
+                    <span className="font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-amber">
+                      {card.keyRef}
+                    </span>
+                    <h2
+                      className="m-0 mt-1 text-xl font-semibold leading-tight tracking-[-0.01em] text-ink"
+                      id={dialogId}
+                    >
+                      {tBoard("editTask")}
+                    </h2>
+                  </div>
                 </div>
-              </div>
 
-              <label className="flex flex-col gap-1.5">
-                <span className="font-mono text-[9.5px] font-bold uppercase tracking-[0.06em] text-mute">
-                  {tBoard("editTitleLabel")}
-                </span>
-                <input
-                  className="min-h-10 rounded-md border border-line-soft bg-ivory px-3 py-2 text-[18px] font-semibold leading-tight text-ink outline-none transition focus:border-amber"
-                  disabled={disabled}
-                  value={title}
-                  onChange={(event) => setTitle(event.target.value)}
-                />
-              </label>
-
-              <div className="flex min-h-[290px] flex-col gap-1.5">
-                <span className="font-mono text-[9.5px] font-bold uppercase tracking-[0.06em] text-mute">
-                  {tBoard("editDescriptionLabel")}
-                </span>
-                <TaskMarkdownEditor
-                  className="min-h-[250px] flex-1 bg-ivory"
-                  disabled={disabled}
-                  labels={markdownEditorLabels(tBoard)}
-                  textareaClassName="min-h-[200px] flex-1 bg-ivory"
-                  value={prompt}
-                  onChange={setPrompt}
-                />
-              </div>
-
-              {error ? (
-                <p
-                  className="m-0 text-[12px] font-medium text-danger"
-                  role="alert"
-                >
-                  {error}
-                </p>
-              ) : null}
-            </div>
-
-            <aside className="flex min-h-0 flex-col gap-4 overflow-y-auto border-t border-line bg-ivory px-4 py-4 lg:border-l lg:border-t-0">
-              <div className="flex items-center justify-between gap-2">
-                <h3 className="m-0 text-sm font-semibold text-ink">
-                  {tBoard("editProperties")}
-                </h3>
-                {loadingOptions ? (
-                  <span className="font-mono text-[10px] text-mute">
-                    {tBoard("editOptionsLoading")}
+                <label className="flex flex-col gap-1.5">
+                  <span className="font-mono text-[9.5px] font-bold uppercase tracking-[0.06em] text-mute">
+                    {tBoard("editTitleLabel")}
                   </span>
+                  <input
+                    className="min-h-10 rounded-md border border-line-soft bg-ivory px-3 py-2 text-[18px] font-semibold leading-tight text-ink outline-none transition focus:border-amber"
+                    disabled={disabled}
+                    value={title}
+                    onChange={(event) => setTitle(event.target.value)}
+                  />
+                </label>
+
+                <div className="flex min-h-[290px] flex-col gap-1.5">
+                  <span className="font-mono text-[9.5px] font-bold uppercase tracking-[0.06em] text-mute">
+                    {tBoard("editDescriptionLabel")}
+                  </span>
+                  <TaskMarkdownEditor
+                    className="min-h-[250px] flex-1 bg-ivory"
+                    disabled={disabled}
+                    labels={markdownEditorLabels(tBoard)}
+                    textareaClassName="min-h-[200px] flex-1 bg-ivory"
+                    value={prompt}
+                    onChange={setPrompt}
+                  />
+                </div>
+
+                {error ? (
+                  <p
+                    className="m-0 text-[12px] font-medium text-danger"
+                    role="alert"
+                  >
+                    {error}
+                  </p>
                 ) : null}
               </div>
-              {optionsError ? (
-                <p
-                  className="m-0 rounded-md border border-[color-mix(in_oklab,var(--attention)_45%,var(--line))] bg-[color-mix(in_oklab,var(--attention)_14%,var(--paper))] px-2 py-1.5 text-[11px] font-medium text-attention"
-                  role="status"
-                >
-                  {tBoard("editOptionsUnavailable")}
-                </p>
-              ) : null}
-              <div className="grid gap-3">
-                <div className="flex min-w-0 flex-col gap-1">
-                  <SelectField
-                    disabled={disabled || loadingOptions || optionsError}
-                    label={tLaunch("flow")}
-                    options={[
-                      { value: "", label: tBoard("editNoFlow") },
-                      ...flowOptions.map((flow) => ({
-                        value: flow.id,
-                        label: flowOptionLabel(flow, tBoard),
-                        disabled: !flow.enabled,
-                      })),
-                    ]}
-                    value={flowId}
-                    onChange={setFlowId}
-                  />
-                  {flowOptions.length > 0 && !hasLaunchableFlowOptions ? (
-                    <p className="m-0 font-mono text-[10px] leading-snug text-mute">
-                      {tBoard("editNoLaunchableFlows")}
-                    </p>
+            </div>
+
+            <aside className="min-h-0 overflow-hidden border-t border-line bg-ivory lg:border-l lg:border-t-0">
+              <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto px-4 py-4">
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="m-0 text-sm font-semibold text-ink">
+                    {tBoard("editProperties")}
+                  </h3>
+                  {loadingOptions ? (
+                    <span className="font-mono text-[10px] text-mute">
+                      {tBoard("editOptionsLoading")}
+                    </span>
                   ) : null}
                 </div>
-                <SelectField
-                  disabled={disabled || loadingOptions || optionsError}
-                  label={tLaunch("runner")}
-                  options={[
-                    { value: "", label: runnerDefaultOptionLabel },
-                    ...runnerOptions.map((runner) => ({
-                      value: runner.id,
-                      label: runnerLabel(runner),
-                      disabled:
-                        !runner.enabled || runner.readinessStatus !== "Ready",
-                    })),
-                  ]}
-                  value={runnerId}
-                  onChange={setRunnerId}
-                />
-                <label className="flex min-w-0 flex-col gap-1">
-                  <span className="font-mono text-[9.5px] font-bold uppercase tracking-[0.06em] text-mute">
-                    {tRun("baseBranch")}
-                  </span>
-                  <input
-                    className="h-9 w-full min-w-0 rounded-md border border-line-soft bg-paper px-2 font-mono text-[11px] text-ink outline-none transition focus:border-amber disabled:cursor-not-allowed disabled:opacity-60"
-                    disabled={disabled}
-                    list={branchListId}
-                    placeholder={baseBranchDefaultLabel}
-                    value={baseBranch}
-                    onChange={(event) => setBaseBranch(event.target.value)}
-                  />
-                </label>
-                <label className="flex min-w-0 flex-col gap-1">
-                  <span className="font-mono text-[9.5px] font-bold uppercase tracking-[0.06em] text-mute">
-                    {tRun("targetBranch")}
-                  </span>
-                  <input
-                    className="h-9 w-full min-w-0 rounded-md border border-line-soft bg-paper px-2 font-mono text-[11px] text-ink outline-none transition focus:border-amber disabled:cursor-not-allowed disabled:opacity-60"
-                    disabled={disabled}
-                    list={branchListId}
-                    placeholder={targetBranchDefaultLabel}
-                    value={targetBranch}
-                    onChange={(event) => setTargetBranch(event.target.value)}
-                  />
-                  <datalist id={branchListId}>
-                    {(options?.branches ?? []).map((branch) => (
-                      <option key={branch} value={branch} />
-                    ))}
-                  </datalist>
-                </label>
-                <SelectField<PromotionMode>
-                  disabled={disabled}
-                  label={tBoard("editDeliveryStrategyLabel")}
-                  options={[
-                    { value: "", label: deliveryStrategyDefaultLabel },
-                    {
-                      value: "local_merge",
-                      label: tBoard("editPromotionLocalMerge"),
-                    },
-                    {
-                      value: "pull_request",
-                      label: tLaunch("promotionPullRequest"),
-                    },
-                  ]}
-                  value={promotionMode}
-                  onChange={setPromotionMode}
-                />
-              </div>
-
-              <div className="border-t border-line-soft pt-3">
+                {optionsError ? (
+                  <p
+                    className="m-0 rounded-md border border-[color-mix(in_oklab,var(--attention)_45%,var(--line))] bg-[color-mix(in_oklab,var(--attention)_14%,var(--paper))] px-2 py-1.5 text-[11px] font-medium text-attention"
+                    role="status"
+                  >
+                    {tBoard("editOptionsUnavailable")}
+                  </p>
+                ) : null}
                 <div className="grid gap-3">
-                  <SelectField<ExecutionPresetChoice>
+                  <div className="flex min-w-0 flex-col gap-1">
+                    <SelectField
+                      disabled={disabled || loadingOptions || optionsError}
+                      label={tLaunch("flow")}
+                      options={[
+                        { value: "", label: tBoard("editNoFlow") },
+                        ...flowOptions.map((flow) => ({
+                          value: flow.id,
+                          label: flowOptionLabel(flow, tBoard),
+                          disabled: !flow.enabled,
+                        })),
+                      ]}
+                      value={flowId}
+                      onChange={setFlowId}
+                    />
+                    {flowOptions.length > 0 && !hasLaunchableFlowOptions ? (
+                      <p className="m-0 font-mono text-[10px] leading-snug text-mute">
+                        {tBoard("editNoLaunchableFlows")}
+                      </p>
+                    ) : null}
+                  </div>
+                  <SelectField
+                    disabled={disabled || loadingOptions || optionsError}
+                    label={tLaunch("runner")}
+                    options={[
+                      { value: "", label: runnerDefaultOptionLabel },
+                      ...runnerOptions.map((runner) => ({
+                        value: runner.id,
+                        label: runnerLabel(runner),
+                        disabled:
+                          !runner.enabled || runner.readinessStatus !== "Ready",
+                      })),
+                    ]}
+                    value={runnerId}
+                    onChange={setRunnerId}
+                  />
+                  <label className="flex min-w-0 flex-col gap-1">
+                    <span className="font-mono text-[9.5px] font-bold uppercase tracking-[0.06em] text-mute">
+                      {tRun("baseBranch")}
+                    </span>
+                    <input
+                      className="h-9 w-full min-w-0 rounded-md border border-line-soft bg-paper px-2 font-mono text-[11px] text-ink outline-none transition focus:border-amber disabled:cursor-not-allowed disabled:opacity-60"
+                      disabled={disabled}
+                      list={branchListId}
+                      placeholder={baseBranchDefaultLabel}
+                      value={baseBranch}
+                      onChange={(event) => setBaseBranch(event.target.value)}
+                    />
+                  </label>
+                  <label className="flex min-w-0 flex-col gap-1">
+                    <span className="font-mono text-[9.5px] font-bold uppercase tracking-[0.06em] text-mute">
+                      {tRun("targetBranch")}
+                    </span>
+                    <input
+                      className="h-9 w-full min-w-0 rounded-md border border-line-soft bg-paper px-2 font-mono text-[11px] text-ink outline-none transition focus:border-amber disabled:cursor-not-allowed disabled:opacity-60"
+                      disabled={disabled}
+                      list={branchListId}
+                      placeholder={targetBranchDefaultLabel}
+                      value={targetBranch}
+                      onChange={(event) => setTargetBranch(event.target.value)}
+                    />
+                    <datalist id={branchListId}>
+                      {(options?.branches ?? []).map((branch) => (
+                        <option key={branch} value={branch} />
+                      ))}
+                    </datalist>
+                  </label>
+                  <SelectField<PromotionMode>
                     disabled={disabled}
-                    label={tLaunch("execPreset")}
+                    label={tBoard("editDeliveryStrategyLabel")}
                     options={[
+                      { value: "", label: deliveryStrategyDefaultLabel },
                       {
-                        value: "",
-                        label: executionPresetDefaultLabel,
+                        value: "local_merge",
+                        label: tBoard("editPromotionLocalMerge"),
                       },
                       {
-                        value: "supervised",
-                        label: tLaunch("execPresetSupervised"),
-                      },
-                      {
-                        value: "assisted",
-                        label: tLaunch("execPresetAssisted"),
-                      },
-                      {
-                        value: "unattended",
-                        label: tLaunch("execPresetUnattended"),
+                        value: "pull_request",
+                        label: tLaunch("promotionPullRequest"),
                       },
                     ]}
-                    value={execPreset}
-                    onChange={onExecPresetChange}
-                  />
-                  <SelectField<CheckStrictness>
-                    disabled={disabled || execDisabled}
-                    label={tLaunch("execChecks")}
-                    options={[
-                      { value: "strict", label: tLaunch("execChecksStrict") },
-                      {
-                        value: "advisory",
-                        label: tLaunch("execChecksAdvisory"),
-                        disabled: execLocks.relaxedChecksDisabled,
-                      },
-                      {
-                        value: "skip",
-                        label: tLaunch("execChecksSkip"),
-                        disabled: execLocks.relaxedChecksDisabled,
-                      },
-                    ]}
-                    value={execChecks}
-                    onChange={setExecChecks}
-                  />
-                  <SelectField<HumanGateAutonomy>
-                    disabled={disabled || execDisabled}
-                    label={tLaunch("execHumanGate")}
-                    options={[
-                      {
-                        value: "stop",
-                        label: tLaunch("execHumanGateStop"),
-                      },
-                      {
-                        value: "auto_pass",
-                        label: tLaunch("execHumanGateAutoPass"),
-                        disabled: execLocks.autoPassDisabled,
-                      },
-                    ]}
-                    value={execHumanGate}
-                    onChange={setExecHumanGate}
-                  />
-                  <SelectField<PromotionTrigger>
-                    disabled={disabled || execDisabled}
-                    label={tBoard("editExecutionPromotionLabel")}
-                    options={[
-                      {
-                        value: "manual",
-                        label: tLaunch("execPromotionManual"),
-                      },
-                      {
-                        value: "auto_on_ready",
-                        label: tLaunch("execPromotionAuto"),
-                        disabled: execLocks.autoPromoteDisabled,
-                      },
-                    ]}
-                    value={execPromotion}
-                    onChange={setExecPromotion}
+                    value={promotionMode}
+                    onChange={setPromotionMode}
                   />
                 </div>
-              </div>
 
-              <div className="border-t border-line-soft pt-3">
-                <RelationsEditor
-                  canEdit={!disabled}
-                  labels={relationLabels(tTaskDetail)}
-                  relationCandidates={relationCandidates}
-                  relations={card.relations}
-                  slug={slug}
-                  taskNumber={card.number}
-                />
-              </div>
+                <div className="border-t border-line-soft pt-3">
+                  <div className="grid gap-3">
+                    <SelectField<ExecutionPresetChoice>
+                      disabled={disabled}
+                      label={tLaunch("execPreset")}
+                      options={[
+                        {
+                          value: "",
+                          label: executionPresetDefaultLabel,
+                        },
+                        {
+                          value: "supervised",
+                          label: tLaunch("execPresetSupervised"),
+                        },
+                        {
+                          value: "assisted",
+                          label: tLaunch("execPresetAssisted"),
+                        },
+                        {
+                          value: "unattended",
+                          label: tLaunch("execPresetUnattended"),
+                        },
+                      ]}
+                      value={execPreset}
+                      onChange={onExecPresetChange}
+                    />
+                    <SelectField<CheckStrictness>
+                      disabled={disabled || execDisabled}
+                      label={tLaunch("execChecks")}
+                      options={[
+                        { value: "strict", label: tLaunch("execChecksStrict") },
+                        {
+                          value: "advisory",
+                          label: tLaunch("execChecksAdvisory"),
+                          disabled: execLocks.relaxedChecksDisabled,
+                        },
+                        {
+                          value: "skip",
+                          label: tLaunch("execChecksSkip"),
+                          disabled: execLocks.relaxedChecksDisabled,
+                        },
+                      ]}
+                      value={execChecks}
+                      onChange={setExecChecks}
+                    />
+                    <SelectField<HumanGateAutonomy>
+                      disabled={disabled || execDisabled}
+                      label={tLaunch("execHumanGate")}
+                      options={[
+                        {
+                          value: "stop",
+                          label: tLaunch("execHumanGateStop"),
+                        },
+                        {
+                          value: "auto_pass",
+                          label: tLaunch("execHumanGateAutoPass"),
+                          disabled: execLocks.autoPassDisabled,
+                        },
+                      ]}
+                      value={execHumanGate}
+                      onChange={setExecHumanGate}
+                    />
+                    <SelectField<PromotionTrigger>
+                      disabled={disabled || execDisabled}
+                      label={tBoard("editExecutionPromotionLabel")}
+                      options={[
+                        {
+                          value: "manual",
+                          label: tLaunch("execPromotionManual"),
+                        },
+                        {
+                          value: "auto_on_ready",
+                          label: tLaunch("execPromotionAuto"),
+                          disabled: execLocks.autoPromoteDisabled,
+                        },
+                      ]}
+                      value={execPromotion}
+                      onChange={setExecPromotion}
+                    />
+                  </div>
+                </div>
 
-              <div className="mt-auto flex items-center justify-end gap-2 border-t border-line-soft pt-3">
-                <button
-                  className="rounded-md border border-line bg-paper px-3 py-1.5 text-[12px] font-semibold text-mute transition hover:border-mute hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
-                  disabled={disabled}
-                  type="button"
-                  onClick={close}
-                >
-                  {tCommon("cancel")}
-                </button>
-                <button
-                  className="rounded-md border border-amber bg-amber px-3 py-1.5 text-[12px] font-semibold text-paper transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50"
-                  disabled={disabled}
-                  type="button"
-                  onClick={() => void save()}
-                >
-                  {busy || pending ? tBoard("editSaving") : tCommon("save")}
-                </button>
+                <div className="border-t border-line-soft pt-3">
+                  <RelationsEditor
+                    canEdit={!disabled}
+                    labels={relationLabels(tTaskDetail)}
+                    relationCandidates={relationCandidates}
+                    relations={card.relations}
+                    slug={slug}
+                    taskNumber={card.number}
+                  />
+                </div>
+
+                <div className="mt-auto flex items-center justify-end gap-2 border-t border-line-soft pt-3">
+                  <button
+                    className="rounded-md border border-line bg-paper px-3 py-1.5 text-[12px] font-semibold text-mute transition hover:border-mute hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={disabled}
+                    type="button"
+                    onClick={close}
+                  >
+                    {tCommon("cancel")}
+                  </button>
+                  <button
+                    className="rounded-md border border-amber bg-amber px-3 py-1.5 text-[12px] font-semibold text-paper transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={disabled}
+                    type="button"
+                    onClick={() => void save()}
+                  >
+                    {busy || pending ? tBoard("editSaving") : tCommon("save")}
+                  </button>
+                </div>
               </div>
             </aside>
           </section>
