@@ -22,7 +22,7 @@ erDiagram
         text id PK
         text run_id FK
         text step_id "Flow step / node that raised it"
-        text kind "permission | form | human"
+        text kind "permission | form | human | infra_recovery | budget_breach | hook_trip"
         jsonb schema "form_schema or permission descriptor (+ review allow-list; ADR-072: + maxLoops/gateAttempt)"
         text prompt "human-readable rationale"
         jsonb response "operator's answer (NULL while open)"

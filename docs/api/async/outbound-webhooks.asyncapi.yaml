@@ -455,17 +455,18 @@ components:
     DataRunEscalated:
       type: object
       description: >-
-        `run.escalated` — two emit sites share this kind, with per-variant fields
+        `run.escalated` — three emit sites share this kind, with per-variant fields
         (so none is globally required): (1) execution-policy B3 on-stuck
         (`flows/graph/runner-graph.ts`) emits `{ nodeId, onStuck }`; (2) the budget
         watchdog (`runs/keepalive-sweeper.ts`, ADR-101) emits
-        `{ reason: "budget_exceeded", scope, meter }`.
+        `{ reason: "budget_exceeded", scope, meter }`; (3) the guardrail/hook engine
+        (ADR-104) emits `{ reason: "hook_trip", rule }`.
       additionalProperties: false
       properties:
         reason:
           type: string
-          enum: [budget_exceeded]
-          description: Budget-escalate variant only.
+          enum: [budget_exceeded, hook_trip]
+          description: Budget-escalate or hook-trip variant.
         scope:
           type: string
           enum: [run, task, tree]
@@ -481,7 +482,11 @@ components:
         nodeId:
           type: string
           nullable: true
-          description: Graph node id (B3 on-stuck variant).
+          description: Graph node id (B3 on-stuck or hook-trip variant).
+        rule:
+          type: string
+          enum: [path_guard, repetition, no_progress]
+          description: Guardrail rule that tripped (hook-trip variant).
 
     DataHitlRequested:
       type: object

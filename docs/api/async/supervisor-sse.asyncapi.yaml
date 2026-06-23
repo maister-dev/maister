@@ -75,6 +75,7 @@ channels:
           - $ref: "#/components/messages/SessionExited"
           - $ref: "#/components/messages/SessionCrashed"
           - $ref: "#/components/messages/SessionChatTurn"
+          - $ref: "#/components/messages/SessionHookTrip"
 components:
   messages:
     SessionLine:
@@ -210,6 +211,18 @@ components:
         `mutationReverted` flag.
       contentType: application/json
       payload: { $ref: "#/components/schemas/SessionChatTurnEvent" }
+    SessionHookTrip:
+      name: session.hook_trip
+      title: Guardrail/hook engine trip (Designed — ADR-104)
+      summary: |
+        (Designed — ADR-104, M40) A guardrail rule tripped at the supervisor↔ACP
+        seam. `disposition: "deny"` (path_guard) is resolved inline — the tool call
+        is cancelled and the run continues. `disposition: "halt"` (repetition /
+        no_progress) cancels work and stops issuing prompts; the web consumer then
+        checkpoints + escalates the run to `NeedsInput` with a `hook_trip` HITL. The
+        supervisor never self-kills. See `system-analytics/guardrail-hooks.md`.
+      contentType: application/json
+      payload: { $ref: "#/components/schemas/SessionHookTripEvent" }
   schemas:
     EventBase:
       type: object
@@ -224,6 +237,7 @@ components:
             - session.exited
             - session.crashed
             - session.chat_turn
+            - session.hook_trip
         sessionId:
           type: string
           format: uuid
@@ -414,3 +428,37 @@ components:
         HITL pause. Rendered in the chat surface, NOT the flow timeline. The
         prompt is tagged `stepId = gate-chat-<hitlRequestId>` (server-derived,
         dash not colon).
+    SessionHookTripEvent:
+      allOf:
+        - $ref: "#/components/schemas/EventBase"
+        - type: object
+          required: [type, rule, lifecycle, disposition]
+          properties:
+            type:
+              type: string
+              const: session.hook_trip
+            rule:
+              type: string
+              enum: [path_guard, repetition, no_progress]
+            lifecycle:
+              type: string
+              enum: [pre_tool_call, post_turn]
+              description: |
+                `pre_tool_call` for path_guard / repetition; `post_turn` for
+                no_progress (driven from sessionUpdate, after a tool already ran).
+            disposition:
+              type: string
+              enum: [deny, halt]
+              description: |
+                `deny` = path_guard (the tool call is cancelled, the run
+                continues); `halt` = repetition / no_progress (the web consumer
+                checkpoints + escalates).
+            toolCall:
+              type: object
+              nullable: true
+              description: |
+                The offending ACP toolCall for `pre_tool_call` rules; null for
+                `no_progress`.
+      description: |
+        (Designed — ADR-104, M40) Emitted when a guardrail rule trips at the
+        supervisor↔ACP seam. See `system-analytics/guardrail-hooks.md`.

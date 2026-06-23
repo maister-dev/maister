@@ -52,9 +52,10 @@ in M11c.
   shape; `human` carries decision/role/takeover shape; `cli` / `check` carry the
   command shape. Optional on every node type. Lives in the pinned
   `flow_revisions.manifest` (persisted; see [runs-domain ERD](db/runs-domain.md)).
-- **Capability class** — one of the six capability-bearing settings subject to
+- **Capability class** — one of the seven capability-bearing settings subject to
   the `enforcement` intent: `mcps`, `tools`, `skills`, `restrictions`,
-  `permissionMode`, `workspaceAccess`.
+  `permissionMode`, `workspaceAccess`, `hooks` (`hooks` Designed — ADR-104, M40;
+  see "Hook engine capability class" below).
 - **`enforcement` intent** — per-class `strict | instruct | off`, default
   `instruct`, declared by the flow author in `settings.enforcement`.
 - **`ENFORCEABILITY_BY_AGENT`** — the static, code-constant table
@@ -211,6 +212,49 @@ verdict `refused`.)
 
 The error message names the offending node id + class + resolved agent + the
 `declared`/`capability` pair. **No new error code** (ADR-008 closed union).
+
+## Hook engine capability class (Designed — ADR-104)
+
+The **seventh** capability class `hooks` ([ADR-104](../decisions.md#adr-104-declarative-guardrailhook-engine--universal-supervisor-acp-seam-interceptor-native-materializer-seam-and-hook-trip-hitl-escalation),
+M40) declares the per-tool-call guardrail rules (`path_guard` / `repetition` /
+`no_progress`) enforced at the supervisor↔ACP seam. Full design:
+[`guardrail-hooks.md`](guardrail-hooks.md). Engine floor: a node/agent declaring
+`hooks` requires `compat.engine_min >= 1.8.0`.
+
+`hooks` is `instructed` for every agent in `ENFORCEABILITY_BY_AGENT` (a 7th
+column, all `instructed`):
+
+| agent → class | `hooks` |
+| ------------- | ------- |
+| `claude`   | instructed |
+| `codex`    | instructed |
+| `gemini`   | instructed |
+| `opencode` | instructed |
+| `mimo`     | instructed |
+
+**Why `instructed`, not `enforced` (honest visibility).** Unlike `mcps` / `tools`
+(instructed because the materialized delivery is built but the flip awaits a live
+spike), the supervisor's hook interceptor enforces `hooks` *deterministically*. It
+is still modeled `instructed` on purpose: marking it `enforced` would reopen the
+frozen ADR-041 strict-capability flip and let a `strict` hooks declaration pass the
+launch gate keyed on the static table. So a `strict` `enforcement.hooks` is
+**refused** at launch (the refusal branch above), and the deterministic supervisor
+enforcement is documented behavior — not a static-table `enforced` claim.
+
+**Two-tier default.** The resolver seeds the two liveness breakers (`repetition` =
+5, `noProgress` = 15, from `MAISTER_HOOK_*`) for runs under the `unattended`
+execution-policy preset unless the node opts out; `supervised` / `assisted` are
+opt-in; `path_guard` is always opt-in. See [`guardrail-hooks.md`](guardrail-hooks.md)
+and [`execution-policy.md`](execution-policy.md).
+
+**Supervisor-vs-native split + materialization.** All three rules are enforced
+universally supervisor-side. A claude-only `NativeHookMaterializer` (spike-gated)
+may *additionally* write a `PreToolUse` path-guard hook into
+`<worktree>/.claude/settings.local.json` (the same M14 channel that delivers
+`tools` / `permissionMode`, ADR-044), covering only `path_guard` and degrading to
+documented-N/A if the bundled adapter does not honor settings-file hooks. The
+native hook's `allowedPaths` derive from the same resolved `hooksConfig.pathGuard`
+(one source of truth).
 
 ## FROZEN SPEC — capability-token normalizer & matcher (Designed — capability composer, FR-E)
 

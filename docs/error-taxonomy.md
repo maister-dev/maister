@@ -338,6 +338,15 @@ Seventeen codes (M8 added `STEP_CHECKPOINTED`; M9 added `UNAUTHENTICATED`,
 > children stay `Review`) and the lost M18 durable-claim CAS. There is NO
 > `CONFIG` launch gate for shared writable worktrees any more.
 
+> **ADR-104 (guardrail/hook engine) adds NO new `MaisterError` code** ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror)
+> closed union; **Designed — M40**). A guardrail trip is a recoverable escalation
+> (`Running → NeedsInput` + a `hook_trip` HITL), never a terminal `Failed` — so no
+> new discriminant. An invalid `hooks` block (negative caps, empty `allowedPaths`,
+> unknown lifecycle) reuses **`CONFIG`** at compile/load; a `strict`
+> `enforcement.hooks` declaration reuses the existing M11c strict-refusal branch
+> (`CONFIG` / `EXECUTOR_UNAVAILABLE`). The deterministic supervisor enforcement is
+> not modeled as a thrown code (the ADR-041 static table stays frozen).
+
 ## Construction
 
 ```ts

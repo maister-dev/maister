@@ -4,8 +4,9 @@
 > v1 execution model, shipped on the `feature/m11a-flow-graph-lifecycle` branch.
 > Sub-parts owned by
 > later milestones are tagged inline: manual takeover / `human_edit` → **M11b**;
-> node `settings` enforcement → **M11c**; typed artifact instances + the
-> `artifact_required` gate → **M12**; `external_check` ingestion → **M16**;
+> node `settings` enforcement → **M11c** (the `hooks` guardrail capability class
+> → **M40**, see [`guardrail-hooks.md`](guardrail-hooks.md)); typed artifact
+> instances + the `artifact_required` gate → **M12**; `external_check` ingestion → **M16**;
 > promotion-gating readiness policy → **M15**. Decisions:
 > [ADR-026](../decisions.md#adr-026-flow-graph-manifest-v1-nodes--engine-version-bump),
 > [ADR-027](../decisions.md#adr-027-append-only-node_attempts-run-ledger),

@@ -831,7 +831,7 @@ erDiagram
         text id PK
         text run_id FK
         text step_id
-        text kind "permission|form|human"
+        text kind "permission|form|human|infra_recovery|budget_breach|hook_trip"
         jsonb schema "form_schema (+ review allow-list for human_review; ADR-072: + maxLoops/gateAttempt)"
         text prompt
         jsonb response
@@ -892,7 +892,7 @@ erDiagram
         text step_id
         text hitl_request_id FK
         text node_attempt_id FK
-        text action_kind "permission|form|human_review|manual_takeover|merge_conflict"
+        text action_kind "permission|form|human_review|manual_takeover|merge_conflict|infra_recovery|budget_breach|hook_trip"
         text status "open|claimed|completed|cancelled"
         jsonb role_refs
         text title

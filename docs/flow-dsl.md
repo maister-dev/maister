@@ -82,8 +82,14 @@ nodes:
         - no-global-installs
         - no-secret-env
       permissionMode: ask
+      hooks: # M40 (Designed — ADR-104); requires compat.engine_min >= 1.8.0
+        repetition: { max: 5 } # liveness breaker — consecutive identical calls
+        noProgress: { maxTurns: 15 } # liveness breaker — turns without an edit
+        pathGuard:
+          allowedPaths: ["src/**", "tests/**"] # always opt-in
       enforcement:
         restrictions: strict # strict | instruct (default) | off, per class
+        hooks: instruct
       limits:
         maxDurationMinutes: 45
         maxCostUsd: 5
@@ -232,8 +238,9 @@ SLA/staleness hints, and return requirements. CLI/check/judge nodes constrain
 commands, environment policy, artifact inputs/outputs, timeout, and failure
 classification.
 
-**Per-class `enforcement` intent (M11c).** Each of the six capability classes —
-`mcps`, `tools`, `skills`, `restrictions`, `permissionMode`, `workspaceAccess` —
+**Per-class `enforcement` intent (M11c).** Each of the seven capability classes —
+`mcps`, `tools`, `skills`, `restrictions`, `permissionMode`, `workspaceAccess`,
+`hooks` (the last Designed — ADR-104) —
 carries an optional `enforcement` intent of `strict | instruct | off`, default
 `instruct`, declared in `settings.enforcement`. At launch, MAIster evaluates each
 declared class against the static `ENFORCEABILITY_BY_AGENT` table for the
@@ -247,6 +254,20 @@ closed union). The full truth table, the frozen `ENFORCEABILITY_BY_AGENT` seed
 (all-`instructed` in M11c), and the refusal allow-list are specified in
 [`system-analytics/flow-settings.md`](system-analytics/flow-settings.md);
 rationale is in [ADR-032](decisions.md#adr-032-settings-enforcement-refusal-boundary).
+
+**`hooks` capability class (Designed — ADR-104, M40).** A seventh capability class
+`hooks` declares the per-tool-call guardrail rules enforced at the supervisor↔ACP
+seam — `repetition` (consecutive-identical-call cap), `noProgress`
+(turns-without-edit cap), and `pathGuard.allowedPaths` (an opt-in writable set).
+The block is sparse (every key optional); `enforcement.hooks` follows the same
+`strict | instruct (default) | off` intent, and a `strict` declaration is
+**refused** at launch (`hooks` is `instructed` in `ENFORCEABILITY_BY_AGENT`). A
+node/agent declaring `hooks` requires `compat.engine_min >= 1.8.0`
+(`MAISTER_ENGINE_VERSION` bumps `1.7.0 → 1.8.0`); flows without `hooks` stay valid
+at any `engine_min`. Under the `unattended` execution-policy preset the two
+liveness breakers auto-arm (caps 5 / 15 from `MAISTER_HOOK_*`) unless the node sets
+`hooks.disabled: true`; `path_guard` is always opt-in. Full design:
+[`system-analytics/guardrail-hooks.md`](system-analytics/guardrail-hooks.md).
 
 **M14 (Implemented) — registry-resolved refs and native materialization.**
 Every `settings.mcps[]`, `settings.skills[]`, `settings.restrictions[]`,

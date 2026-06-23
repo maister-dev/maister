@@ -103,6 +103,7 @@ channels:
           - $ref: "#/components/messages/SessionCrashed"
           - $ref: "#/components/messages/SessionStreamTimeout"
           - $ref: "#/components/messages/SessionChatTurn"
+          - $ref: "#/components/messages/SessionHookTrip"
 components:
   messages:
     SessionLine:
@@ -157,6 +158,16 @@ components:
         documented in `supervisor-sse.asyncapi.yaml`.
       contentType: application/json
       payload: { $ref: "#/components/schemas/EventBase" }
+    SessionHookTrip:
+      name: session.hook_trip
+      title: Guardrail/hook engine trip (Designed — ADR-104)
+      summary: |
+        (Designed — ADR-104, M40) A guardrail rule tripped at the supervisor↔ACP
+        seam, mirrored to the browser. The full payload (rule, lifecycle,
+        disposition, toolCall) is documented in `supervisor-sse.asyncapi.yaml`;
+        behavior is in `system-analytics/guardrail-hooks.md`.
+      contentType: application/json
+      payload: { $ref: "#/components/schemas/EventBase" }
   schemas:
     EventBase:
       type: object
@@ -171,6 +182,7 @@ components:
             - session.exited
             - session.crashed
             - session.chat_turn
+            - session.hook_trip
         sessionId:
           type: string
           format: uuid

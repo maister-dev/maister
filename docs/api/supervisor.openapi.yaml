@@ -1054,6 +1054,48 @@ components:
             platform-agent runs; incompatible with
             `permission_policy=dangerously_skip_permissions` (the web tier
             refuses that combination before calling this endpoint).
+        hooksConfig:
+          type: object
+          additionalProperties: false
+          description: |
+            (Designed — ADR-104) Resolved, materialized guardrail-rule set for the
+            declarative hook engine. Each rule key is optional; an absent key means
+            that rule is not armed. Composes with `readOnlySession` (both are
+            pre-hoc denies; `readOnlySession` is the stricter superset, left
+            intact). The supervisor enforces exactly what it is given. See
+            `system-analytics/guardrail-hooks.md`.
+          properties:
+            repetition:
+              type: object
+              additionalProperties: false
+              required: [max]
+              properties:
+                max:
+                  type: integer
+                  minimum: 1
+                  description: Consecutive-identical tool-call cap before halt.
+            noProgress:
+              type: object
+              additionalProperties: false
+              required: [maxTurns]
+              properties:
+                maxTurns:
+                  type: integer
+                  minimum: 1
+                  description: |
+                    Turns since the last edit/diff-producing tool call before halt.
+            pathGuard:
+              type: object
+              additionalProperties: false
+              required: [allowedPaths]
+              properties:
+                allowedPaths:
+                  type: array
+                  items:
+                    type: string
+                  description: |
+                    Glob writable set; a write-class tool call outside it is denied
+                    (deny-and-continue).
     AdapterLaunch:
       type: object
       additionalProperties: false

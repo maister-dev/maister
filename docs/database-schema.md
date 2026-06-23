@@ -1800,7 +1800,8 @@ token itself is deleted.
 ```ts
 {
   id, runId, stepId,
-  kind: 'permission' | 'form' | 'human',
+  kind: 'permission' | 'form' | 'human' | 'infra_recovery' | 'budget_breach'
+      | 'hook_trip',               // 'hook_trip' Designed — ADR-104 (migration 0063)
   schema (jsonb)?,               // form_schema with required schemaVersion
                                  // OR permission descriptor:
                                  //   { requestId, options, toolCall,
@@ -1983,7 +1984,9 @@ injected value byte-identical to the raw review summary.
   hitlRequestId?,                 // FK -> hitl_requests.id (cascade)
   nodeAttemptId?,                 // FK -> node_attempts.id (cascade)
   actionKind: 'permission' | 'form' | 'human_review'
-            | 'manual_takeover' | 'merge_conflict',
+            | 'manual_takeover' | 'merge_conflict'
+            | 'infra_recovery' | 'budget_breach'
+            | 'hook_trip',        // 'hook_trip' Designed — ADR-104 (migration 0063)
   status: 'open' | 'claimed' | 'completed' | 'cancelled',
   roleRefs,                       // jsonb string[] snapshot
   title,

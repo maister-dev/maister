@@ -771,7 +771,8 @@ fields on a `judge` node.
 | `permissionMode` | `ask \| allow \| deny` | Capability class. Unknown value rejected. |
 | `limits` | `{ maxDurationMinutes?: number > 0; maxCostUsd?: number > 0 }` | Out-of-range rejected. `maxDurationMinutes` is the watchdog cap (below); `maxCostUsd` is record-only. |
 | `restrictions` | `string[]` | Capability class. Registry resolution is **Implemented (M14)**. |
-| `enforcement` | `{ mcps?; tools?; skills?; restrictions?; permissionMode?; workspaceAccess? }` | Per-class intent — see below. |
+| `hooks` | `{ disabled?: boolean; repetition?: { max: number > 0 }; noProgress?: { maxTurns: number > 0 }; pathGuard?: { allowedPaths: string[] } }` | **(Designed — ADR-104, M40.)** Capability class. Per-tool-call guardrail rules enforced at the supervisor↔ACP seam; requires `compat.engine_min >= 1.8.0`. See [`flow-dsl.md`](flow-dsl.md) + [`system-analytics/guardrail-hooks.md`](system-analytics/guardrail-hooks.md). |
+| `enforcement` | `{ mcps?; tools?; skills?; restrictions?; permissionMode?; workspaceAccess?; hooks? }` | Per-class intent — see below. |
 
 **`human` settings** (decision/role/takeover shape):
 
@@ -801,8 +802,8 @@ fields on a `judge` node.
 #### `enforcement` intent + the static enforceability table
 
 `settings.enforcement` declares, per capability class (`mcps`, `tools`,
-`skills`, `restrictions`, `permissionMode`, `workspaceAccess`), how strictly the
-class must hold:
+`skills`, `restrictions`, `permissionMode`, `workspaceAccess`, `hooks`), how
+strictly the class must hold:
 
 | Value | Meaning |
 | ----- | ------- |
@@ -1056,6 +1057,9 @@ Read by Next.js (`web/`) and `supervisor/` at startup:
 | `MAISTER_AUTO_RETRY_MAX_ATTEMPTS` | no | `3` | **(Implemented, [ADR-095](decisions.md#adr-095-flow-execution-control-policy--snapshotted-preset--composable-autonomy-axes-fail-closed-no-blind-ship).)** Execution-policy in-run auto-retry (axis A2, `crashRetry=auto_retry`): hard cap on TOTAL ledger attempts for a `retry_safe` node re-dispatched in-run on a transient code (`SPAWN`/`EXECUTOR_UNAVAILABLE`/`CHECKPOINT`/`ACP_PROTOCOL`) when no per-node `retry_policy` is declared (the author's `retry_policy` wins). Floor 1. Read by `web/lib/instance-config.ts:autoRetryMaxAttempts()`; synthesizes an ADR-080 retry in `web/lib/flows/graph/runner-graph.ts`. Host/service-env only. |
 | `MAISTER_BUDGET_HARD_MULTIPLIER` | no | `1.25` | **(Implemented, [ADR-101](decisions.md#adr-101-cost-budget-governance--budget-execution-policy-axis-token-metered-warn-escalate-terminate-ladder-fail-open).)** Execution-policy `budget` axis: the multiplier deriving a scope's TERMINATE ceiling `hardMaxTokens` from its ESCALATE ceiling `maxTokens` when `hardMaxTokens` is unset (`hardMaxTokens = maxTokens × this`). Read by the **web tier** (the keepalive-sweeper budget watchdog). Host/service-env only — `web` runs on the host ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)), so this is never a container/compose var. |
 | `MAISTER_DEFAULT_UNATTENDED_BUDGET_TOKENS` | no | unset (no default ceiling) | **(Implemented, [ADR-101](decisions.md#adr-101-cost-budget-governance--budget-execution-policy-axis-token-metered-warn-escalate-terminate-ladder-fail-open).)** Execution-policy `budget` axis: when set, seeds a `tree`-scope token ceiling for an `unattended`-preset launch that declares no explicit budget (the launch dialog also shows a non-blocking hint). Unset ⇒ an unattended run stays unbounded (fail-open). Read by the **web tier**. Host/service-env only ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)) — never a container/compose var. |
+| `MAISTER_HOOK_REPETITION_MAX` | no | `5` | **(Designed — [ADR-104](decisions.md#adr-104-declarative-guardrailhook-engine--universal-supervisor-acp-seam-interceptor-native-materializer-seam-and-hook-trip-hitl-escalation), M40.)** Guardrail hook engine: consecutive-identical tool-call cap before the `repetition` breaker halts. Auto-armed for `unattended`-preset runs (per-node opt-out); a node may override. Read by the **web tier** (folded into the resolved `hooksConfig`). Host/service-env only ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)) — never a container/compose var. |
+| `MAISTER_HOOK_NO_PROGRESS_TURNS` | no | `15` | **(Designed — ADR-104, M40.)** Guardrail hook engine: `sessionUpdate` turns since the last edit/diff-producing tool call before the `no_progress` breaker halts. Auto-armed for `unattended`-preset runs (per-node opt-out). Read by the **web tier**. Host/service-env only (ADR-023) — never a container/compose var. |
+| `MAISTER_HOOK_DEFAULT_WRITABLE_PATHS` | no | unset (⇒ worktree root) | **(Designed — ADR-104, M40.)** Guardrail hook engine: comma-separated default writable glob set for a node that opts into `path_guard` without listing `allowedPaths`. Unset ⇒ the worktree root (the guard then denies only out-of-tree writes). `path_guard` is always opt-in. Read by the **web tier**. Host/service-env only (ADR-023) — never a container/compose var. |
 | `MAISTER_GC_WARNING_DAYS` | no | `2` | Web: TTL warning window before removal (color ramp) (M19) |
 | `MAISTER_GC_ARCHIVE_PUSH` | no | `false` | Web: push the `maister/archive/<runId>` branch to the remote during GC preserve (M19) |
 | `MAISTER_CRON_TOKEN` | no (empty ⇒ `/api/cron/gc` and `/api/cron/tick` return 503 disabled) | (none) | **Server-only secret** for token-guarded cron routes — never logged or streamed. M24 reuses it for `GET`/`POST /api/cron/tick`; `/api/cron/gc` remains a compatibility wrapper. |
