@@ -68,8 +68,9 @@ describe("RunShell", () => {
 
     expect(html).toContain('data-inspector-open="true"');
     expect(html).toContain('data-testid="run-shell-inspector"');
-    expect(html).toContain("max-w-none");
-    expect(html).toContain("min-w-[1000px]");
+    expect(html).toContain("max-w-full");
+    expect(html).toContain("min-w-0");
+    expect(html).not.toContain("min-w-[1000px]");
     expect(html).toContain("xl:grid-cols-[minmax(0,1fr)_380px]");
   });
 

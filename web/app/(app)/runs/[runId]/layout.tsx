@@ -1133,8 +1133,8 @@ export default async function RunDetailLayout({
       taskPrompt={detail.taskPrompt}
       title={shellTitle}
     >
-      <div className="grid gap-5">
-        <div className="flex flex-wrap items-center gap-3">
+      <div className="grid min-w-0 max-w-full gap-5">
+        <div className="flex min-w-0 flex-wrap items-center gap-3">
           <ExecutionPolicyBadge
             labels={{
               supervised: t("execPolicySupervised"),
@@ -1196,7 +1196,10 @@ export default async function RunDetailLayout({
         ) : null}
 
         {flowGraphData || showAgentCenter ? (
-          <section data-testid="run-primary-result">
+          <section
+            className="min-w-0 max-w-full"
+            data-testid="run-primary-result"
+          >
             {flowGraphData ? (
               <FlowRunCenter
                 graphView={
@@ -1437,7 +1440,7 @@ export default async function RunDetailLayout({
         ) : null}
 
         {flowGraphData || showAgentCenter ? (
-          <section data-testid="run-workbench">
+          <section className="min-w-0 max-w-full" data-testid="run-workbench">
             <WorkbenchPanel
               diff={
                 <RunDiff

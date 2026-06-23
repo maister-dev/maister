@@ -3,10 +3,7 @@
 import type { ReactNode } from "react";
 
 import { useEffect, useState } from "react";
-import {
-  ChevronDownIcon,
-  ChevronRightIcon,
-} from "@heroicons/react/24/outline";
+import { ChevronDownIcon, ChevronRightIcon } from "@heroicons/react/24/outline";
 import { usePathname, useSearchParams } from "next/navigation";
 
 import {
@@ -109,7 +106,7 @@ function WorkbenchDisclosure({
 
   return (
     <details
-      className="rounded-[10px] border border-line bg-paper"
+      className="min-w-0 max-w-full overflow-hidden rounded-[10px] border border-line bg-paper"
       data-testid={testId}
       open={open}
       onToggle={(event) => setOpen(event.currentTarget.open)}
@@ -121,7 +118,9 @@ function WorkbenchDisclosure({
         <span>{label}</span>
         <Icon aria-hidden="true" className="h-3.5 w-3.5 text-mute" />
       </summary>
-      <div className="border-t border-line p-3">{children}</div>
+      <div className="min-w-0 max-w-full border-t border-line p-3">
+        {children}
+      </div>
     </details>
   );
 }
@@ -167,7 +166,7 @@ export function WorkbenchPanel({
   );
 
   return (
-    <div className="grid gap-3">
+    <div className="grid min-w-0 max-w-full gap-3">
       {regularTabs.length > 0 && activeRegular ? (
         <WorkbenchTabs
           active={activeRegular}
@@ -204,23 +203,27 @@ export function WorkbenchPanel({
           />
           {collapsibleTabs.includes("files") ? (
             <div
-              className="grid grid-cols-1 items-stretch gap-3 md:grid-cols-[minmax(220px,300px)_1fr]"
+              className="grid min-w-0 grid-cols-1 items-stretch gap-3 md:grid-cols-[minmax(220px,300px)_minmax(0,1fr)]"
               data-testid="files-pane"
               hidden={activeWorkbenchTab !== "files"}
             >
-              <div className="min-h-[560px] [&>[data-testid=file-tree]]:h-full">
+              <div className="min-h-[560px] min-w-0 [&>[data-testid=file-tree]]:h-full">
                 {filesTree}
               </div>
               {/* `filesPane` is the layout `children` (an array node); rendering it
                   as the sole child of its own wrapper keeps it out of a nested
                   sibling array (which would trip React's missing-key warning). */}
-              <div className="min-h-[560px] [&_.markdown-rich-view]:!h-full [&_.markdown-rich-view]:!max-h-full [&_[data-testid=code-view]]:!h-full [&_[data-testid=code-view]]:!max-h-full">
+              <div className="min-h-[560px] min-w-0 max-w-full [&_.markdown-rich-view]:!h-full [&_.markdown-rich-view]:!max-h-full [&_[data-testid=code-view]]:!h-full [&_[data-testid=code-view]]:!max-h-full">
                 {filesPane}
               </div>
             </div>
           ) : null}
           {collapsibleTabs.includes("diff") ? (
-            <div data-testid="diff-pane" hidden={activeWorkbenchTab !== "diff"}>
+            <div
+              className="min-w-0 max-w-full"
+              data-testid="diff-pane"
+              hidden={activeWorkbenchTab !== "diff"}
+            >
               {diff}
             </div>
           ) : null}

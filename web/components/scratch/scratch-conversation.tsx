@@ -31,6 +31,7 @@ import {
   parseQuickReplies,
   parseScratchMessageContent,
 } from "@/lib/scratch-runs/transcript";
+import { useRunStream } from "@/lib/use-run-stream";
 
 const shell =
   "rounded-lg border border-line-soft bg-[color-mix(in_oklab,var(--ivory)_35%,var(--paper))]";
@@ -73,6 +74,7 @@ export function ScratchConversation({
   const [commandCatalog, setCommandCatalog] = useState<
     ProjectCapabilityCatalogEntry[]
   >([]);
+  const { eventCount } = useRunStream(runId, { retain: false });
 
   const loadDetail = useCallback(async (): Promise<void> => {
     setLoading(true);
@@ -164,24 +166,14 @@ export function ScratchConversation({
   }, [composerAgent, detail?.run.projectSlug, detailRevision, runId]);
 
   useEffect(() => {
-    const source = new EventSource(`/api/runs/${runId}/stream`);
-    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+    if (eventCount === 0) return;
 
-    const scheduleRefresh = () => {
-      if (refreshTimer) return;
-      refreshTimer = setTimeout(() => {
-        refreshTimer = null;
-        void loadDetail();
-      }, 250);
-    };
+    const refreshTimer = setTimeout(() => {
+      void loadDetail();
+    }, 250);
 
-    source.onmessage = scheduleRefresh;
-
-    return () => {
-      if (refreshTimer) clearTimeout(refreshTimer);
-      source.close();
-    };
-  }, [loadDetail, runId]);
+    return () => clearTimeout(refreshTimer);
+  }, [eventCount, loadDetail]);
 
   const attachmentsByMessage = useMemo(() => {
     const result = new Map<string, ScratchDetail["attachments"]>();
@@ -400,10 +392,10 @@ export function ScratchConversation({
 
   return (
     <section
-      className={`${shell} flex min-h-[620px] flex-col`}
+      className={`${shell} flex min-h-[620px] min-w-0 max-w-full flex-col overflow-hidden`}
       data-testid="scratch-conversation"
     >
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-line-soft px-4 py-3">
+      <header className="flex min-w-0 flex-wrap items-center justify-between gap-3 border-b border-line-soft px-4 py-3">
         <span
           className={clsx(
             "rounded-full border px-2.5 py-1 font-mono text-[10.5px] font-semibold",
@@ -440,11 +432,11 @@ export function ScratchConversation({
       </header>
 
       {globalAttachments.length > 0 ? (
-        <ul className="flex list-none flex-wrap gap-1 border-b border-line-soft px-4 py-2 p-0">
+        <ul className="flex min-w-0 list-none flex-wrap gap-1 border-b border-line-soft px-4 py-2 p-0">
           {globalAttachments.map((attachment) => (
             <li
               key={attachment.id}
-              className="rounded-md border border-line bg-paper px-2 py-1 font-mono text-[10.5px] text-mute"
+              className="min-w-0 max-w-full overflow-hidden text-ellipsis whitespace-nowrap rounded-md border border-line bg-paper px-2 py-1 font-mono text-[10.5px] text-mute"
             >
               {attachment.kind}: {attachmentSummary(attachment)}
             </li>
@@ -453,7 +445,7 @@ export function ScratchConversation({
       ) : null}
 
       {detail.messages.length === 0 ? (
-        <div className="flex flex-1 flex-col gap-3 overflow-y-auto px-4 py-4">
+        <div className="flex min-w-0 flex-1 flex-col gap-3 overflow-y-auto overflow-x-hidden px-4 py-4">
           <p className="text-[13px] text-mute">{t("noMessages")}</p>
         </div>
       ) : (
@@ -467,7 +459,7 @@ export function ScratchConversation({
       )}
 
       {detail.pendingHitl ? (
-        <div className="border-t border-line-soft px-4 py-3">
+        <div className="min-w-0 border-t border-line-soft px-4 py-3">
           <ScratchPermissionPanel
             pending={pendingAction === "hitl"}
             pendingHitl={detail.pendingHitl}
@@ -477,13 +469,13 @@ export function ScratchConversation({
       ) : null}
 
       {status === "Crashed" ? (
-        <div className="border-t border-line-soft px-4 py-2 text-[12px] leading-[1.5] text-ink-2">
+        <div className="min-w-0 border-t border-line-soft px-4 py-2 text-[12px] leading-[1.5] text-ink-2">
           {t("recoverHint")}
         </div>
       ) : null}
 
       {error ? (
-        <div className="mx-4 mt-3 rounded-lg border border-[#d9534f]/40 bg-[#d9534f]/10 px-3 py-2 text-[12px] leading-[1.5] text-[#d9534f]">
+        <div className="mx-4 mt-3 min-w-0 rounded-lg border border-[#d9534f]/40 bg-[#d9534f]/10 px-3 py-2 text-[12px] leading-[1.5] text-[#d9534f]">
           {error}
         </div>
       ) : null}

@@ -58,7 +58,9 @@ describe("WorkbenchPanel", () => {
 
     expect(html).toContain('data-testid="files-pane"');
     expect(html).toContain("items-stretch");
+    expect(html).toContain("md:grid-cols-[minmax(220px,300px)_minmax(0,1fr)]");
     expect(html).toContain("min-h-[560px]");
+    expect(html).toContain("min-w-0");
     expect(html).toContain("[&amp;_[data-testid=code-view]]:!h-full");
     expect(html).toContain("[&amp;_[data-testid=code-view]]:!max-h-full");
   });
@@ -66,9 +68,7 @@ describe("WorkbenchPanel", () => {
   it("keeps scratch run files and diff collapsed by default", () => {
     const html = renderPanel({ tabs: ["files", "diff"] });
 
-    expect(html.split('data-testid="workbench-disclosure"').length - 1).toBe(
-      1,
-    );
+    expect(html.split('data-testid="workbench-disclosure"').length - 1).toBe(1);
     expect(tagWithTestId(html, "workbench-disclosure")).not.toContain("open");
     expect(html).toContain('href="/runs/run-1?wb=files"');
     expect(html).toContain('href="/runs/run-1?wb=diff"');

@@ -216,10 +216,10 @@ export default async function ScratchRunDetailLayout({
       targetBranch={detail.targetBranch}
       title={detail.branch}
     >
-      <div className="grid gap-5">
+      <div className="grid min-w-0 max-w-full gap-5">
         <ScratchConversation runId={detail.runId} />
 
-        <section data-testid="run-workbench">
+        <section className="min-w-0 max-w-full" data-testid="run-workbench">
           <WorkbenchPanel
             diff={<RunDiff labels={workbenchDiffLabels} runId={detail.runId} />}
             filesPane={children}

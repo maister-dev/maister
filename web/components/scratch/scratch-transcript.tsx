@@ -63,7 +63,7 @@ const markdownComponents: Components = {
     );
   },
   pre: ({ children }) => (
-    <pre className="my-2 overflow-auto rounded-lg border border-line-soft bg-paper p-3 font-mono text-[12px] leading-[1.5] text-ink-2">
+    <pre className="my-2 max-w-full overflow-auto rounded-lg border border-line-soft bg-paper p-3 font-mono text-[12px] leading-[1.5] text-ink-2">
       {children}
     </pre>
   ),
@@ -73,7 +73,7 @@ const markdownComponents: Components = {
 
 function Markdown({ text }: { text: string }): ReactElement {
   return (
-    <div className="scratch-markdown text-[13px] leading-[1.6] text-ink [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_h1]:mt-3 [&_h1]:text-[15px] [&_h1]:font-semibold [&_h2]:mt-3 [&_h2]:text-[14px] [&_h2]:font-semibold [&_p]:my-1.5">
+    <div className="scratch-markdown min-w-0 max-w-full text-[13px] leading-[1.6] text-ink [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_h1]:mt-3 [&_h1]:text-[15px] [&_h1]:font-semibold [&_h2]:mt-3 [&_h2]:text-[14px] [&_h2]:font-semibold [&_p]:my-1.5">
       <ReactMarkdown
         components={markdownComponents}
         remarkPlugins={[remarkGfm]}
@@ -145,10 +145,10 @@ function ToolRow({
   const hasDetail = inputText.length > 0 || tool.result.length > 0;
 
   return (
-    <li className="group rounded-md border border-line bg-paper">
+    <li className="group min-w-0 max-w-full overflow-hidden rounded-md border border-line bg-paper">
       <button
         className={clsx(
-          "flex w-full items-center gap-2 px-2.5 py-1.5 text-left font-mono text-[11.5px]",
+          "flex w-full min-w-0 items-center gap-2 px-2.5 py-1.5 text-left font-mono text-[11.5px]",
           hasDetail ? "cursor-pointer" : "cursor-default",
         )}
         disabled={!hasDetail}
@@ -161,7 +161,9 @@ function ToolRow({
             statusDot(tool.status),
           )}
         />
-        <span className="flex-none font-semibold text-ink">{tool.name}</span>
+        <span className="max-w-[45%] flex-none truncate font-semibold text-ink">
+          {tool.name}
+        </span>
         {tool.arg ? (
           <span className="min-w-0 flex-1 truncate text-mute">{tool.arg}</span>
         ) : (
@@ -172,14 +174,14 @@ function ToolRow({
         ) : null}
       </button>
       {open && hasDetail ? (
-        <div className="border-t border-line-soft px-2.5 py-2">
+        <div className="min-w-0 border-t border-line-soft px-2.5 py-2">
           {inputText ? (
             <div className="group mb-2">
               <div className="mb-1 flex items-center justify-between font-mono text-[9px] font-semibold uppercase tracking-[0.1em] text-mute">
                 {labels.input}
                 <CopyButton labels={labels} text={inputText} />
               </div>
-              <pre className="overflow-auto rounded border border-line-soft bg-ivory p-2 font-mono text-[11px] leading-[1.5] text-ink-2">
+              <pre className="max-w-full overflow-auto rounded border border-line-soft bg-ivory p-2 font-mono text-[11px] leading-[1.5] text-ink-2">
                 {inputText}
               </pre>
             </div>
@@ -190,7 +192,7 @@ function ToolRow({
                 {labels.result}
                 <CopyButton labels={labels} text={tool.result} />
               </div>
-              <pre className="max-h-[320px] overflow-auto rounded border border-line-soft bg-ivory p-2 font-mono text-[11px] leading-[1.5] text-ink-2">
+              <pre className="max-h-[320px] max-w-full overflow-auto rounded border border-line-soft bg-ivory p-2 font-mono text-[11px] leading-[1.5] text-ink-2">
                 {tool.result}
               </pre>
             </div>
@@ -223,13 +225,13 @@ function ToolGroup({
   const [override, setOverride] = useState<boolean | null>(null);
   const open = override ?? autoOpen;
   const shell =
-    "rounded-lg border border-line bg-[color-mix(in_oklab,var(--ivory)_45%,var(--paper))] p-2";
+    "min-w-0 max-w-full overflow-hidden rounded-lg border border-line bg-[color-mix(in_oklab,var(--ivory)_45%,var(--paper))] p-2";
 
   // Single call: render the row directly (no group-level collapse needed).
   if (tools.length === 1) {
     return (
       <div className={shell}>
-        <ul className="flex list-none flex-col gap-1 p-0">
+        <ul className="flex min-w-0 list-none flex-col gap-1 p-0">
           <ToolRow labels={labels} tool={tools[0]} />
         </ul>
       </div>
@@ -240,18 +242,18 @@ function ToolGroup({
   return (
     <div className={shell}>
       <button
-        className="flex w-full items-center gap-1.5 px-0.5 text-left"
+        className="flex w-full min-w-0 items-center gap-1.5 px-0.5 text-left"
         type="button"
         onClick={() => setOverride(!open)}
       >
         <span className="flex-none font-mono text-[10px] text-mute">
           {open ? "▾" : "▸"}
         </span>
-        <span className="flex flex-1 flex-wrap gap-1.5">
+        <span className="flex min-w-0 flex-1 flex-wrap gap-1.5">
           {counts.map(([name, count]) => (
             <span
               key={name}
-              className="rounded-full border border-line bg-paper px-2 py-px font-mono text-[9.5px] font-semibold uppercase tracking-[0.06em] text-mute"
+              className="min-w-0 max-w-full truncate rounded-full border border-line bg-paper px-2 py-px font-mono text-[9.5px] font-semibold uppercase tracking-[0.06em] text-mute"
             >
               {labels.toolCount(name, count)}
             </span>
@@ -259,7 +261,7 @@ function ToolGroup({
         </span>
       </button>
       {open ? (
-        <ul className="mt-1.5 flex list-none flex-col gap-1 p-0">
+        <ul className="mt-1.5 flex min-w-0 list-none flex-col gap-1 p-0">
           {tools.map((tool, index) => (
             <ToolRow key={index} labels={labels} tool={tool} />
           ))}
@@ -279,9 +281,9 @@ function ThoughtBlock({
   const [open, setOpen] = useState(false);
 
   return (
-    <div className="rounded-lg border border-dashed border-line bg-ivory/40 px-3 py-2">
+    <div className="min-w-0 max-w-full overflow-hidden rounded-lg border border-dashed border-line bg-ivory/40 px-3 py-2">
       <button
-        className="flex w-full items-center gap-2 font-mono text-[10px] uppercase tracking-[0.1em] text-mute"
+        className="flex w-full min-w-0 items-center gap-2 font-mono text-[10px] uppercase tracking-[0.1em] text-mute"
         type="button"
         onClick={() => setOpen((value) => !value)}
       >
@@ -289,7 +291,7 @@ function ThoughtBlock({
         <span>{labels.thinking}</span>
       </button>
       {open ? (
-        <p className="mt-1.5 whitespace-pre-wrap text-[12px] leading-[1.55] text-mute">
+        <p className="mt-1.5 whitespace-pre-wrap break-words text-[12px] leading-[1.55] text-mute">
           {text}
         </p>
       ) : null}
@@ -307,9 +309,9 @@ function LegacyRow({
   const [open, setOpen] = useState(false);
 
   return (
-    <div className="rounded-md border border-line-soft bg-ivory/30 px-2.5 py-1.5">
+    <div className="min-w-0 max-w-full overflow-hidden rounded-md border border-line-soft bg-ivory/30 px-2.5 py-1.5">
       <button
-        className="flex w-full items-center gap-2 font-mono text-[9.5px] uppercase tracking-[0.1em] text-mute"
+        className="flex w-full min-w-0 items-center gap-2 font-mono text-[9.5px] uppercase tracking-[0.1em] text-mute"
         type="button"
         onClick={() => setOpen((value) => !value)}
       >
@@ -317,7 +319,7 @@ function LegacyRow({
         <span>{labels.rawEvent}</span>
       </button>
       {open ? (
-        <pre className="mt-1 max-h-[240px] overflow-auto font-mono text-[10px] leading-[1.4] text-mute">
+        <pre className="mt-1 max-h-[240px] max-w-full overflow-auto font-mono text-[10px] leading-[1.4] text-mute">
           {text}
         </pre>
       ) : null}
@@ -434,7 +436,9 @@ export function ScratchTranscript({
     const attachments = renderAttachments?.(message.id) ?? null;
 
     if (parsed.kind === "thought") {
-      return <ThoughtBlock key={message.id} labels={labels} text={parsed.text} />;
+      return (
+        <ThoughtBlock key={message.id} labels={labels} text={parsed.text} />
+      );
     }
 
     if (parsed.kind === "permission") {
@@ -461,18 +465,19 @@ export function ScratchTranscript({
         key={message.id}
         className={clsx(
           "group max-w-[88%] rounded-lg border px-3 py-2.5",
+          "min-w-0 overflow-hidden break-words",
           isUser
             ? "ml-auto border-amber-line bg-amber-soft text-ink"
             : "border-line bg-paper text-ink",
         )}
       >
-        <div className="mb-1 flex items-center justify-between gap-3 font-mono text-[10px] uppercase tracking-[0.08em] text-mute">
-          <span>
+        <div className="mb-1 flex min-w-0 items-center justify-between gap-3 font-mono text-[10px] uppercase tracking-[0.08em] text-mute">
+          <span className="min-w-0 truncate">
             {isUser
               ? (userLabel ?? message.role)
               : (assistantLabel ?? message.role)}
           </span>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-none items-center gap-2">
             {!isUser ? <CopyButton labels={labels} text={parsed.text} /> : null}
             <span suppressHydrationWarning>
               {new Date(message.createdAt).toLocaleString()}
@@ -482,7 +487,7 @@ export function ScratchTranscript({
         {parsed.markdown ? (
           <Markdown text={parsed.text} />
         ) : (
-          <p className="whitespace-pre-wrap text-[13px] leading-[1.55]">
+          <p className="whitespace-pre-wrap break-words text-[13px] leading-[1.55]">
             {parsed.text}
           </p>
         )}
@@ -492,7 +497,7 @@ export function ScratchTranscript({
   }
 
   return (
-    <div className="flex flex-1 flex-col gap-3 overflow-y-auto px-4 py-4">
+    <div className="flex min-w-0 max-w-full flex-1 flex-col gap-3 overflow-y-auto overflow-x-hidden px-4 py-4">
       {historyBlocks.length > 0 ? (
         <div
           className="rounded-lg border border-dashed border-line bg-ivory/40 px-3 py-2"
@@ -508,7 +513,7 @@ export function ScratchTranscript({
             {clearedHistoryLabel(labels, historyBlockCount(historyBlocks))}
           </button>
           {historyOpen ? (
-            <div className="mt-3 flex flex-col gap-3">
+            <div className="mt-3 flex min-w-0 flex-col gap-3">
               {historyBlocks.map(renderBlock)}
             </div>
           ) : null}

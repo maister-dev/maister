@@ -18,7 +18,7 @@ import { CapabilityComposer } from "@/components/capabilities/capability-compose
 import { canCompose, canRecover, canSend } from "@/lib/scratch-runs/dialog";
 
 const inputBase =
-  "w-full rounded-lg border border-line bg-paper px-3.5 py-3 font-mono text-[13px] leading-[1.35] text-ink outline-none transition focus:border-amber focus:shadow-[0_0_0_3px_var(--amber-soft)] placeholder:text-mute";
+  "min-w-0 max-w-full w-full rounded-lg border border-line bg-paper px-3.5 py-3 font-mono text-[13px] leading-[1.35] text-ink outline-none transition focus:border-amber focus:shadow-[0_0_0_3px_var(--amber-soft)] placeholder:text-mute";
 
 export interface ScratchComposerProps {
   status: ScratchDialogStatus;
@@ -104,18 +104,18 @@ export function ScratchComposer({
 
   return (
     <form
-      className="border-t border-line-soft px-4 py-3"
+      className="min-w-0 max-w-full border-t border-line-soft px-4 py-3"
       onSubmit={(event) => {
         event.preventDefault();
         void submit();
       }}
     >
       {quickReplies.length > 0 ? (
-        <div className="mb-2 flex flex-wrap gap-1.5">
+        <div className="mb-2 flex min-w-0 flex-wrap gap-1.5">
           {quickReplies.map((reply, index) => (
             <button
               key={`${index}-${reply.value}`}
-              className="rounded-full border border-amber-line bg-amber-soft px-3 py-1 text-left font-mono text-[11px] text-ink transition hover:border-amber hover:bg-amber hover:text-white"
+              className="max-w-full truncate rounded-full border border-amber-line bg-amber-soft px-3 py-1 text-left font-mono text-[11px] text-ink transition hover:border-amber hover:bg-amber hover:text-white"
               type="button"
               onClick={() => applyQuickReply(reply.value)}
             >
@@ -144,11 +144,11 @@ export function ScratchComposer({
         onSubmitShortcut={() => void submit()}
       />
       {composerAttachments.length > 0 ? (
-        <div className="mt-2 flex flex-col gap-2">
+        <div className="mt-2 flex min-w-0 flex-col gap-2">
           {composerAttachments.map((attachment, index) => (
             <div
               key={`${attachment.kind}-${index}`}
-              className="grid gap-2 md:grid-cols-[120px_1fr_1.5fr_auto]"
+              className="grid min-w-0 gap-2 md:grid-cols-[minmax(0,120px)_minmax(0,1fr)_minmax(0,1.5fr)_auto]"
             >
               <select
                 aria-label={t("composerKindAria")}
@@ -207,7 +207,7 @@ export function ScratchComposer({
           ))}
         </div>
       ) : null}
-      <div className="mt-2">
+      <div className="mt-2 min-w-0">
         <input
           multiple
           aria-label={t("composerFilesAria")}
@@ -227,7 +227,7 @@ export function ScratchComposer({
           </div>
         ) : null}
       </div>
-      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+      <div className="mt-2 flex min-w-0 flex-wrap items-center justify-between gap-2">
         {canSend(status) ? (
           <button
             className="rounded-full border border-line bg-paper px-3 py-1.5 font-mono text-[11px] text-ink-2 hover:border-amber hover:text-amber"

@@ -75,6 +75,8 @@ describe("ScratchTranscript render", () => {
 
     expect(html).toContain("Bash");
     expect(html).toContain("git status");
+    expect(html).toContain("min-w-0 max-w-full overflow-hidden");
+    expect(html).toContain("flex min-w-0 list-none");
     // collapsed by default → raw input/result not in initial markup
     expect(html).not.toContain("clean");
   });
