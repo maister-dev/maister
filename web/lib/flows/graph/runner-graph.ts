@@ -1016,6 +1016,29 @@ async function executeNodeAction(
     // the maister MCP facade via the run-bound token appended at the
     // materialization seam.
     case "orchestrator": {
+      // ADR-104 (M40): resolve the node's guardrail rule set once (two-tier
+      // against the run's execution preset) so it can be both logged and
+      // threaded to the supervisor session. The resolver stays pure; the DEBUG
+      // line records WHICH rules are in the resolved set (keys only — never path
+      // values). NOTE: resolved-and-sent ≠ enforced — the supervisor interceptor
+      // that acts on these lands in Phase 2; until then the body is accept-and-ignore.
+      const hooksConfig = resolveHooksConfig({
+        hooks: capabilityBearingSettings(node.nodeType, node.settings)?.hooks,
+        preset: presetFromSnapshot(loaded.run.executionPolicy ?? null),
+        defaults: hookEnvDefaults(),
+      });
+
+      if (hooksConfig) {
+        log.debug(
+          {
+            runId: loaded.run.id,
+            nodeId: node.id,
+            rules: Object.keys(hooksConfig),
+          },
+          "guardrail hooks resolved (enforcement: Phase 2)",
+        );
+      }
+
       const dispatchAgent = (): Promise<NodeResult> =>
         runAgentStep(
           {
@@ -1068,13 +1091,9 @@ async function executeNodeAction(
               permissionsFromSnapshot(loaded.run.executionPolicy ?? null) ===
               "auto_approve",
             // ADR-104 (M40): the node's guardrail rule set, two-tier-resolved
-            // against the run's execution preset, for the supervisor interceptor.
-            hooksConfig: resolveHooksConfig({
-              hooks: capabilityBearingSettings(node.nodeType, node.settings)
-                ?.hooks,
-              preset: presetFromSnapshot(loaded.run.executionPolicy ?? null),
-              defaults: hookEnvDefaults(),
-            }),
+            // against the run's execution preset (hoisted above), for the
+            // supervisor interceptor.
+            hooksConfig,
           },
           ctx.supervisorApi,
         );
@@ -3574,15 +3593,24 @@ export async function runGraph(
     }
 
     // P7 (ADR-103): final rewrite after the loop, capturing the last node's
-    // terminal transition (no next iteration would otherwise project it).
-    await writeRunContext({
-      runId,
-      worktreePath,
-      taskPrompt: loaded.task.prompt,
-      db,
-    }).catch((err) =>
-      log2.debug({ err: asError(err).message }, "[run-context] write skipped"),
-    );
+    // terminal transition (no next iteration would otherwise project it). Gated
+    // on the SAME git-leak-safety flag as the in-loop write (~line 1974): an
+    // unsafe worktree (`.maister/run.json` not git-ignored) must skip THIS write
+    // too, or run.json (task prompt + node vars + gate verdicts) leaks into
+    // `git status` / the agent's `git add -A` / the promoted diff.
+    if (runContextWriteSafe) {
+      await writeRunContext({
+        runId,
+        worktreePath,
+        taskPrompt: loaded.task.prompt,
+        db,
+      }).catch((err) =>
+        log2.debug(
+          { err: asError(err).message },
+          "[run-context] write skipped",
+        ),
+      );
+    }
   } catch (err) {
     const e = isMaisterError(err)
       ? err

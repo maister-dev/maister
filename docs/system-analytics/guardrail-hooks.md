@@ -302,7 +302,6 @@ resumes through the same agent-permission-HITL path that already drives it.
 - **Wire:** [`supervisor.openapi.yaml`](../api/supervisor.openapi.yaml) (`StartSessionRequest.hooksConfig`),
   [`supervisor-sse.asyncapi.yaml`](../api/async/supervisor-sse.asyncapi.yaml) +
   [`web-runs.asyncapi.yaml`](../api/async/web-runs.asyncapi.yaml) (`session.hook_trip`),
-  [`web.openapi.yaml`](../api/web.openapi.yaml) (`hook_trip` HITL),
   [`outbound-webhooks.asyncapi.yaml`](../api/async/outbound-webhooks.asyncapi.yaml) (`DataRunEscalated.reason`).
 - **Schema:** [`database-schema.md`](../database-schema.md) + [`db/hitl-domain.md`](../db/hitl-domain.md) +
   [`db/assignments-domain.md`](../db/assignments-domain.md) (`hook_trip`, migration `0063`).

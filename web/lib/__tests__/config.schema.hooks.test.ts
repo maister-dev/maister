@@ -31,13 +31,15 @@ describe("hooks capability class — node settings (ADR-104)", () => {
   });
 
   it("judgeSettingsSchema accepts a full hooks block", () => {
-    expect(() => judgeSettingsSchema.parse({ hooks: fullHooks })).not.toThrow();
+    expect(judgeSettingsSchema.parse({ hooks: fullHooks }).hooks).toEqual(
+      fullHooks,
+    );
   });
 
   it("orchestratorSettingsSchema inherits the hooks block", () => {
-    expect(() =>
-      orchestratorSettingsSchema.parse({ hooks: fullHooks }),
-    ).not.toThrow();
+    expect(
+      orchestratorSettingsSchema.parse({ hooks: fullHooks }).hooks,
+    ).toEqual(fullHooks);
   });
 
   it("accepts a sparse hooks block (only repetition) without injecting defaults", () => {

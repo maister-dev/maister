@@ -23,6 +23,7 @@ import {
   requiresLaunchUnattended,
   resolveExecutionPolicy,
   reworkExhaustionFromSnapshot,
+  presetFromSnapshot,
   type ExecutionPolicy,
 } from "@/lib/runs/execution-policy";
 import { applyDefaultBudgetForUnattended } from "@/lib/runs/budget-default";
@@ -480,6 +481,36 @@ describe("reworkExhaustionFromSnapshot (run snapshot → rework action, fail-clo
         overrides: { reworkExhaustion: "abandon" },
       }),
     ).toBe("escalate");
+  });
+});
+
+describe("presetFromSnapshot (run snapshot → execution preset, fail-safe to supervised)", () => {
+  it("null / undefined snapshot → supervised (a corrupt policy never auto-arms guardrails)", () => {
+    expect(presetFromSnapshot(null)).toBe("supervised");
+    expect(presetFromSnapshot(undefined)).toBe("supervised");
+  });
+
+  it("each valid preset resolves to itself", () => {
+    expect(presetFromSnapshot({ preset: "supervised" })).toBe("supervised");
+    expect(presetFromSnapshot({ preset: "assisted" })).toBe("assisted");
+    expect(presetFromSnapshot({ preset: "unattended" })).toBe("unattended");
+  });
+
+  it("a preset with per-axis overrides still reports the base preset", () => {
+    expect(
+      presetFromSnapshot({
+        preset: "unattended",
+        overrides: { permissions: "ask" },
+      }),
+    ).toBe("unattended");
+  });
+
+  it("malformed snapshots fail safe to supervised (never read junk as unattended)", () => {
+    expect(presetFromSnapshot({ preset: "bogus" })).toBe("supervised");
+    expect(presetFromSnapshot({})).toBe("supervised");
+    // A bare "unattended" string must NOT be coerced into the unattended preset.
+    expect(presetFromSnapshot("unattended")).toBe("supervised");
+    expect(presetFromSnapshot(42)).toBe("supervised");
   });
 });
 

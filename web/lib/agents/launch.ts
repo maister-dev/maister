@@ -2109,6 +2109,25 @@ export async function startAgentSession(
       runId,
     });
 
+    // ADR-104 (M40): explicit agent guardrail hooks. Agent runs carry no
+    // execution-policy preset, so there is no `unattended` auto-arm — only what
+    // the agent definition declares (undefined when it declares none). Resolved
+    // once so it can be both logged and threaded; resolver stays pure. NOTE:
+    // resolved-and-sent ≠ enforced — the supervisor interceptor lands in Phase 2;
+    // until then the session body is accept-and-ignore.
+    const hooksConfig = resolveHooksConfig({
+      hooks: effective.parsed.hooks ?? undefined,
+      preset: undefined,
+      defaults: hookEnvDefaults(),
+    });
+
+    if (hooksConfig) {
+      log.debug(
+        { runId, rules: Object.keys(hooksConfig) },
+        "guardrail hooks resolved (enforcement: Phase 2)",
+      );
+    }
+
     const session = await api.createSession({
       runId,
       projectSlug: project.slug,
@@ -2124,14 +2143,7 @@ export async function startAgentSession(
       ],
       // ADR-090 L1: none/repo_read agents run the whole session read-only.
       readOnlySession: workspace !== "worktree",
-      // ADR-104 (M40): explicit agent guardrail hooks. Agent runs carry no
-      // execution-policy preset, so there is no `unattended` auto-arm — only
-      // what the agent definition declares arms (undefined when it declares none).
-      hooksConfig: resolveHooksConfig({
-        hooks: effective.parsed.hooks ?? undefined,
-        preset: undefined,
-        defaults: hookEnvDefaults(),
-      }),
+      hooksConfig,
       ...(run.acpSessionId ? { resumeSessionId: run.acpSessionId } : {}),
     });
 

@@ -69,7 +69,14 @@ export type CreateHitlAssignmentArgs = CreateAssignmentArgs & {
   hitlRequestId: string;
   actionKind: Extract<
     Assignment["actionKind"],
-    "permission" | "form" | "human_review" | "infra_recovery" | "budget_breach"
+    // ADR-104 (M40): `hook_trip` is a HITL escalation kind, so it carries an
+    // assignment like the other human-gate kinds (producer in T3.3/T3.4).
+    | "permission"
+    | "form"
+    | "human_review"
+    | "infra_recovery"
+    | "budget_breach"
+    | "hook_trip"
   >;
 };
 

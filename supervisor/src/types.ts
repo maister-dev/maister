@@ -223,6 +223,24 @@ export const StartSessionRequestSchema = z
     // (L3, below the read-only layers — read-only always wins). Resolved from
     // the run's execution_policy snapshot at launch.
     autoApprovePermissions: z.boolean().optional(),
+    // ADR-104 (M40): the web tier's resolved guardrail rule set. Mirrors
+    // `StartSessionRequest.hooksConfig` in supervisor.openapi.yaml + the web
+    // `HooksConfig` type. The acceptor must land WITH the emitter so an armed
+    // run can spawn; the interceptor that enforces these arrives in Phase 2.
+    // Accept-and-ignore until then (no behavioral coupling yet).
+    hooksConfig: z
+      .object({
+        repetition: z.object({ max: z.number().int().min(1) }).strict(),
+        noProgress: z
+          .object({ maxTurns: z.number().int().min(1) })
+          .strict(),
+        pathGuard: z
+          .object({ allowedPaths: z.array(z.string()) })
+          .strict(),
+      })
+      .partial()
+      .strict()
+      .optional(),
   })
   .strict()
   .superRefine((value, ctx) => {

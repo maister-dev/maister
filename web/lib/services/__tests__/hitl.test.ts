@@ -314,7 +314,7 @@ function seedAssignment(hitlRequestId: string, runId: string): string {
 }
 
 function seedFormRow(
-  kind: "form" | "human" = "form",
+  kind: "form" | "human" | "hook_trip" = "form",
   overrides: Partial<{
     runStatus: string;
     respondedAt: Date | null;
@@ -987,6 +987,24 @@ describe("respondToHitl service — actor kind", () => {
     await expect(
       respondToHitl(
         { runId, hitlRequestId, body: { response: { approved: true } } },
+        actor,
+        { db: fakeDb },
+      ),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  });
+
+  it("api_token actor answering a hook_trip HITL throws UNAUTHORIZED (ADR-104: a guardrail trip is human-only)", async () => {
+    const { runId, hitlRequestId } = seedFormRow("hook_trip");
+    const actor: HitlActor = {
+      kind: "api_token",
+      tokenId: "t1",
+      projectId: "proj-1",
+      label: "token",
+    };
+
+    await expect(
+      respondToHitl(
+        { runId, hitlRequestId, body: { response: { resume: true } } },
         actor,
         { db: fakeDb },
       ),

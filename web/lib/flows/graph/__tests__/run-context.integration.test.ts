@@ -3,7 +3,13 @@ import type { SupervisorApi } from "@/lib/flows/runner-agent";
 import type { SupervisorEvent } from "@/lib/supervisor-client";
 
 import { execFile } from "node:child_process";
-import { appendFile, mkdtemp, readFile } from "node:fs/promises";
+import {
+  appendFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -298,6 +304,70 @@ describe("runGraph — P7 run-context (ADR-103)", () => {
 
     expect(stdout).not.toMatch(/^\?\?\s+\.maister/m); // not untracked
     expect(stdout).toMatch(/!!\s+\.maister/); // shown as ignored
+  }, 60_000);
+
+  it("skips the FINAL run.json write when the worktree is git-leak-unsafe (Codex finding #1: the post-loop write must honor runContextWriteSafe too)", async () => {
+    const manifest = {
+      schemaVersion: 1,
+      name: "g",
+      compat: { engine_min: "1.7.0" },
+      nodes: [
+        {
+          id: "a",
+          type: "cli",
+          action: { command: "echo hi" },
+          transitions: { success: "done" },
+        },
+      ],
+    };
+    const seeded = await seedGraphRun(manifest);
+
+    // Force the git-leak-unsafe path: a git worktree where `.maister/run.json`
+    // is TRACKED. ensureWorktreeGitExclude still appends `.maister/` to
+    // info/exclude, but `git check-ignore` consults the index, so a tracked path
+    // is reported NOT-ignored → isRunContextWriteSafe === false. A sentinel body
+    // reveals whether runGraph wrote over it.
+    await execFileAsync("git", ["-C", seeded.worktreePath, "init", "-q"]);
+    await execFileAsync("git", [
+      "-C",
+      seeded.worktreePath,
+      "config",
+      "user.email",
+      "t@t",
+    ]);
+    await execFileAsync("git", [
+      "-C",
+      seeded.worktreePath,
+      "config",
+      "user.name",
+      "t",
+    ]);
+
+    const runJsonPath = join(seeded.worktreePath, ".maister", "run.json");
+
+    await mkdir(join(seeded.worktreePath, ".maister"), { recursive: true });
+    const sentinel = '{"sentinel":true}';
+
+    await writeFile(runJsonPath, sentinel, "utf8");
+    await execFileAsync("git", [
+      "-C",
+      seeded.worktreePath,
+      "add",
+      ".maister/run.json",
+    ]);
+
+    // Sanity: the gate the runner reads agrees this worktree is unsafe.
+    expect(await isRunContextWriteSafe(seeded.worktreePath)).toBe(false);
+
+    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+
+    // The post-loop final write MUST be gated too: the tracked sentinel is
+    // intact, so run.json was NEVER overwritten with the run-context projection
+    // (task prompt + node vars + gate verdicts) that would leak into git.
+    const after = await readFile(runJsonPath, "utf8");
+
+    expect(after).toBe(sentinel);
+    expect(after).not.toContain('"intent"');
   }, 60_000);
 
   it("appends a [Run context: <path>] pointer to each agent node's prompt", async () => {

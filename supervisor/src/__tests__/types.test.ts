@@ -342,6 +342,49 @@ describe("StartSessionRequestSchema", () => {
 
     expect(result.success).toBe(false);
   });
+
+  // ADR-104 (M40): the supervisor must ACCEPT the resolved guardrail rule set
+  // the web tier puts on POST /sessions. Enforcement lands in Phase 2; until
+  // then the schema accepts-and-ignores so an armed run can still spawn.
+  it("accepts a fully-resolved guardrail hooksConfig payload", () => {
+    const result = StartSessionRequestSchema.safeParse({
+      ...validRequest,
+      hooksConfig: {
+        repetition: { max: 5 },
+        noProgress: { maxTurns: 15 },
+        pathGuard: { allowedPaths: ["src/**", "tests/**"] },
+      },
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts a sparse hooksConfig (only pathGuard)", () => {
+    const result = StartSessionRequestSchema.safeParse({
+      ...validRequest,
+      hooksConfig: { pathGuard: { allowedPaths: ["**"] } },
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects a hooksConfig with an unknown rule key (strict)", () => {
+    const result = StartSessionRequestSchema.safeParse({
+      ...validRequest,
+      hooksConfig: { lifecycle: "pre_tool_call" },
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a hooksConfig repetition.max below 1", () => {
+    const result = StartSessionRequestSchema.safeParse({
+      ...validRequest,
+      hooksConfig: { repetition: { max: 0 } },
+    });
+
+    expect(result.success).toBe(false);
+  });
 });
 
 describe("SupervisorDiagnosticsResponseSchema", () => {

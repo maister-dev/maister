@@ -1734,7 +1734,11 @@ export async function respondToHitl(
     if (
       hitlRow.kind === "human" ||
       hitlRow.kind === "infra_recovery" ||
-      hitlRow.kind === "budget_breach"
+      hitlRow.kind === "budget_breach" ||
+      // ADR-104 (M40): a guardrail trip is a safety escalation only a human may
+      // resolve — a machine/agent token must never dismiss its own trip. The
+      // respond-dispatch branch for hook_trip lands with its producer in T3.4.
+      hitlRow.kind === "hook_trip"
     ) {
       throw new MaisterError(
         "UNAUTHORIZED",

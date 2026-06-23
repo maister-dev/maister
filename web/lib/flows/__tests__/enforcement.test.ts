@@ -147,18 +147,8 @@ describe("ENFORCEABILITY_BY_AGENT — conservative all-adapter table", () => {
 // ---------------------------------------------------------------------------
 
 describe("hooks capability class — enforcement (ADR-104)", () => {
-  it("ENFORCEABILITY_BY_AGENT has hooks=instructed for every agent", () => {
-    for (const agent of [
-      "claude",
-      "codex",
-      "gemini",
-      "opencode",
-      "mimo",
-    ] as const) {
-      expect(ENFORCEABILITY_BY_AGENT[agent].hooks).toBe("instructed");
-    }
-  });
-
+  // NB: the per-agent `hooks=instructed` cells are already pinned by the
+  // full-table `toEqual` above; this block only covers hooks-specific behavior.
   it("evaluateNodeEnforcement reports a refused verdict for strict hooks", () => {
     const result = evaluateNodeEnforcement(
       { enforcement: { hooks: "strict" } } as AiCodingSettings,
