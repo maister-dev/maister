@@ -147,9 +147,9 @@ beforeEach(async () => {
 async function seedAgent(stem: string): Promise<string> {
   const qualifiedId = `test-pkg:${stem}`;
 
-  await mkdir(path.join(agentsRoot, "agents"), { recursive: true });
+  await mkdir(path.join(agentsRoot, "maister-agents"), { recursive: true });
   await writeFile(
-    path.join(agentsRoot, "agents", `${stem}.md`),
+    path.join(agentsRoot, "maister-agents", `${stem}.md`),
     `---
 name: ${stem}
 description: d
@@ -169,7 +169,7 @@ Do the thing.
     `INSERT INTO "agents" ("id", "flow_ref_id", "version_label", "origin", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path", "enabled")
      VALUES ($1, 'test-pkg', 'v1.0.0', 'git', $2, 'd', 'none', 'session', '["manual","domain_event"]'::jsonb, 'read_only', $3, true)
      ON CONFLICT (id) DO NOTHING`,
-    [qualifiedId, stem, path.join(agentsRoot, "agents", `${stem}.md`)],
+    [qualifiedId, stem, path.join(agentsRoot, "maister-agents", `${stem}.md`)],
   );
   await pool.query(
     `INSERT INTO "agent_project_links" ("id", "agent_id", "project_id") VALUES ($1, $2, $3)

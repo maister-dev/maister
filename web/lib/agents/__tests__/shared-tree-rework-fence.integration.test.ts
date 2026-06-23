@@ -190,9 +190,9 @@ async function seedWorkerAgent(): Promise<string> {
   const revisionId = randomUUID();
   const installedPath = path.join(cacheRoot, `pkg-${revisionId.slice(0, 8)}`);
 
-  await mkdir(path.join(installedPath, "agents"), { recursive: true });
+  await mkdir(path.join(installedPath, "maister-agents"), { recursive: true });
   await writeFile(
-    path.join(installedPath, "agents", "worker.md"),
+    path.join(installedPath, "maister-agents", "worker.md"),
     `---
 name: worker
 description: d
@@ -230,7 +230,7 @@ Do the thing.
   await pool.query(
     `INSERT INTO "agents" ("id", "flow_ref_id", "version_label", "origin", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path", "enabled")
      VALUES ($1, 'test-pkg', 'v1.0.0', 'git', 'worker', 'd', 'worktree', 'session', '["manual"]'::jsonb, 'read_only', $2, true)`,
-    [qualifiedId, path.join(installedPath, "agents", "worker.md")],
+    [qualifiedId, path.join(installedPath, "maister-agents", "worker.md")],
   );
   await pool.query(
     `INSERT INTO "agent_project_links" ("id", "agent_id", "project_id") VALUES ($1, $2, $3)`,

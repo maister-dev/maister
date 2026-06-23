@@ -121,9 +121,9 @@ async function seedAgent(args: {
   const workspace = args.workspace ?? "none";
   const riskTier = args.riskTier ?? "read_only";
 
-  await mkdir(path.join(agentsRoot, "agents"), { recursive: true });
+  await mkdir(path.join(agentsRoot, "maister-agents"), { recursive: true });
   await writeFile(
-    path.join(agentsRoot, "agents", `${args.id}.md`),
+    path.join(agentsRoot, "maister-agents", `${args.id}.md`),
     `---
 name: ${args.id}
 description: d
@@ -145,7 +145,7 @@ Do the thing.
       qualifiedId,
       args.id,
       JSON.stringify(args.triggers),
-      path.join(agentsRoot, "agents", `${args.id}.md`),
+      path.join(agentsRoot, "maister-agents", `${args.id}.md`),
       workspace,
       riskTier,
     ],

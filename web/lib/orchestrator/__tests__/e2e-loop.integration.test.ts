@@ -253,9 +253,9 @@ async function seedChildAgent(): Promise<string> {
     [randomUUID(), projectId, agentsRoot, revisionId],
   );
 
-  await mkdir(join(agentsRoot, "agents"), { recursive: true });
+  await mkdir(join(agentsRoot, "maister-agents"), { recursive: true });
   await writeFile(
-    join(agentsRoot, "agents", `${id}.md`),
+    join(agentsRoot, "maister-agents", `${id}.md`),
     `---
 name: ${id}
 description: a delegated worker
@@ -273,7 +273,7 @@ Do the delegated sub-task.
   await pool.query(
     `INSERT INTO "agents" ("id", "flow_ref_id", "version_label", "origin", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path", "enabled")
      VALUES ($1, 'orc-pkg', 'v1.0.0', 'git', $2, 'd', 'none', 'session', '["manual"]'::jsonb, 'read_only', $3, true)`,
-    [qualifiedId, id, join(agentsRoot, "agents", `${id}.md`)],
+    [qualifiedId, id, join(agentsRoot, "maister-agents", `${id}.md`)],
   );
   await pool.query(
     `INSERT INTO "agent_project_links" ("id", "agent_id", "project_id") VALUES ($1, $2, $3)`,

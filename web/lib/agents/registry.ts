@@ -53,11 +53,15 @@ async function listAgentFileStems(installedPath: string): Promise<string[]> {
   let entries;
 
   try {
-    entries = await readdir(join(installedPath, "agents"), {
+    // (M39 A4, owner) Platform-agent definitions live at the package-root
+    // `maister-agents/` — the canonical location, distinct from capability
+    // subagents (`capability/<id>/agents/`). Root `agents/` is no longer a
+    // platform-agent location; packages still shipping it are unregistered.
+    entries = await readdir(join(installedPath, "maister-agents"), {
       withFileTypes: true,
     });
   } catch {
-    return []; // no agents/ dir — a perfectly normal package
+    return []; // no maister-agents/ dir — a perfectly normal package
   }
 
   return entries
@@ -112,9 +116,9 @@ async function upsertAgentRow(
     .onConflictDoUpdate({ target: agents.id, set: syncedColumns });
 }
 
-// Register every `agents/<stem>.md` shipped by an installed flow revision
-// under the package-qualified id `<flowRefId>:<stem>`. Invalid definitions
-// are reported, never written — and never fail the surrounding install.
+// Register every `maister-agents/<stem>.md` shipped by an installed flow
+// revision under the package-qualified id `<flowRefId>:<stem>`. Invalid
+// definitions are reported, never written — and never fail the surrounding install.
 export async function registerAgentsForRevision(
   revisionId: string,
   db?: Db,
@@ -153,7 +157,11 @@ export async function registerAgentsForRevision(
   const invalid: { id: string; error: string }[] = [];
 
   for (const stem of stems) {
-    const sourcePath = join(revision.installedPath, "agents", `${stem}.md`);
+    const sourcePath = join(
+      revision.installedPath,
+      "maister-agents",
+      `${stem}.md`,
+    );
     const id = `${revision.flowRefId}:${stem}`;
 
     try {

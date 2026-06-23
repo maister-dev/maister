@@ -81,9 +81,9 @@ beforeAll(async () => {
   // agent's .md, an Enabled/trusted pinned project flow, a ready default runner.
   const agentsRoot = await mkdtemp(path.join(os.tmpdir(), "maister-webhook-"));
 
-  await mkdir(path.join(agentsRoot, "agents"), { recursive: true });
+  await mkdir(path.join(agentsRoot, "maister-agents"), { recursive: true });
   await writeFile(
-    path.join(agentsRoot, "agents", "notifier.md"),
+    path.join(agentsRoot, "maister-agents", "notifier.md"),
     `---
 name: notifier
 description: d
@@ -135,7 +135,7 @@ Do the thing.
   await pool.query(
     `INSERT INTO "agents" ("id", "flow_ref_id", "version_label", "origin", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path")
      VALUES ($1, 'test-pkg', 'v1.0.0', 'git', 'notifier', 'd', 'none', 'session', '["webhook"]'::jsonb, 'read_only', $2)`,
-    [AGENT_ID, path.join(agentsRoot, "agents", "notifier.md")],
+    [AGENT_ID, path.join(agentsRoot, "maister-agents", "notifier.md")],
   );
   await pool.query(
     `INSERT INTO "agent_project_links" ("id", "agent_id", "project_id") VALUES ($1, $2, $3)`,

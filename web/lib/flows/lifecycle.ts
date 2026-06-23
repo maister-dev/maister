@@ -589,11 +589,14 @@ async function scanRevisionAgents(
   let entries;
 
   try {
-    entries = await readdir(join(installedPath, "agents"), {
+    // (M39 A4) Platform agents live at the package-root `maister-agents/`
+    // (canonical) — not root `agents/` (capability subagents use
+    // `capability/<id>/agents/`).
+    entries = await readdir(join(installedPath, "maister-agents"), {
       withFileTypes: true,
     });
   } catch {
-    return out; // no agents/ dir
+    return out; // no maister-agents/ dir
   }
 
   for (const entry of entries) {
@@ -602,7 +605,7 @@ async function scanRevisionAgents(
 
     try {
       const content = await readFile(
-        join(installedPath, "agents", entry.name),
+        join(installedPath, "maister-agents", entry.name),
         "utf8",
       );
 

@@ -139,7 +139,7 @@ export async function resolveEffectiveAgentDefinition(
 
   const sourcePath = join(
     revision.installedPath as string,
-    "agents",
+    "maister-agents",
     `${stem}.md`,
   );
 
@@ -150,7 +150,7 @@ export async function resolveEffectiveAgentDefinition(
   } catch {
     throw new MaisterError(
       "PRECONDITION",
-      `agent "${input.agentId}": version ${revision.versionLabel} of package "${flowRefId}" does not ship agents/${stem}.md`,
+      `agent "${input.agentId}": version ${revision.versionLabel} of package "${flowRefId}" does not ship maister-agents/${stem}.md`,
     );
   }
 

@@ -94,10 +94,10 @@ async function installRevision(opts: {
     `${opts.flowRefId}@${opts.versionLabel}-${revisionId.slice(0, 8)}`,
   );
 
-  await mkdir(path.join(installedPath, "agents"), { recursive: true });
+  await mkdir(path.join(installedPath, "maister-agents"), { recursive: true });
   for (const [stem, content] of Object.entries(opts.agents)) {
     await writeFile(
-      path.join(installedPath, "agents", `${stem}.md`),
+      path.join(installedPath, "maister-agents", `${stem}.md`),
       content,
       "utf8",
     );
@@ -244,7 +244,7 @@ describe("resolveEffectiveAgentDefinition (RD4)", () => {
         { agentId: "gated:absent", projectId: p },
         db,
       ),
-      /does not ship agents\/absent\.md/,
+      /does not ship maister-agents\/absent\.md/,
     );
 
     // The happy path still resolves after the gates clear.

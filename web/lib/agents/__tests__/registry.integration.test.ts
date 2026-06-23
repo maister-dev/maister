@@ -79,7 +79,7 @@ Triage the task.
 `;
 }
 
-// An installed flow-revision fixture: a real dir with agents/*.md + the
+// An installed flow-revision fixture: a real dir with maister-agents/*.md + the
 // flow_revisions row pointing at it.
 async function installRevisionFixture(opts: {
   flowRefId: string;
@@ -95,10 +95,10 @@ async function installRevisionFixture(opts: {
     `${opts.flowRefId}@${opts.versionLabel}-${revisionId.slice(0, 8)}`,
   );
 
-  await mkdir(path.join(installedPath, "agents"), { recursive: true });
+  await mkdir(path.join(installedPath, "maister-agents"), { recursive: true });
   for (const [stem, content] of Object.entries(opts.agents)) {
     await writeFile(
-      path.join(installedPath, "agents", `${stem}.md`),
+      path.join(installedPath, "maister-agents", `${stem}.md`),
       content,
       "utf8",
     );
@@ -160,7 +160,7 @@ describe("registerAgentsForRevision", () => {
       workspace: "none",
       enabled: true,
     });
-    expect(String(row?.sourcePath)).toContain("/agents/triager.md");
+    expect(String(row?.sourcePath)).toContain("/maister-agents/triager.md");
   });
 
   it("derives origin=authored for local filesystem sources", async () => {
@@ -280,7 +280,7 @@ describe("registerAgentsForRevision", () => {
     );
   });
 
-  it("registers nothing for a package without an agents/ dir", async () => {
+  it("registers nothing for a package without a maister-agents/ dir", async () => {
     const revisionId = await installRevisionFixture({
       flowRefId: "plain",
       versionLabel: "v1.0.0",
@@ -295,7 +295,7 @@ describe("registerAgentsForRevision", () => {
             [revisionId],
           )
         ).rows[0].installed_path as string,
-        "agents",
+        "maister-agents",
       ),
       { recursive: true, force: true },
     );

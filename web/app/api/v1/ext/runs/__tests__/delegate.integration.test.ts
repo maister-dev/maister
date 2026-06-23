@@ -148,9 +148,9 @@ async function seedAgent(args: {
 }): Promise<string> {
   const qualifiedId = `test-pkg:${args.id}`;
 
-  await mkdir(path.join(agentsRoot, "agents"), { recursive: true });
+  await mkdir(path.join(agentsRoot, "maister-agents"), { recursive: true });
   await writeFile(
-    path.join(agentsRoot, "agents", `${args.id}.md`),
+    path.join(agentsRoot, "maister-agents", `${args.id}.md`),
     `---
 name: ${args.id}
 description: d
@@ -171,7 +171,7 @@ Do the thing.
     [
       qualifiedId,
       args.id,
-      path.join(agentsRoot, "agents", `${args.id}.md`),
+      path.join(agentsRoot, "maister-agents", `${args.id}.md`),
       args.enabled ?? true,
     ],
   );
@@ -198,9 +198,9 @@ async function seedUntrustedPackageAgent(args: {
   const qualifiedId = `${flowRefId}:${args.id}`;
   const installedPath = path.join(agentsRoot, flowRefId);
 
-  await mkdir(path.join(installedPath, "agents"), { recursive: true });
+  await mkdir(path.join(installedPath, "maister-agents"), { recursive: true });
   await writeFile(
-    path.join(installedPath, "agents", `${args.id}.md`),
+    path.join(installedPath, "maister-agents", `${args.id}.md`),
     `---
 name: ${args.id}
 description: d
@@ -252,7 +252,7 @@ Do the thing.
       qualifiedId,
       flowRefId,
       args.id,
-      path.join(installedPath, "agents", `${args.id}.md`),
+      path.join(installedPath, "maister-agents", `${args.id}.md`),
     ],
   );
   await pool.query(

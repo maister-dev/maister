@@ -159,13 +159,13 @@ async function seedPackageWithAgents(
   const revisionId = randomUUID();
   const installedPath = path.join(cacheRoot, `pkg-${revisionId.slice(0, 8)}`);
 
-  await mkdir(path.join(installedPath, "agents"), { recursive: true });
+  await mkdir(path.join(installedPath, "maister-agents"), { recursive: true });
 
   const ids: Record<string, string> = {};
 
   for (const a of agents) {
     await writeFile(
-      path.join(installedPath, "agents", `${a.stem}.md`),
+      path.join(installedPath, "maister-agents", `${a.stem}.md`),
       `---
 name: ${a.stem}
 description: d
@@ -210,7 +210,7 @@ Do the thing.
         qualifiedId,
         a.stem,
         a.workspace,
-        path.join(installedPath, "agents", `${a.stem}.md`),
+        path.join(installedPath, "maister-agents", `${a.stem}.md`),
       ],
     );
     await pool.query(
