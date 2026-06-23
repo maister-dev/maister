@@ -703,20 +703,27 @@ run_schedules {
 `(enabled, next_fire_at)` (dispatcher due-scan), and `(last_run_id)`
 (FK SET NULL + the read-time `lastRunStatus` join).
 
-## Platform agent tables (Implemented — ADR-089/ADR-090, migrations `0049`/`0050`/`0051`)
+## Platform agent tables (Implemented — ADR-089/ADR-090, migrations `0049`/`0050`/`0051`; M39 package re-key Designed — ADR-106, migration `0062`)
 
 The M34 agent catalog (package-source rework): `maister-agents/<stem>.md`
 definitions INSIDE flow packages (the catalog/registry/effective read paths
 converged onto `maister-agents/` in M39 — ADR-105), projected into the index from
 each package's newest Installed revision; attachments and per-project overrides;
 trigger bindings.
+**(Designed — ADR-106, migration `0062`)** M39 re-keys the catalog from per-flow
+to **per-package**: `flow_ref_id` → `package_name` (= `package_installs.name`), id
+`<packageName>:<stem>`, registration scanning the package root
+`package_installs.installed_path/maister-agents/`, plus new columns `flow_ref`
+(the same-package flow the agent drives), `branch_base`, and a
+`recommended.executionPolicy` shape — and per-instance `branch_base` /
+`execution_policy_override` on `agent_project_links`.
 See [`db/agents-domain.md`](db/agents-domain.md) for the ERD and
 [`system-analytics/agents.md`](system-analytics/agents.md) for process flows.
 
 ```ts
 agents {
-  id,                              // PK; package-qualified `<flowRefId>:<stem>`
-  flowRefId,                       // providing package (ADR-089 rework)
+  id,                              // PK; package-qualified `<packageName>:<stem>` (ADR-106; was `<flowRefId>:<stem>`)
+  packageName,                     // NOT NULL — providing package = package_installs.name (ADR-106; was flowRefId)
   versionLabel,                    // newest registered revision
   origin: 'git' | 'authored',
   name, description,               // frontmatter, required
@@ -728,8 +735,10 @@ agents {
   triggers (jsonb),                // subset of manual|cron|domain_event|webhook|flow
   capabilityProfile? (jsonb),      // M14 shape; materialize-only (ADR-041 boundary)
   riskTier: 'read_only' | 'standard' | 'destructive',
-  recommended? (jsonb),            // {runner?, cron?{expr,timezone}, events?} —
-                                   //   attach-panel pre-fill (RD5)
+  recommended? (jsonb),            // {runner?, branch_base?, cron?{expr,timezone}, events?,
+                                   //   executionPolicy?{autoApply,onBudgetBreach}} — seed/pre-fill (ADR-106)
+  flowRef?,                        // (ADR-106) NULL — same-package flow the agent drives
+  branchBase?,                     // (ADR-106) NULL — agent branch base (default project main)
   sourcePath,                      // maister-agents/<stem>.md in the newest revision
   enabled,                         // platform kill-switch
   quarantinedAt?, quarantineReason?,  // ADR-090 dirty-watchdog flag
@@ -743,6 +752,8 @@ agent_project_links {
   enabled,
   runnerOverrideId?,               // FK -> platform_acp_runners.id SET NULL;
                                    //   tier 2 of the standalone runner chain
+  branchBase?,                     // (ADR-106) NULL — instance override of the branch base
+  executionPolicyOverride? (jsonb),// (ADR-106) NULL — instance override of {autoApply,onBudgetBreach}
   createdAt, updatedAt
   // UNIQUE (agent_id, project_id)
 }
@@ -750,11 +761,19 @@ agent_project_links {
 
 The package file is the canonical definition; registration after install
 finalize (and `resync`) re-syncs every parsed column with SET/CLEAR symmetry,
-projecting the newest Installed revision per flow_ref; rows whose providing
-package vanished are disabled, never deleted. The EFFECTIVE definition for a
-launch resolves through the project's pinned revision (RD4). Indexed on
-`agents(flow_ref_id)`, `agent_project_links(project_id)`, plus the UNIQUE
-pair above.
+projecting the newest Installed revision per `package_name` (ADR-106; was per
+flow_ref); rows whose providing package vanished are disabled, never deleted. The
+EFFECTIVE definition for a launch resolves through the project's ATTACHED package
+install's pinned revision (RD4). Indexed on `agents(package_name)`
+(`agents_package_name_idx`; was `agents_flow_ref_idx`),
+`agent_project_links(project_id)`, plus the UNIQUE pair above.
+
+**Migration 0062 data policy (Designed — ADR-106).** Pre-release: `DELETE FROM
+agents` then re-project via `resyncAgents`. The FK fan-out — `agent_project_links`
+and `agent_schedules` CASCADE-delete; `runs.agent_id` is `ON DELETE SET NULL`
+(run history survives) — makes the wipe safe; a post-migration resync
+(startup reconcile + admin `POST /api/admin/agents/resync`) repopulates the
+catalog from installed packages.
 
 ## Authored catalog tables (Implemented, M25)
 

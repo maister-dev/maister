@@ -131,6 +131,7 @@
 | [ADR-103](#adr-103-output-driven-dynamic-routing-decide--onmismatch-rework--engine-170) | Output-driven dynamic routing (`decide`) + `on_mismatch` rework + engine 1.7.0 | Accepted | 2026-06-22 |
 | [ADR-104](#adr-104-global-personal-api-tokens-via-nullable-project-token-binding) | Global personal API tokens via nullable project token binding | Accepted | 2026-06-23 |
 | [ADR-105](#adr-105-first-class-authored-package-kinds-and-centralized-studio-package-model) | First-class authored package kinds and centralized Studio package model | Accepted | 2026-06-22 |
+| [ADR-106](#adr-106-package-based-platform-agents--package-identity-attachment-gating-optional-flow-enrichment-and-per-agent-runner-policy) | Package-based platform agents — package identity, attachment gating, optional-flow enrichment, and per-agent runner policy | Accepted | 2026-06-23 |
 | [ADR-108](#adr-108-declarative-guardrailhook-engine--universal-supervisor-acp-seam-interceptor-native-materializer-seam-and-hook-trip-hitl-escalation) | Declarative guardrail/hook engine — universal supervisor ACP-seam interceptor (3 rules), native materializer seam, `hook_trip` HITL, engine 1.8.0 | Accepted | 2026-06-23 |
 
 ---
@@ -8197,6 +8198,192 @@ guardrail-hooks) is reserved by an implemented-but-unmerged sibling
 (`.ai-factory/requests/2026-06-22-g4-guardrail-hooks.md`). This ADR takes **105**
 to avoid squatting 104; a renumber pass may run at merge if the ordering changes.
 
+### ADR-106: Package-based platform agents — package identity, attachment gating, optional-flow enrichment, and per-agent runner policy
+
+**Date:** 2026-06-23
+**Status:** Accepted
+**Context:** M34 (ADR-089/090) shipped platform agents keyed PER FLOW: the catalog
+row's provenance is `agents.flow_ref_id`, the id is `<flowRefId>:<stem>`, and
+registration (`registerAgentsForRevision`) scans
+`flow_revisions.installed_path/maister-agents/*.md` once per flow revision. M39
+Stream A (ADR-105) made `maister-agents/` the canonical platform-agent directory
+at the PACKAGE ROOT — but a package install is one `package_installs` row that
+fans out to MANY member flow revisions, and `flow_revisions.installed_path` is a
+PER-FLOW cache subdir (`~/.maister/flows/<flowRefId>@<sha>/`), whereas the package
+root that actually holds `maister-agents/` is `package_installs.installed_path`
+(`~/.maister/packages/<name>@<rev>/`). So today a package-root
+`maister-agents/<stem>.md` is registered only for a member flow whose manifest
+`path` is `"."`, and identity is per-flow even though the file is package-scoped.
+This is the F4 finding from this branch's Codex adversarial review. Separately,
+agent runs never snapshot an execution policy (`launchAgentRun` omits
+`execution_policy`/`budget_state`), so every agent run inherits the
+`{preset:"supervised"}` column default and an unbounded budget; the budget
+terminal path (`keepalive-sweeper.ts`) force-terminates every non-flow breach and
+resumes only via `runFlow` (flow-only). This ADR re-keys agent identity to the
+package, re-frames the launch gate as an attachment allow-list, adds optional
+same-package flow enrichment, and adds a per-agent runner policy (auto-apply +
+budget-breach handling) that rides the existing `ExecutionPolicy` snapshot.
+
+**Decision:**
+
+1. **Package identity.** A platform agent is `maister-agents/<stem>.md` at the
+   PACKAGE ROOT; its platform id is `<packageName>:<stem>` where `packageName =
+   package_installs.name` (the `maister-package.yaml` `name`, capabilityRefId-
+   shaped). `agents.flow_ref_id` is replaced by `agents.package_name` (text NOT
+   NULL); the index `agents_flow_ref_idx` becomes `agents_package_name_idx`. The
+   `AGENT_ID_PATTERN` `<x>:<stem>` grammar is unchanged; `qualifyAgentId` /
+   `splitQualifiedAgentId` re-key their prefix from flowRefId to packageName.
+
+2. **Package-level registration.** Registration projects ONE catalog row per
+   package per `maister-agents/<stem>.md`, scanning
+   `package_installs.installed_path/maister-agents/*.md` (the package root, NOT a
+   flow revision's per-flow dir). The per-flow `registerAgentsForRevision` call in
+   `lib/flows.ts` is dropped; package-level registration is wired into
+   `installPackageRevision` (`lib/packages/attach.ts`) AFTER the member flow
+   installs. `resyncAgents` projects the NEWEST Installed `package_installs` per
+   `name`; a `.md` (or its providing package) that vanished disables — never
+   deletes — its row. SET/CLEAR column symmetry on every sync. Registration NEVER
+   executes `.md` content.
+
+3. **Optional same-package flow.** An agent MAY declare `flow: <flowId>` in its
+   frontmatter; the value MUST be a member of the providing package's manifest
+   (`package_installs.manifest.spec.flows[].id`) or the definition is reported
+   invalid and never written (a later upgrade that REMOVES the referenced flow
+   re-flags it on resync → launch refuses `PRECONDITION`). Stored as
+   `agents.flow_ref` (text, nullable).
+
+4. **Launch gate = attachment allow-list.** A package agent launches when, and
+   only when: (a) the providing package is ATTACHED to the project
+   (`project_package_attachments` row for `(projectId, packageName)` — the
+   attachment IS the enable; packages have no flow-style `enablementState`); (b)
+   the attached install is TRUSTED (`package_installs.trust_status ∈ {trusted,
+   trusted_by_policy}`); (c) the agent is ENABLED (`agent_project_links.enabled`
+   for the project AND catalog `agents.enabled`, and `agents.quarantined_at IS
+   NULL`). The gate is an allow-list — any state not on it is refused
+   `PRECONDITION` by default. The EFFECTIVE definition resolves through the
+   attached install's pinned revision →
+   `package_installs.installed_path/maister-agents/<stem>.md`, at launch (guards)
+   and again at spawn (prompt). `projectId` is server-derived, never body.
+
+5. **Optional-flow enrichment — `run_kind` by discriminant.** Launch branches on
+   has-flow BEFORE routing:
+   - **WITHOUT `flow_ref` → `run_kind='agent'`** — the existing standalone
+     ACP-session path (workspace axis `none|repo_read|worktree`, agent token,
+     agent pool `MAISTER_MAX_CONCURRENT_AGENTS`).
+   - **WITH `flow_ref` → `run_kind='flow'`** — the agent's same-package flow is
+     launched as a normal flow run (flow pool, worktree, the flow engine drives
+     nodes/gates/rework/promotion), carrying `runs.agent_id` (the persona + policy
+     source) + `flowId`. On EVERY `ai_coding` node the agent's `.md` body is
+     injected as the persona/system layer — AUGMENT, not replace: the node keeps
+     its own task prompt, order persona-then-task — reusing the `mode=session`
+     flow-binding injection across all nodes. Budget escalate + raise-resume,
+     gates, promotion, and human-node auto-pass are inherited with no new engine
+     code. The workspace axis `none|repo_read` is meaningful only for the
+     read-only standalone kind; a flow-driving agent is a worktree run by
+     construction.
+
+6. **Per-agent runner policy on the existing `ExecutionPolicy` snapshot.** The
+   agent definition carries `recommended.executionPolicy: { autoApply?,
+   onBudgetBreach? }`, a simplified projection over the rich `ExecutionPolicy`
+   (preset + axes, ADR-095/101) snapshotted onto `runs.execution_policy` at spawn:
+   - **`autoApply: 'off' | 'permissions' | 'full'`** maps to axes B1 `permissions`
+     + B2 `humanGate`: `off`→`{permissions:'ask', humanGate:'stop'}`;
+     `permissions`→`{permissions:'auto_approve', humanGate:'stop'}` (the "с чел"
+     variant — auto-approve ACP tool permissions, but `human`/`form` still pause);
+     `full`→`{permissions:'auto_approve', humanGate:'auto_pass'}` (the "без чел"
+     variant). At the HITL boundary the run reads `permissionsFromSnapshot` /
+     `humanGateFromSnapshot`; `form` and `infra_recovery` HITL ALWAYS pause
+     regardless of mode; `budget_breach` is never auto-applied (the budget axis
+     owns it). Future per-kind toggles are a non-breaking superset of this enum.
+   - **`onBudgetBreach: 'escalate' | 'terminate' | 'terminate_restorable'`** is a
+     NEW optional `ExecutionPolicy` axis read by the budget terminal path
+     (`keepalive-sweeper.ts`). UNSET preserves the existing run_kind-based default
+     (flow non-tree scope → escalate; otherwise terminate). Set: `escalate` = live
+     pause + `budget_breach` HITL, run stays live and HOLDS its slot (raise-resume
+     via `runFlow` for `run_kind='flow'`, via `session/resume` for
+     `run_kind='agent'`); `terminate` = `Failed`, non-recoverable;
+     `terminate_restorable` (NEW, the owner's "no-escalate") = in ONE transaction
+     checkpoint the session (keep `acp_session_id`), free the slot
+     (`promoteNextPending`), transition to the EXISTING recoverable
+     `NeedsInputIdle`, record a `budget_breach` HITL — restore = raise the budget +
+     `session/resume`. No new run status (reuses `NeedsInputIdle`).
+
+7. **Config home + per-instance override.** `recommended` SEEDS the defaults
+   (`runner`, `branch_base`, `executionPolicy.{autoApply,onBudgetBreach}`); the
+   per-project agent INSTANCE (`agent_project_links`) overrides EVERY field via new
+   nullable columns `branch_base` (text) and `execution_policy_override` (jsonb).
+   Effective resolution = instance override → agent `recommended` → project/
+   platform default, snapshotted onto the run (`runs.execution_policy` + runner
+   snapshot + branch base) at launch — the terminal path reads the snapshot, never
+   a post-launch projection.
+
+8. **Branch base.** Optional `recommended.branch_base` (text, defaulting to the
+   project's main branch), overridable on the instance
+   (`agent_project_links.branch_base`). Stored as `agents.branch_base` (nullable).
+   The workspace axis (`none|repo_read|worktree`) + `workspace_ref` are unchanged.
+
+9. **Trigger toggle coupled to enable.** Disabling an agent's project link disables
+   its `agent_schedules` rows (`enabled=false`) AND revokes live agent tokens, in
+   addition to failing the launch gate (today disabling only fails the gate;
+   schedules keep firing-then-refusing and burning their cron catch-up window each
+   tick). Enabling re-enables the schedules — it does NOT resurrect the revoked
+   ephemeral per-launch tokens.
+
+10. **Migration data policy.** Pre-release: migration 0062 runs `DELETE FROM
+    agents` then re-projects via `resyncAgents`. The FK fan-out is verified:
+    `agent_project_links` and `agent_schedules` CASCADE-delete; `runs.agent_id` is
+    `ON DELETE SET NULL`, so run history survives as NULL. A post-migration resync
+    trigger (the startup reconcile path + the existing admin
+    `POST /api/admin/agents/resync`) re-projects from installed packages so the
+    catalog is not empty until the next package install.
+
+**Consequences:**
+- The package-root `maister-agents/<stem>.md` is registered exactly once per
+  package (the F4 split closes); a multi-flow package no longer mis-registers or
+  drops its package-scoped agents.
+- The launch gate is a clean three-term allow-list (attached + trusted + enabled)
+  replacing the per-flow `enablementState` chain; "attached IS enabled" removes a
+  state machine.
+- A coding agent and its flow are one reusable unit: the with-flow run is a full
+  flow run, inheriting budget/gates/promotion/human-gate machinery with no new
+  engine code.
+- `onBudgetBreach` becomes a first-class `ExecutionPolicy` axis affecting all runs;
+  its UNSET default preserves today's flow behavior, so flow runs are unchanged
+  unless they opt in.
+- `terminate_restorable` gives agents (and flows) a recoverable, slot-freeing
+  budget terminal without a new run status; standalone-agent `escalate` resumes via
+  `session/resume` (a new non-flow branch in the raise path).
+- Migration 0062 is destructive to the `agents` catalog only; attachments/schedules
+  cascade and re-project, run history is preserved via SET NULL.
+- NO new `MaisterError` code (reuses `PRECONDITION | CONFLICT | CONFIG`). EN+RU
+  i18n for the new project-settings Agents surface.
+
+**Alternatives Considered:**
+- **Keep per-flow agent identity (`flow_ref_id`):** rejected — the canonical file
+  is package-root (ADR-105); per-flow keying mis-registers package-scoped agents
+  (the F4 bug) and makes "this agent belongs to package P" un-expressible.
+- **`run_kind='agent'` executes the flow graph:** rejected — either the
+  orchestrator-via-MCP model (ADR-098; an agent calling delegation tools, not
+  per-node persona augmentation) or relabeling a flow run as `agent`, forcing the
+  flow engine to special-case `run_kind` for budget/resume/reconcile/promotion.
+  Both are more code for less reuse than launching the flow as a flow run with the
+  agent as trigger+persona+policy.
+- **A brand-new agent-policy table/column set instead of riding `ExecutionPolicy`:**
+  rejected — `runs.execution_policy` already snapshots permission/human-gate
+  autonomy + the budget axis with fail-closed resolvers; `autoApply` /
+  `onBudgetBreach` are a thin projection over it, so the terminal/HITL paths reuse
+  the existing `*FromSnapshot` readers.
+- **A new run status for the no-escalate budget terminal:** rejected — a new status
+  fans out to every run consumer; `NeedsInputIdle` is already the recoverable,
+  slot-freed checkpoint state and fits exactly.
+
+**Numbering note.** ADR-103 (flow-routing, M38) is merged; ADR-104 (G4
+guardrail-hooks) is reserved by an implemented-but-unmerged sibling; ADR-105 (M39
+Stream A) is this branch. This ADR takes **106** per the ADR-105 note that reserved
+106/107 + migration 0062 for the package-runtime Stream B; a renumber pass runs at
+merge (T7.3) if the ordering changes (G4 / Stream-B may also claim 106/107 → likely
+renumber, e.g. 108).
+
 ### ADR-108: Declarative guardrail/hook engine — universal supervisor ACP-seam interceptor, native materializer seam, and hook-trip HITL escalation
 
 **Date:** 2026-06-23
@@ -8229,6 +8416,8 @@ to avoid squatting 104; a renumber pass may run at merge if the ordering changes
 - **Ship the claude-native backend before the universal core:** rejected — no universal native-hook file exists across the 5 adapters, so the supervisor layer must carry enforcement first; native is an optimization (defense-in-depth, claude-only, path-guard-only).
 - **Per-adapter opaque toolCall-body parsers:** rejected after the Phase-0 spike — the write path is standardized at `toolCall.locations[].path`; one extractor plus a kind-only fallback covers all families.
 - **A new `MaisterError` code, or modeling `hooks` as `enforced`:** rejected — a trip is a recoverable `NeedsInput` pause, not a terminal failure, and modeling supervisor enforcement as `enforced` in the static table would reopen the frozen ADR-041 strict-flip.
+
+---
 
 ---
 

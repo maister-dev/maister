@@ -129,6 +129,7 @@ flowchart TD
     Portfolio --> Board["projects/project-board /projects/SLUG"]
     Portfolio --> AddProject["projects/add-project /projects/new — admin"]
     Board --> SettingsGit["projects/project-settings-git /projects/SLUG?tab=settings — admin/owner"]
+    Board --> SettingsAgents["projects/project-settings-agents /projects/SLUG?tab=settings — Designed M39"]
     Rail --> RunsList["Runs ledger /runs"]
     RunsList --> FlowRun["Flow run detail /runs/ID"]
     Board --> FlowRun["Flow run detail /runs/ID"]
@@ -158,6 +159,7 @@ flowchart TD
 | [`projects/project-board.md`](projects/project-board.md) | Project board (columns, Markdown task cards, launch, task editing) | `/projects/{slug}` | Implemented |
 | [`projects/add-project.md`](projects/add-project.md) | Add-project form (mode selector, prefill, classified clone errors) | `/projects/new` | Implemented (M21); modes/prefill/errors Designed (ADR-093) |
 | [`projects/project-settings-git.md`](projects/project-settings-git.md) | Project Settings → Git (remotes table + persist-config) | `/projects/{slug}?tab=settings` | Designed (ADR-093) |
+| [`projects/project-settings-agents.md`](projects/project-settings-agents.md) | Project Settings → Agents (attach/enable, triggers, runner + autonomy policy) | `/projects/{slug}?tab=settings` | Designed (M39, ADR-106) |
 | [`studio/README.md`](studio/README.md) | Flow Studio redesign (area design: overview · sources · packages · package detail · editor · local workspace) | `/studio/*` | Implemented; standalone artifact pickers / move-to-package planned |
 | [`studio/package-viewer.md`](studio/package-viewer.md) | Package viewer (BoM tabs, wide flow previews, flow/skill/agent detail) | `/studio/packages/{ref}` | Implemented |
 | [`studio/local-workspace.md`](studio/local-workspace.md) | Local packages workspace (create/import/edit/delete) | `/studio/local` | Implemented |

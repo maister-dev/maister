@@ -13,6 +13,14 @@ column-level narrative.
 > `0051_agents_package_source.sql` reshapes `agents` to package provenance
 > (drops `scope`/`project_id`, adds `flow_ref_id`/`version_label`/`origin`/
 > `recommended`/`workspace_ref` — ADR-089 rework).
+>
+> **(Designed — ADR-106, migration `0062`)** M39 re-keys the catalog per-package:
+> `agents.flow_ref_id` → `package_name` (NOT NULL, = `package_installs.name`),
+> reindex `agents_flow_ref_idx` → `agents_package_name_idx`, add `agents.flow_ref`
+> + `agents.branch_base`, extend `recommended` with `executionPolicy`, and add
+> `agent_project_links.branch_base` + `agent_project_links.execution_policy_override`.
+> The ERD/tables below show the post-0062 shape; the M34 columns they replace are
+> noted inline.
 
 ```mermaid
 erDiagram
@@ -26,8 +34,8 @@ erDiagram
     AGENTS ||--o{ PROJECT_TOKENS : "ephemeral agent tokens (CASCADE)"
 
     AGENTS {
-        text id PK "package-qualified flowRefId:stem (ADR-089 rework)"
-        text flow_ref_id "NOT NULL — providing package"
+        text id PK "package-qualified packageName:stem (ADR-106; was flowRefId:stem)"
+        text package_name "NOT NULL — providing package = package_installs.name (ADR-106; was flow_ref_id)"
         text version_label "NOT NULL — newest registered revision"
         text origin "git|authored"
         text name "NOT NULL — frontmatter"
@@ -39,8 +47,10 @@ erDiagram
         jsonb triggers "NOT NULL — subset of manual|cron|domain_event|webhook|flow"
         jsonb capability_profile "NULL — M14 shape"
         text risk_tier "read_only|standard|destructive"
-        jsonb recommended "NULL — runner/cron/events attach pre-fill"
-        text source_path "NOT NULL — agents/stem.md in the newest revision"
+        jsonb recommended "NULL — runner/branch_base/cron/events/executionPolicy seed (ADR-106)"
+        text flow_ref "NULL — same-package flow the agent drives (ADR-106)"
+        text branch_base "NULL — agent branch base, default project main (ADR-106)"
+        text source_path "NOT NULL — maister-agents/stem.md in the newest revision"
         boolean enabled "NOT NULL DEFAULT true"
         timestamptz quarantined_at "NULL — dirty-watchdog flag"
         text quarantine_reason "NULL"
@@ -54,6 +64,8 @@ erDiagram
         text project_id FK "NOT NULL -> projects(id) CASCADE"
         boolean enabled "NOT NULL DEFAULT true"
         text runner_override_id FK "NULL -> platform_acp_runners(id) SET NULL"
+        text branch_base "NULL — instance override of branch base (ADR-106)"
+        jsonb execution_policy_override "NULL — instance override of autoApply/onBudgetBreach (ADR-106)"
         timestamptz created_at
         timestamptz updated_at
     }
@@ -100,7 +112,7 @@ future Mγ stage).
 
 | Table | Index | Columns | Purpose |
 | ----- | ----- | ------- | ------- |
-| `agents` | `agents_flow_ref_idx` | `(flow_ref_id)` | Providing-package lookups (registration/resync, available-list filter). |
+| `agents` | `agents_package_name_idx` (ADR-106; was `agents_flow_ref_idx`) | `(package_name)` | Providing-package lookups (registration/resync, available-list filter). |
 | `agent_project_links` | `agent_project_links_project_idx` | `(project_id)` | Attached-agents-per-project reads. |
 | `agent_schedules` | `agent_schedules_project_agent_idx` | `(project_id, agent_id)` | Binding lookups. |
 | `agent_schedules` | `agent_schedules_due_cron_idx` | `(trigger_type, enabled, next_fire_at)` | Due-cron scan on the `agent_tick.dispatcher` tick. |
@@ -124,10 +136,20 @@ leave through their providing package, and `resync` disables missing catalog
 rows instead of deleting them. The `ON DELETE` actions remain FK backstops for
 future/admin maintenance paths and preserve terminal run history.
 
+**Migration 0062 data policy (Designed — ADR-106).** The per-flow → per-package
+re-key is destructive to the catalog only: migration 0062 runs `DELETE FROM
+agents` (which CASCADE-deletes `agent_project_links` + `agent_schedules`, and
+SET-NULLs `runs.agent_id` so run history survives) before/while reshaping the
+columns, then a post-migration resync (startup reconcile + admin
+`POST /api/admin/agents/resync`) re-projects the catalog from installed packages
+under the new `package_name` key.
+
 ## Linked artifacts
 
 - Process flows: [`../system-analytics/agents.md`](../system-analytics/agents.md).
 - Global ERD: [`erd.md`](erd.md); run columns also in [`runs-domain.md`](runs-domain.md).
 - Narrative: [`../database-schema.md`](../database-schema.md).
-- Decision records: ADR-089, ADR-090 in [`../decisions.md`](../decisions.md).
-- Source (Implemented): `web/lib/db/schema.ts` (migration `0049_platform_agents.sql`).
+- Decision records: ADR-089, ADR-090, ADR-106 (M39 per-package re-key) in
+  [`../decisions.md`](../decisions.md).
+- Source (Implemented): `web/lib/db/schema.ts` (migration `0049_platform_agents.sql`);
+  M39 reshape `web/lib/db/migrations/0062_*.sql` (Designed — ADR-106).

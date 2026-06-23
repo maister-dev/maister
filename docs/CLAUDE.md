@@ -121,6 +121,7 @@ per-doc template, and the classification rule.
 | [`screens/mcps.md`](screens/mcps.md) | Platform MCP catalog `/mcps` (admin). |
 | [`screens/projects/add-project.md`](screens/projects/add-project.md) | Add-project form `/projects/new`: onboarding mode selector, live name/task-key prefill, classified clone-error remediation (ADR-093). |
 | [`screens/projects/project-settings-git.md`](screens/projects/project-settings-git.md) | Project Settings → Git (block): remotes table + add/edit/remove + push/fetch, persist-config action + banner (ADR-093). |
+| [`screens/projects/project-settings-agents.md`](screens/projects/project-settings-agents.md) | Project Settings → Agents (block): attach/enable agents from attached packages, cron/event triggers, runner override, autoApply/onBudgetBreach, branch base (M39, ADR-106). |
 | [`screens/studio/README.md`](screens/studio/README.md) | Flow Studio redesign area (overview · sources · packages · package detail · editor · local workspace), `/studio/*`. |
 | [`screens/studio/editor.md`](screens/studio/editor.md) | Flow editor surface (Phase B): 3-pane canvas + properties panel + top-bar drawers, node visual scheme, hideable rail. |
 

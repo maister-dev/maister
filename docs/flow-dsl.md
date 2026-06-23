@@ -446,8 +446,9 @@ these keys stay valid at any `engine_min`.
 An optional `agent: <agent-id>` on `ai_coding` node settings binds the node to
 a catalog agent — `maister-agents/<stem>.md` inside a flow package (dir converged
 in M39 — ADR-105), referenced by its
-package-qualified id `<flowRefId>:<stem>` (ADR-089 rework; no bare-stem
-same-package sugar in v1) — instead of relying solely on the inline prompt.
+package-qualified id `<packageName>:<stem>` (M39 — ADR-106; was `<flowRefId>:<stem>`,
+ADR-089; no bare-stem same-package sugar in v1) — instead of relying solely on the
+inline prompt.
 
 ```yaml
 nodes:
@@ -483,6 +484,69 @@ nodes:
 **Engine floor.** Declaring `settings.agent` requires
 `compat.engine_min >= 1.5.0`, else `CONFIG`; `MAISTER_ENGINE_VERSION` bumps
 `1.4.0 → 1.5.0`. Flows without the key stay valid at any `engine_min`.
+
+## Platform-agent `.md` frontmatter (M34 — Implemented; M39 additions Designed — ADR-106)
+
+A platform agent is `maister-agents/<stem>.md` at a package ROOT; its catalog id
+is `<packageName>:<stem>` (M39, ADR-106). The frontmatter is parsed by
+`agentDefinitionFrontmatterSchema` (`web/lib/agents/definition.ts`) — **strict**:
+an unknown key is refused with `MaisterError("CONFIG")` (ADR-089; the dead
+`scope`/`project` keys are refused loudly). Parsing never executes the body.
+
+```yaml
+---
+name: Code reviewer                 # required
+description: Reviews diffs for ...   # required
+runner: claude-code                 # optional — the agent's own runner (tier-3 of the standalone chain)
+workspace: repo_read                # required — none | repo_read | worktree
+workspace_ref: trigger              # optional — 'trigger' | <branch>; ONLY with workspace=repo_read
+mode: session                       # required — session | subagent
+triggers: [manual, cron]            # required, ≥1 — manual | cron | domain_event | webhook | flow
+risk_tier: read_only                # required — read_only | standard | destructive
+flow: bugfix                        # (ADR-106) optional — a same-package flow id the agent drives
+recommended:                        # optional — SEEDS the attach panel + per-project instance defaults
+  runner: claude-code
+  branch_base: develop              # (ADR-106) seeds agents.branch_base (default: project main)
+  cron: { expr: "0 9 * * 1", timezone: "Europe/Amsterdam" }
+  events: [task.created]
+  executionPolicy:                  # (ADR-106) projection over ExecutionPolicy
+    autoApply: full                 # off | permissions | full
+    onBudgetBreach: terminate_restorable   # escalate | terminate | terminate_restorable
+---
+The agent persona / system prompt (the body; MUST be non-empty).
+```
+
+**M39 additions (Designed — ADR-106).**
+
+- **`flow`** (top-level, optional, capabilityRefId-shaped) — the same-package flow
+  the agent drives, projected to the `agents.flow_ref` column. It MUST be a member
+  of the providing package manifest's `flows[].id`
+  (`package_installs.manifest.spec.flows[].id`); otherwise the definition is
+  reported invalid and never registered, and a later package upgrade that removes
+  the referenced flow re-flags it on resync (launch then refuses `PRECONDITION`).
+  With `flow` set, a launch runs that flow as a `run_kind='flow'` run with the
+  agent persona injected on every `ai_coding` node; without it, the launch is a
+  standalone `run_kind='agent'` ACP session — see
+  [system-analytics/agents.md](system-analytics/agents.md).
+- **`recommended.branch_base`** (optional) — projected to the `agents.branch_base`
+  column; the agent's base branch, default = the project main branch, overridable
+  per project on `agent_project_links.branch_base`.
+- **`recommended.executionPolicy`** (optional) — `{ autoApply?, onBudgetBreach? }`,
+  a projection over the rich `ExecutionPolicy`
+  ([system-analytics/execution-policy.md](system-analytics/execution-policy.md))
+  resolved (instance override → `recommended` → project/platform default) and
+  snapshotted onto `runs.execution_policy` at launch. `autoApply`: `off` (normal
+  HITL) | `permissions` (auto-approve ACP tool permissions; `human`/`form` still
+  pause) | `full` (also auto-pass `human` review). `onBudgetBreach`: `escalate` |
+  `terminate` | `terminate_restorable`. Each is a closed enum — an out-of-enum
+  value is refused `CONFIG`.
+
+**Cross-field rules** (Implemented + M39): `mode=subagent` allows ONLY the `flow`
+trigger; `workspace_ref` is valid ONLY with `workspace=repo_read`; `triggers` must
+not repeat; `recommended.cron` is server-validated (expr + IANA timezone) at
+registration. `recommended` only SEEDS defaults — the per-project instance
+(`agent_project_links`: `enabled`, `runner_override_id`, `branch_base`,
+`execution_policy_override`, `schedules`) overrides every field.
 
 ## Node `orchestrator` (M37 — Implemented)
 

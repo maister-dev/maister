@@ -596,9 +596,9 @@ paths:
         (ADR-089 rework; dir converged to `maister-agents/` in M39 — ADR-105);
         rows are the catalog projection of each package's
         newest Installed revision under package-qualified ids
-        (`<flowRefId>:<stem>`). There is NO create/edit/delete endpoint —
-        definitions change only through their providing package (git push +
-        upgrade, or Studio draft→publish).
+        (`<packageName>:<stem>`, ADR-106; was `<flowRefId>:<stem>`). There is NO
+        create/edit/delete endpoint — definitions change only through their
+        providing package (git push + upgrade, or Studio draft→publish).
       operationId: getAdminAgents
       responses:
         "200":
@@ -1544,10 +1544,10 @@ paths:
       summary: (M34 — Implemented) Attach-panel read model
       description: |
         Project membership `member`+. Returns agents attached to the project
-        (link + overrides + trigger bindings) and agents available to
-        attach — filtered to those whose providing package has a live
-        enabled pin in THIS project (ADR-089 rework). `projectId` resolves
-        from the URL slug (server-state).
+        (link + per-project instance overrides + trigger bindings) and agents
+        available to attach — filtered to those whose providing package is
+        ATTACHED in THIS project (ADR-106; was: had a live enabled flow pin).
+        `projectId` resolves from the URL slug (server-state).
       operationId: getProjectAgents
       parameters:
         - name: slug
@@ -1577,12 +1577,13 @@ paths:
       description: |
         Project `admin`+ (`editSettings`). Creates the
         `agent_project_links` row. `agentId` is package-qualified
-        (`<flowRefId>:<stem>`) and its providing package must be
-        configured+enabled in this project (`409 PRECONDITION` otherwise —
-        ADR-089 rework); `runnerOverrideId` is validated against the
-        enabled runner catalog. The attach panel pre-fills the bindings
-        modal from the definition's `recommended` block; nothing applies
-        without the explicit save.
+        (`<packageName>:<stem>`, ADR-106; was `<flowRefId>:<stem>`) and its
+        providing package must be ATTACHED + TRUSTED in this project
+        (`409 PRECONDITION` otherwise — ADR-106); `runnerOverrideId` is validated
+        against the enabled runner catalog. The attach panel pre-fills the
+        bindings modal from the definition's `recommended` block (runner, branch
+        base, schedules, autoApply/onBudgetBreach); nothing applies without the
+        explicit save.
       operationId: postProjectAgentLink
       parameters:
         - name: slug
@@ -1622,13 +1623,20 @@ paths:
   /api/projects/{slug}/agents/{agentId}:
     patch:
       tags: [projects]
-      summary: (M34 — Implemented) Update an attachment (one aggregating endpoint)
+      summary: (M34 — Implemented; M39 instance config Designed — ADR-106) Update an attachment (one aggregating endpoint)
       description: |
-        Project `admin`+. Partial body in ONE server transaction: link
-        fields (`enabled`, `runnerOverrideId` — explicit `null` clears) and
-        the optional full replacement of the agent's trigger bindings for
-        this project (`schedules` — cron rows croner-validated, event rows
-        validated against the ADR-086 kind taxonomy).
+        Project `admin`+. Partial body in ONE server transaction: link fields
+        (`enabled`, `runnerOverrideId` — explicit `null` clears), the optional
+        full replacement of the agent's trigger bindings for this project
+        (`schedules` — cron rows croner-validated, event rows validated against
+        the ADR-086 kind taxonomy), and **(Designed — ADR-106)** the per-project
+        INSTANCE policy overrides `branchBase` and `executionPolicyOverride`
+        (`{autoApply, onBudgetBreach}`; explicit `null` clears each → fall back to
+        the agent `recommended`). Disabling the link cascades `enabled=false` onto
+        the agent's `agent_schedules` rows AND revokes live agent tokens.
+        Identifiers: `slug` + `agentId` are url-params; `projectId` is server-state
+        (derived from `slug`); body fields are config values, never cross-resource
+        ids.
       operationId: patchProjectAgentLink
       parameters:
         - name: slug
@@ -1649,9 +1657,24 @@ paths:
               properties:
                 enabled: { type: boolean }
                 runnerOverrideId: { type: string, nullable: true }
+                branchBase:
+                  type: string
+                  nullable: true
+                  description: "(ADR-106) Instance branch-base override; explicit `null` clears → fall back to the agent `recommended`/project main."
+                executionPolicyOverride:
+                  type: object
+                  nullable: true
+                  allOf: [{ $ref: "#/components/schemas/AgentRunnerPolicy" }]
+                  description: "(ADR-106) Instance `{autoApply, onBudgetBreach}` override; explicit `null` clears → fall back to the agent `recommended`."
                 schedules:
                   type: array
                   items: { $ref: "#/components/schemas/AgentScheduleBody" }
+            example:
+              enabled: true
+              branchBase: develop
+              executionPolicyOverride: { autoApply: full, onBudgetBreach: terminate_restorable }
+              schedules:
+                - { triggerType: cron, cronExpr: "0 9 * * 1", timezone: "Europe/Amsterdam", enabled: true }
       responses:
         "200":
           description: Updated.
@@ -10171,18 +10194,33 @@ components:
             `origin`), `no-remote` (existing repo without an `origin` — PR
             promotion unavailable), or `initialized` (`git init` ran on a
             non-repo dir — unborn HEAD, needs a first commit before runs).
+    AgentRunnerPolicy:
+      type: object
+      description: |
+        (M39 — Designed, ADR-106) Per-agent runner policy, a projection over the
+        rich `ExecutionPolicy` axis model snapshotted onto `runs.execution_policy`
+        at launch. `autoApply` drives the HITL boundary: `off` → normal HITL;
+        `permissions` → auto-approve ACP tool permissions (human/form still pause);
+        `full` → also auto-pass human review. `onBudgetBreach` drives the budget
+        terminal path. `form`/`infra_recovery` HITL always pause; `budget_breach`
+        is never auto-applied.
+      additionalProperties: false
+      properties:
+        autoApply: { type: string, enum: [off, permissions, full] }
+        onBudgetBreach: { type: string, enum: [escalate, terminate, terminate_restorable] }
     AgentSummary:
       type: object
       description: |
-        (M34 — Implemented, ADR-089 rework) Catalog projection of an `agents`
-        row — package provenance + parsed frontmatter + enabled/quarantine
-        state. Ids are package-qualified `<flowRefId>:<stem>`. Never includes
-        token material or filesystem internals beyond `sourcePath`.
+        (M34 — Implemented; M39 package re-key Designed — ADR-106) Catalog
+        projection of an `agents` row — package provenance + parsed frontmatter +
+        enabled/quarantine state. Ids are package-qualified `<packageName>:<stem>`
+        (ADR-106; was `<flowRefId>:<stem>`). Never includes token material or
+        filesystem internals beyond `sourcePath`.
       required:
-        [id, flowRefId, versionLabel, origin, name, description, workspace, mode, triggers, riskTier, enabled]
+        [id, packageName, versionLabel, origin, name, description, workspace, mode, triggers, riskTier, enabled]
       properties:
         id: { type: string }
-        flowRefId: { type: string }
+        packageName: { type: string, description: "(ADR-106) Providing package = `package_installs.name` (was `flowRefId`)." }
         versionLabel: { type: string }
         origin: { type: string, enum: [git, authored] }
         name: { type: string }
@@ -10203,10 +10241,11 @@ components:
         recommended:
           type: object
           nullable: true
-          description: Package-recommended bindings — pre-fill the attach panel (RD5).
+          description: Package-recommended bindings — seed/pre-fill the attach panel (RD5).
           additionalProperties: false
           properties:
             runner: { type: string }
+            branchBase: { type: string, description: "(ADR-106) Recommended branch base." }
             cron:
               type: object
               additionalProperties: false
@@ -10216,6 +10255,12 @@ components:
             events:
               type: array
               items: { type: string }
+            executionPolicy: { $ref: "#/components/schemas/AgentRunnerPolicy" }
+        flowRef:
+          type: string
+          nullable: true
+          description: "(ADR-106) Same-package flow the agent drives (a `flows[].id` of the providing package manifest); `null` → standalone."
+        branchBase: { type: string, nullable: true, description: "(ADR-106) Agent branch base; defaults to the project main branch." }
         sourcePath: { type: string }
         enabled: { type: boolean }
         quarantinedAt: { type: string, format: date-time, nullable: true }
@@ -10223,14 +10268,21 @@ components:
     AttachedAgent:
       type: object
       description: |
-        (M34 — Implemented) Attach-panel row — the agent summary joined with its
-        link and trigger bindings for this project.
+        (M34 — Implemented; M39 instance config Designed — ADR-106) Attach-panel
+        row — the agent summary joined with its link, per-project INSTANCE
+        overrides, and trigger bindings for this project.
       required: [agent, linkId, enabled, schedules]
       properties:
         agent: { $ref: "#/components/schemas/AgentSummary" }
         linkId: { type: string, format: uuid }
         enabled: { type: boolean }
         runnerOverrideId: { type: string, nullable: true }
+        branchBase: { type: string, nullable: true, description: "(ADR-106) Instance override of the branch base; `null` → fall back to the agent `recommended`/project main." }
+        executionPolicyOverride:
+          type: object
+          nullable: true
+          allOf: [{ $ref: "#/components/schemas/AgentRunnerPolicy" }]
+          description: "(ADR-106) Instance override of `{autoApply, onBudgetBreach}`; `null` → fall back to the agent `recommended`."
         schedules:
           type: array
           items: { $ref: "#/components/schemas/AgentScheduleBody" }
