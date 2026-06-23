@@ -150,16 +150,25 @@ Resume: flow → `runFlow`; agent → the agent permission-HITL resume (`session
 scratch → deny + in-session notice, **no `NeedsInput`**. `onStuck` from
 `onStuckFromSnapshot` (fail-closed `escalate`); `assign = onStuck !== "notify_only"`.
 
-## 5. Supervisor seam (FROZEN)
+## 5. Supervisor seam (FROZEN — ordering amended Phase 2, 2026-06-23)
 
 Interceptor lands in `acp-client.ts` `requestPermission`, **after** L1
-`resolveReadOnlySessionDecision` / L2 `resolveReadOnlyAutoReject` / B1
-`autoApprovePermissions`, **before** the `session.permission_request` emit + the
+`resolveReadOnlySessionDecision` / L2 `resolveReadOnlyAutoReject` and **before** B1
+`autoApprovePermissions` + the `session.permission_request` emit + the
 pending-permission deferred. Pre-hoc for `path_guard` + `repetition` (the callback
 `await`s; the SDK does not run the tool until it resolves). `no_progress` is computed
 in `sessionUpdate` (post-hoc; cannot block). New `SessionRecord` counters:
 `lastToolCallSig?`, `repeatCount`, `turnsSinceProgress` (in-memory only; lost on
 supervisor crash → run reconciled `Crashed`; reset on resume).
+
+> **Amendment (Phase 2, owner-approved 2026-06-23).** The Phase-0 freeze placed the
+> interceptor *after* B1. That is wrong: B1 (`autoApprovePermissions`) returns inline
+> on any allow-shaped option, and **every `unattended` preset resolves to
+> `permissions=auto_approve`** (`execution-policy.ts` `PRESET_AXES`) — the exact runs
+> the two-tier default arms guardrails for. After-B1 placement would silently no-op
+> `path_guard` + `repetition` on them (`repetition`, which only auto-arms under
+> `unattended`, would be dead code). Guardrails are deny/halt layers like L1/L2 and
+> MUST precede the B1 approve layer. Corrected in code + `guardrail-hooks.md` + ADR-104.
 
 ## 6. Number & namespace reservation (FROZEN — re-confirm in T6.3)
 

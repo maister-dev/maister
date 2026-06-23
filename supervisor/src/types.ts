@@ -231,12 +231,8 @@ export const StartSessionRequestSchema = z
     hooksConfig: z
       .object({
         repetition: z.object({ max: z.number().int().min(1) }).strict(),
-        noProgress: z
-          .object({ maxTurns: z.number().int().min(1) })
-          .strict(),
-        pathGuard: z
-          .object({ allowedPaths: z.array(z.string()) })
-          .strict(),
+        noProgress: z.object({ maxTurns: z.number().int().min(1) }).strict(),
+        pathGuard: z.object({ allowedPaths: z.array(z.string()) }).strict(),
       })
       .partial()
       .strict()
@@ -325,6 +321,17 @@ export type AdapterLaunch = z.infer<typeof AdapterLaunchSchema>;
 export type McpServerInput = z.infer<typeof McpServerInputSchema>;
 export type StartSessionRequest = z.infer<typeof StartSessionRequestSchema>;
 export type SendPromptRequest = z.infer<typeof SendPromptRequestSchema>;
+
+// ADR-104 (M40): the resolved, flat guardrail rule set delivered on
+// StartSessionRequest.hooksConfig. Derived from the schema so the wire shape
+// and the in-memory type cannot drift. Each key absent = that rule not armed.
+export type HooksConfig = NonNullable<StartSessionRequest["hooksConfig"]>;
+
+// ADR-104 (M40): a guardrail rule and its frozen lifecycle/disposition — see the
+// rule × lifecycle matrix in docs/system-analytics/guardrail-hooks.md.
+export type HookRule = "path_guard" | "repetition" | "no_progress";
+export type HookLifecycle = "pre_tool_call" | "post_turn";
+export type HookDisposition = "deny" | "halt";
 
 export type StartSessionResponse = {
   sessionId: string;
@@ -444,6 +451,22 @@ export type SessionRecord = {
   // option for every permission request in this session, BELOW the read-only
   // layers. Resolved from the run's execution_policy snapshot in spawn.ts.
   autoApprovePermissions?: boolean;
+  // ADR-104 (M40): the resolved guardrail rule set for this session. Arms the
+  // universal supervisor interceptor; absent → the interceptor is a no-op
+  // (byte-identical to a pre-hook run). Mirrors StartSessionRequest.hooksConfig.
+  hooksConfig?: HooksConfig;
+  // ADR-104 (M40): in-memory guardrail counters — lost on supervisor crash (run
+  // reconciled Crashed) and reset on resume (a respawn builds a fresh record).
+  lastToolCallSig?: string;
+  repeatCount?: number;
+  turnsSinceProgress?: number;
+  // ADR-104 (M40): set once a repetition/no_progress halt fires; every later
+  // permission request is cancelled until the web tier checkpoints (the
+  // supervisor never self-kills on a trip — D1).
+  hookHalted?: boolean;
+  // ADR-104 (M40): WARN-once-per-session guard for the kind-only path-guard
+  // fallback (adapters that do not populate toolCall.locations).
+  hookFallbackWarned?: boolean;
 };
 
 export type PermissionOptionDescriptor = {
@@ -471,6 +494,20 @@ export type SessionEvent =
       monotonicId: number;
       requestId: string;
       options: ReadonlyArray<PermissionOptionDescriptor>;
+      toolCall: unknown;
+    }
+  // ADR-104 (M40): a guardrail rule tripped at the supervisor ACP seam. `deny`
+  // (path_guard) is resolved inline and the run continues; `halt` (repetition /
+  // no_progress) is escalated by the web tier (checkpoint + NeedsInput). The web
+  // consumer branches on `disposition`. `toolCall` is present for pre_tool_call
+  // rules (path_guard / repetition), null for no_progress.
+  | {
+      type: "session.hook_trip";
+      sessionId: string;
+      monotonicId: number;
+      rule: HookRule;
+      lifecycle: HookLifecycle;
+      disposition: HookDisposition;
       toolCall: unknown;
     }
   | {

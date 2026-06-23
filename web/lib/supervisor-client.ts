@@ -334,6 +334,19 @@ export type SupervisorEvent =
       body: string;
       seq?: number;
       mutationReverted?: boolean;
+    }
+  // ADR-104 (M40): a guardrail rule tripped at the supervisor ACP seam. `halt`
+  // (repetition / no_progress) is escalated by the web tier (checkpoint +
+  // NeedsInput, Phase 3); `deny` (path_guard) is record-only. Mirrors
+  // supervisor/src/types.ts + docs/api/async/supervisor-sse.asyncapi.yaml.
+  | {
+      type: "session.hook_trip";
+      sessionId: string;
+      monotonicId: number;
+      rule: "path_guard" | "repetition" | "no_progress";
+      lifecycle: "pre_tool_call" | "post_turn";
+      disposition: "deny" | "halt";
+      toolCall: unknown;
     };
 
 function baseUrl(): string {

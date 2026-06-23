@@ -117,6 +117,16 @@ type MinimalSupervisorEvent =
       hitlRequestId: string;
       role: "user" | "agent";
       body: string;
+    }
+  // ADR-104 (M40): mirrored to keep the projection total. A scratch hook_trip is
+  // ignored here (default → {}); the scratch in-session deny + chat notice (no
+  // NeedsInput, D2) is wired in Phase 3 (T3.3).
+  | {
+      type: "session.hook_trip";
+      monotonicId: number;
+      rule: "path_guard" | "repetition" | "no_progress";
+      lifecycle: "pre_tool_call" | "post_turn";
+      disposition: "deny" | "halt";
     };
 
 // Dialog-status / HITL side effects only. Message content is produced by the

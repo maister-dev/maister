@@ -162,21 +162,28 @@ as an in-session deny + chat notice (no `NeedsInput`).
 
 ## Process flow — pre_tool_call interceptor
 
+The interceptor runs after the read-only layers (L1/L2) and **before** B1
+auto-approve. This ordering is load-bearing: every `unattended` run resolves to
+`permissions=auto_approve` (B1), and B1 returns inline on an allow-shaped option —
+so placing the guardrails after B1 would silently no-op `path_guard` + `repetition`
+on exactly the runs the two-tier default arms them for. Guardrails are deny/halt
+layers (like L1/L2) and therefore precede the B1 approve layer.
+
 ```mermaid
 flowchart TD
   P["requestPermission(params)"] --> L1{"L1 readOnlySession?"}
   L1 -- "decided" --> R1["return inline (ADR-090)"]
   L1 -- "pass" --> L2{"L2 readOnlyTurn?"}
   L2 -- "decided" --> R2["return inline (ADR-078)"]
-  L2 -- "pass" --> B1{"B1 autoApprove?"}
-  B1 -- "decided" --> R3["return inline (B1)"]
-  B1 -- "pass" --> HK["hook interceptor (NEW)"]
+  L2 -- "pass" --> HK["hook interceptor (NEW)"]
   HK --> PG{"path_guard armed AND<br/>write-kind path outside allowedPaths?"}
   PG -- "yes" --> DENY["emit session.hook_trip{path_guard, deny}<br/>return cancelled — RUN CONTINUES"]
   PG -- "no" --> RP{"repetition armed AND<br/>sig repeats >= max?"}
   RP -- "yes" --> HALT["emit session.hook_trip{repetition, halt}<br/>return cancelled + stop issuing work"]
   RP -- "no" --> UPD["update counters (sig, repeatCount)"]
-  UPD --> HITL["fall through to the HITL deferred path"]
+  UPD --> B1{"B1 autoApprove?"}
+  B1 -- "decided" --> R3["return inline (B1)"]
+  B1 -- "pass" --> HITL["fall through to the HITL deferred path"]
 ```
 
 Write-path extraction is adapter-agnostic: `toolCall.locations[0].path` (the
@@ -237,8 +244,10 @@ resumes through the same agent-permission-HITL path that already drives it.
 ## Expectations (Designed — ADR-104)
 
 - The interceptor MUST run in `requestPermission` after L1 (`readOnlySession`) /
-  L2 (`readOnlyTurn`) / B1 (`autoApprovePermissions`) and before the HITL
+  L2 (`readOnlyTurn`) and BEFORE B1 (`autoApprovePermissions`) and the HITL
   deferred; a `pre_tool_call` decision MUST resolve before the SDK runs the tool.
+  The before-B1 placement is required so `path_guard` / `repetition` are NOT
+  bypassed by auto-approve (every `unattended` run is `permissions=auto_approve`).
 - `path_guard` MUST deny (cancelled outcome) a write-class tool call whose
   `toolCall.locations[].path` is outside the resolved `allowedPaths` and MUST let
   the run continue (deny-and-continue) — never `halt`.

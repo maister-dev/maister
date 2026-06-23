@@ -19,6 +19,14 @@ import {
   getAdapterRuntime,
   resolveResumeAction,
 } from "./adapter-registry";
+import {
+  classifyProgressUpdate,
+  HOOK_RULE_META,
+  noProgressTick,
+  repetitionTick,
+  resolvePathGuardDecision,
+  toolCallSignature,
+} from "./guardrail-hooks";
 import { modelCatalogCache } from "./model-catalog/cache";
 import { harvestSessionModels } from "./model-catalog/harvest";
 import {
@@ -31,6 +39,7 @@ import {
   isSupervisorError,
   SupervisorError,
   type ExecutorAgent,
+  type HookRule,
   type McpServerInput,
   type PermissionOptionDescriptor,
   type RunnerLaunch,
@@ -67,6 +76,9 @@ type ToolCallLike = {
   toolCallId?: string;
   title?: string;
   kind?: string;
+  // ADR-104 (M40): the standardized ACP write-path field — path_guard reads
+  // locations[0].path; absent for kind-only-fallback adapters.
+  locations?: Array<{ path?: string; line?: number }>;
 };
 
 // M30 (ADR-078 L2): unambiguous MUTATING ACP toolCall kinds. `execute`
@@ -338,6 +350,25 @@ export async function createAcpConnection(
     readable as unknown as Parameters<typeof acp.ndJsonStream>[1],
   );
 
+  // ADR-104 (M40): emit a session.hook_trip stamped with the rule's frozen
+  // lifecycle/disposition. The web tier escalates on `halt`; `deny` is
+  // record-only there. `toolCall` is the pre_tool_call call (null for no_progress).
+  const emitHookTrip = (rule: HookRule, toolCall: unknown): void => {
+    record.monotonicId += 1;
+    const meta = HOOK_RULE_META[rule];
+    const event: SessionEvent = {
+      type: "session.hook_trip",
+      sessionId,
+      monotonicId: record.monotonicId,
+      rule,
+      lifecycle: meta.lifecycle,
+      disposition: meta.disposition,
+      toolCall,
+    };
+
+    emitter.emit(SESSION_EVENT_CHANNEL, event);
+  };
+
   const clientImpl: acp.Client = {
     async sessionUpdate(params) {
       record.monotonicId += 1;
@@ -359,6 +390,47 @@ export async function createAcpConnection(
         },
         "session-update",
       );
+
+      // ADR-104 (M40): no_progress watchdog (post_turn; cannot block — the tool
+      // already ran). Count tool-call turns, reset on a write-kind (diff-producing)
+      // call, halt at >= maxTurns. On halt, cancel any in-flight permission
+      // deferred and stop; the web tier owns the escalate (the supervisor never
+      // self-kills).
+      if (record.hooksConfig?.noProgress && !record.hookHalted) {
+        const { isTurn, isProgress } = classifyProgressUpdate(params.update);
+
+        if (isTurn) {
+          const tick = noProgressTick(
+            { turnsSinceProgress: record.turnsSinceProgress ?? 0 },
+            isProgress,
+            record.hooksConfig.noProgress.maxTurns,
+          );
+
+          record.turnsSinceProgress = tick.turnsSinceProgress;
+
+          if (tick.tripped) {
+            record.hookHalted = true;
+            emitHookTrip("no_progress", null);
+
+            for (const requestId of pendingPermissions.requestIds(sessionId)) {
+              pendingPermissions.cancel(
+                sessionId,
+                requestId,
+                "hook_trip:no_progress",
+              );
+            }
+
+            logger.info(
+              {
+                sessionId,
+                turnsSinceProgress: tick.turnsSinceProgress,
+                maxTurns: record.hooksConfig.noProgress.maxTurns,
+              },
+              "[guardrail] no_progress halt",
+            );
+          }
+        }
+      }
     },
 
     async requestPermission(params) {
@@ -430,11 +502,88 @@ export async function createAcpConnection(
         };
       }
 
+      // ADR-104 (M40): the universal guardrail interceptor — runs after the
+      // read-only layers (L1/L2) and BEFORE B1 auto-approve, so a deny/halt
+      // resolves before the tool runs AND cannot be bypassed by auto-approve.
+      // (Every `unattended` run is permissions=auto_approve — the exact runs the
+      // two-tier default arms guardrails for; placing this after B1 would silently
+      // no-op path_guard + repetition on them. See ADR-104 / SDD §5.) No-op when
+      // the session carries no hooksConfig (byte-identical to a pre-hook run).
+      if (record.hooksConfig) {
+        // A prior repetition/no_progress halt fired → cancel every further tool
+        // call until the web tier checkpoints (the supervisor never self-kills).
+        if (record.hookHalted) {
+          return { outcome: { outcome: "cancelled" } };
+        }
+
+        // Rule 2 — path_guard (deny-and-continue): a write outside the lane is
+        // denied inline; the run continues. Repeated denials make no progress, so
+        // the no_progress breaker — not path_guard — is what eventually halts.
+        const pathDecision = resolvePathGuardDecision({
+          pathGuard: record.hooksConfig.pathGuard,
+          toolCall: tc,
+          worktreePath,
+        });
+
+        if (pathDecision?.decision === "deny") {
+          if (
+            pathDecision.reason === "kind_only_fallback" &&
+            !record.hookFallbackWarned
+          ) {
+            record.hookFallbackWarned = true;
+            logger.warn(
+              { sessionId, toolKind: tc.kind, adapter: args.adapter },
+              "[guardrail] path_guard kind-only fallback — adapter omits toolCall.locations; write-kind calls denied",
+            );
+          }
+
+          emitHookTrip("path_guard", params.toolCall);
+          logger.info(
+            { sessionId, toolKind: tc.kind, reason: pathDecision.reason },
+            "[guardrail] path_guard deny (run continues)",
+          );
+
+          return { outcome: { outcome: "cancelled" } };
+        }
+
+        // Rule 1 — repetition (halt): N consecutive identical tool-call signatures.
+        if (record.hooksConfig.repetition) {
+          const sig = toolCallSignature(params.toolCall);
+          const tick = repetitionTick(
+            {
+              lastToolCallSig: record.lastToolCallSig,
+              repeatCount: record.repeatCount ?? 0,
+            },
+            sig,
+            record.hooksConfig.repetition.max,
+          );
+
+          record.lastToolCallSig = tick.lastToolCallSig;
+          record.repeatCount = tick.repeatCount;
+
+          if (tick.tripped) {
+            record.hookHalted = true;
+            emitHookTrip("repetition", params.toolCall);
+            logger.info(
+              {
+                sessionId,
+                toolKind: tc.kind,
+                repeatCount: tick.repeatCount,
+                max: record.hooksConfig.repetition.max,
+              },
+              "[guardrail] repetition halt",
+            );
+
+            return { outcome: { outcome: "cancelled" } };
+          }
+        }
+      }
+
       // B1 (execution-policy permissions=auto_approve, L3): a session launched
-      // with autoApprovePermissions auto-selects the allow option inline —
-      // BELOW the read-only layers (L1 session / L2 gate-chat turn always win
-      // above). No allow-shaped option → fall through to the HITL deferred
-      // (never blind-approve or cancel).
+      // with autoApprovePermissions auto-selects the allow option inline — BELOW
+      // the read-only layers AND the guardrail interceptor (L1 / L2 / guardrails
+      // always win above). No allow-shaped option → fall through to the HITL
+      // deferred (never blind-approve or cancel).
       if (record.autoApprovePermissions === true) {
         const autoApprove = resolveAutoApproveOption(options);
 
