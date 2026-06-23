@@ -139,12 +139,14 @@ correctness and first-class kinds (behavior SSOT:
   click-to-select (canvas → inspector, with the node picker as the a11y fallback)
   and a node property tooltip/popover (type · prompt/model summary · transitions ·
   gates) sourced from `FlowNodeData`, mirrored in the editor.
-- **First-class kinds + create wizards.** Each of the four authorable kinds
+- **First-class kinds.** Each of the four authorable kinds
   (flows / platform agents / subagents / skills) gets a per-kind form editor + a
-  raw-file view + a create affordance even when the kind dir is empty (New Flow /
-  Platform Agent / Subagent / Skill, with templates). Platform agents live at
+  raw-file view, dispatched by inferred kind. Platform agents live at
   package-root `maister-agents/`; subagents at `capability/<id>/agents/` (lenient
   schema) — see [`../../system-analytics/agents.md`](../../system-analytics/agents.md).
+  **Create is a generic Add-File today** — the per-kind create wizards (New Flow /
+  Platform Agent / Subagent / Skill, with seeded templates) are **deferred** (#134,
+  A4); `newSubagentTemplate` exists but is not yet wired into a create flow.
 
 ## States
 

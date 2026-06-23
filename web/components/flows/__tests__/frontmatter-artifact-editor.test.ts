@@ -279,6 +279,63 @@ describe("FrontmatterArtifactEditor — rule", () => {
   });
 });
 
+describe("FrontmatterArtifactEditor — subagent (M39 A4 lenient kind)", () => {
+  // Parses as valid YAML but fails the LENIENT subagent schema (no description)
+  // → the ⚠ warning renders while the fields stay editable.
+  const SUBAGENT_INVALID = `---
+name: helper
+color: blue
+---
+You are a helper.
+`;
+  // Required fields present + a custom passthrough key (`favorite`) — valid.
+  const SUBAGENT_VALID = `---
+name: helper
+description: A lenient helper subagent
+tools: Read, Edit
+model: inherit
+favorite: violet
+---
+You are a helper.
+`;
+
+  it("shows the subagent (NOT platform-agent) warning when the lenient schema fails", () => {
+    const html = renderToStaticMarkup(
+      createElement(FrontmatterArtifactEditor, {
+        content: SUBAGENT_INVALID,
+        kind: "subagent",
+        labels,
+        onChange: () => {},
+      }),
+    );
+
+    expect(html).toContain('data-testid="subagent-schema-warning"');
+    expect(html).toContain("Subagent frontmatter has issues.");
+    // The strict platform-agent warning must NEVER be used for a subagent.
+    expect(html).not.toContain('data-testid="agent-schema-warning"');
+    expect(html).not.toContain("Platform-agent frontmatter has issues.");
+    // Field stays editable despite the warning.
+    expect(html).toContain('value="helper"');
+    // Lenient: no agent-only field leaks onto a subagent.
+    expect(html).not.toContain("Risk tier");
+  });
+
+  it("renders no warning for a valid lenient subagent (custom keys allowed)", () => {
+    const html = renderToStaticMarkup(
+      createElement(FrontmatterArtifactEditor, {
+        content: SUBAGENT_VALID,
+        kind: "subagent",
+        labels,
+        onChange: () => {},
+      }),
+    );
+
+    expect(html).not.toContain("subagent-schema-warning");
+    expect(html).toContain('value="helper"');
+    expect(html).toContain("A lenient helper subagent");
+  });
+});
+
 describe("FrontmatterArtifactEditor — malformed", () => {
   it("shows the malformed notice instead of crashing", () => {
     const html = renderToStaticMarkup(

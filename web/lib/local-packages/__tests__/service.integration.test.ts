@@ -26,6 +26,7 @@ import {
   ensureDefaultLocalPackage,
   getDefaultLocalPackage,
   getLocalPackage,
+  listAllLocalPackages,
   listFiles,
   listLocalPackages,
   readFileContent,
@@ -168,11 +169,15 @@ describe("local-packages substrate (integration)", () => {
     expect((await readLockState(pkgId, "session-1", db)).held).toBe(false);
   });
 
-  it("archive hides the package from the active list", async () => {
+  it("archive hides the package from the active list but not the management list", async () => {
     await setLocalPackageStatus(pkgId, "archived", db);
     const active = await listLocalPackages(db);
+    const all = await listAllLocalPackages(db);
 
+    // Active-only readers (API list, attach) drop it; the /studio/local
+    // management list (listAllLocalPackages) still shows it behind the toggle.
     expect(active.some((p) => p.id === pkgId)).toBe(false);
+    expect(all.some((p) => p.id === pkgId)).toBe(true);
   });
 
   it("delete removes the row and the working dir", async () => {

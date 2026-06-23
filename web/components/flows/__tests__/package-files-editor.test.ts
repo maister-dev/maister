@@ -313,4 +313,95 @@ describe("PackageFilesEditor", () => {
     expect(html).toContain('data-testid="artifact-content-issues"');
     expect(html).toContain('data-testid="artifact-content-block"');
   });
+
+  it("dispatches a selected maister-package.yaml to the package manifest form (M39 A1)", () => {
+    const html = renderToStaticMarkup(
+      createElement(PackageFilesEditor, {
+        disabled: false,
+        files: [
+          {
+            kind: "manifest",
+            path: "maister-package.yaml",
+            content: "schemaVersion: 1\nname: demo\nflows: []\n",
+          },
+        ],
+        kindLabels: KIND_LABELS,
+        labels: LABELS,
+      }),
+    );
+
+    expect(html).toContain('data-testid="package-manifest-form"');
+    expect(html).toContain('data-testid="manifest-field-name"');
+  });
+
+  it("dispatches a selected capability subagent .md to the frontmatter editor (M39 A4)", () => {
+    const html = renderToStaticMarkup(
+      createElement(PackageFilesEditor, {
+        disabled: false,
+        files: [
+          {
+            kind: "subagent",
+            path: "capability/demo/agents/helper.md",
+            content: "---\nname: helper\ndescription: A helper\n---\nBody\n",
+          },
+        ],
+        kindLabels: KIND_LABELS,
+        labels: LABELS,
+      }),
+    );
+
+    // Lands in the lenient frontmatter artifact editor (heading + name field),
+    // not the script or form-schema host. (The frontmatter body itself renders
+    // via a readme code-editor, so that testid is expected here.)
+    expect(html).toContain("Frontmatter");
+    expect(html).toContain('value="helper"');
+    expect(html).toContain('value="A helper"');
+    expect(html).not.toContain('data-testid="script-exec-trust-banner"');
+    expect(html).not.toContain('data-testid="form-schema-builder"');
+  });
+
+  it("honors initialSelectedPath over the first-file default", () => {
+    const html = renderToStaticMarkup(
+      createElement(PackageFilesEditor, {
+        disabled: false,
+        files: [
+          { kind: "readme", path: "README.md", content: "Hello" },
+          {
+            kind: "manifest",
+            path: "maister-package.yaml",
+            content: "schemaVersion: 1\nname: demo\nflows: []\n",
+          },
+        ],
+        initialSelectedPath: "maister-package.yaml",
+        kindLabels: KIND_LABELS,
+        labels: LABELS,
+      }),
+    );
+
+    // The manifest (not the first-file README) is selected + rendered.
+    expect(html).toContain('data-testid="package-manifest-form"');
+  });
+
+  it("falls back to the first file when initialSelectedPath is absent from files", () => {
+    const html = renderToStaticMarkup(
+      createElement(PackageFilesEditor, {
+        disabled: false,
+        files: [
+          { kind: "readme", path: "README.md", content: "Hello" },
+          {
+            kind: "manifest",
+            path: "maister-package.yaml",
+            content: "schemaVersion: 1\nname: demo\nflows: []\n",
+          },
+        ],
+        initialSelectedPath: "does/not/exist.yaml",
+        kindLabels: KIND_LABELS,
+        labels: LABELS,
+      }),
+    );
+
+    // README (first file) renders via the generic editor; the manifest form does not.
+    expect(html).toContain('data-testid="code-editor"');
+    expect(html).not.toContain('data-testid="package-manifest-form"');
+  });
 });

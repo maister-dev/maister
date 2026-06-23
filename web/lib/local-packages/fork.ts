@@ -146,31 +146,41 @@ export async function forkPackageToLocal(opts: {
     "fork package to local",
   );
 
-  await cleanCopyExcludingGit(installedPath, workingDir);
-  await gitInitWithCommit(
-    workingDir,
-    DEFAULT_BRANCH,
-    `maister: fork ${opts.sourceRef} to local package`,
-  );
+  let row: LocalPackage | undefined;
 
-  const inserted = await resolveDb(opts.db)
-    .insert(lp)
-    .values({
-      name,
-      slug,
+  try {
+    await cleanCopyExcludingGit(installedPath, workingDir);
+    await gitInitWithCommit(
       workingDir,
-      status: "active",
-      branchName: DEFAULT_BRANCH,
-      sourceInstallId: opts.sourceInstallId,
-      sourceRef: opts.sourceRef,
-      createdBy: opts.createdBy,
-    })
-    .returning();
+      DEFAULT_BRANCH,
+      `maister: fork ${opts.sourceRef} to local package`,
+    );
 
-  const row = inserted[0] as LocalPackage | undefined;
+    const inserted = await resolveDb(opts.db)
+      .insert(lp)
+      .values({
+        name,
+        slug,
+        workingDir,
+        status: "active",
+        branchName: DEFAULT_BRANCH,
+        sourceInstallId: opts.sourceInstallId,
+        sourceRef: opts.sourceRef,
+        createdBy: opts.createdBy,
+      })
+      .returning();
+
+    row = inserted[0] as LocalPackage | undefined;
+  } catch (err) {
+    // Any failure AFTER the dir exists (copy / git-init / insert) rolls back the
+    // scaffold so a failed fork leaves no orphan working dir.
+    await rm(workingDir, { recursive: true, force: true }).catch(
+      () => undefined,
+    );
+    throw err;
+  }
 
   if (!row) {
-    // Roll back the copied scaffold so a failed insert leaves no orphan dir.
     await rm(workingDir, { recursive: true, force: true }).catch(
       () => undefined,
     );
@@ -180,12 +190,57 @@ export async function forkPackageToLocal(opts: {
   return { localPackageId: row.id, alreadyExists: false };
 }
 
-// (M36 T2.6) Element-level fork: copy EXACTLY ONE element (a flow dir / skill
-// bundle / agent .md / rule file at `elementPath`) from an installed package
-// into the caller-project's default ("virtual") local package, created on first
-// use (race-safe). `elementPath` is body-controlled → confined inside BOTH the
-// source bundle and the destination working dir before any fs copy. Copying the
-// rest of the source is forbidden. Executes NOTHING.
+// Resolve + confine + stat ONE element inside an installed package's SOURCE
+// bundle BEFORE any local package is created — a body-controlled `elementPath`
+// that escapes (`..`/`.git`/abs/symlink) throws PRECONDITION, and a missing
+// element/bundle throws PRECONDITION/CONFIG, so a failed element-fork persists
+// NOTHING. Shared by both element-fork entry points.
+async function loadSourceElement(opts: {
+  sourceInstallId: string;
+  elementPath: string;
+  db?: Db;
+}): Promise<{ srcAbs: string; isDirectory: boolean }> {
+  const { installedPath } = await loadInstallSource(
+    opts.sourceInstallId,
+    opts.db,
+  );
+  const srcAbs = await resolveWithinWorkingDir(installedPath, opts.elementPath);
+
+  try {
+    const st = await stat(srcAbs);
+
+    return { srcAbs, isDirectory: st.isDirectory() };
+  } catch {
+    throw new MaisterError(
+      "PRECONDITION",
+      `no such element in source package: ${opts.elementPath}`,
+    );
+  }
+}
+
+// Copy ONE confined element into a destination package's working dir. `dest` is
+// re-confined inside the working dir before any fs write; copying the rest of
+// the source is forbidden — only `elementPath` is written.
+async function copyElementInto(
+  pkg: LocalPackage,
+  elementPath: string,
+  src: { srcAbs: string; isDirectory: boolean },
+): Promise<void> {
+  const destAbs = await resolveWithinWorkingDir(pkg.workingDir, elementPath);
+
+  if (src.isDirectory) {
+    await cleanCopyExcludingGit(src.srcAbs, destAbs);
+  } else {
+    await mkdir(path.dirname(destAbs), { recursive: true });
+    await cp(src.srcAbs, destAbs, { force: true });
+  }
+}
+
+// (M36 T2.6) Element-level fork into the caller-project's default ("virtual")
+// local package, created on first use (race-safe). Copies EXACTLY ONE element (a
+// flow dir / skill bundle / agent `.md` / rule file at `elementPath`). Executes
+// NOTHING. Retained for Stream B — the centralized model uses
+// `forkElementToNewLocal`.
 export async function forkElementToDefault(opts: {
   projectId: string;
   projectName: string;
@@ -194,36 +249,13 @@ export async function forkElementToDefault(opts: {
   createdBy: string;
   db?: Db;
 }): Promise<ForkResult> {
-  const { installedPath } = await loadInstallSource(
-    opts.sourceInstallId,
-    opts.db,
-  );
-
-  // Confine the body-controlled element path inside the SOURCE bundle first —
-  // an escape/`.git` segment throws PRECONDITION before any package is created.
-  const srcAbs = await resolveWithinWorkingDir(installedPath, opts.elementPath);
-
-  let st: Awaited<ReturnType<typeof stat>>;
-
-  try {
-    st = await stat(srcAbs);
-  } catch {
-    throw new MaisterError(
-      "PRECONDITION",
-      `no such element in source package: ${opts.elementPath}`,
-    );
-  }
-
+  const src = await loadSourceElement(opts);
   const pkg = await ensureDefaultLocalPackage({
     projectId: opts.projectId,
     projectName: opts.projectName,
     createdBy: opts.createdBy,
     db: opts.db,
   });
-  const destAbs = await resolveWithinWorkingDir(
-    pkg.workingDir,
-    opts.elementPath,
-  );
 
   log.info(
     {
@@ -234,26 +266,17 @@ export async function forkElementToDefault(opts: {
     },
     "fork element to default local package",
   );
-
-  if (st.isDirectory()) {
-    await cleanCopyExcludingGit(srcAbs, destAbs);
-  } else {
-    await mkdir(path.dirname(destAbs), { recursive: true });
-    await cp(srcAbs, destAbs, { force: true });
-  }
+  await copyElementInto(pkg, opts.elementPath, src);
 
   return { localPackageId: pkg.id };
 }
 
 // (M39 A3) Element-level fork into a NEW centralized local package (the owner's
-// centralized model — NO project target). Copies EXACTLY ONE element (a flow
-// dir / skill bundle / agent `.md` / rule file at `elementPath`) from an
-// installed package into a freshly-created standalone local package named
-// `<elementName> (local)`; the editor then opens on it. `elementPath` is
-// confined inside BOTH the source bundle and the destination working dir before
-// any fs copy. The new package carries NO `source_install_id` lineage — it is a
-// PARTIAL copy, so whole-package fork dedup must never conflate it with a full
-// editable fork. Executes NOTHING.
+// centralized model — NO project target). Copies EXACTLY ONE element into a
+// freshly-created standalone package named `<elementName> (local)`; the editor
+// then opens on it. The new package carries NO `source_install_id` lineage — it
+// is a PARTIAL copy, so whole-package fork dedup must never conflate it with a
+// full editable fork. Executes NOTHING.
 export async function forkElementToNewLocal(opts: {
   sourceInstallId: string;
   elementPath: string;
@@ -261,35 +284,12 @@ export async function forkElementToNewLocal(opts: {
   createdBy: string;
   db?: Db;
 }): Promise<ForkResult> {
-  const { installedPath } = await loadInstallSource(
-    opts.sourceInstallId,
-    opts.db,
-  );
-
-  // Confine the body-controlled element path inside the SOURCE bundle first — an
-  // escape/`.git` segment throws PRECONDITION before any package is created.
-  const srcAbs = await resolveWithinWorkingDir(installedPath, opts.elementPath);
-
-  let st: Awaited<ReturnType<typeof stat>>;
-
-  try {
-    st = await stat(srcAbs);
-  } catch {
-    throw new MaisterError(
-      "PRECONDITION",
-      `no such element in source package: ${opts.elementPath}`,
-    );
-  }
-
+  const src = await loadSourceElement(opts);
   const pkg = await createLocalPackage({
     name: `${opts.elementName} (local)`,
     createdBy: opts.createdBy,
     db: opts.db,
   });
-  const destAbs = await resolveWithinWorkingDir(
-    pkg.workingDir,
-    opts.elementPath,
-  );
 
   log.info(
     {
@@ -299,13 +299,7 @@ export async function forkElementToNewLocal(opts: {
     },
     "fork element to new local package",
   );
-
-  if (st.isDirectory()) {
-    await cleanCopyExcludingGit(srcAbs, destAbs);
-  } else {
-    await mkdir(path.dirname(destAbs), { recursive: true });
-    await cp(srcAbs, destAbs, { force: true });
-  }
+  await copyElementInto(pkg, opts.elementPath, src);
 
   return { localPackageId: pkg.id, alreadyExists: false };
 }

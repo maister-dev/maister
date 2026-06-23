@@ -8,7 +8,7 @@ import {
   errorResponse,
   notFoundResponse,
 } from "@/lib/api/project-route-helpers";
-import { requireSession } from "@/lib/authz";
+import { requireGlobalRole } from "@/lib/authz";
 import { forkElementToNewLocal } from "@/lib/local-packages/fork";
 import { resolveStudioPackageByRef } from "@/lib/studio/load";
 
@@ -30,14 +30,16 @@ const bodySchema = z
 // `elementPath`/`elementName` are body-controlled: `elementPath` is confined
 // inside the source bundle by the service before any fs copy; `elementName` is a
 // display name only. Forks EXACTLY ONE element into a NEW centralized local
-// package (no project target — the centralized model). Studio authoring is
-// member-accessible → requireSession.
+// package (no project target — the centralized model). Element-fork CREATES a
+// local package → gated `requireGlobalRole("member")` like the sibling fork +
+// every studio authoring mutation (`requireSession` would admit viewer/inactive/
+// password-must-change accounts).
 export async function POST(
   req: NextRequest,
   { params }: RouteParams,
 ): Promise<NextResponse> {
   try {
-    const user = await requireSession();
+    const user = await requireGlobalRole("member");
     const { ref } = await params;
     const parsed = bodySchema.safeParse(await req.json());
 

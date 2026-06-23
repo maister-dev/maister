@@ -444,7 +444,8 @@ these keys stay valid at any `engine_min`.
 
 **(M34 — Implemented, [ADR-089](decisions.md#adr-089-platform-agent-catalog-with-per-agent-runner-and-a-five-source-trigger-model).)**
 An optional `agent: <agent-id>` on `ai_coding` node settings binds the node to
-a catalog agent — `agents/<stem>.md` inside a flow package, referenced by its
+a catalog agent — `maister-agents/<stem>.md` inside a flow package (dir converged
+in M39 — ADR-105), referenced by its
 package-qualified id `<flowRefId>:<stem>` (ADR-089 rework; no bare-stem
 same-package sugar in v1) — instead of relying solely on the inline prompt.
 

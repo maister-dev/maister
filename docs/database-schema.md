@@ -705,9 +705,11 @@ run_schedules {
 
 ## Platform agent tables (Implemented — ADR-089/ADR-090, migrations `0049`/`0050`/`0051`)
 
-The M34 agent catalog (package-source rework): `agents/<stem>.md` definitions
-INSIDE flow packages, projected into the index from each package's newest
-Installed revision; attachments and per-project overrides; trigger bindings.
+The M34 agent catalog (package-source rework): `maister-agents/<stem>.md`
+definitions INSIDE flow packages (the catalog/registry/effective read paths
+converged onto `maister-agents/` in M39 — ADR-105), projected into the index from
+each package's newest Installed revision; attachments and per-project overrides;
+trigger bindings.
 See [`db/agents-domain.md`](db/agents-domain.md) for the ERD and
 [`system-analytics/agents.md`](system-analytics/agents.md) for process flows.
 
@@ -728,7 +730,7 @@ agents {
   riskTier: 'read_only' | 'standard' | 'destructive',
   recommended? (jsonb),            // {runner?, cron?{expr,timezone}, events?} —
                                    //   attach-panel pre-fill (RD5)
-  sourcePath,                      // agents/<stem>.md in the newest revision
+  sourcePath,                      // maister-agents/<stem>.md in the newest revision
   enabled,                         // platform kill-switch
   quarantinedAt?, quarantineReason?,  // ADR-090 dirty-watchdog flag
   createdAt, updatedAt

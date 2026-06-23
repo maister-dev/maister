@@ -4,7 +4,7 @@
 
 Platform agents (**Implemented**, ADR-089/ADR-090, M34; Stage 3 of the
 platform-agents staged design) are first-class `.md`-defined actors — a
-triager, reviewers, monitors — shipped as `agents/<stem>.md` files INSIDE
+triager, reviewers, monitors — shipped as `maister-agents/<stem>.md` files INSIDE
 flow packages (same trust contour, versioning, and Studio authoring path),
 projected into a platform catalog under package-qualified ids
 (`<flowRefId>:<stem>`), attached to projects, executed as ACP sessions on
@@ -44,7 +44,7 @@ commit gate.
 
 ## Domain entities
 
-- **`agents`** (Implemented) — catalog projection over `agents/<stem>.md`
+- **`agents`** (Implemented) — catalog projection over `maister-agents/<stem>.md`
   inside the providing package's NEWEST Installed revision: `{ id (PK,
   package-qualified `<flowRefId>:<stem>`), flow_ref_id, version_label,
   origin (git|authored), name, description, runner_id?, workspace
@@ -108,12 +108,12 @@ stateDiagram-v2
 
 Definitions ship inside flow packages; the install finalize hook (git
 install, upgrade, and the authored Studio bridge share it) scans the
-revision's `agents/` dir and projects the catalog. Parsing never executes
+revision's `maister-agents/` dir and projects the catalog. Parsing never executes
 content; invalid files are reported, never written.
 
 ```mermaid
 flowchart TD
-    I[flow revision reaches packageStatus=Installed] --> S[scan installed_path/agents/*.md]
+    I[flow revision reaches packageStatus=Installed] --> S[scan installed_path/maister-agents/*.md]
     S --> P{frontmatter valid?<br/>strict schema, scope/project keys refused}
     P -- no --> R[reported in the registration summary — row NOT written]
     P -- yes --> U[upsert agents row under flowRefId:stem<br/>provenance + SET/CLEAR symmetric]

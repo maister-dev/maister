@@ -1,13 +1,13 @@
 "use client";
 
 import type { PackageGroup } from "@/lib/studio/group-packages";
+import type { ReactElement } from "react";
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
-import { readApiError } from "@/lib/api-error";
+import { useNewLocalPackage } from "@/components/studio/use-new-local-package";
 
 type TrustFilter = "all" | "trusted" | "untrusted";
 
@@ -21,48 +21,26 @@ const KIND_LABEL_KEYS: { key: keyof PackageGroup["counts"]; label: string }[] =
     { key: "rules", label: "kindRules" },
   ];
 
-export function PackagesList({ groups }: { groups: PackageGroup[] }) {
+export function PackagesList({
+  groups,
+}: {
+  groups: PackageGroup[];
+}): ReactElement {
   const t = useTranslations("studio");
-  const tApiErrors = useTranslations("apiErrors");
-  const router = useRouter();
   const [query, setQuery] = useState("");
   const [trust, setTrust] = useState<TrustFilter>("all");
-  const [creating, setCreating] = useState(false);
-  const [name, setName] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
   // Create a fresh local package (same flow as /studio/local) and open the
   // editor — a create affordance directly on the central packages view.
-  async function create(): Promise<void> {
-    const trimmed = name.trim();
-
-    if (trimmed === "") return;
-    setBusy(true);
-    setError(null);
-
-    try {
-      const res = await fetch("/api/studio/local-packages", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name: trimmed }),
-      });
-
-      if (!res.ok) {
-        setError(await readApiError(res, tApiErrors));
-
-        return;
-      }
-
-      const created = (await res.json()) as { id: string };
-
-      router.push(`/studio/edit/${created.id}`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
-  }
+  const {
+    creating,
+    setCreating,
+    name,
+    setName,
+    busy,
+    error,
+    setError,
+    create,
+  } = useNewLocalPackage();
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();

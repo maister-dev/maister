@@ -49,12 +49,15 @@ export function validatePackageArtifacts(input: {
     if (kind === "manifest") {
       validateManifest(path, content, errors);
     } else if (isFlowPath(path)) {
+      // flow.yaml classifies as "asset" (no flow leaf) — match it explicitly.
       validateFlow(path, content, errors);
-    } else if (kind === "agent_definition" && isAgentDefinitionPath(path)) {
+    } else if (isAgentDefinitionPath(path)) {
+      // Narrower than `kind === "agent_definition"`: only top-level `.md`
+      // definitions, never nested aux files under the dir.
       validateAgentDefinition(path, content, errors);
     } else if (kind === "skill") {
       validateSkill(path, content, input.files, errors);
-    } else if (isCapabilitySubagentPath(path)) {
+    } else if (kind === "subagent") {
       validateSubagent(path, content, errors);
     }
     // Everything else (readme/setup/script/schema/template/asset) is freeform —
@@ -81,13 +84,6 @@ function isFlowPath(path: string): boolean {
 // those dirs (nested, non-.md) are not definitions.
 function isAgentDefinitionPath(path: string): boolean {
   return /^(?:maister-agents|agents)\/[^/]+\.md$/.test(path);
-}
-
-// Capability subagents at `capability/<id>/agents/*.md` are Claude subagents
-// (materialized into `.claude/agents/` at run), NOT platform agents — validated
-// LENIENTLY (M39 A4). `classifyPackageFilePath` classifies these as `subagent`.
-function isCapabilitySubagentPath(path: string): boolean {
-  return /^capability\/[^/]+\/agents\/[^/]+\.md$/.test(path);
 }
 
 function validateManifest(

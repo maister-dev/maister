@@ -8,7 +8,7 @@ import {
   errorResponse,
   notFoundResponse,
 } from "@/lib/api/project-route-helpers";
-import { requireSession } from "@/lib/authz";
+import { requireGlobalRole } from "@/lib/authz";
 import { forkPackageToLocal } from "@/lib/local-packages/fork";
 import { resolveStudioPackageByRef } from "@/lib/studio/load";
 
@@ -33,16 +33,18 @@ const bodySchema = z
 
 // `ref` is the package name (url-param). It is resolved server-side to its
 // newest install (resolveStudioPackageByRef); the body carries only the
-// non-authority `forceNew` flag. Studio authoring is member-accessible — fork
-// needs only requireSession. Fork dedup: an existing active fork of the same
-// `source_install_id` is returned with HTTP 200 (`alreadyExists: true`); a fresh
-// fork is 201.
+// non-authority `forceNew` flag. Fork CREATES a local package (writes a working
+// dir) → gated `requireGlobalRole("member")`, matching every other studio
+// authoring mutation (create/commit/import/cut-version) — `requireSession`
+// alone would admit `viewer`, inactive, and password-must-change accounts. Fork
+// dedup: an existing active fork of the same `source_install_id` is returned
+// with HTTP 200 (`alreadyExists: true`); a fresh fork is 201.
 export async function POST(
   req: NextRequest,
   { params }: RouteParams,
 ): Promise<NextResponse> {
   try {
-    const user = await requireSession();
+    const user = await requireGlobalRole("member");
     const { ref } = await params;
     const parsed = bodySchema.safeParse(await req.json().catch(() => ({})));
     const customize = parsed.success ? parsed.data.customize === true : false;

@@ -592,8 +592,9 @@ paths:
       description: |
         Admin-only. Returns every registered agent with parsed frontmatter
         columns, package provenance, enabled state, and quarantine state.
-        Definitions are `agents/<stem>.md` files INSIDE flow packages
-        (ADR-089 rework); rows are the catalog projection of each package's
+        Definitions are `maister-agents/<stem>.md` files INSIDE flow packages
+        (ADR-089 rework; dir converged to `maister-agents/` in M39 — ADR-105);
+        rows are the catalog projection of each package's
         newest Installed revision under package-qualified ids
         (`<flowRefId>:<stem>`). There is NO create/edit/delete endpoint —
         definitions change only through their providing package (git push +
@@ -618,7 +619,7 @@ paths:
       tags: [admin]
       summary: (M34 — Implemented) Re-project the catalog from installed packages
       description: |
-        Admin-only. Re-scans `agents/*.md` in the NEWEST Installed revision
+        Admin-only. Re-scans `maister-agents/*.md` in the NEWEST Installed revision
         of every flow_ref and re-syncs rows with SET/CLEAR symmetry (a
         removed frontmatter field resets its column). Invalid definitions
         are reported and left untouched in the DB; rows whose providing
@@ -7626,10 +7627,10 @@ paths:
         working files (excluding `.git`) into a fresh git-init'd local package
         auto-named `<ref>-local`, recording `source_install_id` + `source_ref`.
         Executes NOTHING (no `setup.sh`, no MCP). A missing/unreadable source
-        bundle → `CONFIG` (400) with nothing persisted. Authenticated users only
-        (`requireSession`; Studio authoring is member-accessible).
+        bundle → `CONFIG` (400) with nothing persisted. Members only
+        (`requireGlobalRole("member")`, matching every studio authoring mutation).
 
-        (ADR-105 — Designed, M39 Stream A.) **Fork dedup:** if a fork of the same
+        (ADR-105 — Implemented, M39 Stream A.) **Fork dedup:** if a fork of the same
         `source_install_id` already exists, no new package is created — the existing
         one is returned as `{ localPackageId, alreadyExists: true }` with status
         **200**. A fresh fork returns **201**.
@@ -7678,10 +7679,11 @@ paths:
         description: "Package name (url-param). Resolved server-side to its newest install."
     post:
       tags: [flow-packages]
-      summary: (ADR-105 — Designed) Fork ONE element into a new local package
+      summary: (ADR-105 — Implemented) Fork ONE element into a new local package
       description: |
-        (ADR-105 — Designed, M39 Stream A — centralized model, supersedes the
-        ADR-096 project-default variant.) Copies EXACTLY ONE element (a flow dir /
+        (ADR-105 — Implemented, M39 Stream A — centralized model, supersedes the
+        ADR-096 project-default variant.) Members only (`requireGlobalRole("member")`).
+        Copies EXACTLY ONE element (a flow dir /
         skill bundle / agent `.md` / rule file at `elementPath`) from the package
         `ref` into a NEW centralized local package named `<elementName> (local)`;
         the editor then opens on it. No project target. The new package carries NO
@@ -13505,7 +13507,7 @@ components:
       required: [localPackageId]
       properties:
         localPackageId: { type: string, description: "The local package the fork landed in (a new `<ref>-local` / `<ref> (custom)` for a package fork; a new `<elementName> (local)` for an element fork)." }
-        alreadyExists: { type: boolean, description: "(ADR-105 — Designed) True when fork dedup returned a pre-existing fork of the same `source_install_id` (HTTP 200) instead of creating a new one (201). Absent/false on a fresh fork." }
+        alreadyExists: { type: boolean, description: "(ADR-105 — Implemented) True when fork dedup returned a pre-existing fork of the same `source_install_id` (HTTP 200) instead of creating a new one (201). Absent/false on a fresh fork." }
     PackageSource:
       type: object
       description: |

@@ -75,6 +75,11 @@ export function inferFileKind(relPath: string): string {
 
   if (relPath === "flow.yaml") return "flow";
   if (relPath === "maister-package.yaml") return "manifest";
+  // Capability subagents (`capability/<id>/agents/*.md`) are agent definitions —
+  // without this they fall through to the `.md` default ("readme") (M39 A4).
+  if (/^capability[\\/][^\\/]+[\\/]agents[\\/][^\\/]+\.md$/.test(relPath)) {
+    return "agent";
+  }
 
   switch (top) {
     case "flows":
@@ -169,30 +174,41 @@ export async function createLocalPackage(opts: {
   const workingDir = localPackageWorkingDir(slug);
 
   log.info({ slug, workingDir }, "create local package");
-  await scaffoldWorkingDir(workingDir, opts.name);
-  await gitInitWithCommit(
-    workingDir,
-    DEFAULT_BRANCH,
-    "maister: init local package",
-  );
 
-  const rows = await resolveDb(opts.db)
-    .insert(lp)
-    .values({
-      name: opts.name,
-      slug,
+  let row: LocalPackage | undefined;
+
+  try {
+    await scaffoldWorkingDir(workingDir, opts.name);
+    await gitInitWithCommit(
       workingDir,
-      status: "active",
-      branchName: DEFAULT_BRANCH,
-      sourceInstallId: opts.sourceInstallId ?? null,
-      createdBy: opts.createdBy,
-    })
-    .returning();
+      DEFAULT_BRANCH,
+      "maister: init local package",
+    );
 
-  const row = rows[0];
+    const rows = await resolveDb(opts.db)
+      .insert(lp)
+      .values({
+        name: opts.name,
+        slug,
+        workingDir,
+        status: "active",
+        branchName: DEFAULT_BRANCH,
+        sourceInstallId: opts.sourceInstallId ?? null,
+        createdBy: opts.createdBy,
+      })
+      .returning();
+
+    row = rows[0];
+  } catch (err) {
+    // Any failure AFTER the dir exists (scaffold / git-init / insert) rolls back
+    // the scaffold so a failed create leaves no orphan dir.
+    await rm(workingDir, { recursive: true, force: true }).catch(
+      () => undefined,
+    );
+    throw err;
+  }
 
   if (!row) {
-    // Roll back the scaffold so a failed insert leaves no orphan dir.
     await rm(workingDir, { recursive: true, force: true }).catch(
       () => undefined,
     );

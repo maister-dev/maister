@@ -84,7 +84,7 @@ export function PackageDetail({
   basePath: string;
   activeTab: string;
   page: number;
-}) {
+}): ReactElement {
   const t = useTranslations("studio");
   const tWorkbench = useTranslations("workbench");
   const newest = pkg.versions[0];

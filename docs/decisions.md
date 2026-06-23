@@ -6476,6 +6476,11 @@ existing `runs` substrate, and triggered from five sources.
 1–8: the original host-catalog draft was replaced by the package-source
 model below before this ADR ever merged.)*
 
+> **Superseded in part by [ADR-105](#adr-105-first-class-authored-package-kinds-and-centralized-studio-package-model):** the
+> platform-agent definition directory converged from `agents/<stem>.md` to
+> `maister-agents/<stem>.md` in M39 Stream A. References to `agents/<stem>.md`
+> below are historical; the runtime now reads `maister-agents/`.
+
 - **Definition = `agents/<stem>.md` inside a flow package; DB row = catalog
   projection.** Agents ride the SAME trust contour, versioning, and Studio
   authoring/publish path as flows — no separate package type, no host

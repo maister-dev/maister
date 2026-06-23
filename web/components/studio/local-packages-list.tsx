@@ -18,6 +18,7 @@ import {
   buildImportDialogLabels,
   ImportDialog,
 } from "@/components/studio/import-dialog";
+import { useNewLocalPackage } from "@/components/studio/use-new-local-package";
 import { readApiError } from "@/lib/api-error";
 
 // Client-safe local-package list item. `working_dir` and the lock session are
@@ -41,10 +42,18 @@ export function LocalPackagesList({
   const t = useTranslations("studio");
   const tApiErrors = useTranslations("apiErrors");
   const router = useRouter();
-  const [creating, setCreating] = useState(false);
-  const [name, setName] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // Create flow shared with the central /studio/packages list; `error`/`setError`
+  // double as this list's row-action error channel.
+  const {
+    creating,
+    setCreating,
+    name,
+    setName,
+    busy,
+    error,
+    setError,
+    create,
+  } = useNewLocalPackage();
   const [notice, setNotice] = useState<string | null>(null);
   const [importingId, setImportingId] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
@@ -60,36 +69,6 @@ export function LocalPackagesList({
   const visible = packages.filter(
     (pkg) => pkg.status === "active" || showArchived,
   );
-
-  async function create(): Promise<void> {
-    const trimmed = name.trim();
-
-    if (trimmed === "") return;
-    setBusy(true);
-    setError(null);
-
-    try {
-      const res = await fetch("/api/studio/local-packages", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name: trimmed }),
-      });
-
-      if (!res.ok) {
-        setError(await readApiError(res, tApiErrors));
-
-        return;
-      }
-
-      const created = (await res.json()) as { id: string };
-
-      router.push(`/studio/edit/${created.id}`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
-  }
 
   // Runs a row-scoped mutating request, surfacing a translated error on failure.
   // Returns true on success so the caller can clear inline state + refresh.
