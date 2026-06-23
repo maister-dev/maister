@@ -233,8 +233,11 @@ export async function loadPackageSourcesView(): Promise<{
 // kind-specific meta line the viewer cards render; a member missing/unreadable
 // on disk degrades to an id-only shape, never throws. `installed_path` never
 // leaves the server.
+// `path` = the element's source-bundle-relative path (M39 A3), so element-fork
+// copies the exact element (for flows, the `id` differs from the dir).
 export type PackageBomFlow = {
   id: string;
+  path: string;
   nodeCount: number;
   gateCount: number;
   engine: string | null;
@@ -256,6 +259,7 @@ export type PackageBomFlowGraph = {
 };
 export type PackageBomSkill = {
   id: string;
+  path: string;
   fileCount: number;
   subfolderCount: number;
   description: string;
@@ -264,6 +268,7 @@ export type PackageBomSkill = {
 // at launch; design §5.5).
 export type PackageBomAgent = {
   id: string;
+  path: string;
   description: string;
   triggers: string[];
   riskTier: string;
@@ -273,8 +278,12 @@ export type PackageBomMcp = { id: string };
 export type PackageBomRule = { id: string; path: string };
 // Capability subagents (capability/**/agents) — raw Claude-subagent .md, never
 // strict-parsed: lenient id + description only (materialized into `.claude/` at
-// run, NOT platform-agents).
-export type PackageBomSubagent = { id: string; description: string };
+// run, NOT platform-agents). `path` is null when the bundle file is unresolved.
+export type PackageBomSubagent = {
+  id: string;
+  path: string | null;
+  description: string;
+};
 
 export type PackageBom = {
   flows: PackageBomFlow[];
@@ -356,6 +365,7 @@ export async function getStudioPackageBom(
       for (const node of graph.nodes.values()) gateCount += node.gates.length;
       flows.push({
         id: flow.id,
+        path: flow.path,
         nodeCount: graph.order.length,
         gateCount,
         engine: parsed.compat?.engine_min ?? null,
@@ -373,6 +383,7 @@ export async function getStudioPackageBom(
       );
       flows.push({
         id: flow.id,
+        path: flow.path,
         nodeCount: 0,
         gateCount: 0,
         engine: null,
@@ -421,6 +432,7 @@ export async function getStudioPackageBom(
       }
       skills.push({
         id,
+        path: prefix.replace(/\/+$/, ""),
         fileCount: files.length,
         subfolderCount: subfolders.size,
         description,
@@ -442,7 +454,13 @@ export async function getStudioPackageBom(
       "bom bundle missing; skills id-only",
     );
     for (const id of skillIds) {
-      skills.push({ id, fileCount: 0, subfolderCount: 0, description: "" });
+      skills.push({
+        id,
+        path: `skills/${id}`,
+        fileCount: 0,
+        subfolderCount: 0,
+        description: "",
+      });
     }
   }
 
@@ -464,6 +482,7 @@ export async function getStudioPackageBom(
 
       platformAgents.push({
         id: stem,
+        path: `maister-agents/${stem}.md`,
         description: def.description,
         triggers: def.triggers,
         riskTier: def.riskTier,
@@ -476,6 +495,7 @@ export async function getStudioPackageBom(
       );
       platformAgents.push({
         id: stem,
+        path: `maister-agents/${stem}.md`,
         description: "",
         triggers: [],
         riskTier: "",
@@ -491,10 +511,12 @@ export async function getStudioPackageBom(
 
   for (const stem of manifest?.inventory.agents ?? []) {
     let description = "";
+    let subagentPath: string | null = null;
 
     try {
       const agentPath = resolveBundledAgentPath(agentFiles, stem);
 
+      subagentPath = agentPath ?? null;
       if (agentPath) {
         const read = await readInstalledPackageFile(
           { installedPath },
@@ -511,7 +533,7 @@ export async function getStudioPackageBom(
     } catch {
       log.warn({ installId, kind: "subagent", stem }, "bom subagent degrade");
     }
-    subagents.push({ id: stem, description });
+    subagents.push({ id: stem, path: subagentPath, description });
   }
 
   const mcps: PackageBomMcp[] = (manifest?.spec.mcps ?? []).map((m) => ({

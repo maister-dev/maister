@@ -28,6 +28,10 @@ import {
 } from "@/components/studio/package-home";
 import { LocalPackageDiffDrawer } from "@/components/studio/local-package-diff-drawer";
 import {
+  ChangeReviewDialog,
+  type ChangeReviewDialogLabels,
+} from "@/components/studio/change-review-dialog";
+import {
   StudioAiTab,
   type StudioAiTabLabels,
 } from "@/components/studio/studio-ai-tab";
@@ -72,6 +76,10 @@ export type LocalPackageEditorLabels = {
   crumbStudio: string;
   crumbLocal: string;
   endEdit: string;
+  // M39 (A3): the prominent top-bar "Commit state" action + the shared review
+  // dialog (diff + commit message + the commit-gate invalid-artifact list).
+  commitState: string;
+  changeReview: ChangeReviewDialogLabels;
 };
 
 // Keep-alive cadence. The server lock TTL defaults to 30 min
@@ -198,6 +206,11 @@ export function LocalPackageEditor({
   // turn end (assistantBusy → false).
   const [activeTab, setActiveTab] = useState<"properties" | "ai">("properties");
   const [assistantBusy, setAssistantBusy] = useState(false);
+  // M39 A3: the working-tree dirty count drives the top-bar "Commit state" badge
+  // and the review dialog. Tracked here (not only in the flow-editor diff drawer)
+  // so the badge works on the package-home view too, where the drawer is absent.
+  const [changedCount, setChangedCount] = useState<number | null>(null);
+  const [reviewOpen, setReviewOpen] = useState(false);
   // Latches once the AI tab is first opened so its panel (and its single ACP
   // run) stays mounted while the editor is open, even when toggled back to
   // Properties.
@@ -273,6 +286,31 @@ export function LocalPackageEditor({
       release();
     };
   }, [packageId, applyLock]);
+
+  // Track the working-tree changed-count for the Commit-state badge. Re-runs on
+  // diffRefresh (after any save / import / commit). A failed fetch leaves the
+  // badge unset rather than throwing.
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const res = await fetch(`/api/studio/local-packages/${packageId}/diff`);
+
+        if (!res.ok || cancelled) return;
+
+        const data = (await res.json()) as { changedCount: number };
+
+        if (!cancelled) setChangedCount(data.changedCount);
+      } catch {
+        // ignore — the badge stays unset
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [packageId, diffRefresh]);
 
   // The working-dir save action injected into FlowEditorTabs. It runs inside the
   // editor's own <form>, so it receives the submitted blob; it diffs against the
@@ -405,14 +443,37 @@ export function LocalPackageEditor({
             {initialTitle}
           </span>
         </div>
-        <button
-          className="shrink-0 rounded-[10px] border border-line bg-ivory px-3 py-1.5 font-mono text-[11px] font-semibold text-ink transition-colors hover:border-amber"
-          data-testid="local-editor-end-edit"
-          type="button"
-          onClick={endEdit}
-        >
-          {labels.endEdit}
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          {canManage ? (
+            <button
+              className="inline-flex items-center gap-1.5 rounded-[10px] border border-line bg-ivory px-3 py-1.5 font-mono text-[11px] font-semibold text-ink transition-colors hover:border-amber disabled:opacity-50"
+              data-testid="local-editor-commit-state"
+              disabled={readOnly || (changedCount ?? 0) === 0}
+              title={labels.commitState}
+              type="button"
+              onClick={() => setReviewOpen(true)}
+            >
+              <span aria-hidden>⎇</span>
+              <span>{labels.commitState}</span>
+              {changedCount && changedCount > 0 ? (
+                <span
+                  className="rounded-full bg-amber px-1.5 text-[10px] font-bold text-white"
+                  data-testid="local-editor-dirty"
+                >
+                  {changedCount}
+                </span>
+              ) : null}
+            </button>
+          ) : null}
+          <button
+            className="rounded-[10px] border border-line bg-ivory px-3 py-1.5 font-mono text-[11px] font-semibold text-ink transition-colors hover:border-amber"
+            data-testid="local-editor-end-edit"
+            type="button"
+            onClick={endEdit}
+          >
+            {labels.endEdit}
+          </button>
+        </div>
       </nav>
       <div className="flex shrink-0 flex-wrap items-center gap-2">
         <div
@@ -475,6 +536,20 @@ export function LocalPackageEditor({
         />
       ) : null}
 
+      {reviewOpen ? (
+        <ChangeReviewDialog
+          diffViewLabels={labels.diffView}
+          labels={labels.changeReview}
+          packageId={packageId}
+          sessionId={sessionIdRef.current}
+          onClose={() => setReviewOpen(false)}
+          onCommitted={() => {
+            setDiffRefresh((n) => n + 1);
+            router.refresh();
+          }}
+        />
+      ) : null}
+
       <div className="min-h-0 flex-1">
         {/* FlowEditorTabs stays MOUNTED across the tab toggle so canvas/YAML
             edit state survives switching to AI and back; only visibility flips. */}
@@ -505,6 +580,7 @@ export function LocalPackageEditor({
                   packageId={packageId}
                   refreshSignal={diffRefresh}
                   sessionId={sessionIdRef.current}
+                  onChanged={setChangedCount}
                 />
               }
               draftVersion={0}

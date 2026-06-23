@@ -2,6 +2,7 @@ import "server-only";
 
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
+import { z } from "zod";
 
 import {
   errorResponse,
@@ -18,16 +19,36 @@ const log = pino({
 
 type RouteParams = { params: Promise<{ ref: string }> };
 
+// Body fields (both optional). `forceNew` bypasses fork dedup to create a fresh
+// copy ("Fork a new copy"). `customize` is the centralized "make a divergent
+// copy" affordance: it forces a new copy AND names it `<ref> (custom)`. A
+// missing/empty body is the common case → dedup; a malformed body never 422s
+// here, it just falls back to the dedup default.
+const bodySchema = z
+  .object({
+    forceNew: z.boolean().optional(),
+    customize: z.boolean().optional(),
+  })
+  .strict();
+
 // `ref` is the package name (url-param). It is resolved server-side to its
-// newest install (resolveStudioPackageByRef); the body controls NOTHING here.
-// Studio authoring is member-accessible — fork needs only requireSession.
+// newest install (resolveStudioPackageByRef); the body carries only the
+// non-authority `forceNew` flag. Studio authoring is member-accessible — fork
+// needs only requireSession. Fork dedup: an existing active fork of the same
+// `source_install_id` is returned with HTTP 200 (`alreadyExists: true`); a fresh
+// fork is 201.
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: RouteParams,
 ): Promise<NextResponse> {
   try {
     const user = await requireSession();
     const { ref } = await params;
+    const parsed = bodySchema.safeParse(await req.json().catch(() => ({})));
+    const customize = parsed.success ? parsed.data.customize === true : false;
+    // Customize is a deliberate divergent copy → always a fresh copy.
+    const forceNew =
+      customize || (parsed.success ? parsed.data.forceNew === true : false);
     const resolution = await resolveStudioPackageByRef(user.id, user.role, ref);
 
     if (resolution.status === "not-found") {
@@ -41,14 +62,24 @@ export async function POST(
       sourceInstallId: resolution.installId,
       sourceRef: ref,
       createdBy: user.id,
+      forceNew,
+      name: customize ? `${ref} (custom)` : undefined,
     });
 
     log.info(
-      { ref, localPackageId: result.localPackageId },
+      {
+        ref,
+        localPackageId: result.localPackageId,
+        alreadyExists: result.alreadyExists === true,
+        forceNew,
+        customize,
+      },
       "package forked to local",
     );
 
-    return NextResponse.json(result, { status: 201 });
+    return NextResponse.json(result, {
+      status: result.alreadyExists ? 200 : 201,
+    });
   } catch (err) {
     return errorResponse(err, log, "studio/packages/[ref]/fork POST");
   }

@@ -188,4 +188,49 @@ describe("local-package git diff/commit/discard (integration)", () => {
 
     await discardWorkingDir(pkg);
   });
+
+  // (M39 ADR-105, A3) The commit-time validation gate is wired into
+  // commitWorkingDir: an invalid changed flow HARD-BLOCKS the commit, the error
+  // carries the per-artifact list, and nothing is written.
+  it("commitWorkingDir HARD-BLOCKS a changed flow that does not compile", async () => {
+    const pkg = (await getLocalPackage(pkgId, db))!;
+
+    await writeWorkingDirFile(pkg, "flows/bad/flow.yaml", "name: broken\n");
+
+    let caught: unknown;
+
+    try {
+      await commitWorkingDir(pkg, "add broken flow");
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toMatchObject({ code: "PRECONDITION" });
+    const detail = (
+      caught as { details?: { invalidArtifacts?: { path: string }[] } }
+    ).details;
+
+    expect(
+      detail?.invalidArtifacts?.some((a) => a.path === "flows/bad/flow.yaml"),
+    ).toBe(true);
+    // Nothing committed — the edit is still pending.
+    expect((await diffWorkingDir(pkg)).changedCount).toBeGreaterThan(0);
+
+    await discardWorkingDir(pkg);
+    expect((await diffWorkingDir(pkg)).changedCount).toBe(0);
+  });
+
+  it("commitWorkingDir lets a valid flow through the gate", async () => {
+    const pkg = (await getLocalPackage(pkgId, db))!;
+
+    await writeWorkingDirFile(
+      pkg,
+      "flows/ok/flow.yaml",
+      "schemaVersion: 1\nname: ok\nsteps:\n  - id: s1\n    type: cli\n    command: echo hi\n",
+    );
+
+    await commitWorkingDir(pkg, "add valid flow");
+
+    expect((await diffWorkingDir(pkg)).changedCount).toBe(0);
+  });
 });

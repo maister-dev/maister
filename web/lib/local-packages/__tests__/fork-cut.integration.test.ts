@@ -18,6 +18,7 @@ import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import {
   forkElementToDefault,
+  forkElementToNewLocal,
   forkPackageToLocal,
 } from "@/lib/local-packages/fork";
 import {
@@ -125,6 +126,10 @@ describe("fork to local (integration)", () => {
       sourceInstallId,
       sourceRef: "srcpkg",
       createdBy: userId,
+      // Fork dedup (A3): this test needs an isolated fork to edit/cut, so it
+      // bypasses dedup — otherwise the second+ fork of one install returns the
+      // shared existing fork.
+      forceNew: true,
       db,
     });
 
@@ -155,6 +160,92 @@ describe("fork to local (integration)", () => {
     await expect(
       stat(join(pkg!.workingDir, "skills/skill-one/.git")),
     ).rejects.toBeTruthy();
+  });
+
+  it("dedups a second whole-package fork of one install (alreadyExists, same id); forceNew makes a fresh copy", async () => {
+    // Test 1 already forked srcpkg (forceNew), so a PLAIN re-fork must return
+    // an existing active fork — never a duplicate.
+    const a = await forkPackageToLocal({
+      sourceInstallId,
+      sourceRef: "srcpkg",
+      createdBy: userId,
+      db,
+    });
+
+    expect(a.alreadyExists).toBe(true);
+
+    const b = await forkPackageToLocal({
+      sourceInstallId,
+      sourceRef: "srcpkg",
+      createdBy: userId,
+      db,
+    });
+
+    expect(b.alreadyExists).toBe(true);
+    expect(b.localPackageId).toBe(a.localPackageId);
+
+    // forceNew bypasses dedup → a fresh, distinct local package.
+    const fresh = await forkPackageToLocal({
+      sourceInstallId,
+      sourceRef: "srcpkg",
+      createdBy: userId,
+      forceNew: true,
+      db,
+    });
+
+    expect(fresh.alreadyExists).toBe(false);
+    expect(fresh.localPackageId).not.toBe(a.localPackageId);
+  });
+
+  it("a named (customize) fork uses the override name", async () => {
+    const custom = await forkPackageToLocal({
+      sourceInstallId,
+      sourceRef: "srcpkg",
+      createdBy: userId,
+      forceNew: true,
+      name: "srcpkg (custom)",
+      db,
+    });
+    const pkg = await getLocalPackage(custom.localPackageId, db);
+
+    expect(pkg).not.toBeNull();
+    expect(pkg!.name).toBe("srcpkg (custom)");
+    expect(pkg!.sourceInstallId).toBe(sourceInstallId);
+  });
+
+  it("element fork to a NEW local package copies just that element, no source lineage", async () => {
+    const result = await forkElementToNewLocal({
+      sourceInstallId,
+      elementPath: "flows/flow-a",
+      elementName: "flow-a",
+      createdBy: userId,
+      db,
+    });
+    const pkg = await getLocalPackage(result.localPackageId, db);
+
+    expect(pkg).not.toBeNull();
+    expect(pkg!.name).toBe("flow-a (local)");
+    // A partial copy → NO whole-package lineage (fork dedup never conflates it).
+    expect(pkg!.sourceInstallId).toBeNull();
+
+    const paths = (await listFiles(pkg!)).map((f) => f.path);
+
+    expect(paths).toContain("flows/flow-a/flow.yaml");
+    expect(paths).not.toContain("flows/flow-b/flow.yaml");
+    expect(paths).not.toContain("skills/skill-one/SKILL.md");
+    expect(paths).not.toContain("agents/agent-one.md");
+  });
+
+  it("element fork rejects an escaping element path, no package created", async () => {
+    await expect(
+      forkElementToNewLocal({
+        sourceInstallId,
+        elementPath: "../escape",
+        elementName: "evil",
+        createdBy: userId,
+        db,
+      }),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
   });
 
   it("element-level fork copies EXACTLY one element into the project default (created on first use)", async () => {
@@ -280,6 +371,10 @@ describe("cut version (integration)", () => {
       sourceInstallId,
       sourceRef: "srcpkg",
       createdBy: userId,
+      // Fork dedup (A3): this test needs an isolated fork to edit/cut, so it
+      // bypasses dedup — otherwise the second+ fork of one install returns the
+      // shared existing fork.
+      forceNew: true,
       db,
     });
     const pkg = await getLocalPackage(localPackageId, db);
@@ -362,6 +457,10 @@ describe("cut version (integration)", () => {
       sourceInstallId,
       sourceRef: "srcpkg",
       createdBy: userId,
+      // Fork dedup (A3): this test needs an isolated fork to edit/cut, so it
+      // bypasses dedup — otherwise the second+ fork of one install returns the
+      // shared existing fork.
+      forceNew: true,
       db,
     });
     const pkg = await getLocalPackage(localPackageId, db);

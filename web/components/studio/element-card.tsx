@@ -2,10 +2,13 @@ import type { ReactElement, ReactNode } from "react";
 
 import Link from "next/link";
 
-// One bill-of-materials member, rendered as a card (never a bare id chip). Pure
-// presentational Server Component — props in, markup out — so it renders under
-// renderToStaticMarkup (no jsdom) in the unit tests. The disk handle never
-// reaches here; the page resolves `href` + `meta` from server-side reads.
+import { ElementForkButton } from "@/components/studio/element-fork-button";
+
+// One bill-of-materials member, rendered as a card (never a bare id chip). A
+// presentational Server Component (props in, markup out) so it renders under
+// renderToStaticMarkup in the unit tests; when the element is forkable it embeds
+// the ElementForkButton client island. The disk handle never reaches here; the
+// page resolves `href` + `meta` + `forkPath` from server-side reads.
 
 export interface ElementCardLabels {
   view: string;
@@ -22,6 +25,11 @@ export interface ElementCardProps {
   // Optional secondary line (e.g. an agent's when-to-call summary).
   description?: ReactNode;
   labels: ElementCardLabels;
+  // M39 A3: when the element has a resolvable source path, the fork control forks
+  // it into a NEW centralized local package; `refName` = the package ref. Omitted
+  // → the disabled "later" stub (e.g. mcps, which have no forkable file path).
+  refName?: string;
+  forkPath?: string | null;
 }
 
 export function ElementCard({
@@ -30,6 +38,8 @@ export function ElementCard({
   meta,
   description,
   labels,
+  refName,
+  forkPath,
 }: ElementCardProps): ReactElement {
   return (
     <div
@@ -57,14 +67,23 @@ export function ElementCard({
         >
           {labels.view}
         </Link>
-        <span
-          aria-disabled="true"
-          className="cursor-default rounded-[9px] border border-dashed border-line px-2.5 py-1 text-[12px] text-mute"
-          data-testid="element-card-fork"
-          title={labels.forkPhase2Hint}
-        >
-          {labels.fork}
-        </span>
+        {refName && forkPath ? (
+          <ElementForkButton
+            elementName={name}
+            elementPath={forkPath}
+            label={labels.fork}
+            refName={refName}
+          />
+        ) : (
+          <span
+            aria-disabled="true"
+            className="cursor-default rounded-[9px] border border-dashed border-line px-2.5 py-1 text-[12px] text-mute"
+            data-testid="element-card-fork"
+            title={labels.forkPhase2Hint}
+          >
+            {labels.fork}
+          </span>
+        )}
       </div>
     </div>
   );

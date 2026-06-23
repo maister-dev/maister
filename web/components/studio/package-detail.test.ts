@@ -30,6 +30,7 @@ const pkg = {
     flows: [
       {
         id: "aif-dev",
+        path: "flows/aif-dev",
         nodeCount: 4,
         gateCount: 2,
         engine: "1.3.0",
@@ -45,6 +46,7 @@ const pkg = {
       },
       {
         id: "aif-init",
+        path: "flows/aif-init",
         nodeCount: 1,
         gateCount: 0,
         engine: null,
@@ -60,10 +62,17 @@ const pkg = {
       },
     ],
     platformAgents: [],
-    subagents: [{ id: "sub1", description: "a subagent" }],
+    subagents: [
+      {
+        id: "sub1",
+        path: "capability/x/agents/sub1.md",
+        description: "a subagent",
+      },
+    ],
     skills: [
       {
         id: "s1",
+        path: "skills/s1",
         fileCount: 3,
         subfolderCount: 1,
         description: "Use when package structure needs a careful plan.",

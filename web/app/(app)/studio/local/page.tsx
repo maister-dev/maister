@@ -7,7 +7,7 @@ import Link from "next/link";
 
 import { LocalPackagesList } from "@/components/studio/local-packages-list";
 import { requireSession } from "@/lib/authz";
-import { listLocalPackages } from "@/lib/local-packages/service";
+import { listAllLocalPackages } from "@/lib/local-packages/service";
 
 export async function generateMetadata(): Promise<Metadata> {
   const t = await getTranslations("studio");
@@ -18,7 +18,7 @@ export async function generateMetadata(): Promise<Metadata> {
 export default async function StudioLocalPage(): Promise<ReactElement> {
   await requireSession();
   const t = await getTranslations("studio");
-  const rows = await listLocalPackages();
+  const rows = await listAllLocalPackages();
 
   // Client-safe projection: `working_dir` + lock session stay server-side.
   const packages: LocalPackageListItem[] = rows.map((row) => ({
@@ -26,7 +26,7 @@ export default async function StudioLocalPage(): Promise<ReactElement> {
     name: row.name,
     slug: row.slug,
     isDefault: row.isDefault,
-    canDelete: row.projectId === null && !row.isDefault,
+    status: row.status,
   }));
 
   return (

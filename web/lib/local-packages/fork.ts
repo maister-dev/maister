@@ -6,13 +6,14 @@ import type { LocalPackage } from "@/lib/db/schema";
 import { cp, mkdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
 
-import { eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import pino from "pino";
 
 import { gitInitWithCommit } from "./git";
 import { localPackageWorkingDir, resolveWithinWorkingDir } from "./paths";
 import {
   cleanCopyExcludingGit,
+  createLocalPackage,
   ensureDefaultLocalPackage,
   uniqueSlugForName,
 } from "./service";
@@ -81,23 +82,62 @@ async function loadInstallSource(
   return { installedPath, name: install.name ?? "package" };
 }
 
-export type ForkResult = { localPackageId: string };
+export type ForkResult = { localPackageId: string; alreadyExists?: boolean };
 
-// (M36 T2.6) Package-level fork: clean-copy ALL of an installed package's
-// working files (minus `.git`) into a fresh git-init'd local package named
-// `<sourceName>-local`, recording the lineage. Executes NOTHING (no setup.sh,
-// no MCP). A missing source bundle → CONFIG, nothing persisted.
+// (M36 T2.6 · M39 A3) Package-level fork: clean-copy ALL of an installed
+// package's working files (minus `.git`) into a fresh git-init'd local package
+// named `<sourceName>-local`, recording the lineage. Executes NOTHING (no
+// setup.sh, no MCP). A missing source bundle → CONFIG, nothing persisted.
+//
+// Fork DEDUP (A3, owner): packages are centralized, so a second fork of the same
+// `source_install_id` returns the EXISTING active fork (`alreadyExists: true`,
+// HTTP 200) instead of a duplicate — unless `forceNew` ("Fork a new copy" /
+// "Customize for this project"). No DB uniqueness constraint exists (Stream A is
+// migration-free), so two truly-concurrent first forks of one install can still
+// each create a copy; that is rare, non-destructive (an extra deletable
+// package), and acceptable for the click-twice case this guards.
 export async function forkPackageToLocal(opts: {
   sourceInstallId: string;
   sourceRef: string;
   createdBy: string;
+  forceNew?: boolean;
+  // Override the fork's display name. "Customize" uses `<ref> (custom)` to mark a
+  // deliberate divergent copy (always paired with forceNew); the default fork is
+  // `<ref>-local`.
+  name?: string;
   db?: Db;
 }): Promise<ForkResult> {
+  if (!opts.forceNew) {
+    const existing = await resolveDb(opts.db)
+      .select({ id: lp.id })
+      .from(lp)
+      .where(
+        and(
+          eq(lp.sourceInstallId, opts.sourceInstallId),
+          eq(lp.status, "active"),
+        ),
+      )
+      // Oldest active fork wins — deterministic + intuitive ("your fork") when
+      // an explicit forceNew copy has produced more than one.
+      .orderBy(asc(lp.createdAt))
+      .limit(1);
+    const found = existing[0];
+
+    if (found) {
+      log.info(
+        { sourceInstallId: opts.sourceInstallId, localPackageId: found.id },
+        "fork dedup — returning existing fork",
+      );
+
+      return { localPackageId: found.id, alreadyExists: true };
+    }
+  }
+
   const { installedPath } = await loadInstallSource(
     opts.sourceInstallId,
     opts.db,
   );
-  const name = `${opts.sourceRef}-local`;
+  const name = opts.name ?? `${opts.sourceRef}-local`;
   const slug = await uniqueSlugForName(name, opts.db);
   const workingDir = localPackageWorkingDir(slug);
 
@@ -137,7 +177,7 @@ export async function forkPackageToLocal(opts: {
     throw new MaisterError("CONFLICT", "failed to create forked local package");
   }
 
-  return { localPackageId: row.id };
+  return { localPackageId: row.id, alreadyExists: false };
 }
 
 // (M36 T2.6) Element-level fork: copy EXACTLY ONE element (a flow dir / skill
@@ -203,4 +243,69 @@ export async function forkElementToDefault(opts: {
   }
 
   return { localPackageId: pkg.id };
+}
+
+// (M39 A3) Element-level fork into a NEW centralized local package (the owner's
+// centralized model — NO project target). Copies EXACTLY ONE element (a flow
+// dir / skill bundle / agent `.md` / rule file at `elementPath`) from an
+// installed package into a freshly-created standalone local package named
+// `<elementName> (local)`; the editor then opens on it. `elementPath` is
+// confined inside BOTH the source bundle and the destination working dir before
+// any fs copy. The new package carries NO `source_install_id` lineage — it is a
+// PARTIAL copy, so whole-package fork dedup must never conflate it with a full
+// editable fork. Executes NOTHING.
+export async function forkElementToNewLocal(opts: {
+  sourceInstallId: string;
+  elementPath: string;
+  elementName: string;
+  createdBy: string;
+  db?: Db;
+}): Promise<ForkResult> {
+  const { installedPath } = await loadInstallSource(
+    opts.sourceInstallId,
+    opts.db,
+  );
+
+  // Confine the body-controlled element path inside the SOURCE bundle first — an
+  // escape/`.git` segment throws PRECONDITION before any package is created.
+  const srcAbs = await resolveWithinWorkingDir(installedPath, opts.elementPath);
+
+  let st: Awaited<ReturnType<typeof stat>>;
+
+  try {
+    st = await stat(srcAbs);
+  } catch {
+    throw new MaisterError(
+      "PRECONDITION",
+      `no such element in source package: ${opts.elementPath}`,
+    );
+  }
+
+  const pkg = await createLocalPackage({
+    name: `${opts.elementName} (local)`,
+    createdBy: opts.createdBy,
+    db: opts.db,
+  });
+  const destAbs = await resolveWithinWorkingDir(
+    pkg.workingDir,
+    opts.elementPath,
+  );
+
+  log.info(
+    {
+      sourceInstallId: opts.sourceInstallId,
+      elementPath: opts.elementPath,
+      localPackageId: pkg.id,
+    },
+    "fork element to new local package",
+  );
+
+  if (st.isDirectory()) {
+    await cleanCopyExcludingGit(srcAbs, destAbs);
+  } else {
+    await mkdir(path.dirname(destAbs), { recursive: true });
+    await cp(srcAbs, destAbs, { force: true });
+  }
+
+  return { localPackageId: pkg.id, alreadyExists: false };
 }

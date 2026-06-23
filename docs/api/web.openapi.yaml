@@ -7632,9 +7632,27 @@ paths:
         (ADR-105 — Designed, M39 Stream A.) **Fork dedup:** if a fork of the same
         `source_install_id` already exists, no new package is created — the existing
         one is returned as `{ localPackageId, alreadyExists: true }` with status
-        **200**. A fresh fork returns **201**. ("Customize for this project" reuses
-        this path with an auto-named copy.)
+        **200**. A fresh fork returns **201**.
+
+        (ADR-105) The optional body bypasses dedup: `forceNew: true` makes a fresh
+        `<ref>-local` copy ("Fork a new copy"); `customize: true` is the
+        centralized "diverge this package" affordance — it forces a fresh copy
+        named `<ref> (custom)` (no project). An empty/absent body → dedup.
       operationId: forkStudioPackage
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                forceNew:
+                  type: boolean
+                  description: Bypass fork dedup — always create a fresh `<ref>-local` copy.
+                customize:
+                  type: boolean
+                  description: "(ADR-105) Force a fresh divergent copy named `<ref> (custom)`."
       responses:
         "200":
           description: (ADR-105) An existing fork of this `source_install_id` was returned (dedup); nothing was created.
@@ -7660,17 +7678,17 @@ paths:
         description: "Package name (url-param). Resolved server-side to its newest install."
     post:
       tags: [flow-packages]
-      summary: (ADR-096 — Designed) Fork ONE element into a project default
+      summary: (ADR-105 — Designed) Fork ONE element into a new local package
       description: |
-        (ADR-096 — Designed, Flow Studio Phase C.) Copies EXACTLY ONE element (a
-        flow dir / skill bundle / agent `.md` / rule file at `elementPath`) from
-        the package `ref` into the caller-project's per-project default
-        ("virtual") local package, created on first use (race-safe on the
-        partial-unique `(project_id) WHERE is_default`). The body `projectId` is
-        validated against the caller's accessible projects — an inaccessible /
-        unknown project → 404 with NO write. `elementPath` is confined inside the
-        source bundle AND the destination working dir; an escape → `PRECONDITION`
-        (409). Copying the rest of the source is forbidden. Executes NOTHING.
+        (ADR-105 — Designed, M39 Stream A — centralized model, supersedes the
+        ADR-096 project-default variant.) Copies EXACTLY ONE element (a flow dir /
+        skill bundle / agent `.md` / rule file at `elementPath`) from the package
+        `ref` into a NEW centralized local package named `<elementName> (local)`;
+        the editor then opens on it. No project target. The new package carries NO
+        `source_install_id` lineage (it is a partial copy, so whole-package fork
+        dedup never conflates it). `elementPath` is confined inside the source
+        bundle AND the destination working dir; an escape → `PRECONDITION` (409).
+        Copying the rest of the source is forbidden. Executes NOTHING.
       operationId: forkStudioPackageElement
       requestBody:
         required: true
@@ -7679,7 +7697,7 @@ paths:
             schema: { $ref: "#/components/schemas/ForkElementBody" }
       responses:
         "201":
-          description: Element forked into the project default.
+          description: Element forked into a new local package.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ForkResult" }
@@ -13478,15 +13496,15 @@ components:
         attachmentId: { type: string, description: "Present only when attachToProjectId was supplied and the attach succeeded." }
     ForkElementBody:
       type: object
-      required: [projectId, elementPath]
+      required: [elementPath, elementName]
       properties:
-        projectId: { type: string, minLength: 1, description: "Target project (body-controlled; validated against the caller's accessible projects). Its default local package receives the element." }
-        elementPath: { type: string, minLength: 1, description: "Working-dir-relative path of the ONE element to copy (flow dir / skill bundle / agent .md / rule file). Confined; `..`/abs/`.git` rejected." }
+        elementPath: { type: string, minLength: 1, maxLength: 1024, description: "Working-dir-relative path of the ONE element to copy (flow dir / skill bundle / agent .md / rule file). Confined; `..`/abs/`.git` rejected." }
+        elementName: { type: string, minLength: 1, maxLength: 200, description: "(ADR-105) Display name for the new local package — created as `<elementName> (local)`." }
     ForkResult:
       type: object
       required: [localPackageId]
       properties:
-        localPackageId: { type: string, description: "The local package the fork landed in (a new `<ref>-local` for a package fork; the project default for an element fork)." }
+        localPackageId: { type: string, description: "The local package the fork landed in (a new `<ref>-local` / `<ref> (custom)` for a package fork; a new `<elementName> (local)` for an element fork)." }
         alreadyExists: { type: boolean, description: "(ADR-105 — Designed) True when fork dedup returned a pre-existing fork of the same `source_install_id` (HTTP 200) instead of creating a new one (201). Absent/false on a fresh fork." }
     PackageSource:
       type: object

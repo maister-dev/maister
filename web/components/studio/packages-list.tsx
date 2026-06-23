@@ -4,7 +4,10 @@ import type { PackageGroup } from "@/lib/studio/group-packages";
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
+
+import { readApiError } from "@/lib/api-error";
 
 type TrustFilter = "all" | "trusted" | "untrusted";
 
@@ -20,8 +23,46 @@ const KIND_LABEL_KEYS: { key: keyof PackageGroup["counts"]; label: string }[] =
 
 export function PackagesList({ groups }: { groups: PackageGroup[] }) {
   const t = useTranslations("studio");
+  const tApiErrors = useTranslations("apiErrors");
+  const router = useRouter();
   const [query, setQuery] = useState("");
   const [trust, setTrust] = useState<TrustFilter>("all");
+  const [creating, setCreating] = useState(false);
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Create a fresh local package (same flow as /studio/local) and open the
+  // editor — a create affordance directly on the central packages view.
+  async function create(): Promise<void> {
+    const trimmed = name.trim();
+
+    if (trimmed === "") return;
+    setBusy(true);
+    setError(null);
+
+    try {
+      const res = await fetch("/api/studio/local-packages", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: trimmed }),
+      });
+
+      if (!res.ok) {
+        setError(await readApiError(res, tApiErrors));
+
+        return;
+      }
+
+      const created = (await res.json()) as { id: string };
+
+      router.push(`/studio/edit/${created.id}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -60,7 +101,64 @@ export function PackagesList({ groups }: { groups: PackageGroup[] }) {
           <option value="trusted">{t("trustTrusted")}</option>
           <option value="untrusted">{t("trustUntrusted")}</option>
         </select>
+        {creating ? (
+          <span className="flex items-center gap-2">
+            <input
+              aria-label={t("local.newName")}
+              className="min-w-[200px] rounded-[10px] border border-line bg-paper px-3 py-2 text-[13px] text-ink placeholder:text-mute"
+              data-testid="studio-new-name"
+              placeholder={t("local.newNamePlaceholder")}
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  void create();
+                }
+                if (event.key === "Escape") setCreating(false);
+              }}
+            />
+            <button
+              className="rounded-[10px] border border-amber bg-amber px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-white hover:bg-amber-2 disabled:opacity-60"
+              data-testid="studio-new-create"
+              disabled={busy || name.trim() === ""}
+              type="button"
+              onClick={() => void create()}
+            >
+              {t("local.create")}
+            </button>
+            <button
+              className="rounded-[10px] border border-line bg-paper px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-mute hover:border-mute hover:text-ink-2"
+              type="button"
+              onClick={() => {
+                setCreating(false);
+                setName("");
+                setError(null);
+              }}
+            >
+              {t("local.cancel")}
+            </button>
+          </span>
+        ) : (
+          <button
+            className="rounded-[10px] border border-line bg-ivory px-3 py-2 text-[12.5px] font-semibold text-ink transition-colors hover:border-amber"
+            data-testid="studio-new-package"
+            type="button"
+            onClick={() => setCreating(true)}
+          >
+            {t("local.newPackage")}
+          </button>
+        )}
       </div>
+
+      {error ? (
+        <p
+          className="rounded-[10px] border border-danger-line bg-danger-soft px-3 py-2 text-[12px] text-danger"
+          role="alert"
+        >
+          {error}
+        </p>
+      ) : null}
 
       {filtered.length > 0 ? (
         <ul className="flex list-none flex-col gap-2">

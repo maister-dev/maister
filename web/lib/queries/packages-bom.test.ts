@@ -111,6 +111,7 @@ describe("getStudioPackageBom enrichment (M36 T1.2)", () => {
     expect(bom.flows).toHaveLength(1);
     expect(bom.flows[0]).toMatchObject({
       id: "dev",
+      path: "flows/dev",
       nodeCount: 2,
       gateCount: 0,
       engine: null,
@@ -129,6 +130,7 @@ describe("getStudioPackageBom enrichment (M36 T1.2)", () => {
     expect(bom.skills).toEqual([
       {
         id: "s1",
+        path: "skills/s1",
         fileCount: 2,
         subfolderCount: 1,
         description: "Use for architecture work.",
@@ -149,7 +151,9 @@ describe("getStudioPackageBom enrichment (M36 T1.2)", () => {
 
     // Subagents — capability agents (here agents/a1.md): lenient id +
     // description only, NEVER strict-parsed (Claude-subagent format).
-    expect(bom.subagents).toEqual([{ id: "a1", description: "An agent" }]);
+    expect(bom.subagents).toEqual([
+      { id: "a1", path: "agents/a1.md", description: "An agent" },
+    ]);
 
     // Rules — inventoried from disk (was permanently [] before M36).
     expect(bom.rules).toEqual([{ id: "r1.md", path: "rules/r1.md" }]);
@@ -179,6 +183,7 @@ describe("getStudioPackageBom enrichment (M36 T1.2)", () => {
     expect(bom.flows).toEqual([
       {
         id: "dev",
+        path: "flows/dev",
         nodeCount: 0,
         gateCount: 0,
         engine: null,
@@ -194,12 +199,19 @@ describe("getStudioPackageBom enrichment (M36 T1.2)", () => {
       },
     ]);
     expect(bom.skills).toEqual([
-      { id: "s1", fileCount: 0, subfolderCount: 0, description: "" },
+      { id: "s1", path: "skills/s1", fileCount: 0, subfolderCount: 0, description: "" },
     ]);
     expect(bom.platformAgents).toEqual([
-      { id: "p1", description: "", triggers: [], riskTier: "", workspace: "" },
+      {
+        id: "p1",
+        path: "maister-agents/p1.md",
+        description: "",
+        triggers: [],
+        riskTier: "",
+        workspace: "",
+      },
     ]);
-    expect(bom.subagents).toEqual([{ id: "a1", description: "" }]);
+    expect(bom.subagents).toEqual([{ id: "a1", path: null, description: "" }]);
     expect(bom.rules).toEqual([]);
   });
 });

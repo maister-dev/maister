@@ -65,12 +65,16 @@ export function validatePackageArtifacts(input: {
   return errors;
 }
 
-// A flow manifest the canvas compiles: root `flow.yaml` or any `flows/*.y(a)ml`.
-// `classifyPackageFilePath` returns "flow" only for the legacy `flow.yaml`? No —
-// it returns "asset" for flows/ paths, so we match flows explicitly here (the
-// kind classifier has no dedicated "flow" leaf; flow files live under flows/).
+// A flow manifest the canvas compiles. `classifyPackageFilePath` has no "flow"
+// leaf (flow files classify as "asset"), so we match the runtime's flow
+// enumeration explicitly: the root single-flow `flow.yaml`, or a per-flow
+// `flows/<id>/flow.yaml` (the manifest's `flows[].path` joined with `/flow.yaml`
+// — see `lib/queries/packages.ts`). Keyed on the `flow.yaml` BASENAME: a bare
+// `flows/notes.yaml` or an aux `flows/<id>/schema.yaml` is NOT a flow (it stays
+// a freeform asset). Matching every `flows/*.ya?ml` would compile-check, and
+// thus hard-block, legitimate non-flow yaml living under flows/.
 function isFlowPath(path: string): boolean {
-  return path === "flow.yaml" || /^flows\/.+\.ya?ml$/i.test(path);
+  return path === "flow.yaml" || /^flows\/.+\/flow\.yaml$/.test(path);
 }
 
 // A package-root platform-agent definition (`maister-agents/<stem>.md` or

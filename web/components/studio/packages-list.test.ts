@@ -5,6 +5,9 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("next-intl", () => ({
   useTranslations: () => (key: string) => key,
 }));
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: () => {}, refresh: () => {} }),
+}));
 
 import { PackagesList } from "@/components/studio/packages-list";
 
@@ -37,5 +40,13 @@ describe("PackagesList", () => {
     expect(html).toContain("/studio/packages/aif"); // ref = name
     expect(html).toContain("5"); // flows count
     expect(html).toMatch(/local/i); // Local badge
+  });
+
+  it("offers a create-package affordance", () => {
+    const html = renderToStaticMarkup(
+      createElement(PackagesList, { groups: groups as never }),
+    );
+
+    expect(html).toContain('data-testid="studio-new-package"');
   });
 });

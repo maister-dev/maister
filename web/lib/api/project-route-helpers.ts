@@ -38,8 +38,13 @@ export function errorResponse(
   slug: string,
 ): NextResponse {
   if (isMaisterError(err)) {
+    // `details` (ADR-093, additive) is forwarded only when the thrower set it —
+    // e.g. the commit gate's `{ invalidArtifacts: [{ path, message }] }`. It is
+    // client-facing context, NEVER a server-only handle (throwers redact).
     return NextResponse.json(
-      { code: err.code, message: err.message },
+      err.details
+        ? { code: err.code, message: err.message, details: err.details }
+        : { code: err.code, message: err.message },
       { status: httpStatusForCode(err.code) },
     );
   }

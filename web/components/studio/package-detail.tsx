@@ -175,6 +175,10 @@ export function PackageDetail({
               package and opens the editor. Import (⤓) stays ABSENT here:
               installed packages are immutable. */}
           {canManage ? <ForkToEditButton refName={pkg.name} /> : null}
+          {/* Customize (M39 A3): a deliberate divergent COPY (always fresh,
+              named `<ref> (custom)`) — the centralized "diverge this package"
+              escape hatch, distinct from the dedup'd fork-to-edit. */}
+          {canManage ? <CustomizeButton refName={pkg.name} /> : null}
         </div>
       </div>
 
@@ -271,6 +275,68 @@ function TrustButton({ installId }: { installId: string }): ReactElement {
         onClick={() => void trust()}
       >
         {t("trust")}
+      </button>
+      {error ? (
+        <span className="font-mono text-[10.5px] text-danger" role="alert">
+          {error}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+// (M39 A3) "Customize" — make a deliberate divergent COPY of this package as a
+// new centralized local package named `<ref> (custom)`, then open the editor.
+// Distinct from fork-to-edit (which dedups to the canonical editable copy): a
+// customize always creates a fresh, separately-editable copy.
+function CustomizeButton({ refName }: { refName: string }): ReactElement {
+  const t = useTranslations("studio");
+  const tApiErrors = useTranslations("apiErrors");
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function customize(): Promise<void> {
+    setBusy(true);
+    setError(null);
+
+    try {
+      const res = await fetch(
+        `/api/studio/packages/${encodeURIComponent(refName)}/fork`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ customize: true }),
+        },
+      );
+
+      if (!res.ok) {
+        setError(await readApiError(res, tApiErrors));
+
+        return;
+      }
+
+      const result = (await res.json()) as { localPackageId: string };
+
+      router.push(`/studio/edit/${result.localPackageId}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <span className="inline-flex flex-col gap-1">
+      <button
+        className="rounded-[10px] border border-line bg-ivory px-3 py-1.5 text-[12.5px] font-semibold text-ink transition-colors hover:border-amber disabled:opacity-60"
+        data-testid="package-customize"
+        disabled={busy}
+        title={t("customizeHint")}
+        type="button"
+        onClick={() => void customize()}
+      >
+        {t("customize")}
       </button>
       {error ? (
         <span className="font-mono text-[10.5px] text-danger" role="alert">
@@ -535,6 +601,7 @@ function buildCards({
         <ElementCard
           key={skill.id}
           description={skill.description || null}
+          forkPath={skill.path}
           href={`${basePath}/skills/${skill.id
             .split("/")
             .map(encodeURIComponent)
@@ -545,6 +612,7 @@ function buildCards({
             subfolders: skill.subfolderCount,
           })}
           name={skill.id}
+          refName={pkg.name}
         />
       ));
     case "agents":
@@ -558,6 +626,7 @@ function buildCards({
                   .join(" · ")
               : t("viewer.agentNoTriggers")
           }
+          forkPath={agent.path}
           href={`${basePath}/agents/${encodeURIComponent(agent.id)}`}
           labels={labels}
           meta={
@@ -573,6 +642,7 @@ function buildCards({
               : null
           }
           name={agent.id}
+          refName={pkg.name}
         />
       ));
     case "subagents":
@@ -584,10 +654,12 @@ function buildCards({
             description={
               subagent.description || t("viewer.subagentNoDescription")
             }
+            forkPath={subagent.path}
             href={`${basePath}/subagents/${encodeURIComponent(subagent.id)}`}
             labels={labels}
             meta={t("viewer.subagentMeta")}
             name={subagent.id}
+            refName={pkg.name}
           />
         ));
     case "mcps":
@@ -607,10 +679,12 @@ function buildCards({
         .map((rule) => (
           <ElementCard
             key={rule.id}
+            forkPath={rule.path}
             href={basePath}
             labels={labels}
             meta={`${t("viewer.rulePath")}: ${rule.path}`}
             name={rule.id}
+            refName={pkg.name}
           />
         ));
   }

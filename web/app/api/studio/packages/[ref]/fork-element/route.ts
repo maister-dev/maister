@@ -9,8 +9,7 @@ import {
   notFoundResponse,
 } from "@/lib/api/project-route-helpers";
 import { requireSession } from "@/lib/authz";
-import { forkElementToDefault } from "@/lib/local-packages/fork";
-import { getAccessibleProjects } from "@/lib/queries/platform-flows";
+import { forkElementToNewLocal } from "@/lib/local-packages/fork";
 import { resolveStudioPackageByRef } from "@/lib/studio/load";
 
 const log = pino({
@@ -22,15 +21,17 @@ type RouteParams = { params: Promise<{ ref: string }> };
 
 const bodySchema = z
   .object({
-    projectId: z.string().min(1),
-    elementPath: z.string().min(1),
+    elementPath: z.string().min(1).max(1024),
+    elementName: z.string().min(1).max(200),
   })
   .strict();
 
-// `ref` (url-param) resolves server-side. `projectId` is BODY-controlled, so it
-// MUST be validated against the caller's accessible projects (getAccessibleProjects)
-// — an inaccessible/unknown project is a 404 with NO write. `elementPath` is
-// confined inside the source bundle + destination working dir by the service.
+// (M39 A3) `ref` (url-param) resolves server-side to its newest install.
+// `elementPath`/`elementName` are body-controlled: `elementPath` is confined
+// inside the source bundle by the service before any fs copy; `elementName` is a
+// display name only. Forks EXACTLY ONE element into a NEW centralized local
+// package (no project target — the centralized model). Studio authoring is
+// member-accessible → requireSession.
 export async function POST(
   req: NextRequest,
   { params }: RouteParams,
@@ -59,29 +60,20 @@ export async function POST(
       return notFoundResponse("package ref is ambiguous");
     }
 
-    const accessible = await getAccessibleProjects(user.id, user.role);
-    const project = accessible.find((p) => p.id === parsed.data.projectId);
-
-    if (!project) {
-      return notFoundResponse("project not found");
-    }
-
-    const result = await forkElementToDefault({
-      projectId: project.id,
-      projectName: project.name,
+    const result = await forkElementToNewLocal({
       sourceInstallId: resolution.installId,
       elementPath: parsed.data.elementPath,
+      elementName: parsed.data.elementName,
       createdBy: user.id,
     });
 
     log.info(
       {
         ref,
-        projectId: project.id,
         elementPath: parsed.data.elementPath,
         localPackageId: result.localPackageId,
       },
-      "element forked to default local package",
+      "element forked to new local package",
     );
 
     return NextResponse.json(result, { status: 201 });

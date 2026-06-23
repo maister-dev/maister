@@ -25,6 +25,7 @@ import {
   resolveWithinWorkingDir,
   slugifyName,
 } from "./paths";
+import { validatePackageArtifacts, type PackageArtifactFile } from "./validate";
 
 import { atomicWriteText } from "@/lib/atomic";
 import { getDb } from "@/lib/db/client";
@@ -207,6 +208,13 @@ export async function listLocalPackages(db?: Db): Promise<LocalPackage[]> {
     .from(lp)
     .where(eq(lp.status, "active"))
     .orderBy(desc(lp.updatedAt));
+}
+
+// Active AND archived, newest first — the /studio/local management list (archived
+// rows sit behind a client-side toggle). `listLocalPackages` stays active-only
+// for every other reader (the API list route, attach flows).
+export async function listAllLocalPackages(db?: Db): Promise<LocalPackage[]> {
+  return resolveDb(db).select().from(lp).orderBy(desc(lp.updatedAt));
 }
 
 export async function getLocalPackage(
@@ -537,13 +545,74 @@ export async function diffWorkingDir(
   }
 }
 
+// Read every regular working-dir file (path + utf8 content) for the commit gate.
+// A binary asset decodes lossily, but the gate never content-validates assets
+// (freeform) and only reads CHANGED-path content + sibling PATHS — so a lossy
+// asset is harmless. A file that vanished between list and read is skipped.
+async function readWorkingDirArtifactFiles(
+  pkg: LocalPackage,
+): Promise<PackageArtifactFile[]> {
+  const metas = await listFiles(pkg);
+  const out: PackageArtifactFile[] = [];
+
+  for (const meta of metas) {
+    try {
+      const abs = await resolveWithinWorkingDir(pkg.workingDir, meta.path);
+
+      out.push({ path: meta.path, content: await fsReadFile(abs, "utf8") });
+    } catch {
+      // vanished/unreadable mid-read — not committable content, skip
+    }
+  }
+
+  return out;
+}
+
+// (M39 ADR-105, Phase A3) The commit-time validation gate. Validates ONLY the
+// artifacts THIS commit changes (already-committed artifacts are assumed valid —
+// owner decision) and HARD-BLOCKS the commit (throws `PRECONDITION`, nothing is
+// written) on any invalid flow / manifest / platform-agent / skill. The
+// per-artifact error list rides on `details.invalidArtifacts` so the editor's
+// change-review dialog can render it. EVERY commit entry point flows through
+// `commitWorkingDir`, which calls this first — so an invalid artifact can never
+// become a committed (and therefore launchable) version.
+export async function assertPackageCommittable(
+  pkg: LocalPackage,
+): Promise<void> {
+  const wt = await diffWorkingTree(pkg.workingDir);
+  const changedPaths = wt.nameStatus.map((entry) => entry.path);
+
+  if (changedPaths.length === 0) return;
+
+  const files = await readWorkingDirArtifactFiles(pkg);
+  const errors = validatePackageArtifacts({ files, changedPaths });
+
+  if (errors.length === 0) return;
+
+  log.warn(
+    {
+      slug: pkg.slug,
+      invalidCount: errors.length,
+      paths: errors.map((e) => e.path),
+    },
+    "commit blocked — invalid artifacts",
+  );
+  throw new MaisterError(
+    "PRECONDITION",
+    `${errors.length} artifact(s) failed validation and cannot be committed`,
+    { details: { invalidArtifacts: errors } },
+  );
+}
+
 // Commit every working-tree change to the local-package branch (M36 T4.1). The
 // caller MUST have asserted the session edit-lock first; this is the git side
-// only.
+// only. The commit-time validation gate (`assertPackageCommittable`) runs FIRST
+// — a package with an invalid changed artifact never commits.
 export async function commitWorkingDir(
   pkg: LocalPackage,
   message?: string,
 ): Promise<void> {
+  await assertPackageCommittable(pkg);
   await gitCommitWorkingDir(
     pkg.workingDir,
     message?.trim() ? message.trim() : "maister: edit local package",
