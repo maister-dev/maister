@@ -939,6 +939,13 @@ components:
         permissionPolicy:
           type: string
           enum: [default, dangerously_skip_permissions]
+        env:
+          type: object
+          additionalProperties: { type: string }
+          description: |
+            Child-process env overrides, keyed by target env var name. Raw
+            values are passed as-is; values with `env:NAME` form are resolved
+            from `process.env` immediately before spawning the ACP adapter.
         sidecar: { $ref: "#/components/schemas/RunnerSidecar" }
       description: |
         Platform ACP runner launch intent. When present, the supervisor maps it

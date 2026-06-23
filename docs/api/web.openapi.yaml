@@ -215,6 +215,7 @@ paths:
       description: |
         Admin-only. Creates an ACP runner and optionally updates the platform
         default. Secret material is accepted only as `env:NAME` references.
+        Runner env overrides may be raw values or `env:NAME` references.
         ADR-084 designs `gemini` and `opencode` runner rows; readiness may keep
         them `NotReady` until supervisor diagnostics and ACP smoke pass.
       operationId: postAdminAcpRunner
@@ -230,6 +231,14 @@ paths:
                 id: { type: string }
                 adapter: { type: string, enum: [claude, codex, gemini, opencode, mimo] }
                 model: { type: string }
+                env:
+                  type: object
+                  additionalProperties: { type: string }
+                  description: |
+                    Child-process env override map. Keys are target env var
+                    names passed to the spawned ACP adapter. Raw values are
+                    passed as-is; values with `env:NAME` form resolve from the
+                    supervisor host environment.
                 provider: { type: object }
                 permissionPolicy:
                   {
@@ -267,7 +276,7 @@ paths:
       tags: [admin]
       summary: Update a platform ACP runner
       description: |
-        Admin-only. Mutates runner provider/model/sidecar/readiness/enabled
+        Admin-only. Mutates runner provider/model/env/sidecar/readiness/enabled
         fields. Disabling is refused while usage references exist. Adapter and
         capability-agent identity are immutable after create.
       operationId: patchAdminAcpRunner
@@ -286,6 +295,13 @@ paths:
               minProperties: 1
               properties:
                 model: { type: string }
+                env:
+                  type: object
+                  additionalProperties: { type: string }
+                  description: |
+                    Full replacement child-process env override map. Keys are
+                    target env var names. Raw values pass as-is; `env:NAME`
+                    values resolve from the supervisor host environment.
                 provider: { type: object }
                 permissionPolicy:
                   { type: string, enum: [default, dangerously_skip_permissions] }

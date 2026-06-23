@@ -170,6 +170,7 @@ export type RunnerSnapshot = {
   adapter: string;
   capabilityAgent: string;
   model: string;
+  env?: Record<string, string>;
   provider?: PlatformRunnerProvider;
   providerKind: string;
   permissionPolicy: string;
@@ -222,6 +223,7 @@ export const platformAcpRunners = pgTable(
     }).notNull(),
     model: text("model").notNull(),
     provider: jsonb("provider").$type<PlatformRunnerProvider>().notNull(),
+    env: jsonb("env").$type<Record<string, string>>().notNull().default({}),
     permissionPolicy: text("permission_policy", {
       enum: ["default", "dangerously_skip_permissions"],
     })

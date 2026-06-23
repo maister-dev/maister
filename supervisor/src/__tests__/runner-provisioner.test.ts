@@ -52,6 +52,37 @@ describe("provisionRunnerLaunch", () => {
     vi.unstubAllEnvs();
   });
 
+  it("resolves env-prefixed runner env values and keeps raw values literal", () => {
+    vi.stubEnv("CLAUDE_BASE_URL_ENV", "https://gateway.example.test");
+
+    expect(
+      provisionRunnerLaunch({
+        version: 1,
+        runnerId: "claude-env-overrides",
+        adapter: "claude",
+        capabilityAgent: "claude",
+        model: "sonnet",
+        provider: { kind: "anthropic" },
+        permissionPolicy: "default",
+        env: {
+          ANTHROPIC_BASE_URL: "env:CLAUDE_BASE_URL_ENV",
+          ANTHROPIC_MODEL: "claude-sonnet-4-6",
+        },
+      }),
+    ).toEqual({
+      executor: {
+        agent: "claude",
+        model: "sonnet",
+        env: {
+          ANTHROPIC_BASE_URL: "https://gateway.example.test",
+          ANTHROPIC_MODEL: "claude-sonnet-4-6",
+        },
+      },
+    });
+
+    vi.unstubAllEnvs();
+  });
+
   it("maps direct Codex runners without env or argv mutation", () => {
     expect(
       provisionRunnerLaunch({

@@ -12,6 +12,7 @@ export interface RunnerDraft {
   id: string;
   adapter: AdapterId;
   model: string;
+  env?: Record<string, string>;
   providerKind: ProviderKind;
   baseUrl?: string;
   authToken?: string;
@@ -25,7 +26,14 @@ export interface RunnerDraft {
 }
 
 const ID_RE = /^[A-Za-z0-9._-]+$/;
+const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const ENV_RE = /^env:[A-Za-z_][A-Za-z0-9_]*$/;
+
+function validRunnerEnvValue(value: string): boolean {
+  if (value.includes("\0")) return false;
+
+  return !value.startsWith("env:") || ENV_RE.test(value);
+}
 
 export function providerKindsForAdapter(adapter: AdapterId): ProviderKind[] {
   return [...adapterProviderKindsForAdapter(adapter)];
@@ -55,6 +63,13 @@ export function validateRunnerDraft(draft: RunnerDraft): {
 
   if (!ID_RE.test(draft.id)) errors.id = "id";
   if (draft.model.trim().length === 0) errors.model = "model";
+  if (
+    Object.entries(draft.env ?? {}).some(
+      ([key, value]) => !ENV_NAME_RE.test(key) || !validRunnerEnvValue(value),
+    )
+  ) {
+    errors.env = "env";
+  }
   if (!providerKindsForAdapter(draft.adapter).includes(draft.providerKind)) {
     errors.providerKind = "providerKind";
   }
@@ -93,6 +108,14 @@ export function validateRunnerDraft(draft: RunnerDraft): {
   }
 
   return { ok: Object.keys(errors).length === 0, errors };
+}
+
+function nonEmptyEnv(
+  env: Record<string, string> | undefined,
+): Record<string, string> | undefined {
+  if (!env || Object.keys(env).length === 0) return undefined;
+
+  return env;
 }
 
 function providerObject(draft: RunnerDraft): Record<string, unknown> {
@@ -142,6 +165,7 @@ export function buildCreateBody(draft: RunnerDraft): Record<string, unknown> {
     id: draft.id,
     adapter: draft.adapter,
     model: draft.model,
+    ...(nonEmptyEnv(draft.env) ? { env: draft.env } : {}),
     provider: providerObject(draft),
     permissionPolicy: draft.permissionPolicy,
     sidecarId: draft.sidecarId ?? null,
@@ -156,6 +180,9 @@ export function buildPatchBody(
   const body: Record<string, unknown> = {};
 
   if (draft.model !== original.model) body.model = draft.model;
+  if (JSON.stringify(draft.env ?? {}) !== JSON.stringify(original.env ?? {})) {
+    body.env = draft.env ?? {};
+  }
 
   const draftProvider = providerObject(draft);
 

@@ -69,6 +69,30 @@ function requireAgentNativeAdapter(
   );
 }
 
+function resolveRunnerEnvValue(
+  value: string,
+  runner: RunnerLaunch,
+  targetName: string,
+): string {
+  if (!value.startsWith("env:")) return value;
+
+  const sourceName = value.slice("env:".length);
+
+  return resolveEnvRef(
+    sourceName,
+    `runner ${runner.runnerId} env ${targetName}`,
+  );
+}
+
+function resolveRunnerEnv(runner: RunnerLaunch): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(runner.env ?? {}).map(([targetName, value]) => [
+      targetName,
+      resolveRunnerEnvValue(value, runner, targetName),
+    ]),
+  );
+}
+
 export function provisionRunnerLaunch(
   runner: RunnerLaunch,
   baseAdapterLaunch?: AdapterLaunch,
@@ -237,6 +261,15 @@ export function provisionRunnerLaunch(
         ),
       };
     }
+  }
+
+  const runnerEnv = resolveRunnerEnv(runner);
+
+  if (Object.keys(runnerEnv).length > 0) {
+    executor.env = {
+      ...(executor.env ?? {}),
+      ...runnerEnv,
+    };
   }
 
   return {

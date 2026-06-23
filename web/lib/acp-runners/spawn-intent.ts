@@ -19,6 +19,14 @@ function envRefName(ref: string | undefined): string | undefined {
   return ref.slice("env:".length);
 }
 
+function nonEmptyRecord(
+  values: Record<string, string> | undefined,
+): Record<string, string> | undefined {
+  const entries = Object.entries(values ?? {});
+
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
 function providerFromSnapshot(
   snapshot: RunnerSnapshot,
 ): PlatformRunnerProvider {
@@ -89,33 +97,43 @@ function toSupervisorProvider(
     case "anthropic_compatible":
       return {
         kind: provider.kind,
-        authTokenEnv: envRefName(provider.authToken),
-        baseUrl: provider.baseUrl,
+        ...(envRefName(provider.authToken)
+          ? { authTokenEnv: envRefName(provider.authToken) }
+          : {}),
+        ...(provider.baseUrl ? { baseUrl: provider.baseUrl } : {}),
       };
     case "openai_compatible":
       return {
         kind: provider.kind,
-        baseUrl: provider.baseUrl,
-        apiKeyEnv: envRefName(provider.apiKey),
-        wireApi: provider.wireApi,
+        ...(provider.baseUrl ? { baseUrl: provider.baseUrl } : {}),
+        ...(envRefName(provider.apiKey)
+          ? { apiKeyEnv: envRefName(provider.apiKey) }
+          : {}),
+        ...(provider.wireApi ? { wireApi: provider.wireApi } : {}),
       };
     case "google_gemini":
       return {
         kind: provider.kind,
-        apiKeyEnv: envRefName(provider.apiKey),
+        ...(envRefName(provider.apiKey)
+          ? { apiKeyEnv: envRefName(provider.apiKey) }
+          : {}),
       };
     case "google_vertex":
       return {
         kind: provider.kind,
-        projectId: provider.projectId,
-        location: provider.location,
-        apiKeyEnv: envRefName(provider.apiKey),
+        ...(provider.projectId ? { projectId: provider.projectId } : {}),
+        ...(provider.location ? { location: provider.location } : {}),
+        ...(envRefName(provider.apiKey)
+          ? { apiKeyEnv: envRefName(provider.apiKey) }
+          : {}),
       };
     case "google_gateway":
       return {
         kind: provider.kind,
-        baseUrl: provider.baseUrl,
-        apiKeyEnv: envRefName(provider.apiKey),
+        ...(provider.baseUrl ? { baseUrl: provider.baseUrl } : {}),
+        ...(envRefName(provider.apiKey)
+          ? { apiKeyEnv: envRefName(provider.apiKey) }
+          : {}),
       };
     case "anthropic":
     case "openai":
@@ -132,6 +150,7 @@ export function runnerSupervisorInput(input: {
   const provider = input.provider ?? providerFromSnapshot(input.snapshot);
   const sidecar = input.sidecar ?? input.snapshot.sidecar;
   const runnerProvider = toSupervisorProvider(provider);
+  const env = nonEmptyRecord(input.snapshot.env);
 
   return {
     version: 1,
@@ -143,6 +162,7 @@ export function runnerSupervisorInput(input: {
     provider: runnerProvider,
     permissionPolicy: input.snapshot
       .permissionPolicy as SupervisorRunnerInput["permissionPolicy"],
+    ...(env ? { env } : {}),
     ...(sidecar
       ? {
           sidecar: {

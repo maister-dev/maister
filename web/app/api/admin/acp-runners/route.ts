@@ -91,6 +91,24 @@ const providerSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("agent_native") }).strict(),
 ]);
 
+const runnerEnvSchema = z
+  .record(
+    z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
+    z
+      .string()
+      .refine(
+        (value) => !value.includes("\0"),
+        "env value must not contain null byte",
+      )
+      .refine(
+        (value) =>
+          !value.startsWith("env:") ||
+          /^env:[A-Za-z_][A-Za-z0-9_]*$/.test(value),
+        "env ref value must be env:NAME",
+      ),
+  )
+  .default({});
+
 const runnerBodySchema = z
   .object({
     id: z
@@ -99,6 +117,7 @@ const runnerBodySchema = z
       .regex(/^[A-Za-z0-9._-]+$/),
     adapter: z.enum(ADAPTER_IDS),
     model: z.string().trim().min(1),
+    env: runnerEnvSchema,
     provider: providerSchema,
     permissionPolicy: z.enum(PERMISSION_POLICIES).default("default"),
     sidecarId: z.string().min(1).nullable().optional(),
@@ -329,6 +348,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         adapter: parsed.data.adapter,
         capabilityAgent: capabilityAgentForAdapter(parsed.data.adapter),
         model: parsed.data.model,
+        env: parsed.data.env,
         provider: parsed.data.provider,
         permissionPolicy: parsed.data.permissionPolicy,
         sidecarId: parsed.data.sidecarId ?? null,

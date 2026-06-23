@@ -270,6 +270,7 @@ function runnerCatalogEntry(
     adapter: row.adapter,
     capabilityAgent: row.capabilityAgent,
     model: row.model,
+    env: row.env,
     provider: row.provider,
     providerKind: runnerProviderKind(row.provider),
     permissionPolicy: row.permissionPolicy,

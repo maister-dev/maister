@@ -99,6 +99,7 @@ function runnerSnapshotFromRunner(row: PlatformAcpRunner): RunnerSnapshot {
     adapter: row.adapter,
     capabilityAgent: row.capabilityAgent,
     model: row.model,
+    env: row.env,
     provider: row.provider,
     providerKind: row.provider.kind,
     permissionPolicy: row.permissionPolicy,

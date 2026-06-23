@@ -16,6 +16,7 @@ export type RunnerCatalogEntry = {
   readonly adapter: string;
   readonly capabilityAgent: string;
   readonly model: string;
+  readonly env?: Record<string, string>;
   readonly provider?: PlatformRunnerProvider;
   readonly providerKind: string;
   readonly permissionPolicy: string;
@@ -70,6 +71,7 @@ export type RunnerSnapshot = {
   readonly adapter: string;
   readonly capabilityAgent: string;
   readonly model: string;
+  readonly env?: Record<string, string>;
   readonly provider?: PlatformRunnerProvider;
   readonly providerKind: string;
   readonly permissionPolicy: string;
@@ -99,6 +101,7 @@ function snapshotRunner(runner: RunnerCatalogEntry): RunnerSnapshot {
     adapter: runner.adapter,
     capabilityAgent: runner.capabilityAgent,
     model: runner.model,
+    env: runner.env,
     provider: runner.provider,
     providerKind: runner.providerKind,
     permissionPolicy: runner.permissionPolicy,

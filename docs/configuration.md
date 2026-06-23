@@ -44,6 +44,8 @@ acp_runners:
   - id: claude-code
     adapter: claude
     model: claude-sonnet-4-6
+    env:
+      ANTHROPIC_MODEL: env:CLAUDE_CODE_MODEL
     provider:
       kind: anthropic
     permission_policy: default
@@ -93,6 +95,11 @@ Rules:
   launch snapshots. Operators do not enter it manually.
 - Router sidecar ids resolve against `router_instances[]`.
 - Secret values are references such as `env:NAME`, never literal tokens.
+- `acp_runners[].env` is an editable child-process env override map. Keys are
+  env vars passed to the spawned ACP adapter (`ANTHROPIC_MODEL`, custom
+  gateway knobs, etc.). Raw values are passed to the child as-is; values with
+  the `env:NAME` form are resolved from the supervisor process environment at
+  launch.
 - Unsupported provider/policy/sidecar combinations are saved only as
   `NotReady` with reason codes, or are rejected when they would create an
   invalid default.
@@ -1290,6 +1297,8 @@ acp_runners:
   - id: claude-glm-ccr
     adapter: claude
     model: glm-5.1
+    env:
+      ANTHROPIC_MODEL: env:CLAUDE_CODE_MODEL
     provider:
       kind: anthropic_compatible
     router_instance: ccr-default

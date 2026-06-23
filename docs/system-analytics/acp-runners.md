@@ -19,7 +19,7 @@ decision record for the delete guard and the in-`/settings` CRUD surface is
 ## Domain entities
 
 - **`platform_acp_runners`** — one row per runner: `{ id, adapter, capability_agent,
-  model, provider (jsonb), permission_policy, sidecar_id?, readiness_status,
+  model, provider (jsonb), env (jsonb), permission_policy, sidecar_id?, readiness_status,
   readiness_reasons, enabled, created_at, updated_at }`. Persisted; see
   [db/projects-domain.md](../db/projects-domain.md).
 - **`provider`** — discriminated union. Implemented kinds:
@@ -27,6 +27,10 @@ decision record for the delete guard and the in-`/settings` CRUD surface is
   google_gemini | google_vertex | google_gateway | agent_native`.
   Secret material is stored ONLY as `env:NAME` references
   (`^env:[A-Za-z_][A-Za-z0-9_]*$`). See [configuration.md](../configuration.md).
+- **`env`** — optional child-process env override map for the selected ACP
+  adapter. Keys are target env var names passed to the spawned adapter. Raw
+  values are passed through literally; `env:NAME` values are resolved from the
+  supervisor environment at launch.
 - **Adapter support** — static adapter registry in
   `web/lib/acp-runners/adapter-support.ts`: `claude` → providers `anthropic |
   anthropic_compatible`, policies `default | dangerously_skip_permissions`;
@@ -268,6 +272,10 @@ sequenceDiagram
 - Secret material MUST persist only as `env:NAME` references; a raw token MUST
   be rejected with `MaisterError("CONFIG")` (422) and MUST NEVER be returned to
   the client or logged. (Implemented)
+- Runner `env` values MAY be raw strings or `env:NAME` references; the map is
+  editable through the create/edit modal and PATCH API. Values that start with
+  `env:` but are not valid `env:NAME` references MUST be rejected with
+  `MaisterError("CONFIG")` (422). (Implemented)
 - `readiness_status`/`readiness_reasons` MUST be computed by
   `evaluateRunnerReadiness` on every `POST`/`PATCH`; caller-provided readiness
   MUST be ignored. (Implemented)

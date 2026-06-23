@@ -58,6 +58,10 @@ describe("runner spawn intent", () => {
           },
           providerKind: "anthropic_compatible",
           permissionPolicy: "default",
+          env: {
+            ANTHROPIC_MODEL: "env:CLAUDE_MODEL_ENV",
+            ANTHROPIC_SMALL_FAST_MODEL: "claude-haiku-4-5",
+          },
           sidecar: {
             id: "ccr-default",
             kind: "ccr",
@@ -77,6 +81,10 @@ describe("runner spawn intent", () => {
         baseUrl: "https://api.z.ai/api/anthropic",
       },
       permissionPolicy: "default",
+      env: {
+        ANTHROPIC_MODEL: "env:CLAUDE_MODEL_ENV",
+        ANTHROPIC_SMALL_FAST_MODEL: "claude-haiku-4-5",
+      },
       sidecar: {
         id: "ccr-default",
         kind: "ccr",

@@ -73,6 +73,7 @@ export type SupervisorRunnerInput = {
     healthcheckUrl?: string;
     authTokenEnv?: string;
   };
+  env?: Record<string, string>;
 };
 
 export type CreateSessionInput = {

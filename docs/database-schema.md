@@ -285,6 +285,7 @@ platform_acp_runners {
   capabilityAgent: 'claude' | 'codex' | 'gemini' | 'opencode' | 'mimo',
   model,
   provider,                      // typed jsonb provider shape
+  env,                           // jsonb child env overrides; env:NAME values resolve at launch
   permissionPolicy: 'default' | 'dangerously_skip_permissions',
   sidecarId?,
   readinessStatus,
@@ -301,8 +302,10 @@ platform_runtime_settings {
 ```
 
 `capabilityAgent` is code-owned adapter-registry identity, snapshotted on
-launch. `provider` and sidecar fields store secret refs only. A runner or
-sidecar usage-reference service guards disable/delete actions.
+launch. `provider` and sidecar fields store env refs only. `env` stores
+child-process override values: raw strings pass through literally, while
+`env:NAME` values resolve from the supervisor environment at launch. A runner
+or sidecar usage-reference service guards disable/delete actions.
 
 **Migration audit for ADR-084:** migration `0022_platform_acp_runners.sql`
 created `platform_acp_runners.adapter`, `platform_acp_runners.capability_agent`,

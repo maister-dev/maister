@@ -358,6 +358,12 @@ boolean, permission policy, and readiness reason codes. They never include env
 values, token values, parsed sidecar config content, or generated config file
 bodies.
 
+The supervisor resolves runner `env` overrides last. Provider and sidecar
+provisioners may set adapter-specific env such as `ANTHROPIC_BASE_URL`, but a
+stored runner override wins when both set the same target key. Raw values pass
+through literally; values in `env:SOURCE` form are resolved from the supervisor
+environment immediately before child spawn.
+
 ## Usage references
 
 Runner and sidecar management uses one usage-reference service. It returns

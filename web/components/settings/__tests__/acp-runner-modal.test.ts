@@ -35,6 +35,7 @@ const claudeRunner: RunnerRow = {
   readinessStatus: "Ready",
   readinessReasons: [],
   enabled: true,
+  env: { ANTHROPIC_MODEL: "env:CLAUDE_MODEL_ENV" },
 };
 
 const geminiVertexRunner: RunnerRow = {
@@ -113,6 +114,10 @@ describe("AcpRunnerModal", () => {
     expect(markup).toContain("deleteRunner");
     expect(markup).toContain("claude-sonnet-4-6");
     expect(markup).toContain("claude-code");
+    expect(markup).toContain("fieldEnv");
+    expect(markup).toContain("fieldEnvHint");
+    expect(markup).toContain("ANTHROPIC_MODEL");
+    expect(markup).toContain("env:CLAUDE_MODEL_ENV");
   });
 
   it("renders Gemini provider fields without Claude/Codex-only assumptions", () => {

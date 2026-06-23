@@ -8,6 +8,7 @@ import type {
 } from "@/lib/acp-runners/runner-form";
 import type { ReactElement } from "react";
 
+import { PlusIcon, TrashIcon } from "@heroicons/react/24/outline";
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
@@ -34,11 +35,18 @@ type Provider = {
   wireApi?: "responses";
 };
 
+type EnvRow = {
+  id: string;
+  key: string;
+  value: string;
+};
+
 export interface RunnerRow {
   id: string;
   adapter: AdapterId;
   capabilityAgent: AdapterId;
   model: string;
+  env?: Record<string, string>;
   provider: Provider;
   permissionPolicy: PermissionPolicy;
   sidecarId: string | null;
@@ -51,6 +59,7 @@ export interface PresetRow {
   id: string;
   adapter: AdapterId;
   model: string;
+  env?: Record<string, string>;
   provider: Provider;
   permissionPolicy: PermissionPolicy;
   sidecarId?: string | null;
@@ -81,11 +90,13 @@ function draftFromProvider(
   enabled: boolean,
   id: string,
   model: string,
+  env?: Record<string, string>,
 ): RunnerDraft {
   return {
     id,
     adapter,
     model,
+    env,
     providerKind: provider.kind as ProviderKind,
     baseUrl: provider.baseUrl,
     authToken: provider.authToken,
@@ -109,6 +120,7 @@ function seedDraft(mode: "create" | "edit", runner?: RunnerRow): RunnerDraft {
       runner.enabled,
       runner.id,
       runner.model,
+      runner.env,
     );
   }
 
@@ -121,6 +133,28 @@ function seedDraft(mode: "create" | "edit", runner?: RunnerRow): RunnerDraft {
     sidecarId: null,
     enabled: true,
   };
+}
+
+function envRowsFrom(env: Record<string, string> | undefined): EnvRow[] {
+  return Object.entries(env ?? {}).map(([key, value], index) => ({
+    id: `${key}-${index}`,
+    key,
+    value,
+  }));
+}
+
+function envFromRows(rows: EnvRow[]): Record<string, string> | undefined {
+  const entries = rows
+    .map((row) => [row.key.trim(), row.value.trim()] as const)
+    .filter(([key, value]) => key.length > 0 || value.length > 0);
+
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
+function draftWithEnv(draft: RunnerDraft, rows: EnvRow[]): RunnerDraft {
+  const env = envFromRows(rows);
+
+  return env ? { ...draft, env } : { ...draft, env: undefined };
 }
 
 async function sendJson(
@@ -180,11 +214,21 @@ export function AcpRunnerModal({
           true,
           "",
           preset.model,
+          preset.env,
         );
       }
     }
 
     return seedDraft(mode, runner);
+  });
+  const [envRows, setEnvRows] = useState<EnvRow[]>(() => {
+    if (mode === "create" && initialPresetId) {
+      const preset = presets.find((item) => item.id === initialPresetId);
+
+      if (preset) return envRowsFrom(preset.env);
+    }
+
+    return envRowsFrom(seedDraft(mode, runner).env);
   });
   const [selectedPresetId, setSelectedPresetId] = useState(
     initialPresetId ?? "",
@@ -254,7 +298,8 @@ export function AcpRunnerModal({
     };
   }, []);
 
-  const { ok, errors } = validateRunnerDraft(draft);
+  const submitDraft = draftWithEnv(draft, envRows);
+  const { ok, errors } = validateRunnerDraft(submitDraft);
   const providerKind = draft.providerKind;
   const modelSuggestions = useModelSuggestions(draft, presets);
   const unknownModel =
@@ -294,8 +339,10 @@ export function AcpRunnerModal({
         true,
         current.id,
         preset.model,
+        preset.env,
       ),
     );
+    setEnvRows(envRowsFrom(preset.env));
   }
 
   function errorFor(field: string): string | undefined {
@@ -303,8 +350,29 @@ export function AcpRunnerModal({
     if (field === "id") return t("validId");
     if (field === "baseUrl") return t("validUrl");
     if (field === "authToken" || field === "apiKey") return t("validEnvRef");
+    if (field === "env") return t("validEnvMap");
 
     return errors[field];
+  }
+
+  function addEnvRow(): void {
+    setEnvRows((current) => [
+      ...current,
+      { id: `new-${current.length}-${Date.now()}`, key: "", value: "" },
+    ]);
+  }
+
+  function patchEnvRow(
+    rowId: string,
+    patch: Partial<Pick<EnvRow, "key" | "value">>,
+  ): void {
+    setEnvRows((current) =>
+      current.map((row) => (row.id === rowId ? { ...row, ...patch } : row)),
+    );
+  }
+
+  function removeEnvRow(rowId: string): void {
+    setEnvRows((current) => current.filter((row) => row.id !== rowId));
   }
 
   async function submit(): Promise<void> {
@@ -317,12 +385,12 @@ export function AcpRunnerModal({
           ? await sendJson(
               "/api/admin/acp-runners",
               "POST",
-              buildCreateBody(draft),
+              buildCreateBody(submitDraft),
             )
           : await sendJson(
               `/api/admin/acp-runners/${runner?.id ?? ""}`,
               "PATCH",
-              buildPatchBody(draft, originalDraft.current),
+              buildPatchBody(submitDraft, originalDraft.current),
             );
 
       if (!result.ok) {
@@ -702,6 +770,74 @@ export function AcpRunnerModal({
               ) : null}
             </label>
           ) : null}
+
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className={fieldLabel}>{t("fieldEnv")}</span>
+              <button
+                className="inline-flex h-8 items-center gap-1.5 rounded-[8px] border border-line px-2.5 font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-ink hover:border-mute disabled:opacity-50"
+                disabled={busy}
+                type="button"
+                onClick={addEnvRow}
+              >
+                <PlusIcon aria-hidden="true" className="h-3.5 w-3.5" />
+                {t("addEnv")}
+              </button>
+            </div>
+            <span className="font-mono text-[10.5px] leading-4 text-mute">
+              {t("fieldEnvHint")}
+            </span>
+            {envRows.length > 0 ? (
+              <div className="flex flex-col gap-2">
+                {envRows.map((row) => (
+                  <div
+                    key={row.id}
+                    className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_36px]"
+                  >
+                    <input
+                      aria-label={t("fieldEnvKey")}
+                      autoComplete="off"
+                      className={inputClass}
+                      disabled={busy}
+                      spellCheck={false}
+                      type="text"
+                      value={row.key}
+                      onChange={(e) =>
+                        patchEnvRow(row.id, { key: e.target.value })
+                      }
+                    />
+                    <input
+                      aria-label={t("fieldEnvValue")}
+                      autoComplete="off"
+                      className={inputClass}
+                      disabled={busy}
+                      spellCheck={false}
+                      type="text"
+                      value={row.value}
+                      onChange={(e) =>
+                        patchEnvRow(row.id, { value: e.target.value })
+                      }
+                    />
+                    <button
+                      aria-label={t("removeEnv")}
+                      className="grid h-9 w-9 place-items-center rounded-[8px] border border-line text-mute hover:border-mute hover:text-ink disabled:opacity-50"
+                      disabled={busy}
+                      title={t("removeEnv")}
+                      type="button"
+                      onClick={() => removeEnvRow(row.id)}
+                    >
+                      <TrashIcon aria-hidden="true" className="h-4 w-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            {errorFor("env") ? (
+              <span className="font-mono text-[10.5px] text-[#b5332b]">
+                {errorFor("env")}
+              </span>
+            ) : null}
+          </div>
 
           <label className="flex flex-col gap-1.5">
             <span className={fieldLabel}>{t("fieldPermissionPolicy")}</span>

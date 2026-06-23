@@ -96,6 +96,7 @@ Request body:
     "adapter": "claude",
     "capabilityAgent": "claude",
     "model": "glm-5.1",
+    "env": { "ANTHROPIC_MODEL": "env:CLAUDE_CODE_MODEL" },
     "provider": { "kind": "anthropic_compatible" },
     "permissionPolicy": "default",
     "sidecar": {
@@ -597,9 +598,9 @@ Secrets MUST NEVER appear in:
 - the supervisor's own logs (env values are summarized as `hasEnv: true|false`, never echoed)
 
 **Env merge semantics for the spawned child:** platform runner launch uses typed
-env refs resolved by the supervisor. During migration, the legacy
-`executor.env` path still exists, but new platform runner APIs must persist
-only `env:NAME` references.
+runner env overrides. Raw values pass through literally; `env:NAME` values are
+resolved by the supervisor. During migration, the legacy `executor.env` path
+still exists.
 
 The implemented compatibility path in `supervisor/src/spawn.ts` builds the
 child's env as `{ ...process.env, ...ccrLayer, ...executor.env,
@@ -722,6 +723,7 @@ until the web tier calls `POST /sessions/:id/input`.
     "adapter": "claude",
     "capabilityAgent": "claude",
     "model": "claude-sonnet-4-6",
+    "env": { "ANTHROPIC_MODEL": "env:CLAUDE_CODE_MODEL" },
     "provider": { "kind": "anthropic" },
     "permissionPolicy": "default"
   },
@@ -733,6 +735,8 @@ until the web tier calls `POST /sessions/:id/input`.
 During migration `executor` remains required for backward compatibility. When
 `runner` is present, the supervisor uses the versioned runner intent as the
 launch source of truth and derives the effective executor/env/argv from it.
+`runner.env` values keep their stored form; the supervisor resolves only values
+with the `env:` prefix and passes all other values literally.
 
 The response includes the negotiated ACP session id:
 

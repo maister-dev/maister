@@ -146,6 +146,35 @@ describe("validateRunnerDraft", () => {
     expect(result.errors.authToken).toBeUndefined();
   });
 
+  it("accepts generic runner env refs and raw values", () => {
+    expect(
+      validateRunnerDraft(
+        validClaudeDraft({
+          env: { ANTHROPIC_MODEL: "env:CLAUDE_MODEL_ENV" },
+        }),
+      ),
+    ).toEqual({ ok: true, errors: {} });
+
+    expect(
+      validateRunnerDraft(
+        validClaudeDraft({
+          env: { ANTHROPIC_MODEL: "claude-opus-4-1" },
+        }),
+      ),
+    ).toEqual({ ok: true, errors: {} });
+  });
+
+  it("rejects malformed env-prefixed runner env values", () => {
+    const result = validateRunnerDraft(
+      validClaudeDraft({
+        env: { ANTHROPIC_MODEL: "env:bad-dash" },
+      }),
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.errors.env).toBeTruthy();
+  });
+
   it("rejects a malformed baseUrl", () => {
     const result = validateRunnerDraft(
       validClaudeDraft({
@@ -257,6 +286,20 @@ describe("buildCreateBody", () => {
     expect(body.provider).toEqual({ kind: "anthropic" });
   });
 
+  it("emits generic runner env refs in the create body", () => {
+    expect(
+      buildCreateBody(
+        validClaudeDraft({
+          env: { ANTHROPIC_MODEL: "env:CLAUDE_MODEL_ENV" },
+        }),
+      ),
+    ).toEqual(
+      expect.objectContaining({
+        env: { ANTHROPIC_MODEL: "env:CLAUDE_MODEL_ENV" },
+      }),
+    );
+  });
+
   it("maps wireApi:true to the responses literal for openai_compatible", () => {
     const body = buildCreateBody({
       id: "c",
@@ -313,6 +356,17 @@ describe("buildPatchBody", () => {
     const draft = validClaudeDraft({ model: "newm" });
 
     expect(buildPatchBody(draft, original)).toEqual({ model: "newm" });
+  });
+
+  it("includes env only when generic runner env refs changed", () => {
+    const original = validClaudeDraft();
+    const draft = validClaudeDraft({
+      env: { ANTHROPIC_MODEL: "env:CLAUDE_MODEL_ENV" },
+    });
+
+    expect(buildPatchBody(draft, original)).toEqual({
+      env: { ANTHROPIC_MODEL: "env:CLAUDE_MODEL_ENV" },
+    });
   });
 
   it("returns an empty body when nothing changed", () => {

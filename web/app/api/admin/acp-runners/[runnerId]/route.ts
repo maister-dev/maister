@@ -93,9 +93,25 @@ const providerSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("agent_native") }).strict(),
 ]);
 
+const runnerEnvSchema = z.record(
+  z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
+  z
+    .string()
+    .refine(
+      (value) => !value.includes("\0"),
+      "env value must not contain null byte",
+    )
+    .refine(
+      (value) =>
+        !value.startsWith("env:") || /^env:[A-Za-z_][A-Za-z0-9_]*$/.test(value),
+      "env ref value must be env:NAME",
+    ),
+);
+
 const patchBodySchema = z
   .object({
     model: z.string().trim().min(1).optional(),
+    env: runnerEnvSchema.optional(),
     provider: providerSchema.optional(),
     permissionPolicy: z.enum(PERMISSION_POLICIES).optional(),
     sidecarId: z.string().min(1).nullable().optional(),

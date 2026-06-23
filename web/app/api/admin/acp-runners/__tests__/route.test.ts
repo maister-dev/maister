@@ -270,6 +270,65 @@ describe("admin ACP runner API", () => {
     ]);
   });
 
+  it("accepts raw generic runner env values and supervisor env refs", async () => {
+    const { POST } = await import("../route");
+    const rawRes = await POST(
+      jsonRequest({
+        id: "claude-raw-env",
+        adapter: "claude",
+        model: "claude-sonnet-4-6",
+        provider: { kind: "anthropic" },
+        env: { ANTHROPIC_MODEL: "claude-opus-4-1" },
+      }),
+    );
+
+    expect(rawRes.status).toBe(201);
+
+    const refRes = await POST(
+      jsonRequest({
+        id: "claude-env-ref",
+        adapter: "claude",
+        model: "claude-sonnet-4-6",
+        provider: { kind: "anthropic" },
+        env: { ANTHROPIC_MODEL: "env:CLAUDE_MODEL_ENV" },
+      }),
+    );
+
+    expect(refRes.status).toBe(201);
+    expect(state.inserts).toEqual([
+      expect.objectContaining({
+        tableName: "platform_acp_runners",
+        values: expect.objectContaining({
+          env: { ANTHROPIC_MODEL: "claude-opus-4-1" },
+        }),
+      }),
+      expect.objectContaining({
+        tableName: "platform_acp_runners",
+        values: expect.objectContaining({
+          env: { ANTHROPIC_MODEL: "env:CLAUDE_MODEL_ENV" },
+        }),
+      }),
+    ]);
+  });
+
+  it("rejects malformed env-prefixed generic runner env values", async () => {
+    const { POST } = await import("../route");
+    const res = await POST(
+      jsonRequest({
+        id: "claude-bad-env-ref",
+        adapter: "claude",
+        model: "claude-sonnet-4-6",
+        provider: { kind: "anthropic" },
+        env: { ANTHROPIC_MODEL: "env:bad-dash" },
+      }),
+    );
+    const body = (await res.json()) as { code?: string };
+
+    expect(res.status).toBe(422);
+    expect(body.code).toBe("CONFIG");
+    expect(state.inserts).toEqual([]);
+  });
+
   it("updates the platform default runner only when the runner exists", async () => {
     const { PATCH } = await import("../route");
     const res = await PATCH(jsonRequest({ defaultRunnerId: "claude-code" }));
@@ -322,6 +381,26 @@ describe("admin ACP runner API", () => {
           readinessReasons: expect.arrayContaining([
             "env ref is missing: ZAI_API_KEY",
           ]),
+        }),
+      }),
+    ]);
+  });
+
+  it("stores generic runner env refs on runner PATCH", async () => {
+    const { PATCH } = await import("../[runnerId]/route");
+    const res = await PATCH(
+      jsonRequest({
+        env: { ANTHROPIC_MODEL: "env:CLAUDE_MODEL_ENV" },
+      }),
+      { params: Promise.resolve({ runnerId: "claude-code" }) },
+    );
+
+    expect(res.status).toBe(200);
+    expect(state.updates).toEqual([
+      expect.objectContaining({
+        tableName: "platform_acp_runners",
+        values: expect.objectContaining({
+          env: { ANTHROPIC_MODEL: "env:CLAUDE_MODEL_ENV" },
         }),
       }),
     ]);

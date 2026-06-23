@@ -146,6 +146,7 @@ function runnerCatalogEntry(row: Record<string, any>): RunnerCatalogEntry {
     adapter: row.adapter,
     capabilityAgent: row.capabilityAgent,
     model: row.model,
+    env: row.env,
     providerKind: runnerProviderKind(row.provider),
     permissionPolicy: row.permissionPolicy,
     sidecarId: row.sidecarId,

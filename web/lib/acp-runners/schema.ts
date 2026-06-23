@@ -34,6 +34,7 @@ export type PlatformAcpRunnerConfig = {
   readonly adapter: AdapterId;
   readonly capabilityAgent: AdapterId;
   readonly model: string;
+  readonly env?: Record<string, string>;
   readonly provider: ProviderConfig;
   readonly permissionPolicy: PermissionPolicy;
   readonly sidecarId?: string;
@@ -89,6 +90,18 @@ const safeIdSchema = z
 const secretRefSchema = z
   .string()
   .regex(ENV_REF_PATTERN, "must be an env:NAME secret reference");
+
+const envNameSchema = z
+  .string()
+  .regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "must be an environment variable name");
+
+const runnerEnvValueSchema = z
+  .string()
+  .refine((value) => !value.includes("\0"), "must not contain a null byte")
+  .refine(
+    (value) => !value.startsWith("env:") || ENV_REF_PATTERN.test(value),
+    "env references must use env:NAME",
+  );
 
 const platformBlockSchema = z
   .object({
@@ -156,6 +169,7 @@ const runnerInputSchema = z
     id: safeIdSchema,
     adapter: safeIdSchema,
     model: z.string().min(1),
+    env: z.record(envNameSchema, runnerEnvValueSchema).default({}),
     provider: providerSchema,
     permission_policy: z.enum(PERMISSION_POLICIES).default("default"),
     router_instance: safeIdSchema.optional(),
@@ -247,6 +261,7 @@ function mapRunner(
     adapter: adapter.id,
     capabilityAgent: adapter.capabilityAgent,
     model: input.model,
+    env: input.env,
     provider: mapProvider(input.provider),
     permissionPolicy: input.permission_policy,
     sidecarId: input.router_instance,

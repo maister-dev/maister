@@ -27,6 +27,18 @@ const envNameSchema = z
   .string()
   .regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "must be an environment variable name");
 
+const runnerEnvValueSchema = z
+  .string()
+  .refine(
+    (value) => !value.includes("\0"),
+    "env value must not contain null byte",
+  )
+  .refine(
+    (value) =>
+      !value.startsWith("env:") || /^env:[A-Za-z_][A-Za-z0-9_]*$/.test(value),
+    "env ref value must be env:NAME",
+  );
+
 const worktreePathSchema = z
   .string()
   .min(1)
@@ -99,6 +111,7 @@ export const RunnerLaunchSchema = z
     model: z.string().min(1),
     provider: RunnerProviderSchema,
     permissionPolicy: z.enum(["default", "dangerously_skip_permissions"]),
+    env: z.record(envNameSchema, runnerEnvValueSchema).optional(),
     sidecar: RunnerSidecarSchema.optional(),
   })
   .strict();
