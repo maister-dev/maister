@@ -141,6 +141,7 @@ export function ScratchComposer({
         testId="scratch-message-composer"
         value={content}
         onChange={setContent}
+        onSubmitShortcut={() => void submit()}
       />
       {composerAttachments.length > 0 ? (
         <div className="mt-2 flex flex-col gap-2">

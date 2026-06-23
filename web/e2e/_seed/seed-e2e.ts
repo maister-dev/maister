@@ -4413,6 +4413,14 @@ async function seedScratchDetailFixture(
      VALUES ($1, $2, $3, 'owner')`,
     [ids.member, ids.project, userId],
   );
+  await pool.query(
+    `INSERT INTO capability_records
+       (id, project_id, capability_ref_id, kind, label, source, agents, material)
+     VALUES ($1, $2, 'aif-plan', 'skill', 'AIF Plan', 'flow-package',
+       '["claude","codex"]'::jsonb,
+       '{"description":"Plan a feature","argHint":"<feature>"}'::jsonb)`,
+    [randomUUID(), ids.project],
+  );
   // run.status mirrors runStatusForDialogStatus("WaitingForUser") = "Running".
   // Pure scratch runs carry no task or flow (flow_id null).
   await pool.query(

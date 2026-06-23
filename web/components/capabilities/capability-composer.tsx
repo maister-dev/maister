@@ -47,6 +47,7 @@ export type CapabilityComposerProps = {
   disabled?: boolean;
   className?: string;
   testId?: string;
+  onSubmitShortcut?: () => void;
 };
 
 type ChipAttrs = {
@@ -157,6 +158,12 @@ const EMPTY_SUGGESTION: SuggestionState = {
   left: 0,
   range: null,
 };
+
+export function isSubmitShortcut(
+  event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey">,
+): boolean {
+  return event.key === "Enter" && (event.metaKey || event.ctrlKey);
+}
 
 function buildSuggestionExtension(args: {
   getCatalog: () => ProjectCapabilityCatalogEntry[];
@@ -369,12 +376,15 @@ export function CapabilityComposer({
   disabled,
   className,
   testId,
+  onSubmitShortcut,
 }: CapabilityComposerProps) {
   const [suggestion, setSuggestion] =
     useState<SuggestionState>(EMPTY_SUGGESTION);
   const suggestionRef = useRef(suggestion);
+  const submitShortcutRef = useRef(onSubmitShortcut);
 
   suggestionRef.current = suggestion;
+  submitShortcutRef.current = onSubmitShortcut;
   const catalogRef = useRef(catalog);
 
   catalogRef.current = catalog;
@@ -387,6 +397,16 @@ export function CapabilityComposer({
         class: "capability-composer__editor",
         "data-testid": "capability-composer-input",
         ...(ariaLabel ? { "aria-label": ariaLabel } : {}),
+      },
+      handleKeyDown: (_view, event) => {
+        if (!isSubmitShortcut(event) || !submitShortcutRef.current) {
+          return false;
+        }
+
+        event.preventDefault();
+        submitShortcutRef.current();
+
+        return true;
       },
     },
     extensions: [

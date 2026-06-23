@@ -47,6 +47,74 @@ test("scratch detail lands on the conversation with an enabled composer", async 
   await expect(composer).toBeEditable();
 });
 
+test("scratch detail composer suggests project skills before live commands arrive", async ({
+  page,
+}) => {
+  const fx = loadScratchDetailFixture();
+  const catalogLoaded = page.waitForResponse(
+    (response) => response.url().includes("/capability-catalog"),
+    { timeout: 20_000 },
+  );
+
+  await page.goto(`/scratch-runs/${fx.scratchRunId}`);
+  await catalogLoaded;
+
+  const composer = page.locator(
+    '[data-testid="scratch-message-composer"] [data-testid="capability-composer-input"]',
+  );
+
+  await composer.click();
+  await page.keyboard.type("/aif");
+
+  const item = page.locator(
+    '[data-testid="capability-suggestion-item"][data-slug="aif-plan"]',
+  );
+
+  await expect(item).toBeVisible({ timeout: 10_000 });
+});
+
+test("scratch detail composer submits with Cmd or Ctrl Enter", async ({
+  page,
+}) => {
+  const fx = loadScratchDetailFixture();
+  const posted = page.waitForRequest(
+    (request) =>
+      request.method() === "POST" &&
+      request.url().includes(`/api/scratch-runs/${fx.scratchRunId}/messages`),
+  );
+
+  await page.route(
+    `**/api/scratch-runs/${fx.scratchRunId}/messages`,
+    async (route) => {
+      if (route.request().method() !== "POST") {
+        await route.continue();
+
+        return;
+      }
+
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true }),
+      });
+    },
+  );
+  await page.goto(`/scratch-runs/${fx.scratchRunId}`);
+
+  const composer = page.locator(
+    '[data-testid="scratch-message-composer"] [data-testid="capability-composer-input"]',
+  );
+
+  await composer.click();
+  await page.keyboard.type("Keyboard submit check");
+  await page.keyboard.press("ControlOrMeta+Enter");
+
+  const request = await posted;
+  const payload = request.postDataJSON() as { content?: string };
+
+  expect(payload.content).toBe("Keyboard submit check");
+});
+
 test("scratch inspector toggles and surfaces change size + actions", async ({
   page,
 }) => {
@@ -88,11 +156,10 @@ test("scratch workbench exposes the shared Diff renderer and a readable file tre
 }) => {
   const fx = loadScratchDetailFixture();
 
-  await page.goto(`/scratch-runs/${fx.scratchRunId}`);
+  await page.goto(`/scratch-runs/${fx.scratchRunId}?wb=diff`);
 
-  // Diff tab → the shared ADR-066 diff renderer (NOT the old raw <pre>).
-  await page.getByRole("tab", { name: "Diff" }).click();
-  await page.waitForURL(/[?&]wb=diff/);
+  // Diff deep link opens the collapsed Files/Diff workbench and selects Diff.
+  await expect(page.getByTestId("workbench-disclosure")).toBeVisible();
   await expect(page.locator('[data-testid="run-diff"]')).toBeVisible();
   await expect(page.locator('[data-testid="diff-view"]')).toBeVisible();
 

@@ -79,7 +79,8 @@ The scratch screen uses the conversation as the primary center:
    is crashed and resumable. It supports structured attachments and uploaded
    files. Slash suggestions include package skills plus the live ACP session's
    available commands; native runner commands are inserted as their exact raw
-   command text rather than converted into capability chips.
+   command text rather than converted into capability chips. `Cmd+Enter` on
+   macOS and `Ctrl+Enter` on Windows/Linux submit the composer.
 4. **Inline HITL** - permission/form/human responses appear in the conversation
    path instead of a separate workflow page.
 5. **Run inspector** - a collapsible right sidebar documented in

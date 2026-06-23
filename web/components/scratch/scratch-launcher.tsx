@@ -363,6 +363,7 @@ export function ScratchLauncher({
   const [restrictionIds, setRestrictionIds] = useState<string[]>([]);
   const [launchStage, setLaunchStage] = useState<LaunchStage | null>(null);
   const launchAbortRef = useRef<AbortController | null>(null);
+  const formRef = useRef<HTMLFormElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -642,7 +643,7 @@ export function ScratchLauncher({
   }
 
   return (
-    <form className="flex flex-col gap-3" onSubmit={handleSubmit}>
+    <form ref={formRef} className="flex flex-col gap-3" onSubmit={handleSubmit}>
       <section className={commandShell}>
         <div
           className={clsx(
@@ -808,6 +809,9 @@ export function ScratchLauncher({
             testId="scratch-composer"
             value={prompt}
             onChange={setPrompt}
+            onSubmitShortcut={() => {
+              if (canSubmit) formRef.current?.requestSubmit();
+            }}
           />
 
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2">

@@ -30,10 +30,11 @@ function surfaceFormForCommand(name: string, agent: AdapterId): string {
 
 /**
  * Build the running-scratch composer catalog from the live `availableCommands`
- * snapshot (FR-A3 / lifecycle source #3): the live list is authoritative for
- * what the running session actually exposes; the static catalog enriches it with
- * display names + descriptions and supplies the claude-only coder subagents that
- * never appear in the stream.
+ * snapshot (FR-A3 / lifecycle source #3): static project skills are the floor
+ * so package commands stay suggestable before a live snapshot exists; the live
+ * list adds native/global commands and enriches matching project skills with
+ * runner-emitted descriptions and hints. The static catalog also supplies the
+ * claude-only coder subagents that never appear in the stream.
  *
  * Live command names arrive AS-EMITTED (codex bakes `$`, claude emits bare or a
  * `mcp:` prefix). Each `/`·`$` command that matches a PROJECT SKILL (present in
@@ -58,6 +59,7 @@ export function buildRunningCommandCatalog(
       .filter((entry) => entry.kind === "skill")
       .map((entry) => [entry.slug, entry] as const),
   );
+  const staticSkills = staticCatalog.filter((entry) => entry.kind === "skill");
   const liveEntries: ProjectCapabilityCatalogEntry[] = [];
   const seen = new Set<string>();
 
@@ -104,7 +106,14 @@ export function buildRunningCommandCatalog(
     });
   }
 
+  const fallbackSkills = staticSkills
+    .filter((entry) => !seen.has(entry.slug))
+    .map((entry) => ({
+      ...entry,
+      canonicalToken: `@skill:${entry.slug}`,
+      surfaceForm: surfaceFormForSkill(entry.slug, agent),
+    }));
   const subagents = staticCatalog.filter((entry) => entry.kind === "subagent");
 
-  return [...liveEntries, ...subagents];
+  return [...liveEntries, ...fallbackSkills, ...subagents];
 }

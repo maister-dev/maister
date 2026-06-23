@@ -317,11 +317,14 @@ stateDiagram-v2
   `scratch.launch_result` frame; the launcher renders a live loader instead of
   freezing, and cancelling (client disconnect) GCs the worktree/session
   pre-commit or marks the run Crashed post-commit (D9, FR-F1/FR-F2).
-- **Running (Designed).** Autocomplete switches to the live ACP
-  `available_commands_update` snapshot (latest-wins per session — the feature
-  stops discarding this event) **unioned with static subagents** (claude-only;
-  subagents never appear in the `availableCommands` stream). The snapshot is
-  exposed scratch-only via `GET /api/scratch-runs/[runId]/commands`, returning
+- **Running (Designed).** Autocomplete keeps the static project-skill catalog as
+  the floor, then adds the live ACP `available_commands_update` snapshot
+  (latest-wins per session — the feature stops discarding this event) plus static
+  subagents (claude-only; subagents never appear in the `availableCommands`
+  stream). The static floor prevents a freshly resumed or slow-to-report session
+  from losing package-skill suggestions; live commands add native/global runner
+  commands and enrich matching skills with live descriptions/hints. The snapshot
+  is exposed scratch-only via `GET /api/scratch-runs/[runId]/commands`, returning
   `[{ name, description, hint? }]` (FR-A2). Names are surfaced **as emitted**
   (codex `$x`, claude bare / `mcp:`); the composer maps them to canonical refs
   through the catalog.

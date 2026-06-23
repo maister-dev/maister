@@ -157,11 +157,14 @@ describe("buildRunningCommandCatalog — live ∪ subagents (FR-A3 / source #3)"
     });
   });
 
-  it("does NOT surface a static skill that is absent from the live stream", () => {
-    // aif-plan is in the static catalog but not in the live list → not available.
+  it("surfaces static skills before the live ACP snapshot arrives", () => {
     const out = buildRunningCommandCatalog([], staticCatalog, "claude");
 
-    expect(out.some((e) => e.kind === "skill")).toBe(false);
+    expect(out.find((e) => e.slug === "aif-plan")).toMatchObject({
+      kind: "skill",
+      canonicalToken: "@skill:aif-plan",
+      surfaceForm: "/aif-plan",
+    });
   });
 
   it("does not carry codex subagents (static catalog for codex has none)", () => {

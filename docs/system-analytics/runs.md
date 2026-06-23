@@ -561,8 +561,10 @@ transcript noise (`web/lib/scratch-runs/transcript.ts`,
 `web/lib/projector/artifact-projector.ts`). This feature **(Designed)** stops
 discarding it and instead persists the **latest snapshot per session**
 (last-write-wins) in run stream state (e.g. `session.json`). The snapshot is the
-authoritative, runner-correct command list once a session is live — it includes
-the agent's native/global commands, which the static catalog cannot know.
+authoritative, runner-correct command list once a session is live for native and
+global agent commands, which the static catalog cannot know. The running
+composer still keeps static project skills as a fallback floor, so package
+skills remain suggestable while the live snapshot is absent or delayed.
 
 Snapshot element shape is the ACP `AvailableCommand`:
 `{ name, description, input?: { hint } }`. **Names are persisted and exposed
