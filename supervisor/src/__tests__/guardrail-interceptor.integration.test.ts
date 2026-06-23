@@ -35,9 +35,12 @@ type BootResult = {
 
 let booted: BootResult | null = null;
 
-async function boot(fixtureArgs: string[]): Promise<BootResult> {
+async function boot(
+  fixtureArgs: string[],
+  logger = silentLogger,
+): Promise<BootResult> {
   const runtimeRoot = await mkdtemp(join(tmpdir(), "guardrail-it-"));
-  const registry = new SessionRegistry(silentLogger);
+  const registry = new SessionRegistry(logger);
   const app = Fastify({ logger: false });
   const spawnOverrides: SpawnOverrides = {
     binary: "node",
@@ -47,7 +50,7 @@ async function boot(fixtureArgs: string[]): Promise<BootResult> {
   registerRoutes({
     app,
     registry,
-    logger: silentLogger,
+    logger,
     runtimeRoot,
     killGraceMs: 2_000,
     spawnOverrides,
@@ -209,6 +212,110 @@ describe("guardrail interceptor (universal supervisor seam)", () => {
     await sendPrompt(url, sessionId);
 
     expect(hookTrips(registry.snapshotEvents(sessionId))).toHaveLength(0);
+    expect(pendingPermissions.size(sessionId)).toBe(0);
+  });
+
+  it("repetition: trips exactly once, then short-circuits every later call (hookHalted)", async () => {
+    const { url, registry, runtimeRoot } = await boot([
+      "--scenario",
+      "repetition",
+      "--count",
+      "7",
+    ]);
+    const sessionId = await createSession(url, {
+      worktreePath: runtimeRoot,
+      hooksConfig: { repetition: { max: 5 } },
+    });
+
+    await sendPrompt(url, sessionId);
+
+    const trips = hookTrips(registry.snapshotEvents(sessionId));
+
+    // 7 identical calls, max 5: the 5th halts; calls 6 & 7 are cancelled inline
+    // by hookHalted WITHOUT a second trip — one escalation per halt.
+    expect(trips).toHaveLength(1);
+    expect(trips[0]).toMatchObject({ rule: "repetition", disposition: "halt" });
+    expect(pendingPermissions.size(sessionId)).toBe(0);
+  });
+
+  it("halt cancels an OPEN permission deferred (no leaked deferred)", async () => {
+    const { url, registry, runtimeRoot } = await boot([
+      "--scenario",
+      "deferred_cancel",
+      "--count",
+      "3",
+    ]);
+    const sessionId = await createSession(url, {
+      worktreePath: runtimeRoot,
+      // autoApprove OFF → the write opens a real HITL deferred (no inline allow).
+      autoApprovePermissions: false,
+      hooksConfig: { noProgress: { maxTurns: 3 } },
+    });
+
+    // Resolves ONLY because the no_progress halt cancels the open deferred (the
+    // mock awaits it); a leak would hang the prompt past the test timeout.
+    await sendPrompt(url, sessionId);
+
+    const trips = hookTrips(registry.snapshotEvents(sessionId));
+
+    expect(trips).toHaveLength(1);
+    expect(trips[0]).toMatchObject({
+      rule: "no_progress",
+      disposition: "halt",
+    });
+    expect(pendingPermissions.size(sessionId)).toBe(0);
+  });
+
+  it("no_progress: a write turn resets the counter (no trip below maxTurns idle)", async () => {
+    const { url, registry, runtimeRoot } = await boot([
+      "--scenario",
+      "no_progress_reset",
+      "--count",
+      "4",
+    ]);
+    const sessionId = await createSession(url, {
+      worktreePath: runtimeRoot,
+      hooksConfig: { noProgress: { maxTurns: 4 } },
+    });
+
+    await sendPrompt(url, sessionId);
+
+    // 3 idle, one write (reset), 3 idle — never 4 consecutive idle → no halt.
+    expect(hookTrips(registry.snapshotEvents(sessionId))).toHaveLength(0);
+    expect(pendingPermissions.size(sessionId)).toBe(0);
+  });
+
+  it("path_guard: kind-only writes are each denied, WARNed once per session", async () => {
+    const warns: Array<Record<string, unknown>> = [];
+    const captureLogger = pino(
+      { level: "warn" },
+      {
+        write: (s: string) =>
+          warns.push(JSON.parse(s) as Record<string, unknown>),
+      },
+    );
+    const { url, registry, runtimeRoot } = await boot(
+      ["--scenario", "path_guard_kindonly", "--count", "2"],
+      captureLogger,
+    );
+    const sessionId = await createSession(url, {
+      worktreePath: runtimeRoot,
+      hooksConfig: { pathGuard: { allowedPaths: ["src/**"] } },
+    });
+
+    await sendPrompt(url, sessionId);
+
+    const trips = hookTrips(registry.snapshotEvents(sessionId));
+
+    // Both kind-only writes are denied (deny-and-continue) ...
+    expect(trips).toHaveLength(2);
+    expect(trips.every((t) => t.rule === "path_guard")).toBe(true);
+    // ... but the fallback WARN fires once per session, not once per call.
+    const fallbackWarns = warns.filter((w) =>
+      String(w.msg ?? "").includes("kind-only fallback"),
+    );
+
+    expect(fallbackWarns).toHaveLength(1);
     expect(pendingPermissions.size(sessionId)).toBe(0);
   });
 });

@@ -385,6 +385,26 @@ describe("StartSessionRequestSchema", () => {
 
     expect(result.success).toBe(false);
   });
+
+  // The resolver always fills pathGuard.allowedPaths (>= ["**"]); the wire schema
+  // mirrors the web authoring constraints so a malformed direct-POST is rejected.
+  it("rejects a hooksConfig pathGuard with an empty allowedPaths array", () => {
+    const result = StartSessionRequestSchema.safeParse({
+      ...validRequest,
+      hooksConfig: { pathGuard: { allowedPaths: [] } },
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a hooksConfig pathGuard with an empty-string glob", () => {
+    const result = StartSessionRequestSchema.safeParse({
+      ...validRequest,
+      hooksConfig: { pathGuard: { allowedPaths: [""] } },
+    });
+
+    expect(result.success).toBe(false);
+  });
 });
 
 describe("SupervisorDiagnosticsResponseSchema", () => {

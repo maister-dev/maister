@@ -26,6 +26,7 @@ import {
   repetitionTick,
   resolvePathGuardDecision,
   toolCallSignature,
+  WRITE_KINDS,
 } from "./guardrail-hooks";
 import { modelCatalogCache } from "./model-catalog/cache";
 import { harvestSessionModels } from "./model-catalog/harvest";
@@ -81,17 +82,6 @@ type ToolCallLike = {
   locations?: Array<{ path?: string; line?: number }>;
 };
 
-// M30 (ADR-078 L2): unambiguous MUTATING ACP toolCall kinds. `execute`
-// (bash) deliberately passes — read-only commands like grep/cat must work;
-// the web-side L3 mutation sensor is the guarantee for anything that slips.
-const READ_ONLY_MUTATING_KINDS = new Set([
-  "edit",
-  "write",
-  "create",
-  "delete",
-  "move",
-]);
-
 // M30 (ADR-078 L2): decide whether a permission request raised during a
 // read-only gate-chat turn is auto-rejected. Returns the reject option to
 // deliver, or null to pass the request through to the normal HITL flow.
@@ -103,7 +93,9 @@ export function resolveReadOnlyAutoReject(
   options: ReadonlyArray<PermissionOptionDescriptor>,
 ): PermissionOptionDescriptor | null {
   if (readOnlyTurn !== true) return null;
-  if (!toolCall.kind || !READ_ONLY_MUTATING_KINDS.has(toolCall.kind)) {
+  // The mutating-kind set is the ADR-104 WRITE_KINDS SSOT (`execute`/bash passes:
+  // read-only commands must work; the web-side L3 sensor backstops what slips).
+  if (!toolCall.kind || !WRITE_KINDS.has(toolCall.kind)) {
     return null;
   }
 

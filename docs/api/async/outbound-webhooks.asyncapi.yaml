@@ -460,7 +460,8 @@ components:
         (`flows/graph/runner-graph.ts`) emits `{ nodeId, onStuck }`; (2) the budget
         watchdog (`runs/keepalive-sweeper.ts`, ADR-101) emits
         `{ reason: "budget_exceeded", scope, meter }`; (3) the guardrail/hook engine
-        (ADR-104) emits `{ reason: "hook_trip", rule }`.
+        (ADR-104, **Designed — M40 Phase 3**, not yet emitted) emits
+        `{ reason: "hook_trip", rule }`.
       additionalProperties: false
       properties:
         reason:

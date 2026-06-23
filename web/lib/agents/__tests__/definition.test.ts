@@ -256,6 +256,10 @@ describe("renderAgentDefinition", () => {
       capabilityProfile: { skills: ["review"] },
       riskTier: "standard",
       recommended: { events: ["run.done"] },
+      hooks: {
+        repetition: { max: 5 },
+        pathGuard: { allowedPaths: ["src/**"] },
+      },
       prompt: "Review the diff.",
     });
 
@@ -269,6 +273,10 @@ describe("renderAgentDefinition", () => {
       capabilityProfile: { skills: ["review"] },
       riskTier: "standard",
       recommended: { events: ["run.done"] },
+      hooks: {
+        repetition: { max: 5 },
+        pathGuard: { allowedPaths: ["src/**"] },
+      },
     });
   });
 
@@ -288,5 +296,6 @@ describe("renderAgentDefinition", () => {
     expect(rendered).not.toContain("capability_profile:");
     expect(rendered).not.toContain("recommended:");
     expect(rendered).not.toContain("workspace_ref:");
+    expect(rendered).not.toContain("hooks:");
   });
 });

@@ -7,10 +7,11 @@ import type {
 
 import path from "node:path";
 
-// ADR-104 (M40): write-class ACP toolCall kinds. The same closed set as the
-// L1/L2 READ_ONLY_MUTATING_KINDS in acp-client.ts — only these kinds are
-// governed by path_guard / counted as no_progress "progress"; reads, searches,
-// and `execute` (bash, which can be read-only) pass.
+// ADR-104 (M40): the canonical write-class ACP toolCall kind set — the single
+// source of truth for "is this tool call mutating?". Consumed here by path_guard
+// / no_progress AND by the ADR-078 L2 read-only-turn auto-reject in acp-client.ts
+// (it imports this set rather than re-declaring it). Reads, searches, and
+// `execute` (bash, which can be read-only) are NOT write-class and pass.
 export const WRITE_KINDS: ReadonlySet<string> = new Set([
   "edit",
   "write",

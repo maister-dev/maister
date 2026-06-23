@@ -280,6 +280,31 @@ describe("repetitionTick", () => {
         .tripped,
     ).toBe(true);
   });
+
+  it("re-arms after a reset: a fresh run of identical sigs trips again at max", () => {
+    const max = 3;
+    // A near-trip run on sig-A, then a differing sig resets the run to 1.
+    let r = repetitionTick(
+      { lastToolCallSig: "sig-A", repeatCount: 2 },
+      "sig-B",
+      max,
+    );
+
+    expect(r).toMatchObject({ repeatCount: 1, tripped: false });
+
+    // Driving sig-B back up to `max` consecutive trips again — no off-by-one on
+    // the post-reset increment path.
+    let state = {
+      lastToolCallSig: r.lastToolCallSig,
+      repeatCount: r.repeatCount,
+    };
+
+    r = repetitionTick(state, "sig-B", max);
+    expect(r).toMatchObject({ repeatCount: 2, tripped: false });
+    state = { lastToolCallSig: r.lastToolCallSig, repeatCount: r.repeatCount };
+    r = repetitionTick(state, "sig-B", max);
+    expect(r).toMatchObject({ repeatCount: 3, tripped: true });
+  });
 });
 
 describe("classifyProgressUpdate", () => {

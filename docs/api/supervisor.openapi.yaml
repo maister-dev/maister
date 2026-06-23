@@ -1091,10 +1091,13 @@ components:
               properties:
                 allowedPaths:
                   type: array
+                  minItems: 1
                   items:
                     type: string
+                    minLength: 1
                   description: |
-                    Glob writable set; a write-class tool call outside it is denied
+                    Glob writable set (non-empty; the resolver fills at least
+                    `["**"]`); a write-class tool call outside it is denied
                     (deny-and-continue).
     AdapterLaunch:
       type: object

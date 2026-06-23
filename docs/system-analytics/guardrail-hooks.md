@@ -295,6 +295,10 @@ resumes through the same agent-permission-HITL path that already drives it.
 - **Adapter omits `toolCall.locations[].path`** (gemini / opencode / mimo) →
   kind-only fallback: an armed `path_guard` denies any write-kind with no
   extractable path (conservative deny-and-continue).
+- **Stall with no tool calls at all** (pure model output, no `tool_call`
+  `sessionUpdate`) → `no_progress` does NOT increment — only tool-call turns
+  count as a turn. That case is covered by the ADR-101 budget
+  (token / wallclock meter) and the keep-alive sweeper, not the hook engine.
 - **Invalid `hooks` block at compile/load** (negative caps, empty
   `allowedPaths`, unknown lifecycle) → `MaisterError("CONFIG")` with the field
   path.
@@ -313,7 +317,7 @@ resumes through the same agent-permission-HITL path that already drives it.
   [`web-runs.asyncapi.yaml`](../api/async/web-runs.asyncapi.yaml) (`session.hook_trip`),
   [`outbound-webhooks.asyncapi.yaml`](../api/async/outbound-webhooks.asyncapi.yaml) (`DataRunEscalated.reason`).
 - **Schema:** [`database-schema.md`](../database-schema.md) + [`db/hitl-domain.md`](../db/hitl-domain.md) +
-  [`db/assignments-domain.md`](../db/assignments-domain.md) (`hook_trip`, migration `0063`).
+  [`db/erd.md`](../db/erd.md) (`hook_trip`, migration `0063`).
 - **DSL / settings / config:** [`flow-dsl.md`](../flow-dsl.md), [`flow-settings.md`](flow-settings.md),
   [`configuration.md`](../configuration.md) (env vars).
 - **Related domains:** [`execution-policy.md`](execution-policy.md) (preset + `onStuck`),

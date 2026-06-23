@@ -232,7 +232,12 @@ export const StartSessionRequestSchema = z
       .object({
         repetition: z.object({ max: z.number().int().min(1) }).strict(),
         noProgress: z.object({ maxTurns: z.number().int().min(1) }).strict(),
-        pathGuard: z.object({ allowedPaths: z.array(z.string()) }).strict(),
+        // allowedPaths mirrors the web authoring schema: non-empty array of
+        // non-empty globs. The resolver always fills it (>= ["**"]), so this only
+        // rejects a malformed direct-POST — the two wire ends stay symmetric.
+        pathGuard: z
+          .object({ allowedPaths: z.array(z.string().min(1)).min(1) })
+          .strict(),
       })
       .partial()
       .strict()
