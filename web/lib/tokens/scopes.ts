@@ -7,6 +7,8 @@ import {
 
 export { TOKEN_SCOPE_VALUES, type TokenScope } from "@/types/token-scopes";
 
+const EXACT_ONLY_SCOPES = new Set<string>(["hitl:respond:human"]);
+
 export function normalizeTokenScopes(scopes?: readonly string[]): TokenScope[] {
   if (!scopes || scopes.length === 0) return [TOKEN_SCOPE_ALL];
 
@@ -29,7 +31,13 @@ export function normalizeTokenScopes(scopes?: readonly string[]): TokenScope[] {
     );
   }
 
-  if (knownScopes.includes(TOKEN_SCOPE_ALL)) return [TOKEN_SCOPE_ALL];
+  if (knownScopes.includes(TOKEN_SCOPE_ALL)) {
+    const exactScopes = knownScopes.filter((scope) =>
+      EXACT_ONLY_SCOPES.has(scope),
+    );
+
+    return [TOKEN_SCOPE_ALL, ...exactScopes];
+  }
 
   return knownScopes;
 }
@@ -38,5 +46,16 @@ export function tokenHasScope(
   scopes: readonly string[],
   requiredScope: string,
 ): boolean {
+  if (EXACT_ONLY_SCOPES.has(requiredScope)) {
+    return scopes.includes(requiredScope);
+  }
+
   return scopes.includes(TOKEN_SCOPE_ALL) || scopes.includes(requiredScope);
+}
+
+export function tokenHasExactScope(
+  scopes: readonly string[],
+  requiredScope: string,
+): boolean {
+  return scopes.includes(requiredScope);
 }

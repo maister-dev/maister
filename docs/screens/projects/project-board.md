@@ -73,6 +73,10 @@ The board is a horizontally scrollable set of columns:
   state, HITL hints, and lifecycle actions.
 - **Relation blockers** disable launch when a task is blocked by open
   `blocks`, `depends_on`, or success-gated `requires` edges.
+- **Integrations panel** in the project settings area is project-bound. Its API
+  tokens table lists only tokens with `project_id` set to this project; global
+  personal API tokens live on [`../account.md`](../account.md) and are not
+  created or listed here.
 
 ## States
 
@@ -100,16 +104,23 @@ stateDiagram-v2
 - Launch options for flow/runner/branch/policy selects:
   `GET /api/runs/launch-options?taskId=...`.
 - Launch run: `POST /api/runs`.
+- Project Integrations tokens: `GET/POST /api/projects/{slug}/tokens` and
+  `DELETE /api/projects/{slug}/tokens/{tokenId}`. These routes remain scoped to
+  `project_id = current project`; personal global tokens use
+  `GET/POST /api/account/tokens` and
+  `DELETE /api/account/tokens/{tokenId}`.
 
 Behavior details live in
 [`../../system-analytics/tasks.md`](../../system-analytics/tasks.md),
 [`../../system-analytics/runs.md`](../../system-analytics/runs.md), and
 [`../../system-analytics/social-board.md`](../../system-analytics/social-board.md).
+External token behavior lives in
+[`../../system-analytics/external-operations.md`](../../system-analytics/external-operations.md).
 
 ## i18n
 
-Uses `board`, `common`, `launch`, `run`, `readiness`, and `taskDetail`
-namespaces from `web/messages/{locale}.json`.
+Uses `board`, `common`, `launch`, `run`, `readiness`, `taskDetail`, and
+`tokens` namespaces from `web/messages/{locale}.json`.
 
 ## Linked Artifacts
 
@@ -118,6 +129,8 @@ namespaces from `web/messages/{locale}.json`.
 - Source: `web/components/board/board.tsx`,
   `web/components/board/task-card.tsx`,
   `web/components/board/task-card-editing.tsx`,
+  `web/components/board/panels/integrations-panel.tsx`,
+  `web/components/board/token-actions.tsx`,
   `web/components/social/markdown-body.tsx`,
   `web/components/social/task-detail-prompt-editor.tsx`,
   `web/lib/queries/board.ts`.

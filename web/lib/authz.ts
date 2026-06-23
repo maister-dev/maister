@@ -6,7 +6,6 @@ import type { AccountStatus, GlobalRole, ProjectRole } from "@/lib/db/schema";
 import { and, eq } from "drizzle-orm";
 import pino from "pino";
 
-import { auth } from "@/auth";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
@@ -91,6 +90,7 @@ async function loadUser(id: string) {
  * than at JWT expiry. Returns null when unauthenticated OR the user is gone.
  */
 export async function getSessionUser(): Promise<SessionUser | null> {
+  const { auth } = await import("@/auth");
   const session = await auth();
   const id = session?.user?.id;
 
@@ -193,17 +193,52 @@ export interface ProjectAccess {
   role: ProjectRole;
 }
 
-/**
- * Authorize the current session against a project. `projectId` MUST be a
- * server-derived value (url-param resolved to a row, or server-state) — never
- * a raw body field. Global admins are implicit owners of every project.
- */
-export async function requireProjectRole(
+export async function requireActiveUserById(
+  userId: string,
+): Promise<SessionUser> {
+  const row = await loadUser(userId);
+
+  if (!row) {
+    log.warn({ userId }, "denied: missing user");
+    throw new MaisterError("UNAUTHENTICATED", "User not found");
+  }
+
+  const user: SessionUser = {
+    id: row.id,
+    role: row.role,
+    accountStatus: row.accountStatus,
+    mustChangePassword: row.mustChangePassword,
+    email: row.email,
+    name: row.name,
+  };
+
+  if (user.accountStatus !== "active") {
+    log.warn(
+      { userId: user.id, status: user.accountStatus },
+      "denied: inactive account",
+    );
+    throw new MaisterError(
+      "ACCOUNT_INACTIVE",
+      "Account is not active. Ask an admin to approve or re-enable it.",
+    );
+  }
+
+  if (user.mustChangePassword) {
+    log.warn({ userId: user.id }, "denied: password change required");
+    throw new MaisterError(
+      "PASSWORD_CHANGE_REQUIRED",
+      "Password change required before any action",
+    );
+  }
+
+  return user;
+}
+
+async function requireProjectRoleForActiveUser(
+  user: SessionUser,
   projectId: string,
   min: ProjectRole,
 ): Promise<ProjectAccess> {
-  const user = await requireActiveSession();
-
   if (user.role === "admin") {
     log.debug(
       { userId: user.id, projectId },
@@ -228,11 +263,43 @@ export async function requireProjectRole(
   return { user, role: role as ProjectRole };
 }
 
+/**
+ * Authorize the current session against a project. `projectId` MUST be a
+ * server-derived value (url-param resolved to a row, or server-state) — never
+ * a raw body field. Global admins are implicit owners of every project.
+ */
+export async function requireProjectRole(
+  projectId: string,
+  min: ProjectRole,
+): Promise<ProjectAccess> {
+  const user = await requireActiveSession();
+
+  return requireProjectRoleForActiveUser(user, projectId, min);
+}
+
+export async function requireProjectRoleForUser(
+  userId: string,
+  projectId: string,
+  min: ProjectRole,
+): Promise<ProjectAccess> {
+  const user = await requireActiveUserById(userId);
+
+  return requireProjectRoleForActiveUser(user, projectId, min);
+}
+
 export function requireProjectAction(
   projectId: string,
   action: ProjectAction,
 ): Promise<ProjectAccess> {
   return requireProjectRole(projectId, PROJECT_ACTION_MIN[action]);
+}
+
+export function requireProjectActionForUser(
+  userId: string,
+  projectId: string,
+  action: ProjectAction,
+): Promise<ProjectAccess> {
+  return requireProjectRoleForUser(userId, projectId, PROJECT_ACTION_MIN[action]);
 }
 
 export function httpStatusForAuthz(code: string): number | null {

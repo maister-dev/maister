@@ -1884,6 +1884,82 @@
     "passwordWeak": "Пароль должен быть не короче 12 символов.",
     "passwordMismatch": "Пароли не совпадают.",
     "passwordError": "Не удалось обновить пароль. Попробуйте ещё раз.",
+    "personalTokens": {
+      "title": "Личные API-токены",
+      "sub": "Глобальные токены вашего аккаунта для личных агентов и автоматизации HITL-инбокса.",
+      "empty": "Личных токенов пока нет.",
+      "emptyDate": "Никогда",
+      "columns": {
+        "name": "Имя",
+        "scopes": "Права",
+        "human": "Human HITL",
+        "prefix": "Префикс",
+        "status": "Статус",
+        "created": "Создан",
+        "lastUsed": "Последнее использование",
+        "expires": "Истекает",
+        "actions": "Действия"
+      },
+      "create": {
+        "title": "Создать личный токен",
+        "name": "Имя",
+        "namePlaceholder": "personal-agent",
+        "expires": "Истекает",
+        "scopes": "Права",
+        "humanHitl": "Разрешить ответы на human HITL"
+      },
+      "actions": {
+        "new": "Новый токен",
+        "create": "Создать токен",
+        "saving": "Сохранение...",
+        "revoke": "Отозвать",
+        "copy": "Скопировать",
+        "copied": "Скопировано",
+        "close": "Закрыть",
+        "done": "Готово"
+      },
+      "human": {
+        "enabled": "Разрешено",
+        "disabled": "Выкл."
+      },
+      "status": {
+        "active": "Активен",
+        "revoked": "Отозван",
+        "expired": "Истёк"
+      },
+      "secret": {
+        "warning": "Скопируйте токен сейчас. Потом он больше не будет показан."
+      },
+      "errors": {
+        "generic": "Не удалось выполнить действие с токеном. Попробуйте ещё раз.",
+        "copy": "Не удалось скопировать токен."
+      },
+      "scopeLabels": {
+        "all": "Полный API-доступ",
+        "tasksCreate": "Создание задач",
+        "tasksRead": "Чтение задач",
+        "tasksUpdate": "Обновление задач",
+        "tasksTriage": "Вердикты триажа",
+        "runsLaunch": "Запуск прогонов",
+        "runsRead": "Чтение прогонов",
+        "readinessRead": "Чтение готовности",
+        "gatesReport": "Отчёты по гейтам",
+        "hitlRead": "Чтение HITL прогона",
+        "hitlRespond": "Ответы на HITL прогона",
+        "hitlInboxRead": "Чтение личного HITL-инбокса",
+        "hitlRespondHuman": "Ответы на human HITL",
+        "commentsRead": "Чтение комментариев",
+        "commentsCreate": "Создание комментариев",
+        "relationsRead": "Чтение связей",
+        "relationsCreate": "Создание связей",
+        "relationsDelete": "Удаление связей",
+        "agentsTrigger": "Триггер агентов",
+        "runsDelegate": "Делегирование запусков",
+        "runsCollect": "Сбор дочерних прогонов",
+        "runsCancel": "Отмена дочерних прогонов",
+        "runsPromote": "Промоут дочерних прогонов"
+      }
+    },
     "role": {
       "admin": "админ",
       "member": "участник",
@@ -2241,6 +2317,8 @@
     "scopeGatesReport": "Отчёты по гейтам",
     "scopeHitlRead": "Чтение HITL",
     "scopeHitlRespond": "Ответы HITL",
+    "scopeHitlInboxRead": "Чтение личного HITL-инбокса",
+    "scopeHitlRespondHuman": "Ответы на human HITL",
     "scopeCommentsRead": "Чтение комментариев",
     "scopeCommentsCreate": "Создание комментариев",
     "errorGeneric": "Не удалось выполнить действие. Повторите.",

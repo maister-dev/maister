@@ -11,6 +11,8 @@ export const TOKEN_SCOPES = [
   "gates:report",
   "hitl:read",
   "hitl:respond",
+  "hitl:inbox:read",
+  "hitl:respond:human",
   "comments:read",
   "comments:create",
   "relations:read",

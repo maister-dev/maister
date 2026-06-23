@@ -45,6 +45,7 @@ docs/screens/
     add-project.md   # /projects/new add-project form
     project-settings-git.md # /projects/:slug?tab=settings Git section (block)
   inbox.md           # /inbox
+  account.md         # /account personal profile, password, personal API tokens
   mcps.md            # /mcps (admin)
   settings-acp-runners.md # /settings ACP runner catalog (admin block)
 ```
@@ -122,6 +123,8 @@ flowchart TD
     Rail --> Scheduler["admin-scheduler /admin/scheduler — admin"]
     Rail --> Settings["Settings /settings — admin"]
     Settings --> SettingsAcp["settings-acp-runners — ACP runner catalog"]
+    TopNav --> Account["Account /account — profile, password, personal API tokens"]
+    Account --> Password["Account password /account/password"]
 
     Portfolio --> Board["projects/project-board /projects/SLUG"]
     Portfolio --> AddProject["projects/add-project /projects/new — admin"]
@@ -148,6 +151,7 @@ flowchart TD
 | [`chrome/top-nav.md`](chrome/top-nav.md) | Top nav (breadcrumb, locale, theme, user) | shell | Implemented (WI-3) |
 | [`chrome/launch-dialog.md`](chrome/launch-dialog.md) | Launch dialog (scratch/launch popover + Cmd/Ctrl+K) | shell | Implemented (WI-4/WI-5) |
 | [`inbox.md`](inbox.md) | Unified inbox | `/inbox` | Implemented (WI-1) |
+| [`account.md`](account.md) | Account settings (profile, password, personal API tokens) | `/account` | Implemented profile/password; personal API tokens Designed |
 | [`mcps.md`](mcps.md) | Platform MCP catalog (admin) | `/mcps` | Implemented (WI-2) |
 | [`settings-acp-runners.md`](settings-acp-runners.md) | Settings → ACP runners catalog (admin) | `/settings` | Implemented |
 | [`admin-scheduler.md`](admin-scheduler.md) | Scheduler cockpit (admin) | `/admin/scheduler` | Implemented (M24/M28) |

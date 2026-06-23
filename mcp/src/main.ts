@@ -49,7 +49,10 @@ function buildServer(transportType: "stdio" | "http"): McpServer {
         if (transportType === "stdio") {
           ctx = {
             transport: "stdio",
-            env: process.env as { MAISTER_PROJECT_TOKEN?: string },
+            env: process.env as {
+              MAISTER_PROJECT_TOKEN?: string;
+              MAISTER_ACCESS_TOKEN?: string;
+            },
           };
         } else {
           // Under Streamable-HTTP, headers are lowercased in the RequestInfo.

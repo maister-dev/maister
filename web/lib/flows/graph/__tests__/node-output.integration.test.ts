@@ -23,6 +23,7 @@ import {
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
 import { loadFlowManifest } from "@/lib/config";
+import { closeDb } from "@/lib/db/client";
 import { runFlow } from "@/lib/flows/runner";
 
 const schema = fullSchema as unknown as Record<string, any>;
@@ -66,6 +67,7 @@ afterAll(async () => {
   } else {
     process.env.DB_URL = originalDbUrl;
   }
+  await closeDb();
   await pool?.end();
   await container?.stop();
 });

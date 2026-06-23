@@ -54,4 +54,37 @@ describe("resolveAuthHeader — stdio transport", () => {
       }),
     ).toBeNull();
   });
+
+  it("prefers MAISTER_PROJECT_TOKEN over MAISTER_ACCESS_TOKEN", () => {
+    expect(
+      resolveAuthHeader({
+        transport: "stdio",
+        env: {
+          MAISTER_PROJECT_TOKEN: "mai_project_token",
+          MAISTER_ACCESS_TOKEN: "mai_access_token",
+        },
+      }),
+    ).toBe("Bearer mai_project_token");
+  });
+
+  it("falls back to MAISTER_ACCESS_TOKEN when MAISTER_PROJECT_TOKEN is absent", () => {
+    expect(
+      resolveAuthHeader({
+        transport: "stdio",
+        env: { MAISTER_ACCESS_TOKEN: "mai_access_token" },
+      }),
+    ).toBe("Bearer mai_access_token");
+  });
+
+  it("falls back to MAISTER_ACCESS_TOKEN when MAISTER_PROJECT_TOKEN is empty", () => {
+    expect(
+      resolveAuthHeader({
+        transport: "stdio",
+        env: {
+          MAISTER_PROJECT_TOKEN: "",
+          MAISTER_ACCESS_TOKEN: "mai_access_token",
+        },
+      }),
+    ).toBe("Bearer mai_access_token");
+  });
 });

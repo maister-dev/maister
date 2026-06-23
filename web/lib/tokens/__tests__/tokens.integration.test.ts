@@ -11,7 +11,7 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
-import { hashToken } from "@/lib/tokens/secret";
+import { generateToken, hashToken } from "@/lib/tokens/secret";
 import { issueToken } from "@/lib/tokens/issue";
 import {
   verifyToken,
@@ -21,6 +21,7 @@ import {
 import { recordTokenAudit, bumpTokenLastUsed } from "@/lib/tokens/audit";
 import { revokeToken } from "@/lib/tokens/revoke";
 import { listTokens, type TokenListItem } from "@/lib/tokens/list";
+import { tokenHasScope } from "@/lib/tokens/scopes";
 
 const schema = schemaModule as unknown as Record<string, any>;
 
@@ -273,6 +274,89 @@ describe("lib/tokens — integration (testcontainers)", () => {
           throw err;
         }
       }
+    });
+
+    it("fails closed for a user token whose owner is disabled", async () => {
+      const disabledUserId = randomUUID();
+
+      await db.insert(schema.users).values({
+        id: disabledUserId,
+        email: `disabled-token-owner-${disabledUserId.slice(0, 8)}@example.test`,
+        name: "Disabled Token Owner",
+        role: "member",
+        accountStatus: "disabled",
+      });
+
+      const issued = await issueToken(
+        {
+          projectId,
+          name: "Disabled owner user token",
+          ownerUserId: disabledUserId,
+          createdByUserId: userId,
+          scopes: ["tasks:read"],
+          tokenKind: "user",
+        },
+        db,
+      );
+
+      await expect(verifyToken(issued.secret, db)).rejects.toMatchObject({
+        kind: "owner-unavailable",
+      });
+    });
+
+    it("fails closed for a user token whose owner must change password", async () => {
+      const resetUserId = randomUUID();
+
+      await db.insert(schema.users).values({
+        id: resetUserId,
+        email: `reset-token-owner-${resetUserId.slice(0, 8)}@example.test`,
+        name: "Reset Token Owner",
+        role: "member",
+        accountStatus: "active",
+        mustChangePassword: true,
+      });
+
+      const issued = await issueToken(
+        {
+          projectId,
+          name: "Password reset owner user token",
+          ownerUserId: resetUserId,
+          createdByUserId: userId,
+          scopes: ["tasks:read"],
+          tokenKind: "user",
+        },
+        db,
+      );
+
+      await expect(verifyToken(issued.secret, db)).rejects.toMatchObject({
+        kind: "owner-unavailable",
+      });
+    });
+
+    it("database rejects manually inserted user tokens without an owner", async () => {
+      const { prefix, hash } = generateToken();
+
+      await expect(
+        db.insert(schema.projectTokens).values({
+          id: randomUUID(),
+          project_id: projectId,
+          name: "Ownerless user token",
+          token_kind: "user",
+          owner_user_id: null,
+          prefix,
+          token_hash: hash,
+          scopes: ["tasks:read"],
+        }),
+      ).rejects.toThrow();
+    });
+  });
+
+  describe("scope helpers", () => {
+    it("does not let wildcard satisfy the exact human HITL response scope", () => {
+      expect(tokenHasScope(["*"], "hitl:respond:human")).toBe(false);
+      expect(
+        tokenHasScope(["hitl:respond:human"], "hitl:respond:human"),
+      ).toBe(true);
     });
   });
 

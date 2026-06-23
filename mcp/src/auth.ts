@@ -1,13 +1,18 @@
 export type AuthContext =
   | { transport: "http"; inboundAuthorization?: string }
-  | { transport: "stdio"; env: { MAISTER_PROJECT_TOKEN?: string } };
+  | {
+      transport: "stdio";
+      env: { MAISTER_PROJECT_TOKEN?: string; MAISTER_ACCESS_TOKEN?: string };
+    };
 
 export function resolveAuthHeader(ctx: AuthContext): string | null {
   if (ctx.transport === "http") {
     return ctx.inboundAuthorization?.length ? ctx.inboundAuthorization : null;
   }
   // stdio
-  const token = ctx.env.MAISTER_PROJECT_TOKEN;
+  const token = ctx.env.MAISTER_PROJECT_TOKEN?.length
+    ? ctx.env.MAISTER_PROJECT_TOKEN
+    : ctx.env.MAISTER_ACCESS_TOKEN;
 
   return token?.length ? `Bearer ${token}` : null;
 }

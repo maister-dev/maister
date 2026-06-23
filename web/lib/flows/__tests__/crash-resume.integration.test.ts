@@ -31,6 +31,7 @@ import {
   testPlatformRunnerRow,
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
+import { closeDb } from "@/lib/db/client";
 import {
   appendNodeAttempt,
   getNodeAttemptsForRun,
@@ -70,6 +71,7 @@ afterAll(async () => {
   } else {
     process.env.DB_URL = originalDbUrl;
   }
+  await closeDb();
   await pool?.end();
   await container?.stop();
 });

@@ -41,6 +41,7 @@ import {
 
 import * as schemaModule from "@/lib/db/schema";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
+import { acquireLock } from "@/lib/local-packages/lock";
 import { classifyRunReconcile, runReconcileSweep } from "@/lib/reconcile";
 import { assertRunScratchMetadataInvariant } from "@/lib/runs/run-kind-invariants";
 
@@ -123,7 +124,7 @@ beforeAll(async () => {
   homeDir = await mkdtemp(join(tmpdir(), "lp-assistant-home-"));
   process.env.HOME = homeDir;
 
-  userId = randomUUID();
+  userId = "lp-user";
   runnerId = randomUUID();
 
   await db.insert(schema.users).values({
@@ -557,6 +558,7 @@ describe("launchLocalPackageAssistant + a turn (ADR-097 T5.7)", () => {
       body: { localPackageId: pkg.id, prompt: "first" },
       userId,
     });
+    await acquireLock(pkg.id, userId, "assistant-turn", db as never);
 
     // There is NO workspaces row for a local-package assistant run.
     const workspaceRows = await db
@@ -637,6 +639,7 @@ describe("deferred-release on a failure path (ADR-097 T5.6)", () => {
       body: { localPackageId: pkg.id, prompt: "first" },
       userId,
     });
+    await acquireLock(pkg.id, userId, "assistant-turn-fail", db as never);
 
     supervisorMock.deleteSession.mockClear();
     // A non-retryable crash on the turn path releases the deferred.

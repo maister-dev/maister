@@ -16,6 +16,7 @@ const schema = schemaModule as unknown as Record<string, any>;
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
 let db: NodePgDatabase;
+let ownerUserId: string;
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 
@@ -33,6 +34,14 @@ beforeAll(async () => {
   db = drizzle(pool);
 
   await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+
+  ownerUserId = randomUUID();
+  await db.insert(schema.users).values({
+    id: ownerUserId,
+    email: `audit-owner-${ownerUserId}@maister.local`,
+    role: "member",
+    accountStatus: "active",
+  });
 
   const mod = await import("@/lib/tokens/audit-list");
 
@@ -68,6 +77,7 @@ async function seedToken(projectId: string, name: string): Promise<string> {
     project_id: projectId,
     name,
     token_kind: "user",
+    owner_user_id: ownerUserId,
     prefix: `mai_${name.slice(0, 4)}`,
     token_hash: randomUUID(),
   });

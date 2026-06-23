@@ -286,7 +286,8 @@ client (e.g. Claude Desktop, an agent harness).
 
 Suitable for local use where the MCP client and MAIster web tier run on the
 same machine. The token is read from the environment — it must be a valid
-project API token created in Project Settings.
+project API token created in Project Settings or a personal access token
+created from Account.
 
 ```bash
 export MAISTER_API_BASE_URL=http://localhost:3000
@@ -294,11 +295,22 @@ export MAISTER_PROJECT_TOKEN=mai_<your-token>
 pnpm --filter @maister/mcp start --stdio
 ```
 
+For personal-agent workflows, use the fallback variable when no project token is
+set:
+
+```bash
+export MAISTER_API_BASE_URL=http://localhost:3000
+export MAISTER_ACCESS_TOKEN=mai_<your-personal-token>
+pnpm --filter @maister/mcp start --stdio
+```
+
 Or force the transport via env: `MCP_TRANSPORT=stdio`.
 
-**Security note:** `MAISTER_PROJECT_TOKEN` is scoped to a single project. Never
-use the stdio transport across a network boundary — the token would be exposed
-in transit. For remote use, use Streamable-HTTP instead.
+**Security note:** `MAISTER_PROJECT_TOKEN` is scoped to a single project;
+`MAISTER_ACCESS_TOKEN` follows the owning user's current project access and may
+span multiple projects. Never use the stdio transport across a network boundary
+— the token would be exposed in transit. For remote use, use Streamable-HTTP
+instead.
 
 ### Streamable-HTTP (remote, per-request inbound bearer)
 
@@ -322,8 +334,8 @@ reverse proxy (e.g. nginx) and enforce TLS before exposing it externally. The
 Authorization` in nginx).
 
 **Reject-unauthenticated guarantee:** the server never falls back to an env
-token when the inbound bearer is missing. There is no `MAISTER_PROJECT_TOKEN`
-fallback under HTTP.
+token when the inbound bearer is missing. There is no `MAISTER_PROJECT_TOKEN` or
+`MAISTER_ACCESS_TOKEN` fallback under HTTP.
 
 ## Linked artifacts
 

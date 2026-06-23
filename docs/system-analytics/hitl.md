@@ -552,15 +552,26 @@ sequenceDiagram
     C-->>U: expanded decision context
 ```
 
-### HITL-over-MCP — hitl_list and hitl_respond (Implemented — M17)
+### HITL-over-MCP — hitl_list, hitl_inbox, and hitl_respond
 
-External token-scoped agents query and answer pending HITL via two new
-MCP tools (`hitl_list`, `hitl_respond`) backed by new external REST
-routes. Both routes enforce scope (D8) and actor-kind (D7) gates and
+Status: `hitl_list` / `hitl_respond` for permission/form HITL are Implemented
+in M17. `hitl_inbox` and global personal-token human response are Implemented
+by migration `0064_user_access_tokens.sql`.
+
+External token-scoped agents query and answer pending HITL via MCP tools
+(`hitl_list`, `hitl_inbox`, `hitl_respond`) backed by external REST
+routes. These routes enforce scope (D8) and actor-kind (D7) gates and
 emit audit rows via `handleExt`. A token/agent actor may answer
 `permission` and `form` HITL only; `human`-kind requests require a human
 actor. Cross-project isolation is enforced by existence-hiding: a
 `runId` that belongs to a different project returns 404, not 403.
+
+Global personal tokens extend this model. `hitl_inbox` lists pending HITL across
+the token owner's currently visible projects through `GET /api/v1/ext/hitl`.
+Human, infra-recovery, and budget-breach HITL responses are accepted only from a
+global personal user token whose owner is live, can `answerHitl` on the run
+project, and holds the exact `hitl:respond:human` scope. The `*` wildcard does
+not satisfy that human-response scope.
 
 ```mermaid
 sequenceDiagram
@@ -593,6 +604,24 @@ sequenceDiagram
     ER->>AU: recordTokenAudit action=hitl_respond
     ER-->>MT: 200 / 202 / 409 / 422
     MT-->>MC: result
+```
+
+```mermaid
+sequenceDiagram
+    participant MC as MCP client (personal agent)
+    participant MT as hitl_inbox tool
+    participant ER as ext route
+    participant DB as Postgres
+    participant AU as audit log
+
+    MC->>MT: hitl_inbox {}
+    MT->>ER: GET /api/v1/ext/hitl (Bearer personal token)
+    ER->>DB: verify token, load owner user
+    ER->>DB: derive visible project ids from owner role/membership
+    ER->>DB: SELECT pending hitl_requests across visible projects
+    ER->>AU: token_audit_log scope=hitl:inbox:read project_id=null
+    ER-->>MT: 200 cross-project HitlItem[]
+    MT-->>MC: pending HITL items
 ```
 
 ## Keep-alive activity tracking
@@ -735,13 +764,21 @@ fields:
   satisfy a `hitl_requests.kind = "human"` request;
   `respondToHitl` MUST return 403 (`UNAUTHORIZED`) for any
   `actor.kind !== "user"` when `hitlRow.kind = "human"` (D7).
-  Token actors are limited to answering `permission` and `form` HITL.
+  Token actors are limited to answering `permission` and `form` HITL. A global
+  personal token with exact `hitl:respond:human` is the Implemented exception: the
+  external route converts it to `HitlActor.kind="user"` before calling
+  `respondToHitl`.
 - **(Implemented — M17)** Both HITL ext routes (`GET …/hitl` scope
   `hitl:read`, `POST …/hitl/{id}/respond` scope `hitl:respond`) MUST
   enforce `handleExt({requireScope:true})`: the route's `scopeLabel`
   MUST be in `actor.scopes` or equal `"*"`; absent scope MUST return
   403. A token actor MUST NOT create or skip a gate; gate placement
   stays the Flow's.
+- **(Implemented)** `GET /api/v1/ext/hitl` MUST require a global personal user
+  token and `hitl:inbox:read`, derive visible projects from the owner user, and
+  write a `token_audit_log` row with `project_id IS NULL`.
+- **(Implemented)** Human, infra-recovery, and budget-breach HITL through REST or
+  MCP MUST require exact `hitl:respond:human`; `*` alone MUST return 403.
 - **(Implemented — M17)** The flat `steps[]` `on_reject` loop MUST be
   bounded by `maxLoops` (default 5). Exceeding `maxLoops` MUST raise
   `MaisterError("CONFIG")` (parity with the graph runner's `rework.maxLoops`
@@ -883,13 +920,21 @@ fields:
 - **`session/request_permission` arrives while the supervisor is
   shutting down** — request lost; agent will retry on next launch
   through the standard `acp_session_id` resume.
-- **Token actor calls ext HITL respond on a `human`-kind request** —
-  `respondToHitl` returns `MaisterError("UNAUTHORIZED")` → HTTP 403
-  (D7). Response body MUST NOT reveal which HITL kind triggered the
-  refusal. (Implemented — M17)
+- **Project, agent, or project-scoped user token calls ext HITL respond on a
+  `human`-kind request** — `respondToHitl` returns
+  `MaisterError("UNAUTHORIZED")` → HTTP 403 (D7). Response body MUST NOT reveal
+  which HITL kind triggered the refusal. (Implemented — M17)
+- **Global personal token calls human HITL respond without exact
+  `hitl:respond:human`** → HTTP 403 even when the token has `*`. Failure audit
+  written with the run's server-derived `project_id`. (Implemented)
 - **Token missing `hitl:read` or `hitl:respond` scope** →
   `handleExt({requireScope:true})` returns 403. Response MUST NOT
   leak which scopes the token holds (D8). (Implemented — M17)
+- **Project or agent token calls `GET /api/v1/ext/hitl`** → HTTP 403; the
+  cross-project inbox is personal-token-only. (Implemented)
+- **Global personal token owner loses project access before response** → HTTP
+  403 or existence-hidden 404 per route family; no HITL row is claimed and the
+  audit row records the server-derived target project. (Implemented)
 - **Ext HITL route called with a `runId` from a different project** →
   existence-hide: 404, not 403. (Implemented — M17)
 - **`human_confidence` body value outside `[0,1]`** → server-side Zod
@@ -998,10 +1043,15 @@ runner-agent enforcement is queued for a follow-up patch.
 - API (external): [`../api/external/acp.asyncapi.yaml`](../api/external/acp.asyncapi.yaml)
   §`session.request_permission`.
 - Related: [`runs.md`](runs.md), [`flows.md`](flows.md),
+  [`external-operations.md`](external-operations.md),
   [`flow-graph.md`](flow-graph.md) (M11a review decisions),
   [`review-comments.md`](review-comments.md) (Implemented — ADR-072:
   line-anchored review threads, `{maxLoops, gateAttempt}` schema fields,
   loop-exhaustion refusal).
 - Source: `web/lib/config.ts` (`validateFormSchemaVersion`),
   `web/lib/atomic.ts` (`atomicWriteJson`),
-  `web/lib/db/schema.ts` (hitl_requests table).
+  `web/lib/db/schema.ts` (hitl_requests table),
+  `web/lib/services/hitl.ts`, `web/app/api/v1/ext/runs/[runId]/hitl/route.ts`,
+  `web/app/api/v1/ext/runs/[runId]/hitl/[hitlRequestId]/respond/route.ts`,
+  `mcp/src/tools.ts`.
+- SDD: [`../../.ai-factory/specs/feature-user-access-tokens.md`](../../.ai-factory/specs/feature-user-access-tokens.md).

@@ -24,6 +24,7 @@ import {
   testPlatformRunnerRow,
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
+import { closeDb } from "@/lib/db/client";
 import { isRunContextWriteSafe } from "@/lib/flows/graph/run-context";
 import { runFlow } from "@/lib/flows/runner";
 
@@ -54,6 +55,7 @@ beforeAll(async () => {
 afterAll(async () => {
   if (originalDbUrl === undefined) delete process.env.DB_URL;
   else process.env.DB_URL = originalDbUrl;
+  await closeDb();
   await pool?.end();
   await container?.stop();
 });

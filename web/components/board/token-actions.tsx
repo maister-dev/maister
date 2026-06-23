@@ -267,6 +267,10 @@ function scopeText(labels: TokenLabels, scope: TokenScope): string {
       return labels.scopeHitlRead;
     case "hitl:respond":
       return labels.scopeHitlRespond;
+    case "hitl:inbox:read":
+      return labels.scopeHitlInboxRead;
+    case "hitl:respond:human":
+      return labels.scopeHitlRespondHuman;
     case "comments:read":
       return labels.scopeCommentsRead;
     case "comments:create":

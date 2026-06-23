@@ -51,12 +51,13 @@ afterEach(() => {
 });
 
 describe("TOOL_SPECS registry", () => {
-  it("registers all 23 external tools (incl. ADR-089 triage_set + relation ops + M37 delegation/plan/message/promote/rework toolset)", () => {
+  it("registers all 24 external tools (incl. personal HITL inbox)", () => {
     expect(Object.keys(TOOL_SPECS).sort()).toEqual(
       [
         "comment_create",
         "comment_list",
         "gate_report",
+        "hitl_inbox",
         "hitl_list",
         "hitl_respond",
         "readiness_get",
@@ -85,6 +86,15 @@ describe("TOOL_SPECS registry", () => {
     expect(
       (TOOL_SPECS.task_create.inputSchema as { required: string[] }).required,
     ).toEqual(["slug", "title", "prompt"]);
+  });
+
+  it("documents that hitl_respond can answer human gates only with exact personal-token scope", () => {
+    expect(TOOL_SPECS.hitl_respond.description).toContain(
+      "hitl:respond:human",
+    );
+    expect(TOOL_SPECS.hitl_respond.description).toContain(
+      "global personal token",
+    );
   });
 });
 
@@ -445,6 +455,24 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
     expect(init.method).toBe("GET");
     expect(url).toBe(`${BASE_URL}/api/v1/ext/runs/run-1/hitl`);
     expect(headerAuth(init)).toBe(AUTH);
+  });
+
+  it("hitl_inbox → GET /api/v1/ext/hitl (no body)", async () => {
+    mockOnce({ hitl: [] }, 200);
+
+    await dispatchTool({
+      name: "hitl_inbox",
+      args: {},
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    const { url, init } = lastRequest();
+
+    expect(init.method).toBe("GET");
+    expect(url).toBe(`${BASE_URL}/api/v1/ext/hitl`);
+    expect(headerAuth(init)).toBe(AUTH);
+    expect(parsedBody(init)).toBeUndefined();
   });
 
   it("hitl_respond → POST /api/v1/ext/runs/{runId}/hitl/{hitlRequestId}/respond with only defined keys", async () => {

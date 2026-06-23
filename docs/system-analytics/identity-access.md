@@ -33,6 +33,11 @@ sign-out are wired in `web/`.
   edits `users.name` only.
 - **Password settings** — `/account/password` page and
   `updateAccountPassword` server action; updates `users.password_hash`.
+- **Personal API tokens** (Implemented) — `/account` token-management section plus
+  `GET/POST/DELETE /api/account/tokens`; creates `project_tokens` rows with
+  `token_kind='user'`, `owner_user_id=<current user>`, and `project_id IS NULL`.
+  Verification reuses this domain's live owner-state checks before any external
+  operation may run.
 - **User menu** — top-nav affordance that shows name, email, role, personal
   settings, password change, and sign-out.
 
@@ -136,6 +141,36 @@ sequenceDiagram
         SA->>DB: UPDATE users SET name=...
         SA-->>U: saved state
     end
+```
+
+### Personal API token management (Implemented)
+
+Personal tokens are account-owned credentials for user-operated agents. They are
+created from `/account`, not from a project settings surface, and are valid only
+while the owner remains an active MAIster user.
+
+```mermaid
+sequenceDiagram
+    actor U as User
+    participant P as /account page
+    participant API as /api/account/tokens
+    participant AZ as requireActiveSession
+    participant DB as Postgres
+
+    U->>P: open Personal API tokens section
+    P->>API: GET /api/account/tokens
+    API->>AZ: require active signed-in user
+    API->>DB: SELECT project_tokens WHERE owner_user_id=user.id AND project_id IS NULL
+    API-->>P: token rows without token_hash or plaintext token
+    U->>P: create token (name, expiry, scopes, humanHitl)
+    P->>API: POST /api/account/tokens
+    API->>AZ: require active signed-in user
+    API->>DB: INSERT project_tokens token_kind=user project_id=NULL owner_user_id=user.id
+    API-->>P: 201 token metadata + plaintext token once
+    U->>P: revoke token
+    P->>API: DELETE /api/account/tokens/{tokenId}
+    API->>DB: UPDATE matching owner token SET revoked_at=now()
+    API-->>P: 204
 ```
 
 ### Password change from account settings (Implemented)
@@ -290,6 +325,12 @@ flowchart TD
 - Every admin mutation (create/edit) MUST stamp `created_by` on insert and `updated_by` + `updated_at` on update. `(Implemented)`
 - A user with `users.must_change_password = true` MUST be redirected to `/change-password` by the app layout and blocked from role-gated APIs with `PASSWORD_CHANGE_REQUIRED`; the flag clears only after a valid password update.
 - `/account/password` MUST update only the signed-in user's `users.password_hash`; `/account` MUST update only `users.name`.
+- `GET/POST/DELETE /api/account/tokens` MUST operate only on the signed-in
+  user's `project_tokens` rows where `project_id IS NULL`; project-bound tokens
+  stay under project Integrations. (Implemented)
+- A personal token MUST be usable only while its `owner_user_id` resolves to a
+  live `users` row with `account_status='active'` and
+  `must_change_password=false`. (Implemented)
 - Deleting a user MUST invalidate authority on the next server request because `getSessionUser()` cannot resolve the live `users` row.
 
 ## Edge cases
@@ -316,6 +357,15 @@ flowchart TD
 - **User changes their password from `/account/password`** -> existing sessions
   are not explicitly revoked in the current target; future session-revocation
   policy belongs in a separate security decision.
+- **Personal token owner is deleted** -> new personal token rows require
+  `owner_user_id NOT NULL`; operators must revoke/delete personal tokens before
+  deleting the owner. Legacy ownerless rows fail closed because no live owner can
+  be authorized. (Implemented)
+- **Personal token owner is disabled or must change password** -> external token
+  calls return 403 before route work; the failure audit row does not reveal held
+  scopes or token material. (Implemented)
+- **Account token route receives a project id** -> request is invalid; project
+  binding is not accepted on `/api/account/tokens`. (Implemented)
 - **Duplicate email on admin create or edit** -> `MaisterError("CONFLICT", ...)`; 409. `(Implemented)`
 - **Hard-delete of a user with linked rows (runs, workspaces, etc.)** -> `MaisterError("PRECONDITION", ...)`; 409; admin is offered disable instead. `(Implemented)`
 - **Self-delete, self-disable, or self-demotion** -> `MaisterError("PRECONDITION", ...)`; 409. `(Implemented)`
@@ -327,8 +377,14 @@ flowchart TD
   [`../database-schema.md#sessions`](../database-schema.md#sessions),
   [`../database-schema.md#project_members`](../database-schema.md#project_members).
 - Project membership management: [`project-membership.md`](project-membership.md).
+- Personal token behavior:
+  [`external-operations.md`](external-operations.md),
+  [`hitl.md`](hitl.md),
+  [`../screens/account.md`](../screens/account.md),
+  [`../../.ai-factory/specs/feature-user-access-tokens.md`](../../.ai-factory/specs/feature-user-access-tokens.md).
 - API: [`../api/web.openapi.yaml`](../api/web.openapi.yaml) §Auth.js routes
-  and authentication notes.
+  and authentication notes, plus `GET/POST/DELETE /api/account/tokens`
+  (Implemented).
 - Error taxonomy: [`../error-taxonomy.md`](../error-taxonomy.md)
   (`UNAUTHENTICATED`, `UNAUTHORIZED`, `PASSWORD_CHANGE_REQUIRED`,
   `ACCOUNT_INACTIVE`).
@@ -336,4 +392,6 @@ flowchart TD
   `web/lib/users.ts`, `web/app/api/admin/users/route.ts`,
   `web/app/(app)/layout.tsx`, `web/components/chrome/user-menu.tsx`,
   `web/app/(app)/account/actions.ts`,
-  `web/app/change-password/actions.ts`.
+  `web/app/change-password/actions.ts`,
+  `web/app/api/account/tokens/route.ts`,
+  `web/app/api/account/tokens/[tokenId]/route.ts`.

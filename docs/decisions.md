@@ -129,6 +129,7 @@
 | [ADR-101](#adr-101-cost-budget-governance--budget-execution-policy-axis-token-metered-warn-escalate-terminate-ladder-fail-open) | Cost-budget governance — budget execution-policy axis, token-metered, warn-escalate-terminate ladder, fail-open | Accepted | 2026-06-22 |
 | [ADR-102](#adr-102-shared-worktree-tree-level-reviewpromote-ownership) | Shared-worktree tree-level review/promote ownership | Accepted | 2026-06-21 |
 | [ADR-103](#adr-103-output-driven-dynamic-routing-decide--onmismatch-rework--engine-170) | Output-driven dynamic routing (`decide`) + `on_mismatch` rework + engine 1.7.0 | Accepted | 2026-06-22 |
+| [ADR-104](#adr-104-global-personal-api-tokens-via-nullable-project-token-binding) | Global personal API tokens via nullable project token binding | Accepted | 2026-06-23 |
 
 ---
 
@@ -8020,6 +8021,67 @@ transition + rework + ledger machinery with **no DB migration** and **no new
 - **A config-driven P7 projection selector:** rejected for v1 — M26's hardcoded
   "all" (intent + every node's vars + every gate result) stands; a selector is a
   later wave.
+
+---
+
+### ADR-104: Global personal API tokens via nullable project token binding
+
+**Date:** 2026-06-23
+**Status:** Accepted
+**Context:** ADR-046 established project-bound API tokens and `token_audit_log`;
+ADR-055 added HITL-over-MCP and token actor gates. That model is sufficient for
+project automation, agent launches, and run-scoped MCP tools, but it cannot
+support a user's personal agent that needs to see HITL work across all projects
+the user can currently access. Creating a parallel token table would duplicate
+hashing, prefix lookup, revocation, scopes, and audit attribution. Treating `*`
+as permission to answer human gates would also make broad automation tokens
+silently become human approvers.
+
+**Decision:** Global personal API tokens reuse `project_tokens`. A global
+personal token is `token_kind='user'`, `owner_user_id NOT NULL`, and
+`project_id IS NULL`; existing project, project-scoped user, and agent tokens
+remain project-bound. Migration `0063` makes `project_tokens.project_id`
+nullable, keeps its FK `ON DELETE CASCADE` for project-bound rows, makes
+`token_audit_log.project_id` nullable with `ON DELETE SET NULL`, and adds
+owner-listing/check constraints for valid token shapes. External routes derive
+the target project from URL/server-state, then global personal tokens authorize
+the owner explicitly against that project; body-supplied ids never expand
+authority. Human-only HITL responses (`human`, `infra_recovery`,
+`budget_breach`) require exact `hitl:respond:human` on a global personal token;
+`*` does not imply it. Permission/form HITL remains available to tokens holding
+`hitl:respond` or `*`. The cross-project HITL inbox uses
+`GET /api/v1/ext/hitl`, requires `hitl:inbox:read`, and writes audit rows with
+`project_id = NULL`.
+
+**Consequences:**
+- One token table remains the operational source of truth: prefix lookup,
+  hashing, revocation, expiry, scope storage, owner attribution, and agent-token
+  compatibility stay in the existing domain.
+- Owner state becomes part of bearer verification for global personal tokens:
+  deleted/disabled/password-change-required owners fail closed even if the
+  token row is otherwise active.
+- Audit rows can represent both project-targeted calls and cross-project
+  personal inbox reads. Target project deletion preserves direct audit lineage
+  by setting `token_audit_log.project_id = NULL`; deleting a token still drops
+  its audit rows.
+- The `/account` UX owns global personal tokens. Project Integrations remains
+  project-bound and may link to `/account`, but it must not create or list
+  global tokens.
+- The MCP facade keeps `MAISTER_PROJECT_TOKEN` first for compatibility and adds
+  `MAISTER_ACCESS_TOKEN` as the personal-token fallback.
+
+**Alternatives Considered:**
+- **New `user_access_tokens` table:** rejected because it duplicates token
+  issuance, prefix/hash verification, expiry, revocation, scope enforcement,
+  and audit joins while adding no required isolation boundary.
+- **Make project-scoped user tokens multi-project:** rejected because a
+  non-null `project_id` currently means an exact project binding throughout
+  ext-route authorization and audit semantics.
+- **Let `*` imply human HITL approval:** rejected because it would turn broad
+  automation tokens into human approvers without an explicit grant.
+- **Skip nullable `token_audit_log.project_id`:** rejected because
+  cross-project inbox reads have no single target project and target-project
+  hard-delete should not erase the existence of an identified external call.
 
 ---
 

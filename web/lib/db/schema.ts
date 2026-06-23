@@ -2827,9 +2827,9 @@ export const projectTokens = pgTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
-    project_id: text("project_id")
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
+    project_id: text("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
     name: text("name").notNull(),
     token_kind: text("token_kind", { enum: ["project", "user", "agent"] })
       .notNull()
@@ -2863,6 +2863,22 @@ export const projectTokens = pgTable(
     idxProject: index("project_tokens_project_idx").on(t.project_id),
     idxOwner: index("project_tokens_owner_idx").on(t.owner_user_id),
     idxAgent: index("project_tokens_agent_idx").on(t.agent_id),
+    idxOwnerCreated: index("project_tokens_owner_created_idx").on(
+      t.owner_user_id,
+      t.created_at,
+    ),
+    projectKindProjectCheck: check(
+      "project_tokens_project_kind_project_check",
+      sql`${t.token_kind} != 'project' OR ${t.project_id} IS NOT NULL`,
+    ),
+    agentProjectCheck: check(
+      "project_tokens_agent_project_check",
+      sql`${t.token_kind} != 'agent' OR (${t.project_id} IS NOT NULL AND ${t.agent_id} IS NOT NULL)`,
+    ),
+    userOwnerCheck: check(
+      "project_tokens_user_owner_check",
+      sql`${t.token_kind} != 'user' OR ${t.owner_user_id} IS NOT NULL`,
+    ),
     agentKindCheck: check(
       "project_tokens_agent_kind_check",
       sql`(${t.token_kind} = 'agent') = (${t.agent_id} IS NOT NULL)`,
@@ -2883,9 +2899,9 @@ export const tokenAuditLog = pgTable(
     token_id: text("token_id")
       .notNull()
       .references(() => projectTokens.id, { onDelete: "cascade" }),
-    project_id: text("project_id")
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
+    project_id: text("project_id").references(() => projects.id, {
+      onDelete: "set null",
+    }),
     actor_label: text("actor_label").notNull(),
     scope_used: text("scope_used").notNull(),
     endpoint: text("endpoint").notNull(),

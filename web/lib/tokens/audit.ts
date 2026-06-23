@@ -16,7 +16,7 @@ type Db = any;
 
 export type TokenAuditInput = {
   tokenId: string;
-  projectId: string;
+  projectId: string | null;
   actorLabel: string;
   scopeUsed: string;
   endpoint: string;

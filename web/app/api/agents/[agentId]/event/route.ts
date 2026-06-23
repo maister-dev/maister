@@ -155,7 +155,7 @@ export async function POST(
 
         const result = await launchAgentRun({
           agentId,
-          projectId: ctx.actor.projectId,
+          projectId: ctx.projectId,
           trigger: {
             source: "webhook",
             eventId: triggerEventId,

@@ -1884,6 +1884,82 @@
     "passwordWeak": "Password must be at least 12 characters.",
     "passwordMismatch": "The two passwords do not match.",
     "passwordError": "Could not update the password. Try again.",
+    "personalTokens": {
+      "title": "Personal API tokens",
+      "sub": "Global tokens owned by your account for personal agents and HITL inbox automation.",
+      "empty": "No personal tokens yet.",
+      "emptyDate": "Never",
+      "columns": {
+        "name": "Name",
+        "scopes": "Scopes",
+        "human": "Human HITL",
+        "prefix": "Prefix",
+        "status": "Status",
+        "created": "Created",
+        "lastUsed": "Last used",
+        "expires": "Expires",
+        "actions": "Actions"
+      },
+      "create": {
+        "title": "Create personal token",
+        "name": "Name",
+        "namePlaceholder": "personal-agent",
+        "expires": "Expires",
+        "scopes": "Scopes",
+        "humanHitl": "Allow human HITL responses"
+      },
+      "actions": {
+        "new": "New token",
+        "create": "Create token",
+        "saving": "Saving...",
+        "revoke": "Revoke",
+        "copy": "Copy",
+        "copied": "Copied",
+        "close": "Close",
+        "done": "Done"
+      },
+      "human": {
+        "enabled": "Allowed",
+        "disabled": "Off"
+      },
+      "status": {
+        "active": "Active",
+        "revoked": "Revoked",
+        "expired": "Expired"
+      },
+      "secret": {
+        "warning": "Copy this token now. It will not be shown again."
+      },
+      "errors": {
+        "generic": "Token action failed. Try again.",
+        "copy": "Could not copy the token."
+      },
+      "scopeLabels": {
+        "all": "Full API access",
+        "tasksCreate": "Create tasks",
+        "tasksRead": "Read tasks",
+        "tasksUpdate": "Update tasks",
+        "tasksTriage": "Submit triage verdicts",
+        "runsLaunch": "Launch runs",
+        "runsRead": "Read runs",
+        "readinessRead": "Read readiness",
+        "gatesReport": "Report gates",
+        "hitlRead": "Read run HITL",
+        "hitlRespond": "Respond to run HITL",
+        "hitlInboxRead": "Read personal HITL inbox",
+        "hitlRespondHuman": "Respond to human HITL",
+        "commentsRead": "Read comments",
+        "commentsCreate": "Create comments",
+        "relationsRead": "Read relations",
+        "relationsCreate": "Create relations",
+        "relationsDelete": "Delete relations",
+        "agentsTrigger": "Trigger agents",
+        "runsDelegate": "Delegate runs",
+        "runsCollect": "Collect child runs",
+        "runsCancel": "Cancel child runs",
+        "runsPromote": "Promote child runs"
+      }
+    },
     "role": {
       "admin": "admin",
       "member": "member",
@@ -2241,6 +2317,8 @@
     "scopeGatesReport": "Report gates",
     "scopeHitlRead": "Read HITL",
     "scopeHitlRespond": "Respond to HITL",
+    "scopeHitlInboxRead": "Read personal HITL inbox",
+    "scopeHitlRespondHuman": "Respond to human HITL",
     "scopeCommentsRead": "Read comments",
     "scopeCommentsCreate": "Create comments",
     "errorGeneric": "Action failed. Try again.",

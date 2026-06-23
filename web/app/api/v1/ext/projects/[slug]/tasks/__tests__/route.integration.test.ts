@@ -117,6 +117,66 @@ async function seedProject(slug: string) {
   return { slug, projectId, flowId, executorId };
 }
 
+async function seedUser(emailPrefix: string): Promise<string> {
+  const userId = randomUUID();
+
+  await db.insert(schema.users).values({
+    id: userId,
+    email: `${emailPrefix}-${userId.slice(0, 8)}@example.test`,
+    role: "member",
+    accountStatus: "active",
+    passwordHash: "x",
+  });
+
+  return userId;
+}
+
+async function seedProjectMember(
+  projectId: string,
+  userId: string,
+  role: "owner" | "admin" | "member" | "viewer" = "member",
+): Promise<void> {
+  await db.insert(schema.projectMembers).values({
+    projectId,
+    userId,
+    role,
+  });
+}
+
+async function seedTask(projectId: string, flowId: string, title: string) {
+  const taskId = randomUUID();
+
+  await db.insert(schema.tasks as any).values({
+    number: Math.trunc(Math.random() * 1e9) + 1,
+    id: taskId,
+    projectId,
+    title,
+    prompt: "Fix it",
+    flowId,
+    status: "Backlog",
+    stage: "Backlog",
+    attemptNumber: 1,
+  });
+
+  return taskId;
+}
+
+async function issueGlobalUserToken(
+  ownerUserId: string,
+  scopes: Parameters<typeof issueToken>[0]["scopes"],
+) {
+  return issueToken(
+    {
+      projectId: null as unknown as string,
+      name: "Global Personal Token",
+      tokenKind: "user",
+      ownerUserId,
+      scopes,
+    },
+    db,
+  );
+}
+
 function makeRequest(method: string, body?: unknown): NextRequest {
   return new NextRequest("http://localhost/api/v1/ext/projects/test/tasks", {
     method,
@@ -371,6 +431,54 @@ describe("POST /api/v1/ext/projects/[slug]/tasks", () => {
 
     expect(task.createdByUserId).toBe(ownerUserId);
   });
+
+  it("global user token creates a task only in the URL-derived project", async () => {
+    const ownerUserId = await seedUser("global-task-create");
+    const allowed = await seedProject(
+      `ext-tasks-global-create-${randomUUID().slice(0, 8)}`,
+    );
+    const other = await seedProject(
+      `ext-tasks-global-body-${randomUUID().slice(0, 8)}`,
+    );
+
+    await seedProjectMember(allowed.projectId, ownerUserId);
+
+    const token = await issueGlobalUserToken(ownerUserId, ["tasks:create"]);
+    const req = makeRequest("POST", {
+      title: "Body project must not win",
+      prompt: "Create in the URL project",
+      flowId: other.flowId,
+    });
+
+    req.headers.set("authorization", `Bearer ${token.secret}`);
+
+    const res = await POST(req, {
+      params: Promise.resolve({ slug: allowed.slug }),
+    });
+
+    expect(res.status).toBe(422);
+
+    const taskRows = await db
+      .select()
+      .from(schema.tasks as any)
+      .where(eq((schema.tasks as any).title, "Body project must not win"))
+      .execute();
+
+    expect(taskRows).toHaveLength(0);
+
+    const auditRows = await db
+      .select()
+      .from(schema.tokenAuditLog as any)
+      .execute();
+
+    expect(auditRows).toHaveLength(1);
+    expect(auditRows[0]).toMatchObject({
+      result: "error",
+      status_code: 422,
+      project_id: allowed.projectId,
+      scope_used: "tasks:create",
+    });
+  });
 });
 
 describe("GET /api/v1/ext/projects/[slug]/tasks", () => {
@@ -448,6 +556,82 @@ describe("GET /api/v1/ext/projects/[slug]/tasks", () => {
     expect(auditRows[0]).toMatchObject({
       result: "ok",
       status_code: 200,
+      scope_used: "tasks:read",
+    });
+  });
+
+  it("global user token lists tasks in an owner-visible project", async () => {
+    const slug = `ext-tasks-global-list-${randomUUID().slice(0, 8)}`;
+    const ownerUserId = await seedUser("global-task-list");
+    const { projectId, flowId } = await seedProject(slug);
+
+    await seedProjectMember(projectId, ownerUserId);
+
+    const taskId = await seedTask(projectId, flowId, "Visible global task");
+    const token = await issueGlobalUserToken(ownerUserId, ["tasks:read"]);
+    const req = makeRequest("GET");
+
+    req.headers.set("authorization", `Bearer ${token.secret}`);
+
+    const res = await GET(req, {
+      params: Promise.resolve({ slug }),
+    });
+
+    expect(res.status).toBe(200);
+
+    const body = await res.json();
+
+    expect(body.tasks).toContainEqual(
+      expect.objectContaining({ id: taskId, title: "Visible global task" }),
+    );
+
+    const auditRows = await db
+      .select()
+      .from(schema.tokenAuditLog as any)
+      .execute();
+
+    expect(auditRows).toHaveLength(1);
+    expect(auditRows[0]).toMatchObject({
+      result: "ok",
+      status_code: 200,
+      project_id: projectId,
+      scope_used: "tasks:read",
+    });
+  });
+
+  it("global user token existence-hides projects outside owner access", async () => {
+    const ownerUserId = await seedUser("global-task-hidden");
+    const visible = await seedProject(
+      `ext-tasks-global-visible-${randomUUID().slice(0, 8)}`,
+    );
+    const hidden = await seedProject(
+      `ext-tasks-global-hidden-${randomUUID().slice(0, 8)}`,
+    );
+
+    await seedProjectMember(visible.projectId, ownerUserId);
+    await seedTask(hidden.projectId, hidden.flowId, "Hidden global task");
+
+    const token = await issueGlobalUserToken(ownerUserId, ["tasks:read"]);
+    const req = makeRequest("GET");
+
+    req.headers.set("authorization", `Bearer ${token.secret}`);
+
+    const res = await GET(req, {
+      params: Promise.resolve({ slug: hidden.slug }),
+    });
+
+    expect(res.status).toBe(404);
+
+    const auditRows = await db
+      .select()
+      .from(schema.tokenAuditLog as any)
+      .execute();
+
+    expect(auditRows).toHaveLength(1);
+    expect(auditRows[0]).toMatchObject({
+      result: "error",
+      status_code: 404,
+      project_id: hidden.projectId,
       scope_used: "tasks:read",
     });
   });

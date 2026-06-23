@@ -74,6 +74,7 @@ vi.mock("@/lib/supervisor-client", () => supervisorMocks);
 vi.mock("@/lib/runs/resume-driver", () => resumeDriverMocks);
 vi.mock("@/lib/authz", () => ({
   requireProjectAction: vi.fn(async () => {}),
+  requireProjectActionForUser: vi.fn(async () => {}),
 }));
 vi.mock("@/auth", () => ({
   auth: vi.fn(async () => null),
@@ -195,6 +196,33 @@ async function seedUser(emailPrefix: string): Promise<string> {
   return userId;
 }
 
+async function seedProjectMember(
+  projectId: string,
+  userId: string,
+): Promise<void> {
+  await (db as any).insert(schema.projectMembers).values({
+    projectId,
+    userId,
+    role: "member",
+  });
+}
+
+async function issueGlobalUserToken(
+  ownerUserId: string,
+  scopes: Parameters<typeof issueToken>[0]["scopes"],
+) {
+  return issueToken(
+    {
+      projectId: null as unknown as string,
+      name: "Global HITL Token",
+      tokenKind: "user",
+      ownerUserId,
+      scopes,
+    },
+    db,
+  );
+}
+
 async function seedRun(
   projectId: string,
   flowId: string,
@@ -270,7 +298,7 @@ async function seedHitlRequest(
     // Minimal valid form schema with one optional field so any object passes.
     schema_ = { schemaVersion: 1, fields: [{ name: "field", type: "string" }] };
   } else {
-    schema_ = undefined;
+    schema_ = { schemaVersion: 1, fields: [] };
   }
 
   await (db as any).insert(schema.hitlRequests).values({
@@ -958,6 +986,57 @@ describe("POST /api/v1/ext/runs/[runId]/hitl/[hitlRequestId]/respond", () => {
     const body = await res.json();
 
     expect(body.code).toBe("UNAUTHORIZED");
+  });
+
+  it("global user token with exact hitl:respond:human answers a human-kind HITL", async () => {
+    const { projectId, flowId } = await seedProject(
+      `ext-hitl-human-global-${randomUUID().slice(0, 8)}`,
+    );
+    const ownerUserId = await seedUser("hitl-human-owner");
+
+    await seedProjectMember(projectId, ownerUserId);
+
+    const { runId } = await seedRun(projectId, flowId, "NeedsInput");
+    const hitlId = await seedHitlRequest(runId, "human");
+    const token = await issueGlobalUserToken(ownerUserId, [
+      "hitl:respond:human",
+    ]);
+
+    const req = makePostRequest(runId, hitlId, token.secret, {
+      response: { decision: "approved" },
+      confidence: 0.9,
+    });
+    const res = await POST(req, {
+      params: Promise.resolve({ runId, hitlRequestId: hitlId }),
+    });
+
+    expect(res.status).toBe(200);
+
+    const hitlRows = await (db as any)
+      .select()
+      .from(schema.hitlRequests)
+      .where(eq(schema.hitlRequests.id, hitlId));
+
+    expect(hitlRows[0].respondedAt).toBeInstanceOf(Date);
+    expect(hitlRows[0].response).toEqual({
+      decision: "approved",
+      confidence: 0.9,
+    });
+    expect(hitlRows[0].humanConfidence).toBe(0.9);
+
+    const auditRows = await db
+      .select()
+      .from(schema.tokenAuditLog as any)
+      .execute();
+
+    expect(auditRows).toHaveLength(1);
+    expect(auditRows[0]).toMatchObject({
+      token_id: token.tokenId,
+      project_id: projectId,
+      result: "ok",
+      status_code: 200,
+      scope_used: "hitl:respond:human",
+    });
   });
 
   it("D8: returns 403 when token lacks hitl:respond scope", async () => {

@@ -36,6 +36,7 @@ import {
   testPlatformRunnerRow,
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
+import { closeDb } from "@/lib/db/client";
 import { runFlow } from "@/lib/flows/runner";
 
 const schema = fullSchema as unknown as Record<string, any>;
@@ -43,6 +44,7 @@ const schema = fullSchema as unknown as Record<string, any>;
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
 let db: NodePgDatabase;
+let originalDbUrl: string | undefined;
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:16-alpine")
@@ -58,10 +60,17 @@ beforeAll(async () => {
   // Set DB_URL for runner-agent to call getDb() when db context is unavailable.
   // Gates-exec calls runAgentStep without passing db in context, so the agent
   // runner falls back to getDb() which requires the env var.
+  originalDbUrl = process.env.DB_URL;
   process.env.DB_URL = container.getConnectionUri();
 }, 180_000);
 
 afterAll(async () => {
+  if (originalDbUrl === undefined) {
+    delete process.env.DB_URL;
+  } else {
+    process.env.DB_URL = originalDbUrl;
+  }
+  await closeDb();
   await pool?.end();
   await container?.stop();
 });

@@ -128,7 +128,12 @@ function payloadsEqual(a: unknown, b: unknown): boolean {
 }
 
 export type HitlActor =
-  | { kind: "user"; userId: string; label: string }
+  | {
+      kind: "user";
+      userId: string;
+      label: string;
+      preauthorizedProjectId?: string | null;
+    }
   | {
       kind: "api_token";
       tokenId: string;
@@ -1714,7 +1719,10 @@ export async function respondToHitl(
     // carries member-level RBAC (any active user, per ADR-096); a project run
     // keeps its project-scoped answerHitl gate. requireActiveSession is already
     // enforced by the calling route, so this branch only needs the project gate.
-    if (runRow.projectId) {
+    if (
+      runRow.projectId &&
+      actor.preauthorizedProjectId !== runRow.projectId
+    ) {
       await requireProjectAction(runRow.projectId, "answerHitl");
     }
   } else {

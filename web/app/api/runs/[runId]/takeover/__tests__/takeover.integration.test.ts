@@ -120,6 +120,15 @@ vi.mock("@/auth", () => ({
   handlers: {},
 }));
 
+vi.mock("next-auth", () => ({
+  default: vi.fn(() => ({
+    auth: vi.fn(async () => sessionRef.value),
+    signIn: vi.fn(),
+    signOut: vi.fn(),
+    handlers: {},
+  })),
+}));
+
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 
 // The return route resumes the runner asynchronously via queueMicrotask. In the

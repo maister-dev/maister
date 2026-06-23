@@ -9,22 +9,27 @@ import * as schemaModule from "@/lib/db/schema";
 import { hashToken, safeEqualHex, tokenPrefix } from "@/lib/tokens/secret";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { projectTokens } = schemaModule as unknown as Record<string, any>;
+const { projectTokens, users } = schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
 
-export type TokenAuthKind = "invalid" | "expired" | "revoked" | "wrong-project";
+export type TokenAuthKind =
+  | "invalid"
+  | "expired"
+  | "revoked"
+  | "wrong-project"
+  | "owner-unavailable";
 
 export class TokenAuthError extends Error {
   readonly kind: TokenAuthKind;
   readonly tokenId?: string;
-  readonly projectId?: string;
+  readonly projectId?: string | null;
 
   constructor(
     kind: TokenAuthKind,
     message?: string,
-    meta?: { tokenId?: string; projectId?: string },
+    meta?: { tokenId?: string; projectId?: string | null },
   ) {
     super(message ?? kind);
     this.name = "TokenAuthError";
@@ -36,7 +41,7 @@ export class TokenAuthError extends Error {
 
 export type TokenActor = {
   tokenId: string;
-  projectId: string;
+  projectId: string | null;
   tokenKind: TokenKind;
   ownerUserId: string | null;
   agentId: string | null;
@@ -107,12 +112,44 @@ export async function verifyToken(
 
   const tokenKind: TokenKind = row.token_kind ?? "project";
   const agentId: string | null = row.agent_id ?? null;
+  const ownerUserId: string | null = row.owner_user_id ?? null;
+
+  if (tokenKind === "user") {
+    if (ownerUserId === null) {
+      throw new TokenAuthError("owner-unavailable", "token owner unavailable", {
+        tokenId: row.id,
+        projectId: row.project_id ?? null,
+      });
+    }
+
+    const ownerRows = await d
+      .select({
+        id: users.id,
+        accountStatus: users.accountStatus,
+        mustChangePassword: users.mustChangePassword,
+      })
+      .from(users)
+      .where(eq(users.id, ownerUserId))
+      .limit(1);
+    const owner = ownerRows[0];
+
+    if (
+      !owner ||
+      owner.accountStatus !== "active" ||
+      owner.mustChangePassword === true
+    ) {
+      throw new TokenAuthError("owner-unavailable", "token owner unavailable", {
+        tokenId: row.id,
+        projectId: row.project_id ?? null,
+      });
+    }
+  }
 
   return {
     tokenId: row.id,
-    projectId: row.project_id,
+    projectId: row.project_id ?? null,
     tokenKind,
-    ownerUserId: row.owner_user_id ?? null,
+    ownerUserId,
     agentId,
     // ADR-089: agent tokens carry the agent identity into token_audit_log.
     actorLabel:
@@ -153,6 +190,8 @@ export function httpStatusForTokenAuth(kind: TokenAuthKind): number {
   switch (kind) {
     case "wrong-project":
       return 404;
+    case "owner-unavailable":
+      return 403;
     default:
       return 401;
   }

@@ -12,6 +12,7 @@ import {
   httpStatusForExtCode,
   recordRequiredTokenAudit,
 } from "@/lib/tokens/ext-handler";
+import { tokenHasExactScope } from "@/lib/tokens/scopes";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const { hitlRequests, runs } = schemaModule as unknown as Record<string, any>;
@@ -21,6 +22,7 @@ type Db = any;
 
 const ENDPOINT = "POST /api/v1/ext/runs/[runId]/hitl/[hitlRequestId]/respond";
 const SCOPE = "hitl:respond";
+const HUMAN_SCOPE = "hitl:respond:human";
 
 type RouteParams = {
   params: Promise<{ runId: string; hitlRequestId: string }>;
@@ -41,6 +43,27 @@ export async function POST(
       method: "POST",
       requireScope: true,
       successAuditInWork: true,
+      resolveProjectId: async ({ db }) => {
+        const runRows = await db
+          .select({ projectId: runs.projectId })
+          .from(runs)
+          .where(eq(runs.id, runId));
+
+        return runRows[0]?.projectId ?? null;
+      },
+      resolveScopeLabel: async ({ db }) => {
+        const hitlRows = await db
+          .select({ kind: hitlRequests.kind })
+          .from(hitlRequests)
+          .where(
+            and(
+              eq(hitlRequests.id, hitlRequestId),
+              eq(hitlRequests.runId, runId),
+            ),
+          );
+
+        return hitlRows[0]?.kind === "human" ? HUMAN_SCOPE : SCOPE;
+      },
       db,
     },
     async (ctx) => {
@@ -70,7 +93,7 @@ export async function POST(
 
       // Existence-hide hitlRequest within this run.
       const hitlRows = await db
-        .select({ id: hitlRequests.id })
+        .select({ id: hitlRequests.id, kind: hitlRequests.kind })
         .from(hitlRequests)
         .where(
           and(
@@ -86,25 +109,41 @@ export async function POST(
         );
       }
 
+      const hitlKind = hitlRows[0].kind as string;
+      const scopeUsed = hitlKind === "human" ? HUMAN_SCOPE : SCOPE;
+      const actor =
+        hitlKind === "human" &&
+        ctx.actor.tokenKind === "user" &&
+        ctx.actor.ownerUserId !== null &&
+        ctx.actor.projectId === null &&
+        tokenHasExactScope(ctx.actor.scopes, HUMAN_SCOPE)
+          ? {
+              kind: "user" as const,
+              userId: ctx.actor.ownerUserId,
+              label: ctx.actor.actorLabel,
+              preauthorizedProjectId: ctx.projectId,
+            }
+          : {
+              kind: "api_token" as const,
+              tokenId: ctx.actor.tokenId,
+              projectId: ctx.projectId,
+              label: ctx.actor.actorLabel,
+              ownerUserId: ctx.actor.ownerUserId,
+            };
+
       try {
         return await respondToHitl(
           { runId, hitlRequestId, body: { optionId, response, confidence } },
-          {
-            kind: "api_token",
-            tokenId: ctx.actor.tokenId,
-            projectId: ctx.projectId,
-            label: ctx.actor.actorLabel,
-            ownerUserId: ctx.actor.ownerUserId,
-          },
+          actor,
           {
             db,
             recordSuccessAudit: (tx, statusCode) =>
               recordRequiredTokenAudit(
                 {
                   tokenId: ctx.actor.tokenId,
-                  projectId: ctx.actor.projectId,
+                  projectId: ctx.projectId,
                   actorLabel: ctx.actor.actorLabel,
-                  scopeUsed: SCOPE,
+                  scopeUsed,
                   endpoint: ENDPOINT,
                   method: "POST",
                   result: "ok",

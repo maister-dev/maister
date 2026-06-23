@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { ProjectAction } from "@/lib/authz";
 import type { TokenAuditInput } from "@/lib/tokens/audit";
 import type { TokenActor } from "@/lib/tokens/verify";
 
@@ -7,8 +8,10 @@ import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import pino from "pino";
 
+import { requireProjectActionForUser } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
+import { isMaisterError } from "@/lib/errors";
 import { bumpTokenLastUsed, recordTokenAudit } from "@/lib/tokens/audit";
 import { tokenHasScope } from "@/lib/tokens/scopes";
 import {
@@ -24,6 +27,8 @@ const { projects } = schemaModule as unknown as Record<string, any>;
 type Db = any;
 
 export type ExtCtx = { actor: TokenActor; projectId: string };
+type ResolveProjectCtx = { actor: TokenActor; db: Db };
+type ResolveScopeCtx = ExtCtx & { db: Db };
 
 const log = pino({
   name: "ext-token-handler",
@@ -76,6 +81,29 @@ function bumpTokenLastUsedAsync(actor: TokenActor, db: Db): void {
   });
 }
 
+const PROJECT_ACTION_BY_SCOPE: Partial<Record<string, ProjectAction>> = {
+  "tasks:create": "createTask",
+  "tasks:read": "readBoard",
+  "tasks:update": "editTask",
+  "tasks:triage": "editTask",
+  "comments:read": "readBoard",
+  "comments:create": "commentTask",
+  "relations:read": "readBoard",
+  "relations:create": "manageTaskRelations",
+  "relations:delete": "manageTaskRelations",
+  "runs:launch": "launchRun",
+  "runs:read": "readBoard",
+  "readiness:read": "readBoard",
+  "gates:report": "launchRun",
+  "hitl:read": "readBoard",
+  "hitl:respond": "answerHitl",
+  "hitl:respond:human": "answerHitl",
+};
+
+function projectActionForScope(scope: string): ProjectAction {
+  return PROJECT_ACTION_BY_SCOPE[scope] ?? "readBoard";
+}
+
 // Canonical MaisterError `code` → HTTP status for the /api/v1/ext/* surface, so
 // sibling routes never diverge. `CONFIG` (a well-formed but unprocessable
 // body/config) is 422 across the whole surface; `PRECONDITION`/`CONFLICT` are
@@ -115,6 +143,10 @@ export async function handleExt(
     // requireScope:false only while preserving an older compatibility contract.
     // The 403 body never reveals which scopes the token holds.
     requireScope?: boolean;
+    allowGlobalActorWithoutProject?: boolean;
+    auditProjectId?: string | null;
+    resolveProjectId?: (ctx: ResolveProjectCtx) => Promise<string | null>;
+    resolveScopeLabel?: (ctx: ResolveScopeCtx) => Promise<string>;
   },
   work: (ctx: ExtCtx) => Promise<NextResponse>,
 ): Promise<NextResponse> {
@@ -140,35 +172,40 @@ export async function handleExt(
     actor = await verifyToken(presented, d);
   } catch (err) {
     if (err instanceof TokenAuthError) {
-      if (
-        (err.kind === "expired" || err.kind === "revoked") &&
-        err.tokenId &&
-        err.projectId
-      ) {
-        // Identified failure: write audit row, then return 401.
+      const status = httpStatusForTokenAuth(err.kind);
+
+      if (err.tokenId && err.kind !== "invalid") {
+        // Identified failure: write audit row, then return the mapped status.
         await recordRequiredTokenAudit(
           {
             tokenId: err.tokenId,
-            projectId: err.projectId,
+            projectId: err.projectId ?? null,
             actorLabel: "token:?",
             scopeUsed: opts.scopeLabel,
             endpoint: opts.endpoint,
             method: opts.method,
             result: "error",
-            statusCode: 401,
+            statusCode: status,
           },
           d,
         );
       }
 
       return NextResponse.json(
-        { code: "UNAUTHENTICATED", message: err.message },
-        { status: 401 },
+        {
+          code: status === 403 ? "UNAUTHORIZED" : "UNAUTHENTICATED",
+          message: err.message,
+        },
+        { status },
       );
     }
 
     throw err;
   }
+
+  let targetProjectId: string | null = actor.projectId;
+  let auditProjectId: string | null =
+    "auditProjectId" in opts ? (opts.auditProjectId ?? null) : actor.projectId;
 
   // 3. If slug provided: resolve project and validate token project ownership.
   if (opts.slug) {
@@ -178,7 +215,7 @@ export async function handleExt(
       .where(eq(projects.slug, opts.slug));
     const project = rows[0];
 
-    if (!project || project.archivedAt || project.id !== actor.projectId) {
+    if (!project || project.archivedAt) {
       await recordRequiredTokenAudit(
         {
           tokenId: actor.tokenId,
@@ -198,19 +235,229 @@ export async function handleExt(
         { status: 404 },
       );
     }
+
+    targetProjectId = project.id;
+    auditProjectId = project.id;
+
+    if (actor.projectId !== null && project.id !== actor.projectId) {
+      await recordRequiredTokenAudit(
+        {
+          tokenId: actor.tokenId,
+          projectId: auditProjectId,
+          actorLabel: actor.actorLabel,
+          scopeUsed: opts.scopeLabel,
+          endpoint: opts.endpoint,
+          method: opts.method,
+          result: "error",
+          statusCode: 404,
+        },
+        d,
+      );
+
+      return NextResponse.json(
+        { code: "NOT_FOUND", message: "project not found" },
+        { status: 404 },
+      );
+    }
+
+    if (actor.projectId === null) {
+      if (actor.tokenKind !== "user" || !actor.ownerUserId) {
+        await recordRequiredTokenAudit(
+          {
+            tokenId: actor.tokenId,
+            projectId: auditProjectId,
+            actorLabel: actor.actorLabel,
+            scopeUsed: opts.scopeLabel,
+            endpoint: opts.endpoint,
+            method: opts.method,
+            result: "error",
+            statusCode: 404,
+          },
+          d,
+        );
+
+        return NextResponse.json(
+          { code: "NOT_FOUND", message: "project not found" },
+          { status: 404 },
+        );
+      }
+
+      try {
+        await requireProjectActionForUser(
+          actor.ownerUserId,
+          project.id,
+          projectActionForScope(opts.scopeLabel),
+        );
+      } catch (err) {
+        if (isMaisterError(err)) {
+          await recordRequiredTokenAudit(
+            {
+              tokenId: actor.tokenId,
+              projectId: auditProjectId,
+              actorLabel: actor.actorLabel,
+              scopeUsed: opts.scopeLabel,
+              endpoint: opts.endpoint,
+              method: opts.method,
+              result: "error",
+              statusCode: 404,
+            },
+            d,
+          );
+
+          return NextResponse.json(
+            { code: "NOT_FOUND", message: "project not found" },
+            { status: 404 },
+          );
+        }
+
+        throw err;
+      }
+    }
   }
+
+  if (!opts.slug && opts.resolveProjectId) {
+    const resolvedProjectId = await opts.resolveProjectId({ actor, db: d });
+
+    if (resolvedProjectId === null) {
+      await recordRequiredTokenAudit(
+        {
+          tokenId: actor.tokenId,
+          projectId: auditProjectId,
+          actorLabel: actor.actorLabel,
+          scopeUsed: opts.scopeLabel,
+          endpoint: opts.endpoint,
+          method: opts.method,
+          result: "error",
+          statusCode: 404,
+        },
+        d,
+      );
+
+      return NextResponse.json(
+        { code: "NOT_FOUND", message: "resource not found" },
+        { status: 404 },
+      );
+    }
+
+    targetProjectId = resolvedProjectId;
+    auditProjectId = resolvedProjectId;
+
+    if (actor.projectId !== null && actor.projectId !== resolvedProjectId) {
+      await recordRequiredTokenAudit(
+        {
+          tokenId: actor.tokenId,
+          projectId: auditProjectId,
+          actorLabel: actor.actorLabel,
+          scopeUsed: opts.scopeLabel,
+          endpoint: opts.endpoint,
+          method: opts.method,
+          result: "error",
+          statusCode: 404,
+        },
+        d,
+      );
+
+      return NextResponse.json(
+        { code: "NOT_FOUND", message: "resource not found" },
+        { status: 404 },
+      );
+    }
+
+    if (actor.projectId === null) {
+      if (actor.tokenKind !== "user" || !actor.ownerUserId) {
+        await recordRequiredTokenAudit(
+          {
+            tokenId: actor.tokenId,
+            projectId: auditProjectId,
+            actorLabel: actor.actorLabel,
+            scopeUsed: opts.scopeLabel,
+            endpoint: opts.endpoint,
+            method: opts.method,
+            result: "error",
+            statusCode: 404,
+          },
+          d,
+        );
+
+        return NextResponse.json(
+          { code: "NOT_FOUND", message: "resource not found" },
+          { status: 404 },
+        );
+      }
+
+      try {
+        await requireProjectActionForUser(
+          actor.ownerUserId,
+          resolvedProjectId,
+          projectActionForScope(opts.scopeLabel),
+        );
+      } catch (err) {
+        if (isMaisterError(err)) {
+          await recordRequiredTokenAudit(
+            {
+              tokenId: actor.tokenId,
+              projectId: auditProjectId,
+              actorLabel: actor.actorLabel,
+              scopeUsed: opts.scopeLabel,
+              endpoint: opts.endpoint,
+              method: opts.method,
+              result: "error",
+              statusCode: 404,
+            },
+            d,
+          );
+
+          return NextResponse.json(
+            { code: "NOT_FOUND", message: "resource not found" },
+            { status: 404 },
+          );
+        }
+
+        throw err;
+      }
+    }
+  }
+
+  if (targetProjectId === null && !opts.allowGlobalActorWithoutProject) {
+    await recordRequiredTokenAudit(
+      {
+        tokenId: actor.tokenId,
+        projectId: auditProjectId,
+        actorLabel: actor.actorLabel,
+        scopeUsed: opts.scopeLabel,
+        endpoint: opts.endpoint,
+        method: opts.method,
+        result: "error",
+        statusCode: 403,
+      },
+      d,
+    );
+
+    return NextResponse.json(
+      { code: "UNAUTHORIZED", message: "project-bound token required" },
+      { status: 403 },
+    );
+  }
+
+  const scopeLabel = opts.resolveScopeLabel
+    ? await opts.resolveScopeLabel({
+        actor,
+        projectId: targetProjectId ?? "",
+        db: d,
+      })
+    : opts.scopeLabel;
 
   // 3b. Scope enforcement. The 403 body MUST NOT leak which scopes the token holds.
   if (
     opts.requireScope !== false &&
-    !tokenHasScope(actor.scopes, opts.scopeLabel)
+    !tokenHasScope(actor.scopes, scopeLabel)
   ) {
     await recordRequiredTokenAudit(
       {
         tokenId: actor.tokenId,
-        projectId: actor.projectId,
+        projectId: auditProjectId,
         actorLabel: actor.actorLabel,
-        scopeUsed: opts.scopeLabel,
+        scopeUsed: scopeLabel,
         endpoint: opts.endpoint,
         method: opts.method,
         result: "error",
@@ -230,7 +477,7 @@ export async function handleExt(
   let response: NextResponse;
 
   try {
-    response = await work({ actor, projectId: actor.projectId });
+    response = await work({ actor, projectId: targetProjectId ?? "" });
   } catch (err) {
     // Map TokenAuthError("wrong-project") thrown from authorize callback → 404.
     if (err instanceof TokenAuthError) {
@@ -243,9 +490,9 @@ export async function handleExt(
       await recordRequiredTokenAudit(
         {
           tokenId: actor.tokenId,
-          projectId: actor.projectId,
+          projectId: auditProjectId,
           actorLabel: actor.actorLabel,
-          scopeUsed: opts.scopeLabel,
+          scopeUsed: scopeLabel,
           endpoint: opts.endpoint,
           method: opts.method,
           result: "error",
@@ -270,9 +517,9 @@ export async function handleExt(
     await recordRequiredTokenAudit(
       {
         tokenId: actor.tokenId,
-        projectId: actor.projectId,
+        projectId: auditProjectId,
         actorLabel: actor.actorLabel,
-        scopeUsed: opts.scopeLabel,
+        scopeUsed: scopeLabel,
         endpoint: opts.endpoint,
         method: opts.method,
         result: statusCode < 400 ? "ok" : "error",

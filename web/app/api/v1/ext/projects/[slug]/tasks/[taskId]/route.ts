@@ -108,7 +108,7 @@ export async function PATCH(
             await recordRequiredTokenAudit(
               {
                 tokenId: ctx.actor.tokenId,
-                projectId: ctx.actor.projectId,
+                projectId: ctx.projectId,
                 actorLabel: ctx.actor.actorLabel,
                 scopeUsed: "tasks:update",
                 endpoint: ENDPOINT_TASK_PATCH,

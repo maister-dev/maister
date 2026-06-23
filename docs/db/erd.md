@@ -129,8 +129,8 @@ erDiagram
     SCRATCH_MESSAGES ||--o{ SCRATCH_ATTACHMENTS : "message attachments"
     SCRATCH_RUNS ||--|| SCRATCH_CAPABILITY_PROFILES : "launch snapshot"
 
-    PROJECTS ||--o{ PROJECT_TOKENS : "project tokens (M16)"
-    PROJECTS ||--o{ TOKEN_AUDIT_LOG : "audit rows (M16)"
+    PROJECTS o|--o{ PROJECT_TOKENS : "optional project binding (M16/0063)"
+    PROJECTS o|--o{ TOKEN_AUDIT_LOG : "optional audit target (M16/0063)"
     USERS ||--o{ PROJECT_TOKENS : "created_by SET NULL (M16)"
     PROJECT_TOKENS ||--o{ TOKEN_AUDIT_LOG : "per-call audit (M16)"
     CAPABILITY_RECORDS ||--o{ AUTHORED_CAPABILITIES : "projected via material.origin"
@@ -989,7 +989,7 @@ erDiagram
 
     PROJECT_TOKENS {
         text id PK "uuid"
-        text project_id FK "NOT NULL -> projects(id) ON DELETE CASCADE"
+        text project_id FK "NULL for personal user tokens -> projects(id) ON DELETE CASCADE"
         text name "NOT NULL"
         text token_kind "NOT NULL default project — project|user|agent (agent M34)"
         text owner_user_id FK "NULL -> users(id) ON DELETE SET NULL"
@@ -1007,7 +1007,7 @@ erDiagram
     TOKEN_AUDIT_LOG {
         text id PK "uuid"
         text token_id FK "NOT NULL -> project_tokens(id) ON DELETE CASCADE"
-        text project_id FK "NOT NULL -> projects(id) ON DELETE CASCADE"
+        text project_id FK "NULL -> projects(id) ON DELETE SET NULL"
         text actor_label "NOT NULL"
         text scope_used "NOT NULL"
         text endpoint "NOT NULL"
@@ -1116,7 +1116,8 @@ migration `0019`)** `capability_imports` table and
 [`capabilities-domain.md`](capabilities-domain.md)), and the **M16 (migration
 `0020_m16_api_tokens.sql`)** `project_tokens` / `token_audit_log` tables (drawn
 above), expanded by `0031_token_actor_scope_support.sql` for user-owned tokens
-and enforced scopes. Remaining roadmap-additive persistence (e.g. artifact edges and
+and enforced scopes, with global personal tokens and nullable audit targets
+Implemented by `0064_user_access_tokens.sql`. Remaining roadmap-additive persistence (e.g. artifact edges and
 external-operation events) is not drawn until its migrations exist. See
 [`../database-schema.md#planned-roadmap-persistence`](../database-schema.md#planned-roadmap-persistence).
 
@@ -1185,10 +1186,11 @@ external-operation events) is not drawn until its migrations exist. See
 | `flows` | `flows_project_ref_uq` | `(project_id, flow_ref_id)` UNIQUE | Per-project namespace. |
 | `workspaces` | implicit | `worktree_path` UNIQUE | Globally unique worktree path. |
 | `project_tokens` | `project_tokens_prefix_idx` | `(prefix)` | **(M16)** Fast prefix lookup during token verification. |
-| `project_tokens` | `project_tokens_project_idx` | `(project_id)` | **(M16)** List tokens for a project. |
+| `project_tokens` | `project_tokens_project_idx` | `(project_id)` | **(M16)** List project-bound tokens for a project. |
 | `project_tokens` | `project_tokens_owner_idx` | `(owner_user_id)` | User-owned token audit joins. |
+| `project_tokens` | `project_tokens_owner_created_idx` | `(owner_user_id, created_at)` | **(0063 Implemented)** List account-level personal tokens. |
 | `token_audit_log` | `token_audit_token_idx` | `(token_id)` | **(M16)** Per-token audit trail. |
-| `token_audit_log` | `token_audit_project_created_idx` | `(project_id, created_at)` | **(M16)** Chronological audit log per project. |
+| `token_audit_log` | `token_audit_project_created_idx` | `(project_id, created_at)` | **(M16, 0063 Implemented)** Chronological audit log per project; NULL rows are global/deleted-target rows. |
 | `webhook_subscriptions` | `webhook_subscriptions_project_idx` | `(project_id)` | **(ADR-077 Implemented)** Project-scope subscription lookup (NULL = platform rows). |
 | `webhook_events` | `webhook_events_pending_fanout_idx` | `(created_at)` PARTIAL `WHERE fanout_at IS NULL` | **(ADR-077 Implemented)** Ordered fanout-pass claim scan. |
 | `webhook_deliveries` | `webhook_deliveries_due_idx` | `(next_attempt_at)` PARTIAL `WHERE status = 'pending'` | **(ADR-077 Implemented)** Ordered drain-pass claim scan. |

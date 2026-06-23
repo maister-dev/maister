@@ -25,6 +25,7 @@ import {
   testPlatformRunnerRow,
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
+import { closeDb } from "@/lib/db/client";
 import { recordArtifact } from "@/lib/flows/graph/artifact-store";
 import { GIT_UNAVAILABLE_REASON } from "@/lib/flows/graph/mutation-check";
 import { runFlow } from "@/lib/flows/runner";
@@ -36,6 +37,7 @@ const schema = fullSchema as unknown as Record<string, any>;
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
 let db: NodePgDatabase;
+let originalDbUrl: string | undefined;
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:16-alpine")
@@ -50,10 +52,17 @@ beforeAll(async () => {
   // runner-agent's event consumer falls back to getDb() (requires DB_URL)
   // when no db is threaded — needed by the M29 ai_coding restriction tests
   // (mirrors calibrate-verdict-exec.integration.test.ts).
+  originalDbUrl = process.env.DB_URL;
   process.env.DB_URL = container.getConnectionUri();
 }, 180_000);
 
 afterAll(async () => {
+  if (originalDbUrl === undefined) {
+    delete process.env.DB_URL;
+  } else {
+    process.env.DB_URL = originalDbUrl;
+  }
+  await closeDb();
   await pool?.end();
   await container?.stop();
 });

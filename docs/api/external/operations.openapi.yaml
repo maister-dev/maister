@@ -4,15 +4,22 @@ info:
   version: "1.0.0"
   description: |
     Token-authenticated external surface for MAIster (M16). All routes are
-    under `/api/v1/ext/` and require a project-scoped bearer token issued via
-    the token-management routes in `docs/api/web.openapi.yaml`.
+    under `/api/v1/ext/` and require a bearer token issued via the
+    token-management routes in `docs/api/web.openapi.yaml`. Tokens may be
+    project-bound (`project_id` set) or global personal user tokens
+    (`project_id = NULL`, Implemented by 0063).
 
     **Security model.** Every call is authenticated by the `projectToken`
     bearer scheme. The token is 256-bit random (`mai_` + base64url(32 bytes)),
     stored as sha256 at rest, looked up by prefix, and compared with
-    `timingSafeEqual`. Token failure kinds map to 401. Cross-project resource
+    `timingSafeEqual`. Token failure kinds map to 401. Project-bound tokens
+    must match the addressed project. Global personal user tokens derive the
+    target project from URL/server-state, load the owner account, require the
+    owner to be active and password-clear, and authorize through current
+    project membership/global admin. Cross-project or inaccessible-project
     access hides existence (404). Every route enforces its scope label unless
-    the token holds `*`.
+    the token holds `*`; `*` does not satisfy exact-only
+    `hitl:respond:human`.
 
     **Audit.** Every call writes a `token_audit_log` row. The gate-report
     endpoint writes the success audit row inside the same database transaction
@@ -46,9 +53,11 @@ tags:
     description: External gate report submission via token auth.
   - name: hitl
     description: |
-      Human-in-the-loop list + respond via token auth (M17). The routes enforce
-      `hitl:read` / `hitl:respond` or `*` and refuse a token actor answering a
-      `human`-kind request (D7).
+      Human-in-the-loop list + respond via token auth (M17, 0063 Implemented).
+      Run-scoped list enforces `hitl:read`; cross-project personal inbox
+      enforces `hitl:inbox:read`; permission/form responses enforce
+      `hitl:respond`; human/infra_recovery/budget_breach responses require a
+      global personal user token with exact `hitl:respond:human`.
   - name: comments
     description: |
       (ADR-078, Implemented) Task comment list + create via token auth. The
@@ -1190,6 +1199,79 @@ paths:
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
 
+  /api/v1/ext/hitl:
+    get:
+      tags: [hitl]
+      summary: (0063 Implemented) List pending human HITL across visible projects
+      description: |
+        Scope `hitl:inbox:read`. Returns pending human-owned HITL work across
+        every project the global personal token owner can currently access.
+        This route is only for global personal user tokens (`token_kind=user`,
+        `project_id IS NULL`). Project tokens, project-scoped user tokens, and
+        agent tokens return 403 because they do not carry a user-wide project
+        set.
+
+        Identifier labels:
+
+        | Identifier | Source | Trust |
+        | --- | --- | --- |
+        | token owner | auth-context | verified bearer token row |
+        | visible projects | server-state | owner membership/global-admin query |
+        | limit | query-controlled | bounded numeric |
+        | offset | query-controlled | bounded numeric |
+
+        `*` may satisfy this read scope. The route writes a
+        `token_audit_log` row with `scope_used='hitl:inbox:read'`,
+        `project_id=NULL`, `endpoint='GET /api/v1/ext/hitl'`, and the returned
+        HTTP status. The audit/log path must not record plaintext token, token
+        hash, Authorization header, or held scope list.
+      operationId: extListHitlInbox
+      security:
+        - projectToken: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: Cross-project HITL inbox for the token owner.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/ExtHitlInboxItem" }
+              examples:
+                default:
+                  value:
+                    items:
+                      - projectId: "project_123"
+                        projectSlug: "demo"
+                        runId: "run_123"
+                        hitlRequestId: "hitl_123"
+                        kind: "human"
+                        title: "Review deployment plan"
+                        createdAt: "2026-06-23T12:00:00.000Z"
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+
   /api/v1/ext/runs/{runId}/hitl:
     get:
       tags: [hitl]
@@ -1197,8 +1279,17 @@ paths:
       description: |
         Scope `hitl:read` (M17). Returns the pending (unanswered) human-in-the-
         loop requests for the run identified by `runId`. The run's `projectId`
-        is re-validated against the token's project — mismatch → 404
-        (existence-hide).
+        is server-state from the run row. Project-bound tokens must match that
+        project; global personal user tokens authorize the owner against that
+        project. Mismatch or inaccessible project → 404 (existence-hide).
+
+        Identifier labels:
+
+        | Identifier | Source | Trust |
+        | --- | --- | --- |
+        | runId | url-param | locator only |
+        | projectId | server-state | loaded from run row |
+        | token owner | auth-context | verified bearer token row |
 
         **Scope enforcement (D8).** This route gates on the token scope:
         `hitl:read` must be present in the token's `scopes`, or the token must
@@ -1208,7 +1299,8 @@ paths:
         **DTO policy.** Items NEVER include `acp_session_id`, absolute worktree
         paths, supervisor-internal handles, or any other internal locator.
 
-        Writes a `token_audit_log` row with scope `hitl:read` after success.
+        Writes a `token_audit_log` row with scope `hitl:read` and the
+        server-derived run project after success.
       operationId: extListRunHitl
       security:
         - projectToken: []
@@ -1243,13 +1335,26 @@ paths:
       tags: [hitl]
       summary: Respond to a pending HITL request
       description: |
-        Scope `hitl:respond` (M17). Answers the pending HITL request identified
-        by `hitlRequestId` on the run identified by `runId`. Routes through the
+        Scope `hitl:respond` or exact `hitl:respond:human` (M17, 0063
+        Designed). Answers the pending HITL request identified by
+        `hitlRequestId` on the run identified by `runId`. Routes through the
         SAME `respondToHitl` service (and the same two-phase commit + audit) as
         the session-auth `POST /api/runs/{runId}/hitl/{hitlRequestId}/respond`.
-        The run's `projectId` is re-validated against the token's project, and
-        `hitlRow.runId` must equal the URL `runId` — either mismatch → 404
-        (existence-hide).
+        The run's `projectId` is server-state from the run row. Project-bound
+        tokens must match that project; global personal user tokens authorize
+        the owner against that project. `hitlRow.runId` must equal the URL
+        `runId`; mismatch or inaccessible project → 404 (existence-hide).
+
+        Identifier labels:
+
+        | Identifier | Source | Trust |
+        | --- | --- | --- |
+        | runId | url-param | locator only |
+        | hitlRequestId | url-param | locator only |
+        | projectId | server-state | loaded from run row |
+        | stored HITL kind/schema/options | server-state | loaded from `hitl_requests` |
+        | response payload | body-controlled | validated by kind/schema |
+        | token owner | auth-context | verified bearer token row |
 
         The handler dispatches on the stored `hitl_requests.kind`:
 
@@ -1257,19 +1362,26 @@ paths:
           `optionId` on retry → idempotent 200; idle-resume scheduled → 202.
         - **form**: supply `response` (validated against the row's `schema`;
           422 on failure), with optional `confidence` (`0..1`).
+        - **human / infra_recovery / budget_breach**: requires a global
+          personal user token with exact `hitl:respond:human`; `*` alone is
+          insufficient. The response is recorded as a human user action with
+          `HitlActor.kind='user'` and `userId=ownerUserId`.
 
-        **Actor-kind gate (D7).** A token actor MAY answer only
-        `kind ∈ {permission, form}`. A `human`-kind request (including a graph
-        `human_review`) requires a human actor — a token answering it → 403.
-        This makes "escalate-to-human is a Flow gate, never the external actor's"
-        (ADR-024) executable: a machine token can never satisfy a human gate,
-        even holding `hitl:respond`. The token actor can answer a pending request
-        but can never create one or alter gate placement.
+        **Actor-kind gate (D7).** Project tokens, project-scoped user tokens,
+        and agent tokens MAY answer only `kind ∈ {permission, form}` and return
+        403 for human-only kinds. Only global personal user tokens with exact
+        `hitl:respond:human` can satisfy a human gate. The token actor can
+        answer a pending request but can never create one or alter gate
+        placement.
 
-        **Scope enforcement (D8).** A token lacking `hitl:respond` (and not `*`)
-        → 403. The 403 body does NOT reveal which scopes the token holds.
+        **Scope enforcement (D8).** Permission/form responses require
+        `hitl:respond` or `*`. Human-only responses require exact
+        `hitl:respond:human`; `*` does not satisfy it. The 403 body does NOT
+        reveal which scopes the token holds.
 
-        Writes a `token_audit_log` row with scope `hitl:respond`.
+        Writes a `token_audit_log` row with scope `hitl:respond` for
+        permission/form or `hitl:respond:human` for human-only responses, and
+        `project_id` equal to the server-derived run project.
       operationId: extRespondRunHitl
       security:
         - projectToken: []
@@ -1359,26 +1471,34 @@ components:
       type: http
       scheme: bearer
       description: |
-        Project-scoped API token. Format: `mai_` + base64url(randomBytes(32)).
+        External API bearer token. Format: `mai_` + base64url(randomBytes(32)).
         Stored as sha256 hex at rest; never logged or streamed. Lookup is by
-        the 12-character prefix; verification uses `timingSafeEqual`. A valid,
-        active, non-expired, non-revoked token must hold the route's required
-        scope or `*`. Missing scope returns 403 without revealing held scopes.
-        Token failures (invalid, expired, revoked, wrong-project) map to 401
-        or 404 per the existence-hide policy.
+        the 12-character prefix; verification uses `timingSafeEqual`.
+        Project-bound tokens carry `project_id` and must match the addressed
+        project. Global personal user tokens carry `project_id = NULL`, require
+        an active/password-clear owner, and authorize through that owner's
+        current project access. A valid, active, non-expired, non-revoked token
+        must hold the route's required scope or `*`, except exact
+        `hitl:respond:human`, which `*` never implies. Missing scope returns
+        403 without revealing held scopes. Token failures (invalid, expired,
+        revoked, wrong-project, inaccessible-project) map to 401 or 404 per
+        the existence-hide policy.
 
   responses:
     TokenUnauthorized:
       description: |
-        Missing, invalid, expired, or revoked bearer token. All token failure
-        kinds (invalid prefix/hash mismatch, expired, revoked) return 401.
+        Missing, invalid, expired, revoked, ownerless, inactive-owner, or
+        password-change-required bearer token. Invalid prefix/hash mismatch,
+        expired, revoked, and unusable-owner failures return 401.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ExtErrorBody" }
     NotFound:
       description: |
         Resource not found, or the token's project does not own the addressed
-        resource (existence-hide — cross-project access returns 404, not 403).
+        resource. For global personal tokens, this also covers projects the
+        owner cannot currently access. Existence-hide cross-project access
+        returns 404, not 403.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ExtErrorBody" }
@@ -1404,10 +1524,16 @@ components:
           - **Missing scope** — the token lacks the route's required scope and
             does not hold `*`. The body NEVER reveals which scopes the token
             holds.
-          - **Actor-kind gate (D7, respond only)** — a token actor attempted to
-            answer a `human`-kind request (including a graph `human_review`).
-            A `human`-kind request requires a human actor; token actors may
-            answer only `kind ∈ {permission, form}`.
+          - **Exact human scope** — `hitl:respond:human` is required for
+            `human`, `infra_recovery`, and `budget_breach` responses; `*`
+            alone is insufficient.
+          - **Actor-kind gate (D7, respond only)** — a project token,
+            project-scoped user token, or agent token attempted to answer a
+            human-only request. Those token actors may answer only
+            `kind ∈ {permission, form}`.
+          - **Wrong token kind (inbox only)** — `/api/v1/ext/hitl` requires a
+            global personal user token; project/agent/project-scoped tokens
+            return 403.
 
         Cross-project access does NOT use 403 — it hides existence (404).
       content:
@@ -1876,6 +2002,36 @@ components:
           format: uuid
           description: ID of the `test_report` artifact created for this report.
 
+    ExtHitlInboxItem:
+      type: object
+      description: |
+        (0063 Implemented) Cross-project pending HITL item visible to a global
+        personal-token owner. NEVER includes `acp_session_id`, absolute
+        worktree paths, token material, or supervisor-internal handles.
+      required: [projectId, projectSlug, runId, hitlRequestId, kind, title, createdAt]
+      properties:
+        projectId:
+          type: string
+          format: uuid
+        projectSlug:
+          type: string
+        runId:
+          type: string
+          format: uuid
+        hitlRequestId:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum: [human, infra_recovery, budget_breach]
+          description: Human-owned HITL kind eligible for the personal inbox.
+        title:
+          type: string
+          description: Human-readable prompt/title for inbox display.
+        createdAt:
+          type: string
+          format: date-time
+
     ExtHitlRequestDTO:
       type: object
       description: |
@@ -1898,9 +2054,10 @@ components:
         kind:
           type: string
           description: |
-            Request kind. A token actor may answer only `permission` and
-            `form`; `human` requires a human actor (D7).
-          enum: [permission, form, human]
+            Request kind. Project/agent/project-scoped user token actors may
+            answer only `permission` and `form`; human-only kinds require a
+            global personal user token with exact `hitl:respond:human`.
+          enum: [permission, form, human, infra_recovery, budget_breach]
         prompt:
           type: string
           description: Prompt text shown to the responder.
@@ -1944,8 +2101,10 @@ components:
       type: object
       description: |
         (M17) HITL response payload. Supply `optionId` for a `permission`
-        request, or `response` for a `form` request. A `human`-kind request
-        cannot be answered by a token actor (D7).
+        request, `response` for a `form` or `human` request, or the
+        kind-specific option/fields for `infra_recovery` and `budget_breach`.
+        Project/agent/project-scoped user tokens cannot answer human-only
+        kinds; global personal tokens need exact `hitl:respond:human`.
       properties:
         optionId:
           type: string
@@ -1956,8 +2115,9 @@ components:
         response:
           type: object
           description: |
-            Required iff the HITL row has `kind == "form"`. Validated against the
-            row's `schema` (server-state, never body-trusted); 422 on failure.
+            Required iff the HITL row has `kind == "form"` or a schema-backed
+            `human` request. Validated against the row's `schema`
+            (server-state, never body-trusted); 422 on failure.
           additionalProperties: true
         confidence:
           type: number
@@ -2219,3 +2379,22 @@ components:
         childRunId:
           type: string
           format: uuid
+    TokenScope:
+      type: string
+      enum:
+        - "*"
+        - tasks:create
+        - tasks:read
+        - tasks:update
+        - runs:launch
+        - runs:read
+        - readiness:read
+        - gates:report
+        - hitl:read
+        - hitl:inbox:read
+        - hitl:respond
+        - hitl:respond:human
+      description: |
+        Route authorization label for `/api/v1/ext`. `*` grants the project
+        external API except exact-only human-HITL approval:
+        `hitl:respond:human` must be present explicitly.

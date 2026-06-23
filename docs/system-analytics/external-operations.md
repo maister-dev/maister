@@ -3,16 +3,21 @@
 > **Status: Implemented (M16), expanded by migration `0031_token_actor_scope_support.sql`.**
 > Project API tokens, user-owned tokens, route-scope enforcement, token audit log,
 > the `/api/v1/ext` external REST surface, the `external_check` gate report loop,
-> and the thin MCP facade. Locked decisions: [ADR-040](../decisions.md#adr-040),
-> [ADR-041](../decisions.md#adr-041), [ADR-042](../decisions.md#adr-042).
+> and the thin MCP facade. Global personal API tokens are **Implemented** by
+> migration `0064_user_access_tokens.sql`. Locked decisions:
+> [ADR-040](../decisions.md#adr-040), [ADR-041](../decisions.md#adr-041),
+> [ADR-042](../decisions.md#adr-042).
 
 ## Purpose
 
 This domain covers how external callers — CI/CD pipelines, automation scripts, and
 AI tool-calling agents via the MCP facade — authenticate to MAIster and interact
 with the project API. A `project_tokens` row carries a sha256-hashed secret,
-token kind (`project` or `user`), optional human owner, and route scopes for
-`/api/v1/ext`. Every token call is recorded in `token_audit_log`. The
+token kind (`project`, `user`, or `agent`), optional human owner, optional
+project binding, and route scopes for `/api/v1/ext`. A user token with
+`project_id IS NULL` is a global personal token: it can act only on projects the
+owner can currently access. Every identified token call is recorded in
+`token_audit_log`. The
 `external_check` gate kind closes the
 CI feedback loop: an external runner posts a pass/fail report to the gate-report
 endpoint, which atomically flips the gate, records a `test_report` artifact, and
@@ -23,11 +28,11 @@ Streamable-HTTP transport.
 
 Domain boundary: token lifecycle management (issue/verify/revoke), the
 `token_audit_log` write path, the `/api/v1/ext` versioned external surface,
-the `external_check` gate-report→artifact→review-refusal loop, and the MCP
-transport-scoped auth model. Out of scope: session-auth routes, promotion
-(M18), readiness DSL calibration (M15), HITL `confidence`/`criticality` (M17),
-and platform-wide tokens. Platform tokens remain a design question until a
-platform-authenticated external surface exists.
+the `external_check` gate-report→artifact→review-refusal loop, global personal
+token authorization, and the MCP transport-scoped auth model. Out of scope:
+promotion (M18), readiness DSL calibration (M15), and platform-wide tokens.
+Platform tokens remain a design question until a platform-authenticated external
+surface exists.
 
 ## Domain entities
 
@@ -35,8 +40,11 @@ platform-authenticated external surface exists.
   chars of the token string, indexed) + `token_hash` (sha256 hex), never the
   plaintext. `token_kind='project'` represents a project automation identity.
   `token_kind='user'` records `owner_user_id` so actions can be attributed to
-  the human who owns a personal agent or webhook token. `scopes` authorizes the
-  matching `/api/v1/ext` route label; `*` remains the broad project API wildcard.
+  the human who owns a personal agent or webhook token. Existing project-bound
+  rows keep `project_id NOT NULL`; global personal tokens use
+  `token_kind='user'`, `owner_user_id NOT NULL`, and `project_id IS NULL`.
+  `scopes` authorizes the matching `/api/v1/ext` route label; `*` remains the
+  broad project API wildcard except it does not imply `hitl:respond:human`.
   See [`../db/integrations-domain.md`](../db/integrations-domain.md).
   (Implemented)
 - **Agent tokens** (M34 — Implemented, ADR-089) — `token_kind='agent'` rows with
@@ -54,9 +62,15 @@ platform-authenticated external surface exists.
   ops), `agents:trigger` (the inbound `POST /api/agents/{agentId}/event`
   webhook trigger — the only token-authenticated route outside
   `/api/v1/ext`).
+- **Personal-token scopes** (Implemented) — `hitl:inbox:read` grants read-only
+  cross-project pending HITL listing. `hitl:respond:human` is an exact critical
+  scope for human, infra-recovery, and budget-breach HITL responses; `*` does
+  not imply it.
 - **`token_audit_log`** — append-only audit record per `/api/v1/ext` call.
   Captures actor label, scope label, endpoint, method, result, and HTTP status
-  code. See [`../db/integrations-domain.md`](../db/integrations-domain.md).
+  code. Global personal inbox calls write `project_id IS NULL`; per-resource
+  calls write the server-derived target project. See
+  [`../db/integrations-domain.md`](../db/integrations-domain.md).
   (Implemented)
 - **Token string** — `mai_` + base64url(randomBytes(32)). `prefix` = first 12
   chars of the full string. Plaintext returned once at creation, never stored.
@@ -70,13 +84,14 @@ platform-authenticated external surface exists.
   (`web/lib/flows/graph/evidence-readiness.ts`) extended in M16 to treat
   a blocking `external_check` in `pending`, `failed`, `stale`, or `skipped` as NOT ready.
   (Implemented)
-- **MCP facade (`@maister/mcp`)** — standalone `mcp/` workspace package; eight
+- **MCP facade (`@maister/mcp`)** — standalone `mcp/` workspace package; external
   tools, each a thin REST client of `/api/v1/ext`; zero DB or web coupling.
   (Implemented) ADR-078 adds `comment_create` / `comment_list` over the ext
   comment routes, following the `hitl_*` idiom. (Implemented) M34 (Implemented,
   ADR-089) adds `triage_set` (the triager's verdict op over
   `POST .../tasks/{taskId}/triage`) and `relation_add` / `relation_remove` /
-  `relation_list` over the ext relation routes.
+  `relation_list` over the ext relation routes. Personal tokens add stdio
+  fallback `MAISTER_ACCESS_TOKEN` and the `hitl_inbox` tool. (Implemented)
 
 ## State machine — token lifecycle
 
@@ -85,9 +100,11 @@ Revocation sets `revoked_at`; no row is deleted.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> active: POST /api/projects/{slug}/tokens\n(plaintext returned once)
-    active --> revoked: DELETE /api/projects/{slug}/tokens/{tokenId}\nsets revoked_at
+    [*] --> active: POST project/account token route\n(plaintext returned once)
+    active --> revoked: DELETE project/account token route\nsets revoked_at
     active --> expired: expires_at passes\nchecked at verify time
+    active --> owner_blocked: personal token owner missing/inactive/password-change
+    owner_blocked --> active: owner active again and password clear
     revoked --> [*]
     expired --> [*]
 ```
@@ -101,6 +118,9 @@ Transitions:
   `revoked_at`; verify of a revoked token → 401.
 - `active → expired`: `expires_at` is compared at verify time; past expiry → 401.
   No sweeper; expiry is evaluated on each request.
+- `active → owner_blocked`: global personal-token owner state is evaluated at
+  verification/authorization time; no token row mutation is required.
+  (Implemented)
 
 ## State machine — external_check gate
 
@@ -169,6 +189,36 @@ sequenceDiagram
         WEB->>DB: INSERT token_audit_log result=ok scope_used=...
         WEB->>DB: UPDATE project_tokens SET last_used_at = now()
         WEB-->>CI: 200/201/202
+    end
+```
+
+### Personal token authorization across projects (Implemented)
+
+Global personal tokens do not carry a project binding. Each external route must
+derive the target project from URL or server state, then authorize the token
+owner as a live MAIster user.
+
+```mermaid
+sequenceDiagram
+    actor PA as Personal agent
+    participant EXT as /api/v1/ext route
+    participant DB as Postgres
+    participant AZ as requireProjectActionForUser
+    participant AU as audit log
+
+    PA->>EXT: request with Bearer personal token
+    EXT->>DB: verify token hash and load project_tokens row
+    EXT->>DB: load owner users row
+    alt owner missing/inactive/password change required
+        EXT->>AU: token_audit_log result=error status=403 project_id=null
+        EXT-->>PA: 403
+    else owner active
+        EXT->>DB: derive target project from slug/run/task server state
+        EXT->>AZ: authorize owner for required project action
+        EXT->>EXT: enforce route scope
+        EXT->>DB: run route work
+        EXT->>AU: token_audit_log result=ok project_id=target project
+        EXT-->>PA: route response
     end
 ```
 
@@ -246,8 +296,9 @@ sequenceDiagram
 ```
 
 For the stdio transport (local-only), the MCP server reads `MAISTER_PROJECT_TOKEN`
-from the environment and forwards it to every `/api/v1/ext` call. No per-request
-bearer extraction occurs.
+first and then `MAISTER_ACCESS_TOKEN` as a fallback. It forwards the first
+non-empty value to every `/api/v1/ext` call. No per-request bearer extraction
+occurs.
 
 ## Expectations
 
@@ -269,6 +320,14 @@ bearer extraction occurs.
   task creation and run launch through such a token MUST set the resulting
   `tasks.created_by_user_id` / `runs.created_by_user_id` to the owner. Project
   tokens keep those user-attribution fields null. (Implemented)
+- A global personal token MUST store `project_id IS NULL` and MUST authorize each
+  per-resource call by deriving the target project from URL/server state and
+  checking the owner through `requireProjectActionForUser`. Body-provided project
+  ids MUST NOT expand authority. (Implemented)
+- A global personal token MUST fail closed when its owner row is missing,
+  inactive, or `must_change_password=true`. (Implemented)
+- `hitl:respond:human` MUST be granted explicitly; `*` MUST NOT satisfy human,
+  infra-recovery, or budget-breach HITL response. (Implemented)
 - Every `/api/v1/ext` call presenting an **identified** token MUST write exactly
   one `token_audit_log` row — on success and on identified-token failures
   (expired / revoked / wrong-project / validation). An **unidentifiable** token
@@ -299,8 +358,9 @@ bearer extraction occurs.
 - Token `scopes` are enforced on every `/api/v1/ext` route. The `*` wildcard is
   the compatibility path for full-project automation. (Implemented)
 - `token_audit_log` rows MUST cascade-delete with their `project_tokens` row;
-  project deletion MUST cascade to both `project_tokens` and `token_audit_log`.
-  (Implemented)
+  project-bound token deletion MUST cascade to token rows, while global personal
+  token audit rows may carry `project_id IS NULL`. (Implemented for
+  project-bound tokens; nullable target Implemented)
 
 ## Edge cases
 
@@ -327,10 +387,19 @@ bearer extraction occurs.
   (the second updates it in place), each still writing its own
   `token_audit_log` row.
 - **MCP stdio transport** → reads `MAISTER_PROJECT_TOKEN` from env; ignores any
-  inbound bearer header; local-only use.
-- **User token owner deleted** → `project_tokens.owner_user_id` and derived
-  attribution joins become `NULL`; token rows and audit rows remain for
-  historical integrity.
+  inbound bearer header; local-only use. If unset, it reads
+  `MAISTER_ACCESS_TOKEN`. Empty strings are ignored. (Implemented)
+- **User token owner deleted** → new user-token rows require
+  `owner_user_id NOT NULL`; operators must revoke/delete personal tokens before
+  deleting the owner. Any legacy ownerless user-token row fails closed because no
+  live owner can be authorized.
+- **Personal token owner disabled or password-change required** → identified
+  request returns 403 and writes a failure audit row without running route work.
+- **Personal token targets inaccessible project** → route uses the existing
+  family rule: existence-hide 404 where project/run/task visibility is hidden,
+  otherwise 403. No body field can make another project visible.
+- **Global personal HITL inbox** → `GET /api/v1/ext/hitl` writes audit with
+  `project_id IS NULL`; project and agent tokens get 403.
 
 ## Linked artifacts
 
@@ -343,7 +412,8 @@ bearer extraction occurs.
   (`project_tokens`, `token_audit_log` sections).
 - API (external surface): `docs/api/external/operations.openapi.yaml`.
 - API (token management): [`../api/web.openapi.yaml`](../api/web.openapi.yaml)
-  (`POST/GET/DELETE /api/projects/{slug}/tokens`).
+  (`POST/GET/DELETE /api/projects/{slug}/tokens`,
+  `GET/POST/DELETE /api/account/tokens`).
 - Error taxonomy: [`../error-taxonomy.md`](../error-taxonomy.md)
   (Token / external-API auth: 401/403/404/422).
 - Related domains: [`flow-graph.md`](flow-graph.md) (gate_results,
@@ -352,7 +422,9 @@ bearer extraction occurs.
   [`social-board.md`](social-board.md) (ADR-083 ext comment routes, actor
   mapping, Implemented).
 - Configuration: [`../configuration.md`](../configuration.md)
-  (`gates[].external` schema, `MAISTER_API_BASE_URL`, `MAISTER_PROJECT_TOKEN`).
+  (`gates[].external` schema, `MAISTER_API_BASE_URL`, `MAISTER_PROJECT_TOKEN`,
+  `MAISTER_ACCESS_TOKEN`).
+- SDD: [`../../.ai-factory/specs/feature-user-access-tokens.md`](../../.ai-factory/specs/feature-user-access-tokens.md).
 - Source files (Implemented): `web/lib/db/schema.ts` + migration
   `0020_m16_api_tokens.sql` + `0031_token_actor_scope_support.sql`,
   `web/lib/tokens/` (`issue.ts`, `verify.ts`,

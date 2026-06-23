@@ -244,9 +244,17 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
       required: ["runId"],
     },
   },
+  hitl_inbox: {
+    description:
+      "List pending HITL requests across projects visible to the owner of a global personal token",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
   hitl_respond: {
     description:
-      "Answer a pending permission/form HITL request for a run (human-kind requests require a human actor and are refused)",
+      "Answer a pending permission/form HITL request for a run. Human-kind requests require a global personal token with exact hitl:respond:human scope; project tokens and wildcard scopes are refused for human gates.",
     inputSchema: {
       type: "object",
       properties: {
@@ -614,6 +622,8 @@ function resolveRouting(
 
       return { method: "GET", path: `/api/v1/ext/runs/${runId}/hitl` };
     }
+    case "hitl_inbox":
+      return { method: "GET", path: `/api/v1/ext/hitl` };
     case "hitl_respond": {
       const { runId, hitlRequestId, optionId, response, confidence } = args as {
         runId: string;

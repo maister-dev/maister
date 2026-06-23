@@ -3,12 +3,28 @@ import type { ReactElement } from "react";
 import Link from "next/link";
 import { getTranslations } from "next-intl/server";
 
+import { PersonalTokensPanel } from "@/components/account/personal-tokens-panel";
 import { ProfileForm } from "@/components/account/profile-form";
 import { requireActiveSession } from "@/lib/authz";
+import { listOwnerTokens } from "@/lib/tokens/list";
 
 export default async function AccountPage(): Promise<ReactElement> {
   const user = await requireActiveSession();
   const t = await getTranslations("account");
+  const tokens = await listOwnerTokens(user.id);
+  const personalTokens = tokens.map((token) => ({
+    id: token.id,
+    name: token.name,
+    kind: "user" as const,
+    ownerUserId: token.ownerUserId ?? user.id,
+    scopes: token.scopes,
+    humanHitl: token.scopes.includes("hitl:respond:human"),
+    prefix: token.prefix,
+    createdAt: token.createdAt.toISOString(),
+    lastUsedAt: token.lastUsedAt?.toISOString() ?? null,
+    expiresAt: token.expiresAt?.toISOString() ?? null,
+    revokedAt: token.revokedAt?.toISOString() ?? null,
+  }));
 
   return (
     <div className="mx-auto flex w-full max-w-[760px] flex-col gap-6">
@@ -53,6 +69,8 @@ export default async function AccountPage(): Promise<ReactElement> {
           name={user.name ?? user.email ?? ""}
         />
       </section>
+
+      <PersonalTokensPanel tokens={personalTokens} />
     </div>
   );
 }

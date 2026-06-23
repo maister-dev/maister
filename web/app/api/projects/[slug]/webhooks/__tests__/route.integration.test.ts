@@ -86,6 +86,15 @@ vi.mock("@/auth", () => ({
   handlers: {},
 }));
 
+vi.mock("next-auth", () => ({
+  default: vi.fn(() => ({
+    auth: vi.fn(async () => sessionRef.value),
+    signIn: vi.fn(),
+    signOut: vi.fn(),
+    handlers: {},
+  })),
+}));
+
 vi.mock("@/lib/db/client", () => ({ getDb: () => db }));
 
 // Ping performs a live signed POST (lib/webhooks/send → fetch). The route

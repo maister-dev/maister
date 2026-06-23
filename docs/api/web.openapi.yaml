@@ -98,6 +98,8 @@ tags:
     description: Project registration and task creation.
   - name: auth
     description: Auth.js v5 session management.
+  - name: account
+    description: Signed-in user's own profile, password, and personal API-token settings.
   - name: admin
     description: Global admin account management.
   - name: runs
@@ -5881,6 +5883,168 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+  /api/account/tokens:
+    get:
+      tags: [account]
+      summary: (0063 Implemented) List personal API tokens
+      description: |
+        Requires an active Auth.js session. Returns only account-level personal
+        tokens owned by the signed-in user (`project_id IS NULL`,
+        `token_kind=user`). It never returns plaintext token material,
+        `token_hash`, or another user's token metadata.
+
+        Identifier labels:
+
+        | Identifier | Source | Trust |
+        | --- | --- | --- |
+        | owner user id | auth-context | trusted after DB-authoritative session load |
+
+        Audit/logging: no `token_audit_log` row is written for session-auth
+        lifecycle reads. Server logs, if emitted, must not include plaintext
+        token, token hash, Authorization headers, or held scope lists.
+      operationId: listAccountTokens
+      responses:
+        "200":
+          description: Personal token list (no secrets).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ListAccountTokensResponse" }
+              examples:
+                default:
+                  value:
+                    tokens:
+                      - id: "tok_123"
+                        name: "Personal agent"
+                        kind: "user"
+                        ownerUserId: "user_123"
+                        ownerLabel: "Alex"
+                        scopes: ["tasks:read", "hitl:inbox:read"]
+                        humanHitl: false
+                        prefix: "mai_abcd1234"
+                        createdAt: "2026-06-23T12:00:00.000Z"
+                        lastUsedAt: null
+                        expiresAt: null
+                        revokedAt: null
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [account]
+      summary: (0063 Implemented) Create a personal API token
+      description: |
+        Requires an active Auth.js session. Creates a global personal user
+        token (`token_kind=user`, `owner_user_id=session user`,
+        `project_id IS NULL`) that can operate across projects the owner can
+        currently access. The response returns the plaintext `token` exactly
+        once; the server stores only its sha256 hash and prefix.
+
+        Identifier labels:
+
+        | Identifier | Source | Trust |
+        | --- | --- | --- |
+        | owner user id | auth-context | trusted after DB-authoritative session load |
+        | name | body-controlled | zod-validated |
+        | scopes | body-controlled | zod-validated against `TokenScope` |
+        | humanHitl | body-controlled | zod boolean |
+        | expiresAt | body-controlled | zod datetime, optional |
+
+        The body never accepts `projectId`. `scopes` must not contain
+        `hitl:respond:human`; callers set `humanHitl=true` instead. When
+        `humanHitl=true`, the server appends `hitl:respond:human` to stored
+        scopes. If `scopes` is empty or omitted, the default is `["*"]` when
+        `humanHitl=false` and `["*", "hitl:respond:human"]` when true; `*`
+        still does not imply the exact human-HITL scope.
+
+        Audit/logging: session-auth creation writes structured INFO fields
+        `tokenId`, `ownerUserId`, `scopeCount`, `global=true`,
+        `expiresAtPresent`, and `humanHitl`; it must not log plaintext token,
+        token hash, Authorization headers, or held scope lists.
+      operationId: createAccountToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateAccountTokenBody" }
+            examples:
+              personal-agent:
+                value:
+                  name: "Personal agent"
+                  scopes: ["tasks:read", "hitl:inbox:read"]
+                  humanHitl: false
+                  expiresAt: null
+      responses:
+        "201":
+          description: |
+            Token created. The plaintext `token` field is shown ONCE and is
+            not stored server-side. All list responses omit the secret.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreateAccountTokenResponse" }
+              examples:
+                default:
+                  value:
+                    id: "tok_123"
+                    name: "Personal agent"
+                    kind: "user"
+                    ownerUserId: "user_123"
+                    ownerLabel: "Alex"
+                    scopes: ["tasks:read", "hitl:inbox:read"]
+                    humanHitl: false
+                    prefix: "mai_abcd1234"
+                    token: "mai_abcd1234..."
+                    createdAt: "2026-06-23T12:00:00.000Z"
+                    expiresAt: null
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Duplicate/race domain conflict.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422":
+          description: Invalid body or unknown scope (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
+  /api/account/tokens/{tokenId}:
+    delete:
+      tags: [account]
+      summary: (0063 Implemented) Revoke a personal API token
+      description: |
+        Requires an active Auth.js session. Revokes the matching personal
+        account token by setting `revoked_at`. The delete predicate includes
+        `id = tokenId`, `owner_user_id = session user`, and `project_id IS NULL`;
+        project tokens and other users' tokens are hidden as 404.
+
+        Identifier labels:
+
+        | Identifier | Source | Trust |
+        | --- | --- | --- |
+        | tokenId | url-param | locator only |
+        | owner user id | auth-context | trusted after DB-authoritative session load |
+
+        Audit/logging: no `token_audit_log` row is written for session-auth
+        lifecycle revocation. Server logs INFO `tokenId`, `ownerUserId`, and
+        `outcome`; they must not include token material or held scope lists.
+      operationId: revokeAccountToken
+      parameters:
+        - name: tokenId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Token revoked or already revoked.
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: No matching personal token belongs to this owner.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
   /api/projects/{slug}/tokens:
     post:
       tags: [projects]
@@ -9690,12 +9854,16 @@ components:
       type: http
       scheme: bearer
       description: |
-        Project-scoped API token for the `/api/v1/ext/` surface (M16,
-        ADR-041). Format: `mai_` + base64url(randomBytes(32)). Stored as
+        External API bearer token for the `/api/v1/ext/` surface (M16,
+        ADR-041; global personal tokens Implemented by 0063). Project-bound
+        tokens carry `project_id`; global personal user tokens carry
+        `project_id = NULL` and authorize per addressed project through the
+        owner account. Format: `mai_` + base64url(randomBytes(32)). Stored as
         sha256 hex at rest; compared with `timingSafeEqual`; never logged or
-        streamed. Tokens carry route scopes; `*` grants the full project
-        external API. Token failures map to 401, 403, or 404 per the
-        existence-hide and missing-scope policies. Used only by
+        streamed. Tokens carry route scopes; `*` grants the project external
+        API except exact-only human-HITL approval (`hitl:respond:human`).
+        Token failures map to 401, 403, or 404 per the existence-hide and
+        missing-scope policies. Used only by
         `docs/api/external/operations.openapi.yaml` routes; session-auth routes
         do not accept tokens.
   parameters:
@@ -12952,10 +13120,116 @@ components:
         - readiness:read
         - gates:report
         - hitl:read
+        - hitl:inbox:read
         - hitl:respond
+        - hitl:respond:human
       description: |
-        Route authorization label for `/api/v1/ext`. `*` grants the full
-        project external API.
+        Route authorization label for `/api/v1/ext`. `*` grants the project
+        external API except exact-only human-HITL approval:
+        `hitl:respond:human` must be present explicitly.
+
+    CreateAccountTokenBody:
+      type: object
+      description: |
+        (0063 Implemented) Request body for creating an account-level personal API
+        token. The body never accepts `projectId`; the owner is the active
+        session user and the stored token has `project_id = NULL`.
+      required: [name]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: Human-readable label for the token.
+        scopes:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/TokenScope"
+          description: |
+            Requested route scopes. Must not include `hitl:respond:human`;
+            use `humanHitl=true` for that exact human capability. Omit or send
+            an empty array to default to `["*"]`.
+        humanHitl:
+          type: boolean
+          default: false
+          description: |
+            When true, the server appends exact `hitl:respond:human` to the
+            stored scopes so this token can answer eligible human HITL as the
+            owner user.
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Optional expiry timestamp. Omit or send null for none.
+
+    AccountTokenListItem:
+      type: object
+      description: |
+        (0063 Implemented) Account-level personal token metadata. NEVER includes
+        plaintext `token` or `token_hash`.
+      required: [id, name, kind, ownerUserId, ownerLabel, scopes, humanHitl, prefix, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        kind:
+          type: string
+          enum: [user]
+        ownerUserId:
+          type: string
+        ownerLabel:
+          type: string
+          nullable: true
+        scopes:
+          type: array
+          items:
+            $ref: "#/components/schemas/TokenScope"
+        humanHitl:
+          type: boolean
+          description: True when stored scopes include exact `hitl:respond:human`.
+        prefix:
+          type: string
+          description: First 12 characters of the token string.
+        createdAt:
+          type: string
+          format: date-time
+        lastUsedAt:
+          type: string
+          format: date-time
+          nullable: true
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+        revokedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    CreateAccountTokenResponse:
+      allOf:
+        - $ref: "#/components/schemas/AccountTokenListItem"
+        - type: object
+          required: [token]
+          properties:
+            token:
+              type: string
+              description: |
+                Full plaintext token (`mai_` + base64url(32 bytes)). Returned
+                ONCE. Store it now; the server only keeps the sha256 hash.
+
+    ListAccountTokensResponse:
+      type: object
+      description: (0063 Implemented) List of account-level personal API tokens without secrets.
+      required: [tokens]
+      properties:
+        tokens:
+          type: array
+          items: { $ref: "#/components/schemas/AccountTokenListItem" }
 
     CreateProjectTokenBody:
       type: object

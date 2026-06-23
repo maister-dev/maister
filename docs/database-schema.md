@@ -1656,18 +1656,24 @@ secondary scope without a schema change. Cascade: `ON DELETE CASCADE` from
 ## `project_tokens`
 
 **(M16 — Implemented, migration `0020_m16_api_tokens.sql`; expanded by
-`0031_token_actor_scope_support.sql`.)** Project-scoped API tokens and
+`0031_token_actor_scope_support.sql`; expanded by
+`0064_user_access_tokens.sql`.)** Project-scoped API tokens and
 user-owned project tokens that grant external callers (CI, scripts, personal
 agents, webhook channels, the MCP facade) access to the `/api/v1/ext` surface.
 See
 [`system-analytics/external-operations.md`](system-analytics/external-operations.md)
 for the token lifecycle FSM and [ADR-046](decisions.md#adr-046) for the model
-rationale.
+rationale. Global account-level personal tokens are **Implemented** by
+migration `0063`: they reuse this table with
+`project_id = NULL` and owner-derived authorization.
 
 ```ts
 {
   id,                                       // uuid PK
-  projectId,                                // NOT NULL, FK -> projects.id, ON DELETE CASCADE
+  projectId?,                               // nullable in migration 0063:
+                                            //   NULL only for account-level personal
+                                            //   user tokens; FK -> projects.id,
+                                            //   ON DELETE CASCADE
   name,                                     // NOT NULL; human-readable label
   tokenKind,                                // NOT NULL DEFAULT 'project'; 'project' | 'user'
                                             //   | 'agent' (M34, migration 0049)
@@ -1685,7 +1691,9 @@ rationale.
   tokenHash,                                // NOT NULL; sha256_hex(fullToken) — plaintext
                                             //   returned once at creation, never stored
   scopes (jsonb),                           // NOT NULL, DEFAULT '["*"]'; enforced route labels;
-                                            //   '*' grants the full project API
+                                            //   '*' grants the project API except
+                                            //   exact-only human scopes such as
+                                            //   hitl:respond:human
   createdBy?,                               // nullable FK -> users.id, ON DELETE SET NULL
   createdAt,                                // NOT NULL DEFAULT now()
   lastUsedAt?,                              // updated after each successful verification
@@ -1699,14 +1707,48 @@ chars of the full string. Verification: extract `prefix` → `SELECT WHERE prefi
 = ?` → `timingSafeEqual(sha256_hex(presented), row.token_hash)` → assert
 `revoked_at IS NULL` AND (`expires_at IS NULL` OR `expires_at > now()`). Failure
 kinds: invalid (no match or hash mismatch) → 401; expired → 401; revoked → 401;
-wrong-project (token's `project_id` ≠ addressed resource) → 404 (existence-hide).
+wrong-project (project-bound token's `project_id` != addressed resource) → 404
+(existence-hide); inaccessible-project (global personal token owner cannot
+access the addressed resource project) → 404. Global personal-token verification
+loads the owner row, rejects deleted/inactive/password-change-required owners,
+and derives project access through `project_members`.
 Modeled as `TokenAuthError(kind)` + `httpStatusForTokenAuth(kind)` — NOT a
 `MaisterError` code.
 
 Indexes: `project_tokens_prefix_idx` on `(prefix)`, `project_tokens_project_idx`
-on `(project_id)`, `project_tokens_owner_idx` on `(owner_user_id)`. Cascade:
-`ON DELETE CASCADE` from `projects.id`; `created_by` and `owner_user_id` are
-`ON DELETE SET NULL` — token rows survive user deletion.
+on `(project_id)`, `project_tokens_owner_idx` on `(owner_user_id)`, and
+Designed `project_tokens_owner_created_idx` on `(owner_user_id, created_at)` for
+the `/account` personal-token list. Cascade: `ON DELETE CASCADE` from
+`projects.id` removes project-bound tokens only; `project_id = NULL` personal
+tokens survive project deletion. `created_by` and `owner_user_id` are
+`ON DELETE SET NULL`, but personal-token verification fails closed when
+`owner_user_id` is NULL.
+
+Designed migration `0064_user_access_tokens.sql`:
+
+```sql
+ALTER TABLE "project_tokens" ALTER COLUMN "project_id" DROP NOT NULL;
+ALTER TABLE "token_audit_log" ALTER COLUMN "project_id" DROP NOT NULL;
+ALTER TABLE "token_audit_log"
+  DROP CONSTRAINT "token_audit_log_project_id_projects_id_fk";
+ALTER TABLE "token_audit_log"
+  ADD CONSTRAINT "token_audit_log_project_id_projects_id_fk"
+  FOREIGN KEY ("project_id") REFERENCES "projects"("id") ON DELETE SET NULL;
+
+ALTER TABLE "project_tokens"
+  ADD CONSTRAINT "project_tokens_project_kind_project_check"
+    CHECK ("token_kind" != 'project' OR "project_id" IS NOT NULL),
+  ADD CONSTRAINT "project_tokens_agent_project_check"
+    CHECK ("token_kind" != 'agent' OR "project_id" IS NOT NULL),
+  ADD CONSTRAINT "project_tokens_user_owner_check"
+    CHECK ("token_kind" != 'user' OR "owner_user_id" IS NOT NULL);
+
+CREATE INDEX "project_tokens_owner_created_idx"
+  ON "project_tokens" ("owner_user_id", "created_at");
+```
+
+Existing `project_tokens_agent_kind_check` from migration `0049` continues to
+enforce `(token_kind = 'agent') = (agent_id IS NOT NULL)`.
 
 ## `token_audit_log`
 
@@ -1724,9 +1766,12 @@ and [ADR-041](decisions.md#adr-041).
   id,                                       // uuid PK
   tokenId,                                  // NOT NULL, FK -> project_tokens.id,
                                             //   ON DELETE CASCADE
-  projectId,                                // NOT NULL, FK -> projects.id,
-                                            //   ON DELETE CASCADE; denormalized for
-                                            //   project-scoped audit queries
+  projectId?,                               // nullable in migration 0063:
+                                            //   FK -> projects.id, ON DELETE SET NULL;
+                                            //   denormalized target project for
+                                            //   project-scoped audit queries;
+                                            //   NULL for global inbox reads or
+                                            //   deleted target projects
   actorLabel,                               // NOT NULL; e.g. "token:<name>"
   scopeUsed,                                // NOT NULL; logical label:
                                             //   tasks:create | runs:launch |
@@ -1745,8 +1790,10 @@ inside the gate-report transaction (for the atomic gate+artifact+audit path) or
 after the handler returns (for all other endpoints).
 
 Indexes: `token_audit_token_idx` on `(token_id)`, `token_audit_project_created_idx`
-on `(project_id, created_at)`. Cascade chain: deleting a project drops all its
-`token_audit_log` rows; deleting a `project_tokens` row drops its audit rows.
+on `(project_id, created_at)`. Cascade chain: deleting a `project_tokens` row
+drops its audit rows; deleting a target project sets direct audit
+`project_id = NULL` while token-linked rows still disappear if the project-bound
+token itself is deleted.
 
 ## `hitl_requests`
 
@@ -2302,9 +2349,9 @@ projects
   │                 │     └── scratch_attachments   (optional message FK)
   │                 ├── scratch_attachments         (run FK)
   │                 └── scratch_capability_profiles
-  ├── project_tokens     (FK projectId, cascade)  ← M16
+  ├── project_tokens     (nullable FK projectId, cascade; NULL personal tokens)  ← M16, 0063 Implemented
   │     └── token_audit_log  (FK tokenId, cascade)
-  ├── token_audit_log    (FK projectId, cascade)  ← M16 (also direct)
+  ├── token_audit_log    (nullable FK projectId, SET NULL)  ← M16, 0063 Implemented (also direct)
   ├── runs               (FK projectId, cascade)  ← also direct
   ├── run_cost_rollups   (FK projectId, cascade)  ← also direct, ADR-085
   ├── node_attempt_cost_rollups (FK projectId, cascade)  ← also direct, ADR-085
@@ -2406,10 +2453,11 @@ Created via Drizzle:
 | `artifact_instances` | `artifact_instances_run_kind_idx` | `(runId, kind)` | **(M12)** Filter by kind |
 | `artifact_instances` | `artifact_instances_run_validity_idx` | `(runId, validity)` | **(M12)** Filter by validity |
 | `project_tokens` | `project_tokens_prefix_idx` | `(prefix)` | **(M16)** Fast prefix lookup during token verification |
-| `project_tokens` | `project_tokens_project_idx` | `(projectId)` | **(M16)** List tokens for a project |
+| `project_tokens` | `project_tokens_project_idx` | `(projectId)` | **(M16)** List project-bound tokens for a project |
 | `project_tokens` | `project_tokens_owner_idx` | `(ownerUserId)` | User-owned token audit joins |
+| `project_tokens` | `project_tokens_owner_created_idx` | `(ownerUserId, createdAt)` | **(0063 Implemented)** List account-level personal tokens |
 | `token_audit_log` | `token_audit_token_idx` | `(tokenId)` | **(M16)** Per-token audit trail |
-| `token_audit_log` | `token_audit_project_created_idx` | `(projectId, createdAt)` | **(M16)** Chronological audit log per project |
+| `token_audit_log` | `token_audit_project_created_idx` | `(projectId, createdAt)` | **(M16, 0063 Implemented)** Chronological audit log per project; NULL rows are global/deleted-target rows |
 | `hitl_requests` | `hitl_requests_run_idx` | `(runId)` | Pending HITL panel |
 | `webhook_subscriptions` | `webhook_subscriptions_project_idx` | `(project_id)` | **(ADR-077 Implemented)** Project-scope subscription lookup (NULL = platform rows) |
 | `webhook_events` | `webhook_events_pending_fanout_idx` | `(created_at)` PARTIAL `WHERE fanout_at IS NULL` | **(ADR-077 Implemented)** Ordered fanout-pass claim scan |

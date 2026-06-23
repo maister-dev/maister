@@ -84,7 +84,7 @@ export async function POST(
             await recordRequiredTokenAudit(
               {
                 tokenId: ctx.actor.tokenId,
-                projectId: ctx.actor.projectId,
+                projectId: ctx.projectId,
                 actorLabel: ctx.actor.actorLabel,
                 scopeUsed: "tasks:create",
                 endpoint: ENDPOINT_TASKS,

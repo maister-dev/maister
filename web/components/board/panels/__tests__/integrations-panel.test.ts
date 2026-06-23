@@ -89,6 +89,8 @@ const labels: TokenLabels = {
   scopeGatesReport: "Report gates",
   scopeHitlRead: "Read HITL",
   scopeHitlRespond: "Respond to HITL",
+  scopeHitlInboxRead: "Read personal HITL inbox",
+  scopeHitlRespondHuman: "Respond to human HITL",
   scopeCommentsRead: "Read comments",
   scopeCommentsCreate: "Create comments",
   scopeTasksTriage: "Submit triage verdicts",
