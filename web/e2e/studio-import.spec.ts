@@ -49,16 +49,17 @@ function buildPackageRepo(): string {
   return repo;
 }
 
-// A small on-disk file to feed the (folder) file input. Playwright's
-// setInputFiles sets file.name only (webkitRelativePath is empty), so the
-// import lands it by basename — sufficient to prove the round-trip commits.
-function importableFile(): string {
+// A small on-disk DIRECTORY to feed the folder (`webkitdirectory`) input.
+// Playwright's setInputFiles requires a DIRECTORY path for a webkitdirectory
+// input (a file path errors "[webkitdirectory] input requires passing a path to
+// a directory"); it uploads the dir's files with their `webkitRelativePath` —
+// enough to prove the import round-trip commits.
+function importableDir(): string {
   const dir = mkdtempSync(join(tmpdir(), "maister-e2e-import-src-"));
-  const file = join(dir, "imported-readme.md");
 
-  writeFileSync(file, "# imported by e2e\n");
+  writeFileSync(join(dir, "imported-readme.md"), "# imported by e2e\n");
 
-  return file;
+  return dir;
 }
 
 test("install → fork → import a folder → commit succeeds", async ({ page }) => {
@@ -88,19 +89,31 @@ test("install → fork → import a folder → commit succeeds", async ({ page }
 
   // Fork-to-local → editor (route changes to /studio/edit/{localPackageId}).
   await page.goto(`/studio/packages/${RUN_TAG}`);
+  // The working-dir edit-lock acquires when the editor mounts (after fork). The
+  // import commit is lock-asserted server-side and the editor renders
+  // optimistically editable, so wait for that acquire before importing.
+  const lockAcquired = page.waitForResponse(
+    (r) =>
+      new URL(r.url()).pathname.endsWith("/lock-refresh") &&
+      r.request().method() === "POST" &&
+      r.ok(),
+  );
+
   await page.getByTestId("package-fork").click();
   await page.waitForURL(/\/studio\/edit\//, { timeout: 30_000 });
+  await lockAcquired;
 
   // Open the import dialog, pick a file, preview, then commit.
   await page.getByTestId("local-editor-import").click();
   await expect(page.getByTestId("import-folder-input")).toBeVisible();
-  await page.getByTestId("import-folder-input").setInputFiles(importableFile());
+  await page.getByTestId("import-folder-input").setInputFiles(importableDir());
   await page.getByTestId("import-preview").click();
   await expect(page.getByTestId("import-tree")).toBeVisible({
     timeout: 30_000,
   });
   await page.getByTestId("import-commit").click();
   await expect(page.getByTestId("import-done")).toBeVisible({
-    timeout: 30_000,
+    // Generous: the commit route's first (cold) compile can push past 30s.
+    timeout: 60_000,
   });
 });

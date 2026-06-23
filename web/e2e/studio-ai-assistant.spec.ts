@@ -80,8 +80,20 @@ test("docked AI assistant: open the AI tab and start the assistant from the edit
   ).toBeVisible({ timeout: 30_000 });
 
   await page.goto(`/studio/packages/${RUN_TAG}`);
+  // The working-dir edit-lock acquires when the editor mounts (after fork). Wait
+  // for that round-trip before launching — the launch is lock-asserted
+  // server-side and the editor renders optimistically editable, so launching
+  // before the acquire lands would 409 (a real user's typing delay hides this).
+  const lockAcquired = page.waitForResponse(
+    (r) =>
+      new URL(r.url()).pathname.endsWith("/lock-refresh") &&
+      r.request().method() === "POST" &&
+      r.ok(),
+  );
+
   await page.getByTestId("package-fork").click();
   await page.waitForURL(/\/studio\/edit\//, { timeout: 30_000 });
+  await lockAcquired;
 
   // Switch to the AI tab. The working-dir lock acquires on mount, enabling the
   // launch control.
@@ -90,10 +102,12 @@ test("docked AI assistant: open the AI tab and start the assistant from the edit
 
   const launch = page.getByTestId("studio-ai-launch");
 
-  await expect(launch).toBeEnabled({ timeout: 15_000 });
+  // The launch button is disabled until a non-empty prompt is entered (and the
+  // working-dir lock is held). Fill the prompt first, then it enables.
   await page
     .getByTestId("studio-ai-prompt")
     .fill("Add a review gate to the flow");
+  await expect(launch).toBeEnabled({ timeout: 15_000 });
 
   // Launching POSTs to the assistant route (asserts the lock) → the stub
   // supervisor session drives the conversation surface into view.

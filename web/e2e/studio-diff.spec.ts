@@ -81,6 +81,22 @@ test("edit a local package → diff shows the change → commit clears it", asyn
   await page.goto(`/studio/packages/${RUN_TAG}`);
   await page.getByTestId("package-fork").click();
   await page.waitForURL(/\/studio\/edit\//, { timeout: 30_000 });
+  const pkgId = new URL(page.url()).pathname.split("/")[3];
+
+  // A1 (ADR-105): the editor lands on the package-home overview, not a flow
+  // canvas. Open the flow editor directly (full navigation) and wait for the
+  // working-dir edit-lock to be (re-)acquired before editing — the editor renders
+  // optimistically editable, so a save fired before that acquire round-trip lands
+  // would 409 (a real user's edit delay hides this; the test is faster).
+  const lockReacquired = page.waitForResponse(
+    (r) =>
+      new URL(r.url()).pathname.endsWith("/lock-refresh") &&
+      r.request().method() === "POST" &&
+      r.ok(),
+  );
+
+  await page.goto(`/studio/edit/${pkgId}/flows/e2e-flow/flow.yaml`);
+  await lockReacquired;
 
   // Open the Diff drawer — a freshly-forked package is clean (0 changed).
   await page.getByTestId("flow-tab-diff").click();
@@ -91,11 +107,18 @@ test("edit a local package → diff shows the change → commit clears it", asyn
   // Make a working-tree edit through the YAML drawer, then Save (a working-dir
   // PUT under the edit-lock). Saving bumps the diff drawer's refresh signal.
   await page.getByTestId("flow-tab-yaml").click();
-  const yaml = page.getByTestId("flow-yaml-editor").locator("textarea");
+  // The flow YAML editor is a CodeMirror surface (`.cm-content`), not a
+  // <textarea> — drive it via the keyboard (mirrors replaceYamlEditor in
+  // flow-studio-artifacts.spec.ts). Append a comment to dirty the working tree.
+  const yaml = page
+    .getByTestId("flow-yaml-editor")
+    .locator(".cm-content")
+    .first();
 
   await yaml.click();
-  await yaml.press("End");
-  await yaml.pressSequentially("\n# e2e edit\n");
+  await page.keyboard.press("ControlOrMeta+a");
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.insertText("\n# e2e edit\n");
   await page.getByTestId("topbar-save").click();
   await expect(page.getByTestId("local-editor-saved")).toBeVisible({
     timeout: 30_000,

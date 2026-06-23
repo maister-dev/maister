@@ -9,6 +9,7 @@ import type { AuthoredFlowPackageFileKind } from "@/lib/catalog/authored-types";
 import type { PackageManifestFormLabels } from "@/lib/local-packages/manifest";
 import type { PackageFilesEditorLabels } from "@/components/flows/package-files-editor";
 import type { LocalPackageDiffLabels } from "@/components/studio/local-package-diff-drawer";
+import type { ChangeReviewDialogLabels } from "@/components/studio/change-review-dialog";
 import type { DiffViewLabels } from "@/components/workbench/diff-view";
 
 import { buildNodeSideFormLabels } from "@/lib/flows/node-side-form-labels";
@@ -59,6 +60,25 @@ export function localPackageDiffLabels(tld: T): LocalPackageDiffLabels {
     committed: tld("committed"),
     discarded: tld("discarded"),
     actionFailed: tld("actionFailed"),
+  };
+}
+
+// The shared change-review/commit modal labels (`studio.local.changeReview.*`).
+// Lives here (server-safe) rather than in the `"use client"` dialog module,
+// because the editor page (an RSC) calls it during render — a function exported
+// from a client module is a client reference and throws when called server-side.
+export function buildChangeReviewLabels(t: T): ChangeReviewDialogLabels {
+  return {
+    title: t("local.changeReview.title"),
+    changed: t("local.changeReview.changed"),
+    clean: t("local.changeReview.clean"),
+    loadError: t("local.changeReview.loadError"),
+    messageLabel: t("local.changeReview.messageLabel"),
+    messagePlaceholder: t("local.changeReview.messagePlaceholder"),
+    commit: t("local.changeReview.commit"),
+    committing: t("local.changeReview.committing"),
+    cancel: t("local.changeReview.cancel"),
+    invalidTitle: t("local.changeReview.invalidTitle"),
   };
 }
 

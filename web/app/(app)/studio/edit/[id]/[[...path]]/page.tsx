@@ -10,11 +10,11 @@ import { getTranslations } from "next-intl/server";
 import { notFound } from "next/navigation";
 import { parse as parseYaml } from "yaml";
 
-import { buildChangeReviewLabels } from "@/components/studio/change-review-dialog";
 import { LocalPackageEditor } from "@/components/studio/local-package-editor";
 import { requireSession } from "@/lib/authz";
 import { flowYamlV1Schema } from "@/lib/config.schema";
 import {
+  buildChangeReviewLabels,
   buildFlowEditorTabsLabels,
   diffViewLabels,
   localPackageDiffLabels,

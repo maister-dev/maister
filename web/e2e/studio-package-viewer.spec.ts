@@ -39,9 +39,12 @@ function buildPackageRepo(): string {
     join(pkgDir, "maister-package.yaml"),
     `schemaVersion: 1\nname: ${RUN_TAG}\nflows:\n  - { id: ${RUN_TAG}-flow, path: flows/e2e-flow }\n`,
   );
+  // Canonical graph DSL (one `cli` node `s1`) — the read-only inspector sources
+  // its node list from the manifest `nodes:`, so a legacy `steps:` flow would
+  // compile a canvas but render no inspector (empty `parsed.nodes`).
   writeFileSync(
     join(pkgDir, "flows/e2e-flow/flow.yaml"),
-    `schemaVersion: 1\nname: ${RUN_TAG}-flow\nsteps:\n  - id: s1\n    type: cli\n    command: echo hi\n`,
+    `schemaVersion: 1\nname: ${RUN_TAG}-flow\ncompat:\n  engine_min: "1.1.0"\nnodes:\n  - id: s1\n    type: cli\n    action:\n      command: echo hi\n    transitions:\n      success: done\n`,
   );
   git(repo, "add", "-A");
   git(repo, "commit", "-m", "init");

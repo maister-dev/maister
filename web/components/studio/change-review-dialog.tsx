@@ -26,25 +26,10 @@ export type ChangeReviewDialogLabels = {
   invalidTitle: string;
 };
 
-// Build the dialog labels from a `studio`-scoped translator (keys under
-// `studio.local.changeReview.*`). Shared so Stream B's launch/publish flows reuse
-// the exact same mapping.
-export function buildChangeReviewLabels(
-  t: (key: string) => string,
-): ChangeReviewDialogLabels {
-  return {
-    title: t("local.changeReview.title"),
-    changed: t("local.changeReview.changed"),
-    clean: t("local.changeReview.clean"),
-    loadError: t("local.changeReview.loadError"),
-    messageLabel: t("local.changeReview.messageLabel"),
-    messagePlaceholder: t("local.changeReview.messagePlaceholder"),
-    commit: t("local.changeReview.commit"),
-    committing: t("local.changeReview.committing"),
-    cancel: t("local.changeReview.cancel"),
-    invalidTitle: t("local.changeReview.invalidTitle"),
-  };
-}
+// NOTE: the `buildChangeReviewLabels` builder lives in `lib/flows/editor/
+// editor-labels.ts` (server-safe), NOT here — a server component (the editor
+// page) calls it during render, and a function exported from this `"use client"`
+// module would be a client reference that throws when called on the server.
 
 type WorkingDirDiff = {
   files: RunDiffFile[];
