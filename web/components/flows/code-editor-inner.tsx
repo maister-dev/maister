@@ -113,6 +113,7 @@ function languageExtension(kind: CodeEditorKind): Extension | null {
     case "rule":
     case "readme":
     case "agent_definition":
+    case "subagent":
       return markdown();
     case "script":
     case "setup":

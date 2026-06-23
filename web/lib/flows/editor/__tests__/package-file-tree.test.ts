@@ -32,11 +32,17 @@ describe("classifyPackageFilePath", () => {
     );
   });
 
-  it("leaves capability subagents as raw assets (not the platform-agent form)", () => {
-    // capability/**/agents/*.md are Claude subagents materialized into .claude
-    // at run — they are NOT platform-agents and must not reach the agent form.
-    expect(classifyPackageFilePath("capability/agents/loop-critic.md")).toBe(
-      "asset",
+  it("classifies capability subagents (capability/<id>/agents/*.md) as the subagent kind (M39 A4)", () => {
+    // Claude subagents under a capability bundle — a distinct first-class kind,
+    // NOT the platform-agent form. Root agents/ + maister-agents/ stay platform.
+    expect(
+      classifyPackageFilePath("capability/aif-loop/agents/loop-critic.md"),
+    ).toBe("subagent");
+    expect(classifyPackageFilePath("agents/triager.md")).toBe(
+      "agent_definition",
+    );
+    expect(classifyPackageFilePath("maister-agents/triager.md")).toBe(
+      "agent_definition",
     );
   });
 });

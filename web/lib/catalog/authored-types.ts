@@ -13,6 +13,7 @@ export type AuthoredFlowPackageFileKind =
   | "rule"
   | "script"
   | "agent_definition"
+  | "subagent"
   | "schema"
   | "template"
   | "readme"

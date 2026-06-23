@@ -3,6 +3,7 @@ import "server-only";
 import { parse as parseYaml } from "yaml";
 
 import { parseAgentDefinition } from "@/lib/agents/definition";
+import { validateSubagentMarkdown } from "@/lib/agents/subagent-definition";
 import { flowYamlV1Schema } from "@/lib/config.schema";
 import {
   skillFrontmatterSchema,
@@ -54,9 +55,7 @@ export function validatePackageArtifacts(input: {
     } else if (kind === "skill") {
       validateSkill(path, content, input.files, errors);
     } else if (isCapabilitySubagentPath(path)) {
-      // TODO(A4): validate capability/<id>/agents/*.md leniently (the
-      // claude-subagent kind + its lenient schema land in Phase A4). Until then
-      // these files are freeform (no validation), same as everything else below.
+      validateSubagent(path, content, errors);
     }
     // Everything else (readme/setup/script/schema/template/asset) is freeform —
     // no commit-time content contract.
@@ -85,8 +84,8 @@ function isAgentDefinitionPath(path: string): boolean {
 }
 
 // Capability subagents at `capability/<id>/agents/*.md` are Claude subagents
-// (materialized into `.claude/` at run), NOT platform agents — their lenient
-// schema is Phase A4. `classifyPackageFilePath` returns "asset" for these.
+// (materialized into `.claude/agents/` at run), NOT platform agents — validated
+// LENIENTLY (M39 A4). `classifyPackageFilePath` classifies these as `subagent`.
 function isCapabilitySubagentPath(path: string): boolean {
   return /^capability\/[^/]+\/agents\/[^/]+\.md$/.test(path);
 }
@@ -153,6 +152,19 @@ function validateAgentDefinition(
     parseAgentDefinition(stem, content);
   } catch (err) {
     errors.push({ path, message: asMessage(err) });
+  }
+}
+
+// Capability subagents (M39 A4): LENIENT frontmatter (name + description
+// required; tools/model/color + custom keys preserved). NEVER strict — they are
+// Claude subagents materialized into `.claude/agents/`, not platform agents.
+function validateSubagent(
+  path: string,
+  content: string,
+  errors: PackageArtifactError[],
+): void {
+  for (const issue of validateSubagentMarkdown(content)) {
+    errors.push({ path, message: issue });
   }
 }
 

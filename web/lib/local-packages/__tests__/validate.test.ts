@@ -112,12 +112,24 @@ describe("validatePackageArtifacts", () => {
     expect(errors[0]?.path).toBe("skills/foo/SKILL.md");
   });
 
-  it("does NOT validate a capability subagent (freeform until A4)", () => {
-    const errors = changedAll([
+  it("validates a capability subagent leniently (M39 A4)", () => {
+    const bad = changedAll([
       { path: "capability/x/agents/helper.md", content: "no frontmatter\n" },
     ]);
 
-    expect(errors).toEqual([]);
+    expect(bad.length).toBeGreaterThan(0);
+    expect(bad[0]?.path).toBe("capability/x/agents/helper.md");
+
+    const ok = changedAll([
+      {
+        path: "capability/x/agents/helper.md",
+        content:
+          "---\nname: helper\ndescription: helps\nmodel: inherit\ntools: Read, Bash\nfavorite: blue\n---\nbody\n",
+      },
+    ]);
+
+    // Lenient + open: tools/custom keys are fine; name + description suffice.
+    expect(ok).toEqual([]);
   });
 
   it("validates ONLY changed paths — an unchanged invalid flow is ignored", () => {

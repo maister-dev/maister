@@ -16,10 +16,16 @@ export function classifyPackageFilePath(
   if (relativePath.startsWith("schemas/")) return "schema";
   if (relativePath.startsWith("skills/")) return "skill";
   if (relativePath.startsWith("rules/")) return "rule";
+  // Capability subagents (`capability/<id>/agents/<stem>.md`) are Claude
+  // subagents — lenient frontmatter, materialized into `.claude/agents/` at run,
+  // NOT platform agents. A distinct first-class kind (M39 A4).
+  if (/^capability\/[^/]+\/agents\/[^/]+\.md$/.test(relativePath)) {
+    return "subagent";
+  }
   // Package-root `maister-agents/` are platform-agent definitions (structural
-  // editor + rich view). Capability subagents at `capability/**/agents/` are NOT
-  // matched here (they fall through to "asset" = raw) — they are Claude
-  // subagents materialized into `.claude/` at run, not platform-agents.
+  // editor + rich view). Root `agents/` is the LEGACY platform-agent location —
+  // the runtime now reads `maister-agents/` (M39 A4), but legacy files stay
+  // classified here so they remain editable.
   if (relativePath.startsWith("maister-agents/")) return "agent_definition";
   if (relativePath.startsWith("agents/")) return "agent_definition";
   if (relativePath.startsWith("scripts/")) return "script";

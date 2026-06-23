@@ -14,6 +14,7 @@ const KIND_LABELS = {
   script: "Script",
   setup: "Setup",
   skill: "Skill",
+  subagent: "Subagent",
   template: "Template",
 };
 
@@ -44,6 +45,7 @@ const FRONTMATTER_LABELS = {
   malformedNotice: "The frontmatter could not be parsed.",
   rawHeading: "Raw content",
   agentSchemaWarning: "Platform-agent frontmatter has issues.",
+  subagentSchemaWarning: "Subagent frontmatter has issues.",
 };
 
 const SCRIPT_LABELS = {

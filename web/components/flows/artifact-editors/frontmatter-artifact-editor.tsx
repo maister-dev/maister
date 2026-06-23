@@ -6,14 +6,20 @@ import { useState } from "react";
 
 import { CodeEditor } from "@/components/flows/code-editor";
 import { agentDefinitionFrontmatterSchema } from "@/lib/agents/definition";
+import { subagentFrontmatterSchema } from "@/lib/agents/subagent-definition";
 import {
   serializeFrontmatter,
   splitFrontmatter,
 } from "@/lib/flows/artifact-frontmatter";
 
-// The three artifact kinds this editor serves. Mirrors `CodeEditorKind`'s
-// frontmatter-bearing members; the Coordinator dispatches here by kind.
-export type FrontmatterArtifactKind = "skill" | "agent_definition" | "rule";
+// The frontmatter-bearing artifact kinds this editor serves. Mirrors
+// `CodeEditorKind`'s frontmatter members; the Coordinator dispatches here by
+// kind. `subagent` (M39 A4) = a capability Claude subagent (lenient schema).
+export type FrontmatterArtifactKind =
+  | "skill"
+  | "agent_definition"
+  | "rule"
+  | "subagent";
 
 export interface FrontmatterArtifactEditorLabels {
   frontmatterHeading: string;
@@ -44,6 +50,7 @@ export interface FrontmatterArtifactEditorLabels {
   malformedNotice: string;
   rawHeading: string;
   agentSchemaWarning: string;
+  subagentSchemaWarning: string;
 }
 
 type FieldValue =
@@ -316,12 +323,15 @@ export function FrontmatterArtifactEditor({
 
   const fm = split.frontmatter ?? {};
 
-  // Lenient platform-agent validation: surface a ⚠ badge for incomplete/invalid
-  // agent frontmatter, but keep every field editable (never block the save).
-  const agentSchema =
+  // Lenient validation: surface a ⚠ badge for incomplete/invalid platform-agent
+  // (strict schema) or subagent (lenient schema) frontmatter, but keep every
+  // field editable (never block the save).
+  const schemaCheck =
     kind === "agent_definition"
       ? agentDefinitionFrontmatterSchema.safeParse(fm)
-      : null;
+      : kind === "subagent"
+        ? subagentFrontmatterSchema.safeParse(fm)
+        : null;
 
   const editField = (key: string, value: FieldValue): void => {
     onChange(applyFrontmatterFieldEdit(content, key, value));
@@ -341,15 +351,22 @@ export function FrontmatterArtifactEditor({
       <div className="flex flex-col gap-3 rounded-lg border border-line bg-ivory/40 px-3.5 py-3">
         <span className={labelClass}>{labels.frontmatterHeading}</span>
 
-        {agentSchema && !agentSchema.success ? (
+        {schemaCheck && !schemaCheck.success ? (
           <div
             className="rounded-lg border border-amber-line bg-amber-soft px-3 py-2 font-mono text-[10.5px] leading-snug text-amber"
-            data-testid="agent-schema-warning"
+            data-testid={
+              kind === "subagent"
+                ? "subagent-schema-warning"
+                : "agent-schema-warning"
+            }
             role="alert"
           >
-            ⚠ {labels.agentSchemaWarning}
+            ⚠{" "}
+            {kind === "subagent"
+              ? labels.subagentSchemaWarning
+              : labels.agentSchemaWarning}
             <ul className="mt-1 list-disc pl-4">
-              {agentSchema.error.issues.slice(0, 6).map((issue) => (
+              {schemaCheck.error.issues.slice(0, 6).map((issue) => (
                 <li key={`${issue.path.join(".")}:${issue.message}`}>
                   {(issue.path.join(".") || "frontmatter") +
                     ": " +
@@ -397,7 +414,9 @@ export function FrontmatterArtifactEditor({
 
 interface SkillAgentFieldsProps {
   fm: Record<string, unknown>;
-  kind: "skill" | "agent_definition";
+  // `subagent` renders the lenient name/description form (the agent-only block
+  // below is gated to `agent_definition`); extra subagent keys are passthrough.
+  kind: "skill" | "agent_definition" | "subagent";
   readOnly: boolean;
   labels: FrontmatterArtifactEditorLabels;
   editField: (key: string, value: FieldValue) => void;

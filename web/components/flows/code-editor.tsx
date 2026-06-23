@@ -21,6 +21,7 @@ export type CodeEditorKind =
   | "rule"
   | "readme"
   | "agent_definition"
+  | "subagent"
   | "script"
   | "setup"
   | "asset"

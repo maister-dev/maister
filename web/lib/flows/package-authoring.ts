@@ -44,6 +44,7 @@ const SUPPORTED_FILE_KINDS = new Set<AuthoredFlowPackageFileKind>([
   "rule",
   "script",
   "agent_definition",
+  "subagent",
   "schema",
   "template",
   "readme",

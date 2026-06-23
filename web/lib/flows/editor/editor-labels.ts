@@ -75,6 +75,7 @@ export function packageFileKindLabels(
     script: t("packageFileKind.script"),
     setup: t("packageFileKind.setup"),
     skill: t("packageFileKind.skill"),
+    subagent: t("packageFileKind.subagent"),
     template: t("packageFileKind.template"),
   };
 }
@@ -111,6 +112,7 @@ export function frontmatterArtifactEditorLabels(
     malformedNotice: te("artifacts.malformedNotice"),
     rawHeading: te("artifacts.rawHeading"),
     agentSchemaWarning: te("artifacts.agentSchemaWarning"),
+    subagentSchemaWarning: te("artifacts.subagentSchemaWarning"),
   };
 }
 

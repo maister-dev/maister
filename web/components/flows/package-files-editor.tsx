@@ -399,7 +399,8 @@ function ContentEditor({
   if (
     inferredKind === "skill" ||
     inferredKind === "agent_definition" ||
-    inferredKind === "rule"
+    inferredKind === "rule" ||
+    inferredKind === "subagent"
   ) {
     return (
       <FrontmatterArtifactEditor
