@@ -1805,7 +1805,8 @@ export type EnforcementSnapshotEntry = {
     | "skills"
     | "restrictions"
     | "permissionMode"
-    | "workspaceAccess";
+    | "workspaceAccess"
+    | "hooks";
   declared: "strict" | "instruct" | "off";
   capability: "enforced" | "instructed" | "unsupported";
   verdict: "enforced" | "instructed" | "refused";
@@ -2213,6 +2214,7 @@ export const assignments = pgTable(
         "merge_conflict",
         "infra_recovery",
         "budget_breach",
+        "hook_trip",
       ],
     }).notNull(),
     status: text("status", {
@@ -2330,7 +2332,14 @@ export const hitlRequests = pgTable(
       .references(() => runs.id, { onDelete: "cascade" }),
     stepId: text("step_id").notNull(),
     kind: text("kind", {
-      enum: ["permission", "form", "human", "infra_recovery", "budget_breach"],
+      enum: [
+        "permission",
+        "form",
+        "human",
+        "infra_recovery",
+        "budget_breach",
+        "hook_trip",
+      ],
     }).notNull(),
     schema: jsonb("schema"),
     prompt: text("prompt").notNull(),

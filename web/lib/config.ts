@@ -588,6 +588,10 @@ const ORCHESTRATOR_ENGINE_MIN = "1.6.0";
 // `output.result.on_mismatch` must declare engine_min >= this value.
 const DECIDE_ENGINE_MIN = "1.7.0";
 
+// M40 floor (ADR-104): manifests declaring node `settings.hooks` (the guardrail
+// capability class) must declare engine_min >= this value.
+const HOOKS_ENGINE_MIN = "1.8.0";
+
 // Returns true when any node is an orchestrator node. Used to gate the 1.6.0
 // floor.
 function declaresOrchestratorNode(nodes: NodeDef[]): boolean {
@@ -648,6 +652,14 @@ function declaresDecideOrOnMismatch(nodes: NodeDef[]): boolean {
   }
 
   return false;
+}
+
+// Returns true when any node declares the M40 guardrail hooks capability class
+// (`settings.hooks`). Used to gate the 1.8.0 floor.
+function declaresHooksBinding(nodes: NodeDef[]): boolean {
+  return nodes.some(
+    (n) => (n.settings as { hooks?: unknown } | undefined)?.hooks !== undefined,
+  );
 }
 
 // Returns true when any node declares the M30 retry/session-policy keys
@@ -797,6 +809,28 @@ export function validateGraphManifest(
       throw new MaisterError(
         "CONFIG",
         `graph flow ${flowYamlPath} is declaring decide/on_mismatch but engine_min "${engineMin}" < ${DECIDE_ENGINE_MIN} — bump compat.engine_min to ${DECIDE_ENGINE_MIN} (host engine is ${MAISTER_ENGINE_VERSION})`,
+      );
+    }
+  }
+
+  // M40 (ADR-104): node `settings.hooks` requires the 1.8.0 floor. Manifests
+  // declaring no hooks stay valid at any engine_min.
+  if (declaresHooksBinding(nodes)) {
+    const ok = semverGte(engineMin, HOOKS_ENGINE_MIN);
+
+    log.debug(
+      {
+        flowYamlPath,
+        declared: engineMin || "(unset)",
+        required: HOOKS_ENGINE_MIN,
+        ok,
+      },
+      "[engine-gate] hooks floor",
+    );
+    if (!ok) {
+      throw new MaisterError(
+        "CONFIG",
+        `graph flow ${flowYamlPath} is declaring settings.hooks but engine_min "${engineMin}" < ${HOOKS_ENGINE_MIN} — bump compat.engine_min to ${HOOKS_ENGINE_MIN} (host engine is ${MAISTER_ENGINE_VERSION})`,
       );
     }
   }

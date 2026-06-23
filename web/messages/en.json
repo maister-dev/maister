@@ -1602,6 +1602,7 @@
     "settingsClassRestrictions": "Restrictions",
     "settingsClassPermissionMode": "Permission mode",
     "settingsClassWorkspaceAccess": "Workspace access",
+    "settingsClassHooks": "Guardrail hooks",
     "settingsNoConstraints": "No constrained capabilities",
     "settingsRefusalReason": "Refused at launch",
     "settingsRefusedHint": "Settings refused at launch",

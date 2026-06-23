@@ -54,6 +54,32 @@ describe("parseAgentDefinition", () => {
     expect(parsed.prompt).toContain("You are the triager.");
   });
 
+  it("defaults hooks to null when absent", () => {
+    expect(parseAgentDefinition("aif:triager", VALID).hooks).toBeNull();
+  });
+
+  it("parses an explicit hooks block (ADR-104, explicit agent arming)", () => {
+    const withHooks = VALID.replace(
+      "risk_tier: read_only",
+      'risk_tier: read_only\nhooks:\n  repetition:\n    max: 5\n  pathGuard:\n    allowedPaths:\n      - "src/**"',
+    );
+    const parsed = parseAgentDefinition("aif:triager", withHooks);
+
+    expect(parsed.hooks).toEqual({
+      repetition: { max: 5 },
+      pathGuard: { allowedPaths: ["src/**"] },
+    });
+  });
+
+  it("refuses an invalid hooks block (non-positive cap)", () => {
+    const bad = VALID.replace(
+      "risk_tier: read_only",
+      "risk_tier: read_only\nhooks:\n  repetition:\n    max: -1",
+    );
+
+    expectConfig(() => parseAgentDefinition("aif:triager", bad), /hooks|max/);
+  });
+
   it("refuses unknown frontmatter keys (strict schema)", () => {
     const content = VALID.replace(
       "risk_tier: read_only",

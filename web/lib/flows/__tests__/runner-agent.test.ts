@@ -479,6 +479,42 @@ describe("runner-agent — B1 autoApprovePermissions threading", () => {
   });
 });
 
+describe("runner-agent — hooksConfig threading (ADR-104)", () => {
+  it("threads ctx.hooksConfig into createSession (new-session)", async () => {
+    const db = makeFakeDb();
+    const api = makeApi({ events: [update(1, "hi"), exited(2)] });
+
+    await runAgentStep(
+      { id: "plan", type: "agent", mode: "new-session", prompt: "go" },
+      makeCtx(db, {
+        hooksConfig: { repetition: { max: 5 }, noProgress: { maxTurns: 15 } },
+      }),
+      api,
+    );
+
+    expect(api.createSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hooksConfig: { repetition: { max: 5 }, noProgress: { maxTurns: 15 } },
+      }),
+    );
+  });
+
+  it("leaves hooksConfig undefined when the ctx omits it", async () => {
+    const db = makeFakeDb();
+    const api = makeApi({ events: [update(1, "hi"), exited(2)] });
+
+    await runAgentStep(
+      { id: "plan", type: "agent", mode: "new-session", prompt: "go" },
+      makeCtx(db),
+      api,
+    );
+
+    expect(api.createSession).toHaveBeenCalledWith(
+      expect.objectContaining({ hooksConfig: undefined }),
+    );
+  });
+});
+
 // M8 Codex review fix #1: when the supervisor checkpoints the agent
 // mid-permission, the adapter cancels the pending requestPermission with
 // `{outcome: "cancelled"}` and the prompt returns with

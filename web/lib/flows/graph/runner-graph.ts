@@ -25,6 +25,7 @@ import { and, count, desc, eq, isNotNull, notInArray } from "drizzle-orm";
 import pino from "pino";
 
 import { buildContext } from "../context";
+import { hookEnvDefaults, resolveHooksConfig } from "../hooks-config";
 import { runAgentStep } from "../runner-agent";
 import { runCliStep } from "../runner-cli";
 
@@ -134,6 +135,7 @@ import {
   humanGateFromSnapshot,
   onStuckFromSnapshot,
   permissionsFromSnapshot,
+  presetFromSnapshot,
   resolveAutoRetryPolicy,
   resolveHumanGateDisposition,
   reworkExhaustionFromSnapshot,
@@ -1065,6 +1067,14 @@ async function executeNodeAction(
             autoApprovePermissions:
               permissionsFromSnapshot(loaded.run.executionPolicy ?? null) ===
               "auto_approve",
+            // ADR-104 (M40): the node's guardrail rule set, two-tier-resolved
+            // against the run's execution preset, for the supervisor interceptor.
+            hooksConfig: resolveHooksConfig({
+              hooks: capabilityBearingSettings(node.nodeType, node.settings)
+                ?.hooks,
+              preset: presetFromSnapshot(loaded.run.executionPolicy ?? null),
+              defaults: hookEnvDefaults(),
+            }),
           },
           ctx.supervisorApi,
         );

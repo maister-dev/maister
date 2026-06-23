@@ -7,8 +7,8 @@ import {
 import { nodeOutputSchema } from "@/lib/config.schema";
 
 describe("config.schema — artifact produces[] fields", () => {
-  it("asserts MAISTER_ENGINE_VERSION is 1.7.0 (bumped for M38)", () => {
-    expect(MAISTER_ENGINE_VERSION).toBe("1.7.0");
+  it("asserts MAISTER_ENGINE_VERSION is 1.8.0 (bumped for M40)", () => {
+    expect(MAISTER_ENGINE_VERSION).toBe("1.8.0");
   });
 
   it("asserts GRAPH_MIN_ENGINE_VERSION remains 1.1.0", () => {

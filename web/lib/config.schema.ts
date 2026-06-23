@@ -608,6 +608,36 @@ export const enforcementMapSchema = z
     restrictions: enforcementModeSchema.optional(),
     permissionMode: enforcementModeSchema.optional(),
     workspaceAccess: enforcementModeSchema.optional(),
+    hooks: enforcementModeSchema.optional(),
+  })
+  .strict();
+
+// ADR-104 (M40): the `hooks` capability class — per-tool-call guardrail rules
+// enforced at the supervisor<->ACP seam. SPARSE: every key optional, no per-key
+// default (the two-tier `unattended` auto-arm + the `instruct` enforcement
+// default are applied at resolution/evaluation, never injected here). A node
+// declaring `hooks` requires `compat.engine_min >= 1.8.0` (HOOKS_ENGINE_MIN).
+export const hooksSettingsSchema = z
+  .object({
+    // Opt out entirely (suppresses the `unattended`-preset auto-arm for this node).
+    disabled: z.boolean().optional(),
+    // Liveness breaker: consecutive-identical tool-call cap before halt.
+    repetition: z
+      .object({ max: z.number().int().positive() })
+      .strict()
+      .optional(),
+    // Liveness breaker: turns since the last edit/diff-producing tool call.
+    noProgress: z
+      .object({ maxTurns: z.number().int().positive() })
+      .strict()
+      .optional(),
+    // Path guard: ALWAYS opt-in. `allowedPaths` is optional — a node may opt in
+    // without listing paths and inherit MAISTER_HOOK_DEFAULT_WRITABLE_PATHS (else
+    // the worktree root) at resolution. Non-empty when present.
+    pathGuard: z
+      .object({ allowedPaths: z.array(z.string().min(1)).min(1).optional() })
+      .strict()
+      .optional(),
   })
   .strict();
 
@@ -738,6 +768,7 @@ export const aiCodingSettingsSchema = z
     limits: settingsLimitsSchema.optional(),
     restrictions: z.array(z.string().min(1)).optional(),
     enforcement: enforcementMapSchema.optional(),
+    hooks: hooksSettingsSchema.optional(),
   })
   .strict();
 
@@ -768,6 +799,7 @@ export const judgeSettingsSchema = z
     thinkingEffort: thinkingEffortSchema.optional(),
     limits: settingsLimitsSchema.optional(),
     enforcement: enforcementMapSchema.optional(),
+    hooks: hooksSettingsSchema.optional(),
   })
   .strict();
 
@@ -1196,6 +1228,7 @@ export type WorkspacePolicy = z.infer<typeof workspacePolicySchema>;
 export type HumanDecision = z.infer<typeof humanDecisionSchema>;
 export type EnforcementMode = z.infer<typeof enforcementModeSchema>;
 export type EnforcementMap = z.infer<typeof enforcementMapSchema>;
+export type HooksSettings = z.infer<typeof hooksSettingsSchema>;
 export type AiCodingSettings = z.infer<typeof aiCodingSettingsSchema>;
 export type JudgeSettings = z.infer<typeof judgeSettingsSchema>;
 export type HumanSettings = z.infer<typeof humanSettingsSchema>;

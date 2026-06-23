@@ -4,6 +4,7 @@ import type { CapabilityAgent } from "@/lib/config.schema";
 import type { ScratchAdapterLaunch } from "@/lib/db/schema";
 import type { AgentMcpServer } from "@/lib/capabilities/agent-map";
 import type { GuardConfig } from "./guards";
+import type { HooksConfig } from "./hooks-config";
 import type { AcpSessionState, FlowContext, StepResult } from "./types";
 
 import { randomUUID } from "node:crypto";
@@ -91,6 +92,9 @@ export type RunAgentStepCtx = {
   // execution_policy snapshot in runGraph; threaded to the supervisor session
   // so the requestPermission handler auto-approves inline (L3).
   autoApprovePermissions?: boolean;
+  // ADR-104 (M40): resolved guardrail rule set (resolveHooksConfig in runGraph),
+  // threaded onto the supervisor session body so the hook interceptor arms.
+  hooksConfig?: HooksConfig;
   db?: DbClientLike;
 };
 
@@ -715,6 +719,7 @@ async function runNewSession(
       adapterLaunch: ctx.adapterLaunch,
       mcpServers: ctx.mcpServers,
       autoApprovePermissions: ctx.autoApprovePermissions,
+      hooksConfig: ctx.hooksConfig,
     };
 
     if (ctx.resumeSessionId) {
@@ -861,6 +866,7 @@ async function runSlashInExisting(
       adapterLaunch: ctx.adapterLaunch,
       mcpServers: ctx.mcpServers,
       autoApprovePermissions: ctx.autoApprovePermissions,
+      hooksConfig: ctx.hooksConfig,
     });
 
     ctx.sessionState.currentSessionId = session.sessionId;

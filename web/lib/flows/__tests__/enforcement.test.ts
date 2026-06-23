@@ -53,6 +53,7 @@ const ALL_CLASSES: CapabilityClass[] = [
   "restrictions",
   "permissionMode",
   "workspaceAccess",
+  "hooks",
 ];
 
 type Capability = "enforced" | "instructed" | "unsupported";
@@ -74,7 +75,7 @@ type EnforcementEntry = {
 // ---------------------------------------------------------------------------
 
 describe("ENFORCEABILITY_BY_AGENT — conservative all-adapter table", () => {
-  it("is value-for-value `instructed` for all adapters × all 6 classes", () => {
+  it("is value-for-value `instructed` for all adapters × all 7 classes", () => {
     const expected: Table = {
       claude: {
         mcps: "instructed",
@@ -83,6 +84,7 @@ describe("ENFORCEABILITY_BY_AGENT — conservative all-adapter table", () => {
         restrictions: "instructed",
         permissionMode: "instructed",
         workspaceAccess: "instructed",
+        hooks: "instructed",
       },
       codex: {
         mcps: "instructed",
@@ -91,6 +93,7 @@ describe("ENFORCEABILITY_BY_AGENT — conservative all-adapter table", () => {
         restrictions: "instructed",
         permissionMode: "instructed",
         workspaceAccess: "instructed",
+        hooks: "instructed",
       },
       gemini: {
         mcps: "instructed",
@@ -99,6 +102,7 @@ describe("ENFORCEABILITY_BY_AGENT — conservative all-adapter table", () => {
         restrictions: "instructed",
         permissionMode: "instructed",
         workspaceAccess: "instructed",
+        hooks: "instructed",
       },
       opencode: {
         mcps: "instructed",
@@ -107,6 +111,7 @@ describe("ENFORCEABILITY_BY_AGENT — conservative all-adapter table", () => {
         restrictions: "instructed",
         permissionMode: "instructed",
         workspaceAccess: "instructed",
+        hooks: "instructed",
       },
       mimo: {
         mcps: "instructed",
@@ -115,6 +120,7 @@ describe("ENFORCEABILITY_BY_AGENT — conservative all-adapter table", () => {
         restrictions: "instructed",
         permissionMode: "instructed",
         workspaceAccess: "instructed",
+        hooks: "instructed",
       },
     };
 
@@ -137,6 +143,68 @@ describe("ENFORCEABILITY_BY_AGENT — conservative all-adapter table", () => {
 });
 
 // ---------------------------------------------------------------------------
+// 1b. hooks capability class (ADR-104, M40) — 7th class, all `instructed`.
+// ---------------------------------------------------------------------------
+
+describe("hooks capability class — enforcement (ADR-104)", () => {
+  it("ENFORCEABILITY_BY_AGENT has hooks=instructed for every agent", () => {
+    for (const agent of [
+      "claude",
+      "codex",
+      "gemini",
+      "opencode",
+      "mimo",
+    ] as const) {
+      expect(ENFORCEABILITY_BY_AGENT[agent].hooks).toBe("instructed");
+    }
+  });
+
+  it("evaluateNodeEnforcement reports a refused verdict for strict hooks", () => {
+    const result = evaluateNodeEnforcement(
+      { enforcement: { hooks: "strict" } } as AiCodingSettings,
+      "claude",
+    );
+    const hooksEntry = result.find(
+      (e: EnforcementEntry) => e.class === "hooks",
+    );
+
+    expect(hooksEntry).toEqual({
+      class: "hooks",
+      declared: "strict",
+      capability: "instructed",
+      verdict: "refused",
+    });
+  });
+
+  it("a strict hooks declaration is refused at launch (CONFIG)", () => {
+    expect(() =>
+      assertNodeLaunchable(
+        {
+          id: "n1",
+          type: "ai_coding",
+          settings: {
+            enforcement: { hooks: "strict" },
+          } as AiCodingSettings,
+        },
+        "claude",
+      ),
+    ).toThrow(/hooks/);
+  });
+
+  it("a hooks data field with no explicit intent → instructed (not refused)", () => {
+    const result = evaluateNodeEnforcement(
+      { hooks: { repetition: { max: 5 } } } as AiCodingSettings,
+      "claude",
+    );
+    const hooksEntry = result.find(
+      (e: EnforcementEntry) => e.class === "hooks",
+    );
+
+    expect(hooksEntry?.verdict).toBe("instructed");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 2. evaluateNodeEnforcement — truth table for every (declared × capability).
 // ---------------------------------------------------------------------------
 
@@ -153,6 +221,7 @@ const injectedTable: Table = {
     restrictions: "instructed",
     permissionMode: "enforced",
     workspaceAccess: "instructed",
+    hooks: "instructed",
   },
   codex: {
     mcps: "instructed",
@@ -161,6 +230,7 @@ const injectedTable: Table = {
     restrictions: "instructed",
     permissionMode: "instructed",
     workspaceAccess: "instructed",
+    hooks: "instructed",
   },
   gemini: {
     mcps: "instructed",
@@ -169,6 +239,7 @@ const injectedTable: Table = {
     restrictions: "instructed",
     permissionMode: "instructed",
     workspaceAccess: "instructed",
+    hooks: "instructed",
   },
   opencode: {
     mcps: "instructed",
@@ -177,6 +248,7 @@ const injectedTable: Table = {
     restrictions: "instructed",
     permissionMode: "instructed",
     workspaceAccess: "instructed",
+    hooks: "instructed",
   },
   mimo: {
     mcps: "instructed",
@@ -185,6 +257,7 @@ const injectedTable: Table = {
     restrictions: "instructed",
     permissionMode: "instructed",
     workspaceAccess: "instructed",
+    hooks: "instructed",
   },
 };
 

@@ -24,7 +24,10 @@ const log = pino({
 // Bumped 1.6.0 -> 1.7.0 for output/verdict-driven dynamic routing (node `decide`)
 // + malformed-output rework (`output.result.on_mismatch`) (M38, ADR-103); flows
 // declaring either MUST `compat.engine_min >= 1.7.0`.
-export const MAISTER_ENGINE_VERSION = "1.7.0";
+// Bumped 1.7.0 -> 1.8.0 for the guardrail hooks capability class (node
+// `settings.hooks`) (M40, ADR-104); flows declaring it MUST
+// `compat.engine_min >= 1.8.0` (HOOKS_ENGINE_MIN).
+export const MAISTER_ENGINE_VERSION = "1.8.0";
 
 // Minimum engine version a graph (`nodes[]`) manifest must declare in
 // `compat.engine_min` (ADR-026). Enforced in `loadFlowManifest`.

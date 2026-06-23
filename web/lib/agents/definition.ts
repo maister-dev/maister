@@ -15,6 +15,7 @@ import type {
 
 import { z } from "zod";
 
+import { hooksSettingsSchema, type HooksSettings } from "@/lib/config.schema";
 import { DOMAIN_EVENT_KINDS } from "@/lib/domain-events/taxonomy";
 // errors-core, not @/lib/errors: this module is imported by the client-side
 // artifact validator (Studio editor bundle); the server re-export preserves
@@ -118,6 +119,10 @@ export const agentDefinitionFrontmatterSchema = z
     capability_profile: z.record(z.unknown()).optional(),
     risk_tier: z.enum(["read_only", "standard", "destructive"]),
     recommended: recommendedSchema.optional(),
+    // ADR-104 (M40): explicit per-agent guardrail hooks. Agent runs have no
+    // execution-policy preset, so there is no `unattended` auto-arm — only what
+    // the agent declares here arms (path_guard / repetition / no_progress).
+    hooks: hooksSettingsSchema.optional(),
   })
   .strict()
   .superRefine((value, ctx) => {
@@ -166,6 +171,7 @@ export type ParsedAgentDefinition = {
   capabilityProfile: Record<string, unknown> | null;
   riskTier: AgentRiskTier;
   recommended: AgentRecommended | null;
+  hooks: HooksSettings | null;
   prompt: string;
 };
 
@@ -224,6 +230,7 @@ export function parseAgentDefinition(
     capabilityProfile: fm.capability_profile ?? null,
     riskTier: fm.risk_tier,
     recommended: fm.recommended ?? null,
+    hooks: fm.hooks ?? null,
     prompt: split.body,
   };
 }
@@ -240,6 +247,7 @@ export type AgentDefinitionInput = {
   capabilityProfile?: Record<string, unknown> | null;
   riskTier: AgentRiskTier;
   recommended?: AgentRecommended | null;
+  hooks?: HooksSettings | null;
   prompt: string;
 };
 
@@ -259,6 +267,7 @@ export function renderAgentDefinition(input: AgentDefinitionInput): string {
       : {}),
     risk_tier: input.riskTier,
     ...(input.recommended ? { recommended: input.recommended } : {}),
+    ...(input.hooks ? { hooks: input.hooks } : {}),
   };
 
   const body = input.prompt.endsWith("\n") ? input.prompt : `${input.prompt}\n`;

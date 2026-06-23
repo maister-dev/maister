@@ -1602,6 +1602,7 @@
     "settingsClassRestrictions": "Ограничения",
     "settingsClassPermissionMode": "Режим разрешений",
     "settingsClassWorkspaceAccess": "Доступ к рабочему пространству",
+    "settingsClassHooks": "Защитные хуки",
     "settingsNoConstraints": "Нет ограниченных возможностей",
     "settingsRefusalReason": "Запуск отклонён",
     "settingsRefusedHint": "Настройки отклонены при запуске",

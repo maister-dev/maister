@@ -368,6 +368,18 @@ export function reworkExhaustionFromSnapshot(
     : "escalate";
 }
 
+// Resolve just the execution preset from a run's execution_policy snapshot. The
+// guardrail two-tier default (ADR-104 D4) keys off `unattended`; fail-safe: a
+// null / absent / malformed snapshot resolves to `supervised` (non-unattended →
+// the liveness breakers never auto-arm).
+export function presetFromSnapshot(snapshot: unknown): ExecutionPreset {
+  const parsed = executionPolicySchema.safeParse(snapshot);
+
+  return parsed.success
+    ? expandExecutionPolicy(parsed.data).preset
+    : "supervised";
+}
+
 // Resolve just the crash-retry axis (A2) from a run's execution_policy snapshot.
 // Fail closed: a null / absent / malformed snapshot resolves to `fail` — a
 // corrupt policy must NEVER silently auto-relaunch (ralph_loop) a failed run.

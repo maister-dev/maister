@@ -5,6 +5,7 @@ import type {
   PlatformUnavailableReason,
 } from "@/types/platform-status";
 import type { AgentMcpServer } from "@/lib/capabilities/agent-map";
+import type { HooksConfig } from "@/lib/flows/hooks-config";
 
 import { cache } from "react";
 import pino from "pino";
@@ -104,6 +105,10 @@ export type CreateSessionInput = {
   // the allow option for every permission request in this session (below the
   // read-only layers). Derived from the run's execution_policy snapshot.
   autoApprovePermissions?: boolean;
+  // ADR-104 (M40): resolved guardrail rule set. The supervisor arms the hook
+  // interceptor (path_guard / repetition / no_progress) for this session; each
+  // rule key is optional and an absent key means that rule is not armed.
+  hooksConfig?: HooksConfig;
 };
 
 export type CreateSessionResult = {

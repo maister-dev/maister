@@ -35,7 +35,13 @@ const KNOWN_ERROR_CODES = new Set([
 export interface RunHitlResponseProps {
   runId: string;
   hitlRequestId: string;
-  kind: "permission" | "form" | "human" | "infra_recovery" | "budget_breach";
+  kind:
+    | "permission"
+    | "form"
+    | "human"
+    | "infra_recovery"
+    | "budget_breach"
+    | "hook_trip";
   options: HitlOption[];
   schema: unknown;
   canAct: boolean;
@@ -246,12 +252,13 @@ export function RunHitlResponse({
     void post({ optionId: "raise", raiseTo: n });
   }
 
-  // Confidence applies to form/human/review; NOT permission, infra_recovery, or
-  // budget_breach (a raise/abandon choice carries no confidence).
+  // Confidence applies to form/human/review; NOT permission, infra_recovery,
+  // budget_breach, or hook_trip (a resume/abandon choice carries no confidence).
   const showConfidence =
     kind !== "permission" &&
     kind !== "infra_recovery" &&
-    kind !== "budget_breach";
+    kind !== "budget_breach" &&
+    kind !== "hook_trip";
 
   const labels = {
     criticalityLabel: t("criticalityLabel"),

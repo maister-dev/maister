@@ -530,6 +530,7 @@ export default async function RunDetailLayout({
       restrictions: t("settingsClassRestrictions"),
       permissionMode: t("settingsClassPermissionMode"),
       workspaceAccess: t("settingsClassWorkspaceAccess"),
+      hooks: t("settingsClassHooks"),
     };
 
   const settingsLabels: FlowSettingsPanelLabels = {

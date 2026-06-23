@@ -1,0 +1,9 @@
+-- ADR-104 (M40) — guardrail/hook engine: the `hook_trip` escalation kind.
+--
+-- `hook_trip` is added to the `hitl_requests.kind` and `assignments.action_kind`
+-- enums in schema.ts. Those columns are bare `text` (no DB CHECK / pgEnum), so
+-- Drizzle emits NO DDL for the value addition — it is a TS-level contract change
+-- (`drizzle-kit generate` reports "No schema changes"). This marker reserves
+-- migration 0063 (namespace deconfliction: 0062 is reserved by the parallel
+-- Flow-Studio-package-authoring stream) and documents the change. It is
+-- intentionally a no-op at the database layer.

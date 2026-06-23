@@ -29,6 +29,7 @@ import {
   resolveEffectiveAgentDefinition,
   type EffectiveAgentDefinition,
 } from "@/lib/agents/effective";
+import { hookEnvDefaults, resolveHooksConfig } from "@/lib/flows/hooks-config";
 import {
   issueAgentRunToken,
   revokeAgentRunTokensForRun,
@@ -2123,6 +2124,14 @@ export async function startAgentSession(
       ],
       // ADR-090 L1: none/repo_read agents run the whole session read-only.
       readOnlySession: workspace !== "worktree",
+      // ADR-104 (M40): explicit agent guardrail hooks. Agent runs carry no
+      // execution-policy preset, so there is no `unattended` auto-arm — only
+      // what the agent definition declares arms (undefined when it declares none).
+      hooksConfig: resolveHooksConfig({
+        hooks: effective.parsed.hooks ?? undefined,
+        preset: undefined,
+        defaults: hookEnvDefaults(),
+      }),
       ...(run.acpSessionId ? { resumeSessionId: run.acpSessionId } : {}),
     });
 

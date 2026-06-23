@@ -128,7 +128,13 @@ export function formFieldsFromSchema(
 }
 
 export interface HitlDecisionControlsProps {
-  kind: "permission" | "form" | "human" | "infra_recovery" | "budget_breach";
+  kind:
+    | "permission"
+    | "form"
+    | "human"
+    | "infra_recovery"
+    | "budget_breach"
+    | "hook_trip";
   reviewSchema: ReviewSchema | null;
   options: HitlOption[];
   schema: unknown;
