@@ -6,7 +6,9 @@ import type {
   CapabilityProfileEntry,
   ResolvedCapabilityProfile,
 } from "@/lib/capabilities/types";
+import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { AgentMcpServer } from "@/lib/capabilities/agent-map";
+import type { HooksConfig } from "@/lib/flows/hooks-config";
 
 import { execFile } from "node:child_process";
 import { appendFile, copyFile, mkdir, readFile, stat } from "node:fs/promises";
@@ -16,6 +18,10 @@ import { promisify } from "node:util";
 import pino from "pino";
 
 import { mapProfileToAgentArtifacts } from "@/lib/capabilities/agent-map";
+import {
+  nativeGuardScriptPath,
+  resolveNativeHookMaterializer,
+} from "@/lib/capabilities/native-hook-materializer";
 import { atomicWriteJson, atomicWriteText } from "@/lib/atomic";
 import { MaisterError } from "@/lib/errors";
 
@@ -58,6 +64,10 @@ export type MaterializeCapabilityProfileArgs = {
   nodeAttemptId?: string;
   tools?: string[];
   permissionMode?: "ask" | "allow" | "deny";
+  // ADR-104 (M40) P4: the resolved guardrail config. When pathGuard is armed and
+  // the agent has a native backend (claude), a PreToolUse hook is folded into
+  // settings.local.json. Absent / no pathGuard / non-claude → no native hook.
+  hooksConfig?: HooksConfig;
 };
 
 export type MaterializedCapabilityProfile = {
@@ -229,12 +239,23 @@ export async function materializeCapabilityProfile(
   await mkdir(rootPath, { recursive: true });
 
   const agent: CapabilityAgent = args.profile.executorAgent;
+  // ADR-104 (M40) P4: resolve the native path-guard hook via the per-adapter seam
+  // (claude → a PreToolUse command hook; others → undefined). Folded into the
+  // SINGLE settings.local.json write below — no separate file write, so the M14
+  // ownership-marker / reclaim / cleanup protocol is untouched.
+  const nativeHooks = resolveNativeHookMaterializer(
+    agent as AdapterId,
+  ).buildSettingsHooks({
+    hooksConfig: args.hooksConfig,
+    guardScriptPath: nativeGuardScriptPath(),
+  });
   const artifacts = mapProfileToAgentArtifacts({
     profile: args.profile,
     agent,
     tools: args.tools,
     permissionMode: args.permissionMode,
     model: args.executor?.model,
+    nativeHooks,
   });
 
   const profilePath = path.join(rootPath, "profile.json");

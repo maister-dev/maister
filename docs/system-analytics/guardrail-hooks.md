@@ -1,6 +1,6 @@
 # Guardrail / hook engine (Designed — ADR-104)
 
-> Status: **Designed — [ADR-104](../decisions.md#adr-104-declarative-guardrailhook-engine--universal-supervisor-acp-seam-interceptor-native-materializer-seam-and-hook-trip-hitl-escalation)** (M40). Contract frozen; not yet coded.
+> Status: **[ADR-104](../decisions.md#adr-104-declarative-guardrailhook-engine--universal-supervisor-acp-seam-interceptor-native-materializer-seam-and-hook-trip-hitl-escalation)** (M40). Contract frozen; **P1–P4 implemented** (capability class + migration 0063 + two-tier default; universal supervisor 3-rule interceptor; web hook-trip escalation + per-run_kind resume + `hook_trip` HITL; native claude `PreToolUse` path-guard backend — live fires+denies confirmation deferred). **P5 (Studio UI) + P6 (e2e / dogfood / verify) remain.**
 > This file is the design home for the mechanism. ADR rationale is in ADR-104 (R7 — cited, not restated).
 
 ## Purpose
@@ -224,22 +224,35 @@ resumes through the same agent-permission-HITL path that already drives it.
 - **Universal supervisor layer (P2/P3)** — all three rules, all five adapters.
   Enforcement is 100% supervisor-side; the native registry resolves a **no-op**
   for every adapter. This layer is complete on its own.
-- **Native claude backend (P4, spike-gated)** — registers a `claude` materializer
-  that writes a `PreToolUse` hook into the M14-owned
-  `<worktree>/.claude/settings.local.json` (respecting the
-  ownership-marker / reclaim / cleanup protocol; the `hooks` key is reclaimed on
-  cleanup, the guard script joins `WORKTREE_EXCLUDE_PATTERNS`). It covers **only
+- **Native claude backend (P4, Implemented)** — `resolveNativeHookMaterializer`
+  registers a `claude` materializer that FOLDS a `PreToolUse` hook into the M14
+  `<worktree>/.claude/settings.local.json` via the SINGLE existing writer
+  (`mapProfileToAgentArtifacts` → `materializeCapabilityProfile`) — the `hooks`
+  key rides the same file, so the ownership-marker / reclaim / cleanup protocol is
+  untouched and reclaim removes it with the file (no second write, no extra
+  cleanup). The hook runs a SHIPPED repo-local guard script
+  (`web/scripts/native-path-guard.mjs`) via `node` (resolved relative to the web
+  cwd, `MAISTER_HOOK_GUARD_SCRIPT`-overridable for split-host) — NOT written into
+  the worktree, so it needs no `WORKTREE_EXCLUDE_PATTERNS` entry or cleanup;
+  `allowedPaths` ride the exec-form `args` (no shell). It covers **only
   `path_guard`**; `repetition` and `no_progress` stay supervisor-only (they need
   cross-turn session state). The hook's `allowedPaths` derive from the **same**
   resolved `hooksConfig.pathGuard` — the two backends share one source of truth
   and cannot diverge.
-- **Spike + graceful degradation** — P4 leads with a spike confirming the bundled
-  `@anthropic-ai/claude-agent-sdk` honors settings-file hooks (the type surface
-  declares `hooks?: Partial<Record<HookEvent, …>>` with `PreToolUse`, but the
-  settings-FILE channel is unverified). **If it does not honor them → register no
-  native materializer, document "native backend N/A for the current claude
-  adapter; the universal supervisor layer carries enforcement", ship no dead
-  code, and stop P4.** The universal layer is unaffected either way.
+- **Spike result (T4.1, 2026-06-23) + graceful degradation** — the spike
+  **CONFIRMED feasibility**: `claude-agent-acp` sets `settingSources: ["user",
+  "project", "local"]` (it loads `settings.local.json`) and the bundled SDK's
+  `Settings` schema honors a `hooks` block, so a settings-file `PreToolUse`
+  command hook is loaded. (The earlier "unverified" note looked only at the
+  programmatic `query({hooks})` channel and missed the settings-file channel.) The
+  native materializer is implemented; the one remaining check is the **live**
+  "a PreToolUse hook fires + denies in a real agent run" confirmation (deferred to
+  a live / dogfood run). The graceful-degradation contract is retained for the
+  unconfirmed-live case AND for every non-claude adapter (which resolves the
+  no-op): if a backend does not honor the hook, the universal supervisor layer
+  carries enforcement — no safety gap, no double-escalate (the native deny is the
+  SDK's `permissionDecision: "deny"`, so the supervisor never sees that permission
+  request).
 
 ## Expectations (Designed — ADR-104)
 

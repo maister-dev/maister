@@ -1428,6 +1428,15 @@ async function materializeNodeCapabilities(
     nodeAttemptId,
     tools: declares && settings ? settings.tools?.[agent] : undefined,
     permissionMode: declares && settings ? settings.permissionMode : undefined,
+    // ADR-104 (M40) P4: re-resolve the node's guardrail config (pure, mirrors the
+    // executeNodeAction resolution) so the native materializer can fold a claude
+    // PreToolUse path-guard hook into this single settings.local.json write when
+    // the node armed hooks.pathGuard.
+    hooksConfig: resolveHooksConfig({
+      hooks: settings?.hooks,
+      preset: presetFromSnapshot(loaded.run.executionPolicy ?? null),
+      defaults: hookEnvDefaults(),
+    }),
     executor: {
       executorRefId: loaded.executor.executorRefId,
       agent,

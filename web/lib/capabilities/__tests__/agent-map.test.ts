@@ -139,6 +139,37 @@ describe("mapProfileToAgentArtifacts", () => {
     expect(result.settingsLocal).toBeNull();
   });
 
+  // ADR-104 (M40) P4: native path-guard hook folds into settings.local.json.
+  const nativeHooks = {
+    PreToolUse: [
+      {
+        matcher: "Edit|Write|MultiEdit|NotebookEdit",
+        hooks: [{ type: "command" as const, command: "node", args: ["g.mjs"] }],
+      },
+    ],
+  };
+
+  it("folds nativeHooks into settingsLocal.hooks for claude (even with nothing else)", () => {
+    const result = mapProfileToAgentArtifacts({
+      profile: claudeProfile(),
+      agent: "claude",
+      nativeHooks,
+    });
+
+    expect(result.settingsLocal).not.toBeNull();
+    expect(result.settingsLocal!.hooks).toEqual(nativeHooks);
+  });
+
+  it("ignores nativeHooks for a non-claude agent (settings.local.json is claude-only)", () => {
+    const result = mapProfileToAgentArtifacts({
+      profile: codexProfile(),
+      agent: "codex",
+      nativeHooks,
+    });
+
+    expect(result.settingsLocal).toBeNull();
+  });
+
   it("maps permissionMode deny->plan, allow->bypassPermissions, ask->default; omits defaultMode when unset (assertion 2)", () => {
     const deny = mapProfileToAgentArtifacts({
       profile: claudeProfile(),

@@ -489,6 +489,69 @@ describe("materializeCapabilityProfile", () => {
     });
   });
 
+  // ADR-104 (M40) P4: native claude PreToolUse path-guard folds into the SAME
+  // settings.local.json write (defense-in-depth; the live fires+denies behavior
+  // is the deferred T4.1 spike, but the materialization wiring is verified here).
+  it("folds a claude PreToolUse path-guard hook into settings.local.json from hooksConfig.pathGuard", async () => {
+    await materializeCapabilityProfile({
+      runId: "run-1",
+      worktreePath: workDir,
+      profile: nativeClaudeProfile(),
+      tools: ["Read", "Edit"],
+      hooksConfig: { pathGuard: { allowedPaths: ["src/**", "tests/**"] } },
+    });
+
+    const settings = JSON.parse(
+      await readFile(
+        path.join(path.resolve(workDir), ".claude", "settings.local.json"),
+        "utf8",
+      ),
+    );
+
+    expect(settings.hooks.PreToolUse).toHaveLength(1);
+    const entry = settings.hooks.PreToolUse[0];
+
+    expect(entry.matcher).toBe("Edit|Write|MultiEdit|NotebookEdit");
+    expect(entry.hooks[0].type).toBe("command");
+    // one source of truth: the same allowedPaths the supervisor uses, after the
+    // shipped guard script, in the exec-form args (no shell).
+    expect(entry.hooks[0].args.slice(1)).toEqual(["src/**", "tests/**"]);
+    expect(entry.hooks[0].args[0]).toMatch(/native-path-guard\.mjs$/);
+  });
+
+  it("writes NO hooks key when pathGuard is not armed (liveness-only hooksConfig)", async () => {
+    await materializeCapabilityProfile({
+      runId: "run-1",
+      worktreePath: workDir,
+      profile: nativeClaudeProfile(),
+      tools: ["Read"],
+      hooksConfig: { repetition: { max: 5 }, noProgress: { maxTurns: 15 } },
+    });
+
+    const settings = JSON.parse(
+      await readFile(
+        path.join(path.resolve(workDir), ".claude", "settings.local.json"),
+        "utf8",
+      ),
+    );
+
+    expect(settings.hooks).toBeUndefined();
+  });
+
+  it("writes NO native hook for a non-claude agent even with pathGuard armed", async () => {
+    const result = await materializeCapabilityProfile({
+      runId: "run-1",
+      worktreePath: workDir,
+      profile: nativeCodexProfile(),
+      tools: ["Read", "Edit"],
+      hooksConfig: { pathGuard: { allowedPaths: ["src/**"] } },
+    });
+
+    // codex pins model supervisor-side and declares no settings.local.json here;
+    // with no permissions/model and native ignored, the file is not written.
+    expect(result.settingsLocalPath).toBeNull();
+  });
+
   it("carries the selected mcp defs on result.mcpServers with names + env keys only (req 2)", async () => {
     const result = await materializeCapabilityProfile({
       runId: "run-1",
