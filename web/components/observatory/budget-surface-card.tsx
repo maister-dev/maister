@@ -4,6 +4,7 @@ import type { BudgetSurfaceCardProps } from "@/components/observatory/types";
 import {
   ExclamationTriangleIcon,
   NoSymbolIcon,
+  ShieldExclamationIcon,
 } from "@heroicons/react/24/outline";
 
 function formatCount(value: number): string {
@@ -34,7 +35,7 @@ export function BudgetSurfaceCard({
           {labels.observationsOnly}
         </span>
       </div>
-      <div className="grid gap-px overflow-hidden rounded-lg border border-line bg-line sm:grid-cols-2">
+      <div className="grid gap-px overflow-hidden rounded-lg border border-line bg-line sm:grid-cols-3">
         <div className="flex items-center gap-3 bg-ivory px-3 py-3">
           <ExclamationTriangleIcon
             aria-hidden="true"
@@ -60,6 +61,23 @@ export function BudgetSurfaceCard({
             </div>
             <div className="mt-1 font-mono text-[20px] font-semibold leading-none text-ink">
               {formatCount(budget.budgetTerminations)}
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-3 bg-ivory px-3 py-3">
+          <ShieldExclamationIcon
+            aria-hidden="true"
+            className="size-5 shrink-0 text-amber"
+          />
+          <div>
+            <div className="font-mono text-[9.5px] font-bold uppercase tracking-[0.08em] text-mute">
+              {budgetLabels.guardrailTrips}
+            </div>
+            <div
+              className="mt-1 font-mono text-[20px] font-semibold leading-none text-ink"
+              data-testid="observatory-hook-trips"
+            >
+              {formatCount(budget.hookTripEscalations)}
             </div>
           </div>
         </div>

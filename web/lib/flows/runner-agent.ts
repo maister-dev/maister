@@ -26,6 +26,7 @@ import { MaisterError } from "@/lib/errors";
 import { markCheckpointedFromExit } from "@/lib/runs/state-transitions";
 import {
   cancelPermission,
+  checkpointSession,
   createSession,
   deleteSession,
   deliverPermission,
@@ -38,6 +39,7 @@ import {
   type SupervisorRunnerInput,
 } from "@/lib/supervisor-client";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
+import { escalateHookTrip } from "@/lib/runs/hook-trip";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 const log = pino({
@@ -105,6 +107,10 @@ export type SupervisorApi = {
   streamSession: typeof streamSession;
   cancelPermission: typeof cancelPermission;
   deliverPermission: typeof deliverPermission;
+  // ADR-104 (M40): a halting guardrail trip checkpoints the live session via
+  // escalateHookTrip before the NeedsInput escalate; injected so the consumer
+  // passes its own supervisor api (and tests stub it).
+  checkpointSession: typeof checkpointSession;
 };
 
 const defaultSupervisor: SupervisorApi = {
@@ -114,6 +120,7 @@ const defaultSupervisor: SupervisorApi = {
   streamSession,
   cancelPermission,
   deliverPermission,
+  checkpointSession,
 };
 
 // M14 T4.5: a long-living (slash-in-existing) session may not silently serve a
@@ -468,6 +475,12 @@ type EventConsumer = {
   // `stopReason: "end_turn"` (which it will, because a cancelled-with-
   // reason permission is journaled-for-replay, not denied).
   checkpointReasonObserved: () => boolean;
+  // ADR-104 (M40): true iff a halting guardrail trip was escalated for this
+  // session. escalateHookTrip already CAS'd Running→NeedsInput + opened the
+  // hook_trip HITL, so the runner MUST surface STEP_CHECKPOINTED WITHOUT
+  // markCheckpointedFromExit (which would flip NeedsInput→NeedsInputIdle and
+  // break the runFlow NeedsInput resume).
+  hookTripEscalated: () => boolean;
 };
 
 function executorToSupervisorInput(
@@ -501,6 +514,7 @@ function startEventConsumer(
   let sawPermissionRequest = false;
   let persistFailure: { reason: string } | null = null;
   let checkpointObserved = false;
+  let hookEscalated = false;
   const pendingWork: Promise<void>[] = [];
 
   const done = (async () => {
@@ -508,6 +522,39 @@ function startEventConsumer(
       for await (const ev of supervisor.streamSession(sessionId, {
         signal: abort.signal,
       })) {
+        // ADR-104 (M40): a halting guardrail trip (repetition / no_progress)
+        // checkpoints + escalates to NeedsInput; a path_guard deny is
+        // record-only (the supervisor already denied inline, deny-and-continue).
+        // Claim once — the supervisor halts a session a single time.
+        if (ev.type === "session.hook_trip" && permissionCtx) {
+          if (ev.disposition === "halt" && !hookEscalated) {
+            hookEscalated = true;
+            const haltRule =
+              ev.rule === "no_progress" ? "no_progress" : "repetition";
+
+            pendingWork.push(
+              escalateHookTrip({
+                db: permissionCtx.db,
+                runId: permissionCtx.runId,
+                stepId: permissionCtx.stepId,
+                supervisorSessionId: permissionCtx.supervisorSessionId,
+                rule: haltRule,
+                toolCall: ev.toolCall,
+                runKind: "flow",
+                checkpointSession: supervisor.checkpointSession,
+              }).then((r) => {
+                // EXECUTOR_UNAVAILABLE / lost CAS → un-claim so the runner does
+                // not suppress the normal checkpoint/exit handling.
+                if (!r.escalated) hookEscalated = false;
+              }),
+            );
+          } else if (ev.disposition === "deny") {
+            log.debug(
+              { runId: permissionCtx.runId, rule: ev.rule },
+              "path_guard deny — run continues (record-only)",
+            );
+          }
+        }
         if (ev.type === "session.permission_request" && permissionCtx) {
           sawPermissionRequest = true;
           pendingWork.push(
@@ -573,6 +620,7 @@ function startEventConsumer(
     },
     permissionPersistFailure: () => persistFailure,
     checkpointReasonObserved: () => checkpointObserved,
+    hookTripEscalated: () => hookEscalated,
   };
 }
 
@@ -781,6 +829,33 @@ async function runNewSession(
     // does not advance and does not write terminal Review.
     const persistFailure = consumer.permissionPersistFailure();
     const checkpointed = consumer.checkpointReasonObserved();
+    const hookEscalated = consumer.hookTripEscalated();
+
+    // ADR-104 (M40): a halting guardrail trip already CAS'd Running→NeedsInput +
+    // opened the hook_trip HITL inside escalateHookTrip. Surface STEP_CHECKPOINTED
+    // (runGraph persists acpSessionId + pauses) but do NOT markCheckpointedFromExit
+    // — the run stays NeedsInput so the hook_trip resume (runFlow) can re-enter.
+    if (hookEscalated) {
+      log.info(
+        {
+          runId: ctx.runId,
+          stepId: ctx.stepId,
+          stopReason: promptResult.stopReason,
+          acpSessionId: session.acpSessionId,
+        },
+        "step halted by guardrail trip — STEP_CHECKPOINTED (NeedsInput)",
+      );
+
+      return {
+        ok: false,
+        stdout: consumer.snapshot(),
+        vars: {},
+        durationMs: Date.now() - startedAt,
+        errorCode: "STEP_CHECKPOINTED" as const,
+        acpSessionId: session.acpSessionId,
+        sessionFallback,
+      };
+    }
 
     if (checkpointed) {
       await markCheckpointedFromExit(ctx.runId, { db: ctx.db ?? getDb() });
@@ -924,6 +999,30 @@ async function runSlashInExisting(
   // M8 Codex review fix #1: see runNewSession for rationale.
   const persistFailure = consumer.permissionPersistFailure();
   const checkpointed = consumer.checkpointReasonObserved();
+  const hookEscalated = consumer.hookTripEscalated();
+
+  // ADR-104 (M40): see runNewSession — a guardrail trip leaves the run
+  // NeedsInput; surface STEP_CHECKPOINTED without markCheckpointedFromExit.
+  if (hookEscalated) {
+    log.info(
+      {
+        runId: ctx.runId,
+        stepId: ctx.stepId,
+        stopReason: promptResult.stopReason,
+        sessionId,
+      },
+      "slash-in-existing step halted by guardrail trip — STEP_CHECKPOINTED (NeedsInput)",
+    );
+
+    return {
+      ok: false,
+      stdout: consumer.snapshot(),
+      vars: {},
+      durationMs: Date.now() - startedAt,
+      errorCode: "STEP_CHECKPOINTED" as const,
+      acpSessionId: sessionId,
+    };
+  }
 
   if (checkpointed) {
     await markCheckpointedFromExit(ctx.runId, { db: ctx.db ?? getDb() });

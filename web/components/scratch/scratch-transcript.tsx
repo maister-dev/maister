@@ -38,6 +38,9 @@ export type TranscriptLabels = {
   copied: string;
   toolCount: (name: string, count: number) => string;
   clearedHistory?: (count: number) => string;
+  // ADR-104 (M40): the scratch in-session guardrail-trip notice. Optional — only
+  // the scratch surface emits hook_trip rows (gate-chat sessions never do).
+  hookTrip?: (args: { rule: string; disposition: "deny" | "halt" }) => string;
 };
 
 const markdownComponents: Components = {
@@ -448,6 +451,21 @@ export function ScratchTranscript({
           className="rounded-lg border border-amber-line bg-amber-soft px-3 py-2 font-mono text-[11.5px] text-amber"
         >
           {parsed.prompt}
+        </div>
+      );
+    }
+
+    if (parsed.kind === "hook_trip") {
+      return (
+        <div
+          key={message.id}
+          className="rounded-lg border border-danger-line bg-danger-soft px-3 py-2 font-mono text-[11.5px] text-danger"
+          data-testid="scratch-hook-trip-notice"
+        >
+          {labels.hookTrip?.({
+            rule: parsed.rule,
+            disposition: parsed.disposition,
+          }) ?? `Guardrail tripped: ${parsed.rule}`}
         </div>
       );
     }

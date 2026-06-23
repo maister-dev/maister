@@ -60,6 +60,7 @@ import {
   tryStartRun,
 } from "@/lib/scheduler";
 import {
+  checkpointSession,
   createSession,
   deliverPermission,
   listSessions,
@@ -67,6 +68,7 @@ import {
   streamSession,
   type SupervisorEvent,
 } from "@/lib/supervisor-client";
+import { escalateHookTrip } from "@/lib/runs/hook-trip";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import {
   addDetachedWorktree,
@@ -1829,6 +1831,9 @@ export type AgentSupervisorApi = {
   deliverPermission: typeof deliverPermission;
   sendPrompt: typeof sendPrompt;
   streamSession: typeof streamSession;
+  // ADR-104 (M40): a halting guardrail trip checkpoints the live session before
+  // the NeedsInput escalate (escalateHookTrip).
+  checkpointSession: typeof checkpointSession;
 };
 
 // RD7 (ADR-089 rework): resolve the agent's declared capability_profile.mcps
@@ -1920,6 +1925,7 @@ const defaultSupervisorApi: AgentSupervisorApi = {
   deliverPermission,
   sendPrompt,
   streamSession,
+  checkpointSession,
 };
 
 // Drives one standalone agent session end-to-end: spawn (resume-aware),
@@ -2274,6 +2280,35 @@ export async function consumeAgentSession(args: {
         });
 
         return;
+      }
+      // ADR-104 (M40): a halting guardrail trip (repetition / no_progress)
+      // checkpoints + escalates to NeedsInput (resumable via startAgentSession);
+      // the checkpoint produces a session.exited{reason:"checkpoint"} that
+      // detaches this loop above. A path_guard deny is record-only (the
+      // supervisor already denied inline, deny-and-continue).
+      case "session.hook_trip": {
+        if (event.disposition === "halt") {
+          const haltRule =
+            event.rule === "no_progress" ? "no_progress" : "repetition";
+
+          await escalateHookTrip({
+            db: args.db,
+            runId: args.runId,
+            stepId: "agent",
+            supervisorSessionId: args.sessionId,
+            rule: haltRule,
+            toolCall: event.toolCall,
+            runKind: "agent",
+            checkpointSession: args.api.checkpointSession,
+          });
+
+          break;
+        }
+        log.debug(
+          { runId: args.runId, rule: event.rule },
+          "path_guard deny — agent run continues (record-only)",
+        );
+        break;
       }
       default:
         break;

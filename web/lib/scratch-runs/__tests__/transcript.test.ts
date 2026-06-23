@@ -1,3 +1,5 @@
+import type { SupervisorEvent } from "@/lib/supervisor-client";
+
 import { describe, expect, it, vi } from "vitest";
 
 // events.ts issues `update(...).set(...).where(eq(scratch_messages.id, id))` and
@@ -12,6 +14,7 @@ vi.mock("drizzle-orm", async (orig) => {
 
 import { sendScratchPromptAndProjectEvents } from "@/lib/scratch-runs/events";
 import {
+  encodeHookTripPayload,
   encodeToolPayload,
   interpretScratchUpdate,
   parseQuickReplies,
@@ -224,6 +227,64 @@ describe("parseScratchMessageContent", () => {
     expect(
       parseScratchMessageContent("system", '{"jsonrpc":"2.0","id":0}'),
     ).toMatchObject({ kind: "legacy", role: "system" });
+  });
+
+  it("round-trips a hook_trip payload (ADR-104)", () => {
+    const content = encodeHookTripPayload("repetition", "halt");
+
+    expect(parseScratchMessageContent("system", content)).toEqual({
+      kind: "hook_trip",
+      rule: "repetition",
+      disposition: "halt",
+    });
+  });
+});
+
+describe("scratch hook_trip notice (ADR-104 T3.3)", () => {
+  function makeRawApi(events: SupervisorEvent[]) {
+    return {
+      async cancelPermission() {
+        return { ok: true as const };
+      },
+      async sendPrompt() {
+        return { stopReason: "end_turn" as const };
+      },
+      async *streamSession() {
+        for (const ev of events) yield ev;
+      },
+    };
+  }
+
+  it("appends a system notice and never escalates to NeedsInput", async () => {
+    const rows: Row[] = [];
+
+    await sendScratchPromptAndProjectEvents({
+      runId: "run-1",
+      sessionId: "sup-1",
+      stepId: "dialog",
+      prompt: "go",
+      db: makeFakeDb(rows) as never,
+      api: makeRawApi([
+        {
+          type: "session.hook_trip",
+          sessionId: "sup-1",
+          monotonicId: 1,
+          rule: "path_guard",
+          lifecycle: "pre_tool_call",
+          disposition: "deny",
+          toolCall: { title: "Edit /etc/passwd" },
+        },
+      ]) as never,
+    });
+
+    const system = rows.filter((row) => row.role === "system");
+
+    expect(system).toHaveLength(1);
+    expect(parseScratchMessageContent("system", system[0].content)).toEqual({
+      kind: "hook_trip",
+      rule: "path_guard",
+      disposition: "deny",
+    });
   });
 });
 

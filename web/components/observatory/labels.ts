@@ -84,6 +84,7 @@ export function labelsFromTranslations(
       subtitle: t("budget.subtitle"),
       escalations: t("budget.escalations"),
       terminations: t("budget.terminations"),
+      guardrailTrips: t("budget.guardrailTrips"),
       warnNotSurfaced: t("budget.warnNotSurfaced"),
     },
   };

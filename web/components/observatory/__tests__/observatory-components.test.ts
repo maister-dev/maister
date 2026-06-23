@@ -83,6 +83,7 @@ function portfolio(): ObservatoryPortfolio {
     budget: {
       budgetEscalations: 0,
       budgetTerminations: 0,
+      hookTripEscalations: 0,
     },
     topSignals: [
       {
@@ -484,10 +485,14 @@ describe("Observatory components", () => {
     expect(html).toContain("access_token=[redacted] failed");
   });
 
-  it("renders budget escalation/termination counts read-only with warn caveat", () => {
+  it("renders budget escalation/termination/guardrail counts read-only with warn caveat", () => {
     const html = renderToStaticMarkup(
       createElement(BudgetSurfaceCard, {
-        budget: { budgetEscalations: 1234, budgetTerminations: 0 },
+        budget: {
+          budgetEscalations: 1234,
+          budgetTerminations: 0,
+          hookTripEscalations: 7,
+        },
         labels,
       }),
     );
@@ -495,6 +500,9 @@ describe("Observatory components", () => {
     expect(html).toContain("Budget pressure");
     expect(html).toContain("Escalations");
     expect(html).toContain("Terminations");
+    // ADR-104 (M40): the guardrail-trips tile.
+    expect(html).toContain("Guardrail trips");
+    expect(html).toContain(">7<");
     // thousands separator proves Intl formatting; the zero state renders "0".
     expect(html).toContain("1,234");
     expect(html).toContain(">0<");
@@ -506,12 +514,17 @@ describe("Observatory components", () => {
     const ruLabels = labelsForTest(ru.observatory as Record<string, unknown>);
     const html = renderToStaticMarkup(
       createElement(BudgetSurfaceCard, {
-        budget: { budgetEscalations: 2, budgetTerminations: 3 },
+        budget: {
+          budgetEscalations: 2,
+          budgetTerminations: 3,
+          hookTripEscalations: 4,
+        },
         labels: ruLabels,
       }),
     );
 
     expect(html).toContain("Давление бюджета");
+    expect(html).toContain("Срабатывания гардрейла");
     expect(html).toContain("Эскалации");
     expect(html).toContain("Остановки");
   });

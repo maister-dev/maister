@@ -41,10 +41,22 @@ export type ScratchPermissionPayload = {
   prompt: string;
 };
 
+// ADR-104 (M40): a guardrail trip surfaced inline in a scratch transcript. A
+// scratch run never escalates to NeedsInput (D2) — the trip is a chat notice
+// only. `deny` = path_guard deny-and-continue; `halt` = a liveness breaker.
+export type ScratchHookTripRule = "path_guard" | "repetition" | "no_progress";
+export type ScratchHookTripPayload = {
+  v: 1;
+  kind: "hook_trip";
+  rule: ScratchHookTripRule;
+  disposition: "deny" | "halt";
+};
+
 export type ScratchSystemPayload =
   | ScratchThoughtPayload
   | ScratchUsagePayload
-  | ScratchPermissionPayload;
+  | ScratchPermissionPayload
+  | ScratchHookTripPayload;
 
 export type ParsedScratchMessage =
   | { kind: "text"; markdown: boolean; text: string }
@@ -52,6 +64,11 @@ export type ParsedScratchMessage =
   | { kind: "thought"; text: string }
   | { kind: "usage"; used: number; size: number }
   | { kind: "permission"; prompt: string }
+  | {
+      kind: "hook_trip";
+      rule: ScratchHookTripRule;
+      disposition: "deny" | "halt";
+    }
   | { kind: "legacy"; role: ScratchMessageRole; text: string };
 
 export type QuickReply = { label: string; value: string };
@@ -290,6 +307,20 @@ export function encodePermissionPayload(prompt: string): string {
   return JSON.stringify(payload);
 }
 
+export function encodeHookTripPayload(
+  rule: ScratchHookTripRule,
+  disposition: "deny" | "halt",
+): string {
+  const payload: ScratchHookTripPayload = {
+    v: 1,
+    kind: "hook_trip",
+    rule,
+    disposition,
+  };
+
+  return JSON.stringify(payload);
+}
+
 export function parseScratchMessageContent(
   role: ScratchMessageRole,
   content: string,
@@ -324,6 +355,19 @@ export function parseScratchMessageContent(
     }
     if (obj.kind === "permission" && typeof obj.prompt === "string") {
       return { kind: "permission", prompt: obj.prompt };
+    }
+    if (
+      obj.kind === "hook_trip" &&
+      (obj.rule === "path_guard" ||
+        obj.rule === "repetition" ||
+        obj.rule === "no_progress") &&
+      (obj.disposition === "deny" || obj.disposition === "halt")
+    ) {
+      return {
+        kind: "hook_trip",
+        rule: obj.rule,
+        disposition: obj.disposition,
+      };
     }
   }
 

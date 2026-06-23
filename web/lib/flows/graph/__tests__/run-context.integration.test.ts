@@ -202,6 +202,7 @@ function makeAgentSupervisor(text: string): SupervisorApi {
     cancelPermission: (async () => ({
       ok: true,
     })) as unknown as SupervisorApi["cancelPermission"],
+    checkpointSession: async () => ({ alreadyCheckpointed: false, sessionId: "s", monotonicId: 0 }),
     deliverPermission: (async () => ({
       ok: true,
     })) as unknown as SupervisorApi["deliverPermission"],

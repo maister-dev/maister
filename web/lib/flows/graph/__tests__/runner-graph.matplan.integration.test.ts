@@ -215,6 +215,7 @@ function makeSupervisorSpy(): SupervisorApi & {
     cancelPermission: vi.fn(
       async () => ({ ok: true }) as { ok: true },
     ) as unknown as SupervisorApi["cancelPermission"],
+    checkpointSession: async () => ({ alreadyCheckpointed: false, sessionId: "s", monotonicId: 0 }),
     deliverPermission: vi.fn(
       async () => ({ ok: true }) as { ok: true },
     ) as unknown as SupervisorApi["deliverPermission"],

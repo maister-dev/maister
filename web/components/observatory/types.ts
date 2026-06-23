@@ -55,6 +55,7 @@ export interface ObservatoryBudgetLabels {
   subtitle: string;
   escalations: string;
   terminations: string;
+  guardrailTrips: string;
   warnNotSurfaced: string;
 }
 

@@ -12,6 +12,7 @@ import * as schemaModule from "@/lib/db/schema";
 import { nextScratchMessageSequence } from "@/lib/scratch-runs/messages";
 import { runStatusForDialogStatus } from "@/lib/scratch-runs/state";
 import {
+  encodeHookTripPayload,
   encodePermissionPayload,
   encodeThoughtPayload,
   encodeToolPayload,
@@ -529,6 +530,29 @@ function startScratchEventConsumer(args: {
                 reason: err instanceof Error ? err.message : String(err),
               };
             }
+          }
+          continue;
+        }
+
+        if (event.type === "session.hook_trip") {
+          // ADR-104 (M40): scratch never escalates to NeedsInput (D2) — surface
+          // the trip as an in-session chat notice only. A path_guard deny already
+          // denied the tool inline (deny-and-continue); a halt ends the turn (the
+          // run then goes WaitingForUser via the natural session.exited). No
+          // dialogStatus change here.
+          try {
+            await appendScratchMessageRow({
+              db: args.db,
+              runId: args.runId,
+              role: "system",
+              content: encodeHookTripPayload(event.rule, event.disposition),
+              supervisorEventId: String(event.monotonicId),
+            });
+          } catch (err) {
+            log.warn(
+              { sessionId: args.sessionId, err: (err as Error).message },
+              "scratch hook_trip notice write failed",
+            );
           }
           continue;
         }

@@ -213,6 +213,8 @@ export function ScratchConversation({
     copied: t("copied"),
     toolCount: (name, count) => t("toolCount", { name, count }),
     clearedHistory: (count) => t("clearedHistory", { count }),
+    hookTrip: ({ rule, disposition }) =>
+      t("hookTripNotice", { rule, disposition }),
   };
   const quickReplies = useMemo(() => {
     if (!canCompose(status)) return [];

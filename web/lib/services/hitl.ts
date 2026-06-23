@@ -1670,6 +1670,203 @@ async function handleBudgetBreachResponse(args: {
   );
 }
 
+// ADR-104 (M40): respond to a guardrail trip (NeedsInput hook_trip HITL). A
+// resume-or-abort decision (like infra_recovery / budget_breach), routed through
+// each run_kind's EXISTING resume path: flow → scheduleResume (runFlow does the
+// NeedsInput→Running CAS); agent → CAS the run Running in-tx then respawn via
+// startAgentSession. abort → terminal Failed. Human-actor-only is enforced at
+// the respondToHitl chokepoint. scratch never produces a hook_trip HITL (D2).
+async function handleHookTripResponse(args: {
+  db: any;
+  hitlRow: any;
+  runRow: any;
+  body: { optionId?: string };
+  runId: string;
+  hitlRequestId: string;
+  startedAt: number;
+  recordSuccessAudit?: (db: any, statusCode: number) => Promise<void>;
+}): Promise<NextResponse> {
+  const {
+    db,
+    runRow,
+    body,
+    runId,
+    hitlRequestId,
+    startedAt,
+    recordSuccessAudit,
+  } = args;
+  const decision = body.optionId;
+
+  if (decision !== "resume" && decision !== "abort") {
+    throw new MaisterError(
+      "PRECONDITION",
+      'hook_trip response requires optionId "resume" or "abort"',
+    );
+  }
+
+  const isAgent = runRow.runKind === "agent";
+
+  const outcome = await db.transaction(async (tx: any) => {
+    const locked = await lockHitlRow(tx, hitlRequestId);
+
+    if (!locked) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `hitl request not found: ${hitlRequestId}`,
+      );
+    }
+    if (locked.respondedAt) {
+      return { transition: "already-delivered" } as const;
+    }
+
+    await tx
+      .update(hitlRequests)
+      .set({ respondedAt: new Date() })
+      .where(eq(hitlRequests.id, hitlRequestId));
+
+    if (decision === "abort") {
+      const terminal = await tx
+        .update(runs)
+        .set({ status: "Failed", endedAt: new Date() })
+        .where(
+          and(
+            eq(runs.id, runId),
+            inArray(runs.status, ["NeedsInput", "NeedsInputIdle"]),
+          ),
+        )
+        .returning({
+          projectId: runs.projectId,
+          taskId: runs.taskId,
+          flowId: runs.flowId,
+          runKind: runs.runKind,
+          parentRunId: runs.parentRunId,
+        });
+
+      if (terminal.length > 0 && terminal[0].projectId) {
+        await emitWebhookEvent({
+          db: tx,
+          type: "run.failed",
+          projectId: terminal[0].projectId,
+          runId,
+          data: { errorCode: "PRECONDITION", reason: "hook_trip_abandoned" },
+        });
+        await emitDomainEvent({
+          db: tx,
+          kind: "run.failed",
+          projectId: terminal[0].projectId,
+          runId,
+          taskId: terminal[0].taskId,
+          actor: { type: "system", id: null },
+          parentRunId: terminal[0].parentRunId,
+          payload: {
+            runId,
+            taskId: terminal[0].taskId,
+            flowId: terminal[0].flowId,
+            runKind: terminal[0].runKind,
+            reason: "hook_trip_abandoned",
+          },
+        });
+      }
+      await systemCloseActiveAssignmentsForRun({
+        db: tx,
+        runId,
+        reason: "hook_trip aborted",
+      });
+      await recordSuccessAudit?.(tx, 200);
+
+      return { transition: "aborted" } as const;
+    }
+
+    // resume: an agent run has no live session after a trip (it was
+    // checkpointed) — flip it Running here so startAgentSession respawns +
+    // session/resumes. A flow run is left NeedsInput; runFlow does its own
+    // NeedsInput→Running CAS on resume. CAS-lost (run moved) → CONFLICT
+    // rolls the whole tx back (respondedAt reverts).
+    if (isAgent) {
+      const rows = await tx
+        .update(runs)
+        .set({ status: "Running", keepaliveUntil: null, checkpointAt: null })
+        .where(
+          and(
+            eq(runs.id, runId),
+            inArray(runs.status, ["NeedsInput", "NeedsInputIdle"]),
+          ),
+        )
+        .returning({ id: runs.id });
+
+      if (rows.length === 0) {
+        throw new MaisterError(
+          "CONFLICT",
+          `run ${runId} is no longer awaiting a hook_trip response`,
+        );
+      }
+    }
+    await systemCloseActiveAssignmentsForRun({
+      db: tx,
+      runId,
+      reason: "hook_trip resumed",
+    });
+    await recordSuccessAudit?.(tx, 202);
+
+    return { transition: "resume" } as const;
+  });
+
+  if (outcome.transition === "already-delivered") {
+    return NextResponse.json(
+      { ok: true, runStatus: runRow.status, idempotent: true },
+      { status: 200 },
+    );
+  }
+
+  if (outcome.transition === "aborted") {
+    log.info(
+      { runId, hitlRequestId, decision, latencyMs: Date.now() - startedAt },
+      "hook_trip aborted — run Failed",
+    );
+
+    return NextResponse.json(
+      { ok: true, runStatus: "Failed" },
+      { status: 200 },
+    );
+  }
+
+  // resume → re-enter the run through its run_kind's resume path.
+  if (isAgent) {
+    const { startAgentSession } = await import("@/lib/agents/launch");
+
+    queueMicrotask(() => {
+      void startAgentSession(runId, { db }).catch((err: unknown) => {
+        log.error(
+          {
+            runId,
+            hitlRequestId,
+            err: err instanceof Error ? err.message : String(err),
+          },
+          "agent hook_trip resume failed",
+        );
+      });
+    });
+  } else {
+    scheduleResume(runId);
+  }
+
+  log.info(
+    {
+      runId,
+      hitlRequestId,
+      decision,
+      runKind: runRow.runKind,
+      latencyMs: Date.now() - startedAt,
+    },
+    "hook_trip resumed — re-entering run",
+  );
+
+  return NextResponse.json(
+    { ok: true, runStatus: "Running", state: "resume-in-progress" },
+    { status: 202 },
+  );
+}
+
 export async function respondToHitl(
   input: RespondInput,
   actor: HitlActor,
@@ -1736,8 +1933,8 @@ export async function respondToHitl(
       hitlRow.kind === "infra_recovery" ||
       hitlRow.kind === "budget_breach" ||
       // ADR-104 (M40): a guardrail trip is a safety escalation only a human may
-      // resolve — a machine/agent token must never dismiss its own trip. The
-      // respond-dispatch branch for hook_trip lands with its producer in T3.4.
+      // resolve — a machine/agent token must never dismiss its own trip
+      // (dispatched to handleHookTripResponse below).
       hitlRow.kind === "hook_trip"
     ) {
       throw new MaisterError(
@@ -1788,6 +1985,21 @@ export async function respondToHitl(
     log.debug({ runId, hitlRequestId, branch: "budget_breach" }, "dispatch");
 
     return await handleBudgetBreachResponse({
+      db,
+      hitlRow,
+      runRow,
+      body,
+      runId,
+      hitlRequestId,
+      startedAt,
+      recordSuccessAudit,
+    });
+  }
+
+  if (hitlRow.kind === "hook_trip") {
+    log.debug({ runId, hitlRequestId, branch: "hook_trip" }, "dispatch");
+
+    return await handleHookTripResponse({
       db,
       hitlRow,
       runRow,

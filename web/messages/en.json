@@ -753,9 +753,10 @@
     },
     "budget": {
       "title": "Budget pressure",
-      "subtitle": "Read-only count of token-budget breaches in this window — runs paused for a budget decision, and runs terminated at the hard ceiling.",
+      "subtitle": "Read-only count of token-budget breaches in this window — runs paused for a budget decision, runs terminated at the hard ceiling, and runs halted by a guardrail trip.",
       "escalations": "Escalations",
       "terminations": "Terminations",
+      "guardrailTrips": "Guardrail trips",
       "warnNotSurfaced": "Warn-band signals are logged, not counted here — only escalations and terminations emit domain events."
     },
     "harness": {
@@ -888,6 +889,7 @@
     "copied": "copied",
     "toolCount": "{name} ×{count}",
     "clearedHistory": "Cleared history · {count, plural, one {# item} other {# items}}",
+    "hookTripNotice": "Guardrail · {rule, select, path_guard {path guard} repetition {repetition} no_progress {no progress} other {trip}} — {disposition, select, deny {write denied, continuing} halt {run halted} other {tripped}}",
     "tokens": "Context tokens",
     "status": {
       "Starting": "Starting",

@@ -202,6 +202,18 @@ describe("scratch event projection", () => {
         monotonicId: 4,
       }),
     ).toMatchObject({ dialogStatus: "Crashed" });
+
+    // ADR-104 (M40): a scratch hook_trip never escalates to NeedsInput (D2) —
+    // the projection emits no dialogStatus (the consumer adds a chat notice).
+    expect(
+      projectSupervisorEventToScratch({
+        type: "session.hook_trip",
+        monotonicId: 5,
+        rule: "repetition",
+        lifecycle: "pre_tool_call",
+        disposition: "halt",
+      }),
+    ).toEqual({});
   });
 
   it("cancels supervisor permission when permission persistence fails", async () => {

@@ -124,6 +124,9 @@ export interface ObservatoryCostSummary {
 export interface ObservatoryBudgetSummary {
   budgetEscalations: number;
   budgetTerminations: number;
+  // ADR-104 (M40): run.escalated events with reason "hook_trip" — a guardrail
+  // liveness breaker (repetition / no_progress) halted + escalated a run.
+  hookTripEscalations: number;
 }
 
 export interface ObservatoryTotals {
@@ -348,7 +351,11 @@ async function getCostSummary(
 }
 
 function emptyBudgetSummary(): ObservatoryBudgetSummary {
-  return { budgetEscalations: 0, budgetTerminations: 0 };
+  return {
+    budgetEscalations: 0,
+    budgetTerminations: 0,
+    hookTripEscalations: 0,
+  };
 }
 
 async function getBudgetSummary(
@@ -367,11 +374,14 @@ async function getBudgetSummary(
   // Terminate emits are not normalized — flow/scratch use BUDGET_EXCEEDED, the
   // agent finalizer uses budget_breach, the tree-root uses budget_exceeded;
   // all three must be matched. WARN is a logExecPolicyAction log line (no
-  // domain event) so it is not surfaceable here. One grouped scan, no N+1.
+  // domain event) so it is not surfaceable here. ADR-104: a hook_trip escalate
+  // shares the run.escalated kind, distinguished by reason. One grouped scan,
+  // no N+1.
   const rows = await client
     .select({
       escalations: sql<number>`count(*) filter (where ${domainEvents.kind} = 'run.escalated' and ${domainEvents.payload}->>'reason' = 'budget_exceeded')::int`,
       terminations: sql<number>`count(*) filter (where ${domainEvents.kind} = 'run.failed' and ${domainEvents.payload}->>'reason' in ('budget_exceeded', 'BUDGET_EXCEEDED', 'budget_breach'))::int`,
+      hookTrips: sql<number>`count(*) filter (where ${domainEvents.kind} = 'run.escalated' and ${domainEvents.payload}->>'reason' = 'hook_trip')::int`,
     })
     .from(domainEvents)
     .where(
@@ -388,6 +398,7 @@ async function getBudgetSummary(
   return {
     budgetEscalations: row?.escalations ?? 0,
     budgetTerminations: row?.terminations ?? 0,
+    hookTripEscalations: row?.hookTrips ?? 0,
   };
 }
 
