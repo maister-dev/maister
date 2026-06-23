@@ -1668,6 +1668,15 @@
       "failures": "failures",
       "wallclock": "wall-clock"
     },
+    "hookTripTitle": "Guardrail trip",
+    "hookTripSummary": "\"$rule\" guardrail tripped — resume the run or abort.",
+    "hookTripToolCall": "Last tool: $title",
+    "hookTripResume": "Resume",
+    "hookTripAbort": "Abort",
+    "hookTripRule": {
+      "repetition": "repetition",
+      "no_progress": "no progress"
+    },
     "error": {
       "generic": "Something went wrong. Try again.",
       "CRASH": "Something went wrong. Try again.",
@@ -2526,7 +2535,8 @@
         "skills": "Skills",
         "restrictions": "Restrictions",
         "permissionMode": "Permission mode",
-        "workspaceAccess": "Workspace access"
+        "workspaceAccess": "Workspace access",
+        "hooks": "Guardrail hooks"
       },
       "timeoutMs": "Timeout (ms)",
       "environmentPolicy": "Environment policy",
@@ -2569,6 +2579,14 @@
         "onMismatchNone": "Fail (CONFIG)",
         "onMismatchRetry": "Retry (self)",
         "hint": "retry / an outcome requires a rework block."
+      },
+      "hooks": {
+        "title": "Guardrail hooks",
+        "repetitionMax": "Repetition limit (identical calls)",
+        "noProgressMaxTurns": "No-progress limit (turns)",
+        "pathGuardAllowedPaths": "Path guard — allowed paths (comma-separated)",
+        "disabled": "Disable auto-arm (unattended)",
+        "hint": "Liveness breakers auto-arm under the unattended preset; path guard is always opt-in."
       }
     },
     "gate": {

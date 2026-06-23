@@ -17,13 +17,14 @@ import ru from "@/messages/ru.json";
 //     run.settingsVerdictEnforced
 //     run.settingsVerdictInstructed
 //     run.settingsVerdictRefused
-//   Capability-class labels (all 6 classes):
+//   Capability-class labels (all 7 classes — `hooks` added by ADR-104 / M40):
 //     run.settingsClassMcps
 //     run.settingsClassTools
 //     run.settingsClassSkills
 //     run.settingsClassRestrictions
 //     run.settingsClassPermissionMode
 //     run.settingsClassWorkspaceAccess
+//     run.settingsClassHooks
 //   Panel framing + refusal:
 //     run.settingsTitle                 (panel heading)
 //     run.settingsNoConstraints         (node with classes: [])
@@ -48,6 +49,7 @@ const RUN_SETTINGS_KEYS = [
   "settingsClassRestrictions",
   "settingsClassPermissionMode",
   "settingsClassWorkspaceAccess",
+  "settingsClassHooks",
   "settingsNoConstraints",
   "settingsRefusalReason",
   "settingsRefusedHint",

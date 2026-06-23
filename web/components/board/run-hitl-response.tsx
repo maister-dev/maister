@@ -296,6 +296,13 @@ export function RunHitlResponse({
     "budgetMeter.tokens": t("budgetMeter.tokens"),
     "budgetMeter.failures": t("budgetMeter.failures"),
     "budgetMeter.wallclock": t("budgetMeter.wallclock"),
+    hookTripTitle: t("hookTripTitle"),
+    hookTripSummary: t("hookTripSummary"),
+    "hookTripRule.repetition": t("hookTripRule.repetition"),
+    "hookTripRule.no_progress": t("hookTripRule.no_progress"),
+    hookTripToolCall: t("hookTripToolCall"),
+    hookTripResume: t("hookTripResume"),
+    hookTripAbort: t("hookTripAbort"),
   };
 
   return (

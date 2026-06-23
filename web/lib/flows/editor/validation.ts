@@ -45,6 +45,10 @@ export function validateEditorManifest(
         // Decide errors are reported via validateDecideDraft below (it adds the
         // when-grammar rule the base node schema does not run).
         if (issue.path.startsWith("decide")) continue;
+        // `settings.hooks` (ADR-104) needs NO separate pass: unlike decide/gates
+        // it carries no deferred rule beyond the base node schema (positive ints,
+        // min-1 paths, .strict()), so its errors surface here directly. The
+        // cross-node engine_min >= 1.8.0 floor stays in compile.
         issues.push({
           nodeId: node.id,
           path: issue.path,

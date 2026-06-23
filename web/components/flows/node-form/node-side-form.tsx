@@ -39,6 +39,7 @@ export type NodeSideFormLabels = {
     restrictions: string;
     permissionMode: string;
     workspaceAccess: string;
+    hooks: string;
   };
   timeoutMs: string;
   environmentPolicy: string;
@@ -65,7 +66,18 @@ export type NodeSideFormLabels = {
   noTransitions: string;
   noGates: string;
   decide: DecideFormLabels;
+  hooks: HooksFormLabels;
   gate: GateFormLabels;
+};
+
+// ADR-104 (M40) — the `hooks` capability-class editor labels.
+export type HooksFormLabels = {
+  title: string;
+  repetitionMax: string;
+  noProgressMaxTurns: string;
+  pathGuardAllowedPaths: string;
+  disabled: string;
+  hint: string;
 };
 
 export type DecideFormLabels = {
@@ -240,6 +252,19 @@ export function NodeSideForm({
     if (value === "") delete next[cls];
     else next[cls] = value;
     setSetting("enforcement", Object.keys(next).length ? next : undefined);
+  };
+  // ADR-104 (M40) — the `hooks` block is sparse: its presence is derived from
+  // content (any populated sub-field) rather than a separate enable toggle, so
+  // clearing every field removes `settings.hooks` entirely. Cross-node concerns
+  // (engine_min >= 1.8.0 when `hooks` is declared) stay in compile, never here.
+  const hooks = asRec(settings.hooks);
+  const setHooks = (patch: Rec): void => {
+    const next: Rec = { ...hooks, ...patch };
+
+    for (const key of Object.keys(next)) {
+      if (next[key] === undefined) delete next[key];
+    }
+    setSetting("hooks", Object.keys(next).length ? next : undefined);
   };
   const setAction = (key: string, value: unknown): void =>
     emit({ ...n, action: { ...action, [key]: value } });
@@ -495,6 +520,7 @@ export function NodeSideForm({
                   "restrictions",
                   "permissionMode",
                   "workspaceAccess",
+                  "hooks",
                 ] as const
               ).map((cls) => (
                 <SelectField
@@ -513,6 +539,63 @@ export function NodeSideForm({
                   onChange={(v) => setEnforcement(cls, v)}
                 />
               ))}
+            </div>
+            <div className="grid gap-2" data-testid="node-hooks">
+              <h4 className={SECTION_CLS}>{labels.hooks.title}</h4>
+              <TextField
+                label={labels.hooks.repetitionMax}
+                readOnly={readOnly}
+                testid="node-hooks-repetition-max"
+                type="number"
+                value={str(asRec(hooks.repetition).max)}
+                onChange={(v) =>
+                  setHooks({
+                    repetition: v === "" ? undefined : { max: Number(v) },
+                  })
+                }
+              />
+              <TextField
+                label={labels.hooks.noProgressMaxTurns}
+                readOnly={readOnly}
+                testid="node-hooks-no-progress-max-turns"
+                type="number"
+                value={str(asRec(hooks.noProgress).maxTurns)}
+                onChange={(v) =>
+                  setHooks({
+                    noProgress: v === "" ? undefined : { maxTurns: Number(v) },
+                  })
+                }
+              />
+              <TextField
+                label={labels.hooks.pathGuardAllowedPaths}
+                readOnly={readOnly}
+                testid="node-hooks-path-guard-allowed-paths"
+                value={joinList(asRec(hooks.pathGuard).allowedPaths)}
+                onChange={(v) =>
+                  setHooks({
+                    pathGuard: parseList(v).length
+                      ? { allowedPaths: parseList(v) }
+                      : undefined,
+                  })
+                }
+              />
+              <label className="flex items-center gap-2">
+                <input
+                  checked={Boolean(hooks.disabled)}
+                  data-testid="node-hooks-disabled"
+                  disabled={readOnly}
+                  type="checkbox"
+                  onChange={(e) =>
+                    setHooks({
+                      disabled: e.target.checked ? true : undefined,
+                    })
+                  }
+                />
+                <span className={LABEL_CLS}>{labels.hooks.disabled}</span>
+              </label>
+              <p className="font-mono text-[10px] text-mute">
+                {labels.hooks.hint}
+              </p>
             </div>
           </>
         ) : null}

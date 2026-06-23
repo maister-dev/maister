@@ -29,6 +29,11 @@ const MANIFEST: FlowYamlV1 = flowYamlV1Schema.parse({
         thinkingEffort: "high",
         permissionMode: "ask",
         workspaceAccess: "write",
+        hooks: {
+          repetition: { max: 5 },
+          noProgress: { maxTurns: 15 },
+          pathGuard: { allowedPaths: ["src/**", "lib/**"] },
+        },
       },
       rework: {
         allowedTargets: ["plan"],
@@ -121,6 +126,7 @@ const labels: NodeSideFormProps["labels"] = {
     restrictions: "Restrictions",
     permissionMode: "Permission mode",
     workspaceAccess: "Workspace access",
+    hooks: "Guardrail hooks",
   },
   timeoutMs: "Timeout (ms)",
   environmentPolicy: "Environment policy",
@@ -163,6 +169,14 @@ const labels: NodeSideFormProps["labels"] = {
     onMismatchNone: "Fail (CONFIG)",
     onMismatchRetry: "Retry (self)",
     hint: "retry/<outcome> requires a rework block.",
+  },
+  hooks: {
+    title: "Guardrail hooks",
+    repetitionMax: "Repetition limit",
+    noProgressMaxTurns: "No-progress limit",
+    pathGuardAllowedPaths: "Allowed paths",
+    disabled: "Disable auto-arm",
+    hint: "hooks hint",
   },
   gate: {
     mode: "Mode",
@@ -303,6 +317,37 @@ describe("NodeSideForm — decide routing (M38)", () => {
 
     expect(html).toContain('data-testid="node-decide-source"');
     expect(html).toContain('data-testid="node-decide-onmismatch"');
+  });
+});
+
+describe("NodeSideForm — hooks (M40)", () => {
+  it("ai_coding renders the hooks editor + enforcement.hooks with values", () => {
+    const html = render(nodeById("plan"));
+
+    expect(html).toContain('data-testid="node-hooks"');
+    expect(html).toContain('data-testid="node-hooks-repetition-max"');
+    expect(html).toContain('data-testid="node-hooks-no-progress-max-turns"');
+    expect(html).toContain('data-testid="node-hooks-path-guard-allowed-paths"');
+    expect(html).toContain('data-testid="node-hooks-disabled"');
+    expect(html).toContain('data-testid="node-enforcement-hooks"');
+    // the node's hooks values round-trip into the fields
+    expect(html).toContain('value="5"');
+    expect(html).toContain('value="15"');
+    expect(html).toContain("src/**, lib/**");
+  });
+
+  it("judge renders the hooks editor (empty when no hooks settings)", () => {
+    const html = render(nodeById("assess"));
+
+    expect(html).toContain('data-testid="node-hooks"');
+    expect(html).toContain('data-testid="node-hooks-repetition-max"');
+  });
+
+  it("omits the hooks editor for cli and human nodes", () => {
+    expect(render(nodeById("build"))).not.toContain('data-testid="node-hooks"');
+    expect(render(nodeById("review"))).not.toContain(
+      'data-testid="node-hooks"',
+    );
   });
 });
 

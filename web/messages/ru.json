@@ -1668,6 +1668,15 @@
       "failures": "сбои",
       "wallclock": "время"
     },
+    "hookTripTitle": "Срабатывание хука",
+    "hookTripSummary": "Сработал защитный хук «$rule» — продолжите запуск или прекратите.",
+    "hookTripToolCall": "Последний инструмент: $title",
+    "hookTripResume": "Продолжить",
+    "hookTripAbort": "Прекратить",
+    "hookTripRule": {
+      "repetition": "повторение",
+      "no_progress": "нет прогресса"
+    },
     "error": {
       "generic": "Что-то пошло не так. Попробуйте ещё раз.",
       "CRASH": "Что-то пошло не так. Попробуйте ещё раз.",
@@ -2526,7 +2535,8 @@
         "skills": "Навыки",
         "restrictions": "Ограничения",
         "permissionMode": "Режим разрешений",
-        "workspaceAccess": "Доступ к рабочей области"
+        "workspaceAccess": "Доступ к рабочей области",
+        "hooks": "Защитные хуки"
       },
       "timeoutMs": "Таймаут (мс)",
       "environmentPolicy": "Политика окружения",
@@ -2569,6 +2579,14 @@
         "onMismatchNone": "Сбой (CONFIG)",
         "onMismatchRetry": "Повтор (себя)",
         "hint": "Для retry / исхода нужен блок rework."
+      },
+      "hooks": {
+        "title": "Защитные хуки",
+        "repetitionMax": "Лимит повторов (идентичных вызовов)",
+        "noProgressMaxTurns": "Лимит без прогресса (ходов)",
+        "pathGuardAllowedPaths": "Path guard — разрешённые пути (через запятую)",
+        "disabled": "Отключить авто-взвод (unattended)",
+        "hint": "Брейкеры живости авто-взводятся в пресете unattended; path guard всегда явный."
       }
     },
     "gate": {

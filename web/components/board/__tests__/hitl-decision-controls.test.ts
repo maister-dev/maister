@@ -43,6 +43,7 @@ vi.mock("next-intl", () => ({
 import {
   HitlDecisionControls,
   budgetBreachFromSchema,
+  hookTripFromSchema,
   reviewLoopInfo,
 } from "@/components/board/hitl-decision-controls";
 
@@ -935,5 +936,123 @@ describe("budgetBreachFromSchema — pure schema narrowing", () => {
         limit: 2,
       }),
     ).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Guardrail-hook trip card (ADR-104 / M40). Renders for kind="hook_trip" with
+// the escalator schema { kind, rule, decisions:["resume","abort"], toolCall? }:
+// a localized rule summary, the offending tool-call line (when present), a
+// primary "Resume" and a destructive "Abort" button. Mirrors the budget_breach
+// card; confidence is never shown (run-hitl-response passes showConfidence=false).
+// ---------------------------------------------------------------------------
+
+const HOOK_TRIP_LABELS = {
+  ...LABELS,
+  hookTripTitle: "Guardrail trip",
+  hookTripSummary: '"$rule" guardrail tripped — resume the run or abort.',
+  "hookTripRule.repetition": "repetition",
+  "hookTripRule.no_progress": "no progress",
+  hookTripToolCall: "Last tool: $title",
+  hookTripResume: "Resume",
+  hookTripAbort: "Abort",
+};
+
+const HOOK_TRIP_SCHEMA = {
+  kind: "hook_trip",
+  rule: "repetition",
+  decisions: ["resume", "abort"],
+  toolCall: { title: "Edit src/app.ts" },
+};
+
+describe("HitlDecisionControls — hook_trip card (M40)", () => {
+  it("renders the trip card with the localized rule + offending tool call", () => {
+    const html = render({
+      kind: "hook_trip",
+      schema: HOOK_TRIP_SCHEMA,
+      labels: HOOK_TRIP_LABELS,
+    });
+
+    expect(html).toContain('data-testid="hook-trip-card"');
+    expect(html).toContain("repetition");
+    expect(html).toContain("guardrail tripped");
+    expect(html).toContain("Last tool: Edit src/app.ts");
+  });
+
+  it("renders both Resume and Abort buttons", () => {
+    const html = render({
+      kind: "hook_trip",
+      schema: HOOK_TRIP_SCHEMA,
+      labels: HOOK_TRIP_LABELS,
+    });
+
+    expect(html).toContain('data-testid="hook-trip-resume"');
+    expect(html).toContain(">Resume<");
+    expect(html).toContain('data-testid="hook-trip-abort"');
+    expect(html).toContain(">Abort<");
+  });
+
+  it("localizes no_progress and omits the tool-call line when toolCall is absent", () => {
+    const html = render({
+      kind: "hook_trip",
+      schema: {
+        kind: "hook_trip",
+        rule: "no_progress",
+        decisions: ["resume", "abort"],
+      },
+      labels: HOOK_TRIP_LABELS,
+    });
+
+    expect(html).toContain('data-testid="hook-trip-card"');
+    expect(html).toContain("no progress");
+    expect(html).not.toContain('data-testid="hook-trip-tool-call"');
+  });
+
+  it("never renders a confidence input for hook_trip", () => {
+    const html = render({
+      kind: "hook_trip",
+      schema: HOOK_TRIP_SCHEMA,
+      labels: HOOK_TRIP_LABELS,
+      // Even if a caller forced showConfidence, the trip branch ignores it.
+      showConfidence: true,
+      confidence: "0.9",
+    });
+
+    expect(html).not.toContain("run.confidenceLabel");
+  });
+
+  it("disables both buttons when disabled", () => {
+    const html = render({
+      kind: "hook_trip",
+      schema: HOOK_TRIP_SCHEMA,
+      labels: HOOK_TRIP_LABELS,
+      disabled: true,
+    });
+
+    expect(buttonTagFor(html, ">Resume<")).toContain("disabled");
+    expect(buttonTagFor(html, ">Abort<")).toContain("disabled");
+  });
+});
+
+describe("hookTripFromSchema — pure schema narrowing", () => {
+  it("parses a well-formed hook_trip schema with toolCall title", () => {
+    expect(hookTripFromSchema(HOOK_TRIP_SCHEMA)).toEqual({
+      rule: "repetition",
+      toolCallTitle: "Edit src/app.ts",
+    });
+  });
+
+  it("parses without a toolCall", () => {
+    expect(
+      hookTripFromSchema({ kind: "hook_trip", rule: "no_progress" }),
+    ).toEqual({ rule: "no_progress" });
+  });
+
+  it("returns null for a non-hook_trip or malformed schema", () => {
+    expect(hookTripFromSchema({ kind: "budget_breach" })).toBeNull();
+    // missing rule
+    expect(hookTripFromSchema({ kind: "hook_trip" })).toBeNull();
+    expect(hookTripFromSchema(null)).toBeNull();
+    expect(hookTripFromSchema("nope")).toBeNull();
   });
 });

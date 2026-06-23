@@ -1,6 +1,6 @@
 # Guardrail / hook engine (Designed — ADR-104)
 
-> Status: **[ADR-104](../decisions.md#adr-104-declarative-guardrailhook-engine--universal-supervisor-acp-seam-interceptor-native-materializer-seam-and-hook-trip-hitl-escalation)** (M40). Contract frozen; **P1–P4 implemented** (capability class + migration 0063 + two-tier default; universal supervisor 3-rule interceptor; web hook-trip escalation + per-run_kind resume + `hook_trip` HITL; native claude `PreToolUse` path-guard backend — live fires+denies confirmation deferred). **P5 (Studio UI) + P6 (e2e / dogfood / verify) remain.**
+> Status: **[ADR-104](../decisions.md#adr-104-declarative-guardrailhook-engine--universal-supervisor-acp-seam-interceptor-native-materializer-seam-and-hook-trip-hitl-escalation)** (M40). Contract frozen; **P1–P5 implemented** (capability class + migration 0063 + two-tier default; universal supervisor 3-rule interceptor; web hook-trip escalation + per-run_kind resume + `hook_trip` HITL; native claude `PreToolUse` path-guard backend — live fires+denies confirmation deferred; Studio node-settings `hooks` editor + 7th-class settings-panel tag + `hook_trip` HITL resume/abort affordance with timeline surfacing). **P6 (e2e / dogfood / verify) remains.**
 > This file is the design home for the mechanism. ADR rationale is in ADR-104 (R7 — cited, not restated).
 
 ## Purpose

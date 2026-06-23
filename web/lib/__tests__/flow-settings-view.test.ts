@@ -109,6 +109,47 @@ describe("buildSettingsView — all-instruct ai_coding node", () => {
 });
 
 // ---------------------------------------------------------------------------
+// hooks capability class (M40, ADR-104) — the 7th class. Declared by the data
+// field `settings.hooks` (→ instructed) or by an explicit `enforcement.hooks`.
+// ---------------------------------------------------------------------------
+
+describe("buildSettingsView — hooks capability class (M40)", () => {
+  it("a node declaring settings.hooks tags the `hooks` class instructed", () => {
+    const node = aiNode("guarded", {
+      hooks: { repetition: { max: 5 } },
+    } as AiCodingSettings);
+
+    const view = buildSettingsView([node], "claude") as NodeView[];
+
+    expect(classOf(find(view, "guarded")!, "hooks")).toEqual({
+      class: "hooks",
+      verdict: "instructed",
+    });
+  });
+
+  it("enforcement.hooks: strict → refused (the frozen table cannot enforce it)", () => {
+    const node = aiNode("guarded", {
+      enforcement: { hooks: "strict" },
+    } as AiCodingSettings);
+
+    const view = buildSettingsView([node], "claude") as NodeView[];
+
+    expect(classOf(find(view, "guarded")!, "hooks")?.verdict).toBe("refused");
+  });
+
+  it("enforcement.hooks: off omits the hooks class", () => {
+    const node = aiNode("guarded", {
+      hooks: { repetition: { max: 5 } },
+      enforcement: { hooks: "off" },
+    } as AiCodingSettings);
+
+    const view = buildSettingsView([node], "claude") as NodeView[];
+
+    expect(classOf(find(view, "guarded")!, "hooks")).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 2. strict mcps against the real all-instructed table → `mcps` refused.
 // ---------------------------------------------------------------------------
 

@@ -48,6 +48,7 @@ export function buildNodeSideFormLabels(te: Translator): NodeSideFormLabels {
       restrictions: te("nodeForm.enforcement.restrictions"),
       permissionMode: te("nodeForm.enforcement.permissionMode"),
       workspaceAccess: te("nodeForm.enforcement.workspaceAccess"),
+      hooks: te("nodeForm.enforcement.hooks"),
     },
     timeoutMs: te("nodeForm.timeoutMs"),
     environmentPolicy: te("nodeForm.environmentPolicy"),
@@ -90,6 +91,14 @@ export function buildNodeSideFormLabels(te: Translator): NodeSideFormLabels {
       onMismatchNone: te("nodeForm.decide.onMismatchNone"),
       onMismatchRetry: te("nodeForm.decide.onMismatchRetry"),
       hint: te("nodeForm.decide.hint"),
+    },
+    hooks: {
+      title: te("nodeForm.hooks.title"),
+      repetitionMax: te("nodeForm.hooks.repetitionMax"),
+      noProgressMaxTurns: te("nodeForm.hooks.noProgressMaxTurns"),
+      pathGuardAllowedPaths: te("nodeForm.hooks.pathGuardAllowedPaths"),
+      disabled: te("nodeForm.hooks.disabled"),
+      hint: te("nodeForm.hooks.hint"),
     },
     gate: {
       mode: te("gate.mode"),

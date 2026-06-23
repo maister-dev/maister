@@ -46,6 +46,16 @@ export interface HitlDecisionControlsLabels {
   "budgetMeter.tokens"?: string;
   "budgetMeter.failures"?: string;
   "budgetMeter.wallclock"?: string;
+  // Guardrail-hook trip card (ADR-104 / M40) — resume/abort + the tripped rule
+  // and the offending tool call. Optional so pre-feature consumers keep
+  // compiling without them. `$rule`/`$title` `$`-token templates.
+  hookTripTitle?: string;
+  hookTripSummary?: string;
+  "hookTripRule.repetition"?: string;
+  "hookTripRule.no_progress"?: string;
+  hookTripToolCall?: string;
+  hookTripResume?: string;
+  hookTripAbort?: string;
 }
 
 export interface ReviewSchema {
@@ -202,6 +212,30 @@ export function budgetBreachFromSchema(
     current: s.current,
     limit: s.limit,
   };
+}
+
+// Structural view of the hook_trip `schema` (ADR-104 / M40):
+// { kind: "hook_trip", rule, decisions: ["resume","abort"], toolCall? }. Only a
+// `halt` rule escalates to a HITL (repetition / no_progress; path_guard is
+// deny-and-continue and never reaches here). `toolCallTitle` is the offending
+// call's display title when the adapter supplied one. Returns null for any other
+// schema so the branch renders only for a real hook_trip row.
+export interface HookTripView {
+  rule: string;
+  toolCallTitle?: string;
+}
+
+export function hookTripFromSchema(schema: unknown): HookTripView | null {
+  if (!schema || typeof schema !== "object") return null;
+  const s = schema as Record<string, unknown>;
+
+  if (s.kind !== "hook_trip" || typeof s.rule !== "string") return null;
+
+  const toolCall = s.toolCall as { title?: unknown } | null | undefined;
+  const title =
+    toolCall && typeof toolCall.title === "string" ? toolCall.title : undefined;
+
+  return { rule: s.rule, ...(title ? { toolCallTitle: title } : {}) };
 }
 
 // String-token variant of fillTemplate for the breach summary (scope/meter are
@@ -387,6 +421,7 @@ export function HitlDecisionControls({
   const formFields = kind === "form" ? formFieldsFromSchema(schema) : null;
   const budgetBreach =
     kind === "budget_breach" ? budgetBreachFromSchema(schema) : null;
+  const hookTrip = kind === "hook_trip" ? hookTripFromSchema(schema) : null;
   const decisionLabel = (d: string): string => {
     if (d === "approve") return labels.decisionApprove;
     if (d === "rework") return labels.decisionRework;
@@ -650,6 +685,64 @@ export function HitlDecisionControls({
               onClick={() => onOption("abandon")}
             >
               {labels.budgetAbandon ?? "Abandon"}
+            </button>
+          </div>
+        </div>
+      ) : kind === "hook_trip" && hookTrip ? (
+        <div className="flex flex-col gap-3" data-testid="hook-trip-card">
+          <p className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-amber">
+            {labels.hookTripTitle ?? "Guardrail trip"}
+          </p>
+          <p
+            className="rounded-[8px] border border-amber-line bg-amber-soft px-3 py-2 text-[12.5px] leading-[1.5] text-ink-2"
+            data-testid="hook-trip-summary"
+          >
+            {fillStringTemplate(
+              labels.hookTripSummary ??
+                '"$rule" guardrail tripped — resume the run or abort.',
+              {
+                $rule:
+                  labels[
+                    `hookTripRule.${hookTrip.rule}` as keyof HitlDecisionControlsLabels
+                  ] ?? hookTrip.rule,
+              },
+            )}
+          </p>
+          {hookTrip.toolCallTitle ? (
+            <p
+              className="font-mono text-[11px] text-mute"
+              data-testid="hook-trip-tool-call"
+            >
+              {fillStringTemplate(
+                labels.hookTripToolCall ?? "Last tool: $title",
+                { $title: hookTrip.toolCallTitle },
+              )}
+            </p>
+          ) : null}
+          <div className="flex flex-wrap gap-2">
+            <button
+              className={clsx(
+                "rounded-lg border border-amber bg-amber px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-white shadow-[0_4px_12px_-6px_var(--amber)] hover:bg-amber-2",
+                disabled && "opacity-60",
+              )}
+              data-testid="hook-trip-resume"
+              disabled={disabled}
+              type="button"
+              onClick={() => onOption("resume")}
+            >
+              {labels.hookTripResume ?? "Resume"}
+            </button>
+            <button
+              className={clsx(
+                "rounded-lg border border-rose-300 bg-paper px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-rose-600 hover:border-rose-400 hover:bg-rose-50",
+                disabled && "opacity-60",
+              )}
+              data-testid="hook-trip-abort"
+              disabled={disabled}
+              type="button"
+              onClick={() => onOption("abort")}
+            >
+              {labels.hookTripAbort ?? "Abort"}
             </button>
           </div>
         </div>
