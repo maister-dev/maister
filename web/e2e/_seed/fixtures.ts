@@ -115,6 +115,20 @@ export type E2EM38Fixture = {
   studio: { projectSlug: string; capId: string; nodeLabel: string };
 };
 
+// M40 (ADR-104) guardrail-hooks fixture: one project with two NeedsInput flow
+// runs each parked on a seeded `hook_trip` HITL — a `repetition` trip (render +
+// abort) and a `no_progress` trip (resume route).
+export type E2EM40Fixture = {
+  projectSlug: string;
+  projectId: string;
+  repetitionRunId: string;
+  repetitionHitlId: string;
+  repetitionTaskTitle: string;
+  noProgressRunId: string;
+  noProgressHitlId: string;
+  noProgressTaskTitle: string;
+};
+
 // M19 Phase 5: reconcile + GC UI fixture. One project carrying:
 //   • a Crashed flow run with an acpSessionId checkpoint + an ai_coding current
 //     node → recoverable: true (run-detail crashed section + board Crashed col);
@@ -184,6 +198,7 @@ export type E2EFixtures = {
     platformAgents: E2EPlatformAgentsFixture;
     orchestrator: E2EOrchestratorFixture;
     m38: E2EM38Fixture;
+    m40: E2EM40Fixture;
   };
 };
 

@@ -3502,6 +3502,181 @@ async function seedM17Fixture(
   };
 }
 
+// --- M40 Fixture (guardrail hooks) ---------------------------------------
+// One project, two NeedsInput flow runs each parked on a `hook_trip` HITL: a
+// `repetition` trip (carries an offending toolCall, drives the render + abort
+// assertions) and a `no_progress` trip (no toolCall, drives the resume route
+// assertion). The web e2e supervisor stub cannot DYNAMICALLY trip a guardrail
+// (no tool-call scripting — that lives in supervisor integration tests), so the
+// trip state is seeded directly, mirroring how M17 seeds a `human_review` HITL.
+const M40_PROJECT_SLUG = "e2e-m40-guardrail";
+const M40_BRANCH_REPETITION = "maister/e2e-m40-repetition";
+const M40_BRANCH_NOPROGRESS = "maister/e2e-m40-no-progress";
+const M40_REPETITION_TITLE = "M40 Repetition trip";
+const M40_NOPROGRESS_TITLE = "M40 No-progress trip";
+
+// A flow whose ai_coding node declares `hooks` (engine_min >= 1.8.0 per ADR-104
+// D6). Mirrors M17_MANIFEST's compiling shape; the trip is parked on `implement`.
+const M40_MANIFEST = {
+  schemaVersion: 1,
+  name: "Guardrail hooks (e2e)",
+  compat: { engine_min: "1.8.0" },
+  nodes: [
+    {
+      id: "implement",
+      type: "ai_coding",
+      prompt: "implement {{ task.prompt }}",
+      settings: {
+        hooks: { repetition: { max: 5 }, noProgress: { maxTurns: 15 } },
+      },
+    },
+    {
+      id: "review",
+      type: "human",
+      decisions: ["approve", "rework"],
+      transitions: { approve: "done", rework: "implement" },
+      rework: {
+        allowedTargets: ["implement"],
+        workspacePolicies: ["keep"],
+        maxLoops: 3,
+        commentsVar: "review_comments",
+      },
+    },
+  ],
+};
+
+type M40FixtureRecord = {
+  projectSlug: string;
+  projectId: string;
+  repetitionRunId: string;
+  repetitionHitlId: string;
+  repetitionTaskTitle: string;
+  noProgressRunId: string;
+  noProgressHitlId: string;
+  noProgressTaskTitle: string;
+};
+
+async function seedM40HookTripRun(
+  pool: Pool,
+  projectId: string,
+  flowId: string,
+  branch: string,
+  taskTitle: string,
+  schema: Record<string, unknown>,
+  prompt: string,
+): Promise<{ runId: string; hitlId: string }> {
+  const ids = {
+    task: randomUUID(),
+    run: randomUUID(),
+    workspace: randomUUID(),
+    hitl: randomUUID(),
+    implAttempt: randomUUID(),
+  };
+  const repoPath = `/tmp/maister-e2e/${projectId}`;
+  const worktreePath = `${repoPath}/.worktrees/${branch.split("/").pop()}`;
+
+  await pool.query(
+    `INSERT INTO tasks (id, project_id, number, title, prompt, flow_id, status, stage)
+     VALUES ($1, $2, (SELECT COALESCE(MAX(number), 0) + 1 FROM tasks WHERE project_id = $2), $3, $4, $5, 'InFlight', 'Backlog')`,
+    [ids.task, projectId, taskTitle, "Loop on a boring task", flowId],
+  );
+  await pool.query(
+    `INSERT INTO runs (id, task_id, project_id, flow_id, runner_id, capability_agent, runner_snapshot, status, current_step_id, flow_version, started_at)
+     VALUES ($1, $2, $3, $4, $5, 'claude', jsonb_build_object('id', $5::text, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'NeedsInput', 'implement', 'v0.0.1', now())`,
+    [ids.run, ids.task, projectId, flowId, PLATFORM_DEFAULT_RUNNER_ID],
+  );
+  await pool.query(
+    `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [ids.workspace, ids.run, projectId, branch, worktreePath, repoPath],
+  );
+  await pool.query(
+    `INSERT INTO node_attempts (id, run_id, node_id, node_type, attempt, status, started_at)
+     VALUES ($1, $2, 'implement', 'ai_coding', 1, 'NeedsInput', now())`,
+    [ids.implAttempt, ids.run],
+  );
+  await pool.query(
+    `INSERT INTO hitl_requests (id, run_id, step_id, kind, schema, prompt)
+     VALUES ($1, $2, 'implement', 'hook_trip', $3, $4)`,
+    [ids.hitl, ids.run, JSON.stringify(schema), prompt],
+  );
+
+  return { runId: ids.run, hitlId: ids.hitl };
+}
+
+async function seedM40Fixture(
+  pool: Pool,
+  _userId: string,
+): Promise<M40FixtureRecord> {
+  const projectId = randomUUID();
+  const flowId = randomUUID();
+  const repoPath = `/tmp/maister-e2e/${projectId}`;
+
+  await pool.query(`DELETE FROM projects WHERE slug = $1`, [M40_PROJECT_SLUG]);
+
+  await pool.query(
+    `INSERT INTO projects (id, slug, name, repo_path, maister_yaml_path, task_key)
+     VALUES ($1, $2, $3, $4, $5, 'E' || upper(substr(md5(random()::text), 1, 8)))`,
+    [
+      projectId,
+      M40_PROJECT_SLUG,
+      "MAIster E2E M40 Guardrail",
+      repoPath,
+      `${repoPath}/maister.yaml`,
+    ],
+  );
+  await pool.query(
+    `INSERT INTO flows (id, project_id, flow_ref_id, source, version, installed_path, manifest, schema_version)
+     VALUES ($1, $2, 'aif', $3, 'v0.0.1', $4, $5, 1)`,
+    [
+      flowId,
+      projectId,
+      "github.com/maister/maister-flow-aif",
+      `/tmp/maister-e2e/flows/aif-m40@v0.0.1`,
+      JSON.stringify(M40_MANIFEST),
+    ],
+  );
+
+  const repetition = await seedM40HookTripRun(
+    pool,
+    projectId,
+    flowId,
+    M40_BRANCH_REPETITION,
+    M40_REPETITION_TITLE,
+    {
+      kind: "hook_trip",
+      rule: "repetition",
+      decisions: ["resume", "abort"],
+      toolCall: { title: "Edit src/app.ts" },
+    },
+    'Guardrail "repetition" tripped: the agent repeated the same tool call too many times (last tool: Edit src/app.ts). Resume the run or abort.',
+  );
+  const noProgress = await seedM40HookTripRun(
+    pool,
+    projectId,
+    flowId,
+    M40_BRANCH_NOPROGRESS,
+    M40_NOPROGRESS_TITLE,
+    {
+      kind: "hook_trip",
+      rule: "no_progress",
+      decisions: ["resume", "abort"],
+    },
+    'Guardrail "no_progress" tripped: the agent made no progress for too many turns. Resume the run or abort.',
+  );
+
+  return {
+    projectSlug: M40_PROJECT_SLUG,
+    projectId,
+    repetitionRunId: repetition.runId,
+    repetitionHitlId: repetition.hitlId,
+    repetitionTaskTitle: M40_REPETITION_TITLE,
+    noProgressRunId: noProgress.runId,
+    noProgressHitlId: noProgress.hitlId,
+    noProgressTaskTitle: M40_NOPROGRESS_TITLE,
+  };
+}
+
 // The M18 fixture carries the three Review run ids (one per promotion scenario)
 // plus the target branch + the pre-seeded PR display fields, so the e2e spec can
 // navigate each run-detail page and assert the promote / conflict / PR-display
@@ -5925,6 +6100,7 @@ async function main(): Promise<void> {
     const platformAgents = await seedPlatformAgentsFixture(pool, admin.id);
     const orchestrator = await seedOrchestratorE2EFixture(pool, admin.id);
     const m38 = await seedM38DecideFixture(pool, admin.id);
+    const m40 = await seedM40Fixture(pool, admin.id);
 
     await pool.query(
       `INSERT INTO project_members (id, project_id, user_id, role)
@@ -5978,6 +6154,7 @@ async function main(): Promise<void> {
         platformAgents,
         orchestrator,
         m38,
+        m40,
       },
     };
     const outDir = path.resolve("e2e/.auth");
