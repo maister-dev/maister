@@ -369,7 +369,7 @@ describe("upgradePreview agents break-impact (RD4, owner decision 7)", () => {
     // Live usage in THIS project: both agents attached, the triager bound.
     for (const stem of ["triager", "dropped"]) {
       await pool.query(
-        `INSERT INTO "agents" ("id", "flow_ref_id", "version_label", "origin", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path")
+        `INSERT INTO "agents" ("id", "package_name", "version_label", "origin", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path")
          VALUES ($1, 'pkg2', 'v1.0.0', 'git', $2, 'd', 'none', 'session', '["manual"]'::jsonb, 'read_only', '/x')`,
         [`pkg2:${stem}`, stem],
       );

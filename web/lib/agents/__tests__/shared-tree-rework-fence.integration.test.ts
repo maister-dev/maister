@@ -228,7 +228,7 @@ Do the thing.
   const qualifiedId = "test-pkg:worker";
 
   await pool.query(
-    `INSERT INTO "agents" ("id", "flow_ref_id", "version_label", "origin", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path", "enabled")
+    `INSERT INTO "agents" ("id", "package_name", "version_label", "origin", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path", "enabled")
      VALUES ($1, 'test-pkg', 'v1.0.0', 'git', 'worker', 'd', 'worktree', 'session', '["manual"]'::jsonb, 'read_only', $2, true)`,
     [qualifiedId, path.join(installedPath, "maister-agents", "worker.md")],
   );

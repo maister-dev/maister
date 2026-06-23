@@ -133,7 +133,7 @@ Do the thing.
      ON CONFLICT (id) DO UPDATE SET "default_runner_id" = 'whk-runner'`,
   );
   await pool.query(
-    `INSERT INTO "agents" ("id", "flow_ref_id", "version_label", "origin", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path")
+    `INSERT INTO "agents" ("id", "package_name", "version_label", "origin", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path")
      VALUES ($1, 'test-pkg', 'v1.0.0', 'git', 'notifier', 'd', 'none', 'session', '["webhook"]'::jsonb, 'read_only', $2)`,
     [AGENT_ID, path.join(agentsRoot, "maister-agents", "notifier.md")],
   );

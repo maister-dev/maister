@@ -745,24 +745,38 @@ export type AgentTriggerKind =
   | "webhook"
   | "flow";
 export type AgentOrigin = "git" | "authored";
-// Package-recommended bindings (ADR-089 rework): pre-fill the attach panel.
+// Per-agent runner-policy recommendation (ADR-106): a simplified projection
+// over the rich ExecutionPolicy (lib/runs/execution-policy.ts). `autoApply`
+// maps to the B1 permissions + B2 humanGate axes; `onBudgetBreach` is the new
+// budget terminal-handling axis. It seeds the per-project agent instance; the
+// effective resolution + enforcement land in Phase 5.
+export type AgentExecutionPolicyRecommendation = {
+  autoApply?: "off" | "permissions" | "full";
+  onBudgetBreach?: "escalate" | "terminate" | "terminate_restorable";
+};
+
+// Package-recommended bindings (ADR-089 rework, extended ADR-106): pre-fill the
+// attach panel and seed the per-project agent instance defaults.
 export type AgentRecommended = {
   runner?: string;
+  branch_base?: string;
   cron?: { expr: string; timezone: string };
   events?: string[];
+  executionPolicy?: AgentExecutionPolicyRecommendation;
 };
 
 export const agents = pgTable(
   "agents",
   {
-    // Package-qualified id `<flowRefId>:<file-stem>` (ADR-089 rework) — the
-    // definition is `agents/<stem>.md` inside the providing flow package, so
-    // two packages shipping the same stem register as distinct agents.
+    // Package-qualified id `<packageName>:<file-stem>` (ADR-106 re-key) — the
+    // definition is `maister-agents/<stem>.md` at the providing package ROOT,
+    // so two packages shipping the same stem register as distinct agents.
     id: text("id").primaryKey(),
-    // Provenance: the providing package + the newest registered version. The
-    // catalog row is a projection; the per-project EFFECTIVE definition
-    // resolves through that project's pinned package revision at launch.
-    flowRefId: text("flow_ref_id").notNull(),
+    // Provenance: the providing package name (= package_installs.name) + the
+    // newest registered version. The catalog row is a projection; the
+    // per-project EFFECTIVE definition resolves through that project's attached
+    // package install's pinned revision at launch (ADR-106; was flowRefId).
+    packageName: text("package_name").notNull(),
     versionLabel: text("version_label").notNull(),
     origin: text("origin", { enum: ["git", "authored"] }).notNull(),
     name: text("name").notNull(),
@@ -781,6 +795,13 @@ export const agents = pgTable(
       enum: ["read_only", "standard", "destructive"],
     }).notNull(),
     recommended: jsonb("recommended").$type<AgentRecommended>(),
+    // (ADR-106) The same-package flow this agent drives (a manifest flow id);
+    // null → standalone ACP-session agent. WITH it, launching runs that flow
+    // (run_kind='flow') with the agent's .md augmenting every ai_coding node.
+    flowRef: text("flow_ref"),
+    // (ADR-106) Agent branch base; null → defaults to the project main branch.
+    // Seeded from recommended.branch_base, overridable per-instance.
+    branchBase: text("branch_base"),
     // `trigger` or a literal branch name; only valid with workspace=repo_read
     // (ADR-090 rework — ephemeral read-only checkout at the resolved ref).
     workspaceRef: text("workspace_ref"),
@@ -799,7 +820,7 @@ export const agents = pgTable(
       .defaultNow(),
   },
   (t) => ({
-    idxFlowRef: index("agents_flow_ref_idx").on(t.flowRefId),
+    idxPackageName: index("agents_package_name_idx").on(t.packageName),
   }),
 );
 
@@ -820,6 +841,13 @@ export const agentProjectLinks = pgTable(
       () => platformAcpRunners.id,
       { onDelete: "set null" },
     ),
+    // (ADR-106) Per-instance overrides: branch base + the {autoApply,
+    // onBudgetBreach} policy. null → fall back to the agent `recommended`
+    // (then project/platform default). Effective resolution is Phase 5.
+    branchBase: text("branch_base"),
+    executionPolicyOverride: jsonb(
+      "execution_policy_override",
+    ).$type<AgentExecutionPolicyRecommendation>(),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),

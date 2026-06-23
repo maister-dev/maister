@@ -58,7 +58,7 @@ async function loadAgentsView() {
     // M34: explicit DTO projection — serialized dates, no raw rows.
     agents: agentRows.map((row: any) => ({
       id: row.id,
-      flowRefId: row.flowRefId,
+      packageName: row.packageName,
       versionLabel: row.versionLabel,
       origin: row.origin,
       name: row.name,

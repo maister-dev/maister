@@ -206,6 +206,74 @@ describe("parseAgentDefinition", () => {
     );
   });
 
+  it("parses the ADR-106 fields: flow + recommended.branch_base/executionPolicy", () => {
+    const withAdr106 = VALID.replace(
+      "risk_tier: read_only",
+      [
+        "risk_tier: read_only",
+        "flow: bugfix",
+        "recommended:",
+        "  runner: claude-default",
+        "  branch_base: develop",
+        "  executionPolicy:",
+        "    autoApply: full",
+        "    onBudgetBreach: terminate_restorable",
+      ].join("\n"),
+    );
+    const parsed = parseAgentDefinition("aif:triager", withAdr106);
+
+    expect(parsed.flow).toBe("bugfix");
+    expect(parsed.recommended).toEqual({
+      runner: "claude-default",
+      branch_base: "develop",
+      executionPolicy: {
+        autoApply: "full",
+        onBudgetBreach: "terminate_restorable",
+      },
+    });
+  });
+
+  it("defaults flow to null and refuses an invalid autoApply/onBudgetBreach", () => {
+    expect(parseAgentDefinition("aif:triager", VALID).flow).toBeNull();
+
+    expectConfig(
+      () =>
+        parseAgentDefinition(
+          "aif:triager",
+          VALID.replace(
+            "risk_tier: read_only",
+            "risk_tier: read_only\nrecommended:\n  executionPolicy:\n    autoApply: sometimes",
+          ),
+        ),
+      /autoApply|executionPolicy/i,
+    );
+    expectConfig(
+      () =>
+        parseAgentDefinition(
+          "aif:triager",
+          VALID.replace(
+            "risk_tier: read_only",
+            "risk_tier: read_only\nrecommended:\n  executionPolicy:\n    onBudgetBreach: kill",
+          ),
+        ),
+      /onBudgetBreach|executionPolicy/i,
+    );
+  });
+
+  it("refuses an unsafe flow value (bad chars / dot-dot)", () => {
+    expectConfig(
+      () =>
+        parseAgentDefinition(
+          "aif:triager",
+          VALID.replace(
+            "risk_tier: read_only",
+            "risk_tier: read_only\nflow: ../evil",
+          ),
+        ),
+      /flow/,
+    );
+  });
+
   it("refuses missing frontmatter, malformed yaml, and an empty body", () => {
     expectConfig(
       () => parseAgentDefinition("aif:triager", "just a body\n"),
@@ -277,6 +345,31 @@ describe("renderAgentDefinition", () => {
         repetition: { max: 5 },
         pathGuard: { allowedPaths: ["src/**"] },
       },
+    });
+  });
+
+  it("round-trips the ADR-106 flow + executionPolicy recommendation", () => {
+    const rendered = renderAgentDefinition({
+      id: "aif:driver",
+      name: "Driver",
+      description: "Drives the bugfix flow",
+      workspace: "worktree",
+      mode: "session",
+      triggers: ["manual"],
+      riskTier: "standard",
+      flow: "bugfix",
+      recommended: {
+        branch_base: "main",
+        executionPolicy: { autoApply: "permissions", onBudgetBreach: "escalate" },
+      },
+      prompt: "Drive it.",
+    });
+    const parsed = parseAgentDefinition("aif:driver", rendered);
+
+    expect(parsed.flow).toBe("bugfix");
+    expect(parsed.recommended).toEqual({
+      branch_base: "main",
+      executionPolicy: { autoApply: "permissions", onBudgetBreach: "escalate" },
     });
   });
 

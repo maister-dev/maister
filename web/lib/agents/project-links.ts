@@ -190,8 +190,11 @@ export async function getProjectAgentsView(
   const catalogAgents = (await _db.select().from(agents)) as Array<
     Record<string, any>
   >;
+  // (ADR-106) The agent's providing ref is its packageName now (was flowRefId).
+  // NOTE: enabledRefs is still flow-ref based until the Phase 3 gating rewrite
+  // switches the available-filter to package attachment.
   const available = catalogAgents.filter(
-    (a) => !linkedIds.has(a.id) && enabledRefs.has(a.flowRefId as string),
+    (a) => !linkedIds.has(a.id) && enabledRefs.has(a.packageName as string),
   );
 
   return { attached, available };

@@ -204,7 +204,7 @@ Do the thing.
 
     ids[a.stem] = qualifiedId;
     await pool.query(
-      `INSERT INTO "agents" ("id", "flow_ref_id", "version_label", "origin", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path", "enabled")
+      `INSERT INTO "agents" ("id", "package_name", "version_label", "origin", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path", "enabled")
        VALUES ($1, 'test-pkg', 'v1.0.0', 'git', $2, 'd', $3, 'session', '["manual"]'::jsonb, 'read_only', $4, true)`,
       [
         qualifiedId,

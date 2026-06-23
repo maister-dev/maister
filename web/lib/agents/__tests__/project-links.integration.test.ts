@@ -57,7 +57,7 @@ beforeAll(async () => {
   });
   await db.insert(schema.agents).values({
     id: fx.agentId,
-    flowRefId: "test-pkg",
+    packageName: "test-pkg",
     versionLabel: "v1.0.0",
     origin: "git",
     name: fx.agentId,
@@ -114,7 +114,7 @@ describe("project agent links (attach panel service)", () => {
     // A catalog agent from a package that has NO pin in fx.projectId.
     await db.insert(schema.agents).values({
       id: "orphan-pkg:helper",
-      flowRefId: "orphan-pkg",
+      packageName: "orphan-pkg",
       versionLabel: "v1.0.0",
       origin: "git",
       name: "helper",

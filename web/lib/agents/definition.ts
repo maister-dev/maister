@@ -1,6 +1,6 @@
-// Platform-agent definition parsing (ADR-089, package-source rework). The
-// canonical definition is `agents/<stem>.md` INSIDE a flow package; the
-// platform id is package-qualified `<flowRefId>:<stem>`. This module parses
+// Platform-agent definition parsing (ADR-089; re-keyed per-package in ADR-106).
+// The canonical definition is `maister-agents/<stem>.md` at a package ROOT; the
+// platform id is package-qualified `<packageName>:<stem>`. This module parses
 // frontmatter + body into the typed shape the registry indexes into the
 // `agents` table. Parsing NEVER executes definition content.
 // Client-import-safe (no fs, no node:*).
@@ -76,14 +76,42 @@ export function assertAgentStem(stem: string): string {
   return stem;
 }
 
-// Compose the platform-unique id from the providing package + file stem.
-export function qualifyAgentId(flowRefId: string, stem: string): string {
-  return `${flowRefId}:${assertAgentStem(stem)}`;
+// Compose the platform-unique id from the providing package + file stem
+// (ADR-106: the prefix is the package name, was flowRefId).
+export function qualifyAgentId(packageName: string, stem: string): string {
+  return `${packageName}:${assertAgentStem(stem)}`;
 }
+
+// Same-package flow id (a manifest `flows[].id`) — capabilityRefId-shaped.
+// Membership in the providing package's manifest is validated at registration
+// (it needs the manifest), not here; this only guards the value's shape since
+// it flows into a filesystem/resolution path.
+const flowRefValueSchema = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^[A-Za-z0-9._-]+$/, "flow must match /^[A-Za-z0-9._-]+$/")
+  .refine(
+    (s) => s !== "." && s !== ".." && !s.includes(".."),
+    "flow must not be '.', '..' or contain '..'",
+  );
+
+// Per-agent runner-policy recommendation (ADR-106): seeds the per-project
+// instance. `autoApply` maps to the B1/B2 axes, `onBudgetBreach` is the new
+// budget terminal-handling axis; both resolved + enforced in Phase 5.
+const recommendedExecutionPolicySchema = z
+  .object({
+    autoApply: z.enum(["off", "permissions", "full"]).optional(),
+    onBudgetBreach: z
+      .enum(["escalate", "terminate", "terminate_restorable"])
+      .optional(),
+  })
+  .strict();
 
 const recommendedSchema = z
   .object({
     runner: z.string().min(1).max(128).optional(),
+    branch_base: z.string().min(1).max(255).optional(),
     cron: z
       .object({
         expr: z.string().min(1).max(128),
@@ -99,6 +127,7 @@ const recommendedSchema = z
         "recommended events must not repeat",
       )
       .optional(),
+    executionPolicy: recommendedExecutionPolicySchema.optional(),
   })
   .strict();
 
@@ -118,6 +147,9 @@ export const agentDefinitionFrontmatterSchema = z
     triggers: z.array(z.enum(AGENT_TRIGGER_KINDS)).min(1),
     capability_profile: z.record(z.unknown()).optional(),
     risk_tier: z.enum(["read_only", "standard", "destructive"]),
+    // (ADR-106) Optional same-package flow this agent drives. Membership in the
+    // package manifest's flows[] is enforced at registration.
+    flow: flowRefValueSchema.optional(),
     recommended: recommendedSchema.optional(),
     // ADR-108 (M40): explicit per-agent guardrail hooks. Agent runs have no
     // execution-policy preset, so there is no `unattended` auto-arm — only what
@@ -170,6 +202,7 @@ export type ParsedAgentDefinition = {
   triggers: AgentTriggerKind[];
   capabilityProfile: Record<string, unknown> | null;
   riskTier: AgentRiskTier;
+  flow: string | null;
   recommended: AgentRecommended | null;
   hooks: HooksSettings | null;
   prompt: string;
@@ -229,6 +262,7 @@ export function parseAgentDefinition(
     triggers: fm.triggers,
     capabilityProfile: fm.capability_profile ?? null,
     riskTier: fm.risk_tier,
+    flow: fm.flow ?? null,
     recommended: fm.recommended ?? null,
     hooks: fm.hooks ?? null,
     prompt: split.body,
@@ -246,6 +280,7 @@ export type AgentDefinitionInput = {
   triggers: AgentTriggerKind[];
   capabilityProfile?: Record<string, unknown> | null;
   riskTier: AgentRiskTier;
+  flow?: string | null;
   recommended?: AgentRecommended | null;
   hooks?: HooksSettings | null;
   prompt: string;
@@ -266,6 +301,7 @@ export function renderAgentDefinition(input: AgentDefinitionInput): string {
       ? { capability_profile: input.capabilityProfile }
       : {}),
     risk_tier: input.riskTier,
+    ...(input.flow ? { flow: input.flow } : {}),
     ...(input.recommended ? { recommended: input.recommended } : {}),
     ...(input.hooks ? { hooks: input.hooks } : {}),
   };

@@ -99,7 +99,7 @@ beforeEach(async () => {
     .values(testPlatformRunnerRow(executorId, "claude"));
 
   await pool.query(
-    `INSERT INTO "agents" ("id", "flow_ref_id", "version_label", "origin", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path", "enabled")
+    `INSERT INTO "agents" ("id", "package_name", "version_label", "origin", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path", "enabled")
      VALUES ('test-pkg:worker', 'test-pkg', 'v1.0.0', 'git', 'worker', 'd', 'worktree', 'session', '["manual"]'::jsonb, 'read_only', '/tmp/worker.md', true)
      ON CONFLICT (id) DO NOTHING`,
   );

@@ -1,6 +1,6 @@
 import "server-only";
 
-import { readdir } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 
 import { desc, eq, inArray } from "drizzle-orm";
@@ -21,7 +21,7 @@ import {
 
 // FIXME(any): drizzle-orm ships duplicate peer-dep variants in pnpm; typed
 // table imports clash across copies (repo-wide pattern, see schema tests).
-const { agents, flowRevisions } = schemaModule as unknown as Record<
+const { agents, packageInstalls } = schemaModule as unknown as Record<
   string,
   any
 >;
@@ -33,17 +33,19 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-type RevisionRow = {
+type InstallRow = {
   id: string;
-  flowRefId: string;
-  source: string;
+  name: string;
   versionLabel: string;
   installedPath: string;
   packageStatus: string;
+  sourceUrl: string;
+  // The stored jsonb is the PackageInstallManifest ({ spec, inventory, … }).
+  manifest: { spec?: { flows?: Array<{ id: string }> } } | null;
 };
 
 export type AgentRegistrationSummary = {
-  flowRefId: string;
+  packageName: string;
   versionLabel: string;
   registered: string[];
   invalid: { id: string; error: string }[];
@@ -53,10 +55,10 @@ async function listAgentFileStems(installedPath: string): Promise<string[]> {
   let entries;
 
   try {
-    // (M39 A4, owner) Platform-agent definitions live at the package-root
-    // `maister-agents/` — the canonical location, distinct from capability
-    // subagents (`capability/<id>/agents/`). Root `agents/` is no longer a
-    // platform-agent location; packages still shipping it are unregistered.
+    // (ADR-106) Platform-agent definitions live at the PACKAGE ROOT
+    // `maister-agents/` — distinct from capability subagents
+    // (`capability/<id>/agents/`). Scanned off `package_installs.installed_path`
+    // (the package root), never a member flow revision's per-flow cache dir.
     entries = await readdir(join(installedPath, "maister-agents"), {
       withFileTypes: true,
     });
@@ -82,20 +84,21 @@ function assertRecommendedCron(parsed: ParsedAgentDefinition): void {
 }
 
 // Upsert the parsed index row with SET/CLEAR symmetry: every parsed column is
-// written on every sync, so a field removed from the .md resets its column.
+// written on every sync, so a field removed from the .md resets its column
+// (flowRef, branchBase, runnerId, workspaceRef all CLEAR to null when absent).
 // `enabled` and the quarantine pair are runtime state and are NOT touched.
 async function upsertAgentRow(
   _db: Db,
   parsed: ParsedAgentDefinition,
-  revision: RevisionRow,
+  install: InstallRow,
   sourcePath: string,
 ): Promise<void> {
   const syncedColumns = {
-    flowRefId: revision.flowRefId,
-    versionLabel: revision.versionLabel,
+    packageName: install.name,
+    versionLabel: install.versionLabel,
     // Authored installs bridge through a local filesystem source; git
     // installs use a remote ref (flowOrigin precedent, lib/services/runs.ts).
-    origin: revision.source.startsWith("/") ? "authored" : "git",
+    origin: install.sourceUrl.startsWith("/") ? "authored" : "git",
     name: parsed.name,
     description: parsed.description,
     runnerId: parsed.runner,
@@ -106,6 +109,9 @@ async function upsertAgentRow(
     capabilityProfile: parsed.capabilityProfile,
     riskTier: parsed.riskTier,
     recommended: parsed.recommended,
+    // (ADR-106) The same-package flow + the seeded branch base; both CLEAR.
+    flowRef: parsed.flow,
+    branchBase: parsed.recommended?.branch_base ?? null,
     sourcePath,
     updatedAt: new Date(),
   };
@@ -116,62 +122,77 @@ async function upsertAgentRow(
     .onConflictDoUpdate({ target: agents.id, set: syncedColumns });
 }
 
-// Register every `maister-agents/<stem>.md` shipped by an installed flow
-// revision under the package-qualified id `<flowRefId>:<stem>`. Invalid
-// definitions are reported, never written — and never fail the surrounding install.
-export async function registerAgentsForRevision(
-  revisionId: string,
+// Register every `maister-agents/<stem>.md` shipped by an installed PACKAGE
+// under the package-qualified id `<packageName>:<stem>` (ADR-106). An agent
+// declaring a `flow` not present in the package manifest's `flows[]` is
+// reported invalid + never written. Invalid definitions are reported, never
+// written — and never fail the surrounding install.
+export async function registerPackageAgents(
+  packageInstallId: string,
   db?: Db,
 ): Promise<AgentRegistrationSummary> {
   const _db = db ?? getDb();
 
   const rows = (await _db
     .select({
-      id: flowRevisions.id,
-      flowRefId: flowRevisions.flowRefId,
-      source: flowRevisions.source,
-      versionLabel: flowRevisions.versionLabel,
-      installedPath: flowRevisions.installedPath,
-      packageStatus: flowRevisions.packageStatus,
+      id: packageInstalls.id,
+      name: packageInstalls.name,
+      versionLabel: packageInstalls.versionLabel,
+      installedPath: packageInstalls.installedPath,
+      packageStatus: packageInstalls.packageStatus,
+      sourceUrl: packageInstalls.sourceUrl,
+      manifest: packageInstalls.manifest,
     })
-    .from(flowRevisions)
-    .where(eq(flowRevisions.id, revisionId))) as RevisionRow[];
-  const revision = rows[0];
+    .from(packageInstalls)
+    .where(eq(packageInstalls.id, packageInstallId))) as InstallRow[];
+  const install = rows[0];
 
-  if (!revision) {
+  if (!install) {
     throw new MaisterError(
       "PRECONDITION",
-      `flow revision ${revisionId} not found`,
+      `package install ${packageInstallId} not found`,
     );
   }
 
-  if (revision.packageStatus !== "Installed") {
+  if (install.packageStatus !== "Installed") {
     throw new MaisterError(
       "PRECONDITION",
-      `flow revision ${revisionId} is ${revision.packageStatus}, not Installed`,
+      `package install ${packageInstallId} is ${install.packageStatus}, not Installed`,
     );
   }
 
-  const stems = await listAgentFileStems(revision.installedPath);
+  // The membership allow-list for an agent's optional same-package `flow`.
+  const manifestFlowIds = new Set<string>(
+    (install.manifest?.spec?.flows ?? []).map((f) => f.id),
+  );
+
+  const stems = await listAgentFileStems(install.installedPath);
   const registered: string[] = [];
   const invalid: { id: string; error: string }[] = [];
 
   for (const stem of stems) {
     const sourcePath = join(
-      revision.installedPath,
+      install.installedPath,
       "maister-agents",
       `${stem}.md`,
     );
-    const id = `${revision.flowRefId}:${stem}`;
+    const id = `${install.name}:${stem}`;
 
     try {
-      const qualifiedId = qualifyAgentId(revision.flowRefId, stem);
-      const { readFile } = await import("node:fs/promises");
+      const qualifiedId = qualifyAgentId(install.name, stem);
       const content = await readFile(sourcePath, "utf8");
       const parsed = parseAgentDefinition(qualifiedId, content);
 
       assertRecommendedCron(parsed);
-      await upsertAgentRow(_db, parsed, revision, sourcePath);
+
+      if (parsed.flow && !manifestFlowIds.has(parsed.flow)) {
+        throw new MaisterError(
+          "CONFIG",
+          `flow "${parsed.flow}" is not a flow of package "${install.name}"`,
+        );
+      }
+
+      await upsertAgentRow(_db, parsed, install, sourcePath);
       registered.push(qualifiedId);
     } catch (err) {
       invalid.push({
@@ -184,18 +205,18 @@ export async function registerAgentsForRevision(
   if (registered.length > 0 || invalid.length > 0) {
     log.info(
       {
-        flowRefId: revision.flowRefId,
-        versionLabel: revision.versionLabel,
+        packageName: install.name,
+        versionLabel: install.versionLabel,
         registered: registered.length,
         invalid: invalid.length,
       },
-      "agents registered from flow revision",
+      "agents registered from package install",
     );
   }
 
   return {
-    flowRefId: revision.flowRefId,
-    versionLabel: revision.versionLabel,
+    packageName: install.name,
+    versionLabel: install.versionLabel,
     registered,
     invalid,
   };
@@ -208,32 +229,33 @@ export type AgentResyncSummary = {
   missing: string[];
 };
 
-// Re-project the catalog from installed packages: for every flow_ref the
-// NEWEST Installed revision wins the index rows; rows whose providing
-// package (or file within it) vanished are disabled — never silently
-// deleted (attachments and run history keep their FK anchor).
+// Re-project the catalog from installed packages: for every package NAME the
+// NEWEST Installed `package_installs` row wins the index rows (ADR-106; was
+// newest revision per flow_ref); rows whose providing package (or file within
+// it) vanished are disabled — never silently deleted (attachments and run
+// history keep their FK anchor).
 export async function resyncAgents(db?: Db): Promise<AgentResyncSummary> {
   const _db = db ?? getDb();
 
-  const revisionRows = (await _db
+  const installRows = (await _db
     .select({
-      id: flowRevisions.id,
-      flowRefId: flowRevisions.flowRefId,
-      installedAt: flowRevisions.installedAt,
+      id: packageInstalls.id,
+      name: packageInstalls.name,
+      createdAt: packageInstalls.createdAt,
     })
-    .from(flowRevisions)
-    .where(eq(flowRevisions.packageStatus, "Installed"))
-    .orderBy(desc(flowRevisions.installedAt))) as Array<{
+    .from(packageInstalls)
+    .where(eq(packageInstalls.packageStatus, "Installed"))
+    .orderBy(desc(packageInstalls.createdAt))) as Array<{
     id: string;
-    flowRefId: string;
-    installedAt: Date;
+    name: string;
+    createdAt: Date;
   }>;
 
-  const newestByFlowRef = new Map<string, string>();
+  const newestByName = new Map<string, string>();
 
-  for (const row of revisionRows) {
-    if (!newestByFlowRef.has(row.flowRefId)) {
-      newestByFlowRef.set(row.flowRefId, row.id);
+  for (const row of installRows) {
+    if (!newestByName.has(row.name)) {
+      newestByName.set(row.name, row.id);
     }
   }
 
@@ -241,8 +263,8 @@ export async function resyncAgents(db?: Db): Promise<AgentResyncSummary> {
   const invalid: { id: string; error: string }[] = [];
   let synced = 0;
 
-  for (const revisionId of newestByFlowRef.values()) {
-    const summary = await registerAgentsForRevision(revisionId, _db);
+  for (const installId of newestByName.values()) {
+    const summary = await registerPackageAgents(installId, _db);
 
     summary.registered.forEach((id) => seen.add(id));
     invalid.push(...summary.invalid);
@@ -267,7 +289,7 @@ export async function resyncAgents(db?: Db): Promise<AgentResyncSummary> {
 
   log.info(
     { synced, invalid: invalid.length, missing: missing.length },
-    "agent catalog resynced from installed revisions",
+    "agent catalog resynced from installed packages",
   );
 
   return { ok: true, synced, invalid, missing };

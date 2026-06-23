@@ -24,7 +24,7 @@ import {
 function agent(over: Partial<AgentSummaryRow> = {}): AgentSummaryRow {
   return {
     id: "aif:triager",
-    flowRefId: "aif",
+    packageName: "aif",
     versionLabel: "v1.2.0",
     origin: "git",
     name: "Triager",

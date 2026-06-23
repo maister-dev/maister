@@ -49,13 +49,38 @@ export function agentsErrorResponse(err: unknown): NextResponse {
   );
 }
 
+// Project the stored `recommended` jsonb to the wire shape (AgentSummary
+// schema, additionalProperties:false): the stored object is faithful to the
+// .md frontmatter (snake `branch_base`); the wire DTO is camelCase
+// (`branchBase`). Only known keys are emitted.
+function projectRecommended(rec: unknown): Record<string, unknown> | null {
+  if (!rec || typeof rec !== "object") return null;
+  const r = rec as {
+    runner?: string;
+    branch_base?: string;
+    cron?: { expr: string; timezone: string };
+    events?: string[];
+    executionPolicy?: { autoApply?: string; onBudgetBreach?: string };
+  };
+
+  return {
+    ...(r.runner !== undefined ? { runner: r.runner } : {}),
+    ...(r.branch_base !== undefined ? { branchBase: r.branch_base } : {}),
+    ...(r.cron !== undefined ? { cron: r.cron } : {}),
+    ...(r.events !== undefined ? { events: r.events } : {}),
+    ...(r.executionPolicy !== undefined
+      ? { executionPolicy: r.executionPolicy }
+      : {}),
+  };
+}
+
 // Explicit DTO projection — never serialize the raw row (repo rule).
 export function projectAgentSummary(
   row: Record<string, unknown>,
 ): Record<string, unknown> {
   return {
     id: row.id,
-    flowRefId: row.flowRefId,
+    packageName: row.packageName,
     versionLabel: row.versionLabel,
     origin: row.origin,
     name: row.name,
@@ -66,7 +91,9 @@ export function projectAgentSummary(
     mode: row.mode,
     triggers: row.triggers,
     riskTier: row.riskTier,
-    recommended: row.recommended ?? null,
+    recommended: projectRecommended(row.recommended),
+    flowRef: row.flowRef ?? null,
+    branchBase: row.branchBase ?? null,
     sourcePath: row.sourcePath,
     enabled: row.enabled,
     quarantinedAt: row.quarantinedAt ?? null,

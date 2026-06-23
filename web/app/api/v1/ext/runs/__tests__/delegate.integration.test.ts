@@ -166,7 +166,7 @@ Do the thing.
   );
 
   await pool.query(
-    `INSERT INTO "agents" ("id", "flow_ref_id", "version_label", "origin", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path", "enabled")
+    `INSERT INTO "agents" ("id", "package_name", "version_label", "origin", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path", "enabled")
      VALUES ($1, 'test-pkg', 'v1.0.0', 'git', $2, 'd', 'none', 'session', '["manual"]'::jsonb, 'read_only', $3, $4)`,
     [
       qualifiedId,
@@ -246,7 +246,7 @@ Do the thing.
   // The catalog row is ENABLED (kill switch OFF) — proving it is the PACKAGE
   // trust contour, not the agents-row flag, that refuses the launch.
   await pool.query(
-    `INSERT INTO "agents" ("id", "flow_ref_id", "version_label", "origin", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path", "enabled")
+    `INSERT INTO "agents" ("id", "package_name", "version_label", "origin", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path", "enabled")
      VALUES ($1, $2, 'v1.0.0', 'git', $3, 'd', 'none', 'session', '["manual"]'::jsonb, 'read_only', $4, true)`,
     [
       qualifiedId,

@@ -557,7 +557,7 @@ async function AgentsAttachPanelLoader({
         agent: {
           id: row.agent.id as string,
           name: row.agent.name as string,
-          flowRefId: row.agent.flowRefId as string,
+          packageName: row.agent.packageName as string,
           workspace: row.agent.workspace as string,
           mode: row.agent.mode as string,
           triggers: row.agent.triggers as string[],
@@ -571,7 +571,7 @@ async function AgentsAttachPanelLoader({
       available={view.available.map((agent) => ({
         id: agent.id as string,
         name: agent.name as string,
-        flowRefId: agent.flowRefId as string,
+        packageName: agent.packageName as string,
         recommended:
           (agent.recommended as {
             runner?: string;

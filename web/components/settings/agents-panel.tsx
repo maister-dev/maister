@@ -12,7 +12,7 @@ import { PanelSection } from "@/components/settings/panel-section";
 // is no create/edit surface here; definitions change through their package.
 export type AgentSummaryRow = {
   id: string;
-  flowRefId: string;
+  packageName: string;
   versionLabel: string;
   origin: "git" | "authored";
   name: string;
@@ -182,7 +182,7 @@ export function AgentsPanel({ agents, projects }: Props): ReactElement {
                   {agent.id}
                 </td>
                 <td className="px-4 py-3 font-mono text-[11px] text-ink-2">
-                  {agent.flowRefId}@{agent.versionLabel}
+                  {agent.packageName}@{agent.versionLabel}
                   <span className="ml-1.5 rounded border border-line px-1 py-px text-[10px] text-mute">
                     {agent.origin}
                   </span>

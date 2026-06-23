@@ -1,7 +1,9 @@
-// ADR-089 rework: the agents catalog is a projection of INSTALLED flow
-// revisions — `agents/<stem>.md` files register under package-qualified ids
-// `<flowRefId>:<stem>`. These tests drive registerAgentsForRevision/
-// resyncAgents against real installed-dir fixtures on a real Postgres.
+// ADR-106 re-key: the agents catalog is a projection of INSTALLED PACKAGES —
+// `maister-agents/<stem>.md` files at the package ROOT register under
+// package-qualified ids `<packageName>:<stem>`. These tests drive
+// registerPackageAgents/resyncAgents against real installed-dir fixtures +
+// package_installs rows on a real Postgres, and assert the migration 0062
+// FK fan-out (the destructive re-key wipe is safe for run history).
 import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -17,7 +19,7 @@ import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
-import { registerAgentsForRevision, resyncAgents } from "@/lib/agents/registry";
+import { registerPackageAgents, resyncAgents } from "@/lib/agents/registry";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 
@@ -49,19 +51,25 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  await pool.query(`DELETE FROM "runs"`);
+  await pool.query(`DELETE FROM "agent_schedules"`);
+  await pool.query(`DELETE FROM "agent_project_links"`);
   await pool.query(`DELETE FROM "agents"`);
-  await pool.query(`DELETE FROM "flow_revisions"`);
+  await pool.query(`DELETE FROM "package_installs"`);
+  await pool.query(`DELETE FROM "projects"`);
 });
 
 function definitionMd(opts?: {
   runner?: string | null;
   workspaceRef?: string;
   recommendedCron?: { expr: string; timezone: string };
+  flow?: string;
 }): string {
   const runnerLine = opts?.runner ? `runner: ${opts.runner}\n` : "";
   const refLine = opts?.workspaceRef
     ? `workspace_ref: ${opts.workspaceRef}\n`
     : "";
+  const flowLine = opts?.flow ? `flow: ${opts.flow}\n` : "";
   const recommended = opts?.recommendedCron
     ? `recommended:\n  cron:\n    expr: "${opts.recommendedCron.expr}"\n    timezone: ${opts.recommendedCron.timezone}\n`
     : "";
@@ -74,25 +82,27 @@ ${refLine}mode: session
 triggers:
   - manual
 risk_tier: read_only
-${recommended}---
+${flowLine}${recommended}---
 Triage the task.
 `;
 }
 
-// An installed flow-revision fixture: a real dir with maister-agents/*.md + the
-// flow_revisions row pointing at it.
-async function installRevisionFixture(opts: {
-  flowRefId: string;
+// An installed PACKAGE fixture: a real package-root dir with maister-agents/*.md
+// + the package_installs row pointing at it (manifest carries the flows[] used
+// for the same-package `flow` membership check).
+async function installPackageFixture(opts: {
+  name: string;
   versionLabel: string;
   agents: Record<string, string>;
+  manifestFlows?: string[];
   source?: string;
   packageStatus?: string;
-  installedAt?: Date;
+  createdAt?: Date;
 }): Promise<string> {
-  const revisionId = randomUUID();
+  const installId = randomUUID();
   const installedPath = path.join(
     cacheRoot,
-    `${opts.flowRefId}@${opts.versionLabel}-${revisionId.slice(0, 8)}`,
+    `${opts.name}@${opts.versionLabel}-${installId.slice(0, 8)}`,
   );
 
   await mkdir(path.join(installedPath, "maister-agents"), { recursive: true });
@@ -104,25 +114,38 @@ async function installRevisionFixture(opts: {
     );
   }
 
+  const manifest = {
+    spec: {
+      name: opts.name,
+      flows: (opts.manifestFlows ?? []).map((id) => ({ id })),
+    },
+    inventory: {
+      skills: [],
+      agents: [],
+      platformAgents: Object.keys(opts.agents),
+    },
+  };
+
   await pool.query(
-    `INSERT INTO "flow_revisions"
-       ("id", "flow_ref_id", "source", "version_label", "resolved_revision",
-        "manifest_digest", "manifest", "schema_version", "installed_path",
-        "package_status", "installed_at")
-     VALUES ($1, $2, $3, $4, $5, 'digest', '{}'::jsonb, 1, $6, $7, $8)`,
+    `INSERT INTO "package_installs"
+       ("id", "source_url", "name", "version_label", "resolved_revision",
+        "manifest", "manifest_digest", "installed_path", "package_status",
+        "trust_status", "created_at")
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb, 'digest', $7, $8, 'trusted', $9)`,
     [
-      revisionId,
-      opts.flowRefId,
+      installId,
       opts.source ?? "github.com/acme/pkg",
+      opts.name,
       opts.versionLabel,
       `rev-${opts.versionLabel}`,
+      JSON.stringify(manifest),
       installedPath,
       opts.packageStatus ?? "Installed",
-      opts.installedAt ?? new Date(),
+      opts.createdAt ?? new Date(),
     ],
   );
 
-  return revisionId;
+  return installId;
 }
 
 async function agentRow(
@@ -136,15 +159,15 @@ async function agentRow(
   return rows[0] as Record<string, unknown> | undefined;
 }
 
-describe("registerAgentsForRevision", () => {
+describe("registerPackageAgents", () => {
   it("registers package agents under qualified ids with provenance", async () => {
-    const revisionId = await installRevisionFixture({
-      flowRefId: "aif",
+    const installId = await installPackageFixture({
+      name: "aif",
       versionLabel: "v1.0.0",
       agents: { triager: definitionMd() },
     });
 
-    const summary = await registerAgentsForRevision(revisionId, db);
+    const summary = await registerPackageAgents(installId, db);
 
     expect(summary.registered).toEqual(["aif:triager"]);
     expect(summary.invalid).toEqual([]);
@@ -153,7 +176,7 @@ describe("registerAgentsForRevision", () => {
 
     expect(row).toMatchObject({
       id: "aif:triager",
-      flowRefId: "aif",
+      packageName: "aif",
       versionLabel: "v1.0.0",
       origin: "git",
       name: "Triager",
@@ -164,14 +187,14 @@ describe("registerAgentsForRevision", () => {
   });
 
   it("derives origin=authored for local filesystem sources", async () => {
-    const revisionId = await installRevisionFixture({
-      flowRefId: "studio-pkg",
+    const installId = await installPackageFixture({
+      name: "studio-pkg",
       versionLabel: "local-abc123",
       source: "/var/folders/authored-bridge-tmp",
       agents: { helper: definitionMd() },
     });
 
-    await registerAgentsForRevision(revisionId, db);
+    await registerPackageAgents(installId, db);
 
     expect((await agentRow("studio-pkg:helper"))?.origin).toBe("authored");
   });
@@ -183,8 +206,8 @@ describe("registerAgentsForRevision", () => {
        ON CONFLICT DO NOTHING`,
     );
 
-    const v1 = await installRevisionFixture({
-      flowRefId: "aif",
+    const v1 = await installPackageFixture({
+      name: "aif",
       versionLabel: "v1.0.0",
       agents: {
         triager: definitionMd({
@@ -194,7 +217,7 @@ describe("registerAgentsForRevision", () => {
       },
     });
 
-    await registerAgentsForRevision(v1, db);
+    await registerPackageAgents(v1, db);
 
     expect(await agentRow("aif:triager")).toMatchObject({
       runnerId: "claude-default",
@@ -203,13 +226,13 @@ describe("registerAgentsForRevision", () => {
     });
 
     // v2 drops runner + workspace_ref → columns CLEAR; version advances.
-    const v2 = await installRevisionFixture({
-      flowRefId: "aif",
+    const v2 = await installPackageFixture({
+      name: "aif",
       versionLabel: "v2.0.0",
       agents: { triager: definitionMd() },
     });
 
-    await registerAgentsForRevision(v2, db);
+    await registerPackageAgents(v2, db);
 
     expect(await agentRow("aif:triager")).toMatchObject({
       runnerId: null,
@@ -219,18 +242,18 @@ describe("registerAgentsForRevision", () => {
   });
 
   it("preserves runtime state (enabled, quarantine) across re-register", async () => {
-    const v1 = await installRevisionFixture({
-      flowRefId: "aif",
+    const v1 = await installPackageFixture({
+      name: "aif",
       versionLabel: "v1.0.0",
       agents: { triager: definitionMd() },
     });
 
-    await registerAgentsForRevision(v1, db);
+    await registerPackageAgents(v1, db);
     await pool.query(
       `UPDATE "agents" SET "enabled" = false, "quarantined_at" = now(), "quarantine_reason" = 'dirty' WHERE "id" = 'aif:triager'`,
     );
 
-    await registerAgentsForRevision(v1, db);
+    await registerPackageAgents(v1, db);
 
     const row = await agentRow("aif:triager");
 
@@ -239,9 +262,28 @@ describe("registerAgentsForRevision", () => {
     expect(row?.quarantineReason).toBe("dirty");
   });
 
+  it("validates the same-package flow: stores a valid flowRef, rejects a non-member", async () => {
+    const installId = await installPackageFixture({
+      name: "aif",
+      versionLabel: "v1.0.0",
+      manifestFlows: ["bugfix"],
+      agents: {
+        driver: definitionMd({ flow: "bugfix" }),
+        stray: definitionMd({ flow: "ghost" }),
+      },
+    });
+
+    const summary = await registerPackageAgents(installId, db);
+
+    expect(summary.registered).toEqual(["aif:driver"]);
+    expect(summary.invalid.map((i) => i.id)).toEqual(["aif:stray"]);
+    expect((await agentRow("aif:driver"))?.flowRef).toBe("bugfix");
+    expect(await agentRow("aif:stray")).toBeUndefined();
+  });
+
   it("reports invalid definitions without writing rows (bad schema + bad recommended cron)", async () => {
-    const revisionId = await installRevisionFixture({
-      flowRefId: "aif",
+    const installId = await installPackageFixture({
+      name: "aif",
       versionLabel: "v1.0.0",
       agents: {
         ok: definitionMd(),
@@ -252,7 +294,7 @@ describe("registerAgentsForRevision", () => {
       },
     });
 
-    const summary = await registerAgentsForRevision(revisionId, db);
+    const summary = await registerPackageAgents(installId, db);
 
     expect(summary.registered).toEqual(["aif:ok"]);
     expect(summary.invalid.map((i) => i.id).sort()).toEqual([
@@ -263,26 +305,26 @@ describe("registerAgentsForRevision", () => {
     expect(await agentRow("aif:badcron")).toBeUndefined();
   });
 
-  it("refuses unknown and not-Installed revisions with PRECONDITION", async () => {
-    await expect(registerAgentsForRevision(randomUUID(), db)).rejects.toSatisfy(
+  it("refuses unknown and not-Installed package installs with PRECONDITION", async () => {
+    await expect(registerPackageAgents(randomUUID(), db)).rejects.toSatisfy(
       (err: unknown) => isMaisterError(err) && err.code === "PRECONDITION",
     );
 
-    const installing = await installRevisionFixture({
-      flowRefId: "aif",
+    const installing = await installPackageFixture({
+      name: "aif",
       versionLabel: "v1.0.0",
       packageStatus: "Installing",
       agents: { triager: definitionMd() },
     });
 
-    await expect(registerAgentsForRevision(installing, db)).rejects.toSatisfy(
+    await expect(registerPackageAgents(installing, db)).rejects.toSatisfy(
       (err: unknown) => isMaisterError(err) && err.code === "PRECONDITION",
     );
   });
 
   it("registers nothing for a package without a maister-agents/ dir", async () => {
-    const revisionId = await installRevisionFixture({
-      flowRefId: "plain",
+    const installId = await installPackageFixture({
+      name: "plain",
       versionLabel: "v1.0.0",
       agents: {},
     });
@@ -291,8 +333,8 @@ describe("registerAgentsForRevision", () => {
       path.join(
         (
           await pool.query(
-            `SELECT "installed_path" FROM "flow_revisions" WHERE "id" = $1`,
-            [revisionId],
+            `SELECT "installed_path" FROM "package_installs" WHERE "id" = $1`,
+            [installId],
           )
         ).rows[0].installed_path as string,
         "maister-agents",
@@ -300,7 +342,7 @@ describe("registerAgentsForRevision", () => {
       { recursive: true, force: true },
     );
 
-    const summary = await registerAgentsForRevision(revisionId, db);
+    const summary = await registerPackageAgents(installId, db);
 
     expect(summary.registered).toEqual([]);
     expect(summary.invalid).toEqual([]);
@@ -308,30 +350,30 @@ describe("registerAgentsForRevision", () => {
 });
 
 describe("resyncAgents", () => {
-  it("projects the newest Installed revision per flow_ref and disables vanished agents", async () => {
+  it("projects the newest Installed install per package name and disables vanished agents", async () => {
     const older = new Date(Date.now() - 60_000);
 
-    await installRevisionFixture({
-      flowRefId: "aif",
+    await installPackageFixture({
+      name: "aif",
       versionLabel: "v1.0.0",
-      installedAt: older,
+      createdAt: older,
       agents: { triager: definitionMd(), dropped: definitionMd() },
     });
-    // Newest revision no longer ships `dropped`.
-    await installRevisionFixture({
-      flowRefId: "aif",
+    // Newest install no longer ships `dropped`.
+    await installPackageFixture({
+      name: "aif",
       versionLabel: "v2.0.0",
       agents: { triager: definitionMd() },
     });
 
-    // Seed the stale rows from the older revision first.
-    const oldRevId = (
+    // Seed the stale rows from the older install first.
+    const oldId = (
       await pool.query(
-        `SELECT "id" FROM "flow_revisions" WHERE "version_label" = 'v1.0.0'`,
+        `SELECT "id" FROM "package_installs" WHERE "version_label" = 'v1.0.0'`,
       )
     ).rows[0].id as string;
 
-    await registerAgentsForRevision(oldRevId, db);
+    await registerPackageAgents(oldId, db);
     expect((await agentRow("aif:dropped"))?.enabled).toBe(true);
 
     const summary = await resyncAgents(db);
@@ -345,22 +387,87 @@ describe("resyncAgents", () => {
     });
   });
 
-  it("disables agents whose providing package has no Installed revision left", async () => {
-    const revisionId = await installRevisionFixture({
-      flowRefId: "gone",
+  it("disables agents whose providing package has no Installed install left", async () => {
+    const installId = await installPackageFixture({
+      name: "gone",
       versionLabel: "v1.0.0",
       agents: { watcher: definitionMd() },
     });
 
-    await registerAgentsForRevision(revisionId, db);
+    await registerPackageAgents(installId, db);
     await pool.query(
-      `UPDATE "flow_revisions" SET "package_status" = 'Removed' WHERE "id" = $1`,
-      [revisionId],
+      `UPDATE "package_installs" SET "package_status" = 'Removed' WHERE "id" = $1`,
+      [installId],
     );
 
     const summary = await resyncAgents(db);
 
     expect(summary.missing).toEqual(["gone:watcher"]);
     expect((await agentRow("gone:watcher"))?.enabled).toBe(false);
+  });
+});
+
+describe("migration 0062 data policy (DELETE FROM agents FK fan-out)", () => {
+  it("cascades agent_project_links + agent_schedules and SET-NULLs runs.agent_id", async () => {
+    const projectId = randomUUID();
+
+    await db.insert(schema.projects).values({
+      id: projectId,
+      slug: "fanout",
+      name: "Fan-out",
+      repoPath: "/tmp/fanout",
+      maisterYamlPath: "/tmp/fanout/maister.yaml",
+      taskKey: "FAN",
+    });
+
+    const installId = await installPackageFixture({
+      name: "aif",
+      versionLabel: "v1.0.0",
+      agents: { helper: definitionMd() },
+    });
+
+    await registerPackageAgents(installId, db);
+
+    const linkId = randomUUID();
+
+    await pool.query(
+      `INSERT INTO "agent_project_links" ("id", "agent_id", "project_id", "enabled")
+       VALUES ($1, 'aif:helper', $2, true)`,
+      [linkId, projectId],
+    );
+    await pool.query(
+      `INSERT INTO "agent_schedules"
+         ("id", "agent_id", "project_id", "trigger_type", "event_match", "enabled")
+       VALUES ($1, 'aif:helper', $2, 'event', '{"kinds":["run.failed"]}'::jsonb, true)`,
+      [randomUUID(), projectId],
+    );
+
+    const runId = randomUUID();
+
+    await pool.query(
+      `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id", "flow_version", "status")
+       VALUES ($1, 'agent', 'aif:helper', $2, 'v1', 'Done')`,
+      [runId, projectId],
+    );
+
+    // The destructive re-key wipe.
+    await pool.query(`DELETE FROM "agents"`);
+
+    const links = await pool.query(
+      `SELECT "id" FROM "agent_project_links" WHERE "id" = $1`,
+      [linkId],
+    );
+    const schedules = await pool.query(
+      `SELECT "id" FROM "agent_schedules" WHERE "agent_id" = 'aif:helper'`,
+    );
+    const run = await pool.query(
+      `SELECT "id", "agent_id" FROM "runs" WHERE "id" = $1`,
+      [runId],
+    );
+
+    expect(links.rowCount).toBe(0); // CASCADE
+    expect(schedules.rowCount).toBe(0); // CASCADE
+    expect(run.rowCount).toBe(1); // run history survives
+    expect(run.rows[0].agent_id).toBeNull(); // SET NULL
   });
 });

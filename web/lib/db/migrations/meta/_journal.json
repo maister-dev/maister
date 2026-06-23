@@ -477,6 +477,13 @@
       "when": 1782345600000,
       "tag": "0067_cost_rollups_projectless_scratch",
       "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1782432000000,
+      "tag": "0068_m39_package_agents",
+      "breakpoints": true
     }
   ]
 }

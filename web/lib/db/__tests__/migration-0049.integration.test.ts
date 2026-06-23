@@ -58,7 +58,7 @@ async function seedAgent(): Promise<string> {
   const agentId = `test-pkg:agent-${randomUUID().slice(0, 8)}`;
 
   await pool.query(
-    `INSERT INTO "agents" ("id", "flow_ref_id", "version_label", "origin", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path")
+    `INSERT INTO "agents" ("id", "package_name", "version_label", "origin", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path")
      VALUES ($1, 'test-pkg', 'v1.0.0', 'git', 'A', 'desc', 'none', 'session', '["manual"]'::jsonb, 'read_only', '/tmp/agent.md')`,
     [agentId],
   );
@@ -94,9 +94,11 @@ describe("migration 0049 — platform agents", () => {
     );
     const names = cols.rows.map((r) => r.column_name);
 
+    // ADR-106 (migration 0062) re-keyed the provenance column flow_ref_id →
+    // package_name and added flow_ref / branch_base.
     expect(names).toEqual(
       expect.arrayContaining([
-        "flow_ref_id",
+        "package_name",
         "version_label",
         "origin",
         "recommended",
@@ -105,13 +107,14 @@ describe("migration 0049 — platform agents", () => {
     );
     expect(names).not.toContain("scope");
     expect(names).not.toContain("project_id");
+    expect(names).not.toContain("flow_ref_id");
 
     await expect(
       pool.query(
         `INSERT INTO "agents" ("id", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path")
          VALUES ('no-provenance', 'A', 'd', 'none', 'session', '["manual"]'::jsonb, 'read_only', '/tmp/a.md')`,
       ),
-    ).rejects.toThrow(/flow_ref_id|not-null/);
+    ).rejects.toThrow(/package_name|not-null/);
   });
 
   it("agent_schedules shape CHECKs enforce cron and event row fields", async () => {

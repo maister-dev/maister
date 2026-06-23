@@ -40,7 +40,7 @@ const ATTACHED: AttachedAgentRow = {
   agent: {
     id: "aif:triager",
     name: "Triager",
-    flowRefId: "aif",
+    packageName: "aif",
     workspace: "none",
     mode: "session",
     triggers: ["manual", "domain_event"],
@@ -63,7 +63,7 @@ function render(over: {
         {
           id: "aif:reviewer",
           name: "Reviewer",
-          flowRefId: "aif",
+          packageName: "aif",
           recommended: null,
         },
       ],

@@ -95,7 +95,7 @@ async function seedWorld(): Promise<{
     ],
   );
   await pool.query(
-    `INSERT INTO "agents" ("id", "flow_ref_id", "version_label", "origin", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path")
+    `INSERT INTO "agents" ("id", "package_name", "version_label", "origin", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path")
      VALUES ('watchdog-agent', 'test-pkg', 'v1.0.0', 'git', 'W', 'd', 'repo_read', 'session', '["manual"]'::jsonb, 'read_only', '/tmp/agent.md')`,
   );
   await pool.query(

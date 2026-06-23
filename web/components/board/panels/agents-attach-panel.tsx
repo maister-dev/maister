@@ -22,7 +22,7 @@ export type AttachedAgentRow = {
   agent: {
     id: string;
     name: string;
-    flowRefId: string;
+    packageName: string;
     workspace: string;
     mode: string;
     triggers: string[];
@@ -35,7 +35,7 @@ export type AttachedAgentRow = {
 export type AvailableAgentRow = {
   id: string;
   name: string;
-  flowRefId: string;
+  packageName: string;
   // RD5: package-recommended bindings — pre-fill the attach modal; nothing
   // applies without Save.
   recommended: {
@@ -134,7 +134,7 @@ export function AgentsAttachPanel({
             >
               {available.map((agent) => (
                 <option key={agent.id} value={agent.id}>
-                  {agent.name} ({agent.flowRefId})
+                  {agent.name} ({agent.packageName})
                 </option>
               ))}
             </select>
@@ -301,7 +301,7 @@ function rowFromAvailable(agent: AvailableAgentRow): AttachedAgentRow {
     agent: {
       id: agent.id,
       name: agent.name,
-      flowRefId: agent.flowRefId,
+      packageName: agent.packageName,
       workspace: "",
       mode: "",
       triggers: [],

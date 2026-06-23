@@ -102,7 +102,7 @@ describe("workbench stop — agent runs", () => {
     const runId = randomUUID();
 
     await pool.query(
-      `INSERT INTO "agents" ("id", "flow_ref_id", "version_label", "origin", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path")
+      `INSERT INTO "agents" ("id", "package_name", "version_label", "origin", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path")
        VALUES ('stop-agent', 'stop-pkg', 'v1.0.0', 'git', 'A', 'd', 'worktree', 'session', '["manual"]'::jsonb, 'read_only', '/tmp/agent.md')`,
     );
     await pool.query(
@@ -143,7 +143,7 @@ describe("workbench stop — agent runs", () => {
     const runId = randomUUID();
 
     await pool.query(
-      `INSERT INTO "agents" ("id", "flow_ref_id", "version_label", "origin", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path")
+      `INSERT INTO "agents" ("id", "package_name", "version_label", "origin", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path")
        VALUES ('stop-agent', 'stop-pkg', 'v1.0.0', 'git', 'A', 'd', 'worktree', 'session', '["manual"]'::jsonb, 'read_only', '/tmp/agent.md')`,
     );
     await pool.query(

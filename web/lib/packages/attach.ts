@@ -279,6 +279,27 @@ export async function installPackageRevision(opts: {
       })
       .where(eq(packageInstalls.id, id));
 
+    // ADR-106: platform agents ship at the package ROOT (`maister-agents/`) —
+    // register them AFTER the member flow installs, keyed by package name.
+    // Best-effort: a broken agent file is reported in the summary, never fails
+    // the surrounding install (a later resync re-projects the catalog anyway).
+    try {
+      const { registerPackageAgents } = await import("@/lib/agents/registry");
+      const agentSummary = await registerPackageAgents(id, db);
+
+      if (agentSummary.invalid.length > 0) {
+        log.warn(
+          { id, name, invalid: agentSummary.invalid },
+          "package shipped invalid agent definitions",
+        );
+      }
+    } catch (err) {
+      log.warn(
+        { id, name, err: err instanceof Error ? err.message : String(err) },
+        "agent registration after package install failed",
+      );
+    }
+
     log.info(
       {
         id,

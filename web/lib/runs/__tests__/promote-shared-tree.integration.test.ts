@@ -124,7 +124,7 @@ beforeEach(async () => {
   // dereferences them; the merge resolves the tree workspace, not the agent).
   for (const stem of ["coordinator", "worker"]) {
     await pool.query(
-      `INSERT INTO "agents" ("id", "flow_ref_id", "version_label", "origin", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path", "enabled")
+      `INSERT INTO "agents" ("id", "package_name", "version_label", "origin", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path", "enabled")
        VALUES ($1, 'test-pkg', 'v1.0.0', 'git', $2, 'd', 'worktree', 'session', '["manual"]'::jsonb, 'read_only', $3, true)
        ON CONFLICT (id) DO NOTHING`,
       [`test-pkg:${stem}`, stem, `/tmp/${stem}.md`],

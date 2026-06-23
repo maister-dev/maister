@@ -34,6 +34,15 @@ export async function register(): Promise<void> {
 
     await runReconcileSweep();
 
+    // ADR-106 (migration 0062): the per-flow → per-package agent re-key wipes
+    // the `agents` catalog; re-project it from installed packages on boot so a
+    // deploy that ran the migration repopulates without waiting for the next
+    // package install. Idempotent (newest-Installed-per-name projection) — a
+    // normal boot re-syncs to the same rows.
+    const { resyncAgents } = await import("@/lib/agents/registry");
+
+    await resyncAgents();
+
     // ADR-022/ADR-038: idempotent boot catch-up so event-stream evidence is
     // projected before any run is viewed (deterministic-PK upsert → no dups).
     const { runProjectorCatchUpSweep } = await import(

@@ -721,7 +721,7 @@ describe("runReconcileSweep (integration)", () => {
     const agentId = `recon-agent-${randomUUID().slice(0, 8)}`;
 
     await pool.query(
-      `INSERT INTO "agents" ("id", "flow_ref_id", "version_label", "origin", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path")
+      `INSERT INTO "agents" ("id", "package_name", "version_label", "origin", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path")
        VALUES ($1, 'recon-pkg', 'v1.0.0', 'git', 'Recon Agent', 'd', 'none', 'session', '["manual"]'::jsonb, 'read_only', '/tmp/agent.md')`,
       [agentId],
     );
