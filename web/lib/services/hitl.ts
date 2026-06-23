@@ -1306,7 +1306,15 @@ async function handleInfraRecoveryResponse(args: {
       );
     }
     if (locked.respondedAt) {
-      return { transition: "already-delivered" } as const;
+      const [r] = await tx
+        .select({ status: runs.status })
+        .from(runs)
+        .where(eq(runs.id, runId));
+
+      return {
+        transition: "already-delivered",
+        runStatus: (r?.status as string | undefined) ?? runRow.status,
+      } as const;
     }
 
     await tx
@@ -1390,8 +1398,16 @@ async function handleInfraRecoveryResponse(args: {
   });
 
   if (outcome.transition === "already-delivered") {
+    // Self-heal a lost post-commit scheduleResume (see respondToHookTripHitl):
+    // a retry-resumed flow run left NeedsInput has no reconcile backstop, so the
+    // same-payload retry re-queues the wake. Idempotent — runFlow's NeedsInput
+    // resume gate no-ops if the run already advanced.
+    if (outcome.runStatus === "NeedsInput") {
+      scheduleResume(runId);
+    }
+
     return NextResponse.json(
-      { ok: true, runStatus: runRow.status, idempotent: true },
+      { ok: true, runStatus: outcome.runStatus, idempotent: true },
       { status: 200 },
     );
   }
@@ -1463,6 +1479,7 @@ async function handleBudgetBreachResponse(args: {
   const {
     db,
     hitlRow,
+    runRow,
     body,
     runId,
     hitlRequestId,
@@ -1514,7 +1531,15 @@ async function handleBudgetBreachResponse(args: {
       );
     }
     if (locked.respondedAt) {
-      return { transition: "already-delivered" } as const;
+      const [r] = await tx
+        .select({ status: runs.status })
+        .from(runs)
+        .where(eq(runs.id, runId));
+
+      return {
+        transition: "already-delivered",
+        runStatus: (r?.status as string | undefined) ?? runRow.status,
+      } as const;
     }
 
     await tx
@@ -1634,6 +1659,14 @@ async function handleBudgetBreachResponse(args: {
   });
 
   if (outcome.transition === "already-delivered") {
+    // Self-heal a lost post-commit scheduleResume (see respondToHookTripHitl):
+    // a raise-resumed flow run left NeedsInput has no reconcile backstop, so the
+    // same-payload retry re-queues the wake. Idempotent — runFlow's NeedsInput
+    // resume gate no-ops if the run already advanced.
+    if (outcome.runStatus === "NeedsInput") {
+      scheduleResume(runId);
+    }
+
     return NextResponse.json({ ok: true, idempotent: true }, { status: 200 });
   }
 
@@ -1716,7 +1749,15 @@ async function handleHookTripResponse(args: {
       );
     }
     if (locked.respondedAt) {
-      return { transition: "already-delivered" } as const;
+      const [r] = await tx
+        .select({ status: runs.status })
+        .from(runs)
+        .where(eq(runs.id, runId));
+
+      return {
+        transition: "already-delivered",
+        runStatus: (r?.status as string | undefined) ?? runRow.status,
+      } as const;
     }
 
     await tx
@@ -1812,8 +1853,19 @@ async function handleHookTripResponse(args: {
   });
 
   if (outcome.transition === "already-delivered") {
+    // Self-heal a crash between the respondedAt commit and the post-commit
+    // resume handoff: a resumed flow run is left NeedsInput and, if the original
+    // scheduleResume was lost (process restart), has no reconcile backstop.
+    // Re-queue here so the same-payload retry is the durable recovery path —
+    // idempotent, runFlow's NeedsInput resume gate no-ops if the run already
+    // advanced. (Agent resume CAS'd Running in the same tx, so it is never
+    // NeedsInput here; a stranded Running agent run is recovered by reconcile.)
+    if (outcome.runStatus === "NeedsInput") {
+      scheduleResume(runId);
+    }
+
     return NextResponse.json(
-      { ok: true, runStatus: runRow.status, idempotent: true },
+      { ok: true, runStatus: outcome.runStatus, idempotent: true },
       { status: 200 },
     );
   }

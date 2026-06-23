@@ -333,6 +333,82 @@ describe("respondToHitl hook_trip integration", () => {
     expect(await second.json()).toMatchObject({ idempotent: true });
   });
 
+  it("flow already-delivered retry self-heals: re-queues runFlow when still NeedsInput", async () => {
+    const projectId = await seedProject("ht-flow-reheal");
+    const runId = await seedRun(projectId, { runKind: "flow" });
+    const hitlRequestId = await seedHookTripHitl(runId);
+
+    const { runFlow } = await import("@/lib/flows/runner");
+
+    // First resume: commits respondedAt + schedules runFlow, leaving the flow
+    // run NeedsInput (runFlow is mocked → no advance).
+    const first = await respondToHitl(
+      { runId, hitlRequestId, body: { optionId: "resume" } },
+      userActor,
+      { db },
+    );
+
+    expect(first.status).toBe(202);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(vi.mocked(runFlow)).toHaveBeenCalledTimes(1);
+    vi.mocked(runFlow).mockClear();
+
+    // Crash window: the original microtask was lost; the run is still
+    // NeedsInput. A same-payload retry MUST re-queue the resume (durable
+    // recovery), not return 200 inertly and strand the run.
+    const retry = await respondToHitl(
+      { runId, hitlRequestId, body: { optionId: "resume" } },
+      userActor,
+      { db },
+    );
+
+    expect(retry.status).toBe(200);
+    expect(await retry.json()).toMatchObject({
+      idempotent: true,
+      runStatus: "NeedsInput",
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(vi.mocked(runFlow)).toHaveBeenCalledWith(runId);
+  });
+
+  it("already-delivered retry does NOT re-queue runFlow once the run advanced", async () => {
+    const projectId = await seedProject("ht-flow-advanced");
+    const runId = await seedRun(projectId, { runKind: "flow" });
+    const hitlRequestId = await seedHookTripHitl(runId);
+
+    const { runFlow } = await import("@/lib/flows/runner");
+
+    const first = await respondToHitl(
+      { runId, hitlRequestId, body: { optionId: "resume" } },
+      userActor,
+      { db },
+    );
+
+    expect(first.status).toBe(202);
+    await new Promise((r) => setTimeout(r, 0));
+    vi.mocked(runFlow).mockClear();
+
+    // The run has since advanced past NeedsInput.
+    await (db as any)
+      .update(schema.runs)
+      .set({ status: "Review" })
+      .where(eq(schema.runs.id, runId));
+
+    const retry = await respondToHitl(
+      { runId, hitlRequestId, body: { optionId: "resume" } },
+      userActor,
+      { db },
+    );
+
+    expect(retry.status).toBe(200);
+    expect(await retry.json()).toMatchObject({
+      idempotent: true,
+      runStatus: "Review",
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(vi.mocked(runFlow)).not.toHaveBeenCalled();
+  });
+
   it("rejects an unknown optionId (PRECONDITION)", async () => {
     const projectId = await seedProject("ht-bad-option");
     const runId = await seedRun(projectId);

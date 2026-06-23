@@ -50,6 +50,15 @@ function extractWritePath(tc: ToolCallLike): { isWrite: boolean; path?: string }
 }
 ```
 
+**Known limitation (`execute`/bash, by design):** `WRITE_KINDS` excludes
+`execute` — a shell command can be read-only and neither the supervisor nor the
+native claude `Edit|Write|MultiEdit|NotebookEdit` hook statically proves a bash
+command stays in-lane. So `path_guard` confines only write-class tool calls;
+under `unattended` (`permissions=auto_approve`) a single out-of-lane bash write
+is auto-approved. A bash *loop* is still bounded by `no_progress` (an `execute`
+turn is not progress). True filesystem confinement for bash is an OS-sandbox
+concern (Phase 2), out of scope for the kind-based `path_guard`.
+
 ### 1.2 — T0.2 per-`run_kind` resume verification
 
 | `run_kind` | Resume path | Reuse for `hook_trip`? |

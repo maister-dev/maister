@@ -481,6 +481,12 @@ type EventConsumer = {
   // markCheckpointedFromExit (which would flip NeedsInput→NeedsInputIdle and
   // break the runFlow NeedsInput resume).
   hookTripEscalated: () => boolean;
+  // ADR-104 (M40): true iff escalateHookTrip REJECTED (its tx threw after the
+  // pre-tx checkpoint already stopped the agent). The run is stranded Running
+  // with no hook_trip HITL, so the runner MUST surface CRASH (not a clean
+  // STEP_CHECKPOINTED) — runFlow marks it Crashed and crash-reconcile/recover
+  // can session/resume the retained acpSessionId.
+  hookTripEscalateFailed: () => boolean;
 };
 
 function executorToSupervisorInput(
@@ -515,6 +521,7 @@ function startEventConsumer(
   let persistFailure: { reason: string } | null = null;
   let checkpointObserved = false;
   let hookEscalated = false;
+  let hookEscalateFailed = false;
   const pendingWork: Promise<void>[] = [];
 
   const done = (async () => {
@@ -542,11 +549,30 @@ function startEventConsumer(
                 toolCall: ev.toolCall,
                 runKind: "flow",
                 checkpointSession: supervisor.checkpointSession,
-              }).then((r) => {
-                // EXECUTOR_UNAVAILABLE / lost CAS → un-claim so the runner does
-                // not suppress the normal checkpoint/exit handling.
-                if (!r.escalated) hookEscalated = false;
-              }),
+              }).then(
+                (r) => {
+                  // EXECUTOR_UNAVAILABLE / lost CAS → un-claim so the runner
+                  // does not suppress the normal checkpoint/exit handling.
+                  if (!r.escalated) hookEscalated = false;
+                },
+                (err: unknown) => {
+                  // The escalate tx threw AFTER the pre-tx checkpoint already
+                  // stopped the agent: the run is stranded Running with no
+                  // hook_trip HITL. Un-claim and flag the failure so the runner
+                  // surfaces CRASH instead of a clean checkpoint — without this,
+                  // Promise.allSettled swallows the rejection and hookEscalated
+                  // stays true (false STEP_CHECKPOINTED on a stranded run).
+                  hookEscalated = false;
+                  hookEscalateFailed = true;
+                  log.error(
+                    {
+                      runId: permissionCtx.runId,
+                      err: err instanceof Error ? err.message : String(err),
+                    },
+                    "hook_trip escalation threw — surfacing CRASH",
+                  );
+                },
+              ),
             );
           } else if (ev.disposition === "deny") {
             log.debug(
@@ -621,6 +647,7 @@ function startEventConsumer(
     permissionPersistFailure: () => persistFailure,
     checkpointReasonObserved: () => checkpointObserved,
     hookTripEscalated: () => hookEscalated,
+    hookTripEscalateFailed: () => hookEscalateFailed,
   };
 }
 
@@ -830,6 +857,31 @@ async function runNewSession(
     const persistFailure = consumer.permissionPersistFailure();
     const checkpointed = consumer.checkpointReasonObserved();
     const hookEscalated = consumer.hookTripEscalated();
+    const hookEscalateFailed = consumer.hookTripEscalateFailed();
+
+    // ADR-104 (M40): escalateHookTrip rejected after the pre-tx checkpoint — the
+    // run is stranded Running with no hook_trip HITL. Surface CRASH (not a clean
+    // checkpoint) so runFlow marks it Crashed and recover can session/resume.
+    if (hookEscalateFailed) {
+      log.error(
+        {
+          runId: ctx.runId,
+          stepId: ctx.stepId,
+          acpSessionId: session.acpSessionId,
+        },
+        "hook_trip escalation failed — STEP CRASH (stranded run)",
+      );
+
+      return {
+        ok: false,
+        stdout: consumer.snapshot(),
+        vars: {},
+        durationMs: Date.now() - startedAt,
+        errorCode: "CRASH" as const,
+        acpSessionId: session.acpSessionId,
+        sessionFallback,
+      };
+    }
 
     // ADR-104 (M40): a halting guardrail trip already CAS'd Running→NeedsInput +
     // opened the hook_trip HITL inside escalateHookTrip. Surface STEP_CHECKPOINTED
@@ -1000,6 +1052,25 @@ async function runSlashInExisting(
   const persistFailure = consumer.permissionPersistFailure();
   const checkpointed = consumer.checkpointReasonObserved();
   const hookEscalated = consumer.hookTripEscalated();
+  const hookEscalateFailed = consumer.hookTripEscalateFailed();
+
+  // ADR-104 (M40): see runNewSession — escalateHookTrip rejected after the
+  // pre-tx checkpoint; the run is stranded Running with no HITL. Surface CRASH.
+  if (hookEscalateFailed) {
+    log.error(
+      { runId: ctx.runId, stepId: ctx.stepId, sessionId },
+      "hook_trip escalation failed — STEP CRASH (stranded run)",
+    );
+
+    return {
+      ok: false,
+      stdout: consumer.snapshot(),
+      vars: {},
+      durationMs: Date.now() - startedAt,
+      errorCode: "CRASH" as const,
+      acpSessionId: sessionId,
+    };
+  }
 
   // ADR-104 (M40): see runNewSession — a guardrail trip leaves the run
   // NeedsInput; surface STEP_CHECKPOINTED without markCheckpointedFromExit.

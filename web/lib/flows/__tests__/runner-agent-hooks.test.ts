@@ -161,6 +161,34 @@ describe("runner-agent — session.hook_trip", () => {
     ).not.toHaveBeenCalled();
   });
 
+  it("escalate rejection: surfaces CRASH (not a clean checkpoint), no markCheckpointedFromExit", async () => {
+    escalateHookTripMock.escalateHookTrip.mockClear();
+    stateTransitionsMock.markCheckpointedFromExit.mockClear();
+    // The escalate tx throws AFTER the pre-tx checkpoint already stopped the
+    // agent — the run is stranded Running with no hook_trip HITL.
+    escalateHookTripMock.escalateHookTrip.mockRejectedValueOnce(
+      new Error("escalate tx threw"),
+    );
+    const api = makeApi([
+      hookTrip(1, "halt", "repetition"),
+      exited(2, "checkpoint"),
+    ]);
+
+    const result = await runAgentStep(
+      { id: "implement", type: "agent", mode: "new-session", prompt: "go" },
+      makeCtx(),
+      api as never,
+    );
+
+    expect(result.ok).toBe(false);
+    // CRASH (runFlow → Crashed → recover), NOT the false clean STEP_CHECKPOINTED
+    // that would hide the stranded run behind a successful pause.
+    expect(result.errorCode).toBe("CRASH");
+    expect(
+      stateTransitionsMock.markCheckpointedFromExit,
+    ).not.toHaveBeenCalled();
+  });
+
   it("no_progress halt is escalated with the no_progress rule", async () => {
     escalateHookTripMock.escalateHookTrip.mockClear();
     const api = makeApi([

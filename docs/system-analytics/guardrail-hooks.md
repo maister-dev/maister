@@ -308,6 +308,16 @@ resumes through the same agent-permission-HITL path that already drives it.
 - **Adapter omits `toolCall.locations[].path`** (gemini / opencode / mimo) →
   kind-only fallback: an armed `path_guard` denies any write-kind with no
   extractable path (conservative deny-and-continue).
+- **`execute` (bash) writes are NOT confined by `path_guard`** — the guard is
+  kind-based (`WRITE_KINDS` = edit/write/create/delete/move); `execute` is
+  excluded by design (a shell command can be read-only, and neither the
+  supervisor nor the native claude `Edit|Write|MultiEdit|NotebookEdit` hook
+  statically proves a command stays in-lane). Under `unattended`
+  (`permissions=auto_approve`) a single out-of-lane bash write is therefore
+  auto-approved. The liveness breakers bound bash *loops* (an `execute` turn is
+  not progress, so a non-writing bash loop trips `no_progress`), but a single
+  destructive command is not blocked — true filesystem confinement is an
+  OS-sandbox concern (Phase 2), not `path_guard`'s kind-based scope.
 - **Stall with no tool calls at all** (pure model output, no `tool_call`
   `sessionUpdate`) → `no_progress` does NOT increment — only tool-call turns
   count as a turn. That case is covered by the ADR-101 budget
