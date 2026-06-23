@@ -139,9 +139,9 @@ Root causes (CORRECTED by /aif-improve trace — "add a 4th tab" was a misdiagno
 - Files: `web/lib/flows/editor/package-file-tree.ts`, `web/lib/agents/{definition,subagent-definition}.ts`, `web/lib/capabilities/materialize-bundle.ts` (verify), `web/components/flows/package-files-editor.tsx`, NEW `web/components/flows/artifact-editors/subagent-editor.tsx`, `web/components/studio/{package-detail,package-tabs}.tsx`, NEW create-artifact wizard, `web/lib/queries/packages.ts` (BOM split + naming), i18n.
 
 ### Phase A5 — Verify Stream A + docs flip + ROADMAP M39 (part A) — Task #9 (blockedBy #3,#4,#5)
-- [ ] Flip Stream-A docs Designed→Implemented + ADR-105 status.
-- [ ] ROADMAP M39 entry (Stream-A scope); note M38 = flow-routing.
-- [ ] Final `/aif-verify` for Stream A: tsc 0, full unit+integration, e2e on host (free :3000), validate:docs:all, redocly 0, i18n en/ru parity, zero console.*.
+- [x] Flipped Stream-A docs Designed→Implemented: `local-packages.md` header + customize/element-fork **reconciled to the project-less reality** (owner reframe); `agents.md` canonical `maister-agents/` + first-class `subagent` kind; `screens/studio/editor.md` authoring IA. ★ADR-105 STAYS **Accepted** (ADR-status convention — implementation status lives in system-analytics docs; shipped ADR-103 is likewise "Accepted"). Create-wizard parts noted as deferred.
+- [x] ROADMAP **M39** entry added after M38 (Stream-A scope; marked `[ ]` in-progress — create wizards + Stream B remain; M38=flow-routing noted; the 3 A-stream commits cited).
+- [x] Final verify: **tsc 0, full unit 4751**, affected integration (local-pkg 27 + agent-runtime ~96) green, **validate:docs:all 272/272 mermaid + 560 ADR anchors**, **redocly: API valid** (4 pre-existing warnings, 0 errors), i18n en/ru parity, zero NEW `console.*`. **e2e → HOST-DEFERRED** (Next 16 single-dev lock — run on host with a free :3000; covers A3 fork-twice/customize/delete-confirm/commit-gate + A4 create-each-kind/edit-form/raw-toggle).
 
 ---
 

@@ -115,7 +115,7 @@ declared `output` transition keys; these are already transition keys, compile-en
 rework amber-dashed, a `deny`/`fail` verdict branch red). The read-only
 `FlowGraphView` twin inherits the same outcome-labeled edges.
 
-### Package authoring IA (M39 Stream A — Designed, ADR-105)
+### Package authoring IA (M39 Stream A — Implemented, ADR-105 — create wizards deferred)
 
 Stream A reworks the `/studio/edit/{id}/{path}` local-package editor for
 correctness and first-class kinds (behavior SSOT:

@@ -30,16 +30,17 @@ subagent schema types the known Claude-Code fields
 passthrough (contrast the strict platform-agent schema, where unknown → `CONFIG`);
 the New-Subagent template uses `model: inherit` with `tools` omitted.
 
-**Canonical platform-agent directory (M39 Stream A — Designed, ADR-105).** The
-catalog/registry/effective-definition read paths converge from the historical M34
-`agents/<stem>.md` onto package-root `maister-agents/<stem>.md` — the same
+**Canonical platform-agent directory (M39 Stream A — Implemented, ADR-105).** The
+registry/effective-definition/lifecycle read paths converged from the historical
+M34 `agents/<stem>.md` onto package-root `maister-agents/<stem>.md` — the same
 directory the Studio viewer/BOM/attach already read. This **closes** the split
 this doc previously deferred (the viewer read `maister-agents/` while the catalog
-read `agents/`); after Stream A, all readers agree on `maister-agents/`, and root
-`agents/` is no longer a platform-agent location. Subagents keep
-`capability/<id>/agents/` and are path-distinguishable by depth. *(Until Stream A
-lands, the implemented catalog still reads `agents/<stem>.md` — the convergence is
-Designed, implemented in M39 Phase A4.)*
+read `agents/`); all readers now agree on `maister-agents/`, and root `agents/` is
+no longer a platform-agent location (existing `agents/`-shipping packages break —
+owner-accepted). Subagents keep `capability/<id>/agents/` and are a distinct
+first-class authored `subagent` kind (path-distinguishable by depth; LENIENT
+schema — `lib/agents/subagent-definition.ts`), validated leniently at the Studio
+commit gate.
 
 ## Domain entities
 

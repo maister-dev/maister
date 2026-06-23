@@ -209,7 +209,7 @@ optional message) clears the count; `POST .../discard` (lock-guarded; body
 `paths[]` confined BEFORE git, omitted → all) restores to `HEAD`. All three work
 with NO AI session present.
 
-## M39 Stream A — first-class authoring (Designed, ADR-105)
+## M39 Stream A — first-class authoring (Implemented, ADR-105 — create wizards deferred)
 
 Stream A is **web-only** (no migration, no new `MaisterError` code) and finishes
 the in-app authoring surface M36 started.
@@ -237,11 +237,11 @@ flow file is selected — not the empty flow canvas — which removes the spurio
 **Fork dedup + "Customize for this project."** `forkPackageToLocal` checks for an
 existing fork by `source_install_id` before INSERTing: an existing fork returns
 `{ localPackageId, alreadyExists: true }` (HTTP **200**) and the UI navigates to it
-(+ an explicit "Fork a new copy"); a fresh fork is **201**. "Customize for this
-project" is the same whole-package fork with an origin-reflecting auto-name
-(`P (for <project>)`, editable — a name convention, **no schema field**) reusing
-the dedup path, so a project's copy is never duplicated. The project-side attach of
-the copy is Stream B.
+(+ an explicit "Fork a new copy"); a fresh fork is **201**. **"Customize"** is the
+same whole-package fork forced fresh (`forceNew`) with an origin-reflecting name
+`<ref> (custom)` — a name convention, **no schema field**, and **no project
+target** (owner reframe: packages are centralized, edited in one place). The
+project-side attach of a copy is Stream B.
 
 **List management.** The local-packages list gains Delete (confirm; also `rm`s the
 working dir), Rename, Archive/unarchive (archived hidden behind a toggle), Open,
@@ -284,16 +284,19 @@ for the PR flow.
   (no `setup.sh`, no MCP). A missing/unreadable source bundle → `CONFIG`, nothing
   persisted.
 - A package fork MUST copy the WHOLE bundle into a NEW `<ref>-local` package
-  (recording `source_install_id` + `source_ref`). An element fork MUST copy
-  EXACTLY ONE confined element into the caller-project's default package and MUST
-  NOT copy the rest of the source.
-- An element fork's body `projectId` MUST be validated against the caller's
-  `getAccessibleProjects` set; an unknown/inaccessible project MUST be rejected
-  (404) with NO write (the default MUST NOT be created).
-- A project MUST have at most one `is_default` local package; "create on first
-  use" MUST be race-safe via `insert(...).onConflictDoNothing()` on the
-  partial-unique `(project_id) WHERE is_default` + re-select (never a
-  read-then-write SELECT).
+  (recording `source_install_id` + `source_ref`); `forceNew` bypasses dedup and
+  "Customize" names the copy `<ref> (custom)`. An element fork (M39 A4,
+  `forkElementToNewLocal`) MUST copy EXACTLY ONE confined element into a NEW
+  centralized local package named `<elementName> (local)` — **NO project target**
+  (owner reframe: editing is centralized) — carrying NO `source_install_id`
+  lineage (a partial copy), and MUST NOT copy the rest of the source.
+- An element fork's `elementPath` MUST be confined inside BOTH the source bundle
+  AND the destination working dir (reject `..`/abs/`.git`) → `PRECONDITION`, with
+  NO package created on violation.
+- The legacy per-project default (`forkElementToDefault` + the partial-unique
+  `(project_id) WHERE is_default` race-safe ensure via
+  `insert(...).onConflictDoNothing()` + re-select) is RETAINED for Stream B but is
+  no longer the A4 element-fork target.
 - "Cut version" MUST install from a clean export of `working_dir` (no `.git`/VCS
   metadata) via the existing `installPackageRevision({ version: "local" })`,
   producing a `local-<digest>` `package_installs` revision; it MUST NOT introduce
