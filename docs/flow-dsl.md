@@ -82,7 +82,7 @@ nodes:
         - no-global-installs
         - no-secret-env
       permissionMode: ask
-      hooks: # M40 (Designed — ADR-104); requires compat.engine_min >= 1.8.0
+      hooks: # M40 (Designed — ADR-108); requires compat.engine_min >= 1.8.0
         repetition: { max: 5 } # liveness breaker — consecutive identical calls
         noProgress: { maxTurns: 15 } # liveness breaker — turns without an edit
         pathGuard:
@@ -240,7 +240,7 @@ classification.
 
 **Per-class `enforcement` intent (M11c).** Each of the seven capability classes —
 `mcps`, `tools`, `skills`, `restrictions`, `permissionMode`, `workspaceAccess`,
-`hooks` (the last Designed — ADR-104) —
+`hooks` (the last Designed — ADR-108) —
 carries an optional `enforcement` intent of `strict | instruct | off`, default
 `instruct`, declared in `settings.enforcement`. At launch, MAIster evaluates each
 declared class against the static `ENFORCEABILITY_BY_AGENT` table for the
@@ -255,7 +255,7 @@ closed union). The full truth table, the frozen `ENFORCEABILITY_BY_AGENT` seed
 [`system-analytics/flow-settings.md`](system-analytics/flow-settings.md);
 rationale is in [ADR-032](decisions.md#adr-032-settings-enforcement-refusal-boundary).
 
-**`hooks` capability class (Designed — ADR-104, M40).** A seventh capability class
+**`hooks` capability class (Designed — ADR-108, M40).** A seventh capability class
 `hooks` declares the per-tool-call guardrail rules enforced at the supervisor↔ACP
 seam — `repetition` (consecutive-identical-call cap), `noProgress`
 (turns-without-edit cap), and `pathGuard.allowedPaths` (an opt-in writable set).

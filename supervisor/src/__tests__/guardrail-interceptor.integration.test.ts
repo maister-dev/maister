@@ -1,4 +1,4 @@
-// ADR-104 (M40): end-to-end guardrail interceptor against a scripted mock ACP
+// ADR-108 (M40): end-to-end guardrail interceptor against a scripted mock ACP
 // adapter. The mock drives the REAL requestPermission / sessionUpdate closures in
 // createAcpConnection; we assert on the session.hook_trip events the supervisor
 // buffers. Sessions run with autoApprovePermissions=true (an unattended run), so

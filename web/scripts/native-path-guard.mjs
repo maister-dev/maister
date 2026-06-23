@@ -1,4 +1,4 @@
-// ADR-104 (M40) T4.3 — native claude PreToolUse path-guard hook.
+// ADR-108 (M40) T4.3 — native claude PreToolUse path-guard hook.
 //
 // Registered into <worktree>/.claude/settings.local.json by the P4 native
 // materializer for a claude flow session whose node arms `hooks.pathGuard`. The

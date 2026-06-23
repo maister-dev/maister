@@ -1,4 +1,4 @@
-// Phase 3 (ADR-104 / M40): the agent consumer's session.hook_trip handling.
+// Phase 3 (ADR-108 / M40): the agent consumer's session.hook_trip handling.
 // A halting trip drives consumeAgentSession → escalateHookTrip → NeedsInput +
 // a hook_trip HITL (resumable via startAgentSession); a path_guard deny is
 // record-only. Real escalateHookTrip against a testcontainer DB; the supervisor

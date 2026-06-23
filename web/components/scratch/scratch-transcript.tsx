@@ -38,7 +38,7 @@ export type TranscriptLabels = {
   copied: string;
   toolCount: (name: string, count: number) => string;
   clearedHistory?: (count: number) => string;
-  // ADR-104 (M40): the scratch in-session guardrail-trip notice. Optional — only
+  // ADR-108 (M40): the scratch in-session guardrail-trip notice. Optional — only
   // the scratch surface emits hook_trip rows (gate-chat sessions never do).
   hookTrip?: (args: { rule: string; disposition: "deny" | "halt" }) => string;
 };

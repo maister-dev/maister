@@ -8,7 +8,7 @@ const DEFAULTS = {
   defaultWritablePaths: undefined,
 };
 
-describe("resolveHooksConfig — two-tier default (ADR-104 D4)", () => {
+describe("resolveHooksConfig — two-tier default (ADR-108 D4)", () => {
   it("supervised + no hooks → undefined (nothing auto-arms)", () => {
     expect(
       resolveHooksConfig({

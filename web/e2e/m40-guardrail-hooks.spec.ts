@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 
 import { loadFixtures } from "./_seed/fixtures";
 
-// M40 / ADR-104 — the guardrail-hook `hook_trip` HITL surface (Phase 5/6).
+// M40 / ADR-108 — the guardrail-hook `hook_trip` HITL surface (Phase 5/6).
 //
 // The web e2e supervisor stub cannot DYNAMICALLY trip a guardrail (it serves
 // only `GET /health`; tool-call-stream scripting lives in the supervisor

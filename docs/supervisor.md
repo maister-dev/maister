@@ -124,7 +124,7 @@ Request body:
 (Note: prompts are sent separately via `POST /sessions/:id/prompt`
 since M5 — the body field is gone.)
 
-(Note: `readOnlySession` (M34, ADR-090) and `hooksConfig` (Designed — ADR-104)
+(Note: `readOnlySession` (M34, ADR-090) and `hooksConfig` (Designed — ADR-108)
 are optional behavioral-policy fields beside the launch fields; both arbitrate
 ACP permission requests pre-hoc at the supervisor seam. A `hooksConfig` trip
 emits the `session.hook_trip` SSE event. See `StartSessionRequest` in

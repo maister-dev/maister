@@ -203,7 +203,7 @@ describe("scratch event projection", () => {
       }),
     ).toMatchObject({ dialogStatus: "Crashed" });
 
-    // ADR-104 (M40): a scratch hook_trip never escalates to NeedsInput (D2) —
+    // ADR-108 (M40): a scratch hook_trip never escalates to NeedsInput (D2) —
     // the projection emits no dialogStatus (the consumer adds a chat notice).
     expect(
       projectSupervisorEventToScratch({

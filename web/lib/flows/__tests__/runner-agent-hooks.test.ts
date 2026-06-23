@@ -1,4 +1,4 @@
-// Phase 3 (ADR-104 / M40) — the flow consumer's session.hook_trip handling.
+// Phase 3 (ADR-108 / M40) — the flow consumer's session.hook_trip handling.
 // A halting trip (repetition / no_progress) escalates via escalateHookTrip and
 // surfaces STEP_CHECKPOINTED WITHOUT markCheckpointedFromExit (so the run stays
 // NeedsInput, not NeedsInputIdle); a path_guard deny is record-only and the node

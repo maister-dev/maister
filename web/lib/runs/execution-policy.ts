@@ -369,7 +369,7 @@ export function reworkExhaustionFromSnapshot(
 }
 
 // Resolve just the execution preset from a run's execution_policy snapshot. The
-// guardrail two-tier default (ADR-104 D4) keys off `unattended`; fail-safe: a
+// guardrail two-tier default (ADR-108 D4) keys off `unattended`; fail-safe: a
 // null / absent / malformed snapshot resolves to `supervised` (non-unattended →
 // the liveness breakers never auto-arm).
 export function presetFromSnapshot(snapshot: unknown): ExecutionPreset {

@@ -14,7 +14,7 @@ import {
 } from "@/lib/config.schema";
 import { isMaisterError } from "@/lib/errors";
 
-// ADR-104 (M40): the seventh capability class `hooks` — the per-tool-call
+// ADR-108 (M40): the seventh capability class `hooks` — the per-tool-call
 // guardrail rule declaration on a capability-bearing node's settings.
 const fullHooks = {
   disabled: false,
@@ -23,7 +23,7 @@ const fullHooks = {
   pathGuard: { allowedPaths: ["src/**", "tests/**"] },
 };
 
-describe("hooks capability class — node settings (ADR-104)", () => {
+describe("hooks capability class — node settings (ADR-108)", () => {
   it("aiCodingSettingsSchema accepts a full hooks block", () => {
     const parsed = aiCodingSettingsSchema.parse({ hooks: fullHooks });
 
@@ -111,7 +111,7 @@ describe("hooks capability class — node settings (ADR-104)", () => {
   });
 });
 
-describe("engine gate — node settings.hooks requires engine_min >= 1.8.0 (ADR-104)", () => {
+describe("engine gate — node settings.hooks requires engine_min >= 1.8.0 (ADR-108)", () => {
   let workDir: string;
 
   beforeEach(async () => {

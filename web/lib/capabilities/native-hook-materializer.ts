@@ -6,7 +6,7 @@ import type { HooksConfig } from "@/lib/flows/hooks-config";
 
 import path from "node:path";
 
-// ADR-104 D7 (M40): the per-adapter native-hook materializer seam. The universal
+// ADR-108 D7 (M40): the per-adapter native-hook materializer seam. The universal
 // supervisor ACP-seam interceptor enforces ALL three rules for every adapter;
 // the OPTIONAL native backend (a claude `PreToolUse` hook written into the M14
 // `.claude/settings.local.json`) is a defense-in-depth optimization covering

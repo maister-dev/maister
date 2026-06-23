@@ -30,7 +30,7 @@ export type AgentMcpServer = {
   headerKeys?: string[];
 };
 
-// ADR-104 (M40) P4: the claude `.claude/settings.local.json` `hooks` block. The
+// ADR-108 (M40) P4: the claude `.claude/settings.local.json` `hooks` block. The
 // bundled claude-agent-acp adapter loads local settings (settingSources includes
 // "local") and fires a PreToolUse command hook before a write tool runs. Native
 // covers ONLY path_guard (rule 2) — repetition / no_progress stay supervisor-only.
@@ -50,7 +50,7 @@ export type AgentSettingsLocal = {
   permissions: { allow?: string[]; defaultMode?: string };
   model?: string;
   availableModels?: string[];
-  // ADR-104 (M40) P4: native path-guard hook, folded in by the native
+  // ADR-108 (M40) P4: native path-guard hook, folded in by the native
   // materializer for a claude session whose node armed hooks.pathGuard.
   hooks?: ClaudeSettingsLocalHooks;
 };
@@ -72,7 +72,7 @@ export type MapProfileToAgentArtifactsArgs = {
   tools?: string[];
   permissionMode?: "ask" | "allow" | "deny";
   model?: string;
-  // ADR-104 (M40) P4: the resolved native path-guard hook block (claude only).
+  // ADR-108 (M40) P4: the resolved native path-guard hook block (claude only).
   // Produced by the NativeHookMaterializer seam from the run's hooksConfig and
   // folded into settings.local.json here so there is a SINGLE writer of the file
   // (the M14 ownership-marker / reclaim / cleanup protocol stays intact).
@@ -161,7 +161,7 @@ export function mapProfileToAgentArtifacts(
   // pick the real provider alias. Other adapters apply the model via a separate
   // supervisor-side/advisory channel, so this is claude-only.
   const model = isClaude ? claudeSettingsModel(args.model) : undefined;
-  // ADR-104 (M40) P4: native path-guard hook is claude-only (settings.local.json
+  // ADR-108 (M40) P4: native path-guard hook is claude-only (settings.local.json
   // is a claude surface). The seam already returns undefined for non-claude.
   const nativeHooks = isClaude ? args.nativeHooks : undefined;
   const permissions: AgentSettingsLocal["permissions"] = {};

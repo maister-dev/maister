@@ -612,7 +612,7 @@ export const enforcementMapSchema = z
   })
   .strict();
 
-// ADR-104 (M40): the `hooks` capability class — per-tool-call guardrail rules
+// ADR-108 (M40): the `hooks` capability class — per-tool-call guardrail rules
 // enforced at the supervisor<->ACP seam. SPARSE: every key optional, no per-key
 // default (the two-tier `unattended` auto-arm + the `instruct` enforcement
 // default are applied at resolution/evaluation, never injected here). A node

@@ -1831,7 +1831,7 @@ export type AgentSupervisorApi = {
   deliverPermission: typeof deliverPermission;
   sendPrompt: typeof sendPrompt;
   streamSession: typeof streamSession;
-  // ADR-104 (M40): a halting guardrail trip checkpoints the live session before
+  // ADR-108 (M40): a halting guardrail trip checkpoints the live session before
   // the NeedsInput escalate (escalateHookTrip).
   checkpointSession: typeof checkpointSession;
 };
@@ -2115,7 +2115,7 @@ export async function startAgentSession(
       runId,
     });
 
-    // ADR-104 (M40): explicit agent guardrail hooks. Agent runs carry no
+    // ADR-108 (M40): explicit agent guardrail hooks. Agent runs carry no
     // execution-policy preset, so there is no `unattended` auto-arm — only what
     // the agent definition declares (undefined when it declares none). Resolved
     // once so it can be both logged and threaded; resolver stays pure. NOTE:
@@ -2281,7 +2281,7 @@ export async function consumeAgentSession(args: {
 
         return;
       }
-      // ADR-104 (M40): a halting guardrail trip (repetition / no_progress)
+      // ADR-108 (M40): a halting guardrail trip (repetition / no_progress)
       // checkpoints + escalates to NeedsInput (resumable via startAgentSession);
       // the checkpoint produces a session.exited{reason:"checkpoint"} that
       // detaches this loop above. A path_guard deny is record-only (the

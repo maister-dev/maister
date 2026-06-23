@@ -46,7 +46,7 @@ export interface HitlDecisionControlsLabels {
   "budgetMeter.tokens"?: string;
   "budgetMeter.failures"?: string;
   "budgetMeter.wallclock"?: string;
-  // Guardrail-hook trip card (ADR-104 / M40) — resume/abort + the tripped rule
+  // Guardrail-hook trip card (ADR-108 / M40) — resume/abort + the tripped rule
   // and the offending tool call. Optional so pre-feature consumers keep
   // compiling without them. `$rule`/`$title` `$`-token templates.
   hookTripTitle?: string;
@@ -214,7 +214,7 @@ export function budgetBreachFromSchema(
   };
 }
 
-// Structural view of the hook_trip `schema` (ADR-104 / M40):
+// Structural view of the hook_trip `schema` (ADR-108 / M40):
 // { kind: "hook_trip", rule, decisions: ["resume","abort"], toolCall? }. Only a
 // `halt` rule escalates to a HITL (repetition / no_progress; path_guard is
 // deny-and-continue and never reaches here). `toolCallTitle` is the offending

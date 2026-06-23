@@ -94,7 +94,7 @@ export type RunAgentStepCtx = {
   // execution_policy snapshot in runGraph; threaded to the supervisor session
   // so the requestPermission handler auto-approves inline (L3).
   autoApprovePermissions?: boolean;
-  // ADR-104 (M40): resolved guardrail rule set (resolveHooksConfig in runGraph),
+  // ADR-108 (M40): resolved guardrail rule set (resolveHooksConfig in runGraph),
   // threaded onto the supervisor session body so the hook interceptor arms.
   hooksConfig?: HooksConfig;
   db?: DbClientLike;
@@ -107,7 +107,7 @@ export type SupervisorApi = {
   streamSession: typeof streamSession;
   cancelPermission: typeof cancelPermission;
   deliverPermission: typeof deliverPermission;
-  // ADR-104 (M40): a halting guardrail trip checkpoints the live session via
+  // ADR-108 (M40): a halting guardrail trip checkpoints the live session via
   // escalateHookTrip before the NeedsInput escalate; injected so the consumer
   // passes its own supervisor api (and tests stub it).
   checkpointSession: typeof checkpointSession;
@@ -475,13 +475,13 @@ type EventConsumer = {
   // `stopReason: "end_turn"` (which it will, because a cancelled-with-
   // reason permission is journaled-for-replay, not denied).
   checkpointReasonObserved: () => boolean;
-  // ADR-104 (M40): true iff a halting guardrail trip was escalated for this
+  // ADR-108 (M40): true iff a halting guardrail trip was escalated for this
   // session. escalateHookTrip already CAS'd Running→NeedsInput + opened the
   // hook_trip HITL, so the runner MUST surface STEP_CHECKPOINTED WITHOUT
   // markCheckpointedFromExit (which would flip NeedsInput→NeedsInputIdle and
   // break the runFlow NeedsInput resume).
   hookTripEscalated: () => boolean;
-  // ADR-104 (M40): true iff escalateHookTrip REJECTED (its tx threw after the
+  // ADR-108 (M40): true iff escalateHookTrip REJECTED (its tx threw after the
   // pre-tx checkpoint already stopped the agent). The run is stranded Running
   // with no hook_trip HITL, so the runner MUST surface CRASH (not a clean
   // STEP_CHECKPOINTED) — runFlow marks it Crashed and crash-reconcile/recover
@@ -529,7 +529,7 @@ function startEventConsumer(
       for await (const ev of supervisor.streamSession(sessionId, {
         signal: abort.signal,
       })) {
-        // ADR-104 (M40): a halting guardrail trip (repetition / no_progress)
+        // ADR-108 (M40): a halting guardrail trip (repetition / no_progress)
         // checkpoints + escalates to NeedsInput; a path_guard deny is
         // record-only (the supervisor already denied inline, deny-and-continue).
         // Claim once — the supervisor halts a session a single time.
@@ -859,7 +859,7 @@ async function runNewSession(
     const hookEscalated = consumer.hookTripEscalated();
     const hookEscalateFailed = consumer.hookTripEscalateFailed();
 
-    // ADR-104 (M40): escalateHookTrip rejected after the pre-tx checkpoint — the
+    // ADR-108 (M40): escalateHookTrip rejected after the pre-tx checkpoint — the
     // run is stranded Running with no hook_trip HITL. Surface CRASH (not a clean
     // checkpoint) so runFlow marks it Crashed and recover can session/resume.
     if (hookEscalateFailed) {
@@ -883,7 +883,7 @@ async function runNewSession(
       };
     }
 
-    // ADR-104 (M40): a halting guardrail trip already CAS'd Running→NeedsInput +
+    // ADR-108 (M40): a halting guardrail trip already CAS'd Running→NeedsInput +
     // opened the hook_trip HITL inside escalateHookTrip. Surface STEP_CHECKPOINTED
     // (runGraph persists acpSessionId + pauses) but do NOT markCheckpointedFromExit
     // — the run stays NeedsInput so the hook_trip resume (runFlow) can re-enter.
@@ -1054,7 +1054,7 @@ async function runSlashInExisting(
   const hookEscalated = consumer.hookTripEscalated();
   const hookEscalateFailed = consumer.hookTripEscalateFailed();
 
-  // ADR-104 (M40): see runNewSession — escalateHookTrip rejected after the
+  // ADR-108 (M40): see runNewSession — escalateHookTrip rejected after the
   // pre-tx checkpoint; the run is stranded Running with no HITL. Surface CRASH.
   if (hookEscalateFailed) {
     log.error(
@@ -1072,7 +1072,7 @@ async function runSlashInExisting(
     };
   }
 
-  // ADR-104 (M40): see runNewSession — a guardrail trip leaves the run
+  // ADR-108 (M40): see runNewSession — a guardrail trip leaves the run
   // NeedsInput; surface STEP_CHECKPOINTED without markCheckpointedFromExit.
   if (hookEscalated) {
     log.info(

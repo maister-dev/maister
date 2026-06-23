@@ -1801,7 +1801,7 @@ token itself is deleted.
 {
   id, runId, stepId,
   kind: 'permission' | 'form' | 'human' | 'infra_recovery' | 'budget_breach'
-      | 'hook_trip',               // 'hook_trip' Designed — ADR-104 (migration 0063)
+      | 'hook_trip',               // 'hook_trip' Designed — ADR-108 (migration 0066)
   schema (jsonb)?,               // form_schema with required schemaVersion
                                  // OR permission descriptor:
                                  //   { requestId, options, toolCall,
@@ -1986,7 +1986,7 @@ injected value byte-identical to the raw review summary.
   actionKind: 'permission' | 'form' | 'human_review'
             | 'manual_takeover' | 'merge_conflict'
             | 'infra_recovery' | 'budget_breach'
-            | 'hook_trip',        // 'hook_trip' Designed — ADR-104 (migration 0063)
+            | 'hook_trip',        // 'hook_trip' Designed — ADR-108 (migration 0066)
   status: 'open' | 'claimed' | 'completed' | 'cancelled',
   roleRefs,                       // jsonb string[] snapshot
   title,

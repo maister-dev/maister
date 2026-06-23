@@ -232,7 +232,11 @@ function makeApi(opts: {
       eventStream(opts.events),
     ) as unknown as SupervisorApi["streamSession"],
     cancelPermission: cancelSpy as unknown as SupervisorApi["cancelPermission"],
-    checkpointSession: async () => ({ alreadyCheckpointed: false, sessionId: "s", monotonicId: 0 }),
+    checkpointSession: async () => ({
+      alreadyCheckpointed: false,
+      sessionId: "s",
+      monotonicId: 0,
+    }),
     deliverPermission: vi.fn(
       async () => ({ ok: true }) as { ok: true },
     ) as unknown as SupervisorApi["deliverPermission"],
@@ -480,7 +484,7 @@ describe("runner-agent — B1 autoApprovePermissions threading", () => {
   });
 });
 
-describe("runner-agent — hooksConfig threading (ADR-104)", () => {
+describe("runner-agent — hooksConfig threading (ADR-108)", () => {
   it("threads ctx.hooksConfig into createSession (new-session)", async () => {
     const db = makeFakeDb();
     const api = makeApi({ events: [update(1, "hi"), exited(2)] });

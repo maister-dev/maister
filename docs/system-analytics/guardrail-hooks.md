@@ -1,7 +1,7 @@
-# Guardrail / hook engine (Designed — ADR-104)
+# Guardrail / hook engine (Designed — ADR-108)
 
-> Status: **[ADR-104](../decisions.md#adr-104-declarative-guardrailhook-engine--universal-supervisor-acp-seam-interceptor-native-materializer-seam-and-hook-trip-hitl-escalation)** (M40). Contract frozen; **P1–P5 implemented** (capability class + migration 0063 + two-tier default; universal supervisor 3-rule interceptor; web hook-trip escalation + per-run_kind resume + `hook_trip` HITL; native claude `PreToolUse` path-guard backend — live fires+denies confirmation deferred; Studio node-settings `hooks` editor + 7th-class settings-panel tag + `hook_trip` HITL resume/abort affordance with timeline surfacing; seeded `m40-guardrail-hooks` e2e). **P6: e2e + full gate sweep done (green); dogfood ralph-loop dropped (the universal + native layers stand on unit/integration/e2e coverage; the live native-hook fires/denies confirmation is the one residual); rebase onto current main + renumber (ADR-104→108, migration 0063→0066) deferred to the owner.**
-> This file is the design home for the mechanism. ADR rationale is in ADR-104 (R7 — cited, not restated).
+> Status: **[ADR-108](../decisions.md#adr-108-declarative-guardrailhook-engine--universal-supervisor-acp-seam-interceptor-native-materializer-seam-and-hook-trip-hitl-escalation)** (M40). Contract frozen; **P1–P5 implemented** (capability class + migration 0066 + two-tier default; universal supervisor 3-rule interceptor; web hook-trip escalation + per-run_kind resume + `hook_trip` HITL; native claude `PreToolUse` path-guard backend — live fires+denies confirmation deferred; Studio node-settings `hooks` editor + 7th-class settings-panel tag + `hook_trip` HITL resume/abort affordance with timeline surfacing; seeded `m40-guardrail-hooks` e2e). **P6: e2e + full gate sweep done (green); dogfood ralph-loop dropped (the universal + native layers stand on unit/integration/e2e coverage; the live native-hook fires/denies confirmation is the one residual); rebased onto main + renumbered (ADR-108 / migration 0066) 2026-06-24.**
+> This file is the design home for the mechanism. ADR rationale is in ADR-108 (R7 — cited, not restated).
 
 ## Purpose
 
@@ -35,7 +35,7 @@ optional claude-native backend delivered through a clean seam.
   and the web mirror [`web-runs.asyncapi.yaml`](../api/async/web-runs.asyncapi.yaml).
 - **`hook_trip` HITL kind** — the dedicated `hitl_requests.kind` /
   `assignments.action_kind` value created on a `halt` escalation (migration
-  `0063`). Persisted; see [`database-schema.md`](../database-schema.md) +
+  `0066`). Persisted; see [`database-schema.md`](../database-schema.md) +
   [`db/hitl-domain.md`](../db/hitl-domain.md).
 - **Per-session counters** — `lastToolCallSig`, `repeatCount`,
   `turnsSinceProgress` on the in-memory `SessionRecord` (`supervisor/src/types.ts`).
@@ -254,7 +254,7 @@ resumes through the same agent-permission-HITL path that already drives it.
   SDK's `permissionDecision: "deny"`, so the supervisor never sees that permission
   request).
 
-## Expectations (Designed — ADR-104)
+## Expectations (Designed — ADR-108)
 
 - The interceptor MUST run in `requestPermission` after L1 (`readOnlySession`) /
   L2 (`readOnlyTurn`) and BEFORE B1 (`autoApprovePermissions`) and the HITL
@@ -334,13 +334,13 @@ resumes through the same agent-permission-HITL path that already drives it.
 
 ## Linked artifacts
 
-- **ADR:** [ADR-104](../decisions.md#adr-104-declarative-guardrailhook-engine--universal-supervisor-acp-seam-interceptor-native-materializer-seam-and-hook-trip-hitl-escalation).
+- **ADR:** [ADR-108](../decisions.md#adr-108-declarative-guardrailhook-engine--universal-supervisor-acp-seam-interceptor-native-materializer-seam-and-hook-trip-hitl-escalation).
 - **Wire:** [`supervisor.openapi.yaml`](../api/supervisor.openapi.yaml) (`StartSessionRequest.hooksConfig`),
   [`supervisor-sse.asyncapi.yaml`](../api/async/supervisor-sse.asyncapi.yaml) +
   [`web-runs.asyncapi.yaml`](../api/async/web-runs.asyncapi.yaml) (`session.hook_trip`),
   [`outbound-webhooks.asyncapi.yaml`](../api/async/outbound-webhooks.asyncapi.yaml) (`DataRunEscalated.reason`).
 - **Schema:** [`database-schema.md`](../database-schema.md) + [`db/hitl-domain.md`](../db/hitl-domain.md) +
-  [`db/erd.md`](../db/erd.md) (`hook_trip`, migration `0063`).
+  [`db/erd.md`](../db/erd.md) (`hook_trip`, migration `0066`).
 - **DSL / settings / config:** [`flow-dsl.md`](../flow-dsl.md), [`flow-settings.md`](flow-settings.md),
   [`configuration.md`](../configuration.md) (env vars).
 - **Related domains:** [`execution-policy.md`](execution-policy.md) (preset + `onStuck`),

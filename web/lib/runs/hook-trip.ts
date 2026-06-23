@@ -33,7 +33,7 @@ const log = pino({
 });
 
 // Only the two liveness breakers HALT and reach the escalate path; `path_guard`
-// is deny-and-continue (ADR-104 §2.4) and never escalates.
+// is deny-and-continue (ADR-108 §2.4) and never escalates.
 export type HookTripHaltRule = "repetition" | "no_progress";
 
 export type EscalateHookTripArgs = {

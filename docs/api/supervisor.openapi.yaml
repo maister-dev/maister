@@ -1058,7 +1058,7 @@ components:
           type: object
           additionalProperties: false
           description: |
-            (Designed — ADR-104) Resolved, materialized guardrail-rule set for the
+            (Designed — ADR-108) Resolved, materialized guardrail-rule set for the
             declarative hook engine. Each rule key is optional; an absent key means
             that rule is not armed. Composes with `readOnlySession` (both are
             pre-hoc denies; `readOnlySession` is the stricter superset, left

@@ -343,7 +343,7 @@ describe("StartSessionRequestSchema", () => {
     expect(result.success).toBe(false);
   });
 
-  // ADR-104 (M40): the supervisor must ACCEPT the resolved guardrail rule set
+  // ADR-108 (M40): the supervisor must ACCEPT the resolved guardrail rule set
   // the web tier puts on POST /sessions. Enforcement lands in Phase 2; until
   // then the schema accepts-and-ignores so an armed run can still spawn.
   it("accepts a fully-resolved guardrail hooksConfig payload", () => {

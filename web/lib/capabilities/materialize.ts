@@ -64,7 +64,7 @@ export type MaterializeCapabilityProfileArgs = {
   nodeAttemptId?: string;
   tools?: string[];
   permissionMode?: "ask" | "allow" | "deny";
-  // ADR-104 (M40) P4: the resolved guardrail config. When pathGuard is armed and
+  // ADR-108 (M40) P4: the resolved guardrail config. When pathGuard is armed and
   // the agent has a native backend (claude), a PreToolUse hook is folded into
   // settings.local.json. Absent / no pathGuard / non-claude → no native hook.
   hooksConfig?: HooksConfig;
@@ -239,7 +239,7 @@ export async function materializeCapabilityProfile(
   await mkdir(rootPath, { recursive: true });
 
   const agent: CapabilityAgent = args.profile.executorAgent;
-  // ADR-104 (M40) P4: resolve the native path-guard hook via the per-adapter seam
+  // ADR-108 (M40) P4: resolve the native path-guard hook via the per-adapter seam
   // (claude → a PreToolUse command hook; others → undefined). Folded into the
   // SINGLE settings.local.json write below — no separate file write, so the M14
   // ownership-marker / reclaim / cleanup protocol is untouched.

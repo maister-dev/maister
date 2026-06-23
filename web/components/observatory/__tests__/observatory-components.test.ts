@@ -500,7 +500,7 @@ describe("Observatory components", () => {
     expect(html).toContain("Budget pressure");
     expect(html).toContain("Escalations");
     expect(html).toContain("Terminations");
-    // ADR-104 (M40): the guardrail-trips tile.
+    // ADR-108 (M40): the guardrail-trips tile.
     expect(html).toContain("Guardrail trips");
     expect(html).toContain(">7<");
     // thousands separator proves Intl formatting; the zero state renders "0".

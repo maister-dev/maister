@@ -6,11 +6,11 @@ import {
   resolveNativeHookMaterializer,
 } from "@/lib/capabilities/native-hook-materializer";
 
-// ADR-104 D7 (M40): the NativeHookMaterializer seam is a pure shape producer.
+// ADR-108 D7 (M40): the NativeHookMaterializer seam is a pure shape producer.
 // Only claude has a native backend (P4 — a PreToolUse path-guard hook); every
 // other adapter resolves to the no-op, and the universal supervisor ACP-seam
 // interceptor is the sole enforcer. These tests pin both contracts.
-describe("resolveNativeHookMaterializer — seam (ADR-104 D7)", () => {
+describe("resolveNativeHookMaterializer — seam (ADR-108 D7)", () => {
   const GUARD = "/opt/maister/web/scripts/native-path-guard.mjs";
   const armed = {
     repetition: { max: 5 },

@@ -17,7 +17,7 @@ import ru from "@/messages/ru.json";
 //     run.settingsVerdictEnforced
 //     run.settingsVerdictInstructed
 //     run.settingsVerdictRefused
-//   Capability-class labels (all 7 classes — `hooks` added by ADR-104 / M40):
+//   Capability-class labels (all 7 classes — `hooks` added by ADR-108 / M40):
 //     run.settingsClassMcps
 //     run.settingsClassTools
 //     run.settingsClassSkills

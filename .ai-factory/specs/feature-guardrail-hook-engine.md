@@ -1,7 +1,7 @@
 # SDD Spec — Vendor-neutral guardrail/hook engine at the supervisor↔ACP seam (G4 / M40)
 
 > **Status: FROZEN 2026-06-23 (Phase 0).** Implementation contract for Phases 1–6.
-> Decision record: **ADR-104** (`docs/decisions.md`). Design home (diagrams, R5):
+> Decision record: **ADR-108** (`docs/decisions.md`). Design home (diagrams, R5):
 > `docs/system-analytics/guardrail-hooks.md`. Task plan:
 > `.ai-factory/plans/feature-guardrail-hook-engine.md`.
 > When code and this spec disagree during implementation, fix the code OR amend this
@@ -177,11 +177,11 @@ supervisor crash → run reconciled `Crashed`; reset on resume).
 > the two-tier default arms guardrails for. After-B1 placement would silently no-op
 > `path_guard` + `repetition` on them (`repetition`, which only auto-arms under
 > `unattended`, would be dead code). Guardrails are deny/halt layers like L1/L2 and
-> MUST precede the B1 approve layer. Corrected in code + `guardrail-hooks.md` + ADR-104.
+> MUST precede the B1 approve layer. Corrected in code + `guardrail-hooks.md` + ADR-108.
 
 ## 6. Number & namespace reservation (FROZEN — re-confirm in T6.3)
 
-- **ADR-104** (max ADR in tree = 103). Studio holds 105/106/107.
+- **ADR-108** (max ADR in tree = 103). Studio holds 105/106/107.
 - **Migration 0063** (max idx = 61). **0062 reserved by the Studio stream** → G4 yields to 0063. The ONLY schema change: `hook_trip` in `hitl_requests.kind` + `assignments.action_kind`.
 - **Engine 1.7.0 → 1.8.0**; `HOOKS_ENGINE_MIN = "1.8.0"`.
 - **Milestone M40** (M39 reserved for Studio; both unmerged on their branch, prior claim).
@@ -216,7 +216,7 @@ Rules `repetition` / `no_progress` are **always** supervisor-only (cross-turn st
 | `run.escalated` hook reason | `runner-graph.ts` / keepalive emit; `outbound-webhooks.asyncapi.yaml` ✓ | 3 (code), 0 (docs ✓) |
 | native `settings.local.json` `hooks` | `agent-map.ts` `AgentSettingsLocal`, `materialize.ts`; `flow-settings.md` ✓ | 4 |
 | env vars (`MAISTER_HOOK_*`) | `.env.example` + `deploy/maister.env.example` (Phase 1, with consumption); `docs/configuration.md` ✓ | 1 (.env), 0 (docs ✓) |
-| ADR-104 + domain doc | `docs/decisions.md` ✓ + `## Index` ✓, `guardrail-hooks.md` ✓, `docs/CLAUDE.md` row ✓ | 0 ✓ |
+| ADR-108 + domain doc | `docs/decisions.md` ✓ + `## Index` ✓, `guardrail-hooks.md` ✓, `docs/CLAUDE.md` row ✓ | 0 ✓ |
 | error taxonomy "no new code" | `docs/error-taxonomy.md` ✓ | 0 ✓ |
 
 (✓ = landed in Phase 0.) **web.openapi.yaml needs NO edit**: its only HITL `kind` enum
@@ -241,7 +241,7 @@ postgres-only (ADR-023 host-run); `MAISTER_HOOK_*` go to `.env.example` +
 - **Phase 3** — consume `session.hook_trip` (deny → record-only DEBUG; halt → escalate); branch on `run_kind` BEFORE routing; `escalateHookTrip` (§4, mirror `actBudgetEscalate`); per-run_kind arms + resume (flow `runFlow`; agent existing HITL resume — escalate NOT terminate; scratch deny + notice); `hook_trip` HITL fan-out (respond service resume-or-abort kind-switch; board + portfolio inbox + run-detail timeline + "Needs you" sum; Observatory count; EN/RU i18n). Tests: escalate (assigned) vs notify_only (unassigned); CAS rejects non-`Running`; crash-window reconcile; agent `hook_trip` HITL responds → run RESUMES; the kind appears in every inbox surface.
 - **Phase 4** — the spike gate (§7); if honored, the claude materializer + shipped guard script + defense-in-depth integration test (native denies before the supervisor sees the permission; no double-count/double-escalate; supervisor remains the backstop + sole layer for codex/etc + rules 1 & 3).
 - **Phase 5** — node side-form `hooks` editor (`node-side-form.tsx`, testids `node-hooks-*`, icon+label affordances) + `validateHooksDraft`; `FlowSettingsPanel` tags the 7th class; trip surfacing (distinct guardrail HITL affordance + timeline entry); EN/RU parity.
-- **Phase 6** — seeded authed e2e `web/e2e/m40-guardrail-hooks.spec.ts` (repeat N× → `NeedsInput` → resume; out-of-path write → denied, run continues); dogfood capped nightly ralph-loop; renumber/rebase re-confirm (ADR-104 / 0063 / M40 vs main + Studio) + ADR-anchor script + full gate sweep + `/aif-verify`.
+- **Phase 6** — seeded authed e2e `web/e2e/m40-guardrail-hooks.spec.ts` (repeat N× → `NeedsInput` → resume; out-of-path write → denied, run continues); dogfood capped nightly ralph-loop; renumber/rebase re-confirm (ADR-108 / 0063 / M40 vs main + Studio) + ADR-anchor script + full gate sweep + `/aif-verify`.
 
 ## 11. Test-runnability (FROZEN)
 

@@ -109,7 +109,7 @@ describe("buildSettingsView — all-instruct ai_coding node", () => {
 });
 
 // ---------------------------------------------------------------------------
-// hooks capability class (M40, ADR-104) — the 7th class. Declared by the data
+// hooks capability class (M40, ADR-108) — the 7th class. Declared by the data
 // field `settings.hooks` (→ instructed) or by an explicit `enforcement.hooks`.
 // ---------------------------------------------------------------------------
 

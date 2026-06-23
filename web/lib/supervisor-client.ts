@@ -105,7 +105,7 @@ export type CreateSessionInput = {
   // the allow option for every permission request in this session (below the
   // read-only layers). Derived from the run's execution_policy snapshot.
   autoApprovePermissions?: boolean;
-  // ADR-104 (M40): resolved guardrail rule set. The supervisor arms the hook
+  // ADR-108 (M40): resolved guardrail rule set. The supervisor arms the hook
   // interceptor (path_guard / repetition / no_progress) for this session; each
   // rule key is optional and an absent key means that rule is not armed.
   hooksConfig?: HooksConfig;
@@ -335,7 +335,7 @@ export type SupervisorEvent =
       seq?: number;
       mutationReverted?: boolean;
     }
-  // ADR-104 (M40): a guardrail rule tripped at the supervisor ACP seam. `halt`
+  // ADR-108 (M40): a guardrail rule tripped at the supervisor ACP seam. `halt`
   // (repetition / no_progress) is escalated by the web tier (checkpoint +
   // NeedsInput, Phase 3); `deny` (path_guard) is record-only. Mirrors
   // supervisor/src/types.ts + docs/api/async/supervisor-sse.asyncapi.yaml.

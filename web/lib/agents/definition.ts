@@ -119,7 +119,7 @@ export const agentDefinitionFrontmatterSchema = z
     capability_profile: z.record(z.unknown()).optional(),
     risk_tier: z.enum(["read_only", "standard", "destructive"]),
     recommended: recommendedSchema.optional(),
-    // ADR-104 (M40): explicit per-agent guardrail hooks. Agent runs have no
+    // ADR-108 (M40): explicit per-agent guardrail hooks. Agent runs have no
     // execution-policy preset, so there is no `unattended` auto-arm — only what
     // the agent declares here arms (path_guard / repetition / no_progress).
     hooks: hooksSettingsSchema.optional(),

@@ -7,7 +7,7 @@ import type {
 
 import path from "node:path";
 
-// ADR-104 (M40): the canonical write-class ACP toolCall kind set — the single
+// ADR-108 (M40): the canonical write-class ACP toolCall kind set — the single
 // source of truth for "is this tool call mutating?". Consumed here by path_guard
 // / no_progress AND by the ADR-078 L2 read-only-turn auto-reject in acp-client.ts
 // (it imports this set rather than re-declaring it). Reads, searches, and
@@ -126,7 +126,7 @@ export function resolvePathGuardDecision(args: {
     : { decision: "deny", reason: "out_of_lane" };
 }
 
-// ADR-104 (M40): a stable signature for the repetition breaker. The volatile
+// ADR-108 (M40): a stable signature for the repetition breaker. The volatile
 // per-call `toolCallId` is stripped; an identical repeated tool call (same kind,
 // title, args, locations) yields an identical signature. A volatile non-id field
 // (e.g. a per-call timestamp) would defeat the match — acceptable: a missed

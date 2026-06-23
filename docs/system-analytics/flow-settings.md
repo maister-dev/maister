@@ -54,7 +54,7 @@ in M11c.
   `flow_revisions.manifest` (persisted; see [runs-domain ERD](db/runs-domain.md)).
 - **Capability class** — one of the seven capability-bearing settings subject to
   the `enforcement` intent: `mcps`, `tools`, `skills`, `restrictions`,
-  `permissionMode`, `workspaceAccess`, `hooks` (`hooks` Designed — ADR-104, M40;
+  `permissionMode`, `workspaceAccess`, `hooks` (`hooks` Designed — ADR-108, M40;
   see "Hook engine capability class" below).
 - **`enforcement` intent** — per-class `strict | instruct | off`, default
   `instruct`, declared by the flow author in `settings.enforcement`.
@@ -213,9 +213,9 @@ verdict `refused`.)
 The error message names the offending node id + class + resolved agent + the
 `declared`/`capability` pair. **No new error code** (ADR-008 closed union).
 
-## Hook engine capability class (Designed — ADR-104)
+## Hook engine capability class (Designed — ADR-108)
 
-The **seventh** capability class `hooks` ([ADR-104](../decisions.md#adr-104-declarative-guardrailhook-engine--universal-supervisor-acp-seam-interceptor-native-materializer-seam-and-hook-trip-hitl-escalation),
+The **seventh** capability class `hooks` ([ADR-108](../decisions.md#adr-108-declarative-guardrailhook-engine--universal-supervisor-acp-seam-interceptor-native-materializer-seam-and-hook-trip-hitl-escalation),
 M40) declares the per-tool-call guardrail rules (`path_guard` / `repetition` /
 `no_progress`) enforced at the supervisor↔ACP seam. Full design:
 [`guardrail-hooks.md`](guardrail-hooks.md). Engine floor: a node/agent declaring

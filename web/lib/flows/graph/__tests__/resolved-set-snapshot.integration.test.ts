@@ -89,7 +89,8 @@ async function seedRun(resolvedCapabilitySet: ResolvedCapabilitySet) {
   const worktreePath = await mkdtemp(join(tmpdir(), "wt-"));
   const runtimeRoot = await mkdtemp(join(tmpdir(), "rt-"));
 
-  await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
+  await db.insert(schema.projects).values({
+    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug,
     name: "Test",
@@ -109,7 +110,8 @@ async function seedRun(resolvedCapabilitySet: ResolvedCapabilitySet) {
     manifest: githubDeclaringFlow,
     schemaVersion: 1,
   });
-  await db.insert(schema.tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
+  await db.insert(schema.tasks).values({
+    number: Math.trunc(Math.random() * 1e9) + 1,
     id: taskId,
     projectId,
     title: "t",
@@ -224,7 +226,11 @@ function makeSupervisorSpy(): SupervisorApi & {
     cancelPermission: vi.fn(
       async () => ({ ok: true }) as { ok: true },
     ) as unknown as SupervisorApi["cancelPermission"],
-    checkpointSession: async () => ({ alreadyCheckpointed: false, sessionId: "s", monotonicId: 0 }),
+    checkpointSession: async () => ({
+      alreadyCheckpointed: false,
+      sessionId: "s",
+      monotonicId: 0,
+    }),
     deliverPermission: vi.fn(
       async () => ({ ok: true }) as { ok: true },
     ) as unknown as SupervisorApi["deliverPermission"],

@@ -940,7 +940,7 @@ describe("budgetBreachFromSchema — pure schema narrowing", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Guardrail-hook trip card (ADR-104 / M40). Renders for kind="hook_trip" with
+// Guardrail-hook trip card (ADR-108 / M40). Renders for kind="hook_trip" with
 // the escalator schema { kind, rule, decisions:["resume","abort"], toolCall? }:
 // a localized rule summary, the offending tool-call line (when present), a
 // primary "Resume" and a destructive "Abort" button. Mirrors the budget_breach

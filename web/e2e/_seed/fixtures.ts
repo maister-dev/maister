@@ -115,7 +115,7 @@ export type E2EM38Fixture = {
   studio: { projectSlug: string; capId: string; nodeLabel: string };
 };
 
-// M40 (ADR-104) guardrail-hooks fixture: one project with two NeedsInput flow
+// M40 (ADR-108) guardrail-hooks fixture: one project with two NeedsInput flow
 // runs each parked on a seeded `hook_trip` HITL — a `repetition` trip (render +
 // abort) and a `no_progress` trip (resume route).
 export type E2EM40Fixture = {

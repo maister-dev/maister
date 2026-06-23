@@ -99,7 +99,7 @@ cases, process flows. One file per domain.
 | [`system-analytics/local-packages.md`](system-analytics/local-packages.md) | Editable local packages (ADR-096, Designed — Flow Studio Phase C): platform-scoped git-backed working dir, session edit-lock, cut-version into `package_installs`, member-level fork/apply, fork lineage for the Phase-2 PR-back. |
 | [`system-analytics/agents.md`](system-analytics/agents.md) | Platform agents (ADR-089/090, Implemented): `.md` catalog + per-agent runner chain, five trigger sources, workspace axis with 3-layer read-only enforcement + quarantine, triage Q&A loop, ephemeral agent tokens. |
 | [`system-analytics/orchestrator.md`](system-analytics/orchestrator.md) | Orchestrator engine (ADR-098/099/100, Implemented): supervisory `orchestrator` node + run-tree (`parent_run_id`/`root_run_id`) + delegation toolset + `requires` success-gated task-DAG + `WaitingOnChildren` idle-checkpoint wait/resume. |
-| [`system-analytics/guardrail-hooks.md`](system-analytics/guardrail-hooks.md) | Guardrail/hook engine (ADR-104, Designed — M40): per-tool-call supervisor ACP-seam interceptor (`path_guard` / `repetition` / `no_progress`), `hook_trip` HITL escalation, two-tier unattended default, `NativeHookMaterializer` seam. |
+| [`system-analytics/guardrail-hooks.md`](system-analytics/guardrail-hooks.md) | Guardrail/hook engine (ADR-108, Designed — M40): per-tool-call supervisor ACP-seam interceptor (`path_guard` / `repetition` / `no_progress`), `hook_trip` HITL escalation, two-tier unattended default, `NativeHookMaterializer` seam. |
 
 ### Screen reference (`screens/`)
 

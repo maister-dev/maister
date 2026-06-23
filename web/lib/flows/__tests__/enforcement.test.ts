@@ -143,10 +143,10 @@ describe("ENFORCEABILITY_BY_AGENT — conservative all-adapter table", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 1b. hooks capability class (ADR-104, M40) — 7th class, all `instructed`.
+// 1b. hooks capability class (ADR-108, M40) — 7th class, all `instructed`.
 // ---------------------------------------------------------------------------
 
-describe("hooks capability class — enforcement (ADR-104)", () => {
+describe("hooks capability class — enforcement (ADR-108)", () => {
   // NB: the per-agent `hooks=instructed` cells are already pinned by the
   // full-table `toEqual` above; this block only covers hooks-specific behavior.
   it("evaluateNodeEnforcement reports a refused verdict for strict hooks", () => {

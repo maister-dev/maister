@@ -160,9 +160,9 @@ components:
       payload: { $ref: "#/components/schemas/EventBase" }
     SessionHookTrip:
       name: session.hook_trip
-      title: Guardrail/hook engine trip (Designed — ADR-104)
+      title: Guardrail/hook engine trip (Designed — ADR-108)
       summary: |
-        (Designed — ADR-104, M40) A guardrail rule tripped at the supervisor↔ACP
+        (Designed — ADR-108, M40) A guardrail rule tripped at the supervisor↔ACP
         seam, mirrored to the browser. The full payload (rule, lifecycle,
         disposition, toolCall) is documented in `supervisor-sse.asyncapi.yaml`;
         behavior is in `system-analytics/guardrail-hooks.md`.

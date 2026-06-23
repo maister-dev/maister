@@ -588,7 +588,7 @@ const ORCHESTRATOR_ENGINE_MIN = "1.6.0";
 // `output.result.on_mismatch` must declare engine_min >= this value.
 const DECIDE_ENGINE_MIN = "1.7.0";
 
-// M40 floor (ADR-104): manifests declaring node `settings.hooks` (the guardrail
+// M40 floor (ADR-108): manifests declaring node `settings.hooks` (the guardrail
 // capability class) must declare engine_min >= this value.
 const HOOKS_ENGINE_MIN = "1.8.0";
 
@@ -802,7 +802,12 @@ export function validateGraphManifest(
     const ok = semverGte(engineMin, DECIDE_ENGINE_MIN);
 
     log.debug(
-      { flowYamlPath, declared: engineMin || "(unset)", required: DECIDE_ENGINE_MIN, ok },
+      {
+        flowYamlPath,
+        declared: engineMin || "(unset)",
+        required: DECIDE_ENGINE_MIN,
+        ok,
+      },
       "[engine-gate] decide/on_mismatch floor",
     );
     if (!ok) {
@@ -813,7 +818,7 @@ export function validateGraphManifest(
     }
   }
 
-  // M40 (ADR-104): node `settings.hooks` requires the 1.8.0 floor. Manifests
+  // M40 (ADR-108): node `settings.hooks` requires the 1.8.0 floor. Manifests
   // declaring no hooks stay valid at any engine_min.
   if (declaresHooksBinding(nodes)) {
     const ok = semverGte(engineMin, HOOKS_ENGINE_MIN);

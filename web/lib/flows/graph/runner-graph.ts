@@ -1016,7 +1016,7 @@ async function executeNodeAction(
     // the maister MCP facade via the run-bound token appended at the
     // materialization seam.
     case "orchestrator": {
-      // ADR-104 (M40): resolve the node's guardrail rule set once (two-tier
+      // ADR-108 (M40): resolve the node's guardrail rule set once (two-tier
       // against the run's execution preset) so it can be both logged and
       // threaded to the supervisor session. The resolver stays pure; the DEBUG
       // line records WHICH rules are in the resolved set (keys only — never path
@@ -1090,7 +1090,7 @@ async function executeNodeAction(
             autoApprovePermissions:
               permissionsFromSnapshot(loaded.run.executionPolicy ?? null) ===
               "auto_approve",
-            // ADR-104 (M40): the node's guardrail rule set, two-tier-resolved
+            // ADR-108 (M40): the node's guardrail rule set, two-tier-resolved
             // against the run's execution preset (hoisted above), for the
             // supervisor interceptor.
             hooksConfig,
@@ -1428,7 +1428,7 @@ async function materializeNodeCapabilities(
     nodeAttemptId,
     tools: declares && settings ? settings.tools?.[agent] : undefined,
     permissionMode: declares && settings ? settings.permissionMode : undefined,
-    // ADR-104 (M40) P4: re-resolve the node's guardrail config (pure, mirrors the
+    // ADR-108 (M40) P4: re-resolve the node's guardrail config (pure, mirrors the
     // executeNodeAction resolution) so the native materializer can fold a claude
     // PreToolUse path-guard hook into this single settings.local.json write when
     // the node armed hooks.pathGuard.

@@ -1,4 +1,4 @@
-// Phase 3 (ADR-104 / M40): respondToHitl for the hook_trip kind — a
+// Phase 3 (ADR-108 / M40): respondToHitl for the hook_trip kind — a
 // resume-or-abort decision routed through each run_kind's resume path (flow →
 // runFlow; agent → startAgentSession) or terminal abort. Mirrors
 // hitl-budget-breach.integration.test.ts (testcontainer DB; runFlow +

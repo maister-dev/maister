@@ -70,7 +70,7 @@ export type NodeSideFormLabels = {
   gate: GateFormLabels;
 };
 
-// ADR-104 (M40) — the `hooks` capability-class editor labels.
+// ADR-108 (M40) — the `hooks` capability-class editor labels.
 export type HooksFormLabels = {
   title: string;
   repetitionMax: string;
@@ -253,7 +253,7 @@ export function NodeSideForm({
     else next[cls] = value;
     setSetting("enforcement", Object.keys(next).length ? next : undefined);
   };
-  // ADR-104 (M40) — the `hooks` block is sparse: its presence is derived from
+  // ADR-108 (M40) — the `hooks` block is sparse: its presence is derived from
   // content (any populated sub-field) rather than a separate enable toggle, so
   // clearing every field removes `settings.hooks` entirely. Cross-node concerns
   // (engine_min >= 1.8.0 when `hooks` is declared) stay in compile, never here.

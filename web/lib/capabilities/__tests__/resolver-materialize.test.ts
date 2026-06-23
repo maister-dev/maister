@@ -489,7 +489,7 @@ describe("materializeCapabilityProfile", () => {
     });
   });
 
-  // ADR-104 (M40) P4: native claude PreToolUse path-guard folds into the SAME
+  // ADR-108 (M40) P4: native claude PreToolUse path-guard folds into the SAME
   // settings.local.json write (defense-in-depth; the live fires+denies behavior
   // is the deferred T4.1 spike, but the materialization wiring is verified here).
   it("folds a claude PreToolUse path-guard hook into settings.local.json from hooksConfig.pathGuard", async () => {

@@ -1,4 +1,4 @@
-// Phase 3 (ADR-104 / M40) — escalateHookTrip, the web-side halt escalation for
+// Phase 3 (ADR-108 / M40) — escalateHookTrip, the web-side halt escalation for
 // a guardrail trip. Mirrors the budget-watchdog harness: testcontainers
 // postgres:16-alpine, drizzle migrate against ./lib/db/migrations, rows seeded
 // directly. checkpointSession is INJECTED into escalateHookTrip (not imported),

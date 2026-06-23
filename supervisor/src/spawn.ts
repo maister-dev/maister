@@ -311,7 +311,7 @@ export async function spawnSession(
     readOnlySession: request.readOnlySession === true,
     // B1 (execution-policy permissions=auto_approve): inline L3 auto-approve.
     autoApprovePermissions: request.autoApprovePermissions === true,
-    // ADR-104 (M40): arm the universal guardrail interceptor with the web tier's
+    // ADR-108 (M40): arm the universal guardrail interceptor with the web tier's
     // resolved rule set. Counters start fresh (in-memory only; a resume rebuilds
     // this record, so a resumed run counts from zero).
     hooksConfig: request.hooksConfig,

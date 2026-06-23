@@ -33,7 +33,7 @@ export const ENFORCEABILITY_BY_AGENT: EnforceabilityTable = {
     restrictions: "instructed", // TODO(M14): flip to "enforced" once restrictions is materialized per session
     permissionMode: "instructed", // TODO(M14): flip to "enforced" once permissionMode is materialized per session
     workspaceAccess: "instructed", // TODO(M14): flip to "enforced" once workspaceAccess is materialized per session
-    hooks: "instructed", // ADR-104: supervisor-enforced at the ACP seam; kept instructed (ADR-041 frozen)
+    hooks: "instructed", // ADR-108: supervisor-enforced at the ACP seam; kept instructed (ADR-041 frozen)
   },
   codex: {
     mcps: "instructed", // TODO(M14): flip to "enforced" once mcps is materialized per session
@@ -42,7 +42,7 @@ export const ENFORCEABILITY_BY_AGENT: EnforceabilityTable = {
     restrictions: "instructed", // TODO(M14): flip to "enforced" once restrictions is materialized per session
     permissionMode: "instructed", // TODO(M14): flip to "enforced" once permissionMode is materialized per session
     workspaceAccess: "instructed", // TODO(M14): flip to "enforced" once workspaceAccess is materialized per session
-    hooks: "instructed", // ADR-104: supervisor-enforced at the ACP seam; kept instructed (ADR-041 frozen)
+    hooks: "instructed", // ADR-108: supervisor-enforced at the ACP seam; kept instructed (ADR-041 frozen)
   },
   gemini: {
     mcps: "instructed",

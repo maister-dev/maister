@@ -993,7 +993,7 @@ describe("respondToHitl service — actor kind", () => {
     ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
   });
 
-  it("api_token actor answering a hook_trip HITL throws UNAUTHORIZED (ADR-104: a guardrail trip is human-only)", async () => {
+  it("api_token actor answering a hook_trip HITL throws UNAUTHORIZED (ADR-108: a guardrail trip is human-only)", async () => {
     const { runId, hitlRequestId } = seedFormRow("hook_trip");
     const actor: HitlActor = {
       kind: "api_token",

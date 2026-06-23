@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// ADR-104 (M40): a mock ACP adapter that scripts tool-call streams to drive the
+// ADR-108 (M40): a mock ACP adapter that scripts tool-call streams to drive the
 // supervisor's universal guardrail interceptor end-to-end. Scenarios (argv):
 //   --scenario repetition          --count N → N identical permission requests
 //   --scenario path_guard                    → one out-of-lane then one in-lane write

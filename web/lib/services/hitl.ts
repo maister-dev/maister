@@ -1703,7 +1703,7 @@ async function handleBudgetBreachResponse(args: {
   );
 }
 
-// ADR-104 (M40): respond to a guardrail trip (NeedsInput hook_trip HITL). A
+// ADR-108 (M40): respond to a guardrail trip (NeedsInput hook_trip HITL). A
 // resume-or-abort decision (like infra_recovery / budget_breach), routed through
 // each run_kind's EXISTING resume path: flow → scheduleResume (runFlow does the
 // NeedsInput→Running CAS); agent → CAS the run Running in-tx then respawn via
@@ -1968,10 +1968,7 @@ export async function respondToHitl(
     // carries member-level RBAC (any active user, per ADR-096); a project run
     // keeps its project-scoped answerHitl gate. requireActiveSession is already
     // enforced by the calling route, so this branch only needs the project gate.
-    if (
-      runRow.projectId &&
-      actor.preauthorizedProjectId !== runRow.projectId
-    ) {
+    if (runRow.projectId && actor.preauthorizedProjectId !== runRow.projectId) {
       await requireProjectAction(runRow.projectId, "answerHitl");
     }
   } else {
@@ -1984,7 +1981,7 @@ export async function respondToHitl(
       hitlRow.kind === "human" ||
       hitlRow.kind === "infra_recovery" ||
       hitlRow.kind === "budget_breach" ||
-      // ADR-104 (M40): a guardrail trip is a safety escalation only a human may
+      // ADR-108 (M40): a guardrail trip is a safety escalation only a human may
       // resolve — a machine/agent token must never dismiss its own trip
       // (dispatched to handleHookTripResponse below).
       hitlRow.kind === "hook_trip"

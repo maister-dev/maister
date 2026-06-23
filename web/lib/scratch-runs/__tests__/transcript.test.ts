@@ -229,7 +229,7 @@ describe("parseScratchMessageContent", () => {
     ).toMatchObject({ kind: "legacy", role: "system" });
   });
 
-  it("round-trips a hook_trip payload (ADR-104)", () => {
+  it("round-trips a hook_trip payload (ADR-108)", () => {
     const content = encodeHookTripPayload("repetition", "halt");
 
     expect(parseScratchMessageContent("system", content)).toEqual({
@@ -240,7 +240,7 @@ describe("parseScratchMessageContent", () => {
   });
 });
 
-describe("scratch hook_trip notice (ADR-104 T3.3)", () => {
+describe("scratch hook_trip notice (ADR-108 T3.3)", () => {
   function makeRawApi(events: SupervisorEvent[]) {
     return {
       async cancelPermission() {

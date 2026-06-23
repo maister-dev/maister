@@ -3,7 +3,7 @@ import "server-only";
 import type { HooksSettings } from "@/lib/config.schema";
 import type { ExecutionPreset } from "@/lib/runs/execution-policy";
 
-// ADR-104 (M40): the resolved, flat guardrail rule set delivered to the
+// ADR-108 (M40): the resolved, flat guardrail rule set delivered to the
 // supervisor on `StartSessionRequest.hooksConfig`. Each key is optional; an
 // absent key means that rule is NOT armed for the session.
 export type HooksConfig = {

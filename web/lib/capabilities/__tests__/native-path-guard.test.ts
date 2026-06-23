@@ -1,4 +1,4 @@
-// ADR-104 (M40) T4.3 — the shipped native claude PreToolUse path-guard script.
+// ADR-108 (M40) T4.3 — the shipped native claude PreToolUse path-guard script.
 // Unit-tests the pure decision logic (the runnable `main` reads stdin + argv and
 // is exercised end-to-end by the P4 defense-in-depth integration test).
 

@@ -58,7 +58,7 @@ describe("parseAgentDefinition", () => {
     expect(parseAgentDefinition("aif:triager", VALID).hooks).toBeNull();
   });
 
-  it("parses an explicit hooks block (ADR-104, explicit agent arming)", () => {
+  it("parses an explicit hooks block (ADR-108, explicit agent arming)", () => {
     const withHooks = VALID.replace(
       "risk_tier: read_only",
       'risk_tier: read_only\nhooks:\n  repetition:\n    max: 5\n  pathGuard:\n    allowedPaths:\n      - "src/**"',

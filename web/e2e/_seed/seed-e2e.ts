@@ -3515,7 +3515,7 @@ const M40_BRANCH_NOPROGRESS = "maister/e2e-m40-no-progress";
 const M40_REPETITION_TITLE = "M40 Repetition trip";
 const M40_NOPROGRESS_TITLE = "M40 No-progress trip";
 
-// A flow whose ai_coding node declares `hooks` (engine_min >= 1.8.0 per ADR-104
+// A flow whose ai_coding node declares `hooks` (engine_min >= 1.8.0 per ADR-108
 // D6). Mirrors M17_MANIFEST's compiling shape; the trip is parked on `implement`.
 const M40_MANIFEST = {
   schemaVersion: 1,

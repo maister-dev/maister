@@ -1,4 +1,4 @@
-// ADR-104 (M40): the pure guardrail engine. Every decision is a pure function so
+// ADR-108 (M40): the pure guardrail engine. Every decision is a pure function so
 // every branch is unit-tested directly (the resolveReadOnlySessionDecision
 // pattern), independent of the ACP connection wiring.
 

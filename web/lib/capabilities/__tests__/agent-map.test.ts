@@ -139,7 +139,7 @@ describe("mapProfileToAgentArtifacts", () => {
     expect(result.settingsLocal).toBeNull();
   });
 
-  // ADR-104 (M40) P4: native path-guard hook folds into settings.local.json.
+  // ADR-108 (M40) P4: native path-guard hook folds into settings.local.json.
   const nativeHooks = {
     PreToolUse: [
       {

@@ -77,7 +77,7 @@ type ToolCallLike = {
   toolCallId?: string;
   title?: string;
   kind?: string;
-  // ADR-104 (M40): the standardized ACP write-path field — path_guard reads
+  // ADR-108 (M40): the standardized ACP write-path field — path_guard reads
   // locations[0].path; absent for kind-only-fallback adapters.
   locations?: Array<{ path?: string; line?: number }>;
 };
@@ -93,7 +93,7 @@ export function resolveReadOnlyAutoReject(
   options: ReadonlyArray<PermissionOptionDescriptor>,
 ): PermissionOptionDescriptor | null {
   if (readOnlyTurn !== true) return null;
-  // The mutating-kind set is the ADR-104 WRITE_KINDS SSOT (`execute`/bash passes:
+  // The mutating-kind set is the ADR-108 WRITE_KINDS SSOT (`execute`/bash passes:
   // read-only commands must work; the web-side L3 sensor backstops what slips).
   if (!toolCall.kind || !WRITE_KINDS.has(toolCall.kind)) {
     return null;
@@ -342,7 +342,7 @@ export async function createAcpConnection(
     readable as unknown as Parameters<typeof acp.ndJsonStream>[1],
   );
 
-  // ADR-104 (M40): emit a session.hook_trip stamped with the rule's frozen
+  // ADR-108 (M40): emit a session.hook_trip stamped with the rule's frozen
   // lifecycle/disposition. The web tier escalates on `halt`; `deny` is
   // record-only there. `toolCall` is the pre_tool_call call (null for no_progress).
   const emitHookTrip = (rule: HookRule, toolCall: unknown): void => {
@@ -383,7 +383,7 @@ export async function createAcpConnection(
         "session-update",
       );
 
-      // ADR-104 (M40): no_progress watchdog (post_turn; cannot block — the tool
+      // ADR-108 (M40): no_progress watchdog (post_turn; cannot block — the tool
       // already ran). Count tool-call turns, reset on a write-kind (diff-producing)
       // call, halt at >= maxTurns. On halt, cancel any in-flight permission
       // deferred and stop; the web tier owns the escalate (the supervisor never
@@ -494,12 +494,12 @@ export async function createAcpConnection(
         };
       }
 
-      // ADR-104 (M40): the universal guardrail interceptor — runs after the
+      // ADR-108 (M40): the universal guardrail interceptor — runs after the
       // read-only layers (L1/L2) and BEFORE B1 auto-approve, so a deny/halt
       // resolves before the tool runs AND cannot be bypassed by auto-approve.
       // (Every `unattended` run is permissions=auto_approve — the exact runs the
       // two-tier default arms guardrails for; placing this after B1 would silently
-      // no-op path_guard + repetition on them. See ADR-104 / SDD §5.) No-op when
+      // no-op path_guard + repetition on them. See ADR-108 / SDD §5.) No-op when
       // the session carries no hooksConfig (byte-identical to a pre-hook run).
       if (record.hooksConfig) {
         // A prior repetition/no_progress halt fired → cancel every further tool

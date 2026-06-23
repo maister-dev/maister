@@ -119,7 +119,7 @@ type MinimalSupervisorEvent =
       role: "user" | "agent";
       body: string;
     }
-  // ADR-104 (M40): mirrored to keep the projection total. A scratch hook_trip is
+  // ADR-108 (M40): mirrored to keep the projection total. A scratch hook_trip is
   // ignored here (default → {}); the scratch in-session deny + chat notice (no
   // NeedsInput, D2) is wired in Phase 3 (T3.3).
   | {
@@ -535,7 +535,7 @@ function startScratchEventConsumer(args: {
         }
 
         if (event.type === "session.hook_trip") {
-          // ADR-104 (M40): scratch never escalates to NeedsInput (D2) — surface
+          // ADR-108 (M40): scratch never escalates to NeedsInput (D2) — surface
           // the trip as an in-session chat notice only. A path_guard deny already
           // denied the tool inline (deny-and-continue); a halt ends the turn (the
           // run then goes WaitingForUser via the natural session.exited). No

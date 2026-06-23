@@ -213,9 +213,9 @@ components:
       payload: { $ref: "#/components/schemas/SessionChatTurnEvent" }
     SessionHookTrip:
       name: session.hook_trip
-      title: Guardrail/hook engine trip (Designed — ADR-104)
+      title: Guardrail/hook engine trip (Designed — ADR-108)
       summary: |
-        (Designed — ADR-104, M40) A guardrail rule tripped at the supervisor↔ACP
+        (Designed — ADR-108, M40) A guardrail rule tripped at the supervisor↔ACP
         seam. `disposition: "deny"` (path_guard) is resolved inline — the tool call
         is cancelled and the run continues. `disposition: "halt"` (repetition /
         no_progress) cancels work and stops issuing prompts; the web consumer then
@@ -460,5 +460,5 @@ components:
                 The offending ACP toolCall for `pre_tool_call` rules; null for
                 `no_progress`.
       description: |
-        (Designed — ADR-104, M40) Emitted when a guardrail rule trips at the
+        (Designed — ADR-108, M40) Emitted when a guardrail rule trips at the
         supervisor↔ACP seam. See `system-analytics/guardrail-hooks.md`.
