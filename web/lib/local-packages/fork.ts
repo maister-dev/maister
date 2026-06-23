@@ -3,7 +3,7 @@ import "server-only";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { LocalPackage } from "@/lib/db/schema";
 
-import { cp, mkdir, rm, stat } from "node:fs/promises";
+import { cp, mkdir, stat } from "node:fs/promises";
 import path from "node:path";
 
 import { and, asc, eq } from "drizzle-orm";
@@ -15,6 +15,9 @@ import {
   cleanCopyExcludingGit,
   createLocalPackage,
   ensureDefaultLocalPackage,
+  insertLocalPackageRow,
+  registerFlowElementInManifest,
+  rollbackLocalPackageRow,
   uniqueSlugForName,
 } from "./service";
 
@@ -146,8 +149,23 @@ export async function forkPackageToLocal(opts: {
     "fork package to local",
   );
 
-  let row: LocalPackage | undefined;
+  // Insert-first: claim the slug before any fs copy (see insertLocalPackageRow).
+  const row = await insertLocalPackageRow(
+    {
+      name,
+      slug,
+      workingDir,
+      status: "active",
+      branchName: DEFAULT_BRANCH,
+      sourceInstallId: opts.sourceInstallId,
+      sourceRef: opts.sourceRef,
+      createdBy: opts.createdBy,
+    },
+    opts.db,
+  );
 
+  // Row claimed — copy the source bundle. A failure rolls back ONLY this caller's
+  // own row + its uniquely-claimed dir (never a shared path).
   try {
     await cleanCopyExcludingGit(installedPath, workingDir);
     await gitInitWithCommit(
@@ -155,36 +173,9 @@ export async function forkPackageToLocal(opts: {
       DEFAULT_BRANCH,
       `maister: fork ${opts.sourceRef} to local package`,
     );
-
-    const inserted = await resolveDb(opts.db)
-      .insert(lp)
-      .values({
-        name,
-        slug,
-        workingDir,
-        status: "active",
-        branchName: DEFAULT_BRANCH,
-        sourceInstallId: opts.sourceInstallId,
-        sourceRef: opts.sourceRef,
-        createdBy: opts.createdBy,
-      })
-      .returning();
-
-    row = inserted[0] as LocalPackage | undefined;
   } catch (err) {
-    // Any failure AFTER the dir exists (copy / git-init / insert) rolls back the
-    // scaffold so a failed fork leaves no orphan working dir.
-    await rm(workingDir, { recursive: true, force: true }).catch(
-      () => undefined,
-    );
+    await rollbackLocalPackageRow(row.id, workingDir, opts.db);
     throw err;
-  }
-
-  if (!row) {
-    await rm(workingDir, { recursive: true, force: true }).catch(
-      () => undefined,
-    );
-    throw new MaisterError("CONFLICT", "failed to create forked local package");
   }
 
   return { localPackageId: row.id, alreadyExists: false };
@@ -267,6 +258,7 @@ export async function forkElementToDefault(opts: {
     "fork element to default local package",
   );
   await copyElementInto(pkg, opts.elementPath, src);
+  await registerFlowElementInManifest(pkg, opts.elementPath, src.isDirectory);
 
   return { localPackageId: pkg.id };
 }
@@ -300,6 +292,7 @@ export async function forkElementToNewLocal(opts: {
     "fork element to new local package",
   );
   await copyElementInto(pkg, opts.elementPath, src);
+  await registerFlowElementInManifest(pkg, opts.elementPath, src.isDirectory);
 
   return { localPackageId: pkg.id, alreadyExists: false };
 }

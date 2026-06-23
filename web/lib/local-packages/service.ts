@@ -21,6 +21,11 @@ import pino from "pino";
 
 import { gitCommitWorkingDir, gitDiscardPaths, gitInitWithCommit } from "./git";
 import {
+  appendManifestFlow,
+  parsePackageManifest,
+  serializeScaffoldManifest,
+} from "./manifest";
+import {
   localPackageWorkingDir,
   resolveWithinWorkingDir,
   slugifyName,
@@ -119,7 +124,8 @@ export async function uniqueSlugForName(
 
 async function scaffoldWorkingDir(
   workingDir: string,
-  name: string,
+  manifestName: string,
+  title: string,
 ): Promise<void> {
   await mkdir(workingDir, { recursive: true });
   for (const d of KIND_DIRS) {
@@ -127,8 +133,62 @@ async function scaffoldWorkingDir(
   }
   await atomicWriteText(
     path.join(workingDir, "maister-package.yaml"),
-    `schemaVersion: 1\nname: ${name}\nflows: []\n`,
+    serializeScaffoldManifest(manifestName, title),
   );
+}
+
+// pg unique-violation → CONFLICT (mirrors lib/users.ts + lib/project-members.ts).
+function isUniqueViolation(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    (err as { code?: unknown }).code === "23505"
+  );
+}
+
+// Insert-first (ADR-105 D1): claim the unique `slug` in the DB BEFORE any
+// filesystem work, so a concurrent same-slug create loses HERE (23505 → CONFLICT)
+// having touched nothing on disk — the winner's dir can never be deleted by the
+// loser's rollback. Shared by create + fork.
+export async function insertLocalPackageRow(
+  values: typeof lp.$inferInsert,
+  db?: Db,
+): Promise<LocalPackage> {
+  let rows: LocalPackage[];
+
+  try {
+    rows = await resolveDb(db).insert(lp).values(values).returning();
+  } catch (err) {
+    if (isUniqueViolation(err)) {
+      throw new MaisterError(
+        "CONFLICT",
+        `a local package named "${values.name}" is already being created`,
+      );
+    }
+    throw err;
+  }
+
+  const row = rows[0];
+
+  if (!row) {
+    throw new MaisterError("CONFLICT", "failed to create local package");
+  }
+
+  return row;
+}
+
+// Roll back a claimed row + its uniquely-owned working dir after a post-insert
+// scaffold/copy/init failure. Touches ONLY this caller's slug/dir — never shared.
+export async function rollbackLocalPackageRow(
+  id: string,
+  workingDir: string,
+  db?: Db,
+): Promise<void> {
+  await resolveDb(db)
+    .delete(lp)
+    .where(eq(lp.id, id))
+    .catch(() => undefined);
+  await rm(workingDir, { recursive: true, force: true }).catch(() => undefined);
 }
 
 // Recursively copy `src` into `dest` skipping every VCS `.git` entry, so a fork
@@ -175,44 +235,32 @@ export async function createLocalPackage(opts: {
 
   log.info({ slug, workingDir }, "create local package");
 
-  let row: LocalPackage | undefined;
+  // Insert-first: claim the slug before any fs work (see insertLocalPackageRow).
+  const row = await insertLocalPackageRow(
+    {
+      name: opts.name,
+      slug,
+      workingDir,
+      status: "active",
+      branchName: DEFAULT_BRANCH,
+      sourceInstallId: opts.sourceInstallId ?? null,
+      createdBy: opts.createdBy,
+    },
+    opts.db,
+  );
 
+  // Row claimed — now scaffold. A failure rolls back ONLY this caller's own row
+  // + its uniquely-claimed dir (never a shared path).
   try {
-    await scaffoldWorkingDir(workingDir, opts.name);
+    await scaffoldWorkingDir(workingDir, slug, opts.name);
     await gitInitWithCommit(
       workingDir,
       DEFAULT_BRANCH,
       "maister: init local package",
     );
-
-    const rows = await resolveDb(opts.db)
-      .insert(lp)
-      .values({
-        name: opts.name,
-        slug,
-        workingDir,
-        status: "active",
-        branchName: DEFAULT_BRANCH,
-        sourceInstallId: opts.sourceInstallId ?? null,
-        createdBy: opts.createdBy,
-      })
-      .returning();
-
-    row = rows[0];
   } catch (err) {
-    // Any failure AFTER the dir exists (scaffold / git-init / insert) rolls back
-    // the scaffold so a failed create leaves no orphan dir.
-    await rm(workingDir, { recursive: true, force: true }).catch(
-      () => undefined,
-    );
+    await rollbackLocalPackageRow(row.id, workingDir, opts.db);
     throw err;
-  }
-
-  if (!row) {
-    await rm(workingDir, { recursive: true, force: true }).catch(
-      () => undefined,
-    );
-    throw new MaisterError("CONFLICT", "failed to create local package");
   }
 
   return row;
@@ -282,7 +330,7 @@ export async function ensureDefaultLocalPackage(opts: {
   const workingDir = localPackageWorkingDir(slug);
 
   log.info({ projectId: opts.projectId, slug }, "ensure default local package");
-  await scaffoldWorkingDir(workingDir, name);
+  await scaffoldWorkingDir(workingDir, slug, name);
   await gitInitWithCommit(
     workingDir,
     DEFAULT_BRANCH,
@@ -507,6 +555,49 @@ export async function writeWorkingDirFile(
   };
 }
 
+// (M39 A4) After a flow element is copied into a package, register it in the
+// manifest's `flows[]` — otherwise the forked flow is invisible to the installer
+// (`installPackageRevision` loops `manifest.flows`) and is dead weight. A flow is
+// a dir holding `flow.yaml` (manifest `flows[].path` points at the dir) or a bare
+// `flow.yaml`. A non-flow element (skill / agent / rule) is a no-op.
+export async function registerFlowElementInManifest(
+  pkg: LocalPackage,
+  elementPath: string,
+  isDirectory: boolean,
+): Promise<void> {
+  let flowDir: string | null = null;
+
+  if (isDirectory) {
+    const flowYaml = path.join(pkg.workingDir, elementPath, "flow.yaml");
+    const hasFlowYaml = await fsReadFile(flowYaml, "utf8").then(
+      () => true,
+      () => false,
+    );
+
+    if (hasFlowYaml) flowDir = elementPath;
+  } else if ((elementPath.split(/[\\/]/).at(-1) ?? "") === "flow.yaml") {
+    const parent = elementPath.replace(/[\\/]?flow\.yaml$/, "");
+
+    flowDir = parent.length > 0 ? parent : null;
+  }
+
+  if (!flowDir) return;
+
+  const id = slugifyName(flowDir.split(/[\\/]/).at(-1) ?? "flow");
+  const manifestAbs = path.join(pkg.workingDir, "maister-package.yaml");
+  const current = await fsReadFile(manifestAbs, "utf8").catch(() => null);
+
+  if (current === null) return;
+
+  const parsed = parsePackageManifest(current);
+
+  if (!parsed.ok) return;
+  await atomicWriteText(
+    manifestAbs,
+    appendManifestFlow(parsed.raw, { id, path: flowDir }),
+  );
+}
+
 // Confined delete of a working-dir file (M36 T2.3). Idempotent (`force`); a
 // missing file is not an error. Lock-asserted by the caller.
 export async function deleteWorkingDirFile(
@@ -632,6 +723,50 @@ export async function commitWorkingDir(
   await gitCommitWorkingDir(
     pkg.workingDir,
     message?.trim() ? message.trim() : "maister: edit local package",
+  );
+}
+
+// (M39 ADR-105 D3) The cut-time gate: a version may be cut ONLY from a clean,
+// committed, fully-valid working tree — committed state is the validation
+// boundary, so publishing uncommitted WIP or an invalid committed baseline is
+// refused. Called by the cut-version route BEFORE the export/install. Unlike the
+// commit gate (changed paths only), this validates EVERY artifact, catching an
+// invalid baseline that a scoped commit never re-checked.
+export async function assertPackageCuttable(pkg: LocalPackage): Promise<void> {
+  const wt = await diffWorkingTree(pkg.workingDir);
+
+  if (wt.nameStatus.length > 0) {
+    log.warn(
+      { slug: pkg.slug, changedCount: wt.nameStatus.length },
+      "cut blocked — uncommitted working-tree changes",
+    );
+    throw new MaisterError(
+      "PRECONDITION",
+      "commit or discard working-tree changes before cutting a version",
+      { details: { changedCount: wt.nameStatus.length } },
+    );
+  }
+
+  const files = await readWorkingDirArtifactFiles(pkg);
+  const errors = validatePackageArtifacts({
+    files,
+    changedPaths: files.map((f) => f.path),
+  });
+
+  if (errors.length === 0) return;
+
+  log.warn(
+    {
+      slug: pkg.slug,
+      invalidCount: errors.length,
+      paths: errors.map((e) => e.path),
+    },
+    "cut blocked — invalid artifacts",
+  );
+  throw new MaisterError(
+    "PRECONDITION",
+    `${errors.length} artifact(s) failed validation and cannot be cut`,
+    { details: { invalidArtifacts: errors } },
   );
 }
 

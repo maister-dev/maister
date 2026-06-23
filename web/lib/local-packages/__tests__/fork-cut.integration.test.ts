@@ -22,10 +22,15 @@ import {
   forkPackageToLocal,
 } from "@/lib/local-packages/fork";
 import {
+  parsePackageManifest,
+  validatePackageManifestYaml,
+} from "@/lib/local-packages/manifest";
+import {
   exportWorkingDir,
   getDefaultLocalPackage,
   getLocalPackage,
   listFiles,
+  readFileContent,
   stampLastCutInstall,
   writeWorkingDirFile,
 } from "@/lib/local-packages/service";
@@ -234,6 +239,22 @@ describe("fork to local (integration)", () => {
     expect(paths).not.toContain("flows/flow-b/flow.yaml");
     expect(paths).not.toContain("skills/skill-one/SKILL.md");
     expect(paths).not.toContain("agents/agent-one.md");
+
+    // F2.a/F2.b: the scaffold manifest has a slug-safe `name` + display title,
+    // and the copied FLOW is registered in flows[] — so the manifest is valid
+    // (the forked flow is not dead weight at install time).
+    const manifest = await readFileContent(pkg!, "maister-package.yaml");
+
+    expect(validatePackageManifestYaml(manifest.content)).toEqual([]);
+    const parsed = parsePackageManifest(manifest.content);
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.model.name).toBe(pkg!.slug);
+    expect(parsed.model.title).toBe("flow-a (local)");
+    expect(parsed.model.flows).toEqual([
+      { id: "flow-a", path: "flows/flow-a" },
+    ]);
   });
 
   it("element fork rejects an escaping element path, no package created", async () => {

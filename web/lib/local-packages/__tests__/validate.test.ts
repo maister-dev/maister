@@ -69,7 +69,7 @@ describe("validatePackageArtifacts", () => {
     expect(errors[0]?.path).toBe("flow.yaml");
   });
 
-  it("rejects a manifest with zero flows (schema requires >= 1)", () => {
+  it("accepts a manifest with zero flows (empty/draft packages are valid — ADR-105)", () => {
     const errors = changedAll([
       {
         path: "maister-package.yaml",
@@ -77,8 +77,7 @@ describe("validatePackageArtifacts", () => {
       },
     ]);
 
-    expect(errors.length).toBeGreaterThan(0);
-    expect(errors[0]?.path).toBe("maister-package.yaml");
+    expect(errors).toEqual([]);
   });
 
   it("rejects a platform-agent definition with no frontmatter", () => {

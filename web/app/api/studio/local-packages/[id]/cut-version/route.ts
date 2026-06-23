@@ -15,6 +15,7 @@ import { requireGlobalRole, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import {
+  assertPackageCuttable,
   exportWorkingDir,
   getLocalPackage,
   stampLastCutInstall,
@@ -76,6 +77,11 @@ export async function POST(
     if (!pkg || pkg.status !== "active") {
       return notFoundResponse("local package not found");
     }
+
+    // Cut gate (ADR-105 D3): publish ONLY a clean, committed, fully-valid tree.
+    // Uncommitted WIP or an invalid committed baseline is refused (PRECONDITION)
+    // before any irreversible export/install.
+    await assertPackageCuttable(pkg);
 
     // Gate the optional attach BEFORE any irreversible side-effect: an
     // inaccessible attach target must not leave a cut install behind.

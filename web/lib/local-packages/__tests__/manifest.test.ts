@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import { parse as parseYaml } from "yaml";
 
 import {
+  appendManifestFlow,
   applyManifestScalars,
   parsePackageManifest,
+  serializeScaffoldManifest,
   validatePackageManifestYaml,
 } from "@/lib/local-packages/manifest";
 
@@ -95,16 +97,60 @@ describe("validatePackageManifestYaml", () => {
     expect(validatePackageManifestYaml(VALID_MANIFEST)).toEqual([]);
   });
 
-  it("flags a manifest with zero flows (schema requires >= 1)", () => {
+  it("accepts a manifest with zero flows (empty/draft packages are valid — ADR-105)", () => {
     expect(
-      validatePackageManifestYaml("schemaVersion: 1\nname: x\nflows: []\n")
-        .length,
-    ).toBeGreaterThan(0);
+      validatePackageManifestYaml("schemaVersion: 1\nname: x\nflows: []\n"),
+    ).toEqual([]);
   });
 
   it("flags unparseable YAML", () => {
     expect(validatePackageManifestYaml(":\n  - bad: [").length).toBeGreaterThan(
       0,
     );
+  });
+});
+
+describe("serializeScaffoldManifest (F2.a)", () => {
+  it("writes a slug-safe name + display title, and validates (display never lands in `name`)", () => {
+    const yaml = serializeScaffoldManifest("flow-a-local", "flow-a (local)");
+    const parsed = parsePackageManifest(yaml);
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    // The capabilityRefId-shaped slug is the manifest `name`; the display name
+    // (spaces/parens — would violate capabilityRefIdSchema) goes to metadata.title.
+    expect(parsed.model.name).toBe("flow-a-local");
+    expect(parsed.model.title).toBe("flow-a (local)");
+    // Empty flows are valid (D2) — a fresh scaffold passes the install schema.
+    expect(validatePackageManifestYaml(yaml)).toEqual([]);
+  });
+});
+
+describe("appendManifestFlow (F2.b)", () => {
+  it("adds a flow entry, preserving other fields, and is idempotent on id", () => {
+    const base = serializeScaffoldManifest("pkg", "Pkg");
+
+    const once = appendManifestFlow(parseYaml(base), {
+      id: "flow-a",
+      path: "flows/flow-a",
+    });
+    const onceParsed = parsePackageManifest(once);
+
+    expect(onceParsed.ok).toBe(true);
+    if (!onceParsed.ok) return;
+    expect(onceParsed.model.name).toBe("pkg");
+    expect(onceParsed.model.flows).toEqual([
+      { id: "flow-a", path: "flows/flow-a" },
+    ]);
+    // A flow already listed is not duplicated.
+    const twice = appendManifestFlow(parseYaml(once), {
+      id: "flow-a",
+      path: "flows/flow-a",
+    });
+    const twiceParsed = parsePackageManifest(twice);
+
+    expect(twiceParsed.ok).toBe(true);
+    if (!twiceParsed.ok) return;
+    expect(twiceParsed.model.flows).toHaveLength(1);
   });
 });

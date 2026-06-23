@@ -65,10 +65,12 @@ describe("PackageManifestForm", () => {
     expect(html).not.toContain('data-testid="manifest-field-name"');
   });
 
-  it("surfaces schema validation issues for an incomplete manifest", () => {
+  it("surfaces schema validation issues for an invalid manifest (bad name)", () => {
+    // Empty flows are valid now (ADR-105); an unsafe `name` (spaces/punctuation)
+    // still violates capabilityRefIdSchema → the issues panel renders.
     const html = renderToStaticMarkup(
       createElement(PackageManifestForm, {
-        content: "schemaVersion: 1\nname: x\nflows: []\n",
+        content: "schemaVersion: 1\nname: Bad Name!\nflows: []\n",
         readOnly: false,
         labels: LABELS,
         onChange: () => {},

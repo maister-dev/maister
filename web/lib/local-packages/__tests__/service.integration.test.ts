@@ -1,3 +1,5 @@
+import type { LocalPackage } from "@/lib/db/schema";
+
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -14,6 +16,7 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
+import { gitCommitWorkingDir } from "@/lib/local-packages/git";
 import {
   acquireLock,
   assertHoldsLock,
@@ -21,6 +24,8 @@ import {
   releaseLock,
 } from "@/lib/local-packages/lock";
 import {
+  assertPackageCuttable,
+  commitWorkingDir,
   createLocalPackage,
   deleteLocalPackage,
   ensureDefaultLocalPackage,
@@ -31,6 +36,7 @@ import {
   listLocalPackages,
   readFileContent,
   setLocalPackageStatus,
+  writeWorkingDirFile,
 } from "@/lib/local-packages/service";
 
 // FIXME(any): dual drizzle peer-dep variants (matches attach.integration.test.ts).
@@ -112,7 +118,10 @@ describe("local-packages substrate (integration)", () => {
     const f = await readFileContent(pkg!, "maister-package.yaml");
 
     expect(f.kind).toBe("manifest");
-    expect(f.content).toContain("name: My Flow Pack");
+    // F2.a: the manifest `name` is the slug-safe id; the display name lives in
+    // metadata.title (a display name with spaces would violate capabilityRefIdSchema).
+    expect(f.content).toContain("name: my-flow-pack");
+    expect(f.content).toContain("title: My Flow Pack");
     expect(f.contentHash).toMatch(/^[0-9a-f]{64}$/);
   });
 
@@ -282,5 +291,80 @@ describe("local-packages substrate (integration)", () => {
     // The surviving row's repo EXISTS — the loser did not delete a shared dir.
     expect((await stat(a.workingDir)).isDirectory()).toBe(true);
     expect((await stat(join(a.workingDir, ".git"))).isDirectory()).toBe(true);
+  });
+
+  it("two concurrent same-name creates never delete a winner's repo (F1, insert-first)", async () => {
+    // Insert-first claims the unique slug in the DB BEFORE any fs work, so the
+    // race loser fails at the constraint having touched nothing — it can never
+    // delete the winner's working dir (the critical data-loss bug).
+    const settled = await Promise.allSettled([
+      createLocalPackage({ name: "Race Create Pack", createdBy: userId, db }),
+      createLocalPackage({ name: "Race Create Pack", createdBy: userId, db }),
+    ]);
+
+    const created = settled
+      .filter(
+        (s): s is PromiseFulfilledResult<LocalPackage> =>
+          s.status === "fulfilled",
+      )
+      .map((s) => s.value);
+
+    // At least one wins; whether the other wins a distinct slug or loses the
+    // unique-constraint race, NO created package's repo is ever deleted.
+    expect(created.length).toBeGreaterThanOrEqual(1);
+    for (const pkg of created) {
+      expect((await stat(pkg.workingDir)).isDirectory()).toBe(true);
+      expect((await stat(join(pkg.workingDir, ".git"))).isDirectory()).toBe(
+        true,
+      );
+      const files = await listFiles(pkg);
+
+      expect(files.some((f) => f.path === "maister-package.yaml")).toBe(true);
+    }
+
+    // Any loser failed cleanly with CONFLICT — never a raw 23505 → 500.
+    for (const s of settled) {
+      if (s.status === "rejected") {
+        expect(s.reason).toMatchObject({ code: "CONFLICT" });
+      }
+    }
+  });
+
+  it("cut gate (F3): clean+valid is cuttable; dirty WIP and invalid committed baseline are not", async () => {
+    const pkg = await createLocalPackage({
+      name: "Cut Gate Pack",
+      createdBy: userId,
+      db,
+    });
+
+    // Fresh scaffold = clean + valid (empty flows OK, slug-safe name) → cuttable.
+    await expect(assertPackageCuttable(pkg)).resolves.toBeUndefined();
+
+    // An uncommitted edit makes the tree dirty → NOT cuttable.
+    await writeWorkingDirFile(
+      pkg,
+      "skills/demo/SKILL.md",
+      "---\nname: demo\ndescription: a demo skill\n---\nbody\n",
+    );
+    await expect(assertPackageCuttable(pkg)).rejects.toMatchObject({
+      code: "PRECONDITION",
+    });
+
+    // Commit it (valid) → clean again → cuttable.
+    await commitWorkingDir(pkg, "add demo skill");
+    await expect(assertPackageCuttable(pkg)).resolves.toBeUndefined();
+
+    // Force an invalid manifest committed via the RAW git path (bypasses the
+    // commit gate, simulating a legacy invalid baseline): clean tree, but full
+    // validation rejects the unsafe name → NOT cuttable.
+    await writeWorkingDirFile(
+      pkg,
+      "maister-package.yaml",
+      "schemaVersion: 1\nname: Bad Name!\nflows: []\n",
+    );
+    await gitCommitWorkingDir(pkg.workingDir, "force invalid baseline");
+    await expect(assertPackageCuttable(pkg)).rejects.toMatchObject({
+      code: "PRECONDITION",
+    });
   });
 });

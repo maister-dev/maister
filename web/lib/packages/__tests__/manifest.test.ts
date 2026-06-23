@@ -84,12 +84,11 @@ describe("loadMaisterPackageManifest", () => {
     );
   });
 
-  it("rejects an empty flows list with CONFIG", async () => {
+  it("accepts an empty flows list (empty/draft packages are valid — ADR-105)", async () => {
     const root = await packageRoot(`schemaVersion: 1\nname: p\nflows: []\n`);
+    const manifest = await loadMaisterPackageManifest(root);
 
-    await expect(loadMaisterPackageManifest(root)).rejects.toSatisfy(
-      (e: unknown) => isMaisterError(e) && e.code === "CONFIG",
-    );
+    expect(manifest.flows).toEqual([]);
   });
 
   it("rejects duplicate ids within a section with CONFIG", async () => {

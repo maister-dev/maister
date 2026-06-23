@@ -131,6 +131,36 @@ export function applyManifestScalars(
   return stringifyYaml(next);
 }
 
+// Serialize a fresh scaffold manifest (M39 A4): the manifest `name` is the
+// slug-safe capabilityRefId (NOT the display name — that would violate
+// `capabilityRefIdSchema`); the human-readable display goes to `metadata.title`.
+// `flows` starts empty (now valid — empty packages are allowed).
+export function serializeScaffoldManifest(name: string, title: string): string {
+  return stringifyYaml({
+    schemaVersion: 1,
+    name,
+    metadata: { title },
+    flows: [],
+  });
+}
+
+// Append a flow entry to a manifest's `flows[]`, preserving every other field +
+// key order, and re-serialize. Idempotent on `id` (a flow already listed is not
+// duplicated). Used when a flow element fork copies a flow into a package — the
+// flow must be registered in the manifest or it is dead weight at install time.
+export function appendManifestFlow(
+  raw: Record<string, unknown>,
+  entry: { id: string; path: string },
+): string {
+  const flows = Array.isArray(raw.flows) ? [...raw.flows] : [];
+  const present = flows.some((f) => isRecord(f) && f.id === entry.id);
+  const nextFlows = present
+    ? flows
+    : [...flows, { id: entry.id, path: entry.path }];
+
+  return stringifyYaml({ ...raw, flows: nextFlows });
+}
+
 // Strict validation against the install-time manifest schema. Returns the issue
 // list (empty = valid). Reused by the M39 commit-time gate (Phase A3) and the
 // editor's inline content-issues.

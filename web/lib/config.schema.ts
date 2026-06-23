@@ -1334,7 +1334,9 @@ export const maisterPackageManifestSchema = z
     schemaVersion: z.literal(1),
     name: capabilityRefIdSchema,
     metadata: flowMetadataSchema.optional(),
-    flows: z.array(packageManifestEntrySchema).min(1),
+    // A package may ship zero flows (capability/agent-only, or a fresh in-Studio
+    // draft) — empty is valid (ADR-105/M39). Other entry arrays already default.
+    flows: z.array(packageManifestEntrySchema).default([]),
     capabilities: z.array(packageManifestEntrySchema).default([]),
     mcps: z.array(packageManifestMcpSchema).default([]),
     restrictions: z.array(packageManifestRestrictionSchema).default([]),
