@@ -159,6 +159,10 @@ export type LaunchRunInput = {
   targetBranch?: string;
   deliveryPolicy?: StoredDeliveryPolicy;
   executionPolicy?: ExecutionPolicy;
+  // M39 (ADR-106): an agent-driven flow run records the driving agent — the
+  // persona/policy source the graph runner injects on every ai_coding node.
+  // null/absent for a normal board flow run.
+  agentId?: string | null;
 };
 
 export type PromotionMode = "local_merge" | "rebase_merge" | "pull_request";
@@ -908,6 +912,10 @@ export async function* launchRunStaged(
         resolvedCapabilitySet,
         deliveryPolicySnapshot: deliveryPolicy,
         executionPolicy,
+        // M39 (ADR-106): the driving agent of an agent-driven flow run (null for
+        // a normal board launch). The graph runner reads it to inject the
+        // agent's persona on every ai_coding node.
+        agentId: input.agentId ?? null,
         createdByUserId: ctx.actorUserId,
         status: "Pending",
         // Snapshot the enabled revision (M10, ADR-021). flow_revision_id is

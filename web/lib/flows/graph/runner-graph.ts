@@ -1060,6 +1060,14 @@ async function executeNodeAction(
               (def.settings as { agent?: string } | undefined)?.agent
                 ? { id: (def.settings as { agent: string }).agent }
                 : undefined,
+            // M39 (ADR-106): an agent-driven flow run (run.agent_id set) injects
+            // the driving agent's persona on EVERY ai_coding node. The graph
+            // runner only loads flow runs, so agent_id here is the launch driver;
+            // a per-node agentBinding (above) takes precedence for that node.
+            runPersonaAgentId:
+              def.type === "ai_coding" && loaded.run.agentId
+                ? (loaded.run.agentId as string)
+                : undefined,
             // M30 (ADR-081): rework `resume` — the dispatch carries the prior
             // attempt's session handle (runner-agent falls back to a fresh
             // session, observably, when it is unresumable). For an orchestrator

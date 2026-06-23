@@ -72,6 +72,10 @@ export type RunAgentStepCtx = {
   // M34 (ADR-089): the node's `settings.agent` catalog binding — resolved at
   // dispatch (session-mode prompt substitution / subagent materialization).
   agentBinding?: { id: string };
+  // M39 (ADR-106): the run's DRIVING agent (a launch with flow_ref) — its `.md`
+  // persona is injected on EVERY ai_coding node (augment-not-replace). A per-node
+  // `agentBinding` wins for that node; otherwise this run-level persona applies.
+  runPersonaAgentId?: string;
   executor: {
     id: string;
     agent: CapabilityAgent;
@@ -682,6 +686,25 @@ export async function runAgentStep(
       executorAgent: ctx.executor.agent,
       worktreePath: ctx.worktreePath,
       db: ctx.db,
+    });
+
+    if (bound.mode === "session") {
+      promptTemplate = `${bound.prompt}\n\n## Task\n\n${step.prompt}`;
+    }
+  } else if (ctx.runPersonaAgentId) {
+    // M39 (ADR-106): the run's DRIVING agent (a launch with flow_ref) augments
+    // EVERY ai_coding node — its `.md` body is the persona/system block, the
+    // node keeps its own task prompt (order persona-then-task). The driving
+    // agent is launched by its own trigger and need not declare the "flow"
+    // trigger, so that check is skipped; launch validates mode=session.
+    const { resolveFlowBoundAgent } = await import("@/lib/agents/flow-binding");
+    const bound = await resolveFlowBoundAgent({
+      agentId: ctx.runPersonaAgentId,
+      runId: ctx.runId,
+      executorAgent: ctx.executor.agent,
+      worktreePath: ctx.worktreePath,
+      db: ctx.db,
+      requireFlowTrigger: false,
     });
 
     if (bound.mode === "session") {

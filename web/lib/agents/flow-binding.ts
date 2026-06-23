@@ -35,6 +35,11 @@ export async function resolveFlowBoundAgent(args: {
   executorAgent: string;
   worktreePath: string;
   db?: Db;
+  // M39 (ADR-106): the run-driving persona path (an agent launched WITH a
+  // flow_ref) reuses this resolver but skips the "flow" trigger requirement —
+  // the driving agent is launched by its own trigger, not bound to a flow node.
+  // Defaults to true (the per-node settings.agent binding still requires it).
+  requireFlowTrigger?: boolean;
 }): Promise<FlowBoundAgentResolution> {
   const _db = args.db ?? getDb();
   const rows = await _db
@@ -89,7 +94,7 @@ export async function resolveFlowBoundAgent(args: {
   );
   const parsed = effective.parsed;
 
-  if (!parsed.triggers.includes("flow")) {
+  if (args.requireFlowTrigger !== false && !parsed.triggers.includes("flow")) {
     throw new MaisterError(
       "CONFIG",
       `agent "${args.agentId}" does not declare the "flow" trigger — flow binding refused`,

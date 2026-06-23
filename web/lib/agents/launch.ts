@@ -85,6 +85,7 @@ const {
   agentProjectLinks,
   domainEvents,
   hitlRequests,
+  flows,
   platformAcpRunners,
   platformRouterSidecars,
   platformRuntimeSettings,
@@ -161,7 +162,10 @@ export type AgentLaunchErrorKind =
   | "subagent"
   | "trigger_missing"
   | "project_missing"
-  | "task_mismatch";
+  | "task_mismatch"
+  // M39 (ADR-106): the agent declares a flow_ref but the same-package flow is
+  // not configured/enabled in the project.
+  | "flow_unconfigured";
 
 export class AgentLaunchError extends MaisterError {
   readonly kind: AgentLaunchErrorKind;
@@ -541,11 +545,84 @@ export async function resolveWorkspaceRefCommittish(
   });
 }
 
+// M39 (ADR-106): an agent declaring a same-package flow_ref drives that flow as
+// a NORMAL flow run (run_kind='flow', flow pool, worktree, the flow engine —
+// reusing the board launch path `launchRun`) carrying runs.agent_id; the graph
+// runner injects the agent persona on every ai_coding node. The graph runner
+// derives promotion/branch/board from a task, so a task-less trigger
+// (cron/webhook/event) auto-creates one (owner decision, M39).
+async function launchAgentDrivenFlowRun(
+  _db: Db,
+  ctx: LoadedAgentContext,
+  input: LaunchAgentRunInput,
+): Promise<LaunchAgentRunResult> {
+  const flowRef = ctx.effective.parsed.flow as string;
+
+  // flows.flow_ref_id IS the manifest flow id, and a package install enables its
+  // member flows — so the attached+trusted agent's flow resolves to the
+  // project's enabled flow row of the same ref.
+  const flowRows = await _db
+    .select({ id: flows.id })
+    .from(flows)
+    .where(
+      and(eq(flows.projectId, input.projectId), eq(flows.flowRefId, flowRef)),
+    );
+  const flow = flowRows[0];
+
+  if (!flow) {
+    throw new AgentLaunchError(
+      "flow_unconfigured",
+      "PRECONDITION",
+      `agent "${input.agentId}" declares flow "${flowRef}", but that flow is not configured in project ${input.projectId}`,
+    );
+  }
+
+  let taskId = input.taskId ?? null;
+
+  if (!taskId) {
+    const { createTask } = await import("@/lib/services/tasks");
+    const created = await createTask(
+      {
+        title: `${ctx.effective.parsed.name} (${input.trigger.source})`,
+        prompt: ctx.effective.parsed.prompt,
+        flowId: flow.id as string,
+      },
+      { projectId: input.projectId, actorUserId: null },
+      _db,
+    );
+
+    taskId = created.taskId;
+  }
+
+  const { launchRun } = await import("@/lib/services/runs");
+  const result = await launchRun(
+    { taskId, flowId: flow.id as string, agentId: input.agentId },
+    { authorize: async () => {}, actorUserId: null },
+    _db,
+  );
+
+  return {
+    runId: result.runId,
+    status: result.status as "Running" | "Pending",
+    ...(result.queuePosition !== undefined
+      ? { queuePosition: result.queuePosition }
+      : {}),
+  };
+}
+
 export async function launchAgentRun(
   input: LaunchAgentRunInput,
 ): Promise<LaunchAgentRunResult> {
   const _db = input.db ?? getDb();
   const ctx = await loadAgentContext(_db, input);
+
+  // M39 (ADR-106): branch on the flow_ref discriminant BEFORE the standalone
+  // routing — an agent that declares a same-package flow drives that flow
+  // (run_kind='flow', persona on every ai_coding node), not a standalone session.
+  if (ctx.effective.parsed.flow) {
+    return launchAgentDrivenFlowRun(_db, ctx, input);
+  }
+
   const resolution = await resolveRunnerForAgent(
     _db,
     ctx,

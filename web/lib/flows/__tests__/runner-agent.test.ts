@@ -834,6 +834,59 @@ describe("runner-agent — catalog-agent binding substitution (M34, ADR-089)", (
     expect(prompt.startsWith("E2E-HELPER-SYSTEM-PROMPT-MARKER")).toBe(true);
   });
 
+  // M39 (ADR-106): the run-driving persona — an agent launched WITH a flow_ref
+  // augments EVERY ai_coding node with its .md body, skipping the flow-trigger
+  // check (it is launched by its own trigger, not bound to a flow node).
+  it("a run-driving persona (runPersonaAgentId) prepends the agent body + '## Task', skipping the flow-trigger check", async () => {
+    flowBindingMock.resolveFlowBoundAgent.mockClear();
+
+    const db = makeFakeDb();
+    const api = makeApi({ events: [update(1, "ok"), exited(2)] });
+
+    await runAgentStep(
+      { id: "code", type: "agent", mode: "new-session", prompt: "implement X" },
+      makeCtx(db, { runPersonaAgentId: "pkg:driver" }),
+      api,
+    );
+
+    expect(flowBindingMock.resolveFlowBoundAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: "pkg:driver",
+        requireFlowTrigger: false,
+      }),
+    );
+
+    const prompt = (api.sendPrompt as ReturnType<typeof vi.fn>).mock.calls[0][1]
+      .prompt as string;
+
+    expect(prompt.startsWith("E2E-HELPER-SYSTEM-PROMPT-MARKER")).toBe(true);
+    expect(prompt).toContain("\n\n## Task\n\nimplement X");
+  });
+
+  it("a per-node agentBinding wins over the run-driving persona (resolver called once, for the node binding)", async () => {
+    flowBindingMock.resolveFlowBoundAgent.mockClear();
+
+    const db = makeFakeDb();
+    const api = makeApi({ events: [update(1, "ok"), exited(2)] });
+
+    await runAgentStep(
+      { id: "code", type: "agent", mode: "new-session", prompt: "go" },
+      makeCtx(db, {
+        agentBinding: { id: "node-helper" },
+        runPersonaAgentId: "pkg:driver",
+      }),
+      api,
+    );
+
+    expect(flowBindingMock.resolveFlowBoundAgent).toHaveBeenCalledTimes(1);
+    expect(flowBindingMock.resolveFlowBoundAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ agentId: "node-helper" }),
+    );
+    expect(flowBindingMock.resolveFlowBoundAgent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ agentId: "pkg:driver" }),
+    );
+  });
+
   it("an unbound step never touches the resolver and keeps the inline prompt", async () => {
     flowBindingMock.resolveFlowBoundAgent.mockClear();
 
