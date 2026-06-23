@@ -81,6 +81,8 @@ beforeEach(async () => {
   await pool.query(`DELETE FROM "project_tokens"`);
   await pool.query(`DELETE FROM "agent_project_links"`);
   await pool.query(`DELETE FROM "agents"`);
+  await pool.query(`DELETE FROM "project_package_attachments"`);
+  await pool.query(`DELETE FROM "package_installs"`);
   await pool.query(`DELETE FROM "flows"`);
   await pool.query(`DELETE FROM "flow_revisions"`);
   await pool.query(`DELETE FROM "projects"`);
@@ -131,6 +133,25 @@ beforeEach(async () => {
              '{}'::jsonb, 1, $4, 'Enabled', 'trusted', 'pinned')`,
     [randomUUID(), projectId, agentsRoot, revisionId],
   );
+
+  // (ADR-106) The package-anchored chain the effective-definition resolver
+  // walks: an attached, trusted, Installed package_install at the agent .md root.
+  const packageInstallId = randomUUID();
+
+  await pool.query(
+    `INSERT INTO "package_installs"
+       ("id", "source_url", "name", "version_label", "resolved_revision",
+        "manifest", "manifest_digest", "installed_path", "package_status", "trust_status")
+     VALUES ($1, 'github.com/acme/test-pkg', 'test-pkg', 'v1.0.0', 'rev-pkg-1',
+             '{}'::jsonb, 'digest', $2, 'Installed', 'trusted')`,
+    [packageInstallId, agentsRoot],
+  );
+  await pool.query(
+    `INSERT INTO "project_package_attachments"
+       ("id", "project_id", "package_install_id", "package_name")
+     VALUES ($1, $2, $3, 'test-pkg')`,
+    [randomUUID(), projectId, packageInstallId],
+  );
 });
 
 async function seedAgent(args: { id: string }): Promise<string> {
@@ -157,7 +178,11 @@ Do the thing.
   await pool.query(
     `INSERT INTO "agents" ("id", "package_name", "version_label", "origin", "name", "description", "workspace", "mode", "triggers", "risk_tier", "source_path", "enabled")
      VALUES ($1, 'test-pkg', 'v1.0.0', 'git', $2, 'd', 'none', 'session', '["manual","domain_event"]'::jsonb, 'read_only', $3, true)`,
-    [qualifiedId, args.id, path.join(agentsRoot, "maister-agents", `${args.id}.md`)],
+    [
+      qualifiedId,
+      args.id,
+      path.join(agentsRoot, "maister-agents", `${args.id}.md`),
+    ],
   );
   await pool.query(
     `INSERT INTO "agent_project_links" ("id", "agent_id", "project_id") VALUES ($1, $2, $3)`,

@@ -44,7 +44,11 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  // projects-cascade clears attachments/links/schedules; the explicit
+  // attachment delete guards the restrict FK before package_installs goes.
   await pool.query(`DELETE FROM "projects"`);
+  await pool.query(`DELETE FROM "project_package_attachments"`);
+  await pool.query(`DELETE FROM "package_installs"`);
   await pool.query(`DELETE FROM "flow_revisions"`);
   await pool.query(`DELETE FROM "agents"`);
 });
@@ -144,6 +148,64 @@ async function pinFlow(opts: {
   );
 }
 
+// Package model (ADR-106): an agent's effective definition resolves through
+// project_package_attachments → package_installs.installed_path, NOT a flow
+// pin. Two installs of the same name (different resolved_revision) model the
+// per-project version pin.
+async function installPackage(opts: {
+  name: string;
+  versionLabel: string;
+  agents: Record<string, string>;
+  trustStatus?: string;
+  packageStatus?: string;
+}): Promise<string> {
+  const installId = randomUUID();
+  const installedPath = path.join(
+    cacheRoot,
+    `${opts.name}@${opts.versionLabel}-${installId.slice(0, 8)}`,
+  );
+
+  await mkdir(path.join(installedPath, "maister-agents"), { recursive: true });
+  for (const [stem, content] of Object.entries(opts.agents)) {
+    await writeFile(
+      path.join(installedPath, "maister-agents", `${stem}.md`),
+      content,
+      "utf8",
+    );
+  }
+
+  await pool.query(
+    `INSERT INTO "package_installs"
+       ("id", "source_url", "name", "version_label", "resolved_revision",
+        "manifest", "manifest_digest", "installed_path", "package_status", "trust_status")
+     VALUES ($1, 'github.com/acme/pkg', $2, $3, $4, '{}'::jsonb, 'digest', $5, $6, $7)`,
+    [
+      installId,
+      opts.name,
+      opts.versionLabel,
+      `rev-${opts.versionLabel}-${installId.slice(0, 6)}`,
+      installedPath,
+      opts.packageStatus ?? "Installed",
+      opts.trustStatus ?? "trusted",
+    ],
+  );
+
+  return installId;
+}
+
+async function attachPackage(opts: {
+  projectId: string;
+  packageInstallId: string;
+  packageName: string;
+}): Promise<void> {
+  await pool.query(
+    `INSERT INTO "project_package_attachments"
+       ("id", "project_id", "package_install_id", "package_name")
+     VALUES ($1, $2, $3, $4)`,
+    [randomUUID(), opts.projectId, opts.packageInstallId, opts.packageName],
+  );
+}
+
 function expectPrecondition(promise: Promise<unknown>, match: RegExp) {
   return promise.then(
     () => expect.unreachable("expected PRECONDITION"),
@@ -157,23 +219,31 @@ function expectPrecondition(promise: Promise<unknown>, match: RegExp) {
   );
 }
 
-describe("resolveEffectiveAgentDefinition (RD4)", () => {
-  it("two projects pinned to different versions resolve different definitions", async () => {
+describe("resolveEffectiveAgentDefinition (RD4 / ADR-106)", () => {
+  it("two projects attached to different package versions resolve different definitions", async () => {
     const p1 = await seedProject("eff-p1");
     const p2 = await seedProject("eff-p2");
-    const v1 = await installRevision({
-      flowRefId: "pkg",
+    const v1 = await installPackage({
+      name: "pkg",
       versionLabel: "v1.0.0",
       agents: { triager: md("V1-BODY") },
     });
-    const v2 = await installRevision({
-      flowRefId: "pkg",
+    const v2 = await installPackage({
+      name: "pkg",
       versionLabel: "v2.0.0",
       agents: { triager: md("V2-BODY", ["manual", "cron"]) },
     });
 
-    await pinFlow({ projectId: p1, flowRefId: "pkg", revisionId: v1 });
-    await pinFlow({ projectId: p2, flowRefId: "pkg", revisionId: v2 });
+    await attachPackage({
+      projectId: p1,
+      packageInstallId: v1,
+      packageName: "pkg",
+    });
+    await attachPackage({
+      projectId: p2,
+      packageInstallId: v2,
+      packageName: "pkg",
+    });
 
     const e1 = await resolveEffectiveAgentDefinition(
       { agentId: "pkg:triager", projectId: p1 },
@@ -186,59 +256,81 @@ describe("resolveEffectiveAgentDefinition (RD4)", () => {
 
     expect(e1.parsed.prompt).toContain("V1-BODY");
     expect(e1.versionLabel).toBe("v1.0.0");
+    expect(e1.packageName).toBe("pkg");
+    expect(e1.packageInstallId).toBe(v1);
     expect(e1.parsed.triggers).toEqual(["manual"]);
     expect(e2.parsed.prompt).toContain("V2-BODY");
     expect(e2.versionLabel).toBe("v2.0.0");
     expect(e2.parsed.triggers).toEqual(["manual", "cron"]);
   });
 
-  it("refuses: package not configured / untrusted / not enabled / missing agent file", async () => {
+  it("refuses: not attached / untrusted / not Installed / missing agent file; then resolves", async () => {
     const p = await seedProject("eff-gates");
-    const rev = await installRevision({
-      flowRefId: "gated",
+    const trusted = await installPackage({
+      name: "gated",
       versionLabel: "v1.0.0",
       agents: { present: md("BODY") },
+      trustStatus: "trusted",
     });
 
-    // Not configured at all.
+    // The package is not attached to this project at all.
     await expectPrecondition(
       resolveEffectiveAgentDefinition(
         { agentId: "gated:present", projectId: p },
         db,
       ),
-      /not configured in this project/,
+      /not attached to this project/,
     );
 
-    // Untrusted pin.
-    await pinFlow({
-      projectId: p,
-      flowRefId: "gated",
-      revisionId: rev,
+    // Attached, but the install is untrusted.
+    const untrusted = await installPackage({
+      name: "gated-untrusted",
+      versionLabel: "v1.0.0",
+      agents: { present: md("BODY") },
       trustStatus: "untrusted",
+    });
+
+    await attachPackage({
+      projectId: p,
+      packageInstallId: untrusted,
+      packageName: "gated-untrusted",
     });
     await expectPrecondition(
       resolveEffectiveAgentDefinition(
-        { agentId: "gated:present", projectId: p },
+        { agentId: "gated-untrusted:present", projectId: p },
         db,
       ),
       /not trusted/,
     );
 
-    await pool.query(
-      `UPDATE "flows" SET "trust_status" = 'trusted', "enablement_state" = 'Installed' WHERE "flow_ref_id" = 'gated'`,
-    );
+    // Attached + trusted, but the install is no longer Installed.
+    const removed = await installPackage({
+      name: "gated-removed",
+      versionLabel: "v1.0.0",
+      agents: { present: md("BODY") },
+      trustStatus: "trusted",
+      packageStatus: "Removed",
+    });
+
+    await attachPackage({
+      projectId: p,
+      packageInstallId: removed,
+      packageName: "gated-removed",
+    });
     await expectPrecondition(
       resolveEffectiveAgentDefinition(
-        { agentId: "gated:present", projectId: p },
+        { agentId: "gated-removed:present", projectId: p },
         db,
       ),
-      /not launchable/,
+      /not Installed/,
     );
 
-    // Enabled, but the pinned version does not ship the stem.
-    await pool.query(
-      `UPDATE "flows" SET "enablement_state" = 'Enabled' WHERE "flow_ref_id" = 'gated'`,
-    );
+    // Attached + trusted + Installed, but the version does not ship the stem.
+    await attachPackage({
+      projectId: p,
+      packageInstallId: trusted,
+      packageName: "gated",
+    });
     await expectPrecondition(
       resolveEffectiveAgentDefinition(
         { agentId: "gated:absent", projectId: p },
@@ -247,13 +339,38 @@ describe("resolveEffectiveAgentDefinition (RD4)", () => {
       /does not ship maister-agents\/absent\.md/,
     );
 
-    // The happy path still resolves after the gates clear.
+    // The happy path resolves once every gate clears.
     const ok = await resolveEffectiveAgentDefinition(
       { agentId: "gated:present", projectId: p },
       db,
     );
 
     expect(ok.parsed.prompt).toContain("BODY");
+    expect(ok.execTrust).toBe("trusted");
+  });
+
+  it("trusted_by_policy installs resolve with exec-trust granted", async () => {
+    const p = await seedProject("eff-policy");
+    const install = await installPackage({
+      name: "policy-pkg",
+      versionLabel: "v1.0.0",
+      agents: { present: md("POLICY-BODY") },
+      trustStatus: "trusted_by_policy",
+    });
+
+    await attachPackage({
+      projectId: p,
+      packageInstallId: install,
+      packageName: "policy-pkg",
+    });
+
+    const ok = await resolveEffectiveAgentDefinition(
+      { agentId: "policy-pkg:present", projectId: p },
+      db,
+    );
+
+    expect(ok.parsed.prompt).toContain("POLICY-BODY");
+    expect(ok.execTrust).toBe("trusted");
   });
 });
 

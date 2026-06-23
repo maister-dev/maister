@@ -813,7 +813,7 @@ export async function launchAgentRun(
     delegationSnapshot: input.parentRunId
       ? {
           agentDefinitionId: input.agentId,
-          revisionId: ctx.effective.revisionId,
+          revisionId: ctx.effective.packageInstallId,
         }
       : null,
     // M37 Phase 8 (ADR-099): persistent swarm-member flags.

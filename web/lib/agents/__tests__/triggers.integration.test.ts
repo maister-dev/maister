@@ -54,6 +54,8 @@ beforeEach(async () => {
   await pool.query(`DELETE FROM "runs"`);
   await pool.query(`DELETE FROM "agent_schedules"`);
   await pool.query(`DELETE FROM "agents"`);
+  await pool.query(`DELETE FROM "project_package_attachments"`);
+  await pool.query(`DELETE FROM "package_installs"`);
   await pool.query(`DELETE FROM "projects"`);
   await pool.query(`DELETE FROM "flow_revisions"`);
 
@@ -93,6 +95,25 @@ beforeEach(async () => {
      VALUES ($1, $2, 'test-pkg', 'github.com/acme/test-pkg', 'v1.0.0', $3,
              '{}'::jsonb, 1, $4, 'Enabled', 'trusted', 'pinned')`,
     [randomUUID(), projectId, agentsRoot, revisionId],
+  );
+
+  // (ADR-106) The package-anchored chain the REAL launch path resolves
+  // through: an attached, trusted, Installed package_install at agentsRoot.
+  const packageInstallId = randomUUID();
+
+  await pool.query(
+    `INSERT INTO "package_installs"
+       ("id", "source_url", "name", "version_label", "resolved_revision",
+        "manifest", "manifest_digest", "installed_path", "package_status", "trust_status")
+     VALUES ($1, 'github.com/acme/test-pkg', 'test-pkg', 'v1.0.0', 'rev-pkg-1',
+             '{}'::jsonb, 'digest', $2, 'Installed', 'trusted')`,
+    [packageInstallId, agentsRoot],
+  );
+  await pool.query(
+    `INSERT INTO "project_package_attachments"
+       ("id", "project_id", "package_install_id", "package_name")
+     VALUES ($1, $2, $3, 'test-pkg')`,
+    [randomUUID(), projectId, packageInstallId],
   );
 
   // The consumer tests exercise the REAL launch path (the partial-unique

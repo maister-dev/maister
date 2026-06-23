@@ -89,6 +89,25 @@ beforeAll(async () => {
              '{}'::jsonb, 1, $3, 'Enabled', 'trusted', 'pinned')`,
     [randomUUID(), fx.projectId, revisionId],
   );
+
+  // (ADR-106) Attach the package to the project — attachment IS the enable, so
+  // it is what assertAgentPackageAttachable + listEnabledPackageRefs read now.
+  const packageInstallId = randomUUID();
+
+  await pool.query(
+    `INSERT INTO "package_installs"
+       ("id", "source_url", "name", "version_label", "resolved_revision",
+        "manifest", "manifest_digest", "installed_path", "package_status", "trust_status")
+     VALUES ($1, 'github.com/acme/test-pkg', 'test-pkg', 'v1.0.0', 'rev-pkg-1',
+             '{}'::jsonb, 'digest', '/tmp/test-pkg', 'Installed', 'trusted')`,
+    [packageInstallId],
+  );
+  await pool.query(
+    `INSERT INTO "project_package_attachments"
+       ("id", "project_id", "package_install_id", "package_name")
+     VALUES ($1, $2, $3, 'test-pkg')`,
+    [randomUUID(), fx.projectId, packageInstallId],
+  );
 }, 180_000);
 
 afterAll(async () => {

@@ -123,6 +123,25 @@ Do the thing.
              '{}'::jsonb, 1, $4, 'Enabled', 'trusted', 'pinned')`,
     [randomUUID(), fx.projectId, agentsRoot, revisionId],
   );
+
+  // (ADR-106) The package-anchored chain the webhook launch resolves through:
+  // an attached, trusted, Installed package_install at agentsRoot.
+  const packageInstallId = randomUUID();
+
+  await pool.query(
+    `INSERT INTO "package_installs"
+       ("id", "source_url", "name", "version_label", "resolved_revision",
+        "manifest", "manifest_digest", "installed_path", "package_status", "trust_status")
+     VALUES ($1, 'github.com/acme/test-pkg', 'test-pkg', 'v1.0.0', 'rev-pkg-1',
+             '{}'::jsonb, 'digest', $2, 'Installed', 'trusted')`,
+    [packageInstallId, agentsRoot],
+  );
+  await pool.query(
+    `INSERT INTO "project_package_attachments"
+       ("id", "project_id", "package_install_id", "package_name")
+     VALUES ($1, $2, $3, 'test-pkg')`,
+    [randomUUID(), fx.projectId, packageInstallId],
+  );
   await pool.query(
     `INSERT INTO "platform_acp_runners" ("id", "adapter", "capability_agent", "model", "provider", "readiness_status")
      VALUES ('whk-runner', 'claude', 'claude', 'claude-sonnet-4-6', '{"kind":"anthropic"}'::jsonb, 'Ready')`,

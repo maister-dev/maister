@@ -210,6 +210,8 @@ beforeEach(async () => {
   await pool.query(`DELETE FROM "tasks"`);
   await pool.query(`DELETE FROM "agent_project_links"`);
   await pool.query(`DELETE FROM "agents"`);
+  await pool.query(`DELETE FROM "project_package_attachments"`);
+  await pool.query(`DELETE FROM "package_installs"`);
   await pool.query(`DELETE FROM "flows"`);
   await pool.query(`DELETE FROM "flow_revisions"`);
   await pool.query(`DELETE FROM "platform_runtime_settings"`);
@@ -251,6 +253,25 @@ async function seedChildAgent(): Promise<string> {
      VALUES ($1, $2, 'orc-pkg', 'github.com/acme/orc-pkg', 'v1.0.0', $3,
              '{}'::jsonb, 1, $4, 'Enabled', 'trusted', 'pinned')`,
     [randomUUID(), projectId, agentsRoot, revisionId],
+  );
+
+  // (ADR-106) The package-anchored chain the child launch resolves through: an
+  // attached, trusted, Installed package_install at installed_path.
+  const packageInstallId = randomUUID();
+
+  await pool.query(
+    `INSERT INTO "package_installs"
+       ("id", "source_url", "name", "version_label", "resolved_revision",
+        "manifest", "manifest_digest", "installed_path", "package_status", "trust_status")
+     VALUES ($1, 'github.com/acme/orc-pkg', 'orc-pkg', 'v1.0.0', 'rev-pkg-1',
+             '{}'::jsonb, 'digest', $2, 'Installed', 'trusted')`,
+    [packageInstallId, agentsRoot],
+  );
+  await pool.query(
+    `INSERT INTO "project_package_attachments"
+       ("id", "project_id", "package_install_id", "package_name")
+     VALUES ($1, $2, $3, 'orc-pkg')`,
+    [randomUUID(), projectId, packageInstallId],
   );
 
   await mkdir(join(agentsRoot, "maister-agents"), { recursive: true });

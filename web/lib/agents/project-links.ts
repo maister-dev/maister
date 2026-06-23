@@ -184,15 +184,13 @@ export async function getProjectAgentsView(
 
   const linkedIds = new Set(attached.map((a) => a.agent.id as string));
 
-  // Attachable = catalog agents whose providing package has a live enabled
-  // pin in THIS project (RD4) and that are not already linked here.
+  // Attachable = catalog agents whose providing package is attached to THIS
+  // project (ADR-106: attachment IS the enable) and that are not already
+  // linked here. enabledRefs is the set of attached package names.
   const enabledRefs = await listEnabledPackageRefs(projectId, _db);
   const catalogAgents = (await _db.select().from(agents)) as Array<
     Record<string, any>
   >;
-  // (ADR-106) The agent's providing ref is its packageName now (was flowRefId).
-  // NOTE: enabledRefs is still flow-ref based until the Phase 3 gating rewrite
-  // switches the available-filter to package attachment.
   const available = catalogAgents.filter(
     (a) => !linkedIds.has(a.id) && enabledRefs.has(a.packageName as string),
   );
