@@ -473,19 +473,59 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       throw new SupervisorError("SPAWN", "child has no stdin for ACP");
     }
 
-    const { connection, acpSessionId } = await createAcpConnection({
-      stdin: child.stdin,
-      stdoutSource: acpStdoutTap,
-      sessionId,
-      worktreePath: parsed.worktreePath,
-      record,
-      emitter,
-      logger,
-      adapter: parsed.runner?.adapter ?? parsed.executor.agent,
-      mcpServers: parsed.mcpServers,
-      resumeSessionId: parsed.resumeSessionId,
-      runner: parsed.runner,
-    });
+    let connection: acp.ClientSideConnection;
+    let acpSessionId: string;
+
+    try {
+      const result = await createAcpConnection({
+        stdin: child.stdin,
+        stdoutSource: acpStdoutTap,
+        sessionId,
+        worktreePath: parsed.worktreePath,
+        record,
+        emitter,
+        logger,
+        adapter: parsed.runner?.adapter ?? parsed.executor.agent,
+        mcpServers: parsed.mcpServers,
+        resumeSessionId: parsed.resumeSessionId,
+        runner: parsed.runner,
+      });
+
+      connection = result.connection;
+      acpSessionId = result.acpSessionId;
+    } catch (err) {
+      const entry = registry.get(sessionId);
+      const message = err instanceof Error ? err.message : String(err);
+
+      logger.warn({ sessionId, err: message }, "acp handshake failed");
+      registry.markIntentionalShutdown(sessionId, "intentional");
+      child.kill("SIGTERM");
+
+      if (entry) {
+        const exited = await waitForExit(entry, killGraceMs);
+
+        if (!exited) {
+          logger.warn(
+            { sessionId, killGraceMs },
+            "acp-handshake-failed-sigterm-grace-expired-sigkill",
+          );
+          child.kill("SIGKILL");
+        }
+      }
+
+      registry.remove(sessionId, "acp-handshake-failed");
+      await eventsLog.close().catch((closeErr: unknown) => {
+        logger.warn(
+          {
+            sessionId,
+            err:
+              closeErr instanceof Error ? closeErr.message : String(closeErr),
+          },
+          "events-log close failed after acp handshake failure",
+        );
+      });
+      throw err;
+    }
 
     registry.attachAcp(sessionId, connection, acpSessionId);
 

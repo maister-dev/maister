@@ -843,6 +843,7 @@
     "restrictions": "Ограничения",
     "launch": "Запустить черновой run",
     "launching": "Запуск…",
+    "cancel": "Отмена",
     "launchInterrupted": "Запуск прерван до готовности сессии.",
     "launchStage": {
       "precondition": "Проверяем предусловия…",

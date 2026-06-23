@@ -415,6 +415,44 @@ describe("supervisor lifecycle integration", () => {
     ).toBe(true);
   });
 
+  it("POST /sessions returns 503 and cleans up when ACP newSession hangs", async () => {
+    const previousTimeout = process.env.MAISTER_ACP_HANDSHAKE_TIMEOUT_MS;
+
+    process.env.MAISTER_ACP_HANDSHAKE_TIMEOUT_MS = "500";
+
+    try {
+      const { url, registry } = await bootFor(["--hang-new-session"]);
+      const res = await fetch(`${url}/sessions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          runId: "run-int",
+          projectSlug: "demo",
+          worktreePath: process.cwd(),
+          stepId: "step-1",
+          executor: {
+            agent: "claude",
+            model: "claude-sonnet-4-6",
+          },
+        }),
+      });
+
+      expect(res.status).toBe(503);
+      const body = (await res.json()) as { code: string; message: string };
+
+      expect(body.code).toBe("EXECUTOR_UNAVAILABLE");
+      expect(body.message).toContain("newSession");
+      expect(body.message).toContain("timed out");
+      expect(registry.size()).toBe(0);
+    } finally {
+      if (previousTimeout === undefined) {
+        delete process.env.MAISTER_ACP_HANDSHAKE_TIMEOUT_MS;
+      } else {
+        process.env.MAISTER_ACP_HANDSHAKE_TIMEOUT_MS = previousTimeout;
+      }
+    }
+  });
+
   it("POST /sessions with malformed body returns 409 PRECONDITION", async () => {
     const { url } = await bootFor(["--lines", "0"]);
     const res = await fetch(`${url}/sessions`, {

@@ -7,6 +7,7 @@ import {
   readdir,
   readFile,
   rm,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -462,6 +463,30 @@ describe("materializeCapabilityProfile", () => {
       expect.arrayContaining(["Read", "Edit"]),
     );
     expect(settings.permissions.defaultMode).toBe("plan");
+  });
+
+  it("does not write settings.local.json for a claude run with default executor.model and no tools", async () => {
+    const result = await materializeCapabilityProfile({
+      runId: "run-default-model",
+      worktreePath: workDir,
+      profile: nativeClaudeProfile(),
+      executor: {
+        executorRefId: "runner-1",
+        agent: "claude",
+        model: "default",
+        router: null,
+      },
+    });
+    const settingsLocalPath = path.join(
+      path.resolve(workDir),
+      ".claude",
+      "settings.local.json",
+    );
+
+    expect(result.settingsLocalPath).toBeNull();
+    await expect(stat(settingsLocalPath)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it("carries the selected mcp defs on result.mcpServers with names + env keys only (req 2)", async () => {

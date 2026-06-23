@@ -843,6 +843,7 @@
     "restrictions": "Restrictions",
     "launch": "Launch scratch run",
     "launching": "Launching…",
+    "cancel": "Cancel",
     "launchInterrupted": "Launch interrupted before the session was ready.",
     "launchStage": {
       "precondition": "Checking preconditions…",

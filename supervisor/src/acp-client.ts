@@ -170,8 +170,51 @@ export function resolveAutoApproveOption(
 
 type AcpMethod = "initialize" | "newSession" | "resumeSession" | "prompt";
 
+const ACP_HANDSHAKE_TIMEOUT_ENV = "MAISTER_ACP_HANDSHAKE_TIMEOUT_MS";
+export const DEFAULT_ACP_HANDSHAKE_TIMEOUT_MS = 30_000;
+
 function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+export function resolveAcpHandshakeTimeoutMs(
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  const raw = env[ACP_HANDSHAKE_TIMEOUT_ENV];
+
+  if (raw === undefined || raw.trim() === "") {
+    return DEFAULT_ACP_HANDSHAKE_TIMEOUT_MS;
+  }
+
+  const parsed = Number.parseInt(raw, 10);
+
+  if (!Number.isFinite(parsed) || parsed <= 0 || String(parsed) !== raw.trim()) {
+    throw new SupervisorError(
+      "PRECONDITION",
+      `${ACP_HANDSHAKE_TIMEOUT_ENV} must be a positive integer number of milliseconds`,
+    );
+  }
+
+  return parsed;
+}
+
+function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`${message} timed out after ${timeoutMs}ms`)),
+      timeoutMs,
+    );
+    timer.unref();
+  });
+
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
 }
 
 export function classifyAcpMethodError(args: {
@@ -187,6 +230,13 @@ export function classifyAcpMethodError(args: {
   const context = `adapter=${args.adapter}, method=${args.method}${
     args.sessionId ? `, sessionId=${args.sessionId}` : ""
   }`;
+
+  if (lower.includes("timed out") || lower.includes("timeout")) {
+    return new SupervisorError(
+      "EXECUTOR_UNAVAILABLE",
+      `ACP ${args.method} timed out while opening adapter session (${context}): ${rawMessage}`,
+    );
+  }
 
   if (
     lower.includes("auth") ||
@@ -225,10 +275,19 @@ async function callAcpMethod<T>(args: {
   method: AcpMethod;
   sessionId?: string;
   logger: Logger;
+  timeoutMs?: number;
   run: () => Promise<T>;
 }): Promise<T> {
   try {
-    return await args.run();
+    const promise = args.run();
+
+    return await (args.timeoutMs
+      ? withTimeout(
+          promise,
+          args.timeoutMs,
+          `ACP ${args.method} (${args.adapter})`,
+        )
+      : promise);
   } catch (err) {
     const classified = classifyAcpMethodError({
       adapter: args.adapter,
@@ -266,6 +325,7 @@ export async function createAcpConnection(
   } = args;
   const pendingPermissions =
     args.pendingPermissions ?? defaultPendingPermissions;
+  const handshakeTimeoutMs = resolveAcpHandshakeTimeoutMs();
 
   const writable = Writable.toWeb(
     stdin,
@@ -437,6 +497,7 @@ export async function createAcpConnection(
     method: "initialize",
     sessionId,
     logger,
+    timeoutMs: handshakeTimeoutMs,
     run: () =>
       connection.initialize({
         protocolVersion: acp.PROTOCOL_VERSION,
@@ -507,6 +568,7 @@ export async function createAcpConnection(
         method: "resumeSession",
         sessionId,
         logger,
+        timeoutMs: handshakeTimeoutMs,
         run: () =>
           connection.resumeSession({
             sessionId: resumeSessionId,
@@ -554,6 +616,7 @@ export async function createAcpConnection(
     method: "newSession",
     sessionId,
     logger,
+    timeoutMs: handshakeTimeoutMs,
     run: () =>
       connection.newSession({
         cwd: worktreePath,

@@ -338,6 +338,29 @@ describe("mapProfileToAgentArtifacts", () => {
     });
   });
 
+  it("does not write model/availableModels for claude when runner model is default", () => {
+    const result = mapProfileToAgentArtifacts({
+      profile: claudeProfile(),
+      agent: "claude",
+      model: "default",
+    });
+
+    expect(result.settingsLocal).toBeNull();
+  });
+
+  it("keeps permissions but omits model/availableModels for claude default model", () => {
+    const result = mapProfileToAgentArtifacts({
+      profile: claudeProfile(),
+      agent: "claude",
+      permissionMode: "deny",
+      model: "default",
+    });
+
+    expect(result.settingsLocal).toEqual({
+      permissions: { defaultMode: "plan" },
+    });
+  });
+
   it("carries permissions AND model AND availableModels for claude with model + permissions (T3.1)", () => {
     const result = mapProfileToAgentArtifacts({
       profile: claudeProfile(),

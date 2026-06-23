@@ -83,6 +83,47 @@ describe("provisionRunnerLaunch", () => {
     vi.unstubAllEnvs();
   });
 
+  it("passes Claude GLM env-router overrides through generic runner env", () => {
+    vi.stubEnv("ZAI_API_KEY", "zai-secret-value");
+
+    expect(
+      provisionRunnerLaunch({
+        version: 1,
+        runnerId: "claude-code-glm",
+        adapter: "claude",
+        capabilityAgent: "claude",
+        model: "default",
+        provider: { kind: "anthropic" },
+        permissionPolicy: "default",
+        env: {
+          API_TIMEOUT_MS: "3000000",
+          ANTHROPIC_AUTH_TOKEN: "env:ZAI_API_KEY",
+          ANTHROPIC_BASE_URL: "https://api.z.ai/api/anthropic",
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: "glm-4.7",
+          ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5.2[1m]",
+          ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-5.2[1m]",
+          CLAUDE_CODE_AUTO_COMPACT_WINDOW: "1000000",
+        },
+      }),
+    ).toEqual({
+      executor: {
+        agent: "claude",
+        model: "default",
+        env: {
+          API_TIMEOUT_MS: "3000000",
+          ANTHROPIC_AUTH_TOKEN: "zai-secret-value",
+          ANTHROPIC_BASE_URL: "https://api.z.ai/api/anthropic",
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: "glm-4.7",
+          ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5.2[1m]",
+          ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-5.2[1m]",
+          CLAUDE_CODE_AUTO_COMPACT_WINDOW: "1000000",
+        },
+      },
+    });
+
+    vi.unstubAllEnvs();
+  });
+
   it("maps direct Codex runners without env or argv mutation", () => {
     expect(
       provisionRunnerLaunch({

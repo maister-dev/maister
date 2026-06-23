@@ -64,6 +64,14 @@ const PERMISSION_MODE_TO_DEFAULT_MODE: Record<
   deny: "plan",
 };
 
+function claudeSettingsModel(model: string | undefined): string | undefined {
+  const trimmed = model?.trim();
+
+  if (!trimmed || trimmed === "default") return undefined;
+
+  return trimmed;
+}
+
 function envKeysOf(material: CapabilityMaterial): string[] {
   return Array.isArray(material.envKeys) ? (material.envKeys as string[]) : [];
 }
@@ -123,9 +131,12 @@ export function mapProfileToAgentArtifacts(
   // query.setModel() from settings at startup). `availableModels: [model]` is
   // the minimal allowlist that lets the adapter accept a non-Claude env-router
   // model id (e.g. glm-5.1) — and is correct for plain anthropic too, since a
-  // run pins exactly one model. Other adapters apply the model via a separate
+  // run pins exactly one model. The special UI/default runner value means "let
+  // Claude Code choose its startup default" and must not become
+  // availableModels:["default"], otherwise env default-model mapping cannot
+  // pick the real provider alias. Other adapters apply the model via a separate
   // supervisor-side/advisory channel, so this is claude-only.
-  const model = isClaude && args.model ? args.model : undefined;
+  const model = isClaude ? claudeSettingsModel(args.model) : undefined;
   const permissions: AgentSettingsLocal["permissions"] = {};
 
   if (allow !== undefined) permissions.allow = allow;

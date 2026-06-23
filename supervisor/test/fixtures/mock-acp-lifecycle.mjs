@@ -8,6 +8,8 @@ const args = process.argv.slice(2);
 let lines = 3;
 let exitCode = 0;
 let hang = false;
+let hangInitialize = false;
+let hangNewSession = false;
 let emitUsage = false;
 
 for (let i = 0; i < args.length; i += 1) {
@@ -19,9 +21,17 @@ for (let i = 0; i < args.length; i += 1) {
     exitCode = Number.parseInt(args[++i], 10);
   } else if (arg === "--hang") {
     hang = true;
+  } else if (arg === "--hang-initialize") {
+    hangInitialize = true;
+  } else if (arg === "--hang-new-session") {
+    hangNewSession = true;
   } else if (arg === "--emit-usage") {
     emitUsage = true;
   }
+}
+
+function never() {
+  return new Promise(() => {});
 }
 
 class LifecycleAgent {
@@ -30,6 +40,8 @@ class LifecycleAgent {
   }
 
   async initialize() {
+    if (hangInitialize) return never();
+
     return {
       protocolVersion: acp.PROTOCOL_VERSION,
       agentCapabilities: { promptCapabilities: {} },
@@ -37,6 +49,8 @@ class LifecycleAgent {
   }
 
   async newSession() {
+    if (hangNewSession) return never();
+
     return { sessionId: `mock-${randomUUID()}` };
   }
 
