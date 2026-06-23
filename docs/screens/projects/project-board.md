@@ -61,14 +61,23 @@ The board is a horizontally scrollable set of columns:
   `PATCH /api/projects/{slug}/tasks/{number}`.
 - **Full card editor** opens from the card edit icon. It follows an issue-detail
   layout: title and description on the left; persisted first-level task
-  properties on the right (`flowId`, `runnerId`, `targetBranch`,
-  `promotionMode`, `executionPolicy`) plus editable relations. The full save uses
+  properties on the right (`flowId`, `runnerId`, `baseBranch`,
+  `targetBranch`, `promotionMode`, `executionPolicy`) plus editable relations.
+  Flow options come from launch-options: launchable Flows are selectable, while
+  non-launchable Flows remain disabled with a short reason. The full save uses
   `PUT /api/projects/{slug}/tasks/{number}` and is accepted only before work
-  starts.
+  starts. Relation targets are picked with a compact search field that matches
+  task number, title, and prompt text; the relation-kind select stays narrow so
+  the target search has the primary width.
 - **Task detail page** repeats the same inline title/description editing and
   full task editor so an operator can make issue-style changes without returning
-  to the board. Its comments/activity timeline sits below the run history; a
-  threaded hierarchy can be added later without changing the current read flow.
+  to the board. The header keeps breadcrumbs, status chips, and action buttons in
+  a compact top strip, then gives the editable task title a full-width row before
+  the prompt. The launch-configuration summary mirrors the editable properties
+  form: inherited defaults are displayed as concrete effective values while still
+  saving as inherited task fields unless the operator chooses an override. Its
+  comments/activity timeline sits below the run history; a threaded hierarchy can
+  be added later without changing the current read flow.
 - **Flight cards** show active or latest runs, readiness, assignment/takeover
   state, HITL hints, and lifecycle actions.
 - **Relation blockers** disable launch when a task is blocked by open

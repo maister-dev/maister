@@ -255,6 +255,9 @@ overrides:
   launch-time base commit; target is the promotion target snapshot.
 - `deliveryPolicy` — optional launch override, resolved against the project
   default and snapshotted on the run.
+- `executionPolicy` — optional launch override, resolved against the task and
+  project defaults and snapshotted on the run. Budget ceilings are sparse:
+  omitted fields mean unlimited.
 
 The branch naming summary is deterministic:
 `<project.branchPrefix>task-<taskId>/attempt-<nextAttempt>` unless a later

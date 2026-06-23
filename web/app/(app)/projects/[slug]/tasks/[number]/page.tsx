@@ -1,7 +1,14 @@
 import type { ReactElement } from "react";
 import type { RunStatus, TaskStatus } from "@/lib/db/schema";
 import type { TaskEditableTarget } from "@/components/board/task-card-editing";
+import type {
+  CheckStrictness,
+  ExecutionPreset,
+  HumanGateAutonomy,
+  PromotionTrigger,
+} from "@/lib/runs/execution-policy";
 
+import { QuestionMarkCircleIcon } from "@heroicons/react/24/outline";
 import { getTranslations } from "next-intl/server";
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
@@ -28,6 +35,7 @@ import { loadRunManifest } from "@/lib/queries/run-manifest";
 import { getRunNodeStatuses } from "@/lib/queries/run-node-status";
 import { getProjectAgentsView } from "@/lib/agents/project-links";
 import { getTaskDetail } from "@/lib/queries/task-detail";
+import { expandExecutionPolicy } from "@/lib/runs/execution-policy";
 import { classifyManualTaskLaunchability } from "@/lib/runs/launchability";
 import { resolveTaskLaunchConfig } from "@/lib/runs/task-launch-config";
 import { getPlatformStatus } from "@/lib/supervisor-client";
@@ -39,14 +47,66 @@ const DELIVERY_STRATEGY_LABEL: Record<string, string> = {
   ai_rebase_merge: "strategyAiRebaseMerge",
 };
 
-const DELIVERY_TRIGGER_LABEL: Record<string, string> = {
-  manual: "triggerManual",
-  auto_on_ready: "triggerAutoOnReady",
+const EXECUTION_PRESET_LABEL: Record<ExecutionPreset, string> = {
+  supervised: "execPresetSupervised",
+  assisted: "execPresetAssisted",
+  unattended: "execPresetUnattended",
+};
+
+const EXECUTION_CHECKS_LABEL: Record<CheckStrictness, string> = {
+  strict: "execChecksStrict",
+  advisory: "execChecksAdvisory",
+  skip: "execChecksSkip",
+};
+
+const EXECUTION_HUMAN_GATE_LABEL: Record<HumanGateAutonomy, string> = {
+  stop: "execHumanGateStop",
+  auto_pass: "execHumanGateAutoPass",
+};
+
+const EXECUTION_PROMOTION_LABEL: Record<PromotionTrigger, string> = {
+  manual: "execPromotionManual",
+  auto_on_ready: "execPromotionAuto",
 };
 
 type PageProps = {
   params: Promise<{ slug: string; number: string }>;
 };
+
+type LaunchConfigItem = {
+  label: string;
+  value: string;
+  help: string;
+};
+
+function LaunchConfigLabel({
+  help,
+  label,
+}: {
+  help: string;
+  label: string;
+}): ReactElement {
+  return (
+    <div className="flex items-center gap-1 font-mono text-[9.5px] font-bold uppercase tracking-[0.08em] text-mute">
+      <span>{label}</span>
+      <span className="group/help relative inline-flex">
+        <button
+          aria-label={help}
+          className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full text-mute transition hover:text-amber focus:text-amber focus:outline-none"
+          type="button"
+        >
+          <QuestionMarkCircleIcon aria-hidden="true" className="h-3.5 w-3.5" />
+        </button>
+        <span
+          className="pointer-events-none absolute left-1/2 top-full z-40 mt-1 hidden w-64 max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-md border border-line bg-paper px-2 py-1.5 text-left font-mono text-[10.5px] font-medium normal-case leading-snug tracking-normal text-ink shadow-lg group-hover/help:block group-focus-within/help:block"
+          role="tooltip"
+        >
+          {help}
+        </span>
+      </span>
+    </div>
+  );
+}
 
 function parseTaskNumber(raw: string): number | null {
   const parsed = Number.parseInt(raw, 10);
@@ -252,48 +312,103 @@ export default async function TaskDetailPage({
     prompt: detail.task.prompt,
     flowId: detail.task.flowId,
     runnerId: detail.task.runnerId,
+    baseBranch: detail.task.baseBranch,
     targetBranch: detail.task.targetBranch,
     promotionMode: detail.task.promotionMode,
     executionPolicy: detail.task.executionPolicy,
     relations: detail.relations,
   };
+  const launchExecutionPolicy = launchConfig
+    ? expandExecutionPolicy(launchConfig.executionPolicy)
+    : null;
+  const launchConfigItems: LaunchConfigItem[] = launchConfig
+    ? [
+        {
+          label: t("lcFlow"),
+          value: launchConfig.flow?.refId ?? "—",
+          help: t("lcHelpFlow"),
+        },
+        {
+          label: t("lcRunner"),
+          value: launchConfig.runner
+            ? `${launchConfig.runner.id} · ${launchConfig.runner.model}`
+            : "—",
+          help: t("lcHelpRunner"),
+        },
+        {
+          label: t("lcBaseBranch"),
+          value: launchConfig.baseBranch,
+          help: t("lcHelpBaseBranch"),
+        },
+        {
+          label: t("lcTargetBranch"),
+          value: launchConfig.targetBranch,
+          help: t("lcHelpTargetBranch"),
+        },
+        {
+          label: t("lcDeliveryStrategy"),
+          value: tLaunch(
+            DELIVERY_STRATEGY_LABEL[launchConfig.deliveryPolicy.strategy],
+          ),
+          help: t("lcHelpDeliveryStrategy"),
+        },
+        {
+          label: t("lcExecutionPreset"),
+          value: launchExecutionPolicy
+            ? tLaunch(EXECUTION_PRESET_LABEL[launchExecutionPolicy.preset])
+            : "—",
+          help: t("lcHelpExecutionPreset"),
+        },
+        {
+          label: t("lcChecks"),
+          value: launchExecutionPolicy
+            ? tLaunch(EXECUTION_CHECKS_LABEL[launchExecutionPolicy.checks])
+            : "—",
+          help: t("lcHelpChecks"),
+        },
+        {
+          label: t("lcHumanGate"),
+          value: launchExecutionPolicy
+            ? tLaunch(
+                EXECUTION_HUMAN_GATE_LABEL[launchExecutionPolicy.humanGate],
+              )
+            : "—",
+          help: t("lcHelpHumanGate"),
+        },
+        {
+          label: t("lcPromotionTrigger"),
+          value: launchExecutionPolicy
+            ? tLaunch(
+                EXECUTION_PROMOTION_LABEL[launchExecutionPolicy.promotion],
+              )
+            : "—",
+          help: t("lcHelpPromotionTrigger"),
+        },
+      ]
+    : [];
 
   return (
     <div className="flex flex-col gap-6">
-      <header className="flex flex-col gap-2">
-        <div className="flex items-center gap-2 font-mono text-[11px] text-mute">
-          <Link className="hover:text-amber" href={`/projects/${slug}`}>
-            {detail.project.name}
-          </Link>
-          <span>/</span>
-          <span className="rounded border border-line bg-ivory px-1.5 py-px font-semibold text-ink">
-            {detail.keyRef}
-          </span>
-          <span className="rounded border border-line px-1.5 py-px uppercase tracking-[0.08em]">
-            {t(`status.${detail.task.status}`)}
-          </span>
-          {detail.task.triageStatus === "triaged" ? (
-            <span className="rounded border border-line bg-ivory px-1.5 py-px font-semibold uppercase tracking-[0.08em] text-accent-4">
-              {t("triaged")}
+      <header className="flex flex-col gap-3">
+        <div className="flex flex-col gap-2 border-b border-line-soft pb-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 flex-wrap items-center gap-2 font-mono text-[11px] text-mute">
+            <Link className="hover:text-amber" href={`/projects/${slug}`}>
+              {detail.project.name}
+            </Link>
+            <span>/</span>
+            <span className="rounded border border-line bg-ivory px-1.5 py-px font-semibold text-ink">
+              {detail.keyRef}
             </span>
-          ) : null}
-        </div>
-        <div className="flex items-start justify-between gap-3">
-          <div
-            aria-level={1}
-            className="min-w-0 flex-1 text-[20px] font-semibold leading-tight text-ink"
-            role="heading"
-          >
-            <TaskInlineEditableField
-              canEdit={canAct}
-              className="min-w-0"
-              field="title"
-              slug={slug}
-              taskNumber={detail.task.number}
-              value={detail.task.title}
-            />
+            <span className="rounded border border-line px-1.5 py-px uppercase tracking-[0.08em]">
+              {t(`status.${detail.task.status}`)}
+            </span>
+            {detail.task.triageStatus === "triaged" ? (
+              <span className="rounded border border-line bg-ivory px-1.5 py-px font-semibold uppercase tracking-[0.08em] text-accent-4">
+                {t("triaged")}
+              </span>
+            ) : null}
           </div>
-          <div className="flex flex-wrap items-center justify-end gap-2">
+          <div className="flex flex-wrap items-center gap-2 sm:justify-end">
             {canAct ? (
               <TaskAgentActions
                 agents={manualAgents}
@@ -332,10 +447,25 @@ export default async function TaskDetailPage({
             <TaskCardEditModal
               canEdit={canAct}
               card={editableTask}
+              relationCandidates={detail.relationCandidates}
               slug={slug}
               triggerClassName="inline-flex h-8 w-8 flex-none items-center justify-center rounded-md border border-line bg-paper text-mute transition hover:border-amber hover:text-amber focus:border-amber focus:text-amber"
             />
           </div>
+        </div>
+        <div
+          aria-level={1}
+          className="w-full min-w-0 text-[22px] font-semibold leading-tight text-ink"
+          role="heading"
+        >
+          <TaskInlineEditableField
+            canEdit={canAct}
+            className="min-w-0"
+            field="title"
+            slug={slug}
+            taskNumber={detail.task.number}
+            value={detail.task.title}
+          />
         </div>
         <div className="rounded-lg border border-line-soft bg-paper p-3">
           <TaskDetailPromptEditor
@@ -353,6 +483,8 @@ export default async function TaskDetailPage({
             add: t("relationsAdd"),
             adding: t("relationsAdding"),
             numberPlaceholder: t("relationsNumberPlaceholder"),
+            searchPlaceholder: t("relationsSearchPlaceholder"),
+            searchNoResults: t("relationsSearchNoResults"),
             remove: t("relationsRemove"),
             kindOut: {
               blocks: t("relationKind.blocks"),
@@ -371,6 +503,7 @@ export default async function TaskDetailPage({
             errorForbidden: t("errorForbidden"),
             errorGeneric: t("errorGeneric"),
           }}
+          relationCandidates={detail.relationCandidates}
           relations={detail.relations}
           slug={slug}
           taskNumber={detail.task.number}
@@ -383,36 +516,12 @@ export default async function TaskDetailPage({
             {t("launchConfigTitle")}
           </h2>
           <div
-            className="grid gap-px overflow-hidden rounded-lg border border-line bg-line sm:grid-cols-5"
+            className="grid gap-px rounded-lg border border-line bg-line sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5"
             data-testid="task-launch-config"
           >
-            {(
-              [
-                [t("lcFlow"), launchConfig.flow?.refId ?? "—"],
-                [
-                  t("lcRunner"),
-                  launchConfig.runner
-                    ? `${launchConfig.runner.id} · ${launchConfig.runner.model}`
-                    : "—",
-                ],
-                [t("lcBaseBranch"), launchConfig.baseBranch],
-                [
-                  t("lcDelivery"),
-                  `${tLaunch(
-                    DELIVERY_STRATEGY_LABEL[
-                      launchConfig.deliveryPolicy.strategy
-                    ],
-                  )} · ${tLaunch(
-                    DELIVERY_TRIGGER_LABEL[launchConfig.deliveryPolicy.trigger],
-                  )}`,
-                ],
-                [t("lcExecution"), t("lcExecutionSupervised")],
-              ] as const
-            ).map(([label, value]) => (
+            {launchConfigItems.map(({ help, label, value }) => (
               <div key={label} className="bg-paper px-3 py-2">
-                <div className="font-mono text-[9.5px] font-bold uppercase tracking-[0.08em] text-mute">
-                  {label}
-                </div>
+                <LaunchConfigLabel help={help} label={label} />
                 <div className="mt-1 break-words font-mono text-[12px] font-semibold text-ink">
                   {value}
                 </div>

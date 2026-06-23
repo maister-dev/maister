@@ -1,8 +1,8 @@
+import type { TaskRelationView } from "@/lib/social/relations";
+
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-
-import type { TaskRelationView } from "@/lib/social/relations";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn() }),
@@ -16,8 +16,14 @@ const labels = {
   add: "Add",
   adding: "Adding…",
   numberPlaceholder: "task #",
+  searchPlaceholder: "Search tasks",
+  searchNoResults: "No tasks found.",
   remove: "Remove relation to",
-  kindOut: { blocks: "blocks", depends_on: "depends on", parent_of: "parent of" },
+  kindOut: {
+    blocks: "blocks",
+    depends_on: "depends on",
+    parent_of: "parent of",
+  },
   kindIn: {
     blocks: "blocked by",
     depends_on: "required by",
@@ -34,13 +40,36 @@ const relations: TaskRelationView[] = [
     id: "r1",
     direction: "out",
     kind: "blocks",
-    other: { taskId: "t2", key: "MAI", number: 2, title: "Other", status: "Backlog" },
+    other: {
+      taskId: "t2",
+      key: "MAI",
+      number: 2,
+      title: "Other",
+      status: "Backlog",
+    },
   },
   {
     id: "r2",
     direction: "in",
     kind: "depends_on",
-    other: { taskId: "t3", key: "MAI", number: 3, title: "Third", status: "InFlight" },
+    other: {
+      taskId: "t3",
+      key: "MAI",
+      number: 3,
+      title: "Third",
+      status: "InFlight",
+    },
+  },
+];
+
+const relationCandidates = [
+  {
+    taskId: "t2",
+    key: "MAI",
+    number: 2,
+    title: "Other",
+    prompt: "Fix another part",
+    status: "Backlog",
   },
 ];
 
@@ -51,6 +80,7 @@ describe("RelationsEditor", () => {
         slug: "maister",
         taskNumber: 1,
         relations,
+        relationCandidates,
         canEdit: true,
         labels,
       }),
@@ -64,7 +94,7 @@ describe("RelationsEditor", () => {
     expect(html).toContain("MAI-2");
     expect(html).toContain("MAI-3");
     // Edit affordances present for members.
-    expect(html).toContain("task #");
+    expect(html).toContain("Search tasks");
   });
 
   it("hides edit affordances for viewers", () => {
@@ -73,12 +103,13 @@ describe("RelationsEditor", () => {
         slug: "maister",
         taskNumber: 1,
         relations,
+        relationCandidates,
         canEdit: false,
         labels,
       }),
     );
 
-    expect(html).not.toContain("task #");
+    expect(html).not.toContain("Search tasks");
     expect(html).not.toContain(">Add<");
   });
 
@@ -88,6 +119,7 @@ describe("RelationsEditor", () => {
         slug: "maister",
         taskNumber: 1,
         relations: [],
+        relationCandidates,
         canEdit: true,
         labels,
       }),

@@ -30,6 +30,7 @@ export type PromotionMode = "local_merge" | "pull_request";
 export type TaskVerdictPatch = {
   flowId?: string | null;
   runnerId?: string | null;
+  baseBranch?: string | null;
   targetBranch?: string | null;
   promotionMode?: PromotionMode | null;
 };
@@ -55,7 +56,7 @@ export function isValidGitBranchName(name: string): boolean {
 }
 
 // Allow-list validation of body-controlled verdict ids against server state:
-// flowId ∈ project flows, runnerId ∈ enabled runner catalog, targetBranch =
+// flowId ∈ project flows, runnerId ∈ enabled runner catalog, branch names =
 // git ref-name shape. promotionMode is schema-validated by the caller.
 export async function validateVerdictRefs(
   projectId: string,
@@ -97,6 +98,13 @@ export async function validateVerdictRefs(
     }
   }
 
+  if (patch.baseBranch != null && !isValidGitBranchName(patch.baseBranch)) {
+    throw new MaisterError(
+      "CONFIG",
+      `baseBranch is not a valid git branch name`,
+    );
+  }
+
   if (patch.targetBranch != null && !isValidGitBranchName(patch.targetBranch)) {
     throw new MaisterError(
       "CONFIG",
@@ -110,6 +118,7 @@ function verdictColumns(patch: TaskVerdictPatch): Record<string, unknown> {
 
   if (patch.flowId !== undefined) set.flowId = patch.flowId;
   if (patch.runnerId !== undefined) set.runnerId = patch.runnerId;
+  if (patch.baseBranch !== undefined) set.baseBranch = patch.baseBranch;
   if (patch.targetBranch !== undefined) set.targetBranch = patch.targetBranch;
   if (patch.promotionMode !== undefined) {
     set.promotionMode = patch.promotionMode;

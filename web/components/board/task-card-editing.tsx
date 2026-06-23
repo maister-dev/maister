@@ -8,7 +8,14 @@ import type {
   HumanGateAutonomy,
   PromotionTrigger,
 } from "@/lib/runs/execution-policy";
-import type { RelationsEditorLabels } from "@/components/social/relations-editor";
+import type {
+  DeliveryPolicy,
+  DeliveryPolicyStrategy,
+} from "@/lib/runs/delivery-policy";
+import type {
+  RelationCandidate,
+  RelationsEditorLabels,
+} from "@/components/social/relations-editor";
 import type {
   FormEvent,
   KeyboardEvent as ReactKeyboardEvent,
@@ -56,6 +63,7 @@ type LaunchFlowOption = {
   id: string;
   name: string;
   enabled: boolean;
+  disabledReason?: string | null;
 };
 
 type LaunchRunnerOption = {
@@ -70,6 +78,11 @@ type LaunchRunnerOption = {
 type LaunchOptions = {
   flows: LaunchFlowOption[];
   runners: LaunchRunnerOption[];
+  selectedRunnerId: string | null;
+  defaultBaseBranch: string | null;
+  defaultTargetBranch: string | null;
+  deliveryPolicyDefault: DeliveryPolicy;
+  executionPolicyDefault: ExecutionPolicy;
   branches: string[];
 };
 
@@ -80,6 +93,29 @@ type TaskEditErrorBody = {
 
 type TranslationFn = (key: string) => string;
 
+const DELIVERY_STRATEGY_LABEL: Record<DeliveryPolicyStrategy, string> = {
+  merge: "strategyMerge",
+  rebase_merge: "strategyRebaseMerge",
+  pull_request: "strategyPullRequest",
+  ai_rebase_merge: "strategyAiRebaseMerge",
+};
+
+const EXECUTION_PRESET_LABEL: Record<ExecutionPreset, string> = {
+  supervised: "execPresetSupervised",
+  assisted: "execPresetAssisted",
+  unattended: "execPresetUnattended",
+};
+
+const FLOW_DISABLED_REASON_LABEL: Record<string, string> = {
+  incompatible: "editFlowIncompatible",
+  no_revision: "editFlowNoRevision",
+  not_enabled: "editFlowNotEnabled",
+  not_installed: "editFlowNotInstalled",
+  setup_failed: "editFlowSetupFailed",
+  setup_pending: "editFlowSetupPending",
+  unsupported_schema: "editFlowUnsupportedSchema",
+};
+
 export type TaskEditableTarget = {
   taskId: string;
   number: number;
@@ -88,6 +124,7 @@ export type TaskEditableTarget = {
   prompt: string;
   flowId: string | null;
   runnerId: string | null;
+  baseBranch: string | null;
   targetBranch: string | null;
   promotionMode: "local_merge" | "pull_request" | null;
   executionPolicy: ExecutionPolicy | null;
@@ -110,6 +147,7 @@ export interface TaskCardEditModalProps {
   card: TaskEditableTarget;
   slug: string;
   canEdit: boolean;
+  relationCandidates: RelationCandidate[];
   triggerClassName?: string;
 }
 
@@ -129,12 +167,12 @@ function SelectField<T extends string>(props: {
   onChange: (value: T) => void;
 }): ReactElement {
   return (
-    <label className="flex flex-col gap-1">
+    <label className="flex min-w-0 flex-col gap-1">
       <span className="font-mono text-[9.5px] font-bold uppercase tracking-[0.06em] text-mute">
         {props.label}
       </span>
       <select
-        className="h-9 rounded-md border border-line-soft bg-paper px-2 font-mono text-[11px] text-ink outline-none transition focus:border-amber disabled:cursor-not-allowed disabled:opacity-60"
+        className="h-9 w-full min-w-0 rounded-md border border-line-soft bg-paper px-2 font-mono text-[11px] text-ink outline-none transition focus:border-amber disabled:cursor-not-allowed disabled:opacity-60"
         disabled={props.disabled}
         value={props.value}
         onChange={(event) => props.onChange(event.target.value as T)}
@@ -172,6 +210,8 @@ function relationLabels(tTaskDetail: TranslationFn): RelationsEditorLabels {
     add: tTaskDetail("relationsAdd"),
     adding: tTaskDetail("relationsAdding"),
     numberPlaceholder: tTaskDetail("relationsNumberPlaceholder"),
+    searchPlaceholder: tTaskDetail("relationsSearchPlaceholder"),
+    searchNoResults: tTaskDetail("relationsSearchNoResults"),
     remove: tTaskDetail("relationsRemove"),
     kindOut: {
       blocks: tTaskDetail("relationKind.blocks"),
@@ -193,7 +233,27 @@ function relationLabels(tTaskDetail: TranslationFn): RelationsEditorLabels {
 }
 
 function runnerLabel(runner: LaunchRunnerOption): string {
-  return `${runner.id} - ${runner.model}`;
+  return `${runner.id} · ${runner.model}`;
+}
+
+function flowDisabledReasonLabel(
+  flow: LaunchFlowOption,
+  tBoard: TranslationFn,
+): string {
+  if (!flow.disabledReason) return tBoard("editFlowUnavailable");
+
+  return tBoard(
+    FLOW_DISABLED_REASON_LABEL[flow.disabledReason] ?? "editFlowUnavailable",
+  );
+}
+
+function flowOptionLabel(
+  flow: LaunchFlowOption,
+  tBoard: TranslationFn,
+): string {
+  if (flow.enabled) return flow.name;
+
+  return `${flow.name} · ${flowDisabledReasonLabel(flow, tBoard)}`;
 }
 
 function markdownEditorLabels(tBoard: TranslationFn): TaskMarkdownEditorLabels {
@@ -230,7 +290,15 @@ function expandFlowOptions(
 
   if (!flowId || flows.some((flow) => flow.id === flowId)) return flows;
 
-  return [...flows, { id: flowId, name: flowId, enabled: true }];
+  return [
+    ...flows,
+    {
+      id: flowId,
+      name: flowId,
+      enabled: false,
+      disabledReason: "no_revision",
+    },
+  ];
 }
 
 function expandRunnerOptions(
@@ -256,32 +324,37 @@ function expandRunnerOptions(
   ];
 }
 
+type ExecutionPolicySetters = {
+  setExecPreset: (value: ExecutionPresetChoice) => void;
+  setExecChecks: (value: CheckStrictness) => void;
+  setExecHumanGate: (value: HumanGateAutonomy) => void;
+  setExecPromotion: (value: PromotionTrigger) => void;
+};
+
+function applyExecutionPolicyAxes(
+  policy: ExecutionPolicy,
+  setters: Omit<ExecutionPolicySetters, "setExecPreset">,
+): void {
+  const expanded = expandExecutionPolicy(policy);
+
+  setters.setExecChecks(expanded.checks);
+  setters.setExecHumanGate(expanded.humanGate);
+  setters.setExecPromotion(expanded.promotion);
+}
+
 function resetExecutionPolicy(
   policy: ExecutionPolicy | null,
-  setters: {
-    setExecPreset: (value: ExecutionPresetChoice) => void;
-    setExecChecks: (value: CheckStrictness) => void;
-    setExecHumanGate: (value: HumanGateAutonomy) => void;
-    setExecPromotion: (value: PromotionTrigger) => void;
-  },
+  setters: ExecutionPolicySetters,
 ): void {
   if (!policy) {
-    const supervised = expandExecutionPolicy({ preset: "supervised" });
-
     setters.setExecPreset("");
-    setters.setExecChecks(supervised.checks);
-    setters.setExecHumanGate(supervised.humanGate);
-    setters.setExecPromotion(supervised.promotion);
+    applyExecutionPolicyAxes({ preset: "supervised" }, setters);
 
     return;
   }
 
-  const expanded = expandExecutionPolicy(policy);
-
   setters.setExecPreset(policy.preset);
-  setters.setExecChecks(expanded.checks);
-  setters.setExecHumanGate(expanded.humanGate);
-  setters.setExecPromotion(expanded.promotion);
+  applyExecutionPolicyAxes(policy, setters);
 }
 
 function buildExecutionPolicy(args: {
@@ -519,6 +592,7 @@ export function TaskCardEditModal({
   card,
   slug,
   canEdit,
+  relationCandidates,
   triggerClassName,
 }: TaskCardEditModalProps): ReactElement | null {
   const tBoard = useTranslations("board");
@@ -538,6 +612,7 @@ export function TaskCardEditModal({
   const [prompt, setPrompt] = useState(card.prompt);
   const [flowId, setFlowId] = useState(card.flowId ?? "");
   const [runnerId, setRunnerId] = useState(card.runnerId ?? "");
+  const [baseBranch, setBaseBranch] = useState(card.baseBranch ?? "");
   const [targetBranch, setTargetBranch] = useState(card.targetBranch ?? "");
   const [promotionMode, setPromotionMode] = useState<PromotionMode>(
     card.promotionMode ?? "",
@@ -565,6 +640,7 @@ export function TaskCardEditModal({
     setPrompt(card.prompt);
     setFlowId(card.flowId ?? "");
     setRunnerId(card.runnerId ?? "");
+    setBaseBranch(card.baseBranch ?? "");
     setTargetBranch(card.targetBranch ?? "");
     setPromotionMode(card.promotionMode ?? "");
     setOptions(null);
@@ -609,6 +685,23 @@ export function TaskCardEditModal({
   }, [card.taskId, open, options]);
 
   useEffect(() => {
+    if (
+      !open ||
+      card.executionPolicy !== null ||
+      execPreset !== "" ||
+      !options
+    ) {
+      return;
+    }
+
+    applyExecutionPolicyAxes(options.executionPolicyDefault, {
+      setExecChecks,
+      setExecHumanGate,
+      setExecPromotion,
+    });
+  }, [card.executionPolicy, execPreset, open, options]);
+
+  useEffect(() => {
     if (!open) return;
 
     closeRef.current?.focus();
@@ -632,7 +725,20 @@ export function TaskCardEditModal({
   function onExecPresetChange(value: ExecutionPresetChoice): void {
     setExecPreset(value);
 
-    if (value === "") return;
+    if (value === "") {
+      applyExecutionPolicyAxes(
+        options?.executionPolicyDefault ?? {
+          preset: "supervised",
+        },
+        {
+          setExecChecks,
+          setExecHumanGate,
+          setExecPromotion,
+        },
+      );
+
+      return;
+    }
 
     const expanded = expandExecutionPolicy({ preset: value });
 
@@ -663,6 +769,7 @@ export function TaskCardEditModal({
           prompt: nextPrompt,
           flowId: flowId || null,
           runnerId: runnerId || null,
+          baseBranch: baseBranch.trim() || null,
           targetBranch: targetBranch.trim() || null,
           promotionMode: promotionMode || null,
           executionPolicy: buildExecutionPolicy({
@@ -695,9 +802,48 @@ export function TaskCardEditModal({
   }
 
   const flowOptions = expandFlowOptions(flowId, options);
+  const hasLaunchableFlowOptions = flowOptions.some((flow) => flow.enabled);
   const runnerOptions = expandRunnerOptions(runnerId, options);
   const disabled = busy || pending;
   const execDisabled = execPreset === "";
+  const defaultRunner =
+    options?.selectedRunnerId && options.selectedRunnerId.length > 0
+      ? (runnerOptions.find(
+          (runner) => runner.id === options.selectedRunnerId,
+        ) ?? null)
+      : null;
+  const defaultRunnerLabel = defaultRunner
+    ? runnerLabel(defaultRunner)
+    : (options?.selectedRunnerId ?? null);
+  const runnerDefaultOptionLabel = defaultRunnerLabel
+    ? tBoard("editDefaultValue", { value: defaultRunnerLabel })
+    : tLaunch("runnerDefault");
+  const baseBranchDefaultValue =
+    options?.defaultBaseBranch ??
+    options?.defaultTargetBranch ??
+    options?.branches[0] ??
+    null;
+  const baseBranchDefaultLabel = baseBranchDefaultValue
+    ? tBoard("editDefaultValue", { value: baseBranchDefaultValue })
+    : tBoard("editBaseBranchPlaceholder");
+  const effectiveBaseBranch = baseBranch.trim() || baseBranchDefaultValue;
+  const targetBranchDefaultLabel = effectiveBaseBranch
+    ? tBoard("editDefaultValue", { value: effectiveBaseBranch })
+    : tBoard("editTargetBranchPlaceholder");
+  const deliveryStrategyDefaultLabel = options?.deliveryPolicyDefault
+    ? tBoard("editDefaultValue", {
+        value: tLaunch(
+          DELIVERY_STRATEGY_LABEL[options.deliveryPolicyDefault.strategy],
+        ),
+      })
+    : tBoard("editPromotionDefault");
+  const executionPresetDefaultLabel = options?.executionPolicyDefault
+    ? tBoard("editDefaultValue", {
+        value: tLaunch(
+          EXECUTION_PRESET_LABEL[options.executionPolicyDefault.preset],
+        ),
+      })
+    : tBoard("editExecutionPolicyDefault");
   const execLocks = blindShipLockedOptions({
     checks: execChecks,
     humanGate: execHumanGate,
@@ -715,7 +861,7 @@ export function TaskCardEditModal({
           <section
             aria-labelledby={dialogId}
             aria-modal="true"
-            className="relative grid max-h-[calc(100vh-32px)] w-full max-w-[920px] grid-cols-1 overflow-hidden rounded-[14px] border border-line bg-paper shadow-[0_26px_80px_-30px_rgba(22,20,15,0.42)] md:grid-cols-[minmax(0,1fr)_300px]"
+            className="relative grid max-h-[calc(100vh-32px)] w-full max-w-[1080px] grid-cols-1 overflow-hidden rounded-[14px] border border-line bg-paper shadow-[0_26px_80px_-30px_rgba(22,20,15,0.42)] lg:grid-cols-[minmax(0,1fr)_340px]"
             role="dialog"
           >
             <button
@@ -779,7 +925,7 @@ export function TaskCardEditModal({
               ) : null}
             </div>
 
-            <aside className="flex min-h-0 flex-col gap-4 overflow-y-auto border-t border-line bg-ivory px-4 py-4 md:border-l md:border-t-0">
+            <aside className="flex min-h-0 flex-col gap-4 overflow-y-auto border-t border-line bg-ivory px-4 py-4 lg:border-l lg:border-t-0">
               <div className="flex items-center justify-between gap-2">
                 <h3 className="m-0 text-sm font-semibold text-ink">
                   {tBoard("editProperties")}
@@ -799,25 +945,32 @@ export function TaskCardEditModal({
                 </p>
               ) : null}
               <div className="grid gap-3">
-                <SelectField
-                  disabled={disabled || loadingOptions || optionsError}
-                  label={tLaunch("flow")}
-                  options={[
-                    { value: "", label: tBoard("editNoFlow") },
-                    ...flowOptions.map((flow) => ({
-                      value: flow.id,
-                      label: flow.name,
-                      disabled: !flow.enabled,
-                    })),
-                  ]}
-                  value={flowId}
-                  onChange={setFlowId}
-                />
+                <div className="flex min-w-0 flex-col gap-1">
+                  <SelectField
+                    disabled={disabled || loadingOptions || optionsError}
+                    label={tLaunch("flow")}
+                    options={[
+                      { value: "", label: tBoard("editNoFlow") },
+                      ...flowOptions.map((flow) => ({
+                        value: flow.id,
+                        label: flowOptionLabel(flow, tBoard),
+                        disabled: !flow.enabled,
+                      })),
+                    ]}
+                    value={flowId}
+                    onChange={setFlowId}
+                  />
+                  {flowOptions.length > 0 && !hasLaunchableFlowOptions ? (
+                    <p className="m-0 font-mono text-[10px] leading-snug text-mute">
+                      {tBoard("editNoLaunchableFlows")}
+                    </p>
+                  ) : null}
+                </div>
                 <SelectField
                   disabled={disabled || loadingOptions || optionsError}
                   label={tLaunch("runner")}
                   options={[
-                    { value: "", label: tLaunch("runnerDefault") },
+                    { value: "", label: runnerDefaultOptionLabel },
                     ...runnerOptions.map((runner) => ({
                       value: runner.id,
                       label: runnerLabel(runner),
@@ -828,15 +981,28 @@ export function TaskCardEditModal({
                   value={runnerId}
                   onChange={setRunnerId}
                 />
-                <label className="flex flex-col gap-1">
+                <label className="flex min-w-0 flex-col gap-1">
+                  <span className="font-mono text-[9.5px] font-bold uppercase tracking-[0.06em] text-mute">
+                    {tRun("baseBranch")}
+                  </span>
+                  <input
+                    className="h-9 w-full min-w-0 rounded-md border border-line-soft bg-paper px-2 font-mono text-[11px] text-ink outline-none transition focus:border-amber disabled:cursor-not-allowed disabled:opacity-60"
+                    disabled={disabled}
+                    list={branchListId}
+                    placeholder={baseBranchDefaultLabel}
+                    value={baseBranch}
+                    onChange={(event) => setBaseBranch(event.target.value)}
+                  />
+                </label>
+                <label className="flex min-w-0 flex-col gap-1">
                   <span className="font-mono text-[9.5px] font-bold uppercase tracking-[0.06em] text-mute">
                     {tRun("targetBranch")}
                   </span>
                   <input
-                    className="h-9 rounded-md border border-line-soft bg-paper px-2 font-mono text-[11px] text-ink outline-none transition focus:border-amber disabled:cursor-not-allowed disabled:opacity-60"
+                    className="h-9 w-full min-w-0 rounded-md border border-line-soft bg-paper px-2 font-mono text-[11px] text-ink outline-none transition focus:border-amber disabled:cursor-not-allowed disabled:opacity-60"
                     disabled={disabled}
                     list={branchListId}
-                    placeholder={tBoard("editTargetBranchPlaceholder")}
+                    placeholder={targetBranchDefaultLabel}
                     value={targetBranch}
                     onChange={(event) => setTargetBranch(event.target.value)}
                   />
@@ -848,9 +1014,9 @@ export function TaskCardEditModal({
                 </label>
                 <SelectField<PromotionMode>
                   disabled={disabled}
-                  label={tLaunch("promotionMode")}
+                  label={tBoard("editDeliveryStrategyLabel")}
                   options={[
-                    { value: "", label: tBoard("editPromotionDefault") },
+                    { value: "", label: deliveryStrategyDefaultLabel },
                     {
                       value: "local_merge",
                       label: tBoard("editPromotionLocalMerge"),
@@ -873,7 +1039,7 @@ export function TaskCardEditModal({
                     options={[
                       {
                         value: "",
-                        label: tBoard("editExecutionPolicyDefault"),
+                        label: executionPresetDefaultLabel,
                       },
                       {
                         value: "supervised",
@@ -929,7 +1095,7 @@ export function TaskCardEditModal({
                   />
                   <SelectField<PromotionTrigger>
                     disabled={disabled || execDisabled}
-                    label={tLaunch("execPromotion")}
+                    label={tBoard("editExecutionPromotionLabel")}
                     options={[
                       {
                         value: "manual",
@@ -951,6 +1117,7 @@ export function TaskCardEditModal({
                 <RelationsEditor
                   canEdit={!disabled}
                   labels={relationLabels(tTaskDetail)}
+                  relationCandidates={relationCandidates}
                   relations={card.relations}
                   slug={slug}
                   taskNumber={card.number}

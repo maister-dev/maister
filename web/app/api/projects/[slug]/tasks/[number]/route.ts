@@ -24,6 +24,7 @@ const patchBodySchema = z
     prompt: z.string().trim().min(1).optional(),
     flowId: z.string().min(1).nullable().optional(),
     runnerId: z.string().min(1).nullable().optional(),
+    baseBranch: z.string().min(1).max(255).nullable().optional(),
     targetBranch: z.string().min(1).max(255).nullable().optional(),
     promotionMode: z
       .enum(["local_merge", "pull_request"])
@@ -44,6 +45,7 @@ const putBodySchema = z
     prompt: z.string().trim().min(1),
     flowId: z.string().min(1).nullable(),
     runnerId: z.string().min(1).nullable(),
+    baseBranch: z.string().min(1).max(255).nullable(),
     targetBranch: z.string().min(1).max(255).nullable(),
     promotionMode: z.enum(["local_merge", "pull_request"]).nullable(),
     executionPolicy: executionPolicySchema.nullable(),

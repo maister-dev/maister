@@ -1,4 +1,5 @@
 import type { BacklogCard } from "@/lib/queries/board";
+import type { RelationCandidate } from "@/components/social/relations-editor";
 import type { TaskDecompositionLabels } from "@/components/board/task-decomposition";
 import type { ReactElement } from "react";
 
@@ -24,6 +25,7 @@ export interface TaskCardProps {
   triagedLabel: string;
   runsCountLabel: (count: number) => string;
   decompositionLabels: TaskDecompositionLabels;
+  relationCandidates: RelationCandidate[];
 }
 
 const PRIO_STRIPE: Record<BacklogCard["priority"], string> = {
@@ -54,6 +56,7 @@ export function TaskCard({
   triagedLabel,
   runsCountLabel,
   decompositionLabels,
+  relationCandidates,
 }: TaskCardProps): ReactElement {
   // M34: a flowless simple-intent task renders the `unconfigured` chip — the
   // launch popover collects the missing fields.
@@ -74,9 +77,12 @@ export function TaskCard({
         data-testid="task-card-meta-bar"
       >
         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-          <span className="rounded border border-line bg-paper px-1.5 py-px font-mono text-[9.5px] font-bold tracking-[0.05em] text-mute">
+          <Link
+            className="rounded border border-line bg-paper px-1.5 py-px font-mono text-[9.5px] font-bold tracking-[0.05em] text-mute transition hover:border-amber hover:text-amber focus:border-amber focus:text-amber"
+            href={`/projects/${slug}/tasks/${card.number}`}
+          >
             {card.keyRef}
-          </span>
+          </Link>
           <span
             className={clsx(
               "rounded border px-1.5 py-px font-mono text-[9.5px] font-bold uppercase tracking-[0.08em]",
@@ -89,6 +95,7 @@ export function TaskCard({
         <TaskCardEditModal
           canEdit={canAct}
           card={card}
+          relationCandidates={relationCandidates}
           slug={slug}
           triggerClassName="inline-flex h-6 w-6 flex-none items-center justify-center rounded-md border border-line bg-paper text-mute transition hover:border-amber hover:text-amber focus:border-amber focus:text-amber"
         />

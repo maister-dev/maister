@@ -31,12 +31,24 @@ const card: BacklogCard = {
   flowId: "flow-1",
   triageStatus: null,
   runnerId: null,
+  baseBranch: null,
   targetBranch: null,
   promotionMode: null,
   executionPolicy: null,
   relations: [],
   childTasks: [],
 };
+
+const relationCandidates = [
+  {
+    taskId: "task-2",
+    key: "MAI",
+    number: 8,
+    title: "Related task",
+    prompt: "Candidate description",
+    status: "Backlog",
+  },
+];
 
 describe("Task card editing", () => {
   it("renders an inline edit affordance for card title fields", () => {
@@ -113,6 +125,7 @@ describe("Task card editing", () => {
         card,
         slug: "maister",
         canEdit: true,
+        relationCandidates,
         triggerClassName: "visible-edit-trigger",
       }),
     );

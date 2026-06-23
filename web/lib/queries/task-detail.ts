@@ -3,7 +3,7 @@ import "server-only";
 import type { ActorDTO } from "@/lib/social/actors";
 import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
 
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, ne } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -98,6 +98,15 @@ export type TaskRunTotals = {
   tokenTotal: number;
 };
 
+export type TaskRelationCandidate = {
+  taskId: string;
+  key: string;
+  number: number;
+  title: string;
+  prompt: string;
+  status: string;
+};
+
 export type TaskDetailData = {
   project: { id: string; slug: string; name: string; taskKey: string };
   task: {
@@ -107,6 +116,7 @@ export type TaskDetailData = {
     prompt: string;
     flowId: string | null;
     runnerId: string | null;
+    baseBranch: string | null;
     targetBranch: string | null;
     promotionMode: "local_merge" | "pull_request" | null;
     executionPolicy: ExecutionPolicy | null;
@@ -116,6 +126,7 @@ export type TaskDetailData = {
   };
   keyRef: string;
   relations: TaskRelationView[];
+  relationCandidates: TaskRelationCandidate[];
   openBlockers: Array<{ key: string; number: number }>;
   timeline: TimelineItem[];
   isFollowing: boolean;
@@ -256,6 +267,12 @@ export async function getTaskDetail(
   );
 
   const relations = await getTaskRelations(taskId);
+  const relationCandidates = await relationCandidatesOf(
+    db,
+    resolved.project.id,
+    taskId,
+    resolved.project.taskKey,
+  );
   const openBlockers =
     (await getOpenRelationBlockers([taskId], db)).get(taskId) ?? [];
 
@@ -374,6 +391,7 @@ export async function getTaskDetail(
     },
     keyRef: `${resolved.project.taskKey}-${resolved.task.number}`,
     relations,
+    relationCandidates,
     openBlockers,
     timeline,
     isFollowing: following.length > 0,
@@ -400,6 +418,46 @@ export async function getTaskDetail(
   };
 }
 
+async function relationCandidatesOf(
+  db: { select: any },
+  projectId: string,
+  currentTaskId: string,
+  taskKey: string,
+): Promise<TaskRelationCandidate[]> {
+  const rows = (await db
+    .select({
+      taskId: schemaModule.tasks.id,
+      number: schemaModule.tasks.number,
+      title: schemaModule.tasks.title,
+      prompt: schemaModule.tasks.prompt,
+      status: schemaModule.tasks.status,
+      createdAt: schemaModule.tasks.createdAt,
+    })
+    .from(schemaModule.tasks)
+    .where(
+      and(
+        eq(schemaModule.tasks.projectId, projectId),
+        ne(schemaModule.tasks.id, currentTaskId),
+      ),
+    )
+    .orderBy(desc(schemaModule.tasks.createdAt))) as Array<{
+    taskId: string;
+    number: number;
+    title: string;
+    prompt: string;
+    status: string;
+  }>;
+
+  return rows.map((row) => ({
+    taskId: row.taskId,
+    key: taskKey,
+    number: row.number,
+    title: row.title,
+    prompt: row.prompt,
+    status: row.status,
+  }));
+}
+
 async function taskExtrasOf(
   db: { select: any },
   taskId: string,
@@ -407,6 +465,7 @@ async function taskExtrasOf(
   prompt: string;
   flowId: string | null;
   runnerId: string | null;
+  baseBranch: string | null;
   targetBranch: string | null;
   promotionMode: "local_merge" | "pull_request" | null;
   executionPolicy: ExecutionPolicy | null;
@@ -417,6 +476,7 @@ async function taskExtrasOf(
       prompt: schemaModule.tasks.prompt,
       flowId: schemaModule.tasks.flowId,
       runnerId: schemaModule.tasks.runnerId,
+      baseBranch: schemaModule.tasks.baseBranch,
       targetBranch: schemaModule.tasks.targetBranch,
       promotionMode: schemaModule.tasks.promotionMode,
       executionPolicy: schemaModule.tasks.executionPolicy,
@@ -427,6 +487,7 @@ async function taskExtrasOf(
     prompt: string;
     flowId: string | null;
     runnerId: string | null;
+    baseBranch: string | null;
     targetBranch: string | null;
     promotionMode: "local_merge" | "pull_request" | null;
     executionPolicy: ExecutionPolicy | null;
@@ -437,6 +498,7 @@ async function taskExtrasOf(
     prompt: rows[0]?.prompt ?? "",
     flowId: rows[0]?.flowId ?? null,
     runnerId: rows[0]?.runnerId ?? null,
+    baseBranch: rows[0]?.baseBranch ?? null,
     targetBranch: rows[0]?.targetBranch ?? null,
     promotionMode: rows[0]?.promotionMode ?? null,
     executionPolicy: rows[0]?.executionPolicy ?? null,

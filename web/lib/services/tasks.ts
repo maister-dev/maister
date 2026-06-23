@@ -172,6 +172,7 @@ export type TaskDTO = {
   // launch popover edits them pre-launch.
   triageStatus: "triaged" | null;
   runnerId: string | null;
+  baseBranch: string | null;
   targetBranch: string | null;
   promotionMode: "local_merge" | "pull_request" | null;
   latestRunId: string | null;
@@ -206,6 +207,7 @@ async function taskToDTO(row: any, db: { select: any }): Promise<TaskDTO> {
     flowId: row.flowId ?? null,
     triageStatus: row.triageStatus ?? null,
     runnerId: row.runnerId ?? null,
+    baseBranch: row.baseBranch ?? null,
     targetBranch: row.targetBranch ?? null,
     promotionMode: row.promotionMode ?? null,
     latestRunId: runRows[0]?.id ?? null,
@@ -250,6 +252,7 @@ export type UpdateTaskInput = {
   prompt?: string;
   flowId?: string | null;
   runnerId?: string | null;
+  baseBranch?: string | null;
   targetBranch?: string | null;
   promotionMode?: PromotionMode | null;
   executionPolicy?: ExecutionPolicy | null;
@@ -262,6 +265,7 @@ function updateColumns(input: UpdateTaskInput): Record<string, unknown> {
   if (input.prompt !== undefined) patch.prompt = input.prompt;
   if (input.flowId !== undefined) patch.flowId = input.flowId;
   if (input.runnerId !== undefined) patch.runnerId = input.runnerId;
+  if (input.baseBranch !== undefined) patch.baseBranch = input.baseBranch;
   if (input.targetBranch !== undefined) patch.targetBranch = input.targetBranch;
   if (input.promotionMode !== undefined) {
     patch.promotionMode = input.promotionMode;
@@ -278,6 +282,7 @@ function verdictPatch(input: UpdateTaskInput): TaskVerdictPatch {
 
   if (input.flowId !== undefined) patch.flowId = input.flowId;
   if (input.runnerId !== undefined) patch.runnerId = input.runnerId;
+  if (input.baseBranch !== undefined) patch.baseBranch = input.baseBranch;
   if (input.targetBranch !== undefined) patch.targetBranch = input.targetBranch;
   if (input.promotionMode !== undefined) {
     patch.promotionMode = input.promotionMode;

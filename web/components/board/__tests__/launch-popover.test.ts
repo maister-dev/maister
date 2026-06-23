@@ -30,6 +30,7 @@ import {
   LaunchPopover,
   budgetTextHasInvalid,
   isBudgetFieldInvalid,
+  launchUnavailableReasonMessage,
   pruneBudgetText,
 } from "@/components/board/launch-popover";
 
@@ -70,6 +71,28 @@ describe("LaunchPopover — modal-first launch", () => {
 
     expect(html).toContain("unavailable");
     expect(html.match(/disabled=""/g)?.length).toBe(1);
+  });
+});
+
+describe("LaunchPopover — launchability reason copy", () => {
+  const translate = (key: string): string => `copy:${key}`;
+
+  it("maps no_revision to a user-facing message key", () => {
+    expect(launchUnavailableReasonMessage("no_revision", translate)).toBe(
+      "copy:launchUnavailableReason.noRevision",
+    );
+  });
+
+  it("maps not_enabled to a user-facing message key", () => {
+    expect(launchUnavailableReasonMessage("not_enabled", translate)).toBe(
+      "copy:launchUnavailableReason.notEnabled",
+    );
+  });
+
+  it("keeps unknown backend reasons visible for diagnostics", () => {
+    expect(launchUnavailableReasonMessage("new_reason", translate)).toBe(
+      "new_reason",
+    );
   });
 });
 

@@ -720,12 +720,20 @@ export async function* launchRunStaged(
   const runId = randomUUID();
   const worktreePath = path.join(worktreeRoot, project.slug, runId);
 
-  // M18 §3.1: branch targeting. base defaults to the project default branch;
-  // target defaults to the resolved base. BOTH are body-controlled, so they
-  // MUST be validated against the project's real branch set (server-state
+  // M18 §3.1: branch targeting. Saved task defaults sit between launch input
+  // and project defaults; target defaults to the resolved base. Both resolved
+  // refs are validated against the project's real branch set (server-state
   // allow-list) BEFORE any git side-effect — an unknown branch is a
   // PRECONDITION refusal and no worktree is created.
-  const base = input.baseBranch ?? project.mainBranch;
+  const base =
+    input.baseBranch ??
+    (task.baseBranch as string | null) ??
+    project.mainBranch;
+  const target =
+    input.targetBranch ??
+    input.deliveryPolicy?.targetBranch ??
+    (task.targetBranch as string | null) ??
+    base;
   const deliveryPolicy = resolveDeliveryPolicy({
     projectDefault:
       project.deliveryPolicyDefault as StoredDeliveryPolicy | null,
@@ -733,11 +741,9 @@ export async function* launchRunStaged(
     projectMainBranch: project.mainBranch,
     launchOverride: {
       ...input.deliveryPolicy,
-      targetBranch:
-        input.deliveryPolicy?.targetBranch ?? input.targetBranch ?? undefined,
+      targetBranch: target,
     },
   });
-  const target = input.targetBranch ?? deliveryPolicy.targetBranch ?? base;
 
   // Refresh origin (read-only: updates remote-tracking refs, never the working
   // tree) so the branch allow-list and the base commit reflect the freshest

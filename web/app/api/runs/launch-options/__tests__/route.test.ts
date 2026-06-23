@@ -148,6 +148,7 @@ describe("GET /api/runs/launch-options runner remaps", () => {
         id: "flow-1",
         flowRefId: "bugfix",
         enabledRevisionId: "revision-1",
+        enablementState: "Enabled",
       },
     ];
     state.flow_revisions = [
@@ -257,7 +258,12 @@ describe("GET /api/runs/launch-options runner remaps", () => {
     const body = (await res.json()) as {
       task?: { id?: string; projectSlug?: string; flowId?: string };
       launchability?: { launchable?: boolean; reason?: string };
-      flows?: Array<{ id: string; isTaskDefault: boolean }>;
+      flows?: Array<{
+        id: string;
+        disabledReason: string | null;
+        enabled: boolean;
+        isTaskDefault: boolean;
+      }>;
       selectedFlowId?: string;
       runners?: Array<{ id: string; model: string; pinnedModel?: object }>;
       branches?: string[];
@@ -283,7 +289,12 @@ describe("GET /api/runs/launch-options runner remaps", () => {
       blockers: [],
     });
     expect(body.flows).toEqual([
-      expect.objectContaining({ id: "flow-1", isTaskDefault: true }),
+      expect.objectContaining({
+        id: "flow-1",
+        disabledReason: null,
+        enabled: true,
+        isTaskDefault: true,
+      }),
     ]);
     expect(body.selectedFlowId).toBe("flow-1");
     expect(body.runners).toEqual([
@@ -331,7 +342,12 @@ describe("GET /api/runs/launch-options — M34 verdict pre-fill + unconfigured (
       },
     ];
     state.flows = [
-      { id: "flow-1", flowRefId: "bugfix", enabledRevisionId: "revision-1" },
+      {
+        id: "flow-1",
+        flowRefId: "bugfix",
+        enabledRevisionId: "revision-1",
+        enablementState: "Enabled",
+      },
     ];
     state.flow_revisions = [
       {
@@ -396,7 +412,12 @@ describe("GET /api/runs/launch-options — M34 verdict pre-fill + unconfigured (
       launchability?: { launchable: boolean; reason: string };
       selectedFlowId?: string;
       flowId?: string | null;
-      flows?: unknown[];
+      flows?: Array<{
+        id: string;
+        disabledReason: string | null;
+        enabled: boolean;
+        isTaskDefault: boolean;
+      }>;
     };
 
     expect(res.status).toBe(200);
@@ -408,7 +429,75 @@ describe("GET /api/runs/launch-options — M34 verdict pre-fill + unconfigured (
     expect(body.flowId).toBeNull();
     // The project's flows are still offered for the set-up pick.
     expect(body.flows).toEqual([
-      expect.objectContaining({ id: "flow-1", isTaskDefault: false }),
+      expect.objectContaining({
+        id: "flow-1",
+        disabledReason: null,
+        enabled: true,
+        isTaskDefault: false,
+      }),
+    ]);
+  });
+
+  it("returns edit/setup options for a selected flow with no enabled revision", async () => {
+    state.flows = [
+      { id: "flow-1", flowRefId: "bugfix", enabledRevisionId: null },
+    ];
+
+    const res = await invoke();
+    const body = (await res.json()) as {
+      launchability?: { launchable: boolean; reason: string };
+      selectedFlowId?: string;
+      flows?: Array<{ id: string; disabledReason: string; enabled: boolean }>;
+      runners?: unknown[];
+    };
+
+    expect(res.status).toBe(200);
+    expect(body.launchability).toMatchObject({
+      launchable: false,
+      reason: "no_revision",
+    });
+    expect(body.selectedFlowId).toBe("flow-1");
+    expect(body.flows).toEqual([
+      expect.objectContaining({
+        id: "flow-1",
+        disabledReason: "no_revision",
+        enabled: false,
+        isTaskDefault: true,
+      }),
+    ]);
+    expect(body.runners).toEqual([
+      expect.objectContaining({ id: "claude-platform" }),
+      expect.objectContaining({ id: "codex-ready" }),
+    ]);
+  });
+
+  it("does not mark an installed-but-not-enabled flow as launchable", async () => {
+    state.flows = [
+      {
+        id: "flow-1",
+        flowRefId: "bugfix",
+        enabledRevisionId: "revision-1",
+        enablementState: "Installed",
+      },
+    ];
+
+    const res = await invoke();
+    const body = (await res.json()) as {
+      launchability?: { launchable: boolean; reason: string };
+      flows?: Array<{ id: string; disabledReason: string; enabled: boolean }>;
+    };
+
+    expect(res.status).toBe(200);
+    expect(body.launchability).toMatchObject({
+      launchable: false,
+      reason: "not_enabled",
+    });
+    expect(body.flows).toEqual([
+      expect.objectContaining({
+        id: "flow-1",
+        disabledReason: "not_enabled",
+        enabled: false,
+      }),
     ]);
   });
 

@@ -22,6 +22,25 @@ export type TaskRichMarkdownEditorProps = {
   onToolbarStateChange?: () => void;
 };
 
+function codeLanguage(className: string | null): string | null {
+  const match = /(?:^|\s)language-([^\s]+)/.exec(className ?? "");
+
+  return match?.[1]?.toLowerCase() ?? null;
+}
+
+function syncCodeBlockLanguages(editor: Editor): void {
+  editor.view.dom.querySelectorAll("pre").forEach((pre) => {
+    const code = pre.querySelector("code");
+    const language = codeLanguage(code?.getAttribute("class") ?? null);
+
+    if (language) {
+      pre.dataset.language = language;
+    } else {
+      delete pre.dataset.language;
+    }
+  });
+}
+
 export default function TaskRichMarkdownEditor({
   value,
   disabled,
@@ -94,6 +113,7 @@ export default function TaskRichMarkdownEditor({
     extensions,
     immediatelyRender: false,
     onUpdate: ({ editor: updatedEditor }) => {
+      syncCodeBlockLanguages(updatedEditor);
       const next = updatedEditor.getMarkdown();
 
       appliedValueRef.current = next;
@@ -101,7 +121,10 @@ export default function TaskRichMarkdownEditor({
       onToolbarStateChange?.();
     },
     onSelectionUpdate: () => onToolbarStateChange?.(),
-    onTransaction: () => onToolbarStateChange?.(),
+    onTransaction: ({ editor: transactionEditor }) => {
+      syncCodeBlockLanguages(transactionEditor);
+      onToolbarStateChange?.();
+    },
   });
 
   useEffect(() => {
@@ -112,6 +135,7 @@ export default function TaskRichMarkdownEditor({
   useEffect(() => {
     if (!editor) return;
 
+    syncCodeBlockLanguages(editor);
     onReady?.();
     onEditorChange?.(editor);
 
@@ -130,6 +154,7 @@ export default function TaskRichMarkdownEditor({
       emitUpdate: false,
     });
     appliedValueRef.current = value;
+    syncCodeBlockLanguages(editor);
   }, [editor, value]);
 
   return (

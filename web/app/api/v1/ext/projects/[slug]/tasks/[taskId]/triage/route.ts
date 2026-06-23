@@ -27,6 +27,7 @@ const postBodySchema = z
   .object({
     flowId: z.string().min(1).optional(),
     runnerId: z.string().min(1).optional(),
+    baseBranch: z.string().min(1).max(255).optional(),
     targetBranch: z.string().min(1).max(255).optional(),
     promotionMode: z.enum(["local_merge", "pull_request"]).optional(),
   })

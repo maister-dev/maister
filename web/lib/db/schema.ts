@@ -1021,6 +1021,7 @@ export const tasks = pgTable(
     runnerId: text("runner_id").references(() => platformAcpRunners.id, {
       onDelete: "set null",
     }),
+    baseBranch: text("base_branch"),
     targetBranch: text("target_branch"),
     promotionMode: text("promotion_mode", {
       enum: ["local_merge", "pull_request"],

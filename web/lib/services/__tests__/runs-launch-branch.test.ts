@@ -6,8 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // M18 Phase 1 — RED. Pins the launch-time branch-targeting contract the
 // Implementor must conform `launchRun` + `resolvePromotionMode` to:
 //
-//  - base = input.baseBranch ?? project.mainBranch; target = input.targetBranch
-//    ?? resolvedBase.
+//  - base = input.baseBranch ?? task.baseBranch ?? project.mainBranch; target =
+//    input.targetBranch ?? task.targetBranch ?? resolvedBase.
 //  - BOTH resolved branches are validated against listBranches(project.repoPath)
 //    BEFORE addWorktree — an unknown branch throws PRECONDITION and addWorktree
 //    is never called (validation precedes the worktree side-effect).
@@ -177,7 +177,12 @@ function project(overrides: Record<string, unknown> = {}) {
 // Slots 8-11 are intentionally omitted: the fake DB returns `[]` past the
 // array end, which is the correct empty-result for those four (resolution
 // falls through to the platform default runner; no roles/capabilities seeded).
-function seedSelects(opts: { project?: Record<string, unknown> } = {}): void {
+function seedSelects(
+  opts: {
+    project?: Record<string, unknown>;
+    task?: Record<string, unknown>;
+  } = {},
+): void {
   state.selectResults = [
     [
       {
@@ -186,6 +191,7 @@ function seedSelects(opts: { project?: Record<string, unknown> } = {}): void {
         flowId: FLOW_ID,
         status: "Backlog",
         attemptNumber: 0,
+        ...(opts.task ?? {}),
       },
     ],
     [opts.project ?? project()],
@@ -381,6 +387,19 @@ describe("launchRun — branch targeting defaults (M18)", () => {
       baseCommit: "deadbeefdeadbeefdeadbeef",
       targetBranch: "main",
       promotionMode: "local_merge",
+    });
+  });
+
+  it("uses a task base branch as the target default when target is empty", async () => {
+    seedSelects({ task: { baseBranch: "develop", targetBranch: null } });
+
+    await launchRun({ taskId: TASK_ID }, ctx(), fakeDb);
+
+    const ws = workspaceInsert();
+
+    expect(ws).toMatchObject({
+      baseBranch: "develop",
+      targetBranch: "develop",
     });
   });
 

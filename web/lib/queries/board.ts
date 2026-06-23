@@ -85,6 +85,7 @@ export interface BacklogCard {
   flowId: string | null;
   triageStatus: "triaged" | null;
   runnerId: string | null;
+  baseBranch: string | null;
   targetBranch: string | null;
   promotionMode: "local_merge" | "pull_request" | null;
   executionPolicy: ExecutionPolicy | null;
@@ -152,8 +153,18 @@ export interface BoardColumnData {
   total: number;
 }
 
+export interface BoardRelationCandidate {
+  taskId: string;
+  key: string;
+  number: number;
+  title: string;
+  prompt: string;
+  status: string;
+}
+
 export interface BoardData {
   columns: Record<BoardColumn, BoardColumnData>;
+  relationCandidates: BoardRelationCandidate[];
   totalTasks: number;
   inProd: number;
   backlog: number;
@@ -246,6 +257,7 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
       flowId: tasks.flowId,
       triageStatus: tasks.triageStatus,
       runnerId: tasks.runnerId,
+      baseBranch: tasks.baseBranch,
       targetBranch: tasks.targetBranch,
       promotionMode: tasks.promotionMode,
       executionPolicy: tasks.executionPolicy,
@@ -268,6 +280,7 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
   if (taskRows.length === 0) {
     return {
       columns,
+      relationCandidates: [],
       totalTasks: 0,
       inProd: 0,
       backlog: 0,
@@ -282,6 +295,14 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
     .from(projects)
     .where(eq(projects.id, projectId));
   const projectTaskKey = projectKeyRow?.taskKey ?? "";
+  const relationCandidates: BoardRelationCandidate[] = taskRows.map((task) => ({
+    taskId: task.taskId,
+    key: projectTaskKey,
+    number: task.number,
+    title: task.title,
+    prompt: task.prompt,
+    status: task.status,
+  }));
   const openBlockers = await getOpenRelationBlockers(taskIds, client);
   const relationsByTask = await getTaskRelationsByTaskIds(taskIds, client);
 
@@ -516,6 +537,7 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
         flowId: task.flowId ?? null,
         triageStatus: (task.triageStatus ?? null) as "triaged" | null,
         runnerId: task.runnerId ?? null,
+        baseBranch: task.baseBranch ?? null,
         targetBranch: task.targetBranch ?? null,
         promotionMode: (task.promotionMode ?? null) as
           | "local_merge"
@@ -610,6 +632,7 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
 
   return {
     columns,
+    relationCandidates,
     totalTasks: taskRows.length,
     inProd: columns.InProduction.total,
     backlog: columns.Backlog.total,

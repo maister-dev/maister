@@ -291,6 +291,7 @@ samp {
 }
 
 .task-markdown-rich-editor .task-markdown-rich-content pre {
+  position: relative;
   margin: 0.625rem 0;
   overflow: auto;
   border: 1px solid var(--line);
@@ -299,6 +300,28 @@ samp {
   padding: 0.75rem 0.875rem;
   color: var(--ink-2);
   box-shadow: inset 0 1px 0 color-mix(in oklab, var(--paper) 70%, transparent);
+}
+
+.task-markdown-rich-editor .task-markdown-rich-content pre[data-language] {
+  padding-top: 1.75rem;
+}
+
+.task-markdown-rich-editor
+  .task-markdown-rich-content
+  pre[data-language]::before {
+  content: attr(data-language);
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--paper);
+  padding: 0.25rem 0.875rem;
+  color: var(--mute);
+  font-family: var(--mono);
+  font-size: 0.5625rem;
+  font-weight: 700;
+  text-transform: uppercase;
 }
 
 .task-markdown-rich-editor .task-markdown-rich-content pre code {

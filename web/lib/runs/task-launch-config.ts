@@ -9,6 +9,7 @@ import type {
   DeliveryPolicy,
   StoredDeliveryPolicy,
 } from "@/lib/runs/delivery-policy";
+import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
 
 import { and, eq } from "drizzle-orm";
 
@@ -25,6 +26,7 @@ import {
 } from "@/lib/flows/engine-version";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { resolveDeliveryPolicy } from "@/lib/runs/delivery-policy";
+import { resolveExecutionPolicy } from "@/lib/runs/execution-policy";
 import {
   classifyManualTaskLaunchability,
   getLatestFlowRun,
@@ -42,6 +44,11 @@ const {
   tasks,
 } = schemaModule as unknown as Record<string, any>;
 
+const LAUNCHABLE_FLOW_ENABLEMENT_STATES = new Set<string>([
+  "Enabled",
+  "UpdateAvailable",
+]);
+
 export type TaskLaunchConfig = {
   flow: { id: string; refId: string } | null;
   // `null` when fully launchable; otherwise a typed reason the page can label.
@@ -49,6 +56,7 @@ export type TaskLaunchConfig = {
     | "unconfigured"
     | "flow_missing"
     | "no_revision"
+    | "not_enabled"
     | "not_installed"
     | "unsupported_schema"
     | "incompatible"
@@ -60,9 +68,7 @@ export type TaskLaunchConfig = {
   deliveryPolicy: DeliveryPolicy;
   launchable: boolean;
   launchReason: string;
-  // Placeholder until the execution-control policy ships
-  // (docs/plans/2026-06-18-execution-control-policy-design.md).
-  executionPolicy: "supervised";
+  executionPolicy: ExecutionPolicy;
 };
 
 function providerKind(provider: unknown): string {
@@ -115,6 +121,7 @@ export async function resolveTaskLaunchConfig(
   if (!project) return null;
 
   const mainBranch = project.mainBranch ?? "main";
+  const baseBranch = (task.baseBranch as string | null) ?? mainBranch;
 
   let flowRow: Record<string, any> | null = null;
   let revision: Record<string, any> | null = null;
@@ -131,6 +138,10 @@ export async function resolveTaskLaunchConfig(
       flowIssue = "flow_missing";
     } else if (!flowRow.enabledRevisionId) {
       flowIssue = "no_revision";
+    } else if (
+      !LAUNCHABLE_FLOW_ENABLEMENT_STATES.has(flowRow.enablementState)
+    ) {
+      flowIssue = "not_enabled";
     } else {
       revision =
         (
@@ -255,6 +266,7 @@ export async function resolveTaskLaunchConfig(
     projectMainBranch: mainBranch,
   });
   const verdictTargetBranch = (task.targetBranch as string | null) ?? null;
+  const targetBranch = verdictTargetBranch ?? baseBranch;
   const deliveryPolicy: DeliveryPolicy = {
     ...projectPolicy,
     ...(task.promotionMode
@@ -265,8 +277,13 @@ export async function resolveTaskLaunchConfig(
               : ("merge" as const),
         }
       : {}),
-    ...(verdictTargetBranch ? { targetBranch: verdictTargetBranch } : {}),
+    targetBranch,
   };
+  const executionPolicy = resolveExecutionPolicy({
+    taskDefault: (task.executionPolicy as ExecutionPolicy | null) ?? null,
+    projectDefault:
+      (project.executionPolicyDefault as ExecutionPolicy | null) ?? null,
+  });
 
   const latestFlowRun = await getLatestFlowRun(task.id, db);
   const openBlockers =
@@ -284,11 +301,11 @@ export async function resolveTaskLaunchConfig(
     flowIssue,
     runner,
     runnerTier: task.runnerId ? "task" : resolvedTier,
-    baseBranch: mainBranch,
-    targetBranch: verdictTargetBranch ?? mainBranch,
+    baseBranch,
+    targetBranch,
     deliveryPolicy,
     launchable: manual === "launchable",
     launchReason,
-    executionPolicy: "supervised",
+    executionPolicy,
   };
 }

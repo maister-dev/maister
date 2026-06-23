@@ -2,7 +2,7 @@ import "server-only";
 
 import type { FlowYamlV1 } from "@/lib/config.schema";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
 import { z } from "zod";
@@ -56,6 +56,22 @@ const log = pino({
 });
 
 const querySchema = z.object({ taskId: z.string().min(1) }).strict();
+
+type FlowLaunchIssue =
+  | "unconfigured"
+  | "flow_missing"
+  | "no_revision"
+  | "not_enabled"
+  | "not_installed"
+  | "setup_failed"
+  | "setup_pending"
+  | "unsupported_schema"
+  | "incompatible";
+
+const LAUNCHABLE_FLOW_ENABLEMENT_STATES = new Set<string>([
+  "Enabled",
+  "UpdateAvailable",
+]);
 
 function httpStatusForCode(code: string): number {
   switch (code) {
@@ -127,27 +143,20 @@ function runnerProviderKind(provider: unknown): string {
   );
 }
 
-function assertRevisionLaunchable(
-  flow: Record<string, any>,
+function revisionLaunchIssue(
   revision: Record<string, any>,
-) {
+): FlowLaunchIssue | null {
   if (revision.packageStatus !== "Installed") {
-    throw new MaisterError(
-      "PRECONDITION",
-      `flow "${flow.flowRefId}" enabled revision is ${revision.packageStatus}, not Installed`,
-    );
+    return "not_installed";
   }
-  if (revision.setupStatus === "pending" || revision.setupStatus === "failed") {
-    throw new MaisterError(
-      "PRECONDITION",
-      `flow "${flow.flowRefId}" package setup is ${revision.setupStatus}`,
-    );
+  if (revision.setupStatus === "pending") {
+    return "setup_pending";
+  }
+  if (revision.setupStatus === "failed") {
+    return "setup_failed";
   }
   if (!isSchemaVersionSupported(revision.schemaVersion)) {
-    throw new MaisterError(
-      "CONFIG",
-      `flow "${flow.flowRefId}" requires unsupported manifest schemaVersion ${revision.schemaVersion}`,
-    );
+    return "unsupported_schema";
   }
 
   const compat = isEngineCompatible(
@@ -156,11 +165,39 @@ function assertRevisionLaunchable(
   );
 
   if (!compat.compatible) {
-    throw new MaisterError(
-      "CONFIG",
-      `flow "${flow.flowRefId}" is incompatible with this MAIster engine: ${compat.reason}`,
-    );
+    return "incompatible";
   }
+
+  return null;
+}
+
+function projectFlowLaunchIssue(args: {
+  projectFlow: Record<string, any>;
+  revisionById: Map<string, Record<string, any>>;
+}): FlowLaunchIssue | null {
+  const enabledRevisionId = args.projectFlow.enabledRevisionId as
+    | string
+    | null
+    | undefined;
+
+  if (!enabledRevisionId) {
+    return "no_revision";
+  }
+  if (
+    !LAUNCHABLE_FLOW_ENABLEMENT_STATES.has(
+      args.projectFlow.enablementState as string,
+    )
+  ) {
+    return "not_enabled";
+  }
+
+  const projectRevision = args.revisionById.get(enabledRevisionId);
+
+  if (!projectRevision) {
+    return "no_revision";
+  }
+
+  return revisionLaunchIssue(projectRevision);
 }
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
@@ -205,34 +242,40 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
     // M34 (ADR-089): a flowless simple-intent task still gets options — the
     // popover doubles as the "set up & launch" dialog (the flow pick PATCHes
-    // the task before the run POST).
+    // the task before the run POST). The same response shape is useful for an
+    // already-selected flow that cannot launch anymore: users can still change
+    // the saved Flow/runner defaults instead of getting a dead dialog.
     const flowRows = task.flowId
       ? await db.select().from(flows).where(eq(flows.id, task.flowId))
       : [];
     const flow = flowRows[0] ?? null;
 
     let revision: Record<string, any> | null = null;
+    let flowIssue: FlowLaunchIssue | null = task.flowId
+      ? flow
+        ? null
+        : "flow_missing"
+      : "unconfigured";
 
     if (flow) {
       if (!flow.enabledRevisionId) {
-        throw new MaisterError("PRECONDITION", "flow has no enabled revision");
+        flowIssue = "no_revision";
+      } else if (!LAUNCHABLE_FLOW_ENABLEMENT_STATES.has(flow.enablementState)) {
+        flowIssue = "not_enabled";
+      } else {
+        const revisionRows = await db
+          .select()
+          .from(flowRevisions)
+          .where(eq(flowRevisions.id, flow.enabledRevisionId));
+
+        revision = revisionRows[0] ?? null;
+
+        if (!revision) {
+          flowIssue = "no_revision";
+        } else {
+          flowIssue = revisionLaunchIssue(revision);
+        }
       }
-
-      const revisionRows = await db
-        .select()
-        .from(flowRevisions)
-        .where(eq(flowRevisions.id, flow.enabledRevisionId));
-
-      revision = revisionRows[0] ?? null;
-
-      if (!revision) {
-        throw new MaisterError(
-          "PRECONDITION",
-          "enabled flow revision not found",
-        );
-      }
-
-      assertRevisionLaunchable(flow, revision);
     }
 
     const [
@@ -258,7 +301,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
               ),
             )
         : Promise.resolve([]),
-      revision
+      revision && flowIssue === null
         ? db
             .select({
               stepId: flowRunnerRemaps.stepId,
@@ -278,6 +321,33 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     ]);
     const platformRuntime = runtimeRows[0];
 
+    const projectEnabledRevisionIds = Array.from(
+      new Set(
+        flowRowsForProject
+          .map(
+            (projectFlow: Record<string, any>) => projectFlow.enabledRevisionId,
+          )
+          .filter(
+            (enabledRevisionId: unknown): enabledRevisionId is string =>
+              typeof enabledRevisionId === "string" &&
+              enabledRevisionId.length > 0,
+          ),
+      ),
+    );
+    const projectRevisionRows =
+      projectEnabledRevisionIds.length > 0
+        ? await db
+            .select()
+            .from(flowRevisions)
+            .where(inArray(flowRevisions.id, projectEnabledRevisionIds))
+        : [];
+    const projectRevisionById = new Map<string, Record<string, any>>(
+      projectRevisionRows.map((projectRevision: Record<string, any>) => [
+        projectRevision.id as string,
+        projectRevision,
+      ]),
+    );
+
     if (!platformRuntime) {
       throw new MaisterError(
         "EXECUTOR_UNAVAILABLE",
@@ -286,17 +356,17 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     }
 
     const runnerCatalog = runnerRows.map(runnerCatalogEntry);
+    const stepRunnerId =
+      revision && flow && flowIssue === null
+        ? resolveCompiledStepTargetRunnerId({
+            compiled: compileManifest(revision.manifest as FlowYamlV1),
+            remaps: remapRows as FlowRunnerRemapRow[],
+            flowRefId: flow.flowRefId,
+          })
+        : null;
     const defaultResolution = resolveRunner({
       launchOverrideRunnerId: undefined,
-      step: {
-        runnerId: revision
-          ? resolveCompiledStepTargetRunnerId({
-              compiled: compileManifest(revision.manifest as FlowYamlV1),
-              remaps: remapRows as FlowRunnerRemapRow[],
-              flowRefId: flow.flowRefId,
-            })
-          : null,
-      },
+      step: { runnerId: stepRunnerId },
       projectFlow: {
         defaultRunnerId: projectFlowDefaultRows[0]?.runnerId ?? null,
       },
@@ -315,11 +385,12 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       latestFlowRun,
       { openBlockers },
     );
-    // M34 (ADR-089): a flowless task layers `unconfigured` over launchable —
-    // the popover's flow pick clears it (set-up & launch).
+    // M34 (ADR-089): flow setup issues layer over an otherwise-launchable task.
+    // Run-state/relation blockers keep their precedence; users can still load
+    // the options response and edit away from a stale/broken flow.
     const launchability =
-      manualLaunchability === "launchable" && !task.flowId
-        ? "unconfigured"
+      manualLaunchability === "launchable"
+        ? (flowIssue ?? "launchable")
         : manualLaunchability;
     const branches = await listBranches(project.repoPath, {
       includeRemotes: true,
@@ -333,7 +404,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     // M34 (ADR-089): the triage verdict pre-fills the dialog — runner rides
     // the launchOverride tier, target branch + promotion mode shape the
     // delivery-policy default. Nothing applies without the user's confirm.
+    const defaultBaseBranch =
+      (task.baseBranch as string | null) ?? project.mainBranch ?? "main";
     const verdictTargetBranch = (task.targetBranch as string | null) ?? null;
+    const defaultTargetBranch = verdictTargetBranch ?? defaultBaseBranch;
     const deliveryPolicyDefault = {
       ...projectPolicy,
       ...(task.promotionMode
@@ -344,7 +418,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
                 : ("merge" as const),
           }
         : {}),
-      ...(verdictTargetBranch ? { targetBranch: verdictTargetBranch } : {}),
+      targetBranch: defaultTargetBranch,
     };
     // Resolved execution-control default for the dialog (no launch override at
     // options time). Preset + per-axis option enums are client-side constants
@@ -391,7 +465,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         flowId: task.flowId,
       },
       launchability: {
-        launchable: launchability === "launchable",
+        launchable: launchability === "launchable" && flowIssue === null,
         reason: launchability,
         blockers: openBlockers.map(
           (blocker: { key: string; number: number }) => ({
@@ -400,20 +474,28 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
           }),
         ),
       },
-      flows: flowRowsForProject.map((projectFlow: Record<string, any>) => ({
-        id: projectFlow.id,
-        refId: projectFlow.flowRefId,
-        name: projectFlow.flowRefId,
-        version: projectFlow.version ?? null,
-        enabled: projectFlow.enablementState !== "Disabled",
-        isTaskDefault: projectFlow.id === task.flowId,
-      })),
+      flows: flowRowsForProject.map((projectFlow: Record<string, any>) => {
+        const disabledReason = projectFlowLaunchIssue({
+          projectFlow,
+          revisionById: projectRevisionById,
+        });
+
+        return {
+          id: projectFlow.id,
+          refId: projectFlow.flowRefId,
+          name: projectFlow.flowRefId,
+          version: projectFlow.version ?? null,
+          enabled: disabledReason === null,
+          disabledReason,
+          isTaskDefault: projectFlow.id === task.flowId,
+        };
+      }),
       selectedFlowId: flow?.id ?? "",
       selectedRunnerId:
         (task.runnerId as string | null) ?? defaultResolution.runnerId,
       branches,
-      defaultBaseBranch: project.mainBranch ?? null,
-      defaultTargetBranch: verdictTargetBranch ?? project.mainBranch ?? null,
+      defaultBaseBranch,
+      defaultTargetBranch,
       deliveryPolicyDefault,
       executionPolicyDefault,
     });

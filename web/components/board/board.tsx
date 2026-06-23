@@ -216,6 +216,7 @@ export async function Board({
                     launchLabel={
                       card.runCount > 0 ? t("runAgain") : t("launchFirst")
                     }
+                    relationCandidates={data.relationCandidates}
                     runsCountLabel={(count) => t("runsCount", { count })}
                     slug={slug}
                     triagedLabel={t("triaged")}

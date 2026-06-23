@@ -95,6 +95,21 @@ type SelectOption<T extends string> = {
   disabled?: boolean;
 };
 
+const LAUNCH_UNAVAILABLE_REASON_KEY: Record<string, string> = {
+  blocked: "launchUnavailableReason.blocked",
+  busy: "launchUnavailableReason.busy",
+  crashed: "launchUnavailableReason.crashed",
+  flow_missing: "launchUnavailableReason.flowMissing",
+  incompatible: "launchUnavailableReason.incompatible",
+  not_enabled: "launchUnavailableReason.notEnabled",
+  no_revision: "launchUnavailableReason.noRevision",
+  not_installed: "launchUnavailableReason.notInstalled",
+  setup_failed: "launchUnavailableReason.setupFailed",
+  setup_pending: "launchUnavailableReason.setupPending",
+  target_terminal: "launchUnavailableReason.targetTerminal",
+  unsupported_schema: "launchUnavailableReason.unsupportedSchema",
+};
+
 export interface LaunchPopoverProps {
   taskId: string;
   label: string;
@@ -120,6 +135,15 @@ function selectedValue<T extends string>(key: Key | null, fallback: T): T {
   if (key === null) return fallback;
 
   return String(key) as T;
+}
+
+export function launchUnavailableReasonMessage(
+  reason: string,
+  translate: (key: string) => string,
+): string {
+  const key = LAUNCH_UNAVAILABLE_REASON_KEY[reason];
+
+  return key ? translate(key) : reason;
 }
 
 function LaunchSelect<T extends string>(props: {
@@ -336,7 +360,7 @@ export function LaunchPopover({
   // a half-typed / invalid value is rejected inline before it folds into the
   // policy; the prune step coerces to positive ints (NaN / ≤0 dropped).
   const [execBudget, setExecBudget] = useState<BudgetTextAxis>({});
-  const [execBudgetOpen, setExecBudgetOpen] = useState(false);
+  const [execBudgetOpen, setExecBudgetOpen] = useState(true);
   const dialogId = useId();
   const openerRef = useRef<HTMLButtonElement | null>(null);
   const closeRef = useRef<HTMLButtonElement | null>(null);
@@ -667,6 +691,12 @@ export function LaunchPopover({
     hardMaxTokens: t("budgetHardMaxHint"),
     warnAtPct: "80",
   };
+  const launchUnavailableReason =
+    options && !options.launchability.launchable
+      ? launchUnavailableReasonMessage(options.launchability.reason, (key) =>
+          t(key),
+        )
+      : "";
 
   function onBudgetChange(
     scope: BudgetScope,
@@ -770,7 +800,7 @@ export function LaunchPopover({
                         {unconfigured
                           ? t("unconfiguredHint")
                           : t("disabledReason", {
-                              reason: options.launchability.reason,
+                              reason: launchUnavailableReason,
                             })}
                       </p>
                     ) : null}
@@ -984,9 +1014,7 @@ export function LaunchPopover({
                           type="button"
                           onClick={() => setExecBudgetOpen((v) => !v)}
                         >
-                          {execBudgetOpen
-                            ? t("execAdvancedHide")
-                            : t("execAdvancedShow")}
+                          {execBudgetOpen ? t("budgetHide") : t("budgetShow")}
                         </button>
                       </div>
                       <p className="font-mono text-[10px] text-mute">

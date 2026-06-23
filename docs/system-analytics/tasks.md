@@ -269,13 +269,20 @@ therefore no longer "cannot ever launch again" for the manual UI; they are
 
 The launch dialog is the single manual surface for overrides:
 
-- Flow selector defaults to the task's Flow and lists enabled project Flows
-  only.
+- Flow selector defaults to the task's Flow and lists every project Flow, but
+  only Flows with a launchable enablement state (`Enabled` or
+  `UpdateAvailable`), an enabled revision, installed package state, completed
+  setup, supported schema, and compatible engine bounds are selectable. Every
+  disabled option carries `disabledReason` (`no_revision`, `not_enabled`,
+  setup/schema/compat issue) so cards and task pages can explain why the Flow
+  cannot be chosen for launch.
 - Runner/model selector displays the resolved runner plus ADR-076 model
   application metadata.
 - Base and target branch fields default from project/workspace policy and
   validate against server-derived branch lists.
 - Delivery-policy editor is prefilled from the project default.
+- Execution-policy controls expose preset, checks, human-gate, promotion, and
+  budget ceilings. Empty budget inputs mean unlimited.
 - Every value that differs from the default renders an override marker.
 - The summary line names the branch that will be created and the base commit
   branch it forks from.
@@ -295,7 +302,7 @@ the task page.
 | --- | --- | --- | --- |
 | Rerun a terminal or review task | Task card, task page `/projects/[slug]/tasks/[number]` | Run again is visible for `Done`, `Review`, `Failed`, `Abandoned`, and `Crashed`; click opens the launch dialog; success reopens task to `InFlight`; EN/RU labels exist. | `web/e2e/multi-run-cost-policy.spec.ts`; `web/lib/runs/__tests__/launchability.test.ts` |
 | Understand why a task cannot launch | Task card, task page | Busy, relation-blocked, supervisor-unavailable, and runner-unavailable states show a disabled action with tooltip/reason; control is never hidden silently; error retry keeps the dialog state. | `web/e2e/multi-run-cost-policy.spec.ts`; launch-options route tests |
-| Choose launch overrides deliberately | Launch dialog | Flow, runner/model, base/target branch, and delivery policy defaults are prefilled; every deviation from default is marked; empty branch/flow lists render disabled explanations; invalid server response renders typed error copy; EN/RU coverage. | `web/e2e/multi-run-cost-policy.spec.ts`; `/api/runs` integration tests |
+| Choose launch overrides deliberately | Launch dialog | Flow, runner/model, base/target branch, delivery policy, execution controls, and budget defaults are prefilled; every deviation from default is marked; empty branch/flow lists and non-launchable Flow states render disabled explanations; invalid server response renders typed error copy; EN/RU coverage. | `web/e2e/multi-run-cost-policy.spec.ts`; `/api/runs` integration tests |
 | Recognize multiple attempts quickly | Board task card and task page history | Board preserves latest-run status placement and adds a run-count badge; task page table has empty state for no runs and columns for flow, runner/model, outcome, delivery status, duration, and token total. | `web/e2e/multi-run-cost-policy.spec.ts`; `web/lib/queries/__tests__/task-detail*.test.ts` |
 
 ### Assignment-aware board card (Planned)
@@ -389,6 +396,12 @@ flowchart TD
 - **`flow_id` not registered for this project** → `PRECONDITION`.
 - **Launch attempt on a flowless (`unconfigured`) task** → `PRECONDITION`
   (M34 — Implemented); the schedules dispatcher records `skipped_unconfigured`.
+- **Selected Flow has no enabled package revision** → launch options return
+  `no_revision`; `POST /api/runs` fails fast before any worktree/run/workspace
+  side effect.
+- **Selected Flow package is installed/trusted but not enabled for launch** →
+  launch options return `not_enabled`; `POST /api/runs` fails fast before any
+  worktree/run/workspace side effect.
 - **selected `runnerId` missing, disabled, or not ready** →
   `EXECUTOR_UNAVAILABLE`
   (503).
