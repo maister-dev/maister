@@ -1,12 +1,14 @@
 "use client";
 
 import type { ReactElement } from "react";
+import type {
+  TaskRelationKind,
+  TaskRelationView,
+} from "@/lib/social/relations";
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-
-import type { TaskRelationView } from "@/lib/social/relations";
 
 export interface RelationsEditorLabels {
   title: string;
@@ -23,7 +25,12 @@ export interface RelationsEditorLabels {
   errorGeneric: string;
 }
 
-const KINDS = ["blocks", "depends_on", "parent_of"] as const;
+const KINDS: TaskRelationKind[] = [
+  "blocks",
+  "depends_on",
+  "parent_of",
+  "requires",
+];
 
 export function RelationsEditor({
   slug,
@@ -39,7 +46,7 @@ export function RelationsEditor({
   labels: RelationsEditorLabels;
 }): ReactElement {
   const router = useRouter();
-  const [kind, setKind] = useState<(typeof KINDS)[number]>("blocks");
+  const [kind, setKind] = useState<TaskRelationKind>("blocks");
   const [toNumber, setToNumber] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -128,7 +135,10 @@ export function RelationsEditor({
                       void mutate(
                         "DELETE",
                         relation.direction === "out"
-                          ? { kind: relation.kind, toNumber: relation.other.number }
+                          ? {
+                              kind: relation.kind,
+                              toNumber: relation.other.number,
+                            }
                           : { kind: relation.kind, toNumber: taskNumber },
                         relation.direction === "out"
                           ? taskNumber
@@ -151,7 +161,7 @@ export function RelationsEditor({
             className="rounded-lg border border-line bg-paper px-2 py-1 text-[12px] text-ink"
             disabled={busy}
             value={kind}
-            onChange={(e) => setKind(e.target.value as (typeof KINDS)[number])}
+            onChange={(e) => setKind(e.target.value as TaskRelationKind)}
           >
             {KINDS.map((k) => (
               <option key={k} value={k}>

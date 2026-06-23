@@ -6,7 +6,8 @@ import { z } from "zod";
 
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { isMaisterError, MaisterError } from "@/lib/errors";
-import { updateTaskVerdict } from "@/lib/services/triage";
+import { executionPolicySchema } from "@/lib/runs/execution-policy";
+import { updateTask } from "@/lib/services/tasks";
 import { resolveProjectTaskByNumber } from "@/lib/social/task-lookup";
 
 const log = pino({
@@ -14,11 +15,13 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-// M34 (ADR-089 D11): the board card's launch popover persists its
-// flow/runner/branch/policy edits here in ONE transaction — SET/CLEAR
-// symmetric, an explicit null clears a field. Never touches triage_status.
+// Board/card edits are PATCH-shaped: SET/CLEAR symmetric for nullable launch
+// defaults, and content fields can be patched independently for inline edits.
+// Never touches triage_status.
 const patchBodySchema = z
   .object({
+    title: z.string().trim().min(1).optional(),
+    prompt: z.string().trim().min(1).optional(),
     flowId: z.string().min(1).nullable().optional(),
     runnerId: z.string().min(1).nullable().optional(),
     targetBranch: z.string().min(1).max(255).nullable().optional(),
@@ -26,11 +29,26 @@ const patchBodySchema = z
       .enum(["local_merge", "pull_request"])
       .nullable()
       .optional(),
+    executionPolicy: executionPolicySchema.nullable().optional(),
   })
   .strict()
   .refine((body) => Object.keys(body).length > 0, {
     message: "at least one field is required",
   });
+
+// The full card editor is PUT-shaped: it writes the first-level editable task
+// fields as one issue-style save. Lifecycle fields stay owned by the run state.
+const putBodySchema = z
+  .object({
+    title: z.string().trim().min(1),
+    prompt: z.string().trim().min(1),
+    flowId: z.string().min(1).nullable(),
+    runnerId: z.string().min(1).nullable(),
+    targetBranch: z.string().min(1).max(255).nullable(),
+    promotionMode: z.enum(["local_merge", "pull_request"]).nullable(),
+    executionPolicy: executionPolicySchema.nullable(),
+  })
+  .strict();
 
 function httpStatusForCode(code: string): number {
   switch (code) {
@@ -76,9 +94,11 @@ function parseTaskNumber(raw: string): number | null {
 
 type RouteParams = { params: Promise<{ slug: string; number: string }> };
 
-export async function PATCH(
+async function handleTaskUpdate<T extends z.ZodTypeAny>(
   req: NextRequest,
   { params }: RouteParams,
+  bodySchema: T,
+  label: string,
 ): Promise<NextResponse> {
   const { slug, number } = await params;
 
@@ -99,10 +119,10 @@ export async function PATCH(
 
     await requireProjectAction(resolved.project.id, "editTask");
 
-    let body: z.infer<typeof patchBodySchema>;
+    let body: z.infer<T>;
 
     try {
-      body = patchBodySchema.parse(await req.json());
+      body = bodySchema.parse(await req.json());
     } catch (err) {
       return errorResponse(
         new MaisterError("CONFIG", `invalid body: ${(err as Error).message}`),
@@ -110,19 +130,26 @@ export async function PATCH(
       );
     }
 
-    await updateTaskVerdict({
-      taskId: resolved.task.id,
-      projectId: resolved.project.id,
-      patch: body,
-    });
+    await updateTask(resolved.task.id, resolved.project.id, body);
 
-    log.info(
-      { slug, taskNumber, fields: Object.keys(body) },
-      "task verdict patched",
-    );
+    log.info({ slug, taskNumber, fields: Object.keys(body) }, label);
 
     return NextResponse.json({ ok: true });
   } catch (err) {
     return errorResponse(err, slug);
   }
+}
+
+export async function PATCH(
+  req: NextRequest,
+  ctx: RouteParams,
+): Promise<NextResponse> {
+  return handleTaskUpdate(req, ctx, patchBodySchema, "task patched");
+}
+
+export async function PUT(
+  req: NextRequest,
+  ctx: RouteParams,
+): Promise<NextResponse> {
+  return handleTaskUpdate(req, ctx, putBodySchema, "task replaced");
 }

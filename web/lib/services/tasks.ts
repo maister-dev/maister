@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
+
 import { randomUUID } from "node:crypto";
 
 import { and, desc, eq, sql } from "drizzle-orm";
@@ -10,6 +12,11 @@ import * as schemaModule from "@/lib/db/schema";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { MaisterError } from "@/lib/errors";
 import { actorForUserId, recordTaskActivity } from "@/lib/social/activity";
+import {
+  validateVerdictRefs,
+  type PromotionMode,
+  type TaskVerdictPatch,
+} from "@/lib/services/triage";
 import { subscribe } from "@/lib/social/subscriptions";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches app/api/projects/[slug]/tasks/route.ts).
@@ -241,7 +248,43 @@ export async function listTaskDTOs(
 export type UpdateTaskInput = {
   title?: string;
   prompt?: string;
+  flowId?: string | null;
+  runnerId?: string | null;
+  targetBranch?: string | null;
+  promotionMode?: PromotionMode | null;
+  executionPolicy?: ExecutionPolicy | null;
 };
+
+function updateColumns(input: UpdateTaskInput): Record<string, unknown> {
+  const patch: Record<string, unknown> = { updatedAt: new Date() };
+
+  if (input.title !== undefined) patch.title = input.title;
+  if (input.prompt !== undefined) patch.prompt = input.prompt;
+  if (input.flowId !== undefined) patch.flowId = input.flowId;
+  if (input.runnerId !== undefined) patch.runnerId = input.runnerId;
+  if (input.targetBranch !== undefined) patch.targetBranch = input.targetBranch;
+  if (input.promotionMode !== undefined) {
+    patch.promotionMode = input.promotionMode;
+  }
+  if (input.executionPolicy !== undefined) {
+    patch.executionPolicy = input.executionPolicy;
+  }
+
+  return patch;
+}
+
+function verdictPatch(input: UpdateTaskInput): TaskVerdictPatch {
+  const patch: TaskVerdictPatch = {};
+
+  if (input.flowId !== undefined) patch.flowId = input.flowId;
+  if (input.runnerId !== undefined) patch.runnerId = input.runnerId;
+  if (input.targetBranch !== undefined) patch.targetBranch = input.targetBranch;
+  if (input.promotionMode !== undefined) {
+    patch.promotionMode = input.promotionMode;
+  }
+
+  return patch;
+}
 
 export async function updateTask(
   taskId: string,
@@ -268,10 +311,13 @@ export async function updateTask(
     );
   }
 
-  const patch: Record<string, unknown> = { updatedAt: new Date() };
+  const patch = updateColumns(input);
 
-  if (input.title !== undefined) patch.title = input.title;
-  if (input.prompt !== undefined) patch.prompt = input.prompt;
+  if (Object.keys(patch).length === 1) {
+    throw new MaisterError("CONFIG", "at least one task field is required");
+  }
+
+  await validateVerdictRefs(projectId, verdictPatch(input), _db);
 
   await (_db as any)
     .update(tasks)

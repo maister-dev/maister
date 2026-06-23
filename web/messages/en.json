@@ -970,7 +970,50 @@
     "openRun": "Open run",
     "unconfigured": "no flow",
     "decompositionTitle": "Decomposition ({count})",
-    "decompositionNoRun": "no run"
+    "decompositionNoRun": "no run",
+    "editTask": "Edit task",
+    "editTitle": "Edit title",
+    "editDescription": "Edit description",
+    "editClose": "Close",
+    "editSave": "Save",
+    "editCancel": "Cancel",
+    "editSaving": "Saving…",
+    "editTitleLabel": "Title",
+    "editDescriptionLabel": "Description",
+    "editProperties": "Properties",
+    "editNoFlow": "No flow",
+    "editTargetBranchPlaceholder": "default target",
+    "editPromotionDefault": "Project default",
+    "editPromotionLocalMerge": "Merge",
+    "editExecutionPolicyDefault": "Project default",
+    "editOptionsLoading": "Loading…",
+    "editOptionsError": "Could not load options.",
+    "editOptionsUnavailable": "Flow and runner options are temporarily unavailable. Existing values and other fields can still be saved.",
+    "markdownVisual": "Visual",
+    "markdownSource": "Markdown",
+    "markdownLoading": "Loading editor…",
+    "markdownEmpty": "Start writing the task description.",
+    "markdownToolbar": {
+      "undo": "Undo",
+      "redo": "Redo",
+      "heading1": "Heading 1",
+      "heading2": "Heading 2",
+      "quote": "Quote",
+      "bold": "Bold",
+      "italic": "Italic",
+      "inlineCode": "Inline code",
+      "codeBlock": "Code block",
+      "bulletList": "Bullet list",
+      "numberedList": "Numbered list",
+      "link": "Link",
+      "linkPrompt": "Link URL",
+      "divider": "Divider"
+    },
+    "editValidationRequired": "Title and description are required.",
+    "editErrorConfig": "Invalid task configuration.",
+    "editErrorForbidden": "You do not have permission to edit this task.",
+    "editErrorPrecondition": "This task can only be edited before work starts.",
+    "editErrorGeneric": "Could not save the task."
   },
   "hitl": {
     "allowRun": "allow this run",
@@ -2675,12 +2718,14 @@
     "relationKind": {
       "blocks": "blocks",
       "dependsOn": "depends on",
-      "parentOf": "parent of"
+      "parentOf": "parent of",
+      "requires": "requires"
     },
     "relationKindInverse": {
       "blocks": "blocked by",
       "dependsOn": "required by",
-      "parentOf": "child of"
+      "parentOf": "child of",
+      "requires": "required for"
     },
     "relationsErrorConfig": "Invalid relation (self-relations are not allowed).",
     "relationsErrorNotFound": "No task with that number in this project.",

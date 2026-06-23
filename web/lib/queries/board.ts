@@ -4,6 +4,8 @@ import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { BoardColumn, CrashAction } from "@/lib/board";
 import type { RunStatus, StepRun } from "@/lib/db/schema";
 import type { ReadinessState } from "@/lib/flows/graph/readiness-core";
+import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
+import type { TaskRelationView } from "@/lib/social/relations";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
@@ -17,7 +19,10 @@ import {
 } from "@/lib/queries/portfolio";
 import { computeReadinessByRun } from "@/lib/queries/readiness-batch";
 import { runnerAgentFromFields } from "@/lib/queries/runner-agent";
-import { getOpenRelationBlockers } from "@/lib/social/relations";
+import {
+  getOpenRelationBlockers,
+  getTaskRelationsByTaskIds,
+} from "@/lib/social/relations";
 
 const {
   flows,
@@ -82,6 +87,8 @@ export interface BacklogCard {
   runnerId: string | null;
   targetBranch: string | null;
   promotionMode: "local_merge" | "pull_request" | null;
+  executionPolicy: ExecutionPolicy | null;
+  relations: TaskRelationView[];
   // M37 Phase 6 (ADR-098): non-empty when this task is a `parent_of` SOURCE —
   // the run-plan children rendered as a collapsible decomposition group.
   childTasks: ChildTaskRef[];
@@ -241,6 +248,7 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
       runnerId: tasks.runnerId,
       targetBranch: tasks.targetBranch,
       promotionMode: tasks.promotionMode,
+      executionPolicy: tasks.executionPolicy,
     })
     .from(tasks)
     .leftJoin(flows, eq(flows.id, tasks.flowId))
@@ -275,6 +283,7 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
     .where(eq(projects.id, projectId));
   const projectTaskKey = projectKeyRow?.taskKey ?? "";
   const openBlockers = await getOpenRelationBlockers(taskIds, client);
+  const relationsByTask = await getTaskRelationsByTaskIds(taskIds, client);
 
   // M37 Phase 6 (ADR-098): the `parent_of` decomposition children of every task
   // on the board, with each child's latest-run status. Zero-impact on a task
@@ -512,6 +521,9 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
           | "local_merge"
           | "pull_request"
           | null,
+        executionPolicy:
+          (task.executionPolicy as ExecutionPolicy | null) ?? null,
+        relations: relationsByTask.get(task.taskId) ?? [],
         childTasks: childTasksByTask.get(task.taskId) ?? [],
       });
       backlogPos += 1;

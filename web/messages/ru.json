@@ -970,7 +970,50 @@
     "openRun": "Открыть запуск",
     "unconfigured": "без флоу",
     "decompositionTitle": "Декомпозиция ({count})",
-    "decompositionNoRun": "нет запуска"
+    "decompositionNoRun": "нет запуска",
+    "editTask": "Редактировать задачу",
+    "editTitle": "Изменить название",
+    "editDescription": "Изменить описание",
+    "editClose": "Закрыть",
+    "editSave": "Сохранить",
+    "editCancel": "Отмена",
+    "editSaving": "Сохранение…",
+    "editTitleLabel": "Название",
+    "editDescriptionLabel": "Описание",
+    "editProperties": "Поля",
+    "editNoFlow": "Без флоу",
+    "editTargetBranchPlaceholder": "целевая по умолчанию",
+    "editPromotionDefault": "По умолчанию проекта",
+    "editPromotionLocalMerge": "Merge",
+    "editExecutionPolicyDefault": "По умолчанию проекта",
+    "editOptionsLoading": "Загрузка…",
+    "editOptionsError": "Не удалось загрузить варианты.",
+    "editOptionsUnavailable": "Варианты Flow и runner временно недоступны. Текущие значения и остальные поля всё равно можно сохранить.",
+    "markdownVisual": "Визуально",
+    "markdownSource": "Markdown",
+    "markdownLoading": "Загрузка редактора…",
+    "markdownEmpty": "Начните писать описание задачи.",
+    "markdownToolbar": {
+      "undo": "Отменить",
+      "redo": "Повторить",
+      "heading1": "Заголовок 1",
+      "heading2": "Заголовок 2",
+      "quote": "Цитата",
+      "bold": "Полужирный",
+      "italic": "Курсив",
+      "inlineCode": "Код в строке",
+      "codeBlock": "Блок кода",
+      "bulletList": "Маркированный список",
+      "numberedList": "Нумерованный список",
+      "link": "Ссылка",
+      "linkPrompt": "URL ссылки",
+      "divider": "Разделитель"
+    },
+    "editValidationRequired": "Название и описание обязательны.",
+    "editErrorConfig": "Некорректная конфигурация задачи.",
+    "editErrorForbidden": "Нет прав на редактирование этой задачи.",
+    "editErrorPrecondition": "Задачу можно редактировать только до старта работы.",
+    "editErrorGeneric": "Не удалось сохранить задачу."
   },
   "hitl": {
     "allowRun": "разрешить на этот запуск",
@@ -2675,12 +2718,14 @@
     "relationKind": {
       "blocks": "блокирует",
       "dependsOn": "зависит от",
-      "parentOf": "родитель"
+      "parentOf": "родитель",
+      "requires": "требует"
     },
     "relationKindInverse": {
       "blocks": "заблокирована",
       "dependsOn": "нужна для",
-      "parentOf": "входит в"
+      "parentOf": "входит в",
+      "requires": "нужна для"
     },
     "relationsErrorConfig": "Недопустимая связь (связь задачи с самой собой запрещена).",
     "relationsErrorNotFound": "В проекте нет задачи с таким номером.",

@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { ActorDTO } from "@/lib/social/actors";
+import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
 
 import { and, desc, eq } from "drizzle-orm";
 
@@ -104,6 +105,11 @@ export type TaskDetailData = {
     number: number;
     title: string;
     prompt: string;
+    flowId: string | null;
+    runnerId: string | null;
+    targetBranch: string | null;
+    promotionMode: "local_merge" | "pull_request" | null;
+    executionPolicy: ExecutionPolicy | null;
     status: string;
     // M34: the triager's verdict mark (nullable 'triaged').
     triageStatus: "triaged" | null;
@@ -397,20 +403,43 @@ export async function getTaskDetail(
 async function taskExtrasOf(
   db: { select: any },
   taskId: string,
-): Promise<{ prompt: string; triageStatus: "triaged" | null }> {
+): Promise<{
+  prompt: string;
+  flowId: string | null;
+  runnerId: string | null;
+  targetBranch: string | null;
+  promotionMode: "local_merge" | "pull_request" | null;
+  executionPolicy: ExecutionPolicy | null;
+  triageStatus: "triaged" | null;
+}> {
   const rows = (await db
     .select({
       prompt: schemaModule.tasks.prompt,
+      flowId: schemaModule.tasks.flowId,
+      runnerId: schemaModule.tasks.runnerId,
+      targetBranch: schemaModule.tasks.targetBranch,
+      promotionMode: schemaModule.tasks.promotionMode,
+      executionPolicy: schemaModule.tasks.executionPolicy,
       triageStatus: schemaModule.tasks.triageStatus,
     })
     .from(schemaModule.tasks)
     .where(eq(schemaModule.tasks.id, taskId))) as Array<{
     prompt: string;
+    flowId: string | null;
+    runnerId: string | null;
+    targetBranch: string | null;
+    promotionMode: "local_merge" | "pull_request" | null;
+    executionPolicy: ExecutionPolicy | null;
     triageStatus: "triaged" | null;
   }>;
 
   return {
     prompt: rows[0]?.prompt ?? "",
+    flowId: rows[0]?.flowId ?? null,
+    runnerId: rows[0]?.runnerId ?? null,
+    targetBranch: rows[0]?.targetBranch ?? null,
+    promotionMode: rows[0]?.promotionMode ?? null,
+    executionPolicy: rows[0]?.executionPolicy ?? null,
     triageStatus: rows[0]?.triageStatus ?? null,
   };
 }

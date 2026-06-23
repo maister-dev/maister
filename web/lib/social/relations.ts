@@ -372,3 +372,72 @@ export async function getTaskRelations(
 
   return [...outgoing.map(view("out")), ...incoming.map(view("in"))];
 }
+
+export async function getTaskRelationsByTaskIds(
+  taskIds: string[],
+  db?: Db,
+): Promise<Map<string, TaskRelationView[]>> {
+  const relationsByTask = new Map<string, TaskRelationView[]>();
+
+  if (taskIds.length === 0) return relationsByTask;
+
+  const _db = (db ?? getDb()) as unknown as { select: any };
+
+  const outgoing = (await _db
+    .select({
+      taskId: taskRelations.fromTaskId,
+      id: taskRelations.id,
+      kind: taskRelations.kind,
+      otherId: tasks.id,
+      number: tasks.number,
+      key: projects.taskKey,
+      title: tasks.title,
+      status: tasks.status,
+    })
+    .from(taskRelations)
+    .innerJoin(tasks, eq(taskRelations.toTaskId, tasks.id))
+    .innerJoin(projects, eq(tasks.projectId, projects.id))
+    .where(inArray(taskRelations.fromTaskId, taskIds))) as Array<any>;
+
+  const incoming = (await _db
+    .select({
+      taskId: taskRelations.toTaskId,
+      id: taskRelations.id,
+      kind: taskRelations.kind,
+      otherId: tasks.id,
+      number: tasks.number,
+      key: projects.taskKey,
+      title: tasks.title,
+      status: tasks.status,
+    })
+    .from(taskRelations)
+    .innerJoin(tasks, eq(taskRelations.fromTaskId, tasks.id))
+    .innerJoin(projects, eq(tasks.projectId, projects.id))
+    .where(inArray(taskRelations.toTaskId, taskIds))) as Array<any>;
+
+  function pushRelation(
+    row: any,
+    direction: TaskRelationView["direction"],
+  ): void {
+    const list = relationsByTask.get(row.taskId) ?? [];
+
+    list.push({
+      id: row.id,
+      direction,
+      kind: row.kind,
+      other: {
+        taskId: row.otherId,
+        key: row.key,
+        number: row.number,
+        title: row.title,
+        status: row.status,
+      },
+    });
+    relationsByTask.set(row.taskId, list);
+  }
+
+  for (const row of outgoing) pushRelation(row, "out");
+  for (const row of incoming) pushRelation(row, "in");
+
+  return relationsByTask;
+}

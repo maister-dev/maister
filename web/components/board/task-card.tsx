@@ -6,6 +6,10 @@ import clsx from "clsx";
 import Link from "next/link";
 
 import { LaunchPopover } from "@/components/board/launch-popover";
+import {
+  TaskCardEditModal,
+  TaskInlineEditableField,
+} from "@/components/board/task-card-editing";
 import { TaskDecomposition } from "@/components/board/task-decomposition";
 
 export interface TaskCardProps {
@@ -65,27 +69,39 @@ export function TaskCard({
           PRIO_STRIPE[card.priority],
         )}
       />
-      <div className="flex items-start justify-between gap-2.5">
-        <div className="flex-1 text-[13.5px] font-semibold leading-[1.35] tracking-[-0.005em] text-ink">
-          <span className="mr-1.5 rounded border border-line bg-ivory px-1 py-px align-middle font-mono text-[9.5px] font-bold tracking-[0.05em] text-mute">
+      <div
+        className="flex items-center justify-between gap-2 rounded-md border border-line-soft bg-ivory/70 px-2 py-1.5"
+        data-testid="task-card-meta-bar"
+      >
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+          <span className="rounded border border-line bg-paper px-1.5 py-px font-mono text-[9.5px] font-bold tracking-[0.05em] text-mute">
             {card.keyRef}
           </span>
-          <Link
-            className="align-middle hover:text-amber hover:underline"
-            href={`/projects/${slug}/tasks/${card.number}`}
+          <span
+            className={clsx(
+              "rounded border px-1.5 py-px font-mono text-[9.5px] font-bold uppercase tracking-[0.08em]",
+              chip,
+            )}
           >
-            {card.title}
-          </Link>
+            {card.flowRef ?? unconfiguredLabel}
+          </span>
         </div>
-        <span
-          className={clsx(
-            "flex-none rounded border px-[7px] py-[3px] font-mono text-[9.5px] font-bold uppercase tracking-[0.08em]",
-            chip,
-          )}
-        >
-          {card.flowRef ?? unconfiguredLabel}
-        </span>
+        <TaskCardEditModal
+          canEdit={canAct}
+          card={card}
+          slug={slug}
+          triggerClassName="inline-flex h-6 w-6 flex-none items-center justify-center rounded-md border border-line bg-paper text-mute transition hover:border-amber hover:text-amber focus:border-amber focus:text-amber"
+        />
       </div>
+      <TaskInlineEditableField
+        canEdit={canAct}
+        className="min-w-0 text-[13.5px] font-semibold leading-[1.35] tracking-[-0.005em] text-ink"
+        field="title"
+        href={`/projects/${slug}/tasks/${card.number}`}
+        slug={slug}
+        taskNumber={card.number}
+        value={card.title}
+      />
       {card.runCount > 0 ? (
         <span
           className="w-fit rounded-full border border-line bg-ivory px-2 py-[2px] font-mono text-[10px] font-bold tracking-[0.04em] text-ink-2"
@@ -94,9 +110,15 @@ export function TaskCard({
           {runsCountLabel(card.runCount)}
         </span>
       ) : null}
-      <div className="font-mono text-[11px] leading-[1.45] tracking-[0.01em] text-mute">
-        {card.prompt}
-      </div>
+      <TaskInlineEditableField
+        multiline
+        canEdit={canAct}
+        className="font-mono text-[11px] leading-[1.45] tracking-[0.01em] text-mute"
+        field="prompt"
+        slug={slug}
+        taskNumber={card.number}
+        value={card.prompt}
+      />
       {card.blockedBy.length > 0 ? (
         <div className="flex flex-wrap items-center gap-1 font-mono text-[10px] text-danger">
           <span>{blockedByLabel}</span>

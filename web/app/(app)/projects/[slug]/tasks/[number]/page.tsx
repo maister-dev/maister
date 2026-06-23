@@ -1,18 +1,23 @@
 import type { ReactElement } from "react";
 import type { RunStatus, TaskStatus } from "@/lib/db/schema";
+import type { TaskEditableTarget } from "@/components/board/task-card-editing";
 
 import { getTranslations } from "next-intl/server";
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 
 import { LaunchPopover } from "@/components/board/launch-popover";
+import {
+  TaskCardEditModal,
+  TaskInlineEditableField,
+} from "@/components/board/task-card-editing";
 import { type FlowGraphViewLabels } from "@/components/board/flow-graph-view";
 import { FlowGraphViewSection } from "@/components/board/flow-graph-view-section";
 import { CommentComposer } from "@/components/social/comment-composer";
 import { FollowButton } from "@/components/social/follow-button";
 import { TaskAgentActions } from "@/components/social/task-agent-actions";
-import { MarkdownBody } from "@/components/social/markdown-body";
 import { RelationsEditor } from "@/components/social/relations-editor";
+import { TaskDetailPromptEditor } from "@/components/social/task-detail-prompt-editor";
 import { TaskTimeline } from "@/components/social/task-timeline";
 import RunDiff from "@/components/workbench/run-diff";
 import { getProjectRole, getSessionUser } from "@/lib/authz";
@@ -239,6 +244,19 @@ export default async function TaskDetailPage({
       run_launched: t("event.runLaunched"),
     },
   };
+  const editableTask: TaskEditableTarget = {
+    taskId: detail.task.id,
+    number: detail.task.number,
+    keyRef: detail.keyRef,
+    title: detail.task.title,
+    prompt: detail.task.prompt,
+    flowId: detail.task.flowId,
+    runnerId: detail.task.runnerId,
+    targetBranch: detail.task.targetBranch,
+    promotionMode: detail.task.promotionMode,
+    executionPolicy: detail.task.executionPolicy,
+    relations: detail.relations,
+  };
 
   return (
     <div className="flex flex-col gap-6">
@@ -261,9 +279,20 @@ export default async function TaskDetailPage({
           ) : null}
         </div>
         <div className="flex items-start justify-between gap-3">
-          <h1 className="text-[20px] font-semibold leading-tight text-ink">
-            {detail.task.title}
-          </h1>
+          <div
+            aria-level={1}
+            className="min-w-0 flex-1 text-[20px] font-semibold leading-tight text-ink"
+            role="heading"
+          >
+            <TaskInlineEditableField
+              canEdit={canAct}
+              className="min-w-0"
+              field="title"
+              slug={slug}
+              taskNumber={detail.task.number}
+              value={detail.task.title}
+            />
+          </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
             {canAct ? (
               <TaskAgentActions
@@ -300,10 +329,21 @@ export default async function TaskDetailPage({
               slug={slug}
               taskNumber={detail.task.number}
             />
+            <TaskCardEditModal
+              canEdit={canAct}
+              card={editableTask}
+              slug={slug}
+              triggerClassName="inline-flex h-8 w-8 flex-none items-center justify-center rounded-md border border-line bg-paper text-mute transition hover:border-amber hover:text-amber focus:border-amber focus:text-amber"
+            />
           </div>
         </div>
         <div className="rounded-lg border border-line-soft bg-paper p-3">
-          <MarkdownBody text={detail.task.prompt} />
+          <TaskDetailPromptEditor
+            canEdit={canAct}
+            prompt={detail.task.prompt}
+            slug={slug}
+            taskNumber={detail.task.number}
+          />
         </div>
         <RelationsEditor
           canEdit={canAct}
@@ -318,11 +358,13 @@ export default async function TaskDetailPage({
               blocks: t("relationKind.blocks"),
               depends_on: t("relationKind.dependsOn"),
               parent_of: t("relationKind.parentOf"),
+              requires: t("relationKind.requires"),
             },
             kindIn: {
               blocks: t("relationKindInverse.blocks"),
               depends_on: t("relationKindInverse.dependsOn"),
               parent_of: t("relationKindInverse.parentOf"),
+              requires: t("relationKindInverse.requires"),
             },
             errorConfig: t("relationsErrorConfig"),
             errorNotFound: t("relationsErrorNotFound"),
@@ -379,28 +421,6 @@ export default async function TaskDetailPage({
           </div>
         </section>
       ) : null}
-
-      <section className="flex flex-col gap-3">
-        <h2 className="text-[12px] font-semibold uppercase tracking-[0.08em] text-mute">
-          {t("timelineTitle")}
-        </h2>
-        <TaskTimeline items={detail.timeline} labels={timelineLabels} />
-        {canAct ? (
-          <CommentComposer
-            labels={{
-              placeholder: t("composerPlaceholder"),
-              submit: t("composerSubmit"),
-              submitting: t("composerSubmitting"),
-              hint: t("composerHint"),
-              errorConfig: t("composerErrorConfig"),
-              errorForbidden: t("errorForbidden"),
-              errorGeneric: t("errorGeneric"),
-            }}
-            slug={slug}
-            taskNumber={detail.task.number}
-          />
-        ) : null}
-      </section>
 
       <section className="flex flex-col gap-2">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -519,6 +539,28 @@ export default async function TaskDetailPage({
             </table>
           </div>
         )}
+      </section>
+
+      <section className="flex flex-col gap-3">
+        <h2 className="text-[12px] font-semibold uppercase tracking-[0.08em] text-mute">
+          {t("timelineTitle")}
+        </h2>
+        <TaskTimeline items={detail.timeline} labels={timelineLabels} />
+        {canAct ? (
+          <CommentComposer
+            labels={{
+              placeholder: t("composerPlaceholder"),
+              submit: t("composerSubmit"),
+              submitting: t("composerSubmitting"),
+              hint: t("composerHint"),
+              errorConfig: t("composerErrorConfig"),
+              errorForbidden: t("errorForbidden"),
+              errorGeneric: t("errorGeneric"),
+            }}
+            slug={slug}
+            taskNumber={detail.task.number}
+          />
+        ) : null}
       </section>
 
       {graph ? (
