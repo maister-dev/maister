@@ -256,7 +256,7 @@ describe("respondToHitl hook_trip integration", () => {
     expect((await getAssignment(assignmentId)).status).toBe("cancelled");
   });
 
-  it("agent resume → run flipped Running + startAgentSession respawns", async () => {
+  it("agent resume → 202 NeedsInput, run claimed Running async + startAgentSession respawns", async () => {
     const projectId = await seedProject("ht-agent-resume");
     const runId = await seedRun(projectId, {
       runKind: "agent",
@@ -274,9 +274,17 @@ describe("respondToHitl hook_trip integration", () => {
     );
 
     expect(res.status).toBe(202);
-    expect((await getRun(runId)).status).toBe("Running");
+    // The response reports NeedsInput (built before the claim) — the runner, not
+    // the response tx, owns NeedsInput→Running and claims it off the response
+    // path. The DB row flips to Running shortly after (async claim).
+    expect(await res.json()).toMatchObject({
+      runStatus: "NeedsInput",
+      state: "resume-in-progress",
+    });
 
-    await new Promise((r) => setTimeout(r, 0));
+    await vi.waitFor(async () => {
+      expect((await getRun(runId)).status).toBe("Running");
+    });
     expect(vi.mocked(startAgentSession)).toHaveBeenCalledWith(
       runId,
       expect.objectContaining({ db }),
@@ -307,13 +315,15 @@ describe("respondToHitl hook_trip integration", () => {
     expect((await getRun(runId)).status).toBe("NeedsInput");
   });
 
-  it("idempotent: a second response returns already-delivered (200)", async () => {
+  it("idempotent: a second response returns already-delivered (200), no double-spawn", async () => {
     const projectId = await seedProject("ht-idem");
     const runId = await seedRun(projectId, {
       runKind: "agent",
       acpSessionId: "acp",
     });
     const hitlRequestId = await seedHookTripHitl(runId, "agent");
+
+    const { startAgentSession } = await import("@/lib/agents/launch");
 
     const first = await respondToHitl(
       { runId, hitlRequestId, body: { optionId: "resume" } },
@@ -322,6 +332,11 @@ describe("respondToHitl hook_trip integration", () => {
     );
 
     expect(first.status).toBe(202);
+    // Let the first claim land (run Running) before retrying.
+    await vi.waitFor(async () => {
+      expect((await getRun(runId)).status).toBe("Running");
+    });
+    expect(vi.mocked(startAgentSession)).toHaveBeenCalledTimes(1);
 
     const second = await respondToHitl(
       { runId, hitlRequestId, body: { optionId: "resume" } },
@@ -331,6 +346,9 @@ describe("respondToHitl hook_trip integration", () => {
 
     expect(second.status).toBe(200);
     expect(await second.json()).toMatchObject({ idempotent: true });
+    // The run already advanced (Running) → the retry must NOT re-claim/respawn.
+    await new Promise((r) => setTimeout(r, 10));
+    expect(vi.mocked(startAgentSession)).toHaveBeenCalledTimes(1);
   });
 
   it("flow already-delivered retry self-heals: re-queues runFlow when still NeedsInput", async () => {
@@ -407,6 +425,82 @@ describe("respondToHitl hook_trip integration", () => {
     });
     await new Promise((r) => setTimeout(r, 0));
     expect(vi.mocked(runFlow)).not.toHaveBeenCalled();
+  });
+
+  it("agent already-delivered retry self-heals: re-claims + respawns when still NeedsInput", async () => {
+    const projectId = await seedProject("ht-agent-reheal");
+    const runId = await seedRun(projectId, {
+      runKind: "agent",
+      acpSessionId: "acp",
+    });
+    const hitlRequestId = await seedHookTripHitl(runId, "agent");
+
+    // Simulate a lost post-commit handoff: respondedAt committed, but the run
+    // was left NeedsInput because the original claim never landed (process
+    // restart between the commit and claimAndResumeAgentRun).
+    await (db as any)
+      .update(schema.hitlRequests)
+      .set({ respondedAt: new Date() })
+      .where(eq(schema.hitlRequests.id, hitlRequestId));
+
+    const { startAgentSession } = await import("@/lib/agents/launch");
+
+    const retry = await respondToHitl(
+      { runId, hitlRequestId, body: { optionId: "resume" } },
+      userActor,
+      { db },
+    );
+
+    expect(retry.status).toBe(200);
+    expect(await retry.json()).toMatchObject({
+      idempotent: true,
+      runStatus: "NeedsInput",
+    });
+    // Durable recovery: the same-payload retry re-claims the awaiting run and
+    // respawns — not an inert 200 that strands it (the pre-fix behavior).
+    await vi.waitFor(async () => {
+      expect((await getRun(runId)).status).toBe("Running");
+    });
+    expect(vi.mocked(startAgentSession)).toHaveBeenCalledWith(
+      runId,
+      expect.objectContaining({ db }),
+    );
+  });
+
+  it("agent already-delivered retry does NOT re-claim once the run advanced", async () => {
+    const projectId = await seedProject("ht-agent-advanced");
+    const runId = await seedRun(projectId, {
+      runKind: "agent",
+      acpSessionId: "acp",
+    });
+    const hitlRequestId = await seedHookTripHitl(runId, "agent");
+
+    await (db as any)
+      .update(schema.hitlRequests)
+      .set({ respondedAt: new Date() })
+      .where(eq(schema.hitlRequests.id, hitlRequestId));
+    // The run already advanced past awaiting (e.g. the claim landed and the run
+    // moved on, or reconcile crashed it).
+    await (db as any)
+      .update(schema.runs)
+      .set({ status: "Review" })
+      .where(eq(schema.runs.id, runId));
+
+    const { startAgentSession } = await import("@/lib/agents/launch");
+
+    const retry = await respondToHitl(
+      { runId, hitlRequestId, body: { optionId: "resume" } },
+      userActor,
+      { db },
+    );
+
+    expect(retry.status).toBe(200);
+    expect(await retry.json()).toMatchObject({
+      idempotent: true,
+      runStatus: "Review",
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(vi.mocked(startAgentSession)).not.toHaveBeenCalled();
   });
 
   it("rejects an unknown optionId (PRECONDITION)", async () => {

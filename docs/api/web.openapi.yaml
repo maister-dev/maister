@@ -4450,6 +4450,16 @@ paths:
           `input-<stepId>.json` atomically. `respondedAt` is marked
           after the artifact write succeeds. A losing concurrent
           submission gets 409 BEFORE it can corrupt the artifact.
+        - **hook_trip** (ADR-108): a guardrail-trip resume-or-abort, like
+          `infra_recovery` / `budget_breach`. Human-actor-only (a machine/agent
+          token is rejected 403 at the shared chokepoint — it can never dismiss
+          its own trip). `optionId: "abort"` fails the run terminally
+          (`run.failed`, reason `hook_trip_abandoned`) → 200. `optionId:
+          "resume"` leaves the run `NeedsInput` and re-enters it through its
+          run_kind's resume path (flow → `runFlow`; agent → the runner claims
+          `NeedsInput → Running` and respawns), returning 202
+          `{ runStatus: "NeedsInput", state: "resume-in-progress" }`. Idempotent:
+          a same-payload retry whose prior resume handoff was lost re-drives it.
 
         **(M11a — Designed) graph `human_review` decisions.** For a graph
         review HITL the reviewer's `decision` / `comments` / `workspacePolicy`
@@ -4530,6 +4540,10 @@ paths:
                 value:
                   response:
                     decision: "approve"
+              hook-trip-resume:
+                summary: (ADR-108) Resume a guardrail-tripped run
+                value:
+                  optionId: "resume"
       responses:
         "200":
           description: |
@@ -12329,17 +12343,25 @@ components:
     HitlResponseBody:
       type: object
       description: |
-        Discriminated union. Exactly ONE of `optionId` (permission) or
-        `response` (form/human) MUST be present, matching the row's
-        `kind` field.
+        Discriminated union keyed on the row's `kind`. `optionId` is present for
+        `permission` and the resume-or-abort decision kinds (`hook_trip`,
+        `infra_recovery`, `budget_breach`); `response` is present for
+        `form` | `human`. Exactly ONE of the two MUST match the row's `kind`.
       properties:
         optionId:
           type: string
           minLength: 1
           description: |
-            Required iff the HITL row has `kind == "permission"`. MUST
-            match one of the options the supervisor declared on the
-            `session.permission_request` event.
+            For `kind == "permission"`: MUST match one of the options the
+            supervisor declared on the `session.permission_request` event.
+
+            For the resume-or-abort decision kinds it names the chosen decision:
+            `hook_trip` → `"resume" | "abort"` (ADR-108 guardrail trip).
+            (`infra_recovery` uses `"retry" | "abandon"` and `budget_breach`
+            uses `"raise" | "abandon"` here likewise.) These kinds are
+            human-actor-only; abort/abandon fails the run terminally → 200,
+            resume/retry returns 202
+            `{ runStatus: "NeedsInput", state: "resume-in-progress" }`.
         response:
           description: |
             Required iff the HITL row has `kind == "form" | "human"`.

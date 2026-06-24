@@ -116,6 +116,49 @@ function scheduleResume(runId: string): void {
   );
 }
 
+// ADR-108 (M40): idempotent agent hook_trip resume claim. The agent run is left
+// NeedsInput|NeedsInputIdle through the response tx; the NeedsInput→Running claim
+// happens HERE, off the response path (the runner — not the response tx — owns
+// the transition, mirroring runFlow for a flow run). The CAS is the single
+// serialization point: 0 rows means the run already advanced (a prior resume won
+// or it moved terminal), so a same-payload retry never double-spawns. Called from
+// BOTH the first-success path and the already-delivered retry so a process
+// restart between the respondedAt commit and the original claim cannot strand the
+// run. The post-claim crash window (Running, no live session yet) is recovered by
+// the crash-reconcile sweep, as for any agent run.
+function claimAndResumeAgentRun(runId: string, db: any): void {
+  void (async () => {
+    const claimed = await db
+      .update(runs)
+      .set({ status: "Running", keepaliveUntil: null, checkpointAt: null })
+      .where(
+        and(
+          eq(runs.id, runId),
+          inArray(runs.status, ["NeedsInput", "NeedsInputIdle"]),
+        ),
+      )
+      .returning({ id: runs.id });
+
+    if (claimed.length === 0) {
+      log.debug(
+        { runId },
+        "agent hook_trip resume — run already advanced, no re-claim",
+      );
+
+      return;
+    }
+
+    const { startAgentSession } = await import("@/lib/agents/launch");
+
+    await startAgentSession(runId, { db });
+  })().catch((err: unknown) =>
+    log.error(
+      { runId, err: err instanceof Error ? err.message : String(err) },
+      "agent hook_trip resume failed",
+    ),
+  );
+}
+
 // Stable comparison so retries with the same payload are idempotent.
 // Different key order with the same fields hashes differently — clients
 // retrying should send the same byte stream.
@@ -1818,30 +1861,14 @@ async function handleHookTripResponse(args: {
       return { transition: "aborted" } as const;
     }
 
-    // resume: an agent run has no live session after a trip (it was
-    // checkpointed) — flip it Running here so startAgentSession respawns +
-    // session/resumes. A flow run is left NeedsInput; runFlow does its own
-    // NeedsInput→Running CAS on resume. CAS-lost (run moved) → CONFLICT
-    // rolls the whole tx back (respondedAt reverts).
-    if (isAgent) {
-      const rows = await tx
-        .update(runs)
-        .set({ status: "Running", keepaliveUntil: null, checkpointAt: null })
-        .where(
-          and(
-            eq(runs.id, runId),
-            inArray(runs.status, ["NeedsInput", "NeedsInputIdle"]),
-          ),
-        )
-        .returning({ id: runs.id });
-
-      if (rows.length === 0) {
-        throw new MaisterError(
-          "CONFLICT",
-          `run ${runId} is no longer awaiting a hook_trip response`,
-        );
-      }
-    }
+    // resume: the run is left NeedsInput|NeedsInputIdle here for BOTH run kinds.
+    // The runner owns NeedsInput→Running on resume — flow via runFlow's own CAS,
+    // agent via claimAndResumeAgentRun (off the response path). Keeping the run
+    // awaiting until the claim lands is the durable re-drive signal: a
+    // same-payload retry whose prior handoff was lost re-drives from the
+    // already-delivered branch (mirrors the flow self-heal). No in-tx Running
+    // flip — that flip destroyed the agent re-drive signal and stranded a lost
+    // handoff as a fake Running run until reconcile crashed it.
     await systemCloseActiveAssignmentsForRun({
       db: tx,
       runId,
@@ -1854,13 +1881,18 @@ async function handleHookTripResponse(args: {
 
   if (outcome.transition === "already-delivered") {
     // Self-heal a crash between the respondedAt commit and the post-commit
-    // resume handoff: a resumed flow run is left NeedsInput and, if the original
-    // scheduleResume was lost (process restart), has no reconcile backstop.
-    // Re-queue here so the same-payload retry is the durable recovery path —
-    // idempotent, runFlow's NeedsInput resume gate no-ops if the run already
-    // advanced. (Agent resume CAS'd Running in the same tx, so it is never
-    // NeedsInput here; a stranded Running agent run is recovered by reconcile.)
-    if (outcome.runStatus === "NeedsInput") {
+    // resume handoff: the run was left awaiting, so a same-payload retry is the
+    // durable recovery path. Re-drive the run_kind's resume — idempotent: the
+    // agent claim CAS / runFlow's NeedsInput gate no-ops if the run already
+    // advanced. (A stranded post-claim Running agent run is recovered by
+    // reconcile.)
+    if (
+      isAgent &&
+      (outcome.runStatus === "NeedsInput" ||
+        outcome.runStatus === "NeedsInputIdle")
+    ) {
+      claimAndResumeAgentRun(runId, db);
+    } else if (!isAgent && outcome.runStatus === "NeedsInput") {
       scheduleResume(runId);
     }
 
@@ -1882,22 +1914,10 @@ async function handleHookTripResponse(args: {
     );
   }
 
-  // resume → re-enter the run through its run_kind's resume path.
+  // resume → re-enter the run through its run_kind's resume path. The run is
+  // left awaiting; the runner owns NeedsInput→Running (agent claim / runFlow).
   if (isAgent) {
-    const { startAgentSession } = await import("@/lib/agents/launch");
-
-    queueMicrotask(() => {
-      void startAgentSession(runId, { db }).catch((err: unknown) => {
-        log.error(
-          {
-            runId,
-            hitlRequestId,
-            err: err instanceof Error ? err.message : String(err),
-          },
-          "agent hook_trip resume failed",
-        );
-      });
-    });
+    claimAndResumeAgentRun(runId, db);
   } else {
     scheduleResume(runId);
   }
@@ -1914,7 +1934,7 @@ async function handleHookTripResponse(args: {
   );
 
   return NextResponse.json(
-    { ok: true, runStatus: "Running", state: "resume-in-progress" },
+    { ok: true, runStatus: "NeedsInput", state: "resume-in-progress" },
     { status: 202 },
   );
 }
