@@ -3,6 +3,9 @@
 // supervisor's universal guardrail interceptor end-to-end. Scenarios (argv):
 //   --scenario repetition          --count N → N identical permission requests
 //   --scenario path_guard                    → one out-of-lane then one in-lane write
+//   --scenario path_guard_repeat   --count N → N IDENTICAL out-of-lane writes (each
+//                                              denied) — proves repeated denials
+//                                              feed the liveness breakers
 //   --scenario path_guard_kindonly --count N → N write requests with NO locations
 //   --scenario no_progress         --count M → M non-write tool_call turns
 //   --scenario no_progress_reset   --count M → (M-1) idle, one write (reset), (M-1) idle
@@ -149,6 +152,14 @@ class GuardrailAgent {
       // deny-and-continue + selective enforcement, even under auto-approve.
       await this.requestWrite(sessionId, "secrets/.env", "tc-pg-out");
       await this.requestWrite(sessionId, "src/ok.ts", "tc-pg-in");
+    } else if (scenario === "path_guard_repeat") {
+      // N IDENTICAL out-of-lane writes — same kind/title/locations, only
+      // toolCallId varies. Each is denied by path_guard; the repeated denials
+      // must feed the liveness breakers (repetition / no_progress) so the run
+      // halts EXACTLY once instead of looping forever.
+      for (let i = 0; i < count; i += 1) {
+        await this.requestWrite(sessionId, "secrets/.env", `tc-pgr-${i}`);
+      }
     } else if (scenario === "path_guard_kindonly") {
       // N write requests with no `locations` — an armed path_guard denies each
       // (kind-only fallback) but WARNs only once per session.

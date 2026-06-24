@@ -508,37 +508,11 @@ export async function createAcpConnection(
           return { outcome: { outcome: "cancelled" } };
         }
 
-        // Rule 2 — path_guard (deny-and-continue): a write outside the lane is
-        // denied inline; the run continues. Repeated denials make no progress, so
-        // the no_progress breaker — not path_guard — is what eventually halts.
-        const pathDecision = resolvePathGuardDecision({
-          pathGuard: record.hooksConfig.pathGuard,
-          toolCall: tc,
-          worktreePath,
-        });
-
-        if (pathDecision?.decision === "deny") {
-          if (
-            pathDecision.reason === "kind_only_fallback" &&
-            !record.hookFallbackWarned
-          ) {
-            record.hookFallbackWarned = true;
-            logger.warn(
-              { sessionId, toolKind: tc.kind, adapter: args.adapter },
-              "[guardrail] path_guard kind-only fallback — adapter omits toolCall.locations; write-kind calls denied",
-            );
-          }
-
-          emitHookTrip("path_guard", params.toolCall);
-          logger.info(
-            { sessionId, toolKind: tc.kind, reason: pathDecision.reason },
-            "[guardrail] path_guard deny (run continues)",
-          );
-
-          return { outcome: { outcome: "cancelled" } };
-        }
-
-        // Rule 1 — repetition (halt): N consecutive identical tool-call signatures.
+        // Rule 1 — repetition (halt): N consecutive identical tool-call
+        // signatures. Runs BEFORE path_guard so a denied (out-of-lane) write
+        // still feeds the breaker — path_guard is deny-and-continue and makes no
+        // progress on its own, so a repeated denied write would otherwise loop
+        // forever (the original interceptor returned cancelled before this tick).
         if (record.hooksConfig.repetition) {
           const sig = toolCallSignature(params.toolCall);
           const tick = repetitionTick(
@@ -568,6 +542,79 @@ export async function createAcpConnection(
 
             return { outcome: { outcome: "cancelled" } };
           }
+        }
+
+        // Rule 2 — path_guard (deny-and-continue): a write outside the lane is
+        // denied inline; the run continues. Repeated denials are caught by the
+        // liveness breakers — repetition (above) for identical writes, no_progress
+        // (below, in this branch) for varied ones.
+        const pathDecision = resolvePathGuardDecision({
+          pathGuard: record.hooksConfig.pathGuard,
+          toolCall: tc,
+          worktreePath,
+        });
+
+        if (pathDecision?.decision === "deny") {
+          if (
+            pathDecision.reason === "kind_only_fallback" &&
+            !record.hookFallbackWarned
+          ) {
+            record.hookFallbackWarned = true;
+            logger.warn(
+              { sessionId, toolKind: tc.kind, adapter: args.adapter },
+              "[guardrail] path_guard kind-only fallback — adapter omits toolCall.locations; write-kind calls denied",
+            );
+          }
+
+          // A denied write makes no progress and (for a permission-only call)
+          // fires no session.update turn, so the post_turn no_progress watchdog
+          // never sees it. Count it here as a non-progress turn so a stream of
+          // denied writes — including VARIED ones repetition cannot match — trips
+          // no_progress instead of looping forever.
+          if (record.hooksConfig.noProgress) {
+            const tick = noProgressTick(
+              { turnsSinceProgress: record.turnsSinceProgress ?? 0 },
+              false,
+              record.hooksConfig.noProgress.maxTurns,
+            );
+
+            record.turnsSinceProgress = tick.turnsSinceProgress;
+
+            if (tick.tripped) {
+              record.hookHalted = true;
+              emitHookTrip("no_progress", null);
+
+              for (const requestId of pendingPermissions.requestIds(
+                sessionId,
+              )) {
+                pendingPermissions.cancel(
+                  sessionId,
+                  requestId,
+                  "hook_trip:no_progress",
+                );
+              }
+
+              logger.info(
+                {
+                  sessionId,
+                  toolKind: tc.kind,
+                  turnsSinceProgress: tick.turnsSinceProgress,
+                  maxTurns: record.hooksConfig.noProgress.maxTurns,
+                },
+                "[guardrail] no_progress halt (denied write)",
+              );
+
+              return { outcome: { outcome: "cancelled" } };
+            }
+          }
+
+          emitHookTrip("path_guard", params.toolCall);
+          logger.info(
+            { sessionId, toolKind: tc.kind, reason: pathDecision.reason },
+            "[guardrail] path_guard deny (run continues)",
+          );
+
+          return { outcome: { outcome: "cancelled" } };
         }
       }
 

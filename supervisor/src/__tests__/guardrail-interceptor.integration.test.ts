@@ -318,4 +318,69 @@ describe("guardrail interceptor (universal supervisor seam)", () => {
     expect(fallbackWarns).toHaveLength(1);
     expect(pendingPermissions.size(sessionId)).toBe(0);
   });
+
+  it("path_guard + repetition + no_progress armed: repeated identical denied writes halt EXACTLY once", async () => {
+    const { url, registry, runtimeRoot } = await boot([
+      "--scenario",
+      "path_guard_repeat",
+      "--count",
+      "6",
+    ]);
+    const sessionId = await createSession(url, {
+      worktreePath: runtimeRoot,
+      hooksConfig: {
+        pathGuard: { allowedPaths: ["src/**"] },
+        repetition: { max: 3 },
+        noProgress: { maxTurns: 15 },
+      },
+    });
+
+    await sendPrompt(url, sessionId);
+
+    const trips = hookTrips(registry.snapshotEvents(sessionId));
+    const halts = trips.filter((t) => t.disposition === "halt");
+    const denies = trips.filter((t) => t.rule === "path_guard");
+
+    // Repeated out-of-lane writes (deny-and-continue) now feed the repetition
+    // breaker, which halts at EXACTLY max — once, not zero (the pre-fix infinite
+    // loop) and not twice. The 2 denials before it continue; calls after the
+    // halt are cancelled inline (hookHalted) with no further trips.
+    expect(halts).toHaveLength(1);
+    expect(halts[0]).toMatchObject({ rule: "repetition", disposition: "halt" });
+    expect(denies).toHaveLength(2);
+    expect(pendingPermissions.size(sessionId)).toBe(0);
+  });
+
+  it("path_guard + no_progress only: repeated denied writes halt via the deny-branch no_progress tick", async () => {
+    const { url, registry, runtimeRoot } = await boot([
+      "--scenario",
+      "path_guard_repeat",
+      "--count",
+      "6",
+    ]);
+    const sessionId = await createSession(url, {
+      worktreePath: runtimeRoot,
+      // No repetition armed → only the deny-branch no_progress tick can halt a
+      // stream of denied writes (proves the tick fires independently).
+      hooksConfig: {
+        pathGuard: { allowedPaths: ["src/**"] },
+        noProgress: { maxTurns: 4 },
+      },
+    });
+
+    await sendPrompt(url, sessionId);
+
+    const trips = hookTrips(registry.snapshotEvents(sessionId));
+    const halts = trips.filter((t) => t.disposition === "halt");
+
+    expect(halts).toHaveLength(1);
+    expect(halts[0]).toMatchObject({
+      rule: "no_progress",
+      disposition: "halt",
+      toolCall: null,
+    });
+    // 3 denials (maxTurns - 1) precede the no_progress halt.
+    expect(trips.filter((t) => t.rule === "path_guard")).toHaveLength(3);
+    expect(pendingPermissions.size(sessionId)).toBe(0);
+  });
 });
