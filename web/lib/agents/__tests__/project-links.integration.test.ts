@@ -271,4 +271,90 @@ describe("project agent links (attach panel service)", () => {
 
     expect(again.linkId).toBeTruthy();
   });
+
+  it("disabling the agent flips its schedules off + revokes tokens; re-enabling restores schedules, not tokens (T6.2)", async () => {
+    // Self-contained: start from a clean attached link with two schedules.
+    await detachAgent(
+      { projectId: fx.projectId, agentId: fx.agentId },
+      db,
+    ).catch(() => undefined);
+    await attachAgent({ projectId: fx.projectId, agentId: fx.agentId }, db);
+    await updateAgentLink(
+      {
+        projectId: fx.projectId,
+        agentId: fx.agentId,
+        patch: {
+          schedules: [
+            { triggerType: "cron", cronExpr: "*/15 * * * *", timezone: "UTC" },
+            { triggerType: "event", eventKinds: ["task.created"] },
+          ],
+        },
+      },
+      db,
+    );
+    await issueAgentRunToken({
+      agentId: fx.agentId,
+      projectId: fx.projectId,
+      runId: randomUUID(),
+      db,
+    });
+
+    // DISABLE → every schedule flipped off + every live token revoked. The link
+    // row survives (disabled, not detached) so the bindings can be restored.
+    await updateAgentLink(
+      {
+        projectId: fx.projectId,
+        agentId: fx.agentId,
+        patch: { enabled: false },
+      },
+      db,
+    );
+
+    const offRows = await pool.query(
+      `SELECT enabled FROM agent_schedules WHERE agent_id = $1 AND project_id = $2`,
+      [fx.agentId, fx.projectId],
+    );
+
+    expect(offRows.rows).toHaveLength(2);
+    expect(offRows.rows.every((r) => r.enabled === false)).toBe(true);
+
+    const liveAfterDisable = await pool.query(
+      `SELECT count(*)::int AS n FROM project_tokens WHERE agent_id = $1 AND revoked_at IS NULL`,
+      [fx.agentId],
+    );
+
+    expect(liveAfterDisable.rows[0].n).toBe(0);
+
+    const linkAfterDisable = await pool.query(
+      `SELECT enabled FROM agent_project_links WHERE agent_id = $1 AND project_id = $2`,
+      [fx.agentId, fx.projectId],
+    );
+
+    expect(linkAfterDisable.rows[0].enabled).toBe(false);
+
+    // RE-ENABLE → schedules restored; the revoked token is NOT resurrected.
+    await updateAgentLink(
+      {
+        projectId: fx.projectId,
+        agentId: fx.agentId,
+        patch: { enabled: true },
+      },
+      db,
+    );
+
+    const onRows = await pool.query(
+      `SELECT enabled FROM agent_schedules WHERE agent_id = $1 AND project_id = $2`,
+      [fx.agentId, fx.projectId],
+    );
+
+    expect(onRows.rows).toHaveLength(2);
+    expect(onRows.rows.every((r) => r.enabled === true)).toBe(true);
+
+    const liveAfterEnable = await pool.query(
+      `SELECT count(*)::int AS n FROM project_tokens WHERE agent_id = $1 AND revoked_at IS NULL`,
+      [fx.agentId],
+    );
+
+    expect(liveAfterEnable.rows[0].n).toBe(0);
+  });
 });

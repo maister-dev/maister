@@ -342,6 +342,39 @@ export async function updateAgentLink(
         });
       }
     }
+
+    // T6.2 (ADR-106): toggling the agent gates its triggers. Disabling forces
+    // every schedule off so the CRON dispatcher — which filters only
+    // agent_schedules.enabled, never joining the link — skips it instead of
+    // firing-then-refusing and burning the catch-up window (the event
+    // dispatcher already joins agent_project_links.enabled). A same-patch
+    // schedules replacement keeps its own per-schedule `enabled` (the explicit
+    // edit wins), EXCEPT under a disable which still forces all off; re-enabling
+    // without a schedules edit restores them.
+    if (input.patch.enabled === false) {
+      await tx
+        .update(agentSchedules)
+        .set({ enabled: false })
+        .where(
+          and(
+            eq(agentSchedules.agentId, input.agentId),
+            eq(agentSchedules.projectId, input.projectId),
+          ),
+        );
+    } else if (
+      input.patch.enabled === true &&
+      normalizedSchedules === undefined
+    ) {
+      await tx
+        .update(agentSchedules)
+        .set({ enabled: true })
+        .where(
+          and(
+            eq(agentSchedules.agentId, input.agentId),
+            eq(agentSchedules.projectId, input.projectId),
+          ),
+        );
+    }
   });
 
   log.info(
