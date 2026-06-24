@@ -1,12 +1,14 @@
 # Project Settings → Agents
 
 - **Name / route:** Project Settings → **Agents** block · `/projects/{slug}?tab=settings` (Agents section)
-- **Status:** Designed (M39, ADR-106)
-- **Source:** `web/components/settings/project-agents-panel.tsx` (Designed) +
-  `web/components/settings/project-agent-modal.tsx` (Designed) — a second instance
+- **Status:** Implemented (M39, ADR-106)
+- **Source:** `web/components/board/panels/agents-attach-panel.tsx` +
+  `web/components/board/panels/agents-attach-edit-modal.tsx` — a second instance
   of the data-management-page pattern (precedent: admin
   `web/components/settings/agents-panel.tsx`,
-  `web/components/admin/users-table.tsx` + `user-edit-modal.tsx`).
+  `web/components/admin/users-table.tsx` + `user-edit-modal.tsx`). The panel
+  renders on the project **board** surface (`web/app/(app)/projects/[slug]/page.tsx`,
+  component `AgentsAttachPanel`), not under `settings/`.
 
 ## JTBD
 
@@ -65,7 +67,7 @@ with a `min-w`. Forms (the modal) stay narrow (520–760px).
   + risk tier; an **Attach (＋)** icon button opens the bindings modal pre-filled
   from the definition's `recommended` block. Agents whose package is untrusted are
   not listed (attach requires trust).
-- **Instance config modal** (`project-agent-modal.tsx`) — a single
+- **Instance config modal** (`agents-attach-edit-modal.tsx`) — a single
   `create | edit` modal that also owns Detach. ONE aggregating `PATCH` (partial
   body, one transaction) on save — never a per-field fan-out. Fields, each seeded
   from `recommended` and overridable on the instance:
@@ -139,5 +141,5 @@ empty states, action `aria-label`s, modal). EN + RU parity required.
 - Conventions: `web/CLAUDE.md` → "Data-management page patterns" + "UI affordance
   conventions" (view-only table, popup edits, icon buttons, green-check, one
   aggregating endpoint, accessible modal).
-- Source (Designed): `web/components/settings/project-agents-panel.tsx`,
-  `web/components/settings/project-agent-modal.tsx`.
+- Source: `web/components/board/panels/agents-attach-panel.tsx`,
+  `web/components/board/panels/agents-attach-edit-modal.tsx`.

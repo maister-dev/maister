@@ -14,12 +14,12 @@ column-level narrative.
 > (drops `scope`/`project_id`, adds `flow_ref_id`/`version_label`/`origin`/
 > `recommended`/`workspace_ref` — ADR-089 rework).
 >
-> **(Designed — ADR-106, migration `0062`)** M39 re-keys the catalog per-package:
+> **(Implemented — ADR-106, migration `0068`)** M39 re-keys the catalog per-package:
 > `agents.flow_ref_id` → `package_name` (NOT NULL, = `package_installs.name`),
 > reindex `agents_flow_ref_idx` → `agents_package_name_idx`, add `agents.flow_ref`
 > + `agents.branch_base`, extend `recommended` with `executionPolicy`, and add
 > `agent_project_links.branch_base` + `agent_project_links.execution_policy_override`.
-> The ERD/tables below show the post-0062 shape; the M34 columns they replace are
+> The ERD/tables below show the post-0068 shape; the M34 columns they replace are
 > noted inline.
 
 ```mermaid
@@ -136,8 +136,8 @@ leave through their providing package, and `resync` disables missing catalog
 rows instead of deleting them. The `ON DELETE` actions remain FK backstops for
 future/admin maintenance paths and preserve terminal run history.
 
-**Migration 0062 data policy (Designed — ADR-106).** The per-flow → per-package
-re-key is destructive to the catalog only: migration 0062 runs `DELETE FROM
+**Migration 0068 data policy (Implemented — ADR-106).** The per-flow → per-package
+re-key is destructive to the catalog only: migration 0068 runs `DELETE FROM
 agents` (which CASCADE-deletes `agent_project_links` + `agent_schedules`, and
 SET-NULLs `runs.agent_id` so run history survives) before/while reshaping the
 columns, then a post-migration resync (startup reconcile + admin
@@ -152,4 +152,4 @@ under the new `package_name` key.
 - Decision records: ADR-089, ADR-090, ADR-106 (M39 per-package re-key) in
   [`../decisions.md`](../decisions.md).
 - Source (Implemented): `web/lib/db/schema.ts` (migration `0049_platform_agents.sql`);
-  M39 reshape `web/lib/db/migrations/0062_*.sql` (Designed — ADR-106).
+  M39 reshape `web/lib/db/migrations/0068_m39_package_agents.sql` (Implemented — ADR-106).

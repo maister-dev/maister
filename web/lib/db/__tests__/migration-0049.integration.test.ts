@@ -94,7 +94,7 @@ describe("migration 0049 — platform agents", () => {
     );
     const names = cols.rows.map((r) => r.column_name);
 
-    // ADR-106 (migration 0062) re-keyed the provenance column flow_ref_id →
+    // ADR-106 (migration 0068) re-keyed the provenance column flow_ref_id →
     // package_name and added flow_ref / branch_base.
     expect(names).toEqual(
       expect.arrayContaining([

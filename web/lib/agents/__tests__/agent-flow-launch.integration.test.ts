@@ -68,6 +68,7 @@ mode: session
 triggers:
   - manual
   - cron
+  - domain_event
 risk_tier: read_only
 flow: bugfix
 recommended:
@@ -168,7 +169,7 @@ beforeEach(async () => {
   );
   await pool.query(
     `INSERT INTO "agents" ("id", "package_name", "version_label", "origin", "name", "description", "workspace", "mode", "triggers", "risk_tier", "flow_ref", "source_path")
-     VALUES ('pkg:driver', 'pkg', 'v1.0.0', 'git', 'Driver', 'd', 'worktree', 'session', '["manual","cron"]'::jsonb, 'read_only', 'bugfix', $1)`,
+     VALUES ('pkg:driver', 'pkg', 'v1.0.0', 'git', 'Driver', 'd', 'worktree', 'session', '["manual","cron","domain_event"]'::jsonb, 'read_only', 'bugfix', $1)`,
     [path.join(agentsRoot, "maister-agents", "driver.md")],
   );
   await pool.query(
@@ -333,5 +334,127 @@ describe("launchAgentRun — agent drives a flow (M39, ADR-106)", () => {
         budget: { run: { maxTokens: 75000 } },
       },
     });
+  });
+
+  it("a flow-driving agent's branch_base override forks the flow run from that base (not main)", async () => {
+    await exec("git", ["-C", repoPath, "checkout", "-q", "-b", "develop"]);
+    await writeFile(path.join(repoPath, "DEV.md"), "dev\n");
+    await exec("git", ["-C", repoPath, "add", "-A"]);
+    await exec("git", [
+      "-C",
+      repoPath,
+      "-c",
+      "user.email=t@t",
+      "-c",
+      "user.name=t",
+      "commit",
+      "-qm",
+      "dev",
+    ]);
+    await exec("git", ["-C", repoPath, "checkout", "-q", "main"]);
+
+    await pool.query(
+      `UPDATE "agent_project_links" SET "branch_base" = 'develop' WHERE "agent_id" = 'pkg:driver'`,
+    );
+
+    const result = await launchAgentRun({
+      agentId: "pkg:driver",
+      projectId,
+      trigger: { source: "manual" },
+      db,
+    });
+
+    expect("runId" in result).toBe(true);
+    if (!("runId" in result)) return;
+
+    const ws = await pool.query(
+      `SELECT base_branch, target_branch FROM workspaces WHERE run_id = $1`,
+      [result.runId],
+    );
+
+    expect(ws.rows[0].base_branch).toBe("develop");
+    expect(ws.rows[0].target_branch).toBe("develop");
+  });
+
+  it("at-least-once redelivery of the same trigger event converges to one flow run + one task", async () => {
+    const trigger = {
+      source: "domain_event" as const,
+      eventId: 4242,
+      payload: { kind: "task.created" },
+    };
+
+    const first = await launchAgentRun({
+      agentId: "pkg:driver",
+      projectId,
+      trigger,
+      db,
+    });
+    const second = await launchAgentRun({
+      agentId: "pkg:driver",
+      projectId,
+      trigger,
+      db,
+    });
+
+    // The redelivery dedups BEFORE auto-creating a second task / flow run.
+    expect("deduped" in second && second.deduped).toBe(true);
+
+    const runRows = await pool.query(
+      `SELECT id, trigger_event_id FROM runs WHERE agent_id = 'pkg:driver'`,
+    );
+
+    expect(runRows.rows).toHaveLength(1);
+    expect(Number(runRows.rows[0].trigger_event_id)).toBe(4242);
+    expect("runId" in first && runRows.rows[0].id === first.runId).toBe(true);
+
+    const taskRows = await pool.query(
+      `SELECT id FROM tasks WHERE project_id = $1`,
+      [projectId],
+    );
+
+    expect(taskRows.rows).toHaveLength(1);
+  });
+
+  it("CONCURRENT redelivery of the same trigger event converges to ONE flow run + ONE task (two-racer)", async () => {
+    const trigger = {
+      source: "domain_event" as const,
+      eventId: 7777,
+      payload: { kind: "task.created" },
+    };
+
+    // Genuine race: `db` is Pool-backed, so the two launches run on separate
+    // connections and BOTH pass the pre-check before either inserts. The task
+    // claim (tasks_agent_trigger_event_uq) makes the loser REUSE the winner's
+    // auto-task; the run claim (runs_agent_trigger_event_uq) makes the loser's
+    // launchRun throw CONFLICT → reselect the winner. Neither double-creates.
+    const [a, b] = await Promise.all([
+      launchAgentRun({ agentId: "pkg:driver", projectId, trigger, db }),
+      launchAgentRun({ agentId: "pkg:driver", projectId, trigger, db }),
+    ]);
+
+    // Neither racer throws, and both observe the SAME single winning run.
+    const runIdA = "runId" in a ? a.runId : undefined;
+    const runIdB = "runId" in b ? b.runId : undefined;
+
+    expect(runIdA).toBeDefined();
+    expect(runIdB).toBeDefined();
+    expect(runIdA).toBe(runIdB);
+
+    const runRows = await pool.query(
+      `SELECT id, trigger_event_id FROM runs WHERE agent_id = 'pkg:driver'`,
+    );
+
+    expect(runRows.rows).toHaveLength(1);
+    expect(Number(runRows.rows[0].trigger_event_id)).toBe(7777);
+    expect(runRows.rows[0].id).toBe(runIdA);
+
+    // The key idempotency assertion: the concurrent loser did NOT leak an orphan
+    // auto-task (pre-fix this was 2).
+    const taskRows = await pool.query(
+      `SELECT id FROM tasks WHERE project_id = $1`,
+      [projectId],
+    );
+
+    expect(taskRows.rows).toHaveLength(1);
   });
 });

@@ -109,6 +109,14 @@ export async function DELETE(
     await requireGlobalRole("member");
     const { id } = await params;
 
+    // 404 a missing id (mirrors PATCH/GET) instead of a misleading 204; the
+    // attached/locked PRECONDITION guards stay in deleteLocalPackage.
+    const row = await getLocalPackage(id);
+
+    if (!row) {
+      return notFoundResponse("local package not found");
+    }
+
     await deleteLocalPackage(id);
 
     return new NextResponse(null, { status: 204 });

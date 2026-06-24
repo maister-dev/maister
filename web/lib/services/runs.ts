@@ -170,6 +170,13 @@ export type LaunchRunInput = {
   // override) so inherited axes such as budget limits survive. null/absent for a
   // normal board flow run.
   agentPolicyOverlay?: AgentExecutionPolicyRecommendation | null;
+  // M39 (ADR-106): trigger provenance for an agent-driven flow run — recorded on
+  // runs(trigger_source, trigger_event_id, trigger_payload) so the partial unique
+  // (agent_id, trigger_event_id) claim dedups an at-least-once redelivery.
+  // null/absent for a normal board launch (carries no trigger event).
+  triggerSource?: "manual" | "cron" | "domain_event" | "webhook" | "flow";
+  triggerEventId?: number | null;
+  triggerPayload?: Record<string, unknown> | null;
 };
 
 export type PromotionMode = "local_merge" | "rebase_merge" | "pull_request";
@@ -917,33 +924,56 @@ export async function* launchRunStaged(
     await _db.transaction(async (tx: any) => {
       // `runs` first: `workspaces.run_id` is a non-deferrable FK to `runs.id`,
       // so the workspace insert would violate it if it ran first.
-      await tx.insert(runs).values({
-        id: runId,
-        taskId: task.id,
-        projectId: project.id,
-        flowId: flow.id,
-        runnerId: runnerResolution.runnerId,
-        runnerResolutionTier: runnerResolution.runnerResolutionTier,
-        capabilityAgent,
-        runnerSnapshot: runnerResolution.runnerSnapshot,
-        resolvedCapabilitySet,
-        deliveryPolicySnapshot: deliveryPolicy,
-        executionPolicy,
-        // M39 (ADR-106): the driving agent of an agent-driven flow run (null for
-        // a normal board launch). The graph runner reads it to inject the
-        // agent's persona on every ai_coding node.
-        agentId: input.agentId ?? null,
-        createdByUserId: ctx.actorUserId,
-        status: "Pending",
-        // Snapshot the enabled revision (M10, ADR-021). flow_revision_id is
-        // the authoritative pin the runner resolves the manifest + bundle
-        // path from; the version/SHA text columns remain for display and the
-        // legacy fallback. A later upgrade/rollback changes the project's
-        // enabled revision but this run stays pinned to what it launched with.
-        flowVersion: revision.versionLabel,
-        flowRevision: revision.resolvedRevision,
-        flowRevisionId: revision.id,
-      });
+      const insertedRun = await tx
+        .insert(runs)
+        .values({
+          id: runId,
+          taskId: task.id,
+          projectId: project.id,
+          flowId: flow.id,
+          runnerId: runnerResolution.runnerId,
+          runnerResolutionTier: runnerResolution.runnerResolutionTier,
+          capabilityAgent,
+          runnerSnapshot: runnerResolution.runnerSnapshot,
+          resolvedCapabilitySet,
+          deliveryPolicySnapshot: deliveryPolicy,
+          executionPolicy,
+          // M39 (ADR-106): the driving agent of an agent-driven flow run (null for
+          // a normal board launch). The graph runner reads it to inject the
+          // agent's persona on every ai_coding node.
+          agentId: input.agentId ?? null,
+          // M39 (ADR-106): trigger provenance for an agent-driven flow run. The
+          // partial unique (agent_id, trigger_event_id) index is the race backstop
+          // for a CONCURRENT redelivery (the sequential one is caught by
+          // launchAgentRun's pre-check); onConflictDoNothing turns the loser into a
+          // clean CONFLICT (the catch below compensates the worktree) instead of a
+          // raw 23505. A board launch carries no trigger_event_id ⇒ never conflicts.
+          triggerSource: input.triggerSource ?? null,
+          triggerEventId: input.triggerEventId ?? null,
+          triggerPayload: input.triggerPayload ?? null,
+          createdByUserId: ctx.actorUserId,
+          status: "Pending",
+          // Snapshot the enabled revision (M10, ADR-021). flow_revision_id is
+          // the authoritative pin the runner resolves the manifest + bundle
+          // path from; the version/SHA text columns remain for display and the
+          // legacy fallback. A later upgrade/rollback changes the project's
+          // enabled revision but this run stays pinned to what it launched with.
+          flowVersion: revision.versionLabel,
+          flowRevision: revision.resolvedRevision,
+          flowRevisionId: revision.id,
+        })
+        .onConflictDoNothing()
+        .returning({ id: runs.id });
+
+      // A concurrent redelivery lost the (agent_id, trigger_event_id) claim — the
+      // run already exists. Surface a typed CONFLICT (the catch compensates the
+      // worktree); never a raw 23505 → 500. Board launches never reach here.
+      if (insertedRun.length === 0) {
+        throw new MaisterError(
+          "CONFLICT",
+          `trigger event ${input.triggerEventId} already claimed for agent ${input.agentId}`,
+        );
+      }
 
       if (requiresLaunchUnattended(executionPolicy)) {
         logExecPolicyAction({

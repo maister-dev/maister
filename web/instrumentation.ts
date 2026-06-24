@@ -34,7 +34,7 @@ export async function register(): Promise<void> {
 
     await runReconcileSweep();
 
-    // ADR-106 (migration 0062): the per-flow → per-package agent re-key wipes
+    // ADR-106 (migration 0068): the per-flow → per-package agent re-key wipes
     // the `agents` catalog; re-project it from installed packages on boot so a
     // deploy that ran the migration repopulates without waiting for the next
     // package install. Idempotent (newest-Installed-per-name projection) — a

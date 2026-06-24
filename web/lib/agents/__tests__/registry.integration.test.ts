@@ -2,7 +2,7 @@
 // `maister-agents/<stem>.md` files at the package ROOT register under
 // package-qualified ids `<packageName>:<stem>`. These tests drive
 // registerPackageAgents/resyncAgents against real installed-dir fixtures +
-// package_installs rows on a real Postgres, and assert the migration 0062
+// package_installs rows on a real Postgres, and assert the migration 0068
 // FK fan-out (the destructive re-key wipe is safe for run history).
 import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -407,7 +407,7 @@ describe("resyncAgents", () => {
   });
 });
 
-describe("migration 0062 data policy (DELETE FROM agents FK fan-out)", () => {
+describe("migration 0068 data policy (DELETE FROM agents FK fan-out)", () => {
   it("cascades agent_project_links + agent_schedules and SET-NULLs runs.agent_id", async () => {
     const projectId = randomUUID();
 

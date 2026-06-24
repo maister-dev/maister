@@ -8115,8 +8115,9 @@ several rounds: project-scoping was evaluated and **rejected**; M36's
 platform-scoping (ADR-096/097) **stands**.
 
 This is **Stream A** of the M39 "Flow Studio package authoring" work (the
-editor/kinds half) — **web-only, NO migration**. Stream B (version-adopt launch +
-PR-to-source) is a separate branch (ADR-106/107, migration 0062).
+editor/kinds half) — **web-only, NO migration**. The package-based platform-agent
+half (ADR-106, migration 0068) landed alongside it; version-adopt launch +
+PR-to-source (ADR-107) remains a separate, unbuilt branch.
 
 **Decision:**
 1. **Centralized packages + per-project version pins.** Packages are
@@ -8329,7 +8330,7 @@ budget-breach handling) that rides the existing `ExecutionPolicy` snapshot.
    tick). Enabling re-enables the schedules — it does NOT resurrect the revoked
    ephemeral per-launch tokens.
 
-10. **Migration data policy.** Pre-release: migration 0062 runs `DELETE FROM
+10. **Migration data policy.** Pre-release: migration 0068 runs `DELETE FROM
     agents` then re-projects via `resyncAgents`. The FK fan-out is verified:
     `agent_project_links` and `agent_schedules` CASCADE-delete; `runs.agent_id` is
     `ON DELETE SET NULL`, so run history survives as NULL. A post-migration resync
@@ -8353,7 +8354,7 @@ budget-breach handling) that rides the existing `ExecutionPolicy` snapshot.
 - `terminate_restorable` gives agents (and flows) a recoverable, slot-freeing
   budget terminal without a new run status; standalone-agent `escalate` resumes via
   `session/resume` (a new non-flow branch in the raise path).
-- Migration 0062 is destructive to the `agents` catalog only; attachments/schedules
+- Migration 0068 is destructive to the `agents` catalog only; attachments/schedules
   cascade and re-project, run history is preserved via SET NULL.
 - NO new `MaisterError` code (reuses `PRECONDITION | CONFLICT | CONFIG`). EN+RU
   i18n for the new project-settings Agents surface.
@@ -8379,10 +8380,9 @@ budget-breach handling) that rides the existing `ExecutionPolicy` snapshot.
 
 **Numbering note.** ADR-103 (flow-routing, M38) is merged; ADR-104 (G4
 guardrail-hooks) is reserved by an implemented-but-unmerged sibling; ADR-105 (M39
-Stream A) is this branch. This ADR takes **106** per the ADR-105 note that reserved
-106/107 + migration 0062 for the package-runtime Stream B; a renumber pass runs at
-merge (T7.3) if the ordering changes (G4 / Stream-B may also claim 106/107 → likely
-renumber, e.g. 108).
+Stream A) is this branch. This ADR is **106**. The package-agents re-key migration
+landed as `0068` (the `0062` slot that the ADR-105 note originally reserved was
+taken by an unrelated migration; the ADR number stays 106).
 
 ### ADR-108: Declarative guardrail/hook engine — universal supervisor ACP-seam interceptor, native materializer seam, and hook-trip HITL escalation
 

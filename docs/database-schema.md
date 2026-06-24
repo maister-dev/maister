@@ -703,14 +703,14 @@ run_schedules {
 `(enabled, next_fire_at)` (dispatcher due-scan), and `(last_run_id)`
 (FK SET NULL + the read-time `lastRunStatus` join).
 
-## Platform agent tables (Implemented — ADR-089/ADR-090, migrations `0049`/`0050`/`0051`; M39 package re-key Designed — ADR-106, migration `0062`)
+## Platform agent tables (Implemented — ADR-089/ADR-090, migrations `0049`/`0050`/`0051`; M39 package re-key Implemented — ADR-106, migration `0068`)
 
 The M34 agent catalog (package-source rework): `maister-agents/<stem>.md`
 definitions INSIDE flow packages (the catalog/registry/effective read paths
 converged onto `maister-agents/` in M39 — ADR-105), projected into the index from
 each package's newest Installed revision; attachments and per-project overrides;
 trigger bindings.
-**(Designed — ADR-106, migration `0062`)** M39 re-keys the catalog from per-flow
+**(Implemented — ADR-106, migration `0068`)** M39 re-keys the catalog from per-flow
 to **per-package**: `flow_ref_id` → `package_name` (= `package_installs.name`), id
 `<packageName>:<stem>`, registration scanning the package root
 `package_installs.installed_path/maister-agents/`, plus new columns `flow_ref`
@@ -768,7 +768,7 @@ install's pinned revision (RD4). Indexed on `agents(package_name)`
 (`agents_package_name_idx`; was `agents_flow_ref_idx`),
 `agent_project_links(project_id)`, plus the UNIQUE pair above.
 
-**Migration 0062 data policy (Designed — ADR-106).** Pre-release: `DELETE FROM
+**Migration 0068 data policy (Implemented — ADR-106).** Pre-release: `DELETE FROM
 agents` then re-project via `resyncAgents`. The FK fan-out — `agent_project_links`
 and `agent_schedules` CASCADE-delete; `runs.agent_id` is `ON DELETE SET NULL`
 (run history survives) — makes the wipe safe; a post-migration resync

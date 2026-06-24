@@ -20,15 +20,14 @@ the run state machine ([runs.md](runs.md)), the execution-policy axis model
 or capability enforcement (materialize-only per ADR-041/043 —
 [flow-settings.md](flow-settings.md)).
 
-**Status convention.** M39 (ADR-106) re-keys agent identity from per-flow to
-**per-package** and adds optional same-package flow enrichment, a per-agent
+**Status convention.** M39 (ADR-106) re-keyed agent identity from per-flow to
+**per-package** and added optional same-package flow enrichment, a per-agent
 runner policy, branch base, and trigger-toggle coupling. Those pieces are tagged
-**(Designed — ADR-106)** below: they are the Phase-0 contract the M39 code phases
-implement. At this branch's Phase-0 HEAD the runtime still runs the M34 **per-flow**
-model (id `<flowRefId>:<stem>`, registration scanning `flow_revisions.installed_path`)
-— tagged **(Implemented)** where it differs. The unchanged mechanics (workspace
-axis, dirty-watchdog, agent tokens, triage loop, cron/event dispatch) stay
-**(Implemented)**.
+**(Implemented — ADR-106)** below. At HEAD the runtime IS the **per-package**
+model (id `<packageName>:<stem>`, registration scanning
+`package_installs.installed_path/maister-agents/`). The unchanged mechanics
+(workspace axis, dirty-watchdog, agent tokens, triage loop, cron/event dispatch)
+stay **(Implemented)**.
 
 **Platform agents vs Claude subagents — two kinds.** A package's `.md` agents
 split into package-root `maister-agents/<stem>.md` (**platform-agent**
@@ -48,7 +47,7 @@ packages break — owner-accepted). Subagents keep `capability/<id>/agents/` and
 a distinct first-class authored `subagent` kind (path-distinguishable by depth;
 LENIENT schema — `lib/agents/subagent-definition.ts`).
 
-**Package identity & gating (Designed — ADR-106).** The catalog row's provenance
+**Package identity & gating (Implemented — ADR-106).** The catalog row's provenance
 is `package_name` (= `package_installs.name`), the id is `<packageName>:<stem>`,
 and the EFFECTIVE definition for a launch in project P resolves through P's
 ATTACHED install of that package → `package_installs.installed_path/maister-agents/<stem>.md`.
@@ -59,7 +58,7 @@ not contain the package-root `maister-agents/`).
 
 ## Domain entities
 
-- **`agents`** (Implemented; M39 deltas Designed) — catalog projection over
+- **`agents`** (Implemented) — catalog projection over
   `maister-agents/<stem>.md` inside the providing package's NEWEST Installed
   revision: `{ id (PK, package-qualified <packageName>:<stem>), package_name
   (NOT NULL — was flow_ref_id), version_label, origin (git|authored), name,
@@ -72,7 +71,7 @@ not contain the package-root `maister-agents/`).
   source of truth; registration after install finalize (and `resync`) re-syncs
   every column (SET/CLEAR symmetric); rows whose providing package vanished are
   disabled, never deleted. See [db/agents-domain.md](../db/agents-domain.md).
-- **`agent_project_links`** (Implemented; M39 deltas Designed) — attachment +
+- **`agent_project_links`** (Implemented) — attachment +
   per-project INSTANCE overrides: `{ agent_id, project_id, enabled,
   runner_override_id?, branch_base? (NEW), execution_policy_override? jsonb (NEW)
   }`, `UNIQUE(agent_id, project_id)`. Attach requires the providing package
@@ -84,9 +83,9 @@ not contain the package-root `maister-agents/`).
   last_fired_at`; `trigger_type='event'` rows carry `event_match.kinds` (subset of
   the ADR-086 taxonomy). Created/replaced only through the project-link
   `schedules` patch (delete-all-then-reinsert), seeded in the UI from
-  `recommended`. (Designed — ADR-106) An agent disable cascades `enabled=false`
+  `recommended`. (Implemented — ADR-106) An agent disable cascades `enabled=false`
   onto these rows.
-- **Per-agent runner policy** (Designed — ADR-106) — `recommended.executionPolicy:
+- **Per-agent runner policy** (Implemented — ADR-106) — `recommended.executionPolicy:
   { autoApply?: 'off'|'permissions'|'full'; onBudgetBreach?:
   'escalate'|'terminate'|'terminate_restorable' }` SEEDS the defaults; the
   instance (`agent_project_links.execution_policy_override`) overrides. Resolved
@@ -96,7 +95,7 @@ not contain the package-root `maister-agents/`).
   `agent_id`, `trigger_source (manual|cron|domain_event|webhook|flow)`,
   `trigger_event_id?` (claim key), `trigger_payload?` (≤ 32 KB). Budgeted by
   `MAISTER_MAX_CONCURRENT_AGENTS` (default 3), separate from the flow/scratch pool.
-  (Designed — ADR-106) A with-`flow_ref` launch produces a `run_kind='flow'` run
+  (Implemented — ADR-106) A with-`flow_ref` launch produces a `run_kind='flow'` run
   carrying `runs.agent_id` (the persona + policy source) — NOT a `run_kind='agent'`
   run. Task-bound agent runs never flip `tasks.status` and never bump
   `attempt_number`.
@@ -122,12 +121,12 @@ stateDiagram-v2
     Registered --> Quarantined: dirty-watchdog hit<br/>quarantined_at + reason set
     Quarantined --> Registered: explicit un-quarantine action
     Registered --> Disabled: providing package/file missing on resync
-    note right of Disabled: (Designed — ADR-106) a project-link disable<br/>also flips that project's agent_schedules.enabled=false<br/>and revokes live agent tokens
+    note right of Disabled: (Implemented — ADR-106) a project-link disable<br/>also flips that project's agent_schedules.enabled=false<br/>and revokes live agent tokens
 ```
 
 ## Process flows
 
-### (a) Registration / re-sync — per package (Designed — ADR-106; supersedes the M34 per-flow scan)
+### (a) Registration / re-sync — per package (Implemented — ADR-106; supersedes the M34 per-flow scan)
 
 Definitions ship inside flow packages; package-level registration runs at the end
 of `installPackageRevision` AFTER the member flow installs, scanning the PACKAGE
@@ -146,7 +145,7 @@ flowchart TD
     RS --> D[rows whose providing package/file vanished → enabled=false]
 ```
 
-### (b) Standalone launch (manual / cron / domain_event / webhook share this path) (Implemented; gating + policy snapshot Designed — ADR-106)
+### (b) Standalone launch (manual / cron / domain_event / webhook share this path) (Implemented; gating + policy snapshot Implemented — ADR-106)
 
 The four standalone triggers converge on one launch service; only the entry and
 trigger metadata differ. The launch gate is the **attached + trusted + enabled**
@@ -174,7 +173,7 @@ sequenceDiagram
     L->>S: spawn — re-resolve effective, L2 materialize, profile MCPs (exec-trust gated),<br/>POST /sessions (readOnlySession, facade + token env)
 ```
 
-### (c) Optional-flow enrichment — "agent drives a flow" (Designed — ADR-106)
+### (c) Optional-flow enrichment — "agent drives a flow" (Implemented — ADR-106)
 
 When the effective agent declares a same-package `flow_ref`, launch branches on
 the discriminant BEFORE routing: it launches that flow as a normal **flow run**
@@ -195,7 +194,7 @@ flowchart TD
     N --> ENG[flow engine drives nodes/gates/rework/promotion<br/>budget escalate + raise-resume, human-node auto-pass inherited]
 ```
 
-### (d) Cron + event dispatch (Implemented; disable-coupling Designed — ADR-106)
+### (d) Cron + event dispatch (Implemented; disable-coupling Implemented — ADR-106)
 
 The seeded singleton `agent_tick.dispatcher` job (60 s) claims due cron rows
 atomically; the `agent_triggers` outbox consumer claims event matches by run-row
@@ -259,7 +258,7 @@ flowchart TD
     K -- yes --> W[materialize .claude/agents/name.md into worktree]
 ```
 
-### (g) Runner policy: auto-apply + budget breach (Designed — ADR-106)
+### (g) Runner policy: auto-apply + budget breach (Implemented — ADR-106)
 
 The agent's effective `executionPolicy` (instance override → `recommended` →
 project/platform default) is snapshotted onto `runs.execution_policy` at spawn, a
@@ -310,46 +309,46 @@ launch and is cleaned up with the worktree/session on a failed launch.
 - Identity MUST be package-qualified `<packageName>:<stem>` (packageName =
   `package_installs.name`); registration MUST scan
   `package_installs.installed_path/maister-agents/*.md`, project once per package,
-  never execute `.md` content, and never write an invalid definition. *(Designed —
-  ADR-106; HEAD: per-flow `<flowRefId>:<stem>`.)*
+  never execute `.md` content, and never write an invalid definition. *(Implemented —
+  ADR-106.)*
 - Re-registration MUST sync every parsed column with SET/CLEAR symmetry;
   `resyncAgents` MUST project the newest Installed `package_installs` per `name`
   and disable (never delete) rows whose providing package or file vanished.
 - An agent's `flow` MUST be a member of `package_installs.manifest.spec.flows[].id`
   or be reported invalid + never written; a later upgrade that removes it MUST
-  re-flag on resync so launch refuses `PRECONDITION`. *(Designed — ADR-106.)*
+  re-flag on resync so launch refuses `PRECONDITION`. *(Implemented — ADR-106.)*
 - A launch MUST pass the allow-list — package ATTACHED
   (`project_package_attachments` for `(projectId, packageName)`) + install TRUSTED
   (`package_installs.trust_status ∈ {trusted, trusted_by_policy}`) + agent ENABLED
   (`agent_project_links.enabled` AND `agents.enabled` AND `quarantined_at IS
-  NULL`) — any other state refused `PRECONDITION`. *(Designed — ADR-106.)*
+  NULL`) — any other state refused `PRECONDITION`. *(Implemented — ADR-106.)*
 - The EFFECTIVE definition MUST resolve through the attached install's pinned
   revision → `package_installs.installed_path/maister-agents/<stem>.md`, at launch
   and again at spawn; `projectId` MUST be server-derived, never a body field.
 - Launch MUST branch on has-`flow_ref`: no flow → `run_kind='agent'` (standalone
   ACP session, `MAISTER_MAX_CONCURRENT_AGENTS` pool); flow → `run_kind='flow'`
   (the same-package flow run, `runs.agent_id` + `flowId`, the agent `.md` injected
-  on EVERY `ai_coding` node, augment-not-replace, persona-then-task). *(Designed —
+  on EVERY `ai_coding` node, augment-not-replace, persona-then-task). *(Implemented —
   ADR-106.)*
 - The effective `executionPolicy` MUST resolve instance override → agent
   `recommended` → project/platform default and snapshot onto `runs.execution_policy`
   at spawn; the HITL and budget-terminal paths MUST read the snapshot, never
-  re-derive from the catalog. *(Designed — ADR-106.)*
+  re-derive from the catalog. *(Implemented — ADR-106.)*
 - `autoApply` MUST map to the `permissions`/`humanGate` axes (off → ask/stop;
   permissions → auto_approve/stop; full → auto_approve/auto_pass); `form` and
   `infra_recovery` HITL MUST always pause, and `budget_breach` MUST never be
-  auto-applied. *(Designed — ADR-106.)*
+  auto-applied. *(Implemented — ADR-106.)*
 - `onBudgetBreach` MUST drive the budget terminal — `escalate` = live pause + hold
   slot (raise-resume `runFlow` for flow, `session/resume` for agent); `terminate`
   → `Failed`; `terminate_restorable` → ONE-tx checkpoint + free slot +
   `NeedsInputIdle` + `budget_breach` HITL, restore = raise + `session/resume`;
-  UNSET MUST preserve the run_kind default. *(Designed — ADR-106.)*
+  UNSET MUST preserve the run_kind default. *(Implemented — ADR-106.)*
 - `branch_base` MUST resolve `agent_project_links.branch_base` →
   `recommended.branch_base` → the project main branch, and snapshot onto the run
-  at launch. *(Designed — ADR-106.)*
+  at launch. *(Implemented — ADR-106.)*
 - Disabling an agent's project link MUST disable its `agent_schedules` rows AND
   revoke live agent tokens; enabling MUST re-enable the schedules but NOT the
-  revoked ephemeral tokens. *(Designed — ADR-106.)*
+  revoked ephemeral tokens. *(Implemented — ADR-106.)*
 - A cron fire MUST be claimed by the atomic `UPDATE … SET next_fire_at = <next>
   WHERE id = ? AND next_fire_at <= now() RETURNING` (one winner, no backfill); an
   event spawn MUST claim by inserting the `Pending` run with `(agent_id,
@@ -382,7 +381,7 @@ launch and is cleaned up with the worktree/session on a failed launch.
   spawn; no run row.
 - **Budget breach with `onBudgetBreach='terminate_restorable'`** → the run lands in
   the recoverable `NeedsInputIdle` (NOT `Failed`), its slot frees (a queued run
-  promotes), and a budget raise + `session/resume` restores it. *(Designed —
+  promotes), and a budget raise + `session/resume` restores it. *(Implemented —
   ADR-106.)*
 - **Agent budget full** → run enters `Pending` with a per-kind queue position; the
   flow pool is unaffected.
@@ -404,7 +403,7 @@ launch and is cleaned up with the worktree/session on a failed launch.
   ADR-041/043 (materialize-only); policy axes ADR-095/101/102.
 - **DB:** [`db/agents-domain.md`](../db/agents-domain.md),
   [`db/runs-domain.md`](../db/runs-domain.md),
-  [`database-schema.md`](../database-schema.md) (migrations `0049`/`0050`/`0062`).
+  [`database-schema.md`](../database-schema.md) (migrations `0049`/`0050`/`0068`).
 - **Execution policy:** [`execution-policy.md`](execution-policy.md) (preset + axis
   model, budget terminal path, `*FromSnapshot` resolvers).
 - **Triggers:** [`scheduler.md`](scheduler.md) (`agent_tick.dispatcher`),
@@ -428,6 +427,6 @@ launch and is cleaned up with the worktree/session on a failed launch.
 - **Source (Implemented):** `web/lib/agents/*` (`definition.ts`, `registry.ts`,
   `effective.ts`, `launch.ts`, `flow-binding.ts`, `project-links.ts`,
   `triggers.ts`, `dirty-watchdog.ts`, `tokens.ts`),
-  `web/lib/packages/attach.ts` (registration wiring, Designed — ADR-106),
+  `web/lib/packages/attach.ts` (registration wiring, Implemented — ADR-106),
   `web/lib/runs/keepalive-sweeper.ts` (budget terminal),
   `web/lib/scheduler/handlers/agent-tick.ts`, `web/lib/domain-events/consumers.ts`.

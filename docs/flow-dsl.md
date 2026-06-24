@@ -485,7 +485,7 @@ nodes:
 `compat.engine_min >= 1.5.0`, else `CONFIG`; `MAISTER_ENGINE_VERSION` bumps
 `1.4.0 → 1.5.0`. Flows without the key stay valid at any `engine_min`.
 
-## Platform-agent `.md` frontmatter (M34 — Implemented; M39 additions Designed — ADR-106)
+## Platform-agent `.md` frontmatter (M34 — Implemented; M39 additions Implemented — ADR-106)
 
 A platform agent is `maister-agents/<stem>.md` at a package ROOT; its catalog id
 is `<packageName>:<stem>` (M39, ADR-106). The frontmatter is parsed by
@@ -516,7 +516,7 @@ recommended:                        # optional — SEEDS the attach panel + per-
 The agent persona / system prompt (the body; MUST be non-empty).
 ```
 
-**M39 additions (Designed — ADR-106).**
+**M39 additions (Implemented — ADR-106).**
 
 - **`flow`** (top-level, optional, capabilityRefId-shaped) — the same-package flow
   the agent drives, projected to the `agents.flow_ref` column. It MUST be a member

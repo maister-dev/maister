@@ -284,7 +284,9 @@ export async function installPackageRevision(opts: {
     // Best-effort: a broken agent file is reported in the summary, never fails
     // the surrounding install (a later resync re-projects the catalog anyway).
     try {
-      const { registerPackageAgents } = await import("@/lib/agents/registry");
+      const { registerPackageAgents, resyncAgents } = await import(
+        "@/lib/agents/registry"
+      );
       const agentSummary = await registerPackageAgents(id, db);
 
       if (agentSummary.invalid.length > 0) {
@@ -293,6 +295,12 @@ export async function installPackageRevision(opts: {
           "package shipped invalid agent definitions",
         );
       }
+
+      // ADR-106: registerPackageAgents wrote THIS install's rows, which may be an
+      // OLDER revision than another already-Installed revision of the same package
+      // name. Re-assert newest-per-name so a re-install of an older revision can't
+      // regress the catalog projection until the next boot/admin resync.
+      await resyncAgents(db);
     } catch (err) {
       log.warn(
         { id, name, err: err instanceof Error ? err.message : String(err) },

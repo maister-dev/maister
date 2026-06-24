@@ -33,9 +33,11 @@ import {
 import { validatePackageArtifacts, type PackageArtifactFile } from "./validate";
 
 import { atomicWriteText } from "@/lib/atomic";
+import { loadFlowManifest } from "@/lib/config";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { classifyPackageFilePath } from "@/lib/flows/editor/package-file-tree";
 import {
   prepareDiff,
   prepareDiffSummary,
@@ -68,41 +70,16 @@ const KIND_DIRS = [
 ] as const;
 const DEFAULT_BRANCH = "main";
 
-export type LocalPackageFileMeta = { path: string; kind: string };
+export type LocalPackageFileMeta = {
+  path: string;
+  // SSOT: the one client-safe classifier shared with the package-files editor +
+  // commit gate (ADR-105 first-class kinds incl. `subagent`/`agent_definition`).
+  kind: ReturnType<typeof classifyPackageFilePath>;
+};
 export type LocalPackageFileContent = LocalPackageFileMeta & {
   content: string;
   contentHash: string;
 };
-
-// Inferred artifact kind for a working-dir-relative path (top dir wins).
-export function inferFileKind(relPath: string): string {
-  const top = relPath.split(/[\\/]/)[0];
-
-  if (relPath === "flow.yaml") return "flow";
-  if (relPath === "maister-package.yaml") return "manifest";
-  // Capability subagents (`capability/<id>/agents/*.md`) are agent definitions —
-  // without this they fall through to the `.md` default ("readme") (M39 A4).
-  if (/^capability[\\/][^\\/]+[\\/]agents[\\/][^\\/]+\.md$/.test(relPath)) {
-    return "agent";
-  }
-
-  switch (top) {
-    case "flows":
-      return "flow";
-    case "agents":
-      return "agent";
-    case "skills":
-      return "skill";
-    case "mcps":
-      return "mcp";
-    case "rules":
-      return "rule";
-    case "schemas":
-      return "schema";
-    default:
-      return relPath.endsWith(".md") ? "readme" : "asset";
-  }
-}
 
 // Exported for the fork path (T2.6): a slug that does not collide with any
 // existing local-package slug, suffixed `-2..` then a uuid tail as a last resort.
@@ -505,7 +482,7 @@ export async function listFiles(
     const st = await lstat(path.join(pkg.workingDir, name)).catch(() => null);
 
     if (!st || !st.isFile()) continue;
-    files.push({ path: rel, kind: inferFileKind(rel) });
+    files.push({ path: rel, kind: classifyPackageFilePath(rel) });
   }
 
   files.sort((a, b) => a.path.localeCompare(b.path));
@@ -528,7 +505,7 @@ export async function readFileContent(
 
   return {
     path: relPath.split(path.sep).join("/"),
-    kind: inferFileKind(relPath),
+    kind: classifyPackageFilePath(relPath.split(path.sep).join("/")),
     content,
     contentHash: createHash("sha256").update(content).digest("hex"),
   };
@@ -549,7 +526,7 @@ export async function writeWorkingDirFile(
 
   return {
     path: relPath.split(path.sep).join("/"),
-    kind: inferFileKind(relPath),
+    kind: classifyPackageFilePath(relPath.split(path.sep).join("/")),
     content,
     contentHash: createHash("sha256").update(content).digest("hex"),
   };
@@ -583,7 +560,15 @@ export async function registerFlowElementInManifest(
 
   if (!flowDir) return;
 
-  const id = slugifyName(flowDir.split(/[\\/]/).at(-1) ?? "flow");
+  // ADR-106: the manifest flow id MUST equal the copied flow.yaml `name` — the
+  // installer enforces id === flow.yaml.name, so deriving the id from the dir
+  // basename (`flows/dev` → `dev`) forks an UNCUTTABLE package when the two
+  // differ (`name: aif-dev`). Parse it with the SAME loader the installer uses;
+  // a malformed copy fails fast rather than registering a wrong id.
+  const flowManifest = await loadFlowManifest(
+    path.join(pkg.workingDir, flowDir, "flow.yaml"),
+  );
+  const id = flowManifest.name;
   const manifestAbs = path.join(pkg.workingDir, "maister-package.yaml");
   const current = await fsReadFile(manifestAbs, "utf8").catch(() => null);
 

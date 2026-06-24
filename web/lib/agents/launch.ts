@@ -557,6 +557,44 @@ export async function resolveWorkspaceRefCommittish(
 // M39 (ADR-106): an agent declaring a same-package flow_ref drives that flow as
 // a NORMAL flow run (run_kind='flow', flow pool, worktree, the flow engine —
 // reusing the board launch path `launchRun`) carrying runs.agent_id; the graph
+// M39 (ADR-106): the loser of a CONCURRENT trigger redelivery (it reused the
+// winner's auto-task) converges to the winner's run instead of launching its own
+// (which would collide on the shared task's branch). The winner's run row may not
+// be committed the instant we lose the task claim, so this is a one-shot BOUNDED
+// convergence on the (agent_id, trigger_event_id) claim — NOT state-polling. If the
+// winner fails in the narrow pre-insert window, fall back to a deduped marker (the
+// winner's own error path surfaces that failure).
+async function convergeToTriggerWinner(
+  _db: Db,
+  agentId: string,
+  triggerEventId: number,
+): Promise<LaunchAgentRunResult> {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const winner = await _db
+      .select({ id: runs.id, status: runs.status })
+      .from(runs)
+      .where(
+        and(eq(runs.agentId, agentId), eq(runs.triggerEventId, triggerEventId)),
+      );
+
+    if (winner[0]) {
+      return {
+        runId: winner[0].id as string,
+        status: winner[0].status as "Running" | "Pending",
+      };
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+
+  log.warn(
+    { agentId, triggerEventId },
+    "concurrent redelivery winner run not observed — deduped",
+  );
+
+  return { deduped: true, triggerEventId };
+}
+
 // runner injects the agent persona on every ai_coding node. The graph runner
 // derives promotion/branch/board from a task, so a task-less trigger
 // (cron/webhook/event) auto-creates one (owner decision, M39).
@@ -595,12 +633,23 @@ async function launchAgentDrivenFlowRun(
         title: `${ctx.effective.parsed.name} (${input.trigger.source})`,
         prompt: ctx.effective.parsed.prompt,
         flowId: flow.id as string,
+        // ADR-106: carry the trigger claim so a concurrent redelivery converges
+        // to ONE auto-task (createTask dedups on (agent_id, trigger_event_id)).
+        agentId: input.agentId,
+        triggerEventId: input.trigger.eventId ?? null,
       },
       { projectId: input.projectId, actorUserId: null },
       _db,
     );
 
     taskId = created.taskId;
+
+    // ADR-106: a deduped auto-task means a CONCURRENT redelivery already claimed
+    // this trigger and the winner is creating the run. Do NOT launch our own run
+    // (it would collide on the shared task's branch) — converge to the winner's.
+    if (created.deduped && input.trigger.eventId != null) {
+      return convergeToTriggerWinner(_db, input.agentId, input.trigger.eventId);
+    }
   }
 
   // M39 Phase 5 (ADR-106): a flow-driving agent imposes ITS runner policy on the
@@ -619,12 +668,29 @@ async function launchAgentDrivenFlowRun(
   const agentPolicyOverlay: AgentExecutionPolicyRecommendation | null =
     autoApply || onBudgetBreach ? { autoApply, onBudgetBreach } : null;
 
+  // ADR-106: the flow run forks from the agent's branch base (instance override →
+  // recommended → the flow's own task/project default when the agent declares
+  // none). launchRun validates a declared base against the project's branches.
+  const declaredBranchBase =
+    ctx.link.branchBase ??
+    ctx.effective.parsed.recommended?.branch_base ??
+    null;
+
+  // Only the auto-task claim WINNER (or a task-bound launch) reaches here, so the
+  // run insert never contends on (agent_id, trigger_event_id) on the live path —
+  // the partial unique index stays the backstop, not a hot conflict.
   const { launchRun } = await import("@/lib/services/runs");
   const result = await launchRun(
     {
       taskId,
       flowId: flow.id as string,
       agentId: input.agentId,
+      // Trigger provenance carries the (agent_id, trigger_event_id) dedup claim
+      // onto the flow run so an at-least-once redelivery converges to one run.
+      triggerSource: input.trigger.source,
+      triggerEventId: input.trigger.eventId ?? null,
+      triggerPayload: input.trigger.payload ?? null,
+      ...(declaredBranchBase ? { baseBranch: declaredBranchBase } : {}),
       ...(agentPolicyOverlay ? { agentPolicyOverlay } : {}),
     },
     { authorize: async () => {}, actorUserId: null },
@@ -645,6 +711,32 @@ export async function launchAgentRun(
 ): Promise<LaunchAgentRunResult> {
   const _db = input.db ?? getDb();
   const ctx = await loadAgentContext(_db, input);
+
+  // Fast trigger-event dedup BEFORE any side effect (task auto-create, worktree,
+  // run insert) — covering BOTH the flow-driving and standalone paths. The
+  // partial unique index on runs(agent_id, trigger_event_id) is the authoritative
+  // race backstop; this pre-check converges an at-least-once redelivery to one
+  // run without leaving an orphan task/worktree on the common sequential path.
+  if (input.trigger.eventId != null) {
+    const existing = await _db
+      .select({ id: runs.id })
+      .from(runs)
+      .where(
+        and(
+          eq(runs.agentId, input.agentId),
+          eq(runs.triggerEventId, input.trigger.eventId),
+        ),
+      );
+
+    if (existing[0]) {
+      log.info(
+        { agentId: input.agentId, triggerEventId: input.trigger.eventId },
+        "agent trigger already claimed — dedup",
+      );
+
+      return { deduped: true, triggerEventId: input.trigger.eventId };
+    }
+  }
 
   // M39 (ADR-106): branch on the flow_ref discriminant BEFORE the standalone
   // routing — an agent that declares a same-package flow drives that flow
@@ -693,29 +785,6 @@ export async function launchAgentRun(
   // tree, finalizeAgentRun lands every shared writable child in Review, and promote
   // settles the tree. The `!input.rootRunId` gate above still stands (a top-level
   // run has no tree to share). `workspaceMode=own` (default) is unaffected.
-
-  // Fast dedup pre-check before any side effect; the partial unique index
-  // on (agent_id, trigger_event_id) stays the authoritative backstop.
-  if (input.trigger.eventId != null) {
-    const existing = await _db
-      .select({ id: runs.id })
-      .from(runs)
-      .where(
-        and(
-          eq(runs.agentId, input.agentId),
-          eq(runs.triggerEventId, input.trigger.eventId),
-        ),
-      );
-
-    if (existing[0]) {
-      log.info(
-        { agentId: input.agentId, triggerEventId: input.trigger.eventId },
-        "agent trigger already claimed — dedup",
-      );
-
-      return { deduped: true, triggerEventId: input.trigger.eventId };
-    }
-  }
 
   // M37 Phase 8 (ADR-099): the addressable_key must be free within the
   // orchestrator tree. The child's tree root is rootRunId (always set for a

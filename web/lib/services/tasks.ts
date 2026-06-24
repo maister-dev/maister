@@ -39,6 +39,12 @@ export type CreateTaskInput = {
   // M34 (ADR-089): optional — a flowless task is a simple-intent task that
   // classifies as `unconfigured` until triage (or a human) fills the flow.
   flowId?: string | null;
+  // M39 (ADR-106): set ONLY for a task auto-created by an agent trigger. The
+  // pair is the (agent_id, trigger_event_id) idempotency claim — a concurrent
+  // at-least-once redelivery converges to ONE auto-task. Absent for a board
+  // task (which carries no trigger and never conflicts).
+  agentId?: string | null;
+  triggerEventId?: number | null;
 };
 
 export type CreateTaskContext = {
@@ -50,7 +56,16 @@ export async function createTask(
   input: CreateTaskInput,
   ctx: CreateTaskContext,
   db?: Db,
-): Promise<{ taskId: string; number: number; taskKey: string }> {
+): Promise<{
+  taskId: string;
+  number: number;
+  taskKey: string;
+  // M39 (ADR-106): true when a concurrent trigger redelivery lost the
+  // (agent_id, trigger_event_id) claim and this call REUSED the winner's task
+  // (no new row/event). Always false for a board task. Callers that launch a run
+  // off the auto-task use this to converge to the winner instead of double-launching.
+  deduped: boolean;
+}> {
   const _db = (db ?? getDb()) as unknown as {
     select: any;
     insert: any;
@@ -79,7 +94,7 @@ export async function createTask(
   // ADR-078 D1: number allocation + task insert in ONE transaction. The
   // projects-row lock (UPDATE … RETURNING) serializes concurrent creates;
   // UNIQUE(project_id, number) is the backstop.
-  const { number, taskKey } = await _db.transaction(async (tx: any) => {
+  const created = await _db.transaction(async (tx: any) => {
     const allocated = await tx
       .update(projects)
       .set({ nextTaskNumber: sql`${projects.nextTaskNumber} + 1` })
@@ -103,17 +118,58 @@ export async function createTask(
       "task number allocated",
     );
 
-    await tx.insert(tasks).values({
-      id: taskId,
-      projectId: ctx.projectId,
-      number: allocatedNumber,
-      title: input.title,
-      prompt: input.prompt,
-      flowId,
-      createdByUserId: ctx.actorUserId ?? null,
-      status: "Backlog",
-      stage: "Backlog",
-    });
+    // M39 (ADR-106): onConflictDoNothing on the (agent_id, trigger_event_id)
+    // partial-unique converges a CONCURRENT trigger redelivery to one auto-task.
+    // A board task carries no trigger ⇒ never conflicts ⇒ always inserts. (The
+    // SEQUENTIAL redelivery is already short-circuited by launchAgentRun's run
+    // pre-check before createTask is reached.)
+    const inserted = await tx
+      .insert(tasks)
+      .values({
+        id: taskId,
+        projectId: ctx.projectId,
+        number: allocatedNumber,
+        title: input.title,
+        prompt: input.prompt,
+        flowId,
+        agentId: input.agentId ?? null,
+        triggerEventId: input.triggerEventId ?? null,
+        createdByUserId: ctx.actorUserId ?? null,
+        status: "Backlog",
+        stage: "Backlog",
+      })
+      .onConflictDoNothing()
+      .returning({ id: tasks.id });
+
+    if (inserted.length === 0) {
+      // Lost the (agent_id, trigger_event_id) claim to a concurrent redelivery —
+      // the winner already created the auto-task AND emitted task.created. Reuse
+      // it; do NOT re-emit activity/event/subscribe. (The allocated number is
+      // consumed — a rare KEY-N gap, acceptable.)
+      const existing = await tx
+        .select({ id: tasks.id, number: tasks.number })
+        .from(tasks)
+        .where(
+          and(
+            eq(tasks.agentId, input.agentId ?? null),
+            eq(tasks.triggerEventId, input.triggerEventId ?? null),
+          ),
+        );
+
+      if (!existing[0]) {
+        throw new MaisterError(
+          "CONFLICT",
+          `task insert conflicted but no claim row found for agent ${input.agentId} / trigger ${input.triggerEventId}`,
+        );
+      }
+
+      return {
+        taskId: existing[0].id as string,
+        number: existing[0].number as number,
+        taskKey: allocated[0].taskKey as string,
+        deduped: true,
+      };
+    }
 
     const actor = actorForUserId(ctx.actorUserId);
 
@@ -146,17 +202,31 @@ export async function createTask(
     }
 
     return {
+      taskId,
       number: allocatedNumber,
       taskKey: allocated[0].taskKey as string,
+      deduped: false,
     };
   });
 
   log.info(
-    { projectId: ctx.projectId, taskId, flowId, taskKey, number },
-    "task created",
+    {
+      projectId: ctx.projectId,
+      taskId: created.taskId,
+      flowId,
+      taskKey: created.taskKey,
+      number: created.number,
+      deduped: created.deduped,
+    },
+    created.deduped ? "task trigger redelivery deduped" : "task created",
   );
 
-  return { taskId, number, taskKey };
+  return {
+    taskId: created.taskId,
+    number: created.number,
+    taskKey: created.taskKey,
+    deduped: created.deduped,
+  };
 }
 
 export type TaskDTO = {

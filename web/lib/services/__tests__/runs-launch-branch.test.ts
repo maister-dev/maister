@@ -55,10 +55,15 @@ type SelectChain = {
   from: (table: unknown) => FromResult | LatestRunChain | RelationJoinChain;
 };
 type InsertCall = { table: unknown; values: Record<string, unknown> };
+type InsertResult = Promise<void> & {
+  onConflictDoNothing: () => {
+    returning: (cols?: unknown) => Promise<Array<{ id: string }>>;
+  };
+};
 
 type FakeDb = {
   select: (fields?: unknown) => SelectChain;
-  insert: (table: unknown) => { values: (values: unknown) => Promise<void> };
+  insert: (table: unknown) => { values: (values: unknown) => InsertResult };
   update: (table: unknown) => {
     set: (values: unknown) => { where: (predicate: unknown) => Promise<void> };
   };
@@ -116,8 +121,15 @@ const fakeDb: FakeDb = {
     },
   }),
   insert: (table: unknown) => ({
-    values: async (values: unknown) => {
+    values: (values: unknown): InsertResult => {
       state.inserts.push({ table, values: values as Record<string, unknown> });
+      const result = Promise.resolve() as InsertResult;
+
+      result.onConflictDoNothing = () => ({
+        returning: async () => [{ id: (values as { id?: string }).id ?? "" }],
+      });
+
+      return result;
     },
   }),
   update: () => ({

@@ -1060,6 +1060,14 @@ export const tasks = pgTable(
     launchMode: text("launch_mode", { enum: ["auto", "manual"] }),
     delegationSpec: jsonb("delegation_spec").$type<TaskDelegationSpec | null>(),
     executionPolicy: jsonb("execution_policy").$type<ExecutionPolicy | null>(),
+    // M39 (ADR-106): provenance + idempotency key for a task AUTO-created by an
+    // agent trigger. The partial UNIQUE (agent_id, trigger_event_id) below makes
+    // an at-least-once redelivery converge to ONE auto-task (mirrors the runs
+    // claim). null/absent for a board-created task (which carries no trigger).
+    agentId: text("agent_id").references(() => agents.id, {
+      onDelete: "set null",
+    }),
+    triggerEventId: bigint("trigger_event_id", { mode: "number" }),
     createdByUserId: text("created_by_user_id").references(() => users.id, {
       onDelete: "set null",
     }),
@@ -1080,6 +1088,11 @@ export const tasks = pgTable(
       t.projectId,
       t.status,
     ),
+    // M39 (ADR-106): an at-least-once trigger redelivery converges to ONE
+    // auto-task (mirrors runs_agent_trigger_event_uq).
+    uniqAgentTriggerEvent: uniqueIndex("tasks_agent_trigger_event_uq")
+      .on(t.agentId, t.triggerEventId)
+      .where(sql`${t.triggerEventId} IS NOT NULL`),
   }),
 );
 

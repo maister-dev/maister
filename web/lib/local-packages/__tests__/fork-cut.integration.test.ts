@@ -26,6 +26,7 @@ import {
   validatePackageManifestYaml,
 } from "@/lib/local-packages/manifest";
 import {
+  ensureDefaultLocalPackage,
   exportWorkingDir,
   getDefaultLocalPackage,
   getLocalPackage,
@@ -59,6 +60,11 @@ async function buildSourcePackage(root: string): Promise<void> {
     await mkdir(join(root, `flows/${f}`), { recursive: true });
     await writeFile(join(root, `flows/${f}/flow.yaml`), FLOW_YAML(f));
   }
+  // A flow whose flow.yaml `name` ("aif-dev") differs from its directory
+  // basename ("dev") — the common `id: aif-dev, path: flows/dev` case the
+  // installer's id===flow.yaml.name check enforces.
+  await mkdir(join(root, "flows/dev"), { recursive: true });
+  await writeFile(join(root, "flows/dev/flow.yaml"), FLOW_YAML("aif-dev"));
   await mkdir(join(root, "skills/skill-one"), { recursive: true });
   await writeFile(join(root, "skills/skill-one/SKILL.md"), "skill body\n");
   await mkdir(join(root, "agents"), { recursive: true });
@@ -72,6 +78,7 @@ name: srcpkg
 flows:
   - { id: flow-a, path: flows/flow-a }
   - { id: flow-b, path: flows/flow-b }
+  - { id: aif-dev, path: flows/dev }
 capabilities: []
 `,
   );
@@ -257,6 +264,29 @@ describe("fork to local (integration)", () => {
     ]);
   });
 
+  it("element fork derives the flow id from flow.yaml name (not the dir basename) so the package is cuttable", async () => {
+    // The source flow at flows/dev has flow.yaml `name: aif-dev`. The installer
+    // requires manifest id === flow.yaml.name, so a basename-derived id ("dev")
+    // would fork an UNCUTTABLE package (CONFIG mismatch at cut/install).
+    const result = await forkElementToNewLocal({
+      sourceInstallId,
+      elementPath: "flows/dev",
+      elementName: "dev",
+      createdBy: userId,
+      db,
+    });
+    const pkg = await getLocalPackage(result.localPackageId, db);
+    const manifest = await readFileContent(pkg!, "maister-package.yaml");
+
+    expect(validatePackageManifestYaml(manifest.content)).toEqual([]);
+    const parsed = parsePackageManifest(manifest.content);
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    // id MUST equal flow.yaml `name` ("aif-dev"), NOT the dir basename ("dev").
+    expect(parsed.model.flows).toEqual([{ id: "aif-dev", path: "flows/dev" }]);
+  });
+
   it("element fork rejects an escaping element path, no package created", async () => {
     await expect(
       forkElementToNewLocal({
@@ -324,6 +354,63 @@ describe("fork to local (integration)", () => {
     expect(paths2).toContain("agents/agent-one.md");
     // still no unrelated source content
     expect(paths2).not.toContain("flows/flow-b/flow.yaml");
+  });
+
+  it("CONCURRENT first ensureDefault converges to ONE default package; the winner's repo survives (two-racer)", async () => {
+    const projectId = randomUUID();
+    const projectName = "Ensure Race Proj";
+
+    await db.insert(schema.projects).values({
+      taskKey: `T${randomUUID().slice(0, 8)}`.toUpperCase(),
+      id: projectId,
+      slug: `ensure-race-${projectId.slice(0, 8)}`,
+      name: projectName,
+      repoPath: join(homeDir, `repo-ensure-${projectId.slice(0, 8)}`),
+    });
+
+    // No default exists — BOTH racers try to CREATE it. The hardest path: the
+    // insert loser must roll back ITS OWN scaffold without deleting the winner's
+    // working dir (the impl comment flags exactly this data-loss hazard). Genuine
+    // race: db is Pool-backed, so the two run on separate connections.
+    const [a, b] = await Promise.all([
+      ensureDefaultLocalPackage({
+        projectId,
+        projectName,
+        createdBy: userId,
+        db,
+      }),
+      ensureDefaultLocalPackage({
+        projectId,
+        projectName,
+        createdBy: userId,
+        db,
+      }),
+    ]);
+
+    // Both observe the SAME single default package.
+    expect(a.id).toBe(b.id);
+    expect(a.isDefault).toBe(true);
+
+    // Exactly ONE default row for the project (the (project_id) WHERE is_default
+    // partial-unique arbiter held).
+    const rows = (await db
+      .select()
+      .from(schema.localPackages)
+      .where(eq(schema.localPackages.projectId, projectId))) as Array<{
+      id: string;
+      isDefault: boolean;
+    }>;
+    const defaults = rows.filter((r) => r.isDefault);
+
+    expect(defaults).toHaveLength(1);
+    expect(defaults[0].id).toBe(a.id);
+
+    // The winner's working dir survives on disk — the loser's rollback `rm` must
+    // NOT have deleted it (the data-loss hazard the per-attempt-uuid slug avoids).
+    const def = await getDefaultLocalPackage(projectId, db);
+
+    expect(def).not.toBeNull();
+    await expect(stat(def!.workingDir)).resolves.toBeDefined();
   });
 
   it("element-fork rejects a path that escapes the source bundle, no write", async () => {
@@ -526,7 +613,10 @@ describe("cut version (integration)", () => {
       .from(schema.flows)
       .where(eq(schema.flows.projectId, projectId));
 
+    // The source carries three flows incl. `aif-dev` (flow.yaml name ≠ dir
+    // basename `dev`) — a clean package-level cut + install of all three.
     expect(flowRows.map((f: any) => f.flowRefId).sort()).toEqual([
+      "aif-dev",
       "flow-a",
       "flow-b",
     ]);

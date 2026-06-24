@@ -202,7 +202,12 @@ export async function getProjectAgentsView(
     Record<string, any>
   >;
   const available = catalogAgents.filter(
-    (a) => !linkedIds.has(a.id) && enabledRefs.has(a.packageName as string),
+    (a) =>
+      // Exclude catalog rows disabled by resyncAgents (their `.md` vanished from
+      // the newest install) — attaching one would only fail at launch resolution.
+      a.enabled !== false &&
+      !linkedIds.has(a.id) &&
+      enabledRefs.has(a.packageName as string),
   );
 
   return { attached, available };
