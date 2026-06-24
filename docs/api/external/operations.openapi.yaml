@@ -64,6 +64,12 @@ tags:
       routes enforce `comments:read` / `comments:create` or `*` and call the
       SAME `addTaskComment` / `listTaskComments` domain functions as the
       session-auth routes — no parallel write path.
+  - name: discovery
+    description: |
+      (ADR-111, Designed) Read-only catalog discovery for an agent verdict —
+      the project's launchable flows (`flows:read`) and enabled platform ACP
+      runners (`runners:read`). Backs the triager's `flow_list` / `runner_list`
+      MCP tools so it can only assign flows/runners that will actually launch.
 
 paths:
   /api/v1/ext/projects/{slug}/tasks:
@@ -362,18 +368,46 @@ paths:
 
   /api/v1/ext/projects/{slug}/tasks/{taskId}/triage:
     post:
-      summary: (M34 — Implemented) Submit a triage verdict
+      summary: (M34 — Implemented; ADR-111 flag/enqueue — Designed) Submit a triage verdict
       description: |
         Scope `tasks:triage`. The triager's verdict op — ONE transactional
-        update of the task's launch-verdict fields plus the `'triaged'`
+        update of the task's launch-verdict fields plus the triage-status
         stamp. At least one body field is required; every provided field is
         validated against server state (`flowId` ∈ project flows, `runnerId`
         ∈ enabled runner catalog, `promotionMode` ∈ enum, `targetBranch` =
-        git ref-name shape). Always sets `tasks.triage_status = 'triaged'`
-        and records a `triage_set` activity entry carrying the verdict
-        payload. Writes a `token_audit_log` row with scope `tasks:triage`;
+        git ref-name shape). Records a `triage_set` activity entry carrying
+        the payload. Writes a `token_audit_log` row with scope `tasks:triage`;
         agent tokens record `actor_label = agent:<id>` and the activity
         actor is the polymorphic `agent` pair (ADR-083).
+
+        **Verdict path (default).** A verdict body (`flowId` / `runnerId` /
+        `baseBranch` / `targetBranch` / `promotionMode`) sets
+        `tasks.triage_status = 'triaged'`; the task becomes launchable.
+
+        **(ADR-111, Designed) `flag` — hand to a human.** When `flag: true`,
+        the task is marked `tasks.triage_status = 'flagged'` (held — NOT
+        launchable; the board shows a "needs review" chip). `flag` is
+        **mutually exclusive** with the verdict fields (`flowId` / `runnerId` /
+        `baseBranch` / `targetBranch` / `promotionMode`): sending `flag`
+        alongside any verdict field is refused 422 `CONFIG`. `flag: true` alone
+        is a valid body (the "≥1 field" rule is still met).
+
+        **(ADR-111, Designed) `enqueue` — auto-launch after triage.** When
+        `enqueue: true`, the task's enqueue intent is set
+        (`tasks.launch_mode = 'auto'`) so the `auto_launch_triaged` scheduler
+        tick launches it once it is launchable (dependencies cleared, global
+        cap permitting). `enqueue` is valid ONLY alongside a verdict that
+        yields a `flowId` (an existing `tasks.flow_id` or a `flowId` in this
+        body); `enqueue` with no resolvable flow, or together with `flag`, is
+        refused 422 `CONFIG`. The triager never launches directly — the tick
+        performs the launch through the standard precondition choke point.
+
+        **Write-side launchability re-validation (ADR-111, Designed).** When a
+        verdict carries a `flowId` (most relevant with `enqueue`), the flow's
+        enablement + trust are re-validated (`enablementState ∈ {Enabled,
+        UpdateAvailable}` ∧ `trustStatus ≠ untrusted`); a disabled / untrusted
+        / pin-divergent flow is refused 422 `CONFIG` rather than stamped
+        `triaged` + `auto` and left to stall the tick.
       operationId: extTriageTask
       parameters:
         - { name: slug, in: path, required: true, schema: { type: string } }
@@ -383,9 +417,29 @@ paths:
         content:
           application/json:
             schema: { $ref: "#/components/schemas/ExtTriageBody" }
+            examples:
+              verdict:
+                summary: Verdict only — flow + runner, task becomes launchable
+                value:
+                  flowId: "bugfix"
+                  runnerId: "claude-code"
+                  targetBranch: "main"
+                  promotionMode: "local_merge"
+              flag-only:
+                summary: (ADR-111) Flag for human review — no verdict fields
+                value:
+                  flag: true
+              verdict-enqueue:
+                summary: (ADR-111) Verdict + auto-enqueue after triage
+                value:
+                  flowId: "bugfix"
+                  runnerId: "claude-code"
+                  enqueue: true
       responses:
         "200":
-          description: Verdict applied; the task is `triaged`.
+          description: |
+            Triage applied. `triageStatus` is `triaged` for a verdict body or
+            `flagged` for a `flag: true` body.
           content:
             application/json:
               schema:
@@ -393,11 +447,20 @@ paths:
                 required: [ok, triageStatus]
                 properties:
                   ok: { type: boolean }
-                  triageStatus: { type: string, enum: [triaged] }
+                  triageStatus: { type: string, enum: [triaged, flagged] }
         "401": { $ref: "#/components/responses/TokenUnauthorized" }
         "403": { $ref: "#/components/responses/HitlForbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
-        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "422":
+          description: |
+            Request body failed schema validation, or a `CONFIG` precondition
+            was violated (ADR-111, Designed) — `flag` sent with a verdict field
+            (mutually exclusive), `enqueue` with no resolvable `flowId` (or with
+            `flag`), or a verdict `flowId` that is disabled / untrusted /
+            pin-divergent.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtErrorBody" }
   /api/v1/ext/projects/{slug}/tasks/{taskId}/relations:
     get:
       summary: (M34 — Implemented) List a task's typed relations
@@ -489,6 +552,99 @@ paths:
         "403": { $ref: "#/components/responses/HitlForbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+
+  /api/v1/ext/projects/{slug}/flows:
+    get:
+      tags: [discovery]
+      summary: (ADR-111, Designed) List the project's launchable flows
+      description: |
+        Scope `flows:read`. Returns the flows of every package attached to the
+        project identified by `slug`, projected to the routing metadata a
+        triager matches against (`metadata.route_when` / `summary` / `title` /
+        `labels`). The `projectId` is derived server-side from the URL slug and
+        compared against the token's project — mismatch → 404.
+
+        **Launchable-only projection.** This route returns ONLY flows the
+        triager may actually assign: `enablementState ∈ {Enabled,
+        UpdateAvailable}` ∧ `trustStatus ≠ untrusted`. Disabled, pin-divergent,
+        and untrusted flows are omitted, so a verdict built from this list can
+        never stall an `enqueue` on an unlaunchable flow (the write-side
+        `triage_set` re-validates the same enablement + trust and returns 422
+        `CONFIG` otherwise).
+
+        Writes a `token_audit_log` row with scope `flows:read` after success.
+      operationId: extListProjectFlows
+      security:
+        - projectToken: [flows:read]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: Launchable flows for the project.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [flows]
+                properties:
+                  flows:
+                    type: array
+                    items: { $ref: "#/components/schemas/ExtFlowSummary" }
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/ext/projects/{slug}/runners:
+    get:
+      tags: [discovery]
+      summary: (ADR-111, Designed) List enabled platform ACP runners
+      description: |
+        Scope `runners:read`. Returns the enabled platform ACP runners a
+        triager may pick for a verdict — `id`, `adapter`, `model`,
+        `capabilityAgent`, `readinessStatus`. Runners are **platform-scoped**,
+        not project-scoped: the URL `slug` is used only for auth/scope
+        enforcement (cross-project or inaccessible project → 404), and the
+        returned set is the global enabled-runner catalog (`enabled = true`),
+        not filtered by project.
+
+        Writes a `token_audit_log` row with scope `runners:read` after success.
+      operationId: extListProjectRunners
+      security:
+        - projectToken: [runners:read]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: Enabled platform ACP runners.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [runners]
+                properties:
+                  runners:
+                    type: array
+                    items: { $ref: "#/components/schemas/ExtRunnerSummary" }
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /api/v1/ext/runs:
     post:
       tags: [runs]
@@ -1555,20 +1711,36 @@ components:
     ExtTriageBody:
       type: object
       description: |
-        (M34 — Implemented) Triage verdict — at least one field. Every provided
-        field is allow-list validated; the op always stamps
-        `triage_status='triaged'`.
+        (M34 — Implemented; ADR-111 `flag`/`enqueue` — Designed) Triage body —
+        at least one field. Every provided field is allow-list validated. A
+        verdict body stamps `triage_status='triaged'`; a `flag: true` body
+        stamps `triage_status='flagged'`.
+
+        Cross-field rules (enforced server-side; OpenAPI 3.0 cannot express
+        them declaratively), violations → 422 `CONFIG`:
+          - `flag` is **mutually exclusive** with the verdict fields (`flowId`,
+            `runnerId`, `baseBranch`, `targetBranch`, `promotionMode`).
+          - `enqueue: true` is valid ONLY alongside a verdict that yields a
+            `flowId` (this body's `flowId` or the task's existing
+            `tasks.flow_id`); never with `flag`.
       minProperties: 1
       additionalProperties: false
       properties:
         flowId:
           type: string
           minLength: 1
-          description: Flow to run the task with; must belong to the project.
+          description: |
+            Flow to run the task with; must belong to the project and (ADR-111,
+            Designed) be launchable (enabled + trusted + not pin-divergent).
         runnerId:
           type: string
           minLength: 1
           description: Verdict runner; must be an enabled catalog runner.
+        baseBranch:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: Base branch the run worktree is created from (git ref-name shape).
         targetBranch:
           type: string
           minLength: 1
@@ -1577,6 +1749,85 @@ components:
         promotionMode:
           type: string
           enum: [local_merge, pull_request]
+        flag:
+          type: boolean
+          description: |
+            (ADR-111, Designed) When `true`, mark the task `flagged` for human
+            review (held — not launchable). Mutually exclusive with the verdict
+            fields above; `flag: true` alone is a valid body.
+        enqueue:
+          type: boolean
+          description: |
+            (ADR-111, Designed) When `true`, set the task to auto-launch after
+            triage (`tasks.launch_mode = 'auto'`); the `auto_launch_triaged`
+            tick performs the launch once the task is launchable. Valid only
+            with a verdict that yields a `flowId`; never with `flag`.
+
+    ExtFlowSummary:
+      type: object
+      description: |
+        (ADR-111, Designed) One launchable flow available to assign in a triage
+        verdict. Projected from the flow's pinned-revision manifest
+        (`flow.yaml`); `metadata` carries the routing hints the triager matches
+        a task against. Only flows with `enablementState ∈ {Enabled,
+        UpdateAvailable}` ∧ `trustStatus ≠ untrusted` appear in the list.
+      required: [id, ref]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          description: The flow id (the value passed back as `ExtTriageBody.flowId`).
+        ref:
+          type: string
+          description: |
+            Package-qualified flow reference (`<flowRefId>`), stable across the
+            package's revisions.
+        metadata:
+          type: object
+          description: |
+            Routing metadata from the manifest `metadata` block. All fields are
+            optional (a flow may declare none).
+          additionalProperties: false
+          properties:
+            title:
+              type: string
+              description: Human-readable flow title.
+            summary:
+              type: string
+              description: Short description of what the flow does.
+            route_when:
+              type: string
+              description: Author-declared applicability hint ("use this flow when …").
+            labels:
+              type: array
+              items: { type: string }
+              description: Free-form classification labels.
+
+    ExtRunnerSummary:
+      type: object
+      description: |
+        (ADR-111, Designed) One enabled platform ACP runner available to assign
+        in a triage verdict. Runners are platform-scoped (not project-scoped);
+        only `enabled = true` runners appear.
+      required: [id, adapter, model, capabilityAgent, readinessStatus]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          description: The runner id (the value passed back as `ExtTriageBody.runnerId`).
+        adapter:
+          type: string
+          description: The ACP adapter family backing this runner.
+        model:
+          type: string
+          description: The model the runner targets.
+        capabilityAgent:
+          type: string
+          description: The capability-agent identity the adapter exposes.
+        readinessStatus:
+          type: string
+          enum: [Unknown, Ready, NotReady]
+          description: Cached runner readiness from supervisor diagnostics.
 
     ExtRelationOpBody:
       type: object
@@ -2386,6 +2637,8 @@ components:
         - tasks:create
         - tasks:read
         - tasks:update
+        - flows:read
+        - runners:read
         - runs:launch
         - runs:read
         - readiness:read

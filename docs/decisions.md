@@ -135,6 +135,8 @@
 | [ADR-108](#adr-108-declarative-guardrailhook-engine--universal-supervisor-acp-seam-interceptor-native-materializer-seam-and-hook-trip-hitl-escalation) | Declarative guardrail/hook engine — universal supervisor ACP-seam interceptor (3 rules), native materializer seam, `hook_trip` HITL, engine 1.8.0 | Accepted | 2026-06-23 |
 | [ADR-109](#adr-109-consensus-flow-graph-node--engine-owned-unanimous-draft-verification-and-human-resolution) | Consensus flow-graph node — engine-owned unanimous draft verification and human resolution | Accepted | 2026-06-24 |
 | [ADR-110](#adr-110-flow-studio-ai-assistant-read-only-acp--structured-server-applied-actions) | Flow Studio AI assistant: read-only ACP + structured server-applied actions | Accepted | 2026-06-25 |
+| [ADR-110](#adr-110-generic-agent-configuration-framework--declared-config-params-per-instance-values-resolved-snapshot-prompt-injection) | Generic agent configuration framework — declared config params, per-instance values, resolved snapshot, prompt injection | Accepted | 2026-06-25 |
+| [ADR-111](#adr-111-triager-agent--duplicate_offlagged-dedup-substrate-auto_launch_triaged-tick-flowrunner-discovery-no-silent-stall-guards) | Triager agent — duplicate_of/flagged dedup substrate, auto_launch_triaged tick, flow/runner discovery, no-silent-stall guards | Accepted | 2026-06-25 |
 
 ---
 
@@ -8580,6 +8582,234 @@ Recovery never auto-replays action JSONL.
   boundaries. Studio assistant turns need their own route.
 - **Hunk patches:** deferred. Full-file operations reuse existing save and
   validation primitives and make stale-hash conflicts deterministic.
+### ADR-110: Generic agent configuration framework — declared config params, per-instance values, resolved snapshot, prompt injection
+
+**Date:** 2026-06-25
+**Status:** Accepted
+**Context:** Platform agents (ADR-089/090, package-keyed by ADR-106) ship as
+`.md` definitions whose behavior is fixed at author time and tuned only through
+the per-agent runner chain and the per-project attachment fields
+(`agent_project_links.runner_override_id`, `branch_base`,
+`execution_policy_override`). There is no way for an agent author to expose
+*behavioral* knobs — a boolean, an enum, a threshold — that a project operator
+sets per instance and the runtime feeds to the agent. The triager (ADR-111) is
+the first agent that needs this: it must be configurable per project for
+auto-enqueue behavior, duplicate detection, and intake mode without forking the
+definition or hard-coding a triager-specific column. The owner asked for a
+*generic* framework, not a triager-specific hack, so the model extension is
+authored once and the triager is merely its first consumer. The existing
+attachment plumbing, the `recommended`-binding SET/CLEAR resync symmetry, and
+the immutable launch-snapshot discipline (`runs.execution_policy`,
+`runs.runner_snapshot`) are the seams this reuses.
+
+**Decision:**
+1. **Agents declare a typed `config:` block in `.md` frontmatter.** It is an
+   array of parameter declarations, each with `key`, `type ∈ {boolean, enum,
+   string, number}`, `default`, optional `label`/`description`, and (for `enum`)
+   a `values` list. Parsing and strict validation happen in
+   `web/lib/agents/definition.ts`: an unknown type, an `enum` without `values`,
+   a `default` outside `values`, or a duplicate `key` is a hard
+   `MaisterError("CONFIG")` — the catalog row is **not** written on a bad schema
+   (matching the existing behavior for invalid agent frontmatter). The type set
+   is deliberately minimal; richer types are a future ADR.
+2. **The declared schema is projected to `agents.config_schema` (jsonb) under
+   SET/CLEAR resync symmetry.** On install/resync the parsed `config:` is written
+   to the column so the UI can render a form without re-reading the package; an
+   `.md` that drops `config:` re-syncs the column back to `null`, and re-adding
+   it restores the value (idempotent round-trip — the same symmetry the
+   `recommended` bindings already follow).
+3. **Per-instance values live in `agent_project_links.config` (jsonb).** `null`
+   means "all declared defaults". Values are written through the **one
+   aggregating PATCH** the per-instance admin panel already uses (no per-field
+   route), SET/CLEAR symmetric.
+4. **Resolution is two-level: instance value → declared default.**
+   `resolveAgentConfig(declared, instanceValue)` merges the per-instance value
+   over the declared default; a `null` instance yields all defaults, a partial
+   instance overrides only the present keys, and an unknown instance key is
+   ignored. There is no project/platform tier (YAGNI).
+5. **The resolved config is snapshotted once at spawn to `runs.agent_config`
+   (jsonb, immutable).** It is computed in the run-insert path beside
+   `execution_policy` and `runner_snapshot` and never re-resolved afterward —
+   the launch-time-snapshot rule. A later edit to the link or definition does not
+   change a live run's effective config.
+6. **The agent reads its config by prompt injection from the snapshot.** The
+   system prompt gains a small "Effective configuration" context block built
+   **from `runs.agent_config`** (the snapshot), inserted before the task block.
+   No new MCP tool and no new run-time resolution path: the injected block and
+   the snapshot are the single source of truth, so they cannot diverge.
+7. **The change is migration `0071`** (three additive jsonb columns:
+   `agents.config_schema`, `agent_project_links.config`, `runs.agent_config`).
+   No new `MaisterError` code (reuses `CONFIG` for a bad schema).
+
+**Consequences:**
+- Agent authors gain a first-class, per-instance behavioral surface without
+  forking definitions or adding bespoke columns; the triager (ADR-111) consumes
+  it directly and any future agent inherits it for free.
+- The injected "Effective configuration" block reads from the immutable
+  `runs.agent_config` snapshot, so a config edit mid-run is correctly invisible
+  to the in-flight run — config follows the same audit/immutability contract as
+  the execution policy and runner snapshot.
+- The per-instance panel (M39 `agents-attach-panel.tsx` /
+  `agents-attach-edit-modal.tsx`) grows a Configuration section that renders each
+  declared param (toggle / select / input) seeded from the effective values and
+  saves through the existing aggregating PATCH (EN + RU).
+- A malformed `config:` block fails closed at parse time (`CONFIG`, no catalog
+  row), so a broken declaration can never reach a launch.
+
+**Alternatives Considered:**
+- **A triager-specific config column / hard-coded knobs:** rejected — the owner
+  asked for a generic framework; a per-agent column does not scale to the next
+  configurable agent and couples the schema to one consumer.
+- **A three-tier resolver (platform → project → instance):** rejected as YAGNI;
+  the per-instance value over the declared default covers the need, and the
+  extra tier adds resolution surface with no current consumer.
+- **Reading config via a new MCP tool at run time:** rejected — re-resolving at
+  read time would let a mid-run link edit mutate a live run's behavior and break
+  the launch-snapshot invariant; prompt injection from the immutable snapshot is
+  both simpler and audit-correct.
+- **A new `MaisterError` code for bad config:** rejected — an invalid schema is a
+  configuration fault; `CONFIG` already covers it and the ADR-008 union stays
+  closed.
+
+---
+
+### ADR-111: Triager agent — duplicate_of/flagged dedup substrate, auto_launch_triaged tick, flow/runner discovery, no-silent-stall guards
+
+**Date:** 2026-06-25
+**Status:** Accepted
+**Context:** We want a single **triager** platform agent that, given a task's
+request, sets its flow, runner, and base branch, detects duplicates, forms
+dependencies on other tasks, judges clarity, and (optionally) places the task
+into the execution queue. Research showed ~80% of the substrate already exists
+on the M34 platform-agent stack (ADR-089/090; package-keyed by ADR-106): the
+triage verdict ops (`triage_set` → `flowId`/`runnerId`/`baseBranch`), typed task
+relations with launch-gating (`blocks`/`depends_on`/`requires`), the
+domain-event triggers (`task.created`, `task.triage_requeued`,
+`task.comment_added`) with agent self-exclusion, the comment Q&A loop, and the
+per-instance overrides plumbing were all built in anticipation of this agent.
+Three concrete gaps remain: an agent cannot enumerate a project's flows/runners,
+there is no model for "this is a duplicate" or "a human must look", and the only
+auto-launcher (`auto_launch_run_plan`, ADR-098) is orchestrator-specific and
+does not launch ordinary triaged **flow** tasks. The generic agent-config
+framework (ADR-110) supplies the per-instance knobs the triager needs. PRD
+authoring is explicitly **not** the triager's job — flow selection is driven by
+each flow's self-describing `metadata.route_when`, and a PRD, in the limit, is a
+node inside an execution flow (M12 artifact), authored separately.
+
+**Decision:**
+1. **One triager platform agent, shipped as `maister-agents/triager.md` in a new
+   "core" package in the `maister-plugins` repo.** Frontmatter: `workspace:
+   none`, `mode: session`, `risk_tier: read_only`, `triggers: [domain_event,
+   manual]`, `recommended.events: [task.created, task.triage_requeued,
+   task.comment_added]`, no `flow:` (so it runs as a standalone
+   `run_kind='agent'` session on the agent budget). Config (ADR-110):
+   `auto_enqueue (off | when_confident | always = off)`, `detect_duplicates
+   (boolean = true)`, `intake_mode (triage_only | clarify = clarify)`.
+2. **Clarity is two thresholds, not one.** A **routing-floor** check is
+   unconditional in both modes: a black box that cannot be matched to a flow is
+   never triaged — `clarify` asks the creator via a comment (driving "Needs
+   you"), `triage_only` flags it for a human. **Execution-clarity** (detail
+   questions) is mode-dependent: `clarify` refines the task statement *before*
+   triaging; `triage_only` triages on the best obvious route and defers detail to
+   the **flow's own HITL during the run**. So it is "routing always before;
+   details by mode", with a max-rounds guard (3) falling back to `flagged`.
+3. **Duplicates use a new `task_relations.kind` value `duplicate_of` —
+   informational and NON-blocking.** `getOpenRelationBlockers` queries only
+   `blocks`/`depends_on`/`requires`, so `duplicate_of` is never queried and never
+   gates launch (the held state is what stops the task). On a strong match the
+   triager links `duplicate_of`, comments, sets `flagged`, fills **no** verdict,
+   and does **not** enqueue.
+4. **A held task uses a new `tasks.triage_status` value `flagged`.** `flagged` is
+   **not launchable even when `flowId` is set** (a human could attach a flow to a
+   flagged duplicate; it must still be held). It is fanned out to every
+   launchability consumer as an **allow-list** arm ranked **above** `unconfigured`
+   in BOTH `classifyTaskLaunchability` and `classifyManualTaskLaunchability`. It
+   is set via a triage `flag` op (mutually exclusive with verdict fields →
+   `CONFIG`) and cleared only by a human (removing the `duplicate_of` relation or
+   re-sending to triage).
+5. **Enqueue is intent-only; a system tick performs the launch.** A triage op
+   `enqueue:true` sets `tasks.launch_mode='auto'` in the verdict transaction
+   (valid only with a verdict that yields a `flowId`). A new scheduler tick
+   **`auto_launch_triaged`** on the M24 polymorphic clock (`systemManaged`,
+   budget 1, 60s cadence) sweeps tasks that are `triaged` + `launch_mode='auto'`
+   + `flowId` present + `classifyTaskLaunchability` launchable + no live run + not
+   an orchestrator as-plan task, and launches a **standard flow run** through the
+   normal precondition choke point (cap → `Pending`). Reusing
+   `classifyTaskLaunchability` + `getOpenRelationBlockers` means a
+   dependency-blocked task self-launches once its blocker clears, handled by one
+   sweep with no extra wiring. The predicate is **disjoint** from
+   `auto_launch_run_plan` (ADR-098), which requires a `parent_of`-under-orchestrator
+   parent + `delegation_spec.agentId` and launches *agent* runs. The triager has
+   **no** `runs:launch` scope and never calls launch itself.
+6. **Discovery is two read-only ext routes plus two MCP tools.** `GET
+   /api/v1/ext/projects/{slug}/flows` (scope `flows:read`) and `…/runners` (scope
+   `runners:read`), surfaced as MCP `flow_list` / `runner_list`. New token scopes
+   `flows:read` / `runners:read` are added to the agent token scope set. `flow_list`
+   returns per flow `id` + `metadata.{title, summary, route_when, labels}` — the
+   "when/what to apply" the triager matches against; `runner_list` returns enabled
+   platform runners (`id`, `adapter`, `model`, `provider`).
+7. **No-silent-stall is a two-sided contract.** A triager could otherwise stamp
+   `triaged` + `auto` on a disabled/untrusted flow and the tick would refuse the
+   launch forever while WARN-spamming. **Read side:** `flow_list` returns ONLY
+   assignable flows (`enablementState ∈ {Enabled, UpdateAvailable}` ∧
+   `trustStatus ≠ untrusted`), so the agent can only pick launchable flows.
+   **Write side:** `validateVerdictRefs` validates the verdict flow's enablement +
+   trust → `CONFIG`, so `triage_set` with a disabled/untrusted flow returns 422.
+   **Give-up:** if a flow becomes unlaunchable AFTER a valid triage, the tick
+   treats a terminal `PRECONDITION` refusal as give-up — it clears `launch_mode`,
+   posts a system comment, and logs INFO (no WARN loop); a transient cap-hit
+   stays `auto` and is retried.
+8. **No new `MaisterError` code.** The whole feature reuses `CONFIG` (bad config
+   schema, disabled/untrusted verdict flow, verdict+flag conflict),
+   `PRECONDITION` (launch refusals), and `NOT_FOUND` (cross-project locator). The
+   change is two migrations: `0072` (the `flagged` + `duplicate_of` enum widenings
+   here; the ADR-110 config columns are `0071`).
+
+**Consequences:**
+- A triager can route, dedup, form dependencies, and enqueue tasks end-to-end on
+  the existing M34 substrate, with only `read_only`/`workspace:none` blast radius
+  and no launch authority of its own.
+- The auto-launch tick handles dependency release for free: a `triaged` + `auto`
+  task blocked by `depends_on` waits in queue and flies once the blocker reaches
+  `Done`, with no event subscription (a timer was accepted; event-driven enqueue
+  is a later optional upgrade).
+- The `flagged` state must be fanned out to every launchability consumer
+  (classifiers, the 5 classifier call-sites, read models, the user-cron
+  dispatcher, and i18n) as an allow-list arm; `duplicate_of` must be kept out of
+  the blocking-relation set by construction (explicit regression).
+- `flagged` and `auto_launch_triaged` follow the existing snapshot/idempotency
+  discipline: the tick writes no idempotency mark before `launchRun` and relies on
+  a live-run guard plus singleton scheduling (budget 1).
+- A triaged + auto task can never stall on a non-launchable flow: the read-side
+  filter and the write-side validation jointly guarantee the verdict flow is
+  assignable, and the give-up path bounds any post-triage staleness.
+- The triager definition itself is an external deliverable in the
+  `maister-plugins` core package; in-repo work ships a fixture and the
+  register/enable/trust path.
+
+**Alternatives Considered:**
+- **Two agents (a router and a clarifier), or a triager-specific config column:**
+  rejected — one agent configured per instance via the generic ADR-110 framework
+  is simpler and the owner's explicit call.
+- **The triager calls `run_launch` directly:** rejected — keeping the agent to an
+  enqueue *intent* (`launch_mode='auto'`) and launching under system authority
+  through the same precondition choke point keeps its blast radius minimal and
+  reuses every launch safety.
+- **Extending `auto_launch_run_plan` (ADR-098) to also launch flow tasks:**
+  rejected — its predicate (orchestrator parent + `delegation_spec.agentId`,
+  agent runs) is disjoint from a plain triaged flow task; a separate, disjoint
+  tick avoids collision and keeps each launcher legible.
+- **An event consumer instead of a tick:** rejected for v1 — a tick naturally
+  re-evaluates dependency release without subscribing to every run-terminal
+  event; `task.triaged`-driven enqueue is a noted future upgrade with the tick as
+  the dependency-release backstop.
+- **`duplicate_of` as a blocking relation, or a `prd` intake mode / `tasks.prd`
+  column:** rejected — duplicates are held by the `flagged` state (the relation
+  stays informational), and PRD authoring is a flow-execution concern (a typed
+  M12 artifact), not the triager's job.
+- **A new `MaisterError` code:** rejected — `CONFIG`/`PRECONDITION`/`NOT_FOUND`
+  already cover every refusal on the triage → enqueue → tick path; the ADR-008
+  union stays closed.
 
 ---
 

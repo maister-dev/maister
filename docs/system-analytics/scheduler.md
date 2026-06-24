@@ -51,6 +51,18 @@ without turning recovery sweeps into live-path polling.
   per-consumer cursors over the `domain_events` outbox each tick. Not
   user-creatable — `createSchedulerJobSchema` rejects it (`run_schedule`
   precedent). See [domain-events.md](domain-events.md).
+- **`auto_launch_triaged` job kind** (Designed, ADR-111) — singleton
+  triaged-task launcher (one `auto_launch_triaged.default` job, 60s cadence,
+  budget `autoLaunchTriaged: 1`) whose handler each tick sweeps tasks that are
+  `triage_status='triaged'` AND `launch_mode='auto'` AND have a `flow_id` AND
+  classify launchable (no live run, dependency blockers cleared), then launches
+  each through the standard `launchRun` path (global cap → `Pending` if full).
+  `systemManaged`, not user-creatable — `createSchedulerJobSchema` rejects it
+  (`run_schedule` precedent). Its predicate is **disjoint** from the orchestrator
+  `auto_launch_run_plan` domain-event consumer (ADR-098), which fires only on
+  `parent_of`-under-orchestrator tasks carrying a `delegation_spec.agentId` and
+  launches agent runs — this kind launches ordinary triaged FLOW tasks. See
+  [triage.md](triage.md).
 - **Scheduler admin** (`/admin/scheduler` page + `/api/admin/scheduler-jobs[/{jobId}]`,
   Implemented, M24/M28) — admin-only scheduler
   management. The refined surface separates Engine jobs from Task schedules,
@@ -69,7 +81,8 @@ without turning recovery sweeps into live-path polling.
   `console_ping` (`host`, optional `timeoutMs`). `flow_run` targets use a
   required task id plus optional `runnerId`, `baseBranch`, and `targetBranch`.
   `system_sweep`, `run_schedule`, `webhook_delivery`,
-  `domain_event_dispatch`, and `agent_tick` use `{}` in the seeded rows.
+  `domain_event_dispatch`, `agent_tick`, and `auto_launch_triaged` use `{}`
+  in the seeded rows.
 
 ## State machine
 
@@ -168,8 +181,9 @@ flowchart TD
   SQL; it MUST likewise seed `run_schedule.dispatcher` (60-second cadence,
   `max_failures` 3; Implemented, M28), `webhook_delivery.default`
   (60-second cadence; Implemented, ADR-077), `domain_event_dispatch.default`
-  (60-second cadence; Implemented, ADR-086), and `agent_tick.dispatcher`
-  (60-second cadence; M34 — Implemented, ADR-089).
+  (60-second cadence; Implemented, ADR-086), `agent_tick.dispatcher`
+  (60-second cadence; M34 — Implemented, ADR-089), and
+  `auto_launch_triaged.default` (60-second cadence; Designed, ADR-111).
 - Atomic claim MUST enforce per-kind budgets in SQL before an attempt is created:
   `command` uses `MAISTER_MAX_CONCURRENT_COMMANDS`; `agent_tick` is a hardcoded
   budget of 1 (singleton dispatcher; M34 — Implemented — its former
@@ -180,7 +194,8 @@ flowchart TD
   (serial dispatcher, like `system_sweep`; Implemented, M28); `webhook_delivery`
   is a hardcoded budget of 1 (singleton drainer; Implemented, ADR-077);
   `domain_event_dispatch` is a hardcoded budget of 1 (singleton dispatcher;
-  Implemented, ADR-086).
+  Implemented, ADR-086); `auto_launch_triaged` is a hardcoded budget of 1
+  (singleton launcher; Designed, ADR-111).
 - `agent_tick` MUST be the seeded `agent_tick.dispatcher` singleton only —
   `createSchedulerJobSchema` rejects the kind (M34 — Implemented; the M24
   "stub without a launcher records `Skipped`/`PRECONDITION`" seam is
@@ -203,11 +218,12 @@ flowchart TD
 - Scheduler job kind lists MUST share one catalog across parsing, filtering,
   creation, and editing. All DB-supported kinds are visible/filterable:
   `system_sweep`, `command`, `agent_tick`, `flow_run`, `run_schedule`,
-  `webhook_delivery`, and `domain_event_dispatch`.
+  `webhook_delivery`, `domain_event_dispatch`, and `auto_launch_triaged`
+  (the last Designed, ADR-111).
 - Custom job creation MUST match the admin API schema. The seeded singleton
-  kinds `agent_tick`, `run_schedule`, and `domain_event_dispatch` are not
-  creatable as duplicates. `webhook_delivery` policy MUST stay consistent
-  across schema, catalog, docs, and UI.
+  kinds `agent_tick`, `run_schedule`, `domain_event_dispatch`, and
+  `auto_launch_triaged` are not creatable as duplicates. `webhook_delivery`
+  policy MUST stay consistent across schema, catalog, docs, and UI.
 - The admin editor MUST build `scheduler_jobs.target` from typed fields.
   Raw JSON MUST NOT be the primary write UI; a read-only advanced preview is
   acceptable for diagnostics.
@@ -249,6 +265,7 @@ flowchart TD
 - User-facing run schedules (Implemented, M28): [`run-schedules.md`](run-schedules.md) +
   [ADR-071](../decisions.md#adr-071-user-facing-run-schedules-on-the-m24-clock).
 - Domain-event dispatcher (Implemented, ADR-086): [`domain-events.md`](domain-events.md).
+- Triaged-task launcher (Designed, ADR-111): [`triage.md`](triage.md).
 - Platform-agent triggers (M34 — Implemented, ADR-089): [`agents.md`](agents.md).
 - Existing recovery/GC domain: [`reconciliation-gc.md`](reconciliation-gc.md).
 - Source seams: `web/app/api/cron/gc/route.ts`, `web/lib/scheduler.ts`,

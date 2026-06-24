@@ -304,6 +304,61 @@ references alongside skills. Claude-only by descriptor (codex omits subagent
 files; references stay advisory-only). Materialization is part of the staged
 launch and is cleaned up with the worktree/session on a failed launch.
 
+### (j) Generic agent-config framework (Designed — ADR-110)
+
+An agent `.md` MAY declare a typed `config:` block — an array of parameter
+declarations `{ key, type ∈ {boolean, enum, string, number}, default?, label?,
+description?, values? (enum only) }`. Parsing is strict in
+`web/lib/agents/definition.ts`: an unknown type, a duplicate key, an `enum`
+without `values`, or a `default` outside `values` → `MaisterError("CONFIG")`
+and the catalog row is not written (same boundary as any invalid frontmatter).
+The declared schema is projected at install/resync onto `agents.config_schema`
+(jsonb, SET/CLEAR symmetric like every other synced column) so the UI renders a
+form without re-reading the package. Per-instance values live in
+`agent_project_links.config` (jsonb, `null` ⇒ all defaults), written through the
+ONE aggregating project-link PATCH. `resolveAgentConfig(declared, instanceValue)`
+merges two levels only (instance value → declared default; no project/platform
+tier). The resolved config is snapshotted ONCE at spawn into `runs.agent_config`
+(jsonb, immutable, exactly like `runs.execution_policy`) and injected into the
+system prompt as an "Effective configuration" block read from the SNAPSHOT —
+never re-resolved from the (mutable) link or definition. The triager (flow (k))
+is its first consumer.
+
+```mermaid
+flowchart TD
+    D[agent .md config: block] --> P{strict parse<br/>type/values/default/dup-key valid?}
+    P -- no --> C[MaisterError CONFIG — row not written]
+    P -- yes --> SCH[project onto agents.config_schema<br/>SET/CLEAR symmetric at install/resync]
+    SCH --> INST[agent_project_links.config — per-instance values<br/>one aggregating PATCH; null ⇒ defaults]
+    INST --> RES[resolveAgentConfig: instance value → declared default<br/>two levels only]
+    RES --> SNAP[snapshot ONCE at spawn → runs.agent_config jsonb immutable]
+    SNAP --> INJ[inject Effective configuration block into system prompt<br/>read from snapshot, never re-resolve]
+```
+
+### (k) Triager agent (Designed — ADR-111)
+
+The triager is the first config-framework consumer: a single platform agent
+shipped in the `maister-plugins` core package, `workspace: none`,
+`risk_tier: read_only`, `triggers: [domain_event, manual]`, with
+`recommended.events: [task.created, task.triage_requeued, task.comment_added]`.
+Its `config:` knobs are `auto_enqueue (off|when_confident|always, default off)`,
+`detect_duplicates (boolean, default true)`, and `intake_mode
+(triage_only|clarify, default clarify)`. It runs as a standalone
+`run_kind='agent'` session (no `flow_ref`) and reads/writes only through the MCP
+facade. Its clarity model has two tiers: a **routing-clarity floor** (enforced
+in BOTH modes — it cannot triage a task it cannot route, so it always asks under
+`clarify` or sets `flagged` under `triage_only`) and **execution clarity** (per
+`intake_mode` — `clarify` refines the statement before triaging; `triage_only`
+defers detail questions to the flow's own HITL during the run). On a strong
+duplicate match (when `detect_duplicates`) it records `duplicate_of` via
+`relation_add`, comments, and sets the task `flagged` — no verdict, no enqueue.
+Otherwise it sets the verdict via `triage_set` (flow/runner/base branch) and,
+per `auto_enqueue`, sets the enqueue intent `launchMode='auto'`; it NEVER
+launches a run itself (a system-authority tick does — see
+[scheduler.md](scheduler.md)). Full behavior, the `triaged`/`flagged` state
+machine, the dedup/clarify/enqueue/tick-launch flows, and edge cases live in
+[`triage.md`](triage.md) (R7 — not restated here).
+
 ## Expectations
 
 - Identity MUST be package-qualified `<packageName>:<stem>` (packageName =

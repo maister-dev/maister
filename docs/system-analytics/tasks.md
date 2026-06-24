@@ -54,8 +54,12 @@ comment/activity/subscription/inbox substrate around tasks is owned by
   form and ext/MCP `task_create`) plus four verdict columns the triager or a
   human fills: `runner_id` (FK SET NULL — board Launch passes it as the
   `launchOverride` tier), `target_branch`, `promotion_mode`
-  (`local_merge|pull_request`), and `triage_status` (`'triaged'` | NULL =
+  (`local_merge|pull_request`), and `triage_status` (`'triaged'` | `'flagged'` | NULL =
   untriaged; stamped by the ext triage op, cleared by "Send to triage").
+  **(ADR-111 — Designed)** the triager's `flag` op writes `'flagged'` (a
+  duplicate, or unroutable in `triage_only` intake) — a **launch-held**
+  state cleared by a human (remove the `duplicate_of` relation / re-send to
+  triage); see [`triage.md`](triage.md).
   Flowless tasks classify as **`unconfigured`** (not launchable); the
   board card's launch popover collects and persists the missing fields via
   `PATCH /api/projects/{slug}/tasks/{number}` (one aggregating endpoint,
@@ -217,7 +221,16 @@ ADR-089) a flowless task adds the `"unconfigured"` classification between
 launch is refused with `PRECONDITION` at every entry point, the schedules
 dispatcher records `skipped_unconfigured`, ext `run_launch` returns 409, and
 the board card swaps Launch for the popover that collects the missing
-fields. Every consumer
+fields. **(ADR-111 — Designed)** a `flagged` task (the triager bailed on a
+duplicate or an unroutable `triage_only` intake — see [`triage.md`](triage.md))
+adds the `"flagged"` classification between `busy` and `blocked`, so the full
+precedence is
+`target_terminal > crashed > busy > flagged > blocked > unconfigured > launchable`.
+`flagged` is non-launchable **even when `flow_id` is set** (a human could set
+a flow on a flagged duplicate — it stays held); it is gated as an allow-list
+arm in BOTH `classifyTaskLaunchability` and `classifyManualTaskLaunchability`,
+reached via the triage `flag` op and cleared by a human (remove `duplicate_of`
+/ re-send to triage). The board shows a "needs review" chip. Every consumer
 threads the context: `launchRun` (single choke point for internal AND ext
 launches), the run-schedules dispatcher (skip with reason —
 [`run-schedules.md`](run-schedules.md)), and the board/portfolio read
@@ -245,6 +258,38 @@ discarded blocker cannot deadlock its dependents. `parent_of` never gates.
 No cycle detection: a mutual block makes both tasks unlaunchable until one
 relation is removed; the UI always renders blockers as removable chips.
 
+### Auto-launch of triaged tasks (Designed, ADR-111)
+
+The triager never launches a run itself; it sets the enqueue *intent*
+(`tasks.launch_mode = 'auto'`), and a system-authority sweep job
+(`auto_launch_triaged`) on the M24 polymorphic scheduler clock performs the
+launch through the standard `launchRun` choke point. Each tick finds and
+launches every candidate that is `triaged` + `launch_mode = 'auto'` + has a
+`flow_id` + classifies `launchable` (no live run, not an orchestrator
+as-plan task); a full cap sends the run to `Pending` exactly like a manual
+launch. Because the tick reuses `classifyTaskLaunchability` +
+`getOpenRelationBlockers`, a dependency-blocked candidate stays
+`triaged + blocked` and **self-launches on a later tick once the blocker
+clears** — "wait in queue for predecessors, then fly" with no extra wiring.
+The predicate is **disjoint** from the orchestrator's `auto_launch_run_plan`
+(which requires `parent_of`-under-orchestrator + `delegation_spec.agentId`
+and launches *agent* runs, see [`orchestrator.md`](orchestrator.md)), so the
+two never collide. See [`triage.md`](triage.md) for the full intent → tick →
+dependency-release → give-up state machine.
+
+```mermaid
+flowchart TD
+    Tick[auto_launch_triaged tick<br/>M24 clock] --> Scan[SELECT tasks WHERE<br/>triage_status='triaged'<br/>AND launch_mode='auto'<br/>AND flow_id IS NOT NULL]
+    Scan --> Live{live run for task?}
+    Live -- yes --> Skip[skip — idempotent,<br/>no double launch]
+    Live -- no --> Plan{orchestrator as-plan?<br/>parent_of + delegation_spec}
+    Plan -- yes --> Skip2[skip — owned by<br/>auto_launch_run_plan]
+    Plan -- no --> Class{classifyTaskLaunchability}
+    Class -- blocked --> Wait[leave triaged+auto;<br/>self-launch when blocker clears]
+    Class -- launchable --> Launch[launchRun — cap → Pending]
+    Class -- flagged/unconfigured --> Excluded[excluded by construction]
+```
+
 ### Manual launchability v2 and "Run again" surfaces (Designed, ADR-085)
 
 Manual launchability is an operator-facing intent, separate from scheduled
@@ -257,7 +302,8 @@ dispatch. The manual classifier returns:
 | Latest run is `Failed` or `Abandoned` | `launchable` | Existing retry behavior plus launch dialog. |
 | Latest run is `Crashed` | `launchable` | `Run again` is allowed; recover/discard controls for the crashed run stay visible on the run surface. |
 | Latest run is `Pending`, `Running`, `NeedsInput`, `NeedsInputIdle`, or `HumanWorking` | `busy` | The action is disabled with a visible tooltip/reason, never hidden. |
-| Open relation blocker exists and no busy state wins | `blocked` | Disabled action plus blocker `KEY-N` chips. |
+| Task is `flagged` and no busy state wins **(ADR-111 — Designed)** | `flagged` | Disabled action plus a "needs review" chip; held even when `flow_id` is set; cleared by a human (remove `duplicate_of` / re-send to triage). |
+| Open relation blocker exists and no busy/flagged state wins | `blocked` | Disabled action plus blocker `KEY-N` chips. |
 | Supervisor or runner readiness is unavailable | `executor_unavailable` | Disabled or failed launch state with `EXECUTOR_UNAVAILABLE`; no worktree/run/workspace/task side effect. |
 
 Launching a terminal or review task reopens the board task to `InFlight` only
@@ -360,6 +406,13 @@ flowchart TD
   update); `triage_status` MUST be written only by the ext triage op
   (`'triaged'`) and the "Send to triage" action (NULL + the
   `task.triage_requeued` emit in ONE transaction).
+- **(ADR-111 — Designed)** A `flagged` task MUST classify as `flagged`
+  (non-launchable) in BOTH `classifyTaskLaunchability` and
+  `classifyManualTaskLaunchability` — as an allow-list arm at precedence
+  `target_terminal > crashed > busy > flagged > blocked > unconfigured >
+  launchable`, held **even when `flow_id` is set** — and MUST be cleared only
+  by a human (remove `duplicate_of` / re-send to triage); the
+  `auto_launch_triaged` tick MUST NEVER launch a `flagged` task.
 - **(M34 — Implemented)** `PATCH /api/projects/{slug}/tasks/{number}` MUST
   update verdict fields in ONE transaction with explicit-`null` CLEAR
   semantics, validating `flowId`/`runnerId` against server-state allow-lists.
@@ -435,6 +488,8 @@ transition (the run reconciles to `Crashed` on next heartbeat tick).
 - Related domains: [`runs.md`](runs.md), [`workspaces.md`](workspaces.md),
   [`executors.md`](executors.md), [`social-board.md`](social-board.md)
   (comments, activity, subscriptions, inbox),
-  [`run-schedules.md`](run-schedules.md) (dispatcher skip-on-blocked).
+  [`run-schedules.md`](run-schedules.md) (dispatcher skip-on-blocked),
+  [`triage.md`](triage.md) (Designed — `flagged`, `auto_launch_triaged` tick,
+  triager verdict/flag/enqueue ops).
 - Source: `web/lib/db/schema.ts` (tasks + runs tables),
   `web/lib/runs/launchability.ts`, `web/lib/social/relations.ts` (Designed).

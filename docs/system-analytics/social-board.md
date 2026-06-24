@@ -232,6 +232,13 @@ you (N)" badge is the single canonical `needsYou` count (see Expectations); see
   `requires` releases the dependent ONLY on `Done`; `Failed`/`Abandoned`
   keeps it blocked and wakes the orchestrator. Behavior owned by
   [`orchestrator.md`](orchestrator.md).
+- **`duplicate_of` non-blocking (ADR-111 — Designed)** — the triager creates
+  a `duplicate_of` relation kind when it flags a task as a duplicate. It is
+  **informational only**: `getOpenRelationBlockers` queries solely
+  `blocks`/`depends_on`/`requires`, so `duplicate_of` (like `parent_of`)
+  is never returned and NEVER gates launch — the `flagged` task status (not
+  the relation) holds the duplicate. Launchability owned by
+  [`tasks.md`](tasks.md); triager flow by [`triage.md`](triage.md).
 - **Hole-y numbering** — task deletion leaves a permanent hole;
   `next_task_number` never decrements. Owned by [`tasks.md`](tasks.md).
 - **Foreign inbox item id** — `PATCH …/read` on another user's item → 404

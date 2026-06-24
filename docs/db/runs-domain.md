@@ -58,7 +58,7 @@ erDiagram
         text flow_id FK "M34: NULLABLE — unconfigured until triaged"
         text status "Backlog|InFlight|Done|Abandoned"
         integer attempt_number "starts at 1"
-        text triage_status "M34: 'triaged' | NULL"
+        text triage_status "M34: 'triaged' | NULL; += 'flagged' = held/needs-review (Designed ADR-111, 0072)"
         text runner_id FK "M34: verdict runner, SET NULL"
         text target_branch "M34: verdict branch, nullable"
         text promotion_mode "M34: local_merge|pull_request, nullable"
@@ -107,6 +107,7 @@ erDiagram
         jsonb delivery_policy_snapshot "ADR-085 Designed: resolved policy at launch"
         jsonb execution_policy "migration 0055: resolved execution policy {preset,overrides} at launch"
         jsonb budget_state "ADR-101 0061: per-run mutable {ceilingOverride?,notified?} raise-and-resume override + per-scope warn rung, nullable"
+        jsonb agent_config "Designed ADR-110 0071: immutable resolved agent-config snapshot at spawn, nullable"
         timestamp started_at
         timestamp ended_at
     }
@@ -329,7 +330,7 @@ erDiagram
         text id PK
         text project_id FK
         text from_task_id FK
-        text kind "blocks|depends_on|parent_of|requires"
+        text kind "blocks|depends_on|parent_of|requires|duplicate_of (duplicate_of: Designed ADR-111, 0072, non-blocking)"
         text to_task_id FK
         text actor_type "user|agent|system"
         text actor_id "NULL iff actor_type=system"

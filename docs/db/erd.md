@@ -495,6 +495,7 @@ erDiagram
         jsonb capability_profile "M14 shape, nullable"
         text risk_tier "read_only|standard|destructive"
         jsonb recommended "nullable — attach pre-fill"
+        jsonb config_schema "NULL — declared typed config-param schema (Designed ADR-110, 0071)"
         text source_path "agents/stem.md in the newest revision"
         boolean enabled
         timestamp quarantined_at "nullable — ADR-090 dirty-watchdog"
@@ -509,6 +510,7 @@ erDiagram
         text project_id FK "projects(id) CASCADE"
         boolean enabled
         text runner_override_id FK "platform_acp_runners(id) SET NULL"
+        jsonb config "NULL — per-instance config values; NULL ⇒ declared defaults (Designed ADR-110, 0071)"
         timestamp created_at
         timestamp updated_at
     }
@@ -560,7 +562,7 @@ erDiagram
         text status "Backlog|InFlight|Done|Abandoned"
         text stage "Backlog|Prepare"
         integer attempt_number "monotonic per task"
-        text triage_status "M34: 'triaged' | NULL"
+        text triage_status "M34: 'triaged' | NULL; += 'flagged' = held/needs-review (Designed ADR-111, 0072)"
         text runner_id FK "M34: verdict runner, SET NULL"
         text target_branch "M34: verdict branch, nullable"
         text promotion_mode "M34: local_merge|pull_request, nullable"
@@ -575,7 +577,7 @@ erDiagram
         text id PK
         text project_id FK
         text from_task_id FK
-        text kind "blocks|depends_on|parent_of|requires"
+        text kind "blocks|depends_on|parent_of|requires|duplicate_of (duplicate_of: Designed ADR-111, 0072, non-blocking)"
         text to_task_id FK
         text actor_type "user|agent|system"
         text actor_id "NULL iff actor_type=system"
@@ -659,6 +661,7 @@ erDiagram
         jsonb resolved_capability_set "M27 Designed: frozen capability snapshot at launch (flowRevisionId,capabilities,mcps)"
         jsonb delivery_policy_snapshot "ADR-085 Designed: resolved policy at launch"
         jsonb execution_policy "migration 0055: resolved execution policy {preset,overrides} at launch"
+        jsonb agent_config "Designed ADR-110 0071: immutable resolved agent-config snapshot at spawn, nullable"
         timestamp started_at
         timestamp ended_at
     }
