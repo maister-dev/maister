@@ -1775,12 +1775,24 @@ async function handleBudgetBreachResponse(args: {
   });
 
   if (outcome.transition === "already-delivered") {
-    // Self-heal a lost post-commit scheduleResume (see respondToHookTripHitl):
-    // a raise-resumed flow run left NeedsInput has no reconcile backstop, so the
-    // same-payload retry re-queues the wake. Idempotent — runFlow's NeedsInput
-    // resume gate no-ops if the run already advanced.
-    if (outcome.runStatus === "NeedsInput") {
-      scheduleResume(runId);
+    // Self-heal a lost post-commit resume (a crash between the respondedAt commit
+    // and scheduleBudgetBreachResume): the run is still awaiting, so the
+    // same-payload retry re-drives the SAME dispatcher the raise path uses — it
+    // branches on run_kind (agent → respawn, flow → runFlow/resumeRun) AND covers
+    // BOTH the NeedsInput (escalate) and NeedsInputIdle (terminate_restorable)
+    // pauses. Idempotent: its status CAS / NeedsInput gate no-ops if the run
+    // already advanced. The pre-fix flow+NeedsInput-only guard stranded a
+    // restorable pause and mis-drove an agent retry through runFlow.
+    if (
+      outcome.runStatus === "NeedsInput" ||
+      outcome.runStatus === "NeedsInputIdle"
+    ) {
+      await scheduleBudgetBreachResume({
+        db,
+        runId,
+        runKind: runRow.runKind,
+        stepId: hitlRow.stepId,
+      });
     }
 
     return NextResponse.json({ ok: true, idempotent: true }, { status: 200 });

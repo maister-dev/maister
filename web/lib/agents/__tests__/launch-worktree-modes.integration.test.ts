@@ -156,7 +156,12 @@ afterEach(async () => {
 // effective-definition resolver from installed_path) + an enabled trusted flow,
 // and register every agent in the catalog index + attach it to the project.
 async function seedPackageWithAgents(
-  agents: Array<{ stem: string; workspace: "none" | "repo_read" | "worktree" }>,
+  agents: Array<{
+    stem: string;
+    workspace: "none" | "repo_read" | "worktree";
+    recommendedYaml?: string;
+    linkBranchBase?: string;
+  }>,
 ): Promise<Record<string, string>> {
   const revisionId = randomUUID();
   const installedPath = path.join(cacheRoot, `pkg-${revisionId.slice(0, 8)}`);
@@ -166,6 +171,10 @@ async function seedPackageWithAgents(
   const ids: Record<string, string> = {};
 
   for (const a of agents) {
+    const recommendedBlock = a.recommendedYaml
+      ? `recommended:\n${a.recommendedYaml}\n`
+      : "";
+
     await writeFile(
       path.join(installedPath, "maister-agents", `${a.stem}.md`),
       `---
@@ -176,7 +185,7 @@ mode: session
 triggers:
   - manual
 risk_tier: read_only
----
+${recommendedBlock}---
 Do the thing.
 `,
       "utf8",
@@ -235,8 +244,8 @@ Do the thing.
       ],
     );
     await pool.query(
-      `INSERT INTO "agent_project_links" ("id", "agent_id", "project_id") VALUES ($1, $2, $3)`,
-      [randomUUID(), qualifiedId, projectId],
+      `INSERT INTO "agent_project_links" ("id", "agent_id", "project_id", "branch_base") VALUES ($1, $2, $3, $4)`,
+      [randomUUID(), qualifiedId, projectId, a.linkBranchBase ?? null],
     );
   }
 
@@ -541,5 +550,123 @@ describe("M37 Phase 11 — reviewer read-only child reuses L1/L2/L3", () => {
     );
 
     expect(ws.rows[0].n).toBe(0);
+  });
+});
+
+// ADR-106 (docs/system-analytics/agents.md): branch_base MUST resolve
+// agent_project_links.branch_base → recommended.branch_base → project main, and
+// the worktree (+ its base_commit + target_branch) MUST fork from the resolved
+// base. Pre-fix the launch hard-coded project main and the persisted override
+// was inert.
+describe("M39 (ADR-106) — branch_base resolution drives the agent worktree", () => {
+  async function commitOnNewBranch(branch: string, file: string) {
+    await exec("git", ["-C", repoPath, "checkout", "-q", "-b", branch]);
+    await writeFile(path.join(repoPath, file), `${branch}\n`);
+    await exec("git", ["-C", repoPath, "add", "-A"]);
+    await exec("git", [
+      "-C",
+      repoPath,
+      "-c",
+      "user.email=t@t",
+      "-c",
+      "user.name=t",
+      "commit",
+      "-qm",
+      branch,
+    ]);
+    const sha = (
+      await exec("git", ["-C", repoPath, "rev-parse", branch])
+    ).stdout.trim();
+
+    await exec("git", ["-C", repoPath, "checkout", "-q", "main"]);
+
+    return sha;
+  }
+
+  async function workspaceBase(runId: string) {
+    const res = await pool.query(
+      `SELECT "base_branch", "base_commit", "target_branch" FROM "workspaces" WHERE "run_id" = $1`,
+      [runId],
+    );
+
+    return res.rows[0];
+  }
+
+  it("recommended.branch_base forks the worktree (base_commit + target) from that base, not main", async () => {
+    const developSha = await commitOnNewBranch("develop", "DEV.md");
+    const ids = await seedPackageWithAgents([
+      {
+        stem: "brancher",
+        workspace: "worktree",
+        recommendedYaml: "  branch_base: develop",
+      },
+    ]);
+
+    const result = await launchAgentRun({
+      agentId: ids.brancher,
+      projectId,
+      trigger: { source: "manual" },
+      db,
+    });
+
+    if ("deduped" in result) throw new Error("unexpected dedup");
+
+    const ws = await workspaceBase(result.runId);
+
+    expect(ws.base_branch).toBe("develop");
+    expect(ws.target_branch).toBe("develop");
+    expect(ws.base_commit).toBe(developSha);
+  });
+
+  it("the per-instance link branch_base overrides recommended.branch_base", async () => {
+    await commitOnNewBranch("develop", "DEV.md");
+    const releaseSha = await commitOnNewBranch("release", "REL.md");
+    const ids = await seedPackageWithAgents([
+      {
+        stem: "dual",
+        workspace: "worktree",
+        recommendedYaml: "  branch_base: develop",
+        linkBranchBase: "release",
+      },
+    ]);
+
+    const result = await launchAgentRun({
+      agentId: ids.dual,
+      projectId,
+      trigger: { source: "manual" },
+      db,
+    });
+
+    if ("deduped" in result) throw new Error("unexpected dedup");
+
+    const ws = await workspaceBase(result.runId);
+
+    expect(ws.base_branch).toBe("release");
+    expect(ws.base_commit).toBe(releaseSha);
+  });
+
+  it("an unknown branch_base is refused with PRECONDITION before any worktree is created", async () => {
+    const ids = await seedPackageWithAgents([
+      {
+        stem: "badbase",
+        workspace: "worktree",
+        recommendedYaml: "  branch_base: nonexistent",
+      },
+    ]);
+
+    await expect(
+      launchAgentRun({
+        agentId: ids.badbase,
+        projectId,
+        trigger: { source: "manual" },
+        db,
+      }),
+    ).rejects.toSatisfy(
+      (err: unknown) => isMaisterError(err) && err.code === "PRECONDITION",
+    );
+
+    expect(
+      (await pool.query(`SELECT count(*)::int AS n FROM "runs"`)).rows[0].n,
+    ).toBe(0);
   });
 });

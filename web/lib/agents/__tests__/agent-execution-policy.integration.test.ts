@@ -255,6 +255,53 @@ describe("launchAgentRun — execution-policy snapshot (M39 T5.1, ADR-106)", () 
 
     expect(await launchAndReadPolicy(id)).toEqual({ preset: "supervised" });
   });
+
+  it("inherits the project execution-policy default as the base — the budget axis survives the agent overlay", async () => {
+    await pool.query(
+      `UPDATE "projects" SET "execution_policy_default" = $1::jsonb WHERE "id" = $2`,
+      [
+        JSON.stringify({
+          preset: "supervised",
+          overrides: { budget: { run: { maxTokens: 50000 } } },
+        }),
+        projectId,
+      ],
+    );
+    const id = await seedAgent({
+      stem: "budgeted",
+      recommendedYaml: "  executionPolicy:\n    onBudgetBreach: terminate",
+    });
+
+    // The agent folds onBudgetBreach onto the PROJECT base, so the project's
+    // run-token ceiling is preserved (pre-fix it was dropped — base defaulted to
+    // bare supervised, leaving the budget watchdog with no project limit).
+    expect(await launchAndReadPolicy(id)).toEqual({
+      preset: "supervised",
+      overrides: {
+        budget: { run: { maxTokens: 50000 } },
+        onBudgetBreach: "terminate",
+      },
+    });
+  });
+
+  it("inherits the project default budget even when the agent declares no policy", async () => {
+    await pool.query(
+      `UPDATE "projects" SET "execution_policy_default" = $1::jsonb WHERE "id" = $2`,
+      [
+        JSON.stringify({
+          preset: "supervised",
+          overrides: { budget: { task: { maxTokens: 90000 } } },
+        }),
+        projectId,
+      ],
+    );
+    const id = await seedAgent({ stem: "plain-budget" });
+
+    expect(await launchAndReadPolicy(id)).toEqual({
+      preset: "supervised",
+      overrides: { budget: { task: { maxTokens: 90000 } } },
+    });
+  });
 });
 
 // A fake supervisor API recording the createSession input; its session stream

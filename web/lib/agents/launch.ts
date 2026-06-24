@@ -46,7 +46,12 @@ import { type AgentExecutionPolicyRecommendation } from "@/lib/db/schema";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { MaisterError, type MaisterErrorCode } from "@/lib/errors";
 import { gcAgeDays, worktreesRoot } from "@/lib/instance-config";
-import { permissionsFromSnapshot } from "@/lib/runs/execution-policy";
+import { applyDefaultBudgetForUnattended } from "@/lib/runs/budget-default";
+import {
+  permissionsFromSnapshot,
+  resolveExecutionPolicy,
+  type ExecutionPolicy,
+} from "@/lib/runs/execution-policy";
 import { nextKeepaliveAt } from "@/lib/runs/keepalive-config";
 import { assertRunKindInvariant } from "@/lib/runs/run-kind-invariants";
 import {
@@ -76,6 +81,7 @@ import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 import {
   addDetachedWorktree,
   addWorktree,
+  listBranches,
   listWorktrees,
   removeWorktree,
   resolveBaseCommit,
@@ -599,15 +605,19 @@ async function launchAgentDrivenFlowRun(
 
   // M39 Phase 5 (ADR-106): a flow-driving agent imposes ITS runner policy on the
   // flow run (autoApply → the flow's existing B1/B2 enforcement, onBudgetBreach →
-  // the budget axis). Pass it as the launch override ONLY when the agent actually
-  // declares a policy — otherwise the flow keeps its own task/project default.
+  // the budget axis). Pass it as an OVERLAY (not a wholesale launch override) so
+  // launchRun resolves its own task/project base first and the agent axes fold on
+  // top — inherited axes such as budget limits survive. null when the agent
+  // declares neither axis, so the flow keeps its task/project default untouched.
   const instancePolicy = ctx.link
     .executionPolicyOverride as AgentExecutionPolicyRecommendation | null;
   const recommendedPolicy =
     ctx.effective.parsed.recommended?.executionPolicy ?? null;
-  const declaresPolicy =
-    !!(instancePolicy?.autoApply ?? recommendedPolicy?.autoApply) ||
-    !!(instancePolicy?.onBudgetBreach ?? recommendedPolicy?.onBudgetBreach);
+  const autoApply = instancePolicy?.autoApply ?? recommendedPolicy?.autoApply;
+  const onBudgetBreach =
+    instancePolicy?.onBudgetBreach ?? recommendedPolicy?.onBudgetBreach;
+  const agentPolicyOverlay: AgentExecutionPolicyRecommendation | null =
+    autoApply || onBudgetBreach ? { autoApply, onBudgetBreach } : null;
 
   const { launchRun } = await import("@/lib/services/runs");
   const result = await launchRun(
@@ -615,14 +625,7 @@ async function launchAgentDrivenFlowRun(
       taskId,
       flowId: flow.id as string,
       agentId: input.agentId,
-      ...(declaresPolicy
-        ? {
-            executionPolicy: resolveAgentExecutionPolicy({
-              instanceOverride: instancePolicy,
-              recommended: recommendedPolicy,
-            }),
-          }
-        : {}),
+      ...(agentPolicyOverlay ? { agentPolicyOverlay } : {}),
     },
     { authorize: async () => {}, actorUserId: null },
     _db,
@@ -768,6 +771,10 @@ export async function launchAgentRun(
   let worktreePath: string | null = null;
   let branch: string | null = null;
   let baseCommit: string | null = null;
+  // ADR-106: the resolved worktree base (instance → recommended → project main);
+  // forks the worktree and is the promote target on the workspaces row. Stays
+  // project main for non-worktree modes (unused there).
+  let resolvedBranchBase = ctx.project.mainBranch;
   // M37 Phase 10 (ADR-099): a shared-mode child whose tree a sibling already
   // allocated reuses that tree — it gets NO workspaces row of its own (the
   // worktree_path column is UNIQUE; the allocating sibling owns the record).
@@ -781,6 +788,28 @@ export async function launchAgentRun(
   const isShared = input.workspaceMode === "shared" && input.rootRunId != null;
 
   if (workspace === "worktree") {
+    // ADR-106: resolve the worktree base — instance link override → agent
+    // recommended → project main — and validate a DECLARED (non-fallback) base
+    // against the project's branches BEFORE any git side-effect, so an unknown
+    // ref is a clean PRECONDITION rather than a raw git failure.
+    const declaredBranchBase =
+      ctx.link.branchBase ??
+      ctx.effective.parsed.recommended?.branch_base ??
+      null;
+
+    resolvedBranchBase = declaredBranchBase ?? ctx.project.mainBranch;
+
+    if (declaredBranchBase) {
+      const knownBranches = new Set(await listBranches(ctx.project.repoPath));
+
+      if (!knownBranches.has(declaredBranchBase)) {
+        throw new MaisterError(
+          "PRECONDITION",
+          `branch base "${declaredBranchBase}" does not exist in ${ctx.project.slug}`,
+        );
+      }
+    }
+
     if (isShared) {
       const rootRunId = input.rootRunId as string;
 
@@ -818,7 +847,7 @@ export async function launchAgentRun(
           // ALLOCATOR: create the worktree.
           baseCommit = await resolveBaseCommit({
             projectRepoPath: ctx.project.repoPath,
-            baseRef: ctx.project.mainBranch,
+            baseRef: resolvedBranchBase,
           });
 
           try {
@@ -826,7 +855,7 @@ export async function launchAgentRun(
               projectRepoPath: ctx.project.repoPath,
               worktreePath,
               branch,
-              startPoint: ctx.project.mainBranch,
+              startPoint: resolvedBranchBase,
             });
             allocatedWorktree = true;
           } catch (err) {
@@ -876,13 +905,13 @@ export async function launchAgentRun(
       worktreePath = agentWorkdirPath(ctx.project.slug, runId);
       baseCommit = await resolveBaseCommit({
         projectRepoPath: ctx.project.repoPath,
-        baseRef: ctx.project.mainBranch,
+        baseRef: resolvedBranchBase,
       });
       await addWorktree({
         projectRepoPath: ctx.project.repoPath,
         worktreePath,
         branch,
-        startPoint: ctx.project.mainBranch,
+        startPoint: resolvedBranchBase,
       });
       allocatedWorktree = true;
     }
@@ -890,14 +919,23 @@ export async function launchAgentRun(
 
   // M39 Phase 5 (ADR-106): resolve the effective runner policy (autoApply →
   // B1/B2 axes, onBudgetBreach → the budget-terminal axis) in the Q3 order
-  // instance-override → agent recommended → supervised floor, and snapshot it
-  // onto the run so the budget watchdog + HITL boundary read the snapshot
-  // (never a post-launch projection).
-  const executionPolicy = resolveAgentExecutionPolicy({
-    instanceOverride: ctx.link
-      .executionPolicyOverride as AgentExecutionPolicyRecommendation | null,
-    recommended: ctx.effective.parsed.recommended?.executionPolicy ?? null,
-  });
+  // instance-override → agent recommended → project execution-policy default
+  // (then the supervised floor), and snapshot it onto the run so the budget
+  // watchdog + HITL boundary read the snapshot (never a post-launch projection).
+  // The project base is load-bearing: it carries the budget axis the agent
+  // recommendation never declares, so a project token ceiling actually binds an
+  // agent run.
+  const executionPolicy = applyDefaultBudgetForUnattended(
+    resolveAgentExecutionPolicy({
+      instanceOverride: ctx.link
+        .executionPolicyOverride as AgentExecutionPolicyRecommendation | null,
+      recommended: ctx.effective.parsed.recommended?.executionPolicy ?? null,
+      base: resolveExecutionPolicy({
+        projectDefault: ctx.project
+          .executionPolicyDefault as ExecutionPolicy | null,
+      }),
+    }),
+  );
 
   const runRow = {
     id: runId,
@@ -987,9 +1025,9 @@ export async function launchAgentRun(
             branch,
             worktreePath,
             parentRepoPath: ctx.project.repoPath,
-            baseBranch: ctx.project.mainBranch,
+            baseBranch: resolvedBranchBase,
             baseCommit,
-            targetBranch: ctx.project.mainBranch,
+            targetBranch: resolvedBranchBase,
           })
           .onConflictDoNothing({ target: workspaces.worktreePath });
       }

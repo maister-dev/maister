@@ -294,4 +294,44 @@ describe("launchAgentRun — agent drives a flow (M39, ADR-106)", () => {
       overrides: { permissions: "auto_approve", humanGate: "auto_pass" },
     });
   });
+
+  it("overlays the agent policy onto the project base — the project budget default is NOT shadowed", async () => {
+    await pool.query(
+      `UPDATE "projects" SET "execution_policy_default" = $1::jsonb WHERE "id" = $2`,
+      [
+        JSON.stringify({
+          preset: "supervised",
+          overrides: { budget: { run: { maxTokens: 75000 } } },
+        }),
+        projectId,
+      ],
+    );
+
+    const result = await launchAgentRun({
+      agentId: "pkg:driver",
+      projectId,
+      trigger: { source: "manual" },
+      db,
+    });
+
+    expect("runId" in result).toBe(true);
+    if (!("runId" in result)) return;
+
+    const rows = await pool.query(
+      `SELECT execution_policy FROM runs WHERE id = $1`,
+      [result.runId],
+    );
+
+    // The driving agent imposes autoApply='full' (B1/B2), but launchRun resolves
+    // its OWN task/project base first and folds the agent axes on top — so the
+    // project's run-token ceiling survives (pre-fix the agent policy was passed
+    // as a wholesale launch override that shadowed the project budget entirely).
+    expect(rows.rows[0].execution_policy).toMatchObject({
+      overrides: {
+        permissions: "auto_approve",
+        humanGate: "auto_pass",
+        budget: { run: { maxTokens: 75000 } },
+      },
+    });
+  });
 });

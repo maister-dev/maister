@@ -46,6 +46,16 @@ vi.mock("@/lib/flows/runner", () => ({
 vi.mock("@/lib/agents/launch", () => ({
   startAgentSession: vi.fn(async () => {}),
 }));
+vi.mock("@/lib/runs/resume", () => ({
+  resumeRun: vi.fn(async () => ({
+    ok: true,
+    newSupervisorSessionId: "sup-resume",
+    acpSessionId: "acp-resume",
+  })),
+}));
+vi.mock("@/lib/runs/resume-driver", () => ({
+  scheduleResumedSessionDrive: vi.fn(() => {}),
+}));
 vi.mock("@/lib/authz", () => ({
   requireProjectAction: vi.fn(async () => {}),
 }));
@@ -594,5 +604,133 @@ describe("respondToHitl budget_breach integration — DTO has no server handles"
     expect(keys).toEqual(["ok", "runStatus", "state"]);
     expect(JSON.stringify(payload)).not.toContain("acp_session_id");
     expect(JSON.stringify(payload)).not.toContain("acpSessionId");
+  });
+});
+
+// A retry whose prior post-commit resume handoff was lost (process died between
+// the respondedAt commit and scheduleBudgetBreachResume): the run is still
+// awaiting, so the same-payload retry hits the already-delivered branch and MUST
+// re-drive the SAME resume dispatcher the first response used — for BOTH the
+// NeedsInput (escalate) and NeedsInputIdle (terminate_restorable) pauses, and
+// branching on run_kind (agent → respawn, flow → resumeRun). The pre-fix
+// self-heal only re-fired scheduleResume (flow + NeedsInput), stranding a
+// restorable pause and mis-driving an agent run through runFlow.
+describe("respondToHitl budget_breach integration — raise already-delivered retry self-heals (lost-handoff recovery)", () => {
+  async function markResponded(hitlRequestId: string) {
+    await (db as any)
+      .update(schema.hitlRequests)
+      .set({ respondedAt: new Date() })
+      .where(eq(schema.hitlRequests.id, hitlRequestId));
+  }
+
+  it("agent run (NeedsInputIdle restorable): re-claims →Running and respawns via startAgentSession", async () => {
+    const projectId = await seedProject("budget-idem-agent-idle");
+    const runId = await seedRun(projectId, undefined, {
+      runKind: "agent",
+      status: "NeedsInputIdle",
+      acpSessionId: "acp-agent-idle-retry",
+    });
+    const hitlRequestId = await seedBudgetBreachHitl(
+      runId,
+      { limit: 1000, current: 1200 },
+      "agent",
+    );
+
+    await markResponded(hitlRequestId);
+
+    const { startAgentSession } = await import("@/lib/agents/launch");
+    const startAgentSessionSpy = vi.mocked(startAgentSession);
+
+    const res = await respondToHitl(
+      { runId, hitlRequestId, body: { optionId: "raise", raiseTo: 2000 } },
+      userActor,
+      { db },
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, idempotent: true });
+
+    expect(
+      (
+        await (db as any)
+          .select()
+          .from(schema.runs)
+          .where(eq(schema.runs.id, runId))
+      )[0].status,
+    ).toBe("Running");
+
+    await new Promise((r) => setTimeout(r, 0));
+    expect(startAgentSessionSpy).toHaveBeenCalledWith(runId, expect.anything());
+  });
+
+  it("agent run (NeedsInput escalate): re-claims via startAgentSession, never runFlow", async () => {
+    const projectId = await seedProject("budget-idem-agent-needsinput");
+    const runId = await seedRun(projectId, undefined, {
+      runKind: "agent",
+      status: "NeedsInput",
+      acpSessionId: "acp-agent-retry",
+    });
+    const hitlRequestId = await seedBudgetBreachHitl(
+      runId,
+      { limit: 1000, current: 1200 },
+      "agent",
+    );
+
+    await markResponded(hitlRequestId);
+
+    const { startAgentSession } = await import("@/lib/agents/launch");
+    const startAgentSessionSpy = vi.mocked(startAgentSession);
+    const { runFlow } = await import("@/lib/flows/runner");
+    const runFlowSpy = vi.mocked(runFlow);
+
+    const res = await respondToHitl(
+      { runId, hitlRequestId, body: { optionId: "raise", raiseTo: 2000 } },
+      userActor,
+      { db },
+    );
+
+    expect(res.status).toBe(200);
+    expect(
+      (
+        await (db as any)
+          .select()
+          .from(schema.runs)
+          .where(eq(schema.runs.id, runId))
+      )[0].status,
+    ).toBe("Running");
+
+    await new Promise((r) => setTimeout(r, 0));
+    expect(startAgentSessionSpy).toHaveBeenCalledWith(runId, expect.anything());
+    expect(runFlowSpy).not.toHaveBeenCalled();
+  });
+
+  it("flow run (NeedsInputIdle restorable): re-drives the idle resume via resumeRun (not a silent no-op)", async () => {
+    const projectId = await seedProject("budget-idem-flow-idle");
+    const runId = await seedRun(projectId, undefined, {
+      runKind: "flow",
+      status: "NeedsInputIdle",
+      acpSessionId: "acp-flow-idle-retry",
+    });
+    const hitlRequestId = await seedBudgetBreachHitl(runId, {
+      limit: 1000,
+      current: 1200,
+    });
+
+    await markResponded(hitlRequestId);
+
+    const { resumeRun } = await import("@/lib/runs/resume");
+    const resumeRunSpy = vi.mocked(resumeRun);
+
+    const res = await respondToHitl(
+      { runId, hitlRequestId, body: { optionId: "raise", raiseTo: 2000 } },
+      userActor,
+      { db },
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, idempotent: true });
+
+    await new Promise((r) => setTimeout(r, 0));
+    expect(resumeRunSpy).toHaveBeenCalledWith(runId, expect.anything());
   });
 });

@@ -26,6 +26,7 @@ import {
 import { materializeProjectBundlesIntoWorktree } from "@/lib/capabilities/materialize-bundle";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
+import { type AgentExecutionPolicyRecommendation } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import {
   assertNodeLaunchable,
@@ -65,6 +66,7 @@ import {
   type ExecutionPolicy,
 } from "@/lib/runs/execution-policy";
 import { applyDefaultBudgetForUnattended } from "@/lib/runs/budget-default";
+import { resolveAgentExecutionPolicy } from "@/lib/agents/execution-policy";
 import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
 import { actorForUserId, recordTaskActivity } from "@/lib/social/activity";
 import { getOpenRelationBlockers } from "@/lib/social/relations";
@@ -163,6 +165,11 @@ export type LaunchRunInput = {
   // persona/policy source the graph runner injects on every ai_coding node.
   // null/absent for a normal board flow run.
   agentId?: string | null;
+  // M39 (ADR-106): a flow-driving agent's {autoApply, onBudgetBreach} axes,
+  // OVERLAID onto the resolved task/project base policy (not a wholesale launch
+  // override) so inherited axes such as budget limits survive. null/absent for a
+  // normal board flow run.
+  agentPolicyOverlay?: AgentExecutionPolicyRecommendation | null;
 };
 
 export type PromotionMode = "local_merge" | "rebase_merge" | "pull_request";
@@ -297,13 +304,23 @@ export async function* launchRunStaged(
   // supervised), reject blind-ship combos, then gate non-supervised launches
   // behind the privileged action. Snapshotted onto runs.execution_policy below;
   // resume/recover read the snapshot, never re-resolve.
+  const basePolicy = resolveExecutionPolicy({
+    launchOverride: input.executionPolicy ?? null,
+    taskDefault: (task.executionPolicy as ExecutionPolicy | null) ?? null,
+    projectDefault:
+      (project.executionPolicyDefault as ExecutionPolicy | null) ?? null,
+  });
+  // M39 (ADR-106): a flow-driving agent OVERLAYS its {autoApply, onBudgetBreach}
+  // axes onto the resolved task/project base — it does not replace it, so
+  // inherited axes (budget limits) survive. Absent overlay ⇒ base is used as-is.
   const executionPolicy = applyDefaultBudgetForUnattended(
-    resolveExecutionPolicy({
-      launchOverride: input.executionPolicy ?? null,
-      taskDefault: (task.executionPolicy as ExecutionPolicy | null) ?? null,
-      projectDefault:
-        (project.executionPolicyDefault as ExecutionPolicy | null) ?? null,
-    }),
+    input.agentPolicyOverlay
+      ? resolveAgentExecutionPolicy({
+          instanceOverride: input.agentPolicyOverlay,
+          recommended: null,
+          base: basePolicy,
+        })
+      : basePolicy,
   );
 
   assertNoBlindShip(executionPolicy);
