@@ -46,8 +46,9 @@ export type EscalateHookTripArgs = {
   toolCall?: unknown;
   runKind: "flow" | "agent";
   // Injected so each consumer passes its own supervisor api (mirrors the budget
-  // watchdog which calls checkpointSession directly). Bail on
-  // EXECUTOR_UNAVAILABLE — no state mutation, no split-brain.
+  // watchdog which calls checkpointSession directly). An EXECUTOR_UNAVAILABLE
+  // checkpoint re-throws (live halt, undeliverable → CRASH) — no state mutation,
+  // no split-brain.
   checkpointSession: (sessionId: string) => Promise<unknown>;
 };
 
@@ -129,9 +130,11 @@ async function fetchActiveAttempt(
 // pattern, but is NOT flow-only — a hook-trip resume routes through each
 // `run_kind`'s OWN resume path (flow `runFlow` / agent `startAgentSession`), not
 // budget's `raise → runFlow`. Branches on `run_kind` for the node-attempt write
-// (agent runs carry no `node_attempts`). Returns `escalated: false` on an
-// `EXECUTOR_UNAVAILABLE` checkpoint (bail; the crash-reconcile sweep handles a
-// checkpointed-but-not-escalated run) or a lost CAS (run advanced concurrently).
+// (agent runs carry no `node_attempts`). THROWS on an `EXECUTOR_UNAVAILABLE`
+// checkpoint — the supervisor halts once and never re-emits, so a swallowed bail
+// would let the run advance as if the guardrail never fired; the consumer must
+// surface a recoverable CRASH instead. Returns `escalated: false` only when there
+// is nothing to escalate: run gone, run no longer `Running`, or a lost CAS.
 export async function escalateHookTrip(
   args: EscalateHookTripArgs,
 ): Promise<EscalateHookTripResult> {
@@ -153,9 +156,12 @@ export async function escalateHookTrip(
     return { escalated: false };
   }
 
-  // 1. Checkpoint pre-tx to stop spend. EXECUTOR_UNAVAILABLE → bail with no
-  // mutation (the crash-reconcile sweep handles a checkpointed-but-not-escalated
-  // run — never a split-brain). Any other failure means the session is already
+  // 1. Checkpoint pre-tx to stop spend. EXECUTOR_UNAVAILABLE means the halt is
+  // LIVE (the supervisor already cancelled the agent's calls and will NOT re-emit
+  // session.hook_trip) but undeliverable — re-throw with no mutation so the
+  // consumer surfaces a recoverable CRASH (recover → session/resume) instead of
+  // letting the run advance as if the guardrail never fired. No mutation here →
+  // no split-brain. Any OTHER checkpoint failure means the session is already
   // gone; proceed to the pause.
   try {
     await args.checkpointSession(supervisorSessionId);
@@ -163,10 +169,10 @@ export async function escalateHookTrip(
     if (isMaisterError(err) && err.code === "EXECUTOR_UNAVAILABLE") {
       log.warn(
         { runId, err: err.message },
-        "[hook-trip] escalate checkpoint 5xx — leaving Running, no escalate",
+        "[hook-trip] escalate checkpoint 5xx — live halt undeliverable, surfacing CRASH",
       );
 
-      return { escalated: false };
+      throw err;
     }
     log.warn(
       { runId, err: err instanceof Error ? err.message : String(err) },

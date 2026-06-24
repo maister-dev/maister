@@ -347,7 +347,7 @@ describe("escalateHookTrip", () => {
     expect(hitls[0].stepId).toBe("agent");
   });
 
-  it("EXECUTOR_UNAVAILABLE checkpoint: bail, run stays Running, no HITL (crash-reconcile handles it)", async () => {
+  it("EXECUTOR_UNAVAILABLE checkpoint: THROWS (live halt undeliverable) — no mutation, run stays Running, no HITL", async () => {
     const runId = await seedRun({
       runKind: "flow",
       currentStepId: "implement",
@@ -358,17 +358,22 @@ describe("escalateHookTrip", () => {
       throw new MaisterError("EXECUTOR_UNAVAILABLE", "supervisor 503");
     });
 
-    const result = await escalateHookTrip({
-      db,
-      runId,
-      stepId: "implement",
-      supervisorSessionId: "sup-5",
-      rule: "repetition",
-      runKind: "flow",
-      checkpointSession,
-    });
+    // The supervisor halts once and never re-emits; a swallowed bail would let
+    // the run advance as if the guardrail never fired. escalateHookTrip must
+    // re-throw so the consumer surfaces a recoverable CRASH.
+    await expect(
+      escalateHookTrip({
+        db,
+        runId,
+        stepId: "implement",
+        supervisorSessionId: "sup-5",
+        rule: "repetition",
+        runKind: "flow",
+        checkpointSession,
+      }),
+    ).rejects.toMatchObject({ code: "EXECUTOR_UNAVAILABLE" });
 
-    expect(result.escalated).toBe(false);
+    // No split-brain: the bail mutates nothing — the consumer owns the CRASH flip.
     expect(await getHitl(runId)).toHaveLength(0);
     const run = await getRun(runId);
 

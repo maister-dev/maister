@@ -22,6 +22,7 @@ const stateTransitionsMock = vi.hoisted(() => ({
 
 vi.mock("@/lib/runs/state-transitions", () => stateTransitionsMock);
 
+import { MaisterError } from "@/lib/errors";
 import { runAgentStep, type RunAgentStepCtx } from "@/lib/flows/runner-agent";
 
 const baseFlowCtx: FlowContext = {
@@ -183,6 +184,29 @@ describe("runner-agent — session.hook_trip", () => {
     expect(result.ok).toBe(false);
     // CRASH (runFlow → Crashed → recover), NOT the false clean STEP_CHECKPOINTED
     // that would hide the stranded run behind a successful pause.
+    expect(result.errorCode).toBe("CRASH");
+    expect(
+      stateTransitionsMock.markCheckpointedFromExit,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("escalate EXECUTOR_UNAVAILABLE: live halt undeliverable → surfaces CRASH", async () => {
+    escalateHookTripMock.escalateHookTrip.mockClear();
+    stateTransitionsMock.markCheckpointedFromExit.mockClear();
+    // The pre-tx checkpoint returned EXECUTOR_UNAVAILABLE — the supervisor halted
+    // the agent and will not re-emit; the run is stranded Running with no HITL.
+    escalateHookTripMock.escalateHookTrip.mockRejectedValueOnce(
+      new MaisterError("EXECUTOR_UNAVAILABLE", "supervisor 503"),
+    );
+    const api = makeApi([hookTrip(1, "halt", "repetition")]);
+
+    const result = await runAgentStep(
+      { id: "implement", type: "agent", mode: "new-session", prompt: "go" },
+      makeCtx(),
+      api as never,
+    );
+
+    expect(result.ok).toBe(false);
     expect(result.errorCode).toBe("CRASH");
     expect(
       stateTransitionsMock.markCheckpointedFromExit,

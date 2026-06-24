@@ -481,11 +481,11 @@ type EventConsumer = {
   // markCheckpointedFromExit (which would flip NeedsInput→NeedsInputIdle and
   // break the runFlow NeedsInput resume).
   hookTripEscalated: () => boolean;
-  // ADR-108 (M40): true iff escalateHookTrip REJECTED (its tx threw after the
-  // pre-tx checkpoint already stopped the agent). The run is stranded Running
-  // with no hook_trip HITL, so the runner MUST surface CRASH (not a clean
-  // STEP_CHECKPOINTED) — runFlow marks it Crashed and crash-reconcile/recover
-  // can session/resume the retained acpSessionId.
+  // ADR-108 (M40): true iff escalateHookTrip REJECTED — the pre-tx checkpoint
+  // returned EXECUTOR_UNAVAILABLE (live halt, undeliverable) or its tx threw. The
+  // run is stranded Running with no hook_trip HITL, so the runner MUST surface
+  // CRASH (not a clean STEP_CHECKPOINTED) — runFlow marks it Crashed and
+  // crash-reconcile/recover can session/resume the retained acpSessionId.
   hookTripEscalateFailed: () => boolean;
 };
 
@@ -551,17 +551,20 @@ function startEventConsumer(
                 checkpointSession: supervisor.checkpointSession,
               }).then(
                 (r) => {
-                  // EXECUTOR_UNAVAILABLE / lost CAS → un-claim so the runner
-                  // does not suppress the normal checkpoint/exit handling.
+                  // Benign no-escalate (run gone / not Running / lost CAS) →
+                  // un-claim so the runner does not suppress the normal
+                  // checkpoint/exit handling. (EXECUTOR_UNAVAILABLE now rejects.)
                   if (!r.escalated) hookEscalated = false;
                 },
                 (err: unknown) => {
-                  // The escalate tx threw AFTER the pre-tx checkpoint already
-                  // stopped the agent: the run is stranded Running with no
-                  // hook_trip HITL. Un-claim and flag the failure so the runner
-                  // surfaces CRASH instead of a clean checkpoint — without this,
-                  // Promise.allSettled swallows the rejection and hookEscalated
-                  // stays true (false STEP_CHECKPOINTED on a stranded run).
+                  // escalateHookTrip rejected: either the pre-tx checkpoint
+                  // returned EXECUTOR_UNAVAILABLE (the halt is live but
+                  // undeliverable) or its tx threw. Either way the run is stranded
+                  // Running with no hook_trip HITL. Un-claim and flag the failure
+                  // so the runner surfaces CRASH instead of a clean checkpoint —
+                  // without this, Promise.allSettled swallows the rejection and
+                  // hookEscalated stays true (false STEP_CHECKPOINTED on a
+                  // stranded run).
                   hookEscalated = false;
                   hookEscalateFailed = true;
                   log.error(

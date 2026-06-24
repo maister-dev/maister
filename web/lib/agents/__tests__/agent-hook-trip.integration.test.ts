@@ -34,6 +34,7 @@ import {
 
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import * as schemaModule from "@/lib/db/schema";
+import { MaisterError } from "@/lib/errors";
 
 const schema = schemaModule as unknown as Record<string, any>;
 
@@ -209,6 +210,25 @@ describe("consumeAgentSession — session.hook_trip", () => {
     expect(hitls[0].kind).toBe("hook_trip");
     expect(hitls[0].stepId).toBe("agent");
     expect((hitls[0].schema as { rule?: string }).rule).toBe("repetition");
+  });
+
+  it("halt + checkpoint EXECUTOR_UNAVAILABLE: stranded → Crashed, no HITL", async () => {
+    await seedProject();
+    const runId = await seedRunningAgent();
+    const api = fakeApi([hookTrip("halt", "repetition")]);
+
+    api.checkpointSpy.mockRejectedValueOnce(
+      new MaisterError("EXECUTOR_UNAVAILABLE", "supervisor 503"),
+    );
+
+    await consumeAgentSession({ db, api, runId, sessionId: "sup-1" });
+
+    expect(api.checkpointSpy).toHaveBeenCalledWith("sup-1");
+    const run = await getRun(runId);
+
+    // Recoverable Crashed (surfaced for a human), NEVER a silent Done.
+    expect(run.status).toBe("Crashed");
+    expect(await getHitl(runId)).toHaveLength(0);
   });
 
   it("deny: record-only — no escalate, run stays Running, no HITL", async () => {

@@ -2284,23 +2284,47 @@ export async function consumeAgentSession(args: {
       // ADR-108 (M40): a halting guardrail trip (repetition / no_progress)
       // checkpoints + escalates to NeedsInput (resumable via startAgentSession);
       // the checkpoint produces a session.exited{reason:"checkpoint"} that
-      // detaches this loop above. A path_guard deny is record-only (the
-      // supervisor already denied inline, deny-and-continue).
+      // detaches this loop above. If the escalate cannot be durably recorded
+      // (checkpoint EXECUTOR_UNAVAILABLE / tx failure) the run is stranded → it is
+      // finalized Crashed (recoverable) so it never finalizes as success. A
+      // path_guard deny is record-only (the supervisor already denied inline,
+      // deny-and-continue).
       case "session.hook_trip": {
         if (event.disposition === "halt") {
           const haltRule =
             event.rule === "no_progress" ? "no_progress" : "repetition";
 
-          await escalateHookTrip({
-            db: args.db,
-            runId: args.runId,
-            stepId: "agent",
-            supervisorSessionId: args.sessionId,
-            rule: haltRule,
-            toolCall: event.toolCall,
-            runKind: "agent",
-            checkpointSession: args.api.checkpointSession,
-          });
+          try {
+            await escalateHookTrip({
+              db: args.db,
+              runId: args.runId,
+              stepId: "agent",
+              supervisorSessionId: args.sessionId,
+              rule: haltRule,
+              toolCall: event.toolCall,
+              runKind: "agent",
+              checkpointSession: args.api.checkpointSession,
+            });
+          } catch (err) {
+            // The halt is live (the supervisor cancelled the agent and will not
+            // re-emit) but the escalate could not be durably recorded. Do NOT let
+            // the run finalize as success on a later session.exited: surface a
+            // recoverable Crashed (recover → session/resume on the retained
+            // acp_session_id) and detach.
+            log.error(
+              {
+                runId: args.runId,
+                err: err instanceof Error ? err.message : String(err),
+              },
+              "hook_trip escalation failed — agent run Crashed (stranded)",
+            );
+            await finalizeAgentRun(args.runId, "Crashed", {
+              db: args.db,
+              reason: "hook_trip escalation failed (executor unavailable)",
+            });
+
+            return;
+          }
 
           break;
         }
