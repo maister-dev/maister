@@ -7,8 +7,8 @@ import {
 } from "@/lib/flows/engine-version";
 
 describe("MAISTER_ENGINE_VERSION", () => {
-  it("is 1.8.0 (M40 guardrail hooks bump)", () => {
-    expect(MAISTER_ENGINE_VERSION).toBe("1.8.0");
+  it("is 1.9.0 (M41 consensus node bump)", () => {
+    expect(MAISTER_ENGINE_VERSION).toBe("1.9.0");
   });
 });
 
@@ -27,8 +27,8 @@ describe("isEngineCompatible", () => {
   });
 
   it("is incompatible when engine is below engine_min", () => {
-    // Engine is 1.8.0 (M40 bump); a min above it must be rejected.
-    const r = isEngineCompatible("1.9.0");
+    // Engine is 1.9.0 (M41 bump); a min above it must be rejected.
+    const r = isEngineCompatible("2.0.0");
 
     expect(r.compatible).toBe(false);
     expect(r.reason).toContain("engine_min");
