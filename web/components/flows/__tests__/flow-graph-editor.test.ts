@@ -29,10 +29,12 @@ const labels: ToolbarProps["labels"] = {
   selectNodeHint: "Select a node to add a gate",
   nodeType: {
     ai_coding: "AI coding",
+    orchestrator: "Orchestrator",
     cli: "CLI",
     check: "Check",
     judge: "Judge",
     human: "Human",
+    form: "Form",
   },
   gateKind: {
     command_check: "Command check",
@@ -69,6 +71,8 @@ describe("FlowEditorToolbar — edit affordances", () => {
     }
     expect(html).toContain("AI coding");
     expect(html).toContain("Human");
+    expect(html).toContain("Orchestrator");
+    expect(html).toContain("Form");
   });
 
   it("renders an add-gate affordance for every gate kind with its label", () => {

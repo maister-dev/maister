@@ -229,6 +229,20 @@ const NODE_ICON_PATHS: Record<string, ReactElement> = {
       <path d="M8.7 10.8 7.3 12.2a2.4 2.4 0 0 1-3.4-3.4L5.4 7.4" />
     </>
   ),
+  sitemap: (
+    <>
+      <rect height="3" rx="0.6" width="4" x="6" y="2.5" />
+      <rect height="3" rx="0.6" width="4" x="2.5" y="10.5" />
+      <rect height="3" rx="0.6" width="4" x="9.5" y="10.5" />
+      <path d="M8 5.5V8M4.5 8H11.5M4.5 8V10.5M11.5 8V10.5" />
+    </>
+  ),
+  form: (
+    <>
+      <rect height="11" rx="1" width="9" x="3.5" y="2.5" />
+      <path d="M5.5 6h5M5.5 8.5h5M5.5 11h3" />
+    </>
+  ),
   dot: <circle cx="8" cy="8" r="3" />,
 };
 

@@ -74,6 +74,7 @@ function humanizeToken(value: string): string {
 function nodeRoleForType(nodeType: string): GraphNodeRole {
   switch (nodeType) {
     case "ai_coding":
+    case "orchestrator":
       return "agent";
     case "cli":
       return "command";

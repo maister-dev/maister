@@ -7,10 +7,12 @@ describe("nodeVisual", () => {
   it("maps every NodeType to a stable icon + forest token", () => {
     const expected: Record<string, { iconName: string; colorToken: string }> = {
       ai_coding: { iconName: "bot", colorToken: "cv-green" },
+      orchestrator: { iconName: "sitemap", colorToken: "cv-teal" },
       judge: { iconName: "gavel", colorToken: "cv-violet" },
       cli: { iconName: "terminal", colorToken: "cv-gray" },
       check: { iconName: "shield", colorToken: "cv-amber" },
       human: { iconName: "person", colorToken: "cv-blue" },
+      form: { iconName: "form", colorToken: "cv-rose" },
     };
 
     for (const type of NODE_TYPES) {

@@ -9,6 +9,8 @@ export const NODE_TYPES = [
   "check",
   "judge",
   "human",
+  "orchestrator",
+  "form",
 ] as const;
 
 export const GATE_KINDS = [
@@ -116,6 +118,14 @@ export function blankNode(
       return { id, type: "judge", action: { prompt: "TODO" } };
     case "human":
       return { id, type: "human" };
+    // action.prompt is z.string().min(1) — seed a non-empty placeholder so the
+    // fresh node is schema-valid (mirrors ai_coding/judge).
+    case "orchestrator":
+      return { id, type: "orchestrator", action: { prompt: "TODO" } };
+    // form_schema is the one REQUIRED form-node setting — seed it so the blank
+    // validates (a form node with no schema is the empty-prompt analogue).
+    case "form":
+      return { id, type: "form", settings: { form_schema: "TODO" } };
   }
 }
 

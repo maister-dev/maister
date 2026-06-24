@@ -14,10 +14,12 @@ export type NodeVisual = { iconName: string; colorToken: string };
 // until its visual is declared — exhaustiveness without a runtime switch.
 const NODE_VISUALS: Record<NodeType, NodeVisual> = {
   ai_coding: { iconName: "bot", colorToken: "cv-green" },
+  orchestrator: { iconName: "sitemap", colorToken: "cv-teal" },
   judge: { iconName: "gavel", colorToken: "cv-violet" },
   cli: { iconName: "terminal", colorToken: "cv-gray" },
   check: { iconName: "shield", colorToken: "cv-amber" },
   human: { iconName: "person", colorToken: "cv-blue" },
+  form: { iconName: "form", colorToken: "cv-rose" },
 };
 
 const GATE_VISUALS: Record<GateKind, NodeVisual> = {

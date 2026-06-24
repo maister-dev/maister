@@ -2569,10 +2569,12 @@
       "selectNodeHint": "Select a node to add a gate",
       "nodeType": {
         "ai_coding": "AI coding",
+        "orchestrator": "Orchestrator",
         "cli": "CLI",
         "check": "Check",
         "judge": "Judge",
-        "human": "Human"
+        "human": "Human",
+        "form": "Form"
       },
       "gateKind": {
         "command_check": "Command check",
@@ -2593,6 +2595,7 @@
       "output": "Structured output",
       "prompt": "Prompt",
       "command": "Command",
+      "formSchema": "Form schema",
       "model": "Model",
       "thinkingEffort": "Thinking effort",
       "permissionMode": "Permission mode",
@@ -2600,6 +2603,9 @@
       "skills": "Skills (comma-separated)",
       "restrictions": "Restrictions (comma-separated)",
       "mcps": "Additional MCPs (comma-separated)",
+      "delegation": "Delegation",
+      "maxFanout": "Max fanout",
+      "maxDepth": "Max depth",
       "enforcement": {
         "title": "Enforcement",
         "mcps": "MCPs",

@@ -44,6 +44,18 @@ describe("blankNode + validateNodeDraft", () => {
     expect(result).toEqual({ ok: true });
   });
 
+  it("orchestrator: blank is valid", () => {
+    const result = validateNodeDraft(blankNode("orchestrator", "n6"));
+
+    expect(result).toEqual({ ok: true });
+  });
+
+  it("form: blank is valid", () => {
+    const result = validateNodeDraft(blankNode("form", "n7"));
+
+    expect(result).toEqual({ ok: true });
+  });
+
   it("all NODE_TYPES produce valid blanks", () => {
     for (const type of NODE_TYPES) {
       const result = validateNodeDraft(blankNode(type, `id-${type}`));

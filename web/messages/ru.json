@@ -2569,10 +2569,12 @@
       "selectNodeHint": "Выберите узел, чтобы добавить гейт",
       "nodeType": {
         "ai_coding": "AI-кодинг",
+        "orchestrator": "Оркестратор",
         "cli": "CLI",
         "check": "Проверка",
         "judge": "Судья",
-        "human": "Человек"
+        "human": "Человек",
+        "form": "Форма"
       },
       "gateKind": {
         "command_check": "Проверка команды",
@@ -2593,6 +2595,7 @@
       "output": "Структурированный вывод",
       "prompt": "Промпт",
       "command": "Команда",
+      "formSchema": "Схема формы",
       "model": "Модель",
       "thinkingEffort": "Уровень рассуждений",
       "permissionMode": "Режим разрешений",
@@ -2600,6 +2603,9 @@
       "skills": "Навыки (через запятую)",
       "restrictions": "Ограничения (через запятую)",
       "mcps": "Дополнительные MCP (через запятую)",
+      "delegation": "Делегирование",
+      "maxFanout": "Макс. ветвление",
+      "maxDepth": "Макс. глубина",
       "enforcement": {
         "title": "Принуждение",
         "mcps": "MCP",

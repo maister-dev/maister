@@ -33,6 +33,7 @@ export function buildNodeSideFormLabels(te: Translator): NodeSideFormLabels {
     output: te("nodeForm.output"),
     prompt: te("nodeForm.prompt"),
     command: te("nodeForm.command"),
+    formSchema: te("nodeForm.formSchema"),
     model: te("nodeForm.model"),
     thinkingEffort: te("nodeForm.thinkingEffort"),
     permissionMode: te("nodeForm.permissionMode"),
@@ -40,6 +41,9 @@ export function buildNodeSideFormLabels(te: Translator): NodeSideFormLabels {
     skills: te("nodeForm.skills"),
     restrictions: te("nodeForm.restrictions"),
     mcps: te("nodeForm.mcps"),
+    delegation: te("nodeForm.delegation"),
+    maxFanout: te("nodeForm.maxFanout"),
+    maxDepth: te("nodeForm.maxDepth"),
     enforcement: {
       title: te("nodeForm.enforcement.title"),
       mcps: te("nodeForm.enforcement.mcps"),

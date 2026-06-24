@@ -90,6 +90,22 @@ const MANIFEST: FlowYamlV1 = flowYamlV1Schema.parse({
       },
       decide: { from: "output.triage.outcome" },
     },
+    {
+      id: "coordinate",
+      type: "orchestrator",
+      action: { prompt: "coordinate children" },
+      transitions: { success: "build" },
+      settings: {
+        model: "claude-sonnet-4-6",
+        workspaceAccess: "write",
+        delegation: { max_fanout: 4, max_depth: 2 },
+      },
+    },
+    {
+      id: "intake",
+      type: "form",
+      settings: { form_schema: "./intake.json", criticality: "medium" },
+    },
   ],
 });
 
@@ -111,6 +127,7 @@ const labels: NodeSideFormProps["labels"] = {
   output: "Structured output",
   prompt: "Prompt",
   command: "Command",
+  formSchema: "Form schema",
   model: "Model",
   thinkingEffort: "Thinking effort",
   permissionMode: "Permission mode",
@@ -118,6 +135,9 @@ const labels: NodeSideFormProps["labels"] = {
   skills: "Skills",
   restrictions: "Restrictions",
   mcps: "Additional MCPs",
+  delegation: "Delegation",
+  maxFanout: "Max fanout",
+  maxDepth: "Max depth",
   enforcement: {
     title: "Enforcement",
     mcps: "MCPs",
@@ -276,6 +296,32 @@ describe("NodeSideForm — human", () => {
     expect(html).toContain('data-testid="node-allow-takeover"');
     expect(html).not.toContain('data-testid="node-action-prompt"');
     expect(html).not.toContain('data-testid="node-action-command"');
+  });
+});
+
+describe("NodeSideForm — orchestrator (M37)", () => {
+  it("renders the prompt action + ai_coding settings + delegation bounds", () => {
+    const html = render(nodeById("coordinate"));
+
+    expect(html).toContain('data-testid="node-action-prompt"');
+    expect(html).toContain('data-testid="node-model"');
+    expect(html).toContain('data-testid="node-workspace-access"');
+    expect(html).toContain('data-testid="node-delegation"');
+    expect(html).toContain('data-testid="node-delegation-max-fanout"');
+    expect(html).toContain('data-testid="node-delegation-max-depth"');
+  });
+});
+
+describe("NodeSideForm — form (T4)", () => {
+  it("renders the form_schema field and no action editor", () => {
+    const html = render(nodeById("intake"));
+
+    expect(html).toContain('data-testid="node-form-schema"');
+    expect(html).not.toContain('data-testid="node-action-prompt"');
+    expect(html).not.toContain('data-testid="node-action-command"');
+    // a form node does NOT get the ai_coding/judge settings block or delegation
+    expect(html).not.toContain('data-testid="node-model"');
+    expect(html).not.toContain('data-testid="node-delegation"');
   });
 });
 

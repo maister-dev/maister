@@ -24,6 +24,7 @@ export type NodeSideFormLabels = {
   output: string;
   prompt: string;
   command: string;
+  formSchema: string;
   model: string;
   thinkingEffort: string;
   permissionMode: string;
@@ -31,6 +32,9 @@ export type NodeSideFormLabels = {
   skills: string;
   restrictions: string;
   mcps: string;
+  delegation: string;
+  maxFanout: string;
+  maxDepth: string;
   enforcement: {
     title: string;
     mcps: string;
@@ -266,6 +270,17 @@ export function NodeSideForm({
     }
     setSetting("hooks", Object.keys(next).length ? next : undefined);
   };
+  // Orchestrator-only (M37/ADR-098): settings.delegation bounds the run-tree.
+  // Sparse like hooks — clearing both fields removes the block entirely.
+  const delegation = asRec(settings.delegation);
+  const setDelegation = (patch: Rec): void => {
+    const next: Rec = { ...delegation, ...patch };
+
+    for (const key of Object.keys(next)) {
+      if (next[key] === undefined) delete next[key];
+    }
+    setSetting("delegation", Object.keys(next).length ? next : undefined);
+  };
   const setAction = (key: string, value: unknown): void =>
     emit({ ...n, action: { ...action, [key]: value } });
   const setRework = (patch: Rec): void =>
@@ -319,7 +334,8 @@ export function NodeSideForm({
     emit({ ...n, transitions: { ...transitions, [`outcome_${i}`]: "done" } });
   };
 
-  const isPromptType = type === "ai_coding" || type === "judge";
+  const isPromptType =
+    type === "ai_coding" || type === "judge" || type === "orchestrator";
   const isCommandType = type === "cli" || type === "check";
 
   // M38 (ADR-103) — Routing (`decide`) sub-panel. Offered when the node can
@@ -449,7 +465,7 @@ export function NodeSideForm({
 
       <section className="grid gap-2">
         <h3 className={SECTION_CLS}>{labels.settings}</h3>
-        {type === "ai_coding" || type === "judge" ? (
+        {type === "ai_coding" || type === "judge" || type === "orchestrator" ? (
           <>
             <TextField
               label={labels.model}
@@ -599,7 +615,7 @@ export function NodeSideForm({
             </div>
           </>
         ) : null}
-        {type === "ai_coding" ? (
+        {type === "ai_coding" || type === "orchestrator" ? (
           <SelectField
             label={labels.workspaceAccess}
             options={["read", "write", "none"]}
@@ -607,6 +623,40 @@ export function NodeSideForm({
             testid="node-workspace-access"
             value={str(settings.workspaceAccess)}
             onChange={(v) => setSetting("workspaceAccess", v || undefined)}
+          />
+        ) : null}
+        {type === "orchestrator" ? (
+          <div className="grid gap-2" data-testid="node-delegation">
+            <h4 className={SECTION_CLS}>{labels.delegation}</h4>
+            <TextField
+              label={labels.maxFanout}
+              readOnly={readOnly}
+              testid="node-delegation-max-fanout"
+              type="number"
+              value={str(delegation.max_fanout)}
+              onChange={(v) =>
+                setDelegation({ max_fanout: v === "" ? undefined : Number(v) })
+              }
+            />
+            <TextField
+              label={labels.maxDepth}
+              readOnly={readOnly}
+              testid="node-delegation-max-depth"
+              type="number"
+              value={str(delegation.max_depth)}
+              onChange={(v) =>
+                setDelegation({ max_depth: v === "" ? undefined : Number(v) })
+              }
+            />
+          </div>
+        ) : null}
+        {type === "form" ? (
+          <TextField
+            label={labels.formSchema}
+            readOnly={readOnly}
+            testid="node-form-schema"
+            value={str(settings.form_schema)}
+            onChange={(v) => setSetting("form_schema", v)}
           />
         ) : null}
         {isCommandType ? (

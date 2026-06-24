@@ -292,10 +292,12 @@ export function buildFlowEditorTabsLabels(te: T): FlowEditorTabsLabels {
     selectNodeHint: te("toolbar.selectNodeHint"),
     nodeType: {
       ai_coding: te("toolbar.nodeType.ai_coding"),
+      orchestrator: te("toolbar.nodeType.orchestrator"),
       cli: te("toolbar.nodeType.cli"),
       check: te("toolbar.nodeType.check"),
       judge: te("toolbar.nodeType.judge"),
       human: te("toolbar.nodeType.human"),
+      form: te("toolbar.nodeType.form"),
     },
     gateKind,
     graph: { title: te("page.graphTab"), empty: "", currentNode: "", node: {} },
