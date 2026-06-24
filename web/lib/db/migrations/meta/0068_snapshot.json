@@ -1,6 +1,6 @@
 {
   "id": "bac1dad5-3342-4e1e-9745-4b74cb6cc2be",
-  "prevId": "cd6cff82-716e-4f35-acf2-a4b9e853795f",
+  "prevId": "69f4714f-2443-4cc8-bc4d-afb0e4ec3809",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -3743,7 +3743,7 @@
           "name": "project_id",
           "type": "text",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "node_attempt_id": {
           "name": "node_attempt_id",
@@ -4358,6 +4358,13 @@
           "type": "jsonb",
           "primaryKey": false,
           "notNull": true
+        },
+        "env": {
+          "name": "env",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
         },
         "permission_policy": {
           "name": "permission_policy",
@@ -5164,7 +5171,7 @@
           "name": "project_id",
           "type": "text",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "name": {
           "name": "name",
@@ -5302,6 +5309,27 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "project_tokens_owner_created_idx": {
+          "name": "project_tokens_owner_created_idx",
+          "columns": [
+            {
+              "expression": "owner_user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -5362,6 +5390,18 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {
+        "project_tokens_project_kind_project_check": {
+          "name": "project_tokens_project_kind_project_check",
+          "value": "\"project_tokens\".\"token_kind\" != 'project' OR \"project_tokens\".\"project_id\" IS NOT NULL"
+        },
+        "project_tokens_agent_project_check": {
+          "name": "project_tokens_agent_project_check",
+          "value": "\"project_tokens\".\"token_kind\" != 'agent' OR (\"project_tokens\".\"project_id\" IS NOT NULL AND \"project_tokens\".\"agent_id\" IS NOT NULL)"
+        },
+        "project_tokens_user_owner_check": {
+          "name": "project_tokens_user_owner_check",
+          "value": "\"project_tokens\".\"token_kind\" != 'user' OR \"project_tokens\".\"owner_user_id\" IS NOT NULL"
+        },
         "project_tokens_agent_kind_check": {
           "name": "project_tokens_agent_kind_check",
           "value": "(\"project_tokens\".\"token_kind\" = 'agent') = (\"project_tokens\".\"agent_id\" IS NOT NULL)"
@@ -5799,7 +5839,7 @@
           "name": "project_id",
           "type": "text",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "task_id": {
           "name": "task_id",
@@ -8490,6 +8530,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "base_branch": {
+          "name": "base_branch",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "target_branch": {
           "name": "target_branch",
           "type": "text",
@@ -8661,7 +8707,7 @@
           "name": "project_id",
           "type": "text",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "actor_label": {
           "name": "actor_label",
@@ -8769,7 +8815,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "set null",
           "onUpdate": "no action"
         }
       },

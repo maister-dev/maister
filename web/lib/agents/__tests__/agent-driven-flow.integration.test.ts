@@ -253,6 +253,8 @@ function makeCapturingSupervisor(prompts: string[]): SupervisorApi {
     deliverPermission: (async () => ({
       ok: true,
     })) as unknown as SupervisorApi["deliverPermission"],
+    checkpointSession: (async () =>
+      undefined) as unknown as SupervisorApi["checkpointSession"],
   };
 }
 

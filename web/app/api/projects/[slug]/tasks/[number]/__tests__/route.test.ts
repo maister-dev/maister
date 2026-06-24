@@ -117,6 +117,7 @@ describe("PUT /api/projects/[slug]/tasks/[number]", () => {
       prompt: "Full card prompt",
       flowId: "flow-1",
       runnerId: "claude-default",
+      baseBranch: "main",
       targetBranch: "main",
       promotionMode: "pull_request",
       executionPolicy: {

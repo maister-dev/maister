@@ -154,6 +154,8 @@ function claimAndResumeAgentRun(runId: string, db: any): void {
       "agent hook_trip resume failed",
     ),
   );
+}
+
 // Wake a run after a budget raise (ADR-106 M39 Phase 5). The mechanism depends on
 // run_kind + the PAUSED status, which the onBudgetBreach disposition chose:
 // `escalate` left the run in NeedsInput (slot held); `terminate_restorable` in

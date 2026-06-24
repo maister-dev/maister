@@ -199,7 +199,13 @@ describe("getStudioPackageBom enrichment (M36 T1.2)", () => {
       },
     ]);
     expect(bom.skills).toEqual([
-      { id: "s1", path: "skills/s1", fileCount: 0, subfolderCount: 0, description: "" },
+      {
+        id: "s1",
+        path: "skills/s1",
+        fileCount: 0,
+        subfolderCount: 0,
+        description: "",
+      },
     ]);
     expect(bom.platformAgents).toEqual([
       {
