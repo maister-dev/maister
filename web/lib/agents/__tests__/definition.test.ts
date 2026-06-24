@@ -304,7 +304,7 @@ describe("parseAgentDefinition", () => {
 });
 
 describe("qualifyAgentId", () => {
-  it("composes <flowRefId>:<stem> and refuses unsafe stems", () => {
+  it("composes <packageName>:<stem> and refuses unsafe stems", () => {
     expect(qualifyAgentId("aif", "triager")).toBe("aif:triager");
     expect(() => qualifyAgentId("aif", "..")).toThrow(/stem/);
     expect(() => qualifyAgentId("aif", "a:b")).toThrow(/stem/);

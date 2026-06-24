@@ -23,7 +23,7 @@ const { projects } = schemaModule as unknown as Record<string, any>;
 
 const postBodySchema = z
   .object({
-    // Package-qualified id `<flowRefId>:<stem>` (ADR-089 rework).
+    // Package-qualified id `<packageName>:<stem>` (ADR-106 re-key).
     agentId: z
       .string()
       .min(1)

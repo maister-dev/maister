@@ -747,7 +747,7 @@ export const aiCodingSettingsSchema = z
     // M34 (ADR-089): bind the node to a catalog agent — the agent's .md body
     // substitutes the inline prompt (mode=session) or materializes into
     // .claude/agents/ (mode=subagent). Requires compat.engine_min >= 1.5.0.
-    // Package-qualified `<flowRefId>:<stem>` (ADR-089 rework); no bare-stem
+    // Package-qualified `<packageName>:<stem>` (ADR-106 re-key); no bare-stem
     // same-package sugar in v1.
     agent: z
       .string()
