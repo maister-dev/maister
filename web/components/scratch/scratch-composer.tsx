@@ -59,6 +59,7 @@ export function ScratchComposer({
     () => composerFiles.reduce((sum, file) => sum + file.size, 0),
     [composerFiles],
   );
+  const agentBusy = status === "Running" || status === "Starting";
   const canSubmitMessage = !!content.trim() && canCompose(status);
 
   function updateComposerAttachment(
@@ -141,7 +142,9 @@ export function ScratchComposer({
         testId="scratch-message-composer"
         value={content}
         onChange={setContent}
-        onSubmitShortcut={() => void submit()}
+        onSubmitShortcut={() => {
+          if (canSubmitMessage && !pending) void submit();
+        }}
       />
       {composerAttachments.length > 0 ? (
         <div className="mt-2 flex min-w-0 flex-col gap-2">
@@ -228,22 +231,34 @@ export function ScratchComposer({
         ) : null}
       </div>
       <div className="mt-2 flex min-w-0 flex-wrap items-center justify-between gap-2">
-        {canSend(status) ? (
-          <button
-            className="rounded-full border border-line bg-paper px-3 py-1.5 font-mono text-[11px] text-ink-2 hover:border-amber hover:text-amber"
-            type="button"
-            onClick={() =>
-              setComposerAttachments((current) => [
-                ...current,
-                { kind: "text_note", label: "", value: "" },
-              ])
-            }
-          >
-            + {t("attachment")}
-          </button>
-        ) : (
-          <span />
-        )}
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          {canSend(status) ? (
+            <button
+              className="rounded-full border border-line bg-paper px-3 py-1.5 font-mono text-[11px] text-ink-2 hover:border-amber hover:text-amber"
+              type="button"
+              onClick={() =>
+                setComposerAttachments((current) => [
+                  ...current,
+                  { kind: "text_note", label: "", value: "" },
+                ])
+              }
+            >
+              + {t("attachment")}
+            </button>
+          ) : null}
+          {agentBusy ? (
+            <div
+              className="flex min-w-0 items-center gap-2 rounded-full border border-amber-line bg-amber-soft px-3 py-1.5 font-mono text-[11px] text-ink-2"
+              data-testid="scratch-agent-busy"
+            >
+              <span
+                aria-hidden="true"
+                className="h-3 w-3 rounded-full border-2 border-amber/30 border-t-amber motion-safe:animate-spin"
+              />
+              <span className="truncate">{t("agentBusy")}</span>
+            </div>
+          ) : null}
+        </div>
         <button
           className="rounded-full bg-amber px-4 py-2 text-[13px] font-semibold text-white transition hover:bg-amber-2 disabled:cursor-not-allowed disabled:opacity-60"
           data-testid="scratch-composer-send"

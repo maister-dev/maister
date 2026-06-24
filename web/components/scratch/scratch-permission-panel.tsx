@@ -1,7 +1,7 @@
 "use client";
 
 import type { ScratchDetail } from "@/lib/scratch-runs/dialog";
-import type { ReactElement } from "react";
+import type { KeyboardEvent, ReactElement } from "react";
 
 import { useState } from "react";
 import { useTranslations } from "next-intl";
@@ -42,6 +42,13 @@ export function ScratchPermissionPanel({
     }
   }
 
+  function handleJsonKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
+    if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey)) return;
+
+    event.preventDefault();
+    if (!pending) submitJson();
+  }
+
   return (
     <section
       className={`${shell} border-amber-line bg-[color-mix(in_oklab,var(--amber-soft)_45%,var(--paper))] p-3`}
@@ -79,6 +86,7 @@ export function ScratchPermissionPanel({
             className={clsx(inputBase, "min-h-[120px]")}
             value={hitlJson}
             onChange={(event) => setHitlJson(event.target.value)}
+            onKeyDown={handleJsonKeyDown}
           />
           {parseError ? (
             <p className="font-mono text-[10.5px] text-[#d9534f]" role="alert">

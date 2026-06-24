@@ -10,6 +10,7 @@ import { registerRoutes } from "./http-api";
 import { createDefaultModelSourceRegistry } from "./model-catalog/sources";
 import { pendingPermissions } from "./pending-permissions";
 import { SessionRegistry } from "./registry";
+import { runtimeRoot } from "./runtime-root";
 
 const DEFAULT_PORT = 7777;
 const DEFAULT_SHUTDOWN_GRACE_MS = 15_000;
@@ -59,7 +60,7 @@ export async function start(): Promise<void> {
   );
   const killGraceMs = envInt("MAISTER_KILL_GRACE_MS", DEFAULT_KILL_GRACE_MS);
   const heartbeatIntervalMs = envInt("MAISTER_HEARTBEAT_INTERVAL_MS", 5_000);
-  const runtimeRoot = process.env.MAISTER_RUNTIME_ROOT ?? process.cwd();
+  const root = runtimeRoot();
   const logLevel = (process.env.LOG_LEVEL ?? "debug") as pino.Level;
 
   const loggerConfig = {
@@ -73,7 +74,7 @@ export async function start(): Promise<void> {
   const logger = pino(loggerConfig);
 
   logger.info(
-    { port, runtimeRoot, logLevel, heartbeatIntervalMs },
+    { port, runtimeRoot: root, logLevel, heartbeatIntervalMs },
     "supervisor-starting",
   );
 
@@ -85,7 +86,7 @@ export async function start(): Promise<void> {
       app,
       registry,
       logger,
-      runtimeRoot,
+      runtimeRoot: root,
       killGraceMs,
       ccrManager,
     }),

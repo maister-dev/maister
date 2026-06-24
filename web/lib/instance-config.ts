@@ -6,6 +6,8 @@ import { promisify } from "node:util";
 
 import pino from "pino";
 
+export { runtimeRoot } from "@/lib/runtime-root";
+
 const execFileAsync = promisify(execFile);
 
 const log = pino({
@@ -49,10 +51,6 @@ export function worktreesRoot(): string {
     process.env.MAISTER_WORKTREE_ROOT ??
     path.join(os.homedir(), ".maister", "worktrees")
   );
-}
-
-export function runtimeRoot(): string {
-  return process.env.MAISTER_RUNTIME_ROOT ?? process.cwd();
 }
 
 // (ADR-096, Flow Studio Phase C) Root for editable local-package working dirs.

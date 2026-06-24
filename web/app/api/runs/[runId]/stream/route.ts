@@ -16,9 +16,18 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { keepaliveMs } from "@/lib/runs/keepalive-config";
+import {
+  shouldReplayRunStream,
+  streamReadyEvent,
+} from "@/lib/runs/stream-options";
+import { runtimeRoot } from "@/lib/runtime-root";
+import { assertLocalPackageAssistantActor } from "@/lib/scratch-runs/service";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { projects, runs } = schemaModule as unknown as Record<string, any>;
+const { localPackages, projects, runs } = schemaModule as unknown as Record<
+  string,
+  any
+>;
 
 const log = pino({
   name: "api-runs-stream",
@@ -31,18 +40,16 @@ const POLL_INTERVAL_MS = 100;
 const STATUS_REFRESH_MS = 500;
 const CHUNK_SIZE = 64 * 1024;
 
-function runtimeRoot(): string {
-  return process.env.MAISTER_RUNTIME_ROOT ?? process.cwd();
-}
-
 type RouteParams = { params: Promise<{ runId: string }> };
 
 type RunLite = {
   id: string;
   status: string;
   currentStepId: string | null;
-  projectId: string;
+  projectId: string | null;
   projectSlug: string;
+  createdByUserId: string | null;
+  localPackageId: string | null;
 };
 
 async function loadRunLite(runId: string): Promise<RunLite | null> {
@@ -53,22 +60,31 @@ async function loadRunLite(runId: string): Promise<RunLite | null> {
       status: runs.status,
       currentStepId: runs.currentStepId,
       projectId: runs.projectId,
-      slug: projects.slug,
+      projectSlug: projects.slug,
+      localPackageSlug: localPackages.slug,
+      createdByUserId: runs.createdByUserId,
+      localPackageId: runs.localPackageId,
     })
     .from(runs)
-    .innerJoin(projects, eq(projects.id, runs.projectId))
+    .leftJoin(projects, eq(projects.id, runs.projectId))
+    .leftJoin(localPackages, eq(localPackages.id, runs.localPackageId))
     .where(eq(runs.id, runId));
 
   const row = rows[0];
 
   if (!row) return null;
+  const projectSlug = row.projectSlug ?? row.localPackageSlug;
+
+  if (!projectSlug) return null;
 
   return {
     id: row.id,
     status: row.status,
     currentStepId: row.currentStepId,
     projectId: row.projectId,
-    projectSlug: row.slug,
+    projectSlug,
+    createdByUserId: row.createdByUserId,
+    localPackageId: row.localPackageId,
   };
 }
 
@@ -150,13 +166,16 @@ export async function GET(
 ): Promise<Response> {
   const { runId } = await params;
   const lastEventId = parseLastEventId(req);
+  const replayEvents = shouldReplayRunStream(req.url);
 
   // Auth-first: authenticate AND clear the forced-password-change gate BEFORE
   // the run lookup, so unauthenticated / must-change callers cannot probe run
   // existence (404-vs-403 shape). Project membership is enforced below once
   // projectId is derived from the run row.
+  let sessionUser: { id: string };
+
   try {
-    await requireActiveSession();
+    sessionUser = await requireActiveSession();
   } catch (err) {
     if (isMaisterError(err)) {
       const status = httpStatusForAuthz(err.code) ?? 500;
@@ -178,9 +197,16 @@ export async function GET(
     );
   }
 
-  // RBAC: viewer+ on the run's project (projectId derived from the run row).
+  // RBAC: project runs require viewer+ on the derived project; project-less
+  // local-package assistant runs are private to their launching user.
   try {
-    await requireProjectRole(run.projectId, "viewer");
+    if (run.projectId) {
+      await requireProjectRole(run.projectId, "viewer");
+    } else {
+      await assertLocalPackageAssistantActor(run, sessionUser.id, {
+        requireLock: false,
+      });
+    }
   } catch (err) {
     if (isMaisterError(err)) {
       const status = httpStatusForAuthz(err.code) ?? 500;
@@ -203,6 +229,7 @@ export async function GET(
       runId,
       lastEventId,
       currentStepId: run.currentStepId,
+      replayEvents,
       status: run.status,
     },
     "stream connect",
@@ -220,6 +247,15 @@ export async function GET(
       let consecutiveEmpty = 0;
       const maxQuietMs = keepaliveMs();
       let pending = "";
+
+      if (!replayEvents) {
+        controller.enqueue(
+          encoder.encode(
+            formatSyntheticSseEvent(JSON.stringify(streamReadyEvent())),
+          ),
+        );
+        eventsSent += 1;
+      }
 
       const cleanup = async () => {
         if (fh) {
@@ -288,7 +324,7 @@ export async function GET(
           if (!fh) {
             try {
               fh = await open(logPath, "r");
-              cursor = 0;
+              cursor = replayEvents ? 0 : (await fh.stat()).size;
               pending = "";
             } catch (err) {
               if ((err as NodeJS.ErrnoException).code === "ENOENT") {

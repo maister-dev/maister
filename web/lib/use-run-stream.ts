@@ -24,6 +24,9 @@ export type UseRunStreamOptions = {
   // (`eventCount`) on a long-lived run — skips retaining every event in state,
   // which would otherwise grow unbounded for the lifetime of the stream.
   retain?: boolean;
+  // Default follows `retain`. Tick-only consumers should live-tail instead of
+  // replaying the full event log on every reconnect.
+  replay?: boolean;
 };
 
 export function useRunStream(
@@ -31,6 +34,7 @@ export function useRunStream(
   options?: UseRunStreamOptions,
 ): UseRunStreamResult {
   const retain = options?.retain ?? true;
+  const replay = options?.replay ?? retain;
   const [events, setEvents] = useState<RunStreamEvent[]>([]);
   const [eventCount, setEventCount] = useState(0);
   const [status, setStatus] = useState<RunStreamStatus>("connecting");
@@ -65,6 +69,9 @@ export function useRunStream(
     if (lastEventIdRef.current !== null) {
       url.searchParams.set("lastEventId", String(lastEventIdRef.current));
     }
+    if (!replay) {
+      url.searchParams.set("replay", "0");
+    }
 
     const es = new EventSource(url.toString());
 
@@ -96,7 +103,7 @@ export function useRunStream(
       sourceRef.current = null;
       setStatus("closed");
     };
-  }, [runId, reconnectKey, retain]);
+  }, [runId, reconnectKey, replay, retain]);
 
   return { events, eventCount, status, lastEventId, error, reconnect };
 }

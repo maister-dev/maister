@@ -88,7 +88,8 @@ describe("getCrossProjectHitlInbox (M17 P5, integration)", () => {
     const id = randomUUID();
     const slug = `proj-${id.slice(0, 8)}`;
 
-    await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
+    await db.insert(schema.projects).values({
+      taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
       id,
       slug,
       name,
@@ -147,7 +148,8 @@ describe("getCrossProjectHitlInbox (M17 P5, integration)", () => {
   ): Promise<string> {
     const id = randomUUID();
 
-    await db.insert(schema.tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
+    await db.insert(schema.tasks).values({
+      number: Math.trunc(Math.random() * 1e9) + 1,
       id,
       projectId,
       title,
@@ -181,6 +183,48 @@ describe("getCrossProjectHitlInbox (M17 P5, integration)", () => {
       status,
       flowVersion: "v1.0.0",
       startedAt: new Date(),
+    });
+
+    return id;
+  }
+
+  async function createScratchRun(
+    projectId: string,
+    userId: string,
+    executorId: string,
+    status: "NeedsInput" | "NeedsInputIdle" = "NeedsInput",
+  ): Promise<string> {
+    const id = randomUUID();
+
+    await db.insert(schema.runs).values({
+      id,
+      projectId,
+      taskId: null,
+      flowId: null,
+      runnerId: executorId,
+      capabilityAgent: "claude",
+      runnerSnapshot: testRunnerSnapshot(executorId),
+      runKind: "scratch",
+      status,
+      currentStepId: "dialog",
+      flowVersion: "scratch",
+      flowRevision: "manual",
+      createdByUserId: userId,
+      startedAt: new Date(),
+    });
+    await db.insert(schema.scratchRuns).values({
+      runId: id,
+      projectId,
+      name: "Scratch HITL",
+      initialPrompt: "Please inspect",
+      workMode: "auto",
+      reasoningEffort: "high",
+      planMode: "off",
+      baseBranch: "main",
+      baseCommit: "abcdef1",
+      targetBranch: "main",
+      dialogStatus: "NeedsInput",
+      createdByUserId: userId,
     });
 
     return id;
@@ -521,5 +565,34 @@ describe("getCrossProjectHitlInbox (M17 P5, integration)", () => {
     expect(item).toHaveProperty("criticality");
     expect(item.schema).toEqual(schema);
     expect(item.criticality).toBe("medium");
+  });
+
+  it("surfaces project scratch-run HITL without a flow row", async () => {
+    const admin = await createAdminUser("admin-scratch@test.com");
+    const proj = await createProject("Scratch Project");
+    const exec = await createExecutor();
+    const run = await createScratchRun(proj, admin, exec);
+
+    await createWorkspace(run, proj);
+    await createHitlRequest("hitl-scratch", run, "permission", "high", {
+      options: [{ optionId: "allow", label: "Allow" }],
+    });
+
+    const projectInbox = await getHitlInbox(proj);
+    const crossProjectInbox = await getCrossProjectHitlInbox(admin, "admin");
+
+    expect(projectInbox.items).toHaveLength(1);
+    expect(projectInbox.items[0]).toMatchObject({
+      hitlRequestId: "hitl-scratch",
+      flowRef: "scratch",
+      taskRef: null,
+      taskTitle: null,
+    });
+    expect(crossProjectInbox.items).toHaveLength(1);
+    expect(crossProjectInbox.items[0]).toMatchObject({
+      hitlRequestId: "hitl-scratch",
+      projectId: proj,
+      flowRef: "scratch",
+    });
   });
 });

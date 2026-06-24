@@ -883,6 +883,7 @@
     "permissionResponseAria": "JSON ответа",
     "send": "Отправить",
     "sending": "Отправка…",
+    "agentBusy": "Агент работает…",
     "permission": "Нужно разрешение",
     "submit": "Отправить",
     "invalidJson": "Ответ должен быть валидным JSON.",

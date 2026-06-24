@@ -29,6 +29,17 @@ describe("scratch launch-progress frame helpers", () => {
       stage: "materializing",
       adapter: "codex",
     });
+    expect(
+      launchProgress("session_ready", undefined, {
+        runId: "run-1",
+        dialogUrl: "/scratch-runs/run-1",
+      }),
+    ).toEqual({
+      type: "scratch.launch_progress",
+      stage: "session_ready",
+      runId: "run-1",
+      dialogUrl: "/scratch-runs/run-1",
+    });
   });
 
   it("frames a progress event as a synthetic SSE line (no id:)", () => {

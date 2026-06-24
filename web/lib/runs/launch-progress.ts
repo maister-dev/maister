@@ -23,15 +23,21 @@ export type LaunchProgressEvent = {
   type: "scratch.launch_progress";
   stage: LaunchStage;
   adapter?: string;
+  runId?: string;
+  dialogUrl?: string;
 };
 
 export function launchProgress(
   stage: LaunchStage,
   adapter?: string,
+  readyRoute?: { runId: string; dialogUrl: string },
 ): LaunchProgressEvent {
-  return adapter
-    ? { type: "scratch.launch_progress", stage, adapter }
-    : { type: "scratch.launch_progress", stage };
+  return {
+    type: "scratch.launch_progress",
+    stage,
+    ...(adapter ? { adapter } : {}),
+    ...(readyRoute ?? {}),
+  };
 }
 
 function sseData(payload: unknown): string {
@@ -58,7 +64,7 @@ export type LaunchStreamApiError = { code?: string; message?: string };
 // `{runId,status,queuePosition?}`).
 export async function readLaunchStream<T>(
   response: Response,
-  onStage: (stage: LaunchStage) => void,
+  onStage: (stage: LaunchStage, event: LaunchProgressEvent) => void,
 ): Promise<{ result?: T; error?: LaunchStreamApiError }> {
   const reader = response.body?.getReader();
 
@@ -84,6 +90,9 @@ export async function readLaunchStream<T>(
           | {
               type?: string;
               stage?: LaunchStage;
+              adapter?: string;
+              runId?: string;
+              dialogUrl?: string;
               result?: T;
               code?: string;
               message?: string;
@@ -99,7 +108,7 @@ export async function readLaunchStream<T>(
         }
 
         if (frame?.type === "scratch.launch_progress" && frame.stage) {
-          onStage(frame.stage);
+          onStage(frame.stage, frame as LaunchProgressEvent);
         } else if (frame?.type === "scratch.launch_result") {
           result = frame.result;
         } else if (frame?.type === "error") {

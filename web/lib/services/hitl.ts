@@ -31,6 +31,7 @@ import {
 } from "@/lib/flows/hitl-validate";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { runFlow } from "@/lib/flows/runner";
+import { runtimeRoot } from "@/lib/runtime-root";
 import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
 import { cancelPermission, deliverPermission } from "@/lib/supervisor-client";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
@@ -67,10 +68,6 @@ export const PENDING_HITL_RUN_STATUS = new Set([
   "NeedsInput",
   "NeedsInputIdle",
 ]);
-
-function runtimeRoot(): string {
-  return process.env.MAISTER_RUNTIME_ROOT ?? process.cwd();
-}
 
 function isPostgres(): boolean {
   const url = process.env.DB_URL ?? "";

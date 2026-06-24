@@ -19,6 +19,7 @@ vi.mock("@/components/capabilities/capability-composer", () => ({
     agent: string;
     catalog: readonly unknown[];
     disabled?: boolean;
+    onSubmitShortcut?: () => void;
     testId?: string;
     value: string;
   }) =>
@@ -26,6 +27,9 @@ vi.mock("@/components/capabilities/capability-composer", () => ({
       "data-agent": props.agent,
       "data-catalog-count": props.catalog.length,
       "data-disabled": String(Boolean(props.disabled)),
+      "data-submit-shortcut": String(
+        typeof props.onSubmitShortcut === "function",
+      ),
       "data-testid": props.testId,
       "data-value": props.value,
     }),
@@ -71,6 +75,7 @@ describe("ScratchComposer", () => {
     expect(html).toContain('data-agent="codex"');
     expect(html).toContain('data-catalog-count="1"');
     expect(html).toContain('data-disabled="false"');
+    expect(html).toContain('data-submit-shortcut="true"');
     expect(html).toContain('data-testid="scratch-composer-send"');
     expect(html).toContain("scratch.send");
     expect(html).not.toContain("<textarea");
@@ -82,6 +87,13 @@ describe("ScratchComposer", () => {
 
   it("disables the capability composer when the dialog is not composable", () => {
     expect(render("Running")).toContain('data-disabled="true"');
+  });
+
+  it("shows a busy indicator while the agent is working", () => {
+    const html = render("Running");
+
+    expect(html).toContain('data-testid="scratch-agent-busy"');
+    expect(html).toContain("scratch.agentBusy");
   });
 
   it("renders quick replies when present", () => {

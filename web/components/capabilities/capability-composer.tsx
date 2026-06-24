@@ -234,6 +234,7 @@ function buildSuggestionExtension(args: {
               const s = args.getState();
 
               if (!s.open) return false;
+              if (isSubmitShortcut(p.event)) return false;
               if (p.event.key === "ArrowDown") {
                 args.setState({
                   ...s,

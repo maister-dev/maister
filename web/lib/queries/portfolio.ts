@@ -1098,7 +1098,7 @@ export async function getCrossProjectHitlInbox(
       capabilityAgent: runs.capabilityAgent,
       runnerSnapshot: runs.runnerSnapshot,
       branch: workspaces.branch,
-      flowRef: flows.flowRefId,
+      flowRef: sql<string>`coalesce(${flows.flowRefId}, 'scratch')`,
       projectId: runs.projectId,
       taskNumber: tasks.number,
       taskKey: projects.taskKey,
@@ -1112,7 +1112,7 @@ export async function getCrossProjectHitlInbox(
     .leftJoin(tasks, eq(tasks.id, runs.taskId))
     .innerJoin(projects, eq(projects.id, runs.projectId))
     .innerJoin(workspaces, eq(workspaces.runId, runs.id))
-    .innerJoin(flows, eq(flows.id, runs.flowId))
+    .leftJoin(flows, eq(flows.id, runs.flowId))
     .where(
       and(
         inArray(runs.projectId, projectIds),
@@ -1168,8 +1168,9 @@ export async function getCrossProjectHitlInbox(
   );
 
   const items: CrossProjectHitlItem[] = baseItems.map((item, idx) => {
-    // The hitl query inner-joins projects + filters inArray(projectIds), so
-    // projectId is non-null (a project-less run has no hitl_requests, ADR-097).
+    // The HITL query inner-joins projects + filters inArray(projectIds), so
+    // projectId is non-null. Project-less local-package assistant HITL stays
+    // private to the scratch conversation because it has no project scope.
     const projId = requireRunProjectId(rows[idx].projectId);
     const proj = projectById.get(projId) ?? { slug: projId, name: projId };
 

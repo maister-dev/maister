@@ -4,7 +4,7 @@ import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { Assignment, HitlRequest, RunnerSnapshot } from "@/lib/db/schema";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
-import { and, asc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
@@ -278,7 +278,7 @@ export async function getHitlInbox(projectId: string): Promise<HitlInbox> {
       capabilityAgent: runs.capabilityAgent,
       runnerSnapshot: runs.runnerSnapshot,
       branch: workspaces.branch,
-      flowRef: flows.flowRefId,
+      flowRef: sql<string>`coalesce(${flows.flowRefId}, 'scratch')`,
       taskNumber: tasks.number,
       taskKey: projects.taskKey,
       taskTitle: tasks.title,
@@ -289,7 +289,7 @@ export async function getHitlInbox(projectId: string): Promise<HitlInbox> {
     .from(hitlRequests)
     .innerJoin(runs, eq(runs.id, hitlRequests.runId))
     .innerJoin(workspaces, eq(workspaces.runId, runs.id))
-    .innerJoin(flows, eq(flows.id, runs.flowId))
+    .leftJoin(flows, eq(flows.id, runs.flowId))
     .leftJoin(tasks, eq(tasks.id, runs.taskId))
     .innerJoin(projects, eq(projects.id, runs.projectId))
     .where(

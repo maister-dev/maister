@@ -599,11 +599,15 @@ describe("POST /api/scratch-runs", () => {
       "codex",
     );
 
+    const ready = frames.find((f) => f.stage === "session_ready");
     const result = frames.find((f) => f.type === "scratch.launch_result");
+    const runId = (result?.result as { runId?: string } | undefined)?.runId;
 
-    expect(
-      (result?.result as { runId?: string } | undefined)?.runId,
-    ).toBeTruthy();
+    expect(runId).toBeTruthy();
+    expect(ready).toMatchObject({
+      runId,
+      dialogUrl: `/scratch-runs/${runId}`,
+    });
     expect(mocks.createSession).toHaveBeenCalledTimes(1);
   });
 

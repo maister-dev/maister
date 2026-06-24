@@ -1050,7 +1050,10 @@ export async function* launchScratchRunStaged(
         })
         .where(eq(scratchRuns.runId, runId));
     });
-    yield launchProgress("session_ready");
+    yield launchProgress("session_ready", undefined, {
+      runId,
+      dialogUrl: `/scratch-runs/${runId}`,
+    });
 
     if (!hasInitialPrompt) {
       log.info(

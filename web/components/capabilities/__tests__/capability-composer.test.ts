@@ -28,12 +28,15 @@ describe("CapabilityComposer — static render", () => {
 
 describe("isSubmitShortcut", () => {
   it("accepts Cmd+Enter and Ctrl+Enter only", () => {
-    expect(isSubmitShortcut({ key: "Enter", metaKey: true, ctrlKey: false }))
-      .toBe(true);
-    expect(isSubmitShortcut({ key: "Enter", metaKey: false, ctrlKey: true }))
-      .toBe(true);
-    expect(isSubmitShortcut({ key: "Enter", metaKey: false, ctrlKey: false }))
-      .toBe(false);
+    expect(
+      isSubmitShortcut({ key: "Enter", metaKey: true, ctrlKey: false }),
+    ).toBe(true);
+    expect(
+      isSubmitShortcut({ key: "Enter", metaKey: false, ctrlKey: true }),
+    ).toBe(true);
+    expect(
+      isSubmitShortcut({ key: "Enter", metaKey: false, ctrlKey: false }),
+    ).toBe(false);
     expect(isSubmitShortcut({ key: "k", metaKey: true, ctrlKey: false })).toBe(
       false,
     );

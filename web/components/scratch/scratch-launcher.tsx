@@ -598,9 +598,29 @@ export function ScratchLauncher({
         return;
       }
 
+      let openedRun = false;
+      const openRun = (result: ScratchLaunchResponse): void => {
+        if (openedRun) return;
+        openedRun = true;
+
+        if (onLaunched) {
+          onLaunched(result);
+        } else {
+          router.push(result.dialogUrl ?? `/scratch-runs/${result.runId}`);
+        }
+        router.refresh();
+      };
       const streamed = await readLaunchStream<ScratchLaunchResponse>(
         response,
-        setLaunchStage,
+        (stage, event) => {
+          setLaunchStage(stage);
+          if (stage !== "session_ready" || !event.runId) return;
+
+          openRun({
+            runId: event.runId,
+            dialogUrl: event.dialogUrl ?? `/scratch-runs/${event.runId}`,
+          });
+        },
       );
 
       if (streamed.error) {
@@ -614,14 +634,7 @@ export function ScratchLauncher({
         return;
       }
 
-      if (onLaunched) {
-        onLaunched(streamed.result);
-      } else {
-        router.push(
-          streamed.result.dialogUrl ?? `/scratch-runs/${streamed.result.runId}`,
-        );
-      }
-      router.refresh();
+      openRun(streamed.result);
     } catch (err) {
       // A user cancel (abort) GCs server-side; surface nothing.
       if (!launchAbortRef.current?.signal.aborted) {

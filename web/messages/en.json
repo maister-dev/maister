@@ -883,6 +883,7 @@
     "permissionResponseAria": "Response JSON",
     "send": "Send",
     "sending": "Sending…",
+    "agentBusy": "Agent is working…",
     "permission": "Permission needed",
     "submit": "Submit",
     "invalidJson": "Response must be valid JSON.",
