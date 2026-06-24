@@ -85,7 +85,7 @@ export default async function StudioFlowDetailPage({
   if (resolution.status === "not-found") notFound();
 
   const t = await getTranslations("studio");
-  const packageHref = `/studio/packages/${encodeURIComponent(decodedRef)}`;
+  const packageHref = `/studio/packages/${encodeURIComponent(decodedRef)}?tab=flows`;
 
   if (resolution.status === "ambiguous") {
     // Same collision surface as the package detail page — pick the source first.
@@ -140,6 +140,7 @@ export default async function StudioFlowDetailPage({
       </header>
 
       <StudioFlowViewer
+        flowPath={detail?.flowPath ?? undefined}
         flowYaml={detail?.flowYaml ?? null}
         forkRef={canManage ? decodedRef : undefined}
         graphAvailable={graphAvailable}

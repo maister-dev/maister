@@ -1363,9 +1363,9 @@ export const runCostRollups = pgTable(
     runId: text("run_id")
       .primaryKey()
       .references(() => runs.id, { onDelete: "cascade" }),
-    projectId: text("project_id")
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
     taskId: text("task_id").references(() => tasks.id, {
       onDelete: "set null",
     }),
@@ -1933,9 +1933,9 @@ export const nodeAttemptCostRollups = pgTable(
     runId: text("run_id")
       .notNull()
       .references(() => runs.id, { onDelete: "cascade" }),
-    projectId: text("project_id")
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
     nodeAttemptId: text("node_attempt_id")
       .notNull()
       .references(() => nodeAttempts.id, { onDelete: "cascade" }),

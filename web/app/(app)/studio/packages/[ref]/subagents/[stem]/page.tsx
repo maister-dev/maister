@@ -5,6 +5,8 @@ import { getTranslations } from "next-intl/server";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 
+import { CodeEditor } from "@/components/flows/code-editor";
+import { MarkdownDocumentView } from "@/components/studio/markdown-document-view";
 import { requireSession } from "@/lib/authz";
 import { splitFrontmatter } from "@/lib/flows/artifact-frontmatter";
 import {
@@ -15,7 +17,10 @@ import {
 import { getStudioPackageInstalledPath } from "@/lib/studio/package-path";
 import { resolveStudioPackageByRef } from "@/lib/studio/load";
 
-type PageProps = { params: Promise<{ ref: string; stem: string }> };
+type PageProps = {
+  params: Promise<{ ref: string; stem: string }>;
+  searchParams: Promise<{ view?: string | string[] }>;
+};
 
 export async function generateMetadata({
   params,
@@ -37,14 +42,26 @@ function lenientNameDescription(
   return name || description ? { name, description } : null;
 }
 
+function firstParam(raw: string | string[] | undefined): string | null {
+  const value = Array.isArray(raw) ? raw[0] : raw;
+
+  return value && value.length > 0 ? value : null;
+}
+
+function markdownMode(raw: string | string[] | undefined): "preview" | "code" {
+  return firstParam(raw) === "code" ? "code" : "preview";
+}
+
 // Capability subagent detail: a flow-internal Claude-subagent `.md` from
 // `capability/**/agents/`, materialized into the run's `.claude/agents/` — NOT a
-// MAIster platform agent. Rendered as its raw `.md` (the same definition you'd
-// edit), never strict-parsed.
+// MAIster platform agent. Rendered as a markdown preview/source view of the
+// same definition you'd edit, never strict-parsed.
 export default async function StudioSubagentDetailPage({
   params,
+  searchParams,
 }: PageProps): Promise<ReactElement> {
   const { ref, stem: rawStem } = await params;
+  const { view: rawView } = await searchParams;
   const decodedRef = decodeURIComponent(ref);
   const stem = decodeURIComponent(rawStem);
 
@@ -64,7 +81,9 @@ export default async function StudioSubagentDetailPage({
   if (!installedPath) notFound();
 
   const tViewer = await getTranslations("studio.viewer");
-  const packageHref = `/studio/packages/${encodeURIComponent(decodedRef)}`;
+  const packageBaseHref = `/studio/packages/${encodeURIComponent(decodedRef)}`;
+  const packageHref = `${packageBaseHref}?tab=subagents`;
+  const detailHref = `${packageBaseHref}/subagents/${encodeURIComponent(stem)}`;
 
   // Subagents nest under `capability/**/agents/<stem>.md`; resolve the real path
   // from the listing, then confined-read the raw `.md`.
@@ -81,6 +100,7 @@ export default async function StudioSubagentDetailPage({
   const content = read.content;
   const split = splitFrontmatter(content);
   const fm = split.ok ? lenientNameDescription(split.frontmatter) : null;
+  const mode = markdownMode(rawView);
 
   return (
     <div className="mx-auto w-full max-w-[1120px]">
@@ -113,9 +133,28 @@ export default async function StudioSubagentDetailPage({
         <h2 className="mb-2 font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-mute">
           {tViewer("agentDefinitionTitle")}
         </h2>
-        <pre className="overflow-auto whitespace-pre-wrap rounded-lg border border-line bg-ivory p-4 font-mono text-[12px] leading-[1.6] text-ink">
-          {content}
-        </pre>
+        <MarkdownDocumentView
+          codeHref={`${detailHref}?view=code`}
+          editor={
+            <CodeEditor
+              key={stem}
+              readOnly
+              ariaLabel={`${stem}.md`}
+              kind="agent_definition"
+              value={content}
+            />
+          }
+          labels={{
+            preview: tViewer("markdownPreview"),
+            code: tViewer("markdownCode"),
+            frontmatter: tViewer("markdownFrontmatter"),
+            malformedFrontmatter: tViewer("markdownMalformedFrontmatter"),
+          }}
+          mode={mode}
+          path={`${stem}.md`}
+          previewHref={detailHref}
+          source={content}
+        />
       </section>
     </div>
   );

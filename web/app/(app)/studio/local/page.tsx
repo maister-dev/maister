@@ -26,6 +26,7 @@ export default async function StudioLocalPage(): Promise<ReactElement> {
     name: row.name,
     slug: row.slug,
     isDefault: row.isDefault,
+    canDelete: row.projectId === null && !row.isDefault,
   }));
 
   return (

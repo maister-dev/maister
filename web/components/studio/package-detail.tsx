@@ -1,8 +1,13 @@
 "use client";
 
 import type { ElementCardLabels } from "@/components/studio/element-card";
+import type { FlowGraphViewLabels } from "@/components/board/flow-graph-view";
 import type { PackageTabDescriptor } from "@/components/studio/package-tabs";
-import type { PackageBom } from "@/lib/queries/packages";
+import type {
+  PackageBom,
+  PackageBomFlow,
+  PackageBomFlowFrontmatter,
+} from "@/lib/queries/packages";
 import type { PackageVersion } from "@/lib/studio/group-packages";
 import type { ReactElement, ReactNode } from "react";
 
@@ -11,6 +16,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
+import { FlowGraphViewSection } from "@/components/board/flow-graph-view-section";
 import { ElementCard } from "@/components/studio/element-card";
 import { ForkToEditButton } from "@/components/studio/fork-to-edit-button";
 import {
@@ -49,6 +55,15 @@ const TAB_LABEL_KEY: Record<TabKind, string> = {
   rules: "viewer.tabRules",
 };
 
+const EMPTY_FLOW_FRONTMATTER: PackageBomFlowFrontmatter = {
+  title: null,
+  summary: null,
+  labels: [],
+  routeWhen: null,
+  links: [],
+  sources: [],
+};
+
 function isTabKind(value: string): value is TabKind {
   return (TAB_KINDS as readonly string[]).includes(value);
 }
@@ -71,6 +86,7 @@ export function PackageDetail({
   page: number;
 }) {
   const t = useTranslations("studio");
+  const tWorkbench = useTranslations("workbench");
   const newest = pkg.versions[0];
 
   const cardLabels: ElementCardLabels = {
@@ -123,6 +139,7 @@ export function PackageDetail({
     basePath,
     labels: cardLabels,
     t,
+    graphLabels: buildGraphLabels(tWorkbench),
   });
 
   return (
@@ -177,6 +194,7 @@ export function PackageDetail({
             showingCount: t.raw("viewer.showingCount"),
             tabEmpty: t("viewer.tabEmpty"),
           }}
+          layout={resolvedTab === "flows" ? "stack" : "grid"}
           page={safePage}
           pageSize={PACKAGE_TAB_PAGE_SIZE}
           tabs={tabs}
@@ -265,6 +283,218 @@ function TrustButton({ installId }: { installId: string }): ReactElement {
 
 type TFn = ReturnType<typeof useTranslations>;
 
+function buildGraphLabels(t: TFn): FlowGraphViewLabels {
+  return {
+    title: t("graph.title"),
+    empty: t("graph.empty"),
+    currentNode: t("graph.currentNode"),
+    declaredGateSummary: t("graph.declaredGateSummary"),
+    gateSummary: t("graph.gateSummary"),
+    blockingGateSummary: t("graph.blockingGateSummary"),
+    node: {
+      Pending: t("graph.node.Pending"),
+      Running: t("graph.node.Running"),
+      Succeeded: t("graph.node.Succeeded"),
+      Failed: t("graph.node.Failed"),
+      NeedsInput: t("graph.node.NeedsInput"),
+      Reworked: t("graph.node.Reworked"),
+      Stale: t("graph.node.Stale"),
+    },
+    role: {
+      agent: t("graph.role.agent"),
+      command: t("graph.role.command"),
+      check: t("graph.role.check"),
+      judge: t("graph.role.judge"),
+      human: t("graph.role.human"),
+      form: t("graph.role.form"),
+      terminal: t("graph.role.terminal"),
+      other: t("graph.role.other"),
+    },
+    edge: {
+      success: t("graph.edge.success"),
+      default: t("graph.edge.default"),
+      rework: t("graph.edge.rework"),
+      reject: t("graph.edge.reject"),
+      takeover: t("graph.edge.takeover"),
+      approve: t("graph.edge.approve"),
+      other: t("graph.edge.other"),
+    },
+  };
+}
+
+function hasFlowFrontmatter(frontmatter: PackageBomFlowFrontmatter): boolean {
+  return (
+    frontmatter.title !== null ||
+    frontmatter.summary !== null ||
+    frontmatter.labels.length > 0 ||
+    frontmatter.routeWhen !== null ||
+    frontmatter.links.length > 0 ||
+    frontmatter.sources.length > 0
+  );
+}
+
+function FlowPreviewCard({
+  flow,
+  href,
+  labels,
+  graphLabels,
+  t,
+}: {
+  flow: PackageBomFlow;
+  href: string;
+  labels: ElementCardLabels;
+  graphLabels: FlowGraphViewLabels;
+  t: TFn;
+}): ReactElement {
+  const frontmatter = flow.frontmatter ?? EMPTY_FLOW_FRONTMATTER;
+  const title = frontmatter.title ?? flow.id;
+  const metadataPresent = hasFlowFrontmatter(frontmatter);
+
+  return (
+    <article
+      className="grid min-w-0 gap-4 rounded-[14px] border border-line bg-paper p-4 transition-colors hover:border-amber lg:grid-cols-[minmax(0,1fr)_minmax(360px,45%)]"
+      data-testid="flow-preview-card"
+    >
+      <div className="flex min-w-0 flex-col gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h4 className="m-0 text-[16px] font-semibold leading-tight text-ink">
+              {title}
+            </h4>
+            {flow.engine ? (
+              <span className="rounded-full border border-line bg-ivory px-2 py-px font-mono text-[10px] uppercase tracking-[0.06em] text-mute">
+                {flow.engine}
+              </span>
+            ) : null}
+          </div>
+          <p className="mt-1 truncate font-mono text-[11px] text-mute">
+            {flow.id}
+          </p>
+        </div>
+
+        {frontmatter.summary ? (
+          <p className="m-0 max-w-[78ch] text-[13px] leading-[1.45] text-ink-2">
+            {frontmatter.summary}
+          </p>
+        ) : null}
+
+        <div className="grid gap-px overflow-hidden rounded-[10px] border border-line bg-line sm:grid-cols-3">
+          <FlowPreviewStat
+            label={t("viewer.flowNodes")}
+            value={flow.nodeCount}
+          />
+          <FlowPreviewStat
+            label={t("viewer.flowGates")}
+            value={flow.gateCount}
+          />
+          <FlowPreviewStat
+            label={t("viewer.flowFrontmatter")}
+            value={
+              metadataPresent
+                ? t("viewer.flowFrontmatterYes")
+                : t("viewer.flowFrontmatterNo")
+            }
+          />
+        </div>
+
+        <div className="rounded-[10px] border border-line-soft bg-ivory px-3 py-2">
+          <div className="mb-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-mute">
+            {t("viewer.flowFrontmatter")}
+          </div>
+          {metadataPresent ? (
+            <div className="flex flex-col gap-2">
+              {frontmatter.labels.length > 0 ? (
+                <div className="flex flex-wrap gap-1.5">
+                  {frontmatter.labels.map((label) => (
+                    <span
+                      key={label}
+                      className="rounded-full border border-line bg-paper px-2 py-px font-mono text-[10px] text-ink-2"
+                    >
+                      {label}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+              {frontmatter.routeWhen ? (
+                <p className="m-0 text-[12px] leading-snug text-ink-2">
+                  <span className="font-semibold text-ink">
+                    {t("viewer.flowRouteWhen")}:
+                  </span>{" "}
+                  {frontmatter.routeWhen}
+                </p>
+              ) : null}
+              {frontmatter.links.length > 0 ? (
+                <p className="m-0 text-[12px] leading-snug text-ink-2">
+                  <span className="font-semibold text-ink">
+                    {t("viewer.flowLinks")}:
+                  </span>{" "}
+                  {frontmatter.links.map((link) => link.title).join(", ")}
+                </p>
+              ) : null}
+              {frontmatter.sources.length > 0 ? (
+                <p className="m-0 text-[12px] leading-snug text-ink-2">
+                  <span className="font-semibold text-ink">
+                    {t("viewer.flowSources")}:
+                  </span>{" "}
+                  {frontmatter.sources
+                    .map((source) => `${source.component} · ${source.origin}`)
+                    .join(", ")}
+                </p>
+              ) : null}
+            </div>
+          ) : (
+            <p className="m-0 text-[12px] text-mute">
+              {t("viewer.flowNoFrontmatter")}
+            </p>
+          )}
+        </div>
+
+        <Link
+          className="inline-flex w-fit rounded-[10px] border border-line bg-ivory px-3 py-1.5 text-[12.5px] font-semibold text-ink transition-colors hover:border-amber"
+          href={href}
+        >
+          {labels.view}
+        </Link>
+      </div>
+
+      <div className="min-w-0">
+        {flow.graph && flow.graph.topology.nodes.length > 0 ? (
+          <FlowGraphViewSection
+            heightClassName="h-[280px]"
+            labels={graphLabels}
+            layout={flow.graph.layout}
+            nodeTooltips={flow.graph.nodeTooltips}
+            topology={flow.graph.topology}
+          />
+        ) : (
+          <div className="flex h-[280px] items-center justify-center rounded-[10px] border border-dashed border-line bg-ivory px-4 text-center font-mono text-[11px] text-mute">
+            {t("viewer.flowPreviewUnavailable")}
+          </div>
+        )}
+      </div>
+    </article>
+  );
+}
+
+function FlowPreviewStat({
+  label,
+  value,
+}: {
+  label: string;
+  value: ReactNode;
+}): ReactElement {
+  return (
+    <div className="bg-paper px-3 py-2">
+      <div className="font-mono text-[9.5px] font-bold uppercase tracking-[0.08em] text-mute">
+        {label}
+      </div>
+      <div className="mt-0.5 font-mono text-[12px] font-semibold text-ink">
+        {value}
+      </div>
+    </div>
+  );
+}
+
 // Renders the page slice of cards for the active kind. Each member is a card
 // (never a bare id chip); degraded members (empty meta) omit the meta line.
 function buildCards({
@@ -275,6 +505,7 @@ function buildCards({
   basePath,
   labels,
   t,
+  graphLabels,
 }: {
   pkg: PackageDetailView;
   kind: TabKind;
@@ -283,33 +514,27 @@ function buildCards({
   basePath: string;
   labels: ElementCardLabels;
   t: TFn;
+  graphLabels: FlowGraphViewLabels;
 }): ReactNode {
   switch (kind) {
     case "flows":
-      return pkg.bom.flows.slice(start, end).map((flow) => (
-        <ElementCard
-          key={flow.id}
-          href={`${basePath}/flows/${encodeURIComponent(flow.id)}`}
-          labels={labels}
-          meta={
-            flow.engine
-              ? t("viewer.flowMeta", {
-                  nodes: flow.nodeCount,
-                  gates: flow.gateCount,
-                  engine: flow.engine,
-                })
-              : t("viewer.flowMetaNoEngine", {
-                  nodes: flow.nodeCount,
-                  gates: flow.gateCount,
-                })
-          }
-          name={flow.id}
-        />
-      ));
+      return pkg.bom.flows
+        .slice(start, end)
+        .map((flow) => (
+          <FlowPreviewCard
+            key={flow.id}
+            flow={flow}
+            graphLabels={graphLabels}
+            href={`${basePath}/flows/${encodeURIComponent(flow.id)}`}
+            labels={labels}
+            t={t}
+          />
+        ));
     case "skills":
       return pkg.bom.skills.slice(start, end).map((skill) => (
         <ElementCard
           key={skill.id}
+          description={skill.description || null}
           href={`${basePath}/skills/${skill.id
             .split("/")
             .map(encodeURIComponent)

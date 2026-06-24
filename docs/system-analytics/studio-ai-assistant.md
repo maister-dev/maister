@@ -229,6 +229,11 @@ The AI tab (`studio-ai-tab.tsx`):
   candidate scan never selects it — it is never marked Crashed for a missing
   project worktree (it has none). A live session is `skip`ped; reattach is
   refused for non-flow runs (so the resume-driver never drives it).
+- **Cost accounting.** The supervisor still writes `cost.jsonl` for the
+  assistant under `.maister/<local-package-slug>/runs/<runId>/`. The cost rollup
+  reconciler reads that local-package slug for project-less runs and stores a
+  run-scoped rollup with `project_id = NULL`; project-scoped Observatory filters
+  continue to ignore it.
 - **Diff / change-summary.** The project-scoped run diff + change-summary routes
   return 404 for a project-less run; the assistant's diff is the Studio editor's
   git-working-tree view (Phase 4).

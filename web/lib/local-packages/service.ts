@@ -16,7 +16,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, or, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { gitCommitWorkingDir, gitDiscardPaths, gitInitWithCommit } from "./git";
@@ -348,10 +348,51 @@ export async function stampLastCutInstall(
 }
 
 export async function deleteLocalPackage(id: string, db?: Db): Promise<void> {
+  const database = resolveDb(db);
   const row = await getLocalPackage(id, db);
 
   if (!row) return;
-  await resolveDb(db).delete(lp).where(eq(lp.id, id));
+
+  if (row.projectId !== null || row.isDefault) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `local package "${row.name}" is attached to a project and cannot be deleted`,
+    );
+  }
+  if (
+    row.lockedBySession !== null &&
+    row.lockExpiresAt !== null &&
+    row.lockExpiresAt.getTime() > Date.now()
+  ) {
+    throw new MaisterError(
+      "CONFLICT",
+      `local package "${row.name}" is locked for editing — close the editor or wait for the lock to expire`,
+    );
+  }
+
+  const deleted = await database
+    .delete(lp)
+    .where(
+      and(
+        eq(lp.id, id),
+        isNull(lp.projectId),
+        eq(lp.isDefault, false),
+        or(
+          isNull(lp.lockedBySession),
+          isNull(lp.lockExpiresAt),
+          sql`${lp.lockExpiresAt} <= now()`,
+        ),
+      ),
+    )
+    .returning();
+
+  if (deleted.length === 0) {
+    throw new MaisterError(
+      "CONFLICT",
+      `local package "${row.name}" changed while deleting — reload and try again`,
+    );
+  }
+
   // Explicit user delete removes the working dir; there is no background GC
   // (owner decision) — orphans from a crash mid-delete are cleaned manually.
   await rm(row.workingDir, { recursive: true, force: true }).catch((err) =>

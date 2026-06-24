@@ -301,7 +301,7 @@ async function getCostSummary(
 
   const totals = runRows.reduce(
     (acc, row) => {
-      projectsWithCost.add(row.projectId);
+      if (row.projectId) projectsWithCost.add(row.projectId);
       if (row.flowId) flowsWithCost.add(row.flowId);
 
       return {

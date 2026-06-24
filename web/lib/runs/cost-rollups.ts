@@ -10,11 +10,17 @@ import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
+import { MaisterError } from "@/lib/errors";
 import { runtimeRoot as configuredRuntimeRoot } from "@/lib/instance-config";
-import { requireRunProjectId } from "@/lib/runs/run-kind-invariants";
 
-const { nodeAttemptCostRollups, nodeAttempts, projects, runCostRollups, runs } =
-  schema;
+const {
+  localPackages,
+  nodeAttemptCostRollups,
+  nodeAttempts,
+  projects,
+  runCostRollups,
+  runs,
+} = schema;
 
 type DbClient = NodePgDatabase<typeof schema>;
 
@@ -37,6 +43,12 @@ type ParsedCostRecord = {
   cacheReadTokens: number;
   cacheCreationTokens: number;
   resumed: boolean;
+};
+
+type CostSourceRun = {
+  id: string;
+  projectSlug: string | null;
+  localPackageSlug: string | null;
 };
 
 export type CostRollupNodeTotal = TokenTotals & {
@@ -143,6 +155,19 @@ function parseCostRecord(line: string): ParsedCostRecord | null {
   };
 }
 
+export function resolveRunCostSourceSlug(run: CostSourceRun): string {
+  const slug = run.projectSlug ?? run.localPackageSlug;
+
+  if (!slug) {
+    throw new MaisterError(
+      "CONFIG",
+      `cost rollup owner slug missing for run: ${run.id}`,
+    );
+  }
+
+  return slug;
+}
+
 function addByModel(
   byModel: Record<string, Record<string, number>>,
   record: ParsedCostRecord,
@@ -238,23 +263,23 @@ export async function reconcileRunCostRollups(
       taskId: runs.taskId,
       flowId: runs.flowId,
       projectSlug: projects.slug,
+      localPackageSlug: localPackages.slug,
     })
     .from(runs)
-    .innerJoin(projects, eq(projects.id, runs.projectId))
+    .leftJoin(projects, eq(projects.id, runs.projectId))
+    .leftJoin(localPackages, eq(localPackages.id, runs.localPackageId))
     .where(eq(runs.id, runId));
 
   if (!run) {
     return { status: "missing-run", sourceEventCount: 0 };
   }
 
-  // The inner join above guarantees a project, so project_id is non-null here
-  // (a project-less local-package run matches zero rows → missing-run, ADR-097).
-  const projectId = requireRunProjectId(run.projectId, run.id);
+  const ownerSlug = resolveRunCostSourceSlug(run);
 
   const costPath = path.join(
     opts.runtimeRoot ?? configuredRuntimeRoot(),
     ".maister",
-    run.projectSlug,
+    ownerSlug,
     "runs",
     run.id,
     "cost.jsonl",
@@ -297,7 +322,7 @@ export async function reconcileRunCostRollups(
   } else {
     const runValues = {
       runId: run.id,
-      projectId,
+      projectId: run.projectId,
       taskId: run.taskId,
       flowId: run.flowId,
       inputTokens: aggregation.run.inputTokens,
@@ -324,7 +349,7 @@ export async function reconcileRunCostRollups(
     await client.insert(nodeAttemptCostRollups).values(
       aggregation.nodeAttempts.map((attempt) => ({
         runId: run.id,
-        projectId,
+        projectId: run.projectId,
         nodeAttemptId: attempt.nodeAttemptId,
         nodeId: attempt.nodeId,
         model: attempt.model,

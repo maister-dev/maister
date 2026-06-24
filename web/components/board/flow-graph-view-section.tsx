@@ -22,6 +22,10 @@ export interface FlowGraphViewSectionProps {
   layout: Record<string, FlowLayoutOverride>;
   labels: FlowGraphViewLabels;
   runContext?: FlowGraphRunContext;
+  selectedNodeId?: string | null;
+  nodeTooltips?: Record<string, string>;
+  heightClassName?: string;
+  onSelectNode?: (nodeId: string | null) => void;
 }
 
 export function FlowGraphViewSection({
@@ -29,13 +33,21 @@ export function FlowGraphViewSection({
   layout,
   labels,
   runContext,
+  selectedNodeId,
+  nodeTooltips,
+  heightClassName,
+  onSelectNode,
 }: FlowGraphViewSectionProps): ReactElement {
   return (
     <FlowGraphView
+      heightClassName={heightClassName}
       labels={labels}
       layout={layout}
+      nodeTooltips={nodeTooltips}
       runContext={runContext}
+      selectedNodeId={selectedNodeId}
       topology={topology}
+      onSelectNode={onSelectNode}
     />
   );
 }

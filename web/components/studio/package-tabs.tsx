@@ -29,6 +29,7 @@ export interface PackageTabsProps {
   totalForActive: number;
   pageSize: number;
   cards: ReactNode;
+  layout?: "grid" | "stack";
   // Builds the href for a given (tab, page). Page 1 omits `?page=` for clean URLs.
   hrefFor: (tab: string, page: number) => string;
   labels: PackageTabsLabels;
@@ -50,6 +51,7 @@ export function PackageTabs({
   totalForActive,
   pageSize,
   cards,
+  layout = "grid",
   hrefFor,
   labels,
 }: PackageTabsProps): ReactElement {
@@ -102,7 +104,11 @@ export function PackageTabs({
       </div>
 
       <div
-        className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3"
+        className={
+          layout === "stack"
+            ? "flex flex-col gap-3"
+            : "grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3"
+        }
         data-testid="package-tab-cards"
       >
         {cards}

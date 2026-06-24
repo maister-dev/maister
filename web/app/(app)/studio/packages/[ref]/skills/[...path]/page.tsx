@@ -14,7 +14,9 @@ import {
   CodeEditor,
   type CodeEditorKind,
 } from "@/components/flows/code-editor";
+import { MarkdownDocumentView } from "@/components/studio/markdown-document-view";
 import { SkillBundleView } from "@/components/studio/skill-bundle-view";
+import { isMarkdownRichPath } from "@/components/workbench/markdown-rich-view";
 import { requireSession } from "@/lib/authz";
 import { splitFrontmatter } from "@/lib/flows/artifact-frontmatter";
 import {
@@ -29,7 +31,7 @@ import { resolveStudioPackageByRef } from "@/lib/studio/load";
 
 type PageProps = {
   params: Promise<{ ref: string; path: string[] }>;
-  searchParams: Promise<{ file?: string | string[] }>;
+  searchParams: Promise<{ file?: string | string[]; view?: string | string[] }>;
 };
 
 function firstParam(raw: string | string[] | undefined): string | null {
@@ -58,12 +60,35 @@ function frontmatterStrings(
   return name || description ? { name, description } : null;
 }
 
+function defaultRelPath(files: SkillBundleFile[]): string | null {
+  if (files.some((file) => file.relPath === "SKILL.md")) return "SKILL.md";
+
+  return files[0]?.relPath ?? null;
+}
+
+function markdownMode(raw: string | string[] | undefined): "preview" | "code" {
+  return firstParam(raw) === "code" ? "code" : "preview";
+}
+
+function fileHref(
+  baseHref: string,
+  relPath: string,
+  view?: "preview" | "code",
+): string {
+  const params = new URLSearchParams();
+
+  params.set("file", relPath);
+  if (view === "code") params.set("view", "code");
+
+  return `${baseHref}?${params.toString()}`;
+}
+
 export default async function StudioSkillDetailPage({
   params,
   searchParams,
 }: PageProps): Promise<ReactElement> {
   const { ref, path: rawPath } = await params;
-  const { file: rawFile } = await searchParams;
+  const { file: rawFile, view: rawView } = await searchParams;
   const decodedRef = decodeURIComponent(ref);
   const skillId = rawPath.map(decodeURIComponent).join("/");
 
@@ -86,8 +111,9 @@ export default async function StudioSkillDetailPage({
   const tViewer = await getTranslations("studio.viewer");
   // Generic file-state strings are shared with the per-project viewer.
   const tFile = await getTranslations("packages.viewer");
-  const packageHref = `/studio/packages/${encodeURIComponent(decodedRef)}`;
-  const skillBase = `${packageHref}/skills/${skillId
+  const packageBaseHref = `/studio/packages/${encodeURIComponent(decodedRef)}`;
+  const packageHref = `${packageBaseHref}?tab=skills`;
+  const skillBase = `${packageBaseHref}/skills/${skillId
     .split("/")
     .map(encodeURIComponent)
     .join("/")}`;
@@ -138,7 +164,9 @@ export default async function StudioSkillDetailPage({
   // Selected file (deep-linkable `?file=`), confined under the skill subtree. The
   // bundle-relative value is prefixed with the package-relative skill path before
   // the confined read enforces traversal/symlink boundaries.
-  const selectedRelPath = bundleMissing ? null : firstParam(rawFile);
+  const selectedRelPath = bundleMissing
+    ? null
+    : (firstParam(rawFile) ?? defaultRelPath(files));
   let selectedFile: PackageFileReadState | null = null;
 
   if (selectedRelPath) {
@@ -170,6 +198,13 @@ export default async function StudioSkillDetailPage({
           : { state: read.state };
     }
   }
+  const selectedIsMarkdown =
+    selectedFile?.state === "text" &&
+    selectedRelPath !== null &&
+    isMarkdownRichPath(selectedRelPath);
+  const selectedMarkdownPath =
+    selectedIsMarkdown && selectedRelPath !== null ? selectedRelPath : null;
+  const selectedView = selectedIsMarkdown ? markdownMode(rawView) : "code";
 
   return (
     <div className="mx-auto w-full max-w-[1120px]">
@@ -191,9 +226,36 @@ export default async function StudioSkillDetailPage({
 
       <SkillBundleView
         bundleMissing={bundleMissing}
+        documentView={
+          selectedMarkdownPath !== null && selectedFile?.state === "text" ? (
+            <MarkdownDocumentView
+              codeHref={fileHref(skillBase, selectedMarkdownPath, "code")}
+              editor={
+                <CodeEditor
+                  key={selectedMarkdownPath}
+                  readOnly
+                  ariaLabel={selectedMarkdownPath}
+                  kind={selectedFile.kind as CodeEditorKind}
+                  value={selectedFile.content}
+                />
+              }
+              labels={{
+                preview: tViewer("markdownPreview"),
+                code: tViewer("markdownCode"),
+                frontmatter: tViewer("markdownFrontmatter"),
+                malformedFrontmatter: tViewer("markdownMalformedFrontmatter"),
+              }}
+              mode={selectedView}
+              path={selectedMarkdownPath}
+              previewHref={fileHref(skillBase, selectedMarkdownPath)}
+              source={selectedFile.content}
+            />
+          ) : undefined
+        }
         editor={
-          selectedFile?.state === "text" ? (
+          selectedFile?.state === "text" && !selectedIsMarkdown ? (
             <CodeEditor
+              key={selectedRelPath ?? "selected-file"}
               readOnly
               ariaLabel={selectedRelPath ?? undefined}
               kind={selectedFile.kind as CodeEditorKind}
@@ -203,9 +265,7 @@ export default async function StudioSkillDetailPage({
         }
         files={files}
         frontmatter={frontmatter}
-        hrefFor={(relPath) =>
-          `${skillBase}?file=${encodeURIComponent(relPath)}`
-        }
+        hrefFor={(relPath) => fileHref(skillBase, relPath)}
         labels={{
           filesTitle: tViewer("skillFilesTitle"),
           frontmatterTitle: tViewer("skillFrontmatterTitle"),

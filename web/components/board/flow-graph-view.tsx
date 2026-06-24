@@ -34,6 +34,7 @@ import {
   type FlowLayoutOverride,
 } from "@/lib/board/flow-graph-view-layout";
 import { nodeVisual } from "@/lib/flows/node-visuals";
+import { buildFlowNodeTooltipsFromTopology } from "@/lib/flows/graph/node-tooltips";
 import { useRunStream } from "@/lib/use-run-stream";
 
 import "@xyflow/react/dist/style.css";
@@ -64,6 +65,10 @@ export interface FlowGraphViewProps {
   layout: Record<string, FlowLayoutOverride>;
   labels: FlowGraphViewLabels;
   runContext?: FlowGraphRunContext;
+  selectedNodeId?: string | null;
+  nodeTooltips?: Record<string, string>;
+  heightClassName?: string;
+  onSelectNode?: (nodeId: string | null) => void;
 }
 
 interface FlowNodeBodyProps {
@@ -86,6 +91,8 @@ interface FlowNodeBodyProps {
   // Static (run-less) render: drop the status chip, current-node ring, and the
   // run-only gate-rollup — leaving pure topology + declared-gate metadata.
   presentationOnly?: boolean;
+  selected?: boolean;
+  tooltip?: string;
   declaredGateSummary?: {
     total: number;
     blocking: number;
@@ -261,6 +268,8 @@ export function FlowNodeBody({
   presentationColor,
   declaredGateSummary,
   runtimeGateSummary,
+  selected,
+  tooltip,
   labels,
 }: FlowNodeBodyProps): ReactElement {
   const declaredCount = declaredGateSummary?.total ?? 0;
@@ -293,6 +302,14 @@ export function FlowNodeBody({
       ? `0 0 0 1.5px ${accent}, 0 10px 30px -6px color-mix(in srgb, ${accent} 75%, transparent)`
       : `0 6px 18px -10px color-mix(in srgb, ${accent} 55%, transparent)`;
   }
+  if (selected) {
+    const selectedShadow =
+      "0 0 0 2px var(--amber), 0 0 0 5px color-mix(in srgb, var(--amber) 16%, transparent)";
+
+    cardStyle.boxShadow = cardStyle.boxShadow
+      ? `${selectedShadow}, ${cardStyle.boxShadow}`
+      : selectedShadow;
+  }
 
   return (
     <div
@@ -301,8 +318,9 @@ export function FlowNodeBody({
       data-current={presentationOnly ? undefined : isCurrent ? "true" : "false"}
       data-node-role={nodeRole}
       data-node-status={presentationOnly ? undefined : status}
+      data-selected={selected ? "true" : undefined}
       data-testid="flow-node"
-      title={isCurrent ? labels.currentNode : undefined}
+      title={tooltip ?? (isCurrent ? labels.currentNode : undefined)}
     >
       <div
         className="w-[200px] overflow-hidden rounded-[11px] border bg-ivory"
@@ -401,6 +419,8 @@ type FlowNodeRenderData = {
   presentationColor?: string;
   presentationWidth?: number;
   presentationHeight?: number;
+  selected?: boolean;
+  tooltip?: string;
 };
 
 // A nodeType render fn closing over the translation labels: source/target
@@ -437,8 +457,10 @@ function makeFlowNodeView(
           presentationWidth={d.presentationWidth}
           rollup={d.rollup ?? "none"}
           runtimeGateSummary={d.runtimeGateSummary}
+          selected={d.selected ?? false}
           status={status}
           statusLabel={labels.node[status] ?? status}
+          tooltip={d.tooltip}
         />
         <Handle position={Position.Right} type="source" />
       </>
@@ -508,6 +530,10 @@ function FlowGraphCanvas({
   presentationOnly,
   statusByNode,
   currentStep,
+  selectedNodeId,
+  nodeTooltips,
+  heightClassName = "h-[420px]",
+  onSelectNode,
 }: {
   topology: GraphTopology;
   layout: Record<string, FlowLayoutOverride>;
@@ -515,6 +541,10 @@ function FlowGraphCanvas({
   presentationOnly: boolean;
   statusByNode?: RunNodeStatuses["nodes"];
   currentStep?: string | null;
+  selectedNodeId?: string | null;
+  nodeTooltips?: Record<string, string>;
+  heightClassName?: string;
+  onSelectNode?: (nodeId: string | null) => void;
 }): ReactElement {
   const nodeTypes = useMemo<NodeTypes>(
     () => ({ flowNode: makeFlowNodeView(labels, presentationOnly) }),
@@ -528,27 +558,43 @@ function FlowGraphCanvas({
     () => toFlowGraphView(topology, layout),
     [topology, layout],
   );
+  const topologyTooltips = useMemo(
+    () => buildFlowNodeTooltipsFromTopology(topology),
+    [topology],
+  );
 
   const nodes = useMemo<Node[]>(
     () =>
-      presentationOnly
-        ? positioned.nodes
-        : positioned.nodes.map((n) => ({
-            ...n,
-            data: {
-              ...n.data,
-              status: statusByNode?.[n.id]?.status ?? "Pending",
-              isCurrent: n.id === currentStep,
-              rollup: statusByNode?.[n.id]?.rollup ?? "none",
-              runtimeGateSummary: statusByNode?.[n.id]?.gateSummary,
-            },
-          })),
-    [positioned, presentationOnly, statusByNode, currentStep],
+      positioned.nodes.map((n) => ({
+        ...n,
+        data: {
+          ...n.data,
+          ...(presentationOnly
+            ? {}
+            : {
+                status: statusByNode?.[n.id]?.status ?? "Pending",
+                isCurrent: n.id === currentStep,
+                rollup: statusByNode?.[n.id]?.rollup ?? "none",
+                runtimeGateSummary: statusByNode?.[n.id]?.gateSummary,
+              }),
+          selected: n.id === selectedNodeId,
+          tooltip: nodeTooltips?.[n.id] ?? topologyTooltips[n.id],
+        },
+      })),
+    [
+      positioned,
+      presentationOnly,
+      statusByNode,
+      currentStep,
+      selectedNodeId,
+      nodeTooltips,
+      topologyTooltips,
+    ],
   );
 
   return (
     <div
-      className="h-[420px] w-full overflow-hidden rounded-[10px] border border-line bg-paper"
+      className={`${heightClassName} w-full overflow-hidden rounded-[10px] border border-line bg-paper`}
       data-testid="flow-graph-view"
     >
       <ReactFlow
@@ -559,6 +605,10 @@ function FlowGraphCanvas({
         nodes={nodes}
         nodesConnectable={false}
         nodesDraggable={false}
+        onNodeClick={
+          onSelectNode ? (_event, node) => onSelectNode(node.id) : undefined
+        }
+        onPaneClick={onSelectNode ? () => onSelectNode(null) : undefined}
       >
         <Background />
         <Controls showInteractive={false} />
@@ -574,11 +624,15 @@ function RunStatusLayer({
   layout,
   labels,
   runContext,
+  nodeTooltips,
+  heightClassName,
 }: {
   topology: GraphTopology;
   layout: Record<string, FlowLayoutOverride>;
   labels: FlowGraphViewLabels;
   runContext: FlowGraphRunContext;
+  nodeTooltips?: Record<string, string>;
+  heightClassName?: string;
 }): ReactElement {
   const { runId, initialStatuses, currentStepId, runStatus } = runContext;
 
@@ -632,8 +686,10 @@ function RunStatusLayer({
   return (
     <FlowGraphCanvas
       currentStep={currentStep}
+      heightClassName={heightClassName}
       labels={labels}
       layout={layout}
+      nodeTooltips={nodeTooltips}
       presentationOnly={false}
       statusByNode={statuses}
       topology={topology}
@@ -646,12 +702,18 @@ export default function FlowGraphView({
   layout,
   labels,
   runContext,
+  selectedNodeId,
+  nodeTooltips,
+  heightClassName,
+  onSelectNode,
 }: FlowGraphViewProps): ReactElement {
   if (runContext) {
     return (
       <RunStatusLayer
+        heightClassName={heightClassName}
         labels={labels}
         layout={layout}
+        nodeTooltips={nodeTooltips}
         runContext={runContext}
         topology={topology}
       />
@@ -660,10 +722,14 @@ export default function FlowGraphView({
 
   return (
     <FlowGraphCanvas
+      heightClassName={heightClassName}
       labels={labels}
       layout={layout}
+      nodeTooltips={nodeTooltips}
       presentationOnly={true}
+      selectedNodeId={selectedNodeId}
       topology={topology}
+      onSelectNode={onSelectNode}
     />
   );
 }

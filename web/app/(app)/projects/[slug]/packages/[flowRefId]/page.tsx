@@ -33,6 +33,7 @@ import {
 } from "@/lib/authz";
 import { isMaisterError } from "@/lib/errors";
 import { compileManifest } from "@/lib/flows/graph/compile";
+import { buildFlowNodeTooltipsFromManifest } from "@/lib/flows/graph/node-tooltips";
 import {
   listInstalledPackageFiles,
   readInstalledPackageFile,
@@ -109,11 +110,13 @@ function buildGraphLabels(
 function buildStaticGraph(revision: FlowRevisionDetail): {
   topology: ReturnType<typeof buildGraphTopology>;
   layout: FlowLayout;
+  nodeTooltips: Record<string, string>;
 } | null {
   try {
     return {
       topology: buildGraphTopology(compileManifest(revision.manifest)),
       layout: presentationLayout(revision.manifest),
+      nodeTooltips: buildFlowNodeTooltipsFromManifest(revision.manifest),
     };
   } catch {
     return null;
@@ -275,6 +278,7 @@ export default async function FlowPackageViewerPage({
               <FlowGraphViewSection
                 labels={buildGraphLabels(tWorkbench)}
                 layout={staticGraph.layout}
+                nodeTooltips={staticGraph.nodeTooltips}
                 topology={staticGraph.topology}
               />
             ) : (

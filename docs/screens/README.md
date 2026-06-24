@@ -158,8 +158,10 @@ flowchart TD
 | [`projects/project-board.md`](projects/project-board.md) | Project board (columns, Markdown task cards, launch, task editing) | `/projects/{slug}` | Implemented |
 | [`projects/add-project.md`](projects/add-project.md) | Add-project form (mode selector, prefill, classified clone errors) | `/projects/new` | Implemented (M21); modes/prefill/errors Designed (ADR-093) |
 | [`projects/project-settings-git.md`](projects/project-settings-git.md) | Project Settings → Git (remotes table + persist-config) | `/projects/{slug}?tab=settings` | Designed (ADR-093) |
-| [`studio/README.md`](studio/README.md) | Flow Studio redesign (area design: overview · sources · packages · package detail · editor · local workspace) | `/studio/*` | Implemented (Phase A: overview · sources · packages · detail); B/C Planned |
-| [`studio/editor.md`](studio/editor.md) | Flow editor (3-pane canvas + properties + drawers, node visual scheme) | `/flows/{projectSlug}/{capId}` | Implemented (Phase B) |
+| [`studio/README.md`](studio/README.md) | Flow Studio redesign (area design: overview · sources · packages · package detail · editor · local workspace) | `/studio/*` | Implemented; standalone artifact pickers / move-to-package planned |
+| [`studio/package-viewer.md`](studio/package-viewer.md) | Package viewer (BoM tabs, wide flow previews, flow/skill/agent detail) | `/studio/packages/{ref}` | Implemented |
+| [`studio/local-workspace.md`](studio/local-workspace.md) | Local packages workspace (create/import/edit/delete) | `/studio/local` | Implemented |
+| [`studio/editor.md`](studio/editor.md) | Local package editor (canvas + properties + files/YAML/diff) | `/studio/edit/{localPackageId}/[[...path]]` | Implemented |
 | [`runs/list.md`](runs/list.md) | Runs ledger | `/runs` | Implemented |
 | [`runs/flow-run.md`](runs/flow-run.md) | Flow run detail | `/runs/{runId}` | Implemented (refinement ongoing) |
 | [`runs/scratch-run.md`](runs/scratch-run.md) | Scratch run detail | `/scratch-runs/{runId}` | Implemented |

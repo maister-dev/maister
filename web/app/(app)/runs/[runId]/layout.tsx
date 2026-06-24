@@ -81,6 +81,7 @@ import {
   formatRunWorktreePath,
 } from "@/lib/project-path-display";
 import { compileManifest } from "@/lib/flows/graph/compile";
+import { buildFlowNodeTooltipsFromManifest } from "@/lib/flows/graph/node-tooltips";
 import { isHumanReviewGate } from "@/lib/flows/review-gate";
 import {
   getReviewGateThreadCounts,
@@ -484,6 +485,7 @@ export default async function RunDetailLayout({
     topology: ReturnType<typeof buildGraphTopology>;
     layout: Record<string, { x: number; y: number }>;
     statuses: Awaited<ReturnType<typeof getRunNodeStatuses>>;
+    nodeTooltips: Record<string, string>;
     labels: FlowGraphViewLabels;
     tabLabels: WorkbenchTabsLabels;
     filesLabels: FileTreeLabels;
@@ -512,6 +514,7 @@ export default async function RunDetailLayout({
         topology,
         layout: graphLayout,
         statuses: nodeStatuses,
+        nodeTooltips: buildFlowNodeTooltipsFromManifest(loadedM.manifest),
         labels: flowGraphLabels,
         tabLabels: workbenchTabLabels,
         filesLabels: workbenchFilesLabels,
@@ -1207,6 +1210,7 @@ export default async function RunDetailLayout({
                   <FlowGraphViewSection
                     labels={flowGraphData.labels}
                     layout={flowGraphData.layout}
+                    nodeTooltips={flowGraphData.nodeTooltips}
                     runContext={{
                       runId: detail.runId,
                       initialStatuses: flowGraphData.statuses.nodes,

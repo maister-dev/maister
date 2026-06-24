@@ -69,7 +69,7 @@ export default async function StudioAgentDetailPage({
   if (!installedPath) notFound();
 
   const tViewer = await getTranslations("studio.viewer");
-  const packageHref = `/studio/packages/${encodeURIComponent(decodedRef)}`;
+  const packageHref = `/studio/packages/${encodeURIComponent(decodedRef)}?tab=agents`;
 
   // Platform-agents live at the package root `maister-agents/<stem>.md`.
   const read = await readInstalledPackageFile(

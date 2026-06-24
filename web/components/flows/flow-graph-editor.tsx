@@ -54,6 +54,7 @@ import {
 import { readPresentation } from "@/lib/flows/editor/manifest-io";
 import { GATE_KINDS, NODE_TYPES } from "@/lib/flows/editor/node-form";
 import { validateEditorManifest } from "@/lib/flows/editor/validation";
+import { buildFlowNodeTooltipsFromManifest } from "@/lib/flows/graph/node-tooltips";
 
 import "@xyflow/react/dist/style.css";
 
@@ -185,7 +186,10 @@ function makeEditorNodeView(
   labels: FlowGraphViewLabels,
 ): (props: NodeProps) => ReactElement {
   return function EditorNodeView({ data }: NodeProps): ReactElement {
-    const d = data as unknown as FlowNodeData;
+    const d = data as unknown as FlowNodeData & {
+      selected?: boolean;
+      tooltip?: string;
+    };
 
     return (
       <>
@@ -203,8 +207,10 @@ function makeEditorNodeView(
           presentationHeight={d.presentationHeight}
           presentationWidth={d.presentationWidth}
           rollup="none"
+          selected={d.selected ?? false}
           status="Pending"
           statusLabel={d.nodeTypeLabel}
+          tooltip={d.tooltip}
         />
         <Handle position={Position.Right} type="source" />
       </>
@@ -558,6 +564,22 @@ export default function FlowGraphEditor({
       : readPresentation(manifest).find((p) => p.id === selectedNodeId);
 
   const validation = validateEditorManifest(manifest);
+  const nodeTooltips = useMemo(
+    () => buildFlowNodeTooltipsFromManifest(manifest),
+    [manifest],
+  );
+  const renderedNodes = useMemo<Node[]>(
+    () =>
+      nodes.map((node) => ({
+        ...node,
+        data: {
+          ...node.data,
+          selected: node.id === selectedNodeId,
+          tooltip: nodeTooltips[node.id],
+        },
+      })),
+    [nodes, selectedNodeId, nodeTooltips],
+  );
 
   return (
     <div className="flex h-full min-h-0" data-testid="flow-graph-editor-shell">
@@ -579,7 +601,7 @@ export default function FlowGraphEditor({
             nodesDraggable
             edges={edges}
             nodeTypes={nodeTypes}
-            nodes={nodes}
+            nodes={renderedNodes}
             onConnect={handleConnect}
             onEdgesChange={onEdgesChange}
             onNodeClick={(_event, node) => select(node.id)}

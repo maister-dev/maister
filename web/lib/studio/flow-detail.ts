@@ -5,7 +5,7 @@ import type { FlowLayout } from "@/lib/flows/graph/presentation-layout";
 import type { FlowYamlV1 } from "@/lib/config.schema";
 import type { GraphTopology } from "@/lib/queries/flow-graph-view";
 
-import { join } from "node:path";
+import { join, posix } from "node:path";
 
 import { eq } from "drizzle-orm";
 import pino from "pino";
@@ -36,6 +36,7 @@ type NodeDef = NonNullable<FlowYamlV1["nodes"]>[number];
 // the flow id is unknown or its bundle is gone.
 export type StudioFlowDetail = {
   flowId: string;
+  flowPath: string | null;
   flowYaml: string | null;
   compiled: {
     topology: GraphTopology;
@@ -60,9 +61,10 @@ export async function getStudioFlowDetail(
   const manifest = install.manifest as PackageInstallManifest | undefined;
   const flow = manifest?.spec.flows.find((f) => f.id === flowId);
 
-  if (!flow) return { flowId, flowYaml: null, compiled: null };
+  if (!flow) return { flowId, flowPath: null, flowYaml: null, compiled: null };
 
   const installedPath = install.installedPath as string;
+  const flowPath = posix.join(flow.path, "flow.yaml");
 
   // Raw flow.yaml for the fallback view — read through the confined reader off
   // the validated package-relative path (no user input reaches the fs sink).
@@ -80,6 +82,7 @@ export async function getStudioFlowDetail(
 
     return {
       flowId,
+      flowPath,
       flowYaml,
       compiled: {
         topology: buildGraphTopology(compileManifest(parsed)),
@@ -91,6 +94,6 @@ export async function getStudioFlowDetail(
     // A malformed/legacy/uncompilable manifest → yaml-only fallback, never throw.
     log.warn({ installId, flowId }, "studio flow detail compile degrade");
 
-    return { flowId, flowYaml, compiled: null };
+    return { flowId, flowPath, flowYaml, compiled: null };
   }
 }

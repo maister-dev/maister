@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { aggregateCostJsonlLines } from "@/lib/runs/cost-rollups";
+import {
+  aggregateCostJsonlLines,
+  resolveRunCostSourceSlug,
+} from "@/lib/runs/cost-rollups";
 
 describe("aggregateCostJsonlLines", () => {
   it("rolls tokens up by run, model, and node attempt", () => {
@@ -107,5 +110,37 @@ describe("aggregateCostJsonlLines", () => {
     expect(result.nodeAttempts).toEqual([]);
     expect(result.malformedLineCount).toBe(1);
     expect(result.unattributedNodeEventCount).toBe(2);
+  });
+});
+
+describe("resolveRunCostSourceSlug", () => {
+  it("uses the project slug for project-owned runs", () => {
+    expect(
+      resolveRunCostSourceSlug({
+        id: "run-1",
+        projectSlug: "demo-project",
+        localPackageSlug: "local-package",
+      }),
+    ).toBe("demo-project");
+  });
+
+  it("uses the local package slug for project-less assistant scratch runs", () => {
+    expect(
+      resolveRunCostSourceSlug({
+        id: "run-1",
+        projectSlug: null,
+        localPackageSlug: "local-package",
+      }),
+    ).toBe("local-package");
+  });
+
+  it("fails when neither owner slug is available", () => {
+    expect(() =>
+      resolveRunCostSourceSlug({
+        id: "run-1",
+        projectSlug: null,
+        localPackageSlug: null,
+      }),
+    ).toThrow("cost rollup owner slug missing for run: run-1");
   });
 });

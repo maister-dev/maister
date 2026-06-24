@@ -30,6 +30,7 @@ export interface SkillBundleViewProps {
   frontmatter: { name?: string; description?: string } | null;
   selectedRelPath: string | null;
   selectedFile: PackageFileReadState | null;
+  documentView?: ReactNode;
   // The read-only editor host for the selected `text` file (rich CodeMirror is
   // client-only); the page passes it so this stays a server component.
   editor?: ReactNode;
@@ -48,6 +49,7 @@ export function SkillBundleView({
   frontmatter,
   selectedRelPath,
   selectedFile,
+  documentView,
   editor,
   bundleMissing,
   labels,
@@ -129,12 +131,14 @@ export function SkillBundleView({
         </section>
 
         <section className="min-w-0">
-          <PackageFileView
-            editor={editor}
-            labels={labels.file}
-            relPath={selectedRelPath}
-            state={selectedFile}
-          />
+          {documentView ?? (
+            <PackageFileView
+              editor={editor}
+              labels={labels.file}
+              relPath={selectedRelPath}
+              state={selectedFile}
+            />
+          )}
         </section>
       </div>
     </div>

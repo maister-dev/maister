@@ -430,6 +430,9 @@ describe("FlowGraphView — run-coupled vs static mode", () => {
         topology: oneNodeTopology,
         layout: {},
         labels: graphViewLabels,
+        nodeTooltips: {
+          plan: "plan · ai_coding\nmodel: claude",
+        },
         runContext: {
           runId: "run-1",
           initialStatuses: runningStatus,
@@ -446,6 +449,7 @@ describe("FlowGraphView — run-coupled vs static mode", () => {
     expect(html).toContain('data-node-status="Running"');
     expect(html).toContain('data-current="true"');
     expect(html).toContain("chip--");
+    expect(html).toContain("model: claude");
   });
 
   it("renders pure topology with NO chips and NO current ring when runContext is absent (static mode)", () => {
@@ -467,5 +471,21 @@ describe("FlowGraphView — run-coupled vs static mode", () => {
     expect(html).not.toContain("chip--");
     expect(html).not.toContain("data-node-status");
     expect(html).not.toContain("data-current");
+    expect(html).toContain("Plan · Agent");
+  });
+
+  it("uses authored node tooltips in static mode when they are available", () => {
+    const html = renderToStaticMarkup(
+      createElement(FlowGraphView, {
+        topology: oneNodeTopology,
+        layout: {},
+        labels: graphViewLabels,
+        nodeTooltips: {
+          plan: "plan · ai_coding\nmodel: claude",
+        },
+      }),
+    );
+
+    expect(html).toContain("model: claude");
   });
 });

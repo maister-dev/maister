@@ -2,6 +2,7 @@ import "server-only";
 
 import type { PackageInstallRow } from "@/components/settings/package-sources-panel";
 import type { PackageSourceRow } from "@/components/settings/package-source-modal";
+import type { FlowYamlV1 } from "@/lib/config.schema";
 import type { DiscoveredPackageEntry } from "@/lib/db/schema";
 import type { PackageInstallManifest } from "@/lib/packages/attach";
 import type { FlowLayout } from "@/lib/flows/graph/presentation-layout";
@@ -16,6 +17,7 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { loadFlowManifest } from "@/lib/config";
 import { compileManifest } from "@/lib/flows/graph/compile";
+import { buildFlowNodeTooltipsFromManifest } from "@/lib/flows/graph/node-tooltips";
 import { presentationLayout } from "@/lib/flows/graph/presentation-layout";
 import {
   defaultPackageSourceUrls,
@@ -236,11 +238,27 @@ export type PackageBomFlow = {
   nodeCount: number;
   gateCount: number;
   engine: string | null;
+  frontmatter: PackageBomFlowFrontmatter;
+  graph: PackageBomFlowGraph | null;
+};
+export type PackageBomFlowFrontmatter = {
+  title: string | null;
+  summary: string | null;
+  labels: string[];
+  routeWhen: string | null;
+  links: Array<{ kind: string | null; title: string; url: string }>;
+  sources: Array<{ component: string; origin: string }>;
+};
+export type PackageBomFlowGraph = {
+  topology: GraphTopology;
+  layout: FlowLayout;
+  nodeTooltips: Record<string, string>;
 };
 export type PackageBomSkill = {
   id: string;
   fileCount: number;
   subfolderCount: number;
+  description: string;
 };
 // Routing-relevant agent metadata only — NEVER the runner (resolved per-project
 // at launch; design §5.5).
@@ -266,6 +284,44 @@ export type PackageBom = {
   mcps: PackageBomMcp[];
   rules: PackageBomRule[];
 };
+
+const EMPTY_FLOW_FRONTMATTER: PackageBomFlowFrontmatter = {
+  title: null,
+  summary: null,
+  labels: [],
+  routeWhen: null,
+  links: [],
+  sources: [],
+};
+
+function markdownFrontmatterDescription(content: string): string {
+  const split = splitFrontmatter(content);
+  const description = split.ok ? split.frontmatter?.description : undefined;
+
+  return typeof description === "string" ? description : "";
+}
+
+function flowFrontmatterView(manifest: FlowYamlV1): PackageBomFlowFrontmatter {
+  const metadata = manifest.metadata;
+
+  if (!metadata) return EMPTY_FLOW_FRONTMATTER;
+
+  return {
+    title: metadata.title ?? null,
+    summary: metadata.summary ?? null,
+    labels: metadata.labels ?? [],
+    routeWhen: metadata.route_when ?? null,
+    links: (metadata.links ?? []).map((link) => ({
+      kind: link.kind ?? null,
+      title: link.title,
+      url: link.url,
+    })),
+    sources: (metadata.sources ?? []).map((source) => ({
+      component: source.component,
+      origin: source.origin,
+    })),
+  };
+}
 
 // Bill-of-materials for one package install. Flows compile from disk for
 // node/gate/engine counts; skills/rules come from a single confined disk walk;
@@ -294,6 +350,7 @@ export async function getStudioPackageBom(
         join(installedPath, flow.path, "flow.yaml"),
       );
       const graph = compileManifest(parsed);
+      const topology = buildGraphTopology(graph);
       let gateCount = 0;
 
       for (const node of graph.nodes.values()) gateCount += node.gates.length;
@@ -302,13 +359,26 @@ export async function getStudioPackageBom(
         nodeCount: graph.order.length,
         gateCount,
         engine: parsed.compat?.engine_min ?? null,
+        frontmatter: flowFrontmatterView(parsed),
+        graph: {
+          topology,
+          layout: presentationLayout(parsed),
+          nodeTooltips: buildFlowNodeTooltipsFromManifest(parsed),
+        },
       });
     } catch {
       log.warn(
         { installId, kind: "flow", flowId: flow.id },
         "bom flow degrade",
       );
-      flows.push({ id: flow.id, nodeCount: 0, gateCount: 0, engine: null });
+      flows.push({
+        id: flow.id,
+        nodeCount: 0,
+        gateCount: 0,
+        engine: null,
+        frontmatter: EMPTY_FLOW_FRONTMATTER,
+        graph: null,
+      });
     }
   }
 
@@ -332,10 +402,28 @@ export async function getStudioPackageBom(
 
         if (slash > 0) subfolders.add(rest.slice(0, slash));
       }
+      let description = "";
+
+      try {
+        const skillMd = await readInstalledPackageFile(
+          { installedPath },
+          `${prefix}SKILL.md`,
+        );
+
+        if (skillMd.state === "text" && skillMd.content) {
+          description = markdownFrontmatterDescription(skillMd.content);
+        }
+      } catch {
+        log.warn(
+          { installId, kind: "skill", skillId: id },
+          "bom skill degrade",
+        );
+      }
       skills.push({
         id,
         fileCount: files.length,
         subfolderCount: subfolders.size,
+        description,
       });
     }
     for (const f of listed.files) {
@@ -354,7 +442,7 @@ export async function getStudioPackageBom(
       "bom bundle missing; skills id-only",
     );
     for (const id of skillIds) {
-      skills.push({ id, fileCount: 0, subfolderCount: 0 });
+      skills.push({ id, fileCount: 0, subfolderCount: 0, description: "" });
     }
   }
 

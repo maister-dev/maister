@@ -3,6 +3,7 @@
 import type { ReactElement } from "react";
 
 import { useState } from "react";
+import { ArrowDownTrayIcon, TrashIcon } from "@heroicons/react/24/outline";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
@@ -20,6 +21,7 @@ export type LocalPackageListItem = {
   name: string;
   slug: string;
   isDefault: boolean;
+  canDelete: boolean;
 };
 
 export function LocalPackagesList({
@@ -35,6 +37,8 @@ export function LocalPackagesList({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [importingId, setImportingId] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   async function create(): Promise<void> {
     const trimmed = name.trim();
@@ -63,6 +67,31 @@ export function LocalPackagesList({
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function deletePackage(pkg: LocalPackageListItem): Promise<void> {
+    if (!pkg.canDelete) return;
+    setDeletingId(pkg.id);
+    setError(null);
+
+    try {
+      const res = await fetch(`/api/studio/local-packages/${pkg.id}`, {
+        method: "DELETE",
+      });
+
+      if (!res.ok) {
+        setError(await readApiError(res, tApiErrors));
+
+        return;
+      }
+
+      setConfirmDeleteId(null);
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -132,32 +161,86 @@ export function LocalPackagesList({
           {packages.map((pkg) => (
             <li
               key={pkg.id}
-              className="flex items-stretch gap-2 rounded-[14px] border border-line bg-paper transition-colors hover:border-amber"
+              className="overflow-hidden rounded-[14px] border border-line bg-paper transition-colors hover:border-amber"
             >
-              <Link
-                className="flex flex-1 flex-wrap items-center gap-2 px-5 py-4"
-                href={`/studio/edit/${pkg.id}`}
-              >
-                <span className="text-[15px] font-semibold text-ink">
-                  {pkg.name}
-                </span>
-                {pkg.isDefault ? (
-                  <span className="rounded-full border border-amber-line bg-amber-soft px-2 py-px font-mono text-[10px] uppercase tracking-[0.06em] text-amber">
-                    {t("local.defaultBadge")}
+              <div className="flex items-stretch gap-2">
+                <Link
+                  className="flex flex-1 flex-wrap items-center gap-2 px-5 py-4"
+                  href={`/studio/edit/${pkg.id}`}
+                >
+                  <span className="text-[15px] font-semibold text-ink">
+                    {pkg.name}
                   </span>
-                ) : null}
-                <span className="ml-auto truncate font-mono text-[11.5px] text-mute">
-                  {pkg.slug}
-                </span>
-              </Link>
-              <button
-                className="my-2 mr-2 shrink-0 self-center rounded-[10px] border border-line bg-ivory px-3 py-2 text-[12.5px] font-semibold text-ink transition-colors hover:border-amber"
-                data-testid="local-import"
-                type="button"
-                onClick={() => setImportingId(pkg.id)}
-              >
-                ⤓ {t("import.action")}
-              </button>
+                  {pkg.isDefault ? (
+                    <span className="rounded-full border border-amber-line bg-amber-soft px-2 py-px font-mono text-[10px] uppercase tracking-[0.06em] text-amber">
+                      {t("local.defaultBadge")}
+                    </span>
+                  ) : (
+                    <span className="rounded-full border border-line bg-ivory px-2 py-px font-mono text-[10px] uppercase tracking-[0.06em] text-mute">
+                      {t("local.unattachedBadge")}
+                    </span>
+                  )}
+                  <span className="ml-auto truncate font-mono text-[11.5px] text-mute">
+                    {pkg.slug}
+                  </span>
+                </Link>
+                <div className="flex shrink-0 items-center gap-1.5 py-2 pr-2">
+                  <button
+                    className="inline-flex items-center gap-1.5 rounded-[10px] border border-line bg-ivory px-3 py-2 text-[12.5px] font-semibold text-ink transition-colors hover:border-amber"
+                    data-testid="local-import"
+                    type="button"
+                    onClick={() => setImportingId(pkg.id)}
+                  >
+                    <ArrowDownTrayIcon aria-hidden="true" className="h-4 w-4" />
+                    {t("import.action")}
+                  </button>
+                  {pkg.canDelete ? (
+                    <button
+                      className="inline-flex items-center gap-1.5 rounded-[10px] border border-danger-line bg-danger-soft px-3 py-2 text-[12.5px] font-semibold text-danger transition-colors hover:border-danger"
+                      data-testid={`local-delete-${pkg.id}`}
+                      type="button"
+                      onClick={() =>
+                        setConfirmDeleteId((current) =>
+                          current === pkg.id ? null : pkg.id,
+                        )
+                      }
+                    >
+                      <TrashIcon aria-hidden="true" className="h-4 w-4" />
+                      {t("local.delete")}
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+              {confirmDeleteId === pkg.id ? (
+                <div
+                  className="flex flex-wrap items-center justify-between gap-3 border-t border-danger-line bg-danger-soft px-5 py-3"
+                  data-testid={`local-delete-confirm-${pkg.id}`}
+                >
+                  <p className="m-0 text-[12.5px] leading-snug text-danger">
+                    {t("local.deleteConfirm", { name: pkg.name })}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      className="rounded-[10px] border border-danger bg-danger px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-white disabled:opacity-60"
+                      data-testid={`local-delete-confirm-yes-${pkg.id}`}
+                      disabled={deletingId === pkg.id}
+                      type="button"
+                      onClick={() => void deletePackage(pkg)}
+                    >
+                      {deletingId === pkg.id
+                        ? t("local.deleting")
+                        : t("local.deleteConfirmYes")}
+                    </button>
+                    <button
+                      className="rounded-[10px] border border-line bg-paper px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-mute hover:border-mute hover:text-ink-2"
+                      type="button"
+                      onClick={() => setConfirmDeleteId(null)}
+                    >
+                      {t("local.deleteConfirmNo")}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
             </li>
           ))}
         </ul>

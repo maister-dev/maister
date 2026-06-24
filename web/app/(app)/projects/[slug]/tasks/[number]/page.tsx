@@ -29,6 +29,7 @@ import { TaskTimeline } from "@/components/social/task-timeline";
 import RunDiff from "@/components/workbench/run-diff";
 import { getProjectRole, getSessionUser } from "@/lib/authz";
 import { compileManifest } from "@/lib/flows/graph/compile";
+import { buildFlowNodeTooltipsFromManifest } from "@/lib/flows/graph/node-tooltips";
 import { presentationLayout } from "@/lib/flows/graph/presentation-layout";
 import { buildGraphTopology } from "@/lib/queries/flow-graph-view";
 import { loadRunManifest } from "@/lib/queries/run-manifest";
@@ -210,6 +211,7 @@ export default async function TaskDetailPage({
     topology: ReturnType<typeof buildGraphTopology>;
     layout: Record<string, { x: number; y: number }>;
     statuses: Awaited<ReturnType<typeof getRunNodeStatuses>>;
+    nodeTooltips: Record<string, string>;
     currentStepId: string | null;
     runStatus: string;
     labels: FlowGraphViewLabels;
@@ -226,6 +228,7 @@ export default async function TaskDetailPage({
         topology: buildGraphTopology(compileManifest(loaded.manifest)),
         layout: presentationLayout(loaded.manifest),
         statuses: await getRunNodeStatuses(detail.latestFlowRun.id),
+        nodeTooltips: buildFlowNodeTooltipsFromManifest(loaded.manifest),
         currentStepId: detail.latestFlowRun.currentStepId,
         runStatus: detail.latestFlowRun.status,
         labels: {
@@ -680,6 +683,7 @@ export default async function TaskDetailPage({
           <FlowGraphViewSection
             labels={graph.labels}
             layout={graph.layout}
+            nodeTooltips={graph.nodeTooltips}
             runContext={{
               runId: graph.runId,
               initialStatuses: graph.statuses.nodes,

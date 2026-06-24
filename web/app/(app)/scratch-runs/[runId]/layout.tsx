@@ -22,7 +22,7 @@ import { getProjectRole, getSessionUser } from "@/lib/authz";
 import { isMaisterError } from "@/lib/errors";
 import { worktreesRoot } from "@/lib/instance-config";
 import { formatRunWorktreePath } from "@/lib/project-path-display";
-import { getRunDetail } from "@/lib/queries/run";
+import { getRunCostSummary, getRunDetail } from "@/lib/queries/run";
 import { getRunChangeSummary } from "@/lib/runs/change-summary";
 import {
   buildScratchSessionFlowSummary,
@@ -43,6 +43,10 @@ function unavailableChangeSummary(reason: string): RunInspectorChangeSummary {
     unavailableReason: reason,
     files: [],
   };
+}
+
+function formatTokens(value: number): string {
+  return new Intl.NumberFormat("en-US").format(value);
 }
 
 // The persistent scratch-run detail boundary (M35 T3.1) — mirrors the
@@ -75,6 +79,7 @@ export default async function ScratchRunDetailLayout({
 
   const t = await getTranslations("run");
   const tWorkbench = await getTranslations("workbench");
+  const costSummary = await getRunCostSummary(detail.runId);
 
   let changeSummary: RunInspectorChangeSummary | null = null;
 
@@ -164,6 +169,10 @@ export default async function ScratchRunDetailLayout({
     { label: t("headerBranch"), value: detail.branch },
     { label: t("baseBranch"), value: detail.baseBranch ?? "-" },
     { label: t("targetBranch"), value: detail.targetBranch ?? "-" },
+    {
+      label: t("costSummaryTitle"),
+      value: formatTokens(costSummary.totalTokens),
+    },
     {
       label: t("inspectorWorktree"),
       value: detail.pruned

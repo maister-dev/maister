@@ -38,7 +38,7 @@ const schema = schemaModule as unknown as Record<string, any>;
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
 let db: NodePgDatabase<typeof schemaModule>;
-let homeDir: string;
+let homeDir: string | undefined;
 let originalHome: string | undefined;
 let userId: string;
 let otherUserId: string;
@@ -60,16 +60,14 @@ beforeAll(async () => {
 
   userId = randomUUID();
   otherUserId = randomUUID();
-  await db
-    .insert(schema.users)
-    .values([
-      { id: userId, email: `u-${userId}@x.test`, name: "Local Author" },
-      {
-        id: otherUserId,
-        email: `u-${otherUserId}@x.test`,
-        name: "Other Author",
-      },
-    ]);
+  await db.insert(schema.users).values([
+    { id: userId, email: `u-${userId}@x.test`, name: "Local Author" },
+    {
+      id: otherUserId,
+      email: `u-${otherUserId}@x.test`,
+      name: "Other Author",
+    },
+  ]);
 }, 180_000);
 
 afterAll(async () => {
@@ -77,7 +75,9 @@ afterAll(async () => {
   else process.env.HOME = originalHome;
   await pool?.end();
   await container?.stop();
-  await rm(homeDir, { recursive: true, force: true });
+  if (homeDir !== undefined) {
+    await rm(homeDir, { recursive: true, force: true });
+  }
 });
 
 describe("local-packages substrate (integration)", () => {
@@ -189,6 +189,50 @@ describe("local-packages substrate (integration)", () => {
     expect((await stat(workingDir)).isDirectory()).toBe(true);
   });
 
+  it("delete refuses a local package attached to a project", async () => {
+    const projectId = randomUUID();
+
+    await db.insert(schema.projects).values({
+      taskKey: `D${randomUUID().slice(0, 8)}`.toUpperCase(),
+      id: projectId,
+      slug: `delete-guard-${projectId.slice(0, 8)}`,
+      name: "Delete Guard",
+      repoPath: join(homeDir!, `repo-delete-guard-${projectId.slice(0, 8)}`),
+    });
+
+    const attached = await ensureDefaultLocalPackage({
+      projectId,
+      projectName: "Delete Guard",
+      createdBy: userId,
+      db,
+    });
+
+    await expect(deleteLocalPackage(attached.id, db)).rejects.toMatchObject({
+      code: "PRECONDITION",
+    });
+    expect(await getLocalPackage(attached.id, db)).not.toBeNull();
+    expect((await stat(attached.workingDir)).isDirectory()).toBe(true);
+  });
+
+  it("delete refuses a local package with a live edit lock", async () => {
+    const locked = await createLocalPackage({
+      name: "Locked Pack",
+      createdBy: userId,
+      db,
+    });
+
+    await acquireLock(locked.id, userId, "delete-guard-session", db);
+
+    await expect(deleteLocalPackage(locked.id, db)).rejects.toMatchObject({
+      code: "CONFLICT",
+    });
+    expect(await getLocalPackage(locked.id, db)).not.toBeNull();
+    expect((await stat(locked.workingDir)).isDirectory()).toBe(true);
+
+    await releaseLock(locked.id, "delete-guard-session", db);
+    await deleteLocalPackage(locked.id, db);
+  });
+
   it("two concurrent default creations keep the winner's repo (no shared-dir delete)", async () => {
     const projectId = randomUUID();
 
@@ -197,7 +241,7 @@ describe("local-packages substrate (integration)", () => {
       id: projectId,
       slug: `race-${projectId.slice(0, 8)}`,
       name: "Race Proj",
-      repoPath: join(homeDir, `repo-race-${projectId.slice(0, 8)}`),
+      repoPath: join(homeDir!, `repo-race-${projectId.slice(0, 8)}`),
     });
 
     expect(await getDefaultLocalPackage(projectId, db)).toBeNull();

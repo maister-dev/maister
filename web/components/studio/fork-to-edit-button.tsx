@@ -15,8 +15,10 @@ import { readApiError } from "@/lib/api-error";
 // card and the flow viewer so "edit" is reachable from both.
 export function ForkToEditButton({
   refName,
+  targetPath,
 }: {
   refName: string;
+  targetPath?: string;
 }): ReactElement {
   const t = useTranslations("studio");
   const tApiErrors = useTranslations("apiErrors");
@@ -41,8 +43,9 @@ export function ForkToEditButton({
       }
 
       const result = (await res.json()) as { localPackageId: string };
+      const pathSuffix = targetPath ? `/${encodePath(targetPath)}` : "";
 
-      router.push(`/studio/edit/${result.localPackageId}`);
+      router.push(`/studio/edit/${result.localPackageId}${pathSuffix}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -69,4 +72,8 @@ export function ForkToEditButton({
       ) : null}
     </span>
   );
+}
+
+function encodePath(path: string): string {
+  return path.split("/").map(encodeURIComponent).join("/");
 }

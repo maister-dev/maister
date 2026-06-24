@@ -1,14 +1,14 @@
 # Flow editor (Studio)
 
 - **Type:** screen (artifact editor).
-- **Route(s):** `/flows/{projectSlug}/{capId}` (Phase B, project-authored caps).
-  **Phase C adds `/studio/edit/{localPackageId}/{path}`** — the same 3-pane editor
-  over a local package's git-backed working dir (ADR-096), acquired under a
-  session edit-lock (a second session is read-only). Git packages are NOT edited
-  here — they get a read-only preview + "Fork to local" on the package detail.
-- **Status:** Implemented (Phase B). Supersedes the tabs-in-a-form editor; the
-  read-only twin is the shared `FlowGraphView` (per-project package viewer + run
-  workbench), which inherits the node visual scheme.
+- **Route(s):** `/studio/edit/{localPackageId}/[[...path]]` (implemented local
+  package editor over a git-backed working dir, ADR-096). The legacy
+  `/flows/{projectSlug}/{capId}` project-authored-cap route remains the older
+  authored-flow editor path. Git packages are NOT edited in place — package
+  detail **Rework** forks to a local package and then opens this route.
+- **Status:** Implemented for local package editing. Supersedes the tabs-in-a-form
+  editor; the read-only twin is the shared `FlowGraphView` (package viewer + run
+  workbench), which inherits the node visual scheme and node tooltips.
 - **Source:** `web/app/(app)/flows/[projectSlug]/[capId]/page.tsx`,
   `web/components/flows/flow-editor-tabs.tsx`,
   `web/components/flows/editor/editor-top-bar.tsx`,
@@ -30,25 +30,27 @@ narrow viewport.
 
 | Role | Sees | Notes |
 | --- | --- | --- |
-| Project `viewer` / global viewer with read | Read-only canvas + drawers; no Save/Publish | the `disabled` path; top-bar action buttons are hidden |
-| Project `owner`/`admin` or global `admin` (`manageCatalog`) | Full edit: canvas, properties, Save draft, Publish | gated by `canManage`; Publish also requires a valid package |
+| Authenticated viewer without the local package edit lock | Read-only canvas + files/YAML/diff | lock state explains who holds the package |
+| Member holding the edit lock | Full edit: canvas, properties, Save, Cut version | writes go through local-package file APIs; cut version installs a local digest |
 
-The route resolves the authored capability against the project + `manageCatalog`;
-the gate is server-side, the hidden action buttons are convenience only.
+The route resolves the local package server-side and reads the current lock state;
+write routes enforce member authorization and the edit lock.
 
 ## Navigation
 
-- **Entry:** the package detail "Rework / Open in editor" affordance, the legacy
-  `/flows` editor links, or a direct URL.
-- **Exit:** back to the project / Studio; **Publish** commits a local revision
-  (stays on the editor); drawer toggles open/close in place.
+- **Entry:** the package detail **Rework** affordance (forks installed package to
+  local, then opens this editor), the `/studio/local` package row, or a direct
+  URL.
+- **Exit:** back to Studio/local package detail; **Cut version** commits a local
+  digest install (stays on the editor); drawer/toggle state changes in place.
 
 ```mermaid
 flowchart LR
-    Detail["/studio/packages/{ref}"] -->|rework| Editor["Flow editor"]
-    Editor -->|Save draft| Editor
-    Editor -->|Publish| Editor
-    Editor -->|Files / YAML / Diff| Drawer["Drawer overlay"]
+    Detail["/studio/packages/{ref}"] -->|rework forks local| Editor["Local package editor"]
+    Local["/studio/local"] -->|edit package| Editor
+    Editor -->|Save| Editor
+    Editor -->|Cut version| Editor
+    Editor -->|Files / YAML / Diff| Drawer["Drawer / central YAML"]
 ```
 
 ## Layout & regions
@@ -56,21 +58,23 @@ flowchart LR
 A 3-pane shell (top bar + canvas + right properties), with toggled drawers and a
 collapsible app rail ([`../chrome/left-rail.md`](../chrome/left-rail.md)):
 
-1. **Top bar (compact)** — identity (project · cap · kind) · lifecycle chip
-   (Draft/Published) · validation chip (valid / N issues, from the pure
-   `validateEditorManifest`) · readiness chip · **Save draft** · **Publish** ·
-   drawer toggles `[Files] [YAML] [Diff]`.
+1. **Top bar (compact)** — identity (package · selected artifact · kind) · lock
+   state · validation chip (valid / N issues, from the pure
+   `validateEditorManifest`) · readiness chip · **Save** · **Cut version** ·
+   toggles `[Files] [YAML] [Diff]`.
 2. **Canvas (dominant, full height)** — the `FlowEditorToolbar` palette (Add
    node ×5 / Add gate ×6 / Remove), color-coded node cards (icon chip + status
    chip), named-outcome handles, dashed amber rework edges, `<MiniMap>` +
    `<Controls>`. Drag persists `presentation` x/y (ADR-064).
-3. **Right properties panel (collapsible, ~320–360 px)** — `NodeSideForm` grouped
+3. **Right properties panel (collapsible, ~440–500 px on desktop)** — grouped
    under **Identity · Behavior · Runner · Gates · Routing · Transitions ·
-   Presentation** + `EditorValidationSummary`. Nothing selected → empty hint. The
-   **Routing** group is the M38 `decide` sub-panel (below).
-4. **Drawers (overlay)** — `[YAML]` (CodeEditor), `[Diff]` (FlowDraftDiffText),
-   `[Files]` (the existing `PackageFilesEditor`, re-homed not redesigned — Phase C
-   redesigns it). The canvas stays mounted while a drawer is open.
+   Presentation** + `EditorValidationSummary`. Selecting a node happens on the
+   canvas; nothing selected → flow/package-level settings. The **Routing** group
+   is the M38 `decide` sub-panel (below).
+4. **Drawers / toggles** — `[Files]` and `[Diff]` use the existing package-file
+   and diff surfaces. `[YAML]` replaces the center canvas with the selected
+   flow.yaml in CodeEditor. Invalid YAML does not blank the canvas; the last valid
+   compiled graph remains available until the YAML parses again.
 
 ### Node visual language
 
@@ -115,31 +119,33 @@ rework amber-dashed, a `deny`/`fail` verdict branch red). The read-only
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Viewing: open (read-only or canManage)
+    [*] --> Viewing: open local package
     Viewing --> NodeSelected: click a node
     NodeSelected --> Viewing: click pane
     Viewing --> DrawerOpen: toggle [Files]/[YAML]/[Diff]
-    DrawerOpen --> Viewing: close drawer (canvas stayed mounted)
-    Viewing --> Saving: Save draft (server action, CAS)
-    Saving --> Viewing: 200 / 409 conflict / 422 invalid
+    DrawerOpen --> Viewing: close drawer / YAML toggle
+    Viewing --> Saving: Save file (lock checked)
+    Saving --> Viewing: 200 / 409 lock conflict / 422 invalid
+    Viewing --> Cutting: Cut version
+    Cutting --> Viewing: local digest install created
     Viewing --> CompileFallback: manifest fails to compile
-    CompileFallback --> Viewing: edit YAML drawer → reseed
+    CompileFallback --> Viewing: edit YAML until it parses
 ```
 
 ## Data & APIs
 
-Unchanged draft/publish backend (no new route in Phase B):
+The local editor works against the local-package working-dir seam:
 
-- Save draft → `updateAuthoredFlowAction` (server action; `expectedDraftVersion`
-  CAS) — injectable via the load/save seam (default action).
-- Publish → `publishAuthoredFlowAction` (gated on a valid package).
-- Canvas/diff are server-compiled from the draft manifest at page load.
-- **(Phase C — Designed, ADR-096)** local-package edits at
-  `/studio/edit/{id}/{path}` save through the working-dir seam
-  (`PUT /api/studio/local-packages/{id}/files/{path}`, atomic + path-confined)
-  under a session lock; **"cut version"** (`POST .../cut-version`) replaces
-  Publish — it installs the working dir as a `local-<digest>` `package_installs`
-  revision a member then attaches.
+- Page load reads `local_packages`, lists files from the confined working dir,
+  and server-compiles the selected flow manifest for the initial canvas.
+- Save writes through `PUT /api/studio/local-packages/{id}/files/{path}` (or
+  `DELETE` for removed files), with path confinement, atomic writes, and edit-lock
+  enforcement.
+- Lock refresh/release routes keep a single editing session writable; a second
+  session is read-only until it acquires the lock.
+- Cut version uses `POST /api/studio/local-packages/{id}/cut-version` to install
+  the working dir as a `local-<digest>` `package_installs` revision a member then
+  attaches.
 
 Behavior SSOT: [`../../system-analytics/flow-studio.md`](../../system-analytics/flow-studio.md)
 (authored-flow lifecycle, hard-gate, CAS) — not restated here (R7).

@@ -56,7 +56,7 @@ async function seedPackage(): Promise<void> {
   await mkdir(join(root, "skills", "s1", "references"), { recursive: true });
   await writeFile(
     join(root, "skills", "s1", "SKILL.md"),
-    "---\nname: s1\n---\nx\n",
+    "---\nname: s1\ndescription: Use for architecture work.\n---\nx\n",
   );
   await writeFile(join(root, "skills", "s1", "references", "a.md"), "ref\n");
   // Capability subagent (inventory.agents) — read leniently for its description.
@@ -108,12 +108,32 @@ describe("getStudioPackageBom enrichment (M36 T1.2)", () => {
     if (!bom) throw new Error("unexpected null bom");
 
     // Flows — compiled node/gate counts (2 steps → 2 nodes, no gates).
-    expect(bom.flows).toEqual([
-      { id: "dev", nodeCount: 2, gateCount: 0, engine: null },
-    ]);
+    expect(bom.flows).toHaveLength(1);
+    expect(bom.flows[0]).toMatchObject({
+      id: "dev",
+      nodeCount: 2,
+      gateCount: 0,
+      engine: null,
+      frontmatter: {
+        title: null,
+        summary: null,
+        labels: [],
+        routeWhen: null,
+        links: [],
+        sources: [],
+      },
+    });
+    expect(bom.flows[0].graph).not.toBeNull();
 
     // Skills — SKILL.md + references/a.md ⇒ 2 files, 1 subfolder.
-    expect(bom.skills).toEqual([{ id: "s1", fileCount: 2, subfolderCount: 1 }]);
+    expect(bom.skills).toEqual([
+      {
+        id: "s1",
+        fileCount: 2,
+        subfolderCount: 1,
+        description: "Use for architecture work.",
+      },
+    ]);
 
     // Platform-agents — from maister-agents/, routing metadata only; the runner
     // is NEVER projected (design §5.5).
@@ -157,9 +177,25 @@ describe("getStudioPackageBom enrichment (M36 T1.2)", () => {
     if (!bom) throw new Error("unexpected null bom");
 
     expect(bom.flows).toEqual([
-      { id: "dev", nodeCount: 0, gateCount: 0, engine: null },
+      {
+        id: "dev",
+        nodeCount: 0,
+        gateCount: 0,
+        engine: null,
+        frontmatter: {
+          title: null,
+          summary: null,
+          labels: [],
+          routeWhen: null,
+          links: [],
+          sources: [],
+        },
+        graph: null,
+      },
     ]);
-    expect(bom.skills).toEqual([{ id: "s1", fileCount: 0, subfolderCount: 0 }]);
+    expect(bom.skills).toEqual([
+      { id: "s1", fileCount: 0, subfolderCount: 0, description: "" },
+    ]);
     expect(bom.platformAgents).toEqual([
       { id: "p1", description: "", triggers: [], riskTier: "", workspace: "" },
     ]);
