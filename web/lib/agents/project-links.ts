@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { AgentExecutionPolicyRecommendation } from "@/lib/db/schema";
+
 import { and, eq } from "drizzle-orm";
 import pino from "pino";
 
@@ -43,6 +45,11 @@ export type AttachedAgentView = {
   linkId: string;
   enabled: boolean;
   runnerOverrideId: string | null;
+  // (ADR-106) Per-instance overrides; null → fall back to the agent
+  // `recommended` (then project/platform default). Effective resolution +
+  // launch snapshot live in lib/agents/execution-policy.ts (Phase 5).
+  branchBase: string | null;
+  executionPolicyOverride: AgentExecutionPolicyRecommendation | null;
   schedules: Array<{
     triggerType: "cron" | "event";
     cronExpr?: string;
@@ -177,6 +184,9 @@ export async function getProjectAgentsView(
     linkId: link.id as string,
     enabled: link.enabled as boolean,
     runnerOverrideId: (link.runnerOverrideId ?? null) as string | null,
+    branchBase: (link.branchBase ?? null) as string | null,
+    executionPolicyOverride: (link.executionPolicyOverride ??
+      null) as AgentExecutionPolicyRecommendation | null,
     schedules: scheduleRows
       .filter((s) => s.agentId === agent.id)
       .map(scheduleToView),
@@ -267,6 +277,8 @@ export async function updateAgentLink(
     patch: {
       enabled?: boolean;
       runnerOverrideId?: string | null;
+      branchBase?: string | null;
+      executionPolicyOverride?: AgentExecutionPolicyRecommendation | null;
       schedules?: AgentScheduleInput[];
     };
   },
@@ -306,6 +318,15 @@ export async function updateAgentLink(
     if (input.patch.enabled !== undefined) set.enabled = input.patch.enabled;
     if (input.patch.runnerOverrideId !== undefined) {
       set.runnerOverrideId = input.patch.runnerOverrideId;
+    }
+    // SET/CLEAR symmetry (ADR-106 instance overrides): an explicit value sets,
+    // explicit null clears → effective resolution falls back to the agent
+    // `recommended` then project/platform default.
+    if (input.patch.branchBase !== undefined) {
+      set.branchBase = input.patch.branchBase;
+    }
+    if (input.patch.executionPolicyOverride !== undefined) {
+      set.executionPolicyOverride = input.patch.executionPolicyOverride;
     }
 
     await tx

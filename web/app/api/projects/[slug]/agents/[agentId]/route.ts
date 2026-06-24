@@ -25,10 +25,27 @@ const scheduleSchema = z
   })
   .strict();
 
+// (ADR-106) Instance runner-policy override — the AgentRunnerPolicy projection
+// ({autoApply, onBudgetBreach}); explicit null at the wrapping field clears it.
+const executionPolicyOverrideSchema = z
+  .object({
+    autoApply: z.enum(["off", "permissions", "full"]).optional(),
+    onBudgetBreach: z
+      .enum(["escalate", "terminate", "terminate_restorable"])
+      .optional(),
+  })
+  .strict();
+
 const patchBodySchema = z
   .object({
     enabled: z.boolean().optional(),
     runnerOverrideId: z.string().min(1).max(128).nullable().optional(),
+    // (ADR-106) Per-instance overrides; explicit null clears → fall back to the
+    // agent `recommended`.
+    branchBase: z.string().min(1).max(255).nullable().optional(),
+    executionPolicyOverride: executionPolicyOverrideSchema
+      .nullable()
+      .optional(),
     schedules: z.array(scheduleSchema).max(16).optional(),
   })
   .strict()

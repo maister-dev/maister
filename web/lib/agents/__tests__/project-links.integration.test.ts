@@ -357,4 +357,68 @@ describe("project agent links (attach panel service)", () => {
 
     expect(liveAfterEnable.rows[0].n).toBe(0);
   });
+
+  it("PATCH persists per-instance branchBase + executionPolicyOverride and clears each with null (T6.1)", async () => {
+    await detachAgent(
+      { projectId: fx.projectId, agentId: fx.agentId },
+      db,
+    ).catch(() => undefined);
+    await attachAgent({ projectId: fx.projectId, agentId: fx.agentId }, db);
+
+    // SET both instance overrides.
+    await updateAgentLink(
+      {
+        projectId: fx.projectId,
+        agentId: fx.agentId,
+        patch: {
+          branchBase: "develop",
+          executionPolicyOverride: {
+            autoApply: "full",
+            onBudgetBreach: "terminate_restorable",
+          },
+        },
+      },
+      db,
+    );
+
+    let view = await getProjectAgentsView(fx.projectId, db);
+
+    expect(view.attached[0].branchBase).toBe("develop");
+    expect(view.attached[0].executionPolicyOverride).toEqual({
+      autoApply: "full",
+      onBudgetBreach: "terminate_restorable",
+    });
+
+    // A field omitted from the patch is untouched (SET/CLEAR symmetry):
+    // overriding only the policy leaves branchBase as it was.
+    await updateAgentLink(
+      {
+        projectId: fx.projectId,
+        agentId: fx.agentId,
+        patch: { executionPolicyOverride: { autoApply: "permissions" } },
+      },
+      db,
+    );
+
+    view = await getProjectAgentsView(fx.projectId, db);
+    expect(view.attached[0].executionPolicyOverride).toEqual({
+      autoApply: "permissions",
+    });
+    expect(view.attached[0].branchBase).toBe("develop");
+
+    // CLEAR both with explicit null → effective resolution falls back to the
+    // agent `recommended` (then project/platform default).
+    await updateAgentLink(
+      {
+        projectId: fx.projectId,
+        agentId: fx.agentId,
+        patch: { branchBase: null, executionPolicyOverride: null },
+      },
+      db,
+    );
+
+    view = await getProjectAgentsView(fx.projectId, db);
+    expect(view.attached[0].branchBase).toBeNull();
+    expect(view.attached[0].executionPolicyOverride).toBeNull();
+  });
 });

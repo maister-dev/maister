@@ -3111,6 +3111,19 @@
     "removeSchedule": "Удалить привязку",
     "cronExpr": "Cron-выражение",
     "timezone": "Часовой пояс (IANA)",
-    "eventKinds": "Виды событий"
+    "eventKinds": "Виды событий",
+    "colPolicy": "Ветка · политика",
+    "branchBase": "Базовая ветка",
+    "branchBaseInherit": "Наследовать (рекомендация / основная ветка проекта)",
+    "autoApply": "Автоприменение",
+    "autoApplyInherit": "Наследовать",
+    "autoApplyOff": "Выкл — обычный HITL",
+    "autoApplyPermissions": "Разрешения — авто-одобрение только разрешений",
+    "autoApplyFull": "Полное — авто-одобрение + авто-пропуск ревью человеком",
+    "onBudgetBreach": "При превышении бюджета",
+    "budgetInherit": "Наследовать",
+    "budgetEscalate": "Эскалация (пауза, держит слот)",
+    "budgetTerminate": "Завершить (ошибка)",
+    "budgetTerminateRestorable": "Завершить с восстановлением (чекпойнт, освободить слот)"
   }
 }

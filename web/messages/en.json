@@ -3111,6 +3111,19 @@
     "removeSchedule": "Remove binding",
     "cronExpr": "Cron expression",
     "timezone": "Timezone (IANA)",
-    "eventKinds": "Event kinds"
+    "eventKinds": "Event kinds",
+    "colPolicy": "Branch · policy",
+    "branchBase": "Branch base",
+    "branchBaseInherit": "Inherit (recommended / project main)",
+    "autoApply": "Auto-apply",
+    "autoApplyInherit": "Inherit",
+    "autoApplyOff": "Off — normal HITL",
+    "autoApplyPermissions": "Permissions — auto-approve permissions only",
+    "autoApplyFull": "Full — auto-approve + auto-pass human review",
+    "onBudgetBreach": "On budget breach",
+    "budgetInherit": "Inherit",
+    "budgetEscalate": "Escalate (pause, hold slot)",
+    "budgetTerminate": "Terminate (fail)",
+    "budgetTerminateRestorable": "Terminate, restorable (checkpoint, free slot)"
   }
 }

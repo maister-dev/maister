@@ -23,7 +23,10 @@ import { SettingsPanel } from "@/components/board/panels/settings-panel";
 import { WebhooksPanel } from "@/components/board/panels/webhooks-panel";
 import { ProjectMembersPanel } from "@/components/project/project-members-panel";
 import { ConfigPersistBanner } from "@/components/projects/config-persist-banner";
-import { AgentsAttachPanel } from "@/components/board/panels/agents-attach-panel";
+import {
+  AgentsAttachPanel,
+  type AgentRecommendedView,
+} from "@/components/board/panels/agents-attach-panel";
 import { SchedulesPanel } from "@/components/schedules/schedules-panel";
 import { WorkbenchLifecycleActions } from "@/components/workbench/lifecycle-actions";
 import { getProjectRole, getSessionUser } from "@/lib/authz";
@@ -534,6 +537,33 @@ export default async function ProjectBoardPage({
   );
 }
 
+// Project the stored `recommended` jsonb (faithful to the .md frontmatter, snake
+// `branch_base`) to the panel's camelCase view shape — mirrors
+// admin-shared.ts `projectRecommended` (the GET-route DTO path).
+function toRecommendedView(rec: unknown): AgentRecommendedView | null {
+  if (!rec || typeof rec !== "object") return null;
+  const r = rec as {
+    runner?: string;
+    branch_base?: string;
+    cron?: { expr: string; timezone: string };
+    events?: string[];
+    executionPolicy?: {
+      autoApply?: "off" | "permissions" | "full";
+      onBudgetBreach?: "escalate" | "terminate" | "terminate_restorable";
+    };
+  };
+
+  return {
+    ...(r.runner !== undefined ? { runner: r.runner } : {}),
+    ...(r.branch_base !== undefined ? { branchBase: r.branch_base } : {}),
+    ...(r.cron !== undefined ? { cron: r.cron } : {}),
+    ...(r.events !== undefined ? { events: r.events } : {}),
+    ...(r.executionPolicy !== undefined
+      ? { executionPolicy: r.executionPolicy }
+      : {}),
+  };
+}
+
 async function AgentsAttachPanelLoader({
   slug,
   projectId,
@@ -553,6 +583,8 @@ async function AgentsAttachPanelLoader({
         linkId: row.linkId,
         enabled: row.enabled,
         runnerOverrideId: row.runnerOverrideId,
+        branchBase: row.branchBase,
+        executionPolicyOverride: row.executionPolicyOverride,
         schedules: row.schedules,
         agent: {
           id: row.agent.id as string,
@@ -566,18 +598,14 @@ async function AgentsAttachPanelLoader({
           quarantinedAt: row.agent.quarantinedAt
             ? new Date(row.agent.quarantinedAt as Date).toISOString()
             : null,
+          recommended: toRecommendedView(row.agent.recommended),
         },
       }))}
       available={view.available.map((agent) => ({
         id: agent.id as string,
         name: agent.name as string,
         packageName: agent.packageName as string,
-        recommended:
-          (agent.recommended as {
-            runner?: string;
-            cron?: { expr: string; timezone: string };
-            events?: string[];
-          } | null) ?? null,
+        recommended: toRecommendedView(agent.recommended),
       }))}
       canManage={canManage}
       eventKinds={[...DOMAIN_EVENT_KINDS]}
