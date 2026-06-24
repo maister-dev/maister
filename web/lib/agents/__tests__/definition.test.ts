@@ -303,6 +303,131 @@ describe("parseAgentDefinition", () => {
   });
 });
 
+describe("parseAgentDefinition config block (ADR-110)", () => {
+  function withConfig(block: string[]): string {
+    return VALID.replace(
+      "risk_tier: read_only",
+      ["risk_tier: read_only", "config:", ...block].join("\n"),
+    );
+  }
+
+  it("defaults config to null when absent", () => {
+    expect(parseAgentDefinition("aif:triager", VALID).config).toBeNull();
+  });
+
+  it("parses each param type with default/label/description", () => {
+    const parsed = parseAgentDefinition(
+      "aif:triager",
+      withConfig([
+        "  - key: detect_duplicates",
+        "    type: boolean",
+        "    default: true",
+        "    label: Detect duplicates",
+        "    description: Flag likely duplicate tasks",
+        "  - key: intake_mode",
+        "    type: enum",
+        "    values:",
+        "      - triage_only",
+        "      - clarify",
+        "    default: clarify",
+        "  - key: persona",
+        "    type: string",
+        '    default: "default"',
+        "  - key: max_rounds",
+        "    type: number",
+        "    default: 3",
+      ]),
+    );
+
+    expect(parsed.config).toEqual([
+      {
+        key: "detect_duplicates",
+        type: "boolean",
+        default: true,
+        label: "Detect duplicates",
+        description: "Flag likely duplicate tasks",
+      },
+      {
+        key: "intake_mode",
+        type: "enum",
+        values: ["triage_only", "clarify"],
+        default: "clarify",
+      },
+      { key: "persona", type: "string", default: "default" },
+      { key: "max_rounds", type: "number", default: 3 },
+    ]);
+  });
+
+  it("parses a minimal param (key + type only, no default)", () => {
+    const parsed = parseAgentDefinition(
+      "aif:triager",
+      withConfig(["  - key: verbose", "    type: boolean"]),
+    );
+
+    expect(parsed.config).toEqual([{ key: "verbose", type: "boolean" }]);
+  });
+
+  it("refuses an enum param without values (CONFIG)", () => {
+    expectConfig(
+      () =>
+        parseAgentDefinition(
+          "aif:triager",
+          withConfig([
+            "  - key: intake_mode",
+            "    type: enum",
+            "    default: clarify",
+          ]),
+        ),
+      /values|enum/i,
+    );
+  });
+
+  it("refuses a default not in the enum values (CONFIG)", () => {
+    expectConfig(
+      () =>
+        parseAgentDefinition(
+          "aif:triager",
+          withConfig([
+            "  - key: intake_mode",
+            "    type: enum",
+            "    values:",
+            "      - triage_only",
+            "      - clarify",
+            "    default: nonsense",
+          ]),
+        ),
+      /default|values/i,
+    );
+  });
+
+  it("refuses an unknown param type (CONFIG)", () => {
+    expectConfig(
+      () =>
+        parseAgentDefinition(
+          "aif:triager",
+          withConfig(["  - key: weird", "    type: object"]),
+        ),
+      /type|config/i,
+    );
+  });
+
+  it("refuses a duplicate config key (CONFIG)", () => {
+    expectConfig(
+      () =>
+        parseAgentDefinition(
+          "aif:triager",
+          withConfig([
+            "  - key: dup",
+            "    type: boolean",
+            "  - key: dup",
+            "    type: string",
+          ]),
+        ),
+      /duplicate|unique|key/i,
+    );
+  });
+});
+
 describe("qualifyAgentId", () => {
   it("composes <packageName>:<stem> and refuses unsafe stems", () => {
     expect(qualifyAgentId("aif", "triager")).toBe("aif:triager");
@@ -373,6 +498,34 @@ describe("renderAgentDefinition", () => {
     });
   });
 
+  it("round-trips the ADR-110 config declaration block", () => {
+    const config = [
+      { key: "detect_duplicates", type: "boolean" as const, default: true },
+      {
+        key: "intake_mode",
+        type: "enum" as const,
+        values: ["triage_only", "clarify"],
+        default: "clarify",
+        label: "Intake mode",
+      },
+    ];
+    const rendered = renderAgentDefinition({
+      id: "aif:triager",
+      name: "Triager",
+      description: "Classifies tasks",
+      workspace: "none",
+      mode: "session",
+      triggers: ["manual"],
+      riskTier: "read_only",
+      config,
+      prompt: "Triage it.",
+    });
+
+    expect(parseAgentDefinition("aif:triager", rendered).config).toEqual(
+      config,
+    );
+  });
+
   it("omitted optional fields stay absent (CLEAR-able on re-render)", () => {
     const rendered = renderAgentDefinition({
       id: "aif:minimal",
@@ -390,5 +543,6 @@ describe("renderAgentDefinition", () => {
     expect(rendered).not.toContain("recommended:");
     expect(rendered).not.toContain("workspace_ref:");
     expect(rendered).not.toContain("hooks:");
+    expect(rendered).not.toContain("config:");
   });
 });

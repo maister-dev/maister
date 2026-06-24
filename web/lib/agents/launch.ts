@@ -19,6 +19,7 @@ import {
   type RunnerSnapshot,
   type RunnerSidecarSnapshot,
 } from "@/lib/acp-runners/resolve";
+import { resolveAgentConfig } from "@/lib/agents/config";
 import { type ParsedAgentDefinition } from "@/lib/agents/definition";
 import {
   checkRepoReadDirt,
@@ -1030,11 +1031,32 @@ export async function launchAgentRun(
     }),
   );
 
+  // ADR-110 (D5): resolve the effective agent config ONCE here and snapshot it
+  // onto the run row. buildAgentPrompt reads THIS snapshot at spawn — never
+  // re-resolving from the (mutable) definition/link. null when the agent
+  // declares no config (the column stays null).
+  const resolvedConfig = resolveAgentConfig(
+    ctx.effective.parsed.config,
+    (ctx.link.config as Record<string, unknown> | null) ?? null,
+  );
+  const agentConfig =
+    Object.keys(resolvedConfig).length > 0 ? resolvedConfig : null;
+
+  log.debug(
+    {
+      runId,
+      agentId: input.agentId,
+      configKeys: agentConfig ? Object.keys(agentConfig) : [],
+    },
+    "[ADR-110] resolved agent config snapshot",
+  );
+
   const runRow = {
     id: runId,
     runKind: "agent" as const,
     agentId: input.agentId,
     executionPolicy,
+    agentConfig,
     triggerSource: input.trigger.source,
     triggerEventId: input.trigger.eventId ?? null,
     triggerPayload: input.trigger.payload ?? null,
@@ -1392,6 +1414,49 @@ async function taskContextBlock(
   ].join("\n");
 }
 
+// ADR-110 (D5): the "Effective configuration" block is rendered from the
+// launch-time SNAPSHOT on the run row (`run.agentConfig`), NEVER re-resolved
+// from the (mutable) definition/link. The declaration only supplies a
+// human-readable label + a stable order; the VALUE is whatever the snapshot
+// holds. Returns "" when no config was snapshotted (a run with no declared
+// config never writes the column).
+function configContextBlock(
+  parsed: ParsedAgentDefinition,
+  run: Record<string, any>,
+): string {
+  const snapshot = run.agentConfig;
+
+  if (
+    snapshot === null ||
+    typeof snapshot !== "object" ||
+    Array.isArray(snapshot)
+  ) {
+    return "";
+  }
+
+  const config = snapshot as Record<string, unknown>;
+  const keys = Object.keys(config);
+
+  if (keys.length === 0) return "";
+
+  const labelByKey = new Map<string, string>(
+    (parsed.config ?? []).map((p) => [p.key, p.label ?? p.key]),
+  );
+  // Declared order first (stable), then any snapshot-only keys.
+  const orderedKeys = [
+    ...(parsed.config ?? []).map((p) => p.key).filter((k) => k in config),
+    ...keys.filter((k) => !labelByKey.has(k)),
+  ];
+
+  return [
+    "## Effective configuration",
+    ...orderedKeys.map(
+      (key) =>
+        `- ${labelByKey.get(key) ?? key} (${key}): ${JSON.stringify(config[key])}`,
+    ),
+  ].join("\n");
+}
+
 // The prompt body comes from the EFFECTIVE definition (the project-pinned
 // package revision, resolved by the caller at spawn time) — never from the
 // catalog index row.
@@ -1401,9 +1466,13 @@ export async function buildAgentPrompt(
   run: Record<string, any>,
 ): Promise<string> {
   const sections = [parsed.prompt.trim()];
+  const configBlock = configContextBlock(parsed, run);
   const taskBlock = await taskContextBlock(_db, run);
   const commentTriggerBlock = await taskCommentTriggerContextBlock(_db, run);
 
+  // ADR-110 (D5): the config block lands right after the persona body and
+  // BEFORE the task block — the agent reads its effective config first.
+  if (configBlock) sections.push(configBlock);
   if (taskBlock) sections.push(taskBlock);
   if (commentTriggerBlock) sections.push(commentTriggerBlock);
   sections.push(triggerContextBlock(run));

@@ -6,6 +6,7 @@
 // Client-import-safe (no fs, no node:*).
 
 import type {
+  AgentConfigParam,
   AgentMode,
   AgentRecommended,
   AgentRiskTier,
@@ -131,6 +132,57 @@ const recommendedSchema = z
   })
   .strict();
 
+// ADR-110: re-export the canonical type (declared in schema.ts, the base
+// layer) so callers can `import { AgentConfigParam } from "@/lib/agents/definition"`.
+export type { AgentConfigParam };
+
+// `default` (when present) must be in `values` for an enum; `values` is
+// required+meaningful only for `enum`.
+const configParamDeclSchema = z
+  .object({
+    key: z
+      .string()
+      .min(1)
+      .max(64)
+      .regex(/^[A-Za-z0-9_]+$/, "config key must match /^[A-Za-z0-9_]+$/"),
+    type: z.enum(["boolean", "enum", "string", "number"]),
+    default: z.union([z.boolean(), z.string(), z.number()]).optional(),
+    label: z.string().min(1).max(128).optional(),
+    description: z.string().min(1).max(512).optional(),
+    values: z.array(z.string().min(1)).min(1).optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.type === "enum" && (!value.values || value.values.length === 0)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "config enum param requires a non-empty `values` array",
+        path: ["values"],
+      });
+    }
+
+    if (value.type !== "enum" && value.values !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "config `values` is only valid for type=enum",
+        path: ["values"],
+      });
+    }
+
+    if (
+      value.type === "enum" &&
+      value.default !== undefined &&
+      value.values &&
+      !value.values.includes(String(value.default))
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "config enum default must be one of `values`",
+        path: ["default"],
+      });
+    }
+  });
+
 // Strict (no passthrough): this schema is MAIster's own contract, not a
 // vendor file — unknown keys are refused at registration (ADR-089). The
 // pre-rework `scope`/`project` keys are therefore refused loudly too.
@@ -155,6 +207,8 @@ export const agentDefinitionFrontmatterSchema = z
     // execution-policy preset, so there is no `unattended` auto-arm — only what
     // the agent declares here arms (path_guard / repetition / no_progress).
     hooks: hooksSettingsSchema.optional(),
+    // ADR-110: declared agent-config parameters (generic config framework).
+    config: z.array(configParamDeclSchema).optional(),
   })
   .strict()
   .superRefine((value, ctx) => {
@@ -164,6 +218,18 @@ export const agentDefinitionFrontmatterSchema = z
         message: "triggers must not repeat",
         path: ["triggers"],
       });
+    }
+
+    if (value.config) {
+      const keys = value.config.map((p) => p.key);
+
+      if (new Set(keys).size !== keys.length) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "config keys must be unique",
+          path: ["config"],
+        });
+      }
     }
 
     // Standalone triggers require an own ACP session; a subagent definition
@@ -205,6 +271,7 @@ export type ParsedAgentDefinition = {
   flow: string | null;
   recommended: AgentRecommended | null;
   hooks: HooksSettings | null;
+  config: AgentConfigParam[] | null;
   prompt: string;
 };
 
@@ -265,6 +332,7 @@ export function parseAgentDefinition(
     flow: fm.flow ?? null,
     recommended: fm.recommended ?? null,
     hooks: fm.hooks ?? null,
+    config: fm.config ?? null,
     prompt: split.body,
   };
 }
@@ -283,6 +351,7 @@ export type AgentDefinitionInput = {
   flow?: string | null;
   recommended?: AgentRecommended | null;
   hooks?: HooksSettings | null;
+  config?: AgentConfigParam[] | null;
   prompt: string;
 };
 
@@ -304,6 +373,9 @@ export function renderAgentDefinition(input: AgentDefinitionInput): string {
     ...(input.flow ? { flow: input.flow } : {}),
     ...(input.recommended ? { recommended: input.recommended } : {}),
     ...(input.hooks ? { hooks: input.hooks } : {}),
+    ...(input.config && input.config.length > 0
+      ? { config: input.config }
+      : {}),
   };
 
   const body = input.prompt.endsWith("\n") ? input.prompt : `${input.prompt}\n`;

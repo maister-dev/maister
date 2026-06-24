@@ -755,6 +755,19 @@ export type AgentExecutionPolicyRecommendation = {
   onBudgetBreach?: "escalate" | "terminate" | "terminate_restorable";
 };
 
+// ADR-110: a generic agent-config parameter the package declares. Projected
+// onto `agents.config_schema`; the per-project instance value lives on
+// `agent_project_links.config`; the resolved map is snapshotted onto
+// `runs.agent_config` at launch. `values` is meaningful only for `enum`.
+export type AgentConfigParam = {
+  key: string;
+  type: "boolean" | "enum" | "string" | "number";
+  default?: boolean | string | number;
+  label?: string;
+  description?: string;
+  values?: string[];
+};
+
 // Package-recommended bindings (ADR-089 rework, extended ADR-106): pre-fill the
 // attach panel and seed the per-project agent instance defaults.
 export type AgentRecommended = {
@@ -795,6 +808,9 @@ export const agents = pgTable(
       enum: ["read_only", "standard", "destructive"],
     }).notNull(),
     recommended: jsonb("recommended").$type<AgentRecommended>(),
+    // (ADR-110) The declared generic config params, projected from the .md's
+    // `config:` block on every resync (SET/CLEAR symmetric: absent → null).
+    configSchema: jsonb("config_schema").$type<AgentConfigParam[]>(),
     // (ADR-106) The same-package flow this agent drives (a manifest flow id);
     // null → standalone ACP-session agent. WITH it, launching runs that flow
     // (run_kind='flow') with the agent's .md augmenting every ai_coding node.
@@ -848,6 +864,10 @@ export const agentProjectLinks = pgTable(
     executionPolicyOverride: jsonb(
       "execution_policy_override",
     ).$type<AgentExecutionPolicyRecommendation>(),
+    // (ADR-110) Per-instance config values keyed by the declared param key;
+    // null → all declared defaults. Sparse: only keys the operator set. The
+    // resolved (defaults ← instance) map is snapshotted onto runs.agent_config.
+    config: jsonb("config").$type<Record<string, unknown>>(),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
@@ -1373,6 +1393,11 @@ export const runs = pgTable(
     // raise-and-resume ceiling override + per-scope notified rung (idempotency).
     // Nullable: a run with no budget interaction never writes this column.
     budgetState: jsonb("budget_state").$type<BudgetState>(),
+    // (ADR-110, migration 0071) The launch-time snapshot of the resolved agent
+    // config (declared defaults ← instance values). Written ONCE at spawn; the
+    // prompt injection reads THIS column, never re-resolving from the mutable
+    // definition/link. Nullable: only agent runs with declared config write it.
+    agentConfig: jsonb("agent_config").$type<Record<string, unknown>>(),
   },
   (t) => ({
     idxProjectStatus: index("runs_project_status_idx").on(

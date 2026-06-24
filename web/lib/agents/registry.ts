@@ -85,8 +85,8 @@ function assertRecommendedCron(parsed: ParsedAgentDefinition): void {
 
 // Upsert the parsed index row with SET/CLEAR symmetry: every parsed column is
 // written on every sync, so a field removed from the .md resets its column
-// (flowRef, branchBase, runnerId, workspaceRef all CLEAR to null when absent).
-// `enabled` and the quarantine pair are runtime state and are NOT touched.
+// (flowRef, branchBase, runnerId, workspaceRef, configSchema all CLEAR to null
+// when absent). `enabled` and the quarantine pair are runtime state, NOT touched.
 async function upsertAgentRow(
   _db: Db,
   parsed: ParsedAgentDefinition,
@@ -109,6 +109,9 @@ async function upsertAgentRow(
     capabilityProfile: parsed.capabilityProfile,
     riskTier: parsed.riskTier,
     recommended: parsed.recommended,
+    // (ADR-110) SET/CLEAR symmetric: written on EVERY sync, so removing the
+    // `config:` block from the .md resets the column to null on resync.
+    configSchema: parsed.config ?? null,
     // (ADR-106) The same-package flow + the seeded branch base; both CLEAR.
     flowRef: parsed.flow,
     branchBase: parsed.recommended?.branch_base ?? null,

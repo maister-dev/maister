@@ -498,6 +498,13 @@
       "when": 1782432000001,
       "tag": "0070_consensus_round_verdicts",
       "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1782518400000,
+      "tag": "0071_agent_config_framework",
+      "breakpoints": true
     }
   ]
 }

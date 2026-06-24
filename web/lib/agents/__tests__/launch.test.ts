@@ -121,6 +121,85 @@ describe("buildAgentPrompt", () => {
     prompt: "Classify the task.",
   } as Parameters<typeof buildAgentPrompt>[1];
 
+  function emptyPromptDb() {
+    return promptDb({
+      taskRows: [],
+      triggerCommentRows: [],
+      recentCommentRows: [],
+    });
+  }
+
+  it("injects the Effective configuration block from the run snapshot (ADR-110)", async () => {
+    const configParsed = {
+      prompt: "Classify the task.",
+      config: [
+        { key: "detect_duplicates", type: "boolean", default: true },
+        {
+          key: "intake_mode",
+          type: "enum",
+          values: ["triage_only", "clarify"],
+          default: "clarify",
+          label: "Intake mode",
+        },
+      ],
+    } as Parameters<typeof buildAgentPrompt>[1];
+
+    const prompt = await buildAgentPrompt(emptyPromptDb(), configParsed, {
+      id: "run-1",
+      taskId: null,
+      triggerSource: "manual",
+      // The SNAPSHOT is authoritative for values — intake_mode was overridden.
+      agentConfig: { detect_duplicates: true, intake_mode: "triage_only" },
+    });
+
+    expect(prompt).toContain("Effective configuration");
+    expect(prompt).toContain("intake_mode");
+    expect(prompt).toContain("triage_only");
+    expect(prompt).toContain("detect_duplicates");
+    // The config block precedes the trigger block.
+    expect(prompt.indexOf("Effective configuration")).toBeLessThan(
+      prompt.indexOf("## Trigger"),
+    );
+  });
+
+  it("renders config VALUES from run.agentConfig, never re-resolving the declaration default", async () => {
+    const configParsed = {
+      prompt: "Classify the task.",
+      config: [{ key: "intake_mode", type: "enum", default: "clarify" }],
+    } as Parameters<typeof buildAgentPrompt>[1];
+
+    const prompt = await buildAgentPrompt(emptyPromptDb(), configParsed, {
+      id: "run-1",
+      taskId: null,
+      triggerSource: "manual",
+      // Snapshot disagrees with the declaration default — snapshot wins.
+      agentConfig: { intake_mode: "triage_only" },
+    });
+
+    expect(prompt).toContain("triage_only");
+    expect(prompt).not.toContain("clarify");
+  });
+
+  it("omits the Effective configuration block when the snapshot is empty/absent", async () => {
+    const noConfig = await buildAgentPrompt(emptyPromptDb(), parsed, {
+      id: "run-1",
+      taskId: null,
+      triggerSource: "manual",
+      agentConfig: null,
+    });
+
+    expect(noConfig).not.toContain("Effective configuration");
+
+    const emptyConfig = await buildAgentPrompt(emptyPromptDb(), parsed, {
+      id: "run-1",
+      taskId: null,
+      triggerSource: "manual",
+      agentConfig: {},
+    });
+
+    expect(emptyConfig).not.toContain("Effective configuration");
+  });
+
   it("adds the triggering comment body and recent thread tail for task.comment_added", async () => {
     const prompt = await buildAgentPrompt(
       promptDb({

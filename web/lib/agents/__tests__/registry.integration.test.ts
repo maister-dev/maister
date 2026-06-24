@@ -64,6 +64,7 @@ function definitionMd(opts?: {
   workspaceRef?: string;
   recommendedCron?: { expr: string; timezone: string };
   flow?: string;
+  config?: boolean;
 }): string {
   const runnerLine = opts?.runner ? `runner: ${opts.runner}\n` : "";
   const refLine = opts?.workspaceRef
@@ -72,6 +73,22 @@ function definitionMd(opts?: {
   const flowLine = opts?.flow ? `flow: ${opts.flow}\n` : "";
   const recommended = opts?.recommendedCron
     ? `recommended:\n  cron:\n    expr: "${opts.recommendedCron.expr}"\n    timezone: ${opts.recommendedCron.timezone}\n`
+    : "";
+  // ADR-110: a declared config block, gated so the CLEAR half can drop it.
+  const config = opts?.config
+    ? [
+        "config:",
+        "  - key: detect_duplicates",
+        "    type: boolean",
+        "    default: true",
+        "  - key: intake_mode",
+        "    type: enum",
+        "    values:",
+        "      - triage_only",
+        "      - clarify",
+        "    default: clarify",
+        "",
+      ].join("\n")
     : "";
 
   return `---
@@ -82,10 +99,20 @@ ${refLine}mode: session
 triggers:
   - manual
 risk_tier: read_only
-${flowLine}${recommended}---
+${flowLine}${recommended}${config}---
 Triage the task.
 `;
 }
+
+const DECLARED_CONFIG = [
+  { key: "detect_duplicates", type: "boolean", default: true },
+  {
+    key: "intake_mode",
+    type: "enum",
+    values: ["triage_only", "clarify"],
+    default: "clarify",
+  },
+];
 
 // An installed PACKAGE fixture: a real package-root dir with maister-agents/*.md
 // + the package_installs row pointing at it (manifest carries the flows[] used
@@ -239,6 +266,42 @@ describe("registerPackageAgents", () => {
       workspaceRef: null,
       versionLabel: "v2.0.0",
     });
+  });
+
+  it("SET/CLEAR/re-set syncs config_schema from the .md config block (ADR-110)", async () => {
+    // SET: the .md declares config → column equals the declared array.
+    const withConfig = await installPackageFixture({
+      name: "aif",
+      versionLabel: "v1.0.0",
+      agents: { triager: definitionMd({ config: true }) },
+    });
+
+    await registerPackageAgents(withConfig, db);
+    expect((await agentRow("aif:triager"))?.configSchema).toEqual(
+      DECLARED_CONFIG,
+    );
+
+    // CLEAR: a re-sync of a version that drops `config:` resets the column.
+    const noConfig = await installPackageFixture({
+      name: "aif",
+      versionLabel: "v2.0.0",
+      agents: { triager: definitionMd() },
+    });
+
+    await registerPackageAgents(noConfig, db);
+    expect((await agentRow("aif:triager"))?.configSchema).toBeNull();
+
+    // RE-SET: re-adding `config:` makes the column equal again (idempotent).
+    const reAdded = await installPackageFixture({
+      name: "aif",
+      versionLabel: "v3.0.0",
+      agents: { triager: definitionMd({ config: true }) },
+    });
+
+    await registerPackageAgents(reAdded, db);
+    expect((await agentRow("aif:triager"))?.configSchema).toEqual(
+      DECLARED_CONFIG,
+    );
   });
 
   it("preserves runtime state (enabled, quarantine) across re-register", async () => {
