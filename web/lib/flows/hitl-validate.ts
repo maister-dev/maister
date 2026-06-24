@@ -82,6 +82,109 @@ export function isReviewSchema(schema: unknown): boolean {
   return isPlainObject(schema) && (schema as ReviewSchemaLike).review === true;
 }
 
+type ConsensusResolutionSchemaLike = {
+  kind?: unknown;
+  allowedDecisions?: unknown;
+  decisions?: unknown;
+};
+
+export type ResolvedConsensusDecision = {
+  decision: string;
+  response: {
+    decision: string;
+    resolution?: string;
+  };
+};
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+function consensusAllowedDecisions(
+  schema: ConsensusResolutionSchemaLike,
+): string[] {
+  const allowed = stringArray(schema.allowedDecisions);
+
+  return allowed.length > 0 ? allowed : stringArray(schema.decisions);
+}
+
+export function isConsensusResolutionSchema(schema: unknown): boolean {
+  if (!isPlainObject(schema)) return false;
+  const kind = (schema as ConsensusResolutionSchemaLike).kind;
+
+  return kind === "consensus_resolution" || kind === "consensus";
+}
+
+export function validateConsensusDecision(
+  response: unknown,
+  schema: unknown,
+): ({ ok: true } & ResolvedConsensusDecision) | { ok: false; message: string } {
+  if (!isPlainObject(schema) || !isConsensusResolutionSchema(schema)) {
+    return {
+      ok: false,
+      message: "consensus hitl schema is missing or malformed",
+    };
+  }
+  if (!isPlainObject(response)) {
+    return { ok: false, message: "response must be a JSON object" };
+  }
+
+  const allowed = consensusAllowedDecisions(
+    schema as ConsensusResolutionSchemaLike,
+  );
+  const decision = response.decision;
+
+  if (typeof decision !== "string" || !allowed.includes(decision)) {
+    return {
+      ok: false,
+      message: `decision must be one of [${allowed.join(", ")}]`,
+    };
+  }
+
+  if (decision === "provide-resolution") {
+    const resolution = response.resolution;
+
+    if (typeof resolution !== "string" || resolution.trim().length === 0) {
+      return {
+        ok: false,
+        message: "provide-resolution requires a non-empty resolution",
+      };
+    }
+    if (resolution.length > 32_000) {
+      return {
+        ok: false,
+        message: "resolution must be at most 32000 characters",
+      };
+    }
+
+    return {
+      ok: true,
+      decision,
+      response: { decision, resolution },
+    };
+  }
+
+  return { ok: true, decision, response: { decision } };
+}
+
+export function assertConsensusDecision(
+  response: unknown,
+  schema: unknown,
+): ResolvedConsensusDecision {
+  const result = validateConsensusDecision(response, schema);
+
+  if (!result.ok) {
+    throw new MaisterError("NEEDS_INPUT", result.message);
+  }
+
+  return {
+    decision: result.decision,
+    response: result.response,
+  };
+}
+
 export function validateReviewDecision(
   response: unknown,
   schema: unknown,

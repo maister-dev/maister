@@ -14,6 +14,7 @@ import { useTranslations } from "next-intl";
 import {
   HitlDecisionControls,
   budgetBreachFromSchema,
+  consensusHitlFromSchema,
   formFieldsFromSchema,
 } from "@/components/board/hitl-decision-controls";
 
@@ -188,6 +189,8 @@ export function RunHitlResponse({
     (schema as ReviewSchema & { review?: boolean }).review
       ? (schema as ReviewSchema)
       : null;
+  const consensusHitl =
+    kind === "human" ? consensusHitlFromSchema(schema) : null;
 
   const isReworkDecision = (d: string): boolean => {
     if (!reviewSchema) return false;
@@ -203,7 +206,17 @@ export function RunHitlResponse({
     const response: Record<string, unknown> = { decision };
     const trimmed = comments.trim();
 
-    if (trimmed) response.comments = trimmed;
+    if (consensusHitl && decision === "provide-resolution") {
+      if (!trimmed) {
+        setError(t("consensusResolutionRequired"));
+
+        return;
+      }
+
+      response.resolution = trimmed;
+    } else if (trimmed) {
+      response.comments = trimmed;
+    }
 
     const policies = reviewSchema?.workspacePolicies ?? [];
 
@@ -258,7 +271,8 @@ export function RunHitlResponse({
     kind !== "permission" &&
     kind !== "infra_recovery" &&
     kind !== "budget_breach" &&
-    kind !== "hook_trip";
+    kind !== "hook_trip" &&
+    !consensusHitl;
 
   const labels = {
     criticalityLabel: t("criticalityLabel"),
@@ -303,6 +317,19 @@ export function RunHitlResponse({
     hookTripToolCall: t("hookTripToolCall"),
     hookTripResume: t("hookTripResume"),
     hookTripAbort: t("hookTripAbort"),
+    consensusTitle: t("consensusTitle"),
+    consensusRound: t("consensusRound"),
+    consensusDrafts: t("consensusDrafts"),
+    consensusDisagreements: t("consensusDisagreements"),
+    consensusNoDisagreements: t("consensusNoDisagreements"),
+    consensusDebateLog: t("consensusDebateLog"),
+    consensusDraftFallback: t("consensusDraftFallback"),
+    consensusPickDraft: t("consensusPickDraft"),
+    consensusResolutionLabel: t("consensusResolutionLabel"),
+    consensusResolutionPlaceholder: t("consensusResolutionPlaceholder"),
+    consensusProvideResolution: t("consensusProvideResolution"),
+    consensusRerunRound: t("consensusRerunRound"),
+    consensusAbort: t("consensusAbort"),
   };
 
   return (

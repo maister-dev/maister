@@ -33,6 +33,7 @@ const labels: ToolbarProps["labels"] = {
     cli: "CLI",
     check: "Check",
     judge: "Judge",
+    consensus: "Consensus",
     human: "Human",
     form: "Form",
   },

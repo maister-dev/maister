@@ -16,6 +16,7 @@ export type GraphNodeRole =
   | "command"
   | "check"
   | "judge"
+  | "consensus"
   | "human"
   | "form"
   | "terminal"
@@ -83,6 +84,8 @@ function nodeRoleForType(nodeType: string): GraphNodeRole {
       return "check";
     case "judge":
       return "judge";
+    case "consensus":
+      return "consensus";
     case "human":
       return "human";
     case "form":
@@ -102,6 +105,8 @@ function nodeTypeLabelForRole(role: GraphNodeRole): string {
       return "Check";
     case "judge":
       return "Judge";
+    case "consensus":
+      return "Consensus";
     case "human":
       return "Human review";
     case "form":

@@ -1749,6 +1749,20 @@
       "repetition": "повторение",
       "no_progress": "нет прогресса"
     },
+    "consensusTitle": "Решение консенсуса",
+    "consensusRound": "Раунд $n",
+    "consensusDrafts": "Черновики",
+    "consensusDisagreements": "Расхождения",
+    "consensusNoDisagreements": "Материальных расхождений нет",
+    "consensusDebateLog": "Журнал обсуждения",
+    "consensusDraftFallback": "Черновик $n",
+    "consensusPickDraft": "Взять черновик $n",
+    "consensusResolutionLabel": "Решение человека",
+    "consensusResolutionPlaceholder": "Введите доверенное решение для синтеза.",
+    "consensusProvideResolution": "Использовать решение",
+    "consensusRerunRound": "Запустить ещё раунд",
+    "consensusAbort": "Прекратить",
+    "consensusResolutionRequired": "Введите решение перед отправкой.",
     "error": {
       "generic": "Что-то пошло не так. Попробуйте ещё раз.",
       "CRASH": "Что-то пошло не так. Попробуйте ещё раз.",
@@ -1840,7 +1854,8 @@
     "kindArtifact": "Артефакт",
     "kindGate": "Гейт",
     "kindDecision": "Решение",
-    "artifactKindMutationReport": "Отчёт об изменениях"
+    "artifactKindMutationReport": "Отчёт об изменениях",
+    "artifactKindPlan": "План"
   },
   "readiness": {
     "summary": "Готовность",
@@ -1875,6 +1890,7 @@
         "command": "Команда",
         "check": "Проверка",
         "judge": "Оценка",
+        "consensus": "Консенсус",
         "human": "Ревью",
         "form": "Форма",
         "terminal": "Финал",
@@ -2573,6 +2589,7 @@
         "cli": "CLI",
         "check": "Проверка",
         "judge": "Судья",
+        "consensus": "Консенсус",
         "human": "Человек",
         "form": "Форма"
       },
@@ -2640,6 +2657,20 @@
       "removeTransition": "Удалить",
       "noTransitions": "Нет переходов",
       "noGates": "Нет гейтов",
+      "consensus": {
+        "participants": "Участники",
+        "participantId": "ID",
+        "participantAgent": "Агент",
+        "participantRunner": "Раннер",
+        "addParticipant": "Добавить участника",
+        "removeParticipant": "Удалить участника",
+        "materialAxes": "Материальные оси (через запятую)",
+        "synthesizerAgent": "Агент-синтезатор",
+        "synthesizerRunner": "Раннер-синтезатор",
+        "roundsMode": "Режим раундов",
+        "roundsMax": "Макс. раундов",
+        "onNoConsensus": "Нет консенсуса"
+      },
       "decide": {
         "title": "Маршрутизация",
         "source": "Источник",

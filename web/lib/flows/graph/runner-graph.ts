@@ -32,6 +32,7 @@ import { runCliStep } from "../runner-cli";
 import { cleanupSlashSession, asError } from "./runner-core";
 import { compileManifest, resolveTransition } from "./compile";
 import { computeDecideOutcome, type DecideVerdict } from "./decide-eval";
+import { runConsensusNode } from "./consensus/runtime";
 import {
   ensureRunContextExcluded,
   runContextPath,
@@ -175,6 +176,7 @@ const FORM_SCHEMA_VERSION = 1;
 
 type NodeResult = StepResult & {
   needsInput?: boolean;
+  waitsForChildren?: boolean;
   acpSessionId?: string;
   decision?: string;
   workspacePolicy?: string;
@@ -189,6 +191,10 @@ function runDir(
   runId: string,
 ): string {
   return path.join(runtimeRoot, ".maister", projectSlug, "runs", runId);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 // M37 (ADR-098) T5.1 / ADR-100: count an orchestrator run's PENDING (non-SETTLED)
@@ -275,10 +281,11 @@ async function runOrchestratorStep(
 // transition). The reconcile/sweeper backstop for "WaitingOnChildren with no
 // live checkpoint" is Phase-7 (T7.1) — Pass-1 already EXCLUDES WaitingOnChildren
 // so it is never mis-idled here.
-async function parkOrchestratorSession(
+async function parkCoordinatorSession(
   db: Db,
   runId: string,
   acpSessionId: string | null,
+  coordinatorType: "orchestrator" | "consensus",
   log2: typeof log,
 ): Promise<void> {
   if (acpSessionId) {
@@ -291,8 +298,8 @@ async function parkOrchestratorSession(
       if (live) {
         await checkpointSession(live.sessionId);
         log2.info(
-          { runId, supervisorSessionId: live.sessionId },
-          "orchestrator park — live session checkpointed (SIGTERM)",
+          { runId, coordinatorType, supervisorSessionId: live.sessionId },
+          "coordinator park — live session checkpointed (SIGTERM)",
         );
       }
     } catch (err) {
@@ -303,10 +310,11 @@ async function parkOrchestratorSession(
       log2.warn(
         {
           runId,
+          coordinatorType,
           err: err instanceof Error ? err.message : String(err),
           code: isMaisterError(err) ? err.code : null,
         },
-        "orchestrator park — checkpoint best-effort failed (run stays resumable)",
+        "coordinator park — checkpoint best-effort failed (run stays resumable)",
       );
     }
   }
@@ -315,8 +323,12 @@ async function parkOrchestratorSession(
     await releaseSlotOnIdle({ runId, db });
   } catch (err) {
     log2.warn(
-      { runId, err: err instanceof Error ? err.message : String(err) },
-      "orchestrator park — releaseSlotOnIdle failed (non-fatal)",
+      {
+        runId,
+        coordinatorType,
+        err: err instanceof Error ? err.message : String(err),
+      },
+      "coordinator park — releaseSlotOnIdle failed (non-fatal)",
     );
   }
 }
@@ -702,8 +714,10 @@ export async function runReviewHuman(
 
   const hitlRequestId = randomUUID();
   const settingsRoleRefs =
-    node.nodeType === "human" && node.settings && "roles" in node.settings
-      ? (node.settings.roles ?? [])
+    node.nodeType === "human" &&
+    isRecord(node.settings) &&
+    Array.isArray(node.settings.roles)
+      ? node.settings.roles
       : [];
   const roleRefs = Array.from(
     new Set(
@@ -715,7 +729,7 @@ export async function runReviewHuman(
 
   const nodeCriticality =
     node.nodeType === "human" &&
-    node.settings !== undefined &&
+    isRecord(node.settings) &&
     "criticality" in node.settings
       ? ((
           node.settings as {
@@ -1116,6 +1130,21 @@ async function executeNodeAction(
       }
 
       return dispatchAgent();
+    }
+    case "consensus": {
+      return runConsensusNode({
+        node,
+        def,
+        loaded,
+        context,
+        runtimeRoot: ctx.runtimeRoot,
+        worktreePath: ctx.worktreePath,
+        sessionState: ctx.sessionState,
+        supervisorApi: ctx.supervisorApi,
+        nodeAttemptId: ctx.nodeAttemptId,
+        nodeAttemptNumber: ctx.nodeAttemptNumber,
+        db: ctx.db,
+      });
     }
     case "human":
       return runReviewHuman(node, loaded, `Review "${node.id}"`, {
@@ -1594,10 +1623,19 @@ export async function runGraph(
     loaded.run.status === "Running" &&
     loaded.run.currentStepId !== null;
 
+  const isConsensusResume =
+    Boolean(opts.consensusResume) &&
+    !isNeedsInputResume &&
+    !isCrashResume &&
+    !isOrchestratorResume &&
+    loaded.run.status === "Running" &&
+    loaded.run.currentStepId !== null;
+
   const isTakeoverResume =
     !isNeedsInputResume &&
     !isCrashResume &&
     !isOrchestratorResume &&
+    !isConsensusResume &&
     loaded.run.status === "Running" &&
     loaded.run.currentStepId !== null &&
     (await hasPendingTakeoverResume(runId, loaded.run.currentStepId, db));
@@ -1606,7 +1644,8 @@ export async function runGraph(
     isNeedsInputResume ||
     isTakeoverResume ||
     isCrashResume ||
-    isOrchestratorResume;
+    isOrchestratorResume ||
+    isConsensusResume;
   const resumeNodeId = isResume ? (loaded.run.currentStepId as string) : null;
 
   // For a takeover resume, the claim winner appends the fresh re-entry attempt
@@ -2435,13 +2474,16 @@ export async function runGraph(
       }
 
       if (result.needsInput) {
-        // M37 (ADR-098): an orchestrator parks on WaitingOnChildren (it yields
-        // awaiting its delegated children), NOT NeedsInput (a HITL signal). The
-        // ledger NeedsInput mark is kept either way — the attempt is paused — but
-        // the RUN status and the outbox diverge: no run.needs_input webhook fires
-        // for the coordinator (nobody is being asked for input).
-        const parkStatus =
-          node.nodeType === "orchestrator" ? "WaitingOnChildren" : "NeedsInput";
+        // Coordinator nodes park on WaitingOnChildren (they yield awaiting child
+        // runs), NOT NeedsInput (a HITL signal). The ledger NeedsInput mark is
+        // kept either way — the attempt is paused — but the RUN status and the
+        // outbox diverge: no run.needs_input webhook fires for a coordinator.
+        const isCoordinatorNode =
+          result.waitsForChildren ??
+          (node.nodeType === "orchestrator" || node.nodeType === "consensus");
+        const parkStatus = isCoordinatorNode
+          ? "WaitingOnChildren"
+          : "NeedsInput";
 
         // Ledger mark + status flip + run.needs_input outbox row are one
         // logical transition — they commit atomically or not at all.
@@ -2453,7 +2495,7 @@ export async function runGraph(
             .where(eq(runs.id, runId))
             .returning({ projectId: runs.projectId });
 
-          if (flipped.length > 0 && node.nodeType !== "orchestrator") {
+          if (flipped.length > 0 && !isCoordinatorNode) {
             await emitWebhookEvent({
               db: tx,
               type: "run.needs_input",
@@ -2482,11 +2524,12 @@ export async function runGraph(
         // is INTENTIONALLY left on disk across the park (every NeedsInput pause
         // does the same) so the resumed coordinator reuses it; run-level GC
         // reclaims it at termination.
-        if (node.nodeType === "orchestrator") {
-          await parkOrchestratorSession(
+        if (isCoordinatorNode) {
+          await parkCoordinatorSession(
             db,
             runId,
             result.acpSessionId ?? loaded.run.acpSessionId,
+            node.nodeType as "orchestrator" | "consensus",
             log2,
           );
         }

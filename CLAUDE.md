@@ -102,7 +102,8 @@ These were earned in two review passes. Reopen them only with new evidence.
 ### 1. ACP-driven execution with hybrid HITL
 
 A Flow = a typed-node **graph** (`nodes[]`, canonical at runtime) — node
-types `ai_coding | judge | cli | check | human`, wired by named
+types `ai_coding | judge | cli | check | human | form | orchestrator`
+and the M41-designed `consensus`, wired by named
 `transitions` with bounded `rework` loops — OR a legacy linear `steps[]`
 list (`cli | agent | guard | human`); both parse from the `flow.yaml`
 manifest and compile to one `FlowGraph`
@@ -457,9 +458,9 @@ A/B benchmark runs · durable orchestration · full multi-user RBAC w/ action-
 blocking · full Kanban (Done as drag-target / WIP limits / swim-lanes) ·
 event log table · test-run UI button · GitHub Actions CI/CD · project
 archival UI · cross-project task moves · GitHub issue / Linear / YouGile
-sync · custom ACP extensions · cost/time/regex guard enforcement · plugin
-sandboxing · HITL as separate swimlane cards · Cursor / opencode / Aider
-executors. (Outbound webhooks are no longer deferred — the generic outbound
+sync · custom ACP extensions · writable competing-code consensus drafts ·
+cost/time/regex guard enforcement · plugin sandboxing · HITL as separate
+swimlane cards · Cursor / opencode / Aider executors. (Outbound webhooks are no longer deferred — the generic outbound
 event-delivery primitive is now built; agent-over-MCP and notifiers are
 consumers of it, see ADR-077.)
 

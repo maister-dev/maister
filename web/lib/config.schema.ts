@@ -352,6 +352,7 @@ export const ARTIFACT_KINDS = [
   "preview",
   "generic_file",
   "mutation_report",
+  "plan",
 ] as const;
 
 // --- M11a: Flow graph v1 (`nodes[]`) — ADR-026 ---------------------------
@@ -541,6 +542,7 @@ export const nodeOutputSchema = z
             visibility: z.enum(["internal", "shared"]).optional(),
             retention: z.enum(["run", "ephemeral"]).optional(),
             requiredFor: z.array(z.enum(["review", "merge"])).optional(),
+            current: z.boolean().optional(),
           })
           .passthrough(),
       )
@@ -956,6 +958,77 @@ const orchestratorNodeSchema = z
   })
   .passthrough();
 
+const consensusWorkspaceSchema = z
+  .object({
+    mode: z.literal("repo_read"),
+  })
+  .strict();
+
+const consensusParticipantSchema = z
+  .object({
+    id: z.string().min(1),
+    agent: z.string().min(1).optional(),
+    runner: z.string().min(1).optional(),
+    workspace: consensusWorkspaceSchema.optional(),
+  })
+  .strict()
+  .superRefine((participant, ctx) => {
+    const refs = [participant.agent, participant.runner].filter(
+      (ref) => ref !== undefined,
+    );
+
+    if (refs.length !== 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["agent"],
+        message:
+          "consensus participant must declare exactly one of agent or runner",
+      });
+    }
+  });
+
+const consensusSynthesizerSchema = z
+  .object({
+    agent: z.string().min(1).optional(),
+    runner: z.string().min(1).optional(),
+  })
+  .strict()
+  .superRefine((synthesizer, ctx) => {
+    const refs = [synthesizer.agent, synthesizer.runner].filter(
+      (ref) => ref !== undefined,
+    );
+
+    if (refs.length !== 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["agent"],
+        message:
+          "consensus synthesizer must declare exactly one of agent or runner",
+      });
+    }
+  });
+
+const consensusRoundsSchema = z
+  .object({
+    mode: z.enum(["single_pass", "iterate"]).default("single_pass"),
+    max: z.number().int().positive().default(1),
+  })
+  .strict();
+
+const consensusNodeSchema = z
+  .object({
+    ...nodeCommon,
+    type: z.literal("consensus"),
+    prompt: z.string().min(1),
+    participants: z.array(consensusParticipantSchema).min(2),
+    workspace: consensusWorkspaceSchema.default({ mode: "repo_read" }),
+    material_axes: z.array(z.string().min(1)).min(1),
+    rounds: consensusRoundsSchema.default({ mode: "single_pass", max: 1 }),
+    on_no_consensus: z.literal("escalate").default("escalate"),
+    synthesizer: consensusSynthesizerSchema,
+  })
+  .passthrough();
+
 const judgeNodeSchema = z
   .object({
     ...nodeCommon,
@@ -1008,6 +1081,7 @@ const formNodeSchema = z
 const nodeSchemaBase = z.discriminatedUnion("type", [
   aiCodingNodeSchema,
   orchestratorNodeSchema,
+  consensusNodeSchema,
   judgeNodeSchema,
   cliNodeSchema,
   checkNodeSchema,

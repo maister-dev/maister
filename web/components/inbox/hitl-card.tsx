@@ -19,6 +19,7 @@ import {
   MinusIcon,
   ScaleIcon,
   ShieldCheckIcon,
+  UserGroupIcon,
   UserIcon,
   XMarkIcon,
   ClipboardDocumentListIcon,
@@ -68,6 +69,7 @@ const CRITICALITY_ACCENT: Record<string, string> = {
 
 const STAGE_ICON: Record<string, typeof UserIcon> = {
   ai_coding: CpuChipIcon,
+  consensus: UserGroupIcon,
   judge: ScaleIcon,
   cli: CommandLineIcon,
   check: ShieldCheckIcon,

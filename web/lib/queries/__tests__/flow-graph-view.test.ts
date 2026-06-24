@@ -218,6 +218,43 @@ describe("buildGraphTopology — visual metadata", () => {
     expect(byId.get("audit")?.nodeRole).toBe("judge");
   });
 
+  it("maps consensus nodes to a first-class role and label", () => {
+    const topo = buildGraphTopology(
+      compileManifest({
+        schemaVersion: 1,
+        name: "consensus-topology",
+        compat: { engine_min: "1.9.0" },
+        nodes: [
+          {
+            id: "settle-plan",
+            type: "consensus",
+            prompt: "Settle the plan",
+            participants: [
+              { id: "participant_a", runner: "codex" },
+              { id: "participant_b", runner: "claude" },
+            ],
+            workspace: { mode: "repo_read" },
+            material_axes: ["correctness"],
+            rounds: { mode: "single_pass", max: 1 },
+            on_no_consensus: "escalate",
+            synthesizer: { runner: "codex" },
+            output: {
+              produces: [
+                { id: "consensus_plan", kind: "plan", current: true },
+                { id: "debate_log", kind: "human_note", current: true },
+              ],
+            },
+          },
+        ],
+      }),
+    );
+    const node = asRecord(topo.nodes[0]);
+
+    expect(node.nodeType).toBe("consensus");
+    expect(node.nodeRole).toBe("consensus");
+    expect(node.nodeTypeLabel).toBe("Consensus");
+  });
+
   it("maps a form intake node to the 'form' role and 'Form' label", () => {
     const topo = buildGraphTopology(compileManifest(formGraph));
     const byId = new Map(topo.nodes.map((n) => [n.id, asRecord(n)]));

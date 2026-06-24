@@ -37,6 +37,7 @@ import {
 
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import * as schemaModule from "@/lib/db/schema";
+import { MaisterError } from "@/lib/errors";
 
 const schema = schemaModule as unknown as Record<string, any>;
 
@@ -115,9 +116,13 @@ beforeEach(async () => {
 
 // A PARKED flow orchestrator (run_kind='flow', WaitingOnChildren, at node
 // "coordinate", acp handle retained).
-async function seedParkedOrchestrator(runKind = "flow"): Promise<string> {
+async function seedParkedOrchestrator(
+  runKind = "flow",
+  nodeType: "orchestrator" | "consensus" = "orchestrator",
+): Promise<string> {
   const taskId = randomUUID();
   const runId = randomUUID();
+  const nodeAttemptId = randomUUID();
 
   await (db as any).insert(schema.tasks).values({
     number: Math.trunc(Math.random() * 1e9) + 1,
@@ -133,6 +138,14 @@ async function seedParkedOrchestrator(runKind = "flow"): Promise<string> {
      VALUES ($1, $2, $3, $4, $5, 'WaitingOnChildren', 'coordinate', 'acp-coord-1', 'v1.0.0', 'unknown', $6)`,
     [runId, runKind, projectId, taskId, flowId, executorId],
   );
+  await (db as any).insert(schema.nodeAttempts).values({
+    id: nodeAttemptId,
+    runId,
+    nodeId: "coordinate",
+    nodeType,
+    attempt: 1,
+    status: "NeedsInput",
+  });
 
   return runId;
 }
@@ -425,5 +438,83 @@ describe("orchestrator_resume consumer (M37 T5.2)", () => {
     // run_kind='agent' → skipped; status untouched, no flow re-drive.
     expect(await statusOf(parentRunId)).toBe("WaitingOnChildren");
     expect(resumed).toHaveLength(0);
+  });
+
+  it("wakes a consensus parent only after every draft child has settled", async () => {
+    const parentRunId = await seedParkedOrchestrator("flow", "consensus");
+
+    await seedPendingChild(parentRunId);
+    const failed = await seedChildTerminal({ parentRunId, outcome: "Failed" });
+
+    const resumed: Array<{ runId: string; opts: RunFlowOptions }> = [];
+    const consumer = buildOrchestratorResumeConsumer({
+      db,
+      resumeFlow: async (runId, opts) => {
+        resumed.push({ runId, opts });
+      },
+    });
+
+    await consumer.handle([failed]);
+
+    expect(await statusOf(parentRunId)).toBe("WaitingOnChildren");
+    expect(resumed).toEqual([]);
+
+    await pool.query(
+      `UPDATE "runs" SET "status" = 'Done' WHERE "parent_run_id" = $1 AND "status" = 'Running'`,
+      [parentRunId],
+    );
+    const lastDone = await seedChildTerminal({ parentRunId, outcome: "Done" });
+
+    await consumer.handle([lastDone]);
+
+    expect(await statusOf(parentRunId)).toBe("Running");
+    expect(resumed).toHaveLength(1);
+    expect(resumed[0].runId).toBe(parentRunId);
+    expect(resumed[0].opts.consensusResume).toEqual({
+      targetStepId: "coordinate",
+    });
+    expect(resumed[0].opts.orchestratorResume).toBeUndefined();
+  });
+
+  it("rolls a consensus parent back to WaitingOnChildren when re-drive is retryable", async () => {
+    const parentRunId = await seedParkedOrchestrator("flow", "consensus");
+    const event = await seedChildTerminal({ parentRunId, outcome: "Done" });
+
+    const consumer = buildOrchestratorResumeConsumer({
+      db,
+      resumeFlow: async () => {
+        throw new MaisterError(
+          "EXECUTOR_UNAVAILABLE",
+          "mock consensus resume capacity unavailable",
+        );
+      },
+    });
+
+    await consumer.handle([event]);
+
+    expect(await statusOf(parentRunId)).toBe("WaitingOnChildren");
+  });
+
+  it("skips a WaitingOnChildren parent whose current node is not a coordinator", async () => {
+    const parentRunId = await seedParkedOrchestrator("flow", "consensus");
+
+    await pool.query(
+      `UPDATE "node_attempts" SET "node_type" = 'check' WHERE "run_id" = $1`,
+      [parentRunId],
+    );
+    const event = await seedChildTerminal({ parentRunId, outcome: "Done" });
+
+    const resumed: string[] = [];
+    const consumer = buildOrchestratorResumeConsumer({
+      db,
+      resumeFlow: async (runId) => {
+        resumed.push(runId);
+      },
+    });
+
+    await consumer.handle([event]);
+
+    expect(await statusOf(parentRunId)).toBe("WaitingOnChildren");
+    expect(resumed).toEqual([]);
   });
 });

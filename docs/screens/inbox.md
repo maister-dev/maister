@@ -15,6 +15,11 @@ project-grouped surface where each card explains *what the question is about* �
 not only its answer options — so I can clear most of my queue without opening a
 run, and dive into the run only when I need the full task context.
 
+When a consensus node cannot reach agreement, I want the inbox card to show the
+draft options, disagreement summary, and safe decision controls — so I can pick a
+draft, provide a resolution, rerun the round, or abort without reading raw
+artifacts first.
+
 ## Roles & capabilities
 
 | Role | Sees |
@@ -66,6 +71,12 @@ the project-group header) with three disclosure tiers:
   chip** · **Last agent message** · **stage progress** (`done/total`) · an optional
   **Changes** line (`N files · +X −Y`) · the respond controls
   (`hitl-decision-controls`) · `View run`.
+- **Consensus HITL (expanded):** the same card chrome renders a `consensus`
+  stage chip, draft count, current round, material-axis disagreement summary,
+  and capped draft/debate excerpts from `inbox-context`. Decision controls are
+  purpose-built buttons/inputs for `pick-draft-N`, `provide-resolution`,
+  `re-run-round`, and `abort`; the card never exposes participant ids, child run
+  ids, or unbounded draft bodies as editable fields.
 - **Run (deep dive):** `View run` opens the full run page.
 
 Per-card criticality accent (critical red / high amber / medium info / low
@@ -94,8 +105,10 @@ stateDiagram-v2
   unread` (the canonical fan-out — see
   [`../system-analytics/social-board.md`](../system-analytics/social-board.md)).
 - `GET /api/runs/{runId}/inbox-context` — the lazy per-card
-  expand payload `{ lastAgentMessage, gates[], diff, progress }`; `readBoard` on
-  the run's project; read-only, partial-null on a missing peek. Behavior in
+  expand payload `{ lastAgentMessage, gates[], diff, progress }` plus bounded
+  consensus draft/debate refs when the HITL schema discriminator is
+  `consensus_resolution`; `readBoard` on the run's project; read-only,
+  partial-null on a missing peek. Behavior in
   [`../system-analytics/hitl.md`](../system-analytics/hitl.md).
 - Mutations: `POST /api/runs/{runId}/hitl/{hitlRequestId}/respond` (inline
   respond), `PATCH /api/inbox/[itemId]/read`, `POST /api/inbox/read-all`.
@@ -110,11 +123,30 @@ The card reuses `run.*` (criticality / HITL decision) and `board.*` (assignment)
 labels; node-type and gate-status are shown by icon, not text, so no `stage.*` /
 `gate.*` keys exist.
 
+M41 adds consensus-specific keys under the existing card/control namespaces:
+draft labels, round labels, disagreement summary, `pickDraft`, `provideResolution`,
+`rerunRound`, `abortConsensus`, and validation text for required human
+resolution. EN + RU parity is required.
+
+## Consensus acceptance criteria
+
+- A consensus HITL card is scannable while collapsed and shows the same project,
+  criticality, stage, branch, and `View run` affordances as existing HITL cards.
+- Expanding the card shows bounded draft/debate context and the four allowed
+  consensus decisions without layout overflow on one-column and two-column grids.
+- The response body is allow-list driven by stored HITL payload data; arbitrary
+  draft ids, runner refs, participant ids, or child run ids from the browser are
+  ignored or rejected server-side.
+- Clearing the last consensus HITL updates `needsYou` through the existing inbox
+  count path.
+
 ## Linked artifacts
 
 - Behavior: [`../system-analytics/hitl.md`](../system-analytics/hitl.md)
   (cross-project inbox, respond two-phase commit, stage resolution +
   `inbox-context` reads),
+  [`../system-analytics/consensus.md`](../system-analytics/consensus.md)
+  (consensus no-agreement HITL decisions),
   [`../system-analytics/social-board.md`](../system-analytics/social-board.md)
   (canonical `needsYou`, inbox fanout).
 - ADRs: [ADR-057](../decisions.md#adr-057) (HITL hybrid surface),

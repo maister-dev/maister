@@ -16,6 +16,7 @@ const NODE_VISUALS: Record<NodeType, NodeVisual> = {
   ai_coding: { iconName: "bot", colorToken: "cv-green" },
   orchestrator: { iconName: "sitemap", colorToken: "cv-teal" },
   judge: { iconName: "gavel", colorToken: "cv-violet" },
+  consensus: { iconName: "network", colorToken: "cv-teal" },
   cli: { iconName: "terminal", colorToken: "cv-gray" },
   check: { iconName: "shield", colorToken: "cv-amber" },
   human: { iconName: "person", colorToken: "cv-blue" },

@@ -56,6 +56,21 @@ export interface HitlDecisionControlsLabels {
   hookTripToolCall?: string;
   hookTripResume?: string;
   hookTripAbort?: string;
+  // Consensus resolution card (M41): bounded draft/disagreement context plus
+  // purpose-built decisions. Optional to keep older callers source-compatible.
+  consensusTitle?: string;
+  consensusRound?: string;
+  consensusDrafts?: string;
+  consensusDisagreements?: string;
+  consensusNoDisagreements?: string;
+  consensusDebateLog?: string;
+  consensusDraftFallback?: string;
+  consensusPickDraft?: string;
+  consensusResolutionLabel?: string;
+  consensusResolutionPlaceholder?: string;
+  consensusProvideResolution?: string;
+  consensusRerunRound?: string;
+  consensusAbort?: string;
 }
 
 export interface ReviewSchema {
@@ -238,6 +253,151 @@ export function hookTripFromSchema(schema: unknown): HookTripView | null {
   return { rule: s.rule, ...(title ? { toolCallTitle: title } : {}) };
 }
 
+export interface ConsensusDraftChoiceView {
+  decision: string;
+  label: string;
+  excerpt?: string;
+}
+
+export interface ConsensusDisagreementView {
+  axis: string;
+  summary?: string;
+}
+
+export interface ConsensusHitlView {
+  round: number;
+  allowedDecisions: string[];
+  drafts: ConsensusDraftChoiceView[];
+  disagreements: ConsensusDisagreementView[];
+  debateExcerpt?: string;
+}
+
+function recordArray(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value)
+    ? value.filter(
+        (item): item is Record<string, unknown> =>
+          !!item && typeof item === "object",
+      )
+    : [];
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+function optionalText(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0
+    ? value
+    : undefined;
+}
+
+function consensusDecisions(s: Record<string, unknown>): string[] {
+  const decisions = stringArray(s.allowedDecisions);
+
+  return decisions.length > 0 ? decisions : stringArray(s.decisions);
+}
+
+function consensusDrafts(
+  s: Record<string, unknown>,
+  decisions: string[],
+): ConsensusDraftChoiceView[] {
+  const pickDecisions = decisions.filter((decision) =>
+    decision.startsWith("pick-draft-"),
+  );
+
+  return recordArray(s.drafts ?? s.choices).map((draft, index) => {
+    const n = index + 1;
+    const decision = optionalText(draft.decision) ?? pickDecisions[index];
+    const label =
+      optionalText(draft.label) ??
+      optionalText(draft.participantLabel) ??
+      optionalText(draft.title) ??
+      optionalText(draft.name) ??
+      `Draft ${n}`;
+    const excerpt =
+      optionalText(draft.excerpt) ??
+      optionalText(draft.summary) ??
+      optionalText(draft.preview);
+
+    return {
+      decision: decision ?? `pick-draft-${n}`,
+      label,
+      ...(excerpt ? { excerpt } : {}),
+    };
+  });
+}
+
+function consensusDisagreements(
+  s: Record<string, unknown>,
+): ConsensusDisagreementView[] {
+  return recordArray(s.disagreements ?? s.materialAxisDisagreements)
+    .map((item) => {
+      const axis = optionalText(item.axis);
+      const summary =
+        optionalText(item.summary) ??
+        optionalText(item.claim) ??
+        optionalText(item.reason);
+
+      return axis ? { axis, ...(summary ? { summary } : {}) } : null;
+    })
+    .filter((item): item is ConsensusDisagreementView => item !== null);
+}
+
+function consensusDebateExcerpt(
+  s: Record<string, unknown>,
+): string | undefined {
+  const debateLog = s.debateLog ?? s.debate_log;
+
+  if (debateLog && typeof debateLog === "object") {
+    const excerpt = optionalText(
+      (debateLog as Record<string, unknown>).excerpt,
+    );
+
+    if (excerpt) return excerpt;
+  }
+
+  return optionalText(s.debateExcerpt ?? s.debate_log_excerpt);
+}
+
+// Structural view of the consensus-resolution human HITL schema. The server
+// owns ids and artifact references; the UI exposes only bounded labels/excerpts
+// and allow-listed decisions so users never edit raw participant/run ids.
+export function consensusHitlFromSchema(
+  schema: unknown,
+): ConsensusHitlView | null {
+  if (!schema || typeof schema !== "object") return null;
+  const s = schema as Record<string, unknown>;
+
+  if (s.kind !== "consensus_resolution" && s.kind !== "consensus") {
+    return null;
+  }
+
+  const allowedDecisions = consensusDecisions(s);
+  const hasConsensusDecision = allowedDecisions.some(
+    (decision) =>
+      decision.startsWith("pick-draft-") ||
+      decision === "provide-resolution" ||
+      decision === "re-run-round" ||
+      decision === "abort",
+  );
+
+  if (!hasConsensusDecision) return null;
+
+  const round = typeof s.round === "number" && s.round > 0 ? s.round : 1;
+
+  return {
+    round,
+    allowedDecisions,
+    drafts: consensusDrafts(s, allowedDecisions),
+    disagreements: consensusDisagreements(s),
+    ...(consensusDebateExcerpt(s)
+      ? { debateExcerpt: consensusDebateExcerpt(s) }
+      : {}),
+  };
+}
+
 // String-token variant of fillTemplate for the breach summary (scope/meter are
 // localized words, current/limit are numbers stringified by the caller).
 function fillStringTemplate(
@@ -260,6 +420,10 @@ function fillTemplate(
     (out, [token, value]) => out.replace(token, String(value)),
     template,
   );
+}
+
+function labeledNumber(template: string, n: number): string {
+  return fillTemplate(template, { $n: n });
 }
 
 const CRITICALITY_PILL: Record<"low" | "medium" | "high" | "critical", string> =
@@ -389,6 +553,207 @@ function FormFieldControl({
   );
 }
 
+function ConsensusHitlCard({
+  view,
+  labels,
+  comments,
+  disabled,
+  compact,
+  onCommentsChange,
+  onDecision,
+}: {
+  view: ConsensusHitlView;
+  labels: HitlDecisionControlsLabels;
+  comments: string;
+  disabled: boolean;
+  compact?: boolean;
+  onCommentsChange: (v: string) => void;
+  onDecision: (decision: string) => void;
+}): ReactElement {
+  const hasDecision = (decision: string): boolean =>
+    view.allowedDecisions.includes(decision);
+  const canProvideResolution = hasDecision("provide-resolution");
+  const canRerunRound = hasDecision("re-run-round");
+  const canAbort = hasDecision("abort");
+  const resolutionBlank = comments.trim().length === 0;
+
+  return (
+    <div
+      className={clsx("flex flex-col", compact ? "gap-2.5" : "gap-3")}
+      data-testid="consensus-hitl-card"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-amber">
+          {labels.consensusTitle ?? "Consensus resolution"}
+        </p>
+        <span
+          className="rounded-full border border-line bg-ivory px-2 py-[2px] font-mono text-[10px] font-bold uppercase tracking-[0.04em] text-ink-2"
+          data-testid="consensus-round"
+        >
+          {labeledNumber(labels.consensusRound ?? "Round $n", view.round)}
+        </span>
+      </div>
+
+      {view.drafts.length > 0 ? (
+        <div className="grid gap-2" data-testid="consensus-drafts">
+          <p className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute">
+            {labels.consensusDrafts ?? "Drafts"}
+          </p>
+          {view.drafts.map((draft, index) => (
+            <article
+              key={`${draft.decision}-${index}`}
+              className="rounded-[8px] border border-line bg-paper px-3 py-2"
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <b className="min-w-0 break-words text-[12.5px] font-semibold text-ink">
+                  {draft.label ||
+                    labeledNumber(
+                      labels.consensusDraftFallback ?? "Draft $n",
+                      index + 1,
+                    )}
+                </b>
+                {hasDecision(draft.decision) ? (
+                  <button
+                    className={clsx(
+                      "ml-auto rounded-lg border border-amber bg-amber px-3 py-1.5 font-mono text-[10.5px] font-bold uppercase tracking-[0.06em] text-white shadow-[0_4px_12px_-6px_var(--amber)] hover:bg-amber-2",
+                      disabled && "opacity-60",
+                    )}
+                    data-testid={`consensus-pick-draft-${index + 1}`}
+                    disabled={disabled}
+                    type="button"
+                    onClick={() => onDecision(draft.decision)}
+                  >
+                    {labeledNumber(
+                      labels.consensusPickDraft ?? "Use draft $n",
+                      index + 1,
+                    )}
+                  </button>
+                ) : null}
+              </div>
+              {draft.excerpt ? (
+                <p className="mt-2 max-h-24 overflow-y-auto whitespace-pre-wrap break-words text-[12px] leading-[1.5] text-ink-2">
+                  {draft.excerpt}
+                </p>
+              ) : null}
+            </article>
+          ))}
+        </div>
+      ) : null}
+
+      <div className="grid gap-1.5" data-testid="consensus-disagreements">
+        <p className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute">
+          {labels.consensusDisagreements ?? "Disagreements"}
+        </p>
+        {view.disagreements.length > 0 ? (
+          <ul className="grid gap-1.5">
+            {view.disagreements.map((item) => (
+              <li
+                key={`${item.axis}-${item.summary ?? ""}`}
+                className="rounded-[8px] border border-amber-line bg-amber-soft px-3 py-2"
+              >
+                <span className="font-mono text-[11px] font-bold uppercase tracking-[0.04em] text-amber">
+                  {item.axis}
+                </span>
+                {item.summary ? (
+                  <p className="mt-1 whitespace-pre-wrap break-words text-[12px] leading-[1.5] text-ink-2">
+                    {item.summary}
+                  </p>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="rounded-[8px] border border-line bg-ivory px-3 py-2 text-[12px] text-mute">
+            {labels.consensusNoDisagreements ?? "No material disagreements"}
+          </p>
+        )}
+      </div>
+
+      {view.debateExcerpt ? (
+        <div className="grid gap-1.5" data-testid="consensus-debate-log">
+          <p className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute">
+            {labels.consensusDebateLog ?? "Debate log"}
+          </p>
+          <p className="max-h-24 overflow-y-auto whitespace-pre-wrap break-words rounded-[8px] border border-line bg-ivory px-3 py-2 text-[12px] leading-[1.5] text-ink-2">
+            {view.debateExcerpt}
+          </p>
+        </div>
+      ) : null}
+
+      {canProvideResolution ? (
+        <div className="grid gap-1.5">
+          <label
+            className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute"
+            htmlFor="hitl-consensus-resolution"
+          >
+            {labels.consensusResolutionLabel ?? "Human resolution"}
+          </label>
+          <textarea
+            className={clsx(
+              "rounded-[10px] border border-line bg-paper p-3 text-[12.5px] text-ink outline-none focus:border-amber focus:shadow-[0_0_0_3px_var(--amber-soft)]",
+              compact ? "min-h-[72px]" : "min-h-[110px]",
+            )}
+            data-testid="consensus-resolution-input"
+            disabled={disabled}
+            id="hitl-consensus-resolution"
+            placeholder={
+              labels.consensusResolutionPlaceholder ??
+              "Write the trusted resolution for synthesis."
+            }
+            value={comments}
+            onChange={(e) => onCommentsChange(e.target.value)}
+          />
+        </div>
+      ) : null}
+
+      <div className="flex flex-wrap gap-2">
+        {canProvideResolution ? (
+          <button
+            className={clsx(
+              "rounded-lg border border-amber bg-amber px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-white shadow-[0_4px_12px_-6px_var(--amber)] hover:bg-amber-2",
+              (disabled || resolutionBlank) && "opacity-60",
+            )}
+            data-testid="consensus-provide-resolution"
+            disabled={disabled || resolutionBlank}
+            type="button"
+            onClick={() => onDecision("provide-resolution")}
+          >
+            {labels.consensusProvideResolution ?? "Use resolution"}
+          </button>
+        ) : null}
+        {canRerunRound ? (
+          <button
+            className={clsx(
+              "rounded-lg border border-line bg-paper px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-mute hover:border-mute hover:text-ink-2",
+              disabled && "opacity-60",
+            )}
+            data-testid="consensus-rerun-round"
+            disabled={disabled}
+            type="button"
+            onClick={() => onDecision("re-run-round")}
+          >
+            {labels.consensusRerunRound ?? "Run another round"}
+          </button>
+        ) : null}
+        {canAbort ? (
+          <button
+            className={clsx(
+              "rounded-lg border border-rose-300 bg-paper px-4 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.06em] text-rose-600 hover:border-rose-400 hover:bg-rose-50",
+              disabled && "opacity-60",
+            )}
+            data-testid="consensus-abort"
+            disabled={disabled}
+            type="button"
+            onClick={() => onDecision("abort")}
+          >
+            {labels.consensusAbort ?? "Abort"}
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 export function HitlDecisionControls({
   kind,
   reviewSchema,
@@ -422,6 +787,8 @@ export function HitlDecisionControls({
   const budgetBreach =
     kind === "budget_breach" ? budgetBreachFromSchema(schema) : null;
   const hookTrip = kind === "hook_trip" ? hookTripFromSchema(schema) : null;
+  const consensusHitl =
+    kind === "human" ? consensusHitlFromSchema(schema) : null;
   const decisionLabel = (d: string): string => {
     if (d === "approve") return labels.decisionApprove;
     if (d === "rework") return labels.decisionRework;
@@ -574,6 +941,16 @@ export function HitlDecisionControls({
             />
           ) : null}
         </>
+      ) : consensusHitl ? (
+        <ConsensusHitlCard
+          comments={comments}
+          compact={compact}
+          disabled={disabled}
+          labels={labels}
+          view={consensusHitl}
+          onCommentsChange={onCommentsChange}
+          onDecision={onDecision}
+        />
       ) : kind === "permission" ? (
         <div className="flex flex-wrap gap-2">
           {options.map((opt) => (

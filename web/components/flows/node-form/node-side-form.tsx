@@ -69,6 +69,7 @@ export type NodeSideFormLabels = {
   removeTransition: string;
   noTransitions: string;
   noGates: string;
+  consensus: ConsensusFormLabels;
   decide: DecideFormLabels;
   hooks: HooksFormLabels;
   gate: GateFormLabels;
@@ -101,6 +102,21 @@ export type DecideFormLabels = {
   onMismatchNone: string;
   onMismatchRetry: string;
   hint: string;
+};
+
+export type ConsensusFormLabels = {
+  participants: string;
+  participantId: string;
+  participantAgent: string;
+  participantRunner: string;
+  addParticipant: string;
+  removeParticipant: string;
+  materialAxes: string;
+  synthesizerAgent: string;
+  synthesizerRunner: string;
+  roundsMode: string;
+  roundsMax: string;
+  onNoConsensus: string;
 };
 
 const FIELD_CLS =
@@ -334,8 +350,88 @@ export function NodeSideForm({
     emit({ ...n, transitions: { ...transitions, [`outcome_${i}`]: "done" } });
   };
 
+  const participants = Array.isArray(n.participants)
+    ? (n.participants as Rec[])
+    : [];
+  const setParticipant = (index: number, patch: Rec): void => {
+    const next = participants.map((participant, i) =>
+      i === index ? { ...participant, ...patch } : participant,
+    );
+
+    emit({ ...n, participants: next });
+  };
+  const setParticipantAgent = (index: number, value: string): void => {
+    const current = participants[index] ?? {};
+    const next = { ...current };
+
+    if (value) {
+      next.agent = value;
+      delete next.runner;
+    } else {
+      delete next.agent;
+    }
+    setParticipant(index, next);
+  };
+  const setParticipantRunner = (index: number, value: string): void => {
+    const current = participants[index] ?? {};
+    const next = { ...current };
+
+    if (value) {
+      next.runner = value;
+      delete next.agent;
+    } else {
+      delete next.runner;
+    }
+    setParticipant(index, next);
+  };
+  const addParticipant = (): void => {
+    let index = participants.length + 1;
+    const existing = new Set(participants.map((p) => str(p.id)));
+
+    while (existing.has(`participant_${index}`)) index += 1;
+
+    emit({
+      ...n,
+      participants: [
+        ...participants,
+        { id: `participant_${index}`, runner: "" },
+      ],
+    });
+  };
+  const removeParticipant = (index: number): void =>
+    emit({
+      ...n,
+      participants: participants.filter((_, i) => i !== index),
+    });
+  const synthesizer = asRec(n.synthesizer);
+  const setSynthesizer = (patch: Rec): void =>
+    emit({ ...n, synthesizer: patch });
+  const setSynthesizerAgent = (value: string): void => {
+    if (value) {
+      setSynthesizer({ agent: value });
+
+      return;
+    }
+    const next = { ...synthesizer };
+
+    delete next.agent;
+    setSynthesizer(next);
+  };
+  const setSynthesizerRunner = (value: string): void => {
+    if (value) {
+      setSynthesizer({ runner: value });
+
+      return;
+    }
+    const next = { ...synthesizer };
+
+    delete next.runner;
+    setSynthesizer(next);
+  };
+
   const isPromptType =
     type === "ai_coding" || type === "judge" || type === "orchestrator";
+  const isConsensusType = type === "consensus";
   const isCommandType = type === "cli" || type === "check";
 
   // M38 (ADR-103) — Routing (`decide`) sub-panel. Offered when the node can
@@ -449,6 +545,19 @@ export function NodeSideForm({
               spellCheck={false}
               value={str(action.prompt)}
               onChange={(e) => setAction("prompt", e.target.value)}
+            />
+          </label>
+        ) : null}
+        {isConsensusType ? (
+          <label className="grid gap-1">
+            <span className={LABEL_CLS}>{labels.prompt}</span>
+            <textarea
+              className={`${FIELD_CLS} min-h-[90px] resize-y`}
+              data-testid="node-consensus-prompt"
+              readOnly={readOnly}
+              spellCheck={false}
+              value={str(n.prompt)}
+              onChange={(e) => emit({ ...n, prompt: e.target.value })}
             />
           </label>
         ) : null}
@@ -688,6 +797,138 @@ export function NodeSideForm({
               onChange={(v) => setSetting("failureClass", v || undefined)}
             />
           </>
+        ) : null}
+        {isConsensusType ? (
+          <div className="grid gap-3" data-testid="node-consensus-settings">
+            <div className="grid gap-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className={SECTION_CLS}>
+                  {labels.consensus.participants}
+                </span>
+                {readOnly ? null : (
+                  <button
+                    aria-label={labels.consensus.addParticipant}
+                    className="inline-flex items-center gap-1 rounded-md border border-line px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-ink-2 hover:bg-paper"
+                    data-testid="node-consensus-add-participant"
+                    type="button"
+                    onClick={addParticipant}
+                  >
+                    <PlusIcon aria-hidden="true" className="h-3 w-3" />
+                    {labels.consensus.addParticipant}
+                  </button>
+                )}
+              </div>
+              {participants.map((participant, index) => (
+                <div
+                  key={`${index}:${str(participant.id)}`}
+                  className="grid grid-cols-1 gap-2 md:grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)_minmax(0,1fr)_auto]"
+                  data-testid={`node-consensus-participant-${index}`}
+                >
+                  <TextField
+                    label={labels.consensus.participantId}
+                    readOnly={readOnly}
+                    testid={`node-consensus-participant-id-${index}`}
+                    value={str(participant.id)}
+                    onChange={(v) => setParticipant(index, { id: v })}
+                  />
+                  <TextField
+                    label={labels.consensus.participantAgent}
+                    readOnly={readOnly}
+                    testid={`node-consensus-participant-agent-${index}`}
+                    value={str(participant.agent)}
+                    onChange={(v) => setParticipantAgent(index, v)}
+                  />
+                  <TextField
+                    label={labels.consensus.participantRunner}
+                    readOnly={readOnly}
+                    testid={`node-consensus-participant-runner-${index}`}
+                    value={str(participant.runner)}
+                    onChange={(v) => setParticipantRunner(index, v)}
+                  />
+                  {readOnly ? null : (
+                    <button
+                      aria-label={labels.consensus.removeParticipant}
+                      className="inline-flex h-[34px] items-center self-end rounded-md border border-danger-line px-2 text-danger hover:bg-danger-soft"
+                      data-testid={`node-consensus-remove-participant-${index}`}
+                      type="button"
+                      onClick={() => removeParticipant(index)}
+                    >
+                      <TrashIcon aria-hidden="true" className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+            <TextField
+              label={labels.consensus.materialAxes}
+              readOnly={readOnly}
+              testid="node-consensus-material-axes"
+              value={joinList(n.material_axes)}
+              onChange={(v) =>
+                emit({
+                  ...n,
+                  material_axes: parseList(v).length ? parseList(v) : [],
+                })
+              }
+            />
+            <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+              <TextField
+                label={labels.consensus.synthesizerAgent}
+                readOnly={readOnly}
+                testid="node-consensus-synthesizer-agent"
+                value={str(synthesizer.agent)}
+                onChange={setSynthesizerAgent}
+              />
+              <TextField
+                label={labels.consensus.synthesizerRunner}
+                readOnly={readOnly}
+                testid="node-consensus-synthesizer-runner"
+                value={str(synthesizer.runner)}
+                onChange={setSynthesizerRunner}
+              />
+            </div>
+            <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+              <SelectField
+                label={labels.consensus.roundsMode}
+                options={["single_pass", "iterate"]}
+                readOnly={readOnly}
+                testid="node-consensus-rounds-mode"
+                value={str(asRec(n.rounds).mode)}
+                onChange={(v) =>
+                  emit({
+                    ...n,
+                    rounds: { ...asRec(n.rounds), mode: v || "single_pass" },
+                  })
+                }
+              />
+              <TextField
+                label={labels.consensus.roundsMax}
+                readOnly={readOnly}
+                testid="node-consensus-rounds-max"
+                type="number"
+                value={str(asRec(n.rounds).max)}
+                onChange={(v) =>
+                  emit({
+                    ...n,
+                    rounds: {
+                      ...asRec(n.rounds),
+                      max: v === "" ? 1 : Number(v),
+                    },
+                  })
+                }
+              />
+              <SelectField
+                label={labels.consensus.onNoConsensus}
+                options={["escalate"]}
+                readOnly={readOnly}
+                testid="node-consensus-on-no-consensus"
+                value={str(n.on_no_consensus)}
+                onChange={(v) =>
+                  emit({ ...n, on_no_consensus: v || "escalate" })
+                }
+              />
+            </div>
+          </div>
         ) : null}
         {type === "human" ? (
           <>

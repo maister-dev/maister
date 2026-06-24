@@ -58,7 +58,8 @@ async function seedChain() {
   const workspaceId = newId();
   const hitlId = newId();
 
-  await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
+  await db.insert(schema.projects).values({
+    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug: `proj-${projectId.slice(0, 8)}`,
     name: "Test",
@@ -81,7 +82,8 @@ async function seedChain() {
     schemaVersion: 1,
   });
 
-  await db.insert(schema.tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
+  await db.insert(schema.tasks).values({
+    number: Math.trunc(Math.random() * 1e9) + 1,
     id: taskId,
     projectId,
     title: "Test task",
@@ -133,7 +135,8 @@ async function seedScratchParents() {
     accountStatus: "active",
   });
 
-  await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
+  await db.insert(schema.projects).values({
+    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug: `scratch-${projectId.slice(0, 8)}`,
     name: "Scratch Test",
@@ -291,7 +294,8 @@ describe("UNIQUE constraints", () => {
     const id2 = newId();
     const slug = `dup-${id1.slice(0, 8)}`;
 
-    await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
+    await db.insert(schema.projects).values({
+      taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
       id: id1,
       slug,
       name: "p1",
@@ -300,7 +304,8 @@ describe("UNIQUE constraints", () => {
     });
 
     await expect(
-      db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
+      db.insert(schema.projects).values({
+        taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
         id: id2,
         slug,
         name: "p2",
@@ -324,7 +329,8 @@ describe("UNIQUE constraints", () => {
     const ids = await seedChain();
 
     await expect(
-      db.insert(schema.tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
+      db.insert(schema.tasks).values({
+        number: Math.trunc(Math.random() * 1e9) + 1,
         id: ids.taskId,
         projectId: ids.projectId,
         title: "x",
@@ -436,6 +442,111 @@ describe("node_attempts.enforcement_snapshot (M11c, migration 0013)", () => {
     expect(
       (rows.rows[0] as { enforcement_snapshot: unknown }).enforcement_snapshot,
     ).toEqual(original);
+  });
+});
+
+describe("consensus_round_verdicts (M41, migration 0070)", () => {
+  it("round-trips verdict rows and enforces one verifier-target verdict per round", async () => {
+    const ids = await seedChain();
+    const attemptId = newId();
+    const artifactId = newId();
+    const verdictId = newId();
+
+    await db.insert(schema.nodeAttempts).values({
+      id: attemptId,
+      runId: ids.runId,
+      nodeId: "consensus-plan",
+      nodeType: "consensus",
+      attempt: 1,
+      status: "Succeeded",
+    });
+
+    await db.insert(schema.artifactInstances).values({
+      id: artifactId,
+      runId: ids.runId,
+      nodeAttemptId: attemptId,
+      nodeId: "consensus-plan",
+      attempt: 1,
+      artifactDefId: "debate_log",
+      kind: "human_note",
+      producer: "runner",
+      locator: { kind: "inline", text: "raw verdict output" },
+      validity: "current",
+    });
+
+    await db.insert(schema.consensusRoundVerdicts).values({
+      id: verdictId,
+      runId: ids.runId,
+      nodeAttemptId: attemptId,
+      round: 1,
+      verifierKey: "codex",
+      targetKey: "claude",
+      parseStatus: "parsed",
+      verdict: "disagree",
+      axes: { feasibility: true, risk: false },
+      disagreements: [
+        {
+          axis: "risk",
+          claim: "migration is harmless",
+          counterEvidence: "raw SQL changes production tables",
+        },
+      ],
+      confidence: 0.82,
+      rawOutputArtifactId: artifactId,
+    });
+
+    await expect(
+      db.insert(schema.consensusRoundVerdicts).values({
+        id: newId(),
+        runId: ids.runId,
+        nodeAttemptId: attemptId,
+        round: 1,
+        verifierKey: "codex",
+        targetKey: "claude",
+        parseStatus: "parsed",
+        verdict: "agree",
+        axes: { feasibility: true, risk: true },
+      }),
+    ).rejects.toThrow();
+
+    const rows = await db.execute(
+      sql.raw(
+        `select axes, disagreements, raw_output_artifact_id from consensus_round_verdicts where id = '${verdictId}'`,
+      ),
+    );
+    const row = rows.rows[0] as {
+      axes: unknown;
+      disagreements: unknown;
+      raw_output_artifact_id: string | null;
+    };
+
+    expect(row.axes).toEqual({ feasibility: true, risk: false });
+    expect(row.disagreements).toEqual([
+      {
+        axis: "risk",
+        claim: "migration is harmless",
+        counterEvidence: "raw SQL changes production tables",
+      },
+    ]);
+    expect(row.raw_output_artifact_id).toBe(artifactId);
+
+    await db.execute(
+      sql.raw(`delete from artifact_instances where id = '${artifactId}'`),
+    );
+
+    const afterArtifactDelete = await db.execute(
+      sql.raw(
+        `select raw_output_artifact_id from consensus_round_verdicts where id = '${verdictId}'`,
+      ),
+    );
+
+    expect(
+      (
+        afterArtifactDelete.rows[0] as {
+          raw_output_artifact_id: string | null;
+        }
+      ).raw_output_artifact_id,
+    ).toBeNull();
   });
 });
 

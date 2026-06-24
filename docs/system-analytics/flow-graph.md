@@ -7,7 +7,8 @@
 > node `settings` enforcement → **M11c** (the `hooks` guardrail capability class
 > → **M40**, see [`guardrail-hooks.md`](guardrail-hooks.md)); typed artifact
 > instances + the `artifact_required` gate → **M12**; `external_check` ingestion → **M16**;
-> promotion-gating readiness policy → **M15**. Decisions:
+> promotion-gating readiness policy → **M15**; first-class `consensus` node →
+> **M41 Implemented**, see [`consensus.md`](consensus.md). Decisions:
 > [ADR-026](../decisions.md#adr-026-flow-graph-manifest-v1-nodes--engine-version-bump),
 > [ADR-027](../decisions.md#adr-027-append-only-node_attempts-run-ledger),
 > [ADR-028](../decisions.md#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped),
@@ -30,7 +31,8 @@ valid by compiling to single-action nodes, so this domain governs **all** runs.
 ## Domain entities
 
 - **Node** — a typed unit of work in a graph manifest (`nodes[]`):
-  `ai_coding | cli | check | judge | human | form`. Carries `input.requires?`,
+  `ai_coding | cli | check | judge | human | form`, plus the M41 Implemented
+  `consensus` node. Carries `input.requires?`,
   `output.produces?` (typed artifact decls, **M12**), a type-specific `action`,
   `pre_finish.gates?`, `finish` (auto or `human`), `transitions`, and `rework?`.
 - **FlowGraph** — the normalized in-memory graph produced by `compileManifest`:
@@ -697,9 +699,12 @@ flows write `node_attempts` and behave identically to the pre-M11a runner.
   [ADR-074 Mutation sensor on `artifact_required` (M29 — Implemented)](../decisions.md#adr-074-artifact-post-conditions--deterministic-mutation-sensor-on-artifact_required-gates),
   [ADR-079 workspacePolicy execution + node checkpoints (M30 — Implemented)](../decisions.md#adr-079-node-workspacepolicy-execution-and-checkpoint-capture),
   [ADR-080 Node-level retry policy (M30 — Implemented)](../decisions.md#adr-080-node-level-retry-policy),
-  [ADR-081 Rework session policy (M30 — Implemented)](../decisions.md#adr-081-rework-session-policy-with-resume-by-default).
+  [ADR-081 Rework session policy (M30 — Implemented)](../decisions.md#adr-081-rework-session-policy-with-resume-by-default),
+  [ADR-109 Consensus node (M41 — Implemented)](../decisions.md#adr-109-consensus-flow-graph-node--engine-owned-unanimous-draft-verification-and-human-resolution).
 - Spec (M26 — P1 Implemented, P7 + Wave-2 routing Implemented M38):
   `../../.ai-factory/specs/feature-m26-structured-output-run-context.md` (frozen SSOT).
+- Spec (M41 — Implemented):
+  `../../.ai-factory/specs/feature-m41-consensus-node.md` (frozen SSOT).
 - ERD: [`../db/runs-domain.md`](../db/runs-domain.md),
   narrative [`../database-schema.md`](../database-schema.md).
 - DSL: [`../flow-dsl.md`](../flow-dsl.md) §Flow graph node lifecycle, §Gate
@@ -709,6 +714,7 @@ flows write `node_attempts` and behave identically to the pre-M11a runner.
 - API: [`../api/web.openapi.yaml`](../api/web.openapi.yaml) (`respond` review
   decision).
 - Related: [`runs.md`](runs.md), [`hitl.md`](hitl.md), [`flows.md`](flows.md),
+  [`consensus.md`](consensus.md) (M41 — first-class consensus graph node),
   [`workbench.md`](workbench.md) (M22 — the read-only graph **view** + live
   node-status coloring that renders this topology),
   [`review-comments.md`](review-comments.md) (Implemented — ADR-072: composed

@@ -36,6 +36,7 @@ const TEXT_LABELS: EvidenceTextLabels = {
   kindGate: "Gate",
   kindDecision: "Decision",
   artifactKindMutationReport: "Mutation report",
+  artifactKindPlan: "Plan",
 };
 
 // One node of each kind + a supersession edge (old → new) so the dashed-edge
@@ -280,6 +281,7 @@ describe("artifactKindLabel", () => {
     expect(artifactKindLabel("mutation_report", TEXT_LABELS)).toBe(
       "Mutation report",
     );
+    expect(artifactKindLabel("plan", TEXT_LABELS)).toBe("Plan");
     expect(artifactKindLabel("diff", TEXT_LABELS)).toBe("diff");
     expect(artifactKindLabel("commit_set", TEXT_LABELS)).toBe("commit_set");
   });
@@ -288,10 +290,12 @@ describe("artifactKindLabel", () => {
     const enLabels = {
       ...TEXT_LABELS,
       artifactKindMutationReport: en.evidence.artifactKindMutationReport,
+      artifactKindPlan: en.evidence.artifactKindPlan,
     };
     const ruLabels = {
       ...TEXT_LABELS,
       artifactKindMutationReport: ru.evidence.artifactKindMutationReport,
+      artifactKindPlan: ru.evidence.artifactKindPlan,
     };
 
     expect(artifactKindLabel("mutation_report", enLabels)).toBe(
@@ -300,5 +304,7 @@ describe("artifactKindLabel", () => {
     expect(artifactKindLabel("mutation_report", ruLabels)).toBe(
       "Отчёт об изменениях",
     );
+    expect(artifactKindLabel("plan", enLabels)).toBe("Plan");
+    expect(artifactKindLabel("plan", ruLabels)).toBe("План");
   });
 });

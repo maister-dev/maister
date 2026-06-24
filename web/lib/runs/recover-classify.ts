@@ -13,6 +13,7 @@ export type NodeKind =
   | "human"
   | "form"
   | "orchestrator"
+  | "consensus"
   | null;
 
 export type RecoverPlan = "resume-agent" | "redispatch" | "discard-only";

@@ -24,8 +24,10 @@ import { atomicWriteJson } from "@/lib/atomic";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import {
+  assertConsensusDecision,
   assertHitlResponse,
   assertReviewDecision,
+  isConsensusResolutionSchema,
   isReviewSchema,
   resolveConfidence,
 } from "@/lib/flows/hitl-validate";
@@ -241,6 +243,30 @@ function payloadsEqual(a: unknown, b: unknown): boolean {
   } catch {
     return false;
   }
+}
+
+function assignmentResponsePayload(
+  hitlSchema: unknown,
+  response: unknown,
+): Record<string, unknown> {
+  if (
+    isConsensusResolutionSchema(hitlSchema) &&
+    response &&
+    typeof response === "object" &&
+    !Array.isArray(response)
+  ) {
+    const r = response as Record<string, unknown>;
+
+    return {
+      response: {
+        decision: r.decision,
+        resolutionPresent:
+          typeof r.resolution === "string" && r.resolution.length > 0,
+      },
+    };
+  }
+
+  return { response: response as Record<string, unknown> };
 }
 
 export type HitlActor =
@@ -1090,8 +1116,26 @@ async function handleFormHumanResponse(
     workspacePolicy?: string | null;
     reworkTarget?: string | null;
   } = {};
+  let canonicalResponse: unknown | null = null;
 
-  if (isReviewSchema(hitlRow.schema)) {
+  if (isConsensusResolutionSchema(hitlRow.schema)) {
+    const response = body.response;
+
+    if (response === undefined) {
+      throw new MaisterError(
+        "CONFIG",
+        `response is required for kind=${hitlRow.kind}`,
+      );
+    }
+    const resolved = assertConsensusDecision(response, hitlRow.schema);
+
+    canonicalResponse = resolved.response;
+    reviewFields = {
+      decision: resolved.decision,
+      workspacePolicy: null,
+      reworkTarget: null,
+    };
+  } else if (isReviewSchema(hitlRow.schema)) {
     // Review path: confidence flows through assertReviewDecision.
     const response = body.response;
 
@@ -1135,7 +1179,7 @@ async function handleFormHumanResponse(
   // confidence (always written below); the jsonb echo is a best-effort
   // convenience that only applies to object responses (review/form payloads in
   // practice) — for an array/primitive response the column still carries it.
-  const rawResponse: unknown = body.response;
+  const rawResponse: unknown = canonicalResponse ?? body.response;
   const responseToStore: unknown =
     confidence !== undefined &&
     rawResponse !== null &&
@@ -1253,9 +1297,11 @@ async function handleFormHumanResponse(
 
   if (claim.kind === "already-delivered") {
     await db.transaction(async (tx: any) => {
-      await completeResponseAssignment(tx, assignmentClaim, {
-        response: claim.storedResponse as Record<string, unknown>,
-      });
+      await completeResponseAssignment(
+        tx,
+        assignmentClaim,
+        assignmentResponsePayload(hitlRow.schema, claim.storedResponse),
+      );
       await args.recordSuccessAudit?.(tx, 200);
     });
 
@@ -1340,9 +1386,11 @@ async function handleFormHumanResponse(
       )
       .returning({ id: hitlRequests.id });
 
-    await completeResponseAssignment(tx, assignmentClaim, {
-      response: claim.storedResponse as Record<string, unknown>,
-    });
+    await completeResponseAssignment(
+      tx,
+      assignmentClaim,
+      assignmentResponsePayload(hitlRow.schema, claim.storedResponse),
+    );
     await args.recordSuccessAudit?.(tx, 200);
 
     if (stamped.length > 0) {

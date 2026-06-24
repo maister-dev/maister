@@ -24,6 +24,7 @@ type NodeKind =
   | "judge"
   | "guard"
   | "human"
+  | "consensus"
   | null;
 
 describe("classifyRecover — agent node (ignores retry_safe)", () => {
@@ -50,6 +51,7 @@ describe("classifyRecover — session-less node gated on retry_safe", () => {
     "judge",
     "guard",
     "human",
+    "consensus",
     null,
   ];
 

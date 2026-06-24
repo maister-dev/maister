@@ -634,6 +634,100 @@ orchestrator node debuts at `1.6.0`, the new engine floor). Flows without an
 > deferred policy layer lands — maister enforces read-only-vs-full only, so
 > path-scope ships `instructed`-only **(Phase 2)**.
 
+## Node `consensus` (M41 — Implemented)
+
+**(M41 — Implemented, [ADR-109](decisions.md#adr-109-consensus-flow-graph-node--engine-owned-unanimous-draft-verification-and-human-resolution).)**
+`type: consensus` is an engine-owned supervisory node for high-stakes planning
+or review decisions where one agent answer is not enough. It fans out read-only
+draft child runs, parks the parent as `WaitingOnChildren`, cross-verifies drafts
+with a deterministic rotation, tallies unanimous agreement over declared
+material axes, and either synthesizes one answer or escalates to human HITL.
+
+```yaml
+compat:
+  engine_min: 1.9.0
+
+nodes:
+  - id: decide_release_plan
+    type: consensus
+    prompt: |
+      Produce a release plan for the package authoring milestone.
+    participants:
+      - id: architect
+        agent: architecture-reviewer
+      - id: implementer
+        runner: codex
+      - id: qa
+        agent: qa-reviewer
+    workspace:
+      mode: repo_read
+    material_axes:
+      - scope_matches_milestone
+      - migration_order_is_safe
+      - human_handoff_is_clear
+    rounds:
+      mode: iterate
+      max: 3
+    on_no_consensus: escalate
+    synthesizer:
+      agent: plan-synthesizer
+    output:
+      produces:
+        - id: consensus_plan
+          kind: plan
+          current: true
+        - id: debate_log
+          kind: human_note
+          current: true
+    transitions:
+      success: implement
+```
+
+- **`prompt`** — the shared problem statement for every draft participant.
+- **`participants[]`** — 2..`MAISTER_MAX_ORCHESTRATOR_FANOUT` read-only draft
+  authors. Each entry declares exactly one stable `id` plus either `agent` or
+  `runner`; stale runtime resolution fails with `PRECONDITION`, not fallback.
+- **`workspace.mode`** — defaults to `repo_read`. M41 forbids writable competing
+  code drafts; participant overrides may stay read-only only.
+- **`material_axes[]`** — non-empty author-declared booleans verifiers must cover.
+  Consensus is reached only when every verifier returns `verdict: "agree"` and
+  every declared axis is `true`.
+- **`rounds`** — `mode: single_pass | iterate` (default `single_pass`) plus
+  bounded `max`. Iteration re-fans drafts with union disagreement context.
+- **`on_no_consensus`** — v1 supports `escalate`; the engine creates a bounded
+  HITL payload with draft/debate artifact refs and capped excerpts.
+- **`synthesizer`** — a non-voting role declared as `agent` or `runner`. It writes
+  the mandatory `consensus_plan` (`kind: plan`) and `debate_log`
+  (`kind: human_note`) artifacts before the node follows `transitions.success`.
+
+Cross-verification verdict output is parsed fail-closed:
+
+```json
+{
+  "verdict": "agree",
+  "axes": {
+    "scope_matches_milestone": true
+  },
+  "disagreements": [
+    {
+      "axis": "scope_matches_milestone",
+      "claim": "The plan includes writable code drafts.",
+      "counter_evidence": "The node is declared read-only in v1."
+    }
+  ],
+  "confidence": 0.72
+}
+```
+
+`confidence` is advisory only. Missing axes, unknown axes, malformed JSON, or
+unknown verdict strings count as `disagree` and are persisted in
+`consensus_round_verdicts` for recovery and audit.
+
+**Engine floor.** Declaring a `consensus` node requires
+`compat.engine_min >= 1.9.0`, else the manifest is refused at load with
+`MaisterError("CONFIG")`. Flows without a `consensus` node stay valid at their
+existing engine floor.
+
 ## Node `decide` dynamic routing (M38 — Implemented)
 
 **(M38 — Implemented, [ADR-103](decisions.md#adr-103-output-driven-dynamic-routing-decide--onmismatch-rework--engine-170).)**
@@ -956,7 +1050,7 @@ Flow graph nodes can declare typed artifacts as inputs and outputs. Runtime
 records artifact metadata in the database and keeps payloads in the run
 directory, worktree, or git repository. The first artifact kinds are:
 `diff`, `log`, `test_report`, `lint_report`, `ai_judgment`, `human_note`,
-`commit_set`, `checkpoint`, `preview`, and `generic_file`.
+`commit_set`, `checkpoint`, `preview`, `generic_file`, and `plan`.
 
 Each artifact instance belongs to a run, node, and attempt. It records the
 artifact definition id, kind, producer, uri/path, hash, size, created time, and
@@ -968,7 +1062,7 @@ produces. Each entry:
 | field          | type                                   | meaning                                                                                                                                        |
 | -------------- | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | `id`           | string, **unique within the manifest** | Stable artifact id other nodes' `input.requires` and `artifact_required` gates reference.                                                      |
-| `kind`         | enum (closed catalog)                  | One of `diff`, `log`, `test_report`, `lint_report`, `ai_judgment`, `human_note`, `commit_set`, `checkpoint`, `preview`, `generic_file`.        |
+| `kind`         | enum (closed catalog)                  | One of `diff`, `log`, `test_report`, `lint_report`, `ai_judgment`, `human_note`, `commit_set`, `checkpoint`, `preview`, `generic_file`, `plan`. |
 | `schema?`      | string                                 | Optional schema id/ref describing the payload shape.                                                                                           |
 | `path?`        | string                                 | Optional run-relative / worktree path to the payload.                                                                                          |
 | `ref?`         | string                                 | Optional git ref (used by `commit_set` / `diff`).                                                                                              |

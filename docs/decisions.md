@@ -133,6 +133,7 @@
 | [ADR-105](#adr-105-first-class-authored-package-kinds-and-centralized-studio-package-model) | First-class authored package kinds and centralized Studio package model | Accepted | 2026-06-22 |
 | [ADR-106](#adr-106-package-based-platform-agents--package-identity-attachment-gating-optional-flow-enrichment-and-per-agent-runner-policy) | Package-based platform agents — package identity, attachment gating, optional-flow enrichment, and per-agent runner policy | Accepted | 2026-06-23 |
 | [ADR-108](#adr-108-declarative-guardrailhook-engine--universal-supervisor-acp-seam-interceptor-native-materializer-seam-and-hook-trip-hitl-escalation) | Declarative guardrail/hook engine — universal supervisor ACP-seam interceptor (3 rules), native materializer seam, `hook_trip` HITL, engine 1.8.0 | Accepted | 2026-06-23 |
+| [ADR-109](#adr-109-consensus-flow-graph-node--engine-owned-unanimous-draft-verification-and-human-resolution) | Consensus flow-graph node — engine-owned unanimous draft verification and human resolution | Accepted | 2026-06-24 |
 
 ---
 
@@ -8418,6 +8419,73 @@ taken by an unrelated migration; the ADR number stays 106).
 - **A new `MaisterError` code, or modeling `hooks` as `enforced`:** rejected — a trip is a recoverable `NeedsInput` pause, not a terminal failure, and modeling supervisor enforcement as `enforced` in the static table would reopen the frozen ADR-041 strict-flip.
 
 ---
+
+### ADR-109: Consensus flow-graph node — engine-owned unanimous draft verification and human resolution
+
+**Date:** 2026-06-24
+**Status:** Accepted
+**Context:** The orchestrator engine can delegate governed child runs, and the
+flow graph can execute typed nodes, gates, dynamic routing, HITL, and artifact
+post-conditions. It still lacks a first-class way to ask several independent
+agents for competing read-only drafts, verify them against author-declared
+material axes, and produce a single synthesized answer only when the engine can
+prove agreement or a human explicitly resolves disagreement. Modeling this as an
+agent convention, an orchestrator prompt preset, or a judge gate would make the
+agent the authority on whether consensus exists. That would defeat the purpose:
+consensus must be a deterministic control-plane protocol.
+
+**Decision:** Add `consensus` as a first-class graph node with engine floor
+`1.9.0` and migration `0070`. The engine fans out governed `repo_read` draft
+child runs, parks the parent as `WaitingOnChildren`, resumes only after all
+drafts in the round settle, runs in-node rotational cross-verification, parses
+verdicts fail-closed, and tallies unanimity over author-declared
+`material_axes`. On agreement, a separately declared synthesizer writes exactly
+one current `consensus_plan` artifact (`kind = plan`) and one current
+`debate_log` artifact (`kind = human_note`) before the node transitions success.
+On no agreement, v1 escalates through the existing human HITL route with a
+consensus schema discriminator and allow-listed decisions: pick draft, provide
+resolution, rerun round, or abort. Cross-verification and synthesis sessions are
+not child runs, but they consume the same numeric agent-capacity ceiling as
+`MAISTER_MAX_CONCURRENT_AGENTS` and release tokens in `finally`.
+
+The consensus node reuses orchestrator run-tree mechanics where they are already
+the durable model (`parent_run_id`, `root_run_id`, cascade), but it does not
+expose the orchestrator delegation toolset to participants. Runner-only
+participants resolve through the platform runner chain without requiring agent
+catalog rows. Consensus-specific verdicts live in a dedicated
+`consensus_round_verdicts` table keyed by
+`(node_attempt_id, round, verifier_key, target_key)`, not in `gate_results`.
+
+**Consequences:**
+- Consensus is auditable as a control-plane protocol: the tally is pure,
+  deterministic, persisted, and not delegated to an agent.
+- `WaitingOnChildren` wake-up must be generalized or given a consensus-specific
+  consumer; the current `orchestrator_resume` consumer is not sufficient by
+  itself.
+- UI fan-out is required: Flow Studio authoring, read-only graph view,
+  run-detail selected node, inbox/HITL controls, workbench evidence, topology
+  labels, EN/RU strings, and screen docs all need first-class consensus
+  treatment rather than a generic JSON fallback.
+- DB/API/docs contract symmetry applies in the same change: node type
+  `consensus`, artifact kind `plan`, verdict ledger, HITL schema examples, and
+  public DTOs must agree.
+- No new process, sidecar, port, package dependency, env var, public route, or
+  `MaisterError` code is introduced.
+
+**Alternatives Considered:**
+- **Orchestrator prompt convention:** rejected because the agent would decide
+  whether consensus exists, and recovery/audit would depend on prompt discipline
+  rather than a durable engine protocol.
+- **Judge gate over multiple drafts:** rejected because gates are gate-id
+  oriented and do not model round/verifier/target identity or child-run
+  recollection.
+- **Majority/quorum/weighted policies in v1:** rejected to keep the first
+  contract explainable and fail-closed. V1 is unanimous over material axes;
+  other policies can be a future ADR.
+- **Writable competing-code drafts:** rejected for v1 because shared or
+  competing worktrees reopen ADR-102-class promotion ownership questions.
+- **New HITL route:** rejected because the existing route can carry a human HITL
+  schema discriminator and server-derived decision allow-list.
 
 ---
 

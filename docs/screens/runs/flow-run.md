@@ -28,6 +28,11 @@ When a run reaches review, I want the current review node to point me into the
 change review surface without losing the Flow story, so I can judge code changes
 in the context of the step that produced them.
 
+When a consensus node is running or blocked, I want the selected node result to
+show draft participants, round state, disagreements, HITL resolution state, and
+the final plan artifact — so I can understand agreement work without leaving the
+Flow run detail.
+
 ## Roles & capabilities
 
 | Role | Sees / does |
@@ -90,6 +95,11 @@ still a later responsive pass.
    per attempt (collapsible; a manifest-template fallback is shown for runs
    captured before `node_attempts.resolved_prompt` shipped), and logs where
    relevant.
+   For a `consensus` node, the selected result additionally shows participant
+   draft rows, current round, verifier rotation, material-axis agreement chips,
+   disagreement excerpts, child draft run links, and the required
+   `consensus_plan` / `debate_log` artifacts. Draft and debate bodies are
+   capped; full payloads open through Evidence/Workbench artifact routes.
    Standalone agent runs instead show session status, latest activity, evidence,
    and review or diff entry points.
 3. **Review entry point** - when the selected node is a review or human gate,
@@ -132,7 +142,8 @@ The landing focus follows state:
 | State | Main focus |
 | --- | --- |
 | `Pending` / `Running` | Flow result with current node selected, or agent activity center |
-| `NeedsInput` / `NeedsInputIdle` | Flow result with the blocked HITL node selected, or agent prompt/activity center |
+| `WaitingOnChildren` | Flow result with the parked orchestrator or consensus node selected; consensus shows draft child status and round progress |
+| `NeedsInput` / `NeedsInputIdle` | Flow result with the blocked HITL node selected; consensus no-agreement HITL shows the four resolution decisions |
 | `Review` | Review-producing node or agent result with a prominent review action |
 | `Crashed` | Flow or agent result plus crash/recover panel |
 | `Done` / `Failed` / `Abandoned` | Frozen result with Timeline and Evidence close at hand |
@@ -147,7 +158,8 @@ The landing focus follows state:
   Agent runs without a manifest use an agent result DTO instead of Flow
   topology.
 - `getRunNodeStatuses(runId)` plus `GET /api/runs/{runId}/graph-status` keep
-  node colors current via SSE-triggered refetch.
+  node colors current via SSE-triggered refetch; consensus nodes use the same
+  visual language and type tooltip as the Studio editor.
 - `getRunTimeline(runId)` (each `TimelineEntry` now carries the per-attempt
   `resolvedPrompt`), `buildEvidenceGraph(runId)`,
   `getRunReadiness(runId, projectId)`, `getRunCostSummary(runId)`,
@@ -165,16 +177,34 @@ screen doc describes the surface.
 
 `run`, `workbench`, `evidence`, and `readiness`.
 
+M41 adds consensus labels under the existing `run` and `evidence` namespaces:
+participant draft, verifier, target, round, agreement reached, no consensus,
+human resolution, consensus plan, debate log, and bounded excerpt labels. EN +
+RU parity required.
+
+## Consensus acceptance criteria
+
+- A selected consensus node uses the shared graph card, tooltip, status chip,
+  and node-detail layout used by other graph nodes.
+- `WaitingOnChildren` explains which draft children are still running without
+  consuming a scheduler-slot-like visual state.
+- `NeedsInput` selects the consensus node and shows the same decision options as
+  Inbox, with no duplicate or conflicting controls.
+- Terminal consensus success shows exactly one current `consensus_plan` and one
+  current `debate_log` artifact close to the node result and in Evidence.
+
 ## Linked artifacts
 
 - Blocks: [`run-inspector.md`](run-inspector.md), [`workbench.md`](workbench.md).
 - Behavior: [`../../system-analytics/runs.md`](../../system-analytics/runs.md),
   [`../../system-analytics/flow-graph.md`](../../system-analytics/flow-graph.md),
-  [`../../system-analytics/hitl.md`](../../system-analytics/hitl.md).
+  [`../../system-analytics/hitl.md`](../../system-analytics/hitl.md),
+  [`../../system-analytics/consensus.md`](../../system-analytics/consensus.md).
 - ADRs: [ADR-052](../../decisions.md#adr-052-live-node-status-coloring-via-sse-triggered-graph-status-refetch),
   [ADR-053](../../decisions.md#adr-053-workbench-file-tree-git-tracked-only-member-gated-reads),
   [ADR-066](../../decisions.md#adr-066-editor-and-diff-rendering-stack-shiki-git-diff-view-codemirror),
-  [ADR-082](../../decisions.md#adr-082-review-diff-completeness-with-dirty-state-protocol-and-scope-switcher).
+  [ADR-082](../../decisions.md#adr-082-review-diff-completeness-with-dirty-state-protocol-and-scope-switcher),
+  [ADR-109](../../decisions.md#adr-109-consensus-flow-graph-node--engine-owned-unanimous-draft-verification-and-human-resolution).
 - Source: `web/app/(app)/runs/[runId]/layout.tsx`,
   `web/components/board/flow-graph-view-section.tsx`,
   `web/components/board/run-timeline.tsx`,

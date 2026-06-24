@@ -1181,13 +1181,25 @@ export type ResolvedCapabilitySet = {
   mcps: Array<{ refId: string; sha: string | null; scope: string }>;
 };
 
-// M37 (ADR-098): launch-time effective agent-definition of a catalog-resolved
-// orchestrator child. ONLY the definition id + pinned revision — the resolved
-// runner stays in runner_snapshot (skill-context rule 207, never duplicated).
-export type DelegationSnapshot = {
-  agentDefinitionId: string;
-  revisionId: string;
-};
+// M37 (ADR-098): launch-time effective definition of a delegated child. Catalog
+// agents keep the historical `{agentDefinitionId,revisionId}` shape; M41
+// consensus runner participants use an explicit runner discriminator because
+// they are server-launched and do not require catalog agent rows.
+export type DelegationSnapshot =
+  | {
+      kind?: "agent";
+      agentDefinitionId: string;
+      revisionId: string;
+    }
+  | {
+      kind: "runner";
+      runnerId: string;
+      participantId: string;
+      nodeId: string;
+      nodeAttemptId: string;
+      round: number;
+      workspaceMode: "repo_read";
+    };
 
 // M37 (ADR-098, migration 0060): an as-plan task's launch intent — the
 // catalog-agent target + params the auto-launcher uses when the task's
@@ -1878,6 +1890,7 @@ export const nodeAttempts = pgTable(
         "guard",
         "form",
         "orchestrator",
+        "consensus",
       ],
     }).notNull(),
     attempt: integer("attempt").notNull().default(1),
@@ -2147,6 +2160,7 @@ export const artifactInstances = pgTable(
         "preview",
         "generic_file",
         "mutation_report",
+        "plan",
       ],
     }).notNull(),
     producer: text("producer", {
@@ -2189,6 +2203,68 @@ export const artifactInstances = pgTable(
     idxRunValidity: index("artifact_instances_run_validity_idx").on(
       t.runId,
       t.validity,
+    ),
+  }),
+);
+
+export type ConsensusVerdictParseStatus =
+  | "parsed"
+  | "invalid_json"
+  | "invalid_schema"
+  | "missing_axes"
+  | "unknown_axes";
+
+export type ConsensusRoundDisagreement = {
+  axis: string;
+  claim: string;
+  counterEvidence: string;
+};
+
+export const consensusRoundVerdicts = pgTable(
+  "consensus_round_verdicts",
+  {
+    id: text("id").primaryKey(),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    nodeAttemptId: text("node_attempt_id")
+      .notNull()
+      .references(() => nodeAttempts.id, { onDelete: "cascade" }),
+    round: integer("round").notNull(),
+    verifierKey: text("verifier_key").notNull(),
+    targetKey: text("target_key").notNull(),
+    parseStatus: text("parse_status", {
+      enum: [
+        "parsed",
+        "invalid_json",
+        "invalid_schema",
+        "missing_axes",
+        "unknown_axes",
+      ],
+    }).notNull(),
+    verdict: text("verdict", { enum: ["agree", "disagree"] }).notNull(),
+    axes: jsonb("axes").$type<Record<string, boolean>>().notNull().default({}),
+    disagreements: jsonb("disagreements")
+      .$type<ConsensusRoundDisagreement[]>()
+      .notNull()
+      .default([]),
+    confidence: real("confidence"),
+    rawOutputArtifactId: text("raw_output_artifact_id").references(
+      () => artifactInstances.id,
+      { onDelete: "set null" },
+    ),
+    errorCode: text("error_code"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniqAttemptRoundPair: unique(
+      "consensus_round_verdicts_attempt_round_pair_uq",
+    ).on(t.nodeAttemptId, t.round, t.verifierKey, t.targetKey),
+    idxRun: index("consensus_round_verdicts_run_idx").on(t.runId),
+    idxNodeAttempt: index("consensus_round_verdicts_node_attempt_idx").on(
+      t.nodeAttemptId,
     ),
   }),
 );
@@ -2855,6 +2931,9 @@ export type ArtifactInstanceInsert = typeof artifactInstances.$inferInsert;
 export type ArtifactValidity = ArtifactInstance["validity"];
 export type ArtifactKind = ArtifactInstance["kind"];
 export type ArtifactProducer = ArtifactInstance["producer"];
+export type ConsensusRoundVerdict = typeof consensusRoundVerdicts.$inferSelect;
+export type ConsensusRoundVerdictInsert =
+  typeof consensusRoundVerdicts.$inferInsert;
 export type ArtifactProjectionCursor =
   typeof artifactProjectionCursors.$inferSelect;
 export type ArtifactProjectionCursorInsert =

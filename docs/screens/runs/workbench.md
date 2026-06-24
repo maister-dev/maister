@@ -23,6 +23,10 @@ When I review changes, I want syntax highlighting, Markdown preview, Mermaid
 rendering, file status icons, line comments, and scoped diffs, so I can review a
 real branch rather than a raw patch dump.
 
+When a consensus node finishes or escalates, I want the synthesized plan, debate
+log, verifier rows, and draft references to appear as evidence — so I can audit
+why the final answer exists before I act on it.
+
 ## Roles & capabilities
 
 | Role | Sees / does |
@@ -96,8 +100,11 @@ large code-review surfaces sit in one expandable block.
 1. **Timeline** - chronological run ledger: node attempts, assignments, HITL,
    crashes, recoveries, promotions, token/cost chunks, and returned human work.
 2. **Evidence** - artifact graph, logs, reports, AI judgments, human notes,
-   commit sets, checkpoints, previews, payload states, and filters. Evidence
-   explains why a run is ready or blocked.
+   commit sets, checkpoints, previews, plans, payload states, and filters.
+   Evidence explains why a run is ready or blocked. M41 consensus adds a
+   `plan` artifact kind for `consensus_plan`, keeps `debate_log` as
+   `human_note`, and links verifier rows/draft child runs without exposing
+   unbounded draft bodies inline.
 3. **Files / Diff disclosure** - one collapsed-by-default block below the regular
    tabs. It mounts both the Files and Diff panes so file-tree expansion, selected
    file, and diff selection survive collapse and inner-tab switches. Deep links
@@ -151,6 +158,31 @@ Content-level states:
 | Evidence | empty, loading payload, payload gone, payload error |
 | Timeline | empty, live, terminal snapshot |
 
+### Consensus evidence (M41 — Implemented)
+
+Consensus evidence uses the existing Evidence tab and artifact routes:
+
+- `consensus_plan` renders as a `plan` artifact with the same Markdown/Mermaid
+  preview path as other textual artifacts.
+- `debate_log` renders as a `human_note` artifact and links back to the
+  consensus node attempt.
+- Verifier rows from `consensus_round_verdicts` appear as compact agreement /
+  disagreement evidence attached to the node attempt, with round, verifier,
+  target, parse status, and material-axis chips.
+- Draft child runs link to their own run pages; draft body excerpts are capped
+  in parent evidence and HITL context.
+
+**Acceptance criteria.**
+
+- Filtering by artifact kind includes `plan` without changing the layout of the
+  existing evidence filters.
+- `consensus_plan` and `debate_log` are visible from the selected consensus node
+  and from the Evidence tab with matching labels.
+- Verifier evidence shows parse failures as disagree evidence, not as missing
+  rows or generic runtime errors.
+- Deep links and file/diff query params continue to work when the Evidence tab
+  contains consensus artifacts.
+
 ## Data & APIs
 
 - Files: `GET /api/runs/{runId}/files` for tree data and RSC `?file=` reads
@@ -168,6 +200,8 @@ Content-level states:
 ## i18n
 
 `workbench`, `evidence`, `run`, and review-comment keys under `workbench.diff`.
+M41 adds `plan` artifact-kind labels, consensus verifier/target labels, round
+labels, and parse-status labels. EN + RU parity required.
 
 ## Linked artifacts
 
@@ -175,11 +209,13 @@ Content-level states:
   [`run-inspector.md`](run-inspector.md).
 - Behavior: [`../../system-analytics/runs.md`](../../system-analytics/runs.md),
   [`../../system-analytics/flow-graph.md`](../../system-analytics/flow-graph.md),
-  [`../../system-analytics/hitl.md`](../../system-analytics/hitl.md).
+  [`../../system-analytics/hitl.md`](../../system-analytics/hitl.md),
+  [`../../system-analytics/consensus.md`](../../system-analytics/consensus.md).
 - ADRs: [ADR-053](../../decisions.md#adr-053-workbench-file-tree-git-tracked-only-member-gated-reads),
   [ADR-066](../../decisions.md#adr-066-editor-and-diff-rendering-stack-shiki-git-diff-view-codemirror),
   [ADR-072](../../decisions.md#adr-072-pr-grade-review-comments-review_comments-table-snapshot-anchoring-runner-side-rework-compose-open-gate-guard),
-  [ADR-082](../../decisions.md#adr-082-review-diff-completeness-with-dirty-state-protocol-and-scope-switcher).
+  [ADR-082](../../decisions.md#adr-082-review-diff-completeness-with-dirty-state-protocol-and-scope-switcher),
+  [ADR-109](../../decisions.md#adr-109-consensus-flow-graph-node--engine-owned-unanimous-draft-verification-and-human-resolution).
 - Source: `web/components/workbench/workbench-panel.tsx`,
   `web/components/workbench/code-view.tsx`,
   `web/components/workbench/run-diff.tsx`,

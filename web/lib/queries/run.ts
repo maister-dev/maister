@@ -13,6 +13,7 @@ import type {
   NodeAttempt,
   NodeAttemptType,
   ResolvedCapabilitySet,
+  DelegationSnapshot,
 } from "@/lib/db/schema";
 import type { DeliveryPolicy } from "@/lib/runs/delivery-policy";
 import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
@@ -445,6 +446,12 @@ export interface ChildRunRef {
   endedAt: Date | null;
 }
 
+function delegationAgentId(snapshot: DelegationSnapshot | null): string | null {
+  if (!snapshot) return null;
+
+  return "agentDefinitionId" in snapshot ? snapshot.agentDefinitionId : null;
+}
+
 // The run-tree children of an orchestrator run, oldest-first. DTO-projected:
 // the raw `acp_session_id` and any internal handle are NEVER surfaced. A
 // non-orchestrator run (no children) yields an empty array.
@@ -480,7 +487,7 @@ export async function getChildRuns(
     taskNumber: row.taskNumber,
     taskKey: row.taskNumber !== null ? row.projectTaskKey : null,
     taskTitle: row.taskTitle,
-    delegationAgentId: row.delegationSnapshot?.agentDefinitionId ?? null,
+    delegationAgentId: delegationAgentId(row.delegationSnapshot ?? null),
     launchMode: row.launchMode,
     startedAt: row.startedAt,
     endedAt: row.endedAt,

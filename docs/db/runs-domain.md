@@ -11,8 +11,10 @@ full edge set is in [`erd.md`](erd.md)). See
 [`../system-analytics/social-board.md`](../system-analytics/social-board.md),
 [`../system-analytics/runs.md`](../system-analytics/runs.md),
 [`../system-analytics/workspaces.md`](../system-analytics/workspaces.md), and
-[`../system-analytics/scratch-runs.md`](../system-analytics/scratch-runs.md)
-for behavior.
+[`../system-analytics/scratch-runs.md`](../system-analytics/scratch-runs.md).
+M41 adds the designed `consensus_round_verdicts` ledger for consensus-node
+cross-verification; behavior lives in
+[`../system-analytics/consensus.md`](../system-analytics/consensus.md).
 
 ```mermaid
 erDiagram
@@ -30,6 +32,7 @@ erDiagram
     RUNS ||--o| RUN_COST_ROLLUPS : "derived token rollup (ADR-085)"
     RUNS ||--o{ GATE_RESULTS : "per-run gates (M11a)"
     NODE_ATTEMPTS ||--o{ GATE_RESULTS : "gate verdicts (M11a)"
+    NODE_ATTEMPTS ||--o{ CONSENSUS_ROUND_VERDICTS : "consensus verification rows (M41)"
     NODE_ATTEMPTS ||--o{ NODE_ATTEMPT_COST_ROLLUPS : "derived token rollups (ADR-085)"
     USERS ||--o{ NODE_ATTEMPTS : "takeover owner (M11b, SET NULL)"
     USERS ||--o{ WORKSPACES : "promotion owner (M18, nullable)"
@@ -197,7 +200,7 @@ erDiagram
         text id PK
         text run_id FK
         text node_id "node id in compiled FlowGraph"
-        text node_type "ai_coding|cli|check|judge|human|guard|form|orchestrator"
+        text node_type "ai_coding|cli|check|judge|human|guard|form|orchestrator|consensus"
         integer attempt "auto-increment per (run,node)"
         text status "Pending|Running|Succeeded|Failed|NeedsInput|Reworked|Stale"
         text decision "human decision on finish"
@@ -238,6 +241,23 @@ erDiagram
         text overridden_by "hitl_requests.id of override"
         timestamp created_at
         timestamp ended_at
+    }
+
+    CONSENSUS_ROUND_VERDICTS {
+        text id PK
+        text run_id FK
+        text node_attempt_id FK
+        integer round "starts at 1"
+        text verifier_key "participant id"
+        text target_key "participant id audited by verifier"
+        text parse_status "parsed|invalid_json|invalid_schema|missing_axes|unknown_axes"
+        text verdict "agree|disagree"
+        jsonb axes "declared material axis -> boolean"
+        jsonb disagreements "bounded disagreement facts"
+        real confidence "optional, advisory"
+        text raw_output_artifact_id "optional bounded raw evidence ref"
+        text error_code "MaisterErrorCode literal"
+        timestamp created_at
     }
 
     SCRATCH_RUNS {
@@ -367,6 +387,12 @@ erDiagram
 > [ADR-027](../decisions.md#adr-027-append-only-node_attempts-run-ledger) /
 > [ADR-028](../decisions.md#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped).
 
+> **(M41 — Implemented, migration `0070`.)** `CONSENSUS_ROUND_VERDICTS` records
+> per-round verifier rows for `consensus` node attempts. Its unique key
+> `(node_attempt_id, round, verifier_key, target_key)` lets recovery reuse
+> completed cross-verification sessions instead of spawning them again. Rows
+> cascade from both `RUNS` and `NODE_ATTEMPTS`.
+
 > **(M11b — migration `0011`, additive.)** The
 > `RUNS.status` enum gains `HumanWorking` (manual takeover claim), and
 > `NODE_ATTEMPTS` gains four nullable takeover columns — `owner_user_id`
@@ -452,6 +478,12 @@ BY started_at DESC LIMIT 1`; designed run-attempt schema switches to
 - **(M11a)** `gate_results_run_idx` on `(run_id)` and
   `gate_results_node_attempt_idx` on `(node_attempt_id)` — per-run and
   per-node-attempt gate lookups.
+- **(M41)** `consensus_round_verdicts_attempt_round_pair_uq` on
+  `(node_attempt_id, round, verifier_key, target_key)` UNIQUE — idempotent
+  consensus verifier replay.
+- **(M41)** `consensus_round_verdicts_run_idx` on `(run_id)` and
+  `consensus_round_verdicts_node_attempt_idx` on `(node_attempt_id)` — per-run
+  consensus audit and node-attempt verdict lookups.
 - **(ADR-078, Implemented)** `tasks_project_number_uq` on `(project_id,
   number)` UNIQUE — numbering backstop; allocation itself is serialized by
   the `projects.next_task_number` row lock.
@@ -491,6 +523,7 @@ Pending -> Running -> Review -> Done (promotion succeeds)
                   \-> NeedsInput -> HumanWorking -> Running (return, M11b)
                                                 \-> NeedsInput (release)
                                                 \-> Abandoned (abandon)
+                  \-> WaitingOnChildren -> Running (child runs settled)
                   \-> Crashed -> Running (Recover)
                               \-> Abandoned (Discard)
                   \-> Failed

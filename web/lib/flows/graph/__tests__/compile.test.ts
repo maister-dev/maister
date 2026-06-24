@@ -132,6 +132,38 @@ describe("compileManifest — graph nodes[]", () => {
     expect(g.nodes.get("implement")!.settings).toBeUndefined();
   });
 
+  it("maps a consensus graph node to nodeType consensus", () => {
+    const consensusGraph: FlowYamlV1 = {
+      schemaVersion: 1,
+      name: "consensus",
+      compat: { engine_min: "1.9.0" },
+      nodes: [
+        {
+          id: "decide",
+          type: "consensus",
+          prompt: "Decide the release plan.",
+          participants: [
+            { id: "architect", agent: "architecture-reviewer" },
+            { id: "implementer", runner: "codex" },
+          ],
+          material_axes: ["scope_matches_milestone"],
+          synthesizer: { agent: "plan-synthesizer" },
+          output: {
+            produces: [
+              { id: "consensus_plan", kind: "plan", current: true },
+              { id: "debate_log", kind: "human_note", current: true },
+            ],
+          },
+          transitions: { success: "done" },
+        },
+      ],
+    } as unknown as FlowYamlV1;
+
+    const compiled = compileManifest(consensusGraph);
+
+    expect(compiled.nodes.get("decide")?.nodeType).toBe("consensus");
+  });
+
   it("resolveTransition resolves a decision and treats 'done' as terminal", () => {
     const g = compileManifest(graph);
     const review = g.nodes.get("review")!;

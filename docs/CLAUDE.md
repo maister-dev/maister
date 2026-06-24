@@ -100,6 +100,7 @@ cases, process flows. One file per domain.
 | [`system-analytics/agents.md`](system-analytics/agents.md) | Platform agents (ADR-089/090, Implemented; ADR-106 package-keyed agents + migration 0068, Implemented): `.md` catalog + per-agent runner chain, five trigger sources, workspace axis with 3-layer read-only enforcement + quarantine, triage Q&A loop, ephemeral agent tokens. |
 | [`system-analytics/orchestrator.md`](system-analytics/orchestrator.md) | Orchestrator engine (ADR-098/099/100, Implemented): supervisory `orchestrator` node + run-tree (`parent_run_id`/`root_run_id`) + delegation toolset + `requires` success-gated task-DAG + `WaitingOnChildren` idle-checkpoint wait/resume. |
 | [`system-analytics/guardrail-hooks.md`](system-analytics/guardrail-hooks.md) | Guardrail/hook engine (ADR-108, Designed — M40): per-tool-call supervisor ACP-seam interceptor (`path_guard` / `repetition` / `no_progress`), `hook_trip` HITL escalation, two-tier unattended default, `NativeHookMaterializer` seam. |
+| [`system-analytics/consensus.md`](system-analytics/consensus.md) | Consensus node (ADR-109, Implemented — M41): first-class `consensus` graph node with governed read-only draft fan-out, rotational cross-verification, unanimous material-axis tally, human resolution, and synthesized `plan` artifact output. |
 
 ### Screen reference (`screens/`)
 

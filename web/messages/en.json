@@ -1749,6 +1749,20 @@
       "repetition": "repetition",
       "no_progress": "no progress"
     },
+    "consensusTitle": "Consensus resolution",
+    "consensusRound": "Round $n",
+    "consensusDrafts": "Drafts",
+    "consensusDisagreements": "Disagreements",
+    "consensusNoDisagreements": "No material disagreements",
+    "consensusDebateLog": "Debate log",
+    "consensusDraftFallback": "Draft $n",
+    "consensusPickDraft": "Use draft $n",
+    "consensusResolutionLabel": "Human resolution",
+    "consensusResolutionPlaceholder": "Write the trusted resolution for synthesis.",
+    "consensusProvideResolution": "Use resolution",
+    "consensusRerunRound": "Run another round",
+    "consensusAbort": "Abort",
+    "consensusResolutionRequired": "Write a resolution before submitting.",
     "error": {
       "generic": "Something went wrong. Try again.",
       "CRASH": "Something went wrong. Try again.",
@@ -1840,7 +1854,8 @@
     "kindArtifact": "Artifact",
     "kindGate": "Gate",
     "kindDecision": "Decision",
-    "artifactKindMutationReport": "Mutation report"
+    "artifactKindMutationReport": "Mutation report",
+    "artifactKindPlan": "Plan"
   },
   "readiness": {
     "summary": "Readiness",
@@ -1875,6 +1890,7 @@
         "command": "Command",
         "check": "Check",
         "judge": "Judge",
+        "consensus": "Consensus",
         "human": "Human review",
         "form": "Form",
         "terminal": "Terminal",
@@ -2573,6 +2589,7 @@
         "cli": "CLI",
         "check": "Check",
         "judge": "Judge",
+        "consensus": "Consensus",
         "human": "Human",
         "form": "Form"
       },
@@ -2640,6 +2657,20 @@
       "removeTransition": "Remove",
       "noTransitions": "No transitions",
       "noGates": "No gates",
+      "consensus": {
+        "participants": "Participants",
+        "participantId": "ID",
+        "participantAgent": "Agent",
+        "participantRunner": "Runner",
+        "addParticipant": "Add participant",
+        "removeParticipant": "Remove participant",
+        "materialAxes": "Material axes (comma-separated)",
+        "synthesizerAgent": "Synthesizer agent",
+        "synthesizerRunner": "Synthesizer runner",
+        "roundsMode": "Rounds mode",
+        "roundsMax": "Max rounds",
+        "onNoConsensus": "No consensus"
+      },
       "decide": {
         "title": "Routing",
         "source": "Source",

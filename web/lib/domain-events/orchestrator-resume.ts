@@ -4,7 +4,7 @@ import type { DomainEventRow } from "@/lib/db/schema";
 import type { DomainEventConsumer } from "@/lib/domain-events/consumers";
 import type { RunFlowOptions } from "@/lib/flows/graph/runner-core";
 
-import { and, count, eq, notInArray } from "drizzle-orm";
+import { and, count, desc, eq, notInArray } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
@@ -18,7 +18,7 @@ import {
 } from "@/lib/runs/state-transitions";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { runs } = schemaModule as unknown as Record<string, any>;
+const { nodeAttempts, runs } = schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
@@ -39,6 +39,8 @@ type ParentRow = {
   status: string;
   currentStepId: string | null;
 };
+
+type CoordinatorNodeType = "orchestrator" | "consensus";
 
 async function loadParent(
   db: Db,
@@ -73,6 +75,25 @@ async function pendingChildCount(db: Db, parentRunId: string): Promise<number> {
     );
 
   return Number(rows[0]?.n ?? 0);
+}
+
+async function currentCoordinatorNodeType(
+  db: Db,
+  parentRunId: string,
+  nodeId: string,
+): Promise<CoordinatorNodeType | null> {
+  const rows = await db
+    .select({ nodeType: nodeAttempts.nodeType })
+    .from(nodeAttempts)
+    .where(
+      and(eq(nodeAttempts.runId, parentRunId), eq(nodeAttempts.nodeId, nodeId)),
+    )
+    .orderBy(desc(nodeAttempts.attempt));
+  const nodeType = rows[0]?.nodeType;
+
+  return nodeType === "orchestrator" || nodeType === "consensus"
+    ? nodeType
+    : null;
 }
 
 // M37 (ADR-098) T5.2: the orchestrator_resume outbox consumer. A child-terminal
@@ -143,21 +164,36 @@ export function buildOrchestratorResumeConsumer(
             continue;
           }
 
-          // Wake decision. A failed/crashed/abandoned child wakes the parent
-          // unconditionally (deferred-release); a done child wakes only once the
-          // batch has no remaining pending children.
+          const currentNodeType = await currentCoordinatorNodeType(
+            _db,
+            parentRunId,
+            parent.currentStepId,
+          );
+
+          if (!currentNodeType) {
+            log.debug(
+              { eventId: event.id, parentRunId, nodeId: parent.currentStepId },
+              "orchestrator-resume: parked parent is not on a coordinator node — skip",
+            );
+            continue;
+          }
+
+          // Wake decision. Orchestrator failed/crashed/abandoned children wake
+          // the parent unconditionally (deferred-release); consensus waits for
+          // every draft child to settle, including failed drafts, before the
+          // parent verifies/tallies with complete evidence.
           const childFailed =
             event.kind === "run.failed" ||
             event.kind === "run.crashed" ||
             event.kind === "run.abandoned";
 
-          if (!childFailed) {
+          if (!childFailed || currentNodeType === "consensus") {
             const pending = await pendingChildCount(_db, parentRunId);
 
             if (pending > 0) {
               log.debug(
-                { eventId: event.id, parentRunId, pending },
-                "orchestrator-resume: done child but siblings still pending — wait",
+                { eventId: event.id, parentRunId, currentNodeType, pending },
+                "orchestrator-resume: child settled but siblings still pending — wait",
               );
               continue;
             }
@@ -181,6 +217,7 @@ export function buildOrchestratorResumeConsumer(
               eventId: event.id,
               parentRunId,
               nodeId: parent.currentStepId,
+              currentNodeType,
               kind: event.kind,
               childFailed,
             },
@@ -197,6 +234,7 @@ export function buildOrchestratorResumeConsumer(
             _db,
             parentRunId,
             parent.currentStepId,
+            currentNodeType,
             opts.resumeFlow,
           );
         } catch (err) {
@@ -225,11 +263,14 @@ async function driveResume(
   db: Db,
   parentRunId: string,
   targetStepId: string,
+  nodeType: CoordinatorNodeType,
   injected?: ResumeFlowFn,
 ): Promise<void> {
   const resumeOpts: RunFlowOptions = {
     db,
-    orchestratorResume: { targetStepId },
+    ...(nodeType === "orchestrator"
+      ? { orchestratorResume: { targetStepId } }
+      : { consensusResume: { targetStepId } }),
   };
 
   if (injected) {

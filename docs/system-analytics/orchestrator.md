@@ -19,7 +19,8 @@ run state machine ([runs.md](runs.md)), the outbox mechanics
 ([domain-events.md](domain-events.md)), the social-relation substrate it writes
 through ([social-board.md](social-board.md)), the scheduler cap
 ([scheduler.md](scheduler.md)), the catalog/trust resolution it consumes
-([agents.md](agents.md)), or capability enforcement (materialize-only per
+([agents.md](agents.md)), the M41 consensus protocol
+([consensus.md](consensus.md)), or capability enforcement (materialize-only per
 ADR-041/ADR-043 — [flow-settings.md](flow-settings.md)). The shared-worktree
 tree-level review/promote ownership model (re-enabling `workspace_mode: shared` for
 writable worktrees) is **Implemented — ADR-102**; flow (f) and its
@@ -422,6 +423,10 @@ flowchart TD
   (closed error union — no new code).
 - **Flow DSL + engine:** [`../flow-dsl.md`](../flow-dsl.md) (`orchestrator` node
   type, `1.6.0` floor, delegation semantics).
+- **Related graph nodes:** [`consensus.md`](consensus.md) (M41 Implemented —
+  reuses governed child run-tree mechanics but owns its own fan-out,
+  verification, tally, and HITL protocol; no orchestrator delegation toolset is
+  exposed to consensus participants).
 - **DB:** [`../database-schema.md`](../database-schema.md) (migration `0060`:
   run-tree columns, `WaitingOnChildren`, `node_attempts.node_type` value,
   `requires` kind; migration `0060`: the `run.review` `domain_events_kind` CHECK,

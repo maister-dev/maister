@@ -24,6 +24,7 @@ export type EvidenceTextLabels = {
   kindGate: string;
   kindDecision: string;
   artifactKindMutationReport: string;
+  artifactKindPlan: string;
 };
 
 // Translate a node/validity state token. Falls back to the raw token for
@@ -52,12 +53,19 @@ export function stateLabel(
 // Translate an artifact KIND token (artifact_instances.kind — the label the
 // evidence DTO assigns to artifact nodes). Only catalog-translated kinds map;
 // every other kind falls back to the raw token (mirrors stateLabel — never
-// invents keys). M29: mutation_report is the first translated artifact kind.
+// invents keys). Only user-facing catalog additions get translated.
 export function artifactKindLabel(
   kind: string,
   labels: EvidenceTextLabels,
 ): string {
-  return kind === "mutation_report" ? labels.artifactKindMutationReport : kind;
+  switch (kind) {
+    case "mutation_report":
+      return labels.artifactKindMutationReport;
+    case "plan":
+      return labels.artifactKindPlan;
+    default:
+      return kind;
+  }
 }
 
 // Translate an evidence node-kind token.

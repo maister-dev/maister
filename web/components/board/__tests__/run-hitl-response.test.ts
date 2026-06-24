@@ -33,6 +33,19 @@ const REVIEW_SCHEMA = {
   workspacePolicies: ["keep"],
 };
 
+const CONSENSUS_SCHEMA = {
+  kind: "consensus_resolution",
+  round: 1,
+  allowedDecisions: [
+    "pick-draft-1",
+    "provide-resolution",
+    "re-run-round",
+    "abort",
+  ],
+  drafts: [{ participantLabel: "Planner A", excerpt: "Bounded draft." }],
+  disagreements: [{ axis: "risk", summary: "Different rollout order." }],
+};
+
 function render(over: Partial<ResponseProps> = {}): string {
   const base: ResponseProps = {
     runId: "run-1",
@@ -124,5 +137,19 @@ describe("RunHitlResponse — review gate panel wiring (ADR-072 Task 13)", () =>
     expect(html).not.toContain("run.reviewOpenCount");
     expect(html).not.toContain("run.reviewOutdatedCount");
     expect(html).not.toContain("run.reviewApproveOpenWarn");
+  });
+});
+
+describe("RunHitlResponse — consensus resolution wiring (M41)", () => {
+  it("routes a consensus human HITL to the purpose-built decision controls", () => {
+    const html = render({ schema: CONSENSUS_SCHEMA });
+
+    expect(html).toContain('data-testid="consensus-hitl-card"');
+    expect(html).toContain("run.consensusTitle");
+    expect(html).toContain("run.consensusRound");
+    expect(html).toContain("run.consensusPickDraft");
+    expect(html).toContain("run.consensusProvideResolution");
+    expect(html).not.toContain("run.schemaLabel");
+    expect(html).not.toContain("run.confidenceLabel");
   });
 });

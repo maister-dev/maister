@@ -28,6 +28,7 @@ import {
   declaresGraphCapableEngineMin,
   semverGte,
 } from "@/lib/flows/engine-version";
+import { orchestratorMaxFanout } from "@/lib/instance-config";
 
 const log = pino({ name: "config" });
 
@@ -499,6 +500,9 @@ function nodeActionTemplate(node: NodeDef): string | undefined {
   if (node.type === "ai_coding" || node.type === "judge") {
     return node.action.prompt;
   }
+  if (node.type === "consensus") {
+    return node.prompt;
+  }
   if (node.type === "cli" || node.type === "check") {
     return node.action.command;
   }
@@ -592,10 +596,19 @@ const DECIDE_ENGINE_MIN = "1.7.0";
 // capability class) must declare engine_min >= this value.
 const HOOKS_ENGINE_MIN = "1.8.0";
 
+// M41 floor (ADR-109): manifests declaring a `consensus` node must declare
+// engine_min >= this value.
+const CONSENSUS_ENGINE_MIN = "1.9.0";
+
 // Returns true when any node is an orchestrator node. Used to gate the 1.6.0
 // floor.
 function declaresOrchestratorNode(nodes: NodeDef[]): boolean {
   return nodes.some((n) => n.type === "orchestrator");
+}
+
+// Returns true when any node is a consensus node. Used to gate the 1.9.0 floor.
+function declaresConsensusNode(nodes: NodeDef[]): boolean {
+  return nodes.some((n) => n.type === "consensus");
 }
 
 // Returns true when any ai_coding node binds a catalog agent. Used to gate
@@ -840,6 +853,18 @@ export function validateGraphManifest(
     }
   }
 
+  // M41 (ADR-109): a consensus node requires the 1.9.0 floor. Manifests
+  // without a consensus node stay valid at any engine_min.
+  if (
+    declaresConsensusNode(nodes) &&
+    !semverGte(engineMin, CONSENSUS_ENGINE_MIN)
+  ) {
+    throw new MaisterError(
+      "CONFIG",
+      `graph flow ${flowYamlPath} is declaring a consensus node but engine_min "${engineMin}" < ${CONSENSUS_ENGINE_MIN} — bump compat.engine_min to ${CONSENSUS_ENGINE_MIN} (host engine is ${MAISTER_ENGINE_VERSION})`,
+    );
+  }
+
   const nodeIds = new Set<string>();
 
   for (const n of nodes) {
@@ -884,6 +909,7 @@ export function validateGraphManifest(
 
   // Rule 6 (M15): blocking human_review gates deadlock promotion — reject always.
   validateNoBlockingHumanReview(nodes, flowYamlPath);
+  validateConsensusNodes(nodes, flowYamlPath);
 
   const capabilityRefIds = opts?.capabilityRefIds;
 
@@ -1110,6 +1136,107 @@ function validateArtifacts(nodes: NodeDef[], flowYamlPath: string): void {
           );
         }
       }
+    }
+  }
+}
+
+type ConsensusNodeDef = Extract<NodeDef, { type: "consensus" }>;
+
+const CONSENSUS_REQUIRED_OUTPUTS: ReadonlyMap<string, "plan" | "human_note"> =
+  new Map([
+    ["consensus_plan", "plan"],
+    ["debate_log", "human_note"],
+  ]);
+
+function validateConsensusNodes(nodes: NodeDef[], flowYamlPath: string): void {
+  for (const node of nodes) {
+    if (node.type !== "consensus") continue;
+
+    validateConsensusParticipants(node, flowYamlPath);
+    validateConsensusAxes(node, flowYamlPath);
+    validateConsensusOutputs(node, flowYamlPath);
+  }
+}
+
+function validateConsensusParticipants(
+  node: ConsensusNodeDef,
+  flowYamlPath: string,
+): void {
+  const fanoutCap = orchestratorMaxFanout();
+
+  if (node.participants.length > fanoutCap) {
+    throw new MaisterError(
+      "CONFIG",
+      `node "${node.id}" consensus participants count ${node.participants.length} exceeds MAISTER_MAX_ORCHESTRATOR_FANOUT ${fanoutCap} in ${flowYamlPath}`,
+    );
+  }
+
+  const seen = new Set<string>();
+
+  for (const participant of node.participants) {
+    if (seen.has(participant.id)) {
+      throw new MaisterError(
+        "CONFIG",
+        `node "${node.id}" consensus participants duplicate id "${participant.id}" in ${flowYamlPath}`,
+      );
+    }
+    seen.add(participant.id);
+  }
+}
+
+function validateConsensusAxes(
+  node: ConsensusNodeDef,
+  flowYamlPath: string,
+): void {
+  const seen = new Set<string>();
+
+  for (const axis of node.material_axes) {
+    if (seen.has(axis)) {
+      throw new MaisterError(
+        "CONFIG",
+        `node "${node.id}" consensus material_axes duplicate axis "${axis}" in ${flowYamlPath}`,
+      );
+    }
+    seen.add(axis);
+  }
+}
+
+function validateConsensusOutputs(
+  node: ConsensusNodeDef,
+  flowYamlPath: string,
+): void {
+  const produces = node.output?.produces ?? [];
+  const requiredIds = [...CONSENSUS_REQUIRED_OUTPUTS.keys()];
+
+  if (produces.length !== CONSENSUS_REQUIRED_OUTPUTS.size) {
+    throw new MaisterError(
+      "CONFIG",
+      `node "${node.id}" consensus output.produces must declare exactly ${requiredIds.join(" and ")} in ${flowYamlPath}`,
+    );
+  }
+
+  for (const [id, kind] of CONSENSUS_REQUIRED_OUTPUTS) {
+    const artifact = produces.find((entry) => entry.id === id);
+
+    if (artifact === undefined) {
+      throw new MaisterError(
+        "CONFIG",
+        `node "${node.id}" consensus output.produces must include ${requiredIds.join(" and ")} in ${flowYamlPath}`,
+      );
+    }
+
+    if (artifact.kind !== kind) {
+      throw new MaisterError(
+        "CONFIG",
+        `node "${node.id}" consensus output "${id}" must be kind "${kind}" in ${flowYamlPath}`,
+      );
+    }
+
+    if (artifact.current !== true) {
+      throw new MaisterError(
+        "CONFIG",
+        `node "${node.id}" consensus output "${id}" must declare current: true in ${flowYamlPath}`,
+      );
     }
   }
 }

@@ -26,6 +26,11 @@ readable, color-coded node cards, named outcome handles, and a focused propertie
 panel — so I can build and understand the graph without fighting cramped tabs or a
 narrow viewport.
 
+When I add a consensus node, I want participants, material axes, rounds,
+synthesizer, and mandatory outputs to be edited in the same right-panel pattern
+as every other node — so I can author a multi-agent agreement point without
+dropping into raw YAML for routine changes.
+
 ## Roles & capabilities
 
 | Role | Sees | Notes |
@@ -63,7 +68,7 @@ collapsible app rail ([`../chrome/left-rail.md`](../chrome/left-rail.md)):
    `validateEditorManifest`) · readiness chip · **Save** · **Cut version** ·
    toggles `[Files] [YAML] [Diff]`.
 2. **Canvas (dominant, full height)** — the `FlowEditorToolbar` palette (Add
-   node ×5 / Add gate ×6 / Remove), color-coded node cards (icon chip + status
+   node ×6 after M41 `consensus` / Add gate ×6 / Remove), color-coded node cards (icon chip + status
    chip), named-outcome handles, dashed amber rework edges, `<MiniMap>` +
    `<Controls>`. Drag persists `presentation` x/y (ADR-064).
 3. **Right properties panel (collapsible, ~440–500 px on desktop)** — grouped
@@ -148,6 +153,42 @@ correctness and first-class kinds (behavior SSOT:
   Platform Agent / Subagent / Skill, with seeded templates) are **deferred** (#134,
   A4); `newSubagentTemplate` exists but is not yet wired into a create flow.
 
+### Consensus node properties (M41 — Implemented)
+
+The `consensus` node is authorable through the same canvas and right-panel
+surface, not a bespoke wizard. The toolbar adds one consensus node type with the
+canonical node visual from `node-visuals.ts`; the read-only `FlowGraphView`
+uses the same icon, hue, tooltip, handles, and compact node body.
+
+- **Canvas card** — shows node label, `consensus` type chip, participant count,
+  round mode/max, and a concise `WaitingOnChildren`/HITL state when previewing a
+  run. Tooltips name the node as "Consensus", explain read-only draft fan-out,
+  and list the first few material axes with a capped "+N more" suffix.
+- **Properties / Identity** — node id, label, prompt, description, and
+  transitions follow existing node controls.
+- **Properties / Consensus** — participant rows (`id`, `agent` or `runner`,
+  read-only workspace mode), material axes add/remove list, rounds segmented
+  control (`single_pass`/`iterate`) with a numeric max, `on_no_consensus`
+  fixed to `escalate`, and synthesizer selector.
+- **Properties / Outputs** — the default fills must create
+  `consensus_plan` (`kind: plan`, current) and `debate_log`
+  (`kind: human_note`, current). Validation blocks deletion or kind drift for
+  these mandatory outputs.
+- **Validation summary** — surfaces participant count, duplicate ids, missing
+  axes, missing synthesizer, unsupported workspace mode, over-fanout, and
+  engine-floor errors against the selected node.
+
+**Acceptance criteria.**
+
+- Adding a consensus node from the palette creates valid default YAML that still
+  renders on the canvas and in `FlowGraphView`.
+- The right properties panel can fill in every required consensus field without
+  raw YAML editing.
+- Tooltip and canvas text remain clipped/capped rather than resizing the node or
+  overlapping handles on dense graphs.
+- EN and RU labels exist for every consensus control, validation message,
+  tooltip, and artifact-kind label.
+
 ## States
 
 ```mermaid
@@ -186,9 +227,10 @@ Behavior SSOT: [`../../system-analytics/flow-studio.md`](../../system-analytics/
 ## i18n
 
 `flowEditor` (top-bar labels, drawer labels, rail toggle, node/gate visual
-labels, the existing node-form / toolbar / validation keys, plus the M38
-`flowEditor.nodeForm.decide*` routing-panel keys), `flows` (page header + save
-hint). EN + RU parity required.
+labels, the existing node-form / toolbar / validation keys, the M38
+`flowEditor.nodeForm.decide*` routing-panel keys, and M41
+`flowEditor.nodeForm.consensus*` participant/axis/round/synthesizer/output keys),
+`flows` (page header + save hint). EN + RU parity required.
 
 ## Linked artifacts
 
@@ -196,8 +238,11 @@ hint). EN + RU parity required.
   [#adr-092](../../decisions.md#adr-092) (unified Studio + editable-local-package
   direction),
   [#adr-103](../../decisions.md#adr-103-output-driven-dynamic-routing-decide--onmismatch-rework--engine-170)
-  (M38 `decide` routing panel + outcome-labeled edges).
+  (M38 `decide` routing panel + outcome-labeled edges),
+  [#adr-109](../../decisions.md#adr-109-consensus-flow-graph-node--engine-owned-unanimous-draft-verification-and-human-resolution)
+  (M41 consensus node).
 - Spec: [`../../../.ai-factory/specs/feature-flow-studio-editor.md`](../../../.ai-factory/specs/feature-flow-studio-editor.md).
-- Behavior: [`../../system-analytics/flow-studio.md`](../../system-analytics/flow-studio.md).
+- Behavior: [`../../system-analytics/flow-studio.md`](../../system-analytics/flow-studio.md),
+  [`../../system-analytics/consensus.md`](../../system-analytics/consensus.md).
 - Area: [`README.md`](README.md).
 - Source: see the Header.

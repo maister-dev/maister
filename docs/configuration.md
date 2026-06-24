@@ -945,6 +945,20 @@ was not needed (availability is session-presence-driven, ADR-078 DD2), so M30
 adds no deployment surface beyond the existing `MAISTER_RUNTIME_ROOT` layout
 precondition.
 
+**M41 engine bump (Implemented).** M41 bumps `MAISTER_ENGINE_VERSION` `1.8.0 →
+1.9.0` in `web/lib/flows/engine-version.ts` for the first-class `consensus`
+flow-graph node ([ADR-109](decisions.md#adr-109-consensus-flow-graph-node--engine-owned-unanimous-draft-verification-and-human-resolution)).
+A manifest declaring `type: consensus` MUST declare `compat.engine_min >= 1.9.0`;
+an older engine refuses it through the same `engine_min..engine_max` check. The
+node introduces no new process, route, sidecar, or environment variable. It
+reuses `MAISTER_MAX_ORCHESTRATOR_FANOUT` for the participant cap,
+`MAISTER_ORCHESTRATOR_MAX_DEPTH` for run-tree recursion checks on draft child
+runs, and `MAISTER_MAX_CONCURRENT_AGENTS` for ephemeral verification/synthesis
+ACP sessions through the existing capacity helper. Runtime logs for fan-out,
+park/resume, verify, tally, synthesis, and HITL must use structured fields
+(`runId`, `nodeId`, `nodeAttemptId`, `round`, participant/verifier IDs, verdict
+status) and must not interpolate prompt, draft, debate, or resolution body text.
+
 ### Verdict calibration (M15)
 
 `ai_judgment` and `skill_check` gates may declare a confidence threshold so a passing
@@ -1045,10 +1059,10 @@ Read by Next.js (`web/`) and `supervisor/` at startup:
 | `DB_URL` | yes | — | `lib/db/client.ts`; accepts `postgres://...` or `file:...` |
 | `MAISTER_DB_POOL_MAX` | no | `10` | Postgres pool size in `lib/db/client.ts` |
 | `MAISTER_MAX_CONCURRENT_RUNS` | no | `6` | Global Flow/scratch run concurrency cap (across all projects; counts `run_kind IN ('flow','scratch')`). M24 scheduler `flow_run` jobs delegate to this existing launch queue instead of consuming `command` budgets. (M34 — owner-requested default bump `3 → 6`; env semantics unchanged.) |
-| `MAISTER_MAX_CONCURRENT_AGENTS` | no | `3` | **(M34 — Implemented, ADR-089.)** Separate concurrency budget for platform-agent runs (`run_kind='agent'`) enforced at `tryStartRun` with its own `Pending` FIFO — agent runs never consume Flow slots and vice versa. Repurposed from the obsolete M24 meaning (SQL claim budget for `agent_tick` attempts — `agent_tick.dispatcher` is now a hardcoded-budget-1 singleton). |
+| `MAISTER_MAX_CONCURRENT_AGENTS` | no | `3` | **(M34 — Implemented, ADR-089.)** Separate concurrency budget for platform-agent runs (`run_kind='agent'`) enforced at `tryStartRun` with its own `Pending` FIFO — agent runs never consume Flow slots and vice versa. **M41 consensus** also uses this ceiling for ephemeral verification/synthesis ACP sessions through an internal limiter; tokens are released in `finally` and these sessions are not `runs` rows. Repurposed from the obsolete M24 meaning (SQL claim budget for `agent_tick` attempts — `agent_tick.dispatcher` is now a hardcoded-budget-1 singleton). |
 | `MAISTER_MAX_CONCURRENT_COMMANDS` | no | `2` | **Implemented, M24.** SQL claim budget for concurrent `command` scheduler attempts; invalid or non-positive values fall back to `2` and do not reduce or override `MAISTER_MAX_CONCURRENT_RUNS`. |
-| `MAISTER_MAX_ORCHESTRATOR_FANOUT` | no | `16` | **(M37 — Implemented, [ADR-098](decisions.md#adr-098-orchestrator-engine--supervisory-node-governed-run-tree-delegation-toolset-success-gated-task-dag-idle-checkpoint-waitresume).)** Web tier. Per-plan task cap for an orchestrator node's `run_plan` delegation; an `orchestrator` node may lower it via `settings.delegation.max_fanout`. Enforced pre-transaction — an over-limit plan is refused with `MaisterError({ code: "CONFIG" })` and no partial run-tree is written. |
-| `MAISTER_ORCHESTRATOR_MAX_DEPTH` | no | `3` | **(M37 — Implemented, [ADR-098](decisions.md#adr-098-orchestrator-engine--supervisory-node-governed-run-tree-delegation-toolset-success-gated-task-dag-idle-checkpoint-waitresume).)** Web tier. Run-tree recursion bound (`runs.parent_run_id` depth) for orchestrator delegation; an `orchestrator` node may lower it via `settings.delegation.max_depth`. Enforced pre-transaction — an over-depth request is refused with `MaisterError({ code: "CONFIG" })`. |
+| `MAISTER_MAX_ORCHESTRATOR_FANOUT` | no | `16` | **(M37 — Implemented, [ADR-098](decisions.md#adr-098-orchestrator-engine--supervisory-node-governed-run-tree-delegation-toolset-success-gated-task-dag-idle-checkpoint-waitresume).)** Web tier. Per-plan task cap for an orchestrator node's `run_plan` delegation; an `orchestrator` node may lower it via `settings.delegation.max_fanout`. **M41 consensus** reuses the same helper as the hard `participants[]` cap and does not introduce a per-node raise above the host limit. Enforced pre-transaction — an over-limit plan is refused with `MaisterError({ code: "CONFIG" })` and no partial run-tree is written. |
+| `MAISTER_ORCHESTRATOR_MAX_DEPTH` | no | `3` | **(M37 — Implemented, [ADR-098](decisions.md#adr-098-orchestrator-engine--supervisory-node-governed-run-tree-delegation-toolset-success-gated-task-dag-idle-checkpoint-waitresume).)** Web tier. Run-tree recursion bound (`runs.parent_run_id` depth) for orchestrator delegation; an `orchestrator` node may lower it via `settings.delegation.max_depth`. **M41 consensus** draft child runs are regular run-tree children and reuse the same depth guard. Enforced pre-transaction — an over-depth request is refused with `MaisterError({ code: "CONFIG" })`. |
 | `MAISTER_RECONCILE_SWEEP_INTERVAL_SECONDS` | no | `60` | Web: periodic reconcile sweeper interval (M19) |
 | `MAISTER_RECONCILE_GRACE_SECONDS` | no | `90` | Web: grace window before a no-live-session agent run is crashed (protects in-flight launches/recovers) (M19) |
 | `MAISTER_GC_SWEEP_INTERVAL_SECONDS` | no | `3600` | Web: background GC sweeper interval (M19) |

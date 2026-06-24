@@ -47,11 +47,12 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `scratch_attachments`         | Text note, file path, or issue URL attachments attached to a scratch run or message.                                                                                                                                                                                                                                       | `scratch_runs.run_id`, optional `scratch_messages.id`                      |
 | `scratch_capability_profiles` | Launch-time MCP/skill/rule/settings/restriction snapshot and materialized profile path.                                                                                                                                                                                                                                    | `scratch_runs.run_id`                                                      |
 | `step_runs`                   | Per-step execution records for the linear flow runner (legacy-read after M11a).                                                                                                                                                                                                                                            | `runs.id`                                                                  |
-| `node_attempts`               | **(M11a — Designed, migration `0010`)** Append-only per-node-attempt ledger for the graph runner. **(M11b, migration `0011`)** adds takeover columns (`owner_user_id`, `base_ref`, `returned_commits`, `returned_diff`). **(M11c, migration `0013`)** adds the nullable, append-only `enforcement_snapshot` verdict audit. **(migration `0053`)** adds the nullable per-attempt `resolved_prompt` capture. | `runs.id`, `users.id` (takeover owner, M11b)                               |
+| `node_attempts`               | **(M11a — Designed, migration `0010`)** Append-only per-node-attempt ledger for the graph runner. **(M11b, migration `0011`)** adds takeover columns (`owner_user_id`, `base_ref`, `returned_commits`, `returned_diff`). **(M11c, migration `0013`)** adds the nullable, append-only `enforcement_snapshot` verdict audit. **(migration `0053`)** adds the nullable per-attempt `resolved_prompt` capture. **(M41, migration `0070`)** adds node type `consensus`. | `runs.id`, `users.id` (takeover owner, M11b)                               |
 | `run_cost_rollups`            | **(ADR-085 — Designed, migration `0047`)** Derived token rollup per run, reconciled from `.maister/<project>/runs/<runId>/cost.jsonl`. Stores token totals by kind, resume-tax totals, model breakdown, and source cursor; no duration columns.                                                                                | `runs.id`, `projects.id`, optional `flows.id`, optional `tasks.id`         |
 | `node_attempt_cost_rollups`   | **(ADR-085 — Designed, migration `0047`)** Derived token rollup per graph node attempt/model, reconciled from enriched supervisor cost records stamped with `nodeAttemptId`.                                                                                                                                                | `runs.id`, `projects.id`, `node_attempts.id`                               |
 | `gate_results`                | **(M11a — Designed, migration `0010`)** Gate execution verdicts (`command_check`/`ai_judgment`/`human_review`/…).                                                                                                                                                                                                          | `runs.id`, `node_attempts.id`                                              |
-| `artifact_instances`          | **(M12 — Implemented, migration `0015`)** Typed evidence index (diff/log/report/judgment/note/commit_set/checkpoint/preview; + `mutation_report`, M29 — text column, no migration). Deterministic upsert PK.                                                                                                                                                                     | `runs.id`, `node_attempts.id`, self-ref `superseded_by_id`                 |
+| `consensus_round_verdicts`    | **(M41 — Implemented, migration `0070`)** Per-round cross-verification verdict ledger for `consensus` nodes. Unique by node attempt, round, verifier, and target; malformed verifier output is persisted as failed-closed disagree evidence.                                                                                | `runs.id`, `node_attempts.id`                                              |
+| `artifact_instances`          | **(M12 — Implemented, migration `0015`)** Typed evidence index (diff/log/report/judgment/note/commit_set/checkpoint/preview/plan; + `mutation_report`, M29 — text column, no migration). Deterministic upsert PK.                                                                                                                                                                  | `runs.id`, `node_attempts.id`, self-ref `superseded_by_id`                 |
 | `artifact_projection_cursors` | **(M12 — Implemented, migration `0015`)** One projector cursor per run over `run.events.jsonl`. UNIQUE `(run_id, scope)`.                                                                                                                                                                                                  | `runs.id`                                                                  |
 | `hitl_requests`               | HITL prompts emitted during a run (M11a adds review-decision columns).                                                                                                                                                                                                                                                     | `runs.id`                                                                  |
 | `review_comments`             | **(ADR-072 — Implemented, migration `0039`)** Line-anchored, 1-level-threaded review comments drafted at an open review gate. Root rows carry the anchor (`file_path`/`side`/`line`/`line_content`) + `open\|resolved` status; replies carry none (DB CHECK). | `runs.id`, `hitl_requests.id`, self-ref `parent_id`; `users.id` SET NULL (author/resolver) |
@@ -1013,7 +1014,8 @@ unread badge and inbox panel.
   status: 'Pending' | 'Running' | 'NeedsInput' | 'NeedsInputIdle'
         | 'HumanWorking'         // M11b manual-takeover claim (migration 0011, additive)
         | 'WaitingOnChildren'    // M37 (Implemented, ADR-098, migration 0060) orchestrator
-                                 //   parked on children; holds NO scheduler slot
+                                 //   and M41 consensus parked on child drafts;
+                                 //   holds NO scheduler slot
         | 'Review' | 'Crashed' | 'Done' | 'Abandoned' | 'Failed',
   acpSessionId?,                 // resume handle for the ACP session/resume call
   currentStepId?,                // id of the step the runner is on
@@ -1473,7 +1475,8 @@ One immutable row per node execution; `attempt` auto-increments per
 {
   id, runId,
   nodeId,                                   // node id in the compiled FlowGraph
-  nodeType: 'ai_coding' | 'cli' | 'check' | 'judge' | 'human' | 'form',
+  nodeType: 'ai_coding' | 'cli' | 'check' | 'judge'
+          | 'human' | 'form' | 'orchestrator' | 'consensus',
   attempt,                                  // auto-increment per (runId, nodeId)
   status: 'Pending' | 'Running' | 'Succeeded'
         | 'Failed' | 'NeedsInput' | 'Reworked' | 'Stale',
@@ -1577,12 +1580,50 @@ An unparseable `ai_judgment` verdict is `status='failed'` with raw prose kept in
 `verdict` — **no new `MaisterError` code**
 ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror)). Indexed on
 `(runId)` and `(nodeAttemptId)`. Cascade: `ON DELETE CASCADE` from `runs.id`.
+M41 consensus cross-verification does not overload `gate_results`; it writes to
+[`consensus_round_verdicts`](#consensus_round_verdicts) because verifier/target
+identity and round replay are part of the consensus recovery contract.
+
+## `consensus_round_verdicts`
+
+**(M41 — Implemented, migration `0070`.)** Append-only/idempotent ledger for
+`consensus` node cross-verification rounds
+([ADR-109](decisions.md#adr-109-consensus-flow-graph-node--engine-owned-unanimous-draft-verification-and-human-resolution)).
+Each row records one verifier's parsed verdict about one target draft. It is
+separate from `gate_results` because consensus verification is an in-node
+protocol, not a Flow gate.
+
+```ts
+{
+  id,
+  runId,                                    // NOT NULL, FK -> runs.id, ON DELETE CASCADE
+  nodeAttemptId,                            // NOT NULL, FK -> node_attempts.id, ON DELETE CASCADE
+  round,                                    // integer, starts at 1
+  verifierKey,                              // participant id from consensus.participants[]
+  targetKey,                                // participant id audited by verifierKey
+  parseStatus: 'parsed' | 'invalid_json' | 'invalid_schema'
+             | 'missing_axes' | 'unknown_axes',
+  verdict: 'agree' | 'disagree',            // invalid parse/schema rows persist as disagree
+  axes (jsonb),                             // declared material axis -> boolean
+  disagreements (jsonb),                    // bounded array of { axis, claim, counterEvidence }
+  confidence?,                              // numeric 0..1 when present; advisory only
+  rawOutputArtifactId?,                     // optional artifact ref for bounded raw evidence
+  errorCode?,                               // one of MaisterErrorCode literals when spawn/parser failed
+  createdAt
+}
+```
+
+UNIQUE `(nodeAttemptId, round, verifierKey, targetKey)` makes crash recovery
+replay-safe: a resumed consensus node reuses already persisted verifier rows and
+does not repay finished verification sessions. Indexed on `(runId)` and
+`(nodeAttemptId)`. Cascade: `ON DELETE CASCADE` from both `runs.id` and
+`node_attempts.id`.
 
 ## `artifact_instances`
 
 **(M12 — Implemented, migration `0015`.)** Typed evidence index — one row per
-diff, log, report, judgment, note, commit set, checkpoint, or preview produced
-during a run. See [`db/artifacts-domain.md`](db/artifacts-domain.md) for the ERD
+diff, log, report, judgment, note, commit set, checkpoint, preview, or plan
+produced during a run. See [`db/artifacts-domain.md`](db/artifacts-domain.md) for the ERD
 and [`system-analytics/artifacts.md`](system-analytics/artifacts.md) for the
 validity FSM.
 
@@ -1598,7 +1639,8 @@ validity FSM.
   kind: 'diff' | 'log' | 'test_report' | 'lint_report'
       | 'ai_judgment' | 'human_note' | 'commit_set'
       | 'checkpoint' | 'preview' | 'generic_file'
-      | 'mutation_report',                   // M29 (ADR-074) — text column, no migration
+      | 'mutation_report'                    // M29 (ADR-074) — text column, no migration
+      | 'plan',                              // M41 consensus synthesized answer artifact
   producer: 'runner' | 'projector' | 'takeover' | 'gate' | 'human',
   locator (jsonb),                          // discriminated union, server-written only:
                                             //   git-range{ baseCommit, headRef }
@@ -2355,9 +2397,11 @@ projects
   │           ├── run_cost_rollups (FK runId,       cascade)       ← ADR-085
   │           ├── node_attempts   (FK runId,        cascade)   ← M11a
   │           │     ├── gate_results      (FK nodeAttemptId, cascade)
+  │           │     ├── consensus_round_verdicts (FK nodeAttemptId, cascade) ← M41
   │           │     ├── node_attempt_cost_rollups (FK nodeAttemptId, cascade) ← ADR-085
   │           │     └── artifact_instances (FK nodeAttemptId, cascade)   ← M12
   │           ├── gate_results    (FK runId,        cascade)   ← M11a (also direct)
+  │           ├── consensus_round_verdicts (FK runId, cascade) ← M41 (also direct)
   │           ├── artifact_instances (FK runId,     cascade)   ← M12 (also direct)
   │           │     └── artifact_instances.superseded_by_id (self-ref, SET NULL)
   │           ├── artifact_projection_cursors (FK runId, cascade)        ← M12
@@ -2431,6 +2475,9 @@ Created via Drizzle:
 | `node_attempt_cost_rollups` | `node_attempt_cost_rollups_run_attempt_idx` | `(runId, nodeAttemptId)`      | **(ADR-085)** Run timeline cost joins                              |
 | `gate_results`        | `gate_results_run_idx`                  | `(runId)`                         | **(M11a)** Per-run gate lookups                                    |
 | `gate_results`        | `gate_results_node_attempt_idx`         | `(nodeAttemptId)`                 | **(M11a)** Gates for a node attempt                                |
+| `consensus_round_verdicts` | `consensus_round_verdicts_attempt_round_pair_uq` | `(nodeAttemptId, round, verifierKey, targetKey)` UNIQUE | **(M41)** Idempotent verifier replay per consensus round |
+| `consensus_round_verdicts` | `consensus_round_verdicts_run_idx` | `(runId)` | **(M41)** Per-run consensus audit lookup |
+| `consensus_round_verdicts` | `consensus_round_verdicts_node_attempt_idx` | `(nodeAttemptId)` | **(M41)** Verdict rows for a node attempt |
 | `artifact_instances`  | `artifact_instances_run_idx`            | `(runId)`                         | **(M12)** Evidence index for a run                                 |
 | `artifact_instances`  | `artifact_instances_node_attempt_idx`   | `(nodeAttemptId)`                 | **(M12)** All artifacts for a node attempt                         |
 | `artifact_instances`  | `artifact_instances_run_kind_idx`       | `(runId, kind)`                   | **(M12)** Filter by kind                                           |
@@ -2472,6 +2519,9 @@ Created via Drizzle:
 | `node_attempts` | `node_attempts_run_idx` | `(runId)` | **(M11a)** Templating highest-attempt-wins union |
 | `gate_results` | `gate_results_run_idx` | `(runId)` | **(M11a)** Per-run gate lookups |
 | `gate_results` | `gate_results_node_attempt_idx` | `(nodeAttemptId)` | **(M11a)** Gates for a node attempt |
+| `consensus_round_verdicts` | `consensus_round_verdicts_attempt_round_pair_uq` | `(nodeAttemptId, round, verifierKey, targetKey)` UNIQUE | **(M41)** Idempotent verifier replay per consensus round |
+| `consensus_round_verdicts` | `consensus_round_verdicts_run_idx` | `(runId)` | **(M41)** Per-run consensus audit lookup |
+| `consensus_round_verdicts` | `consensus_round_verdicts_node_attempt_idx` | `(nodeAttemptId)` | **(M41)** Verdict rows for a node attempt |
 | `artifact_instances` | `artifact_instances_run_idx` | `(runId)` | **(M12)** Evidence index for a run |
 | `artifact_instances` | `artifact_instances_node_attempt_idx` | `(nodeAttemptId)` | **(M12)** All artifacts for a node attempt |
 | `artifact_instances` | `artifact_instances_run_kind_idx` | `(runId, kind)` | **(M12)** Filter by kind |

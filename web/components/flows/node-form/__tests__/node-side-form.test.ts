@@ -172,6 +172,20 @@ const labels: NodeSideFormProps["labels"] = {
   removeTransition: "Remove",
   noTransitions: "No transitions",
   noGates: "No gates",
+  consensus: {
+    participants: "Participants",
+    participantId: "ID",
+    participantAgent: "Agent",
+    participantRunner: "Runner",
+    addParticipant: "Add participant",
+    removeParticipant: "Remove participant",
+    materialAxes: "Material axes",
+    synthesizerAgent: "Synthesizer agent",
+    synthesizerRunner: "Synthesizer runner",
+    roundsMode: "Rounds mode",
+    roundsMax: "Max rounds",
+    onNoConsensus: "No consensus",
+  },
   decide: {
     title: "Routing",
     source: "Source",
@@ -282,6 +296,44 @@ describe("NodeSideForm — judge", () => {
     expect(html).toContain('data-testid="node-action-prompt"');
     expect(html).toContain('data-testid="node-model"');
     expect(html).toContain('data-testid="node-thinking-effort"');
+  });
+});
+
+describe("NodeSideForm — consensus", () => {
+  it("renders prompt, participants, synthesizer, material axes, and rounds", () => {
+    const consensusNode = {
+      id: "decide_release_plan",
+      type: "consensus",
+      prompt: "Produce a release plan.",
+      participants: [
+        { id: "architect", agent: "architecture-reviewer" },
+        { id: "codex", runner: "codex" },
+      ],
+      material_axes: ["scope_matches_milestone", "handoff_is_clear"],
+      rounds: { mode: "iterate", max: 3 },
+      on_no_consensus: "escalate",
+      synthesizer: { runner: "codex" },
+      output: {
+        produces: [
+          { id: "consensus_plan", kind: "plan", current: true },
+          { id: "debate_log", kind: "human_note", current: true },
+        ],
+      },
+    } as NodeDef;
+    const html = render(consensusNode);
+
+    expect(html).toContain('data-testid="node-consensus-prompt"');
+    expect(html).toContain('data-testid="node-consensus-settings"');
+    expect(html).toContain('data-testid="node-consensus-participant-0"');
+    expect(html).toContain('data-testid="node-consensus-participant-id-0"');
+    expect(html).toContain('data-testid="node-consensus-participant-agent-0"');
+    expect(html).toContain('data-testid="node-consensus-participant-runner-1"');
+    expect(html).toContain('data-testid="node-consensus-material-axes"');
+    expect(html).toContain('data-testid="node-consensus-synthesizer-runner"');
+    expect(html).toContain('data-testid="node-consensus-rounds-mode"');
+    expect(html).toContain('data-testid="node-consensus-rounds-max"');
+    expect(html).toContain('data-testid="node-consensus-on-no-consensus"');
+    expect(html).not.toContain('data-testid="node-action-command"');
   });
 });
 

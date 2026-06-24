@@ -43,6 +43,7 @@ vi.mock("next-intl", () => ({
 import {
   HitlDecisionControls,
   budgetBreachFromSchema,
+  consensusHitlFromSchema,
   hookTripFromSchema,
   reviewLoopInfo,
 } from "@/components/board/hitl-decision-controls";
@@ -80,6 +81,23 @@ const BUDGET_LABELS = {
   "budgetMeter.tokens": "tokens",
   "budgetMeter.failures": "failures",
   "budgetMeter.wallclock": "wall-clock",
+};
+
+const CONSENSUS_LABELS = {
+  ...LABELS,
+  consensusTitle: "Consensus resolution",
+  consensusRound: "Round $n",
+  consensusDrafts: "Drafts",
+  consensusDisagreements: "Disagreements",
+  consensusNoDisagreements: "No material disagreements",
+  consensusDebateLog: "Debate log",
+  consensusDraftFallback: "Draft $n",
+  consensusPickDraft: "Use draft $n",
+  consensusResolutionLabel: "Human resolution",
+  consensusResolutionPlaceholder: "Write the trusted resolution.",
+  consensusProvideResolution: "Use resolution",
+  consensusRerunRound: "Run another round",
+  consensusAbort: "Abort",
 };
 
 type ControlsProps = Parameters<typeof HitlDecisionControls>[0];
@@ -936,6 +954,174 @@ describe("budgetBreachFromSchema — pure schema narrowing", () => {
         limit: 2,
       }),
     ).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Consensus resolution card (M41). A consensus no-agreement row is still kind
+// "human", but its stored schema has a consensus_resolution discriminator and
+// allow-listed decisions. The UI must show bounded context and purpose-built
+// decisions instead of a raw JSON textarea.
+// ---------------------------------------------------------------------------
+
+const CONSENSUS_SCHEMA = {
+  kind: "consensus_resolution",
+  round: 2,
+  allowedDecisions: [
+    "pick-draft-1",
+    "pick-draft-2",
+    "provide-resolution",
+    "re-run-round",
+    "abort",
+  ],
+  drafts: [
+    {
+      participantLabel: "Planner A",
+      excerpt: "Use a branch-targeted rollout with smoke checks.",
+    },
+    {
+      participantLabel: "Planner B",
+      excerpt: "Prefer a smaller first merge and defer analytics.",
+    },
+  ],
+  disagreements: [
+    {
+      axis: "scope",
+      summary: "Planner A keeps analytics in; Planner B defers it.",
+    },
+  ],
+  debateLog: {
+    excerpt: "Both drafts agree on branch targeting but disagree on scope.",
+  },
+};
+
+describe("HitlDecisionControls — consensus resolution card (M41)", () => {
+  it("renders bounded consensus context instead of the raw JSON response", () => {
+    const html = render({
+      kind: "human",
+      schema: CONSENSUS_SCHEMA,
+      labels: CONSENSUS_LABELS,
+    });
+
+    expect(html).toContain('data-testid="consensus-hitl-card"');
+    expect(html).toContain("Consensus resolution");
+    expect(html).toContain("Round 2");
+    expect(html).toContain("Planner A");
+    expect(html).toContain("Use a branch-targeted rollout");
+    expect(html).toContain("scope");
+    expect(html).toContain("Both drafts agree");
+    expect(html).not.toContain('id="hitl-json-response"');
+    expect(html).not.toContain("run.schemaLabel");
+  });
+
+  it("renders draft, resolution, rerun, and abort decisions", () => {
+    const html = render({
+      kind: "human",
+      schema: CONSENSUS_SCHEMA,
+      labels: CONSENSUS_LABELS,
+      comments: "Ship Planner A scope with manual analytics follow-up.",
+    });
+
+    expect(html).toContain('data-testid="consensus-pick-draft-1"');
+    expect(html).toContain("Use draft 1");
+    expect(html).toContain('data-testid="consensus-pick-draft-2"');
+    expect(html).toContain("Use draft 2");
+    expect(html).toContain('data-testid="consensus-provide-resolution"');
+    expect(html).toContain("Use resolution");
+    expect(html).toContain('data-testid="consensus-rerun-round"');
+    expect(html).toContain("Run another round");
+    expect(html).toContain('data-testid="consensus-abort"');
+    expect(html).toContain(">Abort<");
+  });
+
+  it("disables provide-resolution until resolution text exists", () => {
+    const blankHtml = render({
+      kind: "human",
+      schema: CONSENSUS_SCHEMA,
+      labels: CONSENSUS_LABELS,
+      comments: "",
+    });
+    const filledHtml = render({
+      kind: "human",
+      schema: CONSENSUS_SCHEMA,
+      labels: CONSENSUS_LABELS,
+      comments: "Resolve with Planner A.",
+    });
+
+    expect(buttonTagFor(blankHtml, "Use resolution")).toContain("disabled");
+    expect(buttonTagFor(filledHtml, "Use resolution")).not.toContain(
+      "disabled",
+    );
+  });
+
+  it("does not expose participant ids as fallback labels", () => {
+    const html = render({
+      kind: "human",
+      schema: {
+        ...CONSENSUS_SCHEMA,
+        drafts: [{ participantId: "runner-secret-id", excerpt: "Bounded" }],
+      },
+      labels: CONSENSUS_LABELS,
+    });
+
+    expect(html).toContain("Draft 1");
+    expect(html).not.toContain("runner-secret-id");
+  });
+
+  it("never renders a confidence input for consensus resolution", () => {
+    const html = render({
+      kind: "human",
+      schema: CONSENSUS_SCHEMA,
+      labels: CONSENSUS_LABELS,
+      showConfidence: true,
+      confidence: "0.9",
+    });
+
+    expect(html).not.toContain("run.confidenceLabel");
+  });
+});
+
+describe("consensusHitlFromSchema — pure schema narrowing", () => {
+  it("parses a well-formed consensus_resolution schema", () => {
+    expect(consensusHitlFromSchema(CONSENSUS_SCHEMA)).toEqual({
+      round: 2,
+      allowedDecisions: [
+        "pick-draft-1",
+        "pick-draft-2",
+        "provide-resolution",
+        "re-run-round",
+        "abort",
+      ],
+      drafts: [
+        {
+          decision: "pick-draft-1",
+          label: "Planner A",
+          excerpt: "Use a branch-targeted rollout with smoke checks.",
+        },
+        {
+          decision: "pick-draft-2",
+          label: "Planner B",
+          excerpt: "Prefer a smaller first merge and defer analytics.",
+        },
+      ],
+      disagreements: [
+        {
+          axis: "scope",
+          summary: "Planner A keeps analytics in; Planner B defers it.",
+        },
+      ],
+      debateExcerpt:
+        "Both drafts agree on branch targeting but disagree on scope.",
+    });
+  });
+
+  it("returns null for non-consensus or malformed schemas", () => {
+    expect(consensusHitlFromSchema({ kind: "hook_trip" })).toBeNull();
+    expect(
+      consensusHitlFromSchema({ kind: "consensus_resolution" }),
+    ).toBeNull();
+    expect(consensusHitlFromSchema(null)).toBeNull();
+    expect(consensusHitlFromSchema("nope")).toBeNull();
   });
 });
 

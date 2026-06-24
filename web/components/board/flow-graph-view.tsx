@@ -73,7 +73,7 @@ export interface FlowGraphViewProps {
 
 interface FlowNodeBodyProps {
   label: string;
-  // Typed node kind (ai_coding | judge | cli | check | human) → the colored
+  // Typed node kind (ai_coding | judge | consensus | cli | check | human) → the colored
   // identity icon chip (T1.1). Absent/unknown → a neutral dot, never a throw.
   nodeType?: string;
   displayLabel?: string;
@@ -193,6 +193,16 @@ const NODE_ICON_PATHS: Record<string, ReactElement> = {
         x="8.5"
         y="4.2"
       />
+    </>
+  ),
+  network: (
+    <>
+      <circle cx="4.5" cy="5" r="1.6" />
+      <circle cx="11.5" cy="5" r="1.6" />
+      <circle cx="8" cy="11" r="1.6" />
+      <path d="M5.8 5.8 7 9.7" />
+      <path d="M10.2 5.8 9 9.7" />
+      <path d="M6.1 5h3.8" />
     </>
   ),
   terminal: (

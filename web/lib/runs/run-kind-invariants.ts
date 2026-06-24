@@ -1,4 +1,5 @@
 import type { RunKind } from "@/lib/db/schema";
+import type { DelegationSnapshot } from "@/lib/db/schema";
 
 import { MaisterError } from "@/lib/errors";
 
@@ -11,6 +12,7 @@ export type RunKindInvariantInput = {
   flowVersion: string;
   flowRevision: string;
   agentId?: string | null;
+  delegationSnapshot?: DelegationSnapshot | null;
 };
 
 export type RunScratchMetadataInvariantInput = {
@@ -114,7 +116,7 @@ function assertFlowRunInvariant(input: RunKindInvariantInput): void {
 // M34 (ADR-089): agent runs carry the catalog identity instead of a flow;
 // taskId is optional (task-bound triage/commentary vs standalone monitors).
 function assertAgentRunInvariant(input: RunKindInvariantInput): void {
-  if (!input.agentId) {
+  if (!input.agentId && input.delegationSnapshot?.kind !== "runner") {
     throw new MaisterError("CONFIG", "agent run requires agentId");
   }
 

@@ -949,6 +949,115 @@ describe("HITL respond route — graph review decision (M11a)", () => {
   });
 });
 
+describe("HITL respond route — consensus resolution decision (M41)", () => {
+  const consensusSchema = {
+    kind: "consensus_resolution",
+    round: 1,
+    allowedDecisions: [
+      "pick-draft-1",
+      "provide-resolution",
+      "re-run-round",
+      "abort",
+    ],
+    drafts: [
+      {
+        participantLabel: "Planner A",
+        childRunId: "child-run-server-owned",
+        excerpt: "Bounded draft excerpt.",
+      },
+    ],
+  };
+
+  it("stores an allow-listed draft pick without body-controlled ids", async () => {
+    const { runId, hitlRequestId, stepId } = seedFormRow("human", {
+      schema: consensusSchema,
+    });
+
+    const res = await invokePost(runId, hitlRequestId, {
+      response: {
+        decision: "pick-draft-1",
+        childRunId: "body-controlled",
+        participantId: "body-controlled",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    const row = dbState.tables.hitl_requests[0];
+
+    expect(row.response).toEqual({ decision: "pick-draft-1" });
+    expect(row.decision).toBe("pick-draft-1");
+    expect(row.respondedAt).toBeInstanceOf(Date);
+
+    const artifactPath = join(
+      runtimeRoot,
+      ".maister",
+      "demo",
+      "runs",
+      runId,
+      `input-${stepId}.json`,
+    );
+    const onDisk = JSON.parse(await readFile(artifactPath, "utf8"));
+
+    expect(onDisk).toEqual({ decision: "pick-draft-1" });
+  });
+
+  it("stores a human resolution in the response artifact but not assignment events", async () => {
+    const { runId, hitlRequestId, stepId } = seedFormRow("human", {
+      schema: consensusSchema,
+    });
+
+    seedAssignment(hitlRequestId, runId);
+
+    const res = await invokePost(runId, hitlRequestId, {
+      response: {
+        decision: "provide-resolution",
+        resolution: "Use Planner A and defer analytics.",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(dbState.tables.hitl_requests[0].response).toEqual({
+      decision: "provide-resolution",
+      resolution: "Use Planner A and defer analytics.",
+    });
+
+    const artifactPath = join(
+      runtimeRoot,
+      ".maister",
+      "demo",
+      "runs",
+      runId,
+      `input-${stepId}.json`,
+    );
+    const onDisk = JSON.parse(await readFile(artifactPath, "utf8"));
+
+    expect(onDisk).toEqual({
+      decision: "provide-resolution",
+      resolution: "Use Planner A and defer analytics.",
+    });
+    expect(JSON.stringify(dbState.tables.assignment_events)).not.toContain(
+      "Use Planner A and defer analytics.",
+    );
+    expect(JSON.stringify(dbState.tables.assignment_events)).toContain(
+      "resolutionPresent",
+    );
+  });
+
+  it("rejects undeclared decisions before mutation", async () => {
+    const { runId, hitlRequestId } = seedFormRow("human", {
+      schema: consensusSchema,
+    });
+
+    const res = await invokePost(runId, hitlRequestId, {
+      response: { decision: "pick-draft-7" },
+    });
+
+    expect(res.status).toBe(422);
+    expect(dbState.tables.hitl_requests[0].respondedAt).toBeNull();
+    expect(dbState.tables.hitl_requests[0].response).toBeNull();
+  });
+});
+
 describe("HITL respond route — error cases", () => {
   it("unknown hitlRequestId (empty table) returns 409 PRECONDITION", async () => {
     const res = await invokePost("run-x", "unknown-hitl", {

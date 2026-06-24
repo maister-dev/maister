@@ -61,6 +61,10 @@ export type RunFlowOptions = {
   // orchestrator node, reusing its NeedsInput ledger attempt and restoring the
   // coordinator's context via session/resume on the retained acp_session_id.
   orchestratorResume?: { targetStepId: string };
+  // M41 (ADR-109): same WaitingOnChildren CAS/re-entry pattern for consensus.
+  // Unlike orchestrator, consensus has no coordinator ACP session to resume; the
+  // node re-enters to recollect settled drafts and continue verify/tally.
+  consensusResume?: { targetStepId: string };
 };
 
 export type LoadedRun = {

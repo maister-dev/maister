@@ -3926,6 +3926,8 @@ paths:
               - checkpoint
               - preview
               - generic_file
+              - mutation_report
+              - plan
         - name: validity
           in: query
           required: false
@@ -4519,6 +4521,16 @@ paths:
         payload (zero open threads ⇒ byte-identical to the raw `comments`
         summary).
 
+        **(M41 — Implemented) consensus resolution.** A `consensus` node uses
+        this same `kind: "human"` path with `schema.kind =
+        "consensus_resolution"`. The route validates `response.decision`
+        against the stored server-derived allow-list (`pick-draft-N`,
+        `provide-resolution`, `re-run-round`, `abort`), stores the canonical
+        response, writes `input-<nodeId>.json`, and queues `runFlow`; it never
+        accepts draft ids, participant ids, artifact ids, or transition targets
+        from the body. `provide-resolution` requires bounded non-empty
+        `response.resolution`; free-form resolution text is not logged.
+
         On every success path the body returns `runStatus: "NeedsInput"`
         — the runner (not this route) is the single owner of the
         `NeedsInput → Running` transition.
@@ -4564,6 +4576,17 @@ paths:
                 value:
                   response:
                     decision: "approve"
+              consensus-provide-resolution:
+                summary: (M41) Consensus — provide human resolution
+                value:
+                  response:
+                    decision: "provide-resolution"
+                    resolution: "Use the package-authoring release plan with the safer migration order."
+              consensus-pick-draft:
+                summary: (M41) Consensus — pick a server-listed draft
+                value:
+                  response:
+                    decision: "pick-draft-1"
               hook-trip-resume:
                 summary: (ADR-108) Resume a guardrail-tripped run
                 value:
@@ -12228,7 +12251,7 @@ components:
         id: { type: string }
         nodeType:
           type: string
-          enum: [ai_coding, cli, check, judge, human, guard]
+          enum: [ai_coding, cli, check, judge, consensus, human, guard]
         label: { type: string }
         displayLabel:
           type: string
@@ -12238,7 +12261,7 @@ components:
           description: Human-readable node type label; additive.
         nodeRole:
           type: string
-          enum: [agent, command, check, judge, human, terminal, other]
+          enum: [agent, command, check, judge, consensus, human, terminal, other]
         declaredGateSummary:
           $ref: "#/components/schemas/DeclaredGateSummary"
     GraphTopologyEdge:
@@ -12983,6 +13006,8 @@ components:
             - checkpoint
             - preview
             - generic_file
+            - mutation_report
+            - plan
         producer:
           type: string
           enum: [runner, projector, takeover, gate, human]

@@ -89,6 +89,7 @@ Project -> Flow package -> Task / Scratch run -> External operation -> Run -> Br
 | Start a scratch workspace | Open a conversation-like coding-agent session for exploratory work without creating a task board card. |
 | Pick the right branch | Choose the base branch and target branch so work can happen on `main`, `develop`, release branches, or any engineer-selected branch. |
 | Constrain node capabilities | See and edit what each AI or human node is allowed to use: agents, MCP servers, tools, skills, roles, restrictions, and rework paths. |
+| Reach agreement on risky plans | Run several read-only draft agents through an engine-owned consensus node, see why they agree or disagree, and resolve unresolved disagreements through HITL. |
 | Trust what an AI session can touch | Know which skills, MCPs, tools, settings, env profiles, and restrictions were materialized, enforced, instructed, refused, and cleaned up for a node or long-living session. |
 | Inspect readiness evidence | See which artifacts prove the run is ready, which are stale, and which node or human decision produced them. |
 | Understand why work is blocked | See which Flow-distributed gate failed, went stale, is waiting, or was overridden before review/promotion. |
@@ -128,7 +129,8 @@ Project -> Flow package -> Task / Scratch run -> External operation -> Run -> Br
   delivery, and runner-owned resume.
 - Flow graph maturity is the next required product foundation before richer
   HITL: node lifecycle, typed settings, review-driven rework, manual takeover,
-  run ledger, and stale-gate reruns.
+  run ledger, stale-gate reruns, orchestrator delegation, and M41-designed
+  consensus nodes for unanimous read-only plan verification.
 - Typed Flow artifacts and an evidence graph are required for review: payloads
   stay in the run directory/worktree/git, while MAIster stores queryable
   artifact metadata, validity, and dependency edges.
@@ -224,6 +226,8 @@ terminals, leaking secrets, drowning in logs, or paying for tool noise.
      and release-note preparation.
    - Flow designer UI on top of the graph/runtime foundation, without turning
      MAIster into a generic workflow builder.
+   - Writable competing-code consensus drafts after the read-only M41 consensus
+     node proves draft, verification, HITL, and artifact ergonomics.
    - Deeper Gemini/OpenCode/MiMo ACP proof for permissions, MCP, model switching,
      and resume semantics beyond the first adapter-family support.
    - CI/log intake, external board sync, and background project agents only

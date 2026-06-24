@@ -96,6 +96,7 @@ export interface ReconcileInput {
     | "human"
     | "form"
     | "orchestrator"
+    | "consensus"
     | null;
   worktreeExists: boolean;
   liveSession: boolean;

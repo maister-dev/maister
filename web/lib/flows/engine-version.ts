@@ -27,7 +27,9 @@ const log = pino({
 // Bumped 1.7.0 -> 1.8.0 for the guardrail hooks capability class (node
 // `settings.hooks`) (M40, ADR-108); flows declaring it MUST
 // `compat.engine_min >= 1.8.0` (HOOKS_ENGINE_MIN).
-export const MAISTER_ENGINE_VERSION = "1.8.0";
+// Bumped 1.8.0 -> 1.9.0 for the first-class `consensus` node type (M41,
+// ADR-109); flows declaring it MUST `compat.engine_min >= 1.9.0`.
+export const MAISTER_ENGINE_VERSION = "1.9.0";
 
 // Minimum engine version a graph (`nodes[]`) manifest must declare in
 // `compat.engine_min` (ADR-026). Enforced in `loadFlowManifest`.

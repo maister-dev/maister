@@ -8,6 +8,7 @@ export const NODE_TYPES = [
   "cli",
   "check",
   "judge",
+  "consensus",
   "human",
   "orchestrator",
   "form",
@@ -116,6 +117,24 @@ export function blankNode(
       return { id, type: "check", action: { command: "echo ok" } };
     case "judge":
       return { id, type: "judge", action: { prompt: "TODO" } };
+    case "consensus":
+      return {
+        id,
+        type: "consensus",
+        prompt: "TODO",
+        participants: [
+          { id: "participant_a", runner: "codex" },
+          { id: "participant_b", runner: "claude" },
+        ],
+        material_axes: ["correctness"],
+        synthesizer: { runner: "codex" },
+        output: {
+          produces: [
+            { id: "consensus_plan", kind: "plan", current: true },
+            { id: "debate_log", kind: "human_note", current: true },
+          ],
+        },
+      };
     case "human":
       return { id, type: "human" };
     // action.prompt is z.string().min(1) — seed a non-empty placeholder so the

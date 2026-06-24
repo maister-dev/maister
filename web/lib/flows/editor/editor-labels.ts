@@ -296,6 +296,7 @@ export function buildFlowEditorTabsLabels(te: T): FlowEditorTabsLabels {
       cli: te("toolbar.nodeType.cli"),
       check: te("toolbar.nodeType.check"),
       judge: te("toolbar.nodeType.judge"),
+      consensus: te("toolbar.nodeType.consensus"),
       human: te("toolbar.nodeType.human"),
       form: te("toolbar.nodeType.form"),
     },

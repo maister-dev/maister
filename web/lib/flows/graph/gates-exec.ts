@@ -39,6 +39,7 @@ import {
   isEffectivelyBlockingGate,
   isPolicySkippedGate,
 } from "./readiness-core";
+import { extractBalancedJsonObjects } from "./json-extract";
 
 import * as schemaModule from "@/lib/db/schema";
 import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
@@ -95,49 +96,13 @@ function summarize(s: string | null | undefined): string {
     : s.slice(0, VERDICT_EVIDENCE_CAP);
 }
 
-// Extract every top-level brace-balanced `{...}` substring, string-aware (so
-// braces inside string literals don't break balancing). Linear O(n) — no
-// regex backtracking — and correctly captures objects with nested objects.
-function balancedJsonObjects(s: string): string[] {
-  const out: string[] = [];
-  let depth = 0;
-  let start = -1;
-  let inStr = false;
-  let esc = false;
-
-  for (let i = 0; i < s.length; i++) {
-    const c = s[i];
-
-    if (inStr) {
-      if (esc) esc = false;
-      else if (c === "\\") esc = true;
-      else if (c === '"') inStr = false;
-      continue;
-    }
-    if (c === '"') {
-      inStr = true;
-    } else if (c === "{") {
-      if (depth === 0) start = i;
-      depth += 1;
-    } else if (c === "}" && depth > 0) {
-      depth -= 1;
-      if (depth === 0 && start >= 0) {
-        out.push(s.slice(start, i + 1));
-        start = -1;
-      }
-    }
-  }
-
-  return out;
-}
-
 // Tolerant structured-verdict parser for ai_judgment / skill_check output:
 // find the LAST brace-balanced JSON object in the agent's text that carries a
 // string `verdict` (handles nested objects). Returns null when none is found
 // (caller records a `failed` gate with the raw prose as evidence — never a
 // thrown domain code, ADR-028).
 export function parseVerdict(output: string): GateVerdict | null {
-  const candidates = balancedJsonObjects(output);
+  const candidates = extractBalancedJsonObjects(output);
 
   for (let i = candidates.length - 1; i >= 0; i--) {
     try {

@@ -16,6 +16,7 @@ import {
   resolveAgentRunner,
   type RunnerCatalogEntry,
   type RunnerResolution,
+  type RunnerSnapshot,
   type RunnerSidecarSnapshot,
 } from "@/lib/acp-runners/resolve";
 import { type ParsedAgentDefinition } from "@/lib/agents/definition";
@@ -42,7 +43,10 @@ import {
 import { type AgentMcpServer } from "@/lib/capabilities/agent-map";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
-import { type AgentExecutionPolicyRecommendation } from "@/lib/db/schema";
+import {
+  type AgentExecutionPolicyRecommendation,
+  type DelegationSnapshot,
+} from "@/lib/db/schema";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { MaisterError, type MaisterErrorCode } from "@/lib/errors";
 import { gcAgeDays, worktreesRoot } from "@/lib/instance-config";
@@ -87,6 +91,7 @@ import {
   resolveBaseCommit,
   statusPorcelain,
 } from "@/lib/worktree";
+import { recordArtifact } from "@/lib/flows/graph/artifact-store";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 const {
@@ -113,6 +118,7 @@ const log = pino({
 });
 
 const COMMENT_THREAD_TAIL_LIMIT = 6;
+const CONSENSUS_DRAFT_OUTPUT_CAP_BYTES = 1024 * 1024;
 
 export type AgentTriggerSource =
   | "manual"
@@ -210,13 +216,17 @@ export function publicAgentLaunchMessage(err: AgentLaunchError): string {
   return err.message;
 }
 
-type LoadedAgentContext = {
+export type LoadedAgentContext = {
   agent: Record<string, any>;
   // ADR-089 rework (RD4): the definition the launch actually runs — resolved
   // through THIS project's pinned package revision, behind enablement+trust.
   effective: EffectiveAgentDefinition;
   link: Record<string, any>;
   project: Record<string, any>;
+};
+
+export type AgentLaunchRuntime = LoadedAgentContext & {
+  resolution: RunnerResolution;
 };
 
 type TaskCommentPromptRow = {
@@ -418,6 +428,20 @@ async function resolveRunnerForAgent(
       runnerCatalogEntry(row, sidecarById),
     ),
   });
+}
+
+export async function resolveAgentLaunchRuntime(
+  input: LaunchAgentRunInput,
+): Promise<AgentLaunchRuntime> {
+  const _db = input.db ?? getDb();
+  const ctx = await loadAgentContext(_db, input);
+  const resolution = await resolveRunnerForAgent(
+    _db,
+    ctx,
+    input.launchOverrideRunnerId,
+  );
+
+  return { ...ctx, resolution };
 }
 
 export function agentWorkdirPath(projectSlug: string, runId: string): string {
@@ -1387,6 +1411,229 @@ export async function buildAgentPrompt(
   return sections.join("\n\n");
 }
 
+type ConsensusDraftPayload = {
+  kind: "consensus_draft";
+  nodeId: string;
+  nodeAttemptId: string;
+  round: number;
+  participantId: string;
+  participantKind: "agent" | "runner";
+  prompt: string;
+  workspaceMode: "repo_read";
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function consensusDraftPayload(
+  run: Record<string, any>,
+): ConsensusDraftPayload | null {
+  const payload = run.triggerPayload;
+
+  if (!isRecord(payload) || payload.kind !== "consensus_draft") return null;
+
+  if (
+    typeof payload.nodeId !== "string" ||
+    typeof payload.nodeAttemptId !== "string" ||
+    typeof payload.round !== "number" ||
+    typeof payload.participantId !== "string" ||
+    (payload.participantKind !== "agent" &&
+      payload.participantKind !== "runner") ||
+    typeof payload.prompt !== "string" ||
+    payload.workspaceMode !== "repo_read"
+  ) {
+    return null;
+  }
+
+  return payload as ConsensusDraftPayload;
+}
+
+function runnerDelegationSnapshot(
+  value: unknown,
+): Extract<DelegationSnapshot, { kind: "runner" }> | null {
+  if (!isRecord(value) || value.kind !== "runner") return null;
+
+  if (
+    typeof value.runnerId !== "string" ||
+    typeof value.participantId !== "string" ||
+    typeof value.nodeId !== "string" ||
+    typeof value.nodeAttemptId !== "string" ||
+    typeof value.round !== "number" ||
+    value.workspaceMode !== "repo_read"
+  ) {
+    return null;
+  }
+
+  return value as Extract<DelegationSnapshot, { kind: "runner" }>;
+}
+
+function consensusDraftPromptBlock(payload: ConsensusDraftPayload): string {
+  return [
+    "## Consensus draft request",
+    payload.prompt,
+    "",
+    "Return an independent draft with concise evidence for the declared material axes. Do not modify repository files; this session is read-only.",
+  ].join("\n");
+}
+
+function consensusAgentDraftPrompt(
+  basePrompt: string,
+  payload: ConsensusDraftPayload,
+): string {
+  return [basePrompt, consensusDraftPromptBlock(payload)].join("\n\n");
+}
+
+function appendCappedConsensusDraftOutput(
+  current: string,
+  chunk: string,
+): string {
+  const remaining = CONSENSUS_DRAFT_OUTPUT_CAP_BYTES - current.length;
+
+  if (remaining <= 0) return current;
+
+  return current + chunk.slice(0, remaining);
+}
+
+function consensusDraftUpdateText(update: unknown): string | null {
+  if (!isRecord(update)) return null;
+  if (update.sessionUpdate !== "agent_message_chunk") return null;
+
+  const content = update.content;
+
+  if (!isRecord(content) || content.type !== "text") return null;
+
+  return typeof content.text === "string" ? content.text : null;
+}
+
+async function loadConsensusDraftPayload(
+  db: Db,
+  runId: string,
+): Promise<ConsensusDraftPayload | null> {
+  const rows = await db
+    .select({ triggerPayload: runs.triggerPayload })
+    .from(runs)
+    .where(eq(runs.id, runId));
+  const row = rows[0];
+
+  return row ? consensusDraftPayload(row) : null;
+}
+
+async function recordConsensusDraftArtifact(args: {
+  db: Db;
+  runId: string;
+  payload: ConsensusDraftPayload;
+  text: string;
+}): Promise<void> {
+  const text = args.text.slice(0, CONSENSUS_DRAFT_OUTPUT_CAP_BYTES);
+
+  if (text.trim().length === 0) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `consensus draft participant "${args.payload.participantId}" produced no text`,
+    );
+  }
+
+  await recordArtifact(
+    {
+      id: `run:${args.runId}:consensus-draft:${args.payload.nodeAttemptId}:${args.payload.participantId}:r${args.payload.round}`,
+      runId: args.runId,
+      nodeId: "consensus-draft",
+      artifactDefId: "default:consensus-draft",
+      kind: "human_note",
+      producer: "runner",
+      locator: {
+        kind: "inline",
+        text,
+      },
+      validity: "current",
+      visibility: "internal",
+      retention: "run",
+    },
+    args.db,
+  );
+}
+
+async function startConsensusRunnerDraftSession(args: {
+  db: Db;
+  api: AgentSupervisorApi;
+  run: Record<string, any>;
+  project: Record<string, any>;
+  payload: ConsensusDraftPayload;
+  snapshot: RunnerSnapshot;
+}): Promise<void> {
+  const runId = args.run.id as string;
+  const cwd = args.project.repoPath as string;
+
+  try {
+    await materializeAgentReadOnlySettings(cwd).catch((err: unknown) => {
+      log.warn(
+        { runId, err: err instanceof Error ? err.message : String(err) },
+        "L2 materialization failed — L1 carries consensus runner draft read-only contract",
+      );
+    });
+
+    const session = await args.api.createSession({
+      runId,
+      projectSlug: args.project.slug,
+      worktreePath: cwd,
+      stepId: "agent",
+      executor: runnerExecutorInput(args.snapshot),
+      runner: runnerSupervisorInput({ snapshot: args.snapshot }),
+      adapterLaunch: mergeRunnerAdapterLaunch(args.snapshot),
+      readOnlySession: true,
+      ...(args.run.acpSessionId
+        ? { resumeSessionId: args.run.acpSessionId }
+        : {}),
+    });
+
+    await args.db
+      .update(runs)
+      .set({ acpSessionId: session.acpSessionId })
+      .where(eq(runs.id, runId));
+
+    queueMicrotask(() => {
+      void consumeAgentSession({
+        db: args.db,
+        api: args.api,
+        runId,
+        sessionId: session.sessionId,
+      }).catch((err: unknown) => {
+        log.error(
+          { runId, err: err instanceof Error ? err.message : String(err) },
+          "consensus runner draft session consumer threw",
+        );
+      });
+    });
+
+    await args.api.sendPrompt(session.sessionId, {
+      stepId: "agent",
+      prompt: consensusDraftPromptBlock(args.payload),
+    });
+
+    log.info(
+      {
+        runId,
+        participantId: args.payload.participantId,
+        nodeId: args.payload.nodeId,
+        nodeAttemptId: args.payload.nodeAttemptId,
+        round: args.payload.round,
+        runnerId: args.run.runnerId ?? null,
+      },
+      "consensus runner draft session started",
+    );
+  } catch (err) {
+    log.error(
+      { runId, err: err instanceof Error ? err.message : String(err) },
+      "consensus runner draft session spawn/prompt failed",
+    );
+    await finalizeAgentRun(runId, "Failed", {
+      db: args.db,
+      reason: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
 type AgentTerminalOutcome = "Done" | "Failed" | "Crashed" | "Abandoned";
 type AgentFinalStatus = AgentTerminalOutcome | "Review";
 
@@ -2183,21 +2430,58 @@ export async function startAgentSession(
     return;
   }
 
-  const agentRows = await _db
-    .select()
-    .from(agents)
-    .where(eq(agents.id, run.agentId));
-  const agent = agentRows[0];
+  const draftPayload = consensusDraftPayload(run);
   const projectRows = await _db
     .select()
     .from(projects)
     .where(eq(projects.id, run.projectId));
   const project = projectRows[0];
 
-  if (!agent || !project) {
+  if (!project) {
     await finalizeAgentRun(runId, "Failed", {
       db: _db,
-      reason: "agent or project row vanished before spawn",
+      reason: "project row vanished before spawn",
+    });
+
+    return;
+  }
+
+  if (!run.agentId) {
+    const delegation = runnerDelegationSnapshot(run.delegationSnapshot);
+    const snapshot = run.runnerSnapshot;
+
+    if (draftPayload?.participantKind === "runner" && delegation && snapshot) {
+      await startConsensusRunnerDraftSession({
+        db: _db,
+        api,
+        run,
+        project,
+        payload: draftPayload,
+        snapshot,
+      });
+
+      return;
+    }
+
+    await finalizeAgentRun(runId, "Failed", {
+      db: _db,
+      reason:
+        "agent run has no catalog agent and is not a valid consensus runner draft",
+    });
+
+    return;
+  }
+
+  const agentRows = await _db
+    .select()
+    .from(agents)
+    .where(eq(agents.id, run.agentId));
+  const agent = agentRows[0];
+
+  if (!agent) {
+    await finalizeAgentRun(runId, "Failed", {
+      db: _db,
+      reason: "agent row vanished before spawn",
     });
 
     return;
@@ -2315,9 +2599,12 @@ export async function startAgentSession(
       });
     }
 
+    const basePrompt = await buildAgentPrompt(_db, effective.parsed, run);
     const prompt =
       opts.overridePrompt ??
-      (await buildAgentPrompt(_db, effective.parsed, run));
+      (draftPayload
+        ? consensusAgentDraftPrompt(basePrompt, draftPayload)
+        : basePrompt);
 
     const issuedToken = await issueAgentRunToken({
       agentId: agent.id,
@@ -2422,10 +2709,22 @@ export async function consumeAgentSession(args: {
   sessionId: string;
 }): Promise<void> {
   let sawPermissionRequest = false;
+  const draftPayload = await loadConsensusDraftPayload(args.db, args.runId);
+  let consensusDraftOutput = "";
 
   for await (const event of args.api.streamSession(args.sessionId)) {
     switch (event.type) {
       case "session.update": {
+        if (draftPayload) {
+          const chunk = consensusDraftUpdateText(event.update);
+
+          if (chunk) {
+            consensusDraftOutput = appendCappedConsensusDraftOutput(
+              consensusDraftOutput,
+              chunk,
+            );
+          }
+        }
         if (sawPermissionRequest) {
           // The permission was answered (the session is active again);
           // the runner owns NeedsInput → Running for agent runs too.
@@ -2482,6 +2781,39 @@ export async function consumeAgentSession(args: {
 
           if (persistentRows[0]?.persistent === true) {
             await parkPersistentAgent(args.runId, { db: args.db });
+
+            return;
+          }
+        }
+
+        if (
+          draftPayload &&
+          event.exitCode === 0 &&
+          event.reason === undefined
+        ) {
+          try {
+            await recordConsensusDraftArtifact({
+              db: args.db,
+              runId: args.runId,
+              payload: draftPayload,
+              text: consensusDraftOutput,
+            });
+            log.info(
+              {
+                runId: args.runId,
+                participantId: draftPayload.participantId,
+                nodeId: draftPayload.nodeId,
+                nodeAttemptId: draftPayload.nodeAttemptId,
+                round: draftPayload.round,
+                outputLength: consensusDraftOutput.length,
+              },
+              "consensus draft output artifact recorded",
+            );
+          } catch (err) {
+            await finalizeAgentRun(args.runId, "Failed", {
+              db: args.db,
+              reason: err instanceof Error ? err.message : String(err),
+            });
 
             return;
           }

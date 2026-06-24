@@ -400,6 +400,7 @@ export default async function RunDetailLayout({
     kindGate: tEvidence("kindGate"),
     kindDecision: tEvidence("kindDecision"),
     artifactKindMutationReport: tEvidence("artifactKindMutationReport"),
+    artifactKindPlan: tEvidence("artifactKindPlan"),
   };
   const workbenchTabLabels: WorkbenchTabsLabels = {
     files: tWorkbench("tab.files"),

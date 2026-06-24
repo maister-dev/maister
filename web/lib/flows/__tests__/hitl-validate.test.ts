@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  assertConsensusDecision,
   assertReviewDecision,
+  isConsensusResolutionSchema,
   isReviewSchema,
+  validateConsensusDecision,
   validateHitlResponse,
   validateReviewDecision,
 } from "@/lib/flows/hitl-validate";
@@ -15,12 +18,96 @@ const reviewSchema = {
   workspacePolicies: ["keep"],
 };
 
+const consensusSchema = {
+  kind: "consensus_resolution",
+  round: 1,
+  allowedDecisions: [
+    "pick-draft-1",
+    "provide-resolution",
+    "re-run-round",
+    "abort",
+  ],
+  drafts: [{ participantLabel: "Planner A", runId: "child-run-secret" }],
+};
+
 describe("isReviewSchema", () => {
   it("is true only for a {review:true} schema", () => {
     expect(isReviewSchema(reviewSchema)).toBe(true);
     expect(isReviewSchema({ fields: [] })).toBe(false);
     expect(isReviewSchema(null)).toBe(false);
     expect(isReviewSchema(undefined)).toBe(false);
+  });
+});
+
+describe("isConsensusResolutionSchema", () => {
+  it("is true only for consensus resolution schemas", () => {
+    expect(isConsensusResolutionSchema(consensusSchema)).toBe(true);
+    expect(isConsensusResolutionSchema({ kind: "consensus" })).toBe(true);
+    expect(isConsensusResolutionSchema(reviewSchema)).toBe(false);
+    expect(isConsensusResolutionSchema(null)).toBe(false);
+  });
+});
+
+describe("validateConsensusDecision", () => {
+  it("accepts an allow-listed draft pick and canonicalizes away body ids", () => {
+    const r = validateConsensusDecision(
+      {
+        decision: "pick-draft-1",
+        draftRunId: "body-controlled",
+        participantId: "body-controlled",
+      },
+      consensusSchema,
+    );
+
+    expect(r).toEqual({
+      ok: true,
+      decision: "pick-draft-1",
+      response: { decision: "pick-draft-1" },
+    });
+  });
+
+  it("accepts a non-empty human resolution", () => {
+    const r = validateConsensusDecision(
+      {
+        decision: "provide-resolution",
+        resolution: "Use Planner A and defer analytics.",
+      },
+      consensusSchema,
+    );
+
+    expect(r).toEqual({
+      ok: true,
+      decision: "provide-resolution",
+      response: {
+        decision: "provide-resolution",
+        resolution: "Use Planner A and defer analytics.",
+      },
+    });
+  });
+
+  it("rejects undeclared decisions and empty resolutions", () => {
+    expect(
+      validateConsensusDecision({ decision: "pick-draft-7" }, consensusSchema)
+        .ok,
+    ).toBe(false);
+    expect(
+      validateConsensusDecision(
+        { decision: "provide-resolution", resolution: "" },
+        consensusSchema,
+      ).ok,
+    ).toBe(false);
+  });
+
+  it("assertConsensusDecision surfaces invalid consensus responses as NEEDS_INPUT", () => {
+    let thrown: unknown;
+
+    try {
+      assertConsensusDecision({ decision: "abort-now" }, consensusSchema);
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect((thrown as { code?: string } | undefined)?.code).toBe("NEEDS_INPUT");
   });
 });
 

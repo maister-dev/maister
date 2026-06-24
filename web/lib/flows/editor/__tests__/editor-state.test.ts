@@ -110,7 +110,14 @@ describe("addNode", () => {
   });
 
   it("all node types can be added", () => {
-    const types = ["ai_coding", "cli", "check", "judge", "human"] as const;
+    const types = [
+      "ai_coding",
+      "cli",
+      "check",
+      "judge",
+      "consensus",
+      "human",
+    ] as const;
 
     for (const type of types) {
       const result = addNode(BASE_MANIFEST, type, `new-${type}`);

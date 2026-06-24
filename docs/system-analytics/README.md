@@ -24,6 +24,7 @@ Every file in this folder follows the structure defined in
 | Flow packages | [`flow-packages.md`](flow-packages.md) | Package revision lifecycle, trust, compatibility, enablement, upgrade, rollback. |
 | Flows | [`flows.md`](flows.md) | Plugin packaging, step DSL (cli/agent/guard/human), executor override resolution. |
 | Flow settings | [`flow-settings.md`](flow-settings.md) | Typed node settings, launch refusal boundaries, and capability-materialization handoff. |
+| Consensus node | [`consensus.md`](consensus.md) | First-class `consensus` graph node: read-only draft fan-out, rotational cross-verification, unanimous material-axis tally, HITL resolution, and synthesized plan artifact output. |
 | Capabilities | [`capabilities.md`](capabilities.md) | Capability registry refs, agent-aware mappings, and runner-owned materialization. |
 | Tasks | [`tasks.md`](tasks.md) | Board lifecycle (Backlog ↔ InFlight ↔ Done ↔ Abandoned), 1:N task ↔ run, retry loop. |
 | Social board | [`social-board.md`](social-board.md) | `KEY-N` comments with mention expansion, domain-written activity, subscriptions, per-recipient inbox, polymorphic actor pair (ADR-083). |
