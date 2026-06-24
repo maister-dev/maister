@@ -58,6 +58,13 @@ function reasoningInstruction(
   return `Reasoning effort policy: ${reasoningEffort}. Treat this as run guidance unless the selected ACP runner enforces it natively.`;
 }
 
+const explicitCommandPrefixPattern =
+  /^(?:@(skill|agent):[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?|\/[A-Za-z0-9][A-Za-z0-9._:-]*|\$[A-Za-z0-9][A-Za-z0-9._:-]*)(?:\s|$)/;
+
+function startsWithExplicitCommand(prompt: string): boolean {
+  return explicitCommandPrefixPattern.test(prompt.trimStart());
+}
+
 export function decoratePromptForPlanMode(args: PromptPolicy): string {
   const workMode = args.workMode ?? planModeToWorkMode(args.planMode);
   const reasoningEffort = args.reasoningEffort ?? "high";
@@ -68,6 +75,9 @@ export function decoratePromptForPlanMode(args: PromptPolicy): string {
   ].filter((line): line is string => line !== null);
 
   if (policyLines.length === 0 && args.planMode === "off") return args.prompt;
+  if (startsWithExplicitCommand(args.prompt)) {
+    return [args.prompt.trimStart(), "", ...policyLines].join("\n");
+  }
 
   return [...policyLines, "", args.prompt].join("\n");
 }

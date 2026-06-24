@@ -7,6 +7,7 @@ import {
   validateScratchAttachments,
 } from "@/lib/scratch-runs/attachments";
 import {
+  normalizeScratchPrompt,
   projectSupervisorEventToScratch,
   sendScratchPromptAndProjectEvents,
 } from "@/lib/scratch-runs/events";
@@ -48,6 +49,33 @@ describe("scratch launch helpers", () => {
     expect(workModeToPlanMode("plan_first")).toBe("plan-first");
     expect(workModeToPlanMode("manual_approval")).toBe("off");
     expect(scratchStepId()).toBe("dialog");
+  });
+
+  it("keeps explicit skill commands first when adding run policy", () => {
+    const decorated = decoratePromptForPlanMode({
+      planMode: "off",
+      reasoningEffort: "ultra",
+      prompt: "@skill:aif-plan Plan full mode",
+    });
+
+    expect(decorated.startsWith("@skill:aif-plan")).toBe(true);
+    expect(decorated).toContain("Reasoning effort policy: ultra");
+    expect(
+      normalizeScratchPrompt(decorated, "claude", { runId: "r1" }).startsWith(
+        "/aif-plan",
+      ),
+    ).toBe(true);
+  });
+
+  it("keeps raw slash commands first when adding manual approval policy", () => {
+    const decorated = decoratePromptForPlanMode({
+      planMode: "off",
+      workMode: "manual_approval",
+      prompt: "/aif-plan Plan full mode",
+    });
+
+    expect(decorated.startsWith("/aif-plan")).toBe(true);
+    expect(decorated).toContain("Manual approval policy");
   });
 });
 
