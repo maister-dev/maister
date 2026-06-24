@@ -449,7 +449,8 @@ describe("FlowGraphView — run-coupled vs static mode", () => {
     expect(html).toContain('data-node-status="Running"');
     expect(html).toContain('data-current="true"');
     expect(html).toContain("chip--");
-    expect(html).toContain("model: claude");
+    expect(html).toContain('data-testid="flow-node-tooltip"');
+    expect(html).toContain("claude");
   });
 
   it("renders pure topology with NO chips and NO current ring when runContext is absent (static mode)", () => {
@@ -486,6 +487,7 @@ describe("FlowGraphView — run-coupled vs static mode", () => {
       }),
     );
 
-    expect(html).toContain("model: claude");
+    expect(html).toContain('data-testid="flow-node-tooltip"');
+    expect(html).toContain("claude");
   });
 });

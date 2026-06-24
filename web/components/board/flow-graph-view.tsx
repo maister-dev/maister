@@ -314,13 +314,13 @@ export function FlowNodeBody({
   return (
     <div
       aria-current={isCurrent ? "step" : undefined}
-      className="relative"
+      className="group relative"
       data-current={presentationOnly ? undefined : isCurrent ? "true" : "false"}
       data-node-role={nodeRole}
       data-node-status={presentationOnly ? undefined : status}
       data-selected={selected ? "true" : undefined}
       data-testid="flow-node"
-      title={tooltip ?? (isCurrent ? labels.currentNode : undefined)}
+      title={!tooltip && isCurrent ? labels.currentNode : undefined}
     >
       <div
         className="w-[200px] overflow-hidden rounded-[11px] border bg-ivory"
@@ -401,6 +401,52 @@ export function FlowNodeBody({
       {rollup === "failed" || rollup === "stale" ? (
         <span data-rollup={rollup} data-testid="gate-rollup" />
       ) : null}
+      {tooltip ? <NodeTooltipCard text={tooltip} /> : null}
+    </div>
+  );
+}
+
+// Styled hover/focus tooltip card (replaces the native `title=`): the node
+// tooltip builders emit a `\n`-joined block — first line is the `id · type`
+// header, the rest are `key: value` facts (model/permission/workspace/skills/
+// mcps/rework) or `N transitions`/`N gates` counts. Revealed via the parent
+// node's `group` on hover/focus; pointer-events-none so it never eats clicks.
+function NodeTooltipCard({ text }: { text: string }): ReactElement {
+  const [header, ...rows] = text.split("\n").filter((line) => line.length > 0);
+
+  return (
+    <div
+      className="pointer-events-none absolute left-1/2 top-full z-30 mt-1.5 hidden w-[230px] -translate-x-1/2 flex-col gap-1 rounded-lg border border-line bg-paper p-2.5 text-left shadow-[var(--shadow-lg)] group-hover:flex group-focus-within:flex"
+      data-testid="flow-node-tooltip"
+      role="tooltip"
+    >
+      {header ? (
+        <span className="font-mono text-[10.5px] font-semibold text-ink">
+          {header}
+        </span>
+      ) : null}
+      {rows.map((row, index) => {
+        const sep = row.indexOf(": ");
+
+        if (sep <= 0) {
+          return (
+            <span key={index} className="font-mono text-[10px] text-mute">
+              {row}
+            </span>
+          );
+        }
+
+        return (
+          <span key={index} className="flex gap-1 text-[10px] leading-snug">
+            <span className="shrink-0 font-mono font-semibold uppercase tracking-[0.08em] text-mute">
+              {row.slice(0, sep)}
+            </span>
+            <span className="min-w-0 break-words text-ink-2">
+              {row.slice(sep + 2)}
+            </span>
+          </span>
+        );
+      })}
     </div>
   );
 }
