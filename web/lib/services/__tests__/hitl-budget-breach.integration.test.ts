@@ -43,6 +43,9 @@ vi.mock("@/lib/supervisor-client", () => ({
 vi.mock("@/lib/flows/runner", () => ({
   runFlow: vi.fn(async () => {}),
 }));
+vi.mock("@/lib/agents/launch", () => ({
+  startAgentSession: vi.fn(async () => {}),
+}));
 vi.mock("@/lib/authz", () => ({
   requireProjectAction: vi.fn(async () => {}),
 }));
@@ -101,18 +104,28 @@ async function seedRunner() {
   return executorId;
 }
 
-async function seedRun(projectId: string, budgetState?: unknown) {
+async function seedRun(
+  projectId: string,
+  budgetState?: unknown,
+  opts: {
+    runKind?: "flow" | "agent";
+    status?: string;
+    acpSessionId?: string | null;
+  } = {},
+) {
   const runId = randomUUID();
   const executorId = await seedRunner();
 
   await (db as any).insert(schema.runs).values({
     id: runId,
     projectId,
+    runKind: opts.runKind ?? "flow",
     runnerId: executorId,
     capabilityAgent: "claude",
     runnerSnapshot: testRunnerSnapshot(executorId),
-    status: "NeedsInput",
+    status: opts.status ?? "NeedsInput",
     flowVersion: "v1.0.0",
+    acpSessionId: opts.acpSessionId ?? null,
     budgetState: budgetState ?? null,
   });
 
@@ -345,6 +358,87 @@ describe("respondToHitl budget_breach integration — raise (valid)", () => {
     expect(
       (runRow.budgetState as any).ceilingOverride.task.consecutiveFailures,
     ).toBe(6);
+  });
+});
+
+describe("respondToHitl budget_breach integration — raise resumes by run_kind (ADR-106 M39)", () => {
+  it("agent run (NeedsInput escalate): raise CASes →Running and respawns via startAgentSession (not runFlow)", async () => {
+    const projectId = await seedProject("budget-agent-resume");
+    const runId = await seedRun(projectId, undefined, {
+      runKind: "agent",
+      acpSessionId: "acp-agent-resume",
+    });
+    const hitlRequestId = await seedBudgetBreachHitl(
+      runId,
+      { limit: 1000, current: 1200 },
+      "agent",
+    );
+
+    await seedOpenAssignment(projectId, runId, hitlRequestId);
+
+    const { startAgentSession } = await import("@/lib/agents/launch");
+    const startAgentSessionSpy = vi.mocked(startAgentSession);
+    const { runFlow } = await import("@/lib/flows/runner");
+    const runFlowSpy = vi.mocked(runFlow);
+
+    const res = await respondToHitl(
+      { runId, hitlRequestId, body: { optionId: "raise", raiseTo: 2000 } },
+      userActor,
+      { db },
+    );
+
+    expect(res.status).toBe(202);
+
+    const runRow = (
+      await (db as any)
+        .select()
+        .from(schema.runs)
+        .where(eq(schema.runs.id, runId))
+    )[0];
+
+    // The agent resume claims NeedsInput→Running synchronously, then respawns.
+    expect(runRow.status).toBe("Running");
+
+    await new Promise((r) => setTimeout(r, 0)); // flush the respawn microtask
+    expect(startAgentSessionSpy).toHaveBeenCalledWith(runId, expect.anything());
+    // The flow runFlow path is NOT taken for an agent run.
+    expect(runFlowSpy).not.toHaveBeenCalled();
+  });
+
+  it("agent run (NeedsInputIdle restorable): raise resumes via startAgentSession from the idle pause", async () => {
+    const projectId = await seedProject("budget-agent-idle-resume");
+    const runId = await seedRun(projectId, undefined, {
+      runKind: "agent",
+      status: "NeedsInputIdle",
+      acpSessionId: "acp-agent-idle",
+    });
+    const hitlRequestId = await seedBudgetBreachHitl(
+      runId,
+      { limit: 1000, current: 1200 },
+      "agent",
+    );
+
+    const { startAgentSession } = await import("@/lib/agents/launch");
+    const startAgentSessionSpy = vi.mocked(startAgentSession);
+
+    const res = await respondToHitl(
+      { runId, hitlRequestId, body: { optionId: "raise", raiseTo: 2000 } },
+      userActor,
+      { db },
+    );
+
+    expect(res.status).toBe(202);
+    expect(
+      (
+        await (db as any)
+          .select()
+          .from(schema.runs)
+          .where(eq(schema.runs.id, runId))
+      )[0].status,
+    ).toBe("Running");
+
+    await new Promise((r) => setTimeout(r, 0));
+    expect(startAgentSessionSpy).toHaveBeenCalledWith(runId, expect.anything());
   });
 });
 

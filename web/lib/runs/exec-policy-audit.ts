@@ -23,6 +23,7 @@ export type ExecPolicyActionKind =
   | "history_rewritten"
   | "budget_warned"
   | "budget_escalated"
+  | "budget_restorable"
   | "budget_terminated"
   | "budget_raised";
 

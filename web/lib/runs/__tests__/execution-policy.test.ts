@@ -10,6 +10,7 @@ import {
   crashRetryFromSnapshot,
   permissionsFromSnapshot,
   humanGateFromSnapshot,
+  onBudgetBreachFromSnapshot,
   onStuckFromSnapshot,
   promotionFromSnapshot,
   commitsFromSnapshot,
@@ -42,6 +43,7 @@ describe("expandExecutionPolicy — preset → axes", () => {
       commits: "keep_all",
       dirtyResolve: "ask",
       budget: {},
+      onBudgetBreach: null,
     });
   });
 
@@ -68,6 +70,7 @@ describe("expandExecutionPolicy — preset → axes", () => {
       commits: "squash_rework",
       dirtyResolve: "proceed",
       budget: {},
+      onBudgetBreach: null,
     });
   });
 
@@ -776,6 +779,44 @@ describe("budgetFromSnapshot (run snapshot → budget axis, fail-OPEN)", () => {
         overrides: { budget: { run: { warnAtPct: 200 } } },
       }),
     ).toEqual({});
+  });
+});
+
+describe("onBudgetBreachFromSnapshot (run snapshot → budget-breach axis, fail-closed to null)", () => {
+  it("null / undefined / garbage snapshot → null (apply run_kind default)", () => {
+    expect(onBudgetBreachFromSnapshot(null)).toBeNull();
+    expect(onBudgetBreachFromSnapshot(undefined)).toBeNull();
+    expect(onBudgetBreachFromSnapshot("budget")).toBeNull();
+    expect(onBudgetBreachFromSnapshot({ preset: "bogus" })).toBeNull();
+  });
+
+  it("an unset axis (any preset, no override) → null", () => {
+    expect(onBudgetBreachFromSnapshot({ preset: "supervised" })).toBeNull();
+    expect(onBudgetBreachFromSnapshot({ preset: "unattended" })).toBeNull();
+  });
+
+  it("a valid override resolves through", () => {
+    expect(
+      onBudgetBreachFromSnapshot({
+        preset: "supervised",
+        overrides: { onBudgetBreach: "terminate_restorable" },
+      }),
+    ).toBe("terminate_restorable");
+    expect(
+      onBudgetBreachFromSnapshot({
+        preset: "unattended",
+        overrides: { onBudgetBreach: "escalate" },
+      }),
+    ).toBe("escalate");
+  });
+
+  it("a present-but-invalid enum fails the strict parse → null (never a silent switch)", () => {
+    expect(
+      onBudgetBreachFromSnapshot({
+        preset: "supervised",
+        overrides: { onBudgetBreach: "bogus" },
+      }),
+    ).toBeNull();
   });
 });
 

@@ -154,6 +154,80 @@ function claimAndResumeAgentRun(runId: string, db: any): void {
       "agent hook_trip resume failed",
     ),
   );
+// Wake a run after a budget raise (ADR-106 M39 Phase 5). The mechanism depends on
+// run_kind + the PAUSED status, which the onBudgetBreach disposition chose:
+// `escalate` left the run in NeedsInput (slot held); `terminate_restorable` in
+// NeedsInputIdle (checkpointed, slot freed). Both kept acp_session_id, so the
+// resume restores context via session/resume.
+//   - agent  → CAS NeedsInput|NeedsInputIdle → Running, then respawn the session.
+//   - flow + NeedsInput     → runFlow (it claims NeedsInput→Running itself).
+//   - flow + NeedsInputIdle → resumeRun (respawn) + the resume-driver.
+async function scheduleBudgetBreachResume(args: {
+  db: any;
+  runId: string;
+  runKind: string;
+  stepId: string;
+}): Promise<void> {
+  const { db, runId, runKind, stepId } = args;
+
+  if (runKind === "agent") {
+    const claimed = await db.transaction(async (tx: any) => {
+      const rows = await tx
+        .update(runs)
+        .set({ status: "Running", keepaliveUntil: null, checkpointAt: null })
+        .where(
+          and(
+            eq(runs.id, runId),
+            inArray(runs.status, ["NeedsInput", "NeedsInputIdle"]),
+          ),
+        )
+        .returning({ id: runs.id });
+
+      return rows.length > 0;
+    });
+
+    if (!claimed) return;
+    const { startAgentSession } = await import("@/lib/agents/launch");
+
+    queueMicrotask(() => {
+      void startAgentSession(runId, { db }).catch((err: unknown) =>
+        log.error(
+          { runId, err: err instanceof Error ? err.message : String(err) },
+          "agent budget-raise resume failed",
+        ),
+      );
+    });
+
+    return;
+  }
+
+  // flow: the paused status decides the resume path.
+  const [cur] = await db
+    .select({ status: runs.status })
+    .from(runs)
+    .where(eq(runs.id, runId));
+
+  if (cur?.status === "NeedsInputIdle") {
+    const { resumeRun } = await import("@/lib/runs/resume");
+    const { scheduleResumedSessionDrive } = await import(
+      "@/lib/runs/resume-driver"
+    );
+    const r = await resumeRun(runId, { db });
+
+    if (r.ok) {
+      scheduleResumedSessionDrive({
+        runId,
+        supervisorSessionId: r.newSupervisorSessionId,
+        acpSessionId: r.acpSessionId,
+        stepId,
+      });
+    }
+
+    return;
+  }
+
+  // flow + NeedsInput (escalate): runFlow claims NeedsInput→Running.
+  scheduleResume(runId);
 }
 
 // Stable comparison so retries with the same payload are idempotent.
@@ -1722,8 +1796,16 @@ async function handleBudgetBreachResponse(args: {
     );
   }
 
-  // raise → resume the run (worktree preserved, effective ceiling lifted)
-  scheduleResume(runId);
+  // raise → resume the run (worktree preserved, effective ceiling lifted). The
+  // wake mechanism branches on run_kind + the paused status (escalate=NeedsInput,
+  // terminate_restorable=NeedsInputIdle) — ADR-106 extends the former flow-only
+  // runFlow resume to agents (session/resume) and the idle restorable pause.
+  await scheduleBudgetBreachResume({
+    db,
+    runId,
+    runKind: runRow.runKind,
+    stepId: hitlRow.stepId,
+  });
   log.info(
     {
       runId,
@@ -1732,11 +1814,16 @@ async function handleBudgetBreachResponse(args: {
       scope,
       meter,
       raiseTo,
+      runKind: runRow.runKind,
       latencyMs: Date.now() - startedAt,
     },
     "budget_breach raised — resuming",
   );
 
+  // runStatus is the pre-resume paused status hint; the resume runs async and the
+  // client observes the live status via the stream (the contract stays NeedsInput
+  // for back-compat — a restorable run is NeedsInputIdle but resume-in-progress is
+  // the meaningful signal).
   return NextResponse.json(
     { ok: true, runStatus: "NeedsInput", state: "resume-in-progress" },
     { status: 202 },

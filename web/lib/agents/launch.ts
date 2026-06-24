@@ -30,6 +30,7 @@ import {
   type EffectiveAgentDefinition,
 } from "@/lib/agents/effective";
 import { hookEnvDefaults, resolveHooksConfig } from "@/lib/flows/hooks-config";
+import { resolveAgentExecutionPolicy } from "@/lib/agents/execution-policy";
 import {
   issueAgentRunToken,
   revokeAgentRunTokensForRun,
@@ -41,9 +42,11 @@ import {
 import { type AgentMcpServer } from "@/lib/capabilities/agent-map";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
+import { type AgentExecutionPolicyRecommendation } from "@/lib/db/schema";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { MaisterError, type MaisterErrorCode } from "@/lib/errors";
 import { gcAgeDays, worktreesRoot } from "@/lib/instance-config";
+import { permissionsFromSnapshot } from "@/lib/runs/execution-policy";
 import { nextKeepaliveAt } from "@/lib/runs/keepalive-config";
 import { assertRunKindInvariant } from "@/lib/runs/run-kind-invariants";
 import {
@@ -594,9 +597,33 @@ async function launchAgentDrivenFlowRun(
     taskId = created.taskId;
   }
 
+  // M39 Phase 5 (ADR-106): a flow-driving agent imposes ITS runner policy on the
+  // flow run (autoApply → the flow's existing B1/B2 enforcement, onBudgetBreach →
+  // the budget axis). Pass it as the launch override ONLY when the agent actually
+  // declares a policy — otherwise the flow keeps its own task/project default.
+  const instancePolicy = ctx.link
+    .executionPolicyOverride as AgentExecutionPolicyRecommendation | null;
+  const recommendedPolicy =
+    ctx.effective.parsed.recommended?.executionPolicy ?? null;
+  const declaresPolicy =
+    !!(instancePolicy?.autoApply ?? recommendedPolicy?.autoApply) ||
+    !!(instancePolicy?.onBudgetBreach ?? recommendedPolicy?.onBudgetBreach);
+
   const { launchRun } = await import("@/lib/services/runs");
   const result = await launchRun(
-    { taskId, flowId: flow.id as string, agentId: input.agentId },
+    {
+      taskId,
+      flowId: flow.id as string,
+      agentId: input.agentId,
+      ...(declaresPolicy
+        ? {
+            executionPolicy: resolveAgentExecutionPolicy({
+              instanceOverride: instancePolicy,
+              recommended: recommendedPolicy,
+            }),
+          }
+        : {}),
+    },
     { authorize: async () => {}, actorUserId: null },
     _db,
   );
@@ -861,10 +888,22 @@ export async function launchAgentRun(
     }
   }
 
+  // M39 Phase 5 (ADR-106): resolve the effective runner policy (autoApply →
+  // B1/B2 axes, onBudgetBreach → the budget-terminal axis) in the Q3 order
+  // instance-override → agent recommended → supervised floor, and snapshot it
+  // onto the run so the budget watchdog + HITL boundary read the snapshot
+  // (never a post-launch projection).
+  const executionPolicy = resolveAgentExecutionPolicy({
+    instanceOverride: ctx.link
+      .executionPolicyOverride as AgentExecutionPolicyRecommendation | null,
+    recommended: ctx.effective.parsed.recommended?.executionPolicy ?? null,
+  });
+
   const runRow = {
     id: runId,
     runKind: "agent" as const,
     agentId: input.agentId,
+    executionPolicy,
     triggerSource: input.trigger.source,
     triggerEventId: input.trigger.eventId ?? null,
     triggerPayload: input.trigger.payload ?? null,
@@ -2227,6 +2266,13 @@ export async function startAgentSession(
       // ADR-090 L1: none/repo_read agents run the whole session read-only.
       readOnlySession: workspace !== "worktree",
       hooksConfig,
+      // M39 Phase 5 (ADR-106): autoApply='permissions'/'full' maps to B1
+      // permissions=auto_approve — the supervisor's requestPermission handler
+      // auto-selects the allow option inline (L3, below the read-only layers),
+      // so a standalone agent never pauses to a permission HITL. Read from the
+      // run's immutable execution_policy snapshot (fail-closed to `ask`).
+      autoApprovePermissions:
+        permissionsFromSnapshot(run.executionPolicy ?? null) === "auto_approve",
       ...(run.acpSessionId ? { resumeSessionId: run.acpSessionId } : {}),
     });
 

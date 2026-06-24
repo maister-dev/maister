@@ -49,6 +49,15 @@ export type CommitPolicy =
 // C3 — dirty-worktree resolution (discard is never an automatic value).
 export type DirtyResolution = "ask" | "commit" | "proceed";
 
+// Budget-breach terminal handling (ADR-106, the agent runner-policy axis). What a
+// cost-budget breach does to the run: `escalate` pauses to NeedsInput with a
+// budget_breach HITL (slot held); `terminate` fails the run (non-recoverable);
+// `terminate_restorable` checkpoints + frees the slot to the recoverable
+// NeedsInputIdle (raise-and-resume via session/resume). `null` (unset) ⇒ the
+// caller applies today's run_kind default (flow non-tree → escalate, else
+// terminate), so the snapshot reader fails CLOSED to null (behaves like today).
+export type OnBudgetBreach = "escalate" | "terminate" | "terminate_restorable";
+
 export type ExecutionPolicyOverrides = {
   reworkExhaustion?: ReworkExhaustionAction;
   crashRetry?: CrashRetryMode;
@@ -60,6 +69,7 @@ export type ExecutionPolicyOverrides = {
   commits?: CommitPolicy;
   dirtyResolve?: DirtyResolution;
   budget?: BudgetAxis;
+  onBudgetBreach?: OnBudgetBreach;
 };
 
 export type ExecutionPolicy = {
@@ -80,6 +90,7 @@ export type ResolvedExecutionPolicy = {
   commits: CommitPolicy;
   dirtyResolve: DirtyResolution;
   budget: BudgetAxis;
+  onBudgetBreach: OnBudgetBreach | null;
 };
 
 type PresetAxes = Omit<ResolvedExecutionPolicy, "preset">;
@@ -99,6 +110,7 @@ const PRESET_AXES: Record<ExecutionPreset, PresetAxes> = {
     commits: "keep_all",
     dirtyResolve: "ask",
     budget: {},
+    onBudgetBreach: null,
   },
   assisted: {
     reworkExhaustion: "escalate",
@@ -111,6 +123,7 @@ const PRESET_AXES: Record<ExecutionPreset, PresetAxes> = {
     commits: "keep_all",
     dirtyResolve: "proceed",
     budget: {},
+    onBudgetBreach: null,
   },
   unattended: {
     reworkExhaustion: "escalate",
@@ -123,6 +136,7 @@ const PRESET_AXES: Record<ExecutionPreset, PresetAxes> = {
     commits: "squash_rework",
     dirtyResolve: "proceed",
     budget: {},
+    onBudgetBreach: null,
   },
 };
 
@@ -144,6 +158,7 @@ export function expandExecutionPolicy(
     commits: o.commits ?? base.commits,
     dirtyResolve: o.dirtyResolve ?? base.dirtyResolve,
     budget: o.budget ?? base.budget,
+    onBudgetBreach: o.onBudgetBreach ?? base.onBudgetBreach,
   };
 }
 
@@ -333,6 +348,7 @@ export const executionPolicyOverridesSchema = z
     ]),
     dirtyResolve: z.enum(["ask", "commit", "proceed"]),
     budget: budgetAxisSchema.optional(),
+    onBudgetBreach: z.enum(["escalate", "terminate", "terminate_restorable"]),
   })
   .partial()
   .strict();
@@ -465,6 +481,21 @@ export function budgetFromSnapshot(snapshot: unknown): BudgetAxis {
   const parsed = executionPolicySchema.safeParse(snapshot);
 
   return parsed.success ? expandExecutionPolicy(parsed.data).budget : {};
+}
+
+// Resolve the budget-breach axis (ADR-106) from a run's execution_policy
+// snapshot. Returns `null` when the axis is unset OR the snapshot is
+// null/absent/malformed — `null` means "apply the run_kind default" (flow
+// non-tree → escalate, else terminate), so a corrupt policy can never silently
+// switch a run away from today's terminal behavior.
+export function onBudgetBreachFromSnapshot(
+  snapshot: unknown,
+): OnBudgetBreach | null {
+  const parsed = executionPolicySchema.safeParse(snapshot);
+
+  return parsed.success
+    ? expandExecutionPolicy(parsed.data).onBudgetBreach
+    : null;
 }
 
 // Default warn band when warnAtPct is unset. Single source of truth: this module

@@ -37,11 +37,13 @@ import {
 } from "@/lib/runs/cost-rollups";
 import {
   budgetFromSnapshot,
+  onBudgetBreachFromSnapshot,
   DEFAULT_BUDGET_WARN_PCT,
   type BudgetAxis,
   type BudgetLimits,
   type BudgetRung,
   type BudgetScope,
+  type OnBudgetBreach,
 } from "@/lib/runs/execution-policy";
 import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
 import { runDirPath } from "@/lib/flows/graph/mutation-check";
@@ -1128,25 +1130,40 @@ async function evaluateBudgetForCandidate(
     }
   }
 
-  // Escalate (→ NeedsInput pause + raise-and-resume) is FLOW-only in v1. Two
-  // scopes/kinds have no escalate→resume route, so an escalate-rung verdict for
-  // them is promoted to terminate:
-  //   - tree scope: a parked WaitingOnChildren root has no → NeedsInput
-  //     transition (spec §4: tree breach goes straight to terminate-cascade);
-  //   - any non-flow run (agent / scratch): the raise-and-resume path is
-  //     runFlow/loadRun, which only re-enters a flow graph — a non-flow run has
-  //     flowId=null → loadRun throws, stranding the run in NeedsInput. Agent /
-  //     scratch budget escalate-raise is deferred (ADR-101, spec §5); their
-  //     budget breach terminates via the kind-dispatched terminate path.
-  if (
-    verdict &&
-    verdict.rung === "escalate" &&
-    (verdict.scope === "tree" || candidate.runKind !== "flow")
-  ) {
+  // Tree scope has no escalate→resume route — a parked WaitingOnChildren root has
+  // no → NeedsInput transition (spec §4: a tree breach goes straight to the
+  // terminate-cascade) — so a tree escalate verdict is force-promoted to
+  // terminate here. The run/task (non-tree) breach DISPOSITION is no longer
+  // hardcoded by run_kind: it is resolved from the onBudgetBreach policy axis at
+  // dispatch (escalate | terminate | terminate_restorable; ADR-106 M39 Phase 5),
+  // so a non-flow run can now escalate (agent resume via session/resume) or land
+  // in the recoverable NeedsInputIdle instead of an unconditional terminate.
+  if (verdict && verdict.rung === "escalate" && verdict.scope === "tree") {
     return { ...verdict, rung: "terminate" };
   }
 
   return verdict;
+}
+
+// Resolve the run/task (non-tree) breach disposition from the onBudgetBreach
+// policy axis (ADR-106). UNSET (null) reproduces the pre-M39 run_kind default:
+// flow → escalate (pause + raise), non-flow → terminate (Failed). A
+// `terminate_restorable` policy wins at BOTH the soft (escalate) and hard
+// (terminate) rung — the owner's "no-escalate" never hard-fails on budget. At the
+// hard rung, escalate/terminate both terminate (the agent already blew the hard
+// ceiling); only the soft rung honors `escalate`.
+function resolveBudgetDisposition(args: {
+  rung: BudgetRung;
+  runKind: string;
+  onBudgetBreach: OnBudgetBreach | null;
+}): "escalate" | "terminate" | "terminate_restorable" {
+  const policy =
+    args.onBudgetBreach ?? (args.runKind === "flow" ? "escalate" : "terminate");
+
+  if (policy === "terminate_restorable") return "terminate_restorable";
+  if (args.rung === "terminate") return "terminate";
+
+  return policy === "escalate" ? "escalate" : "terminate";
 }
 
 // Idempotency: skip a WARN when this scope is already at warn-or-higher. The
@@ -1248,18 +1265,26 @@ function liveRecordFor(
   );
 }
 
-// ESCALATE (FLOW run/task scope only — non-flow is promoted to terminate
-// upstream, so this only ever runs for a flow run): halt the live session so
-// spend stops (checkpoint), then pause to NeedsInput with a budget_breach HITL —
+// PAUSE-FOR-BUDGET (run/task scope, any run_kind — ADR-106 M39 Phase 5): halt the
+// live session so spend stops (checkpoint), then pause with a budget_breach HITL —
 // status flip + node attempt + HITL row + assignment + run.needs_input +
 // run.escalated outbox all in ONE tx (ADR-086 exactly-once). Worktree KEPT.
 // EXECUTOR_UNAVAILABLE on the checkpoint leaves the run live for the next tick
 // (no split-brain). Returns true on pause.
+//
+// `mode` is the resolved onBudgetBreach disposition:
+//   - "escalate"   → NeedsInput, the slot is HELD (raise-and-resume from a live
+//                    pause; the keep-alive sweeper later idles it if unanswered).
+//   - "restorable" → NeedsInputIdle (checkpointed, recoverable), the slot is
+//                    FREED so a queued run promotes; restore = raise + resume.
+// Both keep acp_session_id, so the resume restores context via session/resume
+// (agent → startAgentSession, flow → runFlow / idle resume-driver).
 async function actBudgetEscalate(
   db: Db,
   records: SupervisorSessionRecord[],
   candidate: BudgetCandidate,
   verdict: BudgetVerdict,
+  mode: "escalate" | "restorable",
 ): Promise<boolean> {
   const live = liveRecordFor(records, candidate);
 
@@ -1300,8 +1325,9 @@ async function actBudgetEscalate(
       )
     : null;
 
-  // Escalate is flow-only (non-flow promoted to terminate upstream), so move the
-  // active node attempt to NeedsInput for a clean resume re-entry.
+  // A flow run's active node attempt moves to NeedsInput for a clean resume
+  // re-entry; an agent run has no node_attempts row (fetchActiveAttempt → null,
+  // a no-op below) — the agent resume respawns the whole session.
   const attempt = candidate.currentStepId
     ? await fetchActiveAttempt(db, candidate.id, candidate.currentStepId)
     : null;
@@ -1323,17 +1349,24 @@ async function actBudgetEscalate(
       const upd = await tx
         .update(runs)
         .set({
-          status: "NeedsInput",
+          status: mode === "restorable" ? "NeedsInputIdle" : "NeedsInput",
+          // restorable is an idle checkpoint: stamp checkpoint_at + clear the
+          // keep-alive window so it reads as a recoverable idle (the Pass2 TTL
+          // still applies, the slot is freed below). escalate leaves the run a
+          // held NeedsInput pause — the slot stays reserved until the raise.
+          ...(mode === "restorable"
+            ? { checkpointAt: new Date(), keepaliveUntil: null }
+            : {}),
           budgetState: mergedBudgetState(
             candidate.budgetState,
             verdict.scope,
-            "escalate",
+            verdict.rung,
           ),
         })
-        // Escalate is a run/task verdict, only ever reached for a Running
-        // candidate (Fix A) — CAS on the EXACT observed status. A parked
-        // WaitingOnChildren root has no → NeedsInput resume route, so it must
-        // never be paused here even defensively.
+        // A run/task verdict is only ever reached for a Running candidate (Fix
+        // A) — CAS on the EXACT observed status. A parked WaitingOnChildren root
+        // has no → NeedsInput resume route, so it must never be paused here even
+        // defensively.
         .where(and(eq(runs.id, candidate.id), eq(runs.status, "Running")))
         .returning({ id: runs.id, projectId: runs.projectId });
 
@@ -1427,10 +1460,25 @@ async function actBudgetEscalate(
   }
 
   // The escalation outbox events committed inside the pause tx above; only the
-  // audit log + runner wake happen post-commit.
+  // slot release (restorable only), audit log + runner wake happen post-commit.
+  if (mode === "restorable") {
+    // NeedsInputIdle frees the concurrency slot — promote the next queued run.
+    try {
+      await releaseSlotOnIdle({ runId: candidate.id, db });
+    } catch (err) {
+      log.warn(
+        {
+          runId: candidate.id,
+          err: err instanceof Error ? err.message : String(err),
+        },
+        "[budget] restorable releaseSlotOnIdle failed (non-fatal)",
+      );
+    }
+  }
+
   logExecPolicyAction({
     runId: candidate.id,
-    kind: "budget_escalated",
+    kind: mode === "restorable" ? "budget_restorable" : "budget_escalated",
     detail: {
       scope: verdict.scope,
       meter: verdict.meter,
@@ -1439,8 +1487,10 @@ async function actBudgetEscalate(
     },
   });
   log.warn(
-    { runId: candidate.id, scope: verdict.scope, meter: verdict.meter },
-    "[budget] escalated → NeedsInput (budget_breach HITL)",
+    { runId: candidate.id, scope: verdict.scope, meter: verdict.meter, mode },
+    mode === "restorable"
+      ? "[budget] restorable → NeedsInputIdle (slot freed, budget_breach HITL)"
+      : "[budget] escalated → NeedsInput (budget_breach HITL)",
   );
 
   return true;
@@ -1886,14 +1936,36 @@ async function runBudgetPass(db: Db): Promise<number> {
 
       if (verdict.rung === "warn") {
         didAct = await actBudgetWarn(db, candidate, verdict);
-      } else if (verdict.rung === "escalate") {
-        // escalate only reaches run/task scope (tree escalate was promoted to
-        // terminate in evaluateBudgetForCandidate).
-        didAct = await actBudgetEscalate(db, records, candidate, verdict);
       } else if (verdict.scope === "tree") {
+        // tree breach (escalate force-promoted to terminate upstream) → cascade.
         didAct = await actBudgetTerminateTree(db, records, candidate, verdict);
       } else {
-        didAct = await actBudgetTerminateRun(db, records, candidate, verdict);
+        // run/task (non-tree): the onBudgetBreach policy axis picks the response.
+        const disposition = resolveBudgetDisposition({
+          rung: verdict.rung,
+          runKind: candidate.runKind,
+          onBudgetBreach: onBudgetBreachFromSnapshot(candidate.executionPolicy),
+        });
+
+        if (disposition === "escalate") {
+          didAct = await actBudgetEscalate(
+            db,
+            records,
+            candidate,
+            verdict,
+            "escalate",
+          );
+        } else if (disposition === "terminate_restorable") {
+          didAct = await actBudgetEscalate(
+            db,
+            records,
+            candidate,
+            verdict,
+            "restorable",
+          );
+        } else {
+          didAct = await actBudgetTerminateRun(db, records, candidate, verdict);
+        }
       }
 
       if (didAct) acted += 1;

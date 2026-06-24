@@ -27,9 +27,23 @@ import {
   describe,
   expect,
   it,
+  vi,
 } from "vitest";
 
 const exec = promisify(execFile);
+
+// Stub the scheduler so the flow launch stays Pending and never fires the
+// fire-and-forget background runFlow (which has no live supervisor + would race
+// the container teardown). The run's identity + execution_policy snapshot are
+// set at the INSERT, so every assertion below holds without starting the run.
+vi.mock("@/lib/scheduler", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/scheduler")>();
+
+  return {
+    ...actual,
+    tryStartRun: vi.fn(async () => ({ started: false, queuePosition: 1 })),
+  };
+});
 
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
@@ -56,6 +70,9 @@ triggers:
   - cron
 risk_tier: read_only
 flow: bugfix
+recommended:
+  executionPolicy:
+    autoApply: full
 ---
 You are the driving persona.
 `,
@@ -253,5 +270,28 @@ describe("launchAgentRun — agent drives a flow (M39, ADR-106)", () => {
     ]);
 
     expect(task.rows[0].flow_id).toBe(run.flow_id);
+  });
+
+  it("imposes the flow-driving agent's runner policy on the flow run (autoApply='full' → B1 auto_approve + B2 auto_pass on execution_policy)", async () => {
+    const result = await launchAgentRun({
+      agentId: "pkg:driver",
+      projectId,
+      trigger: { source: "manual" },
+      db,
+    });
+
+    expect("runId" in result).toBe(true);
+    if (!("runId" in result)) return;
+
+    const rows = await pool.query(
+      `SELECT execution_policy FROM runs WHERE id = $1`,
+      [result.runId],
+    );
+
+    // launchAgentDrivenFlowRun passes the agent's resolved policy as the launch
+    // override; the flow runner's existing B1/B2 enforcement reads it back.
+    expect(rows.rows[0].execution_policy).toMatchObject({
+      overrides: { permissions: "auto_approve", humanGate: "auto_pass" },
+    });
   });
 });

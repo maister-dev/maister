@@ -17,6 +17,7 @@ import type {
   BudgetAxis,
   BudgetState,
   ExecutionPolicy,
+  OnBudgetBreach,
 } from "@/lib/runs/execution-policy";
 
 import { randomUUID } from "node:crypto";
@@ -130,6 +131,14 @@ let userId: string;
 // a budget override) — the shape budgetFromSnapshot parses.
 function policyWithBudget(budget: BudgetAxis): ExecutionPolicy {
   return { preset: "supervised", overrides: { budget } };
+}
+
+// ADR-106 M39 Phase 5: a budget axis + an explicit onBudgetBreach disposition.
+function policyWithBudgetAndBreach(
+  budget: BudgetAxis,
+  onBudgetBreach: OnBudgetBreach,
+): ExecutionPolicy {
+  return { preset: "supervised", overrides: { budget, onBudgetBreach } };
 }
 
 beforeAll(async () => {
@@ -636,6 +645,169 @@ describe("budget watchdog — ESCALATE (flow-only, E4) + non-flow promotion to t
     expect(await getHitl(runId)).toHaveLength(0);
     // The raise top-up is preserved (not clobbered by any notified write).
     expect(run.budgetState?.ceilingOverride?.run?.maxTokens).toBe(100000);
+  }, 60_000);
+});
+
+describe("budget watchdog — onBudgetBreach disposition (ADR-106 M39 Phase 5)", () => {
+  it("flow terminate_restorable: 100% checkpoints, run→NeedsInputIdle (recoverable), slot freed → queued flow promotes, budget_breach HITL", async () => {
+    const taskId = await seedTask();
+    const sup = `sup-${randomUUID().slice(0, 8)}`;
+    const runId = await seedRun({
+      taskId,
+      executionPolicy: policyWithBudgetAndBreach(
+        { run: { maxTokens: 1000 } },
+        "terminate_restorable",
+      ),
+      acpSessionId: "acp-restorable-flow",
+    });
+
+    await seedAttempt({ runId, attempt: 1, status: "Running" });
+    await seedRollup(runId, taskId, 1000);
+    const pendingRunId = await seedPendingRun();
+
+    listSessionsSpy.mockResolvedValue([
+      liveSessionRecord(runId, sup, "implement"),
+    ]);
+
+    await runSweepTick({ db });
+
+    // checkpoint (not delete) — restorable is recoverable, never a hard kill.
+    expect(checkpointSessionSpy).toHaveBeenCalledWith(sup);
+    expect(deleteSessionSpy).not.toHaveBeenCalled();
+
+    const run = await getRun(runId);
+
+    expect(run.status).toBe("NeedsInputIdle");
+    expect(run.checkpointAt).not.toBeNull();
+    expect(run.acpSessionId).toBe("acp-restorable-flow"); // preserved for resume
+
+    const hitl = await getHitl(runId);
+
+    expect(hitl).toHaveLength(1);
+    expect(hitl[0].kind).toBe("budget_breach");
+
+    // The freed slot promotes the queued Pending run (runFlow is the mocked spy).
+    expect((await getRun(pendingRunId)).status).toBe("Running");
+    expect(runFlowSpy).toHaveBeenCalledWith(pendingRunId);
+  }, 60_000);
+
+  it("agent terminate_restorable: lands in NeedsInputIdle (recoverable, NOT Failed) — checkpoint, no deleteSession", async () => {
+    const sup = `sup-${randomUUID().slice(0, 8)}`;
+    const runId = await seedRun({
+      runKind: "agent",
+      executionPolicy: policyWithBudgetAndBreach(
+        { run: { maxTokens: 500 } },
+        "terminate_restorable",
+      ),
+      acpSessionId: "acp-restorable-agent",
+    });
+
+    await seedRollup(runId, null, 500); // 100% (below hard 625)
+
+    listSessionsSpy.mockResolvedValue([liveSessionRecord(runId, sup, "agent")]);
+
+    await runSweepTick({ db });
+
+    expect(checkpointSessionSpy).toHaveBeenCalledWith(sup);
+    expect(deleteSessionSpy).not.toHaveBeenCalled();
+
+    const run = await getRun(runId);
+
+    // The owner's "no-escalate" never hard-fails — recoverable idle, not Failed.
+    expect(run.status).toBe("NeedsInputIdle");
+    expect(run.acpSessionId).toBe("acp-restorable-agent");
+    expect(await getHitl(runId)).toHaveLength(1);
+  }, 60_000);
+
+  it("agent escalate: 100% checkpoints, run→NeedsInput (slot HELD), budget_breach HITL + run.escalated (non-flow escalate now supported)", async () => {
+    const sup = `sup-${randomUUID().slice(0, 8)}`;
+    const runId = await seedRun({
+      runKind: "agent",
+      executionPolicy: policyWithBudgetAndBreach(
+        { run: { maxTokens: 500 } },
+        "escalate",
+      ),
+      acpSessionId: "acp-escalate-agent",
+    });
+
+    await seedRollup(runId, null, 500);
+
+    listSessionsSpy.mockResolvedValue([liveSessionRecord(runId, sup, "agent")]);
+
+    await runSweepTick({ db });
+
+    expect(checkpointSessionSpy).toHaveBeenCalledWith(sup);
+    expect(deleteSessionSpy).not.toHaveBeenCalled();
+
+    const run = await getRun(runId);
+
+    expect(run.status).toBe("NeedsInput");
+    expect(run.budgetState?.notified?.run).toBe("escalate");
+
+    const hitl = await getHitl(runId);
+
+    expect(hitl).toHaveLength(1);
+    expect(hitl[0].kind).toBe("budget_breach");
+
+    const events = await db
+      .select()
+      .from(schema.domainEvents)
+      .where(eq(schema.domainEvents.runId, runId));
+
+    expect(events.some((e: any) => e.kind === "run.escalated")).toBe(true);
+  }, 60_000);
+
+  it("agent terminate_restorable at the HARD ceiling stays recoverable (NeedsInputIdle, NOT Failed)", async () => {
+    const sup = `sup-${randomUUID().slice(0, 8)}`;
+    const runId = await seedRun({
+      runKind: "agent",
+      executionPolicy: policyWithBudgetAndBreach(
+        { run: { maxTokens: 1000, hardMaxTokens: 1200 } },
+        "terminate_restorable",
+      ),
+      acpSessionId: "acp-restorable-hard",
+    });
+
+    await seedRollup(runId, null, 1300); // ≥ hardMax 1200 (terminate rung)
+
+    listSessionsSpy.mockResolvedValue([liveSessionRecord(runId, sup, "agent")]);
+
+    await runSweepTick({ db });
+
+    // restorable wins even at the hard rung — checkpoint, recoverable idle.
+    expect(checkpointSessionSpy).toHaveBeenCalledWith(sup);
+    expect(deleteSessionSpy).not.toHaveBeenCalled();
+    expect((await getRun(runId)).status).toBe("NeedsInputIdle");
+  }, 60_000);
+
+  it("flow terminate (opt-out of escalate): 100% deleteSession, run Failed, no HITL pause", async () => {
+    const taskId = await seedTask();
+    const sup = `sup-${randomUUID().slice(0, 8)}`;
+    const runId = await seedRun({
+      taskId,
+      executionPolicy: policyWithBudgetAndBreach(
+        { run: { maxTokens: 1000 } },
+        "terminate",
+      ),
+      acpSessionId: "acp-flow-optout",
+    });
+
+    await seedAttempt({ runId, attempt: 1, status: "Running" });
+    await seedRollup(runId, taskId, 1000);
+
+    listSessionsSpy.mockResolvedValue([
+      liveSessionRecord(runId, sup, "implement"),
+    ]);
+
+    await runSweepTick({ db });
+
+    expect(deleteSessionSpy).toHaveBeenCalledWith(sup);
+    expect(checkpointSessionSpy).not.toHaveBeenCalled();
+
+    const run = await getRun(runId);
+
+    expect(run.status).toBe("Failed");
+    expect(await getHitl(runId)).toHaveLength(0);
   }, 60_000);
 });
 
