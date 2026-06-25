@@ -16,6 +16,7 @@
     "test:e2e": "NODE_ENV=test playwright test --pass-with-no-tests",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx lib/db/migrate.ts",
+    "db:check": "tsx --import ./scripts/_register-shim.mjs lib/db/check.ts",
     "db:seed": "tsx --import ./scripts/_register-shim.mjs lib/db/seed.ts",
     "db:studio": "drizzle-kit studio",
     "install-flow": "tsx --import ./scripts/_register-shim.mjs scripts/install-flow.ts",

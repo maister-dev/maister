@@ -566,7 +566,7 @@ sequenceDiagram
 
 Status: `hitl_list` / `hitl_respond` for permission/form HITL are Implemented
 in M17. `hitl_inbox` and global personal-token human response are Implemented
-by migration `0064_user_access_tokens.sql`.
+by migration `0076_user_access_tokens.sql`.
 
 External token-scoped agents query and answer pending HITL via MCP tools
 (`hitl_list`, `hitl_inbox`, `hitl_respond`) backed by external REST

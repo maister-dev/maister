@@ -26,7 +26,7 @@ let db: Db;
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("maister_migration_0064_test")
+    .withDatabase("maister_migration_0076_test")
     .withUsername("test")
     .withPassword("test")
     .start();
@@ -114,7 +114,7 @@ async function hasIndex(indexName: string): Promise<boolean> {
   return rows.length === 1;
 }
 
-describe("migration 0064 user access token invariants", () => {
+describe("migration 0076 (was 0064) user access token invariants", () => {
   it("makes personal-token and audit project bindings nullable with the designed FK/index shape", async () => {
     const actual = {
       projectTokensProjectNullable: await columnNullable(
@@ -171,7 +171,9 @@ describe("migration 0064 user access token invariants", () => {
   });
 
   it("rejects invalid token shapes at the database boundary", async () => {
-    const projectId = await seedProject(`token-shape-${randomUUID().slice(0, 8)}`);
+    const projectId = await seedProject(
+      `token-shape-${randomUUID().slice(0, 8)}`,
+    );
 
     await expect(
       db.insert(schema.projectTokens).values({

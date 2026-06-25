@@ -4,7 +4,7 @@
 > Project API tokens, user-owned tokens, route-scope enforcement, token audit log,
 > the `/api/v1/ext` external REST surface, the `external_check` gate report loop,
 > and the thin MCP facade. Global personal API tokens are **Implemented** by
-> migration `0064_user_access_tokens.sql`. Locked decisions:
+> migration `0076_user_access_tokens.sql`. Locked decisions:
 > [ADR-040](../decisions.md#adr-040), [ADR-041](../decisions.md#adr-041),
 > [ADR-042](../decisions.md#adr-042).
 

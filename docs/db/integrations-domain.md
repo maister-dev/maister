@@ -115,5 +115,5 @@ Existing rows remain valid; no data backfill is required.
 - SDD spec: [`../../.ai-factory/specs/feature-user-access-tokens.md`](../../.ai-factory/specs/feature-user-access-tokens.md).
 - Source (Implemented): `web/lib/db/schema.ts` (migrations
   `0020_m16_api_tokens.sql`, `0031_token_actor_scope_support.sql`).
-- Source targets (Designed): `web/lib/db/migrations/0064_user_access_tokens.sql`,
+- Source targets (Designed): `web/lib/db/migrations/0076_user_access_tokens.sql`,
   `web/lib/db/schema.ts`.

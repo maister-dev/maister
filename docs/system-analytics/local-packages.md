@@ -3,7 +3,7 @@
 > Behavior SSOT for **editable local packages** — a platform-scoped, git-backed
 > working directory a member authors/forks artifacts in, edits in Flow Studio
 > under a session lock, and **cuts versions** from into the existing
-> package-install substrate. **Status: Implemented (ADR-096 base; ADR-105 Stream A; ADR-107/110 Stream B — version-adopt launch + PR-to-source, migration 0074).** Surface:
+> package-install substrate. **Status: Implemented (ADR-096 base; ADR-105 Stream A; ADR-107/110 Stream B — version-adopt launch + PR-to-source, migration 0078).** Surface:
 > [`../screens/studio/README.md`](../screens/studio/README.md) §Local workspace +
 > [`../screens/studio/editor.md`](../screens/studio/editor.md). Data:
 > [`../db/projects-domain.md`](../db/projects-domain.md).
@@ -264,17 +264,17 @@ itself is not extended — see ADR-113).
 
 ## M39 Stream B — version-adopt launch + PR-to-source (Implemented — ADR-107/110)
 
-Stream B is the **runtime + publish** half of M39 and owns **migration 0074** — the
+Stream B is the **runtime + publish** half of M39 and owns **migration 0078** — the
 only schema change in M39's runtime. It closes two gaps left by Stream A's
 centralized model: a project can pick up a **newer cut** of a package it pins, and a
 member can **propose a local package's edits upstream** as a PR.
 
-### Source link on the cut (migration 0074)
+### Source link on the cut (migration 0078)
 
 A project's attachment is an immutable `package_installs` row; a centralized package
 is a mutable `local_packages` working dir. Today the only edge is the **forward**
 `local_packages.last_cut_install_id` (package → its newest cut) — an attached install
-does not know which local package + commit it was cut from. Migration 0074 adds the
+does not know which local package + commit it was cut from. Migration 0078 adds the
 **back-edge** plus the publish markers:
 
 - `package_installs.source_local_package_id` — FK → `local_packages.id`

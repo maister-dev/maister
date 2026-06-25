@@ -12,9 +12,9 @@ import { describe, expect, it } from "vitest";
 const MIGRATIONS_DIR = join(__dirname, "../migrations");
 const JOURNAL_PATH = join(MIGRATIONS_DIR, "meta/_journal.json");
 
-function journalEntries(): Array<{ idx: number; tag: string }> {
+function journalEntries(): Array<{ idx: number; tag: string; when: number }> {
   const journal = JSON.parse(readFileSync(JOURNAL_PATH, "utf8")) as {
-    entries: Array<{ idx: number; tag: string }>;
+    entries: Array<{ idx: number; tag: string; when: number }>;
   };
 
   return journal.entries;
@@ -56,5 +56,43 @@ describe("migration journal ↔ files integrity", () => {
     const tags = journalEntries().map((e) => e.tag);
 
     expect(new Set(tags).size).toBe(tags.length);
+  });
+
+  // Guards the failure class that the 2026-06-25 Studio crash hit: a
+  // rebase/renumber left a migration's old authoring `when` while placing it
+  // after newer entries. drizzle's node-postgres migrator reads the single
+  // highest `created_at` in drizzle.__drizzle_migrations once, then applies an
+  // entry only when `entry.when > thatMax`. So an out-of-order (<=) `when` is
+  // SILENTLY skipped on every incremental `db:migrate` against a DB already
+  // past it — surfacing later as a runtime "column does not exist". Fresh
+  // installs are unaffected (the empty ledger short-circuits the comparison and
+  // applies all in array order), which is exactly why CI's fresh-container
+  // integration suite cannot catch it. The runtime counterpart is the
+  // boot/`pnpm db:check` guard in lib/db/check-migrations.ts.
+  it("journal entries are ordered by strictly increasing idx", () => {
+    const entries = journalEntries();
+
+    for (let i = 1; i < entries.length; i++) {
+      expect(
+        entries[i].idx,
+        `entry "${entries[i].tag}" (idx ${entries[i].idx}) must come after ` +
+          `"${entries[i - 1].tag}" (idx ${entries[i - 1].idx}) in array order`,
+      ).toBeGreaterThan(entries[i - 1].idx);
+    }
+  });
+
+  it("journal `when` timestamps are strictly increasing in entry order", () => {
+    const entries = journalEntries();
+
+    for (let i = 1; i < entries.length; i++) {
+      expect(
+        entries[i].when,
+        `"${entries[i].tag}" (when=${entries[i].when}) must have a strictly ` +
+          `greater \`when\` than "${entries[i - 1].tag}" ` +
+          `(when=${entries[i - 1].when}); equal or lower values get skipped by ` +
+          `incremental db:migrate — bump the new migration's \`when\` above all ` +
+          `prior entries (renumber it to the end if a rebase landed it early)`,
+      ).toBeGreaterThan(entries[i - 1].when);
+    }
   });
 });

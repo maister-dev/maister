@@ -1120,7 +1120,7 @@ migration `0019`)** `capability_imports` table and
 `0020_m16_api_tokens.sql`)** `project_tokens` / `token_audit_log` tables (drawn
 above), expanded by `0031_token_actor_scope_support.sql` for user-owned tokens
 and enforced scopes, with global personal tokens and nullable audit targets
-Implemented by `0064_user_access_tokens.sql`. Remaining roadmap-additive persistence (e.g. artifact edges and
+Implemented by `0076_user_access_tokens.sql`. Remaining roadmap-additive persistence (e.g. artifact edges and
 external-operation events) is not drawn until its migrations exist. See
 [`../database-schema.md#planned-roadmap-persistence`](../database-schema.md#planned-roadmap-persistence).
 

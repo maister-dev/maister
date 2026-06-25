@@ -15,6 +15,47 @@
 export async function register(): Promise<void> {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
 
+  // Migration-drift guard (2026-06-25 Studio crash): a journal migration that
+  // never reached this DB — silently skipped by db:migrate on an out-of-order
+  // `when`, never run, or partially applied — otherwise surfaces as a confusing
+  // runtime "column does not exist" deep in a page. Catch it at boot instead.
+  // A failed CHECK (DB unreachable) is tolerated; only a confirmed gap is loud.
+  // Dev throws (fail-fast); MAISTER_STRICT_MIGRATIONS=0 downgrades to a warning,
+  // =1 enforces in any env. Runs before the sweeps, which would fail anyway on a
+  // behind DB. See lib/db/check-migrations.ts + `pnpm db:check`.
+  try {
+    const { findPendingMigrations } = await import("@/lib/db/check-migrations");
+    const { getDb } = await import("@/lib/db/client");
+    const db = getDb();
+    // The drift check is Postgres-only; the SQLite getDb() branch has no
+    // `execute`, so narrow to the Postgres client before checking.
+    const pending = "execute" in db ? await findPendingMigrations(db) : [];
+
+    if (pending.length > 0) {
+      const msg =
+        `[migrations] ${pending.length} migration(s) recorded in the journal ` +
+        `are NOT applied to the database: ${pending.join(", ")}. ` +
+        "Run `pnpm db:migrate`.";
+      const strict =
+        process.env.MAISTER_STRICT_MIGRATIONS === "1" ||
+        (process.env.NODE_ENV === "development" &&
+          process.env.MAISTER_STRICT_MIGRATIONS !== "0");
+
+      // eslint-disable-next-line no-console
+      console.error(`\n${"=".repeat(72)}\n${msg}\n${"=".repeat(72)}\n`);
+
+      if (strict) throw new Error(msg);
+    }
+  } catch (err) {
+    if (err instanceof Error && err.message.startsWith("[migrations]"))
+      throw err;
+    // eslint-disable-next-line no-console
+    console.error(
+      "[migrations] could not verify applied migrations (continuing boot):",
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+
   try {
     const { runResumeRecoverySweep, runTakeoverReturnRecoverySweep } =
       await import("@/lib/runs/resume-recovery");

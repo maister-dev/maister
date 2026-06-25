@@ -1759,7 +1759,7 @@ secondary scope without a schema change. Cascade: `ON DELETE CASCADE` from
 
 **(M16 — Implemented, migration `0020_m16_api_tokens.sql`; expanded by
 `0031_token_actor_scope_support.sql`; expanded by
-`0064_user_access_tokens.sql`.)** Project-scoped API tokens and
+`0076_user_access_tokens.sql`.)** Project-scoped API tokens and
 user-owned project tokens that grant external callers (CI, scripts, personal
 agents, webhook channels, the MCP facade) access to the `/api/v1/ext` surface.
 See
@@ -1826,7 +1826,7 @@ tokens survive project deletion. `created_by` and `owner_user_id` are
 `ON DELETE SET NULL`, but personal-token verification fails closed when
 `owner_user_id` is NULL.
 
-Designed migration `0064_user_access_tokens.sql`:
+Designed migration `0076_user_access_tokens.sql`:
 
 ```sql
 ALTER TABLE "project_tokens" ALTER COLUMN "project_id" DROP NOT NULL;
