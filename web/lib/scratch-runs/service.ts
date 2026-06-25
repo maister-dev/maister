@@ -14,6 +14,11 @@ import type {
   ScratchUploadedFileInput,
 } from "@/lib/scratch-runs/types";
 import type { PromptStopReason } from "@/lib/supervisor-client";
+import type { FlowAssistantFocus } from "@/lib/studio/flow-assistant/context";
+import type {
+  FlowActionResultPayload,
+  FlowAssistantIntent,
+} from "@/lib/studio/flow-assistant/protocol";
 
 import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
@@ -23,7 +28,10 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
-import { assertUserHoldsLock } from "@/lib/local-packages/lock";
+import {
+  assertHoldsLock,
+  assertUserHoldsLock,
+} from "@/lib/local-packages/lock";
 import {
   resolveRunner,
   type RunnerCatalogEntry,
@@ -45,6 +53,9 @@ import {
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
+import { buildFlowAssistantContext } from "@/lib/studio/flow-assistant/context";
+import { normalizeFlowAssistantIntent } from "@/lib/studio/flow-assistant/protocol";
+import { postProcessFlowAssistantTurn } from "@/lib/studio/flow-assistant/turn";
 import { runtimeRoot, worktreesRoot } from "@/lib/instance-config";
 import {
   assertScratchCapacityAvailable,
@@ -141,6 +152,7 @@ const log = pino({
 export type ScratchRunResponse = {
   runId: string;
   dialogUrl: string;
+  actionResult?: FlowActionResultPayload | null;
   status: {
     runId: string;
     projectId: string;
@@ -163,6 +175,7 @@ export type ScratchMessageResponse = {
   sequence: number;
   dialogStatus: ScratchDialogStatus;
   stopReason: PromptStopReason;
+  actionResult?: FlowActionResultPayload | null;
 };
 
 function isPostgresDb(): boolean {
@@ -219,14 +232,21 @@ function messageResponse(args: {
   sequence: number;
   dialogStatus: ScratchDialogStatus;
   stopReason: PromptStopReason;
+  actionResult?: FlowActionResultPayload | null;
 }): ScratchMessageResponse {
-  return {
+  const response: ScratchMessageResponse = {
     ok: true,
     messageId: args.messageId,
     sequence: args.sequence,
     dialogStatus: args.dialogStatus,
     stopReason: args.stopReason,
   };
+
+  if (args.actionResult !== undefined) {
+    response.actionResult = args.actionResult;
+  }
+
+  return response;
 }
 
 async function loadProject(db: Db, projectId: string) {
@@ -1217,12 +1237,36 @@ export async function assertLocalPackageAssistantActor(
 
 export type LocalPackageAssistantLaunchInput = {
   localPackageId: string;
+  sessionId: string;
   prompt: string;
   runnerId?: string;
+  intent?: FlowAssistantIntent;
+  focus?: FlowAssistantFocus;
   workMode?: ScratchWorkMode;
   reasoningEffort?: ScratchReasoningEffort;
   planMode?: ScratchPlanMode;
 };
+
+export type LocalPackageAssistantMessageInput = {
+  localPackageId: string;
+  sessionId: string;
+  content: string;
+  intent?: FlowAssistantIntent;
+  focus?: FlowAssistantFocus;
+};
+
+export type LocalPackageAssistantRunnerOption = {
+  id: string;
+  label: string;
+  adapter: CapabilityAgent;
+  model: string | null;
+  isDefault: boolean;
+};
+
+type ReadyLocalPackageAssistantRunnerOption =
+  LocalPackageAssistantRunnerOption & {
+    ready: boolean;
+  };
 
 // Resolve the runner for a project-less assistant launch. There is no project
 // (so no project default tier); the chain is launch-override → platform default.
@@ -1273,6 +1317,71 @@ async function resolveLocalPackageAssistantRunner(
   };
 }
 
+export async function listLocalPackageAssistantRunners(
+  db: Db = getDb() as Db,
+): Promise<{
+  runners: LocalPackageAssistantRunnerOption[];
+  defaultRunnerId: string | null;
+}> {
+  const runtimeRows = await db
+    .select()
+    .from(platformRuntimeSettings)
+    .where(eq(platformRuntimeSettings.id, "singleton"));
+  const platformRuntime = runtimeRows[0] ?? null;
+  const runnerRows = await db.select().from(platformAcpRunners);
+  const runners = runnerRows
+    .map((row: Record<string, any>): ReadyLocalPackageAssistantRunnerOption => {
+      const ready = row.enabled === true && row.readinessStatus === "Ready";
+
+      return {
+        id: row.id,
+        label: `${row.adapter} · ${row.model}`,
+        adapter: row.capabilityAgent as CapabilityAgent,
+        model: typeof row.model === "string" ? row.model : null,
+        ready,
+        isDefault: row.id === platformRuntime?.defaultRunnerId,
+      };
+    })
+    .filter(
+      (
+        runner: ReadyLocalPackageAssistantRunnerOption,
+      ): runner is ReadyLocalPackageAssistantRunnerOption & { ready: true } =>
+        runner.ready,
+    )
+    .map(
+      (
+        runner: ReadyLocalPackageAssistantRunnerOption,
+      ): LocalPackageAssistantRunnerOption => ({
+        id: runner.id,
+        label: runner.label,
+        adapter: runner.adapter,
+        model: runner.model,
+        isDefault: runner.isDefault,
+      }),
+    )
+    .sort(
+      (
+        a: LocalPackageAssistantRunnerOption,
+        b: LocalPackageAssistantRunnerOption,
+      ) =>
+        Number(b.isDefault) - Number(a.isDefault) ||
+        a.label.localeCompare(b.label),
+    );
+
+  log.debug(
+    {
+      runnerCount: runners.length,
+      defaultRunnerId: platformRuntime?.defaultRunnerId ?? null,
+    },
+    "local-package assistant runners listed",
+  );
+
+  return {
+    runners,
+    defaultRunnerId: platformRuntime?.defaultRunnerId ?? null,
+  };
+}
+
 async function loadActiveLocalPackage(db: Db, localPackageId: string) {
   const rows = await db
     .select()
@@ -1303,10 +1412,14 @@ export async function launchLocalPackageAssistant(args: {
   await requireActiveSession();
 
   const pkg = await loadActiveLocalPackage(db, args.body.localPackageId);
+
+  await assertHoldsLock(pkg.id, args.body.sessionId, db);
+
   const { executor, resolution: runnerResolution } =
     await resolveLocalPackageAssistantRunner(db, args.body);
 
   const policy = scratchPolicy(args.body);
+  const intent = normalizeFlowAssistantIntent(args.body.intent);
   // The assistant carries no project capability catalog — an empty selectable
   // set. The flow-authoring skill is seeded by the Studio surface (separate
   // task); the backend foundation materializes a bare per-adapter profile.
@@ -1347,6 +1460,14 @@ export async function launchLocalPackageAssistant(args: {
         prompt: rawPrompt,
       })
     : "";
+  const flowContext = hasInitialPrompt
+    ? await buildFlowAssistantContext({
+        localPackage: pkg,
+        intent,
+        focus: args.body.focus,
+        runnerLabel: `${runnerResolution.runnerId} (${executor.agent})`,
+      })
+    : null;
   const now = new Date();
   const name = pkg.name ? `${pkg.name} assistant` : scratchNameFallback(prompt);
   const messageId = hasInitialPrompt ? randomUUID() : null;
@@ -1465,6 +1586,7 @@ export async function launchLocalPackageAssistant(args: {
       // ADR-097: the SOLE confinement root is the working dir (no repo/worktree
       // widening). A `file:` URI outside it is rejected supervisor-side.
       confineRoot: workingDir,
+      readOnlySession: true,
       stepId: scratchStepId(),
       executor: runnerExecutorInput(runnerResolution.runnerSnapshot),
       runner: runnerSupervisorInput({
@@ -1514,9 +1636,14 @@ export async function launchLocalPackageAssistant(args: {
       });
     }
 
-    const launchPrompt = normalizeScratchPrompt(prompt, executor.agent, {
-      runId,
-    });
+    const launchPrompt = normalizeScratchPrompt(
+      groundedFlowAssistantPrompt({
+        context: flowContext?.prompt ?? "",
+        prompt,
+      }),
+      executor.agent,
+      { runId },
+    );
     const promptResult = await sendScratchPromptAndProjectEvents({
       runId,
       sessionId: session.sessionId,
@@ -1524,6 +1651,12 @@ export async function launchLocalPackageAssistant(args: {
       prompt: launchPrompt,
     });
     const dialogStatus = await completeScratchPromptTurn({ db, runId });
+    const actionResult = await postProcessFlowAssistantTurn({
+      db,
+      localPackage: pkg,
+      runId,
+      assertCanApply: () => assertHoldsLock(pkg.id, args.body.sessionId, db),
+    });
 
     log.info(
       {
@@ -1531,8 +1664,11 @@ export async function launchLocalPackageAssistant(args: {
         localPackageId: pkg.id,
         runnerId: runnerResolution.runnerId,
         createdByUserId: args.userId,
+        intent,
+        readOnlySession: true,
         dialogStatus,
         stopReason: promptResult.stopReason,
+        actionStatus: actionResult?.status ?? null,
       },
       "local-package assistant run launched",
     );
@@ -1545,6 +1681,7 @@ export async function launchLocalPackageAssistant(args: {
       baseBranch,
       baseCommit,
       policy,
+      actionResult,
     });
   } catch (err) {
     // Release any open permission deferred the turn created: deleting the
@@ -1587,8 +1724,9 @@ function localPackageAssistantResponse(args: {
   baseBranch: string;
   baseCommit: string;
   policy: ReturnType<typeof scratchPolicy>;
+  actionResult?: FlowActionResultPayload | null;
 }): ScratchRunResponse {
-  return {
+  const response: ScratchRunResponse = {
     runId: args.runId,
     dialogUrl: `/scratch-runs/${args.runId}`,
     status: {
@@ -1607,6 +1745,21 @@ function localPackageAssistantResponse(args: {
       planMode: args.policy.planMode,
     },
   };
+
+  if (args.actionResult !== undefined) {
+    response.actionResult = args.actionResult;
+  }
+
+  return response;
+}
+
+function groundedFlowAssistantPrompt(args: {
+  context: string;
+  prompt: string;
+}): string {
+  if (!args.context.trim()) return args.prompt;
+
+  return `${args.context}\n\n# User request\n${args.prompt}`;
 }
 
 // ADR-097: the turn path needs the run's working dir (for attachment URI
@@ -1918,6 +2071,131 @@ export async function sendScratchUserMessage(args: {
           markErr: markErr instanceof Error ? markErr.message : String(markErr),
         },
         "failed to mark scratch message prompt failure",
+      ),
+    );
+    throw err;
+  }
+}
+
+export async function sendLocalPackageAssistantMessage(args: {
+  runId: string;
+  body: LocalPackageAssistantMessageInput;
+}): Promise<ScratchMessageResponse> {
+  const db = getDb() as Db;
+  const pkg = await loadActiveLocalPackage(db, args.body.localPackageId);
+  const runRows = await db.select().from(runs).where(eq(runs.id, args.runId));
+  const run = runRows[0];
+
+  if (!run || run.runKind !== "scratch") {
+    throw new MaisterError("PRECONDITION", `run not found: ${args.runId}`);
+  }
+  if (run.localPackageId !== pkg.id) {
+    throw new MaisterError(
+      "PRECONDITION",
+      "assistant run does not belong to this local package",
+    );
+  }
+  await assertHoldsLock(pkg.id, args.body.sessionId, db);
+
+  const intent = normalizeFlowAssistantIntent(args.body.intent);
+  const appended = await appendScratchUserMessage({
+    db,
+    runId: args.runId,
+    body: { content: args.body.content, attachments: [] },
+    uploadedFiles: [],
+  });
+
+  try {
+    const context = await buildFlowAssistantContext({
+      localPackage: pkg,
+      intent,
+      focus: args.body.focus,
+      runnerLabel: `${run.runnerId ?? "platform default"} (${appended.capabilityAgent})`,
+    });
+    const messagePrompt = normalizeScratchPrompt(
+      groundedFlowAssistantPrompt({
+        context: context.prompt,
+        prompt: args.body.content,
+      }),
+      appended.capabilityAgent,
+      { runId: args.runId },
+    );
+    const promptResult = await sendScratchPromptAndProjectEvents({
+      runId: args.runId,
+      sessionId: appended.supervisorSessionId,
+      stepId: scratchStepId(),
+      prompt: messagePrompt,
+    });
+    const dialogStatus = await completeScratchPromptTurn({
+      db,
+      runId: args.runId,
+    });
+    const actionResult = await postProcessFlowAssistantTurn({
+      db,
+      localPackage: pkg,
+      runId: args.runId,
+      assertCanApply: () => assertHoldsLock(pkg.id, args.body.sessionId, db),
+    });
+
+    log.info(
+      {
+        localPackageId: pkg.id,
+        runId: args.runId,
+        intent,
+        focusPath: context.focusPath,
+        selectedNodeId: context.selectedNodeId,
+        actionStatus: actionResult?.status ?? null,
+      },
+      "local-package assistant message sent",
+    );
+
+    return messageResponse({
+      messageId: appended.messageId,
+      sequence: appended.sequence,
+      dialogStatus,
+      stopReason: promptResult.stopReason,
+      actionResult,
+    });
+  } catch (err) {
+    if (isMaisterError(err) && err.code === "EXECUTOR_UNAVAILABLE") {
+      await markScratchPromptRetryable({ db, runId: args.runId, err }).catch(
+        (markErr) =>
+          log.error(
+            {
+              runId: args.runId,
+              markErr:
+                markErr instanceof Error ? markErr.message : String(markErr),
+            },
+            "failed to mark assistant message prompt retryable",
+          ),
+      );
+      throw err;
+    }
+
+    await deleteScratchSupervisorSessionIfLive(
+      appended.supervisorSessionId,
+      args.runId,
+    ).catch((delErr) =>
+      log.error(
+        {
+          runId: args.runId,
+          delErr: delErr instanceof Error ? delErr.message : String(delErr),
+        },
+        "failed to release supervisor session on assistant turn failure",
+      ),
+    );
+    await markScratchCrashed({
+      db,
+      runId: args.runId,
+      err,
+      clearSupervisorSession: true,
+    }).catch((markErr) =>
+      log.error(
+        {
+          runId: args.runId,
+          markErr: markErr instanceof Error ? markErr.message : String(markErr),
+        },
+        "failed to mark assistant message prompt failure",
       ),
     );
     throw err;

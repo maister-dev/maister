@@ -86,6 +86,7 @@ export function PackageFilesEditor({
   initialSelectedPath = null,
   manifest = null,
   mcpCatalog = null,
+  onDirtyChange,
 }: {
   disabled: boolean;
   files: AuthoredFlowPackageFile[];
@@ -97,6 +98,7 @@ export function PackageFilesEditor({
   manifest?: Record<string, unknown> | null;
   // Optional platform MCP catalog; enables the `mcps/` template surface.
   mcpCatalog?: PlatformMcpCatalogEntry[] | null;
+  onDirtyChange?: (dirty: boolean) => void;
 }): ReactElement {
   const [draftFiles, setDraftFiles] = useState(files);
   const [selectedPath, setSelectedPath] = useState<string | null>(
@@ -107,6 +109,7 @@ export function PackageFilesEditor({
   );
   const [editPath, setEditPath] = useState<string | null>(null);
 
+  const initialSerialized = useMemo(() => JSON.stringify(files), [files]);
   const serialized = useMemo(() => JSON.stringify(draftFiles), [draftFiles]);
   const tree = useMemo(() => buildFileTree(draftFiles), [draftFiles]);
   const contentIssues = useMemo(
@@ -117,6 +120,10 @@ export function PackageFilesEditor({
     () => draftFiles.find((file) => file.path === selectedPath) ?? null,
     [draftFiles, selectedPath],
   );
+
+  useEffect(() => {
+    onDirtyChange?.(serialized !== initialSerialized);
+  }, [initialSerialized, onDirtyChange, serialized]);
 
   function applyPathEdit(oldPath: string, newPath: string): void {
     setDraftFiles((current) =>

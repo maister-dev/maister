@@ -1353,6 +1353,9 @@ it is rooted at a local-package `working_dir` with no project and no
 The `scratch_runs_project_status_idx` is partial (`WHERE projectId IS NOT
 NULL`); `scratch_runs_local_package_idx` is its partial twin. See
 [`system-analytics/studio-ai-assistant.md`](system-analytics/studio-ai-assistant.md).
+ADR-110 adds no proposal table or migration: redacted assistant action metadata
+is stored only as a run-scoped JSONL artifact, while `scratch_messages` stores
+sanitized `flow_action_result` system payloads for reload-stable UI cards.
 
 `workMode` and `reasoningEffort` are launch-policy metadata passed into the
 scratch prompt/profile. `planMode` stays for compatibility with existing
@@ -1380,6 +1383,12 @@ active workspace lists. The primary key on `runId` covers detail joins from
 Messages are append-only. `scratch_messages_run_sequence_uq`
 (`UNIQUE (runId, sequence)`) prevents duplicate dialog positions and supports
 deterministic replay.
+
+Studio assistant action results (ADR-110) are stored as server-produced system
+messages with `kind = "flow_action_result"`. They contain relative touched
+paths, status, issue summaries, and user-facing text only. Raw structured action
+JSON, file contents, and absolute working dirs are not stored in the transcript;
+the server-only JSONL artifact redacts file contents to hashes and byte counts.
 
 ## `scratch_attachments`
 

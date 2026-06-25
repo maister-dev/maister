@@ -641,7 +641,7 @@ export async function diffWorkingDir(
 // A binary asset decodes lossily, but the gate never content-validates assets
 // (freeform) and only reads CHANGED-path content + sibling PATHS — so a lossy
 // asset is harmless. A file that vanished between list and read is skipped.
-async function readWorkingDirArtifactFiles(
+export async function readWorkingDirArtifactFiles(
   pkg: LocalPackage,
 ): Promise<PackageArtifactFile[]> {
   const metas = await listFiles(pkg);

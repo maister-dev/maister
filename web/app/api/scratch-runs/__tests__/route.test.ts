@@ -365,6 +365,11 @@ describe("POST /api/scratch-runs", () => {
           "/tmp/maister-worktrees/demo/run/.maister/capabilities/run/profile.json",
       }),
     );
+    const createArg = mocks.createSession.mock.calls[0]?.[0] as
+      | { readOnlySession?: boolean }
+      | undefined;
+
+    expect(createArg?.readOnlySession).not.toBe(true);
     expect(mocks.sendScratchPromptAndProjectEvents).toHaveBeenCalledWith({
       runId: body.runId,
       sessionId: "supervisor-session-1",

@@ -66,10 +66,11 @@ export type LocalPackageEditorLabels = {
   // The git-backed [Diff] drawer (working-tree-vs-HEAD + Commit/Discard).
   diff: LocalPackageDiffLabels;
   diffView: DiffViewLabels;
-  // M36 T5.7: Properties ⇆ AI tab toggle + the docked assistant panel.
-  tabProperties: string;
+  // M36 T5.7: the bottom assistant panel.
   tabAi: string;
   aiWorking: string;
+  aiCollapse: string;
+  aiExpand: string;
   ai: StudioAiTabLabels;
   // M39 (ADR-105): the package-home landing + breadcrumb + End-edit.
   home: PackageHomeLabels;
@@ -196,31 +197,23 @@ export function LocalPackageEditor({
   }
 
   const [lockHeldByMe, setLockHeldByMe] = useState(initialLock.heldByMe);
+  const [lockConfirmedByMe, setLockConfirmedByMe] = useState(false);
   const [holderLabel, setHolderLabel] = useState(initialLock.holderLabel);
   const [status, setStatus] = useState<SaveStatus>({ kind: "idle" });
   // Bumped after a successful save or import so the git-diff drawer re-fetches
   // the working-tree diff + its changed-count.
   const [diffRefresh, setDiffRefresh] = useState(0);
-  // M36 T5.7: Properties ⇆ AI tab + the "AI working" read-only lock. While the
-  // assistant holds a turn the human editor is read-only; control returns on
-  // turn end (assistantBusy → false).
-  const [activeTab, setActiveTab] = useState<"properties" | "ai">("properties");
+  // M36 T5.7: while the assistant holds a turn the human editor is read-only;
+  // control returns on turn end (assistantBusy → false).
   const [assistantBusy, setAssistantBusy] = useState(false);
+  const [assistantCollapsed, setAssistantCollapsed] = useState(false);
+  const [flowEditorDirty, setFlowEditorDirty] = useState(false);
+  const [packageFilesDirty, setPackageFilesDirty] = useState(false);
   // M39 A3: the working-tree dirty count drives the top-bar "Commit state" badge
   // and the review dialog. Tracked here (not only in the flow-editor diff drawer)
   // so the badge works on the package-home view too, where the drawer is absent.
   const [changedCount, setChangedCount] = useState<number | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
-  // Latches once the AI tab is first opened so its panel (and its single ACP
-  // run) stays mounted while the editor is open, even when toggled back to
-  // Properties.
-  const aiOpenedRef = useRef(false);
-
-  const openTab = useCallback((tab: "properties" | "ai"): void => {
-    if (tab === "ai") aiOpenedRef.current = true;
-    setActiveTab(tab);
-  }, []);
-
   // On any assistant stream activity, re-read the working dir: the canvas
   // (router.refresh re-runs the server compile) and the git-diff drawer's
   // changed-count (diffRefresh) reflect files the assistant just wrote.
@@ -248,6 +241,8 @@ export function LocalPackageEditor({
     let cancelled = false;
     const sessionId = sessionIdRef.current;
 
+    setLockConfirmedByMe(false);
+
     const syncLock = async (mode: "acquire" | "refresh"): Promise<void> => {
       try {
         const res = await fetch(
@@ -262,12 +257,19 @@ export function LocalPackageEditor({
         if (cancelled) return;
         if (!res.ok) {
           setLockHeldByMe(false);
+          setLockConfirmedByMe(false);
 
           return;
         }
-        applyLock((await res.json()) as LockState);
+        const lock = (await res.json()) as LockState;
+
+        applyLock(lock);
+        setLockConfirmedByMe(lock.heldByMe);
       } catch {
-        if (!cancelled) setLockHeldByMe(false);
+        if (!cancelled) {
+          setLockHeldByMe(false);
+          setLockConfirmedByMe(false);
+        }
       }
     };
     const release = (): void => releaseEditorLock(packageId, sessionId);
@@ -401,6 +403,8 @@ export function LocalPackageEditor({
         }
 
         setStatus({ kind: "saved" });
+        setFlowEditorDirty(false);
+        setPackageFilesDirty(false);
         setDiffRefresh((n) => n + 1);
         router.refresh();
       } catch (err) {
@@ -420,6 +424,7 @@ export function LocalPackageEditor({
   // turn ("AI working"). The assistant writes as the lock holder; the human
   // editor steps back until the turn ends.
   const readOnly = !canManage || !lockHeldByMe || assistantBusy;
+  const editorDirty = flowEditorDirty || packageFilesDirty;
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-2">
@@ -476,24 +481,6 @@ export function LocalPackageEditor({
         </div>
       </nav>
       <div className="flex shrink-0 flex-wrap items-center gap-2">
-        <div
-          className="flex shrink-0 rounded-[10px] border border-line bg-paper p-0.5"
-          data-testid="local-editor-tabs"
-          role="tablist"
-        >
-          <TabButton
-            active={activeTab === "properties"}
-            label={labels.tabProperties}
-            testid="local-editor-tab-properties"
-            onClick={() => openTab("properties")}
-          />
-          <TabButton
-            active={activeTab === "ai"}
-            label={labels.tabAi}
-            testid="local-editor-tab-ai"
-            onClick={() => openTab("ai")}
-          />
-        </div>
         <div className="min-w-0 flex-1">
           <LockBanner
             holderLabel={holderLabel}
@@ -515,7 +502,7 @@ export function LocalPackageEditor({
         <button
           className="shrink-0 rounded-[10px] border border-line bg-ivory px-3 py-2 text-[12.5px] font-semibold text-ink transition-colors hover:border-amber disabled:opacity-50"
           data-testid="local-editor-import"
-          disabled={readOnly || activeTab !== "properties"}
+          disabled={readOnly}
           type="button"
           onClick={() => setImporting(true)}
         >
@@ -550,10 +537,8 @@ export function LocalPackageEditor({
         />
       ) : null}
 
-      <div className="min-h-0 flex-1">
-        {/* FlowEditorTabs stays MOUNTED across the tab toggle so canvas/YAML
-            edit state survives switching to AI and back; only visibility flips. */}
-        <div className={activeTab === "properties" ? "h-full" : "hidden"}>
+      <div className="flex min-h-0 flex-1 flex-col gap-3">
+        <div className="min-h-0 flex-1">
           {flowPath === null ? (
             <PackageHome
               fileKindLabels={fileKindLabels}
@@ -565,6 +550,7 @@ export function LocalPackageEditor({
               packageId={packageId}
               readOnly={readOnly}
               saveAction={saveAction}
+              onDirtyChange={setPackageFilesDirty}
             />
           ) : (
             <FlowEditorTabs
@@ -591,6 +577,7 @@ export function LocalPackageEditor({
                   kindLabels={fileKindLabels}
                   labels={filesLabels}
                   mcpCatalog={mcpCatalog}
+                  onDirtyChange={setPackageFilesDirty}
                 />
               }
               hasDraft={false}
@@ -606,21 +593,53 @@ export function LocalPackageEditor({
               readinessReady={false}
               saveAction={saveAction}
               topology={topology}
+              onDirtyChange={setFlowEditorDirty}
             />
           )}
         </div>
-        {/* The AI tab mounts on first open and stays mounted (its ACP run lives
-            while the editor tab is open); only visibility flips thereafter. */}
-        {aiOpenedRef.current ? (
-          <div
-            className={
-              activeTab === "ai"
-                ? "h-full overflow-hidden rounded-xl border border-line bg-paper"
-                : "hidden"
-            }
-          >
+
+        <section
+          className={
+            assistantCollapsed
+              ? "flex shrink-0 flex-col overflow-hidden rounded-xl border border-line bg-paper"
+              : "flex h-[34vh] min-h-[260px] max-h-[420px] shrink-0 flex-col overflow-hidden rounded-xl border border-line bg-paper"
+          }
+          data-testid="local-editor-ai-panel"
+        >
+          <div className="flex shrink-0 items-center justify-between border-b border-line px-3 py-2">
+            <h2 className="font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-mute">
+              {labels.tabAi}
+            </h2>
+            <div className="flex items-center gap-2">
+              {assistantBusy ? (
+                <span
+                  className="rounded-full border border-amber-line bg-amber-soft px-2 py-0.5 font-mono text-[10px] font-semibold text-amber"
+                  data-testid="local-editor-ai-working-panel"
+                  role="status"
+                >
+                  {labels.aiWorking}
+                </span>
+              ) : null}
+              <button
+                aria-expanded={!assistantCollapsed}
+                aria-label={
+                  assistantCollapsed ? labels.aiExpand : labels.aiCollapse
+                }
+                className="rounded-md border border-line px-2 py-1 font-mono text-[11px] text-mute hover:bg-ivory hover:text-ink"
+                data-testid="local-editor-ai-collapse"
+                title={assistantCollapsed ? labels.aiExpand : labels.aiCollapse}
+                type="button"
+                onClick={() => setAssistantCollapsed((collapsed) => !collapsed)}
+              >
+                {assistantCollapsed ? "⌃" : "⌄"}
+              </button>
+            </div>
+          </div>
+          <div className={assistantCollapsed ? "hidden" : "min-h-0 flex-1"}>
             <StudioAiTab
-              canManage={canManage && lockHeldByMe}
+              canManage={canManage && lockHeldByMe && lockConfirmedByMe}
+              focusPath={flowPath}
+              hasUnsavedChanges={editorDirty}
               labels={labels.ai}
               packageId={packageId}
               sessionId={sessionIdRef.current}
@@ -628,36 +647,9 @@ export function LocalPackageEditor({
               onBusyChange={setAssistantBusy}
             />
           </div>
-        ) : null}
+        </section>
       </div>
     </div>
-  );
-}
-
-function TabButton({
-  active,
-  label,
-  testid,
-  onClick,
-}: {
-  active: boolean;
-  label: string;
-  testid: string;
-  onClick: () => void;
-}): ReactElement {
-  return (
-    <button
-      aria-selected={active}
-      className={`rounded-[8px] px-3 py-1.5 text-[12px] font-semibold transition-colors ${
-        active ? "bg-ivory text-ink" : "text-mute hover:text-ink"
-      }`}
-      data-testid={testid}
-      role="tab"
-      type="button"
-      onClick={onClick}
-    >
-      {label}
-    </button>
   );
 }
 

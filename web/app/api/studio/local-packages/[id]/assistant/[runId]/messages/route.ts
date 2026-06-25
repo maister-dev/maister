@@ -11,25 +11,20 @@ import {
 import { requireGlobalRole } from "@/lib/authz";
 import { assertHoldsLock } from "@/lib/local-packages/lock";
 import { getLocalPackage } from "@/lib/local-packages/service";
-import { launchLocalPackageAssistant } from "@/lib/scratch-runs/service";
+import { sendLocalPackageAssistantMessage } from "@/lib/scratch-runs/service";
 
-// M36 Phase 5 (ADR-097) T5.7: launch the Flow Studio assistant for a local
-// package. `sessionId` is the editor's working-dir lock session — `assertHoldsLock`
-// gates the launch so the assistant runs UNDER the holder's lock (the run writes
-// as the lock holder; only the holder may spawn it). One ACP run per editor tab,
-// counting against the flow/scratch concurrency pool (MAISTER_MAX_CONCURRENT_RUNS).
 const log = pino({
-  name: "api/studio/local-packages/[id]/assistant",
+  name: "api/studio/local-packages/[id]/assistant/[runId]/messages",
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-type RouteParams = { params: Promise<{ id: string }> };
+type RouteParams = { params: Promise<{ id: string; runId: string }> };
 
 const bodySchema = z
   .object({
     sessionId: z.string().trim().min(1),
-    prompt: z.string().trim().min(1).max(60_000),
-    runnerId: z.string().trim().min(1).optional(),
+    content: z.string().trim().min(1).max(60_000),
+    attachments: z.array(z.unknown()).max(0).optional(),
     intent: z.enum(["auto", "ask", "edit"]).default("auto"),
     focus: z
       .object({
@@ -50,8 +45,8 @@ export async function POST(
   { params }: RouteParams,
 ): Promise<NextResponse> {
   try {
-    const user = await requireGlobalRole("member");
-    const { id } = await params;
+    await requireGlobalRole("member");
+    const { id, runId } = await params;
     const parsed = bodySchema.safeParse(await req.json());
 
     if (!parsed.success) {
@@ -64,36 +59,35 @@ export async function POST(
       return notFoundResponse("local package not found");
     }
 
-    // Lock coordination: only the live working-dir lock holder may launch the
-    // assistant (a CONFLICT surfaces the editor's reload banner).
     await assertHoldsLock(id, parsed.data.sessionId);
 
-    const result = await launchLocalPackageAssistant({
+    const result = await sendLocalPackageAssistantMessage({
+      runId,
       body: {
         localPackageId: id,
         sessionId: parsed.data.sessionId,
-        prompt: parsed.data.prompt,
-        runnerId: parsed.data.runnerId,
+        content: parsed.data.content,
         intent: parsed.data.intent,
         focus: parsed.data.focus,
       },
-      userId: user.id,
     });
 
     log.info(
-      { id, runId: result.runId, dialogStatus: result.status.dialogStatus },
-      "[localPkg.assistant] launched",
+      {
+        localPackageId: id,
+        runId,
+        dialogStatus: result.dialogStatus,
+        actionStatus: result.actionResult?.status ?? null,
+      },
+      "[localPkg.assistant] message sent",
     );
 
-    return NextResponse.json(
-      {
-        runId: result.runId,
-        dialogStatus: result.status.dialogStatus,
-        actionResult: result.actionResult ?? null,
-      },
-      { status: 202 },
-    );
+    return NextResponse.json(result);
   } catch (err) {
-    return errorResponse(err, log, "studio/local-packages/[id]/assistant POST");
+    return errorResponse(
+      err,
+      log,
+      "studio/local-packages/[id]/assistant/[runId]/messages POST",
+    );
   }
 }

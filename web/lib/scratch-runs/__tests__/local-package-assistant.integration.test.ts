@@ -17,7 +17,7 @@ import type { SupervisorSessionRecord } from "@/lib/supervisor-client";
 import type { WorktreeInfo } from "@/lib/worktree";
 
 import { randomUUID } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -44,6 +44,8 @@ import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import { acquireLock } from "@/lib/local-packages/lock";
 import { classifyRunReconcile, runReconcileSweep } from "@/lib/reconcile";
 import { assertRunScratchMetadataInvariant } from "@/lib/runs/run-kind-invariants";
+import { parseScratchMessageContent } from "@/lib/scratch-runs/transcript";
+import { FLOW_ASSISTANT_ACTION_SCHEMA_VERSION } from "@/lib/studio/flow-assistant/protocol";
 
 // markScratchCrashed lives in scratch-runs/service, which transitively imports
 // @/lib/authz → next-auth. Mock authz + the db client (same pattern as
@@ -79,14 +81,20 @@ vi.mock("@/lib/supervisor-client", () => supervisorMock);
 
 let markScratchCrashed: typeof import("@/lib/scratch-runs/service").markScratchCrashed;
 let launchLocalPackageAssistant: typeof import("@/lib/scratch-runs/service").launchLocalPackageAssistant;
-let sendScratchUserMessage: typeof import("@/lib/scratch-runs/service").sendScratchUserMessage;
+let sendLocalPackageAssistantMessage: typeof import("@/lib/scratch-runs/service").sendLocalPackageAssistantMessage;
 let createLocalPackage: typeof import("@/lib/local-packages/service").createLocalPackage;
 let diffWorkingDir: typeof import("@/lib/local-packages/service").diffWorkingDir;
 let getLocalPackage: typeof import("@/lib/local-packages/service").getLocalPackage;
 
 const schema = schemaModule as unknown as Record<string, any>;
-const { domainEvents, localPackages, runs, scratchRuns, webhookEvents } =
-  schema;
+const {
+  domainEvents,
+  localPackages,
+  runs,
+  scratchMessages,
+  scratchRuns,
+  webhookEvents,
+} = schema;
 
 let container: StartedPostgreSqlContainer;
 let pool: Pool;
@@ -110,8 +118,11 @@ beforeAll(async () => {
   db = drizzle(pool);
   await migrate(db, { migrationsFolder: "./lib/db/migrations" });
 
-  ({ markScratchCrashed, launchLocalPackageAssistant, sendScratchUserMessage } =
-    await import("@/lib/scratch-runs/service"));
+  ({
+    markScratchCrashed,
+    launchLocalPackageAssistant,
+    sendLocalPackageAssistantMessage,
+  } = await import("@/lib/scratch-runs/service"));
   ({ createLocalPackage, diffWorkingDir, getLocalPackage } = await import(
     "@/lib/local-packages/service"
   ));
@@ -465,43 +476,49 @@ describe("project-less rows are invisible to project-scoped queries (ADR-097)", 
 // --- T5.9: launch + turn at a real local-package working dir ----------------
 
 describe("launchLocalPackageAssistant + a turn (ADR-097 T5.7)", () => {
-  it("launches at the working dir, and a turn that writes a file is reflected in the diff", async () => {
+  it("launches read-only and applies a streamed structured action in place", async () => {
     const pkg = await createLocalPackage({
       name: `assistant-launch-${randomUUID().slice(0, 8)}`,
       createdBy: userId,
       db: db as never,
     });
 
-    // The agent's "turn" is simulated by the stubbed sendPrompt writing a flow
-    // file into the working dir (the supervisor confines this server-side; here
-    // we just emulate the on-disk effect), then asserting the git diff shows it.
-    supervisorMock.sendPrompt.mockImplementation(async () => {
-      await writeFile(
-        join(pkg.workingDir, "flows", "new.yaml"),
-        "schemaVersion: 1\nname: new\nnodes: []\n",
-        "utf8",
-      );
-
-      return { stopReason: "end_turn" };
-    });
+    streamAssistantText(
+      assistantActionMarkdown({
+        actionId: "act_launch",
+        summary: "Add launch flow",
+        path: "flows/new/flow.yaml",
+        content: validFlowYaml("new"),
+      }),
+    );
+    const sessionId = await lockLocalPackage(pkg.id, "assistant-launch");
 
     const result = await launchLocalPackageAssistant({
-      body: { localPackageId: pkg.id, prompt: "add a flow" },
+      body: { localPackageId: pkg.id, sessionId, prompt: "add a flow" },
       userId,
     });
 
     expect(result.runId).toBeTruthy();
+    expect(result.actionResult?.status).toBe("applied");
     expect(supervisorMock.createSession).toHaveBeenCalledTimes(1);
     // The launch confines the session to the working dir (no repo/worktree
-    // widening) — the SOLE confinement root.
+    // widening) and the ACP adapter is read-only; mutations only happen through
+    // the server-side structured action apply path.
     const createArg = (
       supervisorMock.createSession.mock.calls as unknown as Array<
-        [{ confineRoot?: string; worktreePath?: string }]
+        [
+          {
+            confineRoot?: string;
+            readOnlySession?: boolean;
+            worktreePath?: string;
+          },
+        ]
       >
     )[0][0];
 
     expect(createArg).toMatchObject({
       confineRoot: pkg.workingDir,
+      readOnlySession: true,
       worktreePath: pkg.workingDir,
     });
 
@@ -516,15 +533,68 @@ describe("launchLocalPackageAssistant + a turn (ADR-097 T5.7)", () => {
 
     expect(runRows[0]).toEqual({ projectId: null, localPackageId: pkg.id });
 
-    // The assistant's write is visible in the working-tree diff (drives the
+    const messages = await db
+      .select({
+        role: scratchMessages.role,
+        content: scratchMessages.content,
+      })
+      .from(scratchMessages)
+      .where(eq(scratchMessages.runId, result.runId));
+    const assistantRows = messages.filter((row) => row.role === "assistant");
+
+    expect(assistantRows.at(-1)?.content).not.toContain(
+      "maister_flow_assistant_action",
+    );
+    expect(
+      messages
+        .map((row) => parseScratchMessageContent(row.role, row.content))
+        .some((message) => message.kind === "flow_action_result"),
+    ).toBe(true);
+
+    // The server-applied action is visible in the working-tree diff (drives the
     // editor's changed-count + canvas refresh).
     const fresh = await getLocalPackage(pkg.id, db as never);
     const diff = await diffWorkingDir(fresh!);
 
     expect(diff.changedCount).toBeGreaterThanOrEqual(1);
-    expect(diff.files.some((f) => f.path.endsWith("flows/new.yaml"))).toBe(
+    expect(diff.files.some((f) => f.path.endsWith("flows/new/flow.yaml"))).toBe(
       true,
     );
+  });
+
+  it("returns a sanitized rejected action if the editor lock is lost before apply", async () => {
+    const pkg = await createLocalPackage({
+      name: `assistant-lock-lost-${randomUUID().slice(0, 8)}`,
+      createdBy: userId,
+      db: db as never,
+    });
+    const sessionId = await lockLocalPackage(pkg.id, "assistant-lock-lost");
+
+    streamAssistantText(
+      assistantActionMarkdown({
+        actionId: "act_lock_lost",
+        summary: "Add lost-lock rule",
+        path: "rules/lost-lock.md",
+        content: "# lost lock\n",
+      }),
+    );
+    supervisorMock.sendPrompt.mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await acquireLock(pkg.id, userId, `${sessionId}-takeover`, db as never);
+
+      return { stopReason: "end_turn" };
+    });
+
+    const result = await launchLocalPackageAssistant({
+      body: { localPackageId: pkg.id, sessionId, prompt: "add a rule" },
+      userId,
+    });
+
+    expect(result.actionResult?.status).toBe("rejected");
+    expect(result.actionResult?.message).toContain("editor lock");
+    await expect(
+      readFile(join(pkg.workingDir, "rules", "lost-lock.md"), "utf8"),
+    ).rejects.toThrow();
   });
 
   it("seeds the flow-authoring skill into the session working dir", async () => {
@@ -533,9 +603,10 @@ describe("launchLocalPackageAssistant + a turn (ADR-097 T5.7)", () => {
       createdBy: userId,
       db: db as never,
     });
+    const sessionId = await lockLocalPackage(pkg.id, "assistant-skill");
 
     await launchLocalPackageAssistant({
-      body: { localPackageId: pkg.id, prompt: "hi" },
+      body: { localPackageId: pkg.id, sessionId, prompt: "hi" },
       userId,
     });
 
@@ -554,11 +625,11 @@ describe("launchLocalPackageAssistant + a turn (ADR-097 T5.7)", () => {
       createdBy: userId,
       db: db as never,
     });
+    const sessionId = await lockLocalPackage(pkg.id, "assistant-turn");
     const launched = await launchLocalPackageAssistant({
-      body: { localPackageId: pkg.id, prompt: "first" },
+      body: { localPackageId: pkg.id, sessionId, prompt: "first" },
       userId,
     });
-    await acquireLock(pkg.id, userId, "assistant-turn", db as never);
 
     // There is NO workspaces row for a local-package assistant run.
     const workspaceRows = await db
@@ -568,24 +639,24 @@ describe("launchLocalPackageAssistant + a turn (ADR-097 T5.7)", () => {
 
     expect(workspaceRows).toHaveLength(0);
 
-    // A follow-up turn writes a second file; the turn path must read the cwd
-    // from the local package (not a workspace row) and not crash.
-    supervisorMock.sendPrompt.mockImplementation(async () => {
-      await writeFile(
-        join(pkg.workingDir, "rules", "more.md"),
-        "# more\n",
-        "utf8",
-      );
+    // A follow-up turn streams a structured action; the turn path must read the
+    // cwd from the local package (not a workspace row) and let the server apply.
+    streamAssistantText(
+      assistantActionMarkdown({
+        actionId: "act_turn",
+        summary: "Add rule",
+        path: "rules/more.md",
+        content: "# more\n",
+      }),
+    );
 
-      return { stopReason: "end_turn" };
-    });
-
-    const res = await sendScratchUserMessage({
+    const res = await sendLocalPackageAssistantMessage({
       runId: launched.runId,
-      body: { content: "do more", attachments: [] },
+      body: { localPackageId: pkg.id, sessionId, content: "do more" },
     });
 
     expect(res.ok).toBe(true);
+    expect(res.actionResult?.status).toBe("applied");
 
     const fresh = await getLocalPackage(pkg.id, db as never);
     const diff = await diffWorkingDir(fresh!);
@@ -593,6 +664,73 @@ describe("launchLocalPackageAssistant + a turn (ADR-097 T5.7)", () => {
     expect(diff.files.some((f) => f.path.endsWith("rules/more.md"))).toBe(true);
   });
 });
+
+function streamAssistantText(text: string): void {
+  supervisorMock.streamSession.mockImplementation(async function* () {
+    yield {
+      type: "session.update" as const,
+      sessionId: "sup-1",
+      monotonicId: 1,
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text },
+      },
+    };
+  });
+  supervisorMock.sendPrompt.mockImplementation(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    return { stopReason: "end_turn" };
+  });
+}
+
+async function lockLocalPackage(
+  localPackageId: string,
+  label: string,
+): Promise<string> {
+  const sessionId = `${label}-${randomUUID().slice(0, 8)}`;
+
+  await acquireLock(localPackageId, userId, sessionId, db as never);
+
+  return sessionId;
+}
+
+function assistantActionMarkdown(args: {
+  actionId: string;
+  summary: string;
+  path: string;
+  content: string;
+}): string {
+  return [
+    "I prepared the update.",
+    "",
+    "```maister-flow-assistant-action",
+    JSON.stringify({
+      schemaVersion: FLOW_ASSISTANT_ACTION_SCHEMA_VERSION,
+      actionId: args.actionId,
+      summary: args.summary,
+      operations: [
+        {
+          op: "upsert_file",
+          path: args.path,
+          baseHash: null,
+          content: args.content,
+        },
+      ],
+    }),
+    "```",
+  ].join("\n");
+}
+
+function validFlowYaml(name: string): string {
+  return `schemaVersion: 1
+name: ${name}
+steps:
+  - id: s1
+    type: cli
+    command: echo hi
+`;
+}
 
 describe("deferred-release on a failure path (ADR-097 T5.6)", () => {
   it("a launch turn failure tears down the supervisor session (releasing any deferred)", async () => {
@@ -605,10 +743,11 @@ describe("deferred-release on a failure path (ADR-097 T5.6)", () => {
     // The turn rejects after the session exists — the launch catch MUST release
     // it by deleting the supervisor session (purgeSession cancels open deferreds).
     supervisorMock.sendPrompt.mockRejectedValue(new Error("turn boom"));
+    const sessionId = await lockLocalPackage(pkg.id, "assistant-fail");
 
     await expect(
       launchLocalPackageAssistant({
-        body: { localPackageId: pkg.id, prompt: "go" },
+        body: { localPackageId: pkg.id, sessionId, prompt: "go" },
         userId,
       }),
     ).rejects.toThrow(/turn boom/);
@@ -635,20 +774,20 @@ describe("deferred-release on a failure path (ADR-097 T5.6)", () => {
       createdBy: userId,
       db: db as never,
     });
+    const sessionId = await lockLocalPackage(pkg.id, "assistant-turn-fail");
     const launched = await launchLocalPackageAssistant({
-      body: { localPackageId: pkg.id, prompt: "first" },
+      body: { localPackageId: pkg.id, sessionId, prompt: "first" },
       userId,
     });
-    await acquireLock(pkg.id, userId, "assistant-turn-fail", db as never);
 
     supervisorMock.deleteSession.mockClear();
     // A non-retryable crash on the turn path releases the deferred.
     supervisorMock.sendPrompt.mockRejectedValue(new Error("turn crash"));
 
     await expect(
-      sendScratchUserMessage({
+      sendLocalPackageAssistantMessage({
         runId: launched.runId,
-        body: { content: "again", attachments: [] },
+        body: { localPackageId: pkg.id, sessionId, content: "again" },
       }),
     ).rejects.toThrow(/turn crash/);
 

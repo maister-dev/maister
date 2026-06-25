@@ -229,6 +229,58 @@ describe("parseScratchMessageContent", () => {
     ).toMatchObject({ kind: "legacy", role: "system" });
   });
 
+  it("hides complete Flow assistant action fences from assistant markdown", () => {
+    const parsed = parseScratchMessageContent(
+      "assistant",
+      [
+        "I'll update the Flow.",
+        "```maister-flow-assistant-action",
+        '{"schemaVersion":"maister_flow_assistant_action.v1","summary":"Update","operations":[{"op":"upsert_file","path":"flow.yaml","baseHash":null,"content":"raw file content"}]}',
+        "```",
+        "Done.",
+      ].join("\n"),
+    );
+
+    expect(parsed).toEqual({
+      kind: "text",
+      markdown: true,
+      text: "I'll update the Flow.\nDone.",
+    });
+  });
+
+  it("hides incomplete Flow assistant action fences while streaming", () => {
+    const parsed = parseScratchMessageContent(
+      "assistant",
+      [
+        "Working on it.",
+        "```maister-flow-assistant-action",
+        '{"operations":[{"content":"raw file content"}]}',
+      ].join("\n"),
+    );
+
+    expect(parsed).toEqual({
+      kind: "text",
+      markdown: true,
+      text: "Working on it.",
+    });
+  });
+
+  it("shows a friendly placeholder for action-only assistant chunks", () => {
+    const parsed = parseScratchMessageContent(
+      "assistant",
+      [
+        "```maister-flow-assistant-action",
+        '{"operations":[{"content":"raw file content"}]}',
+      ].join("\n"),
+    );
+
+    expect(parsed).toEqual({
+      kind: "text",
+      markdown: true,
+      text: "I prepared a Flow update for MAIster to validate.",
+    });
+  });
+
   it("round-trips a hook_trip payload (ADR-108)", () => {
     const content = encodeHookTripPayload("repetition", "halt");
 

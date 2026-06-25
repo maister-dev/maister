@@ -361,6 +361,7 @@ export default function FlowGraphEditor({
   const [pendingOutcome, setPendingOutcome] = useState("success");
 
   const manifestRef = useRef<FlowYamlV1>(initialManifest);
+  const draggingNodeIdsRef = useRef<Set<string>>(new Set());
 
   const nodeTypes = useMemo<NodeTypes>(
     () => ({ flowNode: makeEditorNodeView(labels.graph) }),
@@ -474,9 +475,22 @@ export default function FlowGraphEditor({
     (changes: Parameters<typeof onNodesChange>[0]): void => {
       onNodesChange(changes);
       for (const ch of changes) {
-        if (ch.type === "position" && ch.dragging === false && ch.position) {
+        if (ch.type !== "position") continue;
+
+        if (ch.dragging === true) {
+          draggingNodeIdsRef.current.add(ch.id);
+
+          continue;
+        }
+
+        if (
+          ch.dragging === false &&
+          ch.position &&
+          draggingNodeIdsRef.current.has(ch.id)
+        ) {
           const pos = ch.position;
 
+          draggingNodeIdsRef.current.delete(ch.id);
           applyManifest(
             (m) => moveNode(m, ch.id, { x: pos.x, y: pos.y }),
             `move:${ch.id}`,
@@ -584,7 +598,7 @@ export default function FlowGraphEditor({
   return (
     <div className="flex h-full min-h-0" data-testid="flow-graph-editor-shell">
       <div
-        className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-r border-line bg-paper"
+        className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-paper"
         data-testid="flow-graph-editor"
       >
         <FlowEditorToolbar
@@ -616,7 +630,7 @@ export default function FlowGraphEditor({
       </div>
       {sidebarOpen ? (
         <aside
-          className="flex w-[340px] shrink-0 flex-col gap-3 overflow-y-auto bg-paper p-3"
+          className="flex w-[clamp(420px,34vw,560px)] shrink-0 flex-col gap-3 overflow-y-auto border-l border-line bg-paper p-3"
           data-testid="flow-graph-editor-sidebar"
         >
           <div className="flex items-center justify-end">

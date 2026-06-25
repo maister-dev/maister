@@ -19,16 +19,21 @@ the same web, database, supervisor, and worktree contracts as Flow runs.
   `flow_version = "scratch"`, `flow_revision = "manual"`, and
   `created_by_user_id`.
 - **Project-less local-package assistant run** (M36 Phase 5, ADR-097) -
-  Implemented (backend foundation). A scratch run rooted at a local-package
-  `working_dir` with **no project and no managed worktree**: `runs.project_id`
-  and `scratch_runs.project_id` are **NULL**, `scratch_runs.local_package_id`
+  Implemented. A scratch run rooted at a local-package `working_dir` with
+  **no project and no managed worktree**: `runs.project_id` and
+  `scratch_runs.project_id` are **NULL**, `scratch_runs.local_package_id`
   carries the owner, and `runs.local_package_id` is the launch snapshot. There
   is **no `workspaces` row** (it runs IN the existing git-backed working dir).
   A DB CHECK enforces exactly one of `project_id` / `local_package_id`. Launched
-  by `launchLocalPackageAssistant`; the supervisor session confines content-block
-  file URIs to the `working_dir` (`confineRoot`). See
-  [`studio-ai-assistant.md`](studio-ai-assistant.md). The right-panel AI tab +
-  lock coordination are a separate task.
+  by `launchLocalPackageAssistant`; the supervisor session confines
+  content-block file URIs to the `working_dir` (`confineRoot`) and uses
+  `readOnlySession: true`. Flow/package edits are server-applied structured
+  actions per
+  [ADR-110](../decisions.md#adr-110-flow-studio-ai-assistant-read-only-acp--structured-server-applied-actions);
+  redacted action metadata is stored only in the run artifact tree
+  (`flow-assistant-actions.jsonl`) and the transcript stores sanitized
+  `flow_action_result` system messages. See
+  [`studio-ai-assistant.md`](studio-ai-assistant.md).
 - **Runner profile** - Implemented. The selected runner is a
   `platform_acp_runners.id`, not the adapter/capability agent family. Multiple
   runners may use the same ACP adapter with different model, provider,
@@ -43,7 +48,10 @@ the same web, database, supervisor, and worktree contracts as Flow runs.
   and last message timestamps.
 - **Scratch message** - Implemented. `scratch_messages` is an append-only dialog
   ledger with monotonic `sequence`, `role`, `content`,
-  optional `supervisor_event_id`, and timestamps.
+  optional `supervisor_event_id`, and timestamps. System rows may contain typed
+  JSON payloads such as `permission`, `hook_trip`, and the Studio assistant's
+  sanitized `flow_action_result`; raw Flow assistant action JSON is not stored
+  as assistant markdown.
 - **Scratch attachment** - Implemented. `scratch_attachments` stores metadata
   attachments (`issue_url`, `file_path`, `text_note`) and uploaded files
   (`uploaded_file`) attached to either launch context or a specific message.

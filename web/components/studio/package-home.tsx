@@ -54,6 +54,7 @@ export function PackageHome({
   fileKindLabels,
   mcpCatalog,
   saveAction,
+  onDirtyChange,
 }: {
   packageId: string;
   name: string;
@@ -64,6 +65,7 @@ export function PackageHome({
   fileKindLabels: Record<AuthoredFlowPackageFileKind, string>;
   mcpCatalog: PlatformMcpCatalogEntry[];
   saveAction: ServerFormAction;
+  onDirtyChange?: (dirty: boolean) => void;
 }): ReactElement {
   const flows = files.filter((file) => isFlowPath(file.path));
 
@@ -112,6 +114,7 @@ export function PackageHome({
           kindLabels={fileKindLabels}
           labels={filesLabels}
           mcpCatalog={mcpCatalog}
+          onDirtyChange={onDirtyChange}
         />
         {readOnly ? null : (
           <button

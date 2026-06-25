@@ -1,5 +1,11 @@
 import type { ScratchMessageRole } from "@/lib/db/schema";
 
+import {
+  FLOW_ASSISTANT_ACTION_FENCE,
+  parseFlowActionResultPayload,
+  type FlowActionResultPayload,
+} from "@/lib/studio/flow-assistant/protocol";
+
 // Shared, framework-pure contract for scratch transcript messages. Both the
 // server-side ACP projector (events.ts) and the client renderer
 // (scratch-dialog.tsx) import this so the on-disk/in-DB content encoding never
@@ -9,7 +15,7 @@ import type { ScratchMessageRole } from "@/lib/db/schema";
 //   role "user"      -> plain text
 //   role "assistant" -> plain markdown text (coalesced agent_message_chunk)
 //   role "tool"      -> JSON ScratchToolPayload
-//   role "system"    -> JSON ScratchSystemPayload (thought | usage | permission)
+//   role "system"    -> JSON ScratchSystemPayload (thought | usage | permission | ...)
 
 export type ScratchToolStatus =
   | "pending"
@@ -52,11 +58,14 @@ export type ScratchHookTripPayload = {
   disposition: "deny" | "halt";
 };
 
+export type ScratchFlowActionResultPayload = FlowActionResultPayload;
+
 export type ScratchSystemPayload =
   | ScratchThoughtPayload
   | ScratchUsagePayload
   | ScratchPermissionPayload
-  | ScratchHookTripPayload;
+  | ScratchHookTripPayload
+  | ScratchFlowActionResultPayload;
 
 export type ParsedScratchMessage =
   | { kind: "text"; markdown: boolean; text: string }
@@ -69,6 +78,7 @@ export type ParsedScratchMessage =
       rule: ScratchHookTripRule;
       disposition: "deny" | "halt";
     }
+  | { kind: "flow_action_result"; payload: ScratchFlowActionResultPayload }
   | { kind: "legacy"; role: ScratchMessageRole; text: string };
 
 export type QuickReply = { label: string; value: string };
@@ -88,10 +98,66 @@ export const TOOL_ARG_KEYS = [
   "description",
 ] as const;
 
+const FLOW_ASSISTANT_ACTION_FENCE_PREFIX = "```" + FLOW_ASSISTANT_ACTION_FENCE;
+const FLOW_ASSISTANT_ACTION_PLACEHOLDER =
+  "I prepared a Flow update for MAIster to validate.";
+
 function asObject(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+}
+
+function findActionFenceStart(content: string, from: number): number {
+  let index = content.indexOf(FLOW_ASSISTANT_ACTION_FENCE_PREFIX, from);
+
+  while (index >= 0) {
+    if (index === 0 || content[index - 1] === "\n") return index;
+    index = content.indexOf(FLOW_ASSISTANT_ACTION_FENCE_PREFIX, index + 1);
+  }
+
+  return -1;
+}
+
+export function stripFlowAssistantActionFencesForDisplay(
+  content: string,
+): string {
+  let cursor = 0;
+  let output = "";
+  let stripped = false;
+
+  while (cursor < content.length) {
+    const start = findActionFenceStart(content, cursor);
+
+    if (start < 0) {
+      output += content.slice(cursor);
+      break;
+    }
+
+    output += content.slice(cursor, start);
+    stripped = true;
+
+    const fenceLineEnd = content.indexOf("\n", start);
+
+    if (fenceLineEnd < 0) break;
+
+    const closeStart = content.indexOf("\n```", fenceLineEnd + 1);
+
+    if (closeStart < 0) break;
+
+    const closeLineEnd = content.indexOf("\n", closeStart + 4);
+
+    cursor = closeLineEnd < 0 ? content.length : closeLineEnd + 1;
+  }
+
+  if (!stripped) return content;
+
+  const normalized = output
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  return normalized.length > 0 ? normalized : FLOW_ASSISTANT_ACTION_PLACEHOLDER;
 }
 
 function numberOrNull(value: unknown): number | null {
@@ -326,7 +392,11 @@ export function parseScratchMessageContent(
   content: string,
 ): ParsedScratchMessage {
   if (role === "assistant")
-    return { kind: "text", markdown: true, text: content };
+    return {
+      kind: "text",
+      markdown: true,
+      text: stripFlowAssistantActionFencesForDisplay(content),
+    };
   if (role === "user") return { kind: "text", markdown: false, text: content };
 
   let parsed: unknown = null;
@@ -368,6 +438,11 @@ export function parseScratchMessageContent(
         rule: obj.rule,
         disposition: obj.disposition,
       };
+    }
+    if (obj.kind === "flow_action_result") {
+      const payload = parseFlowActionResultPayload(obj);
+
+      if (payload) return { kind: "flow_action_result", payload };
     }
   }
 

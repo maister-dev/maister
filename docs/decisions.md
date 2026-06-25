@@ -134,6 +134,7 @@
 | [ADR-106](#adr-106-package-based-platform-agents--package-identity-attachment-gating-optional-flow-enrichment-and-per-agent-runner-policy) | Package-based platform agents — package identity, attachment gating, optional-flow enrichment, and per-agent runner policy | Accepted | 2026-06-23 |
 | [ADR-108](#adr-108-declarative-guardrailhook-engine--universal-supervisor-acp-seam-interceptor-native-materializer-seam-and-hook-trip-hitl-escalation) | Declarative guardrail/hook engine — universal supervisor ACP-seam interceptor (3 rules), native materializer seam, `hook_trip` HITL, engine 1.8.0 | Accepted | 2026-06-23 |
 | [ADR-109](#adr-109-consensus-flow-graph-node--engine-owned-unanimous-draft-verification-and-human-resolution) | Consensus flow-graph node — engine-owned unanimous draft verification and human resolution | Accepted | 2026-06-24 |
+| [ADR-110](#adr-110-flow-studio-ai-assistant-read-only-acp--structured-server-applied-actions) | Flow Studio AI assistant: read-only ACP + structured server-applied actions | Accepted | 2026-06-25 |
 
 ---
 
@@ -8486,6 +8487,99 @@ catalog rows. Consensus-specific verdicts live in a dedicated
   competing worktrees reopen ADR-102-class promotion ownership questions.
 - **New HITL route:** rejected because the existing route can carry a human HITL
   schema discriminator and server-derived decision allow-list.
+
+---
+
+### ADR-110: Flow Studio AI assistant: read-only ACP + structured server-applied actions
+
+**Date:** 2026-06-25
+**Status:** Accepted
+**Context:** ADR-097 introduced the docked Flow Studio assistant as a
+project-less scratch run rooted at a local-package working dir. That substrate
+made the assistant convenient, but the initial direct-edit model put too much
+trust in the ACP process: the model could mutate files directly, users could see
+raw protocol-looking output, and the web tier had no deterministic place to
+validate Flow grammar, package artifacts, base versions, or current editor lock
+state before writes. The product requirement is narrower and safer: the
+assistant should answer from the current Flow/package context, and when asked to
+change the Flow it should return structured intent that MAIster validates and
+applies.
+
+**Decision:** Flow Studio assistant sessions are read-only ACP sessions
+(`readOnlySession: true`). Agents may inspect files and answer questions, but
+they must not mutate the local package working dir. For edit requests, the
+assistant must emit one structured `maister_flow_assistant_action.v1` block with
+full-file `upsert_file` / `delete_file` operations, relative paths, and
+base hashes copied from the server-provided context snapshot. The web tier
+parses and strips that protocol block from the assistant transcript, validates
+paths through local-package confinement, checks base hashes, applies the
+operation set to an in-memory virtual package, reuses existing package/Flow
+validation, and only then writes in-place through the existing lock-guarded
+local-package file helpers.
+
+`intent` (`auto | ask | edit`) is prompt-only in V1. It changes the grounded
+instructions and logging context, but it is not an authorization or apply gate:
+if any turn emits a valid structured action block, MAIster parses and applies it
+through the same lock, hash, confinement, and package-validation pipeline.
+
+The local package working tree plus the existing git diff drawer is the
+user-visible proposal/review buffer. Commit/Discard remains the durable
+accept/revert boundary. V1 does not add a proposal table, run kind, run status,
+supervisor process model, DB migration, sidecar, port, env var, or package
+dependency. Redacted structured action metadata and lifecycle states
+(`received`, `validated`, `applied`, `rejected`, `interrupted`) are stored as
+server-only run-scoped JSONL under
+`.maister/<local-package-slug>/runs/<runId>/`. Upsert file contents are redacted
+to content hashes and byte counts. The database stores only sanitized
+`scratch_messages` system payloads of kind
+`flow_action_result`, which render reload-stable user cards without raw JSON,
+absolute paths, or file contents.
+
+Launch and follow-up turns share the same pipeline: server context snapshot,
+read-only ACP prompt, parse/sanitize, optional validated apply, JSONL audit, and
+sanitized result card. Follow-up sends use a Studio-specific message route that
+joins `runs.local_package_id`, `scratch_runs.run_id`, and the current user
+before sending anything to the supervisor; the generic scratch route remains
+unchanged. Runner selection is allowed only through enabled Ready platform ACP
+runners and the platform default. Editor buffers must be saved first or the send
+is blocked, so server apply never races unsaved canvas/YAML/package-file state.
+
+Crash windows are explicit. Stale hashes, path escapes, malformed actions, and
+invalid virtual package artifacts reject before writes. An unexpected failure
+after writes begin is recorded as `interrupted`; the working tree remains the
+source of truth and the existing diff/Discard path is the recovery surface.
+Recovery never auto-replays action JSONL.
+
+**Consequences:**
+- The model can no longer bypass MAIster validation by writing through ACP
+  tools; every mutation crosses the same confinement and package validation
+  boundary as manual Studio writes.
+- Users see prose and change/result cards, not protocol JSON. Reloads stay
+  stable because cards are stored as sanitized scratch system messages.
+- The first implementation keeps persistence simple: no proposal table or new
+  lifecycle state, and git diff continues to be the review buffer.
+- Full-file operations are simpler and safer than hunk patches, but can be
+  heavier for large files. Hunk-level actions require a future ADR if needed.
+- JSONL is audit evidence, not state. Debug tooling must tolerate partial final
+  lines and must not become the source of truth for current package files.
+- Structured logs must include `localPackageId`, `runId`, `actionId`, `intent`,
+  `runnerId`, `focusPath`, `operationCount`, `status`, and validation issue
+  counts, while excluding prompts, raw action JSON, file contents, absolute
+  working dirs, and secrets.
+
+**Alternatives Considered:**
+- **Direct ACP file edits:** rejected because the model could mutate before
+  MAIster validates Flow grammar, package shape, base hashes, or lock state.
+- **Persist proposals in a DB table:** rejected for V1. The working tree already
+  gives a durable review/revert buffer, and storing proposals would introduce a
+  second state machine without clear product value yet.
+- **Client-side apply:** rejected because the client cannot be the path
+  confinement, lock, base-hash, or package validation authority.
+- **Generic scratch message route with package-only body fields:** rejected
+  because it would widen a project scratch surface with local-package-only trust
+  boundaries. Studio assistant turns need their own route.
+- **Hunk patches:** deferred. Full-file operations reuse existing save and
+  validation primitives and make stale-hash conflicts deterministic.
 
 ---
 

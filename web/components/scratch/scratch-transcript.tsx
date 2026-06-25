@@ -3,6 +3,7 @@
 import type { ReactElement } from "react";
 import type { Components } from "react-markdown";
 import type {
+  ScratchFlowActionResultPayload,
   ScratchToolPayload,
   ScratchToolStatus,
 } from "@/lib/scratch-runs/transcript";
@@ -334,6 +335,46 @@ type TranscriptBlock =
   | { kind: "message"; message: TranscriptMessage }
   | { kind: "tools"; key: string; tools: ScratchToolPayload[] };
 
+function DefaultFlowActionResultCard({
+  payload,
+}: {
+  payload: ScratchFlowActionResultPayload;
+}): ReactElement {
+  const tone =
+    payload.status === "applied"
+      ? "border-accent-3 bg-accent-3-soft text-accent-3"
+      : payload.status === "stale"
+        ? "border-amber-line bg-amber-soft text-amber"
+        : "border-danger-line bg-danger-soft text-danger";
+
+  return (
+    <div
+      className={clsx(
+        "min-w-0 max-w-full overflow-hidden rounded-lg border px-3 py-2 text-[12px] leading-[1.5]",
+        tone,
+      )}
+      data-testid="flow-action-result-card"
+    >
+      <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.08em]">
+        {payload.status.replace(/_/g, " ")}
+      </div>
+      <div className="mt-1 font-semibold text-ink">{payload.summary}</div>
+      {payload.operations.length > 0 ? (
+        <ul className="mt-1.5 list-none space-y-1 p-0 font-mono text-[10.5px]">
+          {payload.operations.slice(0, 8).map((operation) => (
+            <li key={`${operation.op}:${operation.path}`} className="truncate">
+              {operation.op} · {operation.path}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {payload.message ? (
+        <p className="mt-1.5 text-[12px] text-current/80">{payload.message}</p>
+      ) : null}
+    </div>
+  );
+}
+
 function splitBlocksOnLatestClear(blocks: TranscriptBlock[]): {
   historyBlocks: TranscriptBlock[];
   currentBlocks: TranscriptBlock[];
@@ -373,6 +414,7 @@ export function ScratchTranscript({
   userLabel,
   assistantLabel,
   renderAttachments,
+  renderFlowActionResult,
 }: {
   messages: TranscriptMessage[];
   labels: TranscriptLabels;
@@ -380,6 +422,9 @@ export function ScratchTranscript({
   userLabel?: string | null;
   assistantLabel?: string | null;
   renderAttachments?: (messageId: string) => ReactElement | null;
+  renderFlowActionResult?: (
+    payload: ScratchFlowActionResultPayload,
+  ) => ReactElement | null;
 }): ReactElement {
   const blocks = useMemo<TranscriptBlock[]>(() => {
     const result: TranscriptBlock[] = [];
@@ -466,6 +511,16 @@ export function ScratchTranscript({
             rule: parsed.rule,
             disposition: parsed.disposition,
           }) ?? `Guardrail tripped: ${parsed.rule}`}
+        </div>
+      );
+    }
+
+    if (parsed.kind === "flow_action_result") {
+      return (
+        <div key={message.id}>
+          {renderFlowActionResult?.(parsed.payload) ?? (
+            <DefaultFlowActionResultCard payload={parsed.payload} />
+          )}
         </div>
       );
     }

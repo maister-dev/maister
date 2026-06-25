@@ -5465,7 +5465,7 @@ async function seedPlatformAgentsFixture(
   ]);
   await pool.query(
     `INSERT INTO agents
-       (id, flow_ref_id, version_label, origin, name, description, workspace,
+       (id, package_name, version_label, origin, name, description, workspace,
         mode, triggers, risk_tier, source_path)
      VALUES
        ($1, 'e2e-agents-pkg', 'v1.0.0', 'git', $1, 'e2e fixture agent', 'none',
@@ -5664,7 +5664,7 @@ async function seedOrchestratorE2EFixture(
   await pool.query(`DELETE FROM agents WHERE id = $1`, [E2E_WORKER_AGENT]);
   await pool.query(
     `INSERT INTO agents
-       (id, flow_ref_id, version_label, origin, name, description, workspace,
+       (id, package_name, version_label, origin, name, description, workspace,
         mode, triggers, risk_tier, source_path)
      VALUES ($1, 'e2e-orc-pkg', 'v1.0.0', 'git', $1, 'e2e worker agent', 'none',
         'session', '["manual"]'::jsonb, 'read_only', $2)`,

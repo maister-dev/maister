@@ -1,264 +1,261 @@
-# Docked AI authoring assistant (Flow Studio — M36 Phase 5)
+# Flow Studio AI authoring assistant
 
-> Behavior SSOT for the **docked AI authoring assistant**: a **project-less
-> scratch-run ACP session rooted at a local-package working dir**. It reuses the
-> scratch-run substrate end-to-end but has **no project and no managed git
-> worktree** — the session's cwd and sole confinement root is the local
-> package's `working_dir`. **Status: Implemented (ADR-097) — backend foundation
-> + the right-panel Properties⇆AI tab, live refresh, inline HITL, the
-> flow-authoring skill, and editor↔assistant lock coordination.** Related:
+> Behavior SSOT for the **Flow Studio AI authoring assistant**: a
+> project-less scratch-run ACP session rooted at a local-package working dir.
+> The assistant is now an authoring copilot with a read-only ACP session plus a
+> server-applied structured action protocol. Related:
 > [`local-packages.md`](local-packages.md), [`scratch-runs.md`](scratch-runs.md),
-> [`runs.md`](runs.md), [`../decisions.md#adr-096`](../decisions.md).
+> [`runs.md`](runs.md),
+> [ADR-097](../decisions.md#adr-097-docked-ai-authoring-assistant--project-less-scratch-at-local-package-run-m36-phase-5),
+> [ADR-110](../decisions.md#adr-110-flow-studio-ai-assistant-read-only-acp--structured-server-applied-actions).
 
 ## Purpose
 
-The assistant lets a member, while editing a local package in Flow Studio, hand
-authoring work to a coding agent: it edits the working-dir files directly
-(`flows/ agents/ skills/ mcps/ rules/ schemas/`), the canvas/files live-refresh,
-and permission/HITL prompts stream inline in the chat. It is **one ACP run per
-editor tab**, lives while the tab is open, and surfaces its edits through the
-same git diff → Commit/Discard the editor already exposes.
+The assistant lets a member ask questions about the current local package and
+request Flow/package edits without leaving the editor. It runs as one docked
+conversation per editor tab, under the same local-package lock as the human
+editor.
 
-The hard constraint it introduces: a local package is platform-scoped — a
-package-level fork has `project_id = NULL`; a per-project default fork carries a
-`project_id`; the editor opens either. So the assistant run is **project-less**:
-it cannot assume a project exists.
+V1 deliberately splits intelligence from mutation:
+
+- ACP runs are **read-only** (`readOnlySession: true`). Agents may inspect the
+  local package and answer questions, but they must not write files directly.
+- Edit requests produce a `maister_flow_assistant_action.v1` structured action
+  block in the assistant response.
+- The web tier parses that block, hides it from the primary transcript,
+  validates it against the current working-dir files, and applies it in-place
+  only through existing local-package write helpers.
+- The local package working tree and the existing git diff drawer are the
+  review/revert buffer. Commit/Discard stays the durable accept/revert boundary.
+
+There is no proposal table. Redacted action metadata and apply lifecycle records
+live in run-scoped JSONL artifacts under
+`.maister/<local-package-slug>/runs/<runId>/`; the database stores only the
+normal scratch transcript plus sanitized `flow_action_result` system messages
+for reload-stable UI cards.
 
 ## Domain entities
 
-- **Local package** — `local_packages` row (ADR-096). `working_dir` is the
-  git-backed directory under `localPackagesRoot()`; server-only, never sent to
-  the client. The assistant launches against an `active` package.
-- **Assistant run** — a `runs` row with `run_kind = "scratch"`,
-  **`project_id = NULL`**, **`local_package_id`** set (the launch snapshot),
-  `flow_id`/`task_id`/`flow_revision_id` NULL, `flow_version = "scratch"`,
-  `flow_revision = "manual"`. **No `workspaces` row.**
-- **Scratch metadata** — a `scratch_runs` row with `project_id = NULL`,
-  `local_package_id` set, `base_branch`/`base_commit`/`target_branch` read from
-  the working dir's git HEAD, the usual `dialog_status`, supervisor session id,
-  prompt/policy fields. The owner XOR is DB-enforced (see Data model).
-- **Supervisor session** — a normal ACP session whose `cwd = working_dir` and
-  whose content-block file-URI **confinement root is `working_dir`** (passed as
-  `confineRoot`).
-- **Capability profile** — a `scratch_capability_profiles` row materialized from
-  a **bare** profile (no project capability catalog). The launch additionally
-  seeds the **`flow-authoring`** skill into the session's per-adapter target
-  (`materializeFlowAuthoringSkill`): claude gets `working_dir/.claude/skills/
-  flow-authoring/`, codex/gemini/… get the skill in a composed home + the
-  redirect env. The skill content is in-memory (`lib/flows/authoring-skill.ts`),
-  not read from a bundled asset path.
-
-## Data model (migration 0059, ADR-097)
-
-```mermaid
-erDiagram
-    local_packages ||--o{ runs : "local_package_id (snapshot, nullable)"
-    local_packages ||--o{ scratch_runs : "local_package_id (owner, nullable)"
-    projects ||--o{ runs : "project_id (nullable)"
-    projects ||--o{ scratch_runs : "project_id (nullable)"
-    runs ||--|| scratch_runs : "run_id"
-
-    runs {
-        text id PK
-        text run_kind "scratch or flow or agent"
-        text project_id FK "NULL for project-less assistant run"
-        text local_package_id FK "set iff project-less; launch snapshot"
-    }
-    scratch_runs {
-        text run_id PK
-        text project_id FK "owner XOR local_package_id (DB CHECK)"
-        text local_package_id FK "the project-less owner"
-        text base_branch
-        text base_commit
-        text dialog_status
-    }
-```
-
-- `scratch_runs_owner_xor_check`:
-  `(project_id IS NOT NULL) <> (local_package_id IS NOT NULL)` — exactly one
-  owner, never both, never neither.
-- `scratch_runs_project_status_idx` is **partial** (`WHERE project_id IS NOT
-  NULL`); `scratch_runs_local_package_idx` is the partial twin
-  (`WHERE local_package_id IS NOT NULL`).
-- `runs.project_id` nullable lets the project-less run exist; every project-scoped
-  consumer narrows it through `requireRunProjectId` (throws `CONFIG` on a null) or
-  excludes the run by query construction. See the consumer checklist in
-  [`../decisions.md#adr-096`](../decisions.md).
+- **Local package** - `local_packages` row (ADR-096). `working_dir` is
+  server-only. All action paths are relative to that working dir and are
+  re-confined before every read/write/delete.
+- **Assistant run** - `runs.run_kind = "scratch"`, `project_id = NULL`,
+  `local_package_id` set, no `workspaces` row. This remains the ADR-097
+  project-less scratch-at-local-package substrate.
+- **Scratch metadata** - `scratch_runs` row with `project_id = NULL`,
+  `local_package_id` set, the existing dialog state, runner snapshot, and
+  supervisor session handles.
+- **Read-only supervisor session** - ACP session created with `cwd =
+working_dir`, `confineRoot = working_dir`, and `readOnlySession = true`.
+- **Flow assistant context snapshot** - server-built prompt context containing
+  current package manifest data, selected flow YAML, compiled graph summary,
+  validation issues, capability inventory (`skills`, `agents`, `mcps`, `rules`,
+  `schemas`), file inventory with hashes, optional editor focus hints, and
+  runner summary.
+- **Assistant action** - full-file operations (`upsert_file`, `delete_file`)
+  with relative paths and base hashes copied from the server-provided context.
+- **Action audit log** - append-only JSONL under the run artifact dir. It is
+  diagnostic evidence only; the working dir is the source of truth.
+- **Action result payload** - sanitized scratch system message kind
+  `flow_action_result`, rendered as a friendly status/change card. It never
+  contains raw action JSON, absolute paths, or file contents.
 
 ## State machine
 
-The assistant uses the existing scratch `dialog_status` machine unchanged — it
-adds no status. A launch with an initial prompt lands `Running`; with no prompt
-it lands `WaitingForUser`.
+The assistant uses the existing scratch `dialog_status` machine unchanged. The
+structured action lifecycle is internal to a turn and does not add a run status.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Starting: launchLocalPackageAssistant (insert rows)
-    Starting --> Running: createSession + initial prompt sent
-    Starting --> WaitingForUser: createSession, no initial prompt
-    Running --> WaitingForUser: turn ends (end_turn)
-    Running --> NeedsInput: agent requests permission (inline HITL)
-    NeedsInput --> Running: user answers (member RBAC)
-    WaitingForUser --> Running: user sends a message
-    Running --> Crashed: prompt/session failure (no project-scoped emit)
-    Running --> Review: stopped with edits to commit
-    WaitingForUser --> [*]
-    Review --> [*]
-    Crashed --> [*]
+    [*] --> Starting: launchLocalPackageAssistant
+    Starting --> Running: create read-only ACP session + initial turn
+    Starting --> WaitingForUser: create read-only ACP session, no prompt
+    WaitingForUser --> Running: user sends Studio assistant message
+    Running --> WaitingForUser: Q&A turn ends
+    Running --> WaitingForUser: action parsed + applied/rejected card stored
+    Running --> NeedsInput: permission HITL requested by ACP
+    NeedsInput --> Running: member answers permission
+    Running --> Crashed: ACP/session failure
+    Running --> Review: stopped with local-package working-tree edits
 ```
 
-## Process flow — launch
+## Process flow - launch and follow-up
 
 ```mermaid
 sequenceDiagram
-    participant Editor as Studio editor (member)
-    participant Web as Next.js (launchLocalPackageAssistant)
+    participant Editor as Studio editor
+    participant Web as Next.js route/service
     participant DB as Postgres
     participant Sup as Supervisor
+    participant FS as Local package working dir
 
-    Editor->>Web: launch (localPackageId, prompt)
-    Web->>Web: requireActiveSession (member RBAC, ADR-096)
-    Web->>DB: load local_packages (active) + platform-default runner
-    Web->>Web: supervisor health + scratch capacity (flow pool)
-    Web->>Web: read base branch/commit from working_dir git HEAD
-    Web->>Web: materialize bare capability profile in working_dir
-    Web->>DB: ONE tx — insert runs (project_id NULL, local_package_id) +<br/>scratch_runs (XOR owner) + initial message
-    Web->>Sup: createSession(worktreePath=working_dir,<br/>confineRoot=working_dir, projectSlug=package slug)
-    Sup-->>Web: { sessionId, acpSessionId }
-    Web->>DB: persist acp_session_id + supervisor session id
-    Web->>Sup: send initial prompt (if any)
-    Web-->>Editor: { runId, dialogStatus }
+    Editor->>Web: POST /studio/local-packages/{id}/assistant
+    Web->>Web: requireActiveSession + assertHoldsLock(id, sessionId)
+    Web->>Web: validate runnerId and editor focus hints from server state
+    Web->>FS: read package files + hashes + flow graph context
+    Web->>DB: insert runs + scratch_runs + initial user message
+    Web->>Sup: createSession(readOnlySession=true, confineRoot=working_dir)
+    Web->>Sup: send grounded prompt with action protocol
+    Sup-->>DB: assistant events persisted as scratch messages
+    Web->>DB: parse latest assistant message and strip protocol block
+    alt action block exists
+        Web->>FS: validate base hashes + virtual package artifacts
+        Web->>FS: apply confined full-file writes/deletes
+        Web->>DB: append sanitized flow_action_result system message
+        Web->>FS: append action JSONL lifecycle records
+    else Q&A only
+        Web->>DB: keep ordinary assistant markdown
+    end
+    Web-->>Editor: dialogStatus + optional actionResult
 ```
 
-Key launch invariants:
-- **No `git worktree add`, no `workspaces` row.** The run executes in the
-  existing git-backed working dir.
-- **`runs.local_package_id` is written at the single launch insert** and is the
-  decisive field every terminal/read path reads.
-- **`projectSlug = local package slug`** names the runtime/cost subtree
-  (`.maister/<slug>/runs/<runId>`); it is kebab-case + unique by construction
-  and is NOT a project reference.
-- The runner chain is launch-override → **platform default** (no project-default
-  tier, since there is no project).
+Follow-up sends use
+`POST /api/studio/local-packages/{id}/assistant/{runId}/messages`, not the
+generic scratch message route. The route joins `runs.local_package_id = id`,
+`scratch_runs.run_id = runId`, and `runs.created_by_user_id = current user`
+before it sends anything to the supervisor.
 
-## Supervisor confinement
+## Structured action protocol
 
-A `file:` content-block URI is confined to `confineRoot` (the working dir) ∪ the
-run dir (uploads). `confineRoot`, when set, **replaces** the worktree ∪ repo
-allow-set used by project runs. A URI outside the working dir — including a path
-inside any project repo — is rejected with `PRECONDITION`. The web tier confines
-too (defense in depth). Source: `supervisor/src/prompt-confinement.ts`,
-`StartSessionRequestSchema.confineRoot`.
+The model may answer ordinary questions with plain markdown. For edit requests,
+it must include exactly one fenced action block:
 
-## Right-panel AI tab (T5.7)
+````markdown
+```maister-flow-assistant-action
+{
+  "schemaVersion": "maister_flow_assistant_action.v1",
+  "actionId": "optional-stable-id",
+  "summary": "Add a manual approval gate after implementation.",
+  "operations": [
+    {
+      "op": "upsert_file",
+      "path": "flows/default/flow.yaml",
+      "baseHash": "sha256:...",
+      "content": "..."
+    }
+  ]
+}
+```
+````
 
-The editor (`local-package-editor.tsx`) exposes a **Properties ⇆ AI** toggle.
-The AI tab (`studio-ai-tab.tsx`):
-- launches via `POST /api/studio/local-packages/{id}/assistant` (body
-  `{ sessionId, prompt }`) — the route `assertHoldsLock(id, sessionId)` so only
-  the working-dir lock holder may spawn it (the run writes **as the holder**);
-- once a run exists, renders the shared **`ScratchConversation`** (transcript +
-  composer + **inline HITL** permission panel) verbatim — same SSE stream
-  (`/api/runs/{runId}/stream`), same `GET /api/scratch-runs/{runId}` detail, same
-  `POST /api/runs/{runId}/hitl/{id}/respond`. Secrets never reach the client: the
-  reused scratch SSE/detail projections already exclude them;
-- subscribes to the run's stream (`useRunStream`, change-tick only) to **live
-  refresh** the editor on each assistant event — it bumps the editor's
-  `diffRefresh` signal and `router.refresh()`, so the T4 changed-count + git-diff
-  drawer and the server-compiled canvas re-read the working dir the assistant
-  just wrote;
-- while a turn is in flight (`dialog_status = Running/Starting`) it lifts an
-  **"AI working"** read-only state into the editor (the human editor stops
-  writing until the turn ends — no concurrent web-tier writer).
+Protocol rules:
 
-## Lock coordination + deferred release (T5.6)
+- `path` is relative to the package root and is treated as model-controlled
+  data. It is validated through the same confinement code as manual Studio
+  writes. Absolute paths, `..`, NUL bytes, symlinks that escape the working dir,
+  and `.git` paths are rejected before writes.
+- `baseHash` is the hash supplied in the server context snapshot. Existing-file
+  upserts/deletes must match the current file hash. New-file upserts use
+  `baseHash: null`.
+- Operations are full-file only in V1. Hunk/patch operations are deferred.
+- The server applies operations to an in-memory virtual package first and runs
+  existing local-package validation. Invalid manifests, Flow YAML, skill/agent
+  frontmatter, schema files, or graph compile state fail before writes.
+- Malformed JSON or schema-invalid action blocks become an invalid-action result
+  card. Raw protocol text is stripped from stored assistant markdown.
+- `intent` (`auto`, `ask`, `edit`) is prompt-only in V1. It changes the
+  instructions and logs, but it does not suppress structured action parsing or
+  apply. Lock ownership plus structured action validation is the apply
+  authority.
 
-- **Run ↔ lock.** The launch route asserts the editor's working-dir lock, tying
-  the run to the holder. The assistant's file writes go through the
-  supervisor (confined to `working_dir`), NOT the lock-guarded PUT/DELETE file
-  routes; the lock's job is to guarantee a single writer — while the assistant
-  holds a turn the editor is read-only, so the holder is never racing it.
-- **Deferred release.** Every assistant failure path that may have created an
-  ACP/HITL permission deferred releases it by tearing down the supervisor
-  session (`deleteSession` → supervisor `purgeSession` cancels all open
-  deferreds), then marks the run Crashed: the launch turn-failure catch in
-  `launchLocalPackageAssistant`, and the non-retryable turn-failure catch in
-  `sendScratchUserMessage` (assistant runs only — project scratch runs keep
-  their prior behavior). The DB-persist-failure release in the event consumer
-  (`persistPermissionRequest` → `cancelPermission`) is unchanged. The
-  `EXECUTOR_UNAVAILABLE` retryable path deliberately keeps the session.
-- **Turn-path project-less fix.** `loadScratchRows` synthesizes a
-  workspace-shaped value from the local package `working_dir` (no `workspaces`
-  row) so a turn on the assistant run does not crash.
+## User-visible turn outcomes
 
-## Expectations
+- **Q&A turn** - no action block. The assistant markdown is shown normally and
+  grounded by the current context snapshot.
+- **Applied action** - hashes and validation pass, writes/deletes complete, the
+  editor refreshes canvas/properties/diff, and a `flow_action_result` card lists
+  the summary, status, and touched files.
+- **Invalid action** - the action parses but fails schema, path, or virtual
+  package validation. No writes occur. The card shows a friendly validation
+  summary without raw JSON.
+- **Stale action** - one or more base hashes no longer match current server
+  files, usually because the user has unsaved or recently saved changes. No
+  writes occur. The route responds as a conflict and the card tells the user to
+  save/refresh and retry.
+- **Malformed action** - the model emitted a protocol-looking block that cannot
+  be parsed. No writes occur; the transcript hides the malformed raw block and
+  shows an invalid-action card.
+- **Interrupted apply** - an unexpected write failure after apply starts. The
+  action log records the operation index and status `interrupted`; the working
+  tree remains the source of truth and the existing diff drawer is the recovery
+  surface.
+- **Assistant crash/recover** - supervisor/session failures use the existing
+  scratch crash/recover behavior. Recovery does not replay JSONL actions
+  automatically; the user can inspect the working-tree diff and continue the
+  conversation.
 
-- Sending a message starts/continues an ACP session whose cwd is the working
-  dir; agent file writes land in the working dir and the editor live-refreshes.
-- The run carries `project_id = NULL` and `local_package_id` set; the
-  `scratch_runs` XOR CHECK guarantees exactly one owner.
-- A terminal transition (Crashed/Review/Abandoned) writes the `runs` +
-  `scratch_runs` terminal rows but emits **no** project-scoped domain/webhook
-  event (there is no project to attribute it to).
-- No assistant session can write outside the working dir.
+## Bottom AI panel
 
-## Concurrency & GC (T5.8)
+The editor keeps canvas/properties visible above the docked assistant:
 
-- **Concurrency pool.** The assistant run is `run_kind = "scratch"`, so it counts
-  against the **flow/scratch** concurrency pool — cap
-  `MAISTER_MAX_CONCURRENT_RUNS` (default 6), enforced at launch by
-  `assertScratchCapacityAvailable`. It does **not** use the separate platform-
-  agent budget (`MAISTER_MAX_CONCURRENT_AGENTS`).
-- **One ACP run per editor tab.** The run id is held in the AI tab's component
-  state for the editor mount's lifetime, so toggling Properties⇆AI never
-  relaunches. A **second** browser tab generates a fresh client lock session
-  that does **not** hold the working-dir lock, so its launch is refused server-
-  side (`assertHoldsLock`) — there is no second assistant for the same holder.
-- **No auto-GC of the working dir.** Consistent with the Phase C local-package
-  model (ADR-096): a local package's `working_dir` is removed only on explicit
-  delete; there is no background GC. The assistant run's rows cascade away when
-  the local package is deleted (`local_package_id ON DELETE CASCADE`).
+- the graph and right-side properties rail remain visible, with the properties
+  rail widened for forms;
+- the assistant sits below the canvas/properties area and is collapsible;
+- the transcript/composer owns its own scroll region, so long conversations do
+  not resize the graph unexpectedly;
+- a compact runner selector lists enabled Ready platform ACP runners plus the
+  platform default;
+- follow-up turns post to the Studio assistant route with `sessionId`, `intent`,
+  and validated focus hints;
+- recover controls are hidden for the docked assistant until a Studio-specific
+  structured recovery route exists;
+- action result cards are rendered from sanitized scratch system messages and
+  survive `router.refresh()` / page reload;
+- the UI blocks assistant sends while editor buffers have unsaved canvas/YAML or
+  package-file edits, so server-side apply never races stale files.
 
-## Edge cases
+Lazyweb desktop references for coding/assistant panels support this placement:
+assistant input and status should stay in the editing context, while machine
+protocol details stay off the primary transcript.
 
-- **Project-less run reaching a project-scoped path.** It cannot via any
-  automatic sweep or project query (excluded by construction); a coding
-  regression that routed one there throws `CONFIG` (`requireRunProjectId`)
-  rather than NULL-dereferencing.
-- **Reconcile.** A project-less run has `project_id = NULL`, so the per-project
-  candidate scan never selects it — it is never marked Crashed for a missing
-  project worktree (it has none). A live session is `skip`ped; reattach is
-  refused for non-flow runs (so the resume-driver never drives it).
-- **Cost accounting.** The supervisor still writes `cost.jsonl` for the
-  assistant under `.maister/<local-package-slug>/runs/<runId>/`. The cost rollup
-  reconciler reads that local-package slug for project-less runs and stores a
-  run-scoped rollup with `project_id = NULL`; project-scoped Observatory filters
-  continue to ignore it.
-- **Diff / change-summary.** The project-scoped run diff + change-summary routes
-  return 404 for a project-less run; the assistant's diff is the Studio editor's
-  git-working-tree view (Phase 4).
-- **Local package deleted.** `runs.local_package_id` / `scratch_runs.
-  local_package_id` are `ON DELETE CASCADE`, so deleting a local package removes
-  its assistant run history.
-- **Lock coordination.** The assistant runs under the editor's working-dir lock
-  (the editor is the lock holder; turn-based, so no concurrent writer). The
-  launch route asserts the lock; a lost/foreign lock refuses the launch with
-  `CONFLICT` (the editor surfaces its reload banner).
-- **HITL on a project-less run.** The permission respond path
-  (`respondToHitl`) skips the project authz gate when `project_id IS NULL`
-  (member RBAC, ADR-096) and skips the project-scoped webhook/domain emits;
-  delivery to the supervisor (`deliverPermission`) is unchanged. Form/human HITL
-  never occurs on an assistant run (scratch sessions only raise `permission`).
+## JSONL action audit artifact
 
-## Sources
+Action audit records are appended under:
 
-- `web/lib/scratch-runs/service.ts` — `launchLocalPackageAssistant`,
-  `loadScratchRows` (project-less variant), `sendScratchUserMessage` deferred
-  release.
-- `web/lib/capabilities/adapter-home.ts` — `materializeFlowAuthoringSkill`;
-  `web/lib/flows/authoring-skill.ts` — the skill content.
-- `web/components/studio/{local-package-editor,studio-ai-tab}.tsx` — the
-  Properties⇆AI tab + the docked assistant.
-- `web/app/api/studio/local-packages/[id]/assistant/route.ts` — the lock-gated
-  launch route.
-- `web/lib/services/hitl.ts` — the project-less HITL respond guards.
+```text
+.maister/<local-package-slug>/runs/<runId>/flow-assistant-actions.jsonl
+```
+
+Record kinds:
+
+- `received` - structured action metadata captured after parsing. File contents
+  are redacted to content hashes and byte counts.
+- `validated` - base hashes and virtual package validation passed.
+- `rejected` - stale, invalid, malformed, or path-confined rejection before
+  writes.
+- `applied` - all operations completed.
+- `interrupted` - writes began and an unexpected failure occurred.
+
+The UI never reads this artifact in V1. A future debug-only route may expose a
+redacted view, but product rendering must continue to use sanitized
+`scratch_messages`.
+
+## Logging boundaries
+
+Server logs are structured and never include prompt text, file contents, raw
+action JSON, absolute working dirs, or secrets.
+
+- Launch/send INFO: `localPackageId`, `runId`, `intent`, `runnerId`,
+  `readOnlySession: true`.
+- Context DEBUG: file count, capability counts, node/edge counts, focus path,
+  truncation flags.
+- Focus rejection WARN: `localPackageId`, `runId`, rejected hint kind/value.
+- Parse DEBUG/INFO/WARN: assistant byte length, action id, operation count, zod
+  issue summary.
+- Apply INFO: begin/success with `actionId`, `operationCount`, touched paths.
+- Reject WARN: status, validation issue count, stale/path-invalid reason.
+- Interrupted ERROR/WARN: operation index, relative path, status.
+- JSONL WARN: audit append failure after successful apply; user-visible file
+  state still wins.
+
+## Deployment and persistence
+
+This feature adds no env vars, sidecars, ports, package dependencies, DB tables,
+or migrations. `.env.example`, `compose.yml`, and `compose.production.yml` do
+not need changes. Persistence remains:
+
+- `runs`, `scratch_runs`, `scratch_messages` for conversation and UI state;
+- local package working dir for the current editable package;
+- `.maister/<slug>/runs/<runId>/flow-assistant-actions.jsonl` for server-only
+  action audit evidence;
+- existing git diff/Commit/Discard as the human review boundary.

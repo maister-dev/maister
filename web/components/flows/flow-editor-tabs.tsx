@@ -78,6 +78,7 @@ export function FlowEditorTabs({
   publishAction,
   filesDrawer,
   diffDrawer,
+  onDirtyChange,
 }: {
   projectSlug: string;
   capId: string;
@@ -102,6 +103,7 @@ export function FlowEditorTabs({
   // (working-tree-vs-HEAD of a local package) instead of the draft-vs-published
   // YAML text. Absent → the authored-flow path keeps `FlowDraftDiffText`.
   diffDrawer?: ReactNode;
+  onDirtyChange?: (dirty: boolean) => void;
 }): ReactElement {
   const [yaml, setYaml] = useState(initialYaml);
   const [title, setTitle] = useState(initialTitle);
@@ -129,6 +131,10 @@ export function FlowEditorTabs({
   );
   const [seedKey, setSeedKey] = useState(0);
   const [syncError, setSyncError] = useState(false);
+
+  useEffect(() => {
+    onDirtyChange?.(yaml !== initialYaml || title !== initialTitle);
+  }, [initialTitle, initialYaml, onDirtyChange, title, yaml]);
 
   // The manifest the canvas currently reflects: its last-serialized or
   // last-seeded state. The debounced reducer diffs the parsed yaml against this

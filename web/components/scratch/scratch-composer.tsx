@@ -26,6 +26,9 @@ export interface ScratchComposerProps {
   quickReplies: QuickReply[];
   agent?: AdapterId;
   catalog?: ProjectCapabilityCatalogEntry[];
+  attachmentsEnabled?: boolean;
+  recoverEnabled?: boolean;
+  disabledReason?: string | null;
   // Returns true when the message landed (the composer clears its draft);
   // false keeps the draft so the user can retry without retyping.
   onSend: (payload: {
@@ -46,6 +49,9 @@ export function ScratchComposer({
   quickReplies,
   agent = "claude",
   catalog = [],
+  attachmentsEnabled = true,
+  recoverEnabled = true,
+  disabledReason = null,
   onSend,
   onRecover,
 }: ScratchComposerProps): ReactElement {
@@ -60,7 +66,18 @@ export function ScratchComposer({
     [composerFiles],
   );
   const agentBusy = status === "Running" || status === "Starting";
-  const canSubmitMessage = !!content.trim() && canCompose(status);
+  const canUseComposer =
+    canCompose(status) &&
+    disabledReason === null &&
+    (recoverEnabled || !canRecover(status));
+  const canSubmitMessage = !!content.trim() && canUseComposer;
+  const placeholder = disabledReason
+    ? disabledReason
+    : canSend(status)
+      ? t("messagePlaceholder")
+      : canRecover(status) && recoverEnabled
+        ? t("recoverPlaceholder")
+        : t("messageDisabled");
 
   function updateComposerAttachment(
     index: number,
@@ -81,6 +98,7 @@ export function ScratchComposer({
     const trimmed = content.trim();
 
     if (!trimmed) return;
+    if (!canUseComposer) return;
 
     if (canRecover(status)) {
       if (await onRecover(trimmed)) setContent("");
@@ -130,13 +148,9 @@ export function ScratchComposer({
         ariaLabel={t("composerMessageAria")}
         catalog={catalog}
         className={clsx(inputBase, "min-h-[110px]")}
-        disabled={!canCompose(status)}
+        disabled={!canUseComposer}
         labels={{
-          placeholder: canSend(status)
-            ? t("messagePlaceholder")
-            : canRecover(status)
-              ? t("recoverPlaceholder")
-              : t("messageDisabled"),
+          placeholder,
           unsupportedBadge: t("composerUnsupported"),
         }}
         testId="scratch-message-composer"
@@ -146,7 +160,7 @@ export function ScratchComposer({
           if (canSubmitMessage && !pending) void submit();
         }}
       />
-      {composerAttachments.length > 0 ? (
+      {attachmentsEnabled && composerAttachments.length > 0 ? (
         <div className="mt-2 flex min-w-0 flex-col gap-2">
           {composerAttachments.map((attachment, index) => (
             <div
@@ -210,29 +224,31 @@ export function ScratchComposer({
           ))}
         </div>
       ) : null}
-      <div className="mt-2 min-w-0">
-        <input
-          multiple
-          aria-label={t("composerFilesAria")}
-          className={inputBase}
-          disabled={!canSend(status)}
-          type="file"
-          onChange={(event) =>
-            setComposerFiles(Array.from(event.currentTarget.files ?? []))
-          }
-        />
-        {composerFiles.length > 0 ? (
-          <div className="mt-1 font-mono text-[10.5px] text-mute">
-            {t("fileSummary", {
-              count: composerFiles.length,
-              bytes: composerFileBytes,
-            })}
-          </div>
-        ) : null}
-      </div>
+      {attachmentsEnabled ? (
+        <div className="mt-2 min-w-0">
+          <input
+            multiple
+            aria-label={t("composerFilesAria")}
+            className={inputBase}
+            disabled={!canSend(status)}
+            type="file"
+            onChange={(event) =>
+              setComposerFiles(Array.from(event.currentTarget.files ?? []))
+            }
+          />
+          {composerFiles.length > 0 ? (
+            <div className="mt-1 font-mono text-[10.5px] text-mute">
+              {t("fileSummary", {
+                count: composerFiles.length,
+                bytes: composerFileBytes,
+              })}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       <div className="mt-2 flex min-w-0 flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
-          {canSend(status) ? (
+          {attachmentsEnabled && canSend(status) ? (
             <button
               className="rounded-full border border-line bg-paper px-3 py-1.5 font-mono text-[11px] text-ink-2 hover:border-amber hover:text-amber"
               type="button"

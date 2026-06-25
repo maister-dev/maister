@@ -30,6 +30,7 @@ import { getAdapterSupportById } from "@/lib/acp-runners/adapter-support";
 import {
   parseQuickReplies,
   parseScratchMessageContent,
+  type ScratchFlowActionResultPayload,
 } from "@/lib/scratch-runs/transcript";
 import { useRunStream } from "@/lib/use-run-stream";
 
@@ -62,8 +63,26 @@ function statusClass(status: ScratchDialogStatus): string {
 // shared run inspector + workbench rendered by the scratch layout.
 export function ScratchConversation({
   runId,
+  compact = false,
+  messageEndpoint,
+  messageBodyExtras,
+  attachmentsEnabled = true,
+  recoverEndpoint,
+  sendDisabledReason = null,
+  renderFlowActionResult,
+  onMessageSettled,
 }: {
   runId: string;
+  compact?: boolean;
+  messageEndpoint?: string;
+  messageBodyExtras?: Record<string, unknown>;
+  attachmentsEnabled?: boolean;
+  recoverEndpoint?: string | null;
+  sendDisabledReason?: string | null;
+  renderFlowActionResult?: (
+    payload: ScratchFlowActionResultPayload,
+  ) => ReactElement | null;
+  onMessageSettled?: () => void;
 }): ReactElement {
   const t = useTranslations("scratch");
   const [detail, setDetail] = useState<ScratchDetail | null>(null);
@@ -75,6 +94,12 @@ export function ScratchConversation({
     ProjectCapabilityCatalogEntry[]
   >([]);
   const { eventCount } = useRunStream(runId, { retain: false });
+  const resolvedMessageEndpoint =
+    messageEndpoint ?? `/api/scratch-runs/${runId}/messages`;
+  const resolvedRecoverEndpoint =
+    recoverEndpoint === undefined
+      ? `/api/scratch-runs/${runId}/recover`
+      : recoverEndpoint;
 
   const loadDetail = useCallback(async (): Promise<void> => {
     setLoading(true);
@@ -270,7 +295,11 @@ export function ScratchConversation({
         .filter((attachment) => attachment.value.length > 0);
 
       try {
-        const body = { content: payload.content, attachments };
+        const body = {
+          content: payload.content,
+          ...(attachments.length > 0 ? { attachments } : {}),
+          ...(messageBodyExtras ?? {}),
+        };
         const requestInit: RequestInit =
           payload.files.length > 0
             ? (() => {
@@ -287,10 +316,7 @@ export function ScratchConversation({
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(body),
               };
-        const response = await fetch(
-          `/api/scratch-runs/${runId}/messages`,
-          requestInit,
-        );
+        const response = await fetch(resolvedMessageEndpoint, requestInit);
 
         if (!response.ok) {
           setError(errorText(await response.json().catch(() => null)));
@@ -299,6 +325,7 @@ export function ScratchConversation({
         }
 
         await loadDetail();
+        onMessageSettled?.();
 
         return true;
       } catch (err) {
@@ -309,7 +336,7 @@ export function ScratchConversation({
         setPendingAction(null);
       }
     },
-    [loadDetail, runId],
+    [loadDetail, messageBodyExtras, onMessageSettled, resolvedMessageEndpoint],
   );
 
   const recover = useCallback(
@@ -318,7 +345,9 @@ export function ScratchConversation({
       setError(null);
 
       try {
-        const response = await fetch(`/api/scratch-runs/${runId}/recover`, {
+        if (resolvedRecoverEndpoint === null) return false;
+
+        const response = await fetch(resolvedRecoverEndpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ prompt }),
@@ -331,6 +360,7 @@ export function ScratchConversation({
         }
 
         await loadDetail();
+        onMessageSettled?.();
 
         return true;
       } catch (err) {
@@ -341,7 +371,7 @@ export function ScratchConversation({
         setPendingAction(null);
       }
     },
-    [loadDetail, runId],
+    [loadDetail, onMessageSettled, resolvedRecoverEndpoint],
   );
 
   const answerHitl = useCallback(
@@ -378,7 +408,13 @@ export function ScratchConversation({
 
   if (loading && !detail) {
     return (
-      <div className={`${shell} px-4 py-5 font-mono text-[12px] text-mute`}>
+      <div
+        className={clsx(
+          shell,
+          "px-4 py-5 font-mono text-[12px] text-mute",
+          compact ? "h-full min-h-0" : null,
+        )}
+      >
         {t("loadingRun")}
       </div>
     );
@@ -394,7 +430,11 @@ export function ScratchConversation({
 
   return (
     <section
-      className={`${shell} flex min-h-[620px] min-w-0 max-w-full flex-col overflow-hidden`}
+      className={clsx(
+        shell,
+        "flex min-w-0 max-w-full flex-col overflow-hidden",
+        compact ? "h-full min-h-0" : "min-h-[620px]",
+      )}
       data-testid="scratch-conversation"
     >
       <header className="flex min-w-0 flex-wrap items-center justify-between gap-3 border-b border-line-soft px-4 py-3">
@@ -455,6 +495,7 @@ export function ScratchConversation({
           labels={transcriptLabels}
           messages={detail.messages}
           renderAttachments={renderMessageAttachments}
+          renderFlowActionResult={renderFlowActionResult}
           running={status === "Running" || status === "Starting"}
           userLabel={detail.run.createdByDisplayName}
         />
@@ -484,9 +525,12 @@ export function ScratchConversation({
 
       <ScratchComposer
         agent={composerAgent}
+        attachmentsEnabled={attachmentsEnabled}
         catalog={commandCatalog}
+        disabledReason={sendDisabledReason}
         pending={pendingAction === "send"}
         quickReplies={quickReplies}
+        recoverEnabled={resolvedRecoverEndpoint !== null}
         status={status}
         onRecover={recover}
         onSend={sendMessage}

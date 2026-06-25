@@ -14,8 +14,9 @@ description: >-
   Author and edit MAIster Flow packages: the flow.yaml typed-node graph DSL
   (nodes, transitions, gates, rework, typed artifacts), the package layout
   (flows/, agents/, skills/, mcps/, rules/, schemas/, maister-package.yaml), and
-  the per-kind file editors. Use whenever editing a local package's flow.yaml,
-  adding nodes/gates, wiring transitions, or scaffolding package files.
+  the structured MAIster action protocol used by the Flow Studio assistant. Use
+  whenever answering questions about a local package's flow.yaml, proposing Flow
+  edits, adding nodes/gates, wiring transitions, or scaffolding package files.
 disable-model-invocation: false
 metadata:
   author: MAIster
@@ -25,9 +26,10 @@ metadata:
 # Flow authoring
 
 You are the docked authoring assistant for a MAIster **Flow package** working
-directory. Every file you read or write lives UNDER this working dir (the host
-confines all file access to it). Edit files directly with your file tools; the
-editor canvas + diff drawer re-read the working dir after each write.
+directory. Your ACP session is read-only: inspect files and answer questions,
+but do not edit files directly with tools. When the user asks for a change,
+return a structured MAIster action block. The web tier validates and applies it
+under the editor lock, then the canvas + diff drawer refresh.
 
 ## What a Flow package is
 
@@ -35,9 +37,9 @@ A directory with a manifest and typed content:
 
 \`\`\`
 maister-package.yaml      # package manifest: schemaVersion, name, flows[]
-flow.yaml                 # OR flows/<id>.yaml — the flow graph(s)
-flows/                    # additional flow manifests
-agents/<stem>.md          # platform-agent definitions (markdown + frontmatter)
+flow.yaml                 # OR flows/<id>/flow.yaml — the flow graph(s)
+flows/<id>/flow.yaml      # additional flow manifests
+maister-agents/<stem>.md  # platform-agent definitions (markdown + frontmatter)
 skills/<name>/SKILL.md    # bundled skills
 mcps/                     # MCP server capability descriptors
 rules/                    # rule capability descriptors
@@ -67,15 +69,42 @@ complete worked example. Key rules:
 
 ## Working method
 
-1. Read the file you are about to change FIRST (\`maister-package.yaml\`, the
-   relevant \`flow.yaml\`). Never guess the current shape.
-2. Make the smallest edit that satisfies the request. Keep the YAML valid — an
-   invalid manifest drops the editor to YAML-only (no canvas).
-3. After editing a flow, re-read it to confirm node ids referenced by
-   \`transitions\`/\`rework.allowedTargets\` all exist (a dangling target is a
-   validation error).
-4. For a new package file, put it under the right kind dir (see layout) so the
+1. Read the context MAIster provides first: file inventory, hashes, active
+   flow, graph summary, validation issues, and capability inventory.
+2. For Q&A, answer normally from that context and the references.
+3. For edits, output exactly one fenced \`maister-flow-assistant-action\` block.
+   Use full-file operations only: \`upsert_file\` and \`delete_file\`.
+4. Copy \`baseHash\` from the file inventory. Use \`baseHash: null\` only for a
+   new file.
+5. Keep YAML valid. Confirm node ids referenced by
+   \`transitions\`/\`rework.allowedTargets\` exist before proposing content.
+6. For a new package file, put it under the right kind dir (see layout) so the
    editor classifies it correctly.
+
+## Action protocol
+
+\`\`\`maister-flow-assistant-action
+{
+  "schemaVersion": "maister_flow_assistant_action.v1",
+  "summary": "Short user-facing summary of the proposed change",
+  "operations": [
+    {
+      "op": "upsert_file",
+      "path": "flows/example/flow.yaml",
+      "baseHash": "sha256:...",
+      "content": "complete replacement file content"
+    }
+  ]
+}
+\`\`\`
+
+Rules:
+- Never include absolute paths, \`..\`, \`.git\`, or host paths.
+- Include complete replacement content for every \`upsert_file\`.
+- Use \`delete_file\` only when the user explicitly asks to remove a file or the
+  edit cannot be represented safely without removal.
+- Do not include raw commentary inside the JSON block. User-facing explanation
+  can be normal markdown before the block.
 
 See also: \`references/package-layout.md\` and \`references/editing-tips.md\`.
 `;
@@ -206,8 +235,8 @@ const REF_PACKAGE_LAYOUT = `# Package layout
 \`\`\`
 maister-package.yaml   # required: schemaVersion: 1, name, flows: [...]
 flow.yaml              # a single root flow (optional if flows/ used)
-flows/<id>.yaml        # one manifest per flow
-agents/<stem>.md       # platform-agent (frontmatter + body); id is the stem
+flows/<id>/flow.yaml   # one manifest per flow
+maister-agents/<stem>.md # platform-agent (frontmatter + body); id is the stem
 skills/<name>/SKILL.md # a bundled skill (+ optional references/)
 mcps/<name>.yaml       # MCP capability descriptor
 rules/<name>.md        # rule capability
@@ -221,32 +250,35 @@ schemaVersion: 1
 name: my-package
 flows:
   - id: bugfix
-    path: flows/bugfix.yaml      # or the root flow.yaml
+    path: flows/bugfix           # directory containing flow.yaml
 \`\`\`
 
 ## File kind is inferred from the top directory
 
-The editor classifies a file by its path: \`flow.yaml\` / \`flows/*\` -> flow;
-\`agents/*\` -> agent; \`skills/*\` -> skill; \`mcps/*\` -> mcp; \`rules/*\` -> rule;
-\`schemas/*\` -> schema; a top-level \`*.md\` -> readme; anything else -> asset. Put
-new files in the right dir so they classify correctly.
+Runtime flow manifests live at \`flow.yaml\` or \`flows/<id>/flow.yaml\`; in
+\`maister-package.yaml\`, each \`flows[].path\` points to the directory containing
+that \`flow.yaml\` (for example, \`flows/bugfix\`). The editor classifies files by
+path: \`maister-agents/*\` -> platform-agent definition; \`agents/*\` -> legacy
+platform-agent definition; \`skills/*\` -> skill; \`mcps/*\` -> mcp;
+\`rules/*\` -> rule; \`schemas/*\` -> schema; a top-level \`*.md\` -> readme;
+anything else -> asset. Put new files in the right dir so they classify correctly.
 `;
 
 const REF_EDITING_TIPS = `# Editing tips for the docked assistant
 
 - You are confined to this working dir. Use relative paths; never try to escape
   it (the host rejects \`file:\` URIs outside the working dir).
-- ALWAYS read a file before editing it. The editor and you share the same
-  working dir, so an edit you make is reflected on the canvas/diff on the next
-  refresh.
+- ALWAYS use the server-provided file inventory and active flow before preparing
+  an action. Do not write directly; MAIster applies accepted action blocks and
+  refreshes the canvas/diff.
 - Keep YAML valid. A flow.yaml that fails to parse falls back to YAML-only in the
   editor (no graph canvas) — confirm your edit parses.
 - After changing a flow graph: every node id named in \`transitions\` and
   \`rework.allowedTargets\` MUST exist. \`done\` is the implicit terminal and needs
   no node.
 - Prefer the smallest diff. Do not reformat or reorder unrelated nodes/keys.
-- A change is not "done" until you have re-read the file and it is internally
-  consistent (ids resolve, required artifacts are produced upstream).
+- A proposed change is not "done" until the full replacement content is
+  internally consistent (ids resolve, required artifacts are produced upstream).
 `;
 
 // The materialized skill tree: a `skills/<id>/...` layout so it drops straight

@@ -7569,41 +7569,39 @@ paths:
         schema: { type: string }
     post:
       tags: [flow-packages]
-      summary: (M36 Phase 5, ADR-097 — backend foundation Implemented) Launch the docked AI authoring assistant
+      summary: (ADR-097 + ADR-110) Launch the Flow Studio AI authoring assistant
       description: |
-        (M36 Phase 5, ADR-097.) Launch a **project-less scratch run** rooted at
-        the local package's `working_dir` (`launchLocalPackageAssistant`). There
-        is NO project and NO managed git worktree: `runs.project_id` /
-        `scratch_runs.project_id` stay NULL and `local_package_id` carries the
-        owner (DB CHECK = exactly one of project / local-package); the supervisor
-        session confines content-block file URIs to the `working_dir`
-        (`confineRoot`). Member-level RBAC (`requireActiveSession`, ADR-096).
-        Counts against the scratch (flow-pool) concurrency cap. The right-panel
-        AI tab + the working-dir lock coordination are a separate task.
+        Launch a **project-less scratch run** rooted at the local package's
+        `working_dir` (`launchLocalPackageAssistant`). There is NO project and
+        NO managed git worktree: `runs.project_id` / `scratch_runs.project_id`
+        stay NULL and `local_package_id` carries the owner (DB CHECK = exactly
+        one of project / local-package). The supervisor session confines
+        content-block file URIs to the `working_dir` (`confineRoot`) and is
+        created with `readOnlySession: true`; mutations can only happen later
+        through the ADR-110 structured action parser/validator/apply path.
+
+        Identifier boundaries: `id` is the server-state local package lookup;
+        `sessionId` is a body-controlled lock token compared with
+        `assertHoldsLock(id, sessionId)`; `runnerId` is a body-controlled launch
+        override allow-listed against enabled Ready platform ACP runners;
+        `focus` is an optional body-controlled hint and is validated against
+        server-read package files / compiled graph before prompt use. Intended
+        structured log fields: `localPackageId`, `runId`, `intent`, `runnerId`,
+        `focusPath`, `readOnlySession:true`.
       operationId: launchStudioLocalPackageAssistant
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                prompt: { type: string, maxLength: 60000 }
-                runnerId: { type: string, minLength: 1 }
-                workMode:
-                  type: string
-                  enum: [auto, plan_first, manual_approval]
-                reasoningEffort:
-                  type: string
-                  enum: [low, high, extra, ultra]
-                planMode: { type: string, enum: [off, plan-first] }
-              required: [prompt]
+              $ref: "#/components/schemas/StudioAssistantLaunchBody"
       responses:
-        "201":
-          description: Assistant run launched (project-less scratch run).
+        "202":
+          description: Assistant run accepted (project-less scratch run).
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ScratchRunResponse" }
+              schema:
+                { $ref: "#/components/schemas/StudioAssistantLaunchResponse" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -7614,6 +7612,33 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
+  /api/studio/local-packages/{id}/assistant/runners:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [flow-packages]
+      summary: (ADR-110) List Flow Studio assistant runner options
+      description: |
+        Lists enabled Ready platform ACP runners plus the platform default for
+        the docked Flow Studio assistant. `id` is the server-state local-package
+        lookup; the body is empty. Disabled, not-ready, or missing runner ids
+        are rejected again server-side when launch uses `runnerId`. Intended log
+        fields: `localPackageId`, runner count, and default runner id.
+      operationId: getStudioLocalPackageAssistantRunners
+      responses:
+        "200":
+          description: Runner options for the assistant launch selector.
+          content:
+            application/json:
+              schema:
+                { $ref: "#/components/schemas/StudioAssistantRunnersResponse" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   /api/studio/local-packages/{id}/assistant/{runId}/messages:
     parameters:
@@ -7627,29 +7652,50 @@ paths:
         schema: { type: string }
     post:
       tags: [flow-packages]
-      summary: (M36 Phase 5, ADR-097 — Designed) Send a turn to the docked assistant
+      summary: (ADR-110) Send a turn to the Flow Studio assistant
       description: |
-        (M36 Phase 5, ADR-097 — Designed.) Continue the assistant conversation —
-        reuses the scratch message substrate (`sendScratchUserMessage`) on a
-        project-less run; RBAC falls back to `requireActiveSession` (member-level)
-        when the run is project-less. Implemented as part of the separate AI-tab
-        task; documented here for contract completeness.
+        Continue the docked assistant conversation through the Studio-specific
+        turn pipeline. The handler joins `runs.local_package_id = id`,
+        `scratch_runs.run_id = runId`, and the current user before sending to
+        the supervisor. `sessionId` is a body-controlled lock token checked by
+        `assertHoldsLock(id, sessionId)`. `intent` controls prompt instructions
+        only; it is not a filesystem authority. `focus` is an optional
+        body-controlled hint validated against server state.
+
+        The assistant ACP session remains read-only. If the assistant emits a
+        `maister_flow_assistant_action.v1` block, the web tier strips raw JSON
+        from the transcript, validates base hashes and package artifacts,
+        applies full-file operations in-place under the local-package lock, logs
+        JSONL lifecycle records under the run artifact dir, and stores a
+        sanitized `flow_action_result` scratch system message. Raw action JSON
+        is never returned by this route. Structured action refusals such as
+        stale base hashes, unsafe paths, invalid package artifacts, or a lost
+        write-time lock are returned as `200` with `actionResult.status`; they
+        are not HTTP 409 responses. Intended log fields:
+        `localPackageId`, `runId`, `actionId`, `intent`, `focusPath`,
+        `operationCount`, `status`, validation issue count.
       operationId: sendStudioLocalPackageAssistantMessage
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                content: { type: string, minLength: 1, maxLength: 60000 }
-              required: [content]
+              $ref: "#/components/schemas/StudioAssistantMessageBody"
       responses:
-        "200": { description: Turn sent; returns the dialog status + stop reason. }
+        "200":
+          description: Turn sent; returns dialog status, stop reason, and optional sanitized action result.
+          content:
+            application/json:
+              schema:
+                { $ref: "#/components/schemas/StudioAssistantMessageResponse" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
-        "409": { $ref: "#/components/responses/Conflict" }
+        "409":
+          description: Lock conflict before the turn starts, or run/package ownership mismatch. Structured action rejections are returned as 200 with `actionResult.status`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "422": { $ref: "#/components/responses/Config" }
         "503":
           description: Supervisor readiness or executor unavailable (`EXECUTOR_UNAVAILABLE`).
@@ -11824,6 +11870,156 @@ components:
         runId: { type: string, format: uuid }
         dialogUrl: { type: string }
         status: { $ref: "#/components/schemas/ScratchRun" }
+    StudioAssistantIntent:
+      type: string
+      description: |
+        Prompt intent hint for ADR-110. `ask` requests a grounded answer;
+        `edit` requests a structured action; `auto` lets the prompt decide.
+        The value is prompt-only in V1: a valid structured action may still be
+        parsed and applied on any intent. The filesystem authority is the
+        editor lock plus structured action validation, never this hint.
+      enum: [auto, ask, edit]
+    StudioAssistantFocus:
+      type: object
+      additionalProperties: false
+      description: |
+        Optional editor focus hints. Body-controlled values are validated against
+        server-read package files and compiled graph data before use.
+      properties:
+        path:
+          type: string
+          minLength: 1
+          maxLength: 512
+          description: Relative package file path, used only if it exists in server state.
+        selectedNodeId:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Selected Flow node id, used only if present in the compiled graph.
+    StudioAssistantLaunchBody:
+      type: object
+      additionalProperties: false
+      required: [sessionId, prompt]
+      properties:
+        sessionId:
+          type: string
+          minLength: 1
+          description: Body-controlled editor lock token, compared with server lock state.
+        prompt: { type: string, minLength: 1, maxLength: 60000 }
+        runnerId:
+          type: string
+          minLength: 1
+          description: Optional enabled Ready `platform_acp_runners.id` launch override.
+        intent: { $ref: "#/components/schemas/StudioAssistantIntent" }
+        focus: { $ref: "#/components/schemas/StudioAssistantFocus" }
+    StudioAssistantLaunchResponse:
+      type: object
+      additionalProperties: false
+      required: [runId, dialogStatus, actionResult]
+      properties:
+        runId: { type: string }
+        dialogStatus:
+          type: string
+          enum:
+            [
+              Starting,
+              WaitingForUser,
+              Running,
+              NeedsInput,
+              Review,
+              Crashed,
+              Done,
+              Abandoned,
+            ]
+        actionResult:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/StudioAssistantActionResult"
+    StudioAssistantMessageBody:
+      type: object
+      additionalProperties: false
+      required: [sessionId, content]
+      properties:
+        sessionId:
+          type: string
+          minLength: 1
+          description: Body-controlled editor lock token, compared with server lock state.
+        content: { type: string, minLength: 1, maxLength: 60000 }
+        intent: { $ref: "#/components/schemas/StudioAssistantIntent" }
+        focus: { $ref: "#/components/schemas/StudioAssistantFocus" }
+    StudioAssistantActionOperation:
+      type: object
+      additionalProperties: false
+      required: [op, path]
+      properties:
+        op: { type: string, enum: [upsert_file, delete_file] }
+        path:
+          type: string
+          description: Confined relative package path. Absolute paths are never exposed.
+    StudioAssistantActionResult:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          v,
+          kind,
+          actionId,
+          status,
+          summary,
+          operations,
+          touchedPaths,
+          issueCount,
+        ]
+      properties:
+        v: { type: integer, enum: [1] }
+        kind: { type: string, enum: [flow_action_result] }
+        actionId: { type: string }
+        status:
+          type: string
+          enum: [applied, invalid, stale, malformed, interrupted, rejected]
+        summary: { type: string }
+        operations:
+          type: array
+          items: { $ref: "#/components/schemas/StudioAssistantActionOperation" }
+        touchedPaths:
+          type: array
+          items: { type: string }
+        issueCount: { type: integer, minimum: 0 }
+        issues:
+          type: array
+          items: { type: string }
+        message:
+          type: string
+          nullable: true
+          description: Friendly user-facing explanation. Never contains raw protocol JSON.
+    StudioAssistantMessageResponse:
+      allOf:
+        - $ref: "#/components/schemas/ScratchMessageResponse"
+        - type: object
+          properties:
+            actionResult:
+              nullable: true
+              allOf:
+                - $ref: "#/components/schemas/StudioAssistantActionResult"
+    StudioAssistantRunnerOption:
+      type: object
+      additionalProperties: false
+      required: [id, label, adapter, isDefault]
+      properties:
+        id: { type: string }
+        label: { type: string }
+        adapter: { type: string, enum: [claude, codex, gemini, opencode, mimo] }
+        model: { type: string, nullable: true }
+        isDefault: { type: boolean }
+    StudioAssistantRunnersResponse:
+      type: object
+      additionalProperties: false
+      required: [runners, defaultRunnerId]
+      properties:
+        runners:
+          type: array
+          items: { $ref: "#/components/schemas/StudioAssistantRunnerOption" }
+        defaultRunnerId: { type: string, nullable: true }
     ScratchPendingHitl:
       type: object
       required: [hitlRequestId, kind, prompt, schema, options]
