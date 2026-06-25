@@ -381,6 +381,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const manualLaunchability = classifyManualTaskLaunchability(
       {
         status: task.status ?? "Backlog",
+        triageStatus:
+          (task.triageStatus as "triaged" | "flagged" | null) ?? null,
       },
       latestFlowRun,
       { openBlockers },

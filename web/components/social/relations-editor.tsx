@@ -47,6 +47,7 @@ const KINDS: TaskRelationKind[] = [
   "depends_on",
   "parent_of",
   "requires",
+  "duplicate_of",
 ];
 
 function normalizeSearchValue(value: string): string {

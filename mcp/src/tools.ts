@@ -348,7 +348,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   relation_add: {
     description:
-      "Add a typed relation from this task to another task (by per-project number)",
+      "Add a typed relation from this task to another task (by per-project number). `duplicate_of` marks this task as a duplicate of the target — a non-blocking annotation used by triage dedup.",
     inputSchema: {
       type: "object",
       properties: {
@@ -356,7 +356,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
         taskId: { type: "string" },
         kind: {
           type: "string",
-          enum: ["blocks", "depends_on", "parent_of"],
+          enum: ["blocks", "depends_on", "parent_of", "duplicate_of"],
         },
         toNumber: { type: "number" },
       },
@@ -373,7 +373,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
         taskId: { type: "string" },
         kind: {
           type: "string",
-          enum: ["blocks", "depends_on", "parent_of"],
+          enum: ["blocks", "depends_on", "parent_of", "duplicate_of"],
         },
         toNumber: { type: "number" },
       },

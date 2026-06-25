@@ -46,6 +46,7 @@ const fx = {
   agentToken: "",
   agentTokenId: "",
   userToken: "",
+  userTokenId: "",
 };
 
 function request(method: string, token: string, body?: unknown): NextRequest {
@@ -158,6 +159,7 @@ beforeAll(async () => {
   );
 
   fx.userToken = userToken.secret;
+  fx.userTokenId = userToken.tokenId;
 
   TRIAGE = (
     await import("@/app/api/v1/ext/projects/[slug]/tasks/[taskId]/triage/route")
@@ -286,5 +288,100 @@ describe("POST /api/v1/ext/.../triage — agent verdict", () => {
     );
 
     expect(res.status).toBe(401);
+  });
+});
+
+// ADR-111 — the triage `flag` op: mark `flagged` (held), NO verdict columns,
+// in the SAME transaction as the token audit; mutually exclusive with verdict
+// fields (422 CONFIG). Uses the user token (the agent token is revoked above).
+describe("POST /api/v1/ext/.../triage — flag op (ADR-111)", () => {
+  async function freshTask(): Promise<string> {
+    const created = await createTask(
+      { title: "to flag", prompt: "maybe a dup" },
+      { projectId: fx.projectId, actorUserId: fx.ownerId },
+      db,
+    );
+
+    return created.taskId;
+  }
+
+  it("flag: true → 'flagged', writes NO verdict columns, one-tx + audit row", async () => {
+    const taskId = await freshTask();
+
+    const res = await TRIAGE(
+      request("POST", fx.userToken, { flag: true }),
+      routeParams(SLUG, taskId),
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, triageStatus: "flagged" });
+
+    const task = await pool.query(
+      `SELECT triage_status, flow_id, runner_id, target_branch, promotion_mode
+       FROM tasks WHERE id = $1`,
+      [taskId],
+    );
+
+    expect(task.rows[0]).toMatchObject({
+      triage_status: "flagged",
+      flow_id: null,
+      runner_id: null,
+      target_branch: null,
+      promotion_mode: null,
+    });
+
+    // Activity recorded with the flag marker (reuses the triage_set kind).
+    const activity = await pool.query(
+      `SELECT payload FROM task_activity
+       WHERE task_id = $1 AND event_kind = 'triage_set'`,
+      [taskId],
+    );
+
+    expect(activity.rows).toHaveLength(1);
+    expect(activity.rows[0].payload).toMatchObject({ flag: true });
+
+    // Token audit row committed in the same transaction as the flag.
+    const audit = await pool.query(
+      `SELECT result, status_code FROM token_audit_log
+       WHERE token_id = $1 AND scope_used = 'tasks:triage'
+         AND result = 'ok' AND status_code = 200`,
+      [fx.userTokenId],
+    );
+
+    expect(audit.rows.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("flag + a verdict field together → 422 CONFIG (mutually exclusive), task unchanged", async () => {
+    const taskId = await freshTask();
+
+    const res = await TRIAGE(
+      request("POST", fx.userToken, { flag: true, flowId: fx.flowId }),
+      routeParams(SLUG, taskId),
+    );
+
+    expect(res.status).toBe(422);
+    expect(await res.json()).toMatchObject({ code: "CONFIG" });
+
+    // Neither the verdict nor the flag landed.
+    const task = await pool.query(
+      `SELECT triage_status, flow_id FROM tasks WHERE id = $1`,
+      [taskId],
+    );
+
+    expect(task.rows[0]).toMatchObject({
+      triage_status: null,
+      flow_id: null,
+    });
+  });
+
+  it("flag: true alone satisfies the ≥1-field rule (empty body still 422)", async () => {
+    const taskId = await freshTask();
+
+    const empty = await TRIAGE(
+      request("POST", fx.userToken, {}),
+      routeParams(SLUG, taskId),
+    );
+
+    expect(empty.status).toBe(422);
   });
 });

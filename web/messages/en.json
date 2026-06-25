@@ -52,6 +52,7 @@
       "skipped_cap": "Skipped — at capacity",
       "skipped_target_terminal": "Skipped — task terminal",
       "skipped_crashed": "Skipped — last run crashed",
+      "skipped_flagged": "Skipped — flagged for review",
       "skipped_blocked": "Skipped — blocked by relations",
       "launch_failed": "Launch failed",
       "dispatching": "Dispatching…",
@@ -65,6 +66,7 @@
       "skipped_cap": "Skipped: concurrency cap reached",
       "skipped_target_terminal": "Skipped: task is in a terminal state",
       "skipped_crashed": "Skipped: latest run crashed",
+      "skipped_flagged": "Skipped: task is flagged for review",
       "skipped_blocked": "Skipped: task is blocked by a relation",
       "launch_failed": "Launch failed",
       "dispatching": "Dispatching",
@@ -1057,6 +1059,7 @@
     "launchBlocked": "Blocked by",
     "launchBlockedShort": "blocked",
     "triaged": "triaged",
+    "flagged": "Needs review",
     "needsAttention": "Needs you",
     "waitingOnChildren": "Waiting on children",
     "openRun": "Open run",
@@ -2211,6 +2214,7 @@
         "skipped_cap": "Skipped — at capacity",
         "skipped_target_terminal": "Skipped — task terminal",
         "skipped_crashed": "Skipped — last run crashed",
+        "skipped_flagged": "Skipped — flagged for review",
         "skipped_blocked": "Skipped — blocked by relations",
         "launch_failed": "Launch failed",
         "dispatching": "Dispatching…",
@@ -2985,13 +2989,15 @@
       "blocks": "blocks",
       "dependsOn": "depends on",
       "parentOf": "parent of",
-      "requires": "requires"
+      "requires": "requires",
+      "duplicateOf": "duplicate of"
     },
     "relationKindInverse": {
       "blocks": "blocked by",
       "dependsOn": "required by",
       "parentOf": "child of",
-      "requires": "required for"
+      "requires": "required for",
+      "duplicateOf": "duplicated by"
     },
     "relationsErrorConfig": "Invalid relation (self-relations are not allowed).",
     "relationsErrorNotFound": "No task with that number in this project.",
@@ -3022,6 +3028,7 @@
       "busy": "Another run is active for this task.",
       "crashed": "Recover or discard the crashed run before launching again.",
       "target_terminal": "This task cannot be launched from its current state.",
+      "flagged": "This task is flagged for review — resolve it before launching.",
       "blocked": "This task is blocked by another task.",
       "launchable": "Ready to launch."
     },
@@ -3068,6 +3075,7 @@
     "runsOpen": "Open",
     "latestRunTitle": "Latest run",
     "triaged": "triaged",
+    "flagged": "Needs review",
     "runAgent": "Run agent",
     "sendToTriage": "Send to triage",
     "agentActionBusy": "Working…",

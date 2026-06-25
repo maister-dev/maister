@@ -31,6 +31,7 @@ const OUTCOME_TONE: Record<
   skipped_blocked: "border-line bg-ivory text-mute",
   skipped_cap: "border-line bg-ivory text-mute",
   skipped_crashed: "border-line bg-ivory text-mute",
+  skipped_flagged: "border-line bg-ivory text-mute",
   skipped_task_busy: "border-line bg-ivory text-mute",
   skipped_target_terminal: "border-line bg-ivory text-mute",
   skipped_unconfigured: "border-line bg-ivory text-mute",

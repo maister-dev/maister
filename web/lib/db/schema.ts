@@ -1065,7 +1065,7 @@ export const tasks = pgTable(
     attemptNumber: integer("attempt_number").notNull().default(1),
     // M34 (ADR-089) launch-verdict columns: written by the ext triage op /
     // the card popover PATCH; runner rides the launchOverride tier at launch.
-    triageStatus: text("triage_status", { enum: ["triaged"] }),
+    triageStatus: text("triage_status", { enum: ["triaged", "flagged"] }),
     runnerId: text("runner_id").references(() => platformAcpRunners.id, {
       onDelete: "set null",
     }),
@@ -1538,6 +1538,7 @@ export type RunScheduleFireOutcome =
   | "skipped_cap"
   | "skipped_target_terminal"
   | "skipped_crashed"
+  | "skipped_flagged"
   | "skipped_blocked"
   | "skipped_unconfigured"
   | "launch_failed"
@@ -1587,6 +1588,7 @@ export const runSchedules = pgTable(
         "skipped_cap",
         "skipped_target_terminal",
         "skipped_crashed",
+        "skipped_flagged",
         "skipped_blocked",
         "skipped_unconfigured",
         "launch_failed",
@@ -3275,7 +3277,7 @@ export const taskRelations = pgTable(
       .notNull()
       .references(() => tasks.id, { onDelete: "cascade" }),
     kind: text("kind", {
-      enum: ["blocks", "depends_on", "parent_of", "requires"],
+      enum: ["blocks", "depends_on", "parent_of", "requires", "duplicate_of"],
     }).notNull(),
     toTaskId: text("to_task_id")
       .notNull()
@@ -3297,7 +3299,7 @@ export const taskRelations = pgTable(
     idxToTask: index("task_relations_to_task_idx").on(t.toTaskId),
     kindCheck: check(
       "task_relations_kind_check",
-      sql`${t.kind} in ('blocks', 'depends_on', 'parent_of', 'requires')`,
+      sql`${t.kind} in ('blocks', 'depends_on', 'parent_of', 'requires', 'duplicate_of')`,
     ),
     noSelfCheck: check(
       "task_relations_no_self_check",

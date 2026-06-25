@@ -122,7 +122,7 @@ export type TaskDetailData = {
     executionPolicy: ExecutionPolicy | null;
     status: string;
     // M34: the triager's verdict mark (nullable 'triaged').
-    triageStatus: "triaged" | null;
+    triageStatus: "triaged" | "flagged" | null;
   };
   keyRef: string;
   relations: TaskRelationView[];
@@ -469,7 +469,7 @@ async function taskExtrasOf(
   targetBranch: string | null;
   promotionMode: "local_merge" | "pull_request" | null;
   executionPolicy: ExecutionPolicy | null;
-  triageStatus: "triaged" | null;
+  triageStatus: "triaged" | "flagged" | null;
 }> {
   const rows = (await db
     .select({
@@ -491,7 +491,7 @@ async function taskExtrasOf(
     targetBranch: string | null;
     promotionMode: "local_merge" | "pull_request" | null;
     executionPolicy: ExecutionPolicy | null;
-    triageStatus: "triaged" | null;
+    triageStatus: "triaged" | "flagged" | null;
   }>;
 
   return {

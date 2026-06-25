@@ -28,7 +28,8 @@ export type TaskRelationKind =
   | "blocks"
   | "depends_on"
   | "parent_of"
-  | "requires";
+  | "requires"
+  | "duplicate_of";
 
 export type KeyRef = { taskId: string; key: string; number: number };
 

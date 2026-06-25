@@ -31,6 +31,16 @@ describe("decideFire (overlap policy × launchability × cap matrix)", () => {
     }
   });
 
+  it("skips flagged targets under every policy, regardless of cap (ADR-111)", () => {
+    for (const policy of ["skip", "queue_one", "start_anyway"] as const) {
+      for (const capFull of [false, true]) {
+        expect(
+          decideFire({ policy, launchability: "flagged", capFull }),
+        ).toEqual({ action: "skip", outcome: "skipped_flagged" });
+      }
+    }
+  });
+
   it("skips flowless (unconfigured) targets under every policy, regardless of cap (M34, ADR-089)", () => {
     for (const policy of ["skip", "queue_one", "start_anyway"] as const) {
       for (const capFull of [false, true]) {

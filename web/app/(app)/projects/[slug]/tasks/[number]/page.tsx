@@ -171,7 +171,10 @@ export default async function TaskDetailPage({
     resolveTaskLaunchConfig(detail.task.id),
   ]);
   const manualLaunchability = classifyManualTaskLaunchability(
-    { status: detail.task.status as TaskStatus },
+    {
+      status: detail.task.status as TaskStatus,
+      triageStatus: detail.task.triageStatus,
+    },
     detail.latestFlowRun
       ? { status: detail.latestFlowRun.status as RunStatus }
       : null,
@@ -408,6 +411,11 @@ export default async function TaskDetailPage({
             {detail.task.triageStatus === "triaged" ? (
               <span className="rounded border border-line bg-ivory px-1.5 py-px font-semibold uppercase tracking-[0.08em] text-accent-4">
                 {t("triaged")}
+              </span>
+            ) : null}
+            {detail.task.triageStatus === "flagged" ? (
+              <span className="rounded border border-amber-line bg-amber-soft px-1.5 py-px font-semibold uppercase tracking-[0.08em] text-amber">
+                {t("flagged")}
               </span>
             ) : null}
           </div>

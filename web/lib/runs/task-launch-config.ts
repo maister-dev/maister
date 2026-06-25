@@ -289,7 +289,10 @@ export async function resolveTaskLaunchConfig(
   const openBlockers =
     (await getOpenRelationBlockers([task.id], db)).get(task.id) ?? [];
   const manual = classifyManualTaskLaunchability(
-    { status: task.status ?? "Backlog" },
+    {
+      status: task.status ?? "Backlog",
+      triageStatus: (task.triageStatus as "triaged" | "flagged" | null) ?? null,
+    },
     latestFlowRun,
     { openBlockers },
   );

@@ -83,7 +83,7 @@ export interface BacklogCard {
   blockedBy: Array<{ key: string; number: number }>;
   // M34 (ADR-089) launch-verdict fields — pre-fill the card's launch popover.
   flowId: string | null;
-  triageStatus: "triaged" | null;
+  triageStatus: "triaged" | "flagged" | null;
   runnerId: string | null;
   baseBranch: string | null;
   targetBranch: string | null;
@@ -535,7 +535,10 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
         runCount: runCountByTask.get(task.taskId) ?? 0,
         blockedBy: openBlockers.get(task.taskId) ?? [],
         flowId: task.flowId ?? null,
-        triageStatus: (task.triageStatus ?? null) as "triaged" | null,
+        triageStatus: (task.triageStatus ?? null) as
+          | "triaged"
+          | "flagged"
+          | null,
         runnerId: task.runnerId ?? null,
         baseBranch: task.baseBranch ?? null,
         targetBranch: task.targetBranch ?? null,

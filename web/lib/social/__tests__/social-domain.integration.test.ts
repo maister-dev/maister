@@ -498,6 +498,74 @@ describe("task relations (ADR-078 D4/D5)", () => {
     expect(blockers.get(b.taskId)).toBeUndefined();
   });
 
+  // ADR-111 dedup substrate: `duplicate_of` is a non-blocking annotation —
+  // the CHECK accepts it, add/remove are idempotent, and it is NEVER a launch
+  // blocker (a task that is ONLY duplicate_of-linked stays launchable).
+  it("duplicate_of persists (CHECK accepts), removes idempotently, and is NEVER a blocker", async () => {
+    const { projectId, creator, a, b } = await seedPair("DUPOF");
+
+    const input = {
+      projectId,
+      fromTaskId: a.taskId,
+      kind: "duplicate_of" as const,
+      toTaskId: b.taskId,
+      actor: userActor(creator),
+    };
+
+    // CHECK accepts the new kind; activity recorded.
+    expect((await addTaskRelation(input, db)).created).toBe(true);
+
+    const persisted = await rowsOf(
+      "task_relations",
+      `from_task_id = '${a.taskId}' and kind = 'duplicate_of' and to_task_id = '${b.taskId}'`,
+    );
+
+    expect(persisted).toHaveLength(1);
+
+    // duplicate_of is queried by neither the incoming (blocks) nor the
+    // outgoing (depends_on/requires) blocker arm → never gates launch, in
+    // EITHER direction, regardless of counterpart status.
+    let blockersA = await getOpenRelationBlockers([a.taskId], db);
+    let blockersB = await getOpenRelationBlockers([b.taskId], db);
+
+    expect(blockersA.get(a.taskId)).toBeUndefined();
+    expect(blockersB.get(b.taskId)).toBeUndefined();
+
+    // Even with the counterpart Backlog/InFlight (the statuses that gate
+    // blocks/depends_on/requires), a duplicate_of edge stays non-blocking.
+    await db
+      .update(schema.tasks)
+      .set({ status: "InFlight" })
+      .where(eq(schema.tasks.id, b.taskId));
+    blockersA = await getOpenRelationBlockers([a.taskId], db);
+    expect(blockersA.get(a.taskId)).toBeUndefined();
+
+    await db
+      .update(schema.tasks)
+      .set({ status: "InFlight" })
+      .where(eq(schema.tasks.id, a.taskId));
+    blockersB = await getOpenRelationBlockers([b.taskId], db);
+    expect(blockersB.get(b.taskId)).toBeUndefined();
+
+    // Remove is idempotent.
+    expect((await removeTaskRelation(input, db)).removed).toBe(true);
+    expect((await removeTaskRelation(input, db)).removed).toBe(false);
+  });
+
+  it("tasks.triage_status accepts and round-trips 'flagged'", async () => {
+    const { a } = await seedPair("FLAG");
+
+    await db
+      .update(schema.tasks)
+      .set({ triageStatus: "flagged" })
+      .where(eq(schema.tasks.id, a.taskId));
+
+    const rows = await rowsOf("tasks", `id = '${a.taskId}'`);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].triage_status).toBe("flagged");
+  });
+
   it("getTaskRelations returns both directions with the counterpart ref", async () => {
     const { projectId, creator, a, b } = await seedPair("DIR");
 

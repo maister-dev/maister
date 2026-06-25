@@ -15,8 +15,13 @@ import {
 function task(
   status: TaskStatus,
   flowId: string | null = "flow-1",
-): { status: TaskStatus; flowId: string | null } {
-  return { status, flowId };
+  triageStatus: "triaged" | "flagged" | null = null,
+): {
+  status: TaskStatus;
+  flowId: string | null;
+  triageStatus: "triaged" | "flagged" | null;
+} {
+  return { status, flowId, triageStatus };
 }
 
 function run(status: RunStatus): { status: RunStatus } {
@@ -240,5 +245,120 @@ describe("classifyManualTaskLaunchability — ADR-085 manual relaunch allow-list
         openBlockers: [{ key: "MAI", number: 7 }],
       }),
     ).toBe("blocked");
+  });
+});
+
+// P3.2 (ADR-111) — a `triage_status='flagged'` task (a confirmed duplicate /
+// triage-rejected intake) is held: non-launchable in BOTH classifiers EVEN
+// with a flow set + no blockers. Precedence:
+// target_terminal > crashed > busy > flagged > blocked > unconfigured >
+// launchable. A non-flagged triaged task is unaffected. A `duplicate_of` edge
+// is never a blocker (proven in the relations integration suite).
+describe("classifyTaskLaunchability — flagged (held duplicate / rejected intake)", () => {
+  const gate: RelationGate = { openBlockers: [{ key: "MAI", number: 7 }] };
+
+  it("flagged Backlog task WITH a flow + no blockers → flagged (not launchable)", () => {
+    expect(
+      classifyTaskLaunchability(task("Backlog", "flow-1", "flagged"), null),
+    ).toBe("flagged");
+  });
+
+  it("flagged retry-eligible task (latest run Failed) → flagged", () => {
+    expect(
+      classifyTaskLaunchability(
+        task("Backlog", "flow-1", "flagged"),
+        run("Failed"),
+      ),
+    ).toBe("flagged");
+  });
+
+  it("flagged outranks unconfigured (flowless + flagged → flagged)", () => {
+    expect(
+      classifyTaskLaunchability(task("Backlog", null, "flagged"), null),
+    ).toBe("flagged");
+  });
+
+  it("flagged outranks blocked (flagged + open blockers → flagged)", () => {
+    expect(
+      classifyTaskLaunchability(
+        task("Backlog", "flow-1", "flagged"),
+        null,
+        gate,
+      ),
+    ).toBe("flagged");
+  });
+
+  it("busy outranks flagged (active run + flagged → busy, never masks run state)", () => {
+    expect(
+      classifyTaskLaunchability(
+        task("InFlight", "flow-1", "flagged"),
+        run("Running"),
+      ),
+    ).toBe("busy");
+  });
+
+  it("crashed outranks flagged", () => {
+    expect(
+      classifyTaskLaunchability(
+        task("InFlight", "flow-1", "flagged"),
+        run("Crashed"),
+      ),
+    ).toBe("crashed");
+  });
+
+  it("target_terminal outranks flagged", () => {
+    expect(
+      classifyTaskLaunchability(task("Done", "flow-1", "flagged"), null),
+    ).toBe("target_terminal");
+  });
+
+  it("a non-flagged triaged task with a flow stays launchable", () => {
+    expect(
+      classifyTaskLaunchability(task("Backlog", "flow-1", "triaged"), null),
+    ).toBe("launchable");
+  });
+});
+
+describe("classifyManualTaskLaunchability — flagged is held on manual relaunch", () => {
+  const gate: RelationGate = { openBlockers: [{ key: "MAI", number: 7 }] };
+
+  it("flagged task (manual-relaunch-eligible run Review) → flagged", () => {
+    expect(
+      classifyManualTaskLaunchability(
+        task("InFlight", "flow-1", "flagged"),
+        run("Review"),
+      ),
+    ).toBe("flagged");
+  });
+
+  it("flagged Done task with no run → flagged (not launchable)", () => {
+    expect(
+      classifyManualTaskLaunchability(task("Done", "flow-1", "flagged"), null),
+    ).toBe("flagged");
+  });
+
+  it("busy outranks flagged on the manual path", () => {
+    expect(
+      classifyManualTaskLaunchability(
+        task("InFlight", "flow-1", "flagged"),
+        run("Running"),
+      ),
+    ).toBe("busy");
+  });
+
+  it("flagged outranks blocked on the manual path", () => {
+    expect(
+      classifyManualTaskLaunchability(
+        task("Done", "flow-1", "flagged"),
+        null,
+        gate,
+      ),
+    ).toBe("flagged");
+  });
+
+  it("a non-flagged task stays manually launchable", () => {
+    expect(
+      classifyManualTaskLaunchability(task("Done", "flow-1", "triaged"), null),
+    ).toBe("launchable");
   });
 });

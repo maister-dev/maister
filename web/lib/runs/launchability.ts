@@ -18,6 +18,7 @@ export type TaskLaunchability =
   | "busy"
   | "crashed"
   | "target_terminal"
+  | "flagged"
   | "blocked"
   | "unconfigured";
 
@@ -62,7 +63,11 @@ const MANUAL_RUN_STATUS_LAUNCHABILITY = {
 } as const satisfies Record<RunStatus, TaskLaunchability>;
 
 export function classifyTaskLaunchability(
-  task: { status: TaskStatus; flowId: string | null },
+  task: {
+    status: TaskStatus;
+    flowId: string | null;
+    triageStatus: "triaged" | "flagged" | null;
+  },
   latestRun: { status: RunStatus } | null,
   relationGate?: RelationGate,
 ): TaskLaunchability {
@@ -77,11 +82,17 @@ export function classifyTaskLaunchability(
         : "busy"
       : RUN_STATUS_LAUNCHABILITY[latestRun.status];
 
-  // Precedence: target_terminal > crashed > busy > blocked > unconfigured >
-  // launchable (M34, ADR-089) — relations gate LAUNCHING only; they never
-  // mask an active run's state; a flowless simple-intent task is not
-  // launchable until triage (or a human) fills the flow.
+  // Precedence: target_terminal > crashed > busy > flagged > blocked >
+  // unconfigured > launchable (M34 ADR-089; flagged ADR-111) — relations gate
+  // LAUNCHING only; they never mask an active run's state. `flagged` (a
+  // confirmed duplicate / triage-rejected intake) is HELD even with a flow
+  // set — a human must resolve it before launch; a flowless simple-intent task
+  // is `unconfigured` until triage (or a human) fills the flow.
   if (base === "launchable") {
+    if (task.triageStatus === "flagged") {
+      return "flagged";
+    }
+
     if ((relationGate?.openBlockers.length ?? 0) > 0) {
       return "blocked";
     }
@@ -95,7 +106,7 @@ export function classifyTaskLaunchability(
 }
 
 export function classifyManualTaskLaunchability(
-  task: { status: TaskStatus },
+  task: { status: TaskStatus; triageStatus: "triaged" | "flagged" | null },
   latestRun: { status: RunStatus } | null,
   relationGate?: RelationGate,
 ): TaskLaunchability {
@@ -106,8 +117,18 @@ export function classifyManualTaskLaunchability(
         : "launchable"
       : MANUAL_RUN_STATUS_LAUNCHABILITY[latestRun.status];
 
-  if (base === "launchable" && (relationGate?.openBlockers.length ?? 0) > 0) {
-    return "blocked";
+  // `flagged` is held on the manual relaunch path too (ADR-111): a confirmed
+  // duplicate / rejected intake is not relaunchable until resolved. Precedence
+  // mirrors the launch path — busy/crashed/target_terminal still win (flagged
+  // never masks an active/terminal run state), flagged outranks blocked.
+  if (base === "launchable") {
+    if (task.triageStatus === "flagged") {
+      return "flagged";
+    }
+
+    if ((relationGate?.openBlockers.length ?? 0) > 0) {
+      return "blocked";
+    }
   }
 
   return base;

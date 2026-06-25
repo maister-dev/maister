@@ -195,6 +195,42 @@ export async function updateTaskVerdict(
   );
 }
 
+// Triage flag op (ADR-111): mark the task `flagged` (held — non-launchable;
+// the board shows a "needs review" chip). Writes NO verdict columns; records a
+// `triage_set` activity carrying the `{ flag: true }` marker (reuses the
+// existing event kind — no new task_activity enum value / CHECK migration).
+// Caller supplies the transaction so the token audit row commits or rolls back
+// with the flag. Mutually exclusive with a verdict (the route enforces 422
+// `CONFIG` before calling this).
+export async function applyTriageFlag(
+  tx: any,
+  input: {
+    taskId: string;
+    projectId: string;
+    actor: SocialActor;
+  },
+): Promise<void> {
+  await tx
+    .update(tasks)
+    .set({ triageStatus: "flagged", updatedAt: new Date() })
+    .where(
+      and(eq(tasks.id, input.taskId), eq(tasks.projectId, input.projectId)),
+    );
+
+  await recordTaskActivity(tx, {
+    taskId: input.taskId,
+    projectId: input.projectId,
+    actor: input.actor,
+    eventKind: "triage_set",
+    payload: { flag: true },
+  });
+
+  log.info(
+    { taskId: input.taskId, actorType: input.actor.type },
+    "triage flagged",
+  );
+}
+
 // "Send to triage" (ADR-089 D13): the task.triage_requeued emitter that
 // ADR-086 registered emitter-less. ONE transaction: clear the stamp, emit
 // the domain event, record the activity entry.

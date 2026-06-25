@@ -23,6 +23,7 @@ export interface TaskCardProps {
   blockedByLabel: string;
   unconfiguredLabel: string;
   triagedLabel: string;
+  flaggedLabel: string;
   runsCountLabel: (count: number) => string;
   decompositionLabels: TaskDecompositionLabels;
   relationCandidates: RelationCandidate[];
@@ -54,6 +55,7 @@ export function TaskCard({
   blockedByLabel,
   unconfiguredLabel,
   triagedLabel,
+  flaggedLabel,
   runsCountLabel,
   decompositionLabels,
   relationCandidates,
@@ -152,6 +154,11 @@ export function TaskCard({
           {card.triageStatus === "triaged" ? (
             <span className="rounded border border-line bg-ivory px-1.5 py-px font-semibold text-accent-4">
               {triagedLabel}
+            </span>
+          ) : null}
+          {card.triageStatus === "flagged" ? (
+            <span className="rounded border border-amber-line bg-amber-soft px-1.5 py-px font-semibold text-amber">
+              {flaggedLabel}
             </span>
           ) : null}
         </div>

@@ -1,0 +1,2 @@
+ALTER TABLE "task_relations" DROP CONSTRAINT "task_relations_kind_check";--> statement-breakpoint
+ALTER TABLE "task_relations" ADD CONSTRAINT "task_relations_kind_check" CHECK ("task_relations"."kind" in ('blocks', 'depends_on', 'parent_of', 'requires', 'duplicate_of'));

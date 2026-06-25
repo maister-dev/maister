@@ -19,7 +19,13 @@ const log = pino({
 // construction (ADR-078 audit table).
 const bodySchema = z
   .object({
-    kind: z.enum(["blocks", "depends_on", "parent_of", "requires"]),
+    kind: z.enum([
+      "blocks",
+      "depends_on",
+      "parent_of",
+      "requires",
+      "duplicate_of",
+    ]),
     toNumber: z.number().int().min(1),
   })
   .strict();

@@ -7,7 +7,11 @@ import { z } from "zod";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
-import { applyTriageVerdict, validateVerdictRefs } from "@/lib/services/triage";
+import {
+  applyTriageFlag,
+  applyTriageVerdict,
+  validateVerdictRefs,
+} from "@/lib/services/triage";
 import {
   handleExt,
   httpStatusForExtCode,
@@ -21,8 +25,20 @@ const { tasks } = schemaModule as unknown as Record<string, any>;
 const ENDPOINT_TRIAGE =
   "POST /api/v1/ext/projects/[slug]/tasks/[taskId]/triage";
 
-// ADR-089 D8: set-only verdict — at least one field; the op ALWAYS stamps
-// triage_status='triaged'. Every provided id is allow-list validated.
+// ADR-089 D8 / ADR-111: at least one field. A verdict body (flowId / runnerId /
+// baseBranch / targetBranch / promotionMode) stamps triage_status='triaged'; a
+// `flag: true` body stamps 'flagged' (held). `flag` is mutually exclusive with
+// every verdict field (enforced below → 422 CONFIG). `enqueue` is accepted by
+// the schema (frozen contract) but its launch_mode='auto' write lands in
+// Phase 4 (auto_launch_triaged tick) — Phase 3 leaves it inert.
+const VERDICT_FIELDS = [
+  "flowId",
+  "runnerId",
+  "baseBranch",
+  "targetBranch",
+  "promotionMode",
+] as const;
+
 const postBodySchema = z
   .object({
     flowId: z.string().min(1).optional(),
@@ -30,10 +46,12 @@ const postBodySchema = z
     baseBranch: z.string().min(1).max(255).optional(),
     targetBranch: z.string().min(1).max(255).optional(),
     promotionMode: z.enum(["local_merge", "pull_request"]).optional(),
+    flag: z.boolean().optional(),
+    enqueue: z.boolean().optional(),
   })
   .strict()
   .refine((body) => Object.keys(body).length > 0, {
-    message: "at least one verdict field is required",
+    message: "at least one field is required",
   });
 
 type RouteParams = { params: Promise<{ slug: string; taskId: string }> };
@@ -87,16 +105,72 @@ export async function POST(
         );
       }
 
-      try {
-        await validateVerdictRefs(ctx.projectId, body, db);
+      // ADR-111: `flag` is mutually exclusive with every verdict field —
+      // a held duplicate / rejected intake carries no launch verdict.
+      const flagged = body.flag === true;
+      const verdictFieldsPresent = VERDICT_FIELDS.filter(
+        (f) => body[f] !== undefined,
+      );
 
+      if (flagged && verdictFieldsPresent.length > 0) {
+        return NextResponse.json(
+          {
+            code: "CONFIG",
+            message: `flag is mutually exclusive with verdict fields (${verdictFieldsPresent.join(", ")})`,
+          },
+          { status: 422 },
+        );
+      }
+
+      try {
         const actor = socialActorForToken(ctx.actor);
+
+        if (flagged) {
+          await (db as TransactionalDb).transaction(async (tx) => {
+            await applyTriageFlag(tx, {
+              taskId,
+              projectId: ctx.projectId,
+              actor,
+            });
+
+            await recordRequiredTokenAudit(
+              {
+                tokenId: ctx.actor.tokenId,
+                projectId: ctx.projectId,
+                actorLabel: ctx.actor.actorLabel,
+                scopeUsed: "tasks:triage",
+                endpoint: ENDPOINT_TRIAGE,
+                method: "POST",
+                result: "ok",
+                statusCode: 200,
+              },
+              tx,
+            );
+          });
+
+          return NextResponse.json(
+            { ok: true, triageStatus: "flagged" },
+            { status: 200 },
+          );
+        }
+
+        // Narrow to verdict fields only — `enqueue` is not a verdict column
+        // (Phase 4) and must not leak into the verdict / activity payload.
+        const verdict = {
+          flowId: body.flowId,
+          runnerId: body.runnerId,
+          baseBranch: body.baseBranch,
+          targetBranch: body.targetBranch,
+          promotionMode: body.promotionMode,
+        };
+
+        await validateVerdictRefs(ctx.projectId, verdict, db);
 
         await (db as TransactionalDb).transaction(async (tx) => {
           await applyTriageVerdict(tx, {
             taskId,
             projectId: ctx.projectId,
-            verdict: body,
+            verdict,
             actor,
           });
 

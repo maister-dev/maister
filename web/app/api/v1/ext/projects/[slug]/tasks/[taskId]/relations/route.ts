@@ -35,7 +35,7 @@ const ENDPOINT_RELATIONS_DELETE =
 // is impossible by construction (ADR-078).
 const opBodySchema = z
   .object({
-    kind: z.enum(["blocks", "depends_on", "parent_of"]),
+    kind: z.enum(["blocks", "depends_on", "parent_of", "duplicate_of"]),
     toNumber: z.number().int().min(1),
   })
   .strict();

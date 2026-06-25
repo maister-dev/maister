@@ -200,6 +200,7 @@ export async function Board({
                     canAct={canAct}
                     card={card}
                     decompositionLabels={decompositionLabels}
+                    flaggedLabel={t("flagged")}
                     launchDisabledLabel={
                       card.blockedBy.length > 0 && !launchDisabledReason
                         ? t("launchBlockedShort")

@@ -49,6 +49,7 @@ export type FireDecision =
         | "skipped_cap"
         | "skipped_target_terminal"
         | "skipped_crashed"
+        | "skipped_flagged"
         | "skipped_blocked"
         | "skipped_unconfigured";
     }
@@ -69,6 +70,13 @@ export function decideFire(input: {
     return input.policy === "queue_one"
       ? { action: "catchup", outcome: "catchup_queued" }
       : { action: "skip", outcome: "skipped_task_busy" };
+  }
+  // ADR-111: a `flagged` task (confirmed duplicate / rejected intake) cannot
+  // fire under any policy; like blocked, the queue_one flag is kept so the
+  // catch-up fires once a human resolves the flag. Precedence mirrors the
+  // classifier (flagged outranks blocked).
+  if (input.launchability === "flagged") {
+    return { action: "skip", outcome: "skipped_flagged" };
   }
   // ADR-078 D5: relations gate launching under EVERY policy; like crashed,
   // an existing queue_one flag is kept (unblocking fires the catch-up).
@@ -111,6 +119,7 @@ export type DispatchSummary = {
   skippedBusy: number;
   skippedCap: number;
   skippedTerminal: number;
+  skippedFlagged: number;
   skippedBlocked: number;
   skippedUnconfigured: number;
   catchupQueued: number;
@@ -236,6 +245,7 @@ type StagedDecision =
         | "skipped_cap"
         | "skipped_target_terminal"
         | "skipped_crashed"
+        | "skipped_flagged"
         | "skipped_blocked"
         | "skipped_unconfigured"
         | "catchup_queued";
@@ -252,6 +262,7 @@ async function decideAndStage(
       status: tasks.status,
       projectId: tasks.projectId,
       flowId: tasks.flowId,
+      triageStatus: tasks.triageStatus,
     })
     .from(tasks)
     .where(eq(tasks.id, row.taskId));
@@ -437,6 +448,7 @@ export async function dispatchDueSchedules(
     skippedBusy: 0,
     skippedCap: 0,
     skippedTerminal: 0,
+    skippedFlagged: 0,
     skippedBlocked: 0,
     skippedUnconfigured: 0,
     catchupQueued: 0,
@@ -484,6 +496,9 @@ export async function dispatchDueSchedules(
           case "skipped_target_terminal":
           case "skipped_crashed":
             summary.skippedTerminal += 1;
+            break;
+          case "skipped_flagged":
+            summary.skippedFlagged += 1;
             break;
           case "skipped_blocked":
             summary.skippedBlocked += 1;
