@@ -2472,6 +2472,8 @@
     "scopeRelationsRead": "Read relations",
     "scopeRelationsCreate": "Create relations",
     "scopeRelationsDelete": "Delete relations",
+    "scopeFlowsRead": "List launchable flows",
+    "scopeRunnersRead": "List enabled runners",
     "scopeAgentsTrigger": "Trigger agents",
     "scopeRunsDelegate": "Delegate runs",
     "scopeRunsCollect": "Collect child runs",

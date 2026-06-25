@@ -43,6 +43,28 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
       required: ["slug", "taskId"],
     },
   },
+  flow_list: {
+    description:
+      "List the project's launchable flows a triage verdict may assign (only enabled + trusted flows are returned, with their routing metadata: title/summary/route_when/labels)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        slug: { type: "string" },
+      },
+      required: ["slug"],
+    },
+  },
+  runner_list: {
+    description:
+      "List the enabled platform ACP runners a triage verdict may assign (runners are platform-scoped; the slug is used only for auth/scope)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        slug: { type: "string" },
+      },
+      required: ["slug"],
+    },
+  },
   task_update: {
     description: "Update fields on a task",
     inputSchema: {
@@ -445,6 +467,16 @@ function resolveRouting(
         method: "GET",
         path: `/api/v1/ext/projects/${slug}/tasks/${taskId}`,
       };
+    }
+    case "flow_list": {
+      const { slug } = args as { slug: string };
+
+      return { method: "GET", path: `/api/v1/ext/projects/${slug}/flows` };
+    }
+    case "runner_list": {
+      const { slug } = args as { slug: string };
+
+      return { method: "GET", path: `/api/v1/ext/projects/${slug}/runners` };
     }
     case "task_update": {
       const { slug, taskId, title, prompt, executorOverrideId } = args as {

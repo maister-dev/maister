@@ -1,10 +1,20 @@
 import "server-only";
 
 import type { AdapterId } from "@/lib/acp-runners/adapter-support";
+import type { FlowYamlV1 } from "@/lib/config.schema";
 import type { Project, RunKind, ScratchDialogStatus } from "@/lib/db/schema";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
-import { and, asc, desc, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  or,
+} from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
@@ -39,6 +49,37 @@ function db(): NodePgDatabase<typeof schema> {
 }
 
 export type ProjectAgent = AdapterId;
+
+// ADR-111 (D9 read side): the discovery routes return ONLY flows a triage
+// verdict may actually assign — same allow-list the launch path enforces
+// (`LAUNCHABLE_ENABLEMENT_STATES` in lib/services/runs.ts) plus a trust gate.
+const LAUNCHABLE_FLOW_ENABLEMENT_STATES = new Set<string>([
+  "Enabled",
+  "UpdateAvailable",
+]);
+
+// ADR-111: one launchable flow projected for the `flow_list` discovery route.
+// Explicit DTO — never the raw `flows` row. Mirrors `ExtFlowSummary`.
+export interface ExtFlowSummary {
+  id: string;
+  ref: string;
+  metadata?: {
+    title?: string;
+    summary?: string;
+    route_when?: string;
+    labels?: string[];
+  };
+}
+
+// ADR-111: one enabled platform runner projected for the `runner_list`
+// discovery route. Mirrors `ExtRunnerSummary`.
+export interface ExtRunnerSummary {
+  id: string;
+  adapter: string;
+  model: string;
+  capabilityAgent: string;
+  readinessStatus: "Unknown" | "Ready" | "NotReady";
+}
 
 export interface ProjectFlow {
   id: string;
@@ -126,6 +167,94 @@ export async function getProjectBySlug(slug: string): Promise<Project | null> {
     .where(eq(projects.slug, slug));
 
   return rows[0] ?? null;
+}
+
+function flowMetadataProjection(
+  manifest: unknown,
+): ExtFlowSummary["metadata"] | undefined {
+  if (manifest === null || typeof manifest !== "object") return undefined;
+  const meta = (manifest as { metadata?: unknown }).metadata;
+
+  if (meta === null || typeof meta !== "object") return undefined;
+  const { title, summary, route_when, labels } =
+    meta as FlowYamlV1["metadata"] & Record<string, unknown>;
+
+  const projected: NonNullable<ExtFlowSummary["metadata"]> = {};
+
+  if (typeof title === "string") projected.title = title;
+  if (typeof summary === "string") projected.summary = summary;
+  if (typeof route_when === "string") projected.route_when = route_when;
+  if (Array.isArray(labels)) projected.labels = labels;
+
+  return Object.keys(projected).length > 0 ? projected : undefined;
+}
+
+/**
+ * ADR-111 (D9): launchable flows of a project, projected for the `flow_list`
+ * discovery route. Only `enablementState ∈ {Enabled, UpdateAvailable}` ∧
+ * `trustStatus ≠ untrusted` flows are returned, so a verdict built from this
+ * list can never stall an `enqueue` on an unlaunchable flow.
+ */
+export async function listLaunchableFlowSummaries(
+  projectId: string,
+  client: NodePgDatabase<typeof schema> = db(),
+): Promise<ExtFlowSummary[]> {
+  const rows = await client
+    .select({
+      id: flows.id,
+      ref: flows.flowRefId,
+      manifest: flows.manifest,
+      enablementState: flows.enablementState,
+      trustStatus: flows.trustStatus,
+    })
+    .from(flows)
+    .where(eq(flows.projectId, projectId))
+    .orderBy(asc(flows.createdAt));
+
+  return rows
+    .filter(
+      (row) =>
+        LAUNCHABLE_FLOW_ENABLEMENT_STATES.has(row.enablementState) &&
+        row.trustStatus !== "untrusted",
+    )
+    .map((row) => {
+      const metadata = flowMetadataProjection(row.manifest);
+
+      return metadata
+        ? { id: row.id, ref: row.ref, metadata }
+        : { id: row.id, ref: row.ref };
+    });
+}
+
+/**
+ * ADR-111: the enabled platform ACP runners, projected for the `runner_list`
+ * discovery route. Runners are platform-scoped (not project-scoped) — the
+ * caller's project is used only for auth/scope; only `enabled = true` runners
+ * are returned.
+ */
+export async function listEnabledRunnerSummaries(
+  client: NodePgDatabase<typeof schema> = db(),
+): Promise<ExtRunnerSummary[]> {
+  const rows = await client
+    .select({
+      id: platformAcpRunners.id,
+      adapter: platformAcpRunners.adapter,
+      model: platformAcpRunners.model,
+      capabilityAgent: platformAcpRunners.capabilityAgent,
+      readinessStatus: platformAcpRunners.readinessStatus,
+      enabled: platformAcpRunners.enabled,
+    })
+    .from(platformAcpRunners)
+    .where(eq(platformAcpRunners.enabled, true))
+    .orderBy(asc(platformAcpRunners.createdAt));
+
+  return rows.map((row) => ({
+    id: row.id,
+    adapter: row.adapter,
+    model: row.model,
+    capabilityAgent: row.capabilityAgent,
+    readinessStatus: row.readinessStatus,
+  }));
 }
 
 export async function getProjectPageData(

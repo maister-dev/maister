@@ -51,11 +51,12 @@ afterEach(() => {
 });
 
 describe("TOOL_SPECS registry", () => {
-  it("registers all 24 external tools (incl. personal HITL inbox)", () => {
+  it("registers all 26 external tools (incl. personal HITL inbox + discovery)", () => {
     expect(Object.keys(TOOL_SPECS).sort()).toEqual(
       [
         "comment_create",
         "comment_list",
+        "flow_list",
         "gate_report",
         "hitl_inbox",
         "hitl_list",
@@ -73,6 +74,7 @@ describe("TOOL_SPECS registry", () => {
         "run_plan",
         "run_promote",
         "run_rework",
+        "runner_list",
         "task_create",
         "task_get",
         "task_list",
@@ -160,6 +162,42 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
 
     expect(init.method).toBe("GET");
     expect(url).toBe(`${BASE_URL}/api/v1/ext/projects/demo/tasks/task-1`);
+    expect(headerAuth(init)).toBe(AUTH);
+    expect(parsedBody(init)).toBeUndefined();
+  });
+
+  it("flow_list → GET /api/v1/ext/projects/{slug}/flows (no body)", async () => {
+    mockOnce({ flows: [] }, 200);
+
+    await dispatchTool({
+      name: "flow_list",
+      args: { slug: "demo" },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    const { url, init } = lastRequest();
+
+    expect(init.method).toBe("GET");
+    expect(url).toBe(`${BASE_URL}/api/v1/ext/projects/demo/flows`);
+    expect(headerAuth(init)).toBe(AUTH);
+    expect(parsedBody(init)).toBeUndefined();
+  });
+
+  it("runner_list → GET /api/v1/ext/projects/{slug}/runners (no body)", async () => {
+    mockOnce({ runners: [] }, 200);
+
+    await dispatchTool({
+      name: "runner_list",
+      args: { slug: "demo" },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    const { url, init } = lastRequest();
+
+    expect(init.method).toBe("GET");
+    expect(url).toBe(`${BASE_URL}/api/v1/ext/projects/demo/runners`);
     expect(headerAuth(init)).toBe(AUTH);
     expect(parsedBody(init)).toBeUndefined();
   });

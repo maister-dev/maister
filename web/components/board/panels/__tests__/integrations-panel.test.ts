@@ -97,6 +97,8 @@ const labels: TokenLabels = {
   scopeRelationsRead: "Read relations",
   scopeRelationsCreate: "Create relations",
   scopeRelationsDelete: "Delete relations",
+  scopeFlowsRead: "Read flows",
+  scopeRunnersRead: "Read runners",
   scopeAgentsTrigger: "Trigger agents",
   scopeRunsDelegate: "Delegate runs",
   scopeRunsCollect: "Collect child runs",

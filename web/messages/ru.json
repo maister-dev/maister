@@ -2472,6 +2472,8 @@
     "scopeRelationsRead": "Чтение связей",
     "scopeRelationsCreate": "Создание связей",
     "scopeRelationsDelete": "Удаление связей",
+    "scopeFlowsRead": "Список доступных флоу",
+    "scopeRunnersRead": "Список активных раннеров",
     "scopeAgentsTrigger": "Триггер агентов",
     "scopeRunsDelegate": "Делегирование запусков",
     "scopeRunsCollect": "Сбор дочерних запусков",

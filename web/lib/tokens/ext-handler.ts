@@ -91,6 +91,8 @@ const PROJECT_ACTION_BY_SCOPE: Partial<Record<string, ProjectAction>> = {
   "relations:read": "readBoard",
   "relations:create": "manageTaskRelations",
   "relations:delete": "manageTaskRelations",
+  "flows:read": "readBoard",
+  "runners:read": "readBoard",
   "runs:launch": "launchRun",
   "runs:read": "readBoard",
   "readiness:read": "readBoard",
@@ -448,10 +450,7 @@ export async function handleExt(
     : opts.scopeLabel;
 
   // 3b. Scope enforcement. The 403 body MUST NOT leak which scopes the token holds.
-  if (
-    opts.requireScope !== false &&
-    !tokenHasScope(actor.scopes, scopeLabel)
-  ) {
+  if (opts.requireScope !== false && !tokenHasScope(actor.scopes, scopeLabel)) {
     await recordRequiredTokenAudit(
       {
         tokenId: actor.tokenId,

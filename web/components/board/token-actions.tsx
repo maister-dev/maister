@@ -283,6 +283,10 @@ function scopeText(labels: TokenLabels, scope: TokenScope): string {
       return labels.scopeRelationsCreate;
     case "relations:delete":
       return labels.scopeRelationsDelete;
+    case "flows:read":
+      return labels.scopeFlowsRead;
+    case "runners:read":
+      return labels.scopeRunnersRead;
     case "agents:trigger":
       return labels.scopeAgentsTrigger;
     case "runs:delegate":
