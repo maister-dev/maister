@@ -8,7 +8,9 @@ import pino from "pino";
 import {
   assertAgentPackageAttachable,
   listEnabledPackageRefs,
+  resolveEffectiveAgentDefinition,
 } from "@/lib/agents/effective";
+import { validateInstanceConfig } from "@/lib/agents/config";
 import { revokeAgentProjectTokens } from "@/lib/agents/tokens";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -316,6 +318,32 @@ export async function updateAgentLink(
 
   if (input.patch.runnerOverrideId != null) {
     await validateRunnerOverride(_db, input.patch.runnerOverrideId);
+  }
+
+  // ADR-110 + version-skew guard (F1): validate per-instance config against the
+  // EFFECTIVE project-pinned definition launch actually runs — NOT the mutable
+  // global `agents` catalog row (projected from the package's NEWEST install, so
+  // a catalog resync can diverge it from this project's pinned version). The same
+  // resolver the launch path uses reads the pinned install's
+  // maister-agents/<stem>.md, so a config valid for the pinned agent is never
+  // wrongly rejected, nor a newer-schema-only config persisted then silently
+  // defaulted at spawn. The wire type is `z.record(z.unknown())`, so an
+  // out-of-range enum / wrong-typed scalar / unknown key would otherwise reach
+  // the immutable launch snapshot + the agent prompt. A null clear is always
+  // valid (falls back to declared defaults).
+  if (input.patch.config != null) {
+    const effective = await resolveEffectiveAgentDefinition(
+      { projectId: input.projectId, agentId: input.agentId },
+      _db,
+    );
+    const configError = validateInstanceConfig(
+      effective.parsed.config,
+      input.patch.config,
+    );
+
+    if (configError) {
+      throw new MaisterError("CONFIG", configError);
+    }
   }
 
   const now = new Date();

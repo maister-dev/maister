@@ -94,7 +94,7 @@ export async function POST(
       // taskId ownership re-validated against the token's project (ext
       // idiom — cross-project access hides existence with 404).
       const taskRows = await (db as { select: any })
-        .select({ id: tasks.id })
+        .select({ id: tasks.id, flowId: tasks.flowId })
         .from(tasks)
         .where(and(eq(tasks.id, taskId), eq(tasks.projectId, ctx.projectId)));
 
@@ -122,16 +122,19 @@ export async function POST(
         );
       }
 
-      // ADR-111: `enqueue` arms the auto_launch_triaged tick — it is valid ONLY
-      // alongside a verdict that yields a flow (the task ends with a non-null
-      // flow_id). `enqueue` + `flag` is excluded by the mutual-exclusion above.
+      // ADR-111 / OpenAPI: `enqueue` arms the auto_launch_triaged tick — valid
+      // when the flow resolves from EITHER this body OR the task's existing
+      // flow_id (the task ends with a non-null flow_id). `enqueue` + `flag` is
+      // excluded by the mutual-exclusion above.
       const enqueue = body.enqueue === true;
+      const resolvableFlowId = body.flowId ?? taskRows[0].flowId ?? undefined;
 
-      if (enqueue && (flagged || body.flowId === undefined)) {
+      if (enqueue && (flagged || resolvableFlowId === undefined)) {
         return NextResponse.json(
           {
             code: "CONFIG",
-            message: "enqueue requires a verdict that sets a flowId",
+            message:
+              "enqueue requires a verdict that yields a flowId (in the body or the task's existing flow)",
           },
           { status: 422 },
         );

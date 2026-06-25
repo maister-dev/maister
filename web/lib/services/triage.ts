@@ -173,14 +173,22 @@ export async function applyTriageVerdict(
   },
 ): Promise<void> {
   const set = verdictColumns(input.verdict);
+  const now = new Date();
 
   await tx
     .update(tasks)
     .set({
       ...set,
       triageStatus: "triaged",
-      ...(input.enqueue ? { launchMode: "auto" } : {}),
-      updatedAt: new Date(),
+      // ADR-111: triage_set is AUTHORITATIVE for the enqueue intent — arm the
+      // auto_launch_triaged tick when enqueue, else CLEAR any stale 'auto' left
+      // by a prior pass (mirrors sendTaskToTriage). A verdict that does not
+      // request enqueue must never inherit an earlier auto-launch arm. The arm
+      // also stamps launch_armed_at so the tick's retry cap counts only failures
+      // from THIS enqueue intent — a re-arm earns a fresh attempt budget.
+      launchMode: input.enqueue ? "auto" : null,
+      launchArmedAt: input.enqueue ? now : null,
+      updatedAt: now,
     })
     .where(
       and(eq(tasks.id, input.taskId), eq(tasks.projectId, input.projectId)),
@@ -235,7 +243,9 @@ export async function updateTaskVerdict(
 }
 
 // Triage flag op (ADR-111): mark the task `flagged` (held — non-launchable;
-// the board shows a "needs review" chip). Writes NO verdict columns; records a
+// the board shows a "needs review" chip). Writes NO verdict columns, but DOES
+// clear any stale launch_mode='auto' from a prior pass — a held task carries no
+// enqueue intent (mirrors sendTaskToTriage / applyTriageVerdict). Records a
 // `triage_set` activity carrying the `{ flag: true }` marker (reuses the
 // existing event kind — no new task_activity enum value / CHECK migration).
 // Caller supplies the transaction so the token audit row commits or rolls back
@@ -251,7 +261,12 @@ export async function applyTriageFlag(
 ): Promise<void> {
   await tx
     .update(tasks)
-    .set({ triageStatus: "flagged", updatedAt: new Date() })
+    .set({
+      triageStatus: "flagged",
+      launchMode: null,
+      launchArmedAt: null,
+      updatedAt: new Date(),
+    })
     .where(
       and(eq(tasks.id, input.taskId), eq(tasks.projectId, input.projectId)),
     );
@@ -288,9 +303,17 @@ export async function sendTaskToTriage(
   };
 
   await _db.transaction(async (tx) => {
+    // Clearing the verdict also drops any stale enqueue intent (ADR-111): a
+    // re-triaged task must not carry a `launch_mode='auto'` from a prior pass
+    // and auto-launch the moment it is re-stamped `triaged`.
     await tx
       .update(tasks)
-      .set({ triageStatus: null, updatedAt: new Date() })
+      .set({
+        triageStatus: null,
+        launchMode: null,
+        launchArmedAt: null,
+        updatedAt: new Date(),
+      })
       .where(
         and(eq(tasks.id, input.taskId), eq(tasks.projectId, input.projectId)),
       );

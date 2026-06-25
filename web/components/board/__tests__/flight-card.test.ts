@@ -41,6 +41,7 @@ const labels: FlightCardLabels = {
   launchUnavailable: "Unavailable",
   unconfigured: "no flow",
   needsAttention: "Needs you",
+  flagged: "Needs review",
   waitingOnChildren: "Waiting on children",
   openRun: "Open run",
   decomposition: {
@@ -71,6 +72,7 @@ function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
     flowRef: "bugfix",
     runCount: 1,
     runStatus: "Running",
+    triageStatus: null,
     runId: "run-1",
     agent: "claude",
     status: "running",

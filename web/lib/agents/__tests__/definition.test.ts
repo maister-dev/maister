@@ -426,6 +426,50 @@ describe("parseAgentDefinition config block (ADR-110)", () => {
       /duplicate|unique|key/i,
     );
   });
+
+  it("refuses a default whose type does not match the declared type (CONFIG)", () => {
+    // number param, string default
+    expectConfig(
+      () =>
+        parseAgentDefinition(
+          "aif:triager",
+          withConfig([
+            "  - key: max_rounds",
+            "    type: number",
+            '    default: "three"',
+          ]),
+        ),
+      /default|number/i,
+    );
+
+    // boolean param, string default
+    expectConfig(
+      () =>
+        parseAgentDefinition(
+          "aif:triager",
+          withConfig([
+            "  - key: verbose",
+            "    type: boolean",
+            '    default: "yes"',
+          ]),
+        ),
+      /default|boolean/i,
+    );
+
+    // string param, number default
+    expectConfig(
+      () =>
+        parseAgentDefinition(
+          "aif:triager",
+          withConfig([
+            "  - key: persona",
+            "    type: string",
+            "    default: 42",
+          ]),
+        ),
+      /default|string/i,
+    );
+  });
 });
 
 describe("qualifyAgentId", () => {
@@ -485,7 +529,10 @@ describe("renderAgentDefinition", () => {
       flow: "bugfix",
       recommended: {
         branch_base: "main",
-        executionPolicy: { autoApply: "permissions", onBudgetBreach: "escalate" },
+        executionPolicy: {
+          autoApply: "permissions",
+          onBudgetBreach: "escalate",
+        },
       },
       prompt: "Drive it.",
     });

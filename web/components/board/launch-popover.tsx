@@ -99,6 +99,7 @@ const LAUNCH_UNAVAILABLE_REASON_KEY: Record<string, string> = {
   blocked: "launchUnavailableReason.blocked",
   busy: "launchUnavailableReason.busy",
   crashed: "launchUnavailableReason.crashed",
+  flagged: "launchUnavailableReason.flagged",
   flow_missing: "launchUnavailableReason.flowMissing",
   incompatible: "launchUnavailableReason.incompatible",
   not_enabled: "launchUnavailableReason.notEnabled",

@@ -51,7 +51,8 @@ surface exists.
   an `agent_id` FK: per-LAUNCH ephemeral credentials for platform-agent runs.
   Issued at agent-run spawn with exactly the fixed scope set `tasks:read,
   tasks:triage, comments:read, comments:create, relations:read,
-  relations:create, relations:delete`; injected server-side into the
+  relations:create, relations:delete, flows:read, runners:read`; injected
+  server-side into the
   session's MCP-facade `mcpServers` entry; revoked at the run's terminal
   transition, on attachment detach, and by GC. Verification maps them to the
   polymorphic actor `{type: 'agent', id: agent_id}` (ADR-083's first agent
@@ -62,6 +63,11 @@ surface exists.
   ops), `agents:trigger` (the inbound `POST /api/agents/{agentId}/event`
   webhook trigger — the only token-authenticated route outside
   `/api/v1/ext`).
+- **New scopes** (M-triager — Implemented, ADR-111) — `flows:read` (the
+  project's launchable flows a triage verdict may assign) and `runners:read`
+  (the enabled platform ACP runners), both mapping to the `readBoard` project
+  action and added to the agent-token scope set for the triager's discovery
+  reads.
 - **Personal-token scopes** (Implemented) — `hitl:inbox:read` grants read-only
   cross-project pending HITL listing. `hitl:respond:human` is an exact critical
   scope for human, infra-recovery, and budget-breach HITL responses; `*` does
@@ -92,6 +98,13 @@ surface exists.
   `POST .../tasks/{taskId}/triage`) and `relation_add` / `relation_remove` /
   `relation_list` over the ext relation routes. Personal tokens add stdio
   fallback `MAISTER_ACCESS_TOKEN` and the `hitl_inbox` tool. (Implemented)
+  M-triager (Implemented, ADR-111) adds the read-only discovery tools
+  `flow_list` (`GET .../flows`, scope `flows:read`, launchable flows only) and
+  `runner_list` (`GET .../runners`, scope `runners:read`, enabled runners only),
+  and extends the triage op with two body booleans — `flag` (sets
+  `triage_status='flagged'`, mutually exclusive with verdict fields → `CONFIG`)
+  and `enqueue` (sets `launch_mode='auto'`, requires a verdict yielding a
+  `flowId` → else `CONFIG`). See [triage.md](triage.md). (Implemented)
 
 ## State machine — token lifecycle
 

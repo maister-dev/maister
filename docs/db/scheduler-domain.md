@@ -28,7 +28,7 @@ erDiagram
     SCHEDULER_JOBS {
         text id PK
         text project_id FK "nullable projects(id) ON DELETE CASCADE"
-        text job_kind "system_sweep|command|agent_tick|flow_run|run_schedule|webhook_delivery|domain_event_dispatch"
+        text job_kind "system_sweep|command|agent_tick|flow_run|run_schedule|webhook_delivery|domain_event_dispatch|auto_launch_triaged"
         jsonb target "validated per job_kind"
         integer cadence_interval_seconds
         timestamp next_run_at

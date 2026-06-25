@@ -497,4 +497,107 @@ describe("POST /api/v1/ext/.../triage — enqueue + D9 (ADR-111)", () => {
       flow_id: null,
     });
   });
+
+  it("verdict WITHOUT enqueue clears a prior launch_mode='auto' (triage_set is authoritative)", async () => {
+    const taskId = await freshTask();
+
+    // Arm auto via enqueue.
+    await TRIAGE(
+      request("POST", fx.userToken, { flowId: fx.flowId, enqueue: true }),
+      routeParams(SLUG, taskId),
+    );
+
+    expect(
+      (
+        await pool.query(`SELECT launch_mode FROM tasks WHERE id = $1`, [
+          taskId,
+        ])
+      ).rows[0].launch_mode,
+    ).toBe("auto");
+
+    // Re-triage WITHOUT enqueue — must CLEAR the stale arm, not inherit it,
+    // otherwise the tick would auto-launch work this verdict did not authorize.
+    const res = await TRIAGE(
+      request("POST", fx.userToken, { runnerId: "triage-runner" }),
+      routeParams(SLUG, taskId),
+    );
+
+    expect(res.status).toBe(200);
+
+    const task = await pool.query(
+      `SELECT triage_status, launch_mode FROM tasks WHERE id = $1`,
+      [taskId],
+    );
+
+    expect(task.rows[0]).toMatchObject({
+      triage_status: "triaged",
+      launch_mode: null,
+    });
+  });
+
+  it("flag clears a prior launch_mode='auto' (a held task carries no enqueue intent)", async () => {
+    const taskId = await freshTask();
+
+    await TRIAGE(
+      request("POST", fx.userToken, { flowId: fx.flowId, enqueue: true }),
+      routeParams(SLUG, taskId),
+    );
+
+    const res = await TRIAGE(
+      request("POST", fx.userToken, { flag: true }),
+      routeParams(SLUG, taskId),
+    );
+
+    expect(res.status).toBe(200);
+
+    const task = await pool.query(
+      `SELECT triage_status, launch_mode FROM tasks WHERE id = $1`,
+      [taskId],
+    );
+
+    expect(task.rows[0]).toMatchObject({
+      triage_status: "flagged",
+      launch_mode: null,
+    });
+  });
+
+  it("enqueue on a task with an EXISTING flow (no body flowId) arms it — OpenAPI resolvable-flow", async () => {
+    const taskId = await freshTask();
+
+    // Give the task a flow via a verdict (no enqueue) so it has an existing flow.
+    await TRIAGE(
+      request("POST", fx.userToken, { flowId: fx.flowId }),
+      routeParams(SLUG, taskId),
+    );
+
+    expect(
+      (
+        await pool.query(`SELECT launch_mode FROM tasks WHERE id = $1`, [
+          taskId,
+        ])
+      ).rows[0].launch_mode,
+    ).toBeNull();
+
+    // Enqueue with NO body flowId — the task's existing flow_id makes it
+    // resolvable (OpenAPI), so this must ARM (200), not 422 as before the fix.
+    const res = await TRIAGE(
+      request("POST", fx.userToken, { enqueue: true }),
+      routeParams(SLUG, taskId),
+    );
+
+    expect(res.status).toBe(200);
+
+    const task = await pool.query(
+      `SELECT triage_status, flow_id, launch_mode, launch_armed_at
+       FROM tasks WHERE id = $1`,
+      [taskId],
+    );
+
+    expect(task.rows[0]).toMatchObject({
+      triage_status: "triaged",
+      flow_id: fx.flowId,
+      launch_mode: "auto",
+    });
+    expect(task.rows[0].launch_armed_at).not.toBeNull();
+  });
 });

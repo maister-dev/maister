@@ -8747,7 +8747,7 @@ node inside an execution flow (M12 artifact), authored separately.
    `flows:read` / `runners:read` are added to the agent token scope set. `flow_list`
    returns per flow `id` + `metadata.{title, summary, route_when, labels}` — the
    "when/what to apply" the triager matches against; `runner_list` returns enabled
-   platform runners (`id`, `adapter`, `model`, `provider`).
+   platform runners (`id`, `adapter`, `model`, `capabilityAgent`, `readinessStatus`).
 7. **No-silent-stall is a two-sided contract.** A triager could otherwise stamp
    `triaged` + `auto` on a disabled/untrusted flow and the tick would refuse the
    launch forever while WARN-spamming. **Read side:** `flow_list` returns ONLY
@@ -8762,8 +8762,11 @@ node inside an execution flow (M12 artifact), authored separately.
 8. **No new `MaisterError` code.** The whole feature reuses `CONFIG` (bad config
    schema, disabled/untrusted verdict flow, verdict+flag conflict),
    `PRECONDITION` (launch refusals), and `NOT_FOUND` (cross-project locator). The
-   change is two migrations: `0072` (the `flagged` + `duplicate_of` enum widenings
-   here; the ADR-110 config columns are `0071`).
+   DB change is one migration: `0072` carries the `duplicate_of` relation widening
+   (the `task_relations_kind_check` CHECK). The `flagged` `triage_status` widening
+   is app-level only — the column is plain `text` with no DB CHECK (migration 0049
+   created it that way), so it needs no migration. (The ADR-110 config columns are
+   `0071`.)
 
 **Consequences:**
 - A triager can route, dedup, form dependencies, and enqueue tasks end-to-end on

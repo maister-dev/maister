@@ -58,11 +58,12 @@ erDiagram
         text flow_id FK "M34: NULLABLE — unconfigured until triaged"
         text status "Backlog|InFlight|Done|Abandoned"
         integer attempt_number "starts at 1"
-        text triage_status "M34: 'triaged' | NULL; += 'flagged' = held/needs-review (Implemented ADR-111, 0072)"
+        text triage_status "M34: 'triaged' | NULL; += 'flagged' = held/needs-review (Implemented ADR-111; app-level text-enum widening, no DB CHECK / no migration)"
         text runner_id FK "M34: verdict runner, SET NULL"
         text target_branch "M34: verdict branch, nullable"
         text promotion_mode "M34: local_merge|pull_request, nullable"
         text launch_mode "M37: auto|manual nullable — as-plan child task (ADR-098, 0060)"
+        timestamp launch_armed_at "ADR-111 (0073): enqueue-intent boundary, nullable — auto_launch_triaged retry cap counts only flow runs started at/after this"
         jsonb delegation_spec "M37: as-plan delegation spec for run_plan children (ADR-098, 0060)"
         jsonb execution_policy "migration 0055: per-task default execution policy, nullable"
         timestamp created_at

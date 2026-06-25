@@ -74,6 +74,9 @@ let flowId: string;
 
 beforeEach(async () => {
   await pool.query(`DELETE FROM "task_activity"`);
+  await pool.query(`DELETE FROM "inbox_items"`);
+  await pool.query(`DELETE FROM "task_comments"`);
+  await pool.query(`DELETE FROM "domain_events"`);
   await pool.query(`DELETE FROM "runs"`);
   await pool.query(`DELETE FROM "task_relations"`);
   await pool.query(`DELETE FROM "tasks"`);
@@ -139,6 +142,7 @@ async function seedTriagedAutoTask(
     flowId?: string | null;
     triageStatus?: "triaged" | "flagged" | null;
     launchMode?: "auto" | "manual" | null;
+    launchArmedAt?: Date | null;
     delegationSpec?: Record<string, unknown> | null;
   } = {},
 ): Promise<string> {
@@ -149,8 +153,9 @@ async function seedTriagedAutoTask(
   await pool.query(
     `INSERT INTO "tasks"
        ("id", "project_id", "number", "title", "prompt", "status", "stage",
-        "attempt_number", "flow_id", "triage_status", "launch_mode", "delegation_spec")
-     VALUES ($1, $2, $3, 'T', 'do it', 'Backlog', 'Backlog', 1, $4, $5, $6, $7::jsonb)`,
+        "attempt_number", "flow_id", "triage_status", "launch_mode",
+        "launch_armed_at", "delegation_spec")
+     VALUES ($1, $2, $3, 'T', 'do it', 'Backlog', 'Backlog', 1, $4, $5, $6, $7, $8::jsonb)`,
     [
       taskId,
       projectId,
@@ -158,6 +163,7 @@ async function seedTriagedAutoTask(
       resolvedFlowId,
       args.triageStatus === undefined ? "triaged" : args.triageStatus,
       args.launchMode === undefined ? "auto" : args.launchMode,
+      args.launchArmedAt === undefined ? null : args.launchArmedAt,
       args.delegationSpec ? JSON.stringify(args.delegationSpec) : null,
     ],
   );
@@ -205,6 +211,50 @@ async function seedLiveFlowRun(
   );
 
   return runId;
+}
+
+// Seed a TERMINAL flow run (Failed/Abandoned) that ended at `endedAt` — used to
+// drive the failure cap + backoff.
+async function seedTerminalFlowRun(
+  taskId: string,
+  status: "Failed" | "Abandoned",
+  endedAt: Date,
+): Promise<string> {
+  const runId = randomUUID();
+
+  await pool.query(
+    `INSERT INTO "runs" ("id", "run_kind", "project_id", "task_id", "status", "flow_version", "flow_revision", "runner_id", "started_at", "ended_at")
+     VALUES ($1, 'flow', $2, $3, $4, 'v1.0.0', 'rev-1', $5, $6, $7)`,
+    [
+      runId,
+      projectId,
+      taskId,
+      status,
+      executorId,
+      new Date(endedAt.getTime() - 60_000),
+      endedAt,
+    ],
+  );
+
+  return runId;
+}
+
+async function triageStatusOf(taskId: string): Promise<string | null> {
+  const r = await pool.query(
+    `SELECT "triage_status" FROM "tasks" WHERE "id" = $1`,
+    [taskId],
+  );
+
+  return r.rows[0].triage_status;
+}
+
+async function commentCount(taskId: string): Promise<number> {
+  const r = await pool.query(
+    `SELECT count(*)::int AS n FROM "task_comments" WHERE "task_id" = $1`,
+    [taskId],
+  );
+
+  return r.rows[0].n;
 }
 
 async function flowRunCount(taskId: string): Promise<number> {
@@ -343,7 +393,7 @@ describe("auto_launch_triaged tick", () => {
     expect(await activityKinds(taskId)).not.toContain("triage_requeued");
   });
 
-  it("gives up on a terminal PRECONDITION (stale flow): clears launch_mode + records activity, not re-attempted", async () => {
+  it("gives up on a terminal PRECONDITION (stale flow): clears launch_mode, flags + comments, not re-attempted", async () => {
     const taskId = await seedTriagedAutoTask();
     const refusing = {
       fn: vi.fn(async () => {
@@ -358,16 +408,75 @@ describe("auto_launch_triaged tick", () => {
 
     expect(refusing.fn).toHaveBeenCalledTimes(1);
     expect(summary.gaveUp).toBe(1);
+    // Held for a human (ADR-111 documented give-up): launch_mode cleared, the
+    // task flagged, and a system comment posted with the reason.
     expect(await launchModeOf(taskId)).toBeNull();
-    expect(await activityKinds(taskId)).toContain("triage_requeued");
+    expect(await triageStatusOf(taskId)).toBe("flagged");
+    expect(await commentCount(taskId)).toBe(1);
+    expect(await activityKinds(taskId)).toContain("comment_added");
     expect(await flowRunCount(taskId)).toBe(0);
 
-    // Next tick: the candidate predicate no longer matches (launch_mode null) →
-    // not re-attempted.
+    // Next tick: the candidate predicate no longer matches (flagged AND
+    // launch_mode null) → not re-attempted.
     const second = recordingLaunch();
 
     await runAutoLaunchTriagedJob({ launch: second.fn });
     expect(second.calls).toEqual([]);
+  });
+
+  it("gives up after the failed-attempt cap (3 failures): flags + comments instead of relaunching", async () => {
+    const taskId = await seedTriagedAutoTask();
+    // Three prior failures, all long past any backoff window.
+    const past = new Date(Date.now() - 60 * 60 * 1000);
+
+    await seedTerminalFlowRun(taskId, "Failed", past);
+    await seedTerminalFlowRun(taskId, "Failed", past);
+    await seedTerminalFlowRun(taskId, "Failed", past);
+
+    const { fn, calls } = recordingLaunch();
+    const summary = await runAutoLaunchTriagedJob({ launch: fn });
+
+    // Cap reached → NOT relaunched.
+    expect(calls).toEqual([]);
+    expect(summary.gaveUp).toBe(1);
+    expect(await launchModeOf(taskId)).toBeNull();
+    expect(await triageStatusOf(taskId)).toBe("flagged");
+    expect(await commentCount(taskId)).toBe(1);
+  });
+
+  it("backs off after a recent failure (stays auto), then launches once the window passes", async () => {
+    const taskId = await seedTriagedAutoTask();
+    // One failure that just ended → within the 60s backoff window for failures=1.
+    const recent = await seedTerminalFlowRun(taskId, "Failed", new Date());
+
+    const first = recordingLaunch();
+    const s1 = await runAutoLaunchTriagedJob({ launch: first.fn });
+
+    expect(first.calls).toEqual([]);
+    expect(s1.gaveUp).toBe(0);
+    expect(await launchModeOf(taskId)).toBe("auto");
+
+    // Move that failure to 2 minutes ago → past the 60s window → launches.
+    await pool.query(`UPDATE "runs" SET "ended_at" = $2 WHERE "id" = $1`, [
+      recent,
+      new Date(Date.now() - 2 * 60 * 1000),
+    ]);
+
+    const second = recordingLaunch();
+
+    await runAutoLaunchTriagedJob({ launch: second.fn });
+    expect(second.calls).toEqual([taskId]);
+  });
+
+  it("launches multiple independent candidates in one tick", async () => {
+    const a = await seedTriagedAutoTask();
+    const b = await seedTriagedAutoTask();
+    const { fn, calls } = recordingLaunch();
+
+    const summary = await runAutoLaunchTriagedJob({ launch: fn });
+
+    expect([...calls].sort()).toEqual([a, b].sort());
+    expect(summary.launched).toBe(2);
   });
 
   it("does NOT give up on a transient EXECUTOR_UNAVAILABLE — stays auto", async () => {
@@ -387,5 +496,101 @@ describe("auto_launch_triaged tick", () => {
     expect(summary.gaveUp).toBe(0);
     expect(await launchModeOf(taskId)).toBe("auto");
     expect(await activityKinds(taskId)).not.toContain("triage_requeued");
+  });
+
+  it("gives up on a terminal CONFIG (unlaunchable revision): flags + comments, not re-attempted", async () => {
+    const taskId = await seedTriagedAutoTask();
+    // A CONFIG refusal is a non-retryable misconfiguration (unsupported manifest
+    // schemaVersion / incompatible engine / unknown role|capability|mcp ref) —
+    // retrying can never succeed, so the tick must HOLD the task, not spin.
+    const refusing = {
+      fn: vi.fn(async () => {
+        throw new MaisterError(
+          "CONFIG",
+          `flow "x" requires unsupported manifest schemaVersion 99`,
+        );
+      }),
+    };
+
+    const summary = await runAutoLaunchTriagedJob({ launch: refusing.fn });
+
+    expect(refusing.fn).toHaveBeenCalledTimes(1);
+    expect(summary.gaveUp).toBe(1);
+    expect(await launchModeOf(taskId)).toBeNull();
+    expect(await triageStatusOf(taskId)).toBe("flagged");
+    expect(await commentCount(taskId)).toBe(1);
+
+    // Next tick: flagged + launch_mode null → not re-attempted (no infinite loop).
+    const second = recordingLaunch();
+
+    await runAutoLaunchTriagedJob({ launch: second.fn });
+    expect(second.calls).toEqual([]);
+  });
+
+  it("give-up does NOT clobber a task changed since selection (CAS): no flag, no comment", async () => {
+    const taskId = await seedTriagedAutoTask();
+    // The launch refuses terminally, but a concurrent action re-sent the task to
+    // triage (cleared the stamp + the enqueue arm) before the give-up writes.
+    const racing = {
+      fn: vi.fn(async (input: { taskId: string }) => {
+        await pool.query(
+          `UPDATE "tasks" SET "triage_status" = NULL, "launch_mode" = NULL WHERE "id" = $1`,
+          [input.taskId],
+        );
+        throw new MaisterError("PRECONDITION", `flow "x" no longer launchable`);
+      }),
+    };
+
+    const summary = await runAutoLaunchTriagedJob({ launch: racing.fn });
+
+    expect(racing.fn).toHaveBeenCalledTimes(1);
+    // The newer state survives — give-up wrote nothing and posted no obsolete
+    // comment; the CAS miss counts as skipped, not gaveUp.
+    expect(summary.gaveUp).toBe(0);
+    expect(summary.skipped).toBe(1);
+    expect(await triageStatusOf(taskId)).toBeNull();
+    expect(await launchModeOf(taskId)).toBeNull();
+    expect(await commentCount(taskId)).toBe(0);
+  });
+
+  it("the retry cap ignores failures from BEFORE launch_armed_at — a re-arm gets a fresh budget", async () => {
+    const armedAt = new Date();
+    const taskId = await seedTriagedAutoTask({ launchArmedAt: armedAt });
+    // Three failures that all ended an hour BEFORE this enqueue was armed (a
+    // prior intent / a previous flow / old manual launches). They must NOT
+    // consume the current intent's budget — else the give-up's own "re-send to
+    // triage to retry" recovery would immediately re-give-up.
+    const past = new Date(armedAt.getTime() - 60 * 60 * 1000);
+
+    await seedTerminalFlowRun(taskId, "Failed", past);
+    await seedTerminalFlowRun(taskId, "Failed", past);
+    await seedTerminalFlowRun(taskId, "Failed", past);
+
+    const { fn, calls } = recordingLaunch();
+    const summary = await runAutoLaunchTriagedJob({ launch: fn });
+
+    // Pre-arm failures excluded → not given up → launched.
+    expect(calls).toEqual([taskId]);
+    expect(summary.gaveUp).toBe(0);
+    expect(summary.launched).toBe(1);
+  });
+
+  it("the retry cap still counts failures AT/AFTER launch_armed_at (the current intent keeps failing)", async () => {
+    const armedAt = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    const taskId = await seedTriagedAutoTask({ launchArmedAt: armedAt });
+    // Three failures that ended after the arm and past the backoff window.
+    const after = new Date(armedAt.getTime() + 30 * 60 * 1000);
+
+    await seedTerminalFlowRun(taskId, "Failed", after);
+    await seedTerminalFlowRun(taskId, "Failed", after);
+    await seedTerminalFlowRun(taskId, "Failed", after);
+
+    const { fn, calls } = recordingLaunch();
+    const summary = await runAutoLaunchTriagedJob({ launch: fn });
+
+    expect(calls).toEqual([]);
+    expect(summary.gaveUp).toBe(1);
+    expect(await triageStatusOf(taskId)).toBe("flagged");
+    expect(await launchModeOf(taskId)).toBeNull();
   });
 });

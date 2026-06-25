@@ -4,6 +4,9 @@
 // rotation guarantee).
 
 import { randomUUID } from "node:crypto";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
 import {
   PostgreSqlContainer,
@@ -14,6 +17,7 @@ import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
+import { renderAgentDefinition } from "@/lib/agents/definition";
 import {
   attachAgent,
   detachAgent,
@@ -67,6 +71,21 @@ beforeAll(async () => {
     triggers: ["manual", "cron", "domain_event"],
     riskTier: "read_only",
     sourcePath: `/tmp/agents/platform-helper.md`,
+    // The GLOBAL catalog projection. F1: per-instance config writes validate
+    // against the project-PINNED definition (.md written below), NOT this row —
+    // so this catalog schema deliberately carries an EXTRA `catalog_only_key`
+    // absent from the pinned .md (and OMITS the pinned-only `intake_mode`). The
+    // version-skew test asserts the pinned definition is the source of truth.
+    configSchema: [
+      {
+        key: "auto_enqueue",
+        type: "enum",
+        values: ["off", "when_confident", "always"],
+        default: "off",
+      },
+      { key: "detect_duplicates", type: "boolean", default: true },
+      { key: "catalog_only_key", type: "boolean", default: false },
+    ],
   });
 
   // RD4 attach gate: the providing package must be enabled in the project.
@@ -94,13 +113,51 @@ beforeAll(async () => {
   // it is what assertAgentPackageAttachable + listEnabledPackageRefs read now.
   const packageInstallId = randomUUID();
 
+  // F1: updateAgentLink now validates per-instance config against the PINNED
+  // definition resolveEffectiveAgentDefinition reads from
+  // <installedPath>/maister-agents/<stem>.md — write a real pinned definition so
+  // config writes validate against it, not the global catalog row. Its schema
+  // carries the pinned-only `intake_mode` and OMITS the catalog-only key.
+  const pkgRoot = await mkdtemp(path.join(os.tmpdir(), "maister-agentcfg-"));
+
+  await mkdir(path.join(pkgRoot, "maister-agents"), { recursive: true });
+  await writeFile(
+    path.join(pkgRoot, "maister-agents", "platform-helper.md"),
+    renderAgentDefinition({
+      id: fx.agentId,
+      name: "Platform Helper",
+      description: "Routes simple-intent tasks.",
+      workspace: "none",
+      mode: "session",
+      triggers: ["manual", "cron", "domain_event"],
+      riskTier: "read_only",
+      config: [
+        {
+          key: "auto_enqueue",
+          type: "enum",
+          values: ["off", "when_confident", "always"],
+          default: "off",
+        },
+        { key: "detect_duplicates", type: "boolean", default: true },
+        {
+          key: "intake_mode",
+          type: "enum",
+          values: ["triage_only", "clarify"],
+          default: "clarify",
+        },
+      ],
+      prompt: "You are the platform helper.",
+    }),
+    "utf8",
+  );
+
   await pool.query(
     `INSERT INTO "package_installs"
        ("id", "source_url", "name", "version_label", "resolved_revision",
         "manifest", "manifest_digest", "installed_path", "package_status", "trust_status")
      VALUES ($1, 'github.com/acme/test-pkg', 'test-pkg', 'v1.0.0', 'rev-pkg-1',
-             '{}'::jsonb, 'digest', '/tmp/test-pkg', 'Installed', 'trusted')`,
-    [packageInstallId],
+             '{}'::jsonb, 'digest', $2, 'Installed', 'trusted')`,
+    [packageInstallId, pkgRoot],
   );
   await pool.query(
     `INSERT INTO "project_package_attachments"
@@ -483,5 +540,92 @@ describe("project agent links (attach panel service)", () => {
 
     view = await getProjectAgentsView(fx.projectId, db);
     expect(view.attached[0].config).toBeNull();
+  });
+
+  it("rejects a per-instance config value that violates the declared schema (ADR-110)", async () => {
+    await detachAgent(
+      { projectId: fx.projectId, agentId: fx.agentId },
+      db,
+    ).catch(() => undefined);
+    await attachAgent({ projectId: fx.projectId, agentId: fx.agentId }, db);
+
+    // Out-of-range enum value → CONFIG.
+    await expect(
+      updateAgentLink(
+        {
+          projectId: fx.projectId,
+          agentId: fx.agentId,
+          patch: { config: { auto_enqueue: "bogus" } },
+        },
+        db,
+      ),
+    ).rejects.toMatchObject({ code: "CONFIG" });
+
+    // Wrong scalar type for a boolean param → CONFIG.
+    await expect(
+      updateAgentLink(
+        {
+          projectId: fx.projectId,
+          agentId: fx.agentId,
+          patch: { config: { detect_duplicates: "yes" } },
+        },
+        db,
+      ),
+    ).rejects.toMatchObject({ code: "CONFIG" });
+
+    // Unknown key → CONFIG.
+    await expect(
+      updateAgentLink(
+        {
+          projectId: fx.projectId,
+          agentId: fx.agentId,
+          patch: { config: { not_a_param: 1 } },
+        },
+        db,
+      ),
+    ).rejects.toMatchObject({ code: "CONFIG" });
+
+    // None of the rejected writes touched the link — config stays null.
+    const view = await getProjectAgentsView(fx.projectId, db);
+
+    expect(view.attached[0].config).toBeNull();
+  });
+
+  it("validates config against the PINNED definition, not the global catalog (F1 version skew)", async () => {
+    await detachAgent(
+      { projectId: fx.projectId, agentId: fx.agentId },
+      db,
+    ).catch(() => undefined);
+    await attachAgent({ projectId: fx.projectId, agentId: fx.agentId }, db);
+
+    // `catalog_only_key` is declared in the GLOBAL catalog row but NOT in the
+    // pinned definition the project runs → REJECTED. If validation used the
+    // catalog (the skew bug) this would be accepted and then silently defaulted
+    // at launch (which reads the pinned definition).
+    await expect(
+      updateAgentLink(
+        {
+          projectId: fx.projectId,
+          agentId: fx.agentId,
+          patch: { config: { catalog_only_key: true } },
+        },
+        db,
+      ),
+    ).rejects.toMatchObject({ code: "CONFIG" });
+
+    // `intake_mode` is declared ONLY in the pinned definition (absent from the
+    // catalog) → ACCEPTED, proving the pinned .md is the validation source.
+    await updateAgentLink(
+      {
+        projectId: fx.projectId,
+        agentId: fx.agentId,
+        patch: { config: { intake_mode: "clarify" } },
+      },
+      db,
+    );
+
+    const view = await getProjectAgentsView(fx.projectId, db);
+
+    expect(view.attached[0].config).toEqual({ intake_mode: "clarify" });
   });
 });

@@ -60,8 +60,10 @@ dedup modelling, and the flow-task auto-launcher.
   resolved effective config (mirrors `runs.execution_policy`); injected into the
   agent system prompt at spawn. Migration 0071. See
   [db/runs-domain.md](../db/runs-domain.md).
-- **`tasks.triage_status`** (Implemented) — enum widened to
-  `triaged | flagged | NULL` (migration 0072 adds `flagged`). `NULL` = untriaged
+- **`tasks.triage_status`** (Implemented) — Drizzle `text` enum widened to
+  `triaged | flagged | NULL` (app-level enum widening only; the column is plain
+  `text` with no DB CHECK — migration 0049 created it that way, so adding
+  `flagged` needs no migration). `NULL` = untriaged
   (fresh, or a `clarify` task awaiting a human answer); `triaged` = verdict set,
   launchable; `flagged` = held, NOT launchable. See [tasks.md](tasks.md).
 - **`tasks.launch_mode`** (Implemented) — the enqueue intent; `'auto'` is the only
@@ -170,7 +172,7 @@ flowchart TD
     LR --> CAP{global cap free?}
     CAP -- no --> PEND[run inserted Pending — stays launch_mode='auto', retried]
     CAP -- yes --> RUN[flow run starts]
-    LR --> GU{terminal PRECONDITION?<br/>flow disabled/untrusted post-triage, branch taken}
+    LR --> GU{terminal PRECONDITION or CONFIG?<br/>flow disabled/untrusted post-triage, branch taken,<br/>unlaunchable revision: unsupported schema/engine}
     GU -- yes --> GIVEUP[give up: clear launch_mode + post system comment / set flagged + INFO log]
     GU -- no/transient --> PEND
 ```
@@ -191,7 +193,7 @@ flowchart TD
     WV -- no --> CFG[MaisterError CONFIG — 422 at triage time, no silent stall]
     WV -- yes --> OK[verdict stamped triaged]
     OK --> TICK[tick launches]
-    TICK --> GB[give-up backstop: a flow that becomes unlaunchable AFTER a valid triage<br/>→ terminal PRECONDITION → tick clears launch_mode, does not loop]
+    TICK --> GB[give-up backstop: a flow that becomes unlaunchable AFTER a valid triage<br/>→ terminal PRECONDITION/CONFIG → tick clears launch_mode, does not loop]
 ```
 
 ## Expectations
@@ -217,15 +219,17 @@ flowchart TD
 - The `duplicate_of` relation kind MUST be informational only —
   `getOpenRelationBlockers` MUST query exactly `{blocks, depends_on, requires}`
   and MUST NEVER gate launch on `duplicate_of`.
-- `triage_set` MUST write the verdict (or `flag`), the optional `enqueue` →
-  `launch_mode='auto'`, the `triage_status`, the `task_activity`, and the token
-  audit in ONE `db.transaction`.
+- `triage_set` MUST write the verdict (or `flag`), the enqueue intent
+  (`enqueue:true` → `launch_mode='auto'` + `launch_armed_at=now`, else CLEAR both;
+  a `flag` also clears them — `triage_set` is authoritative for the enqueue
+  intent), the `triage_status`, the `task_activity`, and the token audit in ONE
+  `db.transaction`.
 - `triage_set` MUST reject a verdict whose `flowId` is not launchable
   (`enablementState ∉ {Enabled, UpdateAvailable}` OR `trustStatus = untrusted`)
   with `MaisterError("CONFIG")` (422) at triage time.
 - `flag` MUST be mutually exclusive with verdict fields (`flag` + any verdict →
-  `MaisterError("CONFIG")`), and `enqueue:true` MUST require a verdict that
-  yields a `flowId`.
+  `MaisterError("CONFIG")`), and `enqueue:true` MUST require a resolvable `flowId`
+  — from the body OR the task's existing `flow_id` (else 422 `CONFIG`).
 - `flow_list` MUST return only launchable flows (per the read-side guard) and
   `runner_list` MUST return only `enabled` runners; both MUST validate `slug`
   against the token's project and existence-hide cross-project access as 404.
@@ -235,7 +239,13 @@ flowchart TD
   orchestrator as-plan task`, and MUST be disjoint from `auto_launch_run_plan`.
 - The tick MUST launch through the standard `launchRun` choke point (cap hit →
   `Pending`, NOT an error) and MUST give up (clear `launch_mode` + system comment
-  / `flagged`) only on a terminal `PRECONDITION`, never on a transient cap-hit.
+  / `flagged`) only on a terminal `PRECONDITION` or `CONFIG` (a non-retryable
+  misconfiguration — unsupported schema/engine, unknown role/capability/mcp ref)
+  or the failure-attempt cap, never on a transient cap-hit or
+  `EXECUTOR_UNAVAILABLE`. The failure cap MUST count ONLY flow runs started
+  at/after `launch_armed_at` (so a re-triage / re-arm earns a fresh budget), and
+  the give-up write MUST be a CAS over the selected `(triaged, auto, flow,
+  launch_armed_at)` tuple so a concurrent re-triage is never clobbered.
 - A `clarify` loop MUST be bounded at 3 question rounds before falling back to
   `flagged`; the triager MUST reconstruct context statelessly per run from the
   task + its comment thread (`comment_list`).
@@ -284,7 +294,7 @@ extends the triage op.
 | MCP tool | `inputSchema` | Backing ext route | Response (mirrors the ext GET) |
 | --- | --- | --- | --- |
 | `flow_list` (Implemented) | `{ slug }` | `GET /api/v1/ext/projects/{slug}/flows` | per project flow `{ id, ref, metadata: { title, summary, route_when, labels } }`, **launchable-only** (read-side guard) |
-| `runner_list` (Implemented) | `{ slug }` | `GET /api/v1/ext/projects/{slug}/runners` | per enabled runner `{ id, adapter, model, provider }` |
+| `runner_list` (Implemented) | `{ slug }` | `GET /api/v1/ext/projects/{slug}/runners` | per enabled runner `{ id, adapter, model, capabilityAgent, readinessStatus }` |
 
 - `flow_list` returns the "when/what to apply" the triager matches against
   (`metadata.route_when` / `metadata.summary`); all attached-package flows are
@@ -320,8 +330,10 @@ flag/enqueue are body booleans, not locators (safe).
   per-project effective definition, trust gate, agent tokens, triage Q&A loop,
   `task.triage_requeued` emitter).
 - **DB:** migration 0071 (`agents.config_schema`, `agent_project_links.config`,
-  `runs.agent_config`), migration 0072 (`tasks.triage_status += flagged`,
-  `task_relations.kind += duplicate_of` + check); narrative
+  `runs.agent_config`), migration 0072 (`task_relations.kind += duplicate_of`,
+  the `task_relations_kind_check` CHECK; `tasks.triage_status += flagged` is an
+  app-level Drizzle text-enum widening with no DB constraint, so it carries no
+  migration); narrative
   [database-schema.md](../database-schema.md), ERDs
   [db/agents-domain.md](../db/agents-domain.md),
   [db/runs-domain.md](../db/runs-domain.md).

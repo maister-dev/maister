@@ -451,7 +451,7 @@ erDiagram
     SCHEDULER_JOBS {
         text id PK
         text project_id FK
-        text job_kind "system_sweep|command|agent_tick|flow_run|run_schedule|webhook_delivery|domain_event_dispatch"
+        text job_kind "system_sweep|command|agent_tick|flow_run|run_schedule|webhook_delivery|domain_event_dispatch|auto_launch_triaged"
         jsonb target
         integer cadence_interval_seconds
         timestamp next_run_at
@@ -562,7 +562,7 @@ erDiagram
         text status "Backlog|InFlight|Done|Abandoned"
         text stage "Backlog|Prepare"
         integer attempt_number "monotonic per task"
-        text triage_status "M34: 'triaged' | NULL; += 'flagged' = held/needs-review (Implemented ADR-111, 0072)"
+        text triage_status "M34: 'triaged' | NULL; += 'flagged' = held/needs-review (Implemented ADR-111; app-level text-enum widening, no DB CHECK / no migration)"
         text runner_id FK "M34: verdict runner, SET NULL"
         text target_branch "M34: verdict branch, nullable"
         text promotion_mode "M34: local_merge|pull_request, nullable"

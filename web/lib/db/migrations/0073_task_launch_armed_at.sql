@@ -1,0 +1,1 @@
+ALTER TABLE "tasks" ADD COLUMN "launch_armed_at" timestamp with time zone;

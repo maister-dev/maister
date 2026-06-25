@@ -41,6 +41,8 @@ export interface FlightCardLabels {
   // in the InProduction column but is blocked on its run-tree children, not
   // actively working.
   waitingOnChildren: string;
+  // ADR-111: "needs review" chip for a flagged task (held for a human).
+  flagged: string;
   openRun: string;
   // M37 Phase 6 (ADR-098): localized labels for the orchestrator decomposition
   // group rendered under a parent task's flight card.
@@ -211,6 +213,17 @@ export function FlightCard({
             data-testid="flight-card-waiting"
           >
             {labels.waitingOnChildren}
+          </span>
+        ) : null}
+        {card.triageStatus === "flagged" ? (
+          <span
+            className={clsx(
+              BADGE,
+              "border-amber-line bg-amber-soft text-amber",
+            )}
+            data-testid="flight-card-flagged"
+          >
+            {labels.flagged}
           </span>
         ) : null}
         {card.refused ? (

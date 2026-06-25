@@ -6547,6 +6547,7 @@ paths:
                 run_schedule,
                 webhook_delivery,
                 domain_event_dispatch,
+                auto_launch_triaged,
               ]
       responses:
         "200":
@@ -6584,6 +6585,7 @@ paths:
                 run_schedule,
                 webhook_delivery,
                 domain_event_dispatch,
+                auto_launch_triaged,
               ]
       responses:
         "200":

@@ -28,3 +28,40 @@ export function resolveAgentConfig(
 
   return resolved;
 }
+
+// ADR-110: validate a per-instance config map against the declared schema.
+// Pure + client-import-safe (no MaisterError, which is server-only): returns an
+// error message string, or null when valid. The server caller (the aggregating
+// PATCH via `updateAgentLink`) throws `MaisterError("CONFIG")` on a non-null
+// result. Without this the instance map is `z.record(z.unknown())` at the wire
+// and would land verbatim in the immutable `runs.agent_config` snapshot + the
+// agent prompt — an out-of-range enum, a wrong-typed scalar, or an unknown key.
+export function validateInstanceConfig(
+  declared: AgentConfigParam[] | null,
+  instance: Record<string, unknown>,
+): string | null {
+  const byKey = new Map((declared ?? []).map((p) => [p.key, p]));
+
+  for (const [key, value] of Object.entries(instance)) {
+    const param = byKey.get(key);
+
+    if (!param) return `unknown config key: ${key}`;
+
+    const ok =
+      param.type === "boolean"
+        ? typeof value === "boolean"
+        : param.type === "number"
+          ? typeof value === "number"
+          : param.type === "string"
+            ? typeof value === "string"
+            : typeof value === "string" && (param.values ?? []).includes(value);
+
+    if (!ok) {
+      return param.type === "enum"
+        ? `config value for "${key}" must be one of: ${(param.values ?? []).join(", ")}`
+        : `config value for "${key}" must be a ${param.type}`;
+    }
+  }
+
+  return null;
+}

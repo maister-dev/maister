@@ -105,6 +105,7 @@ export async function Board({
     launchUnavailable: t("launchUnavailable"),
     unconfigured: t("unconfigured"),
     needsAttention: t("needsAttention"),
+    flagged: t("flagged"),
     waitingOnChildren: t("waitingOnChildren"),
     openRun: t("openRun"),
     decomposition: decompositionLabels,
@@ -126,6 +127,11 @@ export async function Board({
     if (launchDisabledReason) return launchDisabledReason;
     if (!launchableLatestRunStatuses.has(card.runStatus)) {
       return t("launchBusy");
+    }
+    // ADR-111: `flagged` outranks `blocked` (mirrors classifyTaskLaunchability) —
+    // a held task is not relaunchable even when its blockers have cleared.
+    if (card.triageStatus === "flagged") {
+      return t("launchFlagged");
     }
     if (card.blockedBy.length > 0) {
       return `${t("launchBlocked")} ${card.blockedBy
@@ -208,11 +214,13 @@ export async function Board({
                     }
                     launchDisabledReason={
                       launchDisabledReason ??
-                      (card.blockedBy.length > 0
-                        ? `${t("launchBlocked")} ${card.blockedBy
-                            .map((b) => `${b.key}-${b.number}`)
-                            .join(", ")}`
-                        : undefined)
+                      (card.triageStatus === "flagged"
+                        ? t("launchFlagged")
+                        : card.blockedBy.length > 0
+                          ? `${t("launchBlocked")} ${card.blockedBy
+                              .map((b) => `${b.key}-${b.number}`)
+                              .join(", ")}`
+                          : undefined)
                     }
                     launchLabel={
                       card.runCount > 0 ? t("runAgain") : t("launchFirst")

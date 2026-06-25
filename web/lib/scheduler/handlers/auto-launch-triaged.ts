@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq, notInArray, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, notInArray, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
@@ -12,7 +12,8 @@ import {
 } from "@/lib/runs/launchability";
 import { TERMINAL_RUN_STATUSES } from "@/lib/runs/run-status-sets";
 import { launchRun } from "@/lib/services/runs";
-import { actorForUserId, recordTaskActivity } from "@/lib/social/activity";
+import { actorForUserId } from "@/lib/social/activity";
+import { addTaskComment } from "@/lib/social/comments";
 import { getOpenRelationBlockers } from "@/lib/social/relations";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -26,6 +27,17 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
+// ADR-111 (level-triggered + cap): launch_mode='auto' is kept across a
+// successful launch — a dependency-blocked task self-launches once its blocker
+// clears, and a transient cap-hit is retried — but a flow that keeps FAILING
+// must not relaunch forever. Two bounds applied per candidate:
+//   - attempt cap: after MAX_AUTO_LAUNCH_ATTEMPTS failed flow runs the tick GIVES
+//     UP (flags the task + comments) instead of launching again;
+//   - backoff: after a failure it waits an exponentially-growing window keyed on
+//     the last failed run's finishedAt before the next attempt.
+const MAX_AUTO_LAUNCH_ATTEMPTS = 3;
+const AUTO_LAUNCH_BACKOFF_BASE_SECONDS = 60;
+
 type LaunchFn = (
   input: Parameters<typeof launchRun>[0],
   ctx: Parameters<typeof launchRun>[1],
@@ -38,6 +50,7 @@ type CandidateRow = {
   status: "Backlog" | "InFlight" | "Done" | "Abandoned";
   flowId: string | null;
   triageStatus: "triaged" | "flagged" | null;
+  launchArmedAt: Date | null;
 };
 
 export type AutoLaunchTriagedSummary = {
@@ -68,23 +81,61 @@ async function hasLiveFlowRun(db: Db, taskId: string): Promise<boolean> {
   return rows.length > 0;
 }
 
+// Count of FAILED flow-run attempts for the task (Failed/Abandoned — the
+// relaunchable-failure states the tick would otherwise retry). Crashed is held
+// for human recover/discard and is never relaunched by the tick, so it does not
+// count toward the cap. SCOPED to the CURRENT enqueue intent: only runs started
+// at/after the task's launch_armed_at count, so old manual failures, failures
+// under a PREVIOUS flow, and failures before a give-up→re-arm do NOT consume the
+// new intent's attempt budget (else a freshly re-triaged task would be flagged
+// without ever launching, breaking the give-up's "re-send to triage to retry").
+// armedAt null (a legacy auto row armed before migration 0073) → count all.
+async function countFailedFlowRuns(
+  db: Db,
+  taskId: string,
+  armedAt: Date | null,
+): Promise<number> {
+  const rows = await db
+    .select({ id: runs.id })
+    .from(runs)
+    .where(
+      and(
+        eq(runs.taskId, taskId),
+        eq(runs.runKind, "flow"),
+        inArray(runs.status, ["Failed", "Abandoned"]),
+        ...(armedAt ? [gte(runs.startedAt, armedAt)] : []),
+      ),
+    );
+
+  return rows.length;
+}
+
 // The auto_launch_triaged tick (ADR-111): a triaged + launch_mode='auto' + flow
 // task whose relation blockers have cleared is launched as a board flow run by
 // reusing launchRun (which owns git/worktree + the run insert + supervisor
 // spawn). DISJOINT from auto_launch_run_plan (ADR-098): that consumer launches
 // AGENT runs for as-plan tasks (delegation_spec.agentId set, parent_of under an
 // orchestrator); this tick excludes them (delegation_spec.agentId IS NULL,
-// flow_id IS NOT NULL). Idempotency = the per-task live-flow-run guard + the
-// budget-1 singleton scheduling. The tick writes NO mark before launchRun.
+// flow_id IS NOT NULL). Idempotency across overlapping invocations is the
+// budget-1 singleton lease (the M24 clock claims at most one attempt) plus the
+// per-task live-flow-run guard; the tick writes NO mark before launchRun.
+//
+// Level-triggered + cap (ADR-111): launch_mode='auto' is KEPT across a launch, so
+// the same intent self-launches once a dependency clears and is retried after a
+// transient refusal — but the failure cap + backoff (see countFailedFlowRuns /
+// MAX_AUTO_LAUNCH_ATTEMPTS) stop a repeatedly-failing flow from relaunching
+// forever.
 //
 // No-silent-stall give-up (ADR-111 / D9): a single candidate's refusal is logged
 // and skipped, never thrown — a throw would mark the whole tick Skipped/Failed
-// and redeliver. A TERMINAL refusal (PRECONDITION: flow disabled/untrusted
-// post-triage, target branch taken, task became non-launchable) clears
-// launch_mode (back to manual-launchable) + records a triage_requeued activity
-// so the task is not retried forever. A TRANSIENT refusal (cap → the run goes
-// Pending, which launchRun RETURNS without throwing; or EXECUTOR_UNAVAILABLE)
-// leaves launch_mode='auto' so the next tick retries.
+// and redeliver. Give-up HOLDS the task (clears launch_mode, sets
+// triage_status='flagged', posts a system comment) on either a TERMINAL refusal
+// (PRECONDITION: flow disabled/untrusted post-triage, no enabled revision,
+// target branch taken; or CONFIG: the revision is structurally unlaunchable —
+// unsupported schema/engine, unknown role/capability/mcp ref) or the
+// failure-attempt cap. A TRANSIENT refusal (cap → the run goes Pending, which
+// launchRun RETURNS without throwing; or EXECUTOR_UNAVAILABLE) leaves
+// launch_mode='auto' so the next tick retries.
 export async function runAutoLaunchTriagedJob(
   opts: { db?: Db; launch?: LaunchFn } = {},
 ): Promise<AutoLaunchTriagedSummary> {
@@ -98,6 +149,7 @@ export async function runAutoLaunchTriagedJob(
       status: tasks.status,
       flowId: tasks.flowId,
       triageStatus: tasks.triageStatus,
+      launchArmedAt: tasks.launchArmedAt,
     })
     .from(tasks)
     .where(
@@ -160,6 +212,46 @@ export async function runAutoLaunchTriagedJob(
         continue;
       }
 
+      // Cap: a flow that has already failed too many times is given up (held for
+      // a human) rather than relaunched forever.
+      const failures = await countFailedFlowRuns(
+        db,
+        candidate.taskId,
+        candidate.launchArmedAt,
+      );
+
+      if (failures >= MAX_AUTO_LAUNCH_ATTEMPTS) {
+        const held = await giveUp(db, candidate, {
+          reason: "auto_launch_attempts_exhausted",
+          detail: `${failures} flow runs failed since this enqueue was armed`,
+        });
+
+        if (held) {
+          summary.gaveUp += 1;
+        } else {
+          summary.skipped += 1;
+        }
+        continue;
+      }
+
+      // Backoff: after a failure, wait an exponentially-growing window (keyed on
+      // the last failed run's endedAt) before the next attempt — transient,
+      // launch_mode stays 'auto'.
+      if (failures > 0 && latestRun?.endedAt) {
+        const backoffMs =
+          AUTO_LAUNCH_BACKOFF_BASE_SECONDS * 2 ** (failures - 1) * 1000;
+        const readyAt = latestRun.endedAt.getTime() + backoffMs;
+
+        if (Date.now() < readyAt) {
+          log.debug(
+            { taskId: candidate.taskId, failures, readyAt },
+            "auto-launch-triaged: within failure backoff — wait",
+          );
+          summary.skipped += 1;
+          continue;
+        }
+      }
+
       const result = await launch(
         { taskId: candidate.taskId },
         { authorize: async () => {}, actorUserId: null },
@@ -178,14 +270,22 @@ export async function runAutoLaunchTriagedJob(
       );
     } catch (err) {
       if (isTerminalLaunchRefusal(err)) {
-        await giveUp(db, candidate, err);
-        summary.gaveUp += 1;
+        const held = await giveUp(db, candidate, {
+          reason: "auto_launch_stale_flow",
+          detail: err instanceof Error ? err.message : String(err),
+        });
+
+        if (held) {
+          summary.gaveUp += 1;
+        } else {
+          summary.skipped += 1;
+        }
         continue;
       }
 
-      // Transient refusal (EXECUTOR_UNAVAILABLE, CONFLICT redelivery race, or
-      // any non-PRECONDITION) — leave launch_mode='auto' so the next tick
-      // retries. Never thrown (would redeliver the whole tick).
+      // Transient refusal (EXECUTOR_UNAVAILABLE — the supervisor may come back;
+      // or a CONFLICT redelivery race) — leave launch_mode='auto' so the next
+      // tick retries. Never thrown (would redeliver the whole tick).
       summary.skipped += 1;
       log.warn(
         {
@@ -203,47 +303,97 @@ export async function runAutoLaunchTriagedJob(
   return summary;
 }
 
-// A terminal, non-retryable refusal: PRECONDITION (flow disabled/untrusted after
-// triage, target branch taken, the task is no longer launchable). EXECUTOR_
-// UNAVAILABLE is transient (the supervisor may come back); CONFLICT is an
-// idempotency race (a run already exists). Only PRECONDITION gives up.
+// A terminal, non-retryable refusal HOLDS the task (give-up), never loops:
+//   - PRECONDITION: flow disabled/untrusted after triage, no enabled revision,
+//     package not Installed, setup pending/failed, target branch taken — the task
+//     is no longer launchable.
+//   - CONFIG: the enabled revision is structurally unlaunchable — unsupported
+//     manifest schemaVersion, incompatible engine, or an unknown flow-role /
+//     capability / mcp ref / provider payload. Every CONFIG launchRun throws is a
+//     misconfiguration that retrying can NEVER fix, so it must hold the task
+//     (no-silent-stall), NOT WARN-spin every tick forever.
+// EXECUTOR_UNAVAILABLE is transient (the supervisor may come back); CONFLICT is an
+// idempotency race (a run already exists) — both stay 'auto' for the next tick.
 function isTerminalLaunchRefusal(err: unknown): boolean {
-  return isMaisterError(err) && err.code === "PRECONDITION";
+  return (
+    isMaisterError(err) &&
+    (err.code === "PRECONDITION" || err.code === "CONFIG")
+  );
 }
 
+// ADR-111 give-up (no-silent-stall, documented behavior): a triaged+auto task
+// the tick can never successfully launch must not loop. Give-up HOLDS the task
+// for a human in ONE transaction — it clears launch_mode (out of the candidate
+// set), sets triage_status='flagged' (non-launchable even with a flow set), and
+// posts a system comment carrying the reason. Both triggers converge here: a
+// terminal PRECONDITION/CONFIG at launch (stale flow / branch taken / unlaunchable
+// revision) and the failure-attempt cap. The write is a CAS over the selected
+// (triaged, auto, flow) tuple: if an external action (a human clearing the flag,
+// a re-triage, a flow change, sendToTriage) moved the task between selection and
+// here, the give-up is stale → it writes nothing, posts no comment, and returns
+// false (the caller counts it as skipped, not gaveUp). The comment emits
+// task.comment_added, but the now-flagged state keeps the tick (and a well-behaved
+// triager — see triager.md) from re-processing the task until a human clears it.
 async function giveUp(
   db: Db,
   candidate: CandidateRow,
-  err: unknown,
-): Promise<void> {
-  const message = err instanceof Error ? err.message : String(err);
-
-  await db.transaction(async (tx: Db) => {
-    await tx
+  opts: { reason: string; detail: string },
+): Promise<boolean> {
+  const held = await db.transaction(async (tx: Db) => {
+    const rows = await tx
       .update(tasks)
-      .set({ launchMode: null, updatedAt: new Date() })
+      .set({
+        launchMode: null,
+        triageStatus: "flagged",
+        updatedAt: new Date(),
+      })
       .where(
         and(
           eq(tasks.id, candidate.taskId),
           eq(tasks.projectId, candidate.projectId),
+          // CAS: only hold the task we actually selected — a newer external
+          // decision (different triage_status / launch_mode / flow, or a re-arm
+          // bumping launch_armed_at) is preserved, never clobbered.
+          eq(tasks.triageStatus, "triaged"),
+          eq(tasks.launchMode, "auto"),
+          eq(tasks.flowId, candidate.flowId),
+          ...(candidate.launchArmedAt
+            ? [eq(tasks.launchArmedAt, candidate.launchArmedAt)]
+            : []),
         ),
-      );
+      )
+      .returning({ id: tasks.id });
 
-    await recordTaskActivity(tx, {
-      taskId: candidate.taskId,
-      projectId: candidate.projectId,
-      actor: actorForUserId(null),
-      eventKind: "triage_requeued",
-      payload: {
-        reason: "auto_launch_gave_up",
-        code: isMaisterError(err) ? err.code : "UNKNOWN",
-        message,
+    if (rows.length === 0) {
+      return false;
+    }
+
+    await addTaskComment(
+      {
+        taskId: candidate.taskId,
+        body: `Auto-launch gave up (${opts.reason}): ${opts.detail}. This task is now flagged for review — clear the flag or re-send it to triage to retry.`,
+        actor: actorForUserId(null),
+        activityPayloadExtra: { reason: opts.reason, detail: opts.detail },
       },
-    });
+      tx,
+    );
+
+    return true;
   });
 
+  if (!held) {
+    log.info(
+      { taskId: candidate.taskId, reason: opts.reason },
+      "auto-launch-triaged: give-up skipped — task changed since selection",
+    );
+
+    return false;
+  }
+
   log.info(
-    { taskId: candidate.taskId, reason: message },
-    "auto-launch-triaged: gave up on a stale flow — cleared launch_mode",
+    { taskId: candidate.taskId, reason: opts.reason },
+    "auto-launch-triaged: gave up — flagged + commented",
   );
+
+  return true;
 }

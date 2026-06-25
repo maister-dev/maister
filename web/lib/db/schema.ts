@@ -1081,6 +1081,15 @@ export const tasks = pgTable(
     // marks a task whose run the auto-launcher creates once its `requires`
     // blockers clear; delegation_spec carries the catalog-agent target + params.
     launchMode: text("launch_mode", { enum: ["auto", "manual"] }),
+    // ADR-111 (migration 0073): the current enqueue intent boundary — set to
+    // now() whenever launch_mode is armed 'auto' by a triage verdict, cleared
+    // with it. The auto_launch_triaged retry cap counts ONLY failed flow runs
+    // started at/after this instant, so a re-triage (new flow / re-arm after a
+    // give-up) gets a fresh attempt budget instead of inheriting stale failures.
+    launchArmedAt: timestamp("launch_armed_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
     delegationSpec: jsonb("delegation_spec").$type<TaskDelegationSpec | null>(),
     executionPolicy: jsonb("execution_policy").$type<ExecutionPolicy | null>(),
     // M39 (ADR-106): provenance + idempotency key for a task AUTO-created by an

@@ -316,7 +316,12 @@ The declared schema is projected at install/resync onto `agents.config_schema`
 (jsonb, SET/CLEAR symmetric like every other synced column) so the UI renders a
 form without re-reading the package. Per-instance values live in
 `agent_project_links.config` (jsonb, `null` ⇒ all defaults), written through the
-ONE aggregating project-link PATCH. `resolveAgentConfig(declared, instanceValue)`
+ONE aggregating project-link PATCH — validated at write time against the
+EFFECTIVE project-pinned definition (the same `maister-agents/<stem>.md` a launch
+resolves), NOT the mutable `agents.config_schema` catalog projection (which is
+re-keyed from the package's newest install at every resync), so a per-project
+version pin never diverges config validation from what a launch actually runs.
+`resolveAgentConfig(declared, instanceValue)`
 merges two levels only (instance value → declared default; no project/platform
 tier). The resolved config is snapshotted ONCE at spawn into `runs.agent_config`
 (jsonb, immutable, exactly like `runs.execution_policy`) and injected into the

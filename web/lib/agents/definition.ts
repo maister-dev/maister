@@ -169,6 +169,22 @@ const configParamDeclSchema = z
       });
     }
 
+    // ADR-110: a declared `default` must match its declared `type` — otherwise a
+    // mistyped default (e.g. `type: number, default: "x"`) would be projected to
+    // `agents.config_schema`, copied verbatim into the immutable `runs.agent_config`
+    // snapshot, and injected into the agent prompt. enum defaults must be strings.
+    if (value.default !== undefined) {
+      const expected = value.type === "enum" ? "string" : value.type;
+
+      if (typeof value.default !== expected) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `config default must be a ${expected} for type=${value.type}`,
+          path: ["default"],
+        });
+      }
+    }
+
     if (
       value.type === "enum" &&
       value.default !== undefined &&

@@ -842,10 +842,11 @@ draft updates increment `draft_version` and stale callers receive `CONFLICT`.
   triageStatus?,                 // M34: 'triaged' | NULL (untriaged);
                                  //   stamped by the ext triage op, cleared by
                                  //   "Send to triage".
-                                 //   (Implemented — ADR-111, migration 0072) enum
-                                 //   widened to 'triaged' | 'flagged'; 'flagged' =
-                                 //   held / needs human review (dup or unroutable),
-                                 //   not launchable
+                                 //   (Implemented — ADR-111) Drizzle text enum
+                                 //   widened to 'triaged' | 'flagged' (app-level
+                                 //   only; plain 'text' col, no DB CHECK — no
+                                 //   migration); 'flagged' = held / needs human
+                                 //   review (dup or unroutable), not launchable
   runnerId?,                     // M34: verdict runner, FK SET NULL;
                                  //   board Launch passes it as launchOverride
   targetBranch?,                 // M34: verdict target branch (text)

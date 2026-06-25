@@ -62,7 +62,10 @@ Work through these steps in order. Stop as soon as a step says to stop.
 ### 1. Load context
 
 - `task_get` the triggering task: its title, prompt, current status, and any
-  existing relations.
+  existing relations. **If its `triage_status` is already `flagged`, stop
+  immediately** — a flagged task is owned by a human until they clear the flag
+  or re-send it to triage. Do not re-triage, re-flag, or comment (a re-trigger
+  from a system give-up comment lands here and must be a no-op).
 - `task_list` the project backlog (titles, prompts, statuses) — your dedup and
   dependency reasoning is over what you read here.
 - `comment_list` the task thread — especially on a re-trigger, to recover a
