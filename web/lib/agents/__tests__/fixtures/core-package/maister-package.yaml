@@ -1,0 +1,20 @@
+# MAIster core package — platform agents that ship with the control plane.
+# Contract: docs/pv/package-management.md (MAIster repo). This package carries
+# NO flows; it exists to deliver core platform agents (maister-agents/*.md)
+# such as the Triager. The version pin is the git tag (core/vX.Y.Z), never a
+# field in this file.
+schemaVersion: 1
+name: core
+metadata:
+  title: "MAIster Core"
+  summary: "Core platform agents shipped with MAIster: the Triager (routes simple-intent tasks)."
+  links:
+    - { kind: docs, title: "Triage domain", url: "https://github.com/maisterhq/maister/blob/main/docs/system-analytics/triage.md" }
+# No flows: a platform-agent-only package. The agents catalog projects each
+# maister-agents/<stem>.md at the package root under id `core:<stem>`.
+flows: []
+capabilities: []
+# No MCP server templates: the Triager reaches MAIster through the built-in
+# maister MCP facade with its ephemeral agent token (read-only discovery +
+# triage/relation/comment ops), not a package-shipped server.
+mcps: []
