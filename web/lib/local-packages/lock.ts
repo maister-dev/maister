@@ -215,3 +215,56 @@ export async function releaseLock(
     })
     .where(and(eq(lp.id, id), eq(lp.lockedBySession, sessionId)));
 }
+
+// (ADR-113, migration 0075) Publish mutex — a STRICT per-package lock so two
+// concurrent publishes never interleave (which would push committed content to the
+// wrong remote and race the publish markers). Unlike the editor lock there is NO
+// same-user/-session escape: a publish in progress blocks EVERY other publish of
+// the package. A claim older than this TTL is reclaimable, so a crashed publish
+// never wedges the package permanently.
+const PUBLISH_LOCK_STALE_MS = 10 * 60_000;
+
+// Try-acquire (non-blocking): claim iff free or the prior claim is stale. Returns
+// the claim timestamp (the release token). Throws CONFLICT when another publish
+// holds it — the route surfaces a responsive "publish in progress" message rather
+// than queueing.
+export async function acquirePublishLock(id: string, db?: Db): Promise<Date> {
+  const claimedAt = new Date();
+  const staleCutoff = new Date(claimedAt.getTime() - PUBLISH_LOCK_STALE_MS);
+  const claimed = await resolveDb(db)
+    .update(lp)
+    .set({ publishingStartedAt: claimedAt, updatedAt: claimedAt })
+    .where(
+      and(
+        eq(lp.id, id),
+        or(
+          isNull(lp.publishingStartedAt),
+          lt(lp.publishingStartedAt, staleCutoff),
+        ),
+      ),
+    )
+    .returning({ id: lp.id });
+
+  if (claimed.length === 0) {
+    throw new MaisterError(
+      "CONFLICT",
+      "a publish of this package is already in progress — try again shortly",
+    );
+  }
+
+  return claimedAt;
+}
+
+// Release iff THIS claim still holds it (matched by the token): a stale-takeover by
+// a newer publish overwrote `publishing_started_at`, so a late release from the
+// superseded holder clears nothing instead of dropping the live claim.
+export async function releasePublishLock(
+  id: string,
+  claimedAt: Date,
+  db?: Db,
+): Promise<void> {
+  await resolveDb(db)
+    .update(lp)
+    .set({ publishingStartedAt: null, updatedAt: new Date() })
+    .where(and(eq(lp.id, id), eq(lp.publishingStartedAt, claimedAt)));
+}

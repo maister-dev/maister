@@ -34,6 +34,9 @@ const postBodySchema = z
     targetBranch: z.string().min(1).optional(),
     deliveryPolicy: storedDeliveryPolicySchema.optional(),
     executionPolicy: executionPolicySchema.optional(),
+    packageVersions: z
+      .record(z.string().min(1), z.enum(["keep", "adopt", "cut_and_adopt"]))
+      .optional(),
   })
   .strict();
 
@@ -122,6 +125,7 @@ export async function POST(req: NextRequest): Promise<Response> {
     targetBranch: body.targetBranch,
     deliveryPolicy: body.deliveryPolicy,
     executionPolicy: body.executionPolicy,
+    packageVersions: body.packageVersions,
   };
   const ctx = {
     actorUserId: user.id,

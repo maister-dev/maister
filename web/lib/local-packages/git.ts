@@ -23,6 +23,76 @@ async function git(cwd: string, args: readonly string[]): Promise<void> {
   });
 }
 
+// (M39 Stream B, ADR-107) Resolve the working dir's current HEAD commit sha so a
+// cut can record `package_installs.source_commit_sha` — the provenance the
+// launch-time version-adopt check compares the local package's HEAD against to
+// decide whether uncut Studio edits exist beyond the last cut.
+export async function gitHeadSha(dir: string): Promise<string> {
+  const { stdout } = await execFileAsync("git", ["rev-parse", "HEAD"], {
+    cwd: dir,
+    timeout: GIT_TIMEOUT_MS,
+    maxBuffer: EXEC_MAX_BUFFER,
+  });
+
+  return stdout.trim();
+}
+
+// (M39 Stream B, ADR-113) Point a named git remote at the publish target URL —
+// idempotent: drop any prior remote of that name, then add. The URL comes from
+// the registered `package_sources` allow-list (host-ambient creds, no inline
+// secrets) and is passed as argv (execFile, never a shell).
+export async function gitSetRemote(
+  dir: string,
+  name: string,
+  url: string,
+): Promise<void> {
+  await git(dir, ["remote", "remove", name]).catch(() => undefined);
+  await git(dir, ["remote", "add", name, url]);
+}
+
+// (M39 Stream B, ADR-113) Force the stable publish branch to the working dir's
+// current HEAD before pushing it. `branch` is validated (branchNameSchema) by the
+// caller; it is never the working dir's checked-out branch (a distinct
+// `maister/<slug>`), so `-f` cannot fail on "current branch".
+export async function gitSetPublishBranchToHead(
+  dir: string,
+  branch: string,
+): Promise<void> {
+  await git(dir, ["branch", "-f", branch, "HEAD"]);
+}
+
+// (M39 Stream B, ADR-113) Resolve the publish target's default branch (the PR
+// base) from the remote's HEAD symref, so a PR / compare-url targets the
+// upstream's real default (`master`/`develop`/…) instead of a hardcoded `main`.
+// Network call, batch-mode (never prompts for credentials); best-effort — `null`
+// lets the caller fall back to its default.
+export async function gitRemoteDefaultBranch(
+  dir: string,
+  remote: string,
+): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync(
+      "git",
+      ["ls-remote", "--symref", remote, "HEAD"],
+      {
+        cwd: dir,
+        timeout: GIT_TIMEOUT_MS,
+        maxBuffer: EXEC_MAX_BUFFER,
+        env: {
+          ...process.env,
+          GIT_TERMINAL_PROMPT: "0",
+          GIT_SSH_COMMAND: "ssh -o BatchMode=yes",
+        },
+      },
+    );
+    const match = stdout.match(/^ref:\s+refs\/heads\/(\S+)\s+HEAD/m);
+
+    return match ? match[1] : null;
+  } catch {
+    return null;
+  }
+}
+
 // (ADR-096, D12) git-init a fresh working dir on `branch` with one commit, so a
 // local package is a real branch — the Phase-2 PR-back is then additive. Local
 // identity only (no network); a missing global git identity must not break it.

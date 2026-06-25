@@ -1,7 +1,5 @@
 import "server-only";
 
-import { rm } from "node:fs/promises";
-
 import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import pino from "pino";
@@ -16,11 +14,10 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import {
   assertPackageCuttable,
-  exportWorkingDir,
   getLocalPackage,
-  stampLastCutInstall,
 } from "@/lib/local-packages/service";
-import { attachPackage, installPackageRevision } from "@/lib/packages/attach";
+import { cutLocalPackageVersion } from "@/lib/local-packages/versions";
+import { attachPackage } from "@/lib/packages/attach";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches sibling routes).
 const { projects } = schemaModule as unknown as Record<string, any>;
@@ -39,7 +36,10 @@ const bodySchema = z
 // `id` is a url-param (→ server row → working_dir). `attachToProjectId` is a
 // BODY id; requireProjectAction(member) validates membership against it before
 // any attach. The cut is two-phase: the irreversible git/export + content-
-// addressed install happen BEFORE the durable stamp/attach.
+// addressed install happen BEFORE the durable stamp/attach (see
+// cutLocalPackageVersion). The cut records the source-link provenance
+// (source_local_package_id + source_commit_sha) so a project's attached cut can
+// detect a newer version at launch (M39 Stream B, ADR-107).
 //
 // Crash windows (each recoverable, no half-registered state):
 //   (a) export done, install not started → only an orphan tmp dir (GC'd; the
@@ -55,8 +55,6 @@ export async function POST(
   req: NextRequest,
   { params }: RouteParams,
 ): Promise<NextResponse> {
-  let exportDir: string | null = null;
-
   try {
     const user = await requireGlobalRole("member");
     const { id } = await params;
@@ -110,17 +108,10 @@ export async function POST(
       attachTarget = { id: row.id, slug: row.slug, repoPath: row.repoPath };
     }
 
-    // Phase 1 (BEFORE the durable writes): clean-export the working dir minus
-    // `.git`, then install it content-addressed (immutable local-<digest>).
-    exportDir = await exportWorkingDir(pkg);
-    const install = await installPackageRevision({
-      source: exportDir,
-      version: "local",
-      trustStatus: "trusted_by_policy",
-    });
-
-    // Phase 2 (the durable mark): stamp the cut + optionally attach.
-    await stampLastCutInstall(pkg.id, install.id);
+    // Phase 1+2: clean-export → content-addressed install WITH the source link →
+    // stamp last_cut_install_id (the durable cut marker). cutLocalPackageVersion
+    // owns the tmp export dir + its cleanup.
+    const cut = await cutLocalPackageVersion(pkg);
 
     let attachmentId: string | undefined;
 
@@ -128,7 +119,7 @@ export async function POST(
       const attached = await attachPackage({
         projectId: attachTarget.id,
         projectSlug: attachTarget.slug,
-        packageInstallId: install.id,
+        packageInstallId: cut.installId,
         workspaceRoot: attachTarget.repoPath,
       });
 
@@ -138,8 +129,8 @@ export async function POST(
     log.info(
       {
         id,
-        installId: install.id,
-        versionLabel: install.versionLabel,
+        installId: cut.installId,
+        versionLabel: cut.versionLabel,
         attachedTo: attachTarget?.id,
         createdBy: user.id,
       },
@@ -148,8 +139,8 @@ export async function POST(
 
     return NextResponse.json(
       {
-        installId: install.id,
-        versionLabel: install.versionLabel,
+        installId: cut.installId,
+        versionLabel: cut.versionLabel,
         attachmentId,
       },
       { status: 201 },
@@ -160,11 +151,5 @@ export async function POST(
       log,
       "studio/local-packages/[id]/cut-version POST",
     );
-  } finally {
-    if (exportDir) {
-      await rm(exportDir, { recursive: true, force: true }).catch(
-        () => undefined,
-      );
-    }
   }
 }

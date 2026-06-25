@@ -3,7 +3,7 @@
 > Behavior SSOT for **editable local packages** — a platform-scoped, git-backed
 > working directory a member authors/forks artifacts in, edits in Flow Studio
 > under a session lock, and **cuts versions** from into the existing
-> package-install substrate. **Status: Implemented (ADR-096 base; ADR-105 Stream A).** Surface:
+> package-install substrate. **Status: Implemented (ADR-096 base; ADR-105 Stream A; ADR-107/110 Stream B — version-adopt launch + PR-to-source, migration 0074).** Surface:
 > [`../screens/studio/README.md`](../screens/studio/README.md) §Local workspace +
 > [`../screens/studio/editor.md`](../screens/studio/editor.md). Data:
 > [`../db/projects-domain.md`](../db/projects-domain.md).
@@ -219,7 +219,7 @@ and Studio-edited (M36 platform-scoping, ADR-096/097, stands — project-scoping
 evaluated and rejected: it fights reuse). A project consumes a package at a **cut
 version** (a pin), never a live edit; editing in Studio produces new cuts, and at
 launch a project adopts a newer cut or keeps its pin (the adopt path is **Stream
-B**, [`../decisions.md`](../decisions.md) ADR-106). Cross-project divergence is
+B**, [`../decisions.md`](../decisions.md) ADR-107). Cross-project divergence is
 rare + explicit — see "Customize for this project" below — so conflicts never
 arise in the default flow.
 
@@ -258,8 +258,136 @@ frontmatter, and skill `SKILL.md` presence, and **hard-blocks** the commit on an
 invalid artifact (`PRECONDITION`/`CONFIG`) with an error list. Because a launch
 needs a committed state, an invalid artifact is inherently un-launchable; WIP lives
 in the uncommitted, lock-preserved working dir. A shared `ChangeReviewDialog` (diff
-+ editable, prefilled commit message) is introduced here and **reused by Stream B**
-for the PR flow.
++ editable, prefilled commit message) is introduced here; Stream B's PR-to-source
+adds a **sibling `PublishDialog`** modeled on its modal pattern (the commit dialog
+itself is not extended — see ADR-113).
+
+## M39 Stream B — version-adopt launch + PR-to-source (Implemented — ADR-107/110)
+
+Stream B is the **runtime + publish** half of M39 and owns **migration 0074** — the
+only schema change in M39's runtime. It closes two gaps left by Stream A's
+centralized model: a project can pick up a **newer cut** of a package it pins, and a
+member can **propose a local package's edits upstream** as a PR.
+
+### Source link on the cut (migration 0074)
+
+A project's attachment is an immutable `package_installs` row; a centralized package
+is a mutable `local_packages` working dir. Today the only edge is the **forward**
+`local_packages.last_cut_install_id` (package → its newest cut) — an attached install
+does not know which local package + commit it was cut from. Migration 0074 adds the
+**back-edge** plus the publish markers:
+
+- `package_installs.source_local_package_id` — FK → `local_packages.id`
+  (`ON DELETE SET NULL`); set when the Studio `cut-version` path mints the install.
+- `package_installs.source_commit_sha` — the package working-dir `HEAD` at cut time.
+- `local_packages.last_pushed_branch`, `local_packages.last_pr_url` — the PR-to-source
+  result (written after a successful push).
+
+No `runs` column: provenance is
+`run.flowRevisionId → package_installs.(source_local_package_id, source_commit_sha)`,
+and `runs.local_package_id` stays NULL on flow runs (the `run-kind-invariants` hard
+block).
+
+### Version-adopt launch (ADR-107)
+
+A project pins a package at a cut. At launch, the `launchRunStaged` precondition
+chain — **after the flow row loads, before the enablement check reads
+`enabled_revision_id`** — detects, per backing package P of the task's flow, the
+available-version state and prompts the launcher. The choice rides `POST /api/runs`'s
+`packageVersions` (`packageInstallId → keep|adopt|cut_and_adopt`), **server-constrained**
+to the detected set (an unknown or ineligible option → **409**).
+
+```mermaid
+stateDiagram-v2
+    [*] --> Pinned: project attaches P at cut c0
+    Pinned --> Detect: Launch precondition (after flow load)
+    Detect --> Pinned: no newer cut and clean working dir (launch on pin)
+    Detect --> Choice: newer cut and/or uncut Studio edits
+    Choice --> Pinned: keep (launch on pin)
+    Choice --> Advance: adopt (upgradeAttachment to newest cut)
+    Choice --> CutGate: cut_and_adopt
+    CutGate --> Advance: edit-lock free and artifacts valid (install + stamp)
+    CutGate --> Choice: locked or invalid (PRECONDITION, fall back to keep)
+    Advance --> Launched: enabled_revision_id advanced, flow re-read
+    Pinned --> Launched: launch
+    Launched --> [*]
+```
+
+**Choice table (exactly as the code gates).** For each backing package P, let
+`hasNewerCut` mean `P.last_cut_install_id` differs from the attached install, and
+`hasUncutEdits` mean P's working dir is dirty versus the pin's `source_commit_sha`:
+
+| Detected state | Offered options | `keep` | `adopt` | `cut_and_adopt` |
+| --- | --- | --- | --- | --- |
+| neither (up to date, clean) | `keep` only | launch on pin | not offered (409) | not offered (409) |
+| `hasNewerCut` only | `keep`, `adopt` | launch on pin | `upgradeAttachment(last_cut)` then launch | not offered (409) |
+| `hasUncutEdits` only | `keep`, `cut_and_adopt` | launch on pin | not offered (409) | cut gate then `upgradeAttachment(new cut)` then launch |
+| both | `keep`, `adopt`, `cut_and_adopt` | launch on pin | adopt the existing newest cut | mint a fresh cut from the edits, then adopt |
+
+`adopt`/`cut_and_adopt` advance the project's `project_package_attachments` +
+`flows.enabled_revision_id` (via the existing `upgradeAttachment`) **before** the
+enablement check re-reads the flow, so the very launch uses the adopted cut. The
+advance is its own transaction; the run-insert tx is unchanged (a board launch carries
+no `trigger_event_id` and never conflicts on the dedup). Multi-package = one choice per
+backing package.
+
+### Cross-project version reuse
+
+A project's **"Add package"** picks a Studio local package + a cut → the existing
+`attachPackage` (per-project pin). "Pick this version into project B" = attach that cut
+to B. The Stream-A **"Customize for this project"** copy is attached the same way (it is
+just another local package). The launch prompt above is a light "version available"
+dialog — NOT the commit `ChangeReviewDialog`; no commit happens at launch except the
+explicit `cut_and_adopt` Studio gate.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Unattached
+    Unattached --> Attached: Add package (pick local package + cut), attachPackage
+    Attached --> Attached: pin advanced at launch (adopt / cut_and_adopt)
+    Attached --> Unattached: detach
+```
+
+### PR-to-source (ADR-113)
+
+`publishLocalPackage(id, { targetSourceId, branchName })` proposes the local package's
+committed working tree upstream. The target is resolved from the **registered
+`package_sources` allow-list** (server-state — never a body-supplied raw URL); the
+branch is a stable, reusable **`maister/<pkg-slug>`** (re-publish updates it and the
+existing PR, never duplicates).
+
+```mermaid
+stateDiagram-v2
+    [*] --> Resolve: publish(targetSourceId, branchName)
+    Resolve --> Push: target in allow-list and branch name valid
+    Resolve --> Rejected: not in allow-list or bad branch (CONFLICT / PRECONDITION)
+    Push --> Mark: push ok
+    Push --> Resolve: non-fast-forward (CONFLICT, retryable)
+    Push --> Rejected: auth or no remote (PRECONDITION)
+    Mark --> Pr: provider and token detected (open or update PR)
+    Mark --> PushOnly: no provider or token (compare URL)
+    Pr --> Done: last_pushed_branch + last_pr_url stored
+    PushOnly --> Done: last_pushed_branch stored
+    Rejected --> [*]
+    Done --> [*]
+```
+
+**Two-phase + failure table.** The push is the external side-effect;
+`last_pushed_branch` / `last_pr_url` are written **only after** it acks.
+
+| Failure | Code | Marker | Caller action |
+| --- | --- | --- | --- |
+| `targetSourceId` not in `package_sources` | `CONFLICT` (409) | unset | pick a registered source |
+| invalid branch name (`branchNameSchema`) | `PRECONDITION` (409) | unset | fix the branch name |
+| non-fast-forward push | `CONFLICT` (409) | unset | retry (updates the stable branch) |
+| auth / no remote reachable | `PRECONDITION` (409) | unset | configure host credentials |
+| no source url / unsupported provider for the PR | `CONFIG` / push-only | branch only | open the PR from the compare URL |
+| push ok, provider + token | — | `last_pushed_branch` + `last_pr_url` | PR opened/updated |
+| push ok, no provider/token | — | `last_pushed_branch` (+ compare URL shown) | open the PR manually |
+
+PR automation needs the provider CLI (`gh`/`glab`) + a host-ambient token
+(`GH_TOKEN` / `GITLAB_TOKEN` / `GITEA_TOKEN` / `GITVERSE_TOKEN`); absent → the push-only
+fallback. See [`../configuration.md`](../configuration.md).
 
 ## Expectations
 
@@ -330,8 +458,25 @@ for the PR flow.
   (existing fork → 200 `{ alreadyExists: true }`; fresh fork → 201);
   "Customize for this project" MUST reuse that path and name the copy by
   convention (`P (for <project>)`) with NO schema field.
-- (Phase 2 / Stream B) PR-to-source is NOT implemented in Stream A;
-  `source_repo_url`/`source_ref`/`branch_name` are stored only to enable it later.
+- (M39 Stream B, ADR-107 — Implemented) A launch MUST detect, per package backing the
+  task's flow, whether a newer cut exists (`last_cut_install_id` differs from the pin)
+  and/or uncut Studio edits exist (working dir dirty vs the pin's `source_commit_sha`),
+  and offer `keep | adopt | cut_and_adopt`. `adopt`/`cut_and_adopt` MUST advance the
+  project attachment via `upgradeAttachment` BEFORE the enablement check, and the flow
+  run MUST keep `runs.local_package_id` NULL. An option not in the detected set → 409.
+- (M39 Stream B, ADR-107 — Implemented) `cut_and_adopt` MUST run the Studio cut gate (free
+  edit-lock + `validatePackageArtifacts` → `installPackageRevision` → `stampLastCutInstall`)
+  before adopting; a package locked by another session or with invalid artifacts →
+  `PRECONDITION` (the launcher can still `keep`).
+- (M39 Stream B, ADR-107 — Implemented) A cut install MUST record `source_local_package_id`
+  + `source_commit_sha`; provenance is derived (`flowRevisionId → install`), never a new
+  `runs` column.
+- (M39 Stream B, ADR-113 — Implemented) `publishLocalPackage` MUST resolve its target ONLY
+  from the registered `package_sources` allow-list (never a body URL), validate the
+  branch name at the git sink (`branchNameSchema`), push the package working tree on a
+  stable `maister/<pkg-slug>` branch, and write `last_pushed_branch`/`last_pr_url` only
+  AFTER a successful push (two-phase). `source_repo_url`/`source_ref`/`branch_name` feed
+  the source preselect.
 
 ## Edge cases
 
@@ -364,14 +509,18 @@ for the PR flow.
 
 ## Linked artifacts
 
-- **ADRs:** ADR-096 (this domain), ADR-092 (unified Studio + editable-local-package
-  direction), ADR-088 (package management), ADR-021 (fetch-then-execute trust
-  separation) — see [`../decisions.md`](../decisions.md).
+- **ADRs:** ADR-096 (this domain), ADR-105 (Stream A — first-class kinds + centralized
+  model), ADR-107 (Stream B — version-adopt launch), ADR-113 (Stream B — PR-to-source),
+  ADR-092 (unified Studio + editable-local-package direction), ADR-088 (package
+  management), ADR-021 (fetch-then-execute trust separation) — see
+  [`../decisions.md`](../decisions.md).
 - **ERD:** [`../db/projects-domain.md`](../db/projects-domain.md),
   [`../database-schema.md`](../database-schema.md).
 - **API:** [`../api/web.openapi.yaml`](../api/web.openapi.yaml)
-  (`/api/studio/local-packages*` incl. `/files/{path}` CRUD + `/cut-version`;
-  `/api/studio/packages/{ref}/fork` + `/fork-element`).
+  (`/api/studio/local-packages*` incl. `/files/{path}` CRUD + `/cut-version` +
+  `/publish` [Stream B]; `/api/studio/packages/{ref}/fork` + `/fork-element`;
+  `POST /api/runs` `packageVersions` [Stream B]; `POST /api/projects/{slug}/packages`
+  attach-a-version).
 - **Reused behavior:** [`packages.md`](packages.md) (install/attach/trust),
   [`flow-studio.md`](flow-studio.md) (editor seam, fork),
   [`mcp-management.md`](mcp-management.md) (the MCP catalog the template editor

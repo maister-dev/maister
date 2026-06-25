@@ -90,6 +90,12 @@ vi.mock("@/lib/social/relations", () => ({
   getOpenRelationBlockers: mocks.getOpenRelationBlockers,
 }));
 vi.mock("@/lib/worktree", () => ({ listBranches: mocks.listBranches }));
+// M39 Stream B (ADR-107): the route now feeds the launch dialog the available
+// centralized-package versions; this DTO test does not exercise that path, so
+// stub it empty (the fakeDb has no join support).
+vi.mock("@/lib/local-packages/versions", () => ({
+  detectAvailablePackageVersions: async () => [],
+}));
 
 function manifest(runner: string): Row {
   return {

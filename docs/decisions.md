@@ -132,11 +132,13 @@
 | [ADR-104](#adr-104-global-personal-api-tokens-via-nullable-project-token-binding) | Global personal API tokens via nullable project token binding | Accepted | 2026-06-23 |
 | [ADR-105](#adr-105-first-class-authored-package-kinds-and-centralized-studio-package-model) | First-class authored package kinds and centralized Studio package model | Accepted | 2026-06-22 |
 | [ADR-106](#adr-106-package-based-platform-agents--package-identity-attachment-gating-optional-flow-enrichment-and-per-agent-runner-policy) | Package-based platform agents — package identity, attachment gating, optional-flow enrichment, and per-agent runner policy | Accepted | 2026-06-23 |
+| [ADR-107](#adr-107-version-adopt-launch--adopt-a-newer-central-package-cut-at-launch) | Version-adopt launch — adopt a newer central package cut at launch (M39 Stream B) | Accepted | 2026-06-25 |
 | [ADR-108](#adr-108-declarative-guardrailhook-engine--universal-supervisor-acp-seam-interceptor-native-materializer-seam-and-hook-trip-hitl-escalation) | Declarative guardrail/hook engine — universal supervisor ACP-seam interceptor (3 rules), native materializer seam, `hook_trip` HITL, engine 1.8.0 | Accepted | 2026-06-23 |
 | [ADR-109](#adr-109-consensus-flow-graph-node--engine-owned-unanimous-draft-verification-and-human-resolution) | Consensus flow-graph node — engine-owned unanimous draft verification and human resolution | Accepted | 2026-06-24 |
 | [ADR-110](#adr-110-flow-studio-ai-assistant-read-only-acp--structured-server-applied-actions) | Flow Studio AI assistant: read-only ACP + structured server-applied actions | Accepted | 2026-06-25 |
 | [ADR-111](#adr-111-generic-agent-configuration-framework--declared-config-params-per-instance-values-resolved-snapshot-prompt-injection) | Generic agent configuration framework — declared config params, per-instance values, resolved snapshot, prompt injection | Accepted | 2026-06-25 |
 | [ADR-112](#adr-112-triager-agent--duplicate_offlagged-dedup-substrate-auto_launch_triaged-tick-flowrunner-discovery-no-silent-stall-guards) | Triager agent — duplicate_of/flagged dedup substrate, auto_launch_triaged tick, flow/runner discovery, no-silent-stall guards | Accepted | 2026-06-25 |
+| [ADR-113](#adr-113-pr-to-source-for-local-packages--trusted-source-picker--stable-publish-branch) | PR-to-source for local packages — trusted-source picker + stable publish branch (M39 Stream B) | Accepted | 2026-06-25 |
 
 ---
 
@@ -8388,6 +8390,118 @@ Stream A) is this branch. This ADR is **106**. The package-agents re-key migrati
 landed as `0068` (the `0062` slot that the ADR-105 note originally reserved was
 taken by an unrelated migration; the ADR number stays 106).
 
+### ADR-107: Version-adopt launch — adopt a newer central package cut at launch
+
+**Date:** 2026-06-25
+**Status:** Accepted
+**Context:** ADR-105 locked the **centralized package model**: packages are
+instance-level and Studio-edited, and a project consumes a package at an immutable
+**cut version** (a per-project pin), never a live edit. ADR-105/106 built the
+authoring + agent halves but left the *consumption* side unbuilt — a project
+attaches a cut, but there is no path to pick up a **newer** cut, and no link from
+the attached `package_installs` row back to the `local_packages` package + commit
+it was cut from (only the forward `local_packages.last_cut_install_id` exists). A
+`/aif-improve` trace of current main fixed the runtime model: flow runs are
+**task-bound** (`POST /api/runs` needs a `taskId`); materialization is
+**project-scoped** (`materializeProjectBundlesIntoWorktree` copies the project's
+attached `Installed` revisions), so adopting a newer version = advancing the
+project's attached revision, then normal materialization runs — no run-scoped
+override; and `runs.local_package_id` is **hard-blocked for non-scratch runs**
+(`run-kind-invariants.ts`), so provenance must live on the cut install, not on
+`runs`. This is **Stream B** of M39 (the runtime half).
+
+**Decision:**
+1. **Source link on the cut.** `package_installs` gains `source_local_package_id`
+   (FK → `local_packages`, `ON DELETE SET NULL`) + `source_commit_sha`, written when
+   a local package is cut (the Studio `cut-version` path threads its
+   `local_packages.id` + working-dir HEAD sha into `installPackageRevision`).
+   `local_packages.last_cut_install_id` remains the package's newest cut.
+   (Migration **0074**, shared with ADR-113.)
+2. **Attach = pin a version.** A project attaches package P at a chosen cut (the
+   existing `attachPackage`); the attached member flow's `enabled_revision_id`
+   points at that cut's revision. Cross-project reuse = attach a chosen cut to any
+   project; the Stream-A "Customize for this project" copy attaches the same way.
+3. **Launch-time adopt.** In the existing `launchRunStaged` precondition chain —
+   after the flow row loads, before the enablement check reads its
+   `enabled_revision_id` — detect, for each package P backing the task's flow,
+   whether (a) P has a **newer cut** than the pin (`P.last_cut_install_id` ≠ the
+   attached install) and/or (b) P has **uncut Studio edits** (working dir dirty vs
+   the pinned cut's `source_commit_sha`). The launch prompt offers, per backing
+   package, one of **`keep` | `adopt` | `cut_and_adopt`**:
+   - `adopt` → advance the project's attachment to P's newest cut via the existing
+     `upgradeAttachment` (re-wires members, advances `enabled_revision_id`), then
+     **re-read the flow** and launch.
+   - `cut_and_adopt` → run the Studio cut gate first (assert the package's
+     edit-lock is free + `validatePackageArtifacts` → `installPackageRevision`
+     [with the source link] → `stampLastCutInstall`), then `upgradeAttachment` to
+     the fresh cut and launch. Locked-by-another-session or invalid artifacts →
+     `PRECONDITION` (the user can still `keep`).
+   - `keep` → launch on the pin (no-op).
+4. **Contract.** `POST /api/runs` gains `packageVersions` (map
+   `packageInstallId → keep|adopt|cut_and_adopt`), **server-constrained** to the
+   detected available-version set — an unknown or ineligible key is a 409. The
+   advance runs as its own transaction(s) **before** the run-insert transaction; the
+   run row's `flowRevisionId` then resolves to the adopted cut. Flow runs keep
+   `runs.local_package_id` **NULL**.
+5. **Provenance is derivable.**
+   `run.flowRevisionId → package_installs.(source_local_package_id, source_commit_sha)`
+   answers "which package @ which commit this run used", reproducibly. No `runs`
+   column.
+
+**Consequences:**
+- Reuses `launchRunStaged` + the scheduler + ~20 preconditions + `upgradeAttachment`
+  + the Studio cut gate. B1 adds only the source link, the version-availability
+  check (`web/lib/local-packages/versions.ts`), the adopt precondition + body field,
+  and the advance step.
+- Adopt-at-launch is one logical decision per package, each its own tx before the
+  run insert. **Adopt+launch is atomic by compensation:** the supervisor's
+  readiness is gated BEFORE the advance (the dominant transient failure), and an
+  outer compensation `try` spans the WHOLE post-advance remainder of
+  `launchRunStaged` — so ANY failure after the advance re-pins the attachment to
+  its prior install (`revertPackageVersionChoices`): the dropped-flow refusal (the
+  adopted cut no longer ships the launched flow), a later precondition
+  (incompatible / un-enabled / bad target branch / missing host requirement), the
+  `addWorktree` step, materialization, and the run-insert tx all roll the pin back.
+  A multi-package adopt is likewise all-or-nothing — `applyPackageVersionChoices`
+  reverts any attachment it already advanced before rethrowing, so one package's
+  later failure never leaves an earlier package's pin moved.
+  **Residual (accepted):** a process crash between the advance and the run-insert
+  is recoverable, not corrupting — the next launch sees no newer version (already
+  adopted) and runs it. (An ACP-cancel routes through the compensation via the
+  abort signal; a generator abandoned WITHOUT signalling abort is the only
+  uncompensated edge, and the SSE launch path wires the signal.) The run-insert tx
+  is unchanged (`(agent_id, trigger_event_id)` dedup; a board launch carries no
+  trigger and never conflicts).
+- A project never sees working-dir drift — only immutable cuts. `cut_and_adopt`
+  is the only launch path that mints a cut, and it does so through the Studio gate
+  (lock + validate), never by editing.
+- Migration **0074** (the source-link cols, shared with ADR-113's PR cols). NO new
+  `MaisterError` code (reuses the closed union `PRECONDITION | CONFLICT | CONFIG`).
+  NO `runs` column.
+
+**Alternatives Considered:**
+- **Project-side "Update available → Update" button** (advance the pin outside
+  launch): rejected for v1 (owner) — the pin advances only via the
+  adopt/keep/cut_and_adopt choice at launch, keeping a single decision surface.
+- **Cut-first only** (no uncut edits at launch): rejected (owner) — `cut_and_adopt`
+  lets uncut Studio edits be picked up at launch without a separate Studio
+  round-trip.
+- **Run-scoped materialization overlay / binding `runs.local_package_id` on a flow
+  run:** rejected — flow runs are task-bound and materialization is project-scoped;
+  the invariant hard-blocks it. Advancing the project attachment is the existing
+  lever.
+- **A denormalized `runs` provenance column:** deferred — derivable via
+  `flowRevisionId → install`.
+
+**Numbering note.** This ADR fills the reserved **107** gap (108 guardrail-hooks /
+109 consensus took the slots after ADR-106). The PR-to-source half is **ADR-113**
+(110–112 were taken by the AI-assistant / agent-config / triager siblings that
+merged to main first). The shared source-link + PR migration is **0074** and the
+publish mutex is **0075**, both following `0073_task_launch_armed_at` (renumbered
+from 0071/0072 when this branch rebased onto main).
+
+---
+
 ### ADR-108: Declarative guardrail/hook engine — universal supervisor ACP-seam interceptor, native materializer seam, and hook-trip HITL escalation
 
 **Date:** 2026-06-23
@@ -8813,6 +8927,80 @@ node inside an execution flow (M12 artifact), authored separately.
 - **A new `MaisterError` code:** rejected — `CONFIG`/`PRECONDITION`/`NOT_FOUND`
   already cover every refusal on the triage → enqueue → tick path; the ADR-008
   union stays closed.
+
+---
+
+### ADR-113: PR-to-source for local packages — trusted-source picker + stable publish branch
+
+**Date:** 2026-06-25
+**Status:** Accepted
+**Context:** A local package forked from a git source stores `source_repo_url` /
+`source_ref` / `branch_name` (ADR-096/105) **only** to enable a future upstream PR;
+M39 Stream A explicitly deferred the publish path. `pushBranch`
+(`web/lib/worktree.ts`) + the `PrAdapter` family (gh / glab / Gitea / Gitverse,
+`web/lib/runs/pr-adapter.ts`) already exist but are **project-repo-only** (run
+promotion). `package_sources` (`schema.ts`) is a platform-global, URL-keyed
+allow-list of registered git sources, pushed with **host-ambient credentials**
+(`GH_TOKEN` / `GITLAB_TOKEN` / `GITEA_TOKEN` / `GITVERSE_TOKEN`, or the host git
+credential helper / SSH key). This ADR adds the PR-to-source publish path — the
+Stream-B half of M39 paired with ADR-107.
+
+**Decision:**
+1. **`publishLocalPackage(id, { targetSourceId, branchName })`.** Resolve the target
+   from the `package_sources` **allow-list** (server-state — a body-supplied raw URL
+   is never accepted) → add/set a git remote in the package working dir →
+   `pushBranch(workingDir, branch)` → if a provider + token is detected
+   (`detectProvider` + the `PrAdapter` for gh/glab/Gitea/Gitverse), open or update a
+   PR; else push-only + a best-effort compare URL. The PR adapters are parameterized
+   for a package working dir + an arbitrary target source (no longer
+   project-repo-only). Branch names are validated at the git sink (`branchNameSchema`
+   / `assertSafeBranchRefs`); a `targetSourceId` not in the allow-list is a 409.
+2. **UI.** A dedicated **`PublishDialog`** — a sibling of `ChangeReviewDialog`
+   (ADR-105) reusing its modal pattern, kept separate so the tested commit flow is
+   untouched — with a **target-source picker** (registered sources; preselect the one
+   mapped from `local_packages.source_repo_url` by URL equality, retarget allowed), a
+   **branch-name** input prefilled with a stable **`maister/<pkg-slug>`** (editable),
+   a **cross-repo warning** when the target source ≠ the fork origin, and a **result
+   panel** (the PR url, or the branch + a compare url). It publishes the **committed
+   HEAD** (no commit happens at publish), so it steers the author to commit pending
+   edits first (via the Commit-state `ChangeReviewDialog`) rather than showing a
+   working-tree diff that would not be published.
+3. **Stable, reusable branch.** Re-publish updates `maister/<pkg-slug>` and the
+   existing PR — never duplicates it. `local_packages.{last_pushed_branch,
+   last_pr_url}` persist the result, written **after** the push succeeds (two-phase).
+
+**Consequences:**
+- Reuses `pushBranch` + `selectPrAdapter` / `createOrUpdatePr` + `detectProvider` +
+  `branchNameSchema` / `assertSafeBranchRefs` at the sink. The adapters are
+  idempotent (existing-PR detection), so re-publish updates rather than spams.
+- **Two-phase publish:** the push is the external side-effect; `last_pushed_branch`
+  / `last_pr_url` are written only after it acks. Failure table: non-fast-forward
+  push → `CONFLICT` (retryable, markers unset); auth / no-remote → `PRECONDITION`;
+  no source url / unsupported provider → `CONFIG` / `PRECONDITION`.
+- PR automation needs the provider CLI + a host-ambient token; absent → a push-only
+  fallback with a compare URL + a manual-PR hint (documented in
+  `docs/configuration.md`). No new env var, no compose change (`.maister` is
+  host-only, ADR-023).
+- Migration **0074** (the PR cols, shared with ADR-107's source-link cols). NO new
+  `MaisterError` code (reuses `PRECONDITION | CONFLICT | CONFIG`).
+
+**Alternatives Considered:**
+- **Body-supplied raw target URL:** rejected — the registered `package_sources`
+  allow-list is the only valid target set (a body URL is a cross-resource injection
+  vector).
+- **Timestamped per-publish branch (`maister/<pkg>-<ts>`):** rejected (owner) — a
+  stable `maister/<pkg-slug>` keeps one reusable branch + one PR; re-publish updates
+  rather than spamming.
+- **A new `MaisterError` code for publish failures:** rejected — the closed union
+  already covers push-rejected (`CONFLICT`), auth/no-remote (`PRECONDITION`), and
+  config (`CONFIG`).
+- **Hiding cross-repo push behind "advanced":** rejected (owner) — a visible warning
+  is clearer than burying a valid "pull from A, push to B" workflow.
+
+**Numbering note.** PR-to-source is the Stream-B publish half of M39 (paired with
+ADR-107). It takes **113** (110–112 went to the AI-assistant / agent-config /
+triager siblings that merged to main first). Shares migration **0074** with
+ADR-107; the publish mutex is **0075**.
 
 ---
 

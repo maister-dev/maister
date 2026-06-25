@@ -2824,6 +2824,14 @@ export const packageInstalls = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
+    // M39 Stream B (ADR-107, migration 0074): the back-edge from a cut install
+    // to the centralized local package + working-dir commit it was cut from, so
+    // a project's attached cut can detect a newer available cut at launch.
+    sourceLocalPackageId: text("source_local_package_id").references(
+      (): AnyPgColumn => localPackages.id,
+      { onDelete: "set null" },
+    ),
+    sourceCommitSha: text("source_commit_sha"),
   },
   (t) => ({
     uniqSourceNameRevision: unique("package_installs_source_name_rev_uq").on(
@@ -2911,6 +2919,18 @@ export const localPackages = pgTable(
       onDelete: "cascade",
     }),
     isDefault: boolean("is_default").notNull().default(false),
+    // M39 Stream B (ADR-113, migration 0074): the PR-to-source publish result —
+    // the stable `maister/<pkg-slug>` branch last pushed and the opened PR URL.
+    lastPushedBranch: text("last_pushed_branch"),
+    lastPrUrl: text("last_pr_url"),
+    // M39 Stream B (ADR-113, migration 0075): publish mutex. A non-null timestamp
+    // means a publish of THIS package is in progress; a value older than the mutex
+    // TTL is reclaimable so a crashed publish never wedges the package. Set by
+    // acquirePublishLock, cleared by releasePublishLock (publish.ts critical section).
+    publishingStartedAt: timestamp("publishing_started_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
   },
   (t) => ({
     defaultPerProject: uniqueIndex("local_packages_default_per_project")

@@ -1457,6 +1457,15 @@
     "default": "default",
     "runnerModel": "Runner / Model",
     "pinnedModel": "Pinned model: {model}",
+    "packageVersions": "Package versions",
+    "packageVersionsHint": "A package this project uses has a newer version — adopt it for this run or keep your pinned version.",
+    "packageVersionNewer": "pinned {current} → new {next}",
+    "packageVersionUncut": "pinned {current} · uncut Studio edits available",
+    "packageVersionOption": {
+      "keep": "Keep pinned version",
+      "adopt": "Adopt newer version",
+      "cut_and_adopt": "Cut latest & adopt"
+    },
     "deliveryPolicy": "Delivery policy",
     "strategy": "Strategy",
     "strategyMerge": "Merge",
@@ -1521,8 +1530,26 @@
     "budgetInvalid": "Positive integer only",
     "budgetUnattendedHint": "Unattended run with no budget — it will run unbounded. Set a token budget or configure MAISTER_DEFAULT_UNATTENDED_BUDGET_TOKENS."
   },
+  "publishDialog": {
+    "openButton": "Publish",
+    "title": "Publish to source",
+    "note": "Publishes the committed state (HEAD). Commit pending changes first to include them.",
+    "sourceLabel": "Target source",
+    "branchLabel": "Branch",
+    "crossRepoWarning": "Target differs from this package's origin — the PR history may not line up.",
+    "publish": "Publish",
+    "publishing": "Publishing…",
+    "cancel": "Cancel",
+    "done": "Done",
+    "loadError": "Could not load publish options.",
+    "noSources": "No package sources are registered.",
+    "resultPr": "Pull request opened:",
+    "resultPushed": "Pushed branch {branch}.",
+    "resultCompare": "Open a pull request:"
+  },
   "run": {
     "eyebrow": "run",
+    "fromPackage": "from {name} @ {version}",
     "backToBoard": "← Back to board",
     "noPending": "No input is pending for this run.",
     "agentCenterTitle": "Agent run",

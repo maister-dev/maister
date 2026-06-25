@@ -7415,6 +7415,59 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/Config" }
 
+  /api/studio/local-packages/{id}/publish:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [flow-packages]
+      summary: (ADR-113 — Implemented) Publish dialog feed (registered sources + preselect + default branch)
+      description: |
+        (ADR-113 — Implemented.) Returns the registered, enabled `package_sources`
+        (the publish allow-list), the source preselected from the package's fork
+        origin, and the prefilled stable `maister/<slug>` branch. Member-gated.
+      operationId: getStudioLocalPackagePublishOptions
+      responses:
+        "200":
+          description: Publish dialog options.
+          content:
+            application/json:
+              schema:
+                { $ref: "#/components/schemas/PublishLocalPackageOptions" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    post:
+      tags: [flow-packages]
+      summary: (ADR-113 — Implemented) Publish the package to a registered source as a PR
+      description: |
+        (ADR-113 — Implemented.) Pushes the local package's committed working tree to a
+        **registered** `package_sources` target (server-side allow-list — never a
+        body-supplied raw URL) on a stable, reusable `maister/<pkg-slug>` branch, then
+        opens or updates a pull request when a provider CLI + host token is detected
+        (gh/glab/Gitea/Gitverse); otherwise push-only with a best-effort compare URL.
+        Two-phase: `last_pushed_branch`/`last_pr_url` are written only after the push
+        acks. Member-gated (`manageLocalPackages`).
+      operationId: publishStudioLocalPackage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PublishLocalPackageBody" }
+      responses:
+        "200":
+          description: Published (PR opened/updated) or pushed-only.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublishLocalPackageResult" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Config" }
+
   /api/studio/local-packages/{id}/import:
     parameters:
       - name: id
@@ -10827,6 +10880,21 @@ components:
             through task -> project defaults -> `supervised`. A blind-ship combo
             is refused `PRECONDITION` (409); a non-supervised resolved policy
             requires the `launchUnattended` action (403).
+        packageVersions:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [keep, adopt, cut_and_adopt]
+          description: |
+            (M39 Stream B, ADR-107 — Implemented) Per-package version-adopt decision
+            for the centralized Studio packages backing the task's flow. Keys are
+            `package_installs` ids (the project's currently-attached cut); each
+            value is `keep` (launch on the pin), `adopt` (advance the project
+            attachment to the package's newest cut), or `cut_and_adopt` (mint a
+            fresh cut from uncut Studio edits via the cut gate, then adopt).
+            Server-constrained to the launch-detected available-version set — an
+            unknown key or an option not offered for that package → `CONFLICT`
+            (409). Flow runs keep `runs.local_package_id` NULL.
     PostRunResponse:
       type: object
       required: [runId, status]
@@ -11447,6 +11515,47 @@ components:
         defaultTargetBranch: { type: string, nullable: true }
         deliveryPolicyDefault: { $ref: "#/components/schemas/DeliveryPolicy" }
         executionPolicyDefault: { $ref: "#/components/schemas/ExecutionPolicy" }
+        availablePackageVersions:
+          type: array
+          items: { $ref: "#/components/schemas/LaunchAvailablePackageVersion" }
+          description: |
+            (M39 Stream B, ADR-107 — Implemented) The project's attached centralized
+            packages that have a newer cut and/or uncut Studio edits — the launch
+            dialog's per-package keep/adopt/cut_and_adopt choices. Empty for
+            projects with no such packages.
+    LaunchAvailablePackageVersion:
+      type: object
+      required:
+        [
+          packageInstallId,
+          attachmentId,
+          packageName,
+          localPackageId,
+          localPackageName,
+          currentVersionLabel,
+          hasUncutEdits,
+          offeredOptions,
+        ]
+      properties:
+        packageInstallId:
+          type: string
+          description: "The currently-attached cut install (the pin) — the `packageVersions` map key for POST /api/runs."
+        attachmentId: { type: string }
+        packageName: { type: string }
+        localPackageId: { type: string }
+        localPackageName: { type: string }
+        currentVersionLabel: { type: string }
+        newerCutInstallId:
+          type: string
+          nullable: true
+          description: "The package's newest cut when it is newer than the pin."
+        newerVersionLabel: { type: string, nullable: true }
+        hasUncutEdits:
+          type: boolean
+          description: "The local package has committed edits beyond its newest cut."
+        offeredOptions:
+          type: array
+          items: { type: string, enum: [keep, adopt, cut_and_adopt] }
     ScratchLaunchOptionsResponse:
       type: object
       required:
@@ -13771,6 +13880,40 @@ components:
         installId: { type: string, description: "The immutable package_installs id the cut produced." }
         versionLabel: { type: string, description: "e.g. local-<digest12>." }
         attachmentId: { type: string, description: "Present only when attachToProjectId was supplied and the attach succeeded." }
+    PublishLocalPackageBody:
+      type: object
+      required: [targetSourceId, branchName]
+      properties:
+        targetSourceId: { type: string, minLength: 1, description: "(ADR-113 — Implemented) Id of a registered `package_sources` row to push to. Server-validated against the allow-list; a value not in the set → `CONFLICT` (409). A body-supplied raw URL is never accepted." }
+        branchName: { type: string, minLength: 1, maxLength: 255, description: "(ADR-113 — Implemented) Branch to push (prefilled stable `maister/<pkg-slug>`, editable). Validated at the git sink (`branchNameSchema`); invalid → `PRECONDITION` (409). Re-publish updates the same branch + PR." }
+    PublishLocalPackageResult:
+      type: object
+      required: [branch, pushed, crossRepo]
+      properties:
+        branch: { type: string, description: "The branch pushed to the target source." }
+        pushed: { type: boolean, description: "True when the push succeeded." }
+        prUrl: { type: string, nullable: true, description: "The opened/updated PR URL when a provider + host token were detected; null on the push-only fallback." }
+        compareUrl: { type: string, nullable: true, description: "Best-effort compare / create-PR URL for the push-only fallback (provider-specific); null when a PR was opened." }
+        crossRepo: { type: boolean, description: "True when the target source differs from the package's fork origin (`source_repo_url`) — surfaced as a UI warning." }
+    PublishLocalPackageOptions:
+      type: object
+      required: [sources, defaultBranch]
+      properties:
+        sources:
+          type: array
+          items:
+            type: object
+            required: [id, url]
+            properties:
+              id: { type: string }
+              url: { type: string }
+        preselectedSourceId:
+          type: string
+          nullable: true
+          description: "The registered source whose URL matches the package's fork origin (`source_repo_url`), preselected in the dialog."
+        defaultBranch:
+          type: string
+          description: "Prefilled stable `maister/<slug>` branch."
     ForkElementBody:
       type: object
       required: [elementPath, elementName]

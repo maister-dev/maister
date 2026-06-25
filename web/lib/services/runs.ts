@@ -24,6 +24,10 @@ import {
   type RunnerCatalogEntry,
 } from "@/lib/acp-runners/resolve";
 import { materializeProjectBundlesIntoWorktree } from "@/lib/capabilities/materialize-bundle";
+import {
+  applyPackageVersionChoices,
+  revertPackageVersionChoices,
+} from "@/lib/local-packages/versions";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { type AgentExecutionPolicyRecommendation } from "@/lib/db/schema";
@@ -177,6 +181,12 @@ export type LaunchRunInput = {
   triggerSource?: "manual" | "cron" | "domain_event" | "webhook" | "flow";
   triggerEventId?: number | null;
   triggerPayload?: Record<string, unknown> | null;
+  // M39 Stream B (ADR-107): per-package version-adopt choice for the project's
+  // attached centralized packages (key = the attached package_install id).
+  // Applied BEFORE the enablement check so adopt/cut_and_adopt take effect for
+  // this launch. Absent/keep = launch on the pin; server-constrained to the
+  // launch-detected available set (unknown/ineligible → CONFLICT).
+  packageVersions?: Record<string, "keep" | "adopt" | "cut_and_adopt">;
 };
 
 export type PromotionMode = "local_merge" | "rebase_merge" | "pull_request";
@@ -381,7 +391,7 @@ export async function* launchRunStaged(
     .select()
     .from(flows)
     .where(eq(flows.id, input.flowId ?? task.flowId));
-  const flow = flowRows[0];
+  let flow = flowRows[0];
 
   if (!flow) {
     throw new MaisterError("PRECONDITION", "flow not found for task");
@@ -393,651 +403,729 @@ export async function* launchRunStaged(
     );
   }
 
-  // Resolve the project-enabled package revision (M10, ADR-021) and refuse
-  // launch on a package that is not in an explicitly launchable state, or is
-  // untrusted/incompatible/missing-setup — BEFORE any workspace creation. The
-  // revision is server-derived from the enablement pointer, never
-  // body-controlled.
-  //
-  // Launchability is an explicit allow-list (LAUNCHABLE_ENABLEMENT_STATES):
-  // only `Enabled` and `UpdateAvailable` (which still has a live enabled
-  // revision) may launch. `Installed` is NOT launchable — a package installed
-  // from an untrusted source stays `Installed` after `/trust` and must be
-  // explicitly `/enable`d before it can run. This prevents trust alone from
-  // collapsing the trust+enable lifecycle into one launchable step.
-  if (!flow.enabledRevisionId) {
-    throw new MaisterError(
-      "PRECONDITION",
-      `flow "${flow.flowRefId}" has no enabled package revision`,
-    );
-  }
-  if (!LAUNCHABLE_ENABLEMENT_STATES.has(flow.enablementState)) {
-    throw new MaisterError(
-      "PRECONDITION",
-      `flow "${flow.flowRefId}" package is ${flow.enablementState}, not launchable (enable it first)`,
-    );
-  }
-  if (flow.trustStatus === "untrusted") {
-    throw new MaisterError(
-      "PRECONDITION",
-      `flow "${flow.flowRefId}" package is not trusted — confirm trust before launch`,
-    );
-  }
+  // M39 Stream B (ADR-107): gate the supervisor's readiness BEFORE advancing the
+  // project pin. The dominant transient failure (supervisor down/restarting) must
+  // not leave the shared pin silently advanced on a launch that cannot run; a full
+  // re-check with runner context still runs post-resolution below.
+  const preAdoptHealth = await checkSupervisorHealth();
 
-  // M27/T-B4: resolve the effective revision per flows.version_binding (ADR-069).
-  // `pinned` = the enabled pointer (unchanged behavior); `latest` = the newest
-  // Installed revision for this flow_ref_id (a just-published authored revision
-  // floats in via the bridge). The per-revision guards below still gate the
-  // RESOLVED revision (packageStatus/setupStatus/engine/schema).
-  const effectiveRevisionId =
-    (await resolveEffectiveFlowRevision(_db, flow)) ?? flow.enabledRevisionId;
-
-  const revisionRows = await _db
-    .select()
-    .from(flowRevisions)
-    .where(eq(flowRevisions.id, effectiveRevisionId));
-  const revision = revisionRows[0];
-
-  if (!revision) {
-    throw new MaisterError(
-      "PRECONDITION",
-      `enabled revision not found for flow "${flow.flowRefId}"`,
-    );
-  }
-  // Refuse a broken enabled pointer: a revision that was removed (or failed)
-  // out from under the enablement pointer must not reach runner startup
-  // (Codex finding #2 — concurrent removeRevision vs enable).
-  if (revision.packageStatus !== "Installed") {
-    throw new MaisterError(
-      "PRECONDITION",
-      `flow "${flow.flowRefId}" enabled revision is ${revision.packageStatus}, not Installed`,
-    );
-  }
-  if (revision.setupStatus === "pending" || revision.setupStatus === "failed") {
-    throw new MaisterError(
-      "PRECONDITION",
-      `flow "${flow.flowRefId}" package setup is ${revision.setupStatus}`,
-    );
-  }
-  if (!isSchemaVersionSupported(revision.schemaVersion)) {
-    throw new MaisterError(
-      "CONFIG",
-      `flow "${flow.flowRefId}" requires unsupported manifest schemaVersion ${revision.schemaVersion}`,
-    );
-  }
-  {
-    const compat = isEngineCompatible(
-      revision.engineMin ?? undefined,
-      revision.engineMax ?? undefined,
-    );
-
-    if (!compat.compatible) {
-      throw new MaisterError(
-        "CONFIG",
-        `flow "${flow.flowRefId}" is incompatible with this MAIster engine: ${compat.reason}`,
-      );
-    }
-  }
-
-  // ADR-091: launch-time host/runtime requirements (e.g. an external CLI the
-  // flow shells out to). Probed in the project repo BEFORE any worktree/session
-  // exists — a missing binary fails clean as PRECONDITION here, not late
-  // mid-run after token spend. Check-only: MAIster never auto-installs (trust);
-  // each requirement's `hint` carries the remediation. No-op when none declared.
-  await checkFlowRequirements(
-    (revision.manifest as FlowYamlV1).requirements,
-    project.repoPath,
-  );
-
-  const compiled = compileManifest(revision.manifest as FlowYamlV1);
-  const runtimeRows = await _db
-    .select()
-    .from(platformRuntimeSettings)
-    .where(eq(platformRuntimeSettings.id, "singleton"));
-  const platformRuntime = runtimeRows[0];
-
-  if (!platformRuntime) {
+  if (preAdoptHealth.kind === "unavailable") {
     throw new MaisterError(
       "EXECUTOR_UNAVAILABLE",
-      "platform default ACP runner is not configured",
+      `supervisor unavailable (${preAdoptHealth.reason}): ${preAdoptHealth.message}`,
     );
   }
 
-  const runnerRows = await _db.select().from(platformAcpRunners);
-  const sidecarRows = await _db.select().from(platformRouterSidecars);
-  const sidecarById = new Map<string, Record<string, any>>(
-    sidecarRows.map((row: Record<string, any>) => [row.id, row]),
-  );
-  const runnerCatalog = runnerRows.map((row: Record<string, any>) =>
-    runnerCatalogEntry(row, sidecarById),
-  );
-
-  const projectFlowDefaultRows = await _db
-    .select({ runnerId: projectFlowRunnerDefaults.runnerId })
-    .from(projectFlowRunnerDefaults)
-    .where(
-      and(
-        eq(projectFlowRunnerDefaults.projectId, project.id),
-        eq(projectFlowRunnerDefaults.flowId, flow.id),
-      ),
-    );
-  const projectFlowDefaultRunnerId =
-    projectFlowDefaultRows[0]?.runnerId ?? null;
-  const remapRows: FlowRunnerRemapRow[] = await _db
-    .select({
-      stepId: flowRunnerRemaps.stepId,
-      sourceRunnerId: flowRunnerRemaps.sourceRunnerId,
-      mappedRunnerId: flowRunnerRemaps.mappedRunnerId,
-      status: flowRunnerRemaps.status,
-    })
-    .from(flowRunnerRemaps)
-    .where(
-      and(
-        eq(flowRunnerRemaps.projectId, project.id),
-        eq(flowRunnerRemaps.flowRevisionId, revision.id),
-      ),
-    );
-  const stepTargetRunnerId = resolveCompiledStepTargetRunnerId({
-    compiled,
-    remaps: remapRows,
-    flowRefId: flow.flowRefId,
+  // M39 Stream B (ADR-107): apply the launcher's version-adopt choices for the
+  // project's attached centralized packages BEFORE the enablement check reads
+  // flow.enabled_revision_id — adopt/cut_and_adopt advance the project
+  // attachment (each its own tx), so this very launch uses the adopted cut.
+  // keep/absent = no-op; an unoffered choice → CONFLICT (409); a cut_and_adopt
+  // on a locked/invalid package → PRECONDITION (the launcher can still keep).
+  // `adoptReverts` re-pin the attachment if the launch fails after the adopt (see
+  // the worktree-compensation catch below). Flow runs keep
+  // runs.local_package_id NULL (no run override).
+  const adoptReverts = await applyPackageVersionChoices({
+    projectId: project.id,
+    projectSlug: project.slug,
+    workspaceRoot: project.repoPath,
+    choices: input.packageVersions,
+    db: _db as never,
+    signal: opts.signal,
   });
-  const runnerResolution = resolveRunner({
-    launchOverrideRunnerId: input.runnerId,
-    step: { runnerId: stepTargetRunnerId },
-    projectFlow: { defaultRunnerId: projectFlowDefaultRunnerId },
-    platformFlow: { defaultRunnerId: revision.defaultRunnerId },
-    project: { defaultRunnerId: project.defaultRunnerId },
-    platform: { defaultRunnerId: platformRuntime.defaultRunnerId },
-    runners: runnerCatalog,
-  });
-  const capabilityAgent = runnerResolution.capabilityAgent as CapabilityAgent;
 
-  const platformStatus = await checkSupervisorHealth();
+  // Hoisted above the outer try so the post-compensation tryStartRun / return
+  // block can still read it (the try opens right after the adopt).
+  const runId = randomUUID();
 
-  if (platformStatus.kind === "unavailable") {
-    log.warn(
-      {
-        taskId: task.id,
-        projectId: project.id,
-        runnerId: runnerResolution.runnerId,
-        runnerResolutionTier: runnerResolution.runnerResolutionTier,
-        reason: platformStatus.reason,
-        message: platformStatus.message,
-      },
-      "POST /api/runs supervisor readiness unavailable",
-    );
-    throw new MaisterError(
-      "EXECUTOR_UNAVAILABLE",
-      `supervisor unavailable (${platformStatus.reason}): ${platformStatus.message}`,
-    );
-  }
+  // ADR-107: adopt advanced the SHARED project pin. Everything below, up to the
+  // durable run-insert, is fallible — this outer try re-pins the attachment(s) on
+  // ANY failure (the dropped-flow refusal, a later precondition, addWorktree, the
+  // transaction). Its catch reads only pre-adopt vars (adoptReverts/project/_db),
+  // so they stay in scope; the nested try below compensates the worktree.
+  try {
+    if (adoptReverts.length > 0) {
+      const reloadedFlow = await _db
+        .select()
+        .from(flows)
+        .where(eq(flows.id, flow.id));
 
-  // M11c (ADR-032): static settings-enforcement gate. Refuse the launch
-  // BEFORE any worktree/run/workspace side-effect when any capability-bearing
-  // (ai_coding/judge) node in the pinned manifest declares a `strict`
-  // enforcement intent the resolved runner's agent cannot honor. The throw
-  // propagates to errorResponse → httpStatusForCode: CONFIG→400 (the build
-  // cannot enforce the class), EXECUTOR_UNAVAILABLE→503 (another agent could)
-  // — the FROZEN SPEC mapping (docs/system-analytics/flow-settings.md §launch
-  // -refusal). No worktree/run/workspace is created (we are before addWorktree).
-  {
-    // M13: active Flow-role registry (non-archived project_flow_roles).
-    const projectRoleRows = await _db
-      .select({ ref: projectFlowRoles.roleRef })
-      .from(projectFlowRoles)
-      .where(
-        and(
-          eq(projectFlowRoles.projectId, project.id),
-          isNull(projectFlowRoles.archivedAt),
-        ),
-      );
-    const activeFlowRoleRefs = new Set<string>(
-      projectRoleRows.map((r: { ref: string }) => r.ref),
-    );
-
-    const skippedFlowRoleValidation = activeFlowRoleRefs.size === 0;
-
-    assertCompiledFlowRolesLaunchable({
-      compiled,
-      activeRoleRefs: activeFlowRoleRefs,
-      flowRefId: flow.flowRefId,
-      projectSlug: project.slug,
-    });
-
-    // M14 carve-b: capability ref registry from the hydrated capability_records
-    // catalog (DB mirror; maister.yaml is NOT re-read). Only non-disabled rows
-    // count, so a CLEARed capability no longer resolves.
-    const capRecordRows: CapabilityRefRecord[] = await _db
-      .select({
-        capabilityRefId: capabilityRecords.capabilityRefId,
-        kind: capabilityRecords.kind,
-        source: capabilityRecords.source,
-      })
-      .from(capabilityRecords)
-      .where(
-        and(
-          eq(capabilityRecords.projectId, project.id),
-          isNull(capabilityRecords.disabledAt),
-        ),
-      );
-    const capabilityRefIds = capabilityRefIdSetsFromRecords(capRecordRows);
-
-    let configuredNodes = 0;
-    // M27/T-C8b: REQUIRED mcp refs (node settings.mcps.required ∪ package-level)
-    // gathered for the agent-support refusal after the loop.
-    const requiredMcpRefs = new Set<string>();
-
-    for (const node of compiled.nodes.values()) {
-      // M37 (ADR-098): an orchestrator inherits the ai_coding capability shape,
-      // so its mcps/skills/restrictions refs are validated AND its `enforcement`
-      // (e.g. strict mcps) is honored at launch exactly like ai_coding — without
-      // this arm the orchestrator additions to enforcement.ts were dead code and
-      // a strict orchestrator silently degraded to instructed.
-      if (
-        node.nodeType !== "ai_coding" &&
-        node.nodeType !== "judge" &&
-        node.nodeType !== "orchestrator"
-      ) {
-        continue;
-      }
-      configuredNodes += 1;
-
-      const settings = capabilityBearingSettings(node.nodeType, node.settings);
-
-      for (const ref of normalizeNodeMcps(settings?.mcps).required) {
-        requiredMcpRefs.add(ref);
-      }
-
-      // M14 carve-b: reject node settings.mcps/skills/restrictions/
-      // settingsProfile refs absent from the project capability registry.
-      const unknownCapability = firstUnknownCapabilityRef(
-        node.nodeType,
-        settings,
-        capabilityRefIds,
-      );
-
-      if (unknownCapability !== null) {
+      // The adopted cut may no longer ship this flow (upgradeAttachment drops
+      // member flows the new manifest removed). Refuse rather than launch on the
+      // stale, now-deleted flow row / its orphaned revision.
+      if (!reloadedFlow[0]) {
         throw new MaisterError(
-          "CONFIG",
-          `node "${node.id}" unknown ${unknownCapability.kind} capability ref "${unknownCapability.ref}" not registered for project ${project.slug}`,
+          "PRECONDITION",
+          `the adopted package version no longer ships flow "${flow.flowRefId}" — choose a different version or flow`,
         );
       }
+      flow = reloadedFlow[0];
+    }
 
-      assertNodeLaunchable(
-        { id: node.id, nodeType: node.nodeType, settings },
-        capabilityAgent,
+    // Resolve the project-enabled package revision (M10, ADR-021) and refuse
+    // launch on a package that is not in an explicitly launchable state, or is
+    // untrusted/incompatible/missing-setup — BEFORE any workspace creation. The
+    // revision is server-derived from the enablement pointer, never
+    // body-controlled.
+    //
+    // Launchability is an explicit allow-list (LAUNCHABLE_ENABLEMENT_STATES):
+    // only `Enabled` and `UpdateAvailable` (which still has a live enabled
+    // revision) may launch. `Installed` is NOT launchable — a package installed
+    // from an untrusted source stays `Installed` after `/trust` and must be
+    // explicitly `/enable`d before it can run. This prevents trust alone from
+    // collapsing the trust+enable lifecycle into one launchable step.
+    if (!flow.enabledRevisionId) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `flow "${flow.flowRefId}" has no enabled package revision`,
+      );
+    }
+    if (!LAUNCHABLE_ENABLEMENT_STATES.has(flow.enablementState)) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `flow "${flow.flowRefId}" package is ${flow.enablementState}, not launchable (enable it first)`,
+      );
+    }
+    if (flow.trustStatus === "untrusted") {
+      throw new MaisterError(
+        "PRECONDITION",
+        `flow "${flow.flowRefId}" package is not trusted — confirm trust before launch`,
       );
     }
 
-    // M27/T-C6 (C6-top, ADR-070): reject package-level required MCP refs
-    // (manifest top-level `mcps`) absent from the project registry — after the
-    // per-node M14 cap-ref check, before any side-effect. The
-    // known-but-unmaterializable required-MCP refusal is T-C8.
-    const unknownPackageMcp = firstUnknownPackageMcpRef(
-      (revision.manifest as FlowYamlV1).mcps,
-      capabilityRefIds.mcp,
-    );
+    // M27/T-B4: resolve the effective revision per flows.version_binding (ADR-069).
+    // `pinned` = the enabled pointer (unchanged behavior); `latest` = the newest
+    // Installed revision for this flow_ref_id (a just-published authored revision
+    // floats in via the bridge). The per-revision guards below still gate the
+    // RESOLVED revision (packageStatus/setupStatus/engine/schema).
+    const effectiveRevisionId =
+      (await resolveEffectiveFlowRevision(_db, flow)) ?? flow.enabledRevisionId;
 
-    if (unknownPackageMcp !== null) {
+    const revisionRows = await _db
+      .select()
+      .from(flowRevisions)
+      .where(eq(flowRevisions.id, effectiveRevisionId));
+    const revision = revisionRows[0];
+
+    if (!revision) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `enabled revision not found for flow "${flow.flowRefId}"`,
+      );
+    }
+    // Refuse a broken enabled pointer: a revision that was removed (or failed)
+    // out from under the enablement pointer must not reach runner startup
+    // (Codex finding #2 — concurrent removeRevision vs enable).
+    if (revision.packageStatus !== "Installed") {
+      throw new MaisterError(
+        "PRECONDITION",
+        `flow "${flow.flowRefId}" enabled revision is ${revision.packageStatus}, not Installed`,
+      );
+    }
+    if (
+      revision.setupStatus === "pending" ||
+      revision.setupStatus === "failed"
+    ) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `flow "${flow.flowRefId}" package setup is ${revision.setupStatus}`,
+      );
+    }
+    if (!isSchemaVersionSupported(revision.schemaVersion)) {
       throw new MaisterError(
         "CONFIG",
-        `flow "${flow.flowRefId}" declares unknown required mcp capability ref "${unknownPackageMcp}" not registered for project ${project.slug}`,
+        `flow "${flow.flowRefId}" requires unsupported manifest schemaVersion ${revision.schemaVersion}`,
+      );
+    }
+    {
+      const compat = isEngineCompatible(
+        revision.engineMin ?? undefined,
+        revision.engineMax ?? undefined,
+      );
+
+      if (!compat.compatible) {
+        throw new MaisterError(
+          "CONFIG",
+          `flow "${flow.flowRefId}" is incompatible with this MAIster engine: ${compat.reason}`,
+        );
+      }
+    }
+
+    // ADR-091: launch-time host/runtime requirements (e.g. an external CLI the
+    // flow shells out to). Probed in the project repo BEFORE any worktree/session
+    // exists — a missing binary fails clean as PRECONDITION here, not late
+    // mid-run after token spend. Check-only: MAIster never auto-installs (trust);
+    // each requirement's `hint` carries the remediation. No-op when none declared.
+    await checkFlowRequirements(
+      (revision.manifest as FlowYamlV1).requirements,
+      project.repoPath,
+    );
+
+    const compiled = compileManifest(revision.manifest as FlowYamlV1);
+    const runtimeRows = await _db
+      .select()
+      .from(platformRuntimeSettings)
+      .where(eq(platformRuntimeSettings.id, "singleton"));
+    const platformRuntime = runtimeRows[0];
+
+    if (!platformRuntime) {
+      throw new MaisterError(
+        "EXECUTOR_UNAVAILABLE",
+        "platform default ACP runner is not configured",
       );
     }
 
-    for (const ref of (revision.manifest as FlowYamlV1).mcps ?? []) {
-      requiredMcpRefs.add(ref);
+    const runnerRows = await _db.select().from(platformAcpRunners);
+    const sidecarRows = await _db.select().from(platformRouterSidecars);
+    const sidecarById = new Map<string, Record<string, any>>(
+      sidecarRows.map((row: Record<string, any>) => [row.id, row]),
+    );
+    const runnerCatalog = runnerRows.map((row: Record<string, any>) =>
+      runnerCatalogEntry(row, sidecarById),
+    );
+
+    const projectFlowDefaultRows = await _db
+      .select({ runnerId: projectFlowRunnerDefaults.runnerId })
+      .from(projectFlowRunnerDefaults)
+      .where(
+        and(
+          eq(projectFlowRunnerDefaults.projectId, project.id),
+          eq(projectFlowRunnerDefaults.flowId, flow.id),
+        ),
+      );
+    const projectFlowDefaultRunnerId =
+      projectFlowDefaultRows[0]?.runnerId ?? null;
+    const remapRows: FlowRunnerRemapRow[] = await _db
+      .select({
+        stepId: flowRunnerRemaps.stepId,
+        sourceRunnerId: flowRunnerRemaps.sourceRunnerId,
+        mappedRunnerId: flowRunnerRemaps.mappedRunnerId,
+        status: flowRunnerRemaps.status,
+      })
+      .from(flowRunnerRemaps)
+      .where(
+        and(
+          eq(flowRunnerRemaps.projectId, project.id),
+          eq(flowRunnerRemaps.flowRevisionId, revision.id),
+        ),
+      );
+    const stepTargetRunnerId = resolveCompiledStepTargetRunnerId({
+      compiled,
+      remaps: remapRows,
+      flowRefId: flow.flowRefId,
+    });
+    const runnerResolution = resolveRunner({
+      launchOverrideRunnerId: input.runnerId,
+      step: { runnerId: stepTargetRunnerId },
+      projectFlow: { defaultRunnerId: projectFlowDefaultRunnerId },
+      platformFlow: { defaultRunnerId: revision.defaultRunnerId },
+      project: { defaultRunnerId: project.defaultRunnerId },
+      platform: { defaultRunnerId: platformRuntime.defaultRunnerId },
+      runners: runnerCatalog,
+    });
+    const capabilityAgent = runnerResolution.capabilityAgent as CapabilityAgent;
+
+    const platformStatus = await checkSupervisorHealth();
+
+    if (platformStatus.kind === "unavailable") {
+      log.warn(
+        {
+          taskId: task.id,
+          projectId: project.id,
+          runnerId: runnerResolution.runnerId,
+          runnerResolutionTier: runnerResolution.runnerResolutionTier,
+          reason: platformStatus.reason,
+          message: platformStatus.message,
+        },
+        "POST /api/runs supervisor readiness unavailable",
+      );
+      throw new MaisterError(
+        "EXECUTOR_UNAVAILABLE",
+        `supervisor unavailable (${platformStatus.reason}): ${platformStatus.message}`,
+      );
     }
 
-    // M27/T-C8b (mcp-management §6.2, bullet 6): a REQUIRED mcp whose resolved
-    // winner record does not support the executor agent cannot materialize →
-    // refuse launch (EXECUTOR_UNAVAILABLE → 503), before any side-effect.
-    // ADDITIONAL mcps degrade gracefully at materialization (non-fatal).
-    if (requiredMcpRefs.size > 0) {
-      const mcpAgentRows = await _db
+    // M11c (ADR-032): static settings-enforcement gate. Refuse the launch
+    // BEFORE any worktree/run/workspace side-effect when any capability-bearing
+    // (ai_coding/judge) node in the pinned manifest declares a `strict`
+    // enforcement intent the resolved runner's agent cannot honor. The throw
+    // propagates to errorResponse → httpStatusForCode: CONFIG→400 (the build
+    // cannot enforce the class), EXECUTOR_UNAVAILABLE→503 (another agent could)
+    // — the FROZEN SPEC mapping (docs/system-analytics/flow-settings.md §launch
+    // -refusal). No worktree/run/workspace is created (we are before addWorktree).
+    {
+      // M13: active Flow-role registry (non-archived project_flow_roles).
+      const projectRoleRows = await _db
+        .select({ ref: projectFlowRoles.roleRef })
+        .from(projectFlowRoles)
+        .where(
+          and(
+            eq(projectFlowRoles.projectId, project.id),
+            isNull(projectFlowRoles.archivedAt),
+          ),
+        );
+      const activeFlowRoleRefs = new Set<string>(
+        projectRoleRows.map((r: { ref: string }) => r.ref),
+      );
+
+      const skippedFlowRoleValidation = activeFlowRoleRefs.size === 0;
+
+      assertCompiledFlowRolesLaunchable({
+        compiled,
+        activeRoleRefs: activeFlowRoleRefs,
+        flowRefId: flow.flowRefId,
+        projectSlug: project.slug,
+      });
+
+      // M14 carve-b: capability ref registry from the hydrated capability_records
+      // catalog (DB mirror; maister.yaml is NOT re-read). Only non-disabled rows
+      // count, so a CLEARed capability no longer resolves.
+      const capRecordRows: CapabilityRefRecord[] = await _db
         .select({
           capabilityRefId: capabilityRecords.capabilityRefId,
+          kind: capabilityRecords.kind,
           source: capabilityRecords.source,
-          agents: capabilityRecords.agents,
         })
         .from(capabilityRecords)
         .where(
           and(
             eq(capabilityRecords.projectId, project.id),
-            eq(capabilityRecords.kind, "mcp"),
             isNull(capabilityRecords.disabledAt),
           ),
         );
+      const capabilityRefIds = capabilityRefIdSetsFromRecords(capRecordRows);
 
-      const unsupportedMcp = firstAgentUnsupportedRequiredMcp(
-        [...requiredMcpRefs],
-        mcpAgentRows,
-        capabilityAgent,
-      );
+      let configuredNodes = 0;
+      // M27/T-C8b: REQUIRED mcp refs (node settings.mcps.required ∪ package-level)
+      // gathered for the agent-support refusal after the loop.
+      const requiredMcpRefs = new Set<string>();
 
-      if (unsupportedMcp !== null) {
-        throw new MaisterError(
-          "EXECUTOR_UNAVAILABLE",
-          `required mcp "${unsupportedMcp}" cannot materialize for executor agent ${capabilityAgent} in project ${project.slug}`,
+      for (const node of compiled.nodes.values()) {
+        // M37 (ADR-098): an orchestrator inherits the ai_coding capability shape,
+        // so its mcps/skills/restrictions refs are validated AND its `enforcement`
+        // (e.g. strict mcps) is honored at launch exactly like ai_coding — without
+        // this arm the orchestrator additions to enforcement.ts were dead code and
+        // a strict orchestrator silently degraded to instructed.
+        if (
+          node.nodeType !== "ai_coding" &&
+          node.nodeType !== "judge" &&
+          node.nodeType !== "orchestrator"
+        ) {
+          continue;
+        }
+        configuredNodes += 1;
+
+        const settings = capabilityBearingSettings(
+          node.nodeType,
+          node.settings,
+        );
+
+        for (const ref of normalizeNodeMcps(settings?.mcps).required) {
+          requiredMcpRefs.add(ref);
+        }
+
+        // M14 carve-b: reject node settings.mcps/skills/restrictions/
+        // settingsProfile refs absent from the project capability registry.
+        const unknownCapability = firstUnknownCapabilityRef(
+          node.nodeType,
+          settings,
+          capabilityRefIds,
+        );
+
+        if (unknownCapability !== null) {
+          throw new MaisterError(
+            "CONFIG",
+            `node "${node.id}" unknown ${unknownCapability.kind} capability ref "${unknownCapability.ref}" not registered for project ${project.slug}`,
+          );
+        }
+
+        assertNodeLaunchable(
+          { id: node.id, nodeType: node.nodeType, settings },
+          capabilityAgent,
         );
       }
+
+      // M27/T-C6 (C6-top, ADR-070): reject package-level required MCP refs
+      // (manifest top-level `mcps`) absent from the project registry — after the
+      // per-node M14 cap-ref check, before any side-effect. The
+      // known-but-unmaterializable required-MCP refusal is T-C8.
+      const unknownPackageMcp = firstUnknownPackageMcpRef(
+        (revision.manifest as FlowYamlV1).mcps,
+        capabilityRefIds.mcp,
+      );
+
+      if (unknownPackageMcp !== null) {
+        throw new MaisterError(
+          "CONFIG",
+          `flow "${flow.flowRefId}" declares unknown required mcp capability ref "${unknownPackageMcp}" not registered for project ${project.slug}`,
+        );
+      }
+
+      for (const ref of (revision.manifest as FlowYamlV1).mcps ?? []) {
+        requiredMcpRefs.add(ref);
+      }
+
+      // M27/T-C8b (mcp-management §6.2, bullet 6): a REQUIRED mcp whose resolved
+      // winner record does not support the executor agent cannot materialize →
+      // refuse launch (EXECUTOR_UNAVAILABLE → 503), before any side-effect.
+      // ADDITIONAL mcps degrade gracefully at materialization (non-fatal).
+      if (requiredMcpRefs.size > 0) {
+        const mcpAgentRows = await _db
+          .select({
+            capabilityRefId: capabilityRecords.capabilityRefId,
+            source: capabilityRecords.source,
+            agents: capabilityRecords.agents,
+          })
+          .from(capabilityRecords)
+          .where(
+            and(
+              eq(capabilityRecords.projectId, project.id),
+              eq(capabilityRecords.kind, "mcp"),
+              isNull(capabilityRecords.disabledAt),
+            ),
+          );
+
+        const unsupportedMcp = firstAgentUnsupportedRequiredMcp(
+          [...requiredMcpRefs],
+          mcpAgentRows,
+          capabilityAgent,
+        );
+
+        if (unsupportedMcp !== null) {
+          throw new MaisterError(
+            "EXECUTOR_UNAVAILABLE",
+            `required mcp "${unsupportedMcp}" cannot materialize for executor agent ${capabilityAgent} in project ${project.slug}`,
+          );
+        }
+      }
+
+      log.info(
+        {
+          taskId: task.id,
+          flowRefId: flow.flowRefId,
+          runnerId: runnerResolution.runnerId,
+          runnerResolutionTier: runnerResolution.runnerResolutionTier,
+          capabilityAgent,
+          capabilityNodes: configuredNodes,
+          platformRunners: runnerCatalog.length,
+          projectFlowRoles: activeFlowRoleRefs.size,
+          skippedFlowRoleValidation,
+        },
+        skippedFlowRoleValidation
+          ? "[FIX:M13] POST /api/runs settings-enforcement gate passed with empty Flow role registry"
+          : "POST /api/runs settings-enforcement gate passed",
+      );
     }
+
+    const newAttempt = task.attemptNumber + 1;
+    const branch = `${project.branchPrefix}task-${task.id}/attempt-${newAttempt}`;
+    const worktreeRoot = worktreesRoot();
+    const worktreePath = path.join(worktreeRoot, project.slug, runId);
+
+    // M18 §3.1: branch targeting. Saved task defaults sit between launch input
+    // and project defaults; target defaults to the resolved base. Both resolved
+    // refs are validated against the project's real branch set (server-state
+    // allow-list) BEFORE any git side-effect — an unknown branch is a
+    // PRECONDITION refusal and no worktree is created.
+    const base =
+      input.baseBranch ??
+      (task.baseBranch as string | null) ??
+      project.mainBranch;
+    const target =
+      input.targetBranch ??
+      input.deliveryPolicy?.targetBranch ??
+      (task.targetBranch as string | null) ??
+      base;
+    const deliveryPolicy = resolveDeliveryPolicy({
+      projectDefault:
+        project.deliveryPolicyDefault as StoredDeliveryPolicy | null,
+      projectPromotionMode: project.promotionMode,
+      projectMainBranch: project.mainBranch,
+      launchOverride: {
+        ...input.deliveryPolicy,
+        targetBranch: target,
+      },
+    });
+
+    // Refresh origin (read-only: updates remote-tracking refs, never the working
+    // tree) so the branch allow-list and the base commit reflect the freshest
+    // remote state. Best-effort — offline / no origin is advisory, the launch
+    // continues from whatever refs exist locally.
+    try {
+      const remotes = await listProjectRemotes(project.repoPath);
+
+      if (remotes.some((r) => r.name === "origin")) {
+        await fetchProjectRemote({
+          project: { id: project.id, repoPath: project.repoPath },
+          name: "origin",
+        });
+      }
+    } catch (err) {
+      log.warn(
+        { taskId: task.id, err: (err as Error).message },
+        "pre-launch origin fetch failed (advisory)",
+      );
+    }
+
+    const knownBranches = new Set(
+      await listBranches(project.repoPath, { includeRemotes: true }),
+    );
+
+    if (!knownBranches.has(base)) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `base branch "${base}" does not exist in ${project.slug}`,
+      );
+    }
+    if (!knownBranches.has(target)) {
+      throw new MaisterError(
+        "PRECONDITION",
+        `target branch "${target}" does not exist in ${project.slug}`,
+      );
+    }
+
+    const baseCommit = await resolveBaseCommit({
+      projectRepoPath: project.repoPath,
+      baseRef: base,
+      // Fork from origin/<base> when present (just fetched) so runs start from
+      // the freshest remote state, not a stale local checkout; falls back to the
+      // local <base>.
+      preferRemote: "origin",
+    });
+    const promotionMode: PromotionMode =
+      deliveryPolicy.strategy === "ai_rebase_merge"
+        ? "rebase_merge"
+        : legacyPromotionModeFromStrategy(deliveryPolicy.strategy);
 
     log.info(
       {
         taskId: task.id,
-        flowRefId: flow.flowRefId,
+        runId,
+        createdByUserId: ctx.actorUserId,
         runnerId: runnerResolution.runnerId,
         runnerResolutionTier: runnerResolution.runnerResolutionTier,
         capabilityAgent,
-        capabilityNodes: configuredNodes,
-        platformRunners: runnerCatalog.length,
-        projectFlowRoles: activeFlowRoleRefs.size,
-        skippedFlowRoleValidation,
+        branch,
+        worktreePath,
       },
-      skippedFlowRoleValidation
-        ? "[FIX:M13] POST /api/runs settings-enforcement gate passed with empty Flow role registry"
-        : "POST /api/runs settings-enforcement gate passed",
+      "POST /api/runs preconditions ok",
     );
-  }
-
-  const newAttempt = task.attemptNumber + 1;
-  const branch = `${project.branchPrefix}task-${task.id}/attempt-${newAttempt}`;
-  const worktreeRoot = worktreesRoot();
-  const runId = randomUUID();
-  const worktreePath = path.join(worktreeRoot, project.slug, runId);
-
-  // M18 §3.1: branch targeting. Saved task defaults sit between launch input
-  // and project defaults; target defaults to the resolved base. Both resolved
-  // refs are validated against the project's real branch set (server-state
-  // allow-list) BEFORE any git side-effect — an unknown branch is a
-  // PRECONDITION refusal and no worktree is created.
-  const base =
-    input.baseBranch ??
-    (task.baseBranch as string | null) ??
-    project.mainBranch;
-  const target =
-    input.targetBranch ??
-    input.deliveryPolicy?.targetBranch ??
-    (task.targetBranch as string | null) ??
-    base;
-  const deliveryPolicy = resolveDeliveryPolicy({
-    projectDefault:
-      project.deliveryPolicyDefault as StoredDeliveryPolicy | null,
-    projectPromotionMode: project.promotionMode,
-    projectMainBranch: project.mainBranch,
-    launchOverride: {
-      ...input.deliveryPolicy,
-      targetBranch: target,
-    },
-  });
-
-  // Refresh origin (read-only: updates remote-tracking refs, never the working
-  // tree) so the branch allow-list and the base commit reflect the freshest
-  // remote state. Best-effort — offline / no origin is advisory, the launch
-  // continues from whatever refs exist locally.
-  try {
-    const remotes = await listProjectRemotes(project.repoPath);
-
-    if (remotes.some((r) => r.name === "origin")) {
-      await fetchProjectRemote({
-        project: { id: project.id, repoPath: project.repoPath },
-        name: "origin",
-      });
-    }
-  } catch (err) {
-    log.warn(
-      { taskId: task.id, err: (err as Error).message },
-      "pre-launch origin fetch failed (advisory)",
+    log.debug(
+      { runId, base, target, baseCommit, promotionMode, deliveryPolicy },
+      "POST /api/runs branch targeting resolved",
     );
-  }
 
-  const knownBranches = new Set(
-    await listBranches(project.repoPath, { includeRemotes: true }),
-  );
+    // Every precondition has passed; the route turns this first yield into the
+    // signal to start streaming (a throw above here is still a JSON error).
+    yield launchProgress("precondition");
 
-  if (!knownBranches.has(base)) {
-    throw new MaisterError(
-      "PRECONDITION",
-      `base branch "${base}" does not exist in ${project.slug}`,
-    );
-  }
-  if (!knownBranches.has(target)) {
-    throw new MaisterError(
-      "PRECONDITION",
-      `target branch "${target}" does not exist in ${project.slug}`,
-    );
-  }
-
-  const baseCommit = await resolveBaseCommit({
-    projectRepoPath: project.repoPath,
-    baseRef: base,
-    // Fork from origin/<base> when present (just fetched) so runs start from
-    // the freshest remote state, not a stale local checkout; falls back to the
-    // local <base>.
-    preferRemote: "origin",
-  });
-  const promotionMode: PromotionMode =
-    deliveryPolicy.strategy === "ai_rebase_merge"
-      ? "rebase_merge"
-      : legacyPromotionModeFromStrategy(deliveryPolicy.strategy);
-
-  log.info(
-    {
-      taskId: task.id,
-      runId,
-      createdByUserId: ctx.actorUserId,
-      runnerId: runnerResolution.runnerId,
-      runnerResolutionTier: runnerResolution.runnerResolutionTier,
-      capabilityAgent,
+    // Create the worktree BEFORE the DB transaction so a git failure
+    // (branch already exists, dirty parent repo, missing path) does
+    // NOT leave the task stuck in InFlight with an orphan run/workspace
+    // row. The task stays in Backlog and is launchable again. The worktree
+    // forks from the resolved base commit (M18 startPoint), not parent HEAD.
+    await addWorktree({
+      projectRepoPath: project.repoPath,
       branch,
       worktreePath,
-    },
-    "POST /api/runs preconditions ok",
-  );
-  log.debug(
-    { runId, base, target, baseCommit, promotionMode, deliveryPolicy },
-    "POST /api/runs branch targeting resolved",
-  );
-
-  // Every precondition has passed; the route turns this first yield into the
-  // signal to start streaming (a throw above here is still a JSON error).
-  yield launchProgress("precondition");
-
-  // Create the worktree BEFORE the DB transaction so a git failure
-  // (branch already exists, dirty parent repo, missing path) does
-  // NOT leave the task stuck in InFlight with an orphan run/workspace
-  // row. The task stays in Backlog and is launchable again. The worktree
-  // forks from the resolved base commit (M18 startPoint), not parent HEAD.
-  await addWorktree({
-    projectRepoPath: project.repoPath,
-    branch,
-    worktreePath,
-    startPoint: baseCommit,
-  });
-  yield launchProgress("worktree_created");
-
-  // M27/T-C8 (§7.1.8): freeze the resolved capability set onto the run so an
-  // edit/publish mid-run cannot mutate it. flowOrigin: authored installs use a
-  // local filesystem source (the bridge temp dir); git installs use a remote ref.
-  const snapshotRecords = (await _db
-    .select({
-      capabilityRefId: capabilityRecords.capabilityRefId,
-      kind: capabilityRecords.kind,
-      source: capabilityRecords.source,
-      revision: capabilityRecords.revision,
-    })
-    .from(capabilityRecords)
-    .where(
-      and(
-        eq(capabilityRecords.projectId, project.id),
-        isNull(capabilityRecords.disabledAt),
-      ),
-    )) as Array<{
-    capabilityRefId: string;
-    kind: string;
-    source: string;
-    revision: string | null;
-  }>;
-  const resolvedCapabilitySet = buildResolvedCapabilitySet({
-    records: snapshotRecords,
-    flowRevisionId: revision.id,
-    flowOrigin: revision.source?.startsWith("/") ? "authored" : "git",
-  });
-
-  log.debug(
-    {
-      runId,
-      flowRevisionId: revision.id,
-      flowOrigin: resolvedCapabilitySet.flowOrigin,
-      capabilityCount: resolvedCapabilitySet.capabilities.length,
-      mcpCount: resolvedCapabilitySet.mcps.length,
-    },
-    "[service.runs] resolved capability set snapshot built",
-  );
-
-  try {
-    // Cancel here (pre-commit) compensates the worktree via this catch.
-    opts.signal?.throwIfAborted();
-    yield launchProgress("materializing", capabilityAgent);
-    // Deliver AIF capability bundles into the fresh worktree's .claude/ and
-    // write the per-run .ai-factory/config.yaml git-ownership override. Gated
-    // on >=1 Installed import so non-AIF projects never get a stray config.
-    // A failure here lands in the catch below → worktree compensation + abort.
-    // Extracted to a reusable helper (ADR-079 §4) — fresh-attempt rewinds and
-    // the ADR-082 dirty discard re-run it after `git clean -fd`.
-    const { bundles } = await materializeProjectBundlesIntoWorktree({
-      projectId: project.id,
-      worktreePath,
-      baseBranch: base,
-      db: _db,
+      startPoint: baseCommit,
     });
+    yield launchProgress("worktree_created");
 
-    if (bundles > 0) {
-      log.info(
-        { runId, worktreePath, bundles, baseBranch: base },
-        "[capabilities] materialized capability bundles + AIF config override into worktree",
-      );
-    }
-
-    await _db.transaction(async (tx: any) => {
-      // `runs` first: `workspaces.run_id` is a non-deferrable FK to `runs.id`,
-      // so the workspace insert would violate it if it ran first.
-      const insertedRun = await tx
-        .insert(runs)
-        .values({
-          id: runId,
-          taskId: task.id,
-          projectId: project.id,
-          flowId: flow.id,
-          runnerId: runnerResolution.runnerId,
-          runnerResolutionTier: runnerResolution.runnerResolutionTier,
-          capabilityAgent,
-          runnerSnapshot: runnerResolution.runnerSnapshot,
-          resolvedCapabilitySet,
-          deliveryPolicySnapshot: deliveryPolicy,
-          executionPolicy,
-          // M39 (ADR-106): the driving agent of an agent-driven flow run (null for
-          // a normal board launch). The graph runner reads it to inject the
-          // agent's persona on every ai_coding node.
-          agentId: input.agentId ?? null,
-          // M39 (ADR-106): trigger provenance for an agent-driven flow run. The
-          // partial unique (agent_id, trigger_event_id) index is the race backstop
-          // for a CONCURRENT redelivery (the sequential one is caught by
-          // launchAgentRun's pre-check); onConflictDoNothing turns the loser into a
-          // clean CONFLICT (the catch below compensates the worktree) instead of a
-          // raw 23505. A board launch carries no trigger_event_id ⇒ never conflicts.
-          triggerSource: input.triggerSource ?? null,
-          triggerEventId: input.triggerEventId ?? null,
-          triggerPayload: input.triggerPayload ?? null,
-          createdByUserId: ctx.actorUserId,
-          status: "Pending",
-          // Snapshot the enabled revision (M10, ADR-021). flow_revision_id is
-          // the authoritative pin the runner resolves the manifest + bundle
-          // path from; the version/SHA text columns remain for display and the
-          // legacy fallback. A later upgrade/rollback changes the project's
-          // enabled revision but this run stays pinned to what it launched with.
-          flowVersion: revision.versionLabel,
-          flowRevision: revision.resolvedRevision,
-          flowRevisionId: revision.id,
+    // The worktree now exists; this nested try compensates it (removeWorktree) on any
+    // failure through the run-insert. The pin is compensated by the outer catch.
+    try {
+      // M27/T-C8 (§7.1.8): freeze the resolved capability set onto the run so an
+      // edit/publish mid-run cannot mutate it. flowOrigin: authored installs use a
+      // local filesystem source (the bridge temp dir); git installs use a remote ref.
+      const snapshotRecords = (await _db
+        .select({
+          capabilityRefId: capabilityRecords.capabilityRefId,
+          kind: capabilityRecords.kind,
+          source: capabilityRecords.source,
+          revision: capabilityRecords.revision,
         })
-        .onConflictDoNothing()
-        .returning({ id: runs.id });
+        .from(capabilityRecords)
+        .where(
+          and(
+            eq(capabilityRecords.projectId, project.id),
+            isNull(capabilityRecords.disabledAt),
+          ),
+        )) as Array<{
+        capabilityRefId: string;
+        kind: string;
+        source: string;
+        revision: string | null;
+      }>;
+      const resolvedCapabilitySet = buildResolvedCapabilitySet({
+        records: snapshotRecords,
+        flowRevisionId: revision.id,
+        flowOrigin: revision.source?.startsWith("/") ? "authored" : "git",
+      });
 
-      // A concurrent redelivery lost the (agent_id, trigger_event_id) claim — the
-      // run already exists. Surface a typed CONFLICT (the catch compensates the
-      // worktree); never a raw 23505 → 500. Board launches never reach here.
-      if (insertedRun.length === 0) {
-        throw new MaisterError(
-          "CONFLICT",
-          `trigger event ${input.triggerEventId} already claimed for agent ${input.agentId}`,
+      log.debug(
+        {
+          runId,
+          flowRevisionId: revision.id,
+          flowOrigin: resolvedCapabilitySet.flowOrigin,
+          capabilityCount: resolvedCapabilitySet.capabilities.length,
+          mcpCount: resolvedCapabilitySet.mcps.length,
+        },
+        "[service.runs] resolved capability set snapshot built",
+      );
+
+      // Cancel here (pre-commit) compensates the worktree via the inner catch.
+      opts.signal?.throwIfAborted();
+      yield launchProgress("materializing", capabilityAgent);
+      // Deliver AIF capability bundles into the fresh worktree's .claude/ and
+      // write the per-run .ai-factory/config.yaml git-ownership override. Gated
+      // on >=1 Installed import so non-AIF projects never get a stray config.
+      // A failure here lands in the catch below → worktree compensation + abort.
+      // Extracted to a reusable helper (ADR-079 §4) — fresh-attempt rewinds and
+      // the ADR-082 dirty discard re-run it after `git clean -fd`.
+      const { bundles } = await materializeProjectBundlesIntoWorktree({
+        projectId: project.id,
+        worktreePath,
+        baseBranch: base,
+        db: _db,
+      });
+
+      if (bundles > 0) {
+        log.info(
+          { runId, worktreePath, bundles, baseBranch: base },
+          "[capabilities] materialized capability bundles + AIF config override into worktree",
         );
       }
 
-      if (requiresLaunchUnattended(executionPolicy)) {
-        logExecPolicyAction({
+      await _db.transaction(async (tx: any) => {
+        // `runs` first: `workspaces.run_id` is a non-deferrable FK to `runs.id`,
+        // so the workspace insert would violate it if it ran first.
+        const insertedRun = await tx
+          .insert(runs)
+          .values({
+            id: runId,
+            taskId: task.id,
+            projectId: project.id,
+            flowId: flow.id,
+            runnerId: runnerResolution.runnerId,
+            runnerResolutionTier: runnerResolution.runnerResolutionTier,
+            capabilityAgent,
+            runnerSnapshot: runnerResolution.runnerSnapshot,
+            resolvedCapabilitySet,
+            deliveryPolicySnapshot: deliveryPolicy,
+            executionPolicy,
+            // M39 (ADR-106): the driving agent of an agent-driven flow run (null for
+            // a normal board launch). The graph runner reads it to inject the
+            // agent's persona on every ai_coding node.
+            agentId: input.agentId ?? null,
+            // M39 (ADR-106): trigger provenance for an agent-driven flow run. The
+            // partial unique (agent_id, trigger_event_id) index is the race backstop
+            // for a CONCURRENT redelivery (the sequential one is caught by
+            // launchAgentRun's pre-check); onConflictDoNothing turns the loser into a
+            // clean CONFLICT (the catch below compensates the worktree) instead of a
+            // raw 23505. A board launch carries no trigger_event_id ⇒ never conflicts.
+            triggerSource: input.triggerSource ?? null,
+            triggerEventId: input.triggerEventId ?? null,
+            triggerPayload: input.triggerPayload ?? null,
+            createdByUserId: ctx.actorUserId,
+            status: "Pending",
+            // Snapshot the enabled revision (M10, ADR-021). flow_revision_id is
+            // the authoritative pin the runner resolves the manifest + bundle
+            // path from; the version/SHA text columns remain for display and the
+            // legacy fallback. A later upgrade/rollback changes the project's
+            // enabled revision but this run stays pinned to what it launched with.
+            flowVersion: revision.versionLabel,
+            flowRevision: revision.resolvedRevision,
+            flowRevisionId: revision.id,
+          })
+          .onConflictDoNothing()
+          .returning({ id: runs.id });
+
+        // A concurrent redelivery lost the (agent_id, trigger_event_id) claim — the
+        // run already exists. Surface a typed CONFLICT (the catch compensates the
+        // worktree); never a raw 23505 → 500. Board launches never reach here.
+        if (insertedRun.length === 0) {
+          throw new MaisterError(
+            "CONFLICT",
+            `trigger event ${input.triggerEventId} already claimed for agent ${input.agentId}`,
+          );
+        }
+
+        if (requiresLaunchUnattended(executionPolicy)) {
+          logExecPolicyAction({
+            runId,
+            kind: "launched",
+            detail: {
+              preset: executionPolicy.preset,
+              overrides: executionPolicy.overrides ?? {},
+            },
+          });
+        }
+
+        await tx.insert(workspaces).values({
+          id: randomUUID(),
           runId,
-          kind: "launched",
-          detail: {
-            preset: executionPolicy.preset,
-            overrides: executionPolicy.overrides ?? {},
-          },
+          projectId: project.id,
+          branch,
+          worktreePath,
+          parentRepoPath: project.repoPath,
+          baseBranch: base,
+          baseCommit,
+          targetBranch: target,
+          promotionMode,
         });
-      }
+        await tx
+          .update(tasks)
+          .set({
+            status: "InFlight",
+            attemptNumber: newAttempt,
+            updatedAt: new Date(),
+          })
+          .where(eq(tasks.id, task.id));
 
-      await tx.insert(workspaces).values({
-        id: randomUUID(),
-        runId,
-        projectId: project.id,
-        branch,
+        // ADR-078 D7: run_launched is the activity for the only real
+        // task-status transition (the launch flip), written in the same tx.
+        // Scheduler fires pass actorUserId: null ⇒ system actor.
+        await recordTaskActivity(tx, {
+          taskId: task.id,
+          projectId: project.id,
+          actor: actorForUserId(ctx.actorUserId),
+          eventKind: "run_launched",
+          payload: { runId, attemptNumber: newAttempt },
+        });
+
+        await ctx.recordSuccessAudit?.(tx);
+      });
+    } catch (err) {
+      // Inner: a failure after the worktree was created. Remove the orphan worktree
+      // so the next launch can recreate the same branch+path without a PRECONDITION
+      // "already exists". The pin is re-pinned by the outer catch on rethrow.
+      log.warn(
+        { runId, err: (err as Error).message },
+        "launch setup failed after addWorktree — removing worktree",
+      );
+      await removeWorktree({
+        projectRepoPath: project.repoPath,
         worktreePath,
-        parentRepoPath: project.repoPath,
-        baseBranch: base,
-        baseCommit,
-        targetBranch: target,
-        promotionMode,
-      });
-      await tx
-        .update(tasks)
-        .set({
-          status: "InFlight",
-          attemptNumber: newAttempt,
-          updatedAt: new Date(),
-        })
-        .where(eq(tasks.id, task.id));
-
-      // ADR-078 D7: run_launched is the activity for the only real
-      // task-status transition (the launch flip), written in the same tx.
-      // Scheduler fires pass actorUserId: null ⇒ system actor.
-      await recordTaskActivity(tx, {
-        taskId: task.id,
-        projectId: project.id,
-        actor: actorForUserId(ctx.actorUserId),
-        eventKind: "run_launched",
-        payload: { runId, attemptNumber: newAttempt },
-      });
-
-      await ctx.recordSuccessAudit?.(tx);
-    });
+        force: true,
+      }).catch((rmErr) =>
+        log.error(
+          { rmErr: (rmErr as Error).message, worktreePath },
+          "compensating removeWorktree failed (manual cleanup may be required)",
+        ),
+      );
+      throw err;
+    }
   } catch (err) {
-    // DB transaction rolled back. Compensate: remove the orphan worktree
-    // so the next launch can recreate the same branch+path without a
-    // PRECONDITION "already exists" failure.
-    log.warn(
-      { runId, err: (err as Error).message },
-      "launch setup failed after addWorktree — removing worktree",
-    );
-    await removeWorktree({
-      projectRepoPath: project.repoPath,
-      worktreePath,
-      force: true,
-    }).catch((rmErr) =>
-      log.error(
-        { rmErr: (rmErr as Error).message, worktreePath },
-        "compensating removeWorktree failed (manual cleanup may be required)",
-      ),
-    );
+    // Outer (ADR-107): any failure after the adopt re-pins the advanced
+    // attachment(s), so a failed launch never leaves the shared project pin moved.
+    // Best-effort; a revert failure logs but never masks the original error.
+    await revertPackageVersionChoices(adoptReverts, {
+      projectId: project.id,
+      projectSlug: project.slug,
+      workspaceRoot: project.repoPath,
+      db: _db as never,
+    });
     throw err;
   }
 

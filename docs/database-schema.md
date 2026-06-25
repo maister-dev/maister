@@ -531,7 +531,12 @@ Multi-flow package grouping above the per-revision substrate. Process contract:
   `manifest_digest`, `installed_path`, `package_status`
   (`Installing|Installed|Failed|Removed`, two-phase), `trust_status`
   (package-level decision; fan-out writes member rows), timestamps. UNIQUE
-  `(source_url, name, resolved_revision)`.
+  `(source_url, name, resolved_revision)`. **(M39 Stream B — Implemented, ADR-107,
+  migration `0074`)** `source_local_package_id` (FK `local_packages`, SET NULL) +
+  `source_commit_sha` (nullable) — the back-link a centralized cut records (the
+  local package + its working-dir HEAD it was cut from) so a project's attached
+  cut can detect a newer cut at launch. Provenance is derived from this, with NO
+  `runs` column.
 - **`project_package_attachments`** — per-project enablement pointer:
   `project_id` (FK cascade), `package_install_id` (FK restrict),
   `package_name` (denormalized), `attached_at`. UNIQUE
@@ -567,7 +572,10 @@ Editable local packages (Flow Studio Phase C, Variant B). Process contract:
   platform-scoped packages) + `is_default` (bool, default `false`): the
   per-project default "virtual" local package element-level forks land in. A
   partial-unique index `local_packages_default_per_project` on `(project_id)
-  WHERE is_default` enforces at most one default per project.
+  WHERE is_default` enforces at most one default per project. **(M39 Stream B —
+  Implemented, ADR-113, migration `0074`)** `last_pushed_branch` / `last_pr_url`
+  (both nullable) — the PR-to-source publish result (the stable
+  `maister/<pkg-slug>` branch last pushed + the opened PR URL).
 - **Cut version** reuses the installer: a clean export of `working_dir` →
   `installPackageRevision({ version: "local" })` → a `local-<digest>`
   `package_installs` row (cut versions reuse the package substrate above); a

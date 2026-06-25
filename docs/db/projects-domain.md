@@ -101,6 +101,7 @@ erDiagram
     PACKAGE_INSTALLS ||--o{ FLOWS : "package_install_id (nullable FK)"
     PACKAGE_INSTALLS ||--o{ CAPABILITY_IMPORTS : "package_install_id (nullable FK)"
     PACKAGE_INSTALLS ||--o{ LOCAL_PACKAGES : "source_install_id + last_cut_install_id (nullable)"
+    LOCAL_PACKAGES ||--o{ PACKAGE_INSTALLS : "source_local_package_id (nullable; cut provenance)"
     USERS ||--o{ LOCAL_PACKAGES : "created_by / locked_by_user_id"
 
     PACKAGE_SOURCES {
@@ -125,6 +126,8 @@ erDiagram
         text installed_path
         text package_status "Installing|Installed|Failed|Removed"
         text trust_status "untrusted|trusted|trusted_by_policy"
+        text source_local_package_id FK "nullable; cut provenance (SET NULL, ADR-107)"
+        text source_commit_sha "nullable; working-dir HEAD at cut (ADR-107)"
         timestamp created_at
         timestamp updated_at
     }
@@ -148,6 +151,8 @@ erDiagram
         text source_ref "nullable; base commit/tag forked from"
         text branch_name "nullable; fork branch in working_dir"
         text last_cut_install_id FK "nullable; latest cut revision (SET NULL)"
+        text last_pushed_branch "nullable; PR-to-source publish branch (ADR-113)"
+        text last_pr_url "nullable; opened PR URL (ADR-113)"
         text locked_by_user_id FK "nullable; current editor (SET NULL)"
         text locked_by_session "nullable; session holding the lock"
         timestamp lock_expires_at "nullable; lock TTL (mirrors runs.keepalive_until)"

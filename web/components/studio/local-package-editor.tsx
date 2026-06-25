@@ -31,6 +31,7 @@ import {
   ChangeReviewDialog,
   type ChangeReviewDialogLabels,
 } from "@/components/studio/change-review-dialog";
+import { PublishDialog } from "@/components/studio/publish-dialog";
 import {
   StudioAiTab,
   type StudioAiTabLabels,
@@ -182,6 +183,7 @@ export function LocalPackageEditor({
   const router = useRouter();
   const tApiErrors = useTranslations("apiErrors");
   const tStudio = useTranslations("studio");
+  const tPublish = useTranslations("publishDialog");
   const [importing, setImporting] = useState(false);
 
   // Stable per-mount session id (survives re-renders; never the lock-holder
@@ -214,6 +216,7 @@ export function LocalPackageEditor({
   // so the badge works on the package-home view too, where the drawer is absent.
   const [changedCount, setChangedCount] = useState<number | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [publishOpen, setPublishOpen] = useState(false);
   // On any assistant stream activity, re-read the working dir: the canvas
   // (router.refresh re-runs the server compile) and the git-diff drawer's
   // changed-count (diffRefresh) reflect files the assistant just wrote.
@@ -470,6 +473,19 @@ export function LocalPackageEditor({
               ) : null}
             </button>
           ) : null}
+          {canManage ? (
+            <button
+              className="inline-flex items-center gap-1.5 rounded-[10px] border border-line bg-ivory px-3 py-1.5 font-mono text-[11px] font-semibold text-ink transition-colors hover:border-amber disabled:opacity-50"
+              data-testid="local-editor-publish"
+              disabled={readOnly}
+              title={tPublish("openButton")}
+              type="button"
+              onClick={() => setPublishOpen(true)}
+            >
+              <span aria-hidden>↥</span>
+              <span>{tPublish("openButton")}</span>
+            </button>
+          ) : null}
           <button
             className="rounded-[10px] border border-line bg-ivory px-3 py-1.5 font-mono text-[11px] font-semibold text-ink transition-colors hover:border-amber"
             data-testid="local-editor-end-edit"
@@ -534,6 +550,13 @@ export function LocalPackageEditor({
             setDiffRefresh((n) => n + 1);
             router.refresh();
           }}
+        />
+      ) : null}
+
+      {publishOpen ? (
+        <PublishDialog
+          packageId={packageId}
+          onClose={() => setPublishOpen(false)}
         />
       ) : null}
 

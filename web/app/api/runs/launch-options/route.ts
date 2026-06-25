@@ -36,6 +36,7 @@ import {
   resolveExecutionPolicy,
   type ExecutionPolicy,
 } from "@/lib/runs/execution-policy";
+import { detectAvailablePackageVersions } from "@/lib/local-packages/versions";
 import { getOpenRelationBlockers } from "@/lib/social/relations";
 import { listBranches } from "@/lib/worktree";
 
@@ -451,6 +452,15 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       },
     }));
 
+    // M39 Stream B (ADR-107): the project's attached centralized packages that
+    // have a newer cut and/or uncut Studio edits — the launch dialog's
+    // keep/adopt/cut_and_adopt choices. Empty for projects with no such packages
+    // (no git calls), so this is free for the common case.
+    const availablePackageVersions = await detectAvailablePackageVersions({
+      projectId: project.id,
+      db: db as never,
+    });
+
     return NextResponse.json({
       taskId: task.id,
       flowId: flow?.id ?? null,
@@ -500,6 +510,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       defaultTargetBranch,
       deliveryPolicyDefault,
       executionPolicyDefault,
+      availablePackageVersions,
     });
   } catch (err) {
     return errorResponse(err);

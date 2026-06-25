@@ -162,6 +162,10 @@ export async function installPackageRevision(opts: {
   version: string;
   path?: string;
   trustStatus?: "untrusted" | "trusted" | "trusted_by_policy";
+  // M39 Stream B (ADR-107): provenance back-link recorded when a centralized
+  // local package is cut, so a project's attached cut can detect a newer cut.
+  sourceLocalPackageId?: string;
+  sourceCommitSha?: string;
   // FIXME(any): dual drizzle-orm peer-dep variants.
   db?: any;
   signal?: AbortSignal;
@@ -244,6 +248,8 @@ export async function installPackageRevision(opts: {
         installedPath: cachePath,
         packageStatus: "Installing",
         trustStatus: opts.trustStatus ?? "untrusted",
+        sourceLocalPackageId: opts.sourceLocalPackageId ?? null,
+        sourceCommitSha: opts.sourceCommitSha ?? null,
       });
     } else {
       await db

@@ -103,6 +103,7 @@ import {
   getRunSettings,
   getRunTimeline,
 } from "@/lib/queries/run";
+import { getRunPackageProvenance } from "@/lib/local-packages/versions";
 import { buildCostSummaryFacts } from "@/lib/runs/cost-summary-facts";
 import {
   diffRange,
@@ -340,6 +341,9 @@ export default async function RunDetailLayout({
   const resolvedSet = await getRunResolvedCapabilitySet(runId);
   const evidence = await buildEvidenceGraph(runId);
   const readiness = await getRunReadiness(runId, detail.projectId);
+  // M39 Stream B (ADR-107): provenance for a flow that came from a centralized
+  // local-package cut — "from <package> @ <version>". Null otherwise.
+  const packageProvenance = await getRunPackageProvenance(runId);
   // M37 Phase 6 (ADR-098): the orchestrator run-tree children. Empty for an
   // ordinary run — the subtree/inspector sections then render nothing.
   const childRuns = await getChildRuns(runId);
@@ -1105,8 +1109,15 @@ export default async function RunDetailLayout({
     flowGraphData?.topology.nodes.find((n) => n.id === detail.currentStepId)
       ?.displayLabel ?? null;
   const shellTitle = detail.taskTitle ?? detail.taskRef ?? detail.branch;
+  const provenanceSuffix = packageProvenance
+    ? ` · ${t("fromPackage", {
+        name:
+          packageProvenance.localPackageName ?? packageProvenance.packageName,
+        version: packageProvenance.versionLabel,
+      })}`
+    : "";
   const shellSubtitle = detail.flowRef
-    ? `${detail.flowRef}${currentNodeLabel ? ` › ${currentNodeLabel}` : ""}`
+    ? `${detail.flowRef}${currentNodeLabel ? ` › ${currentNodeLabel}` : ""}${provenanceSuffix}`
     : `${t("eyebrow")} / ${detail.projectSlug}`;
 
   return (

@@ -1457,6 +1457,15 @@
     "default": "по умолчанию",
     "runnerModel": "Раннер / модель",
     "pinnedModel": "Зафиксированная модель: {model}",
+    "packageVersions": "Версии пакетов",
+    "packageVersionsHint": "У пакета, который использует проект, есть новая версия — принять её для этого запуска или оставить закреплённую.",
+    "packageVersionNewer": "закреплено {current} → новое {next}",
+    "packageVersionUncut": "закреплено {current} · есть несрезанные правки в Studio",
+    "packageVersionOption": {
+      "keep": "Оставить закреплённую",
+      "adopt": "Принять новую версию",
+      "cut_and_adopt": "Срезать и принять"
+    },
     "deliveryPolicy": "Политика доставки",
     "strategy": "Стратегия",
     "strategyMerge": "Merge",
@@ -1521,8 +1530,26 @@
     "budgetInvalid": "Только положительное целое",
     "budgetUnattendedHint": "Запуск без контроля и без бюджета — будет работать без ограничений. Задайте бюджет токенов или настройте MAISTER_DEFAULT_UNATTENDED_BUDGET_TOKENS."
   },
+  "publishDialog": {
+    "openButton": "Опубликовать",
+    "title": "Опубликовать в источник",
+    "note": "Публикуется зафиксированное состояние (HEAD). Сначала зафиксируйте правки, чтобы включить их.",
+    "sourceLabel": "Целевой источник",
+    "branchLabel": "Ветка",
+    "crossRepoWarning": "Источник отличается от origin этого пакета — история PR может не совпасть.",
+    "publish": "Опубликовать",
+    "publishing": "Публикация…",
+    "cancel": "Отмена",
+    "done": "Готово",
+    "loadError": "Не удалось загрузить параметры публикации.",
+    "noSources": "Источники пакетов не зарегистрированы.",
+    "resultPr": "Pull request открыт:",
+    "resultPushed": "Ветка {branch} отправлена.",
+    "resultCompare": "Откройте pull request:"
+  },
   "run": {
     "eyebrow": "запуск",
+    "fromPackage": "из {name} @ {version}",
     "backToBoard": "← Назад к доске",
     "noPending": "Для этого запуска нет ожидающего ввода.",
     "agentCenterTitle": "Запуск агента",

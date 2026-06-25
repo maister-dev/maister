@@ -157,6 +157,19 @@ vi.mock("@/lib/flows/graph/compile", () => ({
   compileManifest: mocks.compileManifest,
 }));
 
+// Mock only the two version-adopt entry points runs.ts calls; the rest of the
+// module stays real (no unexpected-undefined for other importers).
+const versionsMock = vi.hoisted(() => ({
+  applyPackageVersionChoices: vi.fn(),
+  revertPackageVersionChoices: vi.fn(),
+}));
+
+vi.mock("@/lib/local-packages/versions", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/local-packages/versions")>()),
+  applyPackageVersionChoices: versionsMock.applyPackageVersionChoices,
+  revertPackageVersionChoices: versionsMock.revertPackageVersionChoices,
+}));
+
 type LaunchRunFn = typeof import("@/lib/services/runs").launchRun;
 type ResolvePromotionModeFn =
   typeof import("@/lib/services/runs").resolvePromotionMode;
@@ -280,6 +293,11 @@ beforeEach(async () => {
   // M11c/M13/M14 enforcement gates so the test isolates branch resolution.
   mocks.compileManifest.mockReturnValue({ nodes: new Map() });
 
+  // Default: no version-adopt (returns no reverts) so the other tests' select
+  // sequence is unchanged; individual tests override per-case.
+  versionsMock.applyPackageVersionChoices.mockResolvedValue([]);
+  versionsMock.revertPackageVersionChoices.mockResolvedValue(undefined);
+
   seedSelects();
 
   ({ launchRun, resolvePromotionMode } = await import("@/lib/services/runs"));
@@ -370,6 +388,54 @@ describe("launchRun — execution-control policy (T0.3)", () => {
     await launchRun({ taskId: TASK_ID }, denyUnattendedCtx(), fakeDb);
 
     expect(runInsert()?.executionPolicy).toEqual({ preset: "supervised" });
+  });
+});
+
+describe("launchRun — version-adopt compensation (ADR-107, finding #1)", () => {
+  it("reverts the adopted pin when the adopted cut no longer ships the flow", async () => {
+    versionsMock.applyPackageVersionChoices.mockResolvedValue([
+      { attachmentId: "att-1", priorInstallId: "prior-1" },
+    ]);
+    // tasks, projects, flows(initial), then the post-adopt flow reload returns
+    // empty → the adopted cut dropped the flow → PRECONDITION inside the outer try.
+    state.selectResults = [
+      [
+        {
+          id: TASK_ID,
+          projectId: PROJECT_ID,
+          flowId: FLOW_ID,
+          status: "Backlog",
+          attemptNumber: 0,
+        },
+      ],
+      [project()],
+      [
+        {
+          id: FLOW_ID,
+          projectId: PROJECT_ID,
+          flowRefId: "bugfix",
+          enabledRevisionId: REVISION_ID,
+          enablementState: "Enabled",
+          trustStatus: "trusted_by_policy",
+        },
+      ],
+      [],
+    ];
+
+    await expect(
+      launchRun(
+        { taskId: TASK_ID, packageVersions: { "pin-1": "adopt" } },
+        ctx(),
+        fakeDb,
+      ),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+
+    // The outer compensation catch re-pinned the advanced attachment.
+    expect(versionsMock.revertPackageVersionChoices).toHaveBeenCalledWith(
+      [{ attachmentId: "att-1", priorInstallId: "prior-1" }],
+      expect.objectContaining({ projectId: PROJECT_ID }),
+    );
+    expect(runInsert()).toBeUndefined();
   });
 });
 

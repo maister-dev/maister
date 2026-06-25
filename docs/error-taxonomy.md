@@ -347,6 +347,18 @@ Seventeen codes (M8 added `STEP_CHECKPOINTED`; M9 added `UNAUTHENTICATED`,
 > (`CONFIG` / `EXECUTOR_UNAVAILABLE`). The deterministic supervisor enforcement is
 > not modeled as a thrown code (the ADR-041 static table stays frozen).
 
+> **ADR-107 (version-adopt launch) + ADR-113 (PR-to-source) add NO new `MaisterError`
+> code** ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror) closed union;
+> **Implemented — M39 Stream B**). Version-adopt launch reuses **`CONFLICT`** (an
+> `adopt`/`cut_and_adopt` option not in the launch-detected available set, or a
+> `cut_and_adopt` on a package locked by another session) and **`PRECONDITION`** (a
+> `cut_and_adopt` whose cut gate fails artifact validation — the launcher can still
+> `keep`). PR-to-source reuses **`CONFLICT`** (`targetSourceId` not in the
+> `package_sources` allow-list; a non-fast-forward push — retryable), **`PRECONDITION`**
+> (an invalid branch name at the git sink; auth / no reachable remote), and **`CONFIG`**
+> (no source url / unsupported provider for the PR). Two-phase publish leaves the
+> `last_pushed_branch`/`last_pr_url` markers unset on any failure.
+
 ## Construction
 
 ```ts

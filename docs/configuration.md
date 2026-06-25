@@ -288,6 +288,19 @@ streamed via SSE, never embedded in `session/update` payloads. They are document
 > `GITEA_TOKEN`/`GITVERSE_TOKEN` env (gitea-family), plus a git push credential helper.
 > `local_merge` needs none. No silent dev/prod skew. See
 > [ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)
+
+#### Studio PR-to-source publish — same host prerequisites (Implemented, M39 Stream B — ADR-113)
+
+Studio **PR-to-source** (`POST /api/studio/local-packages/{id}/publish`, ADR-113)
+reuses the **same** provider machinery as `pull_request` run promotion: it `git push`es
+the local package's branch to a **registered `package_sources` target** and, when a
+provider CLI + host token is detected, opens/updates a PR via the shared adapter
+(`gh`/`glab`/Gitea/Gitverse). The prerequisite table above applies unchanged. When the
+provider CLI or token is **absent**, publish degrades to **push-only** + a best-effort
+compare URL (the member opens the PR manually) — it never fails the push for lack of PR
+automation. No new env var; the same
+`GH_TOKEN`/`GITLAB_TOKEN`/`GITEA_TOKEN`/`GITVERSE_TOKEN` + host git push credentials
+cover it. `.maister` stays host-only (ADR-023) — no compose change.
 > and [`deployment.md`](deployment.md).
 
 #### `capability_imports[]` (Implemented, M14)

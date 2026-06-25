@@ -1,0 +1,1 @@
+ALTER TABLE "local_packages" ADD COLUMN "publishing_started_at" timestamp with time zone;

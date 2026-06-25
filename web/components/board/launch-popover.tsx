@@ -60,6 +60,20 @@ type LaunchFlowOption = {
   isTaskDefault: boolean;
 };
 
+// M39 Stream B (ADR-107): a project's attached centralized package with a newer
+// cut and/or uncut Studio edits — the launch dialog's per-package choice.
+type VersionChoice = "keep" | "adopt" | "cut_and_adopt";
+
+type AvailablePackageVersion = {
+  packageInstallId: string;
+  packageName: string;
+  localPackageName: string;
+  currentVersionLabel: string;
+  newerVersionLabel: string | null;
+  hasUncutEdits: boolean;
+  offeredOptions: VersionChoice[];
+};
+
 type LaunchRunnerOption = {
   id: string;
   label: string;
@@ -86,8 +100,19 @@ type LaunchOptions = {
   defaultTargetBranch: string | null;
   deliveryPolicyDefault: DeliveryPolicy;
   executionPolicyDefault: ExecutionPolicy;
+  availablePackageVersions: AvailablePackageVersion[];
   task: { projectSlug: string; number: number };
 };
+
+// Only the non-keep choices are sent — the server treats keep (and an absent
+// map) identically as "launch on the pin".
+function nonKeepPackageVersions(
+  choices: Record<string, VersionChoice>,
+): Record<string, VersionChoice> | undefined {
+  const entries = Object.entries(choices).filter(([, v]) => v !== "keep");
+
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
 
 type SelectOption<T extends string> = {
   id: T;
@@ -362,6 +387,10 @@ export function LaunchPopover({
   // policy; the prune step coerces to positive ints (NaN / ≤0 dropped).
   const [execBudget, setExecBudget] = useState<BudgetTextAxis>({});
   const [execBudgetOpen, setExecBudgetOpen] = useState(true);
+  // M39 Stream B (ADR-107): per-package version-adopt choice (default keep).
+  const [packageVersions, setPackageVersions] = useState<
+    Record<string, VersionChoice>
+  >({});
   const dialogId = useId();
   const openerRef = useRef<HTMLButtonElement | null>(null);
   const closeRef = useRef<HTMLButtonElement | null>(null);
@@ -404,6 +433,14 @@ export function LaunchPopover({
         setExecChecks(eff.checks);
         setExecHumanGate(eff.humanGate);
         setExecPromotion(eff.promotion);
+        setPackageVersions(
+          Object.fromEntries(
+            (payload.availablePackageVersions ?? []).map((v) => [
+              v.packageInstallId,
+              "keep" as VersionChoice,
+            ]),
+          ),
+        );
       })
       .catch(() => {
         if (controller.signal.aborted) return;
@@ -537,6 +574,7 @@ export function LaunchPopover({
           targetBranch: targetBranch || undefined,
           deliveryPolicy: currentPolicy,
           executionPolicy: currentExecutionPolicy,
+          packageVersions: nonKeepPackageVersions(packageVersions),
         }),
       });
 
@@ -878,6 +916,68 @@ export function LaunchPopover({
                         />
                       </label>
                     </div>
+
+                    {options.availablePackageVersions.length > 0 ? (
+                      <div
+                        className="rounded-[10px] border border-amber-line bg-amber-soft/40 p-3"
+                        data-testid="launch-package-versions"
+                      >
+                        <div className="mb-1 flex items-center justify-between gap-3">
+                          <h3 className="text-[13px] font-semibold text-ink">
+                            {t("packageVersions")}
+                          </h3>
+                          {Object.values(packageVersions).some(
+                            (v) => v !== "keep",
+                          ) ? (
+                            <span className="rounded-full border border-amber-line bg-amber-soft px-2 py-[2px] font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-amber">
+                              {t("override")}
+                            </span>
+                          ) : null}
+                        </div>
+                        <p className="mb-2 font-mono text-[10px] text-mute">
+                          {t("packageVersionsHint")}
+                        </p>
+                        <div className="flex flex-col gap-3">
+                          {options.availablePackageVersions.map((pkg) => (
+                            <label
+                              key={pkg.packageInstallId}
+                              className="flex flex-col gap-1"
+                            >
+                              <span className={fieldLabelClass}>
+                                {pkg.localPackageName}
+                                <span className="ml-2 font-normal normal-case text-mute">
+                                  {pkg.newerVersionLabel
+                                    ? t("packageVersionNewer", {
+                                        current: pkg.currentVersionLabel,
+                                        next: pkg.newerVersionLabel,
+                                      })
+                                    : t("packageVersionUncut", {
+                                        current: pkg.currentVersionLabel,
+                                      })}
+                                </span>
+                              </span>
+                              <LaunchSelect
+                                label={pkg.localPackageName}
+                                options={pkg.offeredOptions.map((opt) => ({
+                                  id: opt,
+                                  label: t(`packageVersionOption.${opt}`),
+                                }))}
+                                value={
+                                  packageVersions[pkg.packageInstallId] ??
+                                  "keep"
+                                }
+                                onChange={(value: VersionChoice) =>
+                                  setPackageVersions((prev) => ({
+                                    ...prev,
+                                    [pkg.packageInstallId]: value,
+                                  }))
+                                }
+                              />
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
 
                     <div className="rounded-[10px] border border-line-soft bg-ivory/50 p-3">
                       <div className="mb-2 flex items-center justify-between gap-3">
