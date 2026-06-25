@@ -1,4 +1,5 @@
 import type { ProjectTab } from "@/components/board/project-tabs";
+import type { AgentConfigParam } from "@/lib/agents/definition";
 import type { PortfolioWorkspace } from "@/lib/queries/portfolio";
 import type { ReactElement } from "react";
 
@@ -585,6 +586,7 @@ async function AgentsAttachPanelLoader({
         runnerOverrideId: row.runnerOverrideId,
         branchBase: row.branchBase,
         executionPolicyOverride: row.executionPolicyOverride,
+        config: row.config,
         schedules: row.schedules,
         agent: {
           id: row.agent.id as string,
@@ -599,6 +601,8 @@ async function AgentsAttachPanelLoader({
             ? new Date(row.agent.quarantinedAt as Date).toISOString()
             : null,
           recommended: toRecommendedView(row.agent.recommended),
+          configSchema:
+            (row.agent.configSchema as AgentConfigParam[] | null) ?? null,
         },
       }))}
       available={view.available.map((agent) => ({
@@ -606,6 +610,7 @@ async function AgentsAttachPanelLoader({
         name: agent.name as string,
         packageName: agent.packageName as string,
         recommended: toRecommendedView(agent.recommended),
+        configSchema: (agent.configSchema as AgentConfigParam[] | null) ?? null,
       }))}
       canManage={canManage}
       eventKinds={[...DOMAIN_EVENT_KINDS]}

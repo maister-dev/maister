@@ -50,6 +50,8 @@ export type AttachedAgentView = {
   // launch snapshot live in lib/agents/execution-policy.ts (Phase 5).
   branchBase: string | null;
   executionPolicyOverride: AgentExecutionPolicyRecommendation | null;
+  // (ADR-110) Per-instance config values; null → all declared defaults.
+  config: Record<string, unknown> | null;
   schedules: Array<{
     triggerType: "cron" | "event";
     cronExpr?: string;
@@ -187,6 +189,7 @@ export async function getProjectAgentsView(
     branchBase: (link.branchBase ?? null) as string | null,
     executionPolicyOverride: (link.executionPolicyOverride ??
       null) as AgentExecutionPolicyRecommendation | null,
+    config: (link.config ?? null) as Record<string, unknown> | null,
     schedules: scheduleRows
       .filter((s) => s.agentId === agent.id)
       .map(scheduleToView),
@@ -284,6 +287,9 @@ export async function updateAgentLink(
       runnerOverrideId?: string | null;
       branchBase?: string | null;
       executionPolicyOverride?: AgentExecutionPolicyRecommendation | null;
+      // (ADR-110) Per-instance config values; explicit null clears → fall back
+      // to the declared defaults at resolve time.
+      config?: Record<string, unknown> | null;
       schedules?: AgentScheduleInput[];
     };
   },
@@ -332,6 +338,11 @@ export async function updateAgentLink(
     }
     if (input.patch.executionPolicyOverride !== undefined) {
       set.executionPolicyOverride = input.patch.executionPolicyOverride;
+    }
+    // (ADR-110) SET/CLEAR symmetry: an object sets the per-instance config,
+    // explicit null clears it → resolve falls back to the declared defaults.
+    if (input.patch.config !== undefined) {
+      set.config = input.patch.config;
     }
 
     await tx

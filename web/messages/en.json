@@ -3177,6 +3177,8 @@
     "budgetInherit": "Inherit",
     "budgetEscalate": "Escalate (pause, hold slot)",
     "budgetTerminate": "Terminate (fail)",
-    "budgetTerminateRestorable": "Terminate, restorable (checkpoint, free slot)"
+    "budgetTerminateRestorable": "Terminate, restorable (checkpoint, free slot)",
+    "colConfig": "Config",
+    "configuration": "Configuration"
   }
 }

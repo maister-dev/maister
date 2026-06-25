@@ -32,6 +32,7 @@ const ATTACHED: AttachedAgentRow = {
     autoApply: "full",
     onBudgetBreach: "terminate_restorable",
   },
+  config: null,
   schedules: [
     {
       triggerType: "cron",
@@ -56,6 +57,7 @@ const ATTACHED: AttachedAgentRow = {
     enabled: true,
     quarantinedAt: null,
     recommended: null,
+    configSchema: null,
   },
 };
 
@@ -74,6 +76,7 @@ function render(over: {
           name: "Reviewer",
           packageName: "aif",
           recommended: null,
+          configSchema: null,
         },
       ],
       runners: [{ id: "runner-2", label: "runner-2" }],

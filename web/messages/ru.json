@@ -3177,6 +3177,8 @@
     "budgetInherit": "Наследовать",
     "budgetEscalate": "Эскалация (пауза, держит слот)",
     "budgetTerminate": "Завершить (ошибка)",
-    "budgetTerminateRestorable": "Завершить с восстановлением (чекпойнт, освободить слот)"
+    "budgetTerminateRestorable": "Завершить с восстановлением (чекпойнт, освободить слот)",
+    "colConfig": "Конфигурация",
+    "configuration": "Конфигурация"
   }
 }

@@ -421,4 +421,67 @@ describe("project agent links (attach panel service)", () => {
     expect(view.attached[0].branchBase).toBeNull();
     expect(view.attached[0].executionPolicyOverride).toBeNull();
   });
+
+  it("PATCH persists per-instance config and clears it with null (ADR-110 SET/CLEAR)", async () => {
+    await detachAgent(
+      { projectId: fx.projectId, agentId: fx.agentId },
+      db,
+    ).catch(() => undefined);
+    await attachAgent({ projectId: fx.projectId, agentId: fx.agentId }, db);
+
+    // Fresh attach → no instance config yet.
+    let view = await getProjectAgentsView(fx.projectId, db);
+
+    expect(view.attached[0].config).toBeNull();
+
+    // SET the per-instance config in the one aggregating PATCH alongside another
+    // field — proves it rides the same transaction, not a separate write.
+    await updateAgentLink(
+      {
+        projectId: fx.projectId,
+        agentId: fx.agentId,
+        patch: {
+          enabled: true,
+          config: { auto_enqueue: "always", detect_duplicates: false },
+        },
+      },
+      db,
+    );
+
+    view = await getProjectAgentsView(fx.projectId, db);
+    expect(view.attached[0].config).toEqual({
+      auto_enqueue: "always",
+      detect_duplicates: false,
+    });
+
+    // A patch that omits config leaves the column untouched (SET/CLEAR symmetry).
+    await updateAgentLink(
+      {
+        projectId: fx.projectId,
+        agentId: fx.agentId,
+        patch: { branchBase: "develop" },
+      },
+      db,
+    );
+
+    view = await getProjectAgentsView(fx.projectId, db);
+    expect(view.attached[0].config).toEqual({
+      auto_enqueue: "always",
+      detect_duplicates: false,
+    });
+
+    // CLEAR with explicit null → column null → resolve falls back to declared
+    // defaults.
+    await updateAgentLink(
+      {
+        projectId: fx.projectId,
+        agentId: fx.agentId,
+        patch: { config: null },
+      },
+      db,
+    );
+
+    view = await getProjectAgentsView(fx.projectId, db);
+    expect(view.attached[0].config).toBeNull();
+  });
 });

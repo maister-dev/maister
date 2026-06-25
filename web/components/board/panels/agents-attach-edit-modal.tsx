@@ -8,9 +8,32 @@ import type {
   ExecutionPolicyOverrideView,
   OnBudgetBreachMode,
 } from "@/components/board/panels/agents-attach-panel";
+import type { AgentConfigParam } from "@/lib/agents/definition";
 
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
+
+// (ADR-110) Seed each control from the effective value: the instance config
+// value when the operator set one, else the declared default. A param with
+// neither is left blank (string/number) or false (boolean).
+function seedConfigValues(
+  schema: AgentConfigParam[] | null,
+  instance: Record<string, unknown> | null,
+): Record<string, unknown> {
+  const seeded: Record<string, unknown> = {};
+
+  for (const param of schema ?? []) {
+    if (instance && Object.prototype.hasOwnProperty.call(instance, param.key)) {
+      seeded[param.key] = instance[param.key];
+    } else if (param.default !== undefined) {
+      seeded[param.key] = param.default;
+    } else {
+      seeded[param.key] = param.type === "boolean" ? false : "";
+    }
+  }
+
+  return seeded;
+}
 
 export async function sendJson(
   url: string,
@@ -88,6 +111,14 @@ export function AttachEditModal({
   const [schedules, setSchedules] = useState<EditableSchedule[]>(
     row.schedules.map(toEditable),
   );
+  const configSchema = row.agent.configSchema ?? [];
+  const [configValues, setConfigValues] = useState<Record<string, unknown>>(
+    () => seedConfigValues(row.agent.configSchema, row.config),
+  );
+
+  function setConfigValue(key: string, value: unknown): void {
+    setConfigValues((current) => ({ ...current, [key]: value }));
+  }
 
   const dialogRef = useRef<HTMLDivElement>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
@@ -203,6 +234,9 @@ export function AttachEditModal({
         runnerOverrideId: runnerOverrideId === "" ? null : runnerOverrideId,
         branchBase: branchBase.trim() === "" ? null : branchBase.trim(),
         executionPolicyOverride: policyOverride,
+        // (ADR-110) Fold the per-instance config into the SAME aggregating
+        // PATCH; omit the field entirely when nothing is declared.
+        ...(configSchema.length > 0 ? { configValues } : {}),
         schedules: schedules.map((s) =>
           s.triggerType === "cron"
             ? {
@@ -339,6 +373,24 @@ export function AttachEditModal({
               </option>
             </select>
           </label>
+
+          {configSchema.length > 0 ? (
+            <section
+              className="flex flex-col gap-2.5"
+              data-testid="config-section"
+            >
+              <span className={fieldLabel}>{t("configuration")}</span>
+              {configSchema.map((param) => (
+                <ConfigField
+                  key={param.key}
+                  inputClass={inputClass}
+                  param={param}
+                  value={configValues[param.key]}
+                  onChange={(value) => setConfigValue(param.key, value)}
+                />
+              ))}
+            </section>
+          ) : null}
 
           <div className="flex items-center justify-between">
             <span className={fieldLabel}>{t("schedules")}</span>
@@ -497,5 +549,87 @@ export function AttachEditModal({
         </footer>
       </div>
     </div>
+  );
+}
+
+// (ADR-110) One control per declared config param. The label/description come
+// from the agent `.md` (authored, not i18n); the control type follows
+// `param.type`. The value flows back up as the right JS type (boolean / number
+// / string) so the PATCH body matches the declared schema.
+function ConfigField({
+  param,
+  value,
+  onChange,
+  inputClass,
+}: {
+  param: AgentConfigParam;
+  value: unknown;
+  onChange: (value: unknown) => void;
+  inputClass: string;
+}): ReactElement {
+  const fieldLabel =
+    "font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-mute";
+  const label = param.label ?? param.key;
+  const testId = `config-${param.key}`;
+
+  if (param.type === "boolean") {
+    return (
+      <label className="flex flex-col gap-1">
+        <span className="inline-flex items-center gap-2 font-mono text-[12px] text-ink">
+          <input
+            checked={value === true}
+            data-testid={testId}
+            type="checkbox"
+            onChange={(event) => onChange(event.target.checked)}
+          />
+          {label}
+        </span>
+        {param.description ? (
+          <span className="text-[11px] text-mute">{param.description}</span>
+        ) : null}
+      </label>
+    );
+  }
+
+  return (
+    <label className="flex flex-col gap-1.5">
+      <span className={fieldLabel}>{label}</span>
+      {param.type === "enum" ? (
+        <select
+          className={inputClass}
+          data-testid={testId}
+          value={String(value ?? "")}
+          onChange={(event) => onChange(event.target.value)}
+        >
+          {(param.values ?? []).map((option) => (
+            <option key={option} value={option}>
+              {option}
+            </option>
+          ))}
+        </select>
+      ) : param.type === "number" ? (
+        <input
+          className={inputClass}
+          data-testid={testId}
+          type="number"
+          value={value === "" || value === undefined ? "" : String(value)}
+          onChange={(event) =>
+            onChange(
+              event.target.value === "" ? "" : Number(event.target.value),
+            )
+          }
+        />
+      ) : (
+        <input
+          className={inputClass}
+          data-testid={testId}
+          value={String(value ?? "")}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      )}
+      {param.description ? (
+        <span className="text-[11px] text-mute">{param.description}</span>
+      ) : null}
+    </label>
   );
 }

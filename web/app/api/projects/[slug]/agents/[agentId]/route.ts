@@ -46,6 +46,9 @@ const patchBodySchema = z
     executionPolicyOverride: executionPolicyOverrideSchema
       .nullable()
       .optional(),
+    // (ADR-110) Per-instance config values keyed by declared param key. SET =
+    // an object; CLEAR = explicit null → falls back to the declared defaults.
+    configValues: z.record(z.unknown()).nullable().optional(),
     schedules: z.array(scheduleSchema).max(16).optional(),
   })
   .strict()
@@ -103,10 +106,17 @@ export async function PATCH(
       );
     }
 
+    // Wire field `configValues` maps to the service/column key `config`
+    // (ADR-110); `undefined` stays untouched, explicit null clears.
+    const { configValues, ...rest } = parsed.data;
+
     await updateAgentLink({
       projectId: project.id,
       agentId,
-      patch: parsed.data,
+      patch: {
+        ...rest,
+        ...(configValues !== undefined ? { config: configValues } : {}),
+      },
     });
 
     return NextResponse.json({ ok: true });
