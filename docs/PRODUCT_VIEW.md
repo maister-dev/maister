@@ -14,6 +14,9 @@ organization rollout stay outside the current target.
 
 ## Product Model
 
+This expands the canonical [product spine](VISION.md#core-product-spine) with
+the runtime objects a single delivery passes through.
+
 ```text
 Project -> Flow package -> Task / Scratch run -> External operation -> Run -> Branch target -> Workspace -> Flow node / Dialog turn -> Capability profile -> Artifact graph -> Gate readiness -> Assignment -> HITL / Manual takeover -> Review -> Promote
 ```

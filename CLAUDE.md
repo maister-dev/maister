@@ -4,16 +4,12 @@
 
 **MAIster is the control plane for AI-powered software delivery.**
 
-Product spine:
-
-```
-Project -> Flow package -> Task -> Run -> Workspace -> Headless Agents -> HITL -> Evidence Gates -> Review -> Promote
-```
-
-Current wedge:
-**Web control plane + ACP supervisor daemon + Flow plugin engine** for
-multi-project portfolio, multi-workspace execution, HITL, and a per-project
-task board. We orchestrate and wrap existing agents and Flow frameworks.
+What it does, the challenges it answers, and the core functions are the
+canonical short description in [README](README.md) (section "What MAIster
+does"). The product spine, principles, and MVP goal live in
+[`docs/VISION.md`](docs/VISION.md); the detailed product model and JTBD in
+[`docs/PRODUCT_VIEW.md`](docs/PRODUCT_VIEW.md). What follows here is the
+agent-facing operating contract — locked decisions and current scope.
 
 Audience: solo-technical CEO/CIO/staff-eng
 

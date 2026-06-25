@@ -5,13 +5,11 @@
 **MAIster is the control plane for AI-powered software delivery.**
 
 It turns backlog tasks into supervised delivery Flows and supports manual
-scratch workspaces when the operator needs a direct coding-agent dialog:
-package-managed processes, isolated workspaces, headless agent execution, HITL,
-evidence gates, diff review, and branch-targeted promotion.
+scratch workspaces for direct coding-agent dialog. The challenges it answers
+and its core functions are the canonical short description in
+[README](../README.md) (section "What MAIster does").
 
 ## Why
-
-AI coding agents are useful, but managing several of them manually becomes operational noise: many terminals, lost context, unclear progress, scattered artifacts, weak review and repeated project-specific mistakes.
 
 MAIster should remove the need to babysit coding-agent consoles. The human
 should manage work at the level of projects, tasks, Flows, scratch workspaces,

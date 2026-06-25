@@ -2,11 +2,39 @@
 
 > The control plane for AI-powered software delivery.
 
-MAIster turns backlog tasks into supervised delivery Flows: workspace creation,
-ACP-driven agent execution, HITL, evidence-backed review, and branch-targeted
-promotion. It is a Web control plane plus a separate ACP supervisor daemon. It
-wraps existing agents and Flow plugins; it does not replace Claude Code, Codex,
-or AI Factory.
+## What MAIster does
+
+Running several coding agents by hand is operational noise: many terminals,
+lost context, unclear progress, scattered artifacts, weak review, and the same
+project mistakes repeated. MAIster is the control plane that turns that into
+supervised delivery — it wraps existing coding agents (Claude Code, Codex, …)
+and Flow plugins rather than replacing them.
+
+**Challenges it answers**
+
+- **Console babysitting** → one portfolio, board, and "needs-you" inbox across every project.
+- **Unrepeatable runs** → versioned, trust-gated Flow packages, pinned to the exact revision a run used.
+- **"Did the AI do it right?"** → typed evidence gates + a readiness summary that blocks promotion until proof passes.
+- **Agents overreaching** → per-session capability materialization, guardrail hooks at the ACP seam, and read-only enforcement.
+- **One agent isn't enough** → orchestrated run-trees, a persistent swarm, and consensus nodes that verify a plan before it runs.
+- **Runaway cost/time** → token budgets with a warn → escalate → terminate ladder.
+- **"When do I step in?"** → Flow-declared HITL, role-owned ownership, and local manual takeover with full audit.
+- **Landing work safely** → branch-targeted promotion (PR or local merge), only after gates pass.
+
+**Core functions**
+
+1. **Portfolio & board control plane** — multi-project, active workspaces, HITL inbox.
+2. **Flow packages** — install / trust / version / upgrade / rollback, pinned per run.
+3. **Graph Flow engine** — typed nodes, gates, bounded rework, dynamic routing, consensus.
+4. **Workspaces** — worktree isolation, scratch sessions, manual takeover, promotion.
+5. **Capability & guardrail safety** — scoped materialization, ACP-seam hooks, read-only enforcement.
+6. **Orchestration & agents** — governed run-trees, swarm, package-based platform agents, triggers.
+7. **Evidence & governance** — typed artifacts, readiness, cost budgets, audit, external API/MCP facade.
+
+**Top tasks** — see portfolio & what needs you · launch a controlled run from a
+task (or a scratch session) · constrain what a node or agent may touch · answer
+HITL, take over locally, steer rework · inspect readiness evidence & diff ·
+promote to the target branch.
 
 ## Quick Start
 
@@ -30,61 +58,6 @@ Next.js 16 (Drizzle schema, error taxonomy, `maister.yaml` v2 loader);
 the supervisor is the separate Node daemon that owns ACP sessions and
 agent processes. See [Supervisor](docs/supervisor.md) for the wire
 contract and [Architecture](docs/architecture.md) for the boundary rules.
-
-## Key Features
-
-- **Multi-project registry** — N projects per host, each configured by its
-  own `maister.yaml` v2: project metadata, project runner defaults, and pinned
-  Flow plugins.
-- **Portfolio home (superset.sh-style)** — single grid of every active
-  workspace across all projects, with filters by project + status.
-- **Per-project task board** — Kanban-styled (7 derived columns
-  `Backlog · Prepare · InProduction · OnReview · InDelivery · Crashed · Done`
-  over a 4-value task state; no drag-and-drop / WIP limits yet). A Backlog
-  card's **Launch** creates a Run. **task ↔ run is 1:N** — a failed/abandoned
-  run returns the task to Backlog so Launch can fire attempt N+1 (ralph-loop
-  friendly).
-- **Backlog → Flow launch** — task created with title + prompt + Flow
-  dropdown and optional platform runner override.
-- **Workspace per run** — `git worktree add` with precondition checks
-  (clean parent repo, branch free, worktree path free), isolated under
-  `.maister/<project-slug>/runs/<run-id>/`.
-- **Platform ACP runners** — Claude, Codex, Gemini CLI, OpenCode, and MiMo Code
-  runner families are configured at the platform layer, with project/Flow
-  inheritance, CCR sidecars for Claude routing, and readiness-gated launch
-  diagnostics.
-- **Hybrid HITL** — ACP permission requests become durable HITL rows;
-  structured form and human-review responses use atomic input artifacts and
-  runner-owned resume.
-- **Live run streaming** — supervisor writes per-step logs and
-  `run.events.jsonl`; the web SSE bridge replays durable events with
-  `Last-Event-ID`.
-- **Diff + promotion** — server-rendered Shiki diff (split/inline, per-file
-  +/-) in the workbench, then promote the run branch to a selected target
-  branch by local merge or pull request. `local_merge` uses
-  `git merge --no-ff`; conflicts abort to manual resolve.
-- **Crash recovery** — startup reconciles the `runs` table against
-  `git worktree list` per project; orphaned `Running` rows become `Crashed`.
-- **Concurrency** — global cap `MAISTER_MAX_CONCURRENT_RUNS=6` across all
-  projects; runs above the cap queue with a position badge.
-- **Typed errors** — `MaisterError` with a discriminated `code`; UI branches
-  on `code`, never on string matching.
-- **Graph flow engine** — typed-node graph (`ai_coding/judge/cli/check/human`)
-  with named transitions, bounded rework, six gate kinds, typed artifacts and
-  a promotion-time readiness gate, over a `node_attempts` ledger.
-- **Flow Studio** — in-app visual graph editor + authored catalog
-  (draft→publish, content-addressed) for rules / skills / flows.
-- **Capabilities & MCP** — per-session `settings.local.json` + MCP
-  materialization with two-axis trust; platform + project MCP / runner catalogs.
-- **Manual takeover & workbench lifecycle** — claim a run, edit the worktree
-  locally, return for re-validation; plus stop / archive / drop / export /
-  handoff-branch.
-- **Scratch runs** — ad-hoc conversational agent sessions in a managed
-  worktree, off the task board.
-- **Observatory** — read-only Autonomy Score, correction-rate, and signal
-  clusters over the run ledgers.
-- **External API** — scoped project tokens + `/api/v1/ext/*` + an MCP facade
-  (incl. HITL-over-MCP).
 
 ## Stack
 
