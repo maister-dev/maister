@@ -1,4 +1,4 @@
-// ADR-110: resolve the effective agent config — a 2-level merge of the
+// ADR-111: resolve the effective agent config — a 2-level merge of the
 // declared defaults under the per-project instance values. Client-import-safe
 // (no fs, no node:*, no DB): the caller passes the already-loaded declaration
 // (from the .md / `agents.config_schema`) and the instance map (from
@@ -29,7 +29,7 @@ export function resolveAgentConfig(
   return resolved;
 }
 
-// ADR-110: validate a per-instance config map against the declared schema.
+// ADR-111: validate a per-instance config map against the declared schema.
 // Pure + client-import-safe (no MaisterError, which is server-only): returns an
 // error message string, or null when valid. The server caller (the aggregating
 // PATCH via `updateAgentLink`) throws `MaisterError("CONFIG")` on a non-null

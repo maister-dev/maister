@@ -114,7 +114,7 @@ const DEFAULT_DOMAIN_EVENT_DISPATCH_CADENCE_SECONDS = 60;
 // cron rows and recovers stranded Pending agent runs each tick.
 const DEFAULT_AGENT_TICK_JOB_ID = "agent_tick.dispatcher";
 const DEFAULT_AGENT_TICK_CADENCE_SECONDS = 60;
-// ADR-111: the ONE seeded auto_launch_triaged tick — launches triaged + auto +
+// ADR-112: the ONE seeded auto_launch_triaged tick — launches triaged + auto +
 // flow tasks whose relation blockers have cleared (budget 1, singleton).
 const DEFAULT_AUTO_LAUNCH_TRIAGED_JOB_ID = "auto_launch_triaged.default";
 const DEFAULT_AUTO_LAUNCH_TRIAGED_CADENCE_SECONDS = 60;

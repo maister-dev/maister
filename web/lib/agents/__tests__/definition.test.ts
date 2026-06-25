@@ -303,7 +303,7 @@ describe("parseAgentDefinition", () => {
   });
 });
 
-describe("parseAgentDefinition config block (ADR-110)", () => {
+describe("parseAgentDefinition config block (ADR-111)", () => {
   function withConfig(block: string[]): string {
     return VALID.replace(
       "risk_tier: read_only",
@@ -545,7 +545,7 @@ describe("renderAgentDefinition", () => {
     });
   });
 
-  it("round-trips the ADR-110 config declaration block", () => {
+  it("round-trips the ADR-111 config declaration block", () => {
     const config = [
       { key: "detect_duplicates", type: "boolean" as const, default: true },
       {

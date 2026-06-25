@@ -1,6 +1,6 @@
 import "server-only";
 
-// Phase 4 (ADR-111): the auto_launch_triaged tick. A triaged + launch_mode=auto
+// Phase 4 (ADR-112): the auto_launch_triaged tick. A triaged + launch_mode=auto
 // + flow task with no live flow run and all relation blockers cleared is
 // launched by the tick (reusing launchRun). Candidate selection, the
 // dependency-wait, the flagged hold, the orchestrator disjointness, the
@@ -408,7 +408,7 @@ describe("auto_launch_triaged tick", () => {
 
     expect(refusing.fn).toHaveBeenCalledTimes(1);
     expect(summary.gaveUp).toBe(1);
-    // Held for a human (ADR-111 documented give-up): launch_mode cleared, the
+    // Held for a human (ADR-112 documented give-up): launch_mode cleared, the
     // task flagged, and a system comment posted with the reason.
     expect(await launchModeOf(taskId)).toBeNull();
     expect(await triageStatusOf(taskId)).toBe("flagged");

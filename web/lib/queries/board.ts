@@ -104,7 +104,7 @@ export interface FlightCard {
   flowRef: string | null;
   runCount: number;
   runStatus: RunStatus;
-  // ADR-111: held state — a `flagged` flight card (e.g. a Review/Crashed run on a
+  // ADR-112: held state — a `flagged` flight card (e.g. a Review/Crashed run on a
   // task flagged for review) suppresses the "Run again" affordance and shows the
   // chip; non-launchable even with a flow set (mirrors the backlog card).
   triageStatus: "triaged" | "flagged" | null;

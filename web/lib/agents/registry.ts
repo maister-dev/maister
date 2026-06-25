@@ -109,7 +109,7 @@ async function upsertAgentRow(
     capabilityProfile: parsed.capabilityProfile,
     riskTier: parsed.riskTier,
     recommended: parsed.recommended,
-    // (ADR-110) SET/CLEAR symmetric: written on EVERY sync, so removing the
+    // (ADR-111) SET/CLEAR symmetric: written on EVERY sync, so removing the
     // `config:` block from the .md resets the column to null on resync.
     configSchema: parsed.config ?? null,
     // (ADR-106) The same-package flow + the seeded branch base; both CLEAR.

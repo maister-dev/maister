@@ -63,7 +63,7 @@ beforeAll(async () => {
     maisterYamlPath: "/tmp/triage-svc/maister.yaml",
     taskKey: "TRS",
   });
-  // ADR-111 (D9): a verdict flow must be launchable NOW (enablement + trust) —
+  // ADR-112 (D9): a verdict flow must be launchable NOW (enablement + trust) —
   // updateTaskVerdict/applyTriageVerdict refuse a non-launchable flow. Seed
   // this fixture flow launchable so the verdict-success cases hold.
   await db.insert(schema.flows).values({

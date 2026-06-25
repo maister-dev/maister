@@ -1,4 +1,4 @@
-// Phase 5 / T5.1 (ADR-111): the core-package Triager agent definition is
+// Phase 5 / T5.1 (ADR-112): the core-package Triager agent definition is
 // CONTENT (a maister-agents/triager.md shipped in maister-plugins). Its
 // acceptance is that the real parser accepts it and yields the declared shape:
 // the 3 config params, risk_tier=read_only, workspace=none, no flow, and the

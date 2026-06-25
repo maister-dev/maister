@@ -135,8 +135,8 @@
 | [ADR-108](#adr-108-declarative-guardrailhook-engine--universal-supervisor-acp-seam-interceptor-native-materializer-seam-and-hook-trip-hitl-escalation) | Declarative guardrail/hook engine — universal supervisor ACP-seam interceptor (3 rules), native materializer seam, `hook_trip` HITL, engine 1.8.0 | Accepted | 2026-06-23 |
 | [ADR-109](#adr-109-consensus-flow-graph-node--engine-owned-unanimous-draft-verification-and-human-resolution) | Consensus flow-graph node — engine-owned unanimous draft verification and human resolution | Accepted | 2026-06-24 |
 | [ADR-110](#adr-110-flow-studio-ai-assistant-read-only-acp--structured-server-applied-actions) | Flow Studio AI assistant: read-only ACP + structured server-applied actions | Accepted | 2026-06-25 |
-| [ADR-110](#adr-110-generic-agent-configuration-framework--declared-config-params-per-instance-values-resolved-snapshot-prompt-injection) | Generic agent configuration framework — declared config params, per-instance values, resolved snapshot, prompt injection | Accepted | 2026-06-25 |
-| [ADR-111](#adr-111-triager-agent--duplicate_offlagged-dedup-substrate-auto_launch_triaged-tick-flowrunner-discovery-no-silent-stall-guards) | Triager agent — duplicate_of/flagged dedup substrate, auto_launch_triaged tick, flow/runner discovery, no-silent-stall guards | Accepted | 2026-06-25 |
+| [ADR-111](#adr-111-generic-agent-configuration-framework--declared-config-params-per-instance-values-resolved-snapshot-prompt-injection) | Generic agent configuration framework — declared config params, per-instance values, resolved snapshot, prompt injection | Accepted | 2026-06-25 |
+| [ADR-112](#adr-112-triager-agent--duplicate_offlagged-dedup-substrate-auto_launch_triaged-tick-flowrunner-discovery-no-silent-stall-guards) | Triager agent — duplicate_of/flagged dedup substrate, auto_launch_triaged tick, flow/runner discovery, no-silent-stall guards | Accepted | 2026-06-25 |
 
 ---
 
@@ -8582,7 +8582,7 @@ Recovery never auto-replays action JSONL.
   boundaries. Studio assistant turns need their own route.
 - **Hunk patches:** deferred. Full-file operations reuse existing save and
   validation primitives and make stale-hash conflicts deterministic.
-### ADR-110: Generic agent configuration framework — declared config params, per-instance values, resolved snapshot, prompt injection
+### ADR-111: Generic agent configuration framework — declared config params, per-instance values, resolved snapshot, prompt injection
 
 **Date:** 2026-06-25
 **Status:** Accepted
@@ -8592,7 +8592,7 @@ the per-agent runner chain and the per-project attachment fields
 (`agent_project_links.runner_override_id`, `branch_base`,
 `execution_policy_override`). There is no way for an agent author to expose
 *behavioral* knobs — a boolean, an enum, a threshold — that a project operator
-sets per instance and the runtime feeds to the agent. The triager (ADR-111) is
+sets per instance and the runtime feeds to the agent. The triager (ADR-112) is
 the first agent that needs this: it must be configurable per project for
 auto-enqueue behavior, duplicate detection, and intake mode without forking the
 definition or hard-coding a triager-specific column. The owner asked for a
@@ -8643,7 +8643,7 @@ the immutable launch-snapshot discipline (`runs.execution_policy`,
 
 **Consequences:**
 - Agent authors gain a first-class, per-instance behavioral surface without
-  forking definitions or adding bespoke columns; the triager (ADR-111) consumes
+  forking definitions or adding bespoke columns; the triager (ADR-112) consumes
   it directly and any future agent inherits it for free.
 - The injected "Effective configuration" block reads from the immutable
   `runs.agent_config` snapshot, so a config edit mid-run is correctly invisible
@@ -8673,7 +8673,7 @@ the immutable launch-snapshot discipline (`runs.execution_policy`,
 
 ---
 
-### ADR-111: Triager agent — duplicate_of/flagged dedup substrate, auto_launch_triaged tick, flow/runner discovery, no-silent-stall guards
+### ADR-112: Triager agent — duplicate_of/flagged dedup substrate, auto_launch_triaged tick, flow/runner discovery, no-silent-stall guards
 
 **Date:** 2026-06-25
 **Status:** Accepted
@@ -8691,7 +8691,7 @@ Three concrete gaps remain: an agent cannot enumerate a project's flows/runners,
 there is no model for "this is a duplicate" or "a human must look", and the only
 auto-launcher (`auto_launch_run_plan`, ADR-098) is orchestrator-specific and
 does not launch ordinary triaged **flow** tasks. The generic agent-config
-framework (ADR-110) supplies the per-instance knobs the triager needs. PRD
+framework (ADR-111) supplies the per-instance knobs the triager needs. PRD
 authoring is explicitly **not** the triager's job — flow selection is driven by
 each flow's self-describing `metadata.route_when`, and a PRD, in the limit, is a
 node inside an execution flow (M12 artifact), authored separately.
@@ -8702,7 +8702,7 @@ node inside an execution flow (M12 artifact), authored separately.
    none`, `mode: session`, `risk_tier: read_only`, `triggers: [domain_event,
    manual]`, `recommended.events: [task.created, task.triage_requeued,
    task.comment_added]`, no `flow:` (so it runs as a standalone
-   `run_kind='agent'` session on the agent budget). Config (ADR-110):
+   `run_kind='agent'` session on the agent budget). Config (ADR-111):
    `auto_enqueue (off | when_confident | always = off)`, `detect_duplicates
    (boolean = true)`, `intake_mode (triage_only | clarify = clarify)`.
 2. **Clarity is two thresholds, not one.** A **routing-floor** check is
@@ -8765,7 +8765,7 @@ node inside an execution flow (M12 artifact), authored separately.
    DB change is one migration: `0072` carries the `duplicate_of` relation widening
    (the `task_relations_kind_check` CHECK). The `flagged` `triage_status` widening
    is app-level only — the column is plain `text` with no DB CHECK (migration 0049
-   created it that way), so it needs no migration. (The ADR-110 config columns are
+   created it that way), so it needs no migration. (The ADR-111 config columns are
    `0071`.)
 
 **Consequences:**
@@ -8792,7 +8792,7 @@ node inside an execution flow (M12 artifact), authored separately.
 
 **Alternatives Considered:**
 - **Two agents (a router and a clarifier), or a triager-specific config column:**
-  rejected — one agent configured per instance via the generic ADR-110 framework
+  rejected — one agent configured per instance via the generic ADR-111 framework
   is simpler and the owner's explicit call.
 - **The triager calls `run_launch` directly:** rejected — keeping the agent to an
   enqueue *intent* (`launch_mode='auto'`) and launching under system authority

@@ -25,7 +25,7 @@ const { tasks } = schemaModule as unknown as Record<string, any>;
 const ENDPOINT_TRIAGE =
   "POST /api/v1/ext/projects/[slug]/tasks/[taskId]/triage";
 
-// ADR-089 D8 / ADR-111: at least one field. A verdict body (flowId / runnerId /
+// ADR-089 D8 / ADR-112: at least one field. A verdict body (flowId / runnerId /
 // baseBranch / targetBranch / promotionMode) stamps triage_status='triaged'; a
 // `flag: true` body stamps 'flagged' (held). `flag` is mutually exclusive with
 // every verdict field (enforced below → 422 CONFIG). `enqueue: true` additionally
@@ -105,7 +105,7 @@ export async function POST(
         );
       }
 
-      // ADR-111: `flag` is mutually exclusive with every verdict field —
+      // ADR-112: `flag` is mutually exclusive with every verdict field —
       // a held duplicate / rejected intake carries no launch verdict.
       const flagged = body.flag === true;
       const verdictFieldsPresent = VERDICT_FIELDS.filter(
@@ -122,7 +122,7 @@ export async function POST(
         );
       }
 
-      // ADR-111 / OpenAPI: `enqueue` arms the auto_launch_triaged tick — valid
+      // ADR-112 / OpenAPI: `enqueue` arms the auto_launch_triaged tick — valid
       // when the flow resolves from EITHER this body OR the task's existing
       // flow_id (the task ends with a non-null flow_id). `enqueue` + `flag` is
       // excluded by the mutual-exclusion above.

@@ -35,7 +35,7 @@ export function schedulerBudgetLimits(): SchedulerBudgetLimits {
     runSchedule: 1,
     webhookDelivery: 1,
     domainEventDispatch: 1,
-    // ADR-111: the seeded singleton tick — one attempt at a time (run_schedule
+    // ADR-112: the seeded singleton tick — one attempt at a time (run_schedule
     // precedent). Idempotency rides the per-task live-flow-run guard.
     autoLaunchTriaged: 1,
   };

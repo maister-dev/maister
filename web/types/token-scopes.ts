@@ -18,7 +18,7 @@ export const TOKEN_SCOPES = [
   "relations:read",
   "relations:create",
   "relations:delete",
-  // M-triager (ADR-111): read-only discovery of the project's launchable flows
+  // M-triager (ADR-112): read-only discovery of the project's launchable flows
   // and the enabled platform ACP runners a triage verdict may assign.
   "flows:read",
   "runners:read",
@@ -40,7 +40,7 @@ export const AGENT_TOKEN_SCOPES = [
   "relations:read",
   "relations:create",
   "relations:delete",
-  // M-triager (ADR-111): the triager's ephemeral token reads the launchable
+  // M-triager (ADR-112): the triager's ephemeral token reads the launchable
   // flow + enabled-runner catalogs before stamping a verdict.
   "flows:read",
   "runners:read",

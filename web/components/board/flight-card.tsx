@@ -41,7 +41,7 @@ export interface FlightCardLabels {
   // in the InProduction column but is blocked on its run-tree children, not
   // actively working.
   waitingOnChildren: string;
-  // ADR-111: "needs review" chip for a flagged task (held for a human).
+  // ADR-112: "needs review" chip for a flagged task (held for a human).
   flagged: string;
   openRun: string;
   // M37 Phase 6 (ADR-098): localized labels for the orchestrator decomposition

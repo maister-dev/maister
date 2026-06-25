@@ -1031,7 +1031,7 @@ export async function launchAgentRun(
     }),
   );
 
-  // ADR-110 (D5): resolve the effective agent config ONCE here and snapshot it
+  // ADR-111 (D5): resolve the effective agent config ONCE here and snapshot it
   // onto the run row. buildAgentPrompt reads THIS snapshot at spawn — never
   // re-resolving from the (mutable) definition/link. null when the agent
   // declares no config (the column stays null).
@@ -1048,7 +1048,7 @@ export async function launchAgentRun(
       agentId: input.agentId,
       configKeys: agentConfig ? Object.keys(agentConfig) : [],
     },
-    "[ADR-110] resolved agent config snapshot",
+    "[ADR-111] resolved agent config snapshot",
   );
 
   const runRow = {
@@ -1414,7 +1414,7 @@ async function taskContextBlock(
   ].join("\n");
 }
 
-// ADR-110 (D5): the "Effective configuration" block is rendered from the
+// ADR-111 (D5): the "Effective configuration" block is rendered from the
 // launch-time SNAPSHOT on the run row (`run.agentConfig`), NEVER re-resolved
 // from the (mutable) definition/link. The declaration only supplies a
 // human-readable label + a stable order; the VALUE is whatever the snapshot
@@ -1470,7 +1470,7 @@ export async function buildAgentPrompt(
   const taskBlock = await taskContextBlock(_db, run);
   const commentTriggerBlock = await taskCommentTriggerContextBlock(_db, run);
 
-  // ADR-110 (D5): the config block lands right after the persona body and
+  // ADR-111 (D5): the config block lands right after the persona body and
   // BEFORE the task block — the agent reads its effective config first.
   if (configBlock) sections.push(configBlock);
   if (taskBlock) sections.push(taskBlock);

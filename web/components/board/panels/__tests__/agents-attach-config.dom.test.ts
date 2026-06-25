@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-// P1.5 (ADR-110): the per-instance agent-config section of the attach/edit
+// P1.5 (ADR-111): the per-instance agent-config section of the attach/edit
 // modal renders ONE control per declared `config_schema` param (seeded from the
 // effective value = instance config ?? declared default) and folds the
 // collected values into the SAME aggregating PATCH body (`configValues`) — one
@@ -177,7 +177,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("AttachEditModal configuration section (ADR-110)", () => {
+describe("AttachEditModal configuration section (ADR-111)", () => {
   it("renders one control per declared param seeded from the effective value", () => {
     render(buildRow({ config: { auto_enqueue: "always" } }));
 

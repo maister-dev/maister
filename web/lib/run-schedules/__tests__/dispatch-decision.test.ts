@@ -31,7 +31,7 @@ describe("decideFire (overlap policy × launchability × cap matrix)", () => {
     }
   });
 
-  it("skips flagged targets under every policy, regardless of cap (ADR-111)", () => {
+  it("skips flagged targets under every policy, regardless of cap (ADR-112)", () => {
     for (const policy of ["skip", "queue_one", "start_anyway"] as const) {
       for (const capFull of [false, true]) {
         expect(

@@ -479,7 +479,7 @@ describe("project agent links (attach panel service)", () => {
     expect(view.attached[0].executionPolicyOverride).toBeNull();
   });
 
-  it("PATCH persists per-instance config and clears it with null (ADR-110 SET/CLEAR)", async () => {
+  it("PATCH persists per-instance config and clears it with null (ADR-111 SET/CLEAR)", async () => {
     await detachAgent(
       { projectId: fx.projectId, agentId: fx.agentId },
       db,
@@ -542,7 +542,7 @@ describe("project agent links (attach panel service)", () => {
     expect(view.attached[0].config).toBeNull();
   });
 
-  it("rejects a per-instance config value that violates the declared schema (ADR-110)", async () => {
+  it("rejects a per-instance config value that violates the declared schema (ADR-111)", async () => {
     await detachAgent(
       { projectId: fx.projectId, agentId: fx.agentId },
       db,

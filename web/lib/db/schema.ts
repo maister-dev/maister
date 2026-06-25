@@ -758,7 +758,7 @@ export type AgentExecutionPolicyRecommendation = {
   onBudgetBreach?: "escalate" | "terminate" | "terminate_restorable";
 };
 
-// ADR-110: a generic agent-config parameter the package declares. Projected
+// ADR-111: a generic agent-config parameter the package declares. Projected
 // onto `agents.config_schema`; the per-project instance value lives on
 // `agent_project_links.config`; the resolved map is snapshotted onto
 // `runs.agent_config` at launch. `values` is meaningful only for `enum`.
@@ -811,7 +811,7 @@ export const agents = pgTable(
       enum: ["read_only", "standard", "destructive"],
     }).notNull(),
     recommended: jsonb("recommended").$type<AgentRecommended>(),
-    // (ADR-110) The declared generic config params, projected from the .md's
+    // (ADR-111) The declared generic config params, projected from the .md's
     // `config:` block on every resync (SET/CLEAR symmetric: absent → null).
     configSchema: jsonb("config_schema").$type<AgentConfigParam[]>(),
     // (ADR-106) The same-package flow this agent drives (a manifest flow id);
@@ -867,7 +867,7 @@ export const agentProjectLinks = pgTable(
     executionPolicyOverride: jsonb(
       "execution_policy_override",
     ).$type<AgentExecutionPolicyRecommendation>(),
-    // (ADR-110) Per-instance config values keyed by the declared param key;
+    // (ADR-111) Per-instance config values keyed by the declared param key;
     // null → all declared defaults. Sparse: only keys the operator set. The
     // resolved (defaults ← instance) map is snapshotted onto runs.agent_config.
     config: jsonb("config").$type<Record<string, unknown>>(),
@@ -1081,7 +1081,7 @@ export const tasks = pgTable(
     // marks a task whose run the auto-launcher creates once its `requires`
     // blockers clear; delegation_spec carries the catalog-agent target + params.
     launchMode: text("launch_mode", { enum: ["auto", "manual"] }),
-    // ADR-111 (migration 0073): the current enqueue intent boundary — set to
+    // ADR-112 (migration 0073): the current enqueue intent boundary — set to
     // now() whenever launch_mode is armed 'auto' by a triage verdict, cleared
     // with it. The auto_launch_triaged retry cap counts ONLY failed flow runs
     // started at/after this instant, so a re-triage (new flow / re-arm after a
@@ -1405,7 +1405,7 @@ export const runs = pgTable(
     // raise-and-resume ceiling override + per-scope notified rung (idempotency).
     // Nullable: a run with no budget interaction never writes this column.
     budgetState: jsonb("budget_state").$type<BudgetState>(),
-    // (ADR-110, migration 0071) The launch-time snapshot of the resolved agent
+    // (ADR-111, migration 0071) The launch-time snapshot of the resolved agent
     // config (declared defaults ← instance values). Written ONCE at spawn; the
     // prompt injection reads THIS column, never re-resolving from the mutable
     // definition/link. Nullable: only agent runs with declared config write it.

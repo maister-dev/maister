@@ -74,7 +74,7 @@ function definitionMd(opts?: {
   const recommended = opts?.recommendedCron
     ? `recommended:\n  cron:\n    expr: "${opts.recommendedCron.expr}"\n    timezone: ${opts.recommendedCron.timezone}\n`
     : "";
-  // ADR-110: a declared config block, gated so the CLEAR half can drop it.
+  // ADR-111: a declared config block, gated so the CLEAR half can drop it.
   const config = opts?.config
     ? [
         "config:",
@@ -268,7 +268,7 @@ describe("registerPackageAgents", () => {
     });
   });
 
-  it("SET/CLEAR/re-set syncs config_schema from the .md config block (ADR-110)", async () => {
+  it("SET/CLEAR/re-set syncs config_schema from the .md config block (ADR-111)", async () => {
     // SET: the .md declares config → column equals the declared array.
     const withConfig = await installPackageFixture({
       name: "aif",

@@ -1,4 +1,4 @@
-// Phase 5 / T5.3 (ADR-111): the Triager behavioral wire-through, end-to-end
+// Phase 5 / T5.3 (ADR-112): the Triager behavioral wire-through, end-to-end
 // against a real Postgres. Two halves:
 //   (a) a task.created domain event with the triager's event binding makes the
 //       agent_triggers consumer enqueue a triager run_kind='agent' run; an

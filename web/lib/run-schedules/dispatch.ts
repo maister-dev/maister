@@ -71,7 +71,7 @@ export function decideFire(input: {
       ? { action: "catchup", outcome: "catchup_queued" }
       : { action: "skip", outcome: "skipped_task_busy" };
   }
-  // ADR-111: a `flagged` task (confirmed duplicate / rejected intake) cannot
+  // ADR-112: a `flagged` task (confirmed duplicate / rejected intake) cannot
   // fire under any policy; like blocked, the queue_one flag is kept so the
   // catch-up fires once a human resolves the flag. Precedence mirrors the
   // classifier (flagged outranks blocked).

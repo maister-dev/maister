@@ -97,7 +97,7 @@ beforeAll(async () => {
     maisterYamlPath: `/tmp/${SLUG}/maister.yaml`,
     taskKey: "EXT",
   });
-  // ADR-111 (D9): a verdict flow must be launchable NOW (enablement + trust) —
+  // ADR-112 (D9): a verdict flow must be launchable NOW (enablement + trust) —
   // a verdict on a non-launchable flow is refused at triage time (no silent
   // stall). Seed this fixture flow launchable so the verdict-success cases hold.
   await db.insert(schema.flows).values({
@@ -310,10 +310,10 @@ describe("POST /api/v1/ext/.../triage — agent verdict", () => {
   });
 });
 
-// ADR-111 — the triage `flag` op: mark `flagged` (held), NO verdict columns,
+// ADR-112 — the triage `flag` op: mark `flagged` (held), NO verdict columns,
 // in the SAME transaction as the token audit; mutually exclusive with verdict
 // fields (422 CONFIG). Uses the user token (the agent token is revoked above).
-describe("POST /api/v1/ext/.../triage — flag op (ADR-111)", () => {
+describe("POST /api/v1/ext/.../triage — flag op (ADR-112)", () => {
   async function freshTask(): Promise<string> {
     const created = await createTask(
       { title: "to flag", prompt: "maybe a dup" },
@@ -405,9 +405,9 @@ describe("POST /api/v1/ext/.../triage — flag op (ADR-111)", () => {
   });
 });
 
-// ADR-111 (Phase 4) — the triage `enqueue` intent + the D9 no-silent-stall
+// ADR-112 (Phase 4) — the triage `enqueue` intent + the D9 no-silent-stall
 // write-side validation.
-describe("POST /api/v1/ext/.../triage — enqueue + D9 (ADR-111)", () => {
+describe("POST /api/v1/ext/.../triage — enqueue + D9 (ADR-112)", () => {
   async function freshTask(): Promise<string> {
     const created = await createTask(
       { title: "to enqueue", prompt: "route it" },

@@ -51,7 +51,7 @@ without turning recovery sweeps into live-path polling.
   per-consumer cursors over the `domain_events` outbox each tick. Not
   user-creatable — `createSchedulerJobSchema` rejects it (`run_schedule`
   precedent). See [domain-events.md](domain-events.md).
-- **`auto_launch_triaged` job kind** (Implemented, ADR-111) — singleton
+- **`auto_launch_triaged` job kind** (Implemented, ADR-112) — singleton
   triaged-task launcher (one `auto_launch_triaged.default` job, 60s cadence,
   budget `autoLaunchTriaged: 1`) whose handler each tick sweeps tasks that are
   `triage_status='triaged'` AND `launch_mode='auto'` AND have a `flow_id` AND
@@ -183,7 +183,7 @@ flowchart TD
   (60-second cadence; Implemented, ADR-077), `domain_event_dispatch.default`
   (60-second cadence; Implemented, ADR-086), `agent_tick.dispatcher`
   (60-second cadence; M34 — Implemented, ADR-089), and
-  `auto_launch_triaged.default` (60-second cadence; Implemented, ADR-111).
+  `auto_launch_triaged.default` (60-second cadence; Implemented, ADR-112).
 - Atomic claim MUST enforce per-kind budgets in SQL before an attempt is created:
   `command` uses `MAISTER_MAX_CONCURRENT_COMMANDS`; `agent_tick` is a hardcoded
   budget of 1 (singleton dispatcher; M34 — Implemented — its former
@@ -195,7 +195,7 @@ flowchart TD
   is a hardcoded budget of 1 (singleton drainer; Implemented, ADR-077);
   `domain_event_dispatch` is a hardcoded budget of 1 (singleton dispatcher;
   Implemented, ADR-086); `auto_launch_triaged` is a hardcoded budget of 1
-  (singleton launcher; Implemented, ADR-111).
+  (singleton launcher; Implemented, ADR-112).
 - `agent_tick` MUST be the seeded `agent_tick.dispatcher` singleton only —
   `createSchedulerJobSchema` rejects the kind (M34 — Implemented; the M24
   "stub without a launcher records `Skipped`/`PRECONDITION`" seam is
@@ -219,7 +219,7 @@ flowchart TD
   creation, and editing. All DB-supported kinds are visible/filterable:
   `system_sweep`, `command`, `agent_tick`, `flow_run`, `run_schedule`,
   `webhook_delivery`, `domain_event_dispatch`, and `auto_launch_triaged`
-  (the last Implemented, ADR-111).
+  (the last Implemented, ADR-112).
 - Custom job creation MUST match the admin API schema. The seeded singleton
   kinds `agent_tick`, `run_schedule`, `domain_event_dispatch`, and
   `auto_launch_triaged` are not creatable as duplicates. `webhook_delivery`
@@ -265,7 +265,7 @@ flowchart TD
 - User-facing run schedules (Implemented, M28): [`run-schedules.md`](run-schedules.md) +
   [ADR-071](../decisions.md#adr-071-user-facing-run-schedules-on-the-m24-clock).
 - Domain-event dispatcher (Implemented, ADR-086): [`domain-events.md`](domain-events.md).
-- Triaged-task launcher (Implemented, ADR-111): [`triage.md`](triage.md).
+- Triaged-task launcher (Implemented, ADR-112): [`triage.md`](triage.md).
 - Platform-agent triggers (M34 — Implemented, ADR-089): [`agents.md`](agents.md).
 - Existing recovery/GC domain: [`reconciliation-gc.md`](reconciliation-gc.md).
 - Source seams: `web/app/api/cron/gc/route.ts`, `web/lib/scheduler.ts`,

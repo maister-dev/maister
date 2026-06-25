@@ -232,7 +232,7 @@ you (N)" badge is the single canonical `needsYou` count (see Expectations); see
   `requires` releases the dependent ONLY on `Done`; `Failed`/`Abandoned`
   keeps it blocked and wakes the orchestrator. Behavior owned by
   [`orchestrator.md`](orchestrator.md).
-- **`duplicate_of` non-blocking (ADR-111 — Implemented)** — the triager creates
+- **`duplicate_of` non-blocking (ADR-112 — Implemented)** — the triager creates
   a `duplicate_of` relation kind when it flags a task as a duplicate. It is
   **informational only**: `getOpenRelationBlockers` queries solely
   `blocks`/`depends_on`/`requires`, so `duplicate_of` (like `parent_of`)

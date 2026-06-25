@@ -51,7 +51,7 @@ export type AttachedAgentRow = {
   // (ADR-106) Per-instance overrides; null → inherit the agent `recommended`.
   branchBase: string | null;
   executionPolicyOverride: ExecutionPolicyOverrideView | null;
-  // (ADR-110) Per-instance config values keyed by declared param key; null →
+  // (ADR-111) Per-instance config values keyed by declared param key; null →
   // every declared default. The modal seeds each control from instance ?? default.
   config: Record<string, unknown> | null;
   schedules: AttachScheduleView[];
@@ -66,7 +66,7 @@ export type AttachedAgentRow = {
     enabled: boolean;
     quarantinedAt: string | null;
     recommended: AgentRecommendedView | null;
-    // (ADR-110) The package-declared config params; null → no config section.
+    // (ADR-111) The package-declared config params; null → no config section.
     configSchema: AgentConfigParam[] | null;
   };
 };
@@ -78,7 +78,7 @@ export type AvailableAgentRow = {
   // RD5: package-recommended bindings — pre-fill the attach modal; nothing
   // applies without Save.
   recommended: AgentRecommendedView | null;
-  // (ADR-110) Declared config params — the attach modal renders one control per
+  // (ADR-111) Declared config params — the attach modal renders one control per
   // param seeded from each declared default.
   configSchema: AgentConfigParam[] | null;
 };
@@ -120,7 +120,7 @@ function policySummary(row: AttachedAgentRow): string {
   return parts.length > 0 ? parts.join(" · ") : "—";
 }
 
-// (ADR-110) Terse summary of how many declared config params the instance has
+// (ADR-111) Terse summary of how many declared config params the instance has
 // overridden away from their declared default; "—" when none (or no schema).
 function configSummary(row: AttachedAgentRow): string {
   const schema = row.agent.configSchema;

@@ -27,7 +27,7 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-// ADR-111 (level-triggered + cap): launch_mode='auto' is kept across a
+// ADR-112 (level-triggered + cap): launch_mode='auto' is kept across a
 // successful launch — a dependency-blocked task self-launches once its blocker
 // clears, and a transient cap-hit is retried — but a flow that keeps FAILING
 // must not relaunch forever. Two bounds applied per candidate:
@@ -110,7 +110,7 @@ async function countFailedFlowRuns(
   return rows.length;
 }
 
-// The auto_launch_triaged tick (ADR-111): a triaged + launch_mode='auto' + flow
+// The auto_launch_triaged tick (ADR-112): a triaged + launch_mode='auto' + flow
 // task whose relation blockers have cleared is launched as a board flow run by
 // reusing launchRun (which owns git/worktree + the run insert + supervisor
 // spawn). DISJOINT from auto_launch_run_plan (ADR-098): that consumer launches
@@ -120,13 +120,13 @@ async function countFailedFlowRuns(
 // budget-1 singleton lease (the M24 clock claims at most one attempt) plus the
 // per-task live-flow-run guard; the tick writes NO mark before launchRun.
 //
-// Level-triggered + cap (ADR-111): launch_mode='auto' is KEPT across a launch, so
+// Level-triggered + cap (ADR-112): launch_mode='auto' is KEPT across a launch, so
 // the same intent self-launches once a dependency clears and is retried after a
 // transient refusal — but the failure cap + backoff (see countFailedFlowRuns /
 // MAX_AUTO_LAUNCH_ATTEMPTS) stop a repeatedly-failing flow from relaunching
 // forever.
 //
-// No-silent-stall give-up (ADR-111 / D9): a single candidate's refusal is logged
+// No-silent-stall give-up (ADR-112 / D9): a single candidate's refusal is logged
 // and skipped, never thrown — a throw would mark the whole tick Skipped/Failed
 // and redeliver. Give-up HOLDS the task (clears launch_mode, sets
 // triage_status='flagged', posts a system comment) on either a TERMINAL refusal
@@ -321,7 +321,7 @@ function isTerminalLaunchRefusal(err: unknown): boolean {
   );
 }
 
-// ADR-111 give-up (no-silent-stall, documented behavior): a triaged+auto task
+// ADR-112 give-up (no-silent-stall, documented behavior): a triaged+auto task
 // the tick can never successfully launch must not loop. Give-up HOLDS the task
 // for a human in ONE transaction — it clears launch_mode (out of the candidate
 // set), sets triage_status='flagged' (non-launchable even with a flow set), and

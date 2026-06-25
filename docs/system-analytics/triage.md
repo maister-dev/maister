@@ -2,7 +2,7 @@
 
 > **Status: Implemented.** Frozen design source:
 > [`../superpowers/specs/2026-06-24-triager-agent-design.md`](../superpowers/specs/2026-06-24-triager-agent-design.md).
-> Decisions: ADR-110 (generic agent-config framework), ADR-111 (triager agent +
+> Decisions: ADR-111 (generic agent-config framework), ADR-112 (triager agent +
 > `duplicate_of`/`flagged` substrate + `auto_launch_triaged` tick). Everything in
 > this file is **Implemented** unless a bullet tags it otherwise. Live-agent
 > end-to-end triage is exercised manually only (the substrate paths are covered
@@ -321,8 +321,8 @@ flag/enqueue are body booleans, not locators (safe).
 
 ## Linked artifacts
 
-- **Decisions:** ADR-110 (generic agent-config framework — declare → project →
-  instance → resolve → inject → snapshot); ADR-111 (triager agent, two-tier
+- **Decisions:** ADR-111 (generic agent-config framework — declare → project →
+  instance → resolve → inject → snapshot); ADR-112 (triager agent, two-tier
   clarity, `duplicate_of`/`flagged`, `auto_launch_triaged` tick disjoint from
   ADR-098, `flow_list`/`runner_list`, `flows:read`/`runners:read` scopes, triage
   `flag`/`enqueue`, the no-silent-stall contract). See [decisions.md](../decisions.md).

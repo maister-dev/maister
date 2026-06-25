@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MaisterError } from "@/lib/errors-core";
 
-// P1.5 (ADR-110): the PATCH route folds `configValues` into the SAME aggregating
+// P1.5 (ADR-111): the PATCH route folds `configValues` into the SAME aggregating
 // `updateAgentLink` call, remapping the wire field to the service/column key
 // `config` (SET = object, CLEAR = explicit null), and validates the body shape.
 
@@ -62,7 +62,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("PATCH /api/projects/[slug]/agents/[agentId] config (ADR-110)", () => {
+describe("PATCH /api/projects/[slug]/agents/[agentId] config (ADR-111)", () => {
   it("forwards configValues as patch.config (SET) in the aggregating call", async () => {
     const res = await route.PATCH(
       jsonRequest("PATCH", {

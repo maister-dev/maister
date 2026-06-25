@@ -128,7 +128,7 @@ export async function Board({
     if (!launchableLatestRunStatuses.has(card.runStatus)) {
       return t("launchBusy");
     }
-    // ADR-111: `flagged` outranks `blocked` (mirrors classifyTaskLaunchability) —
+    // ADR-112: `flagged` outranks `blocked` (mirrors classifyTaskLaunchability) —
     // a held task is not relaunchable even when its blockers have cleared.
     if (card.triageStatus === "flagged") {
       return t("launchFlagged");

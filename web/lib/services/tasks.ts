@@ -239,7 +239,7 @@ export type TaskDTO = {
   stage: string;
   flowId: string | null;
   // M34 launch-verdict fields (ADR-089): triage stamps them, the board's
-  // launch popover edits them pre-launch. ADR-111: `flagged` marks a confirmed
+  // launch popover edits them pre-launch. ADR-112: `flagged` marks a confirmed
   // duplicate / triage-rejected intake (held — non-launchable until resolved).
   triageStatus: "triaged" | "flagged" | null;
   runnerId: string | null;

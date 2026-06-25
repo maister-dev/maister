@@ -63,7 +63,7 @@ surface exists.
   ops), `agents:trigger` (the inbound `POST /api/agents/{agentId}/event`
   webhook trigger — the only token-authenticated route outside
   `/api/v1/ext`).
-- **New scopes** (M-triager — Implemented, ADR-111) — `flows:read` (the
+- **New scopes** (M-triager — Implemented, ADR-112) — `flows:read` (the
   project's launchable flows a triage verdict may assign) and `runners:read`
   (the enabled platform ACP runners), both mapping to the `readBoard` project
   action and added to the agent-token scope set for the triager's discovery
@@ -98,7 +98,7 @@ surface exists.
   `POST .../tasks/{taskId}/triage`) and `relation_add` / `relation_remove` /
   `relation_list` over the ext relation routes. Personal tokens add stdio
   fallback `MAISTER_ACCESS_TOKEN` and the `hitl_inbox` tool. (Implemented)
-  M-triager (Implemented, ADR-111) adds the read-only discovery tools
+  M-triager (Implemented, ADR-112) adds the read-only discovery tools
   `flow_list` (`GET .../flows`, scope `flows:read`, launchable flows only) and
   `runner_list` (`GET .../runners`, scope `runners:read`, enabled runners only),
   and extends the triage op with two body booleans — `flag` (sets

@@ -248,7 +248,7 @@ describe("classifyManualTaskLaunchability — ADR-085 manual relaunch allow-list
   });
 });
 
-// P3.2 (ADR-111) — a `triage_status='flagged'` task (a confirmed duplicate /
+// P3.2 (ADR-112) — a `triage_status='flagged'` task (a confirmed duplicate /
 // triage-rejected intake) is held: non-launchable in BOTH classifiers EVEN
 // with a flow set + no blockers. Precedence:
 // target_terminal > crashed > busy > flagged > blocked > unconfigured >

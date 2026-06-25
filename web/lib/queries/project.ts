@@ -50,7 +50,7 @@ function db(): NodePgDatabase<typeof schema> {
 
 export type ProjectAgent = AdapterId;
 
-// ADR-111 (D9 read side): the discovery routes return ONLY flows a triage
+// ADR-112 (D9 read side): the discovery routes return ONLY flows a triage
 // verdict may actually assign — same allow-list the launch path enforces
 // (`LAUNCHABLE_ENABLEMENT_STATES` in lib/services/runs.ts) plus a trust gate.
 const LAUNCHABLE_FLOW_ENABLEMENT_STATES = new Set<string>([
@@ -58,7 +58,7 @@ const LAUNCHABLE_FLOW_ENABLEMENT_STATES = new Set<string>([
   "UpdateAvailable",
 ]);
 
-// ADR-111: one launchable flow projected for the `flow_list` discovery route.
+// ADR-112: one launchable flow projected for the `flow_list` discovery route.
 // Explicit DTO — never the raw `flows` row. Mirrors `ExtFlowSummary`.
 export interface ExtFlowSummary {
   id: string;
@@ -71,7 +71,7 @@ export interface ExtFlowSummary {
   };
 }
 
-// ADR-111: one enabled platform runner projected for the `runner_list`
+// ADR-112: one enabled platform runner projected for the `runner_list`
 // discovery route. Mirrors `ExtRunnerSummary`.
 export interface ExtRunnerSummary {
   id: string;
@@ -190,7 +190,7 @@ function flowMetadataProjection(
 }
 
 /**
- * ADR-111 (D9): launchable flows of a project, projected for the `flow_list`
+ * ADR-112 (D9): launchable flows of a project, projected for the `flow_list`
  * discovery route. Only `enablementState ∈ {Enabled, UpdateAvailable}` ∧
  * `trustStatus ≠ untrusted` flows are returned, so a verdict built from this
  * list can never stall an `enqueue` on an unlaunchable flow.
@@ -227,7 +227,7 @@ export async function listLaunchableFlowSummaries(
 }
 
 /**
- * ADR-111: the enabled platform ACP runners, projected for the `runner_list`
+ * ADR-112: the enabled platform ACP runners, projected for the `runner_list`
  * discovery route. Runners are platform-scoped (not project-scoped) — the
  * caller's project is used only for auth/scope; only `enabled = true` runners
  * are returned.

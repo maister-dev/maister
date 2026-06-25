@@ -83,7 +83,7 @@ export function classifyTaskLaunchability(
       : RUN_STATUS_LAUNCHABILITY[latestRun.status];
 
   // Precedence: target_terminal > crashed > busy > flagged > blocked >
-  // unconfigured > launchable (M34 ADR-089; flagged ADR-111) — relations gate
+  // unconfigured > launchable (M34 ADR-089; flagged ADR-112) — relations gate
   // LAUNCHING only; they never mask an active run's state. `flagged` (a
   // confirmed duplicate / triage-rejected intake) is HELD even with a flow
   // set — a human must resolve it before launch; a flowless simple-intent task
@@ -117,7 +117,7 @@ export function classifyManualTaskLaunchability(
         : "launchable"
       : MANUAL_RUN_STATUS_LAUNCHABILITY[latestRun.status];
 
-  // `flagged` is held on the manual relaunch path too (ADR-111): a confirmed
+  // `flagged` is held on the manual relaunch path too (ADR-112): a confirmed
   // duplicate / rejected intake is not relaunchable until resolved. Precedence
   // mirrors the launch path — busy/crashed/target_terminal still win (flagged
   // never masks an active/terminal run state), flagged outranks blocked.

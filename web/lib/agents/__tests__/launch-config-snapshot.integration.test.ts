@@ -1,4 +1,4 @@
-// ADR-110 (D5): the agent config is resolved ONCE at launch and snapshotted
+// ADR-111 (D5): the agent config is resolved ONCE at launch and snapshotted
 // onto runs.agent_config. The prompt injection reads THAT snapshot, never
 // re-resolving from the (mutable) agent_project_links.config — so mutating the
 // instance config AFTER spawn changes neither the snapshot nor the injected
@@ -223,7 +223,7 @@ async function runAgentConfig(
   return res.rows[0].agent_config as Record<string, unknown> | null;
 }
 
-describe("ADR-110 launch-time config snapshot", () => {
+describe("ADR-111 launch-time config snapshot", () => {
   it("persists runs.agent_config = resolved (instance over declared default)", async () => {
     const agentId = await seedTriager({ intake_mode: "triage_only" });
 

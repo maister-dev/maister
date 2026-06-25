@@ -132,7 +132,7 @@ const recommendedSchema = z
   })
   .strict();
 
-// ADR-110: re-export the canonical type (declared in schema.ts, the base
+// ADR-111: re-export the canonical type (declared in schema.ts, the base
 // layer) so callers can `import { AgentConfigParam } from "@/lib/agents/definition"`.
 export type { AgentConfigParam };
 
@@ -169,7 +169,7 @@ const configParamDeclSchema = z
       });
     }
 
-    // ADR-110: a declared `default` must match its declared `type` — otherwise a
+    // ADR-111: a declared `default` must match its declared `type` — otherwise a
     // mistyped default (e.g. `type: number, default: "x"`) would be projected to
     // `agents.config_schema`, copied verbatim into the immutable `runs.agent_config`
     // snapshot, and injected into the agent prompt. enum defaults must be strings.
@@ -223,7 +223,7 @@ export const agentDefinitionFrontmatterSchema = z
     // execution-policy preset, so there is no `unattended` auto-arm — only what
     // the agent declares here arms (path_guard / repetition / no_progress).
     hooks: hooksSettingsSchema.optional(),
-    // ADR-110: declared agent-config parameters (generic config framework).
+    // ADR-111: declared agent-config parameters (generic config framework).
     config: z.array(configParamDeclSchema).optional(),
   })
   .strict()

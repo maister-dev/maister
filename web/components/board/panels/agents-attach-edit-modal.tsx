@@ -13,7 +13,7 @@ import type { AgentConfigParam } from "@/lib/agents/definition";
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 
-// (ADR-110) Seed each control from the effective value: the instance config
+// (ADR-111) Seed each control from the effective value: the instance config
 // value when the operator set one, else the declared default. A param with
 // neither is left blank (string/number) or false (boolean).
 function seedConfigValues(
@@ -234,7 +234,7 @@ export function AttachEditModal({
         runnerOverrideId: runnerOverrideId === "" ? null : runnerOverrideId,
         branchBase: branchBase.trim() === "" ? null : branchBase.trim(),
         executionPolicyOverride: policyOverride,
-        // (ADR-110) Fold the per-instance config into the SAME aggregating
+        // (ADR-111) Fold the per-instance config into the SAME aggregating
         // PATCH; omit the field entirely when nothing is declared.
         ...(configSchema.length > 0 ? { configValues } : {}),
         schedules: schedules.map((s) =>
@@ -552,7 +552,7 @@ export function AttachEditModal({
   );
 }
 
-// (ADR-110) One control per declared config param. The label/description come
+// (ADR-111) One control per declared config param. The label/description come
 // from the agent `.md` (authored, not i18n); the control type follows
 // `param.type`. The value flows back up as the right JS type (boolean / number
 // / string) so the PATCH body matches the declared schema.

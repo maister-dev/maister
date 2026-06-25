@@ -1,4 +1,4 @@
-// Phase 5 / T5.2 (ADR-111): the core package register -> attach -> launch path
+// Phase 5 / T5.2 (ADR-112): the core package register -> attach -> launch path
 // for the Triager, end-to-end against a real Postgres. Proves:
 //   - a FLOW-LESS package (no flows[] in the manifest) registers its
 //     maister-agents/*.md through the real registerPackageAgents/resyncAgents,

@@ -498,7 +498,7 @@ describe("task relations (ADR-078 D4/D5)", () => {
     expect(blockers.get(b.taskId)).toBeUndefined();
   });
 
-  // ADR-111 dedup substrate: `duplicate_of` is a non-blocking annotation —
+  // ADR-112 dedup substrate: `duplicate_of` is a non-blocking annotation —
   // the CHECK accepts it, add/remove are idempotent, and it is NEVER a launch
   // blocker (a task that is ONLY duplicate_of-linked stays launchable).
   it("duplicate_of persists (CHECK accepts), removes idempotently, and is NEVER a blocker", async () => {

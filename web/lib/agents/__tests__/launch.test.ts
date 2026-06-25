@@ -129,7 +129,7 @@ describe("buildAgentPrompt", () => {
     });
   }
 
-  it("injects the Effective configuration block from the run snapshot (ADR-110)", async () => {
+  it("injects the Effective configuration block from the run snapshot (ADR-111)", async () => {
     const configParsed = {
       prompt: "Classify the task.",
       config: [

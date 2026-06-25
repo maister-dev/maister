@@ -23,7 +23,7 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-// ADR-111 (D9): the launchable-flow allow-list — same states the launch path
+// ADR-112 (D9): the launchable-flow allow-list — same states the launch path
 // (LAUNCHABLE_ENABLEMENT_STATES) and the flow_list read side enforce.
 const LAUNCHABLE_FLOW_ENABLEMENT_STATES = new Set<string>([
   "Enabled",
@@ -89,7 +89,7 @@ export async function validateVerdictRefs(
       );
     }
 
-    // ADR-111 (D9 write side): a verdict flow must be launchable NOW — same
+    // ADR-112 (D9 write side): a verdict flow must be launchable NOW — same
     // allow-list the launch path enforces (LAUNCHABLE_FLOW_ENABLEMENT_STATES)
     // plus the trust gate. Stamping `triaged`+`enqueue` on a disabled/untrusted
     // flow would otherwise hang the auto_launch_triaged tick forever (the tick's
@@ -158,7 +158,7 @@ function verdictColumns(patch: TaskVerdictPatch): Record<string, unknown> {
 
 // Ext triage op (ADR-089 D8): set-only verdict fields + the 'triaged' stamp +
 // a `triage_set` activity entry — caller supplies the transaction so the
-// token audit row commits or rolls back with the verdict. ADR-111: `enqueue`
+// token audit row commits or rolls back with the verdict. ADR-112: `enqueue`
 // additionally sets launch_mode='auto' (the auto_launch_triaged tick fires the
 // run) IN THE SAME transaction — only valid alongside a verdict yielding a flow
 // (the route enforces 422 CONFIG otherwise).
@@ -180,7 +180,7 @@ export async function applyTriageVerdict(
     .set({
       ...set,
       triageStatus: "triaged",
-      // ADR-111: triage_set is AUTHORITATIVE for the enqueue intent — arm the
+      // ADR-112: triage_set is AUTHORITATIVE for the enqueue intent — arm the
       // auto_launch_triaged tick when enqueue, else CLEAR any stale 'auto' left
       // by a prior pass (mirrors sendTaskToTriage). A verdict that does not
       // request enqueue must never inherit an earlier auto-launch arm. The arm
@@ -242,7 +242,7 @@ export async function updateTaskVerdict(
   );
 }
 
-// Triage flag op (ADR-111): mark the task `flagged` (held — non-launchable;
+// Triage flag op (ADR-112): mark the task `flagged` (held — non-launchable;
 // the board shows a "needs review" chip). Writes NO verdict columns, but DOES
 // clear any stale launch_mode='auto' from a prior pass — a held task carries no
 // enqueue intent (mirrors sendTaskToTriage / applyTriageVerdict). Records a
@@ -303,7 +303,7 @@ export async function sendTaskToTriage(
   };
 
   await _db.transaction(async (tx) => {
-    // Clearing the verdict also drops any stale enqueue intent (ADR-111): a
+    // Clearing the verdict also drops any stale enqueue intent (ADR-112): a
     // re-triaged task must not carry a `launch_mode='auto'` from a prior pass
     // and auto-launch the moment it is re-stamped `triaged`.
     await tx
