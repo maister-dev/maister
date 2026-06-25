@@ -22,6 +22,7 @@ import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { closeDb } from "@/lib/db/client";
 import * as fullSchema from "@/lib/db/schema";
 import {
   testPlatformRunnerRow,
@@ -83,6 +84,10 @@ afterAll(async () => {
   } else {
     process.env.DB_URL = originalDbUrl;
   }
+  // runner-agent lazily built the getDb() singleton pool against this
+  // container; close it before stopping the container, else its idle
+  // connections die with pg 57P01 unhandled errors (see lib/db/client.ts).
+  await closeDb();
   await pool?.end();
   await container?.stop();
 });
