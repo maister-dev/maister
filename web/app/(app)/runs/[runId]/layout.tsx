@@ -103,6 +103,7 @@ import {
   getRunSettings,
   getRunTimeline,
 } from "@/lib/queries/run";
+import { buildCostSummaryFacts } from "@/lib/runs/cost-summary-facts";
 import {
   diffRange,
   resolveBaseCommit,
@@ -905,6 +906,14 @@ export default async function RunDetailLayout({
     disabled: t("inspectorDisabled"),
     stale: t("inspectorStale"),
   };
+  const costFacts = buildCostSummaryFacts(costSummary, {
+    tokenTotal: t("tokenTotal"),
+    inputTokens: t("inputTokens"),
+    outputTokens: t("outputTokens"),
+    cacheReadTokens: t("cacheReadTokens"),
+    cacheCreationTokens: t("cacheCreationTokens"),
+    resumeTax: t("resumeTax"),
+  });
   const inspectorFacts = [
     { label: t("flowCenterStatus"), value: detail.status },
     { label: t("agentCenterRunner"), value: detail.agent },
@@ -931,10 +940,7 @@ export default async function RunDetailLayout({
           },
         ]
       : []),
-    {
-      label: t("costSummaryTitle"),
-      value: formatTokens(costSummary.totalTokens),
-    },
+    ...costFacts,
     { label: t("activeTime"), value: formatDuration(activeDurationMs) },
     { label: t("wallClock"), value: formatDuration(wallDurationMs) },
     {

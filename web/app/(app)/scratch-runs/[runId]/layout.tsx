@@ -24,6 +24,7 @@ import { worktreesRoot } from "@/lib/instance-config";
 import { formatRunWorktreePath } from "@/lib/project-path-display";
 import { getRunCostSummary, getRunDetail } from "@/lib/queries/run";
 import { getRunChangeSummary } from "@/lib/runs/change-summary";
+import { buildCostSummaryFacts } from "@/lib/runs/cost-summary-facts";
 import {
   buildScratchSessionFlowSummary,
   getScratchSessionSummary,
@@ -45,8 +46,16 @@ function unavailableChangeSummary(reason: string): RunInspectorChangeSummary {
   };
 }
 
-function formatTokens(value: number): string {
-  return new Intl.NumberFormat("en-US").format(value);
+function formatDuration(durationMs: number | null): string {
+  if (durationMs === null) return "-";
+  const seconds = Math.round(durationMs / 1000);
+
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.round(seconds / 60);
+
+  if (minutes < 60) return `${minutes}m`;
+
+  return `${Math.round(minutes / 60)}h`;
 }
 
 // The persistent scratch-run detail boundary (M35 T3.1) — mirrors the
@@ -162,6 +171,17 @@ export default async function ScratchRunDetailLayout({
     detail.worktreePath,
     worktreesRoot(),
   );
+  const wallDurationMs = detail.endedAt
+    ? Math.max(0, detail.endedAt.getTime() - detail.startedAt.getTime())
+    : Math.max(0, Date.now() - detail.startedAt.getTime());
+  const costFacts = buildCostSummaryFacts(costSummary, {
+    tokenTotal: t("tokenTotal"),
+    inputTokens: t("inputTokens"),
+    outputTokens: t("outputTokens"),
+    cacheReadTokens: t("cacheReadTokens"),
+    cacheCreationTokens: t("cacheCreationTokens"),
+    resumeTax: t("resumeTax"),
+  });
 
   const inspectorFacts = [
     { label: t("flowCenterStatus"), value: detail.status },
@@ -169,10 +189,8 @@ export default async function ScratchRunDetailLayout({
     { label: t("headerBranch"), value: detail.branch },
     { label: t("baseBranch"), value: detail.baseBranch ?? "-" },
     { label: t("targetBranch"), value: detail.targetBranch ?? "-" },
-    {
-      label: t("costSummaryTitle"),
-      value: formatTokens(costSummary.totalTokens),
-    },
+    ...costFacts,
+    { label: t("wallClock"), value: formatDuration(wallDurationMs) },
     {
       label: t("inspectorWorktree"),
       value: detail.pruned

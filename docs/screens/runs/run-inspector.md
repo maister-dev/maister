@@ -66,11 +66,13 @@ The inspector uses tabbed sections inside a wider fixed sidebar on desktop
 implemented. The run header owns branch and target-branch context; the
 inspector must not repeat branch/worktree facts already visible there.
 
-1. **Overview** - run kind, status, executor, token/cost summary, active time,
-   wall-clock duration, delivery policy, settings count, capability count, and
-   resolved capability-set count. Branch, target branch, base branch, and
-   worktree path stay in the header or dedicated action dialogs instead of being
-   duplicated here.
+1. **Overview** - run kind, status, executor, token usage facts (token total,
+   input tokens, output tokens, cache-read input tokens, cache-creation input
+   tokens, and resume tax when present), separate time facts (active time where
+   attempt durations exist and wall-clock duration), delivery policy, settings
+   count, capability count, and resolved capability-set count. Branch, target
+   branch, base branch, and worktree path stay in the header or dedicated action
+   dialogs instead of being duplicated here.
 2. **Changes** - total additions/deletions, file count, dirty-state badge, scope
    selector summary, directory-grouped changed files, file status icons, comment
    badges, and generated/large/truncated indicators where available.

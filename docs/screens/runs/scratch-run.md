@@ -85,7 +85,8 @@ The scratch screen uses the conversation as the primary center:
    path instead of a separate workflow page.
 5. **Run inspector** - a collapsible right sidebar documented in
    [`run-inspector.md`](run-inspector.md). It shows branch/worktree, change size,
-   action shortcuts, attachments, capability profile, and promotion state.
+   token usage breakdown, wall-clock session time, action shortcuts,
+   attachments, capability profile, and promotion state.
 6. **Secondary workbench** - Timeline and Evidence are available as lightweight
    secondary tabs. Files and Diff are grouped inside one collapsed-by-default
    **Files / Diff** disclosure below the run interaction surface, and deep links

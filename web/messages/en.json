@@ -1630,7 +1630,6 @@
     "decisionApprove": "Approve",
     "decisionRework": "Request rework",
     "reworking": "Reworking",
-    "costSummaryTitle": "Cost and time",
     "liveRefresh": "SSE refresh",
     "inputTokens": "Input tokens",
     "outputTokens": "Output tokens",
