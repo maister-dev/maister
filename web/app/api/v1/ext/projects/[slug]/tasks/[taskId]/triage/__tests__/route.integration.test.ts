@@ -40,6 +40,7 @@ const AGENT_ID = "triager";
 const fx = {
   projectId: "",
   flowId: "",
+  disabledFlowId: "",
   ownerId: "",
   taskId: "",
   runId: "",
@@ -96,6 +97,9 @@ beforeAll(async () => {
     maisterYamlPath: `/tmp/${SLUG}/maister.yaml`,
     taskKey: "EXT",
   });
+  // ADR-111 (D9): a verdict flow must be launchable NOW (enablement + trust) —
+  // a verdict on a non-launchable flow is refused at triage time (no silent
+  // stall). Seed this fixture flow launchable so the verdict-success cases hold.
   await db.insert(schema.flows).values({
     id: fx.flowId,
     projectId: fx.projectId,
@@ -104,6 +108,21 @@ beforeAll(async () => {
     version: "v1.0.0",
     installedPath: "/tmp/flows/bugfix",
     manifest: { schemaVersion: 1, name: "Bugfix", steps: [] },
+    schemaVersion: 1,
+    enablementState: "Enabled",
+    trustStatus: "trusted",
+  });
+  // A second flow that is NOT launchable (default Installed + untrusted) — the
+  // D9 write-side regression target.
+  fx.disabledFlowId = randomUUID();
+  await db.insert(schema.flows).values({
+    id: fx.disabledFlowId,
+    projectId: fx.projectId,
+    flowRefId: "disabled-flow",
+    source: "github.com/x/z",
+    version: "v1.0.0",
+    installedPath: "/tmp/flows/disabled",
+    manifest: { schemaVersion: 1, name: "Disabled", steps: [] },
     schemaVersion: 1,
   });
   await db.insert(schema.platformAcpRunners).values({
@@ -383,5 +402,99 @@ describe("POST /api/v1/ext/.../triage — flag op (ADR-111)", () => {
     );
 
     expect(empty.status).toBe(422);
+  });
+});
+
+// ADR-111 (Phase 4) — the triage `enqueue` intent + the D9 no-silent-stall
+// write-side validation.
+describe("POST /api/v1/ext/.../triage — enqueue + D9 (ADR-111)", () => {
+  async function freshTask(): Promise<string> {
+    const created = await createTask(
+      { title: "to enqueue", prompt: "route it" },
+      { projectId: fx.projectId, actorUserId: fx.ownerId },
+      db,
+    );
+
+    return created.taskId;
+  }
+
+  it("verdict + enqueue → triaged + launch_mode='auto' in ONE transaction", async () => {
+    const taskId = await freshTask();
+
+    const res = await TRIAGE(
+      request("POST", fx.userToken, { flowId: fx.flowId, enqueue: true }),
+      routeParams(SLUG, taskId),
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, triageStatus: "triaged" });
+
+    const task = await pool.query(
+      `SELECT triage_status, flow_id, launch_mode FROM tasks WHERE id = $1`,
+      [taskId],
+    );
+
+    expect(task.rows[0]).toMatchObject({
+      triage_status: "triaged",
+      flow_id: fx.flowId,
+      launch_mode: "auto",
+    });
+
+    // The enqueue marker rides the triage_set activity payload.
+    const activity = await pool.query(
+      `SELECT payload FROM task_activity
+       WHERE task_id = $1 AND event_kind = 'triage_set'`,
+      [taskId],
+    );
+
+    expect(activity.rows).toHaveLength(1);
+    expect(activity.rows[0].payload).toMatchObject({ enqueue: true });
+  });
+
+  it("enqueue without a flowId → 422 CONFIG (no silent auto-mode write)", async () => {
+    const taskId = await freshTask();
+
+    const res = await TRIAGE(
+      request("POST", fx.userToken, {
+        runnerId: "triage-runner",
+        enqueue: true,
+      }),
+      routeParams(SLUG, taskId),
+    );
+
+    expect(res.status).toBe(422);
+    expect(await res.json()).toMatchObject({ code: "CONFIG" });
+
+    const task = await pool.query(
+      `SELECT triage_status, launch_mode FROM tasks WHERE id = $1`,
+      [taskId],
+    );
+
+    expect(task.rows[0]).toMatchObject({
+      triage_status: null,
+      launch_mode: null,
+    });
+  });
+
+  it("verdict on a disabled/untrusted flow → 422 CONFIG (D9 write side, no stall)", async () => {
+    const taskId = await freshTask();
+
+    const res = await TRIAGE(
+      request("POST", fx.userToken, { flowId: fx.disabledFlowId }),
+      routeParams(SLUG, taskId),
+    );
+
+    expect(res.status).toBe(422);
+    expect(await res.json()).toMatchObject({ code: "CONFIG" });
+
+    const task = await pool.query(
+      `SELECT triage_status, flow_id FROM tasks WHERE id = $1`,
+      [taskId],
+    );
+
+    expect(task.rows[0]).toMatchObject({
+      triage_status: null,
+      flow_id: null,
+    });
   });
 });

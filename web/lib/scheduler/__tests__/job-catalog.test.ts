@@ -18,6 +18,7 @@ const ALL_JOB_KINDS = [
   "run_schedule",
   "webhook_delivery",
   "domain_event_dispatch",
+  "auto_launch_triaged",
 ] as const;
 
 describe("scheduler job catalog", () => {
@@ -40,12 +41,14 @@ describe("scheduler job catalog", () => {
     expect(isCreatableSchedulerJobKind("agent_tick")).toBe(false);
     expect(isCreatableSchedulerJobKind("run_schedule")).toBe(false);
     expect(isCreatableSchedulerJobKind("domain_event_dispatch")).toBe(false);
+    expect(isCreatableSchedulerJobKind("auto_launch_triaged")).toBe(false);
   });
 
   it("classifies seeded singleton rows separately from creatable kinds", () => {
     expect(isSystemManagedSchedulerJobKind("agent_tick")).toBe(true);
     expect(isSystemManagedSchedulerJobKind("run_schedule")).toBe(true);
     expect(isSystemManagedSchedulerJobKind("domain_event_dispatch")).toBe(true);
+    expect(isSystemManagedSchedulerJobKind("auto_launch_triaged")).toBe(true);
     expect(isSystemManagedSchedulerJobKind("command")).toBe(false);
 
     expect(
@@ -76,6 +79,12 @@ describe("scheduler job catalog", () => {
       isSeededSingletonSchedulerJob({
         id: "agent_tick.dispatcher",
         jobKind: "agent_tick",
+      }),
+    ).toBe(true);
+    expect(
+      isSeededSingletonSchedulerJob({
+        id: "auto_launch_triaged.default",
+        jobKind: "auto_launch_triaged",
       }),
     ).toBe(true);
     expect(

@@ -28,9 +28,9 @@ const ENDPOINT_TRIAGE =
 // ADR-089 D8 / ADR-111: at least one field. A verdict body (flowId / runnerId /
 // baseBranch / targetBranch / promotionMode) stamps triage_status='triaged'; a
 // `flag: true` body stamps 'flagged' (held). `flag` is mutually exclusive with
-// every verdict field (enforced below → 422 CONFIG). `enqueue` is accepted by
-// the schema (frozen contract) but its launch_mode='auto' write lands in
-// Phase 4 (auto_launch_triaged tick) — Phase 3 leaves it inert.
+// every verdict field (enforced below → 422 CONFIG). `enqueue: true` additionally
+// sets launch_mode='auto' (the auto_launch_triaged tick fires the run) — valid
+// ONLY alongside a verdict that sets a flowId (else 422 CONFIG).
 const VERDICT_FIELDS = [
   "flowId",
   "runnerId",
@@ -122,6 +122,21 @@ export async function POST(
         );
       }
 
+      // ADR-111: `enqueue` arms the auto_launch_triaged tick — it is valid ONLY
+      // alongside a verdict that yields a flow (the task ends with a non-null
+      // flow_id). `enqueue` + `flag` is excluded by the mutual-exclusion above.
+      const enqueue = body.enqueue === true;
+
+      if (enqueue && (flagged || body.flowId === undefined)) {
+        return NextResponse.json(
+          {
+            code: "CONFIG",
+            message: "enqueue requires a verdict that sets a flowId",
+          },
+          { status: 422 },
+        );
+      }
+
       try {
         const actor = socialActorForToken(ctx.actor);
 
@@ -172,6 +187,7 @@ export async function POST(
             projectId: ctx.projectId,
             verdict,
             actor,
+            enqueue,
           });
 
           await recordRequiredTokenAudit(

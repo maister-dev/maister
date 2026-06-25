@@ -23,6 +23,13 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
+// ADR-111 (D9): the launchable-flow allow-list — same states the launch path
+// (LAUNCHABLE_ENABLEMENT_STATES) and the flow_list read side enforce.
+const LAUNCHABLE_FLOW_ENABLEMENT_STATES = new Set<string>([
+  "Enabled",
+  "UpdateAvailable",
+]);
+
 export type PromotionMode = "local_merge" | "pull_request";
 
 // M34 (ADR-089) launch-verdict patch. The ext triage op uses the set-only
@@ -67,7 +74,11 @@ export async function validateVerdictRefs(
 
   if (patch.flowId != null) {
     const rows = await _db
-      .select({ id: flows.id })
+      .select({
+        id: flows.id,
+        enablementState: flows.enablementState,
+        trustStatus: flows.trustStatus,
+      })
       .from(flows)
       .where(and(eq(flows.id, patch.flowId), eq(flows.projectId, projectId)));
 
@@ -75,6 +86,24 @@ export async function validateVerdictRefs(
       throw new MaisterError(
         "CONFIG",
         `flow ${patch.flowId} is not configured for project`,
+      );
+    }
+
+    // ADR-111 (D9 write side): a verdict flow must be launchable NOW — same
+    // allow-list the launch path enforces (LAUNCHABLE_FLOW_ENABLEMENT_STATES)
+    // plus the trust gate. Stamping `triaged`+`enqueue` on a disabled/untrusted
+    // flow would otherwise hang the auto_launch_triaged tick forever (the tick's
+    // launchRun refuses, WARN-spamming every 60s). Refuse at triage time (no
+    // silent stall) — mirrors lib/queries/project.ts flow_list read side.
+    const flow = rows[0];
+
+    if (
+      !LAUNCHABLE_FLOW_ENABLEMENT_STATES.has(flow.enablementState) ||
+      flow.trustStatus === "untrusted"
+    ) {
+      throw new MaisterError(
+        "CONFIG",
+        `flow ${patch.flowId} is not launchable (enablement: ${flow.enablementState}, trust: ${flow.trustStatus})`,
       );
     }
   }
@@ -129,7 +158,10 @@ function verdictColumns(patch: TaskVerdictPatch): Record<string, unknown> {
 
 // Ext triage op (ADR-089 D8): set-only verdict fields + the 'triaged' stamp +
 // a `triage_set` activity entry — caller supplies the transaction so the
-// token audit row commits or rolls back with the verdict.
+// token audit row commits or rolls back with the verdict. ADR-111: `enqueue`
+// additionally sets launch_mode='auto' (the auto_launch_triaged tick fires the
+// run) IN THE SAME transaction — only valid alongside a verdict yielding a flow
+// (the route enforces 422 CONFIG otherwise).
 export async function applyTriageVerdict(
   tx: any,
   input: {
@@ -137,13 +169,19 @@ export async function applyTriageVerdict(
     projectId: string;
     verdict: TaskVerdictPatch;
     actor: SocialActor;
+    enqueue?: boolean;
   },
 ): Promise<void> {
   const set = verdictColumns(input.verdict);
 
   await tx
     .update(tasks)
-    .set({ ...set, triageStatus: "triaged", updatedAt: new Date() })
+    .set({
+      ...set,
+      triageStatus: "triaged",
+      ...(input.enqueue ? { launchMode: "auto" } : {}),
+      updatedAt: new Date(),
+    })
     .where(
       and(eq(tasks.id, input.taskId), eq(tasks.projectId, input.projectId)),
     );
@@ -153,7 +191,7 @@ export async function applyTriageVerdict(
     projectId: input.projectId,
     actor: input.actor,
     eventKind: "triage_set",
-    payload: { ...input.verdict },
+    payload: { ...input.verdict, ...(input.enqueue ? { enqueue: true } : {}) },
   });
 
   log.info(
@@ -161,6 +199,7 @@ export async function applyTriageVerdict(
       taskId: input.taskId,
       actorType: input.actor.type,
       fields: Object.keys(set),
+      enqueue: input.enqueue === true,
     },
     "triage verdict applied",
   );

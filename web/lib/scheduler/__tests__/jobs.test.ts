@@ -50,6 +50,7 @@ describe("schedulerBudgetForKind", () => {
       "run_schedule",
       "webhook_delivery",
       "domain_event_dispatch",
+      "auto_launch_triaged",
     ] satisfies SchedulerJobKind[];
 
     expect(kinds.map((kind) => [kind, schedulerBudgetForKind(kind)])).toEqual([
@@ -60,6 +61,7 @@ describe("schedulerBudgetForKind", () => {
       ["run_schedule", "run_schedule"],
       ["webhook_delivery", "webhook_delivery"],
       ["domain_event_dispatch", "domain_event_dispatch"],
+      ["auto_launch_triaged", "auto_launch_triaged"],
     ]);
   });
 
@@ -73,6 +75,13 @@ describe("schedulerBudgetForKind", () => {
       "domain_event_dispatch",
     );
     expect(schedulerBudgetLimits().domainEventDispatch).toBe(1);
+  });
+
+  it("resolves the auto_launch_triaged singleton tick budget to a fixed 1", () => {
+    expect(schedulerBudgetForKind("auto_launch_triaged")).toBe(
+      "auto_launch_triaged",
+    );
+    expect(schedulerBudgetLimits().autoLaunchTriaged).toBe(1);
   });
 });
 

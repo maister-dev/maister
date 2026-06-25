@@ -606,7 +606,8 @@ export type SchedulerJobKind =
   | "flow_run"
   | "run_schedule"
   | "webhook_delivery"
-  | "domain_event_dispatch";
+  | "domain_event_dispatch"
+  | "auto_launch_triaged";
 export type SchedulerJobRunStatus =
   | "Claimed"
   | "Running"
@@ -630,6 +631,7 @@ export const schedulerJobs = pgTable(
         "run_schedule",
         "webhook_delivery",
         "domain_event_dispatch",
+        "auto_launch_triaged",
       ],
     }).notNull(),
     target: jsonb("target")
@@ -688,6 +690,7 @@ export const schedulerJobRuns = pgTable(
         "run_schedule",
         "webhook_delivery",
         "domain_event_dispatch",
+        "auto_launch_triaged",
       ],
     }).notNull(),
     status: text("status", {

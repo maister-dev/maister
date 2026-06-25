@@ -114,6 +114,10 @@ const DEFAULT_DOMAIN_EVENT_DISPATCH_CADENCE_SECONDS = 60;
 // cron rows and recovers stranded Pending agent runs each tick.
 const DEFAULT_AGENT_TICK_JOB_ID = "agent_tick.dispatcher";
 const DEFAULT_AGENT_TICK_CADENCE_SECONDS = 60;
+// ADR-111: the ONE seeded auto_launch_triaged tick — launches triaged + auto +
+// flow tasks whose relation blockers have cleared (budget 1, singleton).
+const DEFAULT_AUTO_LAUNCH_TRIAGED_JOB_ID = "auto_launch_triaged.default";
+const DEFAULT_AUTO_LAUNCH_TRIAGED_CADENCE_SECONDS = 60;
 
 export function isSchedulerJobKind(value: string): value is SchedulerJobKind {
   return SCHEDULER_JOB_KINDS.includes(value as SchedulerJobKind);
@@ -137,6 +141,8 @@ export function schedulerBudgetForKind(
       return "webhook_delivery";
     case "domain_event_dispatch":
       return "domain_event_dispatch";
+    case "auto_launch_triaged":
+      return "auto_launch_triaged";
   }
 }
 
@@ -296,6 +302,32 @@ export async function ensureDefaultSchedulerJobs(
     )
     ON CONFLICT (id) DO NOTHING
   `);
+
+  await db.execute(sql`
+    INSERT INTO scheduler_jobs (
+      id,
+      project_id,
+      job_kind,
+      target,
+      cadence_interval_seconds,
+      next_run_at,
+      max_failures,
+      created_at,
+      updated_at
+    )
+    VALUES (
+      ${DEFAULT_AUTO_LAUNCH_TRIAGED_JOB_ID},
+      NULL,
+      'auto_launch_triaged',
+      '{}'::jsonb,
+      ${DEFAULT_AUTO_LAUNCH_TRIAGED_CADENCE_SECONDS},
+      ${now},
+      3,
+      ${now},
+      ${now}
+    )
+    ON CONFLICT (id) DO NOTHING
+  `);
 }
 
 export async function claimDueJobs(
@@ -328,7 +360,8 @@ export async function claimDueJobs(
         ('flow'::text, ${budgets.flow}::int),
         ('run_schedule'::text, ${budgets.runSchedule}::int),
         ('webhook_delivery'::text, ${budgets.webhookDelivery}::int),
-        ('domain_event_dispatch'::text, ${budgets.domainEventDispatch}::int)
+        ('domain_event_dispatch'::text, ${budgets.domainEventDispatch}::int),
+        ('auto_launch_triaged'::text, ${budgets.autoLaunchTriaged}::int)
     ),
     active_budget AS (
       SELECT
@@ -340,6 +373,7 @@ export async function claimDueJobs(
           WHEN 'run_schedule' THEN 'run_schedule'
           WHEN 'webhook_delivery' THEN 'webhook_delivery'
           WHEN 'domain_event_dispatch' THEN 'domain_event_dispatch'
+          WHEN 'auto_launch_triaged' THEN 'auto_launch_triaged'
         END AS budget_key,
         count(*)::int AS active_count
       FROM scheduler_job_runs r
@@ -358,6 +392,7 @@ export async function claimDueJobs(
           WHEN 'run_schedule' THEN 'run_schedule'
           WHEN 'webhook_delivery' THEN 'webhook_delivery'
           WHEN 'domain_event_dispatch' THEN 'domain_event_dispatch'
+          WHEN 'auto_launch_triaged' THEN 'auto_launch_triaged'
         END AS budget_key,
         bl.max_concurrent,
         coalesce(ab.active_count, 0) AS active_count
@@ -370,6 +405,7 @@ export async function claimDueJobs(
         WHEN 'run_schedule' THEN 'run_schedule'
         WHEN 'webhook_delivery' THEN 'webhook_delivery'
         WHEN 'domain_event_dispatch' THEN 'domain_event_dispatch'
+        WHEN 'auto_launch_triaged' THEN 'auto_launch_triaged'
       END
       LEFT JOIN active_budget ab ON ab.budget_key = bl.budget_key
       WHERE j.disabled_at IS NULL
