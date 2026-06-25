@@ -304,7 +304,7 @@ references alongside skills. Claude-only by descriptor (codex omits subagent
 files; references stay advisory-only). Materialization is part of the staged
 launch and is cleaned up with the worktree/session on a failed launch.
 
-### (j) Generic agent-config framework (Designed — ADR-110)
+### (j) Generic agent-config framework (Implemented — ADR-110)
 
 An agent `.md` MAY declare a typed `config:` block — an array of parameter
 declarations `{ key, type ∈ {boolean, enum, string, number}, default?, label?,
@@ -335,7 +335,7 @@ flowchart TD
     SNAP --> INJ[inject Effective configuration block into system prompt<br/>read from snapshot, never re-resolve]
 ```
 
-### (k) Triager agent (Designed — ADR-111)
+### (k) Triager agent (Implemented — ADR-111)
 
 The triager is the first config-framework consumer: a single platform agent
 shipped in the `maister-plugins` core package, `workspace: none`,

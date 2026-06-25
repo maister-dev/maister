@@ -1,11 +1,12 @@
 # Triage domain
 
-> **Status: Designed (pre-implementation).** Frozen design source:
+> **Status: Implemented.** Frozen design source:
 > [`../superpowers/specs/2026-06-24-triager-agent-design.md`](../superpowers/specs/2026-06-24-triager-agent-design.md).
 > Decisions: ADR-110 (generic agent-config framework), ADR-111 (triager agent +
 > `duplicate_of`/`flagged` substrate + `auto_launch_triaged` tick). Everything in
-> this file is **Designed** unless a bullet tags it otherwise; code lands in a
-> later milestone.
+> this file is **Implemented** unless a bullet tags it otherwise. Live-agent
+> end-to-end triage is exercised manually only (the substrate paths are covered
+> in CI via the mock ACP adapter).
 
 ## Purpose
 
@@ -35,13 +36,13 @@ dedup modelling, and the flow-task auto-launcher.
 
 ## Domain entities
 
-- **Triager agent** (Designed) — a platform agent (`maister-agents/triager.md`):
+- **Triager agent** (Implemented) — a platform agent (`maister-agents/triager.md`):
   `workspace: none`, `mode: session`, `risk_tier: read_only`,
   `triggers: [domain_event, manual]`,
   `recommended.events: [task.created, task.triage_requeued, task.comment_added]`.
   No `flow:` field ⇒ standalone `run_kind='agent'` session on the agent budget.
   Catalogued and launched on the M34 substrate ([agents.md](agents.md)).
-- **Agent-config declaration** (Designed) — the optional `config:` array in an
+- **Agent-config declaration** (Implemented) — the optional `config:` array in an
   agent's `.md` frontmatter: typed params (`boolean | enum | string | number`)
   with `default`/`label`/`description`. Parsed + strictly validated in
   `web/lib/agents/definition.ts` (bad schema → `MaisterError("CONFIG")`, row not
@@ -49,32 +50,32 @@ dedup modelling, and the flow-task auto-launcher.
   `auto_enqueue` (`off|when_confident|always`, default `off`),
   `detect_duplicates` (boolean, default `true`), and
   `intake_mode` (`triage_only|clarify`, default `clarify`).
-- **`agents.config_schema`** (Designed) — jsonb projection of the declared
+- **`agents.config_schema`** (Implemented) — jsonb projection of the declared
   `config:` schema, synced at install/resync so the UI renders a form without
   re-reading the package. Migration 0071. See
   [db/agents-domain.md](../db/agents-domain.md).
-- **`agent_project_links.config`** (Designed) — jsonb per-instance values; `null`
+- **`agent_project_links.config`** (Implemented) — jsonb per-instance values; `null`
   ⇒ all defaults. Written through the existing aggregating PATCH. Migration 0071.
-- **`runs.agent_config`** (Designed) — jsonb immutable launch snapshot of the
+- **`runs.agent_config`** (Implemented) — jsonb immutable launch snapshot of the
   resolved effective config (mirrors `runs.execution_policy`); injected into the
   agent system prompt at spawn. Migration 0071. See
   [db/runs-domain.md](../db/runs-domain.md).
-- **`tasks.triage_status`** (Designed) — enum widened to
+- **`tasks.triage_status`** (Implemented) — enum widened to
   `triaged | flagged | NULL` (migration 0072 adds `flagged`). `NULL` = untriaged
   (fresh, or a `clarify` task awaiting a human answer); `triaged` = verdict set,
   launchable; `flagged` = held, NOT launchable. See [tasks.md](tasks.md).
-- **`tasks.launch_mode`** (Designed) — the enqueue intent; `'auto'` is the only
+- **`tasks.launch_mode`** (Implemented) — the enqueue intent; `'auto'` is the only
   value the triager sets, and only the `auto_launch_triaged` tick consumes it.
   Disjoint from the orchestrator's `auto_launch_run_plan` producer.
-- **`task_relations.kind = duplicate_of`** (Designed) — informational relation
+- **`task_relations.kind = duplicate_of`** (Implemented) — informational relation
   kind added to the enum + `task_relations_kind_check` DB constraint (migration
   0072). NON-blocking by construction: `getOpenRelationBlockers` queries only
   `blocks`/`depends_on`/`requires`. See [social-board.md](social-board.md).
-- **`auto_launch_triaged` job** (Designed) — a `systemManaged` singleton sweep on
+- **`auto_launch_triaged` job** (Implemented) — a `systemManaged` singleton sweep on
   the M24 polymorphic scheduler clock (budget 1, 60 s cadence) that launches
   triaged + auto-enqueued flow tasks once launchable. See
   [scheduler.md](scheduler.md).
-- **Discovery MCP tools** (Designed) — `flow_list` + `runner_list`, read-only
+- **Discovery MCP tools** (Implemented) — `flow_list` + `runner_list`, read-only
   facade tools backed by new ext GETs, gated by token scopes `flows:read` /
   `runners:read`. See [external-operations.md](external-operations.md).
 
@@ -282,8 +283,8 @@ extends the triage op.
 
 | MCP tool | `inputSchema` | Backing ext route | Response (mirrors the ext GET) |
 | --- | --- | --- | --- |
-| `flow_list` (Designed) | `{ slug }` | `GET /api/v1/ext/projects/{slug}/flows` | per project flow `{ id, ref, metadata: { title, summary, route_when, labels } }`, **launchable-only** (read-side guard) |
-| `runner_list` (Designed) | `{ slug }` | `GET /api/v1/ext/projects/{slug}/runners` | per enabled runner `{ id, adapter, model, provider }` |
+| `flow_list` (Implemented) | `{ slug }` | `GET /api/v1/ext/projects/{slug}/flows` | per project flow `{ id, ref, metadata: { title, summary, route_when, labels } }`, **launchable-only** (read-side guard) |
+| `runner_list` (Implemented) | `{ slug }` | `GET /api/v1/ext/projects/{slug}/runners` | per enabled runner `{ id, adapter, model, provider }` |
 
 - `flow_list` returns the "when/what to apply" the triager matches against
   (`metadata.route_when` / `metadata.summary`); all attached-package flows are
@@ -333,7 +334,7 @@ flag/enqueue are body booleans, not locators (safe).
   (`flow_list`/`runner_list`, scopes, triage `flag`/`enqueue`).
 - **HTTP:** [`../api/external/operations.openapi.yaml`](../api/external/operations.openapi.yaml)
   (two GET paths, triage `POST` body `flag`/`enqueue`, scopes).
-- **Source (Designed):** `web/lib/agents/definition.ts` (config declaration +
+- **Source (Implemented):** `web/lib/agents/definition.ts` (config declaration +
   parse), `web/lib/agents/config.ts` (`resolveAgentConfig`),
   `web/lib/agents/launch.ts` (`runs.agent_config` snapshot + prompt injection),
   `web/lib/services/triage.ts` (`applyTriageVerdict`, `validateVerdictRefs`,

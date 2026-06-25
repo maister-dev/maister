@@ -740,7 +740,7 @@ agents {
                                    //   executionPolicy?{autoApply,onBudgetBreach}} — seed/pre-fill (ADR-106)
   flowRef?,                        // (ADR-106) NULL — same-package flow the agent drives
   branchBase?,                     // (ADR-106) NULL — agent branch base (default project main)
-  configSchema? (jsonb),           // (Designed — ADR-110, migration 0071) NULL —
+  configSchema? (jsonb),           // (Implemented — ADR-110, migration 0071) NULL —
                                    //   declared typed config-param schema, projected
                                    //   from the .md frontmatter under SET/CLEAR symmetry
   sourcePath,                      // maister-agents/<stem>.md in the newest revision
@@ -758,7 +758,7 @@ agent_project_links {
                                    //   tier 2 of the standalone runner chain
   branchBase?,                     // (ADR-106) NULL — instance override of the branch base
   executionPolicyOverride? (jsonb),// (ADR-106) NULL — instance override of {autoApply,onBudgetBreach}
-  config? (jsonb),                 // (Designed — ADR-110, migration 0071) NULL —
+  config? (jsonb),                 // (Implemented — ADR-110, migration 0071) NULL —
                                    //   per-instance config values keyed by config_schema
                                    //   param; NULL ⇒ declared defaults
   createdAt, updatedAt
@@ -842,7 +842,7 @@ draft updates increment `draft_version` and stale callers receive `CONFLICT`.
   triageStatus?,                 // M34: 'triaged' | NULL (untriaged);
                                  //   stamped by the ext triage op, cleared by
                                  //   "Send to triage".
-                                 //   (Designed — ADR-111, migration 0072) enum
+                                 //   (Implemented — ADR-111, migration 0072) enum
                                  //   widened to 'triaged' | 'flagged'; 'flagged' =
                                  //   held / needs human review (dup or unroutable),
                                  //   not launchable
@@ -903,7 +903,7 @@ stages. See
   projectId,                      // FK -> projects.id (cascade)
   fromTaskId,                     // FK -> tasks.id (cascade)
   kind: 'blocks' | 'depends_on' | 'parent_of'
-      | 'duplicate_of',           // (Designed — ADR-111, migration 0072)
+      | 'duplicate_of',           // (Implemented — ADR-111, migration 0072)
                                   //   'duplicate_of' added; informational /
                                   //   non-blocking — never gates launch
   toTaskId,                       // FK -> tasks.id (cascade)
@@ -918,7 +918,7 @@ one-direction rows — inverse labels ("blocked by", "required by",
 "child of") are render-time only. Same-project enforced in the domain layer
 (`MaisterError("CONFIG")`); a cross-table CHECK cannot express it.
 The `kind` value set is pinned by the `task_relations_kind_check` CHECK
-constraint; **(Designed — ADR-111, migration 0072)** it is updated to admit
+constraint; **(Implemented — ADR-111, migration 0072)** it is updated to admit
 `duplicate_of`.
 
 ### `task_comments`
@@ -1081,7 +1081,7 @@ unread badge and inbox panel.
                                  //   is runs.status-derived). The run-tree index
                                  //   runs_root_run_id_idx already exists (M37) — 0061
                                  //   adds ONLY this column.
-  agentConfig?,                  // (Designed — ADR-110, migration 0071): jsonb NULL.
+  agentConfig?,                  // (Implemented — ADR-110, migration 0071): jsonb NULL.
                                  //   IMMUTABLE resolved agent-config snapshot taken
                                  //   ONCE at spawn (like execution_policy); the
                                  //   system-prompt injection reads this, never the

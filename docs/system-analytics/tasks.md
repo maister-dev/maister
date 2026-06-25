@@ -56,7 +56,7 @@ comment/activity/subscription/inbox substrate around tasks is owned by
   `launchOverride` tier), `target_branch`, `promotion_mode`
   (`local_merge|pull_request`), and `triage_status` (`'triaged'` | `'flagged'` | NULL =
   untriaged; stamped by the ext triage op, cleared by "Send to triage").
-  **(ADR-111 — Designed)** the triager's `flag` op writes `'flagged'` (a
+  **(ADR-111 — Implemented)** the triager's `flag` op writes `'flagged'` (a
   duplicate, or unroutable in `triage_only` intake) — a **launch-held**
   state cleared by a human (remove the `duplicate_of` relation / re-send to
   triage); see [`triage.md`](triage.md).
@@ -221,7 +221,7 @@ ADR-089) a flowless task adds the `"unconfigured"` classification between
 launch is refused with `PRECONDITION` at every entry point, the schedules
 dispatcher records `skipped_unconfigured`, ext `run_launch` returns 409, and
 the board card swaps Launch for the popover that collects the missing
-fields. **(ADR-111 — Designed)** a `flagged` task (the triager bailed on a
+fields. **(ADR-111 — Implemented)** a `flagged` task (the triager bailed on a
 duplicate or an unroutable `triage_only` intake — see [`triage.md`](triage.md))
 adds the `"flagged"` classification between `busy` and `blocked`, so the full
 precedence is
@@ -258,7 +258,7 @@ discarded blocker cannot deadlock its dependents. `parent_of` never gates.
 No cycle detection: a mutual block makes both tasks unlaunchable until one
 relation is removed; the UI always renders blockers as removable chips.
 
-### Auto-launch of triaged tasks (Designed, ADR-111)
+### Auto-launch of triaged tasks (Implemented, ADR-111)
 
 The triager never launches a run itself; it sets the enqueue *intent*
 (`tasks.launch_mode = 'auto'`), and a system-authority sweep job
@@ -302,7 +302,7 @@ dispatch. The manual classifier returns:
 | Latest run is `Failed` or `Abandoned` | `launchable` | Existing retry behavior plus launch dialog. |
 | Latest run is `Crashed` | `launchable` | `Run again` is allowed; recover/discard controls for the crashed run stay visible on the run surface. |
 | Latest run is `Pending`, `Running`, `NeedsInput`, `NeedsInputIdle`, or `HumanWorking` | `busy` | The action is disabled with a visible tooltip/reason, never hidden. |
-| Task is `flagged` and no busy state wins **(ADR-111 — Designed)** | `flagged` | Disabled action plus a "needs review" chip; held even when `flow_id` is set; cleared by a human (remove `duplicate_of` / re-send to triage). |
+| Task is `flagged` and no busy state wins **(ADR-111 — Implemented)** | `flagged` | Disabled action plus a "needs review" chip; held even when `flow_id` is set; cleared by a human (remove `duplicate_of` / re-send to triage). |
 | Open relation blocker exists and no busy/flagged state wins | `blocked` | Disabled action plus blocker `KEY-N` chips. |
 | Supervisor or runner readiness is unavailable | `executor_unavailable` | Disabled or failed launch state with `EXECUTOR_UNAVAILABLE`; no worktree/run/workspace/task side effect. |
 
@@ -406,7 +406,7 @@ flowchart TD
   update); `triage_status` MUST be written only by the ext triage op
   (`'triaged'`) and the "Send to triage" action (NULL + the
   `task.triage_requeued` emit in ONE transaction).
-- **(ADR-111 — Designed)** A `flagged` task MUST classify as `flagged`
+- **(ADR-111 — Implemented)** A `flagged` task MUST classify as `flagged`
   (non-launchable) in BOTH `classifyTaskLaunchability` and
   `classifyManualTaskLaunchability` — as an allow-list arm at precedence
   `target_terminal > crashed > busy > flagged > blocked > unconfigured >
@@ -489,7 +489,7 @@ transition (the run reconciles to `Crashed` on next heartbeat tick).
   [`executors.md`](executors.md), [`social-board.md`](social-board.md)
   (comments, activity, subscriptions, inbox),
   [`run-schedules.md`](run-schedules.md) (dispatcher skip-on-blocked),
-  [`triage.md`](triage.md) (Designed — `flagged`, `auto_launch_triaged` tick,
+  [`triage.md`](triage.md) (Implemented — `flagged`, `auto_launch_triaged` tick,
   triager verdict/flag/enqueue ops).
 - Source: `web/lib/db/schema.ts` (tasks + runs tables),
-  `web/lib/runs/launchability.ts`, `web/lib/social/relations.ts` (Designed).
+  `web/lib/runs/launchability.ts`, `web/lib/social/relations.ts` (Implemented).

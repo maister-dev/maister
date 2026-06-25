@@ -66,7 +66,7 @@ tags:
       session-auth routes — no parallel write path.
   - name: discovery
     description: |
-      (ADR-111, Designed) Read-only catalog discovery for an agent verdict —
+      (ADR-111, Implemented) Read-only catalog discovery for an agent verdict —
       the project's launchable flows (`flows:read`) and enabled platform ACP
       runners (`runners:read`). Backs the triager's `flow_list` / `runner_list`
       MCP tools so it can only assign flows/runners that will actually launch.
@@ -368,7 +368,7 @@ paths:
 
   /api/v1/ext/projects/{slug}/tasks/{taskId}/triage:
     post:
-      summary: (M34 — Implemented; ADR-111 flag/enqueue — Designed) Submit a triage verdict
+      summary: (M34 — Implemented; ADR-111 flag/enqueue — Implemented) Submit a triage verdict
       description: |
         Scope `tasks:triage`. The triager's verdict op — ONE transactional
         update of the task's launch-verdict fields plus the triage-status
@@ -384,7 +384,7 @@ paths:
         `baseBranch` / `targetBranch` / `promotionMode`) sets
         `tasks.triage_status = 'triaged'`; the task becomes launchable.
 
-        **(ADR-111, Designed) `flag` — hand to a human.** When `flag: true`,
+        **(ADR-111, Implemented) `flag` — hand to a human.** When `flag: true`,
         the task is marked `tasks.triage_status = 'flagged'` (held — NOT
         launchable; the board shows a "needs review" chip). `flag` is
         **mutually exclusive** with the verdict fields (`flowId` / `runnerId` /
@@ -392,7 +392,7 @@ paths:
         alongside any verdict field is refused 422 `CONFIG`. `flag: true` alone
         is a valid body (the "≥1 field" rule is still met).
 
-        **(ADR-111, Designed) `enqueue` — auto-launch after triage.** When
+        **(ADR-111, Implemented) `enqueue` — auto-launch after triage.** When
         `enqueue: true`, the task's enqueue intent is set
         (`tasks.launch_mode = 'auto'`) so the `auto_launch_triaged` scheduler
         tick launches it once it is launchable (dependencies cleared, global
@@ -402,7 +402,7 @@ paths:
         refused 422 `CONFIG`. The triager never launches directly — the tick
         performs the launch through the standard precondition choke point.
 
-        **Write-side launchability re-validation (ADR-111, Designed).** When a
+        **Write-side launchability re-validation (ADR-111, Implemented).** When a
         verdict carries a `flowId` (most relevant with `enqueue`), the flow's
         enablement + trust are re-validated (`enablementState ∈ {Enabled,
         UpdateAvailable}` ∧ `trustStatus ≠ untrusted`); a disabled / untrusted
@@ -454,7 +454,7 @@ paths:
         "422":
           description: |
             Request body failed schema validation, or a `CONFIG` precondition
-            was violated (ADR-111, Designed) — `flag` sent with a verdict field
+            was violated (ADR-111, Implemented) — `flag` sent with a verdict field
             (mutually exclusive), `enqueue` with no resolvable `flowId` (or with
             `flag`), or a verdict `flowId` that is disabled / untrusted /
             pin-divergent.
@@ -556,7 +556,7 @@ paths:
   /api/v1/ext/projects/{slug}/flows:
     get:
       tags: [discovery]
-      summary: (ADR-111, Designed) List the project's launchable flows
+      summary: (ADR-111, Implemented) List the project's launchable flows
       description: |
         Scope `flows:read`. Returns the flows of every package attached to the
         project identified by `slug`, projected to the routing metadata a
@@ -605,7 +605,7 @@ paths:
   /api/v1/ext/projects/{slug}/runners:
     get:
       tags: [discovery]
-      summary: (ADR-111, Designed) List enabled platform ACP runners
+      summary: (ADR-111, Implemented) List enabled platform ACP runners
       description: |
         Scope `runners:read`. Returns the enabled platform ACP runners a
         triager may pick for a verdict — `id`, `adapter`, `model`,
@@ -1711,7 +1711,7 @@ components:
     ExtTriageBody:
       type: object
       description: |
-        (M34 — Implemented; ADR-111 `flag`/`enqueue` — Designed) Triage body —
+        (M34 — Implemented; ADR-111 `flag`/`enqueue` — Implemented) Triage body —
         at least one field. Every provided field is allow-list validated. A
         verdict body stamps `triage_status='triaged'`; a `flag: true` body
         stamps `triage_status='flagged'`.
@@ -1731,7 +1731,7 @@ components:
           minLength: 1
           description: |
             Flow to run the task with; must belong to the project and (ADR-111,
-            Designed) be launchable (enabled + trusted + not pin-divergent).
+            Implemented) be launchable (enabled + trusted + not pin-divergent).
         runnerId:
           type: string
           minLength: 1
@@ -1752,13 +1752,13 @@ components:
         flag:
           type: boolean
           description: |
-            (ADR-111, Designed) When `true`, mark the task `flagged` for human
+            (ADR-111, Implemented) When `true`, mark the task `flagged` for human
             review (held — not launchable). Mutually exclusive with the verdict
             fields above; `flag: true` alone is a valid body.
         enqueue:
           type: boolean
           description: |
-            (ADR-111, Designed) When `true`, set the task to auto-launch after
+            (ADR-111, Implemented) When `true`, set the task to auto-launch after
             triage (`tasks.launch_mode = 'auto'`); the `auto_launch_triaged`
             tick performs the launch once the task is launchable. Valid only
             with a verdict that yields a `flowId`; never with `flag`.
@@ -1766,7 +1766,7 @@ components:
     ExtFlowSummary:
       type: object
       description: |
-        (ADR-111, Designed) One launchable flow available to assign in a triage
+        (ADR-111, Implemented) One launchable flow available to assign in a triage
         verdict. Projected from the flow's pinned-revision manifest
         (`flow.yaml`); `metadata` carries the routing hints the triager matches
         a task against. Only flows with `enablementState ∈ {Enabled,
@@ -1806,7 +1806,7 @@ components:
     ExtRunnerSummary:
       type: object
       description: |
-        (ADR-111, Designed) One enabled platform ACP runner available to assign
+        (ADR-111, Implemented) One enabled platform ACP runner available to assign
         in a triage verdict. Runners are platform-scoped (not project-scoped);
         only `enabled = true` runners appear.
       required: [id, adapter, model, capabilityAgent, readinessStatus]

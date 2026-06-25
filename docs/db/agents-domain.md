@@ -50,7 +50,7 @@ erDiagram
         jsonb recommended "NULL — runner/branch_base/cron/events/executionPolicy seed (ADR-106)"
         text flow_ref "NULL — same-package flow the agent drives (ADR-106)"
         text branch_base "NULL — agent branch base, default project main (ADR-106)"
-        jsonb config_schema "NULL — declared typed config-param schema (Designed ADR-110, 0071)"
+        jsonb config_schema "NULL — declared typed config-param schema (Implemented ADR-110, 0071)"
         text source_path "NOT NULL — maister-agents/stem.md in the newest revision"
         boolean enabled "NOT NULL DEFAULT true"
         timestamptz quarantined_at "NULL — dirty-watchdog flag"
@@ -67,7 +67,7 @@ erDiagram
         text runner_override_id FK "NULL -> platform_acp_runners(id) SET NULL"
         text branch_base "NULL — instance override of branch base (ADR-106)"
         jsonb execution_policy_override "NULL — instance override of autoApply/onBudgetBreach (ADR-106)"
-        jsonb config "NULL — per-instance config values; NULL ⇒ declared defaults (Designed ADR-110, 0071)"
+        jsonb config "NULL — per-instance config values; NULL ⇒ declared defaults (Implemented ADR-110, 0071)"
         timestamptz created_at
         timestamptz updated_at
     }
