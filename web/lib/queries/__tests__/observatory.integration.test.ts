@@ -267,10 +267,12 @@ describe("observatory read models", () => {
     expect(portfolio.budget).toEqual({
       budgetEscalations: 1,
       budgetTerminations: 3,
+      hookTripEscalations: 0,
     });
     expect(project.budget).toEqual({
       budgetEscalations: 1,
       budgetTerminations: 3,
+      hookTripEscalations: 0,
     });
   });
 
