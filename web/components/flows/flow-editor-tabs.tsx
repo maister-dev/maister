@@ -5,8 +5,13 @@ import type {
   EditorDrawerKind,
   EditorTopBarLabels,
 } from "@/components/flows/editor/editor-top-bar";
+import type { AdapterId } from "@/lib/acp-runners/adapter-support";
+import type { ProjectCapabilityCatalogEntry } from "@/lib/capabilities/project-catalog";
 import type { FlowYamlV1 } from "@/lib/config.schema";
-import type { ReferenceSourceGroup } from "@/lib/flows/editor/reference-sources";
+import type {
+  CapabilityOption,
+  ReferenceSourceGroup,
+} from "@/lib/flows/editor/reference-sources";
 import type { FlowLayout } from "@/lib/flows/graph/presentation-layout";
 import type { GraphTopology } from "@/lib/flows/graph/topology";
 import type { ReactElement, ReactNode } from "react";
@@ -77,6 +82,10 @@ export function FlowEditorTabs({
   canvasAvailable,
   participantSources,
   schemaFiles,
+  promptCatalog,
+  promptAdapter,
+  skillOptions,
+  mcpOptions,
   saveAction,
   publishAction,
   filesDrawer,
@@ -103,6 +112,10 @@ export function FlowEditorTabs({
   canvasAvailable: boolean;
   participantSources?: ReferenceSourceGroup[];
   schemaFiles?: { path: string; content: string }[];
+  promptCatalog?: ProjectCapabilityCatalogEntry[];
+  promptAdapter?: AdapterId;
+  skillOptions?: CapabilityOption[];
+  mcpOptions?: CapabilityOption[];
   saveAction: ServerFormAction;
   publishAction: ServerFormAction;
   filesDrawer: ReactNode;
@@ -280,8 +293,12 @@ export function FlowEditorTabs({
               inspectorContainer={inspectorContainer}
               labels={labels.editor}
               layout={seed.layout}
+              mcpOptions={mcpOptions}
               participantSources={participantSources}
+              promptAdapter={promptAdapter}
+              promptCatalog={promptCatalog}
               schemaFiles={schemaFiles}
+              skillOptions={skillOptions}
               topology={seed.topology}
               onChange={handleCanvasChange}
               onWriteSchemaFile={onWriteSchemaFile}

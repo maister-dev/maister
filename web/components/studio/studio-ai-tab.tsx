@@ -1,11 +1,14 @@
 "use client";
 
 import type { ReactElement } from "react";
+import type { AdapterId } from "@/lib/acp-runners/adapter-support";
+import type { AuthoredFlowPackageFile } from "@/lib/catalog/authored-types";
 import type { ScratchFlowActionResultPayload } from "@/lib/scratch-runs/transcript";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 
+import { CapabilityComposer } from "@/components/capabilities/capability-composer";
 import {
   ScratchConversation,
   type ScratchHeaderInfo,
@@ -15,6 +18,7 @@ import {
   type FlowAssistantActionResultLabels,
 } from "@/components/studio/flow-assistant-action-result";
 import { readApiError } from "@/lib/api-error";
+import { buildPackageCapabilityCatalog } from "@/lib/capabilities/package-catalog";
 import { useRunStream } from "@/lib/use-run-stream";
 
 export type StudioAiTabLabels = {
@@ -53,6 +57,7 @@ export function StudioAiTab({
   canManage,
   labels,
   focusPath,
+  files,
   hasUnsavedChanges,
   onBusyChange,
   onActivity,
@@ -63,6 +68,9 @@ export function StudioAiTab({
   canManage: boolean;
   labels: StudioAiTabLabels;
   focusPath?: string | null;
+  // The live package files — the source for the first-prompt `/`-autosuggest
+  // capability catalog (skills derived client-side; the editor is project-less).
+  files: AuthoredFlowPackageFile[];
   hasUnsavedChanges: boolean;
   // Lift "assistant turn in flight" so the editor goes read-only ("AI working").
   onBusyChange: (busy: boolean) => void;
@@ -74,6 +82,7 @@ export function StudioAiTab({
   onHeaderInfo?: (info: ScratchHeaderInfo | null) => void;
 }): ReactElement {
   const t = useTranslations("apiErrors");
+  const tScratch = useTranslations("scratch");
   const [runId, setRunId] = useState<string | null>(null);
   const [prompt, setPrompt] = useState("");
   const [launching, setLaunching] = useState(false);
@@ -85,6 +94,16 @@ export function StudioAiTab({
   // Change-tick only (retain:false): the run's SSE stream signals assistant
   // activity. We re-read dialogStatus on each tick to drive busy/refresh.
   const { eventCount } = useRunStream(runId, { retain: false });
+  const adapter = useMemo<AdapterId>(
+    () =>
+      (runners.find((runner) => runner.id === selectedRunnerId)?.adapter ??
+        "claude") as AdapterId,
+    [runners, selectedRunnerId],
+  );
+  const promptCatalog = useMemo(
+    () => buildPackageCapabilityCatalog(files, adapter),
+    [files, adapter],
+  );
   const sendDisabledReason = !canManage
     ? labels.lockRequired
     : hasUnsavedChanges
@@ -363,19 +382,21 @@ export function StudioAiTab({
         </p>
       ) : null}
       <div className="relative min-h-0 flex-1">
-        <textarea
-          aria-label={labels.promptPlaceholder}
-          className="h-full w-full resize-none rounded-lg border border-line bg-paper px-3.5 py-3 pb-14 font-mono text-[13px] leading-[1.35] text-ink outline-none transition focus:border-amber focus:shadow-[0_0_0_3px_var(--amber-soft)] placeholder:text-mute disabled:opacity-50"
-          data-testid="studio-ai-prompt"
+        <CapabilityComposer
+          agent={adapter}
+          ariaLabel={labels.promptPlaceholder}
+          catalog={promptCatalog}
+          className="h-full w-full overflow-y-auto rounded-lg border border-line bg-paper px-3.5 py-3 pb-14 font-mono text-[13px] leading-[1.35] text-ink outline-none transition focus:border-amber focus:shadow-[0_0_0_3px_var(--amber-soft)] placeholder:text-mute disabled:opacity-50"
           disabled={!canManage || launching || hasUnsavedChanges}
-          placeholder={labels.promptPlaceholder}
+          labels={{
+            placeholder: labels.promptPlaceholder,
+            unsupportedBadge: tScratch("composerUnsupported"),
+          }}
+          testId="studio-ai-prompt"
           value={prompt}
-          onChange={(event) => setPrompt(event.target.value)}
-          onKeyDown={(event) => {
-            if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-              event.preventDefault();
-              if (!launchDisabled) void launch();
-            }
+          onChange={setPrompt}
+          onSubmitShortcut={() => {
+            if (!launchDisabled) void launch();
           }}
         />
         <button

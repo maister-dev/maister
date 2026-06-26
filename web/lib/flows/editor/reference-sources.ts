@@ -8,6 +8,11 @@ export type ReferenceSourceOption = {
   filePath?: string;
 };
 
+// A plain {value,label} option for the node-form MultiSelectField (structurally
+// the component's MultiSelectOption); derived client-side from the package's own
+// skills and the platform MCP catalog.
+export type CapabilityOption = { value: string; label: string };
+
 export type ReferenceSourceGroup = {
   label: string;
   kind: ReferenceSourceKind;
@@ -38,6 +43,33 @@ type KnownSourceSets = {
 
 const ROOT_AGENT_PATTERN = /^maister-agents\/([^/]+)\.md$/;
 const ROOT_SCHEMA_PATTERN = /^schemas\/([^/]+)\.json$/;
+const ROOT_SKILL_PATTERN = /^skills\/([^/]+)\/SKILL\.md$/;
+
+// Skill options for the node-form `skills` multiselect — one per
+// `skills/<slug>/SKILL.md` in the package (mirrors buildAgentGroupFromFiles).
+export function buildSkillOptions(
+  files: readonly PackageFileLike[],
+): CapabilityOption[] {
+  return files
+    .flatMap((file) => {
+      const match = ROOT_SKILL_PATTERN.exec(file.path);
+
+      if (!match) return [];
+
+      return [{ value: match[1], label: match[1] }];
+    })
+    .sort(compareCapabilityOptions);
+}
+
+// MCP options for the node-form `mcps` multiselect — the platform MCP catalog
+// ref ids (the only field read is `id`, so the input stays decoupled).
+export function buildMcpOptions(
+  mcps: readonly { id: string }[],
+): CapabilityOption[] {
+  return mcps
+    .map((mcp) => ({ value: mcp.id, label: mcp.id }))
+    .sort(compareCapabilityOptions);
+}
 
 export function buildRunnerGroup(
   runners: readonly AssistantRunnerSource[],
@@ -162,6 +194,13 @@ function buildRunnerHint(runner: AssistantRunnerSource): string {
 function compareOptionsByLabel(
   left: ReferenceSourceOption,
   right: ReferenceSourceOption,
+): number {
+  return left.label.localeCompare(right.label);
+}
+
+function compareCapabilityOptions(
+  left: CapabilityOption,
+  right: CapabilityOption,
 ): number {
   return left.label.localeCompare(right.label);
 }

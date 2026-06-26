@@ -19,7 +19,7 @@ Rationale: Flow Studio UX polish (assistant dock + node editor); not a standalon
 This plan covers four in-scope blocks from the user's request. Two adjacent
 bodies of work are **explicitly excluded** and must NOT be re-planned here.
 
-### Preconditions (must hold before implementation starts)
+### Preconditions — SATISFIED ✅ (c3f7 merged + rebase done 2026-06-26)
 1. **`feature/flow-studio-reference-pickers` (codex worktree `c3f7`) is MERGED into the base.**
    That branch owns and ships, FROZEN spec
    (`.ai-factory/specs/feature-flow-studio-reference-pickers.md`):
@@ -30,11 +30,16 @@ bodies of work are **explicitly excluded** and must NOT be re-planned here.
    - the `draftFiles` **lift** (`package-files-draft.ts`, controlled
      `PackageFilesEditor`) and `reference-sources.ts` /
      `reference-combobox.tsx` / `schema-ref-field.tsx` / `schema-ref-actions.ts`.
-   These artifacts are **reused, never recreated**. This branch must be
-   **rebased onto post-`c3f7` main before implementing** (the user does this to
-   avoid merge conflicts in the shared files: `node-side-form.tsx`,
-   `node-side-form-labels.ts`, `flow-editor-tabs.tsx`, `flow-graph-editor.tsx`,
-   `local-package-editor.tsx`, `en.json`, `ru.json`).
+   These artifacts are now **in the tree** (rebase landed HEAD `8d1b5307` onto
+   main `12153b0f` on 2026-06-26) and are **reused, never recreated**. The
+   shared-file conflicts (`flow-editor-tabs.tsx`, `flow-graph-editor.tsx`,
+   `local-package-editor.tsx`) were resolved keeping BOTH the dock WIP and c3f7's
+   pickers; `en.json`/`ru.json`/`page.tsx` auto-merged (parity 2887/2887). Backup
+   ref `backup/suspicious-boyd-pre-rebase-2026-06-26` @ `c601eb91`. The c3f7
+   reuse surface now verified in-tree: `web/lib/flows/editor/reference-sources.ts`
+   exports `buildRunnerGroup` / `buildAgentGroupFromFiles` / `buildSchemaOptions`
+   / `ReferenceSourceGroup` (+ the `ReferenceCombobox` native-input control) —
+   D1ʹ extends these (see TD.3).
 2. **This branch already carries uncommitted "AI-dock" WIP** (3-column dock,
    minimap collapse + dark-theme fix, node-type hint tooltips incl. consensus,
    danger remove-node, selected-node glow, status/usage lifted to the panel
@@ -130,11 +135,12 @@ touched are **i18n** and **docs** — traced in §Contract Surface Trace.
 | Screen reference | **Yes** | `docs/screens/studio/editor.md` — node-form MultiSelect/StringList controls + `/`-autosuggest prompt composer + first-prompt autosuggest + overlaid follow-up Send (TE.2). |
 
 ## Testing & Gates (per skill-context rule)
-- **Runner:** `maister-web` vitest. New unit tests live under already-globbed
-  dirs (`web/lib/flows/__tests__/`, `web/lib/capabilities/__tests__/`,
-  `web/components/flows/node-form/__tests__/`, `web/components/scratch/__tests__/`).
-  Confirm with `pnpm --filter maister-web exec vitest list <file>` when a test
-  lands in a new path family.
+- **Runner:** `maister-web` vitest. New unit tests live under dirs **already
+  matched** by the `unit` project globs (verified in `vitest.workspace.ts`:
+  `lib/**/__tests__/**/*.test.ts`, `components/**/__tests__/**/*.test.ts`):
+  `web/lib/flows/__tests__/`, `web/lib/capabilities/__tests__/`,
+  `web/components/flows/node-form/__tests__/`, `web/components/scratch/__tests__/`.
+  **No vitest config change needed.**
 - **Per-phase green gate (exit criteria for EVERY phase):**
   `pnpm --filter maister-web typecheck` clean **and**
   `pnpm --filter maister-web test:unit` green. Assertion migration for the
@@ -160,7 +166,7 @@ touched are **i18n** and **docs** — traced in §Contract Surface Trace.
 
 ### Phase 0 — Grammar SSOT + drift guard (front-loaded; B depends on it)
 
-- [ ] **T0.1 — `buildFlowDslGrammar()` SSOT.** New `web/lib/flows/flow-dsl-grammar.ts`
+- [x] **T0.1 — `buildFlowDslGrammar()` SSOT.** New `web/lib/flows/flow-dsl-grammar.ts`
   exporting a pure `buildFlowDslGrammar(): string`. Output: a compact, complete
   grammar reference — for EVERY node type (`ai_coding`, `judge`, `cli`, `check`,
   `human`, `form`, `orchestrator`, `consensus`) its required/optional fields with
@@ -175,12 +181,17 @@ touched are **i18n** and **docs** — traced in §Contract Surface Trace.
   - Logging: standard — one INFO `[flow-dsl-grammar] built (<N> chars, <M> node types)` on first build; pure otherwise.
   - Acceptance: pure function, deterministic; typecheck clean.
 
-- [ ] **T0.2 — Drift-guard test.** New `web/lib/flows/__tests__/flow-dsl-grammar.test.ts`.
-  Introspect `config.schema.ts`: enumerate the node discriminated-union `type`
-  values; for each settings schema (`aiCodingSettingsSchema`, `judgeSettingsSchema`,
-  `cliCheckSettingsSchema`, `humanSettingsSchema`, `formSettingsSchema`,
-  `orchestratorSettingsSchema`, consensus node shape) enumerate `.shape` keys;
-  enumerate exported zod enum `.options`. Assert EVERY node type, settings key,
+- [x] **T0.2 — Drift-guard test.** New `web/lib/flows/__tests__/flow-dsl-grammar.test.ts`.
+  Introspect `config.schema.ts` (verified exports): enumerate the node
+  discriminated-union `type` values; for each settings schema
+  (`aiCodingSettingsSchema` L745, `orchestratorSettingsSchema` L781,
+  `judgeSettingsSchema` L793, `humanSettingsSchema` L808, `formSettingsSchema`
+  L829, `cliCheckSettingsSchema` L837, the consensus node shape) **plus**
+  `gateSchema` L437 enumerate `.shape` keys; enumerate the `.options` of the
+  enum schemas (`thinkingEffortSchema`, `permissionModeSchema`,
+  `workspacePolicySchema`, + the inline enums: gate `kind`/`mode`,
+  `workspaceAccess`, `criticality`, `environmentPolicy`, `failureClass`,
+  `rounds.mode`, `on_no_consensus`). Assert EVERY node type, settings key,
   and enum value appears in `buildFlowDslGrammar()`. **RED first** (start with the
   grammar intentionally missing one key/enum), then complete T0.1 to GREEN.
   - Files: `web/lib/flows/__tests__/flow-dsl-grammar.test.ts`.
@@ -189,7 +200,7 @@ touched are **i18n** and **docs** — traced in §Contract Surface Trace.
 
 ### Phase A — Follow-up composer Send overlay (#8)
 
-- [ ] **TA.1 — Overlay Send bottom-right over the composer.** In
+- [x] **TA.1 — Overlay Send bottom-right over the composer.** In
   `web/components/scratch/scratch-composer.tsx` `compact` mode: REMOVE the
   action-row-above-input (`mb-2 … {actionButtons}`); wrap the `CapabilityComposer`
   in a `relative` container with bottom padding, and render the Send button
@@ -206,7 +217,7 @@ touched are **i18n** and **docs** — traced in §Contract Surface Trace.
 
 ### Phase B — Feed the grammar to the assistant (#1; root cause of #7) — depends Phase 0
 
-- [ ] **TB.1 — Inject grammar into the per-turn context.** In
+- [x] **TB.1 — Inject grammar into the per-turn context.** In
   `web/lib/studio/flow-assistant/context.ts` (`buildFlowAssistantContext`), render
   `buildFlowDslGrammar()` into the always-sent prompt as a `## Flow DSL grammar
   (authoritative)` section, and replace the line 118 pointer ("answer from … the
@@ -216,7 +227,7 @@ touched are **i18n** and **docs** — traced in §Contract Surface Trace.
   - Logging: standard — INFO `[flow-assistant] grammar injected (<N> chars)` once per build.
   - Acceptance: a unit/snapshot test asserts the assembled context contains the grammar section and the string `type: consensus`.
 
-- [ ] **TB.2 — Render the SSOT into the `/flow-authoring` skill file.** In
+- [x] **TB.2 — Render the SSOT into the `/flow-authoring` skill file.** In
   `web/lib/flows/authoring-skill.ts`, replace the hand-maintained
   `references/flow-dsl.md` grammar body (and the WIP hand-patched
   consensus/orchestrator node-type line + table rows) with the output of
@@ -230,7 +241,7 @@ touched are **i18n** and **docs** — traced in §Contract Surface Trace.
 
 ### Phase C — `/`-autosuggest in two inputs (#2, #3)
 
-- [ ] **TC.1 — `buildPackageCapabilityCatalog(files, adapter)`.** New
+- [x] **TC.1 — `buildPackageCapabilityCatalog(files, adapter)`.** New
   `web/lib/capabilities/package-catalog.ts` — pure builder returning
   `ProjectCapabilityCatalogEntry[]` from `files: AuthoredFlowPackageFile[]`:
   skills from `skills/<slug>/SKILL.md` → `{ kind: "skill", slug, displayName,
@@ -240,7 +251,7 @@ touched are **i18n** and **docs** — traced in §Contract Surface Trace.
   - Logging: none (pure).
   - Acceptance: skills derived; per-adapter `supported` correct; unit green.
 
-- [ ] **TC.2 — Composer in the assistant first prompt.** Replace the
+- [x] **TC.2 — Composer in the assistant first prompt.** Replace the
   `web/components/studio/studio-ai-tab.tsx` first-prompt `<textarea>` with
   `CapabilityComposer` (`catalog={buildPackageCapabilityCatalog(files, adapter)}`,
   `agent={adapter}`), preserving the overlaid launch button, Cmd/Ctrl+Enter
@@ -251,23 +262,25 @@ touched are **i18n** and **docs** — traced in §Contract Surface Trace.
   - Logging: none (UI).
   - Acceptance: `/` shows skill autosuggest in the first prompt; launch + Cmd/Enter still work; tokens normalized on send.
 
-- [ ] **TC.3 — Composer in the node `action.prompt`.** Replace the
+- [x] **TC.3 — Composer in the node `action.prompt`.** Replace the
   `web/components/flows/node-form/node-side-form.tsx` `action.prompt` `<textarea>`
   (testid `node-action-prompt`) with `CapabilityComposer`, storing canonical
-  `@skill:<slug>` tokens. Thread `promptCatalog` + display `adapter` (flow/package
-  default runner adapter; fallback `claude`) from `LocalPackageEditor` →
-  `FlowEditorTabs` → `FlowGraphEditor` → `NodeSideForm`. Read-only viewer (no
-  catalog) degrades to read-only text. NO runtime change — `runner-agent.ts:723`
-  already adapts tokens to codex/claude. Migrate node-side-form tests for the new
-  prompt control.
-  - Files: `node-side-form.tsx`, `flow-graph-editor.tsx`, `flow-editor-tabs.tsx`, `local-package-editor.tsx`, `node-side-form` `__tests__`.
+  `@skill:<slug>` tokens. **Keep `data-testid="node-action-prompt"`** on the
+  composer root so the merged `node-side-form.test.ts` smoke (L361) stays green.
+  Add `promptCatalog` + display `adapter` (flow/package default runner adapter;
+  fallback `claude`) to the **existing c3f7 prop chain** (the same
+  `LocalPackageEditor → FlowEditorTabs → FlowGraphEditor → NodeSideForm` thread
+  that already carries `participantSources`/`schemaFiles`/`onWriteSchemaFile`) —
+  no new threading. Read-only viewer (no catalog) degrades to read-only text. NO
+  runtime change — `runner-agent.ts:723` already adapts tokens to codex/claude.
+  - Files: `node-side-form.tsx`, `flow-graph-editor.tsx`, `flow-editor-tabs.tsx`, `local-package-editor.tsx`, `components/flows/node-form/__tests__/node-side-form.test.ts`.
   - Logging: none (UI).
-  - Acceptance: node prompt shows `/` autosuggest; stores `@skill:<slug>`; emitted manifest parses under `flowYamlV1Schema`; an existing normalizer test proves `@skill:x` → `$x` for codex; read-only viewer unaffected (no catalog → plain text).
+  - Acceptance: `data-testid="node-action-prompt"` preserved (merged smoke test green); node prompt shows `/` autosuggest; stores `@skill:<slug>`; **backward-compat:** an existing plain-text prompt renders unchanged (canonical tokens added only when the user picks from autosuggest); emitted manifest parses under `flowYamlV1Schema`; an existing normalizer test proves `@skill:x` → `$x` for codex; read-only viewer unaffected (no catalog → plain text).
   - **Phase gate:** typecheck clean; `test:unit` green.
 
 ### Phase D — Structured node-form controls (#5, #6)
 
-- [ ] **TD.1 — `MultiSelectField` primitive.** New
+- [x] **TD.1 — `MultiSelectField` primitive.** New
   `web/components/flows/node-form/multi-select-field.tsx`: selected values as
   removable chips + an add-combobox over options (progressive disclosure:
   collapsed filterable list). Two modes: `catalog` (skills/mcps, **free-add
@@ -278,7 +291,7 @@ touched are **i18n** and **docs** — traced in §Contract Surface Trace.
   - Logging: none (UI).
   - Acceptance: select/remove/free-add work; `fixedOptions` rejects free-add; readOnly disables editing; unit/static green.
 
-- [ ] **TD.2 — `StringListField` primitive.** New
+- [x] **TD.2 — `StringListField` primitive.** New
   `web/components/flows/node-form/string-list-field.tsx`: add-button + one
   text input per item with a per-row danger trash button; empty → add-first
   affordance; writes `string[]`; `readOnly` → rows read-only.
@@ -286,39 +299,46 @@ touched are **i18n** and **docs** — traced in §Contract Surface Trace.
   - Logging: none (UI).
   - Acceptance: add/edit/remove rows; empty array semantics preserved; readOnly safe; unit/static green.
 
-- [ ] **TD.3 — Wire catalog/enum multiselects.** In
+- [x] **TD.3 — Wire catalog/enum multiselects.** In
   `node-side-form.tsx`, replace the comma-separated `TextField`s for **`skills`**
-  (catalog = package skills via a `buildSkillOptions(files)` helper) and
-  **`mcps`** (catalog = `mcpCatalog` ids; keep writing the flat `string[]` union
-  branch), and **`rework.workspacePolicies`** (`fixedOptions` = the 3 enum
-  values) with `MultiSelectField`. Thread `skillOptions` + `mcpOptions` from
-  `LocalPackageEditor` down (same plumbing as TC.3). Add `nodeForm` labels.
-  - Files: `node-side-form.tsx`, `node-side-form-labels.ts`, `flow-graph-editor.tsx`, `flow-editor-tabs.tsx`, `local-package-editor.tsx`, `en.json`, `ru.json`, `node-side-form` `__tests__`.
+  and **`mcps`** and **`rework.workspacePolicies`** with `MultiSelectField`.
+  **Keep their existing testids** (`node-skills`, `node-mcps`,
+  `node-rework-workspace-policies`) so the merged `node-side-form.test.ts` smoke
+  (L366/L368/L372) stays green. Option sources: add `buildSkillOptions(files)` +
+  `buildMcpOptions(mcpCatalog)` to the existing
+  `web/lib/flows/editor/reference-sources.ts` (mirroring the in-tree
+  `buildAgentGroupFromFiles`/`buildSchemaOptions`); `rework.workspacePolicies`
+  uses `fixedOptions` = the 3 enum values; `mcps` keeps writing the flat
+  `string[]` union branch. Thread `skillOptions` + `mcpOptions` on the **existing
+  c3f7 prop chain** (same as TC.3). Add `nodeForm` labels.
+  - Files: `node-side-form.tsx`, `node-side-form-labels.ts`, `lib/flows/editor/reference-sources.ts` (+ `__tests__`), `flow-graph-editor.tsx`, `flow-editor-tabs.tsx`, `local-package-editor.tsx`, `en.json`, `ru.json`, `components/flows/node-form/__tests__/node-side-form.test.ts`.
   - Logging: none (UI).
-  - Acceptance: skills/mcps render as chips+add from catalog (free-add allowed); workspacePolicies as fixed multiselect; emitted manifest parses (`skills: string[]`, `mcps: string[]`, `workspacePolicies: enum[]`); read-only viewer degrades.
+  - Acceptance: testids `node-skills`/`node-mcps`/`node-rework-workspace-policies` preserved (merged smoke green); skills/mcps render as chips+add from catalog (free-add allowed); workspacePolicies as fixed multiselect; emitted manifest parses (`skills: string[]`, `mcps: string[]`, `workspacePolicies: enum[]`); read-only viewer degrades.
 
-- [ ] **TD.4 — Wire free-text row lists.** In `node-side-form.tsx`, replace the
+- [x] **TD.4 — Wire free-text row lists.** In `node-side-form.tsx`, replace the
   comma-separated `TextField`s for **`restrictions`, `roles`, `assignees`,
   `decisions`, `material_axes`, `rework.allowedTargets`,
-  `hooks.pathGuard.allowedPaths`** with `StringListField`. Preserve sparse-block
-  semantics (empty list → omit the field, matching current `undefined`). Add
-  `nodeForm` labels. Migrate the affected node-side-form tests (enumerate each
-  asserted field).
-  - Files: `node-side-form.tsx`, `node-side-form-labels.ts`, `en.json`, `ru.json`, `node-side-form` `__tests__`.
+  `hooks.pathGuard.allowedPaths`** with `StringListField`. **Keep each field's
+  existing testid** on the new control (the merged `node-side-form.test.ts` smoke
+  asserts `node-restrictions` at L367; the human/consensus-node cases lower in the
+  file assert the others) — add value-shape assertions, don't rewrite the testid
+  contract. Preserve sparse-block semantics (empty list → omit the field, matching
+  current `undefined`). Add `nodeForm` labels.
+  - Files: `node-side-form.tsx`, `node-side-form-labels.ts`, `en.json`, `ru.json`, `components/flows/node-form/__tests__/node-side-form.test.ts`.
   - Logging: none (UI).
-  - Acceptance: each field = add-button + removable rows; empty omits the field; emitted manifest parses under `flowYamlV1Schema`; migrated tests green.
+  - Acceptance: existing testids preserved (merged smoke + node-variant cases green); each field = add-button + removable rows; empty omits the field; emitted manifest parses under `flowYamlV1Schema`.
   - **Phase gate:** typecheck clean; `test:unit` green.
 
 ### Phase E — i18n parity + docs (mandatory) + e2e
 
-- [ ] **TE.1 — i18n parity.** Ensure every new visible control has en + ru keys
+- [x] **TE.1 — i18n parity.** Ensure every new visible control has en + ru keys
   (MultiSelect add/placeholder/empty/remove; StringList add/remove/placeholder;
   the two composer placeholders; the grammar section needs none). Run the en/ru
   key-parity check.
   - Files: `web/messages/en.json`, `web/messages/ru.json`.
   - Acceptance: en/ru parity passes; all new controls localized.
 
-- [ ] **TE.2 — Docs checkpoint.** Update `docs/system-analytics/flow-studio.md`
+- [x] **TE.2 — Docs checkpoint.** Update `docs/system-analytics/flow-studio.md`
   (the assistant now receives the complete, drift-guarded Flow DSL grammar on
   every turn; consensus is authored as a first-class node) and
   `docs/screens/studio/editor.md` (node-form MultiSelect/StringList controls +
@@ -328,7 +348,7 @@ touched are **i18n** and **docs** — traced in §Contract Surface Trace.
   - Files: `docs/system-analytics/flow-studio.md`, `docs/screens/studio/editor.md`.
   - Acceptance: docs updated; `pnpm validate:docs` green.
 
-- [ ] **TE.3 — E2E.** Extend `web/e2e/studio-local-edit.spec.ts`: (a) first-prompt
+- [x] **TE.3 — E2E.** Extend `web/e2e/studio-local-edit.spec.ts`: (a) first-prompt
   composer renders + a skill chip can be inserted via `/`; (b) node `action.prompt`
   composer renders + stores a canonical token; (c) a `skills` multiselect adds +
   removes a chip; (d) a `StringListField` (e.g. `roles`) adds + removes a row;

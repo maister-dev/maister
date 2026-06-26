@@ -2727,6 +2727,21 @@
       "removeTransition": "Удалить",
       "noTransitions": "Нет переходов",
       "noGates": "Нет гейтов",
+      "promptComposer": {
+        "placeholder": "Введите промпт; / — вставить навык",
+        "unsupported": "недоступно для этого раннера"
+      },
+      "multiSelect": {
+        "add": "Добавить",
+        "remove": "Удалить",
+        "placeholder": "Выберите или введите",
+        "empty": "Ничего не выбрано"
+      },
+      "stringList": {
+        "add": "Добавить",
+        "remove": "Удалить",
+        "placeholder": "Значение"
+      },
       "consensus": {
         "participants": "Участники",
         "participantId": "ID",

@@ -1,5 +1,7 @@
 import "server-only";
 
+import { buildFlowDslGrammar } from "@/lib/flows/flow-dsl-grammar";
+
 // M36 Phase 5 (ADR-097) T5.3: the `flow-authoring` skill shipped INTO the docked
 // local-package AI assistant session. The content is held in-memory (not read off
 // a bundled asset path — robust against the Next/Turbopack server-bundle layout)
@@ -57,8 +59,10 @@ complete worked example. Key rules:
 
 - Each \`nodes[]\` entry has \`id\`, \`type\`, an \`action\`, and \`transitions\`
   (decision/outcome -> target node id). The first node is the entry.
-- Node \`type\`: \`ai_coding\` | \`judge\` | \`cli\` | \`check\` | \`human\` | \`form\`
-  | \`consensus\` | \`orchestrator\`.
+- Node \`type\` is one of the types in \`references/flow-dsl.md\` (generated from
+  the runtime schema). \`consensus\` and \`orchestrator\` are FIRST-CLASS node
+  types — emit \`type: consensus\` directly; never emulate consensus with judge
+  nodes.
 - Gates live under \`pre_finish.gates\` and actually BLOCK (kind \`command_check\`
   | \`skill_check\` | \`ai_judgment\` | \`artifact_required\` | \`external_check\` |
   \`human_review\`, each \`mode: blocking | advisory\`).
@@ -110,128 +114,7 @@ Rules:
 See also: \`references/package-layout.md\` and \`references/editing-tips.md\`.
 `;
 
-const REF_FLOW_DSL = `# flow.yaml — typed-node graph reference
-
-## Manifest header
-
-\`\`\`yaml
-schemaVersion: 1
-name: my-flow
-runner_profiles:
-  claude-code:
-    capability_agent: claude
-    adapter: claude
-    model: claude-sonnet-4-6
-    provider: { kind: anthropic }
-compat:
-  engine_min: 1.3.0          # graph DSL floor (gates/artifacts push higher)
-\`\`\`
-
-## Node types
-
-| type        | action            | runs as                          |
-| ----------- | ----------------- | -------------------------------- |
-| \`ai_coding\` | \`{ prompt }\`      | an ACP agent session             |
-| \`judge\`     | \`{ prompt }\`      | an LLM verdict (no code changes) |
-| \`cli\`       | \`{ command }\`     | a shell command (no agent)       |
-| \`check\`     | \`{ command }\`     | a shell command, gate-style      |
-| \`human\`     | (none) + \`finish.human\` | a HITL decision           |
-| \`form\`      | (none) + \`settings.form_schema\` | a HITL form collect |
-| \`consensus\` | \`participants[]\` + \`synthesizer\` | N independent draft authors (each \`{ id, agent\|runner }\`) → a synthesizer merges them into one result; native fan-out/merge, no manual aggregator node needed |
-| \`orchestrator\` | \`{ prompt }\` + \`delegation\` | spawns and coordinates child runs/tasks (\`delegation: { maxFanout, maxDepth }\`) |
-
-## Gate kinds (under \`pre_finish.gates\`)
-
-\`command_check\` · \`skill_check\` · \`ai_judgment\` · \`artifact_required\` ·
-\`external_check\` · \`human_review\`. Each: \`{ id, kind, mode: blocking|advisory }\`.
-A blocking gate that fails halts the node; advisory only records a signal.
-
-## Typed artifacts
-
-- \`output.produces: [{ id, kind, requiredFor?: [nodeId...] }]\`
-- \`input.requires: [{ artifact: <id>, kind }]\`
-
-Artifact \`kind\` is one of the platform artifact kinds (e.g. \`diff\`,
-\`test_report\`, \`ai_judgment\`, \`generic_file\`). A required-but-absent artifact
-fails as PRECONDITION.
-
-## Transitions + rework
-
-\`transitions\` maps a node's decision/outcome to the next node id:
-
-\`\`\`yaml
-transitions:
-  success: next_node
-  approve: commit
-  rework: fix
-rework:
-  allowedTargets: [fix]
-  maxLoops: 3
-  commentsVar: review_comments
-\`\`\`
-
-## Complete example
-
-\`\`\`yaml
-schemaVersion: 1
-name: bugfix
-runner_profiles:
-  claude-code: { capability_agent: claude, adapter: claude, model: claude-sonnet-4-6, provider: { kind: anthropic } }
-compat: { engine_min: 1.3.0 }
-nodes:
-  - id: fix
-    type: ai_coding
-    action:
-      prompt: |
-        /aif-fix {{ task.prompt }}
-        {{ review_comments }}
-    output:
-      produces:
-        - id: impl-diff
-          kind: diff
-          requiredFor: [review]
-    transitions:
-      success: review
-
-  - id: review
-    type: human
-    input:
-      requires:
-        - artifact: impl-diff
-          kind: diff
-    pre_finish:
-      gates:
-        - id: impl-diff-required
-          kind: artifact_required
-          mode: blocking
-          inputArtifacts: [impl-diff]
-    finish:
-      human:
-        role: maintainer
-        decisions: [approve, rework]
-        commentsVar: review_comments
-    transitions:
-      approve: commit
-      rework: fix
-    rework:
-      allowedTargets: [fix]
-      maxLoops: 3
-      commentsVar: review_comments
-
-  - id: commit
-    type: ai_coding
-    action: { prompt: "/aif-commit" }
-    transitions:
-      success: done
-\`\`\`
-
-\`done\` is the implicit terminal target — no node needs to declare it.
-
-## Templating
-
-Prompts/commands use Mustache (\`{{ task.prompt }}\`, \`{{ steps.<id>.output }}\`,
-\`{{ <commentsVar> }}\`). Strict mode: an unknown variable throws CONFIG.
-`;
+const REF_FLOW_DSL = buildFlowDslGrammar();
 
 const REF_PACKAGE_LAYOUT = `# Package layout
 

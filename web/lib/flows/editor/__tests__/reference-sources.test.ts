@@ -4,8 +4,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildAgentGroupFromFiles,
+  buildMcpOptions,
   buildRunnerGroup,
   buildSchemaOptions,
+  buildSkillOptions,
   deriveSchemaFileName,
   resolveFreeTextSourceKind,
   schemaFilePathToRef,
@@ -115,17 +117,18 @@ describe("reference source helpers", () => {
     expect(deriveSchemaFileName("Review intake", [])).toBe(
       "schemas/review-intake.json",
     );
-    expect(deriveSchemaFileName("Review intake", ["schemas/review-intake.json"]))
-      .toBe("schemas/review-intake-2.json");
+    expect(
+      deriveSchemaFileName("Review intake", ["schemas/review-intake.json"]),
+    ).toBe("schemas/review-intake-2.json");
   });
 
   it("resolves free text source kind from exact matches and defaults", () => {
     const runners = new Set(["codex-main"]);
     const agents = new Set(["delivery-kit:triager"]);
 
-    expect(
-      resolveFreeTextSourceKind("codex-main", { runners, agents }),
-    ).toBe("runner");
+    expect(resolveFreeTextSourceKind("codex-main", { runners, agents })).toBe(
+      "runner",
+    );
     expect(
       resolveFreeTextSourceKind("delivery-kit:triager", { runners, agents }),
     ).toBe("agent");
@@ -143,5 +146,26 @@ describe("reference source helpers", () => {
       agent: "delivery-kit:triager",
       runner: undefined,
     });
+  });
+
+  it("builds skill options from skills/<slug>/SKILL.md files, sorted", () => {
+    expect(
+      buildSkillOptions([
+        packageFile("skills/review/SKILL.md"),
+        packageFile("skills/aif-plan/SKILL.md"),
+        packageFile("skills/aif-plan/references/x.md"),
+        packageFile("flows/bugfix/flow.yaml"),
+      ]),
+    ).toEqual([
+      { value: "aif-plan", label: "aif-plan" },
+      { value: "review", label: "review" },
+    ]);
+  });
+
+  it("builds mcp options from the catalog ids, sorted", () => {
+    expect(buildMcpOptions([{ id: "postgres" }, { id: "github" }])).toEqual([
+      { value: "github", label: "github" },
+      { value: "postgres", label: "postgres" },
+    ]);
   });
 });

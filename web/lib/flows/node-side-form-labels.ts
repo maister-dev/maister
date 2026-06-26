@@ -131,6 +131,21 @@ export function buildNodeSideFormLabels(te: Translator): NodeSideFormLabels {
       disabled: te("nodeForm.hooks.disabled"),
       hint: te("nodeForm.hooks.hint"),
     },
+    promptComposer: {
+      placeholder: te("nodeForm.promptComposer.placeholder"),
+      unsupported: te("nodeForm.promptComposer.unsupported"),
+    },
+    multiSelect: {
+      add: te("nodeForm.multiSelect.add"),
+      remove: te("nodeForm.multiSelect.remove"),
+      placeholder: te("nodeForm.multiSelect.placeholder"),
+      empty: te("nodeForm.multiSelect.empty"),
+    },
+    stringList: {
+      add: te("nodeForm.stringList.add"),
+      remove: te("nodeForm.stringList.remove"),
+      placeholder: te("nodeForm.stringList.placeholder"),
+    },
     gate: {
       mode: te("gate.mode"),
       modeBlocking: te("gate.modeBlocking"),

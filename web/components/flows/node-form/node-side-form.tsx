@@ -4,11 +4,16 @@ import type {
   GateDraft,
   GateFormLabels,
 } from "@/components/flows/node-form/gate-form";
+import type { AdapterId } from "@/lib/acp-runners/adapter-support";
+import type { ProjectCapabilityCatalogEntry } from "@/lib/capabilities/project-catalog";
 import type { FlowYamlV1 } from "@/lib/config.schema";
 import type {
+  CapabilityOption,
   ReferenceSourceGroup,
   ReferenceSourceKind,
 } from "@/lib/flows/editor/reference-sources";
+import type { MultiSelectFieldLabels } from "@/components/flows/node-form/multi-select-field";
+import type { StringListFieldLabels } from "@/components/flows/node-form/string-list-field";
 import type {
   SchemaRefFieldLabels,
   SchemaRefFile,
@@ -17,9 +22,12 @@ import type { ReactElement } from "react";
 
 import { PlusIcon, TrashIcon } from "@heroicons/react/24/outline";
 
+import { CapabilityComposer } from "@/components/capabilities/capability-composer";
 import { GateForm } from "@/components/flows/node-form/gate-form";
+import { MultiSelectField } from "@/components/flows/node-form/multi-select-field";
 import { ReferenceCombobox } from "@/components/flows/node-form/reference-combobox";
 import { SchemaRefField } from "@/components/flows/node-form/schema-ref-field";
+import { StringListField } from "@/components/flows/node-form/string-list-field";
 import { blankDecide } from "@/lib/flows/editor/node-form";
 import {
   resolveFreeTextSourceKind,
@@ -87,6 +95,9 @@ export type NodeSideFormLabels = {
   consensus: ConsensusFormLabels;
   decide: DecideFormLabels;
   hooks: HooksFormLabels;
+  promptComposer: { placeholder: string; unsupported: string };
+  multiSelect: MultiSelectFieldLabels;
+  stringList: StringListFieldLabels;
   gate: GateFormLabels;
 };
 
@@ -159,16 +170,17 @@ function str(value: unknown): string {
   return value === undefined || value === null ? "" : String(value);
 }
 
-function joinList(value: unknown): string {
-  return Array.isArray(value) ? value.join(", ") : "";
+function strList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string")
+    : [];
 }
 
-function parseList(value: string): string[] {
-  return value
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
+const WORKSPACE_POLICY_OPTIONS: CapabilityOption[] = [
+  { value: "keep", label: "keep" },
+  { value: "rewind-to-node-checkpoint", label: "rewind-to-node-checkpoint" },
+  { value: "fresh-attempt", label: "fresh-attempt" },
+];
 
 function compactRec(value: Rec): Rec {
   const next: Rec = {};
@@ -316,6 +328,10 @@ export function NodeSideForm({
   labels,
   participantSources = [],
   schemaFiles,
+  promptCatalog,
+  promptAdapter,
+  skillOptions,
+  mcpOptions,
   presentation,
   readOnly = false,
   onChange,
@@ -326,6 +342,14 @@ export function NodeSideForm({
   labels: NodeSideFormLabels;
   participantSources?: ReferenceSourceGroup[];
   schemaFiles?: SchemaRefFile[];
+  // The `/`-autosuggest capability catalog for the action.prompt composer
+  // (editor mount). Absent → the read-only viewer degrades to a plain textarea.
+  promptCatalog?: ProjectCapabilityCatalogEntry[];
+  promptAdapter?: AdapterId;
+  // Catalog options for the `skills` / `mcps` multiselects (free-add allowed);
+  // absent → empty catalog (free-add still works in the editor).
+  skillOptions?: CapabilityOption[];
+  mcpOptions?: CapabilityOption[];
   presentation?: NodePresentationStyle;
   // Read-only (package viewer T1.4): every field renders as a disabled/read-only
   // value, add/remove controls are dropped, and edits are no-ops. DEFAULTS to
@@ -488,10 +512,7 @@ export function NodeSideForm({
   ): void => {
     setParticipant(index, patchSourceSelection(kind, value));
   };
-  const setSynthesizerSource = (
-    kind: ActorSourceKind,
-    value: string,
-  ): void => {
+  const setSynthesizerSource = (kind: ActorSourceKind, value: string): void => {
     setSynthesizer(patchSourceSelection(kind, value));
   };
 
@@ -604,14 +625,31 @@ export function NodeSideForm({
         {isPromptType ? (
           <label className="grid gap-1">
             <span className={LABEL_CLS}>{labels.prompt}</span>
-            <textarea
-              className={`${FIELD_CLS} min-h-[90px] resize-y`}
-              data-testid="node-action-prompt"
-              readOnly={readOnly}
-              spellCheck={false}
-              value={str(action.prompt)}
-              onChange={(e) => setAction("prompt", e.target.value)}
-            />
+            {promptCatalog ? (
+              <CapabilityComposer
+                agent={promptAdapter ?? "claude"}
+                ariaLabel={labels.prompt}
+                catalog={promptCatalog}
+                className={`${FIELD_CLS} min-h-[90px] overflow-y-auto`}
+                disabled={readOnly}
+                labels={{
+                  placeholder: labels.promptComposer.placeholder,
+                  unsupportedBadge: labels.promptComposer.unsupported,
+                }}
+                testId="node-action-prompt"
+                value={str(action.prompt)}
+                onChange={(v) => setAction("prompt", v)}
+              />
+            ) : (
+              <textarea
+                className={`${FIELD_CLS} min-h-[90px] resize-y`}
+                data-testid="node-action-prompt"
+                readOnly={readOnly}
+                spellCheck={false}
+                value={str(action.prompt)}
+                onChange={(e) => setAction("prompt", e.target.value)}
+              />
+            )}
           </label>
         ) : null}
         {isConsensusType ? (
@@ -665,40 +703,38 @@ export function NodeSideForm({
               value={str(settings.permissionMode)}
               onChange={(v) => setSetting("permissionMode", v || undefined)}
             />
-            <TextField
+            <MultiSelectField
               label={labels.skills}
+              labels={labels.multiSelect}
+              mode="catalog"
+              options={skillOptions ?? []}
               readOnly={readOnly}
               testid="node-skills"
-              value={joinList(settings.skills)}
-              onChange={(v) =>
-                setSetting(
-                  "skills",
-                  parseList(v).length ? parseList(v) : undefined,
-                )
+              values={strList(settings.skills)}
+              onChange={(next) =>
+                setSetting("skills", next.length ? next : undefined)
               }
             />
-            <TextField
+            <StringListField
               label={labels.restrictions}
+              labels={labels.stringList}
               readOnly={readOnly}
               testid="node-restrictions"
-              value={joinList(settings.restrictions)}
-              onChange={(v) =>
-                setSetting(
-                  "restrictions",
-                  parseList(v).length ? parseList(v) : undefined,
-                )
+              values={strList(settings.restrictions)}
+              onChange={(next) =>
+                setSetting("restrictions", next.length ? next : undefined)
               }
             />
-            <TextField
+            <MultiSelectField
               label={labels.mcps}
+              labels={labels.multiSelect}
+              mode="catalog"
+              options={mcpOptions ?? []}
               readOnly={readOnly}
               testid="node-mcps"
-              value={joinList(settings.mcps)}
-              onChange={(v) =>
-                setSetting(
-                  "mcps",
-                  parseList(v).length ? parseList(v) : undefined,
-                )
+              values={strList(settings.mcps)}
+              onChange={(next) =>
+                setSetting("mcps", next.length ? next : undefined)
               }
             />
             <div className="grid gap-2">
@@ -757,16 +793,15 @@ export function NodeSideForm({
                   })
                 }
               />
-              <TextField
+              <StringListField
                 label={labels.hooks.pathGuardAllowedPaths}
+                labels={labels.stringList}
                 readOnly={readOnly}
                 testid="node-hooks-path-guard-allowed-paths"
-                value={joinList(asRec(hooks.pathGuard).allowedPaths)}
-                onChange={(v) =>
+                values={strList(asRec(hooks.pathGuard).allowedPaths)}
+                onChange={(next) =>
                   setHooks({
-                    pathGuard: parseList(v).length
-                      ? { allowedPaths: parseList(v) }
-                      : undefined,
+                    pathGuard: next.length ? { allowedPaths: next } : undefined,
                   })
                 }
               />
@@ -927,7 +962,11 @@ export function NodeSideForm({
                       setParticipantSource(index, kind, value);
                     }}
                     onUnknownKindChange={(kind) =>
-                      setParticipantSource(index, kind, sourceValueFor(participant))
+                      setParticipantSource(
+                        index,
+                        kind,
+                        sourceValueFor(participant),
+                      )
                     }
                   />
                   {readOnly ? null : (
@@ -944,17 +983,13 @@ export function NodeSideForm({
                 </div>
               ))}
             </div>
-            <TextField
+            <StringListField
               label={labels.consensus.materialAxes}
+              labels={labels.stringList}
               readOnly={readOnly}
               testid="node-consensus-material-axes"
-              value={joinList(n.material_axes)}
-              onChange={(v) =>
-                emit({
-                  ...n,
-                  material_axes: parseList(v).length ? parseList(v) : [],
-                })
-              }
+              values={strList(n.material_axes)}
+              onChange={(next) => emit({ ...n, material_axes: next })}
             />
             <div className="grid grid-cols-1 gap-2">
               <ReferenceCombobox
@@ -1032,16 +1067,14 @@ export function NodeSideForm({
         ) : null}
         {type === "human" ? (
           <>
-            <TextField
+            <StringListField
               label={labels.decisions}
+              labels={labels.stringList}
               readOnly={readOnly}
               testid="node-decisions"
-              value={joinList(settings.decisions)}
-              onChange={(v) =>
-                setSetting(
-                  "decisions",
-                  parseList(v).length ? parseList(v) : undefined,
-                )
+              values={strList(settings.decisions)}
+              onChange={(next) =>
+                setSetting("decisions", next.length ? next : undefined)
               }
             />
             <SelectField
@@ -1052,28 +1085,24 @@ export function NodeSideForm({
               value={str(settings.criticality)}
               onChange={(v) => setSetting("criticality", v || undefined)}
             />
-            <TextField
+            <StringListField
               label={labels.roles}
+              labels={labels.stringList}
               readOnly={readOnly}
               testid="node-roles"
-              value={joinList(settings.roles)}
-              onChange={(v) =>
-                setSetting(
-                  "roles",
-                  parseList(v).length ? parseList(v) : undefined,
-                )
+              values={strList(settings.roles)}
+              onChange={(next) =>
+                setSetting("roles", next.length ? next : undefined)
               }
             />
-            <TextField
+            <StringListField
               label={labels.assignees}
+              labels={labels.stringList}
               readOnly={readOnly}
               testid="node-assignees"
-              value={joinList(settings.assignees)}
-              onChange={(v) =>
-                setSetting(
-                  "assignees",
-                  parseList(v).length ? parseList(v) : undefined,
-                )
+              values={strList(settings.assignees)}
+              onChange={(next) =>
+                setSetting("assignees", next.length ? next : undefined)
               }
             />
             <label className="flex items-center gap-2">
@@ -1306,14 +1335,15 @@ export function NodeSideForm({
 
       <section className="grid gap-2">
         <h3 className={SECTION_CLS}>{labels.rework}</h3>
-        <TextField
+        <StringListField
           label={labels.reworkAllowedTargets}
+          labels={labels.stringList}
           readOnly={readOnly}
           testid="node-rework-allowed-targets"
-          value={joinList(rework.allowedTargets)}
-          onChange={(v) =>
+          values={strList(rework.allowedTargets)}
+          onChange={(next) =>
             setRework({
-              allowedTargets: parseList(v),
+              allowedTargets: next,
               workspacePolicies: (rework.workspacePolicies as
                 | string[]
                 | undefined) ?? ["keep"],
@@ -1331,14 +1361,17 @@ export function NodeSideForm({
             setRework({ maxLoops: v === "" ? undefined : Number(v) })
           }
         />
-        <TextField
+        <MultiSelectField
           label={labels.reworkWorkspacePolicies}
+          labels={labels.multiSelect}
+          mode="fixed"
+          options={WORKSPACE_POLICY_OPTIONS}
           readOnly={readOnly}
           testid="node-rework-workspace-policies"
-          value={joinList(rework.workspacePolicies)}
-          onChange={(v) =>
+          values={strList(rework.workspacePolicies)}
+          onChange={(next) =>
             setRework({
-              workspacePolicies: parseList(v),
+              workspacePolicies: next,
               allowedTargets:
                 (rework.allowedTargets as string[] | undefined) ?? [],
               maxLoops: (rework.maxLoops as number | undefined) ?? 1,

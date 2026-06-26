@@ -2727,6 +2727,21 @@
       "removeTransition": "Remove",
       "noTransitions": "No transitions",
       "noGates": "No gates",
+      "promptComposer": {
+        "placeholder": "Type a prompt; use / to insert a skill",
+        "unsupported": "not on this runner"
+      },
+      "multiSelect": {
+        "add": "Add",
+        "remove": "Remove",
+        "placeholder": "Pick or type to add",
+        "empty": "None selected"
+      },
+      "stringList": {
+        "add": "Add",
+        "remove": "Remove",
+        "placeholder": "Value"
+      },
       "consensus": {
         "participants": "Participants",
         "participantId": "ID",

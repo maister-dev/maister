@@ -7,9 +7,14 @@ import type {
   NodeSideFormLabels,
 } from "@/components/flows/node-form/node-side-form";
 import type { FlowNodeData } from "@/lib/board/flow-graph-view-layout";
+import type { AdapterId } from "@/lib/acp-runners/adapter-support";
+import type { ProjectCapabilityCatalogEntry } from "@/lib/capabilities/project-catalog";
 import type { FlowYamlV1 } from "@/lib/config.schema";
 import type { GateKind, NodeType } from "@/lib/flows/editor/editor-state";
-import type { ReferenceSourceGroup } from "@/lib/flows/editor/reference-sources";
+import type {
+  CapabilityOption,
+  ReferenceSourceGroup,
+} from "@/lib/flows/editor/reference-sources";
 import type { FlowLayout } from "@/lib/flows/graph/presentation-layout";
 import type { DeclaredGateSummary } from "@/lib/queries/flow-graph-view";
 import type { GraphTopology } from "@/lib/queries/flow-graph-view";
@@ -90,6 +95,10 @@ export interface FlowGraphEditorProps {
   labels: FlowGraphEditorLabels;
   participantSources?: ReferenceSourceGroup[];
   schemaFiles?: { path: string; content: string }[];
+  promptCatalog?: ProjectCapabilityCatalogEntry[];
+  promptAdapter?: AdapterId;
+  skillOptions?: CapabilityOption[];
+  mcpOptions?: CapabilityOption[];
   onWriteSchemaFile?: (path: string, content: string) => void;
   onChange?: (next: { manifest: FlowYamlV1; draftVersion: number }) => void;
   onSelectNode?: (nodeId: string | null) => void;
@@ -369,6 +378,10 @@ export default function FlowGraphEditor({
   labels,
   participantSources,
   schemaFiles,
+  promptCatalog,
+  promptAdapter,
+  skillOptions,
+  mcpOptions,
   onWriteSchemaFile,
   onChange,
   onSelectNode,
@@ -713,6 +726,7 @@ export default function FlowGraphEditor({
             />
             <NodeSideForm
               labels={labels.nodeForm}
+              mcpOptions={mcpOptions}
               node={selectedNode}
               participantSources={participantSources}
               presentation={
@@ -724,7 +738,10 @@ export default function FlowGraphEditor({
                     }
                   : undefined
               }
+              promptAdapter={promptAdapter}
+              promptCatalog={promptCatalog}
               schemaFiles={schemaFiles}
+              skillOptions={skillOptions}
               onChange={handleNodeFormChange}
               onPresentationChange={handlePresentationChange}
               onWriteSchemaFile={onWriteSchemaFile}

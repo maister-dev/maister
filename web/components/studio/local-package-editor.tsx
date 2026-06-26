@@ -1,6 +1,7 @@
 "use client";
 
 import type { FlowEditorTabsLabels } from "@/components/flows/flow-editor-tabs";
+import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type {
   AuthoredFlowPackageFile,
   AuthoredFlowPackageFileKind,
@@ -46,6 +47,7 @@ import {
   ImportDialog,
 } from "@/components/studio/import-dialog";
 import { readApiError } from "@/lib/api-error";
+import { buildPackageCapabilityCatalog } from "@/lib/capabilities/package-catalog";
 import { isMaisterError } from "@/lib/errors-core";
 import {
   packageFilesToSubmitValue,
@@ -53,7 +55,9 @@ import {
 } from "@/lib/flows/editor/package-files-draft";
 import {
   buildAgentGroupFromFiles,
+  buildMcpOptions,
   buildRunnerGroup,
+  buildSkillOptions,
 } from "@/lib/flows/editor/reference-sources";
 import {
   overlayFlowBuffer,
@@ -532,6 +536,25 @@ export function LocalPackageEditor({
     labels.editor.editor.nodeForm.consensus.runnersGroup,
     runnerSources,
   ]);
+  // The flow/package default runner's adapter (fallback claude) drives the
+  // `/`-autosuggest wire form (claude `/` vs codex `$`) for the node-prompt
+  // composer; the catalog is derived client-side from the package's own skills.
+  const promptAdapter = useMemo<AdapterId>(
+    () =>
+      (runnerSources.find((runner) => runner.isDefault)?.adapter ??
+        runnerSources[0]?.adapter ??
+        "claude") as AdapterId,
+    [runnerSources],
+  );
+  const promptCatalog = useMemo(
+    () => buildPackageCapabilityCatalog(draftFiles, promptAdapter),
+    [draftFiles, promptAdapter],
+  );
+  const skillOptions = useMemo(
+    () => buildSkillOptions(draftFiles),
+    [draftFiles],
+  );
+  const mcpOptions = useMemo(() => buildMcpOptions(mcpCatalog), [mcpCatalog]);
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-2">
@@ -717,12 +740,16 @@ export function LocalPackageEditor({
                 labels={labels.editor}
                 layout={layout}
                 lifecycleLabel={identity.kind}
+                mcpOptions={mcpOptions}
                 participantSources={participantSources}
                 projectSlug={identity.slug}
+                promptAdapter={promptAdapter}
+                promptCatalog={promptCatalog}
                 publishAction={saveAction}
                 readinessReady={false}
                 saveAction={saveAction}
                 schemaFiles={schemaFiles}
+                skillOptions={skillOptions}
                 topology={topology}
                 onDirtyChange={setFlowEditorDirty}
                 onWriteSchemaFile={handleWriteSchemaFile}
@@ -813,6 +840,7 @@ export function LocalPackageEditor({
             <div className={assistantCollapsed ? "hidden" : "min-h-0 flex-1"}>
               <StudioAiTab
                 canManage={canManage && lockHeldByMe && lockConfirmedByMe}
+                files={draftFiles}
                 focusPath={flowPath}
                 hasUnsavedChanges={editorDirty}
                 labels={labels.ai}

@@ -28,9 +28,9 @@ export interface ScratchComposerProps {
   catalog?: ProjectCapabilityCatalogEntry[];
   attachmentsEnabled?: boolean;
   recoverEnabled?: boolean;
-  // Dock/compact placement (Flow Studio assistant): Send moves ABOVE the input
-  // and the field starts shorter so the short docked panel keeps room for the
-  // transcript.
+  // Dock/compact placement (Flow Studio assistant): Send is overlaid bottom-right
+  // over the input, with the attachment/busy chips overlaid bottom-left, so the
+  // short docked panel keeps maximum room for the transcript.
   compact?: boolean;
   disabledReason?: string | null;
   // Returns true when the message landed (the composer clears its draft);
@@ -126,45 +126,69 @@ export function ScratchComposer({
     }
   }
 
-  const actionButtons = (
-    <>
-      <div className="flex min-w-0 flex-wrap items-center gap-2">
-        {attachmentsEnabled && canSend(status) ? (
-          <button
-            className="rounded-full border border-line bg-paper px-3 py-1.5 font-mono text-[11px] text-ink-2 hover:border-amber hover:text-amber"
-            type="button"
-            onClick={() =>
-              setComposerAttachments((current) => [
-                ...current,
-                { kind: "text_note", label: "", value: "" },
-              ])
-            }
-          >
-            + {t("attachment")}
-          </button>
-        ) : null}
-        {agentBusy ? (
-          <div
-            className="flex min-w-0 items-center gap-2 rounded-full border border-amber-line bg-amber-soft px-3 py-1.5 font-mono text-[11px] text-ink-2"
-            data-testid="scratch-agent-busy"
-          >
-            <span
-              aria-hidden="true"
-              className="h-3 w-3 rounded-full border-2 border-amber/30 border-t-amber motion-safe:animate-spin"
-            />
-            <span className="truncate">{t("agentBusy")}</span>
-          </div>
-        ) : null}
-      </div>
-      <button
-        className="rounded-full bg-amber px-4 py-2 text-[13px] font-semibold text-white transition hover:bg-amber-2 disabled:cursor-not-allowed disabled:opacity-60"
-        data-testid="scratch-composer-send"
-        disabled={!canSubmitMessage || pending}
-        type="submit"
-      >
-        {pending ? t("sending") : canRecover(status) ? t("recover") : t("send")}
-      </button>
-    </>
+  const hasClusterContent =
+    (attachmentsEnabled && canSend(status)) || agentBusy;
+  const attachmentCluster = (
+    <div className="flex min-w-0 flex-wrap items-center gap-2">
+      {attachmentsEnabled && canSend(status) ? (
+        <button
+          className="rounded-full border border-line bg-paper px-3 py-1.5 font-mono text-[11px] text-ink-2 hover:border-amber hover:text-amber"
+          type="button"
+          onClick={() =>
+            setComposerAttachments((current) => [
+              ...current,
+              { kind: "text_note", label: "", value: "" },
+            ])
+          }
+        >
+          + {t("attachment")}
+        </button>
+      ) : null}
+      {agentBusy ? (
+        <div
+          className="flex min-w-0 items-center gap-2 rounded-full border border-amber-line bg-amber-soft px-3 py-1.5 font-mono text-[11px] text-ink-2"
+          data-testid="scratch-agent-busy"
+        >
+          <span
+            aria-hidden="true"
+            className="h-3 w-3 rounded-full border-2 border-amber/30 border-t-amber motion-safe:animate-spin"
+          />
+          <span className="truncate">{t("agentBusy")}</span>
+        </div>
+      ) : null}
+    </div>
+  );
+  const sendButton = (
+    <button
+      className="rounded-full bg-amber px-4 py-2 text-[13px] font-semibold text-white transition hover:bg-amber-2 disabled:cursor-not-allowed disabled:opacity-60"
+      data-testid="scratch-composer-send"
+      disabled={!canSubmitMessage || pending}
+      type="submit"
+    >
+      {pending ? t("sending") : canRecover(status) ? t("recover") : t("send")}
+    </button>
+  );
+  const composer = (
+    <CapabilityComposer
+      agent={agent}
+      ariaLabel={t("composerMessageAria")}
+      catalog={catalog}
+      className={clsx(
+        inputBase,
+        compact ? "min-h-[84px] pb-12" : "min-h-[110px]",
+      )}
+      disabled={!canUseComposer}
+      labels={{
+        placeholder,
+        unsupportedBadge: t("composerUnsupported"),
+      }}
+      testId="scratch-message-composer"
+      value={content}
+      onChange={setContent}
+      onSubmitShortcut={() => {
+        if (canSubmitMessage && !pending) void submit();
+      }}
+    />
   );
 
   return (
@@ -193,27 +217,18 @@ export function ScratchComposer({
         </div>
       ) : null}
       {compact ? (
-        <div className="mb-2 flex min-w-0 flex-wrap items-center justify-between gap-2">
-          {actionButtons}
+        <div className="relative min-w-0">
+          {composer}
+          {hasClusterContent ? (
+            <div className="absolute bottom-2.5 left-2.5 z-10 flex min-w-0 max-w-[60%]">
+              {attachmentCluster}
+            </div>
+          ) : null}
+          <div className="absolute bottom-2.5 right-2.5 z-10">{sendButton}</div>
         </div>
-      ) : null}
-      <CapabilityComposer
-        agent={agent}
-        ariaLabel={t("composerMessageAria")}
-        catalog={catalog}
-        className={clsx(inputBase, compact ? "min-h-[56px]" : "min-h-[110px]")}
-        disabled={!canUseComposer}
-        labels={{
-          placeholder,
-          unsupportedBadge: t("composerUnsupported"),
-        }}
-        testId="scratch-message-composer"
-        value={content}
-        onChange={setContent}
-        onSubmitShortcut={() => {
-          if (canSubmitMessage && !pending) void submit();
-        }}
-      />
+      ) : (
+        composer
+      )}
       {attachmentsEnabled && composerAttachments.length > 0 ? (
         <div className="mt-2 flex min-w-0 flex-col gap-2">
           {composerAttachments.map((attachment, index) => (
@@ -302,7 +317,8 @@ export function ScratchComposer({
       ) : null}
       {!compact ? (
         <div className="mt-2 flex min-w-0 flex-wrap items-center justify-between gap-2">
-          {actionButtons}
+          {attachmentCluster}
+          {sendButton}
         </div>
       ) : null}
     </form>

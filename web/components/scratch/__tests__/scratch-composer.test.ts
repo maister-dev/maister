@@ -67,6 +67,21 @@ function render(status: ScratchDialogStatus, quickReplies: QuickReply[] = []) {
   );
 }
 
+function renderCompact(status: ScratchDialogStatus) {
+  return renderToStaticMarkup(
+    createElement(ScratchComposer, {
+      status,
+      pending: false,
+      quickReplies: [],
+      agent: "codex",
+      catalog: [],
+      compact: true,
+      onSend: noop,
+      onRecover: noop,
+    }),
+  );
+}
+
 describe("ScratchComposer", () => {
   it("shows Send and an enabled capability composer for WaitingForUser", () => {
     const html = render("WaitingForUser");
@@ -102,5 +117,21 @@ describe("ScratchComposer", () => {
     ]);
 
     expect(html).toContain("Yes, proceed");
+  });
+
+  it("overlays Send bottom-right over the composer in compact mode", () => {
+    const html = renderCompact("WaitingForUser");
+
+    expect(html).toContain('class="relative min-w-0"');
+    expect(html).toContain("absolute bottom-2.5 right-2.5");
+    expect(html).toContain('data-testid="scratch-composer-send"');
+    expect(html).toContain('data-submit-shortcut="true"');
+  });
+
+  it("overlays the agent-busy chip bottom-left in compact mode", () => {
+    const html = renderCompact("Running");
+
+    expect(html).toContain("absolute bottom-2.5 left-2.5");
+    expect(html).toContain('data-testid="scratch-agent-busy"');
   });
 });

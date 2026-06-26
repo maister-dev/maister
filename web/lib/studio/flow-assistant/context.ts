@@ -10,6 +10,7 @@ import { packageFileHash } from "./actions";
 
 import { flowYamlV1Schema } from "@/lib/config.schema";
 import { classifyPackageFilePath } from "@/lib/flows/editor/package-file-tree";
+import { buildFlowDslGrammar } from "@/lib/flows/flow-dsl-grammar";
 import { readWorkingDirArtifactFiles } from "@/lib/local-packages/service";
 import { validatePackageArtifacts } from "@/lib/local-packages/validate";
 import { buildAuthoredFlowGraph } from "@/lib/queries/authored-flow-graph";
@@ -87,10 +88,13 @@ export async function buildFlowAssistantContext(args: {
         ]
       : focus.rejectedFocus;
 
+  const grammar = buildFlowDslGrammar();
+
   log.debug(
     {
       localPackageId: args.localPackage.id,
       fileCount: files.length,
+      grammarChars: grammar.length,
       flowPath,
       nodeCount: graph?.nodes.length ?? 0,
       edgeCount: graph?.edges.length ?? 0,
@@ -115,7 +119,7 @@ export async function buildFlowAssistantContext(args: {
       "",
       "## Editing contract",
       "- You are in a read-only ACP session. Do not edit files directly.",
-      "- For Q&A, answer from the context below and the flow-authoring skill grammar.",
+      "- For Q&A, answer from the context below and the authoritative Flow DSL grammar section below.",
       "- For edits, return exactly one fenced `maister-flow-assistant-action` block after any short explanation.",
       "- Use only `upsert_file` and `delete_file` full-file operations.",
       "- Copy `baseHash` from the file inventory. Use `baseHash: null` for a new file.",
@@ -141,6 +145,8 @@ export async function buildFlowAssistantContext(args: {
         2,
       ),
       "```",
+      "",
+      grammar,
       "",
       "## File inventory",
       formatInventory(inventory),

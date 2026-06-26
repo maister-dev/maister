@@ -408,6 +408,59 @@ agent options, schema options, `onWriteSchemaFile`, and the existing
 | Pasted JSON is invalid or violates `formSchemaSchema` | Inline alert, no draft file write |
 | `schemaFiles` / writer props absent | Picker degrades to free-text/read-only with no create/edit affordances |
 
+## Assistant grammar + structured node-form controls (Implemented)
+
+> **Status: Implemented.** An authoring-UI + assistant-context refinement over
+> the editor above. **No new endpoint, no OpenAPI change, no migration, no
+> engine bump, no AsyncAPI/SSE event, and no new `MaisterError` code** — the only
+> contract surfaces are i18n and these docs.
+
+### Scope (Implemented)
+
+- **Authoritative Flow DSL grammar, every turn.** `buildFlowDslGrammar()`
+  (`web/lib/flows/flow-dsl-grammar.ts`) emits one complete grammar — every node
+  type (including first-class `consensus` and `orchestrator`), every typed
+  `settings` key, every enum, and the gate / transition / rework / output /
+  `decide` shapes. It is injected into `buildFlowAssistantContext` (the per-turn,
+  always-sent context) and rendered into the `/flow-authoring` skill's
+  `references/flow-dsl.md`. A vitest drift guard introspects `config.schema.ts`
+  and fails the build if any node type, settings key, or enum value is absent
+  from the grammar, so the assistant statement stays complete as the schema
+  moves. This is the root-cause fix for "consensus authored as two judges": the
+  assistant now carries the authoritative `type: consensus` directive on input.
+- **`/`-autosuggest prompt composers.** The assistant first-prompt input and the
+  node `action.prompt` editor are the shared `CapabilityComposer`. Skills are
+  offered from a project-less catalog derived client-side from the package's own
+  `skills/<slug>/SKILL.md` files (`buildPackageCapabilityCatalog`). The composer
+  stores canonical `@skill:<slug>` tokens; the existing runtime normalizer adapts
+  them per adapter (claude `/`, codex `$`) — no runtime change.
+- **Structured node-form controls.** Catalog `string[]` fields (`skills`,
+  `mcps`) and the fixed-enum `rework.workspacePolicies` use a chips + add
+  `MultiSelectField`; free-text list fields (`restrictions`, `roles`,
+  `assignees`, `decisions`, `material_axes`, `rework.allowedTargets`,
+  `hooks.pathGuard.allowedPaths`) use a row-list `StringListField`. The persisted
+  `flow.yaml` shapes are unchanged (`config.schema.ts` is read, never modified).
+- **Overlaid follow-up Send.** The docked assistant's follow-up composer renders
+  Send overlaid bottom-right over the input (attachment/busy chips bottom-left),
+  not as a row above it.
+
+### Expectations (Implemented)
+
+1. The Flow DSL grammar MUST be present on EVERY assistant turn (launch and
+   follow-up) and MUST contain the literal `type: consensus` directive.
+2. The drift guard MUST fail the build when a node type, settings-schema key, or
+   enum value in `config.schema.ts` is absent from `buildFlowDslGrammar()`.
+3. A node `action.prompt` composer MUST store canonical `@skill:<slug>` tokens;
+   an existing plain-text prompt MUST render byte-identically until the user
+   inserts a token.
+4. Node-form controls MUST emit manifests that still parse under
+   `flowYamlV1Schema` (`skills`/`mcps` as `string[]`, `workspacePolicies` as the
+   enum array, list fields as `string[]`); an empty list MUST omit the field.
+5. Read-only viewer mounts (no catalog/options) MUST degrade to read-only text /
+   chips with no fetch — byte-identical to the prior render.
+6. The feature MUST NOT add an API route, DB migration, engine bump, SSE event,
+   deployment setting, or `MaisterError` code.
+
 ## Studio redesign (Phase A IA + editable-local-package direction)
 
 > **Status: Phase A — IA & surfacing (Implemented).** Surface SSOT: [`../screens/studio/README.md`](../screens/studio/README.md).

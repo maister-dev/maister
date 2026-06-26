@@ -1,0 +1,168 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  aiCodingSettingsSchema,
+  cliCheckSettingsSchema,
+  formSettingsSchema,
+  gateSchema,
+  humanSettingsSchema,
+  judgeSettingsSchema,
+  nodeSchema,
+  orchestratorSettingsSchema,
+  workspacePolicySchema,
+} from "@/lib/config.schema";
+import { buildFlowDslGrammar } from "@/lib/flows/flow-dsl-grammar";
+
+// --- Zod introspection helpers (config.schema.ts is the SSOT) ----------------
+// Zod does not type its internal `_def` for structural walking, so these helpers
+// localize the unavoidable casts behind a typed surface instead of leaking `any`.
+
+function def(schema: unknown): Record<string, unknown> {
+  return (schema as { _def: Record<string, unknown> })._def;
+}
+
+function typeName(schema: unknown): string {
+  return def(schema).typeName as string;
+}
+
+function unwrap(schema: unknown): unknown {
+  let current = schema;
+
+  for (;;) {
+    const name = typeName(current);
+
+    if (
+      name === "ZodOptional" ||
+      name === "ZodNullable" ||
+      name === "ZodDefault"
+    ) {
+      current = def(current).innerType;
+    } else if (name === "ZodEffects") {
+      current = def(current).schema;
+    } else {
+      return current;
+    }
+  }
+}
+
+function shapeOf(schema: unknown): Record<string, unknown> {
+  return (unwrap(schema) as { shape: Record<string, unknown> }).shape;
+}
+
+function unionOptions(schema: unknown): unknown[] {
+  return (unwrap(schema) as { options: unknown[] }).options;
+}
+
+function enumValues(schema: unknown): string[] {
+  const inner = unwrap(schema);
+  const name = typeName(inner);
+
+  if (name === "ZodEnum") return [...(inner as { options: string[] }).options];
+  if (name === "ZodLiteral") return [String(def(inner).value)];
+
+  throw new Error(`expected enum/literal, got ${name}`);
+}
+
+function isNever(schema: unknown): boolean {
+  return typeName(unwrap(schema)) === "ZodNever";
+}
+
+function nodeTypeOf(option: unknown): string {
+  return String(def(shapeOf(option).type).value);
+}
+
+function realShapeKeys(schema: unknown): string[] {
+  return Object.entries(shapeOf(schema))
+    .filter(([, sub]) => !isNever(sub))
+    .map(([key]) => key);
+}
+
+describe("buildFlowDslGrammar drift guard", () => {
+  const grammar = buildFlowDslGrammar();
+  const nodeOptions = unionOptions(nodeSchema);
+  const consensusNode = nodeOptions.find(
+    (option) => nodeTypeOf(option) === "consensus",
+  );
+
+  it("introspects every node type from the discriminated union", () => {
+    const types = nodeOptions.map(nodeTypeOf);
+
+    expect(types).toEqual(
+      expect.arrayContaining([
+        "ai_coding",
+        "orchestrator",
+        "consensus",
+        "judge",
+        "cli",
+        "check",
+        "human",
+        "form",
+      ]),
+    );
+    expect(consensusNode).toBeDefined();
+  });
+
+  it("documents every node type, settings key, and enum value", () => {
+    const nodeTypes = nodeOptions.map(nodeTypeOf);
+
+    const settingsKeys = new Set<string>();
+
+    for (const schema of [
+      aiCodingSettingsSchema,
+      orchestratorSettingsSchema,
+      judgeSettingsSchema,
+      humanSettingsSchema,
+      formSettingsSchema,
+      cliCheckSettingsSchema,
+      gateSchema,
+      consensusNode,
+    ]) {
+      for (const key of realShapeKeys(schema)) settingsKeys.add(key);
+    }
+
+    const enumGroups: Record<string, string[]> = {
+      thinkingEffort: enumValues(
+        shapeOf(aiCodingSettingsSchema).thinkingEffort,
+      ),
+      permissionMode: enumValues(
+        shapeOf(aiCodingSettingsSchema).permissionMode,
+      ),
+      workspaceAccess: enumValues(
+        shapeOf(aiCodingSettingsSchema).workspaceAccess,
+      ),
+      workspacePolicy: enumValues(workspacePolicySchema),
+      gateKind: enumValues(shapeOf(gateSchema).kind),
+      gateMode: enumValues(shapeOf(gateSchema).mode),
+      criticality: enumValues(shapeOf(humanSettingsSchema).criticality),
+      environmentPolicy: enumValues(
+        shapeOf(cliCheckSettingsSchema).environmentPolicy,
+      ),
+      failureClass: enumValues(shapeOf(cliCheckSettingsSchema).failureClass),
+      roundsMode: enumValues(shapeOf(shapeOf(consensusNode).rounds).mode),
+      onNoConsensus: enumValues(shapeOf(consensusNode).on_no_consensus),
+    };
+
+    const missing: string[] = [];
+
+    for (const type of nodeTypes) {
+      if (!grammar.includes(type)) missing.push(`node type: ${type}`);
+    }
+
+    for (const key of settingsKeys) {
+      if (!grammar.includes(key)) missing.push(`settings key: ${key}`);
+    }
+
+    for (const [group, values] of Object.entries(enumGroups)) {
+      for (const value of values) {
+        if (!grammar.includes(value)) missing.push(`enum ${group}: ${value}`);
+      }
+    }
+
+    expect(missing).toEqual([]);
+  });
+
+  it("states consensus is a first-class node", () => {
+    expect(grammar).toContain("type: consensus");
+    expect(grammar.toLowerCase()).toContain("first-class");
+  });
+});

@@ -201,6 +201,41 @@ uses the same icon, hue, tooltip, handles, and compact node body.
 - EN and RU labels exist for every consensus control, validation message,
   source picker, schema reference control, tooltip, and artifact-kind label.
 
+### Structured node-form controls + assistant `/`-autosuggest (Implemented)
+
+The properties panel replaces comma-separated text fields with structured
+controls; the persisted `flow.yaml` shapes are unchanged.
+
+- **MultiSelectField** — `skills` and `mcps` render as removable chips + an
+  add-combobox over a package-derived catalog (free-add allowed for forward
+  refs); `rework.workspacePolicies` is a fixed-enum multiselect (no free-add).
+- **StringListField** — `restrictions`, `roles`, `assignees`, `decisions`,
+  `material_axes`, `rework.allowedTargets`, and `hooks.pathGuard.allowedPaths`
+  render as one text row per item with a per-row danger trash button and an
+  add-row affordance; an empty list omits the field.
+- **`/`-autosuggest `action.prompt` composer** — the node prompt is the shared
+  `CapabilityComposer`; typing `/` offers package skills and inserts a canonical
+  `@skill:<slug>` token (the runtime adapts the wire form per runner). A package
+  viewer with no catalog degrades to a plain read-only textarea.
+
+The docked **AI assistant** mirrors this: its first-prompt input is the same
+`/`-autosuggest composer, and the follow-up composer's **Send** is overlaid
+bottom-right over the input (attachment/busy chips bottom-left). The assistant
+also receives the complete, drift-guarded Flow DSL grammar on every turn, so
+`consensus` is authored as a first-class node — see
+[`../../system-analytics/flow-studio.md`](../../system-analytics/flow-studio.md)
+§"Assistant grammar + structured node-form controls".
+
+**Acceptance criteria.**
+
+- Skills/mcps render as chips with an add affordance; workspace policies accept
+  only the three enum values; list fields add and remove rows.
+- The node prompt composer stores `@skill:<slug>`; an existing plain-text prompt
+  renders unchanged until a token is inserted.
+- Read-only viewer mounts degrade to text/chips with no fetch.
+- EN and RU labels exist for every new multiselect, string-list, and composer
+  control.
+
 ## States
 
 ```mermaid
@@ -242,7 +277,9 @@ Behavior SSOT: [`../../system-analytics/flow-studio.md`](../../system-analytics/
 labels, the existing node-form / toolbar / validation keys, the M38
 `flowEditor.nodeForm.decide*` routing-panel keys, and M41
 `flowEditor.nodeForm.consensus*` participant/axis/round/synthesizer/output keys,
-plus reference-picker keys under `flowEditor.nodeForm.schemaRef*`),
+reference-picker keys under `flowEditor.nodeForm.schemaRef*`, and the
+`flowEditor.nodeForm.{promptComposer,multiSelect,stringList}*` structured-control
+keys),
 `flows` (page header + save hint). EN + RU parity required.
 
 ## Linked artifacts

@@ -230,6 +230,21 @@ const labels: NodeSideFormProps["labels"] = {
     disabled: "Disable auto-arm",
     hint: "hooks hint",
   },
+  promptComposer: {
+    placeholder: "Type a prompt",
+    unsupported: "not on this runner",
+  },
+  multiSelect: {
+    add: "Add",
+    remove: "Remove",
+    placeholder: "Pick or type",
+    empty: "None selected",
+  },
+  stringList: {
+    add: "Add",
+    remove: "Remove",
+    placeholder: "Value",
+  },
   gate: {
     mode: "Mode",
     modeBlocking: "Blocking",
@@ -378,6 +393,37 @@ describe("NodeSideForm — ai_coding", () => {
     expect(html).toContain('data-testid="transition-target-0"');
     // the node's gate renders a GateForm
     expect(html).toContain('data-testid="gate-form-g1"');
+  });
+
+  it("renders the prompt as a plain textarea when no catalog is provided (viewer)", () => {
+    const html = render(nodeById("plan"));
+
+    expect(html).toContain("<textarea");
+    expect(html).not.toContain("capability-composer");
+  });
+
+  it("renders the prompt as a /-autosuggest composer when a catalog is provided", () => {
+    const html = render(nodeById("plan"), {
+      promptCatalog: [],
+      promptAdapter: "claude",
+    });
+
+    expect(html).toContain('data-testid="node-action-prompt"');
+    expect(html).toContain("capability-composer");
+  });
+
+  it("renders skills/mcps as multiselects and rework lists as string rows", () => {
+    const html = render(nodeById("plan"));
+
+    // fixed-enum multiselect shows the stored policy as a removable chip
+    expect(html).toContain('data-testid="node-rework-workspace-policies-chip"');
+    expect(html).toContain("keep");
+    // allowedTargets renders one StringListField row per value
+    expect(html).toContain('data-testid="node-rework-allowed-targets-0"');
+    expect(html).toContain('value="plan"');
+    // catalog multiselects expose the free-add input affordance
+    expect(html).toContain('data-testid="node-skills-input"');
+    expect(html).toContain('data-testid="node-mcps-input"');
   });
 });
 
@@ -618,7 +664,12 @@ describe("NodeSideForm — hooks (M40)", () => {
     // the node's hooks values round-trip into the fields
     expect(html).toContain('value="5"');
     expect(html).toContain('value="15"');
-    expect(html).toContain("src/**, lib/**");
+    // allowedPaths now render as one StringListField row per path
+    expect(html).toContain(
+      'data-testid="node-hooks-path-guard-allowed-paths-0"',
+    );
+    expect(html).toContain('value="src/**"');
+    expect(html).toContain('value="lib/**"');
   });
 
   it("judge renders the hooks editor (empty when no hooks settings)", () => {
