@@ -203,7 +203,7 @@ export function PackageFilesEditor({
       ) : (
         <div className="grid gap-3 md:grid-cols-[240px_minmax(0,1fr)]">
           <div className="rounded-lg border border-line bg-ivory p-2">
-            <ul className="m-0 grid list-none gap-0.5 p-0">
+            <ul className="m-0 flex flex-col list-none gap-0.5 p-0">
               <FileTreeNodes
                 depth={0}
                 nodes={tree}
@@ -290,7 +290,7 @@ function FileTreeNodes({
             >
               {node.name}/
             </span>
-            <ul className="m-0 grid list-none gap-0.5 p-0">
+            <ul className="m-0 flex flex-col list-none gap-0.5 p-0">
               <FileTreeNodes
                 depth={depth + 1}
                 nodes={node.children}
