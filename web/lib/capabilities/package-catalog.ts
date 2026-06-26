@@ -11,7 +11,10 @@ import { surfaceFormForSkill } from "@/lib/capabilities/token-normalizer";
 // project DB (getProjectCapabilityCatalog). Mirrors the project-catalog entry
 // shape (skillCatalogEntry) so the same CapabilityComposer renders both.
 
-const SKILL_PATH_RE = /^skills\/([^/]+)\/SKILL\.md$/;
+// Canonical "package skill SKILL.md → slug" matcher, shared with the node-form
+// reference-source helpers (reference-sources.ts) so the path convention lives
+// in one place.
+export const SKILL_PATH_RE = /^skills\/([^/]+)\/SKILL\.md$/;
 
 export function buildPackageCapabilityCatalog(
   files: readonly AuthoredFlowPackageFile[],

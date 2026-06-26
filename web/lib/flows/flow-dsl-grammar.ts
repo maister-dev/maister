@@ -42,9 +42,12 @@ Fields common to every node: \`id\`, \`type\`, \`transitions\`, \`input\`, \`out
   \`type: consensus\` directly with \`prompt\`, \`participants\` (≥2, each
   \`{ id, agent|runner, workspace? }\`), a \`synthesizer\` (\`{ agent|runner }\`),
   \`material_axes\` (≥1), \`workspace\`, \`rounds: { mode, max }\`, and
-  \`on_no_consensus\`. N independent drafters fan out and the synthesizer merges
-  them into one result. **NEVER emulate consensus with two judge nodes** — it is
-  a native fan-out/merge node.
+  \`on_no_consensus\`. It MUST also declare \`output.produces\` with EXACTLY these
+  two artifacts or compile fails (CONFIG):
+  \`{ id: consensus_plan, kind: plan, current: true }\` and
+  \`{ id: debate_log, kind: human_note, current: true }\`. N independent drafters
+  fan out and the synthesizer merges them into one result. **NEVER emulate
+  consensus with two judge nodes** — it is a native fan-out/merge node.
 - **judge** — an LLM verdict (no code changes). \`action: { prompt }\`. \`settings\`
   = judge settings (below).
 - **cli** — a shell command, no agent. \`action: { command }\`. \`settings\` =

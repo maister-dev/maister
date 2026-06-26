@@ -23,6 +23,7 @@ import { stringify as stringifyYaml } from "yaml";
 import { CodeEditor } from "@/components/flows/code-editor";
 import { EditorTopBar } from "@/components/flows/editor/editor-top-bar";
 import { FlowDraftDiffText } from "@/components/flows/flow-draft-diff";
+import { pruneEmptyListEntries } from "@/lib/flows/editor/manifest-normalize";
 import { syncYamlToCanvas } from "@/lib/flows/editor/yaml-sync";
 import { validateEditorManifest } from "@/lib/flows/editor/validation";
 
@@ -218,9 +219,16 @@ export function FlowEditorTabs({
   };
 
   const handleCanvasChange = ({ manifest }: { manifest: FlowYamlV1 }): void => {
-    canvasManifestRef.current = manifest;
-    setLiveManifest(manifest);
-    setYaml(stringifyYaml(manifest));
+    // Drop transient blank list-rows the structured controls allow (see
+    // manifest-normalize) so the persisted YAML always parses. Prune the ref +
+    // liveManifest too, keeping `canvasManifestRef === parse(yaml)` so the
+    // yaml→canvas reseed diff stays a noop (no spurious canvas remount); the
+    // live canvas keeps the blank row via the graph editor's own state.
+    const pruned = pruneEmptyListEntries(manifest);
+
+    canvasManifestRef.current = pruned;
+    setLiveManifest(pruned);
+    setYaml(stringifyYaml(pruned));
   };
 
   const canvasReady = canvasAvailable && seed !== null;

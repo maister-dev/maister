@@ -1,3 +1,5 @@
+import { SKILL_PATH_RE } from "@/lib/capabilities/package-catalog";
+
 export type ReferenceSourceKind = "runner" | "agent" | "schema";
 
 export type ReferenceSourceOption = {
@@ -43,7 +45,6 @@ type KnownSourceSets = {
 
 const ROOT_AGENT_PATTERN = /^maister-agents\/([^/]+)\.md$/;
 const ROOT_SCHEMA_PATTERN = /^schemas\/([^/]+)\.json$/;
-const ROOT_SKILL_PATTERN = /^skills\/([^/]+)\/SKILL\.md$/;
 
 // Skill options for the node-form `skills` multiselect — one per
 // `skills/<slug>/SKILL.md` in the package (mirrors buildAgentGroupFromFiles).
@@ -52,7 +53,7 @@ export function buildSkillOptions(
 ): CapabilityOption[] {
   return files
     .flatMap((file) => {
-      const match = ROOT_SKILL_PATTERN.exec(file.path);
+      const match = SKILL_PATH_RE.exec(file.path);
 
       if (!match) return [];
 

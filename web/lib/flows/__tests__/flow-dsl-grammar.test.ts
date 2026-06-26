@@ -1,14 +1,12 @@
 import { describe, expect, it } from "vitest";
 
+import { CONSENSUS_REQUIRED_OUTPUTS } from "@/lib/config";
 import {
   aiCodingSettingsSchema,
   cliCheckSettingsSchema,
-  formSettingsSchema,
   gateSchema,
   humanSettingsSchema,
-  judgeSettingsSchema,
   nodeSchema,
-  orchestratorSettingsSchema,
   workspacePolicySchema,
 } from "@/lib/config.schema";
 import { buildFlowDslGrammar } from "@/lib/flows/flow-dsl-grammar";
@@ -107,18 +105,30 @@ describe("buildFlowDslGrammar drift guard", () => {
 
     const settingsKeys = new Set<string>();
 
-    for (const schema of [
-      aiCodingSettingsSchema,
-      orchestratorSettingsSchema,
-      judgeSettingsSchema,
-      humanSettingsSchema,
-      formSettingsSchema,
-      cliCheckSettingsSchema,
-      gateSchema,
-      consensusNode,
-    ]) {
+    // Derive node `settings` keys from EVERY node option's settings shape so a
+    // new node type cannot slip past the guard without a settings block being
+    // documented. (consensus carries inline fields, not a `settings` block — its
+    // shape is added below alongside the standalone gate schema.)
+    for (const option of nodeOptions) {
+      const settings = shapeOf(option).settings;
+
+      if (settings !== undefined) {
+        for (const key of realShapeKeys(settings)) settingsKeys.add(key);
+      }
+    }
+
+    for (const schema of [consensusNode, gateSchema]) {
       for (const key of realShapeKeys(schema)) settingsKeys.add(key);
     }
+
+    // Guard against a vacuous derivation: each of these keys exists ONLY in one
+    // node type's settings shape, so their presence proves the per-node settings
+    // were actually read (not silently skipped).
+    expect(settingsKeys).toContain("settingsProfile"); // ai_coding/orchestrator
+    expect(settingsKeys).toContain("delegation"); // orchestrator
+    expect(settingsKeys).toContain("form_schema"); // form
+    expect(settingsKeys).toContain("timeoutMs"); // cli / check
+    expect(settingsKeys).toContain("slaHours"); // human
 
     const enumGroups: Record<string, string[]> = {
       thinkingEffort: enumValues(
@@ -164,5 +174,16 @@ describe("buildFlowDslGrammar drift guard", () => {
   it("states consensus is a first-class node", () => {
     expect(grammar).toContain("type: consensus");
     expect(grammar.toLowerCase()).toContain("first-class");
+  });
+
+  it("documents the consensus compile-time output contract", () => {
+    // validateConsensusOutputs (config.ts) hard-requires these exact produced
+    // artifacts via a superRefine the Zod-shape guard above cannot see — so
+    // assert the grammar mirrors the contract directly. Drift in either fails here.
+    for (const [id, kind] of CONSENSUS_REQUIRED_OUTPUTS) {
+      expect(grammar).toContain(id);
+      expect(grammar).toContain(kind);
+    }
+    expect(grammar).toContain("current: true");
   });
 });

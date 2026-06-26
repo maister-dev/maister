@@ -1142,11 +1142,13 @@ function validateArtifacts(nodes: NodeDef[], flowYamlPath: string): void {
 
 type ConsensusNodeDef = Extract<NodeDef, { type: "consensus" }>;
 
-const CONSENSUS_REQUIRED_OUTPUTS: ReadonlyMap<string, "plan" | "human_note"> =
-  new Map([
-    ["consensus_plan", "plan"],
-    ["debate_log", "human_note"],
-  ]);
+export const CONSENSUS_REQUIRED_OUTPUTS: ReadonlyMap<
+  string,
+  "plan" | "human_note"
+> = new Map([
+  ["consensus_plan", "plan"],
+  ["debate_log", "human_note"],
+]);
 
 function validateConsensusNodes(nodes: NodeDef[], flowYamlPath: string): void {
   for (const node of nodes) {
