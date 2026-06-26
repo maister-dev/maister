@@ -16,6 +16,7 @@ import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { resolveNodeRecoverInfo } from "@/lib/flows/graph/current-node-kind";
 import { classifyRecover } from "@/lib/runs/recover-classify";
+import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import { scheduleResumedSessionDrive } from "@/lib/runs/resume-driver";
 import { crashRunningRun } from "@/lib/runs/state-transitions";
 import { maxConcurrentRunsCap, takeSchedulerLock } from "@/lib/scheduler";
@@ -104,7 +105,6 @@ export async function resumeCrashedRun(
       .select({
         id: runs.id,
         status: runs.status,
-        acpSessionId: runs.acpSessionId,
         currentStepId: runs.currentStepId,
         resumeTargetStepId: runs.resumeTargetStepId,
         flowId: runs.flowId,
@@ -127,6 +127,10 @@ export async function resumeCrashedRun(
       return { state: "conflict" };
     }
 
+    // M42 (ADR-114): the resume handle lives on the run's ACTIVE session now.
+    const acpSessionId =
+      (await loadActiveRunSession(tx, runId))?.acpSessionId ?? null;
+
     // The recover target is the node id retained at crash time
     // (resume_target_step_id; current_step_id is nulled on a clean crash),
     // falling back to current_step_id for live/hand-seeded rows.
@@ -136,11 +140,7 @@ export async function resumeCrashedRun(
       flowId: run.flowId,
       stepId: resumeTarget,
     });
-    const plan = classifyRecover(
-      { acpSessionId: run.acpSessionId },
-      nodeKind,
-      retrySafe,
-    );
+    const plan = classifyRecover({ acpSessionId }, nodeKind, retrySafe);
 
     if (plan === "discard-only") {
       log.info(
@@ -238,10 +238,8 @@ export async function driveResume(
     .select({
       id: runs.id,
       status: runs.status,
-      acpSessionId: runs.acpSessionId,
       currentStepId: runs.currentStepId,
       resumeTargetStepId: runs.resumeTargetStepId,
-      runnerSnapshot: runs.runnerSnapshot,
       projectId: runs.projectId,
       flowId: runs.flowId,
       flowRevisionId: runs.flowRevisionId,
@@ -252,13 +250,22 @@ export async function driveResume(
     .innerJoin(workspaces, eq(workspaces.runId, runs.id))
     .innerJoin(projects, eq(projects.id, runs.projectId))
     .where(eq(runs.id, runId));
-  const run = rows[0];
+  const runRow = rows[0];
 
-  if (!run) {
+  if (!runRow) {
     log.error({ runId }, "driveResume: run row vanished after flip");
 
     return { state: "unresumable" };
   }
+
+  // M42 (ADR-114): resume handle + runner snapshot now come from the run's
+  // ACTIVE session.
+  const active = await loadActiveRunSession(db, runId);
+  const run = {
+    ...runRow,
+    acpSessionId: active?.acpSessionId ?? null,
+    runnerSnapshot: active?.runnerSnapshot ?? null,
+  };
 
   // Phase-1 set current_step_id to the recover target; fall back to the retained
   // marker if driveResume is entered standalone.

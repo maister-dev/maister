@@ -28,6 +28,7 @@ import {
   reconcileSweepIntervalSeconds,
 } from "@/lib/instance-config";
 import { MaisterError } from "@/lib/errors";
+import { loadActiveRunSessionsByRunId } from "@/lib/runs/active-run-session";
 import { scheduleResumedSessionDrive } from "@/lib/runs/resume-driver";
 import { SETTLED_RUN_STATUSES } from "@/lib/runs/run-status-sets";
 import { findSharedTreeWorkspace } from "@/lib/runs/shared-tree";
@@ -490,7 +491,6 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
         runId: runs.id,
         runKind: runs.runKind,
         status: runs.status,
-        acpSessionId: runs.acpSessionId,
         currentStepId: runs.currentStepId,
         resumeStartedAt: runs.resumeStartedAt,
         runStartedAt: runs.startedAt,
@@ -515,11 +515,22 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
       .orderBy(asc(runs.startedAt))
       .limit(PER_TICK_LIMIT);
 
+    // M42 (ADR-114): the resume handle now lives on `run_sessions`, not the run
+    // row. Classification keys on the run's ACTIVE session's acp_session_id.
+    const activeByRun = await loadActiveRunSessionsByRunId(
+      db,
+      rows.map((row: { runId: string }) => row.runId),
+    );
+
     for (const row of rows) {
       // Exclude the takeover-return sweep's candidate set (disjoint sweeps).
       if (await isTakeoverReturnCandidate(db, row.runId)) continue;
 
-      all.push({ ...row, repoPath: project.repoPath });
+      all.push({
+        ...row,
+        acpSessionId: activeByRun.get(row.runId)?.acpSessionId ?? null,
+        repoPath: project.repoPath,
+      });
     }
   }
 

@@ -6,6 +6,7 @@ import { eq, and, isNull } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
+import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
 import { markStepSucceeded } from "@/lib/flows/step-runs";
@@ -188,19 +189,29 @@ type FlowManifest = {
 async function loadRunForCompletion(
   db: Db,
   runId: string,
-): Promise<{ run: RunRow; manifest: FlowManifest } | null> {
+): Promise<{
+  run: RunRow & { acpSessionId: string | null };
+  manifest: FlowManifest;
+} | null> {
   const runRows = await db
     .select({
       id: runs.id,
       flowId: runs.flowId,
       currentStepId: runs.currentStepId,
-      acpSessionId: runs.acpSessionId,
     })
     .from(runs)
     .where(eq(runs.id, runId));
-  const run = runRows[0] as RunRow | undefined;
+  const baseRun = runRows[0] as RunRow | undefined;
 
-  if (!run) return null;
+  if (!baseRun) return null;
+
+  // M42 (ADR-114): the resumed step's session handle comes from the run's ACTIVE
+  // logical session (recorded onto the step_run for attribution).
+  const active = await loadActiveRunSession(db, runId);
+  const run = {
+    ...baseRun,
+    acpSessionId: active?.acpSessionId ?? null,
+  } as RunRow & { acpSessionId: string | null };
 
   const flowRows = await db
     .select({ manifest: flows.manifest })

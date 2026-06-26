@@ -17,6 +17,7 @@ import {
   systemCloseActiveAssignmentsForRun,
 } from "@/lib/assignments/service";
 import { getDb } from "@/lib/db/client";
+import { loadActiveRunSessionsByRunId } from "@/lib/runs/active-run-session";
 import * as schemaModule from "@/lib/db/schema";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -149,7 +150,7 @@ type Pass1Candidate = {
 async function fetchPass1Candidates(db: Db): Promise<Pass1Candidate[]> {
   const now = new Date();
   const rows = await db
-    .select({ id: runs.id, acpSessionId: runs.acpSessionId })
+    .select({ id: runs.id })
     .from(runs)
     .where(
       and(
@@ -161,7 +162,16 @@ async function fetchPass1Candidates(db: Db): Promise<Pass1Candidate[]> {
     .orderBy(asc(runs.keepaliveUntil))
     .limit(PER_TICK_LIMIT);
 
-  return rows;
+  // M42 (ADR-114): the checkpoint handle comes from the run's ACTIVE session.
+  const activeByRun = await loadActiveRunSessionsByRunId(
+    db,
+    rows.map((row: { id: string }) => row.id),
+  );
+
+  return rows.map((row: { id: string }) => ({
+    id: row.id,
+    acpSessionId: activeByRun.get(row.id)?.acpSessionId ?? null,
+  }));
 }
 
 type Pass2Candidate = { id: string; runKind: string };
@@ -432,7 +442,6 @@ async function fetchTimeLimitCandidates(db: Db): Promise<TimeLimitCandidate[]> {
       flowId: runs.flowId,
       flowRevisionId: runs.flowRevisionId,
       currentStepId: runs.currentStepId,
-      acpSessionId: runs.acpSessionId,
     })
     .from(runs)
     .where(
@@ -448,7 +457,17 @@ async function fetchTimeLimitCandidates(db: Db): Promise<TimeLimitCandidate[]> {
     .orderBy(asc(runs.startedAt))
     .limit(PER_TICK_LIMIT);
 
-  return rows;
+  // M42 (ADR-114): the live session handle (if any) comes from the run's ACTIVE
+  // session; a node that hasn't reported one yet stays a candidate (null handle).
+  const activeByRun = await loadActiveRunSessionsByRunId(
+    db,
+    rows.map((row: { id: string }) => row.id),
+  );
+
+  return rows.map((row: { id: string }) => ({
+    ...row,
+    acpSessionId: activeByRun.get(row.id)?.acpSessionId ?? null,
+  }));
 }
 
 // Resolve the pinned manifest for a run: the immutable flow_revisions.manifest
@@ -776,7 +795,6 @@ async function fetchBudgetCandidates(db: Db): Promise<BudgetCandidate[]> {
       parentRunId: runs.parentRunId,
       flowId: runs.flowId,
       currentStepId: runs.currentStepId,
-      acpSessionId: runs.acpSessionId,
       executionPolicy: runs.executionPolicy,
       budgetState: runs.budgetState,
       projectId: runs.projectId,
@@ -786,7 +804,17 @@ async function fetchBudgetCandidates(db: Db): Promise<BudgetCandidate[]> {
     .orderBy(asc(runs.startedAt))
     .limit(PER_TICK_LIMIT);
 
-  return rows;
+  // M42 (ADR-114): the live session handle (for the terminate path) comes from
+  // the run's ACTIVE session.
+  const activeByRun = await loadActiveRunSessionsByRunId(
+    db,
+    rows.map((row: { id: string }) => row.id),
+  );
+
+  return rows.map((row: { id: string }) => ({
+    ...row,
+    acpSessionId: activeByRun.get(row.id)?.acpSessionId ?? null,
+  }));
 }
 
 // Resolve the project slug for a candidate (lazy — only the escalate path needs

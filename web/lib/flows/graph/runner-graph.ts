@@ -2176,12 +2176,9 @@ export async function runGraph(
         // runAgentStep respawns via session/resume (a gone/unresumable session
         // degrades OBSERVABLY to a fresh one + sessionFallback).
         if (isOrchestratorResume && node.id === resumeNodeId) {
-          // M42 (ADR-114): a named-session orchestrator resumes its session's
-          // handle; the default session uses the run-level handle (unchanged).
-          attemptResumeSessionId =
-            (usesNamedSession ? nodeSession?.acpSessionId : null) ??
-            loaded.run.acpSessionId ??
-            undefined;
+          // M42 (ADR-114): the orchestrator resumes its OWN logical session's
+          // handle (the default session for an unnamed node).
+          attemptResumeSessionId = nodeSession?.acpSessionId ?? undefined;
         }
         log2.info(
           { nodeAttemptId, nodeId: node.id },
@@ -2578,13 +2575,6 @@ export async function runGraph(
             });
           }
         });
-        if (result.acpSessionId && !loaded.run.acpSessionId) {
-          await db
-            .update(runs)
-            .set({ acpSessionId: result.acpSessionId })
-            .where(eq(runs.id, runId));
-          loaded.run.acpSessionId = result.acpSessionId;
-        }
         // M37 (ADR-098) T5.1: an orchestrator park checkpoints its (usually
         // already-exited) supervisor session and releases its scheduler slot —
         // WaitingOnChildren is not cap-counted, so the parked coordinator must
@@ -2598,7 +2588,7 @@ export async function runGraph(
           await parkCoordinatorSession(
             db,
             runId,
-            result.acpSessionId ?? loaded.run.acpSessionId,
+            result.acpSessionId ?? nodeSession?.acpSessionId ?? null,
             node.nodeType as "orchestrator" | "consensus",
             log2,
           );
@@ -2629,12 +2619,6 @@ export async function runGraph(
 
       if (result.errorCode === "STEP_CHECKPOINTED") {
         await markNodeNeedsInput(nodeAttemptId, db);
-        if (result.acpSessionId && !loaded.run.acpSessionId) {
-          await db
-            .update(runs)
-            .set({ acpSessionId: result.acpSessionId })
-            .where(eq(runs.id, runId));
-        }
         checkpointed = true;
         log2.info({ nodeId: node.id }, "node paused by supervisor checkpoint");
         break;
@@ -2883,14 +2867,6 @@ export async function runGraph(
           "structured output validation failed — node Failed",
         );
         break;
-      }
-
-      if (result.acpSessionId && !loaded.run.acpSessionId) {
-        await db
-          .update(runs)
-          .set({ acpSessionId: result.acpSessionId })
-          .where(eq(runs.id, runId));
-        loaded.run.acpSessionId = result.acpSessionId;
       }
 
       // Run pre_finish.gates after the action succeeds, before the node

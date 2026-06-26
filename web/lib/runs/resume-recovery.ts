@@ -8,6 +8,7 @@ import { scheduleResumedSessionDrive } from "./resume-driver";
 import { rollbackResumedRun } from "./state-transitions";
 
 import { getDb } from "@/lib/db/client";
+import { loadActiveRunSessionsByRunId } from "@/lib/runs/active-run-session";
 import * as schemaModule from "@/lib/db/schema";
 import {
   listSessions,
@@ -75,21 +76,28 @@ async function fetchCandidates(db: Db): Promise<RecoveryCandidate[]> {
   // (runTakeoverReturnRecoverySweep) that re-dispatches rather than crashes.
   const rows: Array<{
     id: string;
-    acpSessionId: string | null;
     currentStepId: string | null;
   }> = await db
     .select({
       id: runs.id,
-      acpSessionId: runs.acpSessionId,
       currentStepId: runs.currentStepId,
     })
     .from(runs)
-    .where(and(eq(runs.status, "NeedsInput"), isNotNull(runs.acpSessionId)));
+    .where(eq(runs.status, "NeedsInput"));
 
+  // M42 (ADR-114): the checkpoint resume handle lives on the run's ACTIVE
+  // session — only a run whose active session still holds an acp handle is a
+  // resume candidate (replaces the run-level `isNotNull(runs.acpSessionId)`).
+  const activeByRun = await loadActiveRunSessionsByRunId(
+    db,
+    rows.map((row) => row.id),
+  );
   const candidates: RecoveryCandidate[] = [];
 
   for (const row of rows) {
-    if (!row.acpSessionId) continue;
+    const acpSessionId = activeByRun.get(row.id)?.acpSessionId ?? null;
+
+    if (!acpSessionId) continue;
 
     const hitlRows: Array<{
       id: string;
@@ -113,7 +121,7 @@ async function fetchCandidates(db: Db): Promise<RecoveryCandidate[]> {
 
     candidates.push({
       runId: row.id,
-      acpSessionId: row.acpSessionId,
+      acpSessionId,
       stepId: hitl.stepId,
       hitlRequestId: hitl.id,
     });

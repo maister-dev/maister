@@ -140,24 +140,27 @@ export function executorFromRunnerSnapshot(
   };
 }
 
+// M42 (ADR-114): the run-level runner is resolved from the run's DEFAULT logical
+// session (run_sessions), not the dropped run-level mirror columns. `source` is
+// the default session's `{ runnerSnapshot, runnerId }`.
 async function loadRunnerSnapshot(
   db: Db,
-  run: RunRow,
+  source: { runnerSnapshot: RunnerSnapshot | null; runnerId: string | null },
   runId: string,
 ): Promise<RunnerSnapshot> {
-  if (run.runnerSnapshot) return run.runnerSnapshot;
+  if (source.runnerSnapshot) return source.runnerSnapshot;
 
-  if (run.runnerId) {
+  if (source.runnerId) {
     const runnerRows: PlatformAcpRunner[] = await db
       .select()
       .from(platformAcpRunners)
-      .where(eq(platformAcpRunners.id, run.runnerId));
+      .where(eq(platformAcpRunners.id, source.runnerId));
     const runner = runnerRows[0];
 
     if (!runner) {
       throw new MaisterError(
         "EXECUTOR_UNAVAILABLE",
-        `ACP runner ${run.runnerId} not found for run ${runId}`,
+        `ACP runner ${source.runnerId} not found for run ${runId}`,
       );
     }
 
@@ -204,16 +207,26 @@ export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
     throw new MaisterError("PRECONDITION", `flow not found for run ${runId}`);
   }
 
-  const runner = await loadRunnerSnapshot(db, run, runId);
-  const executor = executorFromRunnerSnapshot(runner);
-
-  // M42 (ADR-114): the run's logical sessions. A legacy run (no rows) falls back
-  // to a single `default` session mapped onto the run-level runner + resume
-  // handle, preserving pre-M42 single-session behavior.
+  // M42 (ADR-114): the run's logical sessions are the SOLE source of runner
+  // truth. The run-level `runner`/`executor` (used by default-session nodes and
+  // capability materialization) is the DEFAULT session's runner.
   const runSessionRows: Array<Record<string, any>> = await db
     .select()
     .from(runSessions)
     .where(eq(runSessions.runId, runId));
+  const defaultRow =
+    runSessionRows.find((row) => row.sessionName === "default") ??
+    runSessionRows[0];
+  const runner = await loadRunnerSnapshot(
+    db,
+    {
+      runnerSnapshot: (defaultRow?.runnerSnapshot ?? null) as RunnerSnapshot | null,
+      runnerId: (defaultRow?.runnerId ?? null) as string | null,
+    },
+    runId,
+  );
+  const executor = executorFromRunnerSnapshot(runner);
+
   const sessions = new Map<string, LoadedRunSession>(
     runSessionRows.map((row) => [
       row.sessionName as string,
@@ -229,13 +242,15 @@ export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
     ]),
   );
 
+  // A run with NO session rows (should not occur post-cutover — every creator
+  // writes at least a `default`) still resolves to a usable single session.
   if (!sessions.has("default")) {
     sessions.set("default", {
       sessionName: "default",
       runner,
-      acpSessionId: run.acpSessionId ?? null,
-      capabilityAgent: run.capabilityAgent ?? null,
-      runnerResolutionTier: run.runnerResolutionTier ?? null,
+      acpSessionId: null,
+      capabilityAgent: null,
+      runnerResolutionTier: null,
     });
   }
 

@@ -148,7 +148,6 @@ export async function POST(
         id: runs.id,
         projectId: runs.projectId,
         status: runs.status,
-        acpSessionId: runs.acpSessionId,
         currentStepId: runs.currentStepId,
         runKind: runs.runKind,
       })

@@ -42,6 +42,7 @@ import {
 import { atomicWriteJson } from "@/lib/atomic";
 import { systemCloseActiveAssignmentsForRun } from "@/lib/assignments/service";
 import { promoteNextPending } from "@/lib/scheduler";
+import { persistRunSessionAcpSessionId } from "@/lib/runs/active-run-session";
 import { deliverRunIfAutoReady } from "@/lib/runs/auto-delivery";
 import {
   isMaisterError,
@@ -577,11 +578,13 @@ export async function runFlow(
             });
           }
         });
-        if (result.acpSessionId && !loaded.run.acpSessionId) {
-          await db
-            .update(runs)
-            .set({ acpSessionId: result.acpSessionId })
-            .where(eq(runs.id, runId));
+        if (result.acpSessionId) {
+          await persistRunSessionAcpSessionId(
+            db,
+            runId,
+            "default",
+            result.acpSessionId,
+          );
         }
         needsInput = true;
         log2.info({ stepId: step.id }, "step requested NeedsInput");
@@ -752,11 +755,13 @@ export async function runFlow(
         // and the resume-driver will replay this same step on operator
         // response.
         await markStepNeedsInput(stepRunId, db);
-        if (result.acpSessionId && !loaded.run.acpSessionId) {
-          await db
-            .update(runs)
-            .set({ acpSessionId: result.acpSessionId })
-            .where(eq(runs.id, runId));
+        if (result.acpSessionId) {
+          await persistRunSessionAcpSessionId(
+            db,
+            runId,
+            "default",
+            result.acpSessionId,
+          );
         }
         checkpointed = true;
         log2.info(
@@ -794,12 +799,13 @@ export async function runFlow(
         break;
       }
 
-      if (result.acpSessionId && !loaded.run.acpSessionId) {
-        await db
-          .update(runs)
-          .set({ acpSessionId: result.acpSessionId })
-          .where(eq(runs.id, runId));
-        loaded.run.acpSessionId = result.acpSessionId;
+      if (result.acpSessionId) {
+        await persistRunSessionAcpSessionId(
+          db,
+          runId,
+          "default",
+          result.acpSessionId,
+        );
       }
 
       await markStepSucceeded(

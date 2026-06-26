@@ -10,6 +10,7 @@ import {
 } from "./state-transitions";
 
 import { getDb } from "@/lib/db/client";
+import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import * as schemaModule from "@/lib/db/schema";
 import {
   isMaisterError,
@@ -74,16 +75,14 @@ export async function resumeRun(
       id: runs.id,
       projectId: runs.projectId,
       status: runs.status,
-      acpSessionId: runs.acpSessionId,
       currentStepId: runs.currentStepId,
-      runnerSnapshot: runs.runnerSnapshot,
     })
     .from(runs)
     .where(eq(runs.id, runId));
 
-  const runRow = runRows[0];
+  const baseRow = runRows[0];
 
-  if (!runRow) {
+  if (!baseRow) {
     log.warn({ runId }, "resumeRun: run not found");
 
     return {
@@ -94,9 +93,9 @@ export async function resumeRun(
     };
   }
 
-  if (runRow.status !== "NeedsInputIdle") {
+  if (baseRow.status !== "NeedsInputIdle") {
     log.warn(
-      { runId, status: runRow.status },
+      { runId, status: baseRow.status },
       "resumeRun: status guard mismatch — run is not NeedsInputIdle",
     );
 
@@ -104,9 +103,18 @@ export async function resumeRun(
       ok: false,
       code: "PRECONDITION",
       retryable: false,
-      message: `run is ${runRow.status}, not NeedsInputIdle`,
+      message: `run is ${baseRow.status}, not NeedsInputIdle`,
     };
   }
+
+  // M42 (ADR-114): the resume handle + runner snapshot come from the run's
+  // ACTIVE logical session (the one checkpointed at the idle boundary).
+  const active = await loadActiveRunSession(db, runId);
+  const runRow = {
+    ...baseRow,
+    acpSessionId: active?.acpSessionId ?? null,
+    runnerSnapshot: active?.runnerSnapshot ?? null,
+  };
 
   if (!runRow.acpSessionId) {
     log.error(
