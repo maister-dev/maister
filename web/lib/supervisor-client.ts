@@ -9,6 +9,11 @@ import type { HooksConfig } from "@/lib/flows/hooks-config";
 
 import { cache } from "react";
 import pino from "pino";
+import {
+  Agent,
+  fetch as undiciFetch,
+  type RequestInit as UndiciRequestInit,
+} from "undici";
 import { z } from "zod";
 
 import { ADAPTER_IDS, type AdapterId } from "@/lib/acp-runners/adapter-support";
@@ -21,6 +26,10 @@ const logger = pino({
 
 const DEFAULT_BASE_URL = "http://localhost:7777";
 const DEFAULT_HEALTH_TIMEOUT_MS = 1_000;
+const longLivedDispatcher = new Agent({
+  headersTimeout: 0,
+  bodyTimeout: 0,
+});
 
 export type SupervisorExecutorInput = {
   agent: AdapterId;
@@ -405,6 +414,22 @@ function networkErrorToMaister(err: unknown, ctx: string): MaisterError {
   return new MaisterError("EXECUTOR_UNAVAILABLE", `${ctx}: ${message}`);
 }
 
+async function fetchLongLivedSupervisor(
+  url: string,
+  init: Omit<UndiciRequestInit, "dispatcher">,
+  ctx: string,
+): Promise<Response> {
+  logger.debug(
+    { url, ctx },
+    "[FIX:supervisor-long-lived-fetch] using undici dispatcher without headers/body timeout",
+  );
+
+  return (await undiciFetch(url, {
+    ...init,
+    dispatcher: longLivedDispatcher,
+  })) as unknown as Response;
+}
+
 function isAbortError(err: unknown): boolean {
   return (
     err instanceof Error &&
@@ -606,11 +631,15 @@ export async function sendPrompt(
   let res: Response;
 
   try {
-    res = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(input),
-    });
+    res = await fetchLongLivedSupervisor(
+      url,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(input),
+      },
+      "sendPrompt",
+    );
   } catch (err) {
     throw networkErrorToMaister(err, "sendPrompt");
   }
@@ -938,7 +967,11 @@ export async function* streamSession(
   let res: Response;
 
   try {
-    res = await fetch(url, { headers, signal: opts.signal });
+    res = await fetchLongLivedSupervisor(
+      url,
+      { headers, signal: opts.signal },
+      "streamSession",
+    );
   } catch (err) {
     throw networkErrorToMaister(err, "streamSession");
   }

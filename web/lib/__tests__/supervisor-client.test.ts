@@ -7,6 +7,13 @@ import {
   vi,
   type MockInstance,
 } from "vitest";
+import { Agent, fetch as undiciFetch } from "undici";
+
+vi.mock("undici", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("undici")>();
+
+  return { ...actual, fetch: vi.fn() };
+});
 
 import {
   cancelPermission,
@@ -27,6 +34,7 @@ import {
 import { MaisterError } from "@/lib/errors";
 
 let fetchSpy: MockInstance<typeof fetch>;
+let undiciFetchSpy: MockInstance<typeof undiciFetch>;
 
 function mockOnce(response: Response): void {
   fetchSpy.mockResolvedValueOnce(response);
@@ -36,10 +44,22 @@ function mockReject(err: unknown): void {
   fetchSpy.mockRejectedValueOnce(err);
 }
 
+function mockLongLivedOnce(response: Response): void {
+  undiciFetchSpy.mockResolvedValueOnce(response as never);
+}
+
+function mockLongLivedReject(err: unknown): void {
+  undiciFetchSpy.mockRejectedValueOnce(err);
+}
+
 beforeEach(() => {
   fetchSpy = vi.spyOn(globalThis, "fetch") as unknown as MockInstance<
     typeof fetch
   >;
+  undiciFetchSpy = vi.mocked(undiciFetch) as unknown as MockInstance<
+    typeof undiciFetch
+  >;
+  undiciFetchSpy.mockReset();
   process.env.MAISTER_SUPERVISOR_URL = "http://supervisor:7777";
 });
 
@@ -509,7 +529,7 @@ describe("streamSession", () => {
       `id: 1\nevent: session.line\ndata: ${JSON.stringify(event1)}\n\n` +
       `id: 2\nevent: session.exited\ndata: ${JSON.stringify(event2)}\n\n`;
 
-    mockOnce(
+    mockLongLivedOnce(
       new Response(wire, {
         status: 200,
         headers: { "content-type": "text/event-stream" },
@@ -528,22 +548,23 @@ describe("streamSession", () => {
   });
 
   it("sends Last-Event-ID header when lastEventId is provided", async () => {
-    mockOnce(new Response("", { status: 200 }));
+    mockLongLivedOnce(new Response("", { status: 200 }));
 
     const iter = streamSession("s1", { lastEventId: 42 });
 
     await iter.next();
 
-    expect(fetchSpy).toHaveBeenCalledWith(
+    expect(undiciFetchSpy).toHaveBeenCalledWith(
       expect.stringContaining("/sessions/s1/stream"),
       expect.objectContaining({
+        dispatcher: expect.any(Agent),
         headers: expect.objectContaining({ "Last-Event-ID": "42" }),
       }),
     );
   });
 
   it("throws ACP_PROTOCOL on non-200 SSE response", async () => {
-    mockOnce(
+    mockLongLivedOnce(
       new Response(JSON.stringify({ code: "ACP_PROTOCOL", message: "bad" }), {
         status: 500,
       }),
@@ -555,23 +576,26 @@ describe("streamSession", () => {
   });
 
   it("forwards AbortSignal to fetch", async () => {
-    mockOnce(new Response("", { status: 200 }));
+    mockLongLivedOnce(new Response("", { status: 200 }));
 
     const controller = new AbortController();
     const iter = streamSession("s1", { signal: controller.signal });
 
     await iter.next();
 
-    expect(fetchSpy).toHaveBeenCalledWith(
+    expect(undiciFetchSpy).toHaveBeenCalledWith(
       expect.stringContaining("/sessions/s1/stream"),
-      expect.objectContaining({ signal: controller.signal }),
+      expect.objectContaining({
+        dispatcher: expect.any(Agent),
+        signal: controller.signal,
+      }),
     );
   });
 });
 
 describe("sendPrompt", () => {
   it("returns the PromptResult on 200", async () => {
-    mockOnce(
+    mockLongLivedOnce(
       new Response(
         JSON.stringify({ stopReason: "end_turn", meta: { foo: "bar" } }),
         { status: 200 },
@@ -581,17 +605,19 @@ describe("sendPrompt", () => {
     const result = await sendPrompt("s1", { stepId: "plan", prompt: "go" });
 
     expect(result).toEqual({ stopReason: "end_turn", meta: { foo: "bar" } });
-    expect(fetchSpy).toHaveBeenCalledWith(
+    expect(undiciFetchSpy).toHaveBeenCalledWith(
       "http://supervisor:7777/sessions/s1/prompt",
       expect.objectContaining({
+        dispatcher: expect.any(Agent),
         method: "POST",
         body: JSON.stringify({ stepId: "plan", prompt: "go" }),
       }),
     );
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("translates 404 PRECONDITION to MaisterError", async () => {
-    mockOnce(
+    mockLongLivedOnce(
       new Response(
         JSON.stringify({ code: "PRECONDITION", message: "unknown session" }),
         { status: 404 },
@@ -607,7 +633,7 @@ describe("sendPrompt", () => {
   });
 
   it("translates network failure to EXECUTOR_UNAVAILABLE", async () => {
-    mockReject(new TypeError("fetch failed"));
+    mockLongLivedReject(new TypeError("fetch failed"));
 
     let caught: unknown;
 
