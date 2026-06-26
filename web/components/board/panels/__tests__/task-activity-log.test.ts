@@ -21,7 +21,8 @@ const labels = {
   apply: "Apply",
   pagePrev: "← prev",
   pageNext: "next →",
-  pageInfo: "page {page} / {pages}",
+  pageLabel: "Page {page}",
+  paginationLabel: "Task log pages",
   formerUser: "former user",
   system: "system",
   eventKind: { relation_added: "relation added", run_launched: "run launched" },
@@ -92,7 +93,8 @@ describe("TaskActivityLog (read-only view-table)", () => {
       }),
     );
 
-    expect(html).toContain("page 2 / 3");
+    expect(html).toContain('aria-current="page"');
+    expect(html).toContain('data-testid="pagination-page-2"');
     expect(html).toContain("event_kind=relation_added");
     expect(html).toContain("page=3");
   });

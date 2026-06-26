@@ -2,15 +2,12 @@ import type { RunsListFilters, RunsListRow } from "@/lib/queries/runs-list";
 import type { Metadata } from "next";
 import type { ReactElement, ReactNode } from "react";
 
-import {
-  ArrowLeftIcon,
-  ArrowRightIcon,
-  FunnelIcon,
-} from "@heroicons/react/24/outline";
+import { FunnelIcon } from "@heroicons/react/24/outline";
 import { getLocale, getTranslations } from "next-intl/server";
 import Link from "next/link";
 import clsx from "clsx";
 
+import { NumberedPagination } from "@/components/navigation/numbered-pagination";
 import { ADAPTER_IDS } from "@/lib/acp-runners/adapter-support";
 import { requireActiveSession } from "@/lib/authz";
 import {
@@ -258,32 +255,17 @@ export default async function RunsPage({
           </table>
         </div>
 
-        <div className="flex items-center justify-between gap-3 border-t border-line px-5 py-3">
-          {page.page > 1 ? (
-            <Link
-              className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-paper px-3 py-2 font-mono text-[11px] font-semibold text-ink-2 transition-colors hover:border-mute hover:text-ink"
-              href={pageHref(filters, page.page - 1)}
-            >
-              <ArrowLeftIcon aria-hidden="true" className="h-3.5 w-3.5" />
-              {t("previous")}
-            </Link>
-          ) : (
-            <span />
-          )}
-          {page.hasNextPage ? (
-            <Link
-              className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-paper px-3 py-2 font-mono text-[11px] font-semibold text-ink-2 transition-colors hover:border-mute hover:text-ink"
-              href={pageHref(filters, page.page + 1)}
-            >
-              {t("next")}
-              <ArrowRightIcon aria-hidden="true" className="h-3.5 w-3.5" />
-            </Link>
-          ) : (
-            <span className="font-mono text-[10.5px] text-mute">
-              {t("end")}
-            </span>
-          )}
-        </div>
+        <NumberedPagination
+          currentPage={page.page}
+          hrefForPage={(targetPage) => pageHref(filters, targetPage)}
+          labels={{
+            ariaLabel: t("paginationLabel"),
+            next: t("next"),
+            page: t("page"),
+            previous: t("previous"),
+          }}
+          pageCount={page.pageCount}
+        />
       </section>
     </div>
   );

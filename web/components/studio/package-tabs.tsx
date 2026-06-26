@@ -2,6 +2,8 @@ import type { ReactElement, ReactNode } from "react";
 
 import Link from "next/link";
 
+import { NumberedPagination } from "@/components/navigation/numbered-pagination";
+
 // Tab bar + per-tab paged cards grid for the package detail (T1.3). Pure
 // presentational Server Component: the page resolves the active tab + page slice
 // from `searchParams` and passes the slice as already-rendered `cards`, so tab +
@@ -18,6 +20,10 @@ export interface PackageTabDescriptor {
 
 export interface PackageTabsLabels {
   loadMore: string;
+  next: string;
+  page: string;
+  paginationLabel: string;
+  previous: string;
   showingCount: string;
   tabEmpty: string;
 }
@@ -122,32 +128,19 @@ export function PackageTabs({
               total: totalForActive,
             })}
           </span>
-          <nav
-            aria-label={activeTab}
-            className="ml-auto flex flex-wrap items-center gap-1"
-          >
-            {Array.from({ length: pageCount }, (_, index) => index + 1).map(
-              (pageNumber) => {
-                const isCurrent = pageNumber === page;
-
-                return (
-                  <Link
-                    key={pageNumber}
-                    aria-current={isCurrent ? "page" : undefined}
-                    className={
-                      isCurrent
-                        ? "rounded-[8px] border border-amber-line bg-amber-soft px-2.5 py-1 font-mono text-[11px] font-semibold text-ink"
-                        : "rounded-[8px] border border-line bg-ivory px-2.5 py-1 font-mono text-[11px] text-ink-2 transition-colors hover:border-amber"
-                    }
-                    data-testid={`package-page-${pageNumber}`}
-                    href={hrefFor(activeTab, pageNumber)}
-                  >
-                    {pageNumber}
-                  </Link>
-                );
-              },
-            )}
-          </nav>
+          <NumberedPagination
+            className="ml-auto"
+            currentPage={page}
+            hrefForPage={(pageNumber) => hrefFor(activeTab, pageNumber)}
+            labels={{
+              ariaLabel: labels.paginationLabel,
+              next: labels.next,
+              page: labels.page,
+              previous: labels.previous,
+            }}
+            pageCount={pageCount}
+            surface="inline"
+          />
         </div>
       ) : null}
     </div>

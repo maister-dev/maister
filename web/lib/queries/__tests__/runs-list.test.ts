@@ -71,6 +71,9 @@ describe("runs list query", () => {
         ],
       })
       .mockResolvedValueOnce({
+        rows: [{ total_count: "1" }],
+      })
+      .mockResolvedValueOnce({
         rows: [
           {
             agent_id: null,
@@ -131,6 +134,8 @@ describe("runs list query", () => {
       }),
     ]);
     expect(page.hasNextPage).toBe(false);
+    expect(page.pageCount).toBe(1);
+    expect(page.totalRows).toBe(1);
   });
 
   it("keeps member visibility and workspace joins in the generated query", async () => {
@@ -143,12 +148,18 @@ describe("runs list query", () => {
       user: { id: "user-1", role: "member" as GlobalRole },
     });
 
-    const runsQueryText = sqlDebugText(execute.mock.calls[1]?.[0]);
+    const queryTexts = execute.mock.calls.map((call) => sqlDebugText(call[0]));
+    const runsQueryText =
+      queryTexts.find((text) => text.includes("FROM workspaces w")) ?? "";
+    const countQueryText =
+      queryTexts.find((text) => text.includes("count(*)")) ?? "";
 
     expect(runsQueryText).toContain("project_members");
     expect(runsQueryText).toContain("pm.user_id");
     expect(runsQueryText).toContain("LEFT JOIN LATERAL");
     expect(runsQueryText).toContain("FROM workspaces w");
     expect(runsQueryText).toContain("LIMIT 1");
+    expect(countQueryText).toContain("LEFT JOIN LATERAL");
+    expect(countQueryText).toContain("FROM run_schedules s");
   });
 });

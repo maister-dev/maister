@@ -3,6 +3,8 @@ import type { TaskActivityLogRow } from "@/lib/queries/activity";
 
 import Link from "next/link";
 
+import { NumberedPagination } from "@/components/navigation/numbered-pagination";
+
 export interface TaskActivityLogLabels {
   title: string;
   empty: string;
@@ -18,7 +20,8 @@ export interface TaskActivityLogLabels {
   apply: string;
   pagePrev: string;
   pageNext: string;
-  pageInfo: string;
+  pageLabel: string;
+  paginationLabel: string;
   formerUser: string;
   system: string;
   eventKind: Record<string, string>;
@@ -188,23 +191,18 @@ export function TaskActivityLog({
       )}
 
       {pages > 1 ? (
-        <div className="flex items-center gap-3 font-mono text-[11px] text-mute">
-          {page > 1 ? (
-            <Link className="hover:text-amber" href={pageHref(page - 1)}>
-              {labels.pagePrev}
-            </Link>
-          ) : null}
-          <span>
-            {labels.pageInfo
-              .replace("{page}", String(page))
-              .replace("{pages}", String(pages))}
-          </span>
-          {page < pages ? (
-            <Link className="hover:text-amber" href={pageHref(page + 1)}>
-              {labels.pageNext}
-            </Link>
-          ) : null}
-        </div>
+        <NumberedPagination
+          currentPage={page}
+          hrefForPage={pageHref}
+          labels={{
+            ariaLabel: labels.paginationLabel,
+            next: labels.pageNext,
+            page: labels.pageLabel,
+            previous: labels.pagePrev,
+          }}
+          pageCount={pages}
+          surface="inline"
+        />
       ) : null}
     </section>
   );

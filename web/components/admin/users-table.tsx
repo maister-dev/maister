@@ -10,6 +10,7 @@ import clsx from "clsx";
 
 import { UserCreateModal } from "@/components/admin/user-create-modal";
 import { UserEditModal } from "@/components/admin/user-edit-modal";
+import { NumberedPagination } from "@/components/navigation/numbered-pagination";
 
 export interface AdminUserProjectRow {
   id: string;
@@ -127,7 +128,7 @@ export function AdminUsersTable({
     });
   }
 
-  function goToPage(p: number): void {
+  function pageHref(p: number): string {
     const params = new URLSearchParams();
 
     if (filters.q.trim()) params.set("q", filters.q.trim());
@@ -139,11 +140,7 @@ export function AdminUsersTable({
 
     const query = params.toString();
 
-    startTransition(() => {
-      router.replace(query ? `${pathname}?${query}` : pathname, {
-        scroll: false,
-      });
-    });
+    return query ? `${pathname}?${query}` : pathname;
   }
 
   // Debounce typing → URL. Deps include every filter so the pending timer
@@ -293,29 +290,17 @@ export function AdminUsersTable({
       </div>
 
       {totalPages > 1 ? (
-        <div className="flex items-center justify-between border-t border-line px-5 py-3">
-          <span className="font-mono text-[10.5px] tabular-nums text-mute">
-            {t("pageOf", { page, total: totalPages })}
-          </span>
-          <div className="flex items-center gap-2">
-            <button
-              className="touch-manipulation rounded-md border border-line bg-paper px-3 py-1.5 font-mono text-[10.5px] font-semibold tracking-[0.03em] text-ink-2 transition-colors hover:border-mute hover:text-ink disabled:opacity-40"
-              disabled={page <= 1 || pending}
-              type="button"
-              onClick={() => goToPage(page - 1)}
-            >
-              {t("pagePrev")}
-            </button>
-            <button
-              className="touch-manipulation rounded-md border border-line bg-paper px-3 py-1.5 font-mono text-[10.5px] font-semibold tracking-[0.03em] text-ink-2 transition-colors hover:border-mute hover:text-ink disabled:opacity-40"
-              disabled={page >= totalPages || pending}
-              type="button"
-              onClick={() => goToPage(page + 1)}
-            >
-              {t("pageNext")}
-            </button>
-          </div>
-        </div>
+        <NumberedPagination
+          currentPage={page}
+          hrefForPage={pageHref}
+          labels={{
+            ariaLabel: t("paginationLabel"),
+            next: t("pageNext"),
+            page: t("pageLabel"),
+            previous: t("pagePrev"),
+          }}
+          pageCount={totalPages}
+        />
       ) : null}
 
       {editing ? (

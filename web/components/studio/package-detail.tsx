@@ -192,6 +192,10 @@ export function PackageDetail({
           hrefFor={hrefFor}
           labels={{
             loadMore: t("viewer.loadMore"),
+            next: t("viewer.pageNext"),
+            page: t("viewer.page"),
+            paginationLabel: t("viewer.paginationLabel"),
+            previous: t("viewer.pagePrev"),
             // `t.raw` returns the un-interpolated template; PackageTabs fills
             // {shown}/{total} via formatTemplate. Plain `t()` would error on the
             // unprovided ICU args and fall back to the raw key path.

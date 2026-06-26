@@ -411,9 +411,8 @@ export async function IntegrationsPanel({
     apply: t("audit.apply"),
     pagePrev: t("audit.pagePrev"),
     pageNext: t("audit.pageNext"),
-    // Raw template: TokenAuditTable interpolates {page}/{pages} itself, so the
-    // server must not format it eagerly.
-    pageInfo: t.raw("audit.pageInfo"),
+    pageLabel: t("audit.pageLabel"),
+    paginationLabel: t("audit.paginationLabel"),
   };
 
   return (

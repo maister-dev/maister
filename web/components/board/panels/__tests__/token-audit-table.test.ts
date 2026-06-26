@@ -46,7 +46,8 @@ const labels: TokenAuditLabels = {
   apply: "Apply",
   pagePrev: "Prev",
   pageNext: "Next",
-  pageInfo: "{page} / {pages}",
+  pageLabel: "Page {page}",
+  paginationLabel: "Token audit pages",
 };
 
 const NOW = Date.UTC(2026, 5, 18);

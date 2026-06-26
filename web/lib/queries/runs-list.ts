@@ -73,9 +73,11 @@ export type RunsListPage = {
   filters: RunsListFilters;
   hasNextPage: boolean;
   page: number;
+  pageCount: number;
   pageSize: number;
   projectOptions: RunsListProjectOption[];
   rows: RunsListRow[];
+  totalRows: number;
 };
 
 type RunsListUser = {
@@ -124,6 +126,10 @@ type RawRunsListRow = {
     | "webhook"
     | "flow"
     | null;
+};
+
+type RawRunsListCountRow = {
+  total_count: bigint | number | string | null;
 };
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -269,7 +275,7 @@ function runsListQuery(args: {
   user: RunsListUser;
 }): SQL {
   const offset = (args.filters.page - 1) * args.pageSize;
-  const limit = args.pageSize + 1;
+  const limit = args.pageSize;
   const predicates = buildRunPredicates(args.user, args.filters);
 
   return sql`
@@ -322,6 +328,39 @@ function runsListQuery(args: {
     LIMIT ${limit}
     OFFSET ${offset}
   `;
+}
+
+function runsListCountQuery(args: {
+  filters: RunsListFilters;
+  user: RunsListUser;
+}): SQL {
+  const predicates = buildRunPredicates(args.user, args.filters);
+
+  return sql`
+    SELECT count(*) AS total_count
+    FROM runs r
+    INNER JOIN projects p ON p.id = r.project_id
+    LEFT JOIN LATERAL (
+      SELECT s.id
+      FROM run_schedules s
+      WHERE s.last_run_id = r.id
+      ORDER BY s.last_fired_at DESC NULLS LAST, s.updated_at DESC, s.id ASC
+      LIMIT 1
+    ) rs ON true
+    WHERE ${sql.join(predicates, sql` AND `)}
+  `;
+}
+
+function countTotalRows(row: RawRunsListCountRow | undefined): number {
+  const value = row?.total_count;
+
+  if (typeof value === "bigint") return Number(value);
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  if (typeof value !== "string") return 0;
+
+  const parsed = Number.parseInt(value, 10);
+
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function tokensTotal(row: RawRunsListRow): number | null {
@@ -446,8 +485,14 @@ export async function listRunsPage(args: {
 }): Promise<RunsListPage> {
   const db = args.db ?? (getDb() as unknown as RunsListDb);
   const pageSize = args.pageSize ?? 50;
-  const [projectResult, runsResult] = await Promise.all([
+  const [projectResult, countResult, runsResult] = await Promise.all([
     db.execute(visibleProjectOptionsQuery(args.user)),
+    db.execute(
+      runsListCountQuery({
+        filters: args.filters,
+        user: args.user,
+      }),
+    ),
     db.execute(
       runsListQuery({
         filters: args.filters,
@@ -457,16 +502,22 @@ export async function listRunsPage(args: {
     ),
   ]);
   const rawRows = (runsResult.rows ?? []) as RawRunsListRow[];
-  const hasNextPage = rawRows.length > pageSize;
+  const totalRows = countTotalRows(
+    ((countResult.rows ?? []) as RawRunsListCountRow[])[0],
+  );
+  const pageCount = Math.max(1, Math.ceil(totalRows / pageSize));
+  const hasNextPage = args.filters.page < pageCount;
 
   return {
     filters: args.filters,
     hasNextPage,
     page: args.filters.page,
+    pageCount,
     pageSize,
     projectOptions: ((projectResult.rows ?? []) as RawProjectOptionRow[]).map(
       toProjectOption,
     ),
     rows: rawRows.slice(0, pageSize).map(toRunsListRow),
+    totalRows,
   };
 }
