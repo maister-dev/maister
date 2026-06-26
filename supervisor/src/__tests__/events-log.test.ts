@@ -52,6 +52,38 @@ describe("openEventsLog", () => {
     expect(parsed[2].monotonicId).toBe(3);
   });
 
+  it("stamps sessionName on every event line when configured (M42)", async () => {
+    const path = join(dir, "step-session.events.jsonl");
+    const w = await openEventsLog(path, {
+      logger: silentLogger,
+      sessionName: "review",
+    });
+
+    w.append(lineEvent(1, "first"));
+    await w.close();
+
+    const raw = await readFile(path, "utf8");
+    const parsed = JSON.parse(raw.trim()) as {
+      sessionName?: string;
+      line: string;
+    };
+
+    expect(parsed.sessionName).toBe("review");
+    expect(parsed.line).toBe("first");
+  });
+
+  it("omits sessionName when not configured (single-session run)", async () => {
+    const path = join(dir, "step-nosession.events.jsonl");
+    const w = await openEventsLog(path, { logger: silentLogger });
+
+    w.append(lineEvent(1, "first"));
+    await w.close();
+
+    const raw = await readFile(path, "utf8");
+
+    expect(JSON.parse(raw.trim())).not.toHaveProperty("sessionName");
+  });
+
   it("preserves append order on rapid sequential calls", async () => {
     const path = join(dir, "step-order.events.jsonl");
     const w = await openEventsLog(path, { logger: silentLogger });

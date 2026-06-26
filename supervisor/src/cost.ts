@@ -13,6 +13,9 @@ const MAX_TRAVERSAL_DEPTH = 8;
 export type CostRecord = {
   ts: string;
   sessionId: string;
+  // M42 (ADR-114): logical Flow session this spend belongs to ("default" for a
+  // single-session run) — lets a multi-session run attribute cost per session.
+  sessionName?: string;
   projectSlug?: string;
   runId?: string;
   stepId?: string;
@@ -31,6 +34,7 @@ export type CostRecord = {
 };
 
 export type CostAttributionContext = {
+  sessionName?: string;
   projectSlug?: string;
   runId?: string;
   stepId?: string;
@@ -39,6 +43,7 @@ export type CostAttributionContext = {
 
 export type AttachCostOptions = {
   sessionId: string;
+  sessionName?: string;
   runtimeRoot: string;
   projectSlug: string;
   runId: string;
@@ -76,6 +81,7 @@ export async function attachCost(opts: AttachCostOptions): Promise<CostHandle> {
 
     const dynamicContext = opts.getContext?.() ?? {};
     const record = extractCost(event.line, opts.sessionId, {
+      sessionName: opts.sessionName,
       projectSlug: opts.projectSlug,
       runId: opts.runId,
       stepId: opts.stepId,
@@ -138,6 +144,7 @@ export function extractCost(
     sessionId,
   };
 
+  if (context.sessionName) record.sessionName = context.sessionName;
   if (context.projectSlug) record.projectSlug = context.projectSlug;
   if (context.runId) record.runId = context.runId;
   if (context.stepId) record.stepId = context.stepId;

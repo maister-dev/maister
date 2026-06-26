@@ -71,6 +71,7 @@ async function registerExitedSession(
       runId: `run-${sessionId}`,
       projectSlug: "demo",
       stepId: "step-1",
+      sessionName: "default",
       status: "exited",
       pid: 1,
       startedAt: new Date().toISOString(),

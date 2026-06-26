@@ -231,6 +231,7 @@ describe("supervisor lifecycle integration", () => {
         runId: "run-health",
         projectSlug: "demo",
         stepId: "step-1",
+        sessionName: "default",
         status: "live",
         pid: child.pid ?? 0,
         startedAt: new Date().toISOString(),

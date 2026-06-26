@@ -256,7 +256,10 @@ beforeEach(async () => {
   });
   mocks.tryStartRun.mockResolvedValue({ started: false, queuePosition: 1 });
   mocks.runFlow.mockResolvedValue(undefined);
-  mocks.compileManifest.mockReturnValue({ nodes: new Map() });
+  mocks.compileManifest.mockReturnValue({
+    nodes: new Map(),
+    sessions: new Map([["default", { name: "default" }]]),
+  });
 
   seedSelects();
 

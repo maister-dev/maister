@@ -199,6 +199,15 @@ export const StartSessionRequestSchema = z
       .max(128)
       .regex(SAFE_PATH_SEGMENT, "nodeAttemptId must match /^[A-Za-z0-9._-]+$/")
       .optional(),
+    // M42 (ADR-114): logical Flow session this ACP process serves. Stamped onto
+    // cost.jsonl + run.events.jsonl so a multi-session run attributes spend and
+    // events per session. Absent → "default" (a single-session run).
+    sessionName: z
+      .string()
+      .min(1)
+      .max(128)
+      .regex(SAFE_PATH_SEGMENT, "sessionName must match /^[A-Za-z0-9._-]+$/")
+      .optional(),
     executor: ExecutorSchema,
     runner: RunnerLaunchSchema.optional(),
     resumeSessionId: z
@@ -430,6 +439,9 @@ export type SessionRecord = {
   projectSlug: string;
   stepId: string;
   nodeAttemptId?: string;
+  // M42 (ADR-114): logical Flow session this record serves ("default" for a
+  // single-session run), echoed from StartSessionRequest.sessionName.
+  sessionName: string;
   status: SessionStatus;
   pid: number;
   startedAt: string;

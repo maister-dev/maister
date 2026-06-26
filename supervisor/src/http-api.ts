@@ -451,6 +451,7 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
     attachHeartbeat({ sessionId, child, registry, logger });
     await attachCost({
       sessionId,
+      sessionName: record.sessionName,
       runtimeRoot,
       projectSlug: parsed.projectSlug,
       runId: parsed.runId,

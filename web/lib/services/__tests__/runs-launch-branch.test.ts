@@ -291,7 +291,10 @@ beforeEach(async () => {
   mocks.runFlow.mockResolvedValue(undefined);
   // A trivial compiled graph with no capability-bearing nodes — sidesteps the
   // M11c/M13/M14 enforcement gates so the test isolates branch resolution.
-  mocks.compileManifest.mockReturnValue({ nodes: new Map() });
+  mocks.compileManifest.mockReturnValue({
+    nodes: new Map(),
+    sessions: new Map([["default", { name: "default" }]]),
+  });
 
   // Default: no version-adopt (returns no reverts) so the other tests' select
   // sequence is unchanged; individual tests override per-case.

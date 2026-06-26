@@ -264,7 +264,10 @@ beforeEach(async () => {
   mocks.runFlow.mockResolvedValue(undefined);
   // A trivial compiled graph with no capability-bearing nodes — sidesteps the
   // M11c/M13/M14 enforcement gates so the test isolates the materialization.
-  mocks.compileManifest.mockReturnValue({ nodes: new Map() });
+  mocks.compileManifest.mockReturnValue({
+    nodes: new Map(),
+    sessions: new Map([["default", { name: "default" }]]),
+  });
   mocks.materializeProjectBundlesIntoWorktree.mockResolvedValue({
     bundles: 1,
   });

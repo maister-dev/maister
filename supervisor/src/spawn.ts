@@ -159,7 +159,12 @@ export async function spawnSession(
   // event sequence stays strictly increasing across consecutive
   // sessions of the same run.
   const seedMonotonicId = await tailMaxMonotonicId(eventsLogPath);
-  const eventsLog = await openEventsLog(eventsLogPath, { logger });
+  // M42 (ADR-114): a single-session run omits sessionName → "default".
+  const sessionName = request.sessionName ?? "default";
+  const eventsLog = await openEventsLog(eventsLogPath, {
+    logger,
+    sessionName,
+  });
 
   const args: string[] = [
     ...adapterRuntime.defaultArgs,
@@ -299,6 +304,7 @@ export async function spawnSession(
     projectSlug: request.projectSlug,
     stepId: request.stepId,
     nodeAttemptId: request.nodeAttemptId,
+    sessionName,
     status: "live",
     pid,
     startedAt: new Date().toISOString(),

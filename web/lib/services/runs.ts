@@ -15,13 +15,11 @@ import {
   firstUnknownPackageMcpRef,
   type CapabilityRefRecord,
 } from "@/lib/config";
+import { loadFlowRunnerBindings } from "@/lib/acp-runners/catalog";
 import {
-  resolveCompiledStepTargetRunnerId,
-  type FlowRunnerRemapRow,
-} from "@/lib/acp-runners/flow-step-target";
-import {
-  resolveRunner,
+  resolveRunSessions,
   type RunnerCatalogEntry,
+  type RunSessionSlot,
 } from "@/lib/acp-runners/resolve";
 import { materializeProjectBundlesIntoWorktree } from "@/lib/capabilities/materialize-bundle";
 import {
@@ -88,7 +86,6 @@ import {
 const {
   capabilityRecords,
   flowRevisions,
-  flowRunnerRemaps,
   flows,
   platformAcpRunners,
   platformRouterSidecars,
@@ -97,6 +94,7 @@ const {
   projectFlowRoles,
   projects,
   runs,
+  runSessions,
   tasks,
   workspaces,
 } = schemaModule as unknown as Record<string, any>;
@@ -595,34 +593,37 @@ export async function* launchRunStaged(
       );
     const projectFlowDefaultRunnerId =
       projectFlowDefaultRows[0]?.runnerId ?? null;
-    const remapRows: FlowRunnerRemapRow[] = await _db
-      .select({
-        stepId: flowRunnerRemaps.stepId,
-        sourceRunnerId: flowRunnerRemaps.sourceRunnerId,
-        mappedRunnerId: flowRunnerRemaps.mappedRunnerId,
-        status: flowRunnerRemaps.status,
-      })
-      .from(flowRunnerRemaps)
-      .where(
-        and(
-          eq(flowRunnerRemaps.projectId, project.id),
-          eq(flowRunnerRemaps.flowRevisionId, revision.id),
-        ),
-      );
-    const stepTargetRunnerId = resolveCompiledStepTargetRunnerId({
-      compiled,
-      remaps: remapRows,
-      flowRefId: flow.flowRefId,
-    });
-    const runnerResolution = resolveRunner({
-      launchOverrideRunnerId: input.runnerId,
-      step: { runnerId: stepTargetRunnerId },
+    // M42 (ADR-114): resolve EVERY logical session of the flow to a concrete host
+    // runner. A flow with no runner-bearing node still gets the implicit `default`
+    // session (the legacy single-runner-per-run behavior). Resolution THROWS on an
+    // unbound/ambiguous/no-host slot — the launch fails clean before any worktree.
+    const bindings = await loadFlowRunnerBindings(_db, project.id, revision.id);
+    const compiledSessions = [...compiled.sessions.values()];
+    const sessionSlots: RunSessionSlot[] =
+      compiledSessions.length > 0 ? compiledSessions : [{ name: "default" }];
+    const primarySessionName =
+      sessionSlots.find((session) => session.name === "default")?.name ??
+      sessionSlots[0].name;
+    const sessionResolutions = resolveRunSessions({
+      sessions: sessionSlots,
+      runnerProfiles: (revision.manifest as FlowYamlV1).runner_profiles,
+      bindings,
+      // The single launch-dialog override applies to the run's primary session.
+      ephemeralOverrides: input.runnerId
+        ? { [primarySessionName]: input.runnerId }
+        : undefined,
       projectFlow: { defaultRunnerId: projectFlowDefaultRunnerId },
       platformFlow: { defaultRunnerId: revision.defaultRunnerId },
       project: { defaultRunnerId: project.defaultRunnerId },
       platform: { defaultRunnerId: platformRuntime.defaultRunnerId },
       runners: runnerCatalog,
     });
+    // The run's `runs.*` runner columns mirror the primary session (expand phase —
+    // they are dropped once every reader migrates to `run_sessions`, M42 #24).
+    const runnerResolution =
+      sessionResolutions.find(
+        (session) => session.sessionName === primarySessionName,
+      ) ?? sessionResolutions[0];
     const capabilityAgent = runnerResolution.capabilityAgent as CapabilityAgent;
 
     const platformStatus = await checkSupervisorHealth();
@@ -1050,6 +1051,24 @@ export async function* launchRunStaged(
             `trigger event ${input.triggerEventId} already claimed for agent ${input.agentId}`,
           );
         }
+
+        // M42 (ADR-114): one `run_sessions` row per resolved session — the SOLE
+        // source of truth for which host runner each logical session runs on.
+        // Inserted in the SAME transaction as `runs` (atomic: a crash before
+        // commit leaves no run; the sweep recovers a commit-without-spawn).
+        await tx.insert(runSessions).values(
+          sessionResolutions.map((session) => ({
+            id: randomUUID(),
+            runId,
+            sessionName: session.sessionName,
+            runnerId: session.runnerId,
+            runnerResolutionTier: session.runnerResolutionTier,
+            capabilityAgent: session.capabilityAgent,
+            runnerSnapshot: session.runnerSnapshot,
+            acpSessionId: null,
+            resolutionSource: session.resolutionSource,
+          })),
+        );
 
         if (requiresLaunchUnattended(executionPolicy)) {
           logExecPolicyAction({

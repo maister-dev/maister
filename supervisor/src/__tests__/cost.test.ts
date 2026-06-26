@@ -68,6 +68,7 @@ describe("extractCost", () => {
       }),
       "s2",
       {
+        sessionName: "review",
         projectSlug: "demo",
         runId: "run-1",
         stepId: "implement",
@@ -77,6 +78,7 @@ describe("extractCost", () => {
 
     expect(record).toMatchObject({
       sessionId: "s2",
+      sessionName: "review",
       projectSlug: "demo",
       runId: "run-1",
       stepId: "implement",

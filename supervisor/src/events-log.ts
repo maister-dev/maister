@@ -15,6 +15,10 @@ export type EventsLogWriter = {
 
 export type OpenEventsLogOptions = {
   logger?: Logger;
+  // M42 (ADR-114): logical Flow session whose events this writer appends. A
+  // multi-session run shares one per-run `run.events.jsonl`; each session's
+  // writer stamps `sessionName` so the reader can attribute every event line.
+  sessionName?: string;
 };
 
 export async function openEventsLog(
@@ -22,6 +26,7 @@ export async function openEventsLog(
   opts: OpenEventsLogOptions = {},
 ): Promise<EventsLogWriter> {
   const log = opts.logger?.child({ name: "supervisor-events-log" });
+  const sessionName = opts.sessionName;
 
   await mkdir(dirname(path), { recursive: true });
   const stream: WriteStream = createWriteStream(path, { flags: "a" });
@@ -37,7 +42,9 @@ export async function openEventsLog(
     append(event: SessionEvent): void {
       if (closed) return;
 
-      const line = `${JSON.stringify(event)}\n`;
+      const line = `${JSON.stringify(
+        sessionName ? { ...event, sessionName } : event,
+      )}\n`;
       const ok = stream.write(line);
 
       bytes += Buffer.byteLength(line);

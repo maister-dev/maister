@@ -45,6 +45,7 @@ function makeRecord(): SessionRecord {
     runId: "run",
     projectSlug: "p",
     stepId: "st",
+    sessionName: "default",
     status: "live",
     pid: 1,
     startedAt: new Date(0).toISOString(),

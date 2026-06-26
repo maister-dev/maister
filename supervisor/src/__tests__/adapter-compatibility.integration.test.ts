@@ -42,6 +42,7 @@ function recordFor(adapter: "gemini" | "opencode" | "mimo"): SessionRecord {
     runId: `run-${adapter}`,
     projectSlug: "demo",
     stepId: "step-1",
+    sessionName: "default",
     status: "live",
     pid: 1,
     startedAt: new Date().toISOString(),
