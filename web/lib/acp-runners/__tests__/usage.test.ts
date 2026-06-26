@@ -37,6 +37,14 @@ describe("ACP runner usage references", () => {
       activeRuns: [
         { runId: "run-active", projectId: "project-1", runnerId: "runner-a" },
       ],
+      activeRunSessions: [
+        {
+          runId: "run-active",
+          sessionName: "review",
+          projectId: "project-1",
+          runnerId: "runner-a",
+        },
+      ],
       historicalRunSnapshots: [
         {
           runId: "run-history",
@@ -56,6 +64,7 @@ describe("ACP runner usage references", () => {
       "projectFlowDefault",
       "flowStepRemap",
       "activeRun",
+      "activeRunSession",
       "historicalRunSnapshot",
       "scratchRun",
     ]);

@@ -13,6 +13,7 @@ import {
   runnerSupervisorInput,
 } from "@/lib/acp-runners/spawn-intent";
 import {
+  defaultRunSessionValues,
   resolveAgentRunner,
   type RunnerCatalogEntry,
   type RunnerResolution,
@@ -106,6 +107,7 @@ const {
   platformRuntimeSettings,
   projects,
   runs,
+  runSessions,
   taskComments,
   tasks,
   workspaces,
@@ -1118,6 +1120,12 @@ export async function launchAgentRun(
         .returning({ id: runs.id });
 
       if (rows.length === 0) return false;
+
+      // M42 (ADR-114): a standalone agent run is a single-`default`-session run.
+      await tx.insert(runSessions).values({
+        id: randomUUID(),
+        ...defaultRunSessionValues(runId, resolution),
+      });
 
       // A reused shared tree already has a workspaces row owned by its allocator
       // (worktree_path is UNIQUE), so a reusing sibling inserts none. F3

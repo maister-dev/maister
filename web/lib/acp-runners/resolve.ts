@@ -266,6 +266,35 @@ export function resolveRunner(input: RunnerResolutionInput): RunnerResolution {
   );
 }
 
+// M42 (ADR-114): the `run_sessions` field map for the single `default` session
+// of a non-flow run (scratch / agent / consensus-child). The caller adds the
+// `id` (and runs it inside the run-insert transaction). `acp_session_id` is null
+// until the supervisor session spawns.
+export function defaultRunSessionValues(
+  runId: string,
+  resolution: RunnerResolution,
+): {
+  runId: string;
+  sessionName: "default";
+  runnerId: string;
+  runnerResolutionTier: RunnerResolutionTier;
+  capabilityAgent: string;
+  runnerSnapshot: RunnerSnapshot;
+  acpSessionId: null;
+  resolutionSource: string;
+} {
+  return {
+    runId,
+    sessionName: "default",
+    runnerId: resolution.runnerId,
+    runnerResolutionTier: resolution.runnerResolutionTier,
+    capabilityAgent: resolution.capabilityAgent,
+    runnerSnapshot: resolution.runnerSnapshot,
+    acpSessionId: null,
+    resolutionSource: resolution.runnerResolutionTier,
+  };
+}
+
 // M42 (ADR-114): per-session / per-consensus-slot runner resolution.
 //
 // A flow run no longer resolves ONE runner — it resolves one runner per logical

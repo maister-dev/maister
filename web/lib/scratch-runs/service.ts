@@ -33,6 +33,7 @@ import {
   assertUserHoldsLock,
 } from "@/lib/local-packages/lock";
 import {
+  defaultRunSessionValues,
   resolveRunner,
   type RunnerCatalogEntry,
 } from "@/lib/acp-runners/resolve";
@@ -121,6 +122,7 @@ const {
   platformRuntimeSettings,
   projects,
   runs,
+  runSessions,
   scratchAttachments,
   scratchCapabilityProfiles,
   scratchMessages,
@@ -905,6 +907,11 @@ export async function* launchScratchRunStaged(
         createdByUserId: args.userId,
         startedAt: now,
       });
+      // M42 (ADR-114): a scratch run is a single-`default`-session run.
+      await tx.insert(runSessions).values({
+        id: randomUUID(),
+        ...defaultRunSessionValues(runId, runnerResolution),
+      });
       await tx.insert(workspaces).values({
         id: randomUUID(),
         runId,
@@ -1523,6 +1530,11 @@ export async function launchLocalPackageAssistant(args: {
       flowRevisionId: null,
       createdByUserId: args.userId,
       startedAt: now,
+    });
+    // M42 (ADR-114): a local-package assistant run is single-`default`-session.
+    await tx.insert(runSessions).values({
+      id: randomUUID(),
+      ...defaultRunSessionValues(runId, runnerResolution),
     });
     await tx.insert(scratchRuns).values({
       runId,

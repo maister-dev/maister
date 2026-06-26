@@ -182,7 +182,7 @@ next migration idx = **0080**.
 - [x] **#25 P3.0** Supervisor: accept + stamp `sessionName` (StartSessionRequest, CostRecord, SessionRecord, events) for per-session cost/event attribution.
 - [x] **#12 P3.1** Launch: resolve N sessions + atomic run + N `run_sessions` insert (one tx) + pass `sessionName` per session.
 - [x] **#13 P3.2** Runtime dispatch: per-node session resume + persist acp_session_id; judge runs on its session runner (model field removed; materialize uses the session runner's model).
-- [ ] **#14 P3.3** Fan `run_sessions` to ALL run creators (scratch/agent/consensus-child + orchestrator-child via `agents/launch.ts`, reached by `/api/v1/ext/runs/delegate`) + runner-delete guard + UI read models + **HITL/gate live-delivery** (`services/gate-chat.ts`, `services/hitl.ts`) reads the ACTIVE `run_sessions.acp_session_id` to target the right session's supervisor `/sessions/:id/input`.
+- [x] **#14 P3.3** Fan `run_sessions` to ALL run creators (scratch×2/agent/consensus-child via `agents/launch.ts`) + runner-delete guard (`activeRunSession` ref) + **gate-chat ACTIVE-session live-delivery** (`services/gate-chat.ts` reads the latest `run_sessions.acp_session_id`). NOTE: `services/hitl.ts` resume path delegates to `resumeRun` (active-session lands in #16); UI read models still read the `runs.*` mirror (tsc-forced move to `run_sessions` at #24).
 
 ### Phase 4 — Reconcile / resume / recover / terminal
 - [ ] **#15 P4.1** Reconcile active-session-aware classification + run_kind branch + crash-window coverage.

@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, desc, eq, isNotNull, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { runnerSupervisorInput } from "@/lib/acp-runners/spawn-intent";
@@ -32,8 +32,35 @@ import {
 } from "@/lib/supervisor-client";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { gateChatMessages, hitlRequests, projects, runs, workspaces } =
-  schemaModule as unknown as Record<string, any>;
+const {
+  gateChatMessages,
+  hitlRequests,
+  projects,
+  runs,
+  runSessions,
+  workspaces,
+} = schemaModule as unknown as Record<string, any>;
+
+// M42 (ADR-114): a gate-chat turn is delivered to the run's ACTIVE logical
+// session — the one whose ACP process is paused at the gate. That is the
+// most-recently-updated `run_sessions` row with a live `acp_session_id`. Falls
+// back to the run-level handle for a legacy run with no `run_sessions` rows.
+async function activeRunSessionAcpId(
+  db: Db,
+  runId: string,
+  fallback: string | null,
+): Promise<string | null> {
+  const rows = await db
+    .select({ acpSessionId: runSessions.acpSessionId })
+    .from(runSessions)
+    .where(
+      and(eq(runSessions.runId, runId), isNotNull(runSessions.acpSessionId)),
+    )
+    .orderBy(desc(runSessions.updatedAt))
+    .limit(1);
+
+  return (rows[0]?.acpSessionId as string | null | undefined) ?? fallback;
+}
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
@@ -334,6 +361,16 @@ export async function sendGateChatTurn(args: {
   if (!run) {
     throw new MaisterError("PRECONDITION", `run not found: ${args.runId}`);
   }
+
+  // M42 (ADR-114): target the active session's ACP process, not the run-level
+  // (primary) handle, so a multi-session run delivers the turn to the paused
+  // session.
+  const activeAcpSessionId = await activeRunSessionAcpId(
+    d,
+    args.runId,
+    run.acpSessionId,
+  );
+
   // X-IDENT: both ids are url-params; the hitl row must belong to the run.
   if (!hitl || hitl.runId !== args.runId) {
     throw new MaisterError(
@@ -346,7 +383,7 @@ export async function sendGateChatTurn(args: {
     runStatus: run.status,
     hitlKind: hitl.kind,
     hitlRespondedAt: hitl.respondedAt,
-    acpSessionId: run.acpSessionId,
+    acpSessionId: activeAcpSessionId,
   });
 
   if (!availability.available) {
@@ -436,7 +473,7 @@ export async function sendGateChatTurn(args: {
         authorUserId: args.actorUserId ?? null,
         authorLabel: userLabel,
         body: args.message,
-        acpSessionId: run.acpSessionId,
+        acpSessionId: activeAcpSessionId,
         seq: baseSeq + 1,
       })
       .returning({
@@ -509,7 +546,7 @@ export async function sendGateChatTurn(args: {
         runner: run.runnerSnapshot
           ? runnerSupervisorInput({ snapshot: run.runnerSnapshot })
           : undefined,
-        resumeSessionId: run.acpSessionId as string,
+        resumeSessionId: activeAcpSessionId as string,
       });
     } catch (err) {
       if (idleClaim) {
@@ -635,7 +672,7 @@ export async function sendGateChatTurn(args: {
         authorUserId: null,
         authorLabel: "agent",
         body: replyBody,
-        acpSessionId: run.acpSessionId,
+        acpSessionId: activeAcpSessionId,
         seq: baseSeq + 2,
         mutationReverted: sensed.reverted,
       })

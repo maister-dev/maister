@@ -139,7 +139,13 @@ describe("launchConsensusDraftRuns", () => {
         status: "Running",
       },
     ]);
-    expect(inserts).toHaveLength(1);
+    // M42 (ADR-114): the consensus child run + its single `default` run_sessions row.
+    expect(inserts).toHaveLength(2);
+    expect(inserts[1]).toMatchObject({
+      runId: expect.any(String),
+      sessionName: "default",
+      runnerId: "runner-codex",
+    });
     expect(inserts[0]).toMatchObject({
       runKind: "agent",
       agentId: null,

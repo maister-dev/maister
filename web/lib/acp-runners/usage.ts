@@ -11,6 +11,7 @@ import {
   projectFlowRunnerDefaults,
   projects,
   runs,
+  runSessions,
 } from "@/lib/db/schema";
 
 type Db = {
@@ -67,6 +68,16 @@ export type RunnerUsageReference =
       readonly runnerId: string;
     }
   | {
+      // M42 (ADR-114): a logical session of an active run pins this runner —
+      // a judge/named-session runner that differs from the run's primary runner
+      // is referenced ONLY here, so it must block deletion too.
+      readonly kind: "activeRunSession";
+      readonly runId: string;
+      readonly sessionName: string;
+      readonly projectId: string | null;
+      readonly runnerId: string;
+    }
+  | {
       readonly kind: "historicalRunSnapshot";
       readonly runId: string;
       readonly projectId: string | null;
@@ -110,6 +121,12 @@ type RunnerUsageInput = {
   }[];
   readonly activeRuns: readonly {
     readonly runId: string;
+    readonly projectId: string | null;
+    readonly runnerId?: string | null;
+  }[];
+  readonly activeRunSessions: readonly {
+    readonly runId: string;
+    readonly sessionName: string;
     readonly projectId: string | null;
     readonly runnerId?: string | null;
   }[];
@@ -192,6 +209,17 @@ export function collectRunnerUsageReferences(
     });
   }
 
+  for (const session of input.activeRunSessions) {
+    if (session.runnerId !== input.runnerId) continue;
+    refs.push({
+      kind: "activeRunSession",
+      runId: session.runId,
+      sessionName: session.sessionName,
+      projectId: session.projectId,
+      runnerId: input.runnerId,
+    });
+  }
+
   for (const run of input.historicalRunSnapshots) {
     if (run.runnerSnapshot?.id !== input.runnerId) continue;
     refs.push({
@@ -251,6 +279,7 @@ export async function loadRunnerUsageReferences(
     projectFlowDefaultRows,
     flowStepRemapRows,
     runRows,
+    runSessionRows,
   ] = await Promise.all([
     db.select().from(platformRuntimeSettings),
     db.select().from(projects),
@@ -258,7 +287,9 @@ export async function loadRunnerUsageReferences(
     db.select().from(projectFlowRunnerDefaults),
     db.select().from(flowRunnerRemaps),
     db.select().from(runs),
+    db.select().from(runSessions),
   ]);
+  const runById = new Map(runRows.map((run) => [run.id, run]));
 
   return collectRunnerUsageReferences({
     runnerId,
@@ -289,6 +320,18 @@ export async function loadRunnerUsageReferences(
         runId: run.id,
         projectId: run.projectId,
         runnerId: run.runnerId ?? null,
+      })),
+    activeRunSessions: runSessionRows
+      .filter((session) => {
+        const run = runById.get(session.runId);
+
+        return run !== undefined && ACTIVE_RUN_STATUSES.has(run.status);
+      })
+      .map((session) => ({
+        runId: session.runId,
+        sessionName: session.sessionName,
+        projectId: runById.get(session.runId)?.projectId ?? null,
+        runnerId: session.runnerId ?? null,
       })),
     historicalRunSnapshots: runRows
       .filter((run) => snapshotRunnerId(run.runnerSnapshot) !== null)

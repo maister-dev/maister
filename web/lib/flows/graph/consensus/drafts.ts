@@ -12,6 +12,7 @@ import pino from "pino";
 
 import { resolveConsensusRunnerSlot } from "./roles";
 
+import { defaultRunSessionValues } from "@/lib/acp-runners/resolve";
 import { launchAgentRun, startAgentSession } from "@/lib/agents/launch";
 import * as schemaModule from "@/lib/db/schema";
 import { type DelegationSnapshot } from "@/lib/db/schema";
@@ -19,7 +20,7 @@ import { MaisterError } from "@/lib/errors";
 import { assertRunKindInvariant } from "@/lib/runs/run-kind-invariants";
 import { tryStartRun } from "@/lib/scheduler";
 
-const { runs } = schemaModule as unknown as Record<string, any>;
+const { runs, runSessions } = schemaModule as unknown as Record<string, any>;
 
 const log = pino({
   name: "consensus-drafts",
@@ -214,6 +215,11 @@ async function defaultCreateRunnerDraftRun(
   });
 
   await input.db.insert(runs).values(runRow);
+  // M42 (ADR-114): a consensus draft child is a single-`default`-session agent run.
+  await input.db.insert(runSessions).values({
+    id: randomUUID(),
+    ...defaultRunSessionValues(runId, resolved),
+  });
 
   const startResult = await runtime.tryStartRun(runId, { db: input.db });
 
