@@ -1447,6 +1447,65 @@ export const runs = pgTable(
   }),
 );
 
+// M42 (ADR-114): per-(run, session) runner state — the SOLE source of truth for
+// a run's runner(s). One row per logical session (`default` / solo / named) for a
+// flow run; exactly one `default` row for a scratch/agent run. The run-level
+// runner columns (runs.{runner_id, runner_resolution_tier, capability_agent,
+// runner_snapshot, acp_session_id}) are dropped in the M42 contract migration
+// once every reader is migrated to this table (expand-contract cutover). Note:
+// `step_runs.acp_session_id` is a SEPARATE per-step-run column and STAYS.
+export const runSessions = pgTable(
+  "run_sessions",
+  {
+    id: text("id").primaryKey(),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    sessionName: text("session_name").notNull(),
+    runnerId: text("runner_id").references(() => platformAcpRunners.id, {
+      onDelete: "set null",
+    }),
+    runnerResolutionTier: text("runner_resolution_tier", {
+      enum: [
+        "launchOverride",
+        "stepTarget",
+        // M42 (ADR-114) per-slot binding + unique host auto-match tiers.
+        "binding",
+        "autoMatch",
+        "projectFlowDefault",
+        "platformFlowDefault",
+        "projectDefault",
+        "platformDefault",
+        // M34 (ADR-089) standalone agent chain tiers.
+        "agentLinkOverride",
+        "agentDefault",
+      ],
+    }),
+    capabilityAgent: text("capability_agent", { enum: ADAPTER_IDS }),
+    runnerSnapshot: jsonb("runner_snapshot").$type<RunnerSnapshot>(),
+    acpSessionId: text("acp_session_id"),
+    // Audit descriptor of the concrete source that resolved this session's
+    // runner (the slot_key for a binding/auto-match, the chain scope for the
+    // default chain, or "launch-dialog" for an ephemeral per-run override).
+    resolutionSource: text("resolution_source"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    uniqRunSession: unique("run_sessions_run_session_uq").on(
+      t.runId,
+      t.sessionName,
+    ),
+    idxRunner: index("run_sessions_runner_idx").on(t.runnerId),
+  }),
+);
+
+export type RunSession = typeof runSessions.$inferSelect;
+
 export const runCostRollups = pgTable(
   "run_cost_rollups",
   {
