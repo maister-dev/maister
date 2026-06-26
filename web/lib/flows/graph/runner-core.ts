@@ -29,6 +29,7 @@ const {
   platformAcpRunners,
   projects,
   runs,
+  runSessions,
   tasks,
   workspaces,
 } = schemaModule as unknown as Record<string, any>;
@@ -67,6 +68,18 @@ export type RunFlowOptions = {
   consensusResume?: { targetStepId: string };
 };
 
+// M42 (ADR-114): a run's logical session — its concrete host runner snapshot and
+// the resume handle (`acp_session_id`) for the ACP process serving it. Sourced
+// from `run_sessions` (the sole source of truth); a legacy run with no rows maps
+// the implicit `default` session onto the run-level runner snapshot.
+export type LoadedRunSession = {
+  sessionName: string;
+  runner: RunnerSnapshot;
+  acpSessionId: string | null;
+  capabilityAgent: string | null;
+  runnerResolutionTier: string | null;
+};
+
 export type LoadedRun = {
   // ADR-100: the graph/linear runner only loads flow runs (loadRun requires a
   // task + flow + project), so project_id is non-null here even though the base
@@ -77,6 +90,9 @@ export type LoadedRun = {
   executor: RunnerExecutor;
   manifest: FlowYamlV1;
   runner: RunnerSnapshot;
+  // M42 (ADR-114): the run's session set keyed by session name; the per-node
+  // dispatch resolves the node's session runner + resume handle from here.
+  sessions: Map<string, LoadedRunSession>;
   workspace: WorkspaceRow;
   projectSlug: string;
   flowInstallPath: string;
@@ -111,7 +127,9 @@ function runnerSnapshotFromRunner(row: PlatformAcpRunner): RunnerSnapshot {
   };
 }
 
-function executorFromRunnerSnapshot(snapshot: RunnerSnapshot): RunnerExecutor {
+export function executorFromRunnerSnapshot(
+  snapshot: RunnerSnapshot,
+): RunnerExecutor {
   return {
     id: snapshot.id,
     executorRefId: snapshot.id,
@@ -189,6 +207,38 @@ export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
   const runner = await loadRunnerSnapshot(db, run, runId);
   const executor = executorFromRunnerSnapshot(runner);
 
+  // M42 (ADR-114): the run's logical sessions. A legacy run (no rows) falls back
+  // to a single `default` session mapped onto the run-level runner + resume
+  // handle, preserving pre-M42 single-session behavior.
+  const runSessionRows: Array<Record<string, any>> = await db
+    .select()
+    .from(runSessions)
+    .where(eq(runSessions.runId, runId));
+  const sessions = new Map<string, LoadedRunSession>(
+    runSessionRows.map((row) => [
+      row.sessionName as string,
+      {
+        sessionName: row.sessionName as string,
+        runner: (row.runnerSnapshot ?? runner) as RunnerSnapshot,
+        acpSessionId: (row.acpSessionId ?? null) as string | null,
+        capabilityAgent: (row.capabilityAgent ?? null) as string | null,
+        runnerResolutionTier: (row.runnerResolutionTier ?? null) as
+          | string
+          | null,
+      },
+    ]),
+  );
+
+  if (!sessions.has("default")) {
+    sessions.set("default", {
+      sessionName: "default",
+      runner,
+      acpSessionId: run.acpSessionId ?? null,
+      capabilityAgent: run.capabilityAgent ?? null,
+      runnerResolutionTier: run.runnerResolutionTier ?? null,
+    });
+  }
+
   const projectRows: Array<{ slug: string }> = await db
     .select({ slug: projects.slug })
     .from(projects)
@@ -262,6 +312,7 @@ export async function loadRun(db: Db, runId: string): Promise<LoadedRun> {
     manifest,
     executor,
     runner,
+    sessions,
     workspace,
     projectSlug,
     flowInstallPath,

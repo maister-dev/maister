@@ -84,6 +84,9 @@ export type RunAgentStepCtx = {
     router?: "ccr";
   };
   runner?: SupervisorRunnerInput;
+  // M42 (ADR-114): the logical Flow session this node runs in — forwarded to the
+  // supervisor for per-session cost/event attribution.
+  sessionName?: string;
   context: FlowContext;
   sessionState: AcpSessionState;
   capabilityProfilePath?: string;
@@ -814,6 +817,7 @@ async function runNewSession(
       worktreePath: ctx.worktreePath,
       stepId: ctx.stepId,
       nodeAttemptId: ctx.nodeAttemptId,
+      sessionName: ctx.sessionName,
       executor: executorToSupervisorInput(ctx.executor),
       runner: ctx.runner,
       capabilityProfilePath: ctx.capabilityProfilePath,
@@ -1013,6 +1017,7 @@ async function runSlashInExisting(
       projectSlug: ctx.projectSlug,
       worktreePath: ctx.worktreePath,
       stepId: ctx.stepId,
+      sessionName: ctx.sessionName,
       executor: executorToSupervisorInput(ctx.executor),
       runner: ctx.runner,
       capabilityProfilePath: ctx.capabilityProfilePath,

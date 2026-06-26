@@ -29,7 +29,11 @@ import { hookEnvDefaults, resolveHooksConfig } from "../hooks-config";
 import { runAgentStep } from "../runner-agent";
 import { runCliStep } from "../runner-cli";
 
-import { cleanupSlashSession, asError } from "./runner-core";
+import {
+  cleanupSlashSession,
+  asError,
+  executorFromRunnerSnapshot,
+} from "./runner-core";
 import { compileManifest, resolveTransition } from "./compile";
 import { computeDecideOutcome, type DecideVerdict } from "./decide-eval";
 import { runConsensusNode } from "./consensus/runtime";
@@ -155,7 +159,7 @@ import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { runs, hitlRequests, reviewComments, gateChatMessages } =
+const { runs, runSessions, hitlRequests, reviewComments, gateChatMessages } =
   schemaModule as unknown as Record<string, any>;
 
 const log = pino({
@@ -992,9 +996,17 @@ async function executeNodeAction(
     attempt: number;
     // M30 (ADR-081): resume the prior attempt's ACP session on this dispatch.
     resumeSessionId?: string;
+    // M42 (ADR-114): the node's logical session + its host runner. Default to
+    // the run-level executor/runner (single-session parity) when absent.
+    sessionName?: string;
+    sessionExecutor?: LoadedRun["executor"];
+    sessionRunner?: LoadedRun["runner"];
     db: Db;
   },
 ): Promise<NodeResult> {
+  const sessionExecutor = ctx.sessionExecutor ?? loaded.executor;
+  const sessionRunner = ctx.sessionRunner ?? loaded.runner;
+
   if (node.source.kind !== "node") {
     throw new MaisterError(
       "CONFIG",
@@ -1089,20 +1101,23 @@ async function executeNodeAction(
             // acp_session_id so the coordinator's context is restored via
             // session/resume rather than re-run from scratch.
             resumeSessionId: ctx.resumeSessionId,
+            // M42 (ADR-114): dispatch on the node's session runner. For a
+            // default-session node this is the run-level executor/runner.
+            sessionName: ctx.sessionName,
             executor: {
-              id: loaded.executor.id,
-              agent: loaded.executor.agent,
-              model: loaded.executor.model,
-              env: (loaded.executor.env ?? undefined) as
+              id: sessionExecutor.id,
+              agent: sessionExecutor.agent,
+              model: sessionExecutor.model,
+              env: (sessionExecutor.env ?? undefined) as
                 | Record<string, string>
                 | undefined,
-              router: loaded.executor.router ?? undefined,
+              router: sessionExecutor.router ?? undefined,
             },
-            runner: runnerSupervisorInput({ snapshot: loaded.runner }),
+            runner: runnerSupervisorInput({ snapshot: sessionRunner }),
             sessionState: ctx.sessionState,
             capabilityProfilePath: ctx.capabilityProfilePath,
             adapterLaunch: mergeRunnerAdapterLaunch(
-              loaded.runner,
+              sessionRunner,
               ctx.adapterLaunch,
             ),
             mcpServers: ctx.mcpServers,
@@ -1401,6 +1416,9 @@ async function recordComposedCommentsEvidence(
 async function materializeNodeCapabilities(
   node: CompiledNode,
   loaded: LoadedRun,
+  // M42 (ADR-114): the node's session runner (judge/named-session nodes pin
+  // their OWN model + agent here, not the run-level executor).
+  executor: LoadedRun["executor"],
   worktreePath: string,
   nodeAttemptId: string,
   catalog: CapabilityCatalogRecord[],
@@ -1417,7 +1435,7 @@ async function materializeNodeCapabilities(
     }
   | undefined
 > {
-  const agent = loaded.executor.agent;
+  const agent = executor.agent;
   const settings = capabilityBearingSettings(node.nodeType, node.settings);
   const declares =
     !!settings &&
@@ -1435,8 +1453,7 @@ async function materializeNodeCapabilities(
   // (ADR-076). So claude with a configured model still materializes a model-only
   // profile. codex pins supervisor-side via setSessionModel, so a settings-less
   // codex node needs no materialization.
-  const pinModelOnly =
-    !declares && agent === "claude" && !!loaded.executor.model;
+  const pinModelOnly = !declares && agent === "claude" && !!executor.model;
 
   if (!declares && !pinModelOnly) return undefined;
 
@@ -1475,10 +1492,10 @@ async function materializeNodeCapabilities(
       defaults: hookEnvDefaults(),
     }),
     executor: {
-      executorRefId: loaded.executor.executorRefId,
+      executorRefId: executor.executorRefId,
       agent,
-      model: loaded.executor.model,
-      router: loaded.executor.router ?? null,
+      model: executor.model,
+      router: executor.router ?? null,
     },
   });
 
@@ -2123,6 +2140,22 @@ export async function runGraph(
       // with an effective `resume` policy and a live prior session id).
       let attemptResumeSessionId: string | undefined;
 
+      // M42 (ADR-114): the logical session this node runs in (always "default"
+      // for a single-session flow). A node in a NAMED/solo session dispatches on
+      // that session's host runner and shares its continuous acp_session_id; the
+      // `default` session keeps byte-identical run-level behavior (the run-level
+      // executor/runner snapshot are used directly).
+      const nodeSessionName = node.session ?? "default";
+      const nodeSession = loaded.sessions.get(nodeSessionName);
+      const usesNamedSession =
+        nodeSession !== undefined && nodeSessionName !== "default";
+      const nodeRunnerSnapshot = usesNamedSession
+        ? nodeSession.runner
+        : loaded.runner;
+      const nodeExecutor = usesNamedSession
+        ? executorFromRunnerSnapshot(nodeRunnerSnapshot)
+        : loaded.executor;
+
       // M11b (ADR-030): the takeover-resume claim already appended the re-entry
       // node's fresh attempt inside the claim transaction (the observable CAS
       // marker). Reuse it on the first loop iteration so the resume rerun does
@@ -2143,7 +2176,12 @@ export async function runGraph(
         // runAgentStep respawns via session/resume (a gone/unresumable session
         // degrades OBSERVABLY to a fresh one + sessionFallback).
         if (isOrchestratorResume && node.id === resumeNodeId) {
-          attemptResumeSessionId = loaded.run.acpSessionId ?? undefined;
+          // M42 (ADR-114): a named-session orchestrator resumes its session's
+          // handle; the default session uses the run-level handle (unchanged).
+          attemptResumeSessionId =
+            (usesNamedSession ? nodeSession?.acpSessionId : null) ??
+            loaded.run.acpSessionId ??
+            undefined;
         }
         log2.info(
           { nodeAttemptId, nodeId: node.id },
@@ -2234,6 +2272,18 @@ export async function runGraph(
         // no real git repo at node start — cumulative fallback at gate time
       }
 
+      // M42 (ADR-114): a node joining a NAMED session resumes that session's
+      // continuous acp_session_id (one conversation across the session's nodes in
+      // graph order) unless a rework/orchestrator resume already set a handle. The
+      // default session keeps per-node-fresh behavior (no implicit continuity).
+      if (
+        !attemptResumeSessionId &&
+        usesNamedSession &&
+        nodeSession?.acpSessionId
+      ) {
+        attemptResumeSessionId = nodeSession.acpSessionId;
+      }
+
       await db
         .update(runs)
         .set({ currentStepId: node.id })
@@ -2256,17 +2306,14 @@ export async function runGraph(
           node.nodeType,
           node.settings,
         );
-        const snapshot = evaluateNodeEnforcement(
-          settings,
-          loaded.executor.agent,
-        );
+        const snapshot = evaluateNodeEnforcement(settings, nodeExecutor.agent);
 
         await setEnforcementSnapshot(nodeAttemptId, snapshot, db);
 
         try {
           assertNodeLaunchable(
             { id: node.id, nodeType: node.nodeType, settings },
-            loaded.executor.agent,
+            nodeExecutor.agent,
           );
         } catch (err) {
           const e = isMaisterError(err)
@@ -2293,7 +2340,8 @@ export async function runGraph(
       const context = buildContext({
         task: loaded.task,
         run: loaded.run,
-        executor: loaded.executor,
+        // M42 (ADR-114): `{{ executor.* }}` reflects the node's session runner.
+        executor: nodeExecutor,
         stepRuns: [],
         nodeAttempts: attempts,
         projectSlug: loaded.projectSlug,
@@ -2367,6 +2415,7 @@ export async function runGraph(
           materialized = await materializeNodeCapabilities(
             node,
             loaded,
+            nodeExecutor,
             worktreePath,
             nodeAttemptId,
             catalog,
@@ -2431,6 +2480,9 @@ export async function runGraph(
           nodeAttemptNumber,
           attempt: nodeAttemptNumber,
           resumeSessionId: attemptResumeSessionId,
+          sessionName: nodeSessionName,
+          sessionExecutor: nodeExecutor,
+          sessionRunner: nodeRunnerSnapshot,
           db,
         });
       } catch (err) {
@@ -2471,6 +2523,24 @@ export async function runGraph(
         failed = true;
         runErrorCode = e.code;
         break;
+      }
+
+      // M42 (ADR-114): persist this dispatch's acp_session_id onto the node's
+      // run_sessions row — the per-session resume handle (sole source of truth).
+      // The run-level runs.acp_session_id mirror is still maintained by the
+      // branch sites below (expand phase) until the reader fan-out completes (#24).
+      if (result.acpSessionId) {
+        await db
+          .update(runSessions)
+          .set({ acpSessionId: result.acpSessionId, updatedAt: new Date() })
+          .where(
+            and(
+              eq(runSessions.runId, runId),
+              eq(runSessions.sessionName, nodeSessionName),
+            ),
+          );
+
+        if (nodeSession) nodeSession.acpSessionId = result.acpSessionId;
       }
 
       if (result.needsInput) {

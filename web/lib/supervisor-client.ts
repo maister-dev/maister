@@ -100,6 +100,9 @@ export type CreateSessionInput = {
   confineRoot?: string;
   stepId: string;
   nodeAttemptId?: string;
+  // M42 (ADR-114): the logical Flow session this ACP process serves — stamped
+  // onto cost.jsonl + run.events.jsonl. Absent → supervisor defaults to "default".
+  sessionName?: string;
   executor: SupervisorExecutorInput;
   runner?: SupervisorRunnerInput;
   resumeSessionId?: string;

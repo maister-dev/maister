@@ -13,6 +13,7 @@ import {
   hitlRequests as hitlRequestsTable,
   projects as projectsTable,
   runs as runsTable,
+  runSessions as runSessionsTable,
   stepRuns as stepRunsTable,
   tasks as tasksTable,
   domainEvents as domainEventsTable,
@@ -58,10 +59,12 @@ type TableRows = {
   artifact_instances: Row[];
   webhook_events: Row[];
   domain_events: Row[];
+  run_sessions: Row[];
 };
 
 function tableNameOf(t: unknown): keyof TableRows {
   if (t === runsTable) return "runs";
+  if (t === runSessionsTable) return "run_sessions";
   if (t === tasksTable) return "tasks";
   if (t === flowsTable) return "flows";
   if (t === projectsTable) return "projects";
@@ -77,27 +80,35 @@ function tableNameOf(t: unknown): keyof TableRows {
   throw new Error("unknown table");
 }
 
-function makeFakeDb(initial: TableRows): {
+function makeFakeDb(
+  initial: Omit<TableRows, "run_sessions"> & { run_sessions?: Row[] },
+): {
   client: any;
   updates: Array<{ table: keyof TableRows; set: Row }>;
 } {
-  const rows = initial;
+  const rows: TableRows = {
+    ...initial,
+    run_sessions: initial.run_sessions ?? [],
+  };
   const updates: Array<{ table: keyof TableRows; set: Row }> = [];
   const inserts: Array<{ table: keyof TableRows; row: Row }> = [];
 
   const selectChain = (cols?: Row) => ({
     from: (table: unknown) => {
       const name = tableNameOf(table);
-      const project = () =>
-        cols
-          ? rows[name].map((r) => {
+      const project = () => {
+        const base = rows[name] ?? [];
+
+        return cols
+          ? base.map((r) => {
               const out: Row = {};
 
               for (const k of Object.keys(cols)) out[k] = r[k];
 
               return out;
             })
-          : rows[name];
+          : base;
+      };
       const thenable = (rs: Row[]) => {
         const p = Promise.resolve(rs);
 
@@ -190,7 +201,7 @@ afterEach(async () => {
 
 describe("runFlow terminal-status precedence", () => {
   it("step result errorCode='CRASH' transitions runs.status to 'Crashed' (not 'Failed')", async () => {
-    const fixture: TableRows = {
+    const fixture = {
       runs: [
         {
           id: "run-1",

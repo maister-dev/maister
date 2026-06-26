@@ -181,7 +181,7 @@ next migration idx = **0080**.
 ### Phase 3 — Run lifecycle (multi-session web + supervisor)
 - [x] **#25 P3.0** Supervisor: accept + stamp `sessionName` (StartSessionRequest, CostRecord, SessionRecord, events) for per-session cost/event attribution.
 - [x] **#12 P3.1** Launch: resolve N sessions + atomic run + N `run_sessions` insert (one tx) + pass `sessionName` per session.
-- [ ] **#13 P3.2** Runtime dispatch: per-node session resume + persist acp_session_id; judge runs on its session runner (model field removed; materialize uses the session runner's model).
+- [x] **#13 P3.2** Runtime dispatch: per-node session resume + persist acp_session_id; judge runs on its session runner (model field removed; materialize uses the session runner's model).
 - [ ] **#14 P3.3** Fan `run_sessions` to ALL run creators (scratch/agent/consensus-child + orchestrator-child via `agents/launch.ts`, reached by `/api/v1/ext/runs/delegate`) + runner-delete guard + UI read models + **HITL/gate live-delivery** (`services/gate-chat.ts`, `services/hitl.ts`) reads the ACTIVE `run_sessions.acp_session_id` to target the right session's supervisor `/sessions/:id/input`.
 
 ### Phase 4 — Reconcile / resume / recover / terminal

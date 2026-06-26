@@ -13,6 +13,7 @@ import {
   hitlRequests as hitlRequestsTable,
   projects as projectsTable,
   runs as runsTable,
+  runSessions as runSessionsTable,
   stepRuns as stepRunsTable,
   tasks as tasksTable,
   domainEvents as domainEventsTable,
@@ -35,6 +36,7 @@ type TableRows = {
   artifact_instances: Record<string, unknown>[];
   webhook_events: Record<string, unknown>[];
   domain_events: Record<string, unknown>[];
+  run_sessions: Record<string, unknown>[];
 };
 
 type CapturedUpdate = {
@@ -44,6 +46,7 @@ type CapturedUpdate = {
 
 function tableNameOf(table: unknown): keyof TableRows {
   if (table === runsTable) return "runs";
+  if (table === runSessionsTable) return "run_sessions";
   if (table === tasksTable) return "tasks";
   if (table === flowsTable) return "flows";
   if (table === projectsTable) return "projects";
@@ -79,6 +82,7 @@ function makeFakeDb(initial: Partial<TableRows>): {
     artifact_instances: initial.artifact_instances ?? [],
     webhook_events: initial.webhook_events ?? [],
     domain_events: initial.domain_events ?? [],
+    run_sessions: initial.run_sessions ?? [],
   };
   const updates: CapturedUpdate[] = [];
   const inserts: Array<{
@@ -219,6 +223,7 @@ async function writeArtifact(
 
 function baseFixture(): TableRows {
   return {
+    run_sessions: [],
     runs: [
       {
         id: "run-1",
