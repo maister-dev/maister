@@ -315,11 +315,101 @@ Phase 7 budgets a renumber check vs `main` (`git show main:docs/decisions.md`,
 
 ---
 
-## RESUMPTION STATE — 2026-06-26 (after Phase 2 binding foundation)
+## RESUMPTION STATE — 2026-06-27 (Phases 0–3 COMPLETE; resume at #15)
 
-> The harness task list is in-memory (lost on context clear). THIS section + the
-> `- [x]` checkboxes above are the durable record. On resume, re-run
-> `/aif-implement` (or read this) and continue at **#9 core** below.
+> THIS section + the `- [x]` checkboxes are the durable record (the harness task
+> list is lost on context clear). On resume, read this and continue at **#15**.
+
+**Branch:** `feature/unified-flow-runner-sessions` — **11 commits, UNMERGED + UNPUSHED**.
+**Done: #1–#14 + #25 (Phases 0–3).** All gates green (re-verified 2026-06-27):
+web `tsc 0` / `unit 5154`, supervisor `tsc 0` / `unit 300`, docs `306` mermaid +
+`594` ADR anchors, `db:generate` → "No schema changes" (journal monotonic
+0079…03 → 0080…04 → 0081…05), eslint 0.
+
+Phase-2/3 commits (newest first): `1a49fd0e` format · `1efe7b38` plan ·
+`fdb4c60b` #14 (run_sessions fan-out + active-session gate-chat) · `f85184a9`
+#13 (per-node session dispatch) · `20bcedaa` #25+#12 (supervisor sessionName +
+multi-session launch) · `998893fc` #9–#11 (resolution + slot routes + launch
+surface). Earlier: `0514d59f`/`cd0c8e91`/`05c77f53` Phase 2 schema+binding ·
+`603f7a3b` Phase 1 · `667b037a` Phase 0.
+
+**★★ EXPAND-CONTRACT STATE (critical to understand before #15):** the 5 `runs`
+runner columns (`runner_id, runner_resolution_tier, capability_agent,
+runner_snapshot, acp_session_id`) + `runs_runner_idx` **STILL EXIST and are STILL
+WRITTEN** as a MIRROR of the run's PRIMARY session (launch writes them from the
+primary; dispatch sets `runs.acp_session_id` first-time-only). `run_sessions` is
+the additive **sole source of truth**, written by ALL creators (flow=N rows,
+scratch/agent/consensus-child=1 `default`). **Readers are SPLIT:** the per-node
+graph DISPATCH reads `run_sessions` (#13); **reconcile / resume / recover /
+terminal / UI read-models STILL read the `runs.*` mirror** — which is CORRECT for
+every existing single-session flow. The mirror columns DROP in **migration 0082
+(#24)**, which `tsc`-forces the full rule-11 reader fan-out. So #15–#17 are only
+needed for MULTI-session correctness (no such flow exists until #22 ships them).
+
+**NEXT — #15 reconcile / #16 resume+recover / #17 terminal-closes-all.** REUSE the
+active-session pattern already shipped in `lib/services/gate-chat.ts`
+`activeRunSessionAcpId` (latest non-null `run_sessions.acp_session_id`, fallback
+`runs.acp_session_id`). For resume/recover (#16) you also need the active
+session's `runner_snapshot` (not just acp id) — extend the helper to return
+`{ acpSessionId, runnerSnapshot }`. #17 (terminal/promote/workbench/abandon) must
+close EVERY live `run_sessions` session (sequential sessions → only the active is
+live, so in practice close the active + no-op the exited). **These touch
+crash-recovery and are NOT runtime-verifiable in the sandbox (no live ACP
+agents)** → implement to tsc+unit green; the owner verifies in #23's env. Consider
+folding #15–#17 INTO #24's tsc-forced reader fan-out (when the mirror drops, every
+reader is forced correct + the owner runtime-verifies once).
+
+**KEY ANCHORS (built this session — reuse for #15–#24):**
+- `lib/flows/graph/runner-core.ts` — `loadRun` builds `loaded.sessions:
+  Map<name, LoadedRunSession{ runner, acpSessionId, capabilityAgent,
+  runnerResolutionTier }>` (legacy run synthesizes a `default` from run-level).
+  `executorFromRunnerSnapshot` is EXPORTED.
+- `lib/acp-runners/resolve.ts` — `resolveRunSessions` / `resolveRunnerSlot` /
+  `autoMatchRunners` / `resolveSlotConfig` / `defaultRunSessionValues` +
+  tiers `binding`/`autoMatch` added to `RunnerResolutionTier`.
+- `lib/acp-runners/catalog.ts` — `loadRunnerCatalog` / `loadFlowRunnerBindings`.
+- `lib/acp-runners/usage.ts` — `activeRunSession` delete-guard ref (pattern for
+  any new `run_sessions` reader).
+- `flow-step-target.ts` was DELETED (legacy single-runner divergence path; all
+  callers now on `resolveRunSessions`).
+
+**#18–#21 (Studio UI + i18n):** the node-form ALREADY has runner-picker infra
+(`components/flows/node-form/reference-combobox.tsx` "Runners" group +
+`node-side-form.tsx` runner/agent source kinds — judge `settings.model` removal
+compiles clean). NEW work = node `session:` selector, consensus
+participant/synthesizer unified runner dropdown, the **connect-time binding
+screen** (seed = `components/board/panels/flow-runner-reconfiguration-control.tsx`,
+already re-pointed to the slot-keyed PATCH in #10; GET supports `?flowRevisionId`
+scope), canvas per-session chip+grouping, EN/RU parity. VERIFIABLE here.
+
+**#22 (cross-repo — ASK-FIRST):** `/repos/maister-plugins`
+(SEPARATE repo). OPEN release-order Q (which branch/tag carries engine-2.0.0
+manifests; engine-first vs paired). ALSO bump in-repo fixtures
+(`web/test-fixtures/aif-flows/*`, `web/lib/flows/__tests__/_fixtures/*`,
+`web/lib/agents/__tests__/_fixtures/*`) to unified config + judge-model removal.
+
+**#23 (e2e):** needs owner env (live Claude/Codex + Postgres).
+**#24 (close-out):** as-built docs flip (`sessions.md` etc. Designed→Implemented) +
+migration **0082** (drop the 5 `runs` mirror cols + `runs_runner_idx`; recreate
+FK/idx already on `run_sessions`) — `db:generate` is PTY-interactive for
+drops/renames (BLOCKED in sandbox) → hand-SQL + `_journal.json` `when` bump
+(>…05) + snapshot JSON-surgery (per the MIGRATION TOOLING note above) + the
+rule-11 reader fan-out + renumber check vs `main`.
+
+**TEST-MOCK GOTCHAS (hit + fixed this session — re-apply when touching these):**
+- launch-test `compileManifest` mocks need `sessions: new Map([["default",
+  { name: "default" }]])` (else `compiled.sessions` undefined).
+- `runner-terminal.test.ts` / `runner-reentry.test.ts` DB mocks need a
+  `run_sessions` table (`Omit<TableRows,"run_sessions"> & { run_sessions?: Row[] }`
+  + `project()` `rows[name] ?? []`; baseFixture literal gets `run_sessions: []`).
+- consensus `runtime.test.ts`/`drafts.test.ts` mock `@/lib/acp-runners/catalog`;
+  the `loaded` mock needs a `manifest`.
+- supervisor `SessionRecord` now REQUIRES `sessionName` (6 fixtures stamp
+  `"default"`).
+
+---
+
+### Historical build detail — Phase 0–2 (superseded by the section above)
 
 **Branch:** `feature/unified-flow-runner-sessions`. **5 commits, all green**
 (tsc 0, unit 5130, docs validators, eslint 0):
