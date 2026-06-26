@@ -199,12 +199,20 @@ function consensusRoleCtx(args: RunConsensusNodeInput): {
   db: Db;
   projectId: string;
   taskId: string | null;
+  flowRevisionId: string | null;
+  runnerProfiles: ReturnType<typeof manifestRunnerProfiles>;
 } {
   return {
     db: args.db,
     projectId: args.loaded.run.projectId,
     taskId: args.loaded.run.taskId,
+    flowRevisionId: args.loaded.run.flowRevisionId ?? null,
+    runnerProfiles: manifestRunnerProfiles(args),
   };
+}
+
+function manifestRunnerProfiles(args: RunConsensusNodeInput) {
+  return args.loaded.manifest.runner_profiles;
 }
 
 function resolveVerifierRuntime(
@@ -212,6 +220,7 @@ function resolveVerifierRuntime(
 ): Promise<ConsensusRoleRuntime> {
   return resolveConsensusRoleRuntime({
     ...consensusRoleCtx(args),
+    slotKey: `consensus:${args.node.id}:${args.verifierId}`,
     role: participantById(args.def, args.verifierId),
     roleLabel: `consensus verifier participant "${args.verifierId}"`,
   });
@@ -222,6 +231,7 @@ function resolveSynthesizerRuntime(
 ): Promise<ConsensusRoleRuntime> {
   return resolveConsensusRoleRuntime({
     ...consensusRoleCtx(args),
+    slotKey: `consensus:${args.node.id}:synthesizer`,
     role: args.def.synthesizer,
     roleLabel: "consensus synthesizer",
   });
@@ -295,6 +305,8 @@ async function launchRound(
     db: args.db,
     projectId: args.loaded.run.projectId,
     taskId: args.loaded.run.taskId,
+    flowRevisionId: args.loaded.run.flowRevisionId ?? null,
+    runnerProfiles: args.loaded.manifest.runner_profiles,
     parentRunId: args.loaded.run.id,
     rootRunId: args.loaded.run.rootRunId ?? args.loaded.run.id,
     nodeId: args.node.id,

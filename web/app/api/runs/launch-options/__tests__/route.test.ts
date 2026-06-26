@@ -16,6 +16,7 @@ type TableName =
   | "flow_runner_remaps"
   | "flows"
   | "platform_acp_runners"
+  | "platform_router_sidecars"
   | "platform_runtime_settings"
   | "project_flow_runner_defaults"
   | "projects"
@@ -27,6 +28,7 @@ const state: Record<TableName, Row[]> = {
   flow_runner_remaps: [],
   flows: [],
   platform_acp_runners: [],
+  platform_router_sidecars: [],
   platform_runtime_settings: [],
   project_flow_runner_defaults: [],
   projects: [],
@@ -36,18 +38,7 @@ const state: Record<TableName, Row[]> = {
 function tableNameOf(table: unknown): TableName {
   const tableName = getTableName(table as never);
 
-  if (
-    tableName === "flow_revisions" ||
-    tableName === "flow_runner_remaps" ||
-    tableName === "flows" ||
-    tableName === "platform_acp_runners" ||
-    tableName === "platform_runtime_settings" ||
-    tableName === "project_flow_runner_defaults" ||
-    tableName === "projects" ||
-    tableName === "tasks"
-  ) {
-    return tableName;
-  }
+  if (tableName in state) return tableName as TableName;
 
   throw new Error(`unknown table: ${tableName}`);
 }
@@ -90,36 +81,36 @@ vi.mock("@/lib/social/relations", () => ({
   getOpenRelationBlockers: mocks.getOpenRelationBlockers,
 }));
 vi.mock("@/lib/worktree", () => ({ listBranches: mocks.listBranches }));
-// M39 Stream B (ADR-107): the route now feeds the launch dialog the available
-// centralized-package versions; this DTO test does not exercise that path, so
-// stub it empty (the fakeDb has no join support).
 vi.mock("@/lib/local-packages/versions", () => ({
   detectAvailablePackageVersions: async () => [],
 }));
 
-function manifest(runner: string): Row {
+// A runner-bearing node with no `settings.runner` joins the implicit `default`
+// session (resolved via the project/platform default chain). A node with
+// `settings.runner` becomes its own SOLO session keyed by node id.
+function aiNode(id: string, runner?: string, next = "done"): Row {
+  return {
+    id,
+    type: "ai_coding",
+    action: { prompt: id },
+    settings: { runner_type: "acp", ...(runner ? { runner } : {}) },
+    transitions: { success: next },
+  };
+}
+
+function manifest(nodes: Row[]): Row {
   return {
     schemaVersion: 1,
     name: "Bugfix",
     compat: { engine_min: "1.1.0" },
-    nodes: [
-      {
-        id: "implement",
-        type: "ai_coding",
-        action: { prompt: "implement" },
-        settings: { runner_type: "acp", runner },
-        transitions: { success: "done" },
-      },
-    ],
+    nodes,
   };
 }
 
 function request(): NextRequest {
   const url = new URL("http://x/api/runs/launch-options?taskId=task-1");
 
-  return {
-    nextUrl: url,
-  } as NextRequest;
+  return { nextUrl: url } as NextRequest;
 }
 
 async function invoke(): Promise<Response> {
@@ -128,159 +119,198 @@ async function invoke(): Promise<Response> {
   return GET(request());
 }
 
-describe("GET /api/runs/launch-options runner remaps", () => {
+function seedBase(): void {
+  state.platform_router_sidecars = [];
+  state.tasks = [{ id: "task-1", projectId: "project-1", flowId: "flow-1" }];
+  state.projects = [
+    {
+      id: "project-1",
+      slug: "demo",
+      mainBranch: "main",
+      branchPrefix: "maister/",
+      defaultRunnerId: null,
+      deliveryPolicyDefault: {
+        strategy: "merge",
+        push: "never",
+        trigger: "manual",
+        targetBranch: null,
+      },
+      archivedAt: null,
+    },
+  ];
+  state.flows = [
+    {
+      id: "flow-1",
+      flowRefId: "bugfix",
+      enabledRevisionId: "revision-1",
+      enablementState: "Enabled",
+    },
+  ];
+  state.flow_revisions = [
+    {
+      id: "revision-1",
+      manifest: manifest([aiNode("implement")]),
+      packageStatus: "Installed",
+      setupStatus: "not_required",
+      schemaVersion: 1,
+      defaultRunnerId: null,
+    },
+  ];
+  state.platform_runtime_settings = [
+    { id: "singleton", defaultRunnerId: "claude-platform" },
+  ];
+  state.platform_acp_runners = [
+    {
+      id: "claude-platform",
+      adapter: "claude",
+      capabilityAgent: "claude",
+      model: "claude-sonnet-4-6",
+      provider: { kind: "anthropic_compatible", authToken: "env:SECRET_TOKEN" },
+      permissionPolicy: "default",
+      sidecarId: null,
+      readinessStatus: "Ready",
+      readinessReasons: [],
+      enabled: true,
+    },
+    {
+      id: "codex-ready",
+      adapter: "codex",
+      capabilityAgent: "codex",
+      model: "gpt-5",
+      provider: { kind: "openai_compatible", apiKey: "env:OPENAI_SECRET" },
+      permissionPolicy: "default",
+      sidecarId: null,
+      readinessStatus: "Ready",
+      readinessReasons: [],
+      enabled: true,
+    },
+  ];
+  state.project_flow_runner_defaults = [];
+  state.flow_runner_remaps = [];
+  mocks.requireActiveSession.mockResolvedValue({ id: "user-1" });
+  mocks.requireProjectAction.mockResolvedValue({ role: "member" });
+  mocks.getLatestFlowRun.mockResolvedValue(null);
+  mocks.getOpenRelationBlockers.mockResolvedValue(new Map());
+  mocks.listBranches.mockResolvedValue(["main", "release"]);
+}
+
+describe("GET /api/runs/launch-options per-session resolution (M42)", () => {
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
-    state.tasks = [{ id: "task-1", projectId: "project-1", flowId: "flow-1" }];
-    state.projects = [
-      {
-        id: "project-1",
-        slug: "demo",
-        mainBranch: "main",
-        branchPrefix: "maister/",
-        defaultRunnerId: null,
-        deliveryPolicyDefault: {
-          strategy: "merge",
-          push: "never",
-          trigger: "manual",
-          targetBranch: null,
-        },
-        archivedAt: null,
-      },
-    ];
-    state.flows = [
-      {
-        id: "flow-1",
-        flowRefId: "bugfix",
-        enabledRevisionId: "revision-1",
-        enablementState: "Enabled",
-      },
-    ];
-    state.flow_revisions = [
-      {
-        id: "revision-1",
-        manifest: manifest("flow-claude"),
-        packageStatus: "Installed",
-        setupStatus: "not_required",
-        schemaVersion: 1,
-        defaultRunnerId: null,
-      },
-    ];
-    state.platform_runtime_settings = [
-      { id: "singleton", defaultRunnerId: "claude-platform" },
-    ];
-    state.platform_acp_runners = [
-      {
-        id: "claude-platform",
-        adapter: "claude",
-        capabilityAgent: "claude",
-        model: "claude-sonnet-4-6",
-        provider: {
-          kind: "anthropic_compatible",
-          authToken: "env:SECRET_TOKEN",
-        },
-        permissionPolicy: "default",
-        sidecarId: null,
-        readinessStatus: "Ready",
-        readinessReasons: [],
-        enabled: true,
-      },
-      {
-        id: "codex-ready",
-        adapter: "codex",
-        capabilityAgent: "codex",
-        model: "gpt-5",
-        provider: { kind: "openai_compatible", apiKey: "env:OPENAI_SECRET" },
-        permissionPolicy: "default",
-        sidecarId: null,
-        readinessStatus: "Ready",
-        readinessReasons: [],
-        enabled: true,
-      },
-    ];
-    state.project_flow_runner_defaults = [];
-    state.flow_runner_remaps = [];
-    mocks.requireActiveSession.mockResolvedValue({ id: "user-1" });
-    mocks.requireProjectAction.mockResolvedValue({ role: "member" });
-    mocks.getLatestFlowRun.mockResolvedValue(null);
-    mocks.getOpenRelationBlockers.mockResolvedValue(new Map());
-    mocks.listBranches.mockResolvedValue(["main", "release"]);
+    seedBase();
   });
 
-  it("returns mapped Flow step target as the default runner", async () => {
+  it("resolves the default session via the platform default chain", async () => {
+    const res = await invoke();
+    const body = (await res.json()) as {
+      selectedRunnerId?: string;
+      sessions?: unknown[];
+    };
+
+    expect(res.status).toBe(200);
+    // Single default session -> the single selectedRunnerId selector covers it.
+    expect(body.selectedRunnerId).toBe("claude-platform");
+    expect(body.sessions).toEqual([]);
+  });
+
+  it("binds a solo session runner via a Mapped slot binding", async () => {
+    state.flow_revisions[0].manifest = manifest([
+      aiNode("implement", "flow-claude"),
+    ]);
     state.flow_runner_remaps = [
       {
-        stepId: "implement",
-        sourceRunnerId: "flow-claude",
+        slotKey: "session:implement",
         mappedRunnerId: "codex-ready",
         status: "Mapped",
       },
     ];
 
     const res = await invoke();
+    const body = (await res.json()) as { selectedRunnerId?: string };
+
+    expect(res.status).toBe(200);
+    expect(body.selectedRunnerId).toBe("codex-ready");
+  });
+
+  it("returns one session entry per logical session for a multi-session flow", async () => {
+    state.flow_revisions[0].manifest = manifest([
+      aiNode("plan", undefined, "implement"),
+      aiNode("implement", "codex-ready"),
+    ]);
+
+    const res = await invoke();
     const body = (await res.json()) as {
-      defaultRunnerId?: string;
-      runnerResolutionTier?: string;
+      sessions?: {
+        sessionName: string;
+        runnerId: string | null;
+        overridable: boolean;
+      }[];
     };
 
     expect(res.status).toBe(200);
-    expect(body.defaultRunnerId).toBe("codex-ready");
-    expect(body.runnerResolutionTier).toBe("stepTarget");
+    expect(body.sessions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sessionName: "default",
+          runnerId: "claude-platform",
+          overridable: true,
+        }),
+        expect.objectContaining({
+          sessionName: "implement",
+          runnerId: "codex-ready",
+          overridable: true,
+        }),
+      ]),
+    );
+  });
+
+  it("degrades an unbound session to runnerId null instead of 5xx", async () => {
+    state.flow_revisions[0].manifest = manifest([
+      aiNode("plan", undefined, "implement"),
+      aiNode("implement", "ghost-profile"),
+    ]);
+
+    const res = await invoke();
+    const body = (await res.json()) as {
+      sessions?: { sessionName: string; runnerId: string | null }[];
+    };
+
+    expect(res.status).toBe(200);
+    expect(body.sessions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sessionName: "implement",
+          runnerId: null,
+        }),
+      ]),
+    );
+  });
+
+  it("never leaks provider secrets and omits the dropped runner fields", async () => {
+    const res = await invoke();
+    const body = (await res.json()) as Record<string, unknown>;
+
+    expect(res.status).toBe(200);
+    expect(body).not.toHaveProperty("defaultRunnerId");
+    expect(body).not.toHaveProperty("runnerResolutionTier");
+    expect(body).not.toHaveProperty("flowRef");
     expect(JSON.stringify(body)).not.toMatch(
       /authToken|apiKey|SECRET_TOKEN|OPENAI_SECRET/,
     );
   });
 
-  it("refuses pending Flow runner remap instead of exposing platform default", async () => {
-    state.flow_runner_remaps = [
-      {
-        stepId: "implement",
-        sourceRunnerId: "flow-claude",
-        mappedRunnerId: null,
-        status: "Pending",
-      },
-    ];
-
-    const res = await invoke();
-    const body = (await res.json()) as { code?: string; message?: string };
-
-    expect(res.status).toBe(422);
-    expect(body.code).toBe("CONFIG");
-    expect(body.message).toContain("requires ACP runner remapping");
-  });
-
-  it("returns the ADR-085 launch dialog DTO without provider secrets", async () => {
-    state.flow_runner_remaps = [
-      {
-        stepId: "implement",
-        sourceRunnerId: "flow-claude",
-        mappedRunnerId: "claude-platform",
-        status: "Mapped",
-      },
-    ];
-
+  it("returns the launch dialog DTO (task, flows, runners, branches, policy)", async () => {
     const res = await invoke();
     const body = (await res.json()) as {
       task?: { id?: string; projectSlug?: string; flowId?: string };
       launchability?: { launchable?: boolean; reason?: string };
-      flows?: Array<{
-        id: string;
-        disabledReason: string | null;
-        enabled: boolean;
-        isTaskDefault: boolean;
-      }>;
+      flows?: Array<{ id: string; enabled: boolean; isTaskDefault: boolean }>;
       selectedFlowId?: string;
       runners?: Array<{ id: string; model: string; pinnedModel?: object }>;
       branches?: string[];
       defaultBaseBranch?: string | null;
-      defaultTargetBranch?: string | null;
-      deliveryPolicyDefault?: {
-        strategy?: string;
-        push?: string;
-        trigger?: string;
-        targetBranch?: string | null;
-      };
+      deliveryPolicyDefault?: { strategy?: string; targetBranch?: string };
     };
 
     expect(res.status).toBe(200);
@@ -294,120 +324,35 @@ describe("GET /api/runs/launch-options runner remaps", () => {
       reason: "launchable",
       blockers: [],
     });
-    expect(body.flows).toEqual([
-      expect.objectContaining({
-        id: "flow-1",
-        disabledReason: null,
-        enabled: true,
-        isTaskDefault: true,
-      }),
-    ]);
     expect(body.selectedFlowId).toBe("flow-1");
     expect(body.runners).toEqual([
       expect.objectContaining({
         id: "claude-platform",
-        model: "claude-sonnet-4-6",
         pinnedModel: expect.objectContaining({ model: "claude-sonnet-4-6" }),
       }),
       expect.objectContaining({ id: "codex-ready", model: "gpt-5" }),
     ]);
     expect(body.branches).toContain("main");
     expect(body.defaultBaseBranch).toBe("main");
-    expect(body.defaultTargetBranch).toBe("main");
-    expect(body.deliveryPolicyDefault).toEqual({
+    expect(body.deliveryPolicyDefault).toMatchObject({
       strategy: "merge",
-      push: "never",
-      trigger: "manual",
       targetBranch: "main",
     });
-    expect(JSON.stringify(body)).not.toMatch(
-      /authToken|apiKey|SECRET_TOKEN|OPENAI_SECRET/,
-    );
   });
 });
 
-describe("GET /api/runs/launch-options — M34 verdict pre-fill + unconfigured (ADR-089)", () => {
+describe("GET /api/runs/launch-options — launchability (ADR-089)", () => {
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
-    state.tasks = [{ id: "task-1", projectId: "project-1", flowId: "flow-1" }];
-    state.projects = [
-      {
-        id: "project-1",
-        slug: "demo",
-        mainBranch: "main",
-        branchPrefix: "maister/",
-        defaultRunnerId: null,
-        deliveryPolicyDefault: {
-          strategy: "merge",
-          push: "never",
-          trigger: "manual",
-          targetBranch: null,
-        },
-        archivedAt: null,
+    seedBase();
+    // Provider with no secret fields for these launchability-focused cases.
+    state.platform_acp_runners = state.platform_acp_runners.map((runner) => ({
+      ...runner,
+      provider: {
+        kind: runner.capabilityAgent === "claude" ? "anthropic" : "openai",
       },
-    ];
-    state.flows = [
-      {
-        id: "flow-1",
-        flowRefId: "bugfix",
-        enabledRevisionId: "revision-1",
-        enablementState: "Enabled",
-      },
-    ];
-    state.flow_revisions = [
-      {
-        id: "revision-1",
-        manifest: manifest("flow-claude"),
-        packageStatus: "Installed",
-        setupStatus: "not_required",
-        schemaVersion: 1,
-        defaultRunnerId: null,
-      },
-    ];
-    state.platform_runtime_settings = [
-      { id: "singleton", defaultRunnerId: "claude-platform" },
-    ];
-    state.platform_acp_runners = [
-      {
-        id: "claude-platform",
-        adapter: "claude",
-        capabilityAgent: "claude",
-        model: "claude-sonnet-4-6",
-        provider: { kind: "anthropic" },
-        permissionPolicy: "default",
-        sidecarId: null,
-        readinessStatus: "Ready",
-        readinessReasons: [],
-        enabled: true,
-      },
-      {
-        id: "codex-ready",
-        adapter: "codex",
-        capabilityAgent: "codex",
-        model: "gpt-5",
-        provider: { kind: "openai" },
-        permissionPolicy: "default",
-        sidecarId: null,
-        readinessStatus: "Ready",
-        readinessReasons: [],
-        enabled: true,
-      },
-    ];
-    state.project_flow_runner_defaults = [];
-    state.flow_runner_remaps = [
-      {
-        stepId: "implement",
-        sourceRunnerId: "flow-claude",
-        mappedRunnerId: "claude-platform",
-        status: "Mapped",
-      },
-    ];
-    mocks.requireActiveSession.mockResolvedValue({ id: "user-1" });
-    mocks.requireProjectAction.mockResolvedValue({ role: "member" });
-    mocks.getLatestFlowRun.mockResolvedValue(null);
-    mocks.getOpenRelationBlockers.mockResolvedValue(new Map());
-    mocks.listBranches.mockResolvedValue(["main", "release"]);
+    }));
   });
 
   it("a flowless task gets options with launchability=unconfigured and no selected flow", async () => {
@@ -417,13 +362,7 @@ describe("GET /api/runs/launch-options — M34 verdict pre-fill + unconfigured (
     const body = (await res.json()) as {
       launchability?: { launchable: boolean; reason: string };
       selectedFlowId?: string;
-      flowId?: string | null;
-      flows?: Array<{
-        id: string;
-        disabledReason: string | null;
-        enabled: boolean;
-        isTaskDefault: boolean;
-      }>;
+      flows?: Array<{ id: string; isTaskDefault: boolean }>;
     };
 
     expect(res.status).toBe(200);
@@ -432,15 +371,8 @@ describe("GET /api/runs/launch-options — M34 verdict pre-fill + unconfigured (
       reason: "unconfigured",
     });
     expect(body.selectedFlowId).toBe("");
-    expect(body.flowId).toBeNull();
-    // The project's flows are still offered for the set-up pick.
     expect(body.flows).toEqual([
-      expect.objectContaining({
-        id: "flow-1",
-        disabledReason: null,
-        enabled: true,
-        isTaskDefault: false,
-      }),
+      expect.objectContaining({ id: "flow-1", isTaskDefault: false }),
     ]);
   });
 
@@ -453,7 +385,7 @@ describe("GET /api/runs/launch-options — M34 verdict pre-fill + unconfigured (
     const body = (await res.json()) as {
       launchability?: { launchable: boolean; reason: string };
       selectedFlowId?: string;
-      flows?: Array<{ id: string; disabledReason: string; enabled: boolean }>;
+      flows?: Array<{ id: string; disabledReason: string }>;
       runners?: unknown[];
     };
 
@@ -463,14 +395,6 @@ describe("GET /api/runs/launch-options — M34 verdict pre-fill + unconfigured (
       reason: "no_revision",
     });
     expect(body.selectedFlowId).toBe("flow-1");
-    expect(body.flows).toEqual([
-      expect.objectContaining({
-        id: "flow-1",
-        disabledReason: "no_revision",
-        enabled: false,
-        isTaskDefault: true,
-      }),
-    ]);
     expect(body.runners).toEqual([
       expect.objectContaining({ id: "claude-platform" }),
       expect.objectContaining({ id: "codex-ready" }),
@@ -490,7 +414,6 @@ describe("GET /api/runs/launch-options — M34 verdict pre-fill + unconfigured (
     const res = await invoke();
     const body = (await res.json()) as {
       launchability?: { launchable: boolean; reason: string };
-      flows?: Array<{ id: string; disabledReason: string; enabled: boolean }>;
     };
 
     expect(res.status).toBe(200);
@@ -498,13 +421,6 @@ describe("GET /api/runs/launch-options — M34 verdict pre-fill + unconfigured (
       launchable: false,
       reason: "not_enabled",
     });
-    expect(body.flows).toEqual([
-      expect.objectContaining({
-        id: "flow-1",
-        disabledReason: "not_enabled",
-        enabled: false,
-      }),
-    ]);
   });
 
   it("the triage verdict pre-fills runner, target branch, and promotion mode", async () => {

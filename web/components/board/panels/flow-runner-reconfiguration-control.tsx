@@ -71,7 +71,8 @@ export function FlowRunnerReconfigurationControl({
       await patchJson(
         `/api/projects/${encodeURIComponent(projectSlug)}/flow-runner-remaps`,
         {
-          remapId: remap.id,
+          flowRevisionId: remap.flowRevisionId,
+          slotKey: remap.slotKey,
           mappedRunnerId,
         },
       );

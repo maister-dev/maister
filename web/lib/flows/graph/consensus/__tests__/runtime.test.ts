@@ -24,6 +24,13 @@ const createHitlAssignmentForRun = vi.hoisted(() => vi.fn());
 const emitWebhookEvent = vi.hoisted(() => vi.fn());
 const releaseCapacity = vi.hoisted(() => vi.fn());
 const acquireConsensusAgentCapacity = vi.hoisted(() => vi.fn());
+const loadRunnerCatalog = vi.hoisted(() => vi.fn());
+const loadFlowRunnerBindings = vi.hoisted(() => vi.fn());
+
+vi.mock("@/lib/acp-runners/catalog", () => ({
+  loadRunnerCatalog,
+  loadFlowRunnerBindings,
+}));
 
 vi.mock("@/lib/flows/graph/consensus/drafts", async (importOriginal) => {
   const actual =
@@ -134,6 +141,22 @@ function db(): unknown {
   };
 }
 
+function catalogRunner(
+  id: string,
+  capabilityAgent: string,
+): Record<string, unknown> {
+  return {
+    id,
+    adapter: capabilityAgent,
+    capabilityAgent,
+    model: `${capabilityAgent}-model`,
+    providerKind: capabilityAgent === "claude" ? "anthropic" : "openai",
+    permissionPolicy: "default",
+    enabled: true,
+    ready: true,
+  };
+}
+
 function runnerRow(
   id: string,
   capabilityAgent: string,
@@ -202,7 +225,9 @@ function input(overrides: Record<string, unknown> = {}) {
         projectId: "project-1",
         taskId: "task-1",
         rootRunId: "run-1",
+        flowRevisionId: "rev-1",
       },
+      manifest: { runner_profiles: undefined },
       executor: {
         id: "runner-parent",
         agent: "claude",
@@ -233,6 +258,11 @@ function input(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   acquireConsensusAgentCapacity.mockResolvedValue(releaseCapacity);
+  loadRunnerCatalog.mockResolvedValue([
+    catalogRunner("claude", "claude"),
+    catalogRunner("codex", "codex"),
+  ]);
+  loadFlowRunnerBindings.mockResolvedValue([]);
   loadConsensusVerdicts.mockResolvedValue([]);
   atomicWriteJson.mockResolvedValue(undefined);
   createHitlAssignmentForRun.mockResolvedValue(undefined);

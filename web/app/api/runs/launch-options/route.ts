@@ -8,13 +8,12 @@ import pino from "pino";
 import { z } from "zod";
 
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
-import {
-  resolveCompiledStepTargetRunnerId,
-  type FlowRunnerRemapRow,
-} from "@/lib/acp-runners/flow-step-target";
+import { loadFlowRunnerBindings } from "@/lib/acp-runners/catalog";
 import {
   resolveRunner,
+  resolveRunSessions,
   type RunnerCatalogEntry,
+  type RunSessionSlot,
 } from "@/lib/acp-runners/resolve";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -42,7 +41,6 @@ import { listBranches } from "@/lib/worktree";
 
 const {
   flowRevisions,
-  flowRunnerRemaps,
   flows,
   platformAcpRunners,
   platformRuntimeSettings,
@@ -283,7 +281,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       runtimeRows,
       runnerRows,
       projectFlowDefaultRows,
-      remapRows,
+      bindings,
       flowRowsForProject,
     ] = await Promise.all([
       db
@@ -303,20 +301,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
             )
         : Promise.resolve([]),
       revision && flowIssue === null
-        ? db
-            .select({
-              stepId: flowRunnerRemaps.stepId,
-              sourceRunnerId: flowRunnerRemaps.sourceRunnerId,
-              mappedRunnerId: flowRunnerRemaps.mappedRunnerId,
-              status: flowRunnerRemaps.status,
-            })
-            .from(flowRunnerRemaps)
-            .where(
-              and(
-                eq(flowRunnerRemaps.projectId, project.id),
-                eq(flowRunnerRemaps.flowRevisionId, revision.id),
-              ),
-            )
+        ? loadFlowRunnerBindings(db, project.id, revision.id)
         : Promise.resolve([]),
       db.select().from(flows).where(eq(flows.projectId, project.id)),
     ]);
@@ -357,25 +342,72 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     }
 
     const runnerCatalog = runnerRows.map(runnerCatalogEntry);
-    const stepRunnerId =
-      revision && flow && flowIssue === null
-        ? resolveCompiledStepTargetRunnerId({
-            compiled: compileManifest(revision.manifest as FlowYamlV1),
-            remaps: remapRows as FlowRunnerRemapRow[],
-            flowRefId: flow.flowRefId,
-          })
-        : null;
-    const defaultResolution = resolveRunner({
-      launchOverrideRunnerId: undefined,
-      step: { runnerId: stepRunnerId },
+    const defaultChain = {
       projectFlow: {
         defaultRunnerId: projectFlowDefaultRows[0]?.runnerId ?? null,
       },
       platformFlow: { defaultRunnerId: revision?.defaultRunnerId ?? null },
       project: { defaultRunnerId: project.defaultRunnerId },
       platform: { defaultRunnerId: platformRuntime.defaultRunnerId },
+    } as const;
+    // The dialog's single "default runner" is the implicit `default` session;
+    // it always resolves through the project/platform default chain.
+    const fallbackResolution = resolveRunner({
+      launchOverrideRunnerId: undefined,
+      step: { runnerId: null },
+      ...defaultChain,
       runners: runnerCatalog,
     });
+
+    // M42 (ADR-114): resolve EVERY logical session of the selected flow. A slot
+    // that cannot resolve (unbound / ambiguous / no host) degrades to
+    // `runnerId: null` so the options dialog still renders (the binding screen
+    // resolves it) instead of 5xx-ing the whole preview.
+    const runnerProfiles =
+      revision && flowIssue === null
+        ? (revision.manifest as FlowYamlV1).runner_profiles
+        : undefined;
+    const sessionSlots: RunSessionSlot[] =
+      revision && flow && flowIssue === null
+        ? [
+            ...compileManifest(
+              revision.manifest as FlowYamlV1,
+            ).sessions.values(),
+          ]
+        : [];
+    const sessionResolutions = sessionSlots.map((session) => {
+      try {
+        const [resolution] = resolveRunSessions({
+          sessions: [session],
+          runnerProfiles,
+          bindings,
+          ...defaultChain,
+          runners: runnerCatalog,
+        });
+
+        return {
+          sessionName: session.name,
+          runnerId: resolution.runnerId as string | null,
+          tier: resolution.runnerResolutionTier as string,
+        };
+      } catch {
+        return { sessionName: session.name, runnerId: null, tier: null };
+      }
+    });
+    const defaultSession =
+      sessionResolutions.find((s) => s.sessionName === "default") ??
+      sessionResolutions[0];
+    const defaultResolution =
+      defaultSession?.runnerId && defaultSession.tier
+        ? {
+            runnerId: defaultSession.runnerId,
+            runnerResolutionTier: defaultSession.tier,
+          }
+        : {
+            runnerId: fallbackResolution.runnerId,
+            runnerResolutionTier:
+              fallbackResolution.runnerResolutionTier as string,
+          };
     const latestFlowRun = await getLatestFlowRun(task.id, db);
     const openBlockers =
       (await getOpenRelationBlockers([task.id], db)).get(task.id) ?? [];
@@ -462,12 +494,20 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     });
 
     return NextResponse.json({
-      taskId: task.id,
-      flowId: flow?.id ?? null,
-      flowRef: flow?.flowRefId ?? null,
-      defaultRunnerId: defaultResolution.runnerId,
-      runnerResolutionTier: defaultResolution.runnerResolutionTier,
       runners: safeRunners,
+      // M42 (ADR-114): one entry per logical session of the selected flow, each
+      // with its resolved runner; empty for a single-session flow (the single
+      // `selectedRunnerId` selector covers it). `overridable` advertises the
+      // ephemeral per-run override offered at the Launch dialog.
+      sessions:
+        sessionResolutions.length > 1
+          ? sessionResolutions.map((session) => ({
+              sessionName: session.sessionName,
+              runnerId: session.runnerId,
+              label: session.sessionName,
+              overridable: true,
+            }))
+          : [],
       task: {
         id: task.id,
         projectId: project.id,

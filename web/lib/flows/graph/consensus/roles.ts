@@ -1,33 +1,30 @@
 import "server-only";
 
 import type {
-  RunnerSidecarSnapshot,
+  ResolvedRunnerSlot,
   RunnerSnapshot,
 } from "@/lib/acp-runners/resolve";
+import type { FlowRunnerConfig, RunnerSlot } from "@/lib/config.schema";
 import type { RunAgentStepCtx } from "@/lib/flows/runner-agent";
-import type { RunnerSlot } from "@/lib/config.schema";
 import type { Db, LoadedRun } from "../runner-core";
 
-import { eq } from "drizzle-orm";
-
-import { runnerSlotProfileRef } from "@/lib/config.schema";
-import { resolveAgentLaunchRuntime } from "@/lib/agents/launch";
+import {
+  loadFlowRunnerBindings,
+  loadRunnerCatalog,
+} from "@/lib/acp-runners/catalog";
+import { resolveRunnerSlot } from "@/lib/acp-runners/resolve";
 import {
   mergeRunnerAdapterLaunch,
   runnerSupervisorInput,
 } from "@/lib/acp-runners/spawn-intent";
-import * as schemaModule from "@/lib/db/schema";
+import { resolveAgentLaunchRuntime } from "@/lib/agents/launch";
 import { MaisterError } from "@/lib/errors";
-
-const { platformAcpRunners, platformRouterSidecars } =
-  schemaModule as unknown as Record<string, any>;
 
 export type ConsensusRoleRef = {
   id?: string;
   agent?: string;
-  // M42 (ADR-114): a runner slot (profile-ref string OR inline unified config).
-  // The legacy direct-id resolution below reads the string ref; inline-object
-  // slots become portable via per-slot bindings in M42 Phase 2.
+  // M42 (ADR-114): a runner slot (profile-ref string OR inline unified config),
+  // resolved portably via the per-project slot binding + intent auto-match.
   runner?: RunnerSlot;
 };
 
@@ -39,47 +36,6 @@ export type ConsensusRoleRuntime = {
   adapterLaunch?: RunAgentStepCtx["adapterLaunch"];
   agentBinding?: { id: string };
 };
-
-function sidecarKind(row: Record<string, any>): RunnerSidecarSnapshot["kind"] {
-  if (row.kind !== "ccr") {
-    throw new MaisterError(
-      "CONFIG",
-      `consensus runner sidecar "${row.id}" has unsupported kind "${String(row.kind)}"`,
-    );
-  }
-
-  return row.kind;
-}
-
-function sidecarSnapshot(row: Record<string, any>): RunnerSidecarSnapshot {
-  return {
-    id: row.id,
-    kind: sidecarKind(row),
-    lifecycle: row.lifecycle,
-    configPath: row.configPath ?? null,
-    baseUrl: row.baseUrl ?? null,
-    healthcheckUrl: row.healthcheckUrl ?? null,
-    authTokenRef: row.authTokenRef ?? null,
-  };
-}
-
-function runnerSnapshotFromRow(
-  row: Record<string, any>,
-  sidecar: RunnerSidecarSnapshot | null,
-): RunnerSnapshot {
-  return {
-    id: row.id,
-    adapter: row.adapter,
-    capabilityAgent: row.capabilityAgent,
-    model: row.model,
-    env: row.env,
-    provider: row.provider,
-    providerKind: row.provider?.kind ?? "agent_native",
-    permissionPolicy: row.permissionPolicy,
-    sidecar,
-    sidecarId: row.sidecarId ?? null,
-  };
-}
 
 export function executorFromRunnerSnapshot(
   snapshot: RunnerSnapshot,
@@ -94,55 +50,39 @@ export function executorFromRunnerSnapshot(
   };
 }
 
-export async function resolveConsensusRunnerSnapshot(args: {
+// M42 (ADR-114): resolve a consensus runner slot portably. The slot's declared
+// runner intent is bound to a concrete host runner via the per-project binding
+// (`consensus:<nodeId>:<participantId>` / `:synthesizer`) or a unique intent
+// auto-match — never a direct `platform_acp_runners.id` lookup baked in the
+// manifest.
+export async function resolveConsensusRunnerSlot(args: {
   db: Db;
-  runnerId: string;
+  slot: RunnerSlot;
+  slotKey: string;
+  projectId: string;
+  flowRevisionId: string | null;
+  runnerProfiles: Record<string, FlowRunnerConfig> | undefined;
   roleLabel: string;
-}): Promise<RunnerSnapshot> {
-  const rows = await args.db
-    .select()
-    .from(platformAcpRunners)
-    .where(eq(platformAcpRunners.id, args.runnerId));
-  const row = rows[0];
+}): Promise<ResolvedRunnerSlot> {
+  const [runners, bindings] = await Promise.all([
+    loadRunnerCatalog(args.db),
+    args.flowRevisionId
+      ? loadFlowRunnerBindings(args.db, args.projectId, args.flowRevisionId)
+      : Promise.resolve([]),
+  ]);
+  const resolved = resolveRunnerSlot({
+    slotKey: args.slotKey,
+    slot: args.slot,
+    runnerProfiles: args.runnerProfiles,
+    binding: bindings.find((binding) => binding.slotKey === args.slotKey),
+    runners,
+  });
 
-  if (!row) {
-    throw new MaisterError(
-      "EXECUTOR_UNAVAILABLE",
-      `${args.roleLabel} runner "${args.runnerId}" is missing`,
-    );
-  }
-  if (!row.enabled) {
-    throw new MaisterError(
-      "EXECUTOR_UNAVAILABLE",
-      `${args.roleLabel} runner "${args.runnerId}" is disabled`,
-    );
-  }
-  if (row.readinessStatus !== "Ready") {
-    throw new MaisterError(
-      "EXECUTOR_UNAVAILABLE",
-      `${args.roleLabel} runner "${args.runnerId}" is not Ready`,
-    );
+  if (!resolved) {
+    throw new MaisterError("CONFIG", `${args.roleLabel} must declare a runner`);
   }
 
-  let sidecar: RunnerSidecarSnapshot | null = null;
-
-  if (row.sidecarId) {
-    const sidecarRows = await args.db
-      .select()
-      .from(platformRouterSidecars)
-      .where(eq(platformRouterSidecars.id, row.sidecarId));
-
-    if (!sidecarRows[0]) {
-      throw new MaisterError(
-        "EXECUTOR_UNAVAILABLE",
-        `${args.roleLabel} runner "${args.runnerId}" references missing router sidecar "${row.sidecarId}"`,
-      );
-    }
-
-    sidecar = sidecarSnapshot(sidecarRows[0]);
-  }
-
-  return runnerSnapshotFromRow(row, sidecar);
+  return resolved;
 }
 
 function roleRuntimeFromSnapshot(
@@ -165,6 +105,11 @@ export async function resolveConsensusRoleRuntime(args: {
   db: Db;
   projectId: string;
   taskId: string | null;
+  flowRevisionId: string | null;
+  runnerProfiles: Record<string, FlowRunnerConfig> | undefined;
+  // The slot key for this role — `consensus:<nodeId>:<participantId>` or
+  // `consensus:<nodeId>:synthesizer`. Ignored for agent-bound roles.
+  slotKey: string;
   role: ConsensusRoleRef;
   roleLabel: string;
 }): Promise<ConsensusRoleRuntime> {
@@ -187,16 +132,22 @@ export async function resolveConsensusRoleRuntime(args: {
     };
   }
 
-  const runnerRef = runnerSlotProfileRef(args.role.runner);
-
-  if (runnerRef) {
-    const snapshot = await resolveConsensusRunnerSnapshot({
+  if (args.role.runner !== undefined) {
+    const resolved = await resolveConsensusRunnerSlot({
       db: args.db,
-      runnerId: runnerRef,
+      slot: args.role.runner,
+      slotKey: args.slotKey,
+      projectId: args.projectId,
+      flowRevisionId: args.flowRevisionId,
+      runnerProfiles: args.runnerProfiles,
       roleLabel: args.roleLabel,
     });
 
-    return roleRuntimeFromSnapshot(snapshot, "runner", runnerRef);
+    return roleRuntimeFromSnapshot(
+      resolved.runnerSnapshot,
+      "runner",
+      resolved.runnerId,
+    );
   }
 
   throw new MaisterError(

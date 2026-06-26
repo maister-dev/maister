@@ -13,11 +13,8 @@ import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
 
 import { and, eq } from "drizzle-orm";
 
-import {
-  resolveCompiledStepTargetRunnerId,
-  type FlowRunnerRemapRow,
-} from "@/lib/acp-runners/flow-step-target";
-import { resolveRunner } from "@/lib/acp-runners/resolve";
+import { loadFlowRunnerBindings } from "@/lib/acp-runners/catalog";
+import { resolveRunSessions } from "@/lib/acp-runners/resolve";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import {
@@ -35,7 +32,6 @@ import { getOpenRelationBlockers } from "@/lib/social/relations";
 
 const {
   flowRevisions,
-  flowRunnerRemaps,
   flows,
   platformAcpRunners,
   platformRuntimeSettings,
@@ -168,7 +164,7 @@ export async function resolveTaskLaunchConfig(
     }
   }
 
-  const [runtimeRows, runnerRows, projectFlowDefaultRows, remapRows] =
+  const [runtimeRows, runnerRows, projectFlowDefaultRows, bindings] =
     await Promise.all([
       db
         .select()
@@ -187,20 +183,7 @@ export async function resolveTaskLaunchConfig(
             )
         : Promise.resolve([]),
       revision
-        ? db
-            .select({
-              stepId: flowRunnerRemaps.stepId,
-              sourceRunnerId: flowRunnerRemaps.sourceRunnerId,
-              mappedRunnerId: flowRunnerRemaps.mappedRunnerId,
-              status: flowRunnerRemaps.status,
-            })
-            .from(flowRunnerRemaps)
-            .where(
-              and(
-                eq(flowRunnerRemaps.projectId, project.id),
-                eq(flowRunnerRemaps.flowRevisionId, revision.id),
-              ),
-            )
+        ? loadFlowRunnerBindings(db, project.id, revision.id)
         : Promise.resolve([]),
     ]);
   const platformRuntime = runtimeRows[0];
@@ -209,36 +192,34 @@ export async function resolveTaskLaunchConfig(
   let resolvedDefaultId: string | null = null;
   let resolvedTier: RunnerResolutionTier | null = null;
 
-  if (platformRuntime?.defaultRunnerId) {
-    let stepRunnerId: string | null = null;
-
-    if (revision && flowRow && flowIssue === null) {
-      try {
-        stepRunnerId = resolveCompiledStepTargetRunnerId({
-          compiled: compileManifest(revision.manifest as FlowYamlV1),
-          remaps: remapRows as FlowRunnerRemapRow[],
-          flowRefId: flowRow.flowRefId,
-        });
-      } catch {
-        stepRunnerId = null;
-      }
-    }
-
+  // M42 (ADR-114): the card shows the run's `default` session runner (the
+  // single-runner case). A flow whose default session cannot resolve degrades
+  // to `null` — the card just shows no runner, never throws.
+  if (platformRuntime?.defaultRunnerId && revision && flowRow) {
     try {
-      const resolution = resolveRunner({
-        launchOverrideRunnerId: undefined,
-        step: { runnerId: stepRunnerId },
-        projectFlow: {
-          defaultRunnerId: projectFlowDefaultRows[0]?.runnerId ?? null,
-        },
-        platformFlow: { defaultRunnerId: revision?.defaultRunnerId ?? null },
-        project: { defaultRunnerId: project.defaultRunnerId },
-        platform: { defaultRunnerId: platformRuntime.defaultRunnerId },
-        runners: runnerCatalog,
-      });
+      const sessions = [
+        ...compileManifest(revision.manifest as FlowYamlV1).sessions.values(),
+      ];
+      const defaultSession =
+        sessions.find((session) => session.name === "default") ?? sessions[0];
 
-      resolvedDefaultId = resolution.runnerId;
-      resolvedTier = resolution.runnerResolutionTier;
+      if (defaultSession) {
+        const [resolution] = resolveRunSessions({
+          sessions: [defaultSession],
+          runnerProfiles: (revision.manifest as FlowYamlV1).runner_profiles,
+          bindings,
+          projectFlow: {
+            defaultRunnerId: projectFlowDefaultRows[0]?.runnerId ?? null,
+          },
+          platformFlow: { defaultRunnerId: revision.defaultRunnerId ?? null },
+          project: { defaultRunnerId: project.defaultRunnerId },
+          platform: { defaultRunnerId: platformRuntime.defaultRunnerId },
+          runners: runnerCatalog,
+        });
+
+        resolvedDefaultId = resolution.runnerId;
+        resolvedTier = resolution.runnerResolutionTier;
+      }
     } catch {
       resolvedDefaultId = null;
     }

@@ -1,4 +1,8 @@
-import type { NodeDef } from "@/lib/config.schema";
+import type {
+  FlowRunnerConfig,
+  NodeDef,
+  RunnerSlot,
+} from "@/lib/config.schema";
 import type { Db } from "@/lib/flows/graph/runner-core";
 
 import { randomUUID } from "node:crypto";
@@ -6,7 +10,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import pino from "pino";
 
-import { resolveConsensusRunnerSnapshot } from "./roles";
+import { resolveConsensusRunnerSlot } from "./roles";
 
 import { launchAgentRun, startAgentSession } from "@/lib/agents/launch";
 import * as schemaModule from "@/lib/db/schema";
@@ -40,6 +44,9 @@ export type ConsensusDraftLaunchInput = {
   db: Db;
   projectId: string;
   taskId: string | null;
+  // M42 (ADR-114): binding context for portable consensus runner resolution.
+  flowRevisionId: string | null;
+  runnerProfiles: Record<string, FlowRunnerConfig> | undefined;
   parentRunId: string;
   rootRunId: string;
   nodeId: string;
@@ -65,7 +72,7 @@ type ConsensusDraftDeps = {
   tryStartRun?: typeof tryStartRun;
   createRunnerDraftRun?: (
     input: ConsensusDraftLaunchInput,
-    participant: ConsensusParticipantDef & { runner: string },
+    participant: ConsensusParticipantDef & { runner: RunnerSlot },
     payload: ConsensusDraftPayload,
     runtime?: ConsensusDraftRuntimeDeps,
   ) => Promise<ConsensusDraftLaunchResult>;
@@ -143,15 +150,20 @@ async function existingDraftRun(
 
 async function defaultCreateRunnerDraftRun(
   input: ConsensusDraftLaunchInput,
-  participant: ConsensusParticipantDef & { runner: string },
+  participant: ConsensusParticipantDef & { runner: RunnerSlot },
   payload: ConsensusDraftPayload,
   runtime: ConsensusDraftRuntimeDeps = { startAgentSession, tryStartRun },
 ): Promise<ConsensusDraftLaunchResult> {
-  const snapshot = await resolveConsensusRunnerSnapshot({
+  const resolved = await resolveConsensusRunnerSlot({
     db: input.db,
-    runnerId: participant.runner,
+    slot: participant.runner,
+    slotKey: `consensus:${input.nodeId}:${participant.id}`,
+    projectId: input.projectId,
+    flowRevisionId: input.flowRevisionId,
+    runnerProfiles: input.runnerProfiles,
     roleLabel: `consensus participant "${participant.id}"`,
   });
+  const snapshot = resolved.runnerSnapshot;
   const runId = randomUUID();
   const delegationSnapshot = {
     kind: "runner",
@@ -174,7 +186,7 @@ async function defaultCreateRunnerDraftRun(
     projectId: input.projectId,
     flowId: null,
     runnerId: snapshot.id,
-    runnerResolutionTier: "launchOverride",
+    runnerResolutionTier: resolved.runnerResolutionTier,
     capabilityAgent: snapshot.capabilityAgent,
     runnerSnapshot: snapshot,
     status: "Pending",
@@ -305,7 +317,7 @@ export async function launchConsensusDraftRuns(
     }
 
     const runnerParticipant = participant as ConsensusParticipantDef & {
-      runner: string;
+      runner: RunnerSlot;
     };
 
     results.push(

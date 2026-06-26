@@ -1,5 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 
+const loadRunnerCatalog = vi.hoisted(() => vi.fn());
+const loadFlowRunnerBindings = vi.hoisted(() => vi.fn());
+
+vi.mock("@/lib/acp-runners/catalog", () => ({
+  loadRunnerCatalog,
+  loadFlowRunnerBindings,
+}));
+
 import {
   launchConsensusDraftRuns,
   type ConsensusDraftLaunchInput,
@@ -72,6 +80,21 @@ describe("launchConsensusDraftRuns", () => {
       ],
       inserts,
     });
+
+    loadRunnerCatalog.mockResolvedValue([
+      {
+        id: "runner-codex",
+        adapter: "codex",
+        capabilityAgent: "codex",
+        model: "gpt-5-codex",
+        providerKind: "openai",
+        permissionPolicy: "default",
+        enabled: true,
+        ready: true,
+      },
+    ]);
+    loadFlowRunnerBindings.mockResolvedValue([]);
+
     const launchAgent = vi.fn(async () => ({
       runId: "agent-child",
       status: "Pending" as const,

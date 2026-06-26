@@ -174,9 +174,9 @@ next migration idx = **0080**.
 
 ### Phase 2 — Resolution & binding (DB + resolve)
 - [ ] **#8 P2.1** Migration 0080 + schema.ts (`run_sessions`, binding refactor, drop runs columns) — incl. explicit DROP of the FK `runs.runner_id → platform_acp_runners` (`schema.ts:1293`, `onDelete: set null`) + index `runs_runner_idx` (`schema.ts:1426`); recreate the FK + index on `run_sessions.runner_id`.
-- [ ] **#9 P2.2** Per-session resolution (`resolveRunSessions`, remove divergence throw) + binding sync/auto-match + portable consensus. Binding sync = generalize the EXISTING install-time populator `acp-runners/flow-reconfiguration.ts` (`syncFlowRunnerReconfigurationRequirements`, today writes `flow_runner_remaps` Pending rows on flow install) from per-step → per-slot. Map the existing 6-tier `resolve.ts:223–261` chain (launchOverride → stepTarget → projectFlowDefault → platformFlowDefault → projectDefault → platformDefault) onto the per-session model — the top two tiers are NOT dropped: launchOverride becomes the ephemeral per-run override, stepTarget becomes the session runner config.
-- [ ] **#10 P2.3** Binding HTTP routes (session/slot-keyed) + connect-time endpoint (identifier labels, allow-lists, SET/CLEAR/re-SET).
-- [ ] **#11 P2.4** launch-options + task-launch-config per-session surface.
+- [x] **#9 P2.2** Per-session resolution (`resolveRunSessions`, remove divergence throw) + binding sync/auto-match + portable consensus. Binding sync = generalize the EXISTING install-time populator `acp-runners/flow-reconfiguration.ts` (`syncFlowRunnerReconfigurationRequirements`, today writes `flow_runner_remaps` Pending rows on flow install) from per-step → per-slot. Map the existing 6-tier `resolve.ts:223–261` chain (launchOverride → stepTarget → projectFlowDefault → platformFlowDefault → projectDefault → platformDefault) onto the per-session model — the top two tiers are NOT dropped: launchOverride becomes the ephemeral per-run override, stepTarget becomes the session runner config.
+- [x] **#10 P2.3** Binding HTTP routes (session/slot-keyed) + connect-time endpoint (identifier labels, allow-lists, SET/CLEAR/re-SET).
+- [x] **#11 P2.4** launch-options + task-launch-config per-session surface.
 
 ### Phase 3 — Run lifecycle (multi-session web + supervisor)
 - [ ] **#25 P3.0** Supervisor: accept + stamp `sessionName` (StartSessionRequest, CostRecord, SessionRecord, events) for per-session cost/event attribution.
