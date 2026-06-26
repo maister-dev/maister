@@ -312,3 +312,87 @@ Phase 7 budgets a renumber check vs `main` (`git show main:docs/decisions.md`,
 ## Остаточные вопросы — открыты после improve-прохода (2026-06-26)
 
 1. **maister-plugins (cross-repo)**: какая ветка/тег под engine 2.0.0? Релиз парой (движок-в-main + манифесты одновременно) или сначала движок, потом плагины? Кто держит совместимость в окне рассинхрона (старые pinned-теги пакетов на проде продолжат тянуть `engine_min ≤ 1.9.0` — они НЕ ломаются, но новые 2.0.0-манифесты не запустятся на проде до деплоя движка)?
+
+---
+
+## RESUMPTION STATE — 2026-06-26 (after Phase 2 binding foundation)
+
+> The harness task list is in-memory (lost on context clear). THIS section + the
+> `- [x]` checkboxes above are the durable record. On resume, re-run
+> `/aif-implement` (or read this) and continue at **#9 core** below.
+
+**Branch:** `feature/unified-flow-runner-sessions`. **5 commits, all green**
+(tsc 0, unit 5130, docs validators, eslint 0):
+- `667b037a` Phase 0 — ADR-114 + analytics/ERD/OpenAPI/flow-dsl/configuration/error-taxonomy
+- `603f7a3b` Phase 1 — `config.schema.ts` unified runner config (`flowRunnerConfigSchema`+`effort`/`env`, `runnerSlotSchema`, `runnerSlotProfileRef`, `sessionNameSchema`) + `sessions:`/node `session:`/judge `runner:` (model removed) + engine **2.0.0** + `config.ts` loader validation (`SESSIONS_ENGINE_MIN`, `validateSessions`, `declaresSessionFeatures`) + grammar drift-guard + `compile.ts` (`CompiledNode.session`, `FlowGraph.sessions`, `CompiledSession`, `RUNNER_BEARING_NODE_TYPES`)
+- `05c77f53` `run_sessions` table + migration **0080** (expand)
+- `cd0c8e91` `flow_runner_remaps` → `slot_key` refactor + migration **0081** + `lib/acp-runners/runner-slots.ts` (`enumerateRunnerSlots`) + reader fan-out (flow-reconfiguration/usage/queries.project/admin-acp-runners route/reconfiguration-control + tests) + EN/RU `slot` i18n
+
+Done: **#1–#8 + the binding-refactor half of #9.** Working tree CLEAN.
+
+**★ DECISION — expand-contract cutover (deviates from plan's drop-first):** the 5
+`runs` runner cols (`runner_id, runner_resolution_tier, capability_agent,
+runner_snapshot, acp_session_id`) + `runs_runner_idx` are NOT yet dropped — they
+drop LAST in a final **migration 0082** once every reader moved to `run_sessions`
+(tsc still force-completes the rule-11 fan-out at that drop). Keeps every step
+green/committable. Same locked end-state.
+
+**★ MIGRATION TOOLING (sandbox-critical):** `db:generate` is PTY-interactive for
+column renames → BLOCKED (no PTY). PROVEN workaround: hand-write SQL (DROP+CREATE
+for clean cutover, no data), append `_journal.json` entry with `when` STRICTLY >
+prior max (`0079`=1782777600003 → `0080`=…04 → `0081`=…05; real clock ~1782492…
+is BEHIND, so drizzle's auto-`when` is non-monotonic — ALWAYS bump), JSON-surgery
+`meta/NNNN_snapshot.json` (copy prev, edit the table, new `id`=uuid4, `prevId`=prev
+`id`). VALIDATE by `pnpm db:generate` → "No schema changes". Additive tables don't
+prompt → plain db:generate works (that's how 0080 was made).
+
+**NEXT — #9 core (`resolveRunSessions` + portable consensus):**
+- Add `resolveRunSessions` to `lib/acp-runners/resolve.ts` (reuse `snapshotRunner`/
+  `assertLaunchableRunner`/`Candidate`; `RunnerResolution`). Per session in the
+  compiled `FlowGraph.sessions` Map, precedence: ephemeral per-run override
+  (tier `launchOverride`, src `launch-dialog`) → binding (Mapped
+  `flow_runner_remaps` for the `session:<name>` slot_key, tier `binding`) →
+  profile-ref that IS a platform runner id (tier `stepTarget`) → auto-match by
+  intent `(capability_agent, model, provider.kind)` UNIQUE enabled+ready catalog
+  runner (tier `autoMatch`) → **default session + no config ONLY**:
+  `projectFlowDefault → platformFlowDefault → projectDefault → platformDefault` →
+  else `EXECUTOR_UNAVAILABLE`. Out: N `{ sessionName, runnerId,
+  runnerResolutionTier, capabilityAgent, runnerSnapshot, resolutionSource }`.
+  Helpers: `resolveSlotConfig(slot, manifest.runner_profiles)` (deref ref),
+  `autoMatchRunner(config, runners)`. Unit-test.
+- Portable consensus: `lib/flows/graph/consensus/roles.ts`
+  `resolveConsensusRoleRuntime` currently narrows `runnerSlotProfileRef(role.runner)`
+  → direct `platformAcpRunners.id` lookup (the P1 shim). Make it resolve via
+  binding (`consensus:<nodeId>:<participantId>` / `:synthesizer`) + auto-match.
+- `enumerateRunnerSlots` already yields all slots — reuse for resolution.
+
+**THEN #10→#24** (per plan): slot-keyed binding HTTP routes (validate slot_key ∈
+revision slots, mapped_runner_id ∈ platform_acp_runners) → launch-options
+per-session → supervisor `sessionName` (#25) → multi-session launch (atomic N
+`run_sessions` in ONE tx, `git worktree add` BEFORE tx, spawn AFTER commit) →
+runtime dispatch (per-node `session/resume`, judge on session runner,
+`materializeNodeCapabilities` uses session runner's model not `loaded.executor.model`)
+→ fan `run_sessions` to ALL creators + rule-11 reader fan-out + HITL/gate target
+ACTIVE session + runner-delete guard → reconcile/resume/recover session-aware →
+terminal closes ALL sessions → Studio UI (replace model field w/ runner picker;
+consensus dropdown; connect-time binding screen) + EN/RU i18n → **#22 cross-repo
+`/repos/maister-plugins` (SEPARATE repo — OPEN
+release-order Q, ASK first)** + in-repo fixtures (`web/test-fixtures/aif-flows/*`,
+`web/lib/flows/__tests__/_fixtures/*`, `web/lib/agents/__tests__/_fixtures/*`) →
+e2e → #24 as-built flip + **migration 0082 (drop runs cols)** + renumber check vs main.
+
+**rule-11 reader fan-out** (tsc lists them when 0082 drops the cols): `runs.ts`,
+`runner-core.ts`, `runner-graph.ts`, `flows/runner-agent.ts` (:896-1170), `resume.ts`,
+`recover.ts`, `runs/resume-recovery.ts` (:87 JOIN run_sessions), `reconcile.ts`,
+`scratch-runs/service.ts`, `agents/launch.ts`, `consensus/drafts.ts`, `runs/promote.ts`
+(close ALL), `workbench-lifecycle/service.ts` (close ALL), `services/gate-chat.ts`
+(ACTIVE), `services/hitl.ts` (ACTIVE), `acp-runners/usage.ts`, UI reads
+(`portfolio.ts`/`runs-list.ts`/`task-detail.ts`), `spawn-intent.ts`. `step_runs.acp_session_id` STAYS.
+
+**GOTCHAS:** `node-tooltips.ts:65` is generic (`settings.model` any-node) → NO edit
+(judge returns undefined, ai_coding keeps model). 2 PRE-EXISTING web.openapi
+`nullable-type-sibling` errors (StudioAssistant/ADR-110, not mine). pgTable TS6387
++ IDE `@/lib` "cannot find module" + TS7044 = LSP/pre-existing noise (`pnpm
+typecheck` exit 0 is truth). Commits OMIT Co-Authored-By (owner pref). Integration
+tests via `dangerouslyDisableSandbox`→host docker (DOCKER_HOST). Live-agent e2e
+(#23) needs owner env.
