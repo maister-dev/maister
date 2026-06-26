@@ -258,7 +258,7 @@ function summarizeRefs(refs: RunnerUsageReference[]): string {
         case "projectFlowDefault":
           return `projectFlowDefault:${ref.projectId}`;
         case "flowStepRemap":
-          return `flowStepRemap:${ref.stepId}`;
+          return `flowStepRemap:${ref.slotKey}`;
         case "activeRun":
           return `activeRun:${ref.runId}`;
         case "historicalRunSnapshot":

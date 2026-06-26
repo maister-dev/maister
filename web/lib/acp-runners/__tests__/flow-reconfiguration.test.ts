@@ -49,8 +49,8 @@ describe("missingAcpRunnerTargets", () => {
     expect(missing).toEqual([
       {
         flowRevisionId: "rev-1",
-        stepId: "implement",
-        sourceRunnerId: "claude-glm",
+        slotKey: "session:implement",
+        label: "implement",
         runnerProfile: {
           runner_type: "acp",
           capability_agent: "claude",

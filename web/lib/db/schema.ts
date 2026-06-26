@@ -1166,8 +1166,11 @@ export const flowRunnerRemaps = pgTable(
     flowRevisionId: text("flow_revision_id")
       .notNull()
       .references(() => flowRevisions.id, { onDelete: "cascade" }),
-    stepId: text("step_id").notNull(),
-    sourceRunnerId: text("source_runner_id").notNull(),
+    // M42 (ADR-114): per-slot binding key — `session:<name>` |
+    // `consensus:<nodeId>:<participantId>` | `consensus:<nodeId>:synthesizer`.
+    // Replaces the per-step (step_id, source_runner_id) key; slots are NEVER
+    // deduped by intent.
+    slotKey: text("slot_key").notNull(),
     mappedRunnerId: text("mapped_runner_id").references(
       () => platformAcpRunners.id,
       { onDelete: "set null" },
@@ -1183,9 +1186,9 @@ export const flowRunnerRemaps = pgTable(
       .defaultNow(),
   },
   (t) => ({
-    uniqProjectRevisionStepSource: unique(
-      "flow_runner_remaps_project_revision_step_source_uq",
-    ).on(t.projectId, t.flowRevisionId, t.stepId, t.sourceRunnerId),
+    uniqProjectRevisionSlot: unique(
+      "flow_runner_remaps_project_revision_slot_uq",
+    ).on(t.projectId, t.flowRevisionId, t.slotKey),
     idxMappedRunner: index("flow_runner_remaps_mapped_runner_idx").on(
       t.mappedRunnerId,
     ),

@@ -121,10 +121,10 @@ export function FlowRunnerReconfigurationControl({
             >
               <div className="min-w-0">
                 <div className="truncate text-[13px] font-semibold text-ink">
-                  {remap.flowRef} / {remap.stepId}
+                  {remap.flowRef}
                 </div>
                 <div className="mt-1 font-mono text-[10.5px] tracking-[0.02em] text-mute">
-                  {t("missingRunner")}: {remap.sourceRunnerId}
+                  {t("slot")}: {remap.slotKey}
                 </div>
                 <div
                   className={`mt-1 font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] ${remapStatusClass(

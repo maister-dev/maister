@@ -1347,6 +1347,7 @@
     "flowRunnerReconfigurationHint": "Map Flow package runner ids that are not present in the platform catalog.",
     "pending": "pending",
     "missingRunner": "missing runner",
+    "slot": "slot",
     "chooseRunner": "Choose platform runner",
     "adapterSupport": "Adapter support",
     "codeOwned": "code-owned",

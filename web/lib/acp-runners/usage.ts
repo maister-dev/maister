@@ -55,8 +55,7 @@ export type RunnerUsageReference =
       readonly kind: "flowStepRemap";
       readonly projectId: string | null;
       readonly flowRevisionId: string;
-      readonly stepId: string;
-      readonly sourceRunnerId: string;
+      readonly slotKey: string;
       readonly mappedRunnerId: string;
     }
   | {
@@ -106,8 +105,7 @@ type RunnerUsageInput = {
   readonly flowStepRemaps: readonly {
     readonly projectId?: string | null;
     readonly flowRevisionId: string;
-    readonly stepId: string;
-    readonly sourceRunnerId: string;
+    readonly slotKey: string;
     readonly mappedRunnerId?: string | null;
   }[];
   readonly activeRuns: readonly {
@@ -179,8 +177,7 @@ export function collectRunnerUsageReferences(
       kind: "flowStepRemap",
       projectId: remap.projectId ?? null,
       flowRevisionId: remap.flowRevisionId,
-      stepId: remap.stepId,
-      sourceRunnerId: remap.sourceRunnerId,
+      slotKey: remap.slotKey,
       mappedRunnerId: input.runnerId,
     });
   }
@@ -283,8 +280,7 @@ export async function loadRunnerUsageReferences(
     flowStepRemaps: flowStepRemapRows.map((remap) => ({
       projectId: remap.projectId ?? null,
       flowRevisionId: remap.flowRevisionId,
-      stepId: remap.stepId,
-      sourceRunnerId: remap.sourceRunnerId,
+      slotKey: remap.slotKey,
       mappedRunnerId: remap.mappedRunnerId ?? null,
     })),
     activeRuns: runRows

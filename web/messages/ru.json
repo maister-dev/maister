@@ -1347,6 +1347,7 @@
     "flowRunnerReconfigurationHint": "Свяжите runner id из Flow-пакета с раннером из платформенного каталога.",
     "pending": "ожидает",
     "missingRunner": "отсутствующий раннер",
+    "slot": "слот",
     "chooseRunner": "Выберите раннер платформы",
     "adapterSupport": "Поддержка адаптеров",
     "codeOwned": "из кода",

@@ -540,6 +540,13 @@
 			"when": 1782777600004,
 			"tag": "0080_m42_run_sessions",
 			"breakpoints": true
+		},
+		{
+			"idx": 81,
+			"version": "7",
+			"when": 1782777600005,
+			"tag": "0081_m42_remap_slot_key",
+			"breakpoints": true
 		}
 	]
 }

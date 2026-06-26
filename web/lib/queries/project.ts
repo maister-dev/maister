@@ -102,8 +102,7 @@ export interface ProjectFlowRunnerRemap {
   flowId: string | null;
   flowRef: string;
   flowRevisionId: string;
-  stepId: string;
-  sourceRunnerId: string;
+  slotKey: string;
   mappedRunnerId: string | null;
   status: "Pending" | "Mapped";
 }
@@ -367,14 +366,13 @@ export async function getProjectPageData(
     .select({
       id: flowRunnerRemaps.id,
       flowRevisionId: flowRunnerRemaps.flowRevisionId,
-      stepId: flowRunnerRemaps.stepId,
-      sourceRunnerId: flowRunnerRemaps.sourceRunnerId,
+      slotKey: flowRunnerRemaps.slotKey,
       mappedRunnerId: flowRunnerRemaps.mappedRunnerId,
       status: flowRunnerRemaps.status,
     })
     .from(flowRunnerRemaps)
     .where(eq(flowRunnerRemaps.projectId, project.id))
-    .orderBy(asc(flowRunnerRemaps.stepId));
+    .orderBy(asc(flowRunnerRemaps.slotKey));
   const projectFlowRunnerRemaps: ProjectFlowRunnerRemap[] = remapRows.map(
     (remap) => {
       const flow = flowByRevisionId.get(remap.flowRevisionId);
@@ -384,8 +382,7 @@ export async function getProjectPageData(
         flowId: flow?.id ?? null,
         flowRef: flow?.ref ?? remap.flowRevisionId,
         flowRevisionId: remap.flowRevisionId,
-        stepId: remap.stepId,
-        sourceRunnerId: remap.sourceRunnerId,
+        slotKey: remap.slotKey,
         mappedRunnerId: remap.mappedRunnerId,
         status: remap.status as "Pending" | "Mapped",
       };

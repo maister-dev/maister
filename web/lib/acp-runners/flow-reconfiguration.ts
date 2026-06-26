@@ -1,10 +1,6 @@
 import "server-only";
 
-import type {
-  AiCodingSettings,
-  FlowRunnerProfile,
-  FlowYamlV1,
-} from "@/lib/config.schema";
+import type { FlowRunnerProfile, FlowYamlV1 } from "@/lib/config.schema";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
 import { randomUUID } from "node:crypto";
@@ -12,9 +8,7 @@ import { randomUUID } from "node:crypto";
 import pino from "pino";
 
 import * as schema from "@/lib/db/schema";
-import { runnerSlotProfileRef } from "@/lib/config.schema";
-import { capabilityBearingSettings } from "@/lib/flows/enforcement";
-import { compileManifest } from "@/lib/flows/graph/compile";
+import { enumerateRunnerSlots } from "@/lib/acp-runners/runner-slots";
 import { flowRunnerRemaps } from "@/lib/db/schema";
 
 type Db = Pick<NodePgDatabase<typeof schema>, "insert">;
@@ -24,10 +18,13 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
+// M42 (ADR-114): a flow runner slot that needs a per-project binding before
+// launch — a `session:` / `consensus:` slot whose declared runner is a
+// `runner_profiles` ref (or inline config) with no direct platform-runner match.
 export type MissingFlowRunnerTarget = {
   flowRevisionId: string;
-  stepId: string;
-  sourceRunnerId: string;
+  slotKey: string;
+  label: string;
   runnerProfile?: FlowRunnerProfile;
 };
 
@@ -40,41 +37,43 @@ export type SyncFlowRunnerRequirementsInput = {
   platformRunnerIds: ReadonlySet<string>;
 };
 
-function targetKey(target: { stepId: string; sourceRunnerId: string }): string {
-  return `${target.stepId}\u0000${target.sourceRunnerId}`;
-}
-
+// M42: enumerate every runner slot whose declared runner lacks a direct platform
+// runner match (so it needs a per-project binding). The richer auto-match by
+// intent (agent+model+provider) happens at launch resolution where the platform
+// runner catalog is available; here we only short-circuit a bare ref that is
+// already a platform runner id.
 export function missingAcpRunnerTargets(args: {
   flowRevisionId: string;
   manifest: FlowYamlV1;
   platformRunnerIds: ReadonlySet<string>;
 }): MissingFlowRunnerTarget[] {
-  const graph = compileManifest(args.manifest);
-  const missingByKey = new Map<string, MissingFlowRunnerTarget>();
+  const missing: MissingFlowRunnerTarget[] = [];
 
-  for (const node of graph.nodes.values()) {
-    if (node.nodeType !== "ai_coding") continue;
+  for (const slot of enumerateRunnerSlots(args.manifest)) {
+    // No declared runner -> resolves via the default precedence chain.
+    if (slot.runner === undefined) continue;
+    // A bare ref that IS already a platform runner id is a direct match.
+    if (
+      slot.profileRef !== undefined &&
+      args.platformRunnerIds.has(slot.profileRef)
+    ) {
+      continue;
+    }
 
-    const settings = capabilityBearingSettings(node.nodeType, node.settings) as
-      | AiCodingSettings
-      | undefined;
-    // M42: per-step remap keys on the string profile-ref; inline-object runner
-    // slots are bound per-slot by the M42 per-session sync (Phase 2).
-    const sourceRunnerId = runnerSlotProfileRef(settings?.runner);
+    const runnerProfile =
+      slot.profileRef !== undefined
+        ? args.manifest.runner_profiles?.[slot.profileRef]
+        : undefined;
 
-    if (!sourceRunnerId || args.platformRunnerIds.has(sourceRunnerId)) continue;
-
-    const runnerProfile = args.manifest.runner_profiles?.[sourceRunnerId];
-
-    missingByKey.set(targetKey({ stepId: node.id, sourceRunnerId }), {
+    missing.push({
       flowRevisionId: args.flowRevisionId,
-      stepId: node.id,
-      sourceRunnerId,
+      slotKey: slot.slotKey,
+      label: slot.label,
       ...(runnerProfile ? { runnerProfile } : {}),
     });
   }
 
-  return [...missingByKey.values()];
+  return missing;
 }
 
 export async function syncFlowRunnerReconfigurationRequirements(
@@ -95,8 +94,7 @@ export async function syncFlowRunnerReconfigurationRequirements(
         id: randomUUID(),
         projectId: input.projectId,
         flowRevisionId: target.flowRevisionId,
-        stepId: target.stepId,
-        sourceRunnerId: target.sourceRunnerId,
+        slotKey: target.slotKey,
         mappedRunnerId: null,
         status: "Pending" as const,
       })),
@@ -105,8 +103,7 @@ export async function syncFlowRunnerReconfigurationRequirements(
       target: [
         flowRunnerRemaps.projectId,
         flowRunnerRemaps.flowRevisionId,
-        flowRunnerRemaps.stepId,
-        flowRunnerRemaps.sourceRunnerId,
+        flowRunnerRemaps.slotKey,
       ],
     });
 
@@ -116,10 +113,9 @@ export async function syncFlowRunnerReconfigurationRequirements(
         flowId: input.flowId,
         flowRevisionId: input.flowRevisionId,
         projectId: input.projectId,
-        stepId: target.stepId,
-        missingRunnerId: target.sourceRunnerId,
+        slotKey: target.slotKey,
       },
-      "flow runner target requires ACP runner reconfiguration",
+      "flow runner slot requires per-project binding",
     );
   }
 

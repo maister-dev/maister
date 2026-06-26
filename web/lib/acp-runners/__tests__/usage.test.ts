@@ -30,8 +30,7 @@ describe("ACP runner usage references", () => {
         {
           projectId: "project-1",
           flowRevisionId: "flow-rev-1",
-          stepId: "implement",
-          sourceRunnerId: "missing-runner",
+          slotKey: "session:default",
           mappedRunnerId: "runner-a",
         },
       ],
@@ -93,8 +92,7 @@ describe("ACP runner usage references", () => {
         {
           projectId: "project-1",
           flowRevisionId: "flow-rev-1",
-          stepId: "implement",
-          sourceRunnerId: "missing-runner",
+          slotKey: "session:default",
           mappedRunnerId: "runner-a",
         },
       ],
