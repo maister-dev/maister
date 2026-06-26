@@ -48,6 +48,11 @@ export interface GraphTopologyNode {
   nodeTypeLabel: string;
   nodeRole: GraphNodeRole;
   declaredGateSummary: DeclaredGateSummary;
+  // M42 (ADR-114): the NAMED, shared session this runner-bearing node joins —
+  // the canvas grouping signal. Undefined for the implicit `default` session, a
+  // solo session (keyed by the node id), and non-runner-bearing nodes, so the
+  // common single-session flow stays uncluttered.
+  sessionName?: string;
 }
 
 export interface GraphTopologyEdge {
@@ -176,6 +181,12 @@ export function buildGraphTopology(compiled: FlowGraph): GraphTopology {
     if (!node) continue;
 
     const nodeRole = nodeRoleForType(node.nodeType);
+    // A named shared session is anything other than the implicit `default` or a
+    // solo session (whose key IS the node id). Those two carry no grouping signal.
+    const sessionName =
+      node.session && node.session !== "default" && node.session !== id
+        ? node.session
+        : undefined;
 
     nodes.push({
       id,
@@ -185,6 +196,7 @@ export function buildGraphTopology(compiled: FlowGraph): GraphTopology {
       nodeTypeLabel: nodeTypeLabelForRole(nodeRole),
       nodeRole,
       declaredGateSummary: declaredGateSummary(node.gates),
+      ...(sessionName ? { sessionName } : {}),
     });
 
     for (const [outcome, target] of Object.entries(node.transitions)) {

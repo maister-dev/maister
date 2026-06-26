@@ -13,6 +13,16 @@ type Props = {
   projectSlug: string;
   remaps: ProjectFlowRunnerRemap[];
   runners: ProjectRunner[];
+  // M42 (ADR-114): the same slot-keyed binding control backs BOTH the project
+  // settings tab (all flows) and the per-flow connect-time binding screen. The
+  // connect-time host overrides the heading/hint, supplies friendly slot labels
+  // (`session:<name>` / `consensus:<node>:<participant>` → readable), and asks
+  // for a positive empty-state instead of rendering nothing when every slot
+  // already auto-resolves.
+  heading?: string;
+  hint?: string;
+  slotLabels?: Record<string, string>;
+  allResolvedLabel?: string;
 };
 
 async function patchJson(url: string, body: unknown): Promise<void> {
@@ -41,6 +51,10 @@ export function FlowRunnerReconfigurationControl({
   projectSlug,
   remaps,
   runners,
+  heading,
+  hint,
+  slotLabels,
+  allResolvedLabel,
 }: Props): ReactElement | null {
   const t = useTranslations("settings");
   const [items, setItems] = useState(remaps);
@@ -58,8 +72,29 @@ export function FlowRunnerReconfigurationControl({
       ),
     [runners],
   );
+  const title = heading ?? t("flowRunnerReconfiguration");
+  const subhead = hint ?? t("flowRunnerReconfigurationHint");
 
-  if (items.length === 0) return null;
+  // Connect-time host (allResolvedLabel set) shows a positive "nothing to bind"
+  // state; the settings tab keeps the legacy collapse-to-nothing behavior.
+  if (items.length === 0) {
+    if (!allResolvedLabel) return null;
+
+    return (
+      <div className="mb-4 rounded-[8px] border border-line bg-paper px-[18px] py-[15px]">
+        <h3 className="m-0 text-[13px] font-semibold tracking-[-0.005em] text-ink">
+          {title}
+        </h3>
+        <p
+          className="m-0 mt-2 inline-flex items-center gap-1.5 font-mono text-[11px] text-emerald-700"
+          data-testid="flow-runner-binding-all-resolved"
+        >
+          <span aria-hidden="true">✓</span>
+          {allResolvedLabel}
+        </p>
+      </div>
+    );
+  }
 
   async function save(remap: ProjectFlowRunnerRemap): Promise<void> {
     const mappedRunnerId = selectedById[remap.id] || null;
@@ -99,10 +134,10 @@ export function FlowRunnerReconfigurationControl({
       <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
         <div>
           <h3 className="m-0 text-[13px] font-semibold tracking-[-0.005em] text-ink">
-            {t("flowRunnerReconfiguration")}
+            {title}
           </h3>
           <p className="m-0 mt-1 font-mono text-[10.5px] tracking-[0.02em] text-mute">
-            {t("flowRunnerReconfigurationHint")}
+            {subhead}
           </p>
         </div>
         <span className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-amber">
@@ -125,7 +160,7 @@ export function FlowRunnerReconfigurationControl({
                   {remap.flowRef}
                 </div>
                 <div className="mt-1 font-mono text-[10.5px] tracking-[0.02em] text-mute">
-                  {t("slot")}: {remap.slotKey}
+                  {t("slot")}: {slotLabels?.[remap.slotKey] ?? remap.slotKey}
                 </div>
                 <div
                   className={`mt-1 font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] ${remapStatusClass(

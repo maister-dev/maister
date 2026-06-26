@@ -10,6 +10,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 
 import { FlowGraphViewSection } from "@/components/board/flow-graph-view-section";
+import { FlowRunnerReconfigurationControl } from "@/components/board/panels/flow-runner-reconfiguration-control";
 import {
   CodeEditor,
   type CodeEditorKind,
@@ -44,6 +45,7 @@ import {
 } from "@/lib/flows/graph/presentation-layout";
 import { buildGraphTopology } from "@/lib/queries/flow-graph-view";
 import { getFlowPackageDetail } from "@/lib/queries/flow-packages";
+import { getFlowRunnerBindingScope } from "@/lib/queries/project";
 
 interface PageProps {
   params: Promise<{ slug: string; flowRefId: string }>;
@@ -70,6 +72,7 @@ function buildGraphLabels(
     title: t("graph.title"),
     empty: t("graph.empty"),
     currentNode: t("graph.currentNode"),
+    sessionChip: t("graph.sessionChip"),
     declaredGateSummary: t("graph.declaredGateSummary"),
     gateSummary: t("graph.gateSummary"),
     blockingGateSummary: t("graph.blockingGateSummary"),
@@ -249,6 +252,15 @@ export default async function FlowPackageViewerPage({
 
   const dto = detail.dto;
 
+  // M42 (ADR-114): per-flow connect-time runner-slot bindings — scoped to the
+  // ENABLED revision (what launch resolves + the PATCH route validates against).
+  // Admin/owner-only (binding is an `editSettings` action).
+  const enabledRevisionId = detail.flow.enabledRevisionId ?? null;
+  const bindingScope =
+    canManageCatalog && enabledRevisionId
+      ? await getFlowRunnerBindingScope(detail.project.id, enabledRevisionId)
+      : null;
+
   return (
     <div className="mx-auto w-full max-w-[1120px]">
       <Link
@@ -379,6 +391,20 @@ export default async function FlowPackageViewerPage({
         </div>
 
         <aside className="space-y-4">
+          {bindingScope ? (
+            <div data-testid="package-runner-bindings">
+              <FlowRunnerReconfigurationControl
+                allResolvedLabel={tViewer("runnerBindingAllResolved")}
+                heading={tViewer("runnerBindingTitle")}
+                hint={tViewer("runnerBindingHint")}
+                projectSlug={slug}
+                remaps={bindingScope.remaps}
+                runners={bindingScope.runners}
+                slotLabels={bindingScope.slotLabels}
+              />
+            </div>
+          ) : null}
+
           {canManageCatalog ? (
             <section
               className="rounded-xl border border-amber-line bg-amber-soft p-4"

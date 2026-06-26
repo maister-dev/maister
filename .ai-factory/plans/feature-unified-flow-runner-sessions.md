@@ -190,10 +190,10 @@ next migration idx = **0080**.
 - [ ] **#17 P4.3** Terminal transition closes ALL sessions (no leaked deferreds) + slot-release.
 
 ### Phase 5 — Studio UI + i18n
-- [ ] **#18 P5.1** Node-form runner picker (replace model field) + session selector.
-- [ ] **#19 P5.2** Consensus participant/synthesizer unified runner dropdown.
-- [ ] **#20 P5.3** Connect-time binding screen + refactor reconfiguration control.
-- [ ] **#21 P5.4** Canvas session viz (chip + grouping) + EN/RU i18n parity.
+- [x] **#18 P5.1** Node-form runner picker (replace model field) + session selector.
+- [x] **#19 P5.2** Consensus participant/synthesizer unified runner dropdown. (Satisfied by Phase 1 schema + the existing consensus `ReferenceCombobox` runner/agent picker — unified `runnerSlotSchema`, platform-runner + agent + free-text options, no intent dedup; node-side-form tests green.)
+- [x] **#20 P5.3** Connect-time binding screen + refactor reconfiguration control. (Reconfiguration control refactored with heading/hint/slotLabels/all-resolved-empty-state props; per-flow connect-time binding screen mounted on the project package detail page sidebar via `getFlowRunnerBindingScope` scoped to the enabled revision; EN/RU keys added; tsc/route/i18n green. Rendered screen is e2e-verified in #23.)
+- [x] **#21 P5.4** Canvas session viz (chip + grouping) + EN/RU i18n parity. (Topology carries `sessionName` for named SHARED sessions only [not default/solo]; FlowNodeBody renders a glyph+name session chip with optional translated title prefix; editor live-syncs the chip from the manifest; `workbench.graph.sessionChip` EN/RU added + wired on the package viewer; +7 unit tests; full unit 5161 green.)
 
 ### Phase 6 — Manifest rewrite + validation
 - [ ] **#22 P6.1** Rewrite all 24 maister-plugins manifests + author multi-session & consensus example flows. **Cross-repo**: maister-plugins is a separate repo (`/repos/maister-plugins`) on its own branch/tag — engine-2.0.0 + `compat.engine_min: 2.0.0` manifests only run against THIS branch's engine, so land the two as a coordinated pair (decide the release order — see residual question). ALSO bump the in-repo fixtures that declare `runner_profiles` (`web/test-fixtures/aif-flows/*`, `web/lib/flows/__tests__/_fixtures/*`, `web/lib/agents/__tests__/_fixtures/*`) to the unified config + judge-model removal so #23 stays green (the SCHEMA change is the breakage risk, not the engine-floor bump — `2.0.0 ≥ 1.1.0` still satisfies a low `engine_min`).

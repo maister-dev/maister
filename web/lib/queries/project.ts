@@ -16,6 +16,7 @@ import {
   or,
 } from "drizzle-orm";
 
+import { enumerateRunnerSlots } from "@/lib/acp-runners/runner-slots";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import { computeReadinessByRun } from "@/lib/queries/readiness-batch";
@@ -463,4 +464,96 @@ export async function getProjectPageData(
     defaultAgent: defaultRunner?.agent ?? null,
     defaultRunnerLabel: defaultRunner?.label ?? null,
   };
+}
+
+export interface FlowRunnerBindingScope {
+  remaps: ProjectFlowRunnerRemap[];
+  runners: ProjectRunner[];
+  slotLabels: Record<string, string>;
+}
+
+// M42 (ADR-114): focused loader for the per-flow connect-time binding screen.
+// Returns the binding rows scoped to ONE enabled flow revision, the selectable
+// platform runners, and friendly slot labels enumerated from the manifest
+// (`session:<name>` / `consensus:<node>:<participant>` → readable). The caller
+// (the project package detail page) owns authorization.
+export async function getFlowRunnerBindingScope(
+  projectId: string,
+  flowRevisionId: string,
+): Promise<FlowRunnerBindingScope> {
+  const client = db();
+  const [flowRows, remapRows, runnerRows] = await Promise.all([
+    client
+      .select({
+        id: flows.id,
+        ref: flows.flowRefId,
+        manifest: flows.manifest,
+      })
+      .from(flows)
+      .where(
+        and(
+          eq(flows.projectId, projectId),
+          eq(flows.enabledRevisionId, flowRevisionId),
+        ),
+      ),
+    client
+      .select({
+        id: flowRunnerRemaps.id,
+        flowRevisionId: flowRunnerRemaps.flowRevisionId,
+        slotKey: flowRunnerRemaps.slotKey,
+        mappedRunnerId: flowRunnerRemaps.mappedRunnerId,
+        status: flowRunnerRemaps.status,
+      })
+      .from(flowRunnerRemaps)
+      .where(
+        and(
+          eq(flowRunnerRemaps.projectId, projectId),
+          eq(flowRunnerRemaps.flowRevisionId, flowRevisionId),
+        ),
+      )
+      .orderBy(asc(flowRunnerRemaps.slotKey)),
+    client
+      .select({
+        id: platformAcpRunners.id,
+        agent: platformAcpRunners.capabilityAgent,
+        adapter: platformAcpRunners.adapter,
+        model: platformAcpRunners.model,
+        readinessStatus: platformAcpRunners.readinessStatus,
+        enabled: platformAcpRunners.enabled,
+      })
+      .from(platformAcpRunners)
+      .orderBy(asc(platformAcpRunners.createdAt)),
+  ]);
+
+  const flow = flowRows[0];
+  const slotLabels: Record<string, string> = {};
+
+  if (flow?.manifest) {
+    try {
+      for (const slot of enumerateRunnerSlots(flow.manifest as FlowYamlV1)) {
+        slotLabels[slot.slotKey] = slot.label;
+      }
+    } catch {
+      // A manifest that no longer compiles falls back to the raw slot_key label.
+    }
+  }
+
+  const remaps: ProjectFlowRunnerRemap[] = remapRows.map((remap) => ({
+    id: remap.id,
+    flowId: flow?.id ?? null,
+    flowRef: flow?.ref ?? remap.flowRevisionId,
+    flowRevisionId: remap.flowRevisionId,
+    slotKey: remap.slotKey,
+    mappedRunnerId: remap.mappedRunnerId,
+    status: remap.status as "Pending" | "Mapped",
+  }));
+  const runners: ProjectRunner[] = runnerRows.map((runner) => ({
+    id: runner.id,
+    agent: runner.agent,
+    label: `${runner.id} · ${runner.adapter} · ${runner.model}`,
+    readinessStatus: runner.readinessStatus,
+    enabled: runner.enabled,
+  }));
+
+  return { remaps, runners, slotLabels };
 }

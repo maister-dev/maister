@@ -43,6 +43,7 @@ type FlowNodeBodyProps = {
   displayLabel?: string;
   nodeTypeLabel?: string;
   nodeRole?: string;
+  sessionName?: string;
   status: string;
   isCurrent: boolean;
   rollup: string;
@@ -65,6 +66,7 @@ type FlowNodeBodyProps = {
     gateSummary?: string;
     blockingGateSummary?: string;
     declaredGateSummary?: string;
+    sessionChip?: string;
   };
   tooltip?: string;
 };
@@ -157,6 +159,52 @@ describe("FlowNodeBody — node type icon chip (T1.1)", () => {
     });
 
     expect(html).not.toContain('data-testid="node-type-icon"');
+  });
+});
+
+describe("FlowNodeBody — session chip (M42)", () => {
+  it("renders the session chip with the name + translated title prefix", () => {
+    const html = render({
+      label: "review",
+      nodeType: "judge",
+      sessionName: "reviewer",
+      status: "Pending",
+      isCurrent: false,
+      rollup: "none",
+      labels: { ...baseLabels, sessionChip: "Session" },
+    });
+
+    expect(html).toContain('data-testid="node-session-chip"');
+    expect(html).toContain('data-session="reviewer"');
+    expect(html).toContain("reviewer");
+    expect(html).toContain('title="Session: reviewer"');
+  });
+
+  it("falls back to the bare session name when no prefix label is set", () => {
+    const html = render({
+      label: "review",
+      sessionName: "reviewer",
+      status: "Pending",
+      isCurrent: false,
+      rollup: "none",
+      labels: baseLabels,
+    });
+
+    expect(html).toContain('data-testid="node-session-chip"');
+    expect(html).toContain('title="reviewer"');
+  });
+
+  it("omits the session chip for a default/solo/non-session node", () => {
+    const html = render({
+      label: "plan",
+      nodeType: "ai_coding",
+      status: "Pending",
+      isCurrent: false,
+      rollup: "none",
+      labels: baseLabels,
+    });
+
+    expect(html).not.toContain('data-testid="node-session-chip"');
   });
 });
 

@@ -49,6 +49,9 @@ export interface FlowGraphViewLabels {
   declaredGateSummary?: string;
   gateSummary?: string;
   blockingGateSummary?: string;
+  // M42 (ADR-114): accessible prefix for the per-node session chip (e.g.
+  // "Session"). Optional — absent → the chip shows the bare session name.
+  sessionChip?: string;
 }
 
 // Run coupling is optional: present → live status overlay (SSE + /graph-status,
@@ -79,6 +82,8 @@ interface FlowNodeBodyProps {
   displayLabel?: string;
   nodeTypeLabel?: string;
   nodeRole?: string;
+  // M42 (ADR-114): the named shared session this node joins (grouping chip).
+  sessionName?: string;
   status: string;
   statusLabel?: string;
   isCurrent: boolean;
@@ -105,6 +110,7 @@ interface FlowNodeBodyProps {
     declaredGateSummary?: string;
     gateSummary?: string;
     blockingGateSummary?: string;
+    sessionChip?: string;
   };
 }
 
@@ -322,12 +328,35 @@ function NodeTypeIcon({ name }: { name: string }): ReactElement {
 // Presentational node body — no <Handle>, so it renders under
 // renderToStaticMarkup without a ReactFlow provider. The data attributes are
 // the test/e2e contract surface.
+// M42 (ADR-114): the session chip glyph — stacked layers signal a shared
+// session group. Inline SVG (no icon library), `currentColor` so it inherits
+// the chip's muted text token.
+function SessionGlyph(): ReactElement {
+  return (
+    <svg
+      aria-hidden="true"
+      className="h-2.5 w-2.5 shrink-0"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="1.4"
+      viewBox="0 0 16 16"
+    >
+      <path d="M8 2 14 5 8 8 2 5z" />
+      <path d="M2 8.5 8 11.5 14 8.5" />
+      <path d="M2 11.5 8 14.5 14 11.5" />
+    </svg>
+  );
+}
+
 export function FlowNodeBody({
   label,
   nodeType,
   displayLabel,
   nodeTypeLabel,
   nodeRole,
+  sessionName,
   status,
   statusLabel,
   isCurrent,
@@ -435,6 +464,21 @@ export function FlowNodeBody({
           <p className="truncate text-[13.5px] font-semibold leading-tight text-ink">
             {displayLabel ?? label}
           </p>
+          {sessionName ? (
+            <span
+              className="inline-flex max-w-full items-center gap-1 self-start rounded-full border border-line bg-paper px-1.5 py-0.5 text-[9px] font-medium leading-none text-ink-2"
+              data-session={sessionName}
+              data-testid="node-session-chip"
+              title={
+                labels.sessionChip
+                  ? `${labels.sessionChip}: ${sessionName}`
+                  : sessionName
+              }
+            >
+              <SessionGlyph />
+              <span className="truncate">{sessionName}</span>
+            </span>
+          ) : null}
           {declaredCount > 0 ||
           runtimeGateCount > 0 ||
           blockingGateCount > 0 ? (
@@ -532,6 +576,7 @@ type FlowNodeRenderData = {
   displayLabel?: string;
   nodeTypeLabel?: string;
   nodeRole?: string;
+  sessionName?: string;
   declaredGateSummary?: FlowNodeBodyProps["declaredGateSummary"];
   status?: string;
   isCurrent?: boolean;
@@ -579,6 +624,7 @@ function makeFlowNodeView(
           rollup={d.rollup ?? "none"}
           runtimeGateSummary={d.runtimeGateSummary}
           selected={d.selected ?? false}
+          sessionName={d.sessionName}
           status={status}
           statusLabel={labels.node[status] ?? status}
           tooltip={d.tooltip}

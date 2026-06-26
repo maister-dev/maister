@@ -245,6 +245,7 @@ function makeEditorNodeView(
           presentationWidth={d.presentationWidth}
           rollup="none"
           selected={d.selected ?? false}
+          sessionName={d.sessionName}
           status="Pending"
           statusLabel={d.nodeTypeLabel}
           tooltip={d.tooltip}
@@ -420,6 +421,12 @@ export default function FlowGraphEditor({
   const nodeTypes = useMemo<NodeTypes>(
     () => ({ flowNode: makeEditorNodeView(labels.graph) }),
     [labels.graph],
+  );
+
+  // M42 (ADR-114): the live `sessions:` keys feed the node-form session selector.
+  const sessionNames = useMemo<string[]>(
+    () => Object.keys(manifest.sessions ?? {}),
+    [manifest],
   );
 
   const applyManifest = useCallback(
@@ -636,6 +643,28 @@ export default function FlowGraphEditor({
     () => buildFlowNodeTooltipsFromManifest(manifest),
     [manifest],
   );
+  // M42 (ADR-114): the named-shared-session chip stays live as the author edits
+  // a node's `session:` — recomputed from the live manifest (like the tooltip),
+  // not the static seed. Mirrors the topology rule: explicit name, not `default`
+  // and not the node's own id (a solo session carries no grouping signal).
+  const sessionNameByNode = useMemo<Record<string, string>>(() => {
+    const out: Record<string, string> = {};
+
+    for (const node of manifest.nodes ?? []) {
+      const id = String((node as { id?: unknown }).id ?? "");
+      const session = (node as { session?: unknown }).session;
+
+      if (
+        typeof session === "string" &&
+        session !== "default" &&
+        session !== id
+      ) {
+        out[id] = session;
+      }
+    }
+
+    return out;
+  }, [manifest]);
   const renderedNodes = useMemo<Node[]>(
     () =>
       nodes.map((node) => ({
@@ -644,9 +673,10 @@ export default function FlowGraphEditor({
           ...node.data,
           selected: node.id === selectedNodeId,
           tooltip: nodeTooltips[node.id],
+          sessionName: sessionNameByNode[node.id],
         },
       })),
-    [nodes, selectedNodeId, nodeTooltips],
+    [nodes, selectedNodeId, nodeTooltips, sessionNameByNode],
   );
 
   return (
@@ -741,6 +771,7 @@ export default function FlowGraphEditor({
               promptAdapter={promptAdapter}
               promptCatalog={promptCatalog}
               schemaFiles={schemaFiles}
+              sessionNames={sessionNames}
               skillOptions={skillOptions}
               onChange={handleNodeFormChange}
               onPresentationChange={handlePresentationChange}

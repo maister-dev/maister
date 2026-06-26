@@ -105,6 +105,45 @@ const formGraph: FlowYamlV1 = {
   ],
 } as FlowYamlV1;
 
+// M42 (ADR-114): a multi-session graph. `plan`+`build` share the named
+// `reviewer` session (grouped); `solo` declares its own runner (solo session,
+// keyed by its id → no grouping chip); `plain` joins the implicit default.
+const sessionGraph: FlowYamlV1 = {
+  schemaVersion: 1,
+  name: "session-aif",
+  sessions: { reviewer: { runner: "claude-code" } },
+  runner_profiles: { "claude-code": { capability_agent: "claude" } },
+  nodes: [
+    {
+      id: "plan",
+      type: "ai_coding",
+      action: { prompt: "/aif-plan" },
+      session: "reviewer",
+      transitions: { success: "build" },
+    },
+    {
+      id: "build",
+      type: "ai_coding",
+      action: { prompt: "/aif-build" },
+      session: "reviewer",
+      transitions: { success: "solo" },
+    },
+    {
+      id: "solo",
+      type: "ai_coding",
+      action: { prompt: "/aif" },
+      settings: { runner: "claude-code" },
+      transitions: { success: "plain" },
+    },
+    {
+      id: "plain",
+      type: "ai_coding",
+      action: { prompt: "/aif" },
+      transitions: { success: "done" },
+    },
+  ],
+} as unknown as FlowYamlV1;
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
@@ -322,5 +361,20 @@ describe("buildGraphTopology — visual metadata", () => {
 
     expect(topo.edges.some((e) => e.target === "done")).toBe(false);
     expect(topo.edges.some((e) => e.outcome === "approve")).toBe(false);
+  });
+});
+
+describe("buildGraphTopology — session grouping (M42)", () => {
+  it("carries the named shared session, but not default/solo, as sessionName", () => {
+    const topo = buildGraphTopology(compileManifest(sessionGraph));
+    const byId = new Map(topo.nodes.map((n) => [n.id, n]));
+
+    // plan + build share the named `reviewer` session → grouping chip.
+    expect(byId.get("plan")?.sessionName).toBe("reviewer");
+    expect(byId.get("build")?.sessionName).toBe("reviewer");
+    // a solo session (keyed by the node id) carries no grouping signal.
+    expect(byId.get("solo")?.sessionName).toBeUndefined();
+    // the implicit default session carries no grouping signal.
+    expect(byId.get("plain")?.sessionName).toBeUndefined();
   });
 });

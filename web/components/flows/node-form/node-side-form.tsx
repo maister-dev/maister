@@ -48,6 +48,12 @@ export type NodeSideFormLabels = {
   command: string;
   formSchema: string;
   model: string;
+  // M42 (ADR-114): the unified runner picker + session selector for
+  // runner-bearing nodes (ai_coding/judge/orchestrator).
+  runner: string;
+  runnerInline: string;
+  session: string;
+  sessionDefault: string;
   thinkingEffort: string;
   permissionMode: string;
   workspaceAccess: string;
@@ -250,6 +256,22 @@ function patchSourceSelection(kind: ActorSourceKind, value: string): Rec {
   return sourcePatchFromSelection(kind, value);
 }
 
+// M42 (ADR-114): a runner-bearing node (ai_coding/judge/orchestrator) selects its
+// runner via `settings.runner` (a `runner_profiles` ref string) OR binds a catalog
+// agent via `settings.agent` — the same runner/agent duality consensus uses. An
+// inline-object `settings.runner` (the advanced unified config form) carries no
+// string ref, so the visual picker shows an empty value + a YAML-only hint.
+function nodeActorSourceRec(settings: Rec): Rec {
+  return {
+    runner: typeof settings.runner === "string" ? settings.runner : undefined,
+    agent: str(settings.agent) || undefined,
+  };
+}
+
+function nodeRunnerIsInlineObject(settings: Rec): boolean {
+  return settings.runner !== undefined && typeof settings.runner !== "string";
+}
+
 function TextField({
   testid,
   label,
@@ -286,6 +308,7 @@ function SelectField({
   value,
   options,
   readOnly = false,
+  noneLabel = "—",
   onChange,
 }: {
   testid: string;
@@ -293,6 +316,7 @@ function SelectField({
   value: string;
   options: readonly string[];
   readOnly?: boolean;
+  noneLabel?: string;
   onChange: (value: string) => void;
 }): ReactElement {
   return (
@@ -305,7 +329,7 @@ function SelectField({
         value={value}
         onChange={(e) => onChange(e.target.value)}
       >
-        <option value="">—</option>
+        <option value="">{noneLabel}</option>
         {options.map((opt) => (
           <option key={opt} value={opt}>
             {opt}
@@ -328,6 +352,7 @@ export function NodeSideForm({
   node,
   labels,
   participantSources = [],
+  sessionNames = [],
   schemaFiles,
   promptCatalog,
   promptAdapter,
@@ -342,6 +367,10 @@ export function NodeSideForm({
   node: NodeDef | null;
   labels: NodeSideFormLabels;
   participantSources?: ReferenceSourceGroup[];
+  // M42 (ADR-114): names declared in the flow's top-level `sessions:` map, for
+  // the runner-bearing node's session selector. Empty → only the implicit
+  // `default` (the empty option) is offered.
+  sessionNames?: string[];
   schemaFiles?: SchemaRefFile[];
   // The `/`-autosuggest capability catalog for the action.prompt composer
   // (editor mount). Absent → the read-only viewer degrades to a plain textarea.
@@ -387,6 +416,34 @@ export function NodeSideForm({
   };
   const setSetting = (key: string, value: unknown): void =>
     emit({ ...n, settings: { ...settings, [key]: value } });
+  // M42 (ADR-114): selecting a runner sets `settings.runner` and clears
+  // `settings.agent` (and vice versa) — runner XOR agent, mirroring consensus.
+  const setNodeActorSource = (kind: ActorSourceKind, value: string): void => {
+    const patch = patchSourceSelection(kind, value);
+
+    emit({
+      ...n,
+      settings: compactRec({
+        ...settings,
+        runner: patch.runner,
+        agent: patch.agent,
+      }),
+    });
+  };
+  // M42 (ADR-114): the node's `session:` — empty removes the field (implicit
+  // `default`/solo session); a value joins that named `sessions:` group.
+  const setNodeSession = (value: string): void => {
+    if (value === "") {
+      const rest = { ...n };
+
+      delete rest.session;
+      emit(rest);
+
+      return;
+    }
+
+    emit({ ...n, session: value });
+  };
   const setEnforcement = (cls: string, value: string): void => {
     const next: Record<string, unknown> = {
       ...(settings.enforcement as Record<string, unknown> | undefined),
@@ -521,6 +578,12 @@ export function NodeSideForm({
     type === "ai_coding" || type === "judge" || type === "orchestrator";
   const isConsensusType = type === "consensus";
   const isCommandType = type === "cli" || type === "check";
+  // M42 (ADR-114): the session selector always offers the node's CURRENT session
+  // (so an undeclared ref stays visible + correctable) plus every declared name.
+  const currentSession = str(n.session);
+  const sessionOptions = Array.from(
+    new Set([...(currentSession ? [currentSession] : []), ...sessionNames]),
+  );
 
   // M38 (ADR-103) — Routing (`decide`) sub-panel. Offered when the node can
   // produce a routable signal: it declares `output.result` (→ from: output) OR
@@ -681,12 +744,54 @@ export function NodeSideForm({
         <h3 className={SECTION_CLS}>{labels.settings}</h3>
         {type === "ai_coding" || type === "judge" || type === "orchestrator" ? (
           <>
-            <TextField
-              label={labels.model}
+            <ReferenceCombobox
+              asAgentLabel={labels.consensus.asAgent}
+              asRunnerLabel={labels.consensus.asRunner}
+              emptyHint={labels.consensus.sourceEmptyHint}
+              groups={participantSources}
+              label={labels.runner}
+              placeholder={labels.consensus.sourcePlaceholder}
               readOnly={readOnly}
-              testid="node-model"
-              value={str(settings.model)}
-              onChange={(v) => setSetting("model", v || undefined)}
+              testid="node-runner-source"
+              unknownKind={unknownSourceKindFor(
+                sourceValueFor(nodeActorSourceRec(settings)),
+                sourceDeclaredKindFor(nodeActorSourceRec(settings)),
+                sourceSets,
+              )}
+              value={sourceValueFor(nodeActorSourceRec(settings))}
+              onInputValue={(value) =>
+                setNodeActorSource(
+                  resolveFreeTextSourceKind(value, sourceSets),
+                  value,
+                )
+              }
+              onSelect={(value, kind) => {
+                if (!isActorSourceKind(kind)) return;
+                setNodeActorSource(kind, value);
+              }}
+              onUnknownKindChange={(kind) =>
+                setNodeActorSource(
+                  kind,
+                  sourceValueFor(nodeActorSourceRec(settings)),
+                )
+              }
+            />
+            {nodeRunnerIsInlineObject(settings) ? (
+              <p
+                className="font-mono text-[10px] text-mute"
+                data-testid="node-runner-inline-hint"
+              >
+                {labels.runnerInline}
+              </p>
+            ) : null}
+            <SelectField
+              label={labels.session}
+              noneLabel={labels.sessionDefault}
+              options={sessionOptions}
+              readOnly={readOnly}
+              testid="node-session"
+              value={currentSession}
+              onChange={(v) => setNodeSession(v)}
             />
             <SelectField
               label={labels.thinkingEffort}

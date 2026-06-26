@@ -63,6 +63,8 @@ export type FlowNodeData = {
   nodeTypeLabel: string;
   nodeRole: GraphNodeRole;
   declaredGateSummary: DeclaredGateSummary;
+  // M42 (ADR-114): the named shared session this node joins (canvas grouping chip).
+  sessionName?: string;
   // Additive presentation styling (ADR-064): authored size + color, threaded
   // into `data` so both the read-only view and the editor canvas body can paint
   // them. Kept separate from React Flow's measured Node.width/height (which the
@@ -119,6 +121,7 @@ export function toFlowGraphView(
       nodeTypeLabel: n.nodeTypeLabel,
       nodeRole: n.nodeRole,
       declaredGateSummary: n.declaredGateSummary,
+      ...(n.sessionName ? { sessionName: n.sessionName } : {}),
     };
 
     return {

@@ -134,6 +134,10 @@ const labels: NodeSideFormProps["labels"] = {
   command: "Command",
   formSchema: "Form schema",
   model: "Model",
+  runner: "Runner",
+  runnerInline: "Inline runner config",
+  session: "Session",
+  sessionDefault: "default (implicit)",
   thinkingEffort: "Thinking effort",
   permissionMode: "Permission mode",
   workspaceAccess: "Workspace access",
@@ -311,6 +315,14 @@ const NEW_CONSENSUS_LABEL_KEYS = [
   "asAgent",
 ] as const;
 
+// M42 (ADR-114): the node runner picker + session selector label keys.
+const NEW_NODE_RUNNER_LABEL_KEYS = [
+  "runner",
+  "runnerInline",
+  "session",
+  "sessionDefault",
+] as const;
+
 type JsonObject = Record<string, unknown>;
 
 function messageAt(catalog: JsonObject, path: readonly string[]): string {
@@ -367,6 +379,17 @@ describe("NodeSideForm labels", () => {
       ).not.toBe("");
     }
   });
+
+  // M42 (ADR-114): the node runner picker + session selector labels.
+  it("builds + completes the M42 node runner/session labels in EN and RU", () => {
+    const built = buildNodeSideFormLabels((key) => key);
+
+    for (const key of NEW_NODE_RUNNER_LABEL_KEYS) {
+      expect(built[key]).toBe(`nodeForm.${key}`);
+      expect(messageAt(en, ["flowEditor", "nodeForm", key])).not.toBe("");
+      expect(messageAt(ru, ["flowEditor", "nodeForm", key])).not.toBe("");
+    }
+  });
 });
 
 describe("NodeSideForm — ai_coding", () => {
@@ -375,7 +398,11 @@ describe("NodeSideForm — ai_coding", () => {
 
     expect(html).toContain('data-testid="node-side-form"');
     expect(html).toContain('data-testid="node-action-prompt"');
-    expect(html).toContain('data-testid="node-model"');
+    // M42 (ADR-114): the legacy per-node model field is replaced by the unified
+    // runner picker + the session selector.
+    expect(html).not.toContain('data-testid="node-model"');
+    expect(html).toContain('data-testid="node-runner-source"');
+    expect(html).toContain('data-testid="node-session"');
     expect(html).toContain('data-testid="node-thinking-effort"');
     expect(html).toContain('data-testid="node-permission-mode"');
     expect(html).toContain('data-testid="node-workspace-access"');
@@ -445,8 +472,48 @@ describe("NodeSideForm — judge", () => {
     const html = render(nodeById("assess"));
 
     expect(html).toContain('data-testid="node-action-prompt"');
-    expect(html).toContain('data-testid="node-model"');
+    // M42 (ADR-114): judge is a runner-bearing node — `settings.model` is gone,
+    // replaced by the runner picker (its `settings.runner` value) + session.
+    expect(html).not.toContain('data-testid="node-model"');
+    expect(html).toContain('data-testid="node-runner-source"');
+    expect(html).toContain('data-testid="node-session"');
     expect(html).toContain('data-testid="node-thinking-effort"');
+  });
+});
+
+describe("NodeSideForm — M42 runner picker + session selector", () => {
+  it("offers declared session names plus the implicit-default option", () => {
+    const node = {
+      id: "plan",
+      type: "ai_coding",
+      action: { prompt: "go" },
+      session: "reviewer",
+    } as unknown as NodeDef;
+    const html = render(node, { sessionNames: ["reviewer", "builder"] });
+
+    expect(html).toContain('data-testid="node-session"');
+    expect(html).toContain("default (implicit)");
+    expect(html).toContain("reviewer");
+    expect(html).toContain("builder");
+  });
+
+  it("flags an inline-object settings.runner as YAML-only", () => {
+    const node = {
+      id: "inline",
+      type: "ai_coding",
+      action: { prompt: "go" },
+      settings: {
+        runner: {
+          runner_type: "acp",
+          capability_agent: "claude",
+          model: "claude-opus-4-8",
+        },
+      },
+    } as unknown as NodeDef;
+    const html = render(node);
+
+    expect(html).toContain('data-testid="node-runner-inline-hint"');
+    expect(html).toContain('data-testid="node-runner-source"');
   });
 });
 
@@ -575,7 +642,10 @@ describe("NodeSideForm — orchestrator (M37)", () => {
     const html = render(nodeById("coordinate"));
 
     expect(html).toContain('data-testid="node-action-prompt"');
-    expect(html).toContain('data-testid="node-model"');
+    // M42 (ADR-114): runner picker + session selector replace the model field.
+    expect(html).not.toContain('data-testid="node-model"');
+    expect(html).toContain('data-testid="node-runner-source"');
+    expect(html).toContain('data-testid="node-session"');
     expect(html).toContain('data-testid="node-workspace-access"');
     expect(html).toContain('data-testid="node-delegation"');
     expect(html).toContain('data-testid="node-delegation-max-fanout"');
@@ -592,6 +662,8 @@ describe("NodeSideForm — form (T4)", () => {
     expect(html).not.toContain('data-testid="node-action-command"');
     // a form node does NOT get the ai_coding/judge settings block or delegation
     expect(html).not.toContain('data-testid="node-model"');
+    expect(html).not.toContain('data-testid="node-runner-source"');
+    expect(html).not.toContain('data-testid="node-session"');
     expect(html).not.toContain('data-testid="node-delegation"');
   });
 });
