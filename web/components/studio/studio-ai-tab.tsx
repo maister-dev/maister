@@ -58,7 +58,7 @@ export function StudioAiTab({
   labels,
   focusPath,
   files,
-  hasUnsavedChanges,
+  onBeforeSend,
   onBusyChange,
   onActivity,
   onHeaderInfo,
@@ -71,7 +71,9 @@ export function StudioAiTab({
   // The live package files — the source for the first-prompt `/`-autosuggest
   // capability catalog (skills derived client-side; the editor is project-less).
   files: AuthoredFlowPackageFile[];
-  hasUnsavedChanges: boolean;
+  // Resolved before launch posts: the host flushes unsaved editor buffer edits to
+  // disk so the assistant reads the latest flow; returning false aborts the send.
+  onBeforeSend?: () => Promise<boolean>;
   // Lift "assistant turn in flight" so the editor goes read-only ("AI working").
   onBusyChange: (busy: boolean) => void;
   // Bumped on every assistant stream event so the editor re-reads the working
@@ -104,11 +106,9 @@ export function StudioAiTab({
     () => buildPackageCapabilityCatalog(files, adapter),
     [files, adapter],
   );
-  const sendDisabledReason = !canManage
-    ? labels.lockRequired
-    : hasUnsavedChanges
-      ? labels.saveCurrentChanges
-      : null;
+  // Unsaved buffer edits no longer block the assistant — `onBeforeSend` flushes
+  // them to disk first (see launch + ScratchConversation). Only the lock gates.
+  const sendDisabledReason = !canManage ? labels.lockRequired : null;
   const focus = useMemo(
     () => (focusPath ? { path: focusPath } : {}),
     [focusPath],
@@ -250,6 +250,7 @@ export function StudioAiTab({
 
     try {
       if (!(await ensureLockHeld())) return;
+      if (onBeforeSend && !(await onBeforeSend())) return;
 
       const res = await fetch(
         `/api/studio/local-packages/${packageId}/assistant`,
@@ -291,6 +292,7 @@ export function StudioAiTab({
     focus,
     t,
     onActivity,
+    onBeforeSend,
     ensureLockHeld,
   ]);
 
@@ -322,6 +324,7 @@ export function StudioAiTab({
           renderFlowActionResult={renderFlowActionResult}
           runId={runId}
           sendDisabledReason={sendDisabledReason}
+          onBeforeSend={onBeforeSend}
           onHeaderInfo={onHeaderInfo}
           onMessageSettled={onActivity}
         />
@@ -342,15 +345,6 @@ export function StudioAiTab({
           role="status"
         >
           {labels.lockRequired}
-        </p>
-      ) : null}
-      {hasUnsavedChanges && canManage ? (
-        <p
-          className="rounded-lg border border-amber-line bg-amber-soft px-3 py-2 font-mono text-[11px] text-amber"
-          data-testid="studio-ai-unsaved"
-          role="status"
-        >
-          {labels.saveCurrentChanges}
         </p>
       ) : null}
       <label className="flex items-center gap-2">
@@ -387,7 +381,7 @@ export function StudioAiTab({
           ariaLabel={labels.promptPlaceholder}
           catalog={promptCatalog}
           className="h-full w-full overflow-y-auto rounded-lg border border-line bg-paper px-3.5 py-3 pb-14 font-mono text-[13px] leading-[1.35] text-ink outline-none transition focus:border-amber focus:shadow-[0_0_0_3px_var(--amber-soft)] placeholder:text-mute disabled:opacity-50"
-          disabled={!canManage || launching || hasUnsavedChanges}
+          disabled={!canManage || launching}
           labels={{
             placeholder: labels.promptPlaceholder,
             unsupportedBadge: tScratch("composerUnsupported"),

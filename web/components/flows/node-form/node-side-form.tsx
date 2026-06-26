@@ -137,6 +137,7 @@ export type ConsensusFormLabels = {
   addParticipant: string;
   removeParticipant: string;
   materialAxes: string;
+  materialAxesHint: string;
   synthesizerSource: string;
   runnersGroup: string;
   agentsGroup: string;
@@ -983,14 +984,19 @@ export function NodeSideForm({
                 </div>
               ))}
             </div>
-            <StringListField
-              label={labels.consensus.materialAxes}
-              labels={labels.stringList}
-              readOnly={readOnly}
-              testid="node-consensus-material-axes"
-              values={strList(n.material_axes)}
-              onChange={(next) => emit({ ...n, material_axes: next })}
-            />
+            <div className="grid gap-1">
+              <StringListField
+                label={labels.consensus.materialAxes}
+                labels={labels.stringList}
+                readOnly={readOnly}
+                testid="node-consensus-material-axes"
+                values={strList(n.material_axes)}
+                onChange={(next) => emit({ ...n, material_axes: next })}
+              />
+              <p className="font-mono text-[10px] text-mute">
+                {labels.consensus.materialAxesHint}
+              </p>
+            </div>
             <div className="grid grid-cols-1 gap-2">
               <ReferenceCombobox
                 asAgentLabel={labels.consensus.asAgent}

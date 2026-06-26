@@ -94,6 +94,7 @@ export function buildNodeSideFormLabels(te: Translator): NodeSideFormLabels {
       addParticipant: te("nodeForm.consensus.addParticipant"),
       removeParticipant: te("nodeForm.consensus.removeParticipant"),
       materialAxes: te("nodeForm.consensus.materialAxes"),
+      materialAxesHint: te("nodeForm.consensus.materialAxesHint"),
       synthesizerSource: te("nodeForm.consensus.synthesizerSource"),
       runnersGroup: te("nodeForm.consensus.runnersGroup"),
       agentsGroup: te("nodeForm.consensus.agentsGroup"),

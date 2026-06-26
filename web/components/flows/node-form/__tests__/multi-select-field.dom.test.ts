@@ -61,6 +61,12 @@ function click(element: Element): void {
   });
 }
 
+function focus(element: Element): void {
+  act(() => {
+    element.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+  });
+}
+
 function typeInto(input: HTMLInputElement, value: string): void {
   const setter = Object.getOwnPropertyDescriptor(
     HTMLInputElement.prototype,
@@ -85,6 +91,7 @@ describe("MultiSelectField", () => {
     const onChange = vi.fn();
     const container = render({ values: [], mode: "catalog", onChange });
 
+    focus(container.querySelector('[data-testid="field-input"]')!);
     click(container.querySelector('[data-testid="field-option"]')!);
 
     expect(onChange).toHaveBeenCalledWith(["alpha"]);

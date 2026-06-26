@@ -193,6 +193,7 @@ const labels: NodeSideFormProps["labels"] = {
     addParticipant: "Add participant",
     removeParticipant: "Remove participant",
     materialAxes: "Material axes",
+    materialAxesHint: "Material axes hint",
     synthesizerSource: "Synthesizer source",
     runnersGroup: "Runners",
     agentsGroup: "Agents",

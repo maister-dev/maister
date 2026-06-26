@@ -386,6 +386,13 @@ export function LocalPackageEditor({
 
   originalRef.current = files;
 
+  // Mirrors the FlowEditorTabs flow-YAML buffer so `flushBeforeAssistant` can
+  // persist unsaved flow edits without owning the buffer state.
+  const flowYamlRef = useRef(initialYaml);
+  const handleYamlChange = useCallback((value: string): void => {
+    flowYamlRef.current = value;
+  }, []);
+
   const handleDraftFilesChange = useCallback(
     (next: AuthoredFlowPackageFile[]): void => {
       setDraftFiles(next);
@@ -413,8 +420,8 @@ export function LocalPackageEditor({
     [draftFiles, handleDraftFilesChange],
   );
 
-  const saveAction = useCallback(
-    async (formData: FormData): Promise<void> => {
+  const runSave = useCallback(
+    async (formData: FormData): Promise<boolean> => {
       setStatus({ kind: "saving" });
 
       const submitted = overlayFlowBuffer(
@@ -466,14 +473,14 @@ export function LocalPackageEditor({
               setLockHeldByMe(false);
               setStatus({ kind: "conflict" });
 
-              return;
+              return false;
             }
             setStatus({
               kind: "error",
               message: await readApiError(res, tApiErrors),
             });
 
-            return;
+            return false;
           }
         }
 
@@ -490,7 +497,7 @@ export function LocalPackageEditor({
               message: await readApiError(res, tApiErrors),
             });
 
-            return;
+            return false;
           }
         }
 
@@ -499,6 +506,8 @@ export function LocalPackageEditor({
         setPackageFilesDirty(false);
         setDiffRefresh((n) => n + 1);
         router.refresh();
+
+        return true;
       } catch (err) {
         setStatus({
           kind: "error",
@@ -507,16 +516,39 @@ export function LocalPackageEditor({
               ? err.message
               : String(err),
         });
+
+        return false;
       }
     },
     [packageId, flowPath, initialTitle, router, tApiErrors],
   );
 
+  const saveAction = useCallback(
+    async (formData: FormData): Promise<void> => {
+      await runSave(formData);
+    },
+    [runSave],
+  );
+
+  // The assistant edits files on DISK, so before each turn the unsaved editor
+  // buffer (flow YAML + package files) is flushed there first — this replaces the
+  // old "save before using the assistant" gate. A failed flush aborts the send.
+  const flushBeforeAssistant = useCallback(async (): Promise<boolean> => {
+    if (!flowEditorDirty && !packageFilesDirty) return true;
+
+    const formData = new FormData();
+
+    formData.set("flowYaml", flowYamlRef.current);
+    formData.set("packageFilesJson", packageFilesToSubmitValue(draftFiles));
+    formData.set("title", initialTitle);
+
+    return runSave(formData);
+  }, [draftFiles, flowEditorDirty, initialTitle, packageFilesDirty, runSave]);
+
   // Editing is blocked when the lock is foreign/lost OR the assistant holds a
   // turn ("AI working"). The assistant writes as the lock holder; the human
   // editor steps back until the turn ends.
   const readOnly = !canManage || !lockHeldByMe || assistantBusy;
-  const editorDirty = flowEditorDirty || packageFilesDirty;
   const participantSources = useMemo<ReferenceSourceGroup[]>(() => {
     const consensusLabels = labels.editor.editor.nodeForm.consensus;
     const runnerGroup = {
@@ -753,6 +785,7 @@ export function LocalPackageEditor({
                 topology={topology}
                 onDirtyChange={setFlowEditorDirty}
                 onWriteSchemaFile={handleWriteSchemaFile}
+                onYamlChange={handleYamlChange}
               />
             )}
           </div>
@@ -842,11 +875,11 @@ export function LocalPackageEditor({
                 canManage={canManage && lockHeldByMe && lockConfirmedByMe}
                 files={draftFiles}
                 focusPath={flowPath}
-                hasUnsavedChanges={editorDirty}
                 labels={labels.ai}
                 packageId={packageId}
                 sessionId={sessionIdRef.current}
                 onActivity={onAssistantActivity}
+                onBeforeSend={flushBeforeAssistant}
                 onBusyChange={setAssistantBusy}
                 onHeaderInfo={setAiHeader}
               />

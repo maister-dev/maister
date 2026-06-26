@@ -47,6 +47,9 @@ export function MultiSelectField({
   onChange: (next: string[]) => void;
 }): ReactElement {
   const [query, setQuery] = useState("");
+  // Suggestions stay hidden until the field is engaged (focused or being typed
+  // into) so the form is not a wall of always-open option lists.
+  const [focused, setFocused] = useState(false);
   const selected = new Set(values);
   const trimmed = query.trim();
   const available = options.filter(
@@ -118,7 +121,9 @@ export function MultiSelectField({
               spellCheck={false}
               type="text"
               value={query}
+              onBlur={() => setFocused(false)}
               onChange={(event) => setQuery(event.target.value)}
+              onFocus={() => setFocused(true)}
               onKeyDown={(event) => {
                 if (event.key === "Enter" && canFreeAdd) {
                   event.preventDefault();
@@ -126,7 +131,8 @@ export function MultiSelectField({
                 }
               }}
             />
-            {available.length > 0 || canFreeAdd ? (
+            {(focused || trimmed.length > 0) &&
+            (available.length > 0 || canFreeAdd) ? (
               <div className="flex flex-wrap gap-1.5">
                 {available.map((option) => (
                   <button
@@ -135,6 +141,9 @@ export function MultiSelectField({
                     data-testid={`${testid}-option`}
                     type="button"
                     onClick={() => add(option.value)}
+                    // preventDefault on mousedown keeps the input focused through
+                    // the click so the list does not blur-close before it fires.
+                    onMouseDown={(event) => event.preventDefault()}
                   >
                     {option.label}
                   </button>
@@ -145,6 +154,7 @@ export function MultiSelectField({
                     data-testid={`${testid}-free-add`}
                     type="button"
                     onClick={() => add(trimmed)}
+                    onMouseDown={(event) => event.preventDefault()}
                   >
                     {labels.add} “{trimmed}”
                   </button>

@@ -79,6 +79,7 @@ export function ScratchConversation({
   recoverEndpoint,
   sendDisabledReason = null,
   renderFlowActionResult,
+  onBeforeSend,
   onMessageSettled,
   onHeaderInfo,
 }: {
@@ -92,6 +93,9 @@ export function ScratchConversation({
   renderFlowActionResult?: (
     payload: ScratchFlowActionResultPayload,
   ) => ReactElement | null;
+  // Resolved before each turn is posted; returning false aborts the send (e.g.
+  // the studio editor flushes unsaved buffer edits to disk and bails on failure).
+  onBeforeSend?: () => Promise<boolean>;
   onMessageSettled?: () => void;
   onHeaderInfo?: (info: ScratchHeaderInfo) => void;
 }): ReactElement {
@@ -302,6 +306,7 @@ export function ScratchConversation({
       attachments: ComposerAttachment[];
       files: File[];
     }): Promise<boolean> => {
+      if (onBeforeSend && !(await onBeforeSend())) return false;
       setPendingAction("send");
       setError(null);
 
@@ -355,7 +360,13 @@ export function ScratchConversation({
         setPendingAction(null);
       }
     },
-    [loadDetail, messageBodyExtras, onMessageSettled, resolvedMessageEndpoint],
+    [
+      loadDetail,
+      messageBodyExtras,
+      onBeforeSend,
+      onMessageSettled,
+      resolvedMessageEndpoint,
+    ],
   );
 
   const recover = useCallback(
