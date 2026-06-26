@@ -1789,18 +1789,15 @@ export async function finalizeAgentRun(
     null;
 
   const finalizeResult = await _db.transaction(async (tx: Db) => {
-    // M37 (ADR-100): parent_run_id is immutable — read it up front so a DELEGATED
-    // child reaching Review can KEEP its acp_session_id (the resume handle
-    // run_rework needs). The CAS below still gates on status.
+    // M37 (ADR-102): read the shared-tree axes up front for the finalize
+    // branch below. The CAS gates on status.
     const preRows = await tx
       .select({
-        parentRunId: runs.parentRunId,
         workspaceMode: runs.workspaceMode,
         agentWorkspace: runs.agentWorkspace,
       })
       .from(runs)
       .where(eq(runs.id, runId));
-    const preParentRunId: string | null = preRows[0]?.parentRunId ?? null;
     // M37 (ADR-102): a shared writable-worktree child finalizes to Review even
     // when it owns no `workspaces` row (a reuser child — the allocator owns the
     // UNIQUE worktree_path). The shared tree is one branch = one diff, reviewed and
@@ -1837,18 +1834,15 @@ export async function finalizeAgentRun(
     }
     const endedAt = new Date();
 
-    // M37 (ADR-100): a delegated child reaching Review keeps its session handle so
-    // run_rework can session/resume with prior context; every other terminal (and
-    // a top-level Review with no parent) nulls it.
-    const preserveSessionForRework =
-      status === "Review" && preParentRunId !== null;
-
+    // M42 (ADR-114): the agent run's session resume handle lives on its
+    // `run_sessions` row (sole source of truth) — a delegated child reaching
+    // Review keeps it for run_rework session/resume; a terminal run is never
+    // resumed (status-gated), so no run-level marker reset is needed here.
     const rows = await tx
       .update(runs)
       .set({
         status,
         endedAt,
-        ...(preserveSessionForRework ? {} : { acpSessionId: null }),
         currentStepId: null,
       })
       .where(

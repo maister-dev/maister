@@ -113,7 +113,6 @@ function lifecycleContext(workbench: GitWorkbench): LifecycleContext {
       taskId: null,
       runKind: "flow",
       status: "Review",
-      acpSessionId: null,
       currentStepId: null,
     },
     workspace: {
@@ -143,6 +142,7 @@ function realGitDeps(
     authorize: vi.fn(async () => undefined),
     listSessions: vi.fn(async () => []),
     deleteSession: vi.fn(async () => undefined),
+    listRunSessionAcpIds: vi.fn(async () => []),
     markStoppedAndCloseAssignments: vi.fn(async () => undefined),
     promoteNextPending: vi.fn(async () => undefined),
     preserveWorktree,

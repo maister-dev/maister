@@ -200,7 +200,6 @@ export async function POST(
         .update(runs)
         .set({
           status: "Abandoned",
-          acpSessionId: null,
           currentStepId: null,
           endedAt: now,
         })

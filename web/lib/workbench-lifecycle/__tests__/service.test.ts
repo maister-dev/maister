@@ -25,7 +25,6 @@ function context(over: Partial<LifecycleContext> = {}): LifecycleContext {
       taskId: null,
       runKind: "flow",
       status: "Review",
-      acpSessionId: "acp-1",
       currentStepId: "implement",
     },
     workspace: {
@@ -52,6 +51,7 @@ function deps(ctx: LifecycleContext): WorkbenchLifecycleDeps {
     authorize: vi.fn(async () => undefined),
     listSessions: vi.fn(async () => []),
     deleteSession: vi.fn(async () => undefined),
+    listRunSessionAcpIds: vi.fn(async () => []),
     markStoppedAndCloseAssignments: vi.fn(async () => undefined),
     promoteNextPending: vi.fn(async () => undefined),
     preserveWorktree: vi.fn(async () => ({
@@ -363,6 +363,7 @@ describe("workbench lifecycle service", () => {
   it("stop resolves the live supervisor session by ACP id and parks the run in Review", async () => {
     const d = deps(context({ run: { ...context().run, status: "Running" } }));
 
+    vi.mocked(d.listRunSessionAcpIds).mockResolvedValueOnce(["acp-1"]);
     vi.mocked(d.listSessions).mockResolvedValueOnce([
       {
         sessionId: "supervisor-1",

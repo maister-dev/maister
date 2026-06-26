@@ -901,7 +901,6 @@ async function promoteWorkspaceRun(
         .update(runs)
         .set({
           status: "Done",
-          acpSessionId: null,
           currentStepId: null,
           endedAt: now,
         })
@@ -925,7 +924,6 @@ async function promoteWorkspaceRun(
         .update(runs)
         .set({
           status: "Done",
-          acpSessionId: null,
           currentStepId: null,
           endedAt: now,
         })
@@ -1179,7 +1177,6 @@ async function finalizePullRequest(args: {
       .update(runs)
       .set({
         status: "Done",
-        acpSessionId: null,
         currentStepId: null,
         endedAt: now,
       })
@@ -1508,7 +1505,6 @@ async function promoteScratchRun(
       .update(runs)
       .set({
         status: "Done",
-        acpSessionId: null,
         currentStepId: null,
         endedAt: now,
       })

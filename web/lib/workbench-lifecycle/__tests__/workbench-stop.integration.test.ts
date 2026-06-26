@@ -283,7 +283,6 @@ describe("workbench stop — scratch runs", () => {
             taskId: run.task_id ?? null,
             runKind: run.run_kind,
             status: run.status,
-            acpSessionId: run.acp_session_id,
             currentStepId: run.current_step_id,
           },
           workspace: ws
@@ -310,6 +309,7 @@ describe("workbench stop — scratch runs", () => {
       authorize: vi.fn(async () => undefined),
       listSessions: vi.fn(async () => []),
       deleteSession: vi.fn(async () => undefined),
+      listRunSessionAcpIds: vi.fn(async () => []),
       markStoppedAndCloseAssignments: vi.fn(async () => undefined),
       promoteNextPending: vi.fn(async () => undefined),
       preserveWorktree: vi.fn(async () => ({

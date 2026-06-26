@@ -2325,7 +2325,6 @@ export async function stopScratchWorkbench(
       .update(runs)
       .set({
         status: nextRunStatus,
-        acpSessionId: null,
         currentStepId: null,
         endedAt: now,
       })

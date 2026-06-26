@@ -1008,10 +1008,8 @@ export async function* launchRunStaged(
             taskId: task.id,
             projectId: project.id,
             flowId: flow.id,
-            runnerId: runnerResolution.runnerId,
-            runnerResolutionTier: runnerResolution.runnerResolutionTier,
-            capabilityAgent,
-            runnerSnapshot: runnerResolution.runnerSnapshot,
+            // M42 (ADR-114): the runner identity + resume handle live on
+            // `run_sessions` (inserted below), not the runs row.
             resolvedCapabilitySet,
             deliveryPolicySnapshot: deliveryPolicy,
             executionPolicy,

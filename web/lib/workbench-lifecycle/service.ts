@@ -11,6 +11,7 @@ import pino from "pino";
 
 import { systemCloseActiveAssignmentsForRun } from "@/lib/assignments/service";
 import { getDb } from "@/lib/db/client";
+import { loadRunSessions } from "@/lib/runs/active-run-session";
 import * as schema from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { requireRunProjectId } from "@/lib/runs/run-kind-invariants";
@@ -84,7 +85,6 @@ export type LifecycleRun = {
   taskId: string | null;
   runKind: "flow" | "scratch" | "agent";
   status: WorkbenchRunStatus;
-  acpSessionId: string | null;
   currentStepId: string | null;
 };
 
@@ -131,6 +131,9 @@ export type WorkbenchLifecycleDeps = {
   authorize: (projectId: string, action: LifecycleAction) => Promise<void>;
   listSessions: () => Promise<SupervisorSessionRecord[]>;
   deleteSession: (sessionId: string) => Promise<void>;
+  // M42 (ADR-114): the run's logical-session acp handles (sole source of truth)
+  // — stop closes EVERY live one.
+  listRunSessionAcpIds: (runId: string) => Promise<string[]>;
   markStoppedAndCloseAssignments: (args: {
     runId: string;
     endedAt: Date;
@@ -1102,20 +1105,25 @@ async function stopLiveSupervisorSession(
   ctx: LifecycleContext,
   deps: WorkbenchLifecycleDeps,
 ): Promise<boolean> {
-  if (!ctx.run.acpSessionId) return false;
+  // M42 (ADR-114): a run may hold N logical sessions — stop EVERY live one.
+  const acpIds = new Set(await deps.listRunSessionAcpIds(ctx.run.id));
+
+  if (acpIds.size === 0) return false;
 
   const sessions = await deps.listSessions();
-  const live = sessions.find(
-    (session) =>
-      session.status === "live" &&
-      session.acpSessionId === ctx.run.acpSessionId,
-  );
+  let stoppedAny = false;
 
-  if (!live) return false;
+  for (const session of sessions) {
+    const acp = session.acpSessionId;
 
-  await deps.deleteSession(live.sessionId);
+    if (session.status !== "live" || acp == null || !acpIds.has(acp)) continue;
+    if (session.sessionId == null) continue;
 
-  return true;
+    await deps.deleteSession(session.sessionId);
+    stoppedAny = true;
+  }
+
+  return stoppedAny;
 }
 
 // M37 (ADR-098) T7.4: when a FLOW run being stopped/dropped is an orchestrator
@@ -1371,6 +1379,10 @@ function defaultWorkbenchLifecycleDeps(): WorkbenchLifecycleDeps {
     },
     listSessions,
     deleteSession,
+    listRunSessionAcpIds: async (runId) =>
+      (await loadRunSessions(getDb(), runId))
+        .map((session) => session.acpSessionId)
+        .filter((id): id is string => id !== null),
     markStoppedAndCloseAssignments: markRunStoppedAndCloseAssignments,
     promoteNextPending: async () => {
       await promoteNextPending();
@@ -1403,7 +1415,6 @@ async function loadLifecycleContext(runId: string): Promise<LifecycleContext> {
       taskId: runs.taskId,
       runKind: runs.runKind,
       status: runs.status,
-      acpSessionId: runs.acpSessionId,
       currentStepId: runs.currentStepId,
     })
     .from(runs)
@@ -1528,7 +1539,6 @@ export async function recordDrop(args: RecordDropInput): Promise<void> {
         .update(runs)
         .set({
           status: args.nextRunStatus,
-          acpSessionId: null,
           currentStepId: null,
           endedAt: args.removedAt,
         })
@@ -1621,7 +1631,6 @@ async function markRunStoppedAndCloseAssignments(args: {
       .update(runs)
       .set({
         status: "Review",
-        acpSessionId: null,
         currentStepId: null,
         endedAt: args.endedAt,
       })
