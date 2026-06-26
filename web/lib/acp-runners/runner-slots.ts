@@ -60,7 +60,12 @@ export function enumerateRunnerSlots(
 
   for (const session of graph.sessions.values()) {
     slots.push(
-      slotFor(`session:${session.name}`, "session", session.name, session.runner),
+      slotFor(
+        `session:${session.name}`,
+        "session",
+        session.name,
+        session.runner,
+      ),
     );
   }
 
