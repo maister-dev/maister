@@ -5,12 +5,26 @@ import type {
   GateFormLabels,
 } from "@/components/flows/node-form/gate-form";
 import type { FlowYamlV1 } from "@/lib/config.schema";
+import type {
+  ReferenceSourceGroup,
+  ReferenceSourceKind,
+} from "@/lib/flows/editor/reference-sources";
+import type {
+  SchemaRefFieldLabels,
+  SchemaRefFile,
+} from "@/components/flows/node-form/schema-ref-field";
 import type { ReactElement } from "react";
 
 import { PlusIcon, TrashIcon } from "@heroicons/react/24/outline";
 
 import { GateForm } from "@/components/flows/node-form/gate-form";
+import { ReferenceCombobox } from "@/components/flows/node-form/reference-combobox";
+import { SchemaRefField } from "@/components/flows/node-form/schema-ref-field";
 import { blankDecide } from "@/lib/flows/editor/node-form";
+import {
+  resolveFreeTextSourceKind,
+  sourcePatchFromSelection,
+} from "@/lib/flows/editor/reference-sources";
 
 type NodeDef = NonNullable<FlowYamlV1["nodes"]>[number];
 
@@ -55,6 +69,7 @@ export type NodeSideFormLabels = {
   allowTakeover: string;
   outputSchema: string;
   outputRequired: string;
+  schemaRef: SchemaRefFieldLabels;
   presentation: string;
   presentationWidth: string;
   presentationHeight: string;
@@ -107,13 +122,17 @@ export type DecideFormLabels = {
 export type ConsensusFormLabels = {
   participants: string;
   participantId: string;
-  participantAgent: string;
-  participantRunner: string;
+  participantSource: string;
   addParticipant: string;
   removeParticipant: string;
   materialAxes: string;
-  synthesizerAgent: string;
-  synthesizerRunner: string;
+  synthesizerSource: string;
+  runnersGroup: string;
+  agentsGroup: string;
+  sourcePlaceholder: string;
+  sourceEmptyHint: string;
+  asRunner: string;
+  asAgent: string;
   roundsMode: string;
   roundsMax: string;
   onNoConsensus: string;
@@ -127,6 +146,10 @@ const SECTION_CLS =
   "font-mono text-[10px] font-bold uppercase tracking-[0.1em] text-ink";
 
 type Rec = Record<string, unknown>;
+type ActorSourceSets = {
+  runners: ReadonlySet<string>;
+  agents: ReadonlySet<string>;
+};
 
 function asRec(value: unknown): Rec {
   return (value && typeof value === "object" ? value : {}) as Rec;
@@ -145,6 +168,73 @@ function parseList(value: string): string[] {
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
+}
+
+function compactRec(value: Rec): Rec {
+  const next: Rec = {};
+
+  for (const [key, entry] of Object.entries(value)) {
+    if (entry !== undefined) next[key] = entry;
+  }
+
+  return next;
+}
+
+function buildKnownSourceSets(
+  groups: readonly ReferenceSourceGroup[],
+): ActorSourceSets {
+  const runners = new Set<string>();
+  const agents = new Set<string>();
+
+  for (const group of groups) {
+    const target = group.kind === "agent" ? agents : runners;
+
+    if (!isActorSourceKind(group.kind)) continue;
+
+    for (const option of group.options) {
+      target.add(option.value);
+    }
+  }
+
+  return { runners, agents };
+}
+
+function isActorSourceKind(kind: ReferenceSourceKind): kind is ActorSourceKind {
+  return kind === "runner" || kind === "agent";
+}
+
+function sourceValueFor(source: Rec): string {
+  return str(source.runner) || str(source.agent);
+}
+
+function sourceDeclaredKindFor(source: Rec): ActorSourceKind | undefined {
+  if (str(source.runner)) return "runner";
+  if (str(source.agent)) return "agent";
+
+  return undefined;
+}
+
+function unknownSourceKindFor(
+  value: string,
+  declaredKind: ActorSourceKind | undefined,
+  known: ActorSourceSets,
+): ActorSourceKind | undefined {
+  const normalized = value.trim();
+
+  if (normalized.length === 0) return undefined;
+  if (known.runners.has(normalized) || known.agents.has(normalized)) {
+    return undefined;
+  }
+
+  return declaredKind ?? resolveFreeTextSourceKind(normalized, known);
+}
+
+function patchSourceSelection(kind: ActorSourceKind, value: string): Rec {
+  if (value.trim().length === 0) {
+    return { agent: undefined, runner: undefined };
+  }
+
+  return sourcePatchFromSelection(kind, value);
 }
 
 function TextField({
@@ -219,22 +309,30 @@ export type NodePresentationStyle = {
   color?: string;
 };
 
+type ActorSourceKind = Exclude<ReferenceSourceKind, "schema">;
+
 export function NodeSideForm({
   node,
   labels,
+  participantSources = [],
+  schemaFiles,
   presentation,
   readOnly = false,
   onChange,
+  onWriteSchemaFile,
   onPresentationChange,
 }: {
   node: NodeDef | null;
   labels: NodeSideFormLabels;
+  participantSources?: ReferenceSourceGroup[];
+  schemaFiles?: SchemaRefFile[];
   presentation?: NodePresentationStyle;
   // Read-only (package viewer T1.4): every field renders as a disabled/read-only
   // value, add/remove controls are dropped, and edits are no-ops. DEFAULTS to
   // false so the live Flow Studio editor render + behavior is byte-identical.
   readOnly?: boolean;
   onChange: (next: NodeDef) => void;
+  onWriteSchemaFile?: (path: string, content: string) => void;
   onPresentationChange?: (patch: NodePresentationStyle) => void;
 }): ReactElement {
   if (node === null) {
@@ -355,34 +453,10 @@ export function NodeSideForm({
     : [];
   const setParticipant = (index: number, patch: Rec): void => {
     const next = participants.map((participant, i) =>
-      i === index ? { ...participant, ...patch } : participant,
+      i === index ? compactRec({ ...participant, ...patch }) : participant,
     );
 
     emit({ ...n, participants: next });
-  };
-  const setParticipantAgent = (index: number, value: string): void => {
-    const current = participants[index] ?? {};
-    const next = { ...current };
-
-    if (value) {
-      next.agent = value;
-      delete next.runner;
-    } else {
-      delete next.agent;
-    }
-    setParticipant(index, next);
-  };
-  const setParticipantRunner = (index: number, value: string): void => {
-    const current = participants[index] ?? {};
-    const next = { ...current };
-
-    if (value) {
-      next.runner = value;
-      delete next.agent;
-    } else {
-      delete next.runner;
-    }
-    setParticipant(index, next);
   };
   const addParticipant = (): void => {
     let index = participants.length + 1;
@@ -405,28 +479,20 @@ export function NodeSideForm({
     });
   const synthesizer = asRec(n.synthesizer);
   const setSynthesizer = (patch: Rec): void =>
-    emit({ ...n, synthesizer: patch });
-  const setSynthesizerAgent = (value: string): void => {
-    if (value) {
-      setSynthesizer({ agent: value });
-
-      return;
-    }
-    const next = { ...synthesizer };
-
-    delete next.agent;
-    setSynthesizer(next);
+    emit({ ...n, synthesizer: compactRec(patch) });
+  const sourceSets = buildKnownSourceSets(participantSources);
+  const setParticipantSource = (
+    index: number,
+    kind: ActorSourceKind,
+    value: string,
+  ): void => {
+    setParticipant(index, patchSourceSelection(kind, value));
   };
-  const setSynthesizerRunner = (value: string): void => {
-    if (value) {
-      setSynthesizer({ runner: value });
-
-      return;
-    }
-    const next = { ...synthesizer };
-
-    delete next.runner;
-    setSynthesizer(next);
+  const setSynthesizerSource = (
+    kind: ActorSourceKind,
+    value: string,
+  ): void => {
+    setSynthesizer(patchSourceSelection(kind, value));
   };
 
   const isPromptType =
@@ -760,12 +826,15 @@ export function NodeSideForm({
           </div>
         ) : null}
         {type === "form" ? (
-          <TextField
+          <SchemaRefField
             label={labels.formSchema}
+            labels={labels.schemaRef}
             readOnly={readOnly}
+            schemaFiles={schemaFiles}
             testid="node-form-schema"
             value={str(settings.form_schema)}
             onChange={(v) => setSetting("form_schema", v)}
+            onWriteSchemaFile={onWriteSchemaFile}
           />
         ) : null}
         {isCommandType ? (
@@ -821,7 +890,7 @@ export function NodeSideForm({
               {participants.map((participant, index) => (
                 <div
                   key={`${index}:${str(participant.id)}`}
-                  className="grid grid-cols-1 gap-2 md:grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)_minmax(0,1fr)_auto]"
+                  className="grid grid-cols-1 gap-2 md:grid-cols-[minmax(0,0.8fr)_minmax(0,1.4fr)_auto]"
                   data-testid={`node-consensus-participant-${index}`}
                 >
                   <TextField
@@ -831,19 +900,35 @@ export function NodeSideForm({
                     value={str(participant.id)}
                     onChange={(v) => setParticipant(index, { id: v })}
                   />
-                  <TextField
-                    label={labels.consensus.participantAgent}
+                  <ReferenceCombobox
+                    asAgentLabel={labels.consensus.asAgent}
+                    asRunnerLabel={labels.consensus.asRunner}
+                    emptyHint={labels.consensus.sourceEmptyHint}
+                    groups={participantSources}
+                    label={labels.consensus.participantSource}
+                    placeholder={labels.consensus.sourcePlaceholder}
                     readOnly={readOnly}
-                    testid={`node-consensus-participant-agent-${index}`}
-                    value={str(participant.agent)}
-                    onChange={(v) => setParticipantAgent(index, v)}
-                  />
-                  <TextField
-                    label={labels.consensus.participantRunner}
-                    readOnly={readOnly}
-                    testid={`node-consensus-participant-runner-${index}`}
-                    value={str(participant.runner)}
-                    onChange={(v) => setParticipantRunner(index, v)}
+                    testid={`node-consensus-participant-source-${index}`}
+                    unknownKind={unknownSourceKindFor(
+                      sourceValueFor(participant),
+                      sourceDeclaredKindFor(participant),
+                      sourceSets,
+                    )}
+                    value={sourceValueFor(participant)}
+                    onInputValue={(value) =>
+                      setParticipantSource(
+                        index,
+                        resolveFreeTextSourceKind(value, sourceSets),
+                        value,
+                      )
+                    }
+                    onSelect={(value, kind) => {
+                      if (!isActorSourceKind(kind)) return;
+                      setParticipantSource(index, kind, value);
+                    }}
+                    onUnknownKindChange={(kind) =>
+                      setParticipantSource(index, kind, sourceValueFor(participant))
+                    }
                   />
                   {readOnly ? null : (
                     <button
@@ -871,20 +956,35 @@ export function NodeSideForm({
                 })
               }
             />
-            <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-              <TextField
-                label={labels.consensus.synthesizerAgent}
+            <div className="grid grid-cols-1 gap-2">
+              <ReferenceCombobox
+                asAgentLabel={labels.consensus.asAgent}
+                asRunnerLabel={labels.consensus.asRunner}
+                emptyHint={labels.consensus.sourceEmptyHint}
+                groups={participantSources}
+                label={labels.consensus.synthesizerSource}
+                placeholder={labels.consensus.sourcePlaceholder}
                 readOnly={readOnly}
-                testid="node-consensus-synthesizer-agent"
-                value={str(synthesizer.agent)}
-                onChange={setSynthesizerAgent}
-              />
-              <TextField
-                label={labels.consensus.synthesizerRunner}
-                readOnly={readOnly}
-                testid="node-consensus-synthesizer-runner"
-                value={str(synthesizer.runner)}
-                onChange={setSynthesizerRunner}
+                testid="node-consensus-synthesizer-source"
+                unknownKind={unknownSourceKindFor(
+                  sourceValueFor(synthesizer),
+                  sourceDeclaredKindFor(synthesizer),
+                  sourceSets,
+                )}
+                value={sourceValueFor(synthesizer)}
+                onInputValue={(value) =>
+                  setSynthesizerSource(
+                    resolveFreeTextSourceKind(value, sourceSets),
+                    value,
+                  )
+                }
+                onSelect={(value, kind) => {
+                  if (!isActorSourceKind(kind)) return;
+                  setSynthesizerSource(kind, value);
+                }}
+                onUnknownKindChange={(kind) =>
+                  setSynthesizerSource(kind, sourceValueFor(synthesizer))
+                }
               />
             </div>
             <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
@@ -1256,12 +1356,15 @@ export function NodeSideForm({
 
       <section className="grid gap-2">
         <h3 className={SECTION_CLS}>{labels.output}</h3>
-        <TextField
+        <SchemaRefField
           label={labels.outputSchema}
+          labels={labels.schemaRef}
           readOnly={readOnly}
+          schemaFiles={schemaFiles}
           testid="node-output-schema"
           value={str(result.schema)}
           onChange={(v) => setResult({ schema: v })}
+          onWriteSchemaFile={onWriteSchemaFile}
         />
         <label className="flex items-center gap-2">
           <input

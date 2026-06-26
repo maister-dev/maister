@@ -4,6 +4,7 @@
 // GateForm each. onChange wiring is the editor e2e's job (T-A9).
 
 import type { FlowYamlV1 } from "@/lib/config.schema";
+import type { ReferenceSourceGroup } from "@/lib/flows/editor/reference-sources";
 
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -11,6 +12,10 @@ import { describe, expect, it } from "vitest";
 
 import { NodeSideForm } from "@/components/flows/node-form/node-side-form";
 import { flowYamlV1Schema } from "@/lib/config.schema";
+import { sourcePatchFromSelection } from "@/lib/flows/editor/reference-sources";
+import { buildNodeSideFormLabels } from "@/lib/flows/node-side-form-labels";
+import en from "@/messages/en.json";
+import ru from "@/messages/ru.json";
 
 type NodeSideFormProps = Parameters<typeof NodeSideForm>[0];
 type NodeDef = NonNullable<FlowYamlV1["nodes"]>[number];
@@ -158,6 +163,15 @@ const labels: NodeSideFormProps["labels"] = {
   allowTakeover: "Allow takeover",
   outputSchema: "Result schema",
   outputRequired: "Required",
+  schemaRef: {
+    placeholder: "Pick or type a schema ref",
+    emptyHint: "No schemas yet",
+    create: "Create schema",
+    edit: "Edit schema",
+    paste: "Paste JSON",
+    title: "Schema title",
+    json: "Schema JSON",
+  },
   presentation: "Appearance",
   presentationWidth: "Width (px)",
   presentationHeight: "Height (px)",
@@ -175,13 +189,17 @@ const labels: NodeSideFormProps["labels"] = {
   consensus: {
     participants: "Participants",
     participantId: "ID",
-    participantAgent: "Agent",
-    participantRunner: "Runner",
+    participantSource: "Participant source",
     addParticipant: "Add participant",
     removeParticipant: "Remove participant",
     materialAxes: "Material axes",
-    synthesizerAgent: "Synthesizer agent",
-    synthesizerRunner: "Synthesizer runner",
+    synthesizerSource: "Synthesizer source",
+    runnersGroup: "Runners",
+    agentsGroup: "Agents",
+    sourcePlaceholder: "Pick or type",
+    sourceEmptyHint: "No sources",
+    asRunner: "as runner",
+    asAgent: "as agent",
     roundsMode: "Rounds mode",
     roundsMax: "Max rounds",
     onNoConsensus: "No consensus",
@@ -234,9 +252,74 @@ const labels: NodeSideFormProps["labels"] = {
   },
 };
 
-function render(node: NodeDef | null): string {
+const PARTICIPANT_SOURCES: ReferenceSourceGroup[] = [
+  {
+    label: "Runners",
+    kind: "runner",
+    options: [
+      {
+        value: "codex",
+        label: "Codex",
+        kind: "runner",
+        hint: "codex - gpt-5 - default",
+      },
+    ],
+  },
+  {
+    label: "Agents",
+    kind: "agent",
+    options: [
+      {
+        value: "delivery-kit:architecture-reviewer",
+        label: "architecture-reviewer",
+        kind: "agent",
+        filePath: "maister-agents/architecture-reviewer.md",
+      },
+    ],
+  },
+];
+
+const SCHEMA_FILES = [
+  { path: "schemas/review.json", content: '{"fields":[]}' },
+  { path: "schemas/intake.json", content: '{"fields":[]}' },
+];
+
+const NEW_CONSENSUS_LABEL_KEYS = [
+  "participantSource",
+  "synthesizerSource",
+  "runnersGroup",
+  "agentsGroup",
+  "sourcePlaceholder",
+  "sourceEmptyHint",
+  "asRunner",
+  "asAgent",
+] as const;
+
+type JsonObject = Record<string, unknown>;
+
+function messageAt(catalog: JsonObject, path: readonly string[]): string {
+  let current: unknown = catalog;
+
+  for (const segment of path) {
+    if (!current || typeof current !== "object") return "";
+
+    current = (current as JsonObject)[segment];
+  }
+
+  return typeof current === "string" ? current : "";
+}
+
+function render(
+  node: NodeDef | null,
+  props: Record<string, unknown> = {},
+): string {
   return renderToStaticMarkup(
-    createElement(NodeSideForm, { node, labels, onChange: () => {} }),
+    createElement(NodeSideForm, {
+      node,
+      labels,
+      onChange: () => {},
+      ...props,
+    } as NodeSideFormProps),
   );
 }
 
@@ -246,6 +329,27 @@ describe("NodeSideForm — empty state", () => {
 
     expect(html).toContain('data-testid="node-side-form-empty"');
     expect(html).toContain("Select a node");
+  });
+});
+
+describe("NodeSideForm labels", () => {
+  it("builds every new consensus source-picker label from the flowEditor namespace", () => {
+    const built = buildNodeSideFormLabels((key) => key);
+
+    for (const key of NEW_CONSENSUS_LABEL_KEYS) {
+      expect(built.consensus[key]).toBe(`nodeForm.consensus.${key}`);
+    }
+  });
+
+  it("keeps EN and RU message catalogs complete for new consensus source-picker labels", () => {
+    for (const key of NEW_CONSENSUS_LABEL_KEYS) {
+      expect(
+        messageAt(en, ["flowEditor", "nodeForm", "consensus", key]),
+      ).not.toBe("");
+      expect(
+        messageAt(ru, ["flowEditor", "nodeForm", "consensus", key]),
+      ).not.toBe("");
+    }
   });
 });
 
@@ -320,20 +424,88 @@ describe("NodeSideForm — consensus", () => {
         ],
       },
     } as NodeDef;
-    const html = render(consensusNode);
+    const html = render(consensusNode, {
+      participantSources: PARTICIPANT_SOURCES,
+    });
 
     expect(html).toContain('data-testid="node-consensus-prompt"');
     expect(html).toContain('data-testid="node-consensus-settings"');
     expect(html).toContain('data-testid="node-consensus-participant-0"');
     expect(html).toContain('data-testid="node-consensus-participant-id-0"');
-    expect(html).toContain('data-testid="node-consensus-participant-agent-0"');
-    expect(html).toContain('data-testid="node-consensus-participant-runner-1"');
+    expect(html).toContain('data-testid="node-consensus-participant-source-0"');
+    expect(html).toContain('data-testid="node-consensus-participant-source-1"');
+    expect(html).not.toContain(
+      'data-testid="node-consensus-participant-agent-0"',
+    );
+    expect(html).not.toContain(
+      'data-testid="node-consensus-participant-runner-1"',
+    );
+    expect(html).toContain("Runners");
+    expect(html).toContain("Codex");
+    expect(html).toContain("Agents");
+    expect(html).toContain("architecture-reviewer");
     expect(html).toContain('data-testid="node-consensus-material-axes"');
-    expect(html).toContain('data-testid="node-consensus-synthesizer-runner"');
+    expect(html).toContain('data-testid="node-consensus-synthesizer-source"');
+    expect(html).not.toContain(
+      'data-testid="node-consensus-synthesizer-runner"',
+    );
     expect(html).toContain('data-testid="node-consensus-rounds-mode"');
     expect(html).toContain('data-testid="node-consensus-rounds-max"');
     expect(html).toContain('data-testid="node-consensus-on-no-consensus"');
     expect(html).not.toContain('data-testid="node-action-command"');
+  });
+
+  it("keeps runner/agent source patches parseable as the unchanged consensus DSL", () => {
+    const parsed = flowYamlV1Schema.parse({
+      schemaVersion: 1,
+      name: "consensus-source-patches",
+      nodes: [
+        {
+          id: "decide_release_plan",
+          type: "consensus",
+          prompt: "Produce a release plan.",
+          participants: [
+            {
+              id: "runner",
+              agent: "old-agent",
+              ...sourcePatchFromSelection("runner", "codex"),
+            },
+            {
+              id: "agent",
+              runner: "old-runner",
+              ...sourcePatchFromSelection(
+                "agent",
+                "delivery-kit:architecture-reviewer",
+              ),
+            },
+          ],
+          material_axes: ["scope_matches_milestone"],
+          rounds: { mode: "single_pass", max: 1 },
+          on_no_consensus: "escalate",
+          synthesizer: {
+            runner: "old-runner",
+            ...sourcePatchFromSelection("agent", "delivery-kit:synthesizer"),
+          },
+          output: {
+            produces: [{ id: "consensus_plan", kind: "plan", current: true }],
+          },
+        },
+      ],
+    });
+    const node = parsed.nodes?.[0];
+
+    if (!node || node.type !== "consensus") {
+      throw new Error("expected consensus node");
+    }
+
+    expect(node.participants[0].runner).toBe("codex");
+    expect(node.participants[0].agent).toBeUndefined();
+    expect(node.participants[1].agent).toBe(
+      "delivery-kit:architecture-reviewer",
+    );
+    expect(node.participants[1].runner).toBeUndefined();
+    expect(node.synthesizer.agent).toBe("delivery-kit:synthesizer");
+    expect(node.synthesizer.runner).toBeUndefined();
   });
 });
 
@@ -374,6 +546,21 @@ describe("NodeSideForm — form (T4)", () => {
     // a form node does NOT get the ai_coding/judge settings block or delegation
     expect(html).not.toContain('data-testid="node-model"');
     expect(html).not.toContain('data-testid="node-delegation"');
+  });
+});
+
+describe("NodeSideForm — schema refs", () => {
+  it("renders schema options for form_schema and output.result schema fields", () => {
+    const formHtml = render(nodeById("intake"), { schemaFiles: SCHEMA_FILES });
+    const outputHtml = render(nodeById("plan"), { schemaFiles: SCHEMA_FILES });
+
+    expect(formHtml).toContain('data-testid="node-form-schema"');
+    expect(formHtml).toContain("review");
+    expect(formHtml).toContain("intake");
+    expect(outputHtml).toContain('data-testid="node-output-schema"');
+    expect(outputHtml).toContain("review");
+    expect(outputHtml).toContain("intake");
+    expect(outputHtml).toContain('data-testid="node-decide-source"');
   });
 });
 

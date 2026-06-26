@@ -9,6 +9,7 @@ import type {
 import type { FlowNodeData } from "@/lib/board/flow-graph-view-layout";
 import type { FlowYamlV1 } from "@/lib/config.schema";
 import type { GateKind, NodeType } from "@/lib/flows/editor/editor-state";
+import type { ReferenceSourceGroup } from "@/lib/flows/editor/reference-sources";
 import type { FlowLayout } from "@/lib/flows/graph/presentation-layout";
 import type { DeclaredGateSummary } from "@/lib/queries/flow-graph-view";
 import type { GraphTopology } from "@/lib/queries/flow-graph-view";
@@ -81,6 +82,9 @@ export interface FlowGraphEditorProps {
   layout: FlowLayout;
   draftVersion: number;
   labels: FlowGraphEditorLabels;
+  participantSources?: ReferenceSourceGroup[];
+  schemaFiles?: { path: string; content: string }[];
+  onWriteSchemaFile?: (path: string, content: string) => void;
   onChange?: (next: { manifest: FlowYamlV1; draftVersion: number }) => void;
   onSelectNode?: (nodeId: string | null) => void;
 }
@@ -339,6 +343,9 @@ export default function FlowGraphEditor({
   layout,
   draftVersion,
   labels,
+  participantSources,
+  schemaFiles,
+  onWriteSchemaFile,
   onChange,
   onSelectNode,
 }: FlowGraphEditorProps): ReactElement {
@@ -653,6 +660,8 @@ export default function FlowGraphEditor({
           <NodeSideForm
             labels={labels.nodeForm}
             node={selectedNode}
+            participantSources={participantSources}
+            schemaFiles={schemaFiles}
             presentation={
               selectedPresentation
                 ? {
@@ -663,6 +672,7 @@ export default function FlowGraphEditor({
                 : undefined
             }
             onChange={handleNodeFormChange}
+            onWriteSchemaFile={onWriteSchemaFile}
             onPresentationChange={handlePresentationChange}
           />
         </aside>

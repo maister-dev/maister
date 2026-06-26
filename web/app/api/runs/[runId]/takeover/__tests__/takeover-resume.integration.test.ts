@@ -49,6 +49,7 @@ const execFileAsync = promisify(execFile);
 const schema = schemaModule as unknown as Record<string, any>;
 const {
   flows,
+  artifactInstances,
   gateResults,
   nodeAttempts,
   hitlRequests,
@@ -340,6 +341,36 @@ async function attemptsFor(runId: string, nodeId: string): Promise<any[]> {
     .where(and(eq(nodeAttempts.runId, runId), eq(nodeAttempts.nodeId, nodeId)));
 }
 
+async function waitForDefaultDiffArtifact(
+  runId: string,
+  nodeId: string,
+  timeoutMs = 5_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const rows = await db
+      .select({ id: artifactInstances.id })
+      .from(artifactInstances)
+      .where(
+        and(
+          eq(artifactInstances.runId, runId),
+          eq(artifactInstances.nodeId, nodeId),
+          eq(artifactInstances.producer, "runner"),
+          eq(artifactInstances.artifactDefId, `default:${nodeId}:diff`),
+        ),
+      )
+      .limit(1);
+
+    if (rows.length > 0) return;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+
+  throw new Error(
+    `timed out waiting for default diff artifact for run ${runId} node ${nodeId}`,
+  );
+}
+
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:16-alpine")
     .withDatabase("takeover_resume_test")
@@ -460,6 +491,7 @@ describe("takeover return → runner resume (CRITICAL)", () => {
 
     expect(implementAttempts.length).toBe(1);
 
+    await waitForDefaultDiffArtifact(s.runId, TAKEOVER_NODE);
     await s.cleanup();
   }, 60_000);
 
@@ -501,6 +533,7 @@ describe("takeover return → runner resume (CRITICAL)", () => {
 
     expect(finalRun.status).toBe("NeedsInput");
 
+    await waitForDefaultDiffArtifact(s.runId, TAKEOVER_NODE);
     await s.cleanup();
   }, 60_000);
 });

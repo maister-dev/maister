@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import { PackageFilesEditor } from "@/components/flows/package-files-editor";
+import { packageFilesToSubmitValue } from "@/lib/flows/editor/package-files-draft";
 
 const KIND_LABELS = {
   asset: "Asset",
@@ -143,6 +144,17 @@ const LABELS = {
   manifest: MANIFEST_LABELS,
 };
 
+function hiddenPackageFilesValue(html: string): string {
+  const match = /name="packageFilesJson"[^>]*value="([^"]*)"/.exec(html);
+
+  if (!match) throw new Error("packageFilesJson hidden input missing");
+
+  return match[1]
+    .replaceAll("&quot;", '"')
+    .replaceAll("&#x27;", "'")
+    .replaceAll("&amp;", "&");
+}
+
 describe("PackageFilesEditor", () => {
   it("renders a derived file tree, an inferred-kind badge, and keeps the hidden JSON field", () => {
     const html = renderToStaticMarkup(
@@ -215,6 +227,45 @@ describe("PackageFilesEditor", () => {
     expect(html).toContain('name="packageFilesJson"');
     expect(html).toContain("No package files yet.");
     expect(html).toContain("Add file");
+  });
+
+  it("serializes uncontrolled files into the hidden submit field", () => {
+    const files = [
+      { kind: "readme" as const, path: "README.md", content: "Hello" },
+    ];
+    const html = renderToStaticMarkup(
+      createElement(PackageFilesEditor, {
+        disabled: false,
+        files,
+        kindLabels: KIND_LABELS,
+        labels: LABELS,
+      }),
+    );
+
+    expect(hiddenPackageFilesValue(html)).toBe(packageFilesToSubmitValue(files));
+  });
+
+  it("serializes controlled files from props and renders the same file tree", () => {
+    const files = [
+      {
+        kind: "schema" as const,
+        path: "schemas/review.json",
+        content: '{"fields":[]}',
+      },
+    ];
+    const html = renderToStaticMarkup(
+      createElement(PackageFilesEditor, {
+        disabled: false,
+        files,
+        kindLabels: KIND_LABELS,
+        labels: LABELS,
+        onFilesChange: () => undefined,
+      }),
+    );
+
+    expect(hiddenPackageFilesValue(html)).toBe(packageFilesToSubmitValue(files));
+    expect(html).toContain("schemas");
+    expect(html).toContain("review.json");
   });
 
   it("dispatches a selected SKILL.md to the frontmatter artifact editor", () => {

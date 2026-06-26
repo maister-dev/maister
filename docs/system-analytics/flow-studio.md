@@ -342,6 +342,72 @@ artifacts still FORKS; the first SAVE surfaces the blocks.
 | `?file=` traversal/symlink/NUL/abs/leading-`-` | rejected pre-fs | not-found state (no throw) |
 | Compile failure of stored `manifest` | yaml-only fallback | n/a (no 500) |
 
+## Reference picker authoring polish (Implemented)
+
+> **Status: Implemented.** Source of truth:
+> [`.ai-factory/specs/feature-flow-studio-reference-pickers.md`](../../.ai-factory/specs/feature-flow-studio-reference-pickers.md).
+> This is a local-package editor UX refinement over the implemented package
+> authoring surface above. **No new endpoint, no OpenAPI change, no migration,
+> no engine bump, no AsyncAPI/SSE event, and no new `MaisterError` code.**
+
+### Scope (Implemented)
+
+The local package editor replaces raw reference text fields with pickers while
+leaving the persisted `flow.yaml` grammar unchanged:
+
+- `consensus.participants[]` and `consensus.synthesizer` use one source picker
+  per slot. The picker writes exactly one of `agent` or `runner`.
+- `settings.form_schema` and `output.result.schema` use one schema reference
+  picker per slot. The picker writes a string ref such as
+  `./schemas/review.json`.
+- Inline schema create, paste, and edit mutates the local package draft file set
+  only. Files persist through the existing Save path.
+
+### Source groups (Implemented)
+
+- **Runners** come from the existing member route
+  `GET /api/studio/local-packages/{id}/assistant/runners`, already documented in
+  `docs/api/web.openapi.yaml`.
+- **Agents** are derived in the client from the same package draft files the
+  editor is already authoring: `maister-agents/<stem>.md` becomes
+  `<packageName>:<stem>`. Capability-local subagents under
+  `capability/<id>/agents/` are not shown in this group.
+- Free-text remains available. Exact known runner ids write `runner`; exact known
+  agent ids write `agent`; unmatched values default to `runner` and expose an
+  inline `as runner` / `as agent` toggle.
+
+### Shared draft state (Implemented)
+
+`LocalPackageEditor` owns one `draftFiles` array for the edit session. That
+draft feeds `PackageHome`, the `FlowEditorTabs` Files drawer, package-local
+agent options, schema options, `onWriteSchemaFile`, and the existing
+`packageFilesJson` hidden input. Schema create/edit never performs an immediate
+`PUT /files/{path}`; it upserts into `draftFiles` and waits for Save.
+
+### Expectations (Implemented)
+
+1. A consensus source picker MUST preserve the exact existing DSL shape by
+   writing exactly one of `agent` or `runner`.
+2. A schema reference picker MUST write manifest refs as
+   `./schemas/<name>.json` while package files remain `schemas/<name>.json`.
+3. Schema create, paste, and edit MUST validate with `formSchemaSchema` before
+   changing the draft file set.
+4. `PackageHome` and the flow editor Files drawer MUST read and write the same
+   local package draft during one edit session.
+5. Read-only viewer mounts MUST NOT fetch runner, agent, or schema sources.
+6. The feature MUST NOT add an API route, DB migration, engine bump, SSE event,
+   deployment setting, or `MaisterError` code.
+
+### Edge cases (Implemented)
+
+| Case | Handling |
+|---|---|
+| Runner list fetch fails | Source picker keeps free-text available; no client console logging |
+| Unknown free-text participant source | Defaults to `runner`; inline toggle can switch to `agent` |
+| Schema filename already exists | Derived filename gets a numeric suffix such as `-2` |
+| Pasted JSON is invalid or violates `formSchemaSchema` | Inline alert, no draft file write |
+| `schemaFiles` / writer props absent | Picker degrades to free-text/read-only with no create/edit affordances |
+
 ## Studio redesign (Phase A IA + editable-local-package direction)
 
 > **Status: Phase A — IA & surfacing (Implemented).** Surface SSOT: [`../screens/studio/README.md`](../screens/studio/README.md).

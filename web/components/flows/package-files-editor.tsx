@@ -45,6 +45,13 @@ import {
   classifyPackageFilePath,
   validatePathEdit,
 } from "@/lib/flows/editor/package-file-tree";
+import {
+  packageFilesToSubmitValue,
+  removePackageFile,
+  renamePackageFilePath,
+  replacePackageFileContent,
+  upsertPackageFile,
+} from "@/lib/flows/editor/package-files-draft";
 
 type PathErrorCode = "unsafe_path" | "duplicate_path" | "path_conflict";
 
@@ -86,6 +93,7 @@ export function PackageFilesEditor({
   initialSelectedPath = null,
   manifest = null,
   mcpCatalog = null,
+  onFilesChange,
   onDirtyChange,
 }: {
   disabled: boolean;
@@ -98,9 +106,12 @@ export function PackageFilesEditor({
   manifest?: Record<string, unknown> | null;
   // Optional platform MCP catalog; enables the `mcps/` template surface.
   mcpCatalog?: PlatformMcpCatalogEntry[] | null;
+  onFilesChange?: (files: AuthoredFlowPackageFile[]) => void;
   onDirtyChange?: (dirty: boolean) => void;
 }): ReactElement {
   const [draftFiles, setDraftFiles] = useState(files);
+  const isControlled = onFilesChange !== undefined;
+  const effectiveFiles = isControlled ? files : draftFiles;
   const [selectedPath, setSelectedPath] = useState<string | null>(
     (initialSelectedPath !== null &&
     files.some((file) => file.path === initialSelectedPath)
@@ -110,29 +121,54 @@ export function PackageFilesEditor({
   const [editPath, setEditPath] = useState<string | null>(null);
 
   const initialSerialized = useMemo(() => JSON.stringify(files), [files]);
-  const serialized = useMemo(() => JSON.stringify(draftFiles), [draftFiles]);
-  const tree = useMemo(() => buildFileTree(draftFiles), [draftFiles]);
+  const serialized = useMemo(
+    () => packageFilesToSubmitValue(effectiveFiles),
+    [effectiveFiles],
+  );
+  const tree = useMemo(() => buildFileTree(effectiveFiles), [effectiveFiles]);
   const contentIssues = useMemo(
-    () => validateArtifactContent({ files: draftFiles, manifest }),
-    [draftFiles, manifest],
+    () => validateArtifactContent({ files: effectiveFiles, manifest }),
+    [effectiveFiles, manifest],
   );
   const selectedFile = useMemo(
-    () => draftFiles.find((file) => file.path === selectedPath) ?? null,
-    [draftFiles, selectedPath],
+    () => effectiveFiles.find((file) => file.path === selectedPath) ?? null,
+    [effectiveFiles, selectedPath],
   );
 
   useEffect(() => {
+    if (isControlled) return;
+
     onDirtyChange?.(serialized !== initialSerialized);
-  }, [initialSerialized, onDirtyChange, serialized]);
+  }, [initialSerialized, isControlled, onDirtyChange, serialized]);
+
+  useEffect(() => {
+    if (
+      selectedPath !== null &&
+      effectiveFiles.some((file) => file.path === selectedPath)
+    ) {
+      return;
+    }
+
+    setSelectedPath(
+      (initialSelectedPath !== null &&
+      effectiveFiles.some((file) => file.path === initialSelectedPath)
+        ? initialSelectedPath
+        : effectiveFiles[0]?.path) ?? null,
+    );
+  }, [effectiveFiles, initialSelectedPath, selectedPath]);
+
+  function updateFiles(next: AuthoredFlowPackageFile[]): void {
+    if (isControlled) {
+      onFilesChange(next);
+
+      return;
+    }
+
+    setDraftFiles(next);
+  }
 
   function applyPathEdit(oldPath: string, newPath: string): void {
-    setDraftFiles((current) =>
-      current.map((file) =>
-        file.path === oldPath
-          ? { ...file, path: newPath, kind: classifyPackageFilePath(newPath) }
-          : file,
-      ),
-    );
+    updateFiles(renamePackageFilePath(effectiveFiles, oldPath, newPath));
     setSelectedPath(newPath);
     setEditPath(null);
   }
@@ -141,32 +177,26 @@ export function PackageFilesEditor({
     const folder = selectedFile
       ? selectedFile.path.slice(0, selectedFile.path.lastIndexOf("/") + 1)
       : "";
-    const newPath = uniqueNewPath(draftFiles, folder);
+    const newPath = uniqueNewPath(effectiveFiles, folder);
 
-    setDraftFiles((current) => [
-      ...current,
-      { kind: classifyPackageFilePath(newPath), path: newPath, content: "" },
-    ]);
+    updateFiles(upsertPackageFile(effectiveFiles, newPath, ""));
     setSelectedPath(newPath);
   }
 
   function removeFile(targetPath: string): void {
-    setDraftFiles((current) => {
-      const next = current.filter((file) => file.path !== targetPath);
+    const next = removePackageFile(effectiveFiles, targetPath);
 
-      if (selectedPath === targetPath) {
-        setSelectedPath(next[0]?.path ?? null);
-      }
-
-      return next;
-    });
+    if (selectedPath === targetPath) {
+      setSelectedPath(next[0]?.path ?? null);
+    }
+    updateFiles(next);
   }
 
   return (
     <div className="mt-4 grid gap-3">
       <input name="packageFilesJson" type="hidden" value={serialized} />
 
-      {draftFiles.length === 0 ? (
+      {effectiveFiles.length === 0 ? (
         <p className="m-0 rounded-lg border border-line bg-ivory px-3 py-3 text-[12px] text-mute">
           {labels.noFiles}
         </p>
@@ -192,11 +222,11 @@ export function PackageFilesEditor({
                 labels={labels}
                 mcpCatalog={mcpCatalog}
                 onChangeContent={(next) =>
-                  setDraftFiles((current) =>
-                    current.map((file) =>
-                      file.path === selectedFile.path
-                        ? { ...file, content: next }
-                        : file,
+                  updateFiles(
+                    replacePackageFileContent(
+                      effectiveFiles,
+                      selectedFile.path,
+                      next,
                     ),
                   )
                 }
@@ -208,7 +238,7 @@ export function PackageFilesEditor({
         </div>
       )}
 
-      {draftFiles.length === 0 ? null : (
+      {effectiveFiles.length === 0 ? null : (
         <ArtifactContentIssues
           issues={contentIssues}
           labels={labels.contentIssues}
@@ -227,7 +257,7 @@ export function PackageFilesEditor({
 
       {editPath !== null ? (
         <PathEditDialog
-          files={draftFiles}
+          files={effectiveFiles}
           initialPath={editPath}
           labels={labels}
           onApply={(next) => applyPathEdit(editPath, next)}

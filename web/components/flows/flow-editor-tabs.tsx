@@ -6,6 +6,7 @@ import type {
   EditorTopBarLabels,
 } from "@/components/flows/editor/editor-top-bar";
 import type { FlowYamlV1 } from "@/lib/config.schema";
+import type { ReferenceSourceGroup } from "@/lib/flows/editor/reference-sources";
 import type { FlowLayout } from "@/lib/flows/graph/presentation-layout";
 import type { GraphTopology } from "@/lib/flows/graph/topology";
 import type { ReactElement, ReactNode } from "react";
@@ -74,10 +75,13 @@ export function FlowEditorTabs({
   diff,
   labels,
   canvasAvailable,
+  participantSources,
+  schemaFiles,
   saveAction,
   publishAction,
   filesDrawer,
   diffDrawer,
+  onWriteSchemaFile,
   onDirtyChange,
 }: {
   projectSlug: string;
@@ -96,6 +100,8 @@ export function FlowEditorTabs({
   diff: string;
   labels: FlowEditorTabsLabels;
   canvasAvailable: boolean;
+  participantSources?: ReferenceSourceGroup[];
+  schemaFiles?: { path: string; content: string }[];
   saveAction: ServerFormAction;
   publishAction: ServerFormAction;
   filesDrawer: ReactNode;
@@ -103,6 +109,7 @@ export function FlowEditorTabs({
   // (working-tree-vs-HEAD of a local package) instead of the draft-vs-published
   // YAML text. Absent → the authored-flow path keeps `FlowDraftDiffText`.
   diffDrawer?: ReactNode;
+  onWriteSchemaFile?: (path: string, content: string) => void;
   onDirtyChange?: (dirty: boolean) => void;
 }): ReactElement {
   const [yaml, setYaml] = useState(initialYaml);
@@ -268,8 +275,11 @@ export function FlowEditorTabs({
               initialManifest={seed.manifest}
               labels={labels.editor}
               layout={seed.layout}
+              participantSources={participantSources}
+              schemaFiles={schemaFiles}
               topology={seed.topology}
               onChange={handleCanvasChange}
+              onWriteSchemaFile={onWriteSchemaFile}
             />
           ) : (
             <div className="flex h-full items-center justify-center px-6 text-center font-mono text-[11px] text-mute">

@@ -52,45 +52,6 @@ function isFlowPath(path: string): boolean {
   );
 }
 
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object"
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
-function declaredFlowPaths(files: AuthoredFlowPackageFile[]): string[] {
-  const manifest = files.find((file) => file.path === "maister-package.yaml");
-
-  if (!manifest) return [];
-
-  const parsed = asRecord(parseYaml(manifest.content));
-  const flows = Array.isArray(parsed.flows) ? parsed.flows : [];
-
-  return flows
-    .map((flow) => {
-      const flowPath = asRecord(flow).path;
-
-      if (typeof flowPath !== "string" || flowPath.length === 0) return null;
-
-      return /\.ya?ml$/i.test(flowPath)
-        ? flowPath
-        : `${flowPath.replace(/\/+$/, "")}/flow.yaml`;
-    })
-    .filter((path): path is string =>
-      Boolean(path && files.some((file) => file.path === path)),
-    );
-}
-
-function defaultFlowPath(files: AuthoredFlowPackageFile[]): string | null {
-  if (files.some((file) => file.path === "flow.yaml")) return "flow.yaml";
-
-  return (
-    declaredFlowPaths(files)[0] ??
-    files.find((file) => isFlowPath(file.path))?.path ??
-    null
-  );
-}
-
 export default async function StudioEditPage({
   params,
 }: PageProps): Promise<ReactElement> {
@@ -119,12 +80,12 @@ export default async function StudioEditPage({
   );
 
   // The selected artifact path (optional `[[...path]]`). Decoded segment-wise.
-  // A fork lands on `/studio/edit/:id`; pick the first declared flow manifest
-  // instead of opening an empty YAML buffer.
+  // Bare `/studio/edit/:id` is the ADR-105 package-home landing; flow manifests
+  // open only when the route explicitly includes a file path.
   const selectedPath =
     segments && segments.length > 0
       ? segments.map(decodeURIComponent).join("/")
-      : defaultFlowPath(files);
+      : null;
   const flowPath =
     selectedPath && isFlowPath(selectedPath) ? selectedPath : null;
 

@@ -71,10 +71,10 @@ test("nav-path: board → package viewer → open file → fork → editor → s
 
   await expect(nodes.first()).toBeVisible();
   await expect(
-    page.locator('[data-testid="flow-node"]', { hasText: /Implement/i }),
+    page.locator(`.react-flow__node[data-id="${fx.implementNode}"]`),
   ).toBeVisible();
   await expect(
-    page.locator('[data-testid="flow-node"]', { hasText: /Review/i }),
+    page.locator(`.react-flow__node[data-id="${fx.reviewNode}"]`),
   ).toBeVisible();
 
   // 2. The raw flow.yaml is shown read-only (CodeEditor kind="flow"); it carries

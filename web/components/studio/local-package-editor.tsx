@@ -9,13 +9,17 @@ import type { PackageFilesEditorLabels } from "@/components/flows/package-files-
 import type { LocalPackageDiffLabels } from "@/components/studio/local-package-diff-drawer";
 import type { DiffViewLabels } from "@/components/workbench/diff-view";
 import type { FlowYamlV1 } from "@/lib/config.schema";
+import type {
+  AssistantRunnerSource,
+  ReferenceSourceGroup,
+} from "@/lib/flows/editor/reference-sources";
 import type { FlowLayout } from "@/lib/flows/graph/presentation-layout";
 import type { GraphTopology } from "@/lib/queries/flow-graph-view";
 import type { LockState } from "@/lib/local-packages/lock";
 import type { PlatformMcpCatalogEntry } from "@/lib/queries/platform-mcp-catalog";
 import type { ReactElement, ReactNode } from "react";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
@@ -43,6 +47,14 @@ import {
 import { readApiError } from "@/lib/api-error";
 import { isMaisterError } from "@/lib/errors-core";
 import {
+  packageFilesToSubmitValue,
+  upsertPackageFile,
+} from "@/lib/flows/editor/package-files-draft";
+import {
+  buildAgentGroupFromFiles,
+  buildRunnerGroup,
+} from "@/lib/flows/editor/reference-sources";
+import {
   overlayFlowBuffer,
   parsePackageFilesJson,
   planWorkingDirWrites,
@@ -53,6 +65,11 @@ export type LockSnapshot = {
   held: boolean;
   heldByMe: boolean;
   holderLabel: string | null;
+};
+
+type AssistantRunnersResponse = {
+  runners: AssistantRunnerSource[];
+  defaultRunnerId?: string | null;
 };
 
 export type LocalPackageEditorLabels = {
@@ -211,12 +228,16 @@ export function LocalPackageEditor({
   const [assistantCollapsed, setAssistantCollapsed] = useState(false);
   const [flowEditorDirty, setFlowEditorDirty] = useState(false);
   const [packageFilesDirty, setPackageFilesDirty] = useState(false);
+  const [draftFiles, setDraftFiles] = useState(files);
   // M39 A3: the working-tree dirty count drives the top-bar "Commit state" badge
   // and the review dialog. Tracked here (not only in the flow-editor diff drawer)
   // so the badge works on the package-home view too, where the drawer is absent.
   const [changedCount, setChangedCount] = useState<number | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
+  const [runnerSources, setRunnerSources] = useState<AssistantRunnerSource[]>(
+    [],
+  );
   // On any assistant stream activity, re-read the working dir: the canvas
   // (router.refresh re-runs the server compile) and the git-diff drawer's
   // changed-count (diffRefresh) reflect files the assistant just wrote.
@@ -317,12 +338,73 @@ export function LocalPackageEditor({
     };
   }, [packageId, diffRefresh]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const res = await fetch(
+          `/api/studio/local-packages/${packageId}/assistant/runners`,
+        );
+
+        if (cancelled) return;
+
+        if (!res.ok) {
+          setRunnerSources([]);
+
+          return;
+        }
+
+        const data = (await res.json()) as AssistantRunnersResponse;
+
+        if (!cancelled) setRunnerSources(data.runners);
+      } catch {
+        if (!cancelled) setRunnerSources([]);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [packageId]);
+
+  useEffect(() => {
+    if (!packageFilesDirty) setDraftFiles(files);
+  }, [files, packageFilesDirty]);
+
   // The working-dir save action injected into FlowEditorTabs. It runs inside the
   // editor's own <form>, so it receives the submitted blob; it diffs against the
   // originals and emits the minimal PUT/DELETE set, each lock-guarded server-side.
   const originalRef = useRef(files);
 
   originalRef.current = files;
+
+  const handleDraftFilesChange = useCallback(
+    (next: AuthoredFlowPackageFile[]): void => {
+      setDraftFiles(next);
+      setPackageFilesDirty(
+        packageFilesToSubmitValue(next) !==
+          packageFilesToSubmitValue(originalRef.current),
+      );
+    },
+    [],
+  );
+  const schemaFiles = useMemo(
+    () =>
+      draftFiles
+        .filter(
+          (file) =>
+            file.path.startsWith("schemas/") && file.path.endsWith(".json"),
+        )
+        .map((file) => ({ path: file.path, content: file.content })),
+    [draftFiles],
+  );
+  const handleWriteSchemaFile = useCallback(
+    (path: string, content: string): void => {
+      handleDraftFilesChange(upsertPackageFile(draftFiles, path, content));
+    },
+    [draftFiles, handleDraftFilesChange],
+  );
 
   const saveAction = useCallback(
     async (formData: FormData): Promise<void> => {
@@ -428,6 +510,25 @@ export function LocalPackageEditor({
   // editor steps back until the turn ends.
   const readOnly = !canManage || !lockHeldByMe || assistantBusy;
   const editorDirty = flowEditorDirty || packageFilesDirty;
+  const participantSources = useMemo<ReferenceSourceGroup[]>(() => {
+    const consensusLabels = labels.editor.editor.nodeForm.consensus;
+    const runnerGroup = {
+      ...buildRunnerGroup(runnerSources),
+      label: consensusLabels.runnersGroup,
+    };
+    const agentGroup = {
+      ...buildAgentGroupFromFiles(identity.project, draftFiles),
+      label: consensusLabels.agentsGroup,
+    };
+
+    return [runnerGroup, agentGroup];
+  }, [
+    draftFiles,
+    identity.project,
+    labels.editor.editor.nodeForm.consensus.agentsGroup,
+    labels.editor.editor.nodeForm.consensus.runnersGroup,
+    runnerSources,
+  ]);
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-2">
@@ -565,7 +666,7 @@ export function LocalPackageEditor({
           {flowPath === null ? (
             <PackageHome
               fileKindLabels={fileKindLabels}
-              files={files}
+              files={draftFiles}
               filesLabels={filesLabels}
               labels={labels.home}
               mcpCatalog={mcpCatalog}
@@ -573,7 +674,7 @@ export function LocalPackageEditor({
               packageId={packageId}
               readOnly={readOnly}
               saveAction={saveAction}
-              onDirtyChange={setPackageFilesDirty}
+              onFilesChange={handleDraftFilesChange}
             />
           ) : (
             <FlowEditorTabs
@@ -596,11 +697,11 @@ export function LocalPackageEditor({
               filesDrawer={
                 <PackageFilesEditor
                   disabled={readOnly}
-                  files={files}
+                  files={draftFiles}
                   kindLabels={fileKindLabels}
                   labels={filesLabels}
                   mcpCatalog={mcpCatalog}
-                  onDirtyChange={setPackageFilesDirty}
+                  onFilesChange={handleDraftFilesChange}
                 />
               }
               hasDraft={false}
@@ -611,11 +712,14 @@ export function LocalPackageEditor({
               labels={labels.editor}
               layout={layout}
               lifecycleLabel={identity.kind}
+              participantSources={participantSources}
               projectSlug={identity.slug}
               publishAction={saveAction}
               readinessReady={false}
               saveAction={saveAction}
+              schemaFiles={schemaFiles}
               topology={topology}
+              onWriteSchemaFile={handleWriteSchemaFile}
               onDirtyChange={setFlowEditorDirty}
             />
           )}

@@ -166,10 +166,19 @@ uses the same icon, hue, tooltip, handles, and compact node body.
   and list the first few material axes with a capped "+N more" suffix.
 - **Properties / Identity** — node id, label, prompt, description, and
   transitions follow existing node controls.
-- **Properties / Consensus** — participant rows (`id`, `agent` or `runner`,
+- **Properties / Consensus** — participant rows (`id`, **Participant source**,
   read-only workspace mode), material axes add/remove list, rounds segmented
   control (`single_pass`/`iterate`) with a numeric max, `on_no_consensus`
-  fixed to `escalate`, and synthesizer selector.
+  fixed to `escalate`, and **Synthesizer source**. The source pickers are
+  grouped as **Runners** (existing member runner route) and **Agents**
+  (package-local `maister-agents/*.md` files); unmatched free text remains
+  available with an `as runner` / `as agent` toggle.
+- **Properties / Schema refs (Implemented)** — `settings.form_schema` and
+  `output.result.schema` use schema reference pickers over package-local
+  `schemas/*.json` files. The picker can create, paste, or edit schema JSON
+  through the shared package draft; the saved manifest stores
+  `./schemas/<name>.json`, while the package file path remains
+  `schemas/<name>.json`.
 - **Properties / Outputs** — the default fills must create
   `consensus_plan` (`kind: plan`, current) and `debate_log`
   (`kind: human_note`, current). Validation blocks deletion or kind drift for
@@ -184,10 +193,13 @@ uses the same icon, hue, tooltip, handles, and compact node body.
   renders on the canvas and in `FlowGraphView`.
 - The right properties panel can fill in every required consensus field without
   raw YAML editing.
+- Schema reference fields can select, create, paste, and edit `schemas/*.json`
+  without leaving the existing Save path; no new API/DB/runtime contract is
+  introduced.
 - Tooltip and canvas text remain clipped/capped rather than resizing the node or
   overlapping handles on dense graphs.
 - EN and RU labels exist for every consensus control, validation message,
-  tooltip, and artifact-kind label.
+  source picker, schema reference control, tooltip, and artifact-kind label.
 
 ## States
 
@@ -229,7 +241,8 @@ Behavior SSOT: [`../../system-analytics/flow-studio.md`](../../system-analytics/
 `flowEditor` (top-bar labels, drawer labels, rail toggle, node/gate visual
 labels, the existing node-form / toolbar / validation keys, the M38
 `flowEditor.nodeForm.decide*` routing-panel keys, and M41
-`flowEditor.nodeForm.consensus*` participant/axis/round/synthesizer/output keys),
+`flowEditor.nodeForm.consensus*` participant/axis/round/synthesizer/output keys,
+plus reference-picker keys under `flowEditor.nodeForm.schemaRef*`),
 `flows` (page header + save hint). EN + RU parity required.
 
 ## Linked artifacts
@@ -242,6 +255,8 @@ labels, the existing node-form / toolbar / validation keys, the M38
   [#adr-109](../../decisions.md#adr-109-consensus-flow-graph-node--engine-owned-unanimous-draft-verification-and-human-resolution)
   (M41 consensus node).
 - Spec: [`../../../.ai-factory/specs/feature-flow-studio-editor.md`](../../../.ai-factory/specs/feature-flow-studio-editor.md).
+- Spec: [`../../../.ai-factory/specs/feature-flow-studio-reference-pickers.md`](../../../.ai-factory/specs/feature-flow-studio-reference-pickers.md)
+  (Implemented reference picker polish).
 - Behavior: [`../../system-analytics/flow-studio.md`](../../system-analytics/flow-studio.md),
   [`../../system-analytics/consensus.md`](../../system-analytics/consensus.md).
 - Area: [`README.md`](README.md).
