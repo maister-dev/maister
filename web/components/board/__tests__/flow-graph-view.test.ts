@@ -66,6 +66,7 @@ type FlowNodeBodyProps = {
     blockingGateSummary?: string;
     declaredGateSummary?: string;
   };
+  tooltip?: string;
 };
 
 const baseLabels: FlowNodeBodyProps["labels"] = {
@@ -298,6 +299,38 @@ describe("FlowNodeBody — translated status surfaced as a tooltip", () => {
     );
 
     expect(html).toContain('title="Выполняется"');
+  });
+});
+
+describe("FlowNodeBody — node tooltip preview", () => {
+  it("limits long tooltip prompts and hides overflow rows", () => {
+    const hiddenPromptTail = "TAIL_SHOULD_NOT_RENDER";
+    const longPrompt = `${"review implementation diff ".repeat(12)}${hiddenPromptTail}`;
+    const html = render({
+      label: "review",
+      status: "Pending",
+      isCurrent: false,
+      rollup: "none",
+      labels: baseLabels,
+      tooltip: [
+        "review · ai_coding",
+        `prompt: ${longPrompt}`,
+        "model: claude-sonnet-4-6",
+        "permission: never",
+        "workspace: isolated",
+        "skills: aif-review",
+        "mcps: filesystem",
+        "rework: fix",
+      ].join("\n"),
+    });
+
+    expect(html).toContain('data-testid="flow-node-tooltip"');
+    expect(html).toContain("review implementation diff");
+    expect(html).toContain("...");
+    expect(html).not.toContain(hiddenPromptTail);
+    expect(html).not.toContain("filesystem");
+    expect(html).not.toContain("rework");
+    expect(html).toContain("+2");
   });
 });
 

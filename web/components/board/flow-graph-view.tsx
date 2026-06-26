@@ -125,8 +125,54 @@ interface FlowGraphRuntimeState {
   runStatus: string;
 }
 
+const NODE_TOOLTIP_MAX_ROWS = 5;
+const NODE_TOOLTIP_MAX_LINE_CHARS = 120;
+const NODE_TOOLTIP_ELLIPSIS = "...";
+
 function formatCount(template: string | undefined, count: number): string {
   return (template ?? "$count").replace("$count", String(count));
+}
+
+function compactTooltipLine(line: string): string {
+  return line.replace(/\s+/g, " ").trim();
+}
+
+function truncateTooltipLine(line: string): string {
+  const compactLine = compactTooltipLine(line);
+
+  if (compactLine.length <= NODE_TOOLTIP_MAX_LINE_CHARS) {
+    return compactLine;
+  }
+
+  const end = NODE_TOOLTIP_MAX_LINE_CHARS - NODE_TOOLTIP_ELLIPSIS.length;
+
+  return `${compactLine.slice(0, end).trimEnd()}${NODE_TOOLTIP_ELLIPSIS}`;
+}
+
+function visibleTooltipRows(rows: readonly string[]): string[] {
+  const visibleRows = rows
+    .slice(0, NODE_TOOLTIP_MAX_ROWS)
+    .map(truncateTooltipLine);
+  const hiddenRowCount = rows.length - visibleRows.length;
+
+  return hiddenRowCount > 0
+    ? [...visibleRows, `+${hiddenRowCount}`]
+    : visibleRows;
+}
+
+function tooltipPreview(text: string): {
+  header: string | null;
+  rows: string[];
+} {
+  const [header, ...rows] = text
+    .split("\n")
+    .map(compactTooltipLine)
+    .filter((line) => line.length > 0);
+
+  return {
+    header: header ? truncateTooltipLine(header) : null,
+    rows: visibleTooltipRows(rows),
+  };
 }
 
 export function resolveFlowEdgeLabel(
@@ -435,16 +481,16 @@ export function FlowNodeBody({
 // mcps/rework) or `N transitions`/`N gates` counts. Revealed via the parent
 // node's `group` on hover/focus; pointer-events-none so it never eats clicks.
 function NodeTooltipCard({ text }: { text: string }): ReactElement {
-  const [header, ...rows] = text.split("\n").filter((line) => line.length > 0);
+  const { header, rows } = tooltipPreview(text);
 
   return (
     <div
-      className="pointer-events-none absolute left-1/2 top-full z-30 mt-1.5 hidden w-[230px] -translate-x-1/2 flex-col gap-1 rounded-lg border border-line bg-paper p-2.5 text-left shadow-[var(--shadow-lg)] group-hover:flex group-focus-within:flex"
+      className="pointer-events-none absolute left-1/2 top-full z-30 mt-1.5 hidden max-h-[220px] w-[260px] max-w-[260px] -translate-x-1/2 flex-col gap-1 overflow-hidden rounded-lg border border-line bg-paper p-2.5 text-left shadow-[var(--shadow-lg)] group-hover:flex group-focus-within:flex"
       data-testid="flow-node-tooltip"
       role="tooltip"
     >
       {header ? (
-        <span className="font-mono text-[10.5px] font-semibold text-ink">
+        <span className="block max-w-full truncate font-mono text-[10.5px] font-semibold text-ink">
           {header}
         </span>
       ) : null}
@@ -453,18 +499,24 @@ function NodeTooltipCard({ text }: { text: string }): ReactElement {
 
         if (sep <= 0) {
           return (
-            <span key={index} className="font-mono text-[10px] text-mute">
+            <span
+              key={index}
+              className="line-clamp-2 max-w-full break-words font-mono text-[10px] text-mute [overflow-wrap:anywhere]"
+            >
               {row}
             </span>
           );
         }
 
         return (
-          <span key={index} className="flex gap-1 text-[10px] leading-snug">
-            <span className="shrink-0 font-mono font-semibold uppercase tracking-[0.08em] text-mute">
+          <span
+            key={index}
+            className="flex max-w-full min-w-0 gap-1 overflow-hidden text-[10px] leading-snug"
+          >
+            <span className="max-w-[82px] shrink-0 truncate font-mono font-semibold uppercase tracking-[0.08em] text-mute">
               {row.slice(0, sep)}
             </span>
-            <span className="min-w-0 break-words text-ink-2">
+            <span className="line-clamp-3 min-w-0 break-words text-ink-2 [overflow-wrap:anywhere]">
               {row.slice(sep + 2)}
             </span>
           </span>
