@@ -1,5 +1,14 @@
 # ACP runners domain
 
+> **M42 — Unified runner & session model (Designed).** Manifest runner intent
+> uses ONE `flowRunnerConfigSchema` (reuses `capability_agent` /
+> `permission_policy`, adds `effort` / `env`); resolution is **per session/slot**
+> (binding → auto-match → the `default`-session project-flow/platform-flow/
+> project/platform chain) and snapshotted in `run_sessions`, not a single per-run
+> runner. Canonical: [`sessions.md`](sessions.md) /
+> [ADR-114](../decisions.md#adr-114-unified-flow-runner-config-first-class-sessions-per-project-connect-time-bindings-and-run_sessions-as-the-sole-run-runner-source-of-truth).
+> Flipped to as-built in M42 Phase 7.
+
 ## Purpose
 
 An **ACP runner** is a platform-level launch profile. It tells MAIster which

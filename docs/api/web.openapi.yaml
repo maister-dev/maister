@@ -1032,17 +1032,28 @@ paths:
   /api/projects/{slug}/flow-runner-remaps:
     get:
       tags: [projects]
-      summary: List Flow runner remaps
-      description: Project member route. Lists unresolved and mapped Flow step runner requirements for the project.
+      summary: List Flow runner slot bindings
+      description: |
+        Project member route. Lists per-slot Flow runner bindings
+        (`Pending` / `Mapped`) for the project. **(M42 — Designed, ADR-114)**
+        re-keys bindings from per-step `(step_id, source_runner_id)` to per-slot
+        `slot_key` (`session:<name>` | `consensus:<nodeId>:<participantId>` |
+        `consensus:<nodeId>:synthesizer`); slots are NEVER deduped by intent. The
+        connect-time binding screen scopes by `flowRevisionId`.
       operationId: getProjectFlowRunnerRemaps
       parameters:
         - name: slug
           in: path
           required: true
           schema: { type: string }
+        - name: flowRevisionId
+          in: query
+          required: false
+          description: (M42 — Designed) Scope the listing to one flow revision's slots (connect-time).
+          schema: { type: string }
       responses:
         "200":
-          description: Flow runner remaps.
+          description: Flow runner slot bindings.
           content:
             application/json:
               schema:
@@ -1051,29 +1062,65 @@ paths:
                 properties:
                   remaps:
                     type: array
-                    items: { type: object }
+                    items:
+                      type: object
+                      required: [slotKey, status]
+                      properties:
+                        flowRevisionId: { type: string }
+                        slotKey:
+                          type: string
+                          description: "`session:<name>` | `consensus:<nodeId>:<participantId>` | `consensus:<nodeId>:synthesizer`."
+                        status: { type: string, enum: [Pending, Mapped] }
+                        mappedRunnerId: { type: string, nullable: true }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
     patch:
       tags: [projects]
-      summary: Map a Flow runner requirement to a platform runner
-      description: Project owner/admin route. Maps an imported Flow step runner id to an available platform ACP runner.
+      summary: Bind (or clear) a Flow runner slot to a platform runner
+      description: |
+        Project owner/admin route. Binds one Flow runner `slot_key` to an
+        available platform ACP runner (SET), or clears it (CLEAR → `Pending`).
+        **(M42 — Designed, ADR-114.)** `slot_key` is body-controlled and
+        validated ∈ the revision-declared slots (else 409/422); `mappedRunnerId`
+        is body-controlled and validated ∈ `platform_acp_runners` (allow-list).
+        DB-only, no downstream side-effect — no two-phase commit.
       operationId: patchProjectFlowRunnerRemap
       parameters:
         - name: slug
           in: path
           required: true
           schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [flowRevisionId, slotKey]
+              properties:
+                flowRevisionId: { type: string }
+                slotKey: { type: string, description: Must be one of the revision-declared slots. }
+                mappedRunnerId:
+                  type: string
+                  nullable: true
+                  description: A `platform_acp_runners.id` to SET, or `null` to CLEAR (→ `Pending`).
       responses:
         "200":
-          description: Remap updated.
+          description: Slot binding updated.
           content:
             application/json:
               schema:
                 type: object
                 required: [remap]
                 properties:
-                  remap: { type: object }
+                  remap:
+                    type: object
+                    required: [slotKey, status]
+                    properties:
+                      flowRevisionId: { type: string }
+                      slotKey: { type: string }
+                      status: { type: string, enum: [Pending, Mapped] }
+                      mappedRunnerId: { type: string, nullable: true }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409":
@@ -11484,6 +11531,21 @@ components:
               enabled: { type: boolean }
               isTaskDefault: { type: boolean }
         selectedFlowId: { type: string, format: uuid }
+        sessions:
+          type: array
+          description: |
+            (M42 — Designed, ADR-114) Per logical session of the selected flow:
+            the resolved runner and whether an ephemeral per-run override is
+            offered at the Launch dialog. Empty/absent for a single-session flow.
+          items:
+            type: object
+            additionalProperties: false
+            required: [sessionName]
+            properties:
+              sessionName: { type: string }
+              runnerId: { type: string, nullable: true }
+              label: { type: string, nullable: true }
+              overridable: { type: boolean }
         runners:
           type: array
           items:

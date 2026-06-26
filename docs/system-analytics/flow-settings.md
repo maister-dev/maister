@@ -1,5 +1,13 @@
 # Flow node settings & the enforcement boundary (M11c)
 
+> **M42 — Unified runner & session model (Designed).** Node `settings.runner`
+> uses the unified `flowRunnerConfigSchema` and resolves through the node's
+> **session** runner; `judge` becomes a runner-bearing node and
+> `judge.settings.model` is removed entirely. Canonical:
+> [`sessions.md`](sessions.md) /
+> [ADR-114](../decisions.md#adr-114-unified-flow-runner-config-first-class-sessions-per-project-connect-time-bindings-and-run_sessions-as-the-sole-run-runner-source-of-truth).
+> Flipped to as-built in M42 Phase 7.
+
 > **Status:** Implemented (M11c subset). M14 materialization **Implemented through
 > Phase 4.5** (delivery mechanism built + CI-verified); the enforcement flip is
 > **deferred**.

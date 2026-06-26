@@ -398,6 +398,62 @@ Two halves remain deferred:
   `human_edit` node type (shown in the example above) and the `merge` node type +
   conflict-handoff promotion are M18; M11b implements neither.
 
+## Sessions and the unified runner config (M42 — Designed)
+
+**(M42 — Designed, ADR-114; requires `compat.engine_min >= 2.0.0`.)** One
+**unified runner config** replaces the three divergent runner shapes
+(`runner_profiles` values, per-node `settings.runner`, consensus
+participant/synthesizer runner). Its fields: `runner_type`, `capability_agent`,
+`adapter?`, `model?`, `model_family?`, `provider?`, `permission_policy`,
+`sidecar?`, plus new `effort?` (the `thinkingEffort` enum) and `env?` (a
+passthrough NAME → `env:NAME` map; never secret literals). Any runner slot —
+`runner_profiles` values, `sessions[].runner`, node `settings.runner`
+(`ai_coding` / `orchestrator` / `judge`), and consensus participant/synthesizer
+`runner` — accepts a **profile-ref string** OR an inline **object**. Node
+capability settings (mcps / skills / restrictions / tools / enforcement / hooks)
+stay on the node, unchanged.
+
+A flow groups nodes into **sessions** — one ACP process + one continuous
+`acp_session_id` resumed in graph order:
+
+- a node with **neither** `session:` nor `runner:` joins the implicit
+  **`default`** session (zero ceremony — preserves single-session behavior);
+- a node with **`runner:`** and no `session:` gets its own **solo** session;
+- a node with **`session: <name>`** joins that top-level `sessions:` group.
+
+Sessions execute **sequentially**, share the run's single worktree, and a switch
+between sessions reuses checkpoint → `session/resume` (≈ `$0.28`/respawn).
+**`judge` is now an ordinary runner-bearing node** (`runner:` / `session:`);
+`judge.settings.model` is removed. `consensus` is **excluded** from `sessions:`
+and uses the unified runner config for its participants/synthesizer.
+
+`flow.yaml` never names a concrete host runner or a secret: runner intent
+(agent + model + provider) is bound to a host runner **per project at
+connect-time / first launch** ([sessions.md](system-analytics/sessions.md)), and
+`env` values stay `env:NAME` references. An undefined `session:` reference, a
+`consensus` node placed in `sessions:`, or an unbound slot fails with
+`MaisterError("CONFIG")`; a slot with no resolvable host runner fails with
+`MaisterError("EXECUTOR_UNAVAILABLE")` — no new error code.
+
+```yaml
+sessions:
+  review:                                 # a named, shared session
+    runner: claude-opus                   # profile-ref OR inline object
+nodes:
+  - id: implement
+    type: ai_coding                       # no session:/runner: → 'default' session
+  - id: judge
+    type: judge
+    runner:                               # inline unified runner config
+      capability_agent: claude
+      model: claude-opus-4-8
+      effort: high
+      env: { ANTHROPIC_LOG: "env:ANTHROPIC_LOG" }
+  - id: review
+    type: ai_coding
+    session: review                       # joins the named 'review' session
+```
+
 ## Node `retry_policy` (M30 — Implemented)
 
 **(M30 — Implemented, [ADR-080](decisions.md#adr-080-node-level-retry-policy).)** An

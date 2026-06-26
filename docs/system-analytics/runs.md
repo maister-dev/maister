@@ -1,5 +1,14 @@
 # Runs domain
 
+> **M42 — Unified runner & session model (Designed).** Run runner state
+> (`runner_id`, `runner_resolution_tier`, `capability_agent`, `runner_snapshot`,
+> `acp_session_id`) moves OFF the `runs` row into the per-session `run_sessions`
+> table (sole source of truth; exactly one `default` row for `scratch`/`agent`
+> runs). A flow run hosts N **sequential** sessions sharing one worktree.
+> Canonical: [`sessions.md`](sessions.md) /
+> [ADR-114](../decisions.md#adr-114-unified-flow-runner-config-first-class-sessions-per-project-connect-time-bindings-and-run_sessions-as-the-sole-run-runner-source-of-truth).
+> Flipped to as-built in M42 Phase 7.
+
 ## Purpose
 
 A **run** is one execution attempt of a task through a Flow. It owns

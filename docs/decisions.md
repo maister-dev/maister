@@ -139,6 +139,7 @@
 | [ADR-111](#adr-111-generic-agent-configuration-framework--declared-config-params-per-instance-values-resolved-snapshot-prompt-injection) | Generic agent configuration framework — declared config params, per-instance values, resolved snapshot, prompt injection | Accepted | 2026-06-25 |
 | [ADR-112](#adr-112-triager-agent--duplicate_offlagged-dedup-substrate-auto_launch_triaged-tick-flowrunner-discovery-no-silent-stall-guards) | Triager agent — duplicate_of/flagged dedup substrate, auto_launch_triaged tick, flow/runner discovery, no-silent-stall guards | Accepted | 2026-06-25 |
 | [ADR-113](#adr-113-pr-to-source-for-local-packages--trusted-source-picker--stable-publish-branch) | PR-to-source for local packages — trusted-source picker + stable publish branch (M39 Stream B) | Accepted | 2026-06-25 |
+| [ADR-114](#adr-114-unified-flow-runner-config-first-class-sessions-per-project-connect-time-bindings-and-run_sessions-as-the-sole-run-runner-source-of-truth) | Unified Flow runner config, first-class sessions, per-project connect-time bindings, `run_sessions` sole source of truth, engine 2.0.0 (M42) | Accepted | 2026-06-26 |
 
 ---
 
@@ -9001,6 +9002,150 @@ Stream-B half of M39 paired with ADR-107.
 ADR-107). It takes **113** (110–112 went to the AI-assistant / agent-config /
 triager siblings that merged to main first). Shares migration **0074** with
 ADR-107; the publish mutex is **0075**.
+
+---
+
+### ADR-114: Unified Flow runner config, first-class sessions, per-project connect-time bindings, and `run_sessions` as the sole run-runner source of truth
+
+**Date:** 2026-06-26
+**Status:** Accepted
+**Context:** MAIster grew three divergent per-node runner mechanisms with no
+shared shape: (a) `runner_profiles` manifest values (`flowRunnerProfileSchema`,
+`web/lib/config.schema.ts`) keyed by `capability_agent` + `permission_policy`
+with **no** `effort`/`env`; (b) a per-step `flow_runner_remaps` table keyed
+`(projectId, flowRevisionId, stepId, sourceRunnerId)`; (c) consensus
+participant/synthesizer runners resolved by a **direct** `platformAcpRunners.id`
+lookup (`consensus/roles.ts`) that bakes a host runner id into the git artifact —
+so a consensus flow is not portable across hosts. Three findings from a code read
+are load-bearing and shaped this decision: (1) `judge.settings.model` is **never
+read at runtime** — `materializeNodeCapabilities` always uses the run's single
+`loaded.executor.model`; the field only feeds a tooltip
+(`node-tooltips.ts`). (2) No `session.json` exists on disk — `acp_session_id`
+lives only in `runs.acp_session_id`, and reconciliation is **web-tier + DB-driven**
+(`web/lib/reconcile.ts`) under the hard no-`fs.watch`/polling invariant, so a
+disk-only per-session mirror cannot drive reconcile/resume. (3) The "one runner
+per run" lock is entirely web-tier — the supervisor registry is already keyed by
+supervisor `sessionId` (not `runId`), and `run.events.jsonl` / `cost.jsonl` are
+per-run with monotonic seeding designed for multi-session. The product need is a
+single portable runner config, "one runner per **session**" (not per run), and
+runner intent bound to concrete host runners **per project at connect-time** —
+never baked into the git artifact.
+
+**Decision:**
+1. **One unified runner config** (`flowRunnerConfigSchema`): `runner_type`,
+   `capability_agent`, `adapter?`, `model?`, `model_family?`, `provider?`,
+   `permission_policy`, `sidecar?`, **plus new `effort?`** (reusing the
+   `thinkingEffort` enum) and **`env?`** (a passthrough NAME map whose values are
+   `env:NAME` references only — never secret literals). The same shape is used for
+   `runner_profiles` values, `sessions[].runner`, node `settings.runner`
+   (ai_coding / orchestrator / judge), and consensus participant/synthesizer
+   `runner`. Any runner slot accepts a profile-ref **string** OR an inline
+   **object**. Node **capability** settings (mcps / skills / restrictions / tools /
+   enforcement / hooks) stay on the node, unchanged.
+2. **First-class sessions** (top-level `sessions:` + node `session:`). A node with
+   neither `session:` nor `runner:` joins the implicit **`default`** session
+   (preserves today's single-session behavior, zero ceremony); a node with
+   `runner:` and no `session:` gets its own **solo** one-node session; a node with
+   `session:` joins that named group. A session shares one ACP process + one
+   continuous `acp_session_id` resumed in graph order; **all** sessions share the
+   run's single worktree; sessions are **sequential** (not parallel); a session
+   switch reuses checkpoint → `session/resume` (≈ `$0.28`/respawn,
+   ADR-spike cost). **`judge` becomes an ordinary runner-bearing node** (via
+   `runner:`/`session:`); **`judge.settings.model` is removed entirely** (clean
+   cutover — it was never read), including its `node-tooltips.ts` reference.
+   **`consensus` stays a fan-out node excluded from `sessions:`**; its
+   participants/synthesizer use the unified runner config and are made portable via
+   bindings (3).
+3. **Per-project bindings, at connect-time OR first launch** (whichever first).
+   Bind **every** runner slot whose config has no unique host auto-match — covering
+   all sessions **and** all consensus slots, not just `default`. The binding table
+   is keyed `(project_id, flow_revision_id, slot_key)` where `slot_key ∈
+   {session:<name>, consensus:<nodeId>:<participantId>,
+   consensus:<nodeId>:synthesizer}`. **`slot_key` is REQUIRED, not a
+   dedup-by-intent convenience:** a consensus node may legitimately declare N
+   participants with identical runner intent (LLMs are non-deterministic, so two
+   `claude+opus` participants can and should yield different drafts) — intent-dedup
+   would erase a valid configuration, so slot enumeration **and** the binding UI
+   MUST NOT dedup by intent. `mapped_runner_id → platform_acp_runners`; status
+   `Pending|Mapped`; auto-match by intent (agent + model + provider); a flow
+   revision that introduces new slots re-prompts. `flow.yaml` never names a host
+   runner or a secret.
+4. **`run_sessions` is the SOLE source of truth for run runner state.** Columns:
+   `id, run_id, session_name, runner_id, runner_resolution_tier, capability_agent,
+   runner_snapshot, acp_session_id, resolution_source, timestamps`, with
+   `UNIQUE(run_id, session_name)`. The run-level columns
+   `runs.{runner_id, runner_resolution_tier, capability_agent, runner_snapshot,
+   acp_session_id}` are **DROPPED** (full clean-cutover migration, no run-data
+   migration), and the FK `runs.runner_id → platform_acp_runners` + index
+   `runs_runner_idx` are recreated on `run_sessions.runner_id`. Non-flow runs
+   (scratch / agent) have exactly one `default` row. **`step_runs.acp_session_id`
+   stays** — it is a separate per-step-run column recording which session a step
+   used; it is neither dropped nor migrated.
+5. **Per-session resolution precedence** (per slot): connect-time/first-launch
+   **binding** for any slot whose runner config lacks a unique host auto-match →
+   **auto-match** → for the `default` session **with no explicit runner only**:
+   project-flow → platform-flow → project → platform default. This re-maps the
+   existing 6-tier `resolve.ts` chain onto the session model — the top two tiers
+   are **not** dropped: `launchOverride` becomes the **optional ephemeral per-run
+   per-session override** offered at the Launch dialog (does not persist), and
+   `stepTarget` becomes the session runner config.
+6. **Supervisor gains a `sessionName` field on `POST /sessions`** so `cost.jsonl`
+   and `run.events.jsonl` are attributable per logical session, not only per
+   supervisor `sessionId`.
+7. **No new `MaisterError` code.** An invalid/unbound session graph reuses
+   `CONFIG`; the absence of a concrete host runner reuses `EXECUTOR_UNAVAILABLE`
+   (ADR-008 closed union, ADR-026/065 precedent).
+8. **Engine `2.0.0` — first stable clean-cutover baseline.**
+   `MAISTER_ENGINE_VERSION → "2.0.0"`; the new features' floor is `2.0.0`; all
+   rewritten manifests declare `compat.engine_min: 2.0.0`. (Engine `1.9.0` was
+   taken by ADR-109 consensus; this milestone is a clean cutover with no backward
+   compatibility and no run-data migration, which earns the major bump.)
+
+**Consequences:**
+- Flow packages become **portable**: runner intent travels as agent+model+provider
+  in the git artifact, and the concrete host runner is bound per project at
+  connect-time — a package installs and runs on any host without editing
+  `flow.yaml`.
+- The `run_sessions` cutover is a **full schema migration with no run-data
+  migration** (migration `0080`). Existing in-flight runs must be terminal /
+  abandoned before deploy; this is an explicit clean-cutover, not a compat path.
+- Crash recovery, resume, reconcile, promote, and workbench-lifecycle all read the
+  **snapshotted `run_sessions`** rows, never a mutable catalog/projection that can
+  drift after launch (extends the ADR-089/106 "enforce on what the run DID"
+  discipline to the session axis). Terminal/abandon transitions MUST close **every**
+  `run_sessions` live process; HITL/gate live-delivery MUST target the **active**
+  session's `acp_session_id`.
+- **Deployment touchpoints: NONE.** No new host env var, sidecar, bound port, or
+  runtime config file — the `env` field is a flow-authored passthrough-NAME map and
+  secrets stay `env:NAME`. No `Dockerfile` / `compose*.yml` / `.env.example` change
+  (stated explicitly so the absence is intentional, per the runtime-contract-symmetry
+  rule, not an omission).
+- Migration **0080** + ADR **114** reserved at HEAD `fa68deec` (next after `0079` /
+  ADR-113). Parallel branches may collide — Phase 7 budgets a renumber check vs
+  `main` (`git show main:docs/decisions.md`, `_journal.json`).
+
+**Alternatives Considered:**
+- **Keep the per-run single runner + per-step `flow_runner_remaps`:** rejected —
+  three divergent runner shapes, no session axis, and a host runner id baked into
+  the consensus git artifact (not portable).
+- **Disk `sessions/<name>.json` per-session mirror:** rejected — reconcile/resume is
+  web-tier + DB-driven under the hard no-`fs.watch`/polling invariant, so disk-only
+  state cannot drive recovery; `run_sessions` (DB) is the sole source of truth.
+- **Dedup binding slots by runner intent:** rejected — two consensus participants
+  with identical `claude+opus` intent are a valid, deliberate configuration
+  (non-deterministic drafts); `slot_key` keeps each a distinct, independently
+  bindable slot. Slot enumeration and the binding UI never dedup by intent.
+- **Keep `judge.settings.model`:** rejected — it is never read at runtime (only a
+  tooltip); judge becomes an ordinary runner-bearing node and the field is removed.
+- **A new `MaisterError` code for unbound/invalid sessions:** rejected — `CONFIG`
+  (invalid graph) and `EXECUTOR_UNAVAILABLE` (no host runner) already cover both.
+- **A `1.x` minor engine bump:** rejected — `1.9.0` is taken, and this is a no-compat
+  clean cutover; `2.0.0` marks the first stable clean-cutover baseline.
+
+**Numbering note.** Unified runner & session model is **M42**, engine **2.0.0**,
+ADR **114**, migration **0080** — all reserved at HEAD `fa68deec`. If a parallel
+branch lands 114/`0080` first, Phase 7 renumbers (the ADR body, the Index row, the
+migration file + `_journal.json` entry, and every `ADR-114`/`0080` cross-reference).
 
 ---
 

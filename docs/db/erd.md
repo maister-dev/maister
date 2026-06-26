@@ -85,6 +85,8 @@ erDiagram
     RUNS ||--o{ RUNS : "run-tree delegation (parent_run_id, M37)"
     USERS ||--o{ WORKSPACES : "promotion owner (M18, nullable)"
     RUNS ||--o{ STEP_RUNS : "per-step record (legacy)"
+    RUNS ||--|{ RUN_SESSIONS : "per-session runner state (M42 Designed)"
+    PLATFORM_ACP_RUNNERS ||--o{ RUN_SESSIONS : "session runner (M42 Designed, SET NULL)"
     RUNS ||--o{ NODE_ATTEMPTS : "per-node attempt (M11a)"
     RUNS ||--o| RUN_COST_ROLLUPS : "derived token rollup (ADR-085)"
     USERS ||--o{ NODE_ATTEMPTS : "takeover owner (M11b, SET NULL)"
@@ -636,10 +638,10 @@ erDiagram
         text task_id FK "nullable for scratch"
         text project_id FK
         text flow_id FK "nullable for scratch"
-        text runner_id FK
-        text runner_resolution_tier
-        text capability_agent
-        jsonb runner_snapshot
+        text runner_id FK "M42 Designed: moves to run_sessions.runner_id (FK+index relocated)"
+        text runner_resolution_tier "M42 Designed: moves to run_sessions"
+        text capability_agent "M42 Designed: moves to run_sessions"
+        jsonb runner_snapshot "M42 Designed: moves to run_sessions"
         text parent_run_id FK "M37: runs(id) SET NULL — orchestrator delegator (ADR-098)"
         text root_run_id FK "M37: runs(id) — run-tree root (ADR-098)"
         jsonb delegation_snapshot "M37: {agentDefinitionId,revisionId} (ADR-098, 0060)"
@@ -648,7 +650,7 @@ erDiagram
         text addressable_key "M37: star-routing key, unique per tree when persistent (ADR-099, 0060)"
         text workspace_mode "M37: own|shared run-tree worktree, nullable (ADR-099, 0060)"
         text status "Pending..Done"
-        text acp_session_id "resume handle"
+        text acp_session_id "resume handle; M42 Designed: moves to run_sessions (per session)"
         text current_step_id "runner cursor"
         text flow_version "snapshot or scratch sentinel"
         text flow_revision "snapshot or manual sentinel"
@@ -664,6 +666,20 @@ erDiagram
         jsonb agent_config "Implemented ADR-111 0071: immutable resolved agent-config snapshot at spawn, nullable"
         timestamp started_at
         timestamp ended_at
+    }
+
+    RUN_SESSIONS {
+        text id PK
+        text run_id FK "M42 Designed: runs(id) CASCADE; UNIQUE(run_id, session_name)"
+        text session_name "M42: 'default' (implicit/scratch/agent) | solo | named"
+        text runner_id FK "M42: platform_acp_runners(id) SET NULL — FK+index relocated off runs"
+        text runner_resolution_tier "M42: winning precedence tier"
+        text capability_agent "M42: ADAPTER_IDS"
+        jsonb runner_snapshot "M42: frozen launch profile"
+        text acp_session_id "M42: per-session ACP session/resume handle"
+        text resolution_source "M42: concrete source audit (slot_key | chain scope | launch-dialog)"
+        timestamp created_at
+        timestamp updated_at
     }
 
     RUN_COST_ROLLUPS {

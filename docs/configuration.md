@@ -972,6 +972,17 @@ park/resume, verify, tally, synthesis, and HITL must use structured fields
 (`runId`, `nodeId`, `nodeAttemptId`, `round`, participant/verifier IDs, verdict
 status) and must not interpolate prompt, draft, debate, or resolution body text.
 
+**M42 engine bump (Designed).** M42 bumps `MAISTER_ENGINE_VERSION` `1.9.0 →
+2.0.0` ([ADR-114](decisions.md#adr-114-unified-flow-runner-config-first-class-sessions-per-project-connect-time-bindings-and-run_sessions-as-the-sole-run-runner-source-of-truth))
+— the first stable clean-cutover baseline. The unified runner config (new
+`effort` / `env` fields), first-class `sessions:`, node `session:` / `runner:`,
+and judge `runner:` are 2.0.0 features: a manifest using any of them MUST declare
+`compat.engine_min >= 2.0.0`, refused otherwise through the same
+`engine_min..engine_max` check. The `env` field is a passthrough NAME map whose
+values are `env:NAME` references resolved supervisor-side — never literal secrets
+— so M42 adds **no** deployment surface (no new host env var, sidecar, port, or
+config file). `SUPPORTED_FLOW_SCHEMA_VERSIONS` stays `[1]`.
+
 ### Verdict calibration (M15)
 
 `ai_judgment` and `skill_check` gates may declare a confidence threshold so a passing

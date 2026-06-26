@@ -101,6 +101,7 @@ cases, process flows. One file per domain.
 | [`system-analytics/orchestrator.md`](system-analytics/orchestrator.md) | Orchestrator engine (ADR-098/099/100, Implemented): supervisory `orchestrator` node + run-tree (`parent_run_id`/`root_run_id`) + delegation toolset + `requires` success-gated task-DAG + `WaitingOnChildren` idle-checkpoint wait/resume. |
 | [`system-analytics/guardrail-hooks.md`](system-analytics/guardrail-hooks.md) | Guardrail/hook engine (ADR-108, Designed — M40): per-tool-call supervisor ACP-seam interceptor (`path_guard` / `repetition` / `no_progress`), `hook_trip` HITL escalation, two-tier unattended default, `NativeHookMaterializer` seam. |
 | [`system-analytics/consensus.md`](system-analytics/consensus.md) | Consensus node (ADR-109, Implemented — M41): first-class `consensus` graph node with governed read-only draft fan-out, rotational cross-verification, unanimous material-axis tally, human resolution, and synthesized `plan` artifact output. |
+| [`system-analytics/sessions.md`](system-analytics/sessions.md) | Flow runner & session model (ADR-114, Designed — M42): unified `flowRunnerConfigSchema`, `default`/solo/named sessions, `run_sessions` as the sole run-runner source of truth, per-project connect-time slot bindings, checkpoint→`session/resume` session switch, supervisor `sessionName` attribution. |
 
 ### Screen reference (`screens/`)
 

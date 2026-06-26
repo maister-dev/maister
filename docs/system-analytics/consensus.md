@@ -3,6 +3,13 @@
 > **Status: Implemented (M41).** Frozen SSOT:
 > [`../../.ai-factory/specs/feature-m41-consensus-node.md`](../../.ai-factory/specs/feature-m41-consensus-node.md).
 > Decision: [ADR-109](../decisions.md#adr-109-consensus-flow-graph-node--engine-owned-unanimous-draft-verification-and-human-resolution).
+>
+> **M42 (Designed):** participant/synthesizer `runner` uses the unified
+> `flowRunnerConfigSchema` and resolves through portable per-slot bindings
+> (`consensus:<nodeId>:<participantId>` / `consensus:<nodeId>:synthesizer`), not a
+> direct `platform_acp_runners.id`; identical-intent participants stay distinct
+> slots. See [`sessions.md`](sessions.md) /
+> [ADR-114](../decisions.md#adr-114-unified-flow-runner-config-first-class-sessions-per-project-connect-time-bindings-and-run_sessions-as-the-sole-run-runner-source-of-truth).
 
 ## Purpose
 

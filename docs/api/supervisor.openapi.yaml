@@ -1009,6 +1009,17 @@ components:
           description: |
             Flow step id. Step log lands at `<runId>/<stepId>.log`. Constrained
             to safe filesystem characters.
+        sessionName:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9._-]+$'
+          description: |
+            (M42 — Designed, ADR-114) Logical Flow session this ACP process
+            serves (`default` | solo node id | named session). Stamped onto
+            `cost.jsonl` and `run.events.jsonl` so spend and events are
+            attributable per logical session, not only per supervisor
+            `sessionId`. Absent → treated as `default` (single-session run).
         nodeAttemptId:
           type: string
           minLength: 1
@@ -1254,6 +1265,12 @@ components:
             ACP session id once `session/new` has been observed (or
             echoed from `resumeSessionId`). Absent during the brief
             window between spawn and ACP handshake.
+        sessionName:
+          type: string
+          description: |
+            (M42 — Designed, ADR-114) Logical Flow session name this record
+            serves (`default` for a single-session run), echoed from
+            `StartSessionRequest.sessionName`.
     SupervisorErrorCode:
       type: string
       enum:

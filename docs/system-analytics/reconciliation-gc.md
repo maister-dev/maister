@@ -1,5 +1,14 @@
 # Reconciliation and GC domain
 
+> **M42 — Unified runner & session model (Designed).** Reconcile / resume /
+> recover read the per-session `run_sessions` snapshot (incl. `acp_session_id`)
+> instead of `runs.acp_session_id`; classification is session- and
+> `run_kind`-aware and must cover partial `run_sessions` insert,
+> spawned-but-unpersisted `acp_session_id`, and mid-run session switch. Canonical:
+> [`sessions.md`](sessions.md) /
+> [ADR-114](../decisions.md#adr-114-unified-flow-runner-config-first-class-sessions-per-project-connect-time-bindings-and-run_sessions-as-the-sole-run-runner-source-of-truth).
+> Flipped to as-built in M42 Phase 7.
+
 ## Purpose
 
 This domain (**Designed, M19**) covers two recovery-and-cleanup concerns

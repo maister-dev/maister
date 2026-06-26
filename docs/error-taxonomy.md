@@ -359,6 +359,18 @@ Seventeen codes (M8 added `STEP_CHECKPOINTED`; M9 added `UNAUTHENTICATED`,
 > (no source url / unsupported provider for the PR). Two-phase publish leaves the
 > `last_pushed_branch`/`last_pr_url` markers unset on any failure.
 
+> **M42 (unified runner & session model, ADR-114) adds NO new `MaisterError`
+> code** ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror)
+> closed union; Designed). An undefined `session:` reference, a `consensus` node
+> placed inside `sessions:`, an unbound runner slot at load, or any other
+> invalid/unbound session graph reuses **`CONFIG`**; a runner slot that resolves
+> to no concrete host runner (no binding + no auto-match) reuses
+> **`EXECUTOR_UNAVAILABLE`**. A session switch whose adapter does not advertise
+> `sessionCapabilities.resume` reuses the existing supervisor **`CHECKPOINT`**
+> terminal-resume failure. New call sites: `web/lib/config.ts`
+> (`loadFlowManifest` session validation), `web/lib/runs/resolve.ts`
+> (per-session resolution), and the `POST /api/runs` launch precondition.
+
 ## Construction
 
 ```ts

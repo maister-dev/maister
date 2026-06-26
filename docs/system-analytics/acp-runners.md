@@ -1,5 +1,14 @@
 # Platform ACP runner catalog domain
 
+> **M42 — Unified runner & session model (Designed).** Runner bindings move from
+> the per-step `flow_runner_remaps` to **per-slot**
+> `(project_id, flow_revision_id, slot_key)` rows set at flow-connect / first
+> launch, covering every session and consensus slot (never deduped by intent);
+> the resolved host runner is snapshotted per session in `run_sessions`.
+> Canonical: [`sessions.md`](sessions.md) /
+> [ADR-114](../decisions.md#adr-114-unified-flow-runner-config-first-class-sessions-per-project-connect-time-bindings-and-run_sessions-as-the-sole-run-runner-source-of-truth).
+> Flipped to as-built in M42 Phase 7.
+
 ## Purpose
 
 The platform ACP runner catalog is the admin-owned, host-scoped registry of
