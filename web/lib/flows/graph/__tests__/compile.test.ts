@@ -173,3 +173,112 @@ describe("compileManifest — graph nodes[]", () => {
     expect(resolveTransition(review, "unknown-decision")).toBeNull();
   });
 });
+
+describe("compileManifest — session assignment (M42)", () => {
+  it("assigns a runner-bearing node with no session to the default session", () => {
+    const manifest = {
+      schemaVersion: 1,
+      name: "s",
+      compat: { engine_min: "1.1.0" },
+      nodes: [
+        {
+          id: "implement",
+          type: "ai_coding",
+          action: { prompt: "x" },
+          transitions: { success: "done" },
+        },
+      ],
+    } as FlowYamlV1;
+
+    const g = compileManifest(manifest);
+
+    expect(g.nodes.get("implement")?.session).toBe("default");
+    expect([...g.sessions.keys()]).toEqual(["default"]);
+  });
+
+  it("assigns a node with `session:` to that named session with its declared runner", () => {
+    const manifest = {
+      schemaVersion: 1,
+      name: "named",
+      compat: { engine_min: "2.0.0" },
+      sessions: { review: { runner: "claude-opus" } },
+      nodes: [
+        {
+          id: "implement",
+          type: "ai_coding",
+          action: { prompt: "x" },
+          transitions: { success: "rev" },
+        },
+        {
+          id: "rev",
+          type: "ai_coding",
+          action: { prompt: "y" },
+          session: "review",
+          transitions: { success: "done" },
+        },
+      ],
+    } as FlowYamlV1;
+
+    const g = compileManifest(manifest);
+
+    expect(g.nodes.get("implement")?.session).toBe("default");
+    expect(g.nodes.get("rev")?.session).toBe("review");
+    expect(g.sessions.get("review")?.runner).toBe("claude-opus");
+    expect(new Set(g.sessions.keys())).toEqual(new Set(["default", "review"]));
+  });
+
+  it("gives a runner-bearing node with settings.runner and no session a solo session", () => {
+    const manifest = {
+      schemaVersion: 1,
+      name: "solo",
+      compat: { engine_min: "2.0.0" },
+      nodes: [
+        {
+          id: "judge",
+          type: "judge",
+          action: { prompt: "j" },
+          settings: { runner: { capability_agent: "claude", model: "m" } },
+          transitions: { success: "done" },
+        },
+      ],
+    } as unknown as FlowYamlV1;
+
+    const g = compileManifest(manifest);
+
+    expect(g.nodes.get("judge")?.session).toBe("judge");
+    expect(g.sessions.get("judge")?.runner).toEqual({
+      capability_agent: "claude",
+      model: "m",
+    });
+  });
+
+  it("does not assign a session to non-runner-bearing nodes", () => {
+    const manifest = {
+      schemaVersion: 1,
+      name: "mixed",
+      compat: { engine_min: "1.1.0" },
+      nodes: [
+        {
+          id: "lint",
+          type: "cli",
+          action: { command: "true" },
+          transitions: { success: "done" },
+        },
+      ],
+    } as FlowYamlV1;
+
+    const g = compileManifest(manifest);
+
+    expect(g.nodes.get("lint")?.session).toBeUndefined();
+    expect(g.sessions.size).toBe(0);
+  });
+
+  it("assigns legacy linear agent steps to the default session", () => {
+    const g = compileManifest(linear);
+
+    expect(g.nodes.get("plan")?.session).toBe("default"); // agent
+    expect(g.nodes.get("hello")?.session).toBeUndefined(); // cli
+    expect(g.nodes.get("review")?.session).toBeUndefined(); // human
+    expect([...g.sessions.keys()]).toEqual(["default"]);
+  });
+});

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { CONSENSUS_REQUIRED_OUTPUTS } from "@/lib/config";
+import { CONSENSUS_REQUIRED_OUTPUTS, SESSIONS_ENGINE_MIN } from "@/lib/config";
 import {
   aiCodingSettingsSchema,
   cliCheckSettingsSchema,
@@ -174,6 +174,26 @@ describe("buildFlowDslGrammar drift guard", () => {
   it("states consensus is a first-class node", () => {
     expect(grammar).toContain("type: consensus");
     expect(grammar.toLowerCase()).toContain("first-class");
+  });
+
+  it("documents the M42 session model + compile invariants", () => {
+    // The Zod-shape guard above cannot see top-level `sessions:` (a manifest
+    // field, not a node settings key) nor the validateSessions /
+    // SESSIONS_ENGINE_MIN invariants (config.ts superRefine/validation) — so
+    // assert the grammar mirrors them directly. Drift in either fails here.
+    expect(grammar).toContain("sessions:");
+    expect(grammar).toContain("session:");
+    expect(grammar).toContain(SESSIONS_ENGINE_MIN); // engine floor "2.0.0"
+    // unified runner config surfaces
+    expect(grammar).toContain("effort");
+    expect(grammar).toContain("env:NAME");
+    // invariants the loader enforces
+    const lower = grammar.toLowerCase();
+
+    expect(lower).toContain("excluded from"); // consensus excluded from sessions:
+    expect(lower).toContain("must not declare a"); // consensus session refusal
+    expect(lower).toContain("runner-bearing"); // judge is runner-bearing
+    expect(lower).toContain("fails to compile"); // undefined session ref
   });
 
   it("documents the consensus compile-time output contract", () => {

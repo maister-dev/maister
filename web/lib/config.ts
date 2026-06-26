@@ -600,6 +600,12 @@ const HOOKS_ENGINE_MIN = "1.8.0";
 // engine_min >= this value.
 const CONSENSUS_ENGINE_MIN = "1.9.0";
 
+// M42 floor (ADR-114): manifests using the unified runner config / session
+// features (`sessions:`, node `session:`, a judge `settings.runner`, an inline
+// `settings.runner` object, or any runner config with `effort`/`env`) must
+// declare engine_min >= this value.
+export const SESSIONS_ENGINE_MIN = "2.0.0";
+
 // Returns true when any node is an orchestrator node. Used to gate the 1.6.0
 // floor.
 function declaresOrchestratorNode(nodes: NodeDef[]): boolean {
@@ -609,6 +615,101 @@ function declaresOrchestratorNode(nodes: NodeDef[]): boolean {
 // Returns true when any node is a consensus node. Used to gate the 1.9.0 floor.
 function declaresConsensusNode(nodes: NodeDef[]): boolean {
   return nodes.some((n) => n.type === "consensus");
+}
+
+// M42 (ADR-114): true when a runner config object declares the new `effort` or
+// `env` fields (a bare string profile-ref does not).
+function runnerConfigHasNewFields(runner: unknown): boolean {
+  return (
+    !!runner &&
+    typeof runner === "object" &&
+    ("effort" in runner || "env" in runner)
+  );
+}
+
+// M42 (ADR-114): true when a manifest uses any unified-runner/session feature
+// that requires the 2.0.0 floor. Used to gate SESSIONS_ENGINE_MIN.
+function declaresSessionFeatures(
+  manifest: FlowYamlV1,
+  nodes: NodeDef[],
+): boolean {
+  const m = manifest as {
+    sessions?: Record<string, { runner?: unknown }>;
+    runner_profiles?: Record<string, unknown>;
+  };
+
+  if (m.sessions && Object.keys(m.sessions).length > 0) return true;
+  if (
+    m.runner_profiles &&
+    Object.values(m.runner_profiles).some(runnerConfigHasNewFields)
+  ) {
+    return true;
+  }
+
+  for (const n of nodes) {
+    const node = n as {
+      type: string;
+      session?: unknown;
+      settings?: { runner?: unknown };
+      participants?: Array<{ runner?: unknown }>;
+      synthesizer?: { runner?: unknown };
+    };
+
+    if (node.session !== undefined) return true;
+
+    const settingsRunner = node.settings?.runner;
+
+    // judge is newly runner-bearing; an inline-object settings.runner is new;
+    // effort/env on any settings.runner is new.
+    if (node.type === "judge" && settingsRunner !== undefined) return true;
+    if (typeof settingsRunner === "object" && settingsRunner !== null) {
+      return true;
+    }
+
+    if (node.type === "consensus") {
+      for (const p of node.participants ?? []) {
+        if (runnerConfigHasNewFields(p.runner)) return true;
+      }
+      if (runnerConfigHasNewFields(node.synthesizer?.runner)) return true;
+    }
+  }
+
+  return false;
+}
+
+// M42 (ADR-114): session cross-references. A node's `session` must be the
+// implicit `default` or a key declared in top-level `sessions:`; a consensus
+// node MUST NOT join a session (consensus is excluded from `sessions:`).
+function validateSessions(
+  manifest: FlowYamlV1,
+  nodes: NodeDef[],
+  flowYamlPath: string,
+): void {
+  const declared = new Set(
+    Object.keys(
+      (manifest as { sessions?: Record<string, unknown> }).sessions ?? {},
+    ),
+  );
+
+  for (const n of nodes) {
+    const node = n as { id: string; type: string; session?: string };
+
+    if (node.session === undefined) continue;
+
+    if (node.type === "consensus") {
+      throw new MaisterError(
+        "CONFIG",
+        `consensus node "${node.id}" must not declare a session (consensus is excluded from sessions:) in ${flowYamlPath}`,
+      );
+    }
+
+    if (node.session !== "default" && !declared.has(node.session)) {
+      throw new MaisterError(
+        "CONFIG",
+        `node "${node.id}" references undefined session "${node.session}" — declare it in top-level sessions: in ${flowYamlPath}`,
+      );
+    }
+  }
 }
 
 // Returns true when any ai_coding node binds a catalog agent. Used to gate
@@ -865,6 +966,18 @@ export function validateGraphManifest(
     );
   }
 
+  // M42 (ADR-114): the unified runner config + session features require the
+  // 2.0.0 floor. Manifests using none of them stay valid at any engine_min.
+  if (
+    declaresSessionFeatures(manifest, nodes) &&
+    !semverGte(engineMin, SESSIONS_ENGINE_MIN)
+  ) {
+    throw new MaisterError(
+      "CONFIG",
+      `graph flow ${flowYamlPath} is declaring sessions / a unified runner config (sessions:, node session:, settings.runner object, judge runner, or effort/env) but engine_min "${engineMin}" < ${SESSIONS_ENGINE_MIN} — bump compat.engine_min to ${SESSIONS_ENGINE_MIN} (host engine is ${MAISTER_ENGINE_VERSION})`,
+    );
+  }
+
   const nodeIds = new Set<string>();
 
   for (const n of nodes) {
@@ -910,6 +1023,7 @@ export function validateGraphManifest(
   // Rule 6 (M15): blocking human_review gates deadlock promotion — reject always.
   validateNoBlockingHumanReview(nodes, flowYamlPath);
   validateConsensusNodes(nodes, flowYamlPath);
+  validateSessions(manifest, nodes, flowYamlPath);
 
   const capabilityRefIds = opts?.capabilityRefIds;
 

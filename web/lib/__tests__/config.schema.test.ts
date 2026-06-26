@@ -771,7 +771,7 @@ describe("judgeSettingsSchema (M11c)", () => {
   it("accepts the capability-bearing judge shape", () => {
     expect(() =>
       judgeSettingsSchema.parse({
-        model: "claude-sonnet-4-6",
+        runner: "claude-opus",
         thinkingEffort: "medium",
         mcps: ["github"],
         tools: { claude: ["Read"] },

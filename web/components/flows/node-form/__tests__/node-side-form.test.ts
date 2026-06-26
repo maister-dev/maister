@@ -62,7 +62,7 @@ const MANIFEST: FlowYamlV1 = flowYamlV1Schema.parse({
       id: "assess",
       type: "judge",
       action: { prompt: "judge it" },
-      settings: { model: "m", thinkingEffort: "low" },
+      settings: { runner: "claude-opus", thinkingEffort: "low" },
     },
     {
       id: "review",

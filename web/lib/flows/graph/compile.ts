@@ -1,12 +1,18 @@
 import type { NodeAttemptType } from "@/lib/db/schema";
-import type { FlowYamlV1, GateDef, NodeDef, Step } from "@/lib/config.schema";
+import type {
+  FlowYamlV1,
+  GateDef,
+  NodeDef,
+  RunnerSlot,
+  Step,
+} from "@/lib/config.schema";
 
 import pino from "pino";
 
+import { parseWhen } from "./when-grammar";
+
 import { TERMINAL_TRANSITION_TARGET } from "@/lib/config.schema";
 import { MaisterError } from "@/lib/errors-core";
-
-import { parseWhen } from "./when-grammar";
 
 const log = pino({
   name: "flow-compile",
@@ -43,12 +49,29 @@ export type CompiledNode = {
   // declaring `decide`; the runtime outcome site reads it. Compiled-linear nodes
   // leave it undefined (always "success"-routed).
   decide?: NodeDef["decide"];
+  // M42 (ADR-114): the logical session this node runs in (one ACP process + one
+  // continuous acp_session_id). Set ONLY for runner-bearing nodes
+  // (ai_coding / orchestrator / judge); undefined for consensus/cli/check/
+  // human/form (they spawn no parent ACP session).
+  session?: string;
+};
+
+// M42 (ADR-114): a logical session in the run's session set — its name and
+// declared runner config. `runner` is undefined for the implicit `default`
+// session with no explicit declaration (resolved via the precedence chain at
+// launch).
+export type CompiledSession = {
+  name: string;
+  runner?: RunnerSlot;
 };
 
 export type FlowGraph = {
   entry: string;
   order: string[];
   nodes: Map<string, CompiledNode>;
+  // M42 (ADR-114): the run's session set — every distinct session a
+  // runner-bearing node belongs to, keyed by session name.
+  sessions: Map<string, CompiledSession>;
 };
 
 const STEP_TYPE_TO_NODE_TYPE: Record<Step["type"], NodeAttemptType> = {
@@ -58,28 +81,47 @@ const STEP_TYPE_TO_NODE_TYPE: Record<Step["type"], NodeAttemptType> = {
   human: "human",
 };
 
+// M42 (ADR-114): node types that run as a parent ACP session (and therefore
+// belong to a session). consensus is a child-run fan-out (excluded); cli/check
+// are shell; human/form are HITL.
+const RUNNER_BEARING_NODE_TYPES: ReadonlySet<NodeAttemptType> = new Set([
+  "ai_coding",
+  "orchestrator",
+  "judge",
+]);
+
 // Compile a linear `steps[]` manifest into a chain of single-action nodes:
 // each step -> node with `transitions.success -> next` (last -> "done"), no
 // rework. Preserves behavioral parity with the pre-M11a linear runner.
 function compileLinear(steps: Step[]): FlowGraph {
   const order = steps.map((s) => s.id);
   const nodes = new Map<string, CompiledNode>();
+  // Legacy linear flows are single-runner-per-run: every agent step shares the
+  // implicit `default` session (M42).
+  const sessions = new Map<string, CompiledSession>();
 
   steps.forEach((step, i) => {
     const next =
       i + 1 < steps.length ? steps[i + 1].id : TERMINAL_TRANSITION_TARGET;
+    const nodeType = STEP_TYPE_TO_NODE_TYPE[step.type];
+    const session = RUNNER_BEARING_NODE_TYPES.has(nodeType)
+      ? "default"
+      : undefined;
+
+    if (session) sessions.set("default", { name: "default" });
 
     nodes.set(step.id, {
       id: step.id,
-      nodeType: STEP_TYPE_TO_NODE_TYPE[step.type],
+      nodeType,
       source: { kind: "step", step },
       transitions: { success: next },
       gates: [],
       retrySafe: step.retry_safe ?? false,
+      session,
     });
   });
 
-  return { entry: steps[0].id, order, nodes };
+  return { entry: steps[0].id, order, nodes, sessions };
 }
 
 // M38 (ADR-103): compile/load-time verification of a node's `decide` table and
@@ -193,10 +235,49 @@ function verifyDecideAndOnMismatch(node: NodeDef): void {
 function compileGraph(
   graphNodes: NodeDef[],
   flowVerdictCalibration: FlowYamlV1["verdict_calibration"],
+  manifestSessions: FlowYamlV1["sessions"],
 ): FlowGraph {
   const order = graphNodes.map((n) => n.id);
   const nodes = new Map<string, CompiledNode>();
+  const sessions = new Map<string, CompiledSession>();
+  const sessionDefs = manifestSessions ?? {};
   const flowConfidenceMin = flowVerdictCalibration?.confidence_min;
+
+  const addSession = (name: string, runner?: RunnerSlot): void => {
+    if (!sessions.has(name)) {
+      sessions.set(name, {
+        name,
+        ...(runner !== undefined ? { runner } : {}),
+      });
+    }
+  };
+
+  // M42 (ADR-114): node with `session:` joins that named group; a runner-bearing
+  // node with `settings.runner` and no `session:` gets a SOLO session (keyed by
+  // its node id); otherwise the implicit `default` session.
+  const assignSession = (node: NodeDef): string | undefined => {
+    if (!RUNNER_BEARING_NODE_TYPES.has(node.type)) return undefined;
+
+    if (node.session) {
+      addSession(node.session, sessionDefs[node.session]?.runner);
+
+      return node.session;
+    }
+
+    const settingsRunner = (
+      node.settings as { runner?: RunnerSlot } | undefined
+    )?.runner;
+
+    if (settingsRunner !== undefined) {
+      addSession(node.id, settingsRunner);
+
+      return node.id;
+    }
+
+    addSession("default", sessionDefs.default?.runner);
+
+    return "default";
+  };
 
   for (const node of graphNodes) {
     verifyDecideAndOnMismatch(node);
@@ -235,10 +316,11 @@ function compileGraph(
       input: node.input,
       output: node.output,
       decide: node.decide,
+      session: assignSession(node),
     });
   }
 
-  return { entry: graphNodes[0].id, order, nodes };
+  return { entry: graphNodes[0].id, order, nodes, sessions };
 }
 
 // Normalize either manifest form into a FlowGraph. The manifest has already
@@ -246,7 +328,11 @@ function compileGraph(
 // cross-references resolve), so this is a pure structural transform.
 export function compileManifest(manifest: FlowYamlV1): FlowGraph {
   if (manifest.nodes && manifest.nodes.length > 0) {
-    return compileGraph(manifest.nodes, manifest.verdict_calibration);
+    return compileGraph(
+      manifest.nodes,
+      manifest.verdict_calibration,
+      manifest.sessions,
+    );
   }
   if (manifest.steps && manifest.steps.length > 0) {
     return compileLinear(manifest.steps);

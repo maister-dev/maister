@@ -168,9 +168,9 @@ next migration idx = **0080**.
 - [x] **#4 P0.4** Contract specs (web/supervisor OpenAPI, flow-dsl.md, configuration.md, error-taxonomy.md) + contract-surface checklist + **Phase-0 EXIT gate**.
 
 ### Phase 1 — Schema & DSL in code
-- [ ] **#5 P1.1** Unified runner config + `sessions:` + node `session:`/`runner:` + judge runner (config.schema.ts) + engine bump + loadFlowManifest validation (config.ts).
-- [ ] **#6 P1.2** Grammar string update + **EXTEND drift-guard test** for top-level `sessions:` (currently invisible to the guard). The guard MUST mirror the **compile invariants** (loader `superRefine`/`config.ts`: undefined-`session:`-ref → `CONFIG`, consensus-excluded-from-`sessions:`, judge-now-runner-bearing), not just the Zod shape — per the 2026-06-26-12.17/12.43 patches (which caught the grammar omitting the consensus `output.produces` contract because the guard only checked Zod keys). Export the invariant consts and assert the grammar text mirrors them.
-- [ ] **#7 P1.3** compile.ts session assignment (default/solo/named) + CompiledNode threading + run session set.
+- [x] **#5 P1.1** Unified runner config + `sessions:` + node `session:`/`runner:` + judge runner (config.schema.ts) + engine bump + loadFlowManifest validation (config.ts).
+- [x] **#6 P1.2** Grammar string update + **EXTEND drift-guard test** for top-level `sessions:` (currently invisible to the guard). The guard MUST mirror the **compile invariants** (loader `superRefine`/`config.ts`: undefined-`session:`-ref → `CONFIG`, consensus-excluded-from-`sessions:`, judge-now-runner-bearing), not just the Zod shape — per the 2026-06-26-12.17/12.43 patches (which caught the grammar omitting the consensus `output.produces` contract because the guard only checked Zod keys). Export the invariant consts and assert the grammar text mirrors them.
+- [x] **#7 P1.3** compile.ts session assignment (default/solo/named) + CompiledNode threading + run session set.
 
 ### Phase 2 — Resolution & binding (DB + resolve)
 - [ ] **#8 P2.1** Migration 0080 + schema.ts (`run_sessions`, binding refactor, drop runs columns) — incl. explicit DROP of the FK `runs.runner_id → platform_acp_runners` (`schema.ts:1293`, `onDelete: set null`) + index `runs_runner_idx` (`schema.ts:1426`); recreate the FK + index on `run_sessions.runner_id`.

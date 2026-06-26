@@ -12,6 +12,7 @@ import { randomUUID } from "node:crypto";
 import pino from "pino";
 
 import * as schema from "@/lib/db/schema";
+import { runnerSlotProfileRef } from "@/lib/config.schema";
 import { capabilityBearingSettings } from "@/lib/flows/enforcement";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { flowRunnerRemaps } from "@/lib/db/schema";
@@ -57,7 +58,9 @@ export function missingAcpRunnerTargets(args: {
     const settings = capabilityBearingSettings(node.nodeType, node.settings) as
       | AiCodingSettings
       | undefined;
-    const sourceRunnerId = settings?.runner;
+    // M42: per-step remap keys on the string profile-ref; inline-object runner
+    // slots are bound per-slot by the M42 per-session sync (Phase 2).
+    const sourceRunnerId = runnerSlotProfileRef(settings?.runner);
 
     if (!sourceRunnerId || args.platformRunnerIds.has(sourceRunnerId)) continue;
 

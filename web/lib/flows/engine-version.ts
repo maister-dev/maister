@@ -29,7 +29,12 @@ const log = pino({
 // `compat.engine_min >= 1.8.0` (HOOKS_ENGINE_MIN).
 // Bumped 1.8.0 -> 1.9.0 for the first-class `consensus` node type (M41,
 // ADR-109); flows declaring it MUST `compat.engine_min >= 1.9.0`.
-export const MAISTER_ENGINE_VERSION = "1.9.0";
+// Bumped 1.9.0 -> 2.0.0 for the unified runner config + first-class sessions
+// (`sessions:`, node `session:`, `settings.runner` unified config + `effort`/
+// `env`, judge `runner:`) (M42, ADR-114) — the first stable clean-cutover
+// baseline. A manifest declaring any of those MUST `compat.engine_min >= 2.0.0`
+// (SESSIONS_ENGINE_MIN, see config.ts).
+export const MAISTER_ENGINE_VERSION = "2.0.0";
 
 // Minimum engine version a graph (`nodes[]`) manifest must declare in
 // `compat.engine_min` (ADR-026). Enforced in `loadFlowManifest`.

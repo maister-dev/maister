@@ -695,7 +695,19 @@ const runnerProfileCapabilitiesSchema = z
   })
   .strict();
 
-export const flowRunnerProfileSchema = z
+// M42 (ADR-114): flow-authored runner `env` values are `env:NAME` references
+// only — flow.yaml is a git artifact, so secrets are never inlined; the NAME
+// resolves from the supervisor environment at launch.
+const runnerEnvRefSchema = z.string().regex(/^env:[A-Za-z_][A-Za-z0-9_]*$/, {
+  message:
+    "runner env values must be `env:NAME` references (never literal secrets)",
+});
+
+// M42 (ADR-114): the ONE unified runner config. Reuses the existing profile
+// shape and adds `effort` (thinking effort) + `env` (a passthrough NAME ->
+// `env:NAME` map). Used for `runner_profiles` values, `sessions[].runner`, node
+// `settings.runner`, and consensus participant/synthesizer `runner`.
+export const flowRunnerConfigSchema = z
   .object({
     runner_type: z.literal("acp").default("acp"),
     capability_agent: capabilityAgentSchema,
@@ -705,9 +717,39 @@ export const flowRunnerProfileSchema = z
     provider: runnerProviderRequirementSchema.optional(),
     permission_policy: runnerPermissionPolicySchema.default("default"),
     sidecar: runnerSidecarRequirementSchema.optional(),
+    effort: thinkingEffortSchema.optional(),
+    env: z.record(z.string().min(1), runnerEnvRefSchema).optional(),
     capabilities: runnerProfileCapabilitiesSchema.optional(),
   })
   .strict();
+
+// Back-compat alias — a runner profile IS the unified runner config.
+export const flowRunnerProfileSchema = flowRunnerConfigSchema;
+
+// M42 (ADR-114): a runner slot accepts a `runner_profiles` ref string OR an
+// inline unified runner config object.
+export const runnerSlotSchema = z.union([
+  z.string().min(1),
+  flowRunnerConfigSchema,
+]);
+export type RunnerSlot = z.infer<typeof runnerSlotSchema>;
+
+// M42 (ADR-114): extract the `runner_profiles` ref string from a runner slot.
+// An inline-object slot (the unified config form) has no profile ref and returns
+// undefined — it resolves through the per-session resolver (M42 Phase 2), not the
+// legacy single-runner remap path.
+export function runnerSlotProfileRef(
+  slot: RunnerSlot | undefined,
+): string | undefined {
+  return typeof slot === "string" ? slot : undefined;
+}
+
+// M42 (ADR-114): a named session key in the top-level `sessions:` map.
+export const sessionNameSchema = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^[A-Za-z0-9._-]+$/);
 
 // M27/T-C6 (§3.2): a node's MCP selection is either a bare `string[]`
 // (back-compat — treated as `additional`) or a `{ required?, additional? }`
@@ -745,7 +787,7 @@ export function allNodeMcpRefs(mcps: NodeMcpsConfig | undefined): string[] {
 export const aiCodingSettingsSchema = z
   .object({
     runner_type: z.literal("acp").default("acp"),
-    runner: z.string().min(1).optional(),
+    runner: runnerSlotSchema.optional(),
     // M34 (ADR-089): bind the node to a catalog agent — the agent's .md body
     // substitutes the inline prompt (mode=session) or materializes into
     // .claude/agents/ (mode=subagent). Requires compat.engine_min >= 1.5.0.
@@ -792,12 +834,16 @@ export const orchestratorSettingsSchema = aiCodingSettingsSchema
 
 export const judgeSettingsSchema = z
   .object({
+    // M42 (ADR-114): judge is now a runner-bearing node. `settings.model` is
+    // REMOVED (it was never read at runtime); the judge resolves its runner via
+    // `settings.runner` (or its `session`), falling back to the default-session
+    // runner when unset.
+    runner: runnerSlotSchema.optional(),
     mcps: nodeMcpsSchema.optional(),
     tools: agentToolsSchema.optional(),
     skills: z.array(z.string().min(1)).optional(),
     restrictions: z.array(z.string().min(1)).optional(),
     permissionMode: permissionModeSchema.optional(),
-    model: z.string().min(1).optional(),
     thinkingEffort: thinkingEffortSchema.optional(),
     limits: settingsLimitsSchema.optional(),
     enforcement: enforcementMapSchema.optional(),
@@ -931,6 +977,11 @@ const nodeCommon = {
   // Default false → such a crashed node is discard-only. Ignored for `ai_coding`
   // (recovered via `--resume`, not re-dispatch).
   retry_safe: z.boolean().optional(),
+  // M42 (ADR-114): the named session this node joins (a key in top-level
+  // `sessions:`). Neither `session` nor `settings.runner` -> implicit `default`
+  // session; `settings.runner` + no `session` -> a solo session. Validated
+  // against `sessions:` (and consensus-excluded) in loadFlowManifest.
+  session: sessionNameSchema.optional(),
 };
 
 const aiCodingNodeSchema = z
@@ -968,7 +1019,7 @@ const consensusParticipantSchema = z
   .object({
     id: z.string().min(1),
     agent: z.string().min(1).optional(),
-    runner: z.string().min(1).optional(),
+    runner: runnerSlotSchema.optional(),
     workspace: consensusWorkspaceSchema.optional(),
   })
   .strict()
@@ -990,7 +1041,7 @@ const consensusParticipantSchema = z
 const consensusSynthesizerSchema = z
   .object({
     agent: z.string().min(1).optional(),
-    runner: z.string().min(1).optional(),
+    runner: runnerSlotSchema.optional(),
   })
   .strict()
   .superRefine((synthesizer, ctx) => {
@@ -1186,6 +1237,16 @@ export const flowYamlV1Schema = z
     runner_profiles: z
       .record(capabilityRefIdSchema, flowRunnerProfileSchema)
       .optional(),
+    // M42 (ADR-114): named, runner-bearing sessions. A node joins one via
+    // `session: <name>`; the session `runner` is a profile-ref or inline unified
+    // runner config. Undefined-ref / consensus-excluded / engine-floor checks
+    // run in loadFlowManifest (config.ts). Requires compat.engine_min >= 2.0.0.
+    sessions: z
+      .record(
+        sessionNameSchema,
+        z.object({ runner: runnerSlotSchema }).strict(),
+      )
+      .optional(),
     setup: z.string().min(1).optional(),
     // Package contract (M10): recorded + displayed as opaque metadata; only
     // `compat` and `schemaVersion` are enforced today. Semantic validation of
@@ -1265,6 +1326,7 @@ export const formSchemaSchema = z
 export type MaisterYamlV2 = z.infer<typeof maisterYamlV2Schema>;
 export type FlowEntry = z.infer<typeof flowEntrySchema>;
 export type FlowRunnerProfile = z.infer<typeof flowRunnerProfileSchema>;
+export type FlowRunnerConfig = z.infer<typeof flowRunnerConfigSchema>;
 export type CapabilityImportEntry = z.infer<typeof capabilityImportEntrySchema>;
 export type CapabilityAgent = z.infer<typeof capabilityAgentSchema>;
 export type CapabilitySource = z.infer<typeof capabilitySourceSchema>;

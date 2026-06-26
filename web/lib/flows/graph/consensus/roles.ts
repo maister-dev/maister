@@ -5,10 +5,12 @@ import type {
   RunnerSnapshot,
 } from "@/lib/acp-runners/resolve";
 import type { RunAgentStepCtx } from "@/lib/flows/runner-agent";
+import type { RunnerSlot } from "@/lib/config.schema";
 import type { Db, LoadedRun } from "../runner-core";
 
 import { eq } from "drizzle-orm";
 
+import { runnerSlotProfileRef } from "@/lib/config.schema";
 import { resolveAgentLaunchRuntime } from "@/lib/agents/launch";
 import {
   mergeRunnerAdapterLaunch,
@@ -23,7 +25,10 @@ const { platformAcpRunners, platformRouterSidecars } =
 export type ConsensusRoleRef = {
   id?: string;
   agent?: string;
-  runner?: string;
+  // M42 (ADR-114): a runner slot (profile-ref string OR inline unified config).
+  // The legacy direct-id resolution below reads the string ref; inline-object
+  // slots become portable via per-slot bindings in M42 Phase 2.
+  runner?: RunnerSlot;
 };
 
 export type ConsensusRoleRuntime = {
@@ -182,14 +187,16 @@ export async function resolveConsensusRoleRuntime(args: {
     };
   }
 
-  if (args.role.runner) {
+  const runnerRef = runnerSlotProfileRef(args.role.runner);
+
+  if (runnerRef) {
     const snapshot = await resolveConsensusRunnerSnapshot({
       db: args.db,
-      runnerId: args.role.runner,
+      runnerId: runnerRef,
       roleLabel: args.roleLabel,
     });
 
-    return roleRuntimeFromSnapshot(snapshot, "runner", args.role.runner);
+    return roleRuntimeFromSnapshot(snapshot, "runner", runnerRef);
   }
 
   throw new MaisterError(

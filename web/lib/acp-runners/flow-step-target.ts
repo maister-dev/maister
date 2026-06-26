@@ -2,6 +2,7 @@ import "server-only";
 
 import type { AiCodingSettings } from "@/lib/config.schema";
 
+import { runnerSlotProfileRef } from "@/lib/config.schema";
 import { MaisterError } from "@/lib/errors";
 import { capabilityBearingSettings } from "@/lib/flows/enforcement";
 import { compileManifest } from "@/lib/flows/graph/compile";
@@ -36,7 +37,9 @@ export function resolveCompiledStepTargetRunnerId(args: {
     const settings = capabilityBearingSettings(node.nodeType, node.settings) as
       | AiCodingSettings
       | undefined;
-    const sourceRunnerId = settings?.runner;
+    // M42: the legacy single-runner remap path keys on the string profile-ref;
+    // inline-object runner slots resolve via the per-session resolver (Phase 2).
+    const sourceRunnerId = runnerSlotProfileRef(settings?.runner);
 
     if (!sourceRunnerId) continue;
 

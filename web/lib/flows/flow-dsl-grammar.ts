@@ -30,7 +30,7 @@ nodes: [ ... ]                   # exactly one of nodes[] or steps[]
 ## Node types (discriminated by \`type\`)
 
 Fields common to every node: \`id\`, \`type\`, \`transitions\`, \`input\`, \`output\`,
-\`pre_finish\`, \`finish\`, \`rework\`, \`decide\`, \`retry_safe\`.
+\`pre_finish\`, \`finish\`, \`rework\`, \`decide\`, \`retry_safe\`, \`session\`.
 
 - **ai_coding** — an ACP agent coding session. \`action: { prompt }\` (required).
   \`settings\` = ai_coding settings (below). May add \`retry_policy\` and
@@ -48,8 +48,9 @@ Fields common to every node: \`id\`, \`type\`, \`transitions\`, \`input\`, \`out
   \`{ id: debate_log, kind: human_note, current: true }\`. N independent drafters
   fan out and the synthesizer merges them into one result. **NEVER emulate
   consensus with two judge nodes** — it is a native fan-out/merge node.
-- **judge** — an LLM verdict (no code changes). \`action: { prompt }\`. \`settings\`
-  = judge settings (below).
+- **judge** — an LLM verdict (no code changes). \`action: { prompt }\`. A
+  RUNNER-BEARING node: it resolves via \`settings.runner\` (or its \`session:\`).
+  \`settings\` = judge settings (below).
 - **cli** — a shell command, no agent. \`action: { command }\`. \`settings\` =
   cli/check settings. May add \`retry_policy\`.
 - **check** — a shell command, gate-style. \`action: { command }\`. \`settings\` =
@@ -66,8 +67,9 @@ Fields common to every node: \`id\`, \`type\`, \`transitions\`, \`input\`, \`out
   \`thinkingEffort\`, \`mcps\`, \`tools\`, \`skills\`, \`settingsProfile\`,
   \`workspaceAccess\`, \`artifactAccess\`, \`permissionMode\`, \`limits\`,
   \`restrictions\`, \`enforcement\`, \`hooks\` (orchestrator also: \`delegation\`).
-- **judge**: \`mcps\`, \`tools\`, \`skills\`, \`restrictions\`, \`permissionMode\`,
-  \`model\`, \`thinkingEffort\`, \`limits\`, \`enforcement\`, \`hooks\`.
+- **judge**: \`runner\`, \`mcps\`, \`tools\`, \`skills\`, \`restrictions\`,
+  \`permissionMode\`, \`thinkingEffort\`, \`limits\`, \`enforcement\`, \`hooks\`
+  (\`settings.model\` was REMOVED — judge is runner-bearing).
 - **human**: \`roles\`, \`assignees\`, \`decisions\`, \`allowFurtherTracks\`,
   \`allowTakeover\`, \`slaHours\`, \`stalenessHint\`, \`returnRequires\`,
   \`criticality\`.
@@ -90,6 +92,37 @@ Fields common to every node: \`id\`, \`type\`, \`transitions\`, \`input\`, \`out
 - consensus \`on_no_consensus\`: escalate
 - \`enforcement\` per-class mode: strict | instruct | off
 - \`session_policy\`: resume | new_session
+
+## Sessions & the unified runner config (engine_min >= 2.0.0)
+
+A flow groups runner-bearing nodes into **sessions** — one ACP process + one
+continuous \`acp_session_id\` resumed in graph order. A node opts in via a
+top-level \`session: <name>\` field (a key in the manifest \`sessions:\` map):
+
+\`\`\`yaml
+sessions:
+  review: { runner: claude-opus }   # runner is a profile-ref OR an inline config
+nodes:
+  - { id: implement, type: ai_coding, action: { prompt: ... } }   # implicit 'default' session
+  - { id: review, type: ai_coding, session: review, action: { prompt: ... } }
+\`\`\`
+
+- A node with neither \`session:\` nor \`settings.runner\` joins the implicit
+  **\`default\`** session; \`settings.runner\` + no \`session:\` → a solo session.
+- \`judge\` is runner-bearing — it resolves via \`settings.runner\` (or its
+  \`session:\`); \`judge.settings.model\` is REMOVED.
+- \`consensus\` is EXCLUDED from \`sessions:\` — a consensus node MUST NOT declare a
+  \`session:\` (compile fails CONFIG); its participants/synthesizer carry their own
+  \`runner\`.
+- A node \`session:\` that is neither \`default\` nor a declared \`sessions:\` key
+  fails to compile (CONFIG).
+
+**Unified runner config** — \`runner_profiles\` values, \`sessions[].runner\`, node
+\`settings.runner\`, and consensus participant/synthesizer \`runner\` all accept the
+same shape (a profile-ref string OR an inline object):
+\`{ runner_type, capability_agent, adapter?, model?, model_family?, provider?, permission_policy, sidecar?, effort?, env? }\`.
+\`effort\` is the thinking effort (low | medium | high); \`env\` is a passthrough
+NAME map whose values are \`env:NAME\` references only (never literal secrets).
 
 ## Gates — \`pre_finish.gates[]\` (these BLOCK)
 
