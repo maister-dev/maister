@@ -570,7 +570,7 @@ export function ScratchTranscript({
   }
 
   return (
-    <div className="flex min-w-0 max-w-full flex-1 flex-col gap-3 overflow-y-auto overflow-x-hidden px-4 py-4">
+    <div className="flex min-h-0 min-w-0 max-w-full flex-1 flex-col gap-3 overflow-y-auto overflow-x-hidden px-4 py-4 [&>*]:shrink-0">
       {historyBlocks.length > 0 ? (
         <div
           className="rounded-lg border border-dashed border-line bg-ivory/40 px-3 py-2"

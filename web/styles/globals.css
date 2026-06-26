@@ -699,3 +699,30 @@ input:-webkit-autofill:active {
   font-size: 0.75em;
   color: var(--cv-rose, crimson);
 }
+
+/* React Flow minimap — theme-aware. Default styling is light (white bg,
+   light node fills) and is unreadable on the dark theme. Override the
+   library's own CSS variables (not the painted properties) so the custom-
+   property cascade wins regardless of stylesheet order, in both themes. */
+.react-flow__minimap {
+  --xy-minimap-background-color-default: var(--paper);
+  --xy-minimap-mask-background-color-default: color-mix(
+    in oklab,
+    var(--paper) 58%,
+    transparent
+  );
+  /* Soft contrasting node blocks: lighter than the bg on dark, darker on light. */
+  --xy-minimap-node-background-color-default: color-mix(
+    in oklab,
+    var(--ink) 45%,
+    var(--paper)
+  );
+  --xy-minimap-node-stroke-color-default: color-mix(
+    in oklab,
+    var(--ink) 62%,
+    var(--paper)
+  );
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}

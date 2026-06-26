@@ -174,7 +174,7 @@ export default async function StudioEditPage({
   };
 
   return (
-    <div className="flex h-[calc(100vh-160px)] min-h-[560px] w-full flex-col">
+    <div className="flex h-[calc(100vh-130px)] min-h-[560px] w-full flex-col">
       <LocalPackageEditor
         canManage
         canvasAvailable={canvasAvailable}

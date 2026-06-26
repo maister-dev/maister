@@ -6,7 +6,10 @@ import type { ScratchFlowActionResultPayload } from "@/lib/scratch-runs/transcri
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 
-import { ScratchConversation } from "@/components/scratch/scratch-conversation";
+import {
+  ScratchConversation,
+  type ScratchHeaderInfo,
+} from "@/components/scratch/scratch-conversation";
 import {
   FlowAssistantActionResult,
   type FlowAssistantActionResultLabels,
@@ -53,6 +56,7 @@ export function StudioAiTab({
   hasUnsavedChanges,
   onBusyChange,
   onActivity,
+  onHeaderInfo,
 }: {
   packageId: string;
   sessionId: string;
@@ -65,6 +69,9 @@ export function StudioAiTab({
   // Bumped on every assistant stream event so the editor re-reads the working
   // dir (canvas + the git-diff drawer's changed-count) — reuses diffRefresh.
   onActivity: () => void;
+  // Lifts the run status + token-budget meter to the host's collapsible panel
+  // header (null when no run is active).
+  onHeaderInfo?: (info: ScratchHeaderInfo | null) => void;
 }): ReactElement {
   const t = useTranslations("apiErrors");
   const [runId, setRunId] = useState<string | null>(null);
@@ -203,6 +210,11 @@ export function StudioAiTab({
     if (!runId) onBusyChange(false);
   }, [runId, onBusyChange]);
 
+  // No run → clear the host panel-header status/usage summary.
+  useEffect(() => {
+    if (!runId) onHeaderInfo?.(null);
+  }, [runId, onHeaderInfo]);
+
   const launch = useCallback(async (): Promise<void> => {
     const trimmed = prompt.trim();
 
@@ -291,6 +303,7 @@ export function StudioAiTab({
           renderFlowActionResult={renderFlowActionResult}
           runId={runId}
           sendDisabledReason={sendDisabledReason}
+          onHeaderInfo={onHeaderInfo}
           onMessageSettled={onActivity}
         />
       </div>
@@ -321,12 +334,12 @@ export function StudioAiTab({
           {labels.saveCurrentChanges}
         </p>
       ) : null}
-      <label className="grid gap-1.5">
-        <span className="font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-mute">
+      <label className="flex items-center gap-2">
+        <span className="shrink-0 font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-mute">
           {labels.runner}
         </span>
         <select
-          className="min-h-10 rounded-lg border border-line bg-paper px-3 font-mono text-[12px] text-ink outline-none focus:border-amber disabled:opacity-50"
+          className="min-h-9 min-w-0 flex-1 rounded-lg border border-line bg-paper px-3 font-mono text-[12px] text-ink outline-none focus:border-amber disabled:opacity-50"
           data-testid="studio-ai-runner"
           disabled={
             !canManage || launching || loadingRunners || runners.length === 0
@@ -349,15 +362,32 @@ export function StudioAiTab({
           {loadingRunners ? labels.loadingRunners : labels.noRunners}
         </p>
       ) : null}
-      <textarea
-        aria-label={labels.promptPlaceholder}
-        className="min-h-[140px] w-full resize-y rounded-lg border border-line bg-paper px-3.5 py-3 font-mono text-[13px] leading-[1.35] text-ink outline-none transition focus:border-amber focus:shadow-[0_0_0_3px_var(--amber-soft)] placeholder:text-mute disabled:opacity-50"
-        data-testid="studio-ai-prompt"
-        disabled={!canManage || launching || hasUnsavedChanges}
-        placeholder={labels.promptPlaceholder}
-        value={prompt}
-        onChange={(event) => setPrompt(event.target.value)}
-      />
+      <div className="relative min-h-0 flex-1">
+        <textarea
+          aria-label={labels.promptPlaceholder}
+          className="h-full w-full resize-none rounded-lg border border-line bg-paper px-3.5 py-3 pb-14 font-mono text-[13px] leading-[1.35] text-ink outline-none transition focus:border-amber focus:shadow-[0_0_0_3px_var(--amber-soft)] placeholder:text-mute disabled:opacity-50"
+          data-testid="studio-ai-prompt"
+          disabled={!canManage || launching || hasUnsavedChanges}
+          placeholder={labels.promptPlaceholder}
+          value={prompt}
+          onChange={(event) => setPrompt(event.target.value)}
+          onKeyDown={(event) => {
+            if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+              event.preventDefault();
+              if (!launchDisabled) void launch();
+            }
+          }}
+        />
+        <button
+          className="absolute bottom-2.5 right-2.5 rounded-full bg-amber px-4 py-2 text-[13px] font-semibold text-white shadow-[var(--shadow-lg)] transition hover:bg-amber-2 disabled:cursor-not-allowed disabled:opacity-60"
+          data-testid="studio-ai-launch"
+          disabled={launchDisabled}
+          type="button"
+          onClick={() => void launch()}
+        >
+          {launching ? labels.launching : labels.launch}
+        </button>
+      </div>
       {error ? (
         <p
           className="rounded-lg border border-danger-line bg-danger-soft px-3 py-2 font-mono text-[11px] text-danger"
@@ -367,17 +397,6 @@ export function StudioAiTab({
           {error}
         </p>
       ) : null}
-      <div className="flex justify-end">
-        <button
-          className="rounded-full bg-amber px-4 py-2 text-[13px] font-semibold text-white transition hover:bg-amber-2 disabled:cursor-not-allowed disabled:opacity-60"
-          data-testid="studio-ai-launch"
-          disabled={launchDisabled}
-          type="button"
-          onClick={() => void launch()}
-        >
-          {launching ? labels.launching : labels.launch}
-        </button>
-      </div>
     </div>
   );
 }

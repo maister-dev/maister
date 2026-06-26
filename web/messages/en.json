@@ -2644,6 +2644,16 @@
         "human": "Human",
         "form": "Form"
       },
+      "nodeTypeHint": {
+        "ai_coding": "AI coding agent. Runs an ACP agent that reads and writes code in the worktree to carry out the step's prompt.",
+        "orchestrator": "Orchestrator. Splits the work into child runs/tasks and coordinates their results back into one.",
+        "cli": "Shell command. Runs a CLI command or script (build, test, lint…) and routes on its exit status.",
+        "check": "Check. A non-agent validation step — runs a command or skill check and passes or fails its gate.",
+        "judge": "AI judge. An LLM scores the work against criteria and emits a structured verdict (pass / score).",
+        "consensus": "Consensus. Several participants draft independently, then a synthesizer merges them into one result.",
+        "human": "Human review. Pauses for a person to approve, reject, or send back with comments (HITL).",
+        "form": "Form. Collects structured input from a person through a schema-defined form (HITL)."
+      },
       "gateKind": {
         "command_check": "Command check",
         "skill_check": "Skill check",
@@ -2824,6 +2834,7 @@
       "diff": "Diff",
       "close": "Close"
     },
+    "toggleMinimap": "Toggle minimap",
     "toggleProperties": "Toggle properties",
     "artifacts": {
       "frontmatterHeading": "Frontmatter",

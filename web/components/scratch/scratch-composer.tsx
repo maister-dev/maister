@@ -28,6 +28,10 @@ export interface ScratchComposerProps {
   catalog?: ProjectCapabilityCatalogEntry[];
   attachmentsEnabled?: boolean;
   recoverEnabled?: boolean;
+  // Dock/compact placement (Flow Studio assistant): Send moves ABOVE the input
+  // and the field starts shorter so the short docked panel keeps room for the
+  // transcript.
+  compact?: boolean;
   disabledReason?: string | null;
   // Returns true when the message landed (the composer clears its draft);
   // false keeps the draft so the user can retry without retyping.
@@ -51,6 +55,7 @@ export function ScratchComposer({
   catalog = [],
   attachmentsEnabled = true,
   recoverEnabled = true,
+  compact = false,
   disabledReason = null,
   onSend,
   onRecover,
@@ -121,9 +126,53 @@ export function ScratchComposer({
     }
   }
 
+  const actionButtons = (
+    <>
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        {attachmentsEnabled && canSend(status) ? (
+          <button
+            className="rounded-full border border-line bg-paper px-3 py-1.5 font-mono text-[11px] text-ink-2 hover:border-amber hover:text-amber"
+            type="button"
+            onClick={() =>
+              setComposerAttachments((current) => [
+                ...current,
+                { kind: "text_note", label: "", value: "" },
+              ])
+            }
+          >
+            + {t("attachment")}
+          </button>
+        ) : null}
+        {agentBusy ? (
+          <div
+            className="flex min-w-0 items-center gap-2 rounded-full border border-amber-line bg-amber-soft px-3 py-1.5 font-mono text-[11px] text-ink-2"
+            data-testid="scratch-agent-busy"
+          >
+            <span
+              aria-hidden="true"
+              className="h-3 w-3 rounded-full border-2 border-amber/30 border-t-amber motion-safe:animate-spin"
+            />
+            <span className="truncate">{t("agentBusy")}</span>
+          </div>
+        ) : null}
+      </div>
+      <button
+        className="rounded-full bg-amber px-4 py-2 text-[13px] font-semibold text-white transition hover:bg-amber-2 disabled:cursor-not-allowed disabled:opacity-60"
+        data-testid="scratch-composer-send"
+        disabled={!canSubmitMessage || pending}
+        type="submit"
+      >
+        {pending ? t("sending") : canRecover(status) ? t("recover") : t("send")}
+      </button>
+    </>
+  );
+
   return (
     <form
-      className="min-w-0 max-w-full border-t border-line-soft px-4 py-3"
+      className={clsx(
+        "min-w-0 max-w-full border-t border-line-soft px-4",
+        compact ? "py-2" : "py-3",
+      )}
       onSubmit={(event) => {
         event.preventDefault();
         void submit();
@@ -143,11 +192,16 @@ export function ScratchComposer({
           ))}
         </div>
       ) : null}
+      {compact ? (
+        <div className="mb-2 flex min-w-0 flex-wrap items-center justify-between gap-2">
+          {actionButtons}
+        </div>
+      ) : null}
       <CapabilityComposer
         agent={agent}
         ariaLabel={t("composerMessageAria")}
         catalog={catalog}
-        className={clsx(inputBase, "min-h-[110px]")}
+        className={clsx(inputBase, compact ? "min-h-[56px]" : "min-h-[110px]")}
         disabled={!canUseComposer}
         labels={{
           placeholder,
@@ -246,48 +300,11 @@ export function ScratchComposer({
           ) : null}
         </div>
       ) : null}
-      <div className="mt-2 flex min-w-0 flex-wrap items-center justify-between gap-2">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          {attachmentsEnabled && canSend(status) ? (
-            <button
-              className="rounded-full border border-line bg-paper px-3 py-1.5 font-mono text-[11px] text-ink-2 hover:border-amber hover:text-amber"
-              type="button"
-              onClick={() =>
-                setComposerAttachments((current) => [
-                  ...current,
-                  { kind: "text_note", label: "", value: "" },
-                ])
-              }
-            >
-              + {t("attachment")}
-            </button>
-          ) : null}
-          {agentBusy ? (
-            <div
-              className="flex min-w-0 items-center gap-2 rounded-full border border-amber-line bg-amber-soft px-3 py-1.5 font-mono text-[11px] text-ink-2"
-              data-testid="scratch-agent-busy"
-            >
-              <span
-                aria-hidden="true"
-                className="h-3 w-3 rounded-full border-2 border-amber/30 border-t-amber motion-safe:animate-spin"
-              />
-              <span className="truncate">{t("agentBusy")}</span>
-            </div>
-          ) : null}
+      {!compact ? (
+        <div className="mt-2 flex min-w-0 flex-wrap items-center justify-between gap-2">
+          {actionButtons}
         </div>
-        <button
-          className="rounded-full bg-amber px-4 py-2 text-[13px] font-semibold text-white transition hover:bg-amber-2 disabled:cursor-not-allowed disabled:opacity-60"
-          data-testid="scratch-composer-send"
-          disabled={!canSubmitMessage || pending}
-          type="submit"
-        >
-          {pending
-            ? t("sending")
-            : canRecover(status)
-              ? t("recover")
-              : t("send")}
-        </button>
-      </div>
+      ) : null}
     </form>
   );
 }

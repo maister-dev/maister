@@ -300,6 +300,16 @@ export function buildFlowEditorTabsLabels(te: T): FlowEditorTabsLabels {
       human: te("toolbar.nodeType.human"),
       form: te("toolbar.nodeType.form"),
     },
+    nodeTypeHint: {
+      ai_coding: te("toolbar.nodeTypeHint.ai_coding"),
+      orchestrator: te("toolbar.nodeTypeHint.orchestrator"),
+      cli: te("toolbar.nodeTypeHint.cli"),
+      check: te("toolbar.nodeTypeHint.check"),
+      judge: te("toolbar.nodeTypeHint.judge"),
+      consensus: te("toolbar.nodeTypeHint.consensus"),
+      human: te("toolbar.nodeTypeHint.human"),
+      form: te("toolbar.nodeTypeHint.form"),
+    },
     gateKind,
     graph: { title: te("page.graphTab"), empty: "", currentNode: "", node: {} },
     nodeForm: buildNodeSideFormLabels(te),
@@ -323,6 +333,7 @@ export function buildFlowEditorTabsLabels(te: T): FlowEditorTabsLabels {
       },
     },
     toggleProperties: te("toggleProperties"),
+    toggleMinimap: te("toggleMinimap"),
   };
 
   return {

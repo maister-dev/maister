@@ -57,7 +57,8 @@ complete worked example. Key rules:
 
 - Each \`nodes[]\` entry has \`id\`, \`type\`, an \`action\`, and \`transitions\`
   (decision/outcome -> target node id). The first node is the entry.
-- Node \`type\`: \`ai_coding\` | \`judge\` | \`cli\` | \`check\` | \`human\` | \`form\`.
+- Node \`type\`: \`ai_coding\` | \`judge\` | \`cli\` | \`check\` | \`human\` | \`form\`
+  | \`consensus\` | \`orchestrator\`.
 - Gates live under \`pre_finish.gates\` and actually BLOCK (kind \`command_check\`
   | \`skill_check\` | \`ai_judgment\` | \`artifact_required\` | \`external_check\` |
   \`human_review\`, each \`mode: blocking | advisory\`).
@@ -136,6 +137,8 @@ compat:
 | \`check\`     | \`{ command }\`     | a shell command, gate-style      |
 | \`human\`     | (none) + \`finish.human\` | a HITL decision           |
 | \`form\`      | (none) + \`settings.form_schema\` | a HITL form collect |
+| \`consensus\` | \`participants[]\` + \`synthesizer\` | N independent draft authors (each \`{ id, agent\|runner }\`) → a synthesizer merges them into one result; native fan-out/merge, no manual aggregator node needed |
+| \`orchestrator\` | \`{ prompt }\` + \`delegation\` | spawns and coordinates child runs/tasks (\`delegation: { maxFanout, maxDepth }\`) |
 
 ## Gate kinds (under \`pre_finish.gates\`)
 

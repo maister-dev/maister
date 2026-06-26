@@ -82,6 +82,7 @@ export function FlowEditorTabs({
   filesDrawer,
   diffDrawer,
   onWriteSchemaFile,
+  inspectorContainer,
   onDirtyChange,
 }: {
   projectSlug: string;
@@ -110,6 +111,9 @@ export function FlowEditorTabs({
   // YAML text. Absent → the authored-flow path keeps `FlowDraftDiffText`.
   diffDrawer?: ReactNode;
   onWriteSchemaFile?: (path: string, content: string) => void;
+  // Host container for the hoisted properties inspector (portal target). Threaded
+  // to FlowGraphEditor; absent → inspector renders inline beside the canvas.
+  inspectorContainer?: HTMLElement | null;
   onDirtyChange?: (dirty: boolean) => void;
 }): ReactElement {
   const [yaml, setYaml] = useState(initialYaml);
@@ -273,6 +277,7 @@ export function FlowEditorTabs({
               key={seedKey}
               draftVersion={draftVersion}
               initialManifest={seed.manifest}
+              inspectorContainer={inspectorContainer}
               labels={labels.editor}
               layout={seed.layout}
               participantSources={participantSources}

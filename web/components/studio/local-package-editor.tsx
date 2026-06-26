@@ -6,6 +6,7 @@ import type {
   AuthoredFlowPackageFileKind,
 } from "@/lib/catalog/authored-types";
 import type { PackageFilesEditorLabels } from "@/components/flows/package-files-editor";
+import type { ScratchHeaderInfo } from "@/components/scratch/scratch-conversation";
 import type { LocalPackageDiffLabels } from "@/components/studio/local-package-diff-drawer";
 import type { DiffViewLabels } from "@/components/workbench/diff-view";
 import type { FlowYamlV1 } from "@/lib/config.schema";
@@ -226,6 +227,8 @@ export function LocalPackageEditor({
   // control returns on turn end (assistantBusy → false).
   const [assistantBusy, setAssistantBusy] = useState(false);
   const [assistantCollapsed, setAssistantCollapsed] = useState(false);
+  const [aiHeader, setAiHeader] = useState<ScratchHeaderInfo | null>(null);
+  const [inspectorEl, setInspectorEl] = useState<HTMLDivElement | null>(null);
   const [flowEditorDirty, setFlowEditorDirty] = useState(false);
   const [packageFilesDirty, setPackageFilesDirty] = useState(false);
   const [draftFiles, setDraftFiles] = useState(files);
@@ -661,120 +664,172 @@ export function LocalPackageEditor({
         />
       ) : null}
 
-      <div className="flex min-h-0 flex-1 flex-col gap-3">
-        <div className="min-h-0 flex-1">
-          {flowPath === null ? (
-            <PackageHome
-              fileKindLabels={fileKindLabels}
-              files={draftFiles}
-              filesLabels={filesLabels}
-              labels={labels.home}
-              mcpCatalog={mcpCatalog}
-              name={identity.project}
-              packageId={packageId}
-              readOnly={readOnly}
-              saveAction={saveAction}
-              onFilesChange={handleDraftFilesChange}
-            />
-          ) : (
-            <FlowEditorTabs
-              canManage={!readOnly}
-              canvasAvailable={canvasAvailable}
-              capId={identity.slug}
-              diff={diff}
-              diffDrawer={
-                <LocalPackageDiffDrawer
-                  canManage={!readOnly}
-                  diffViewLabels={labels.diffView}
-                  labels={labels.diff}
-                  packageId={packageId}
-                  refreshSignal={diffRefresh}
-                  sessionId={sessionIdRef.current}
-                  onChanged={setChangedCount}
-                />
-              }
-              draftVersion={0}
-              filesDrawer={
-                <PackageFilesEditor
-                  disabled={readOnly}
-                  files={draftFiles}
-                  kindLabels={fileKindLabels}
-                  labels={filesLabels}
-                  mcpCatalog={mcpCatalog}
-                  onFilesChange={handleDraftFilesChange}
-                />
-              }
-              hasDraft={false}
-              identity={identity}
-              initialManifest={canvasAvailable ? initialManifest : null}
-              initialTitle={initialTitle}
-              initialYaml={initialYaml}
-              labels={labels.editor}
-              layout={layout}
-              lifecycleLabel={identity.kind}
-              participantSources={participantSources}
-              projectSlug={identity.slug}
-              publishAction={saveAction}
-              readinessReady={false}
-              saveAction={saveAction}
-              schemaFiles={schemaFiles}
-              topology={topology}
-              onWriteSchemaFile={handleWriteSchemaFile}
-              onDirtyChange={setFlowEditorDirty}
-            />
-          )}
-        </div>
-
-        <section
-          className={
-            assistantCollapsed
-              ? "flex shrink-0 flex-col overflow-hidden rounded-xl border border-line bg-paper"
-              : "flex h-[34vh] min-h-[260px] max-h-[420px] shrink-0 flex-col overflow-hidden rounded-xl border border-line bg-paper"
-          }
-          data-testid="local-editor-ai-panel"
-        >
-          <div className="flex shrink-0 items-center justify-between border-b border-line px-3 py-2">
-            <h2 className="font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-mute">
-              {labels.tabAi}
-            </h2>
-            <div className="flex items-center gap-2">
-              {assistantBusy ? (
-                <span
-                  className="rounded-full border border-amber-line bg-amber-soft px-2 py-0.5 font-mono text-[10px] font-semibold text-amber"
-                  data-testid="local-editor-ai-working-panel"
-                  role="status"
-                >
-                  {labels.aiWorking}
-                </span>
-              ) : null}
-              <button
-                aria-expanded={!assistantCollapsed}
-                aria-label={
-                  assistantCollapsed ? labels.aiExpand : labels.aiCollapse
+      <div className="flex min-h-0 flex-1 gap-3">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
+          <div className="min-h-0 flex-1">
+            {flowPath === null ? (
+              <PackageHome
+                fileKindLabels={fileKindLabels}
+                files={draftFiles}
+                filesLabels={filesLabels}
+                labels={labels.home}
+                mcpCatalog={mcpCatalog}
+                name={identity.project}
+                packageId={packageId}
+                readOnly={readOnly}
+                saveAction={saveAction}
+                onFilesChange={handleDraftFilesChange}
+              />
+            ) : (
+              <FlowEditorTabs
+                canManage={!readOnly}
+                canvasAvailable={canvasAvailable}
+                capId={identity.slug}
+                diff={diff}
+                diffDrawer={
+                  <LocalPackageDiffDrawer
+                    canManage={!readOnly}
+                    diffViewLabels={labels.diffView}
+                    labels={labels.diff}
+                    packageId={packageId}
+                    refreshSignal={diffRefresh}
+                    sessionId={sessionIdRef.current}
+                    onChanged={setChangedCount}
+                  />
                 }
-                className="rounded-md border border-line px-2 py-1 font-mono text-[11px] text-mute hover:bg-ivory hover:text-ink"
-                data-testid="local-editor-ai-collapse"
-                title={assistantCollapsed ? labels.aiExpand : labels.aiCollapse}
-                type="button"
-                onClick={() => setAssistantCollapsed((collapsed) => !collapsed)}
-              >
-                {assistantCollapsed ? "⌃" : "⌄"}
-              </button>
+                draftVersion={0}
+                filesDrawer={
+                  <PackageFilesEditor
+                    disabled={readOnly}
+                    files={draftFiles}
+                    kindLabels={fileKindLabels}
+                    labels={filesLabels}
+                    mcpCatalog={mcpCatalog}
+                    onFilesChange={handleDraftFilesChange}
+                  />
+                }
+                hasDraft={false}
+                identity={identity}
+                initialManifest={canvasAvailable ? initialManifest : null}
+                initialTitle={initialTitle}
+                initialYaml={initialYaml}
+                inspectorContainer={inspectorEl}
+                labels={labels.editor}
+                layout={layout}
+                lifecycleLabel={identity.kind}
+                participantSources={participantSources}
+                projectSlug={identity.slug}
+                publishAction={saveAction}
+                readinessReady={false}
+                saveAction={saveAction}
+                schemaFiles={schemaFiles}
+                topology={topology}
+                onDirtyChange={setFlowEditorDirty}
+                onWriteSchemaFile={handleWriteSchemaFile}
+              />
+            )}
+          </div>
+
+          <section
+            className={
+              assistantCollapsed
+                ? "flex shrink-0 flex-col overflow-hidden rounded-xl border border-line bg-paper"
+                : "flex h-[28vh] min-h-[220px] max-h-[340px] shrink-0 flex-col overflow-hidden rounded-xl border border-line bg-paper"
+            }
+            data-testid="local-editor-ai-panel"
+          >
+            <div className="flex shrink-0 items-center justify-between border-b border-line px-3 py-2">
+              <div className="flex min-w-0 items-center gap-2">
+                <h2 className="font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-mute">
+                  {labels.tabAi}
+                </h2>
+                {aiHeader ? (
+                  <span
+                    className={`rounded-full border px-2 py-0.5 font-mono text-[9.5px] font-semibold uppercase tracking-[0.06em] ${
+                      aiHeader.status === "Crashed"
+                        ? "border-[#d9534f]/40 bg-[#d9534f]/10 text-[#d9534f]"
+                        : ["Done", "Review", "WaitingForUser"].includes(
+                              aiHeader.status,
+                            )
+                          ? "border-accent-4 bg-accent-4-soft text-accent-4"
+                          : aiHeader.status === "Abandoned"
+                            ? "border-line bg-ivory text-mute"
+                            : "border-amber-line bg-amber-soft text-amber"
+                    }`}
+                    data-testid="local-editor-ai-header-status"
+                  >
+                    {aiHeader.statusLabel}
+                  </span>
+                ) : null}
+              </div>
+              <div className="flex items-center gap-2">
+                {aiHeader?.usage ? (
+                  <span
+                    className="flex items-center gap-1.5 font-mono text-[9.5px] text-mute"
+                    data-testid="local-editor-ai-header-summary"
+                  >
+                    <span className="h-1 w-16 overflow-hidden rounded-full bg-ivory">
+                      <span
+                        className="block h-full bg-amber"
+                        style={{
+                          width: `${Math.min(100, Math.round((aiHeader.usage.used / Math.max(1, aiHeader.usage.size)) * 100))}%`,
+                        }}
+                      />
+                    </span>
+                    <span>
+                      {aiHeader.usage.used.toLocaleString()} /{" "}
+                      {aiHeader.usage.size.toLocaleString()}
+                    </span>
+                  </span>
+                ) : null}
+                {assistantBusy ? (
+                  <span
+                    className="rounded-full border border-amber-line bg-amber-soft px-2 py-0.5 font-mono text-[10px] font-semibold text-amber"
+                    data-testid="local-editor-ai-working-panel"
+                    role="status"
+                  >
+                    {labels.aiWorking}
+                  </span>
+                ) : null}
+                <button
+                  aria-expanded={!assistantCollapsed}
+                  aria-label={
+                    assistantCollapsed ? labels.aiExpand : labels.aiCollapse
+                  }
+                  className="rounded-md border border-line px-2 py-1 font-mono text-[11px] text-mute hover:bg-ivory hover:text-ink"
+                  data-testid="local-editor-ai-collapse"
+                  title={
+                    assistantCollapsed ? labels.aiExpand : labels.aiCollapse
+                  }
+                  type="button"
+                  onClick={() =>
+                    setAssistantCollapsed((collapsed) => !collapsed)
+                  }
+                >
+                  {assistantCollapsed ? "⌃" : "⌄"}
+                </button>
+              </div>
             </div>
-          </div>
-          <div className={assistantCollapsed ? "hidden" : "min-h-0 flex-1"}>
-            <StudioAiTab
-              canManage={canManage && lockHeldByMe && lockConfirmedByMe}
-              focusPath={flowPath}
-              hasUnsavedChanges={editorDirty}
-              labels={labels.ai}
-              packageId={packageId}
-              sessionId={sessionIdRef.current}
-              onActivity={onAssistantActivity}
-              onBusyChange={setAssistantBusy}
-            />
-          </div>
-        </section>
+            <div className={assistantCollapsed ? "hidden" : "min-h-0 flex-1"}>
+              <StudioAiTab
+                canManage={canManage && lockHeldByMe && lockConfirmedByMe}
+                focusPath={flowPath}
+                hasUnsavedChanges={editorDirty}
+                labels={labels.ai}
+                packageId={packageId}
+                sessionId={sessionIdRef.current}
+                onActivity={onAssistantActivity}
+                onBusyChange={setAssistantBusy}
+                onHeaderInfo={setAiHeader}
+              />
+            </div>
+          </section>
+        </div>
+        <div
+          ref={setInspectorEl}
+          className="flex min-h-0 shrink-0"
+          data-testid="local-editor-inspector-column"
+        />
       </div>
     </div>
   );

@@ -23,11 +23,14 @@ import type {
 import type { ReactElement } from "react";
 
 import { useCallback, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { MapIcon, TrashIcon } from "@heroicons/react/24/outline";
 import {
   Background,
   Controls,
   Handle,
   MiniMap,
+  Panel,
   Position,
   ReactFlow,
   useEdgesState,
@@ -43,6 +46,7 @@ import {
 import { NodeSideForm } from "@/components/flows/node-form/node-side-form";
 import { toFlowGraphView } from "@/lib/board/flow-graph-view-layout";
 import { edgeOutcomeStyle, isBackEdgeOutcome } from "@/lib/flows/edge-style";
+import { useTheme } from "@/lib/theme";
 import {
   addGate,
   addNode,
@@ -65,6 +69,7 @@ export type FlowEditorToolbarLabels = {
   addGate: string;
   selectNodeHint: string;
   nodeType: Record<NodeType, string>;
+  nodeTypeHint: Record<NodeType, string>;
   gateKind: Record<GateKind, string>;
 };
 
@@ -74,6 +79,7 @@ export type FlowGraphEditorLabels = FlowEditorToolbarLabels & {
   validation: EditorValidationSummaryLabels;
   edgeModal: EdgeConnectModalLabels;
   toggleProperties: string;
+  toggleMinimap: string;
 };
 
 export interface FlowGraphEditorProps {
@@ -87,6 +93,11 @@ export interface FlowGraphEditorProps {
   onWriteSchemaFile?: (path: string, content: string) => void;
   onChange?: (next: { manifest: FlowYamlV1; draftVersion: number }) => void;
   onSelectNode?: (nodeId: string | null) => void;
+  // When set, the properties inspector renders into this host container via a
+  // portal (so the host can place it as a full-height column) instead of inline
+  // beside the canvas. null = host will portal but its node is not mounted yet
+  // (render nothing); undefined = legacy inline placement.
+  inspectorContainer?: HTMLElement | null;
 }
 
 const EMPTY_GATE_SUMMARY: DeclaredGateSummary = {
@@ -132,15 +143,27 @@ export function FlowEditorToolbar({
           {labels.addNode}
         </span>
         {NODE_TYPES.map((type) => (
-          <button
-            key={type}
-            className="rounded-md border border-line bg-ivory px-2.5 py-1 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-ink-2 hover:bg-paper"
-            data-testid={`add-node-${type}`}
-            type="button"
-            onClick={() => onAddNode(type)}
-          >
-            {labels.nodeType[type]}
-          </button>
+          <span key={type} className="group relative inline-flex">
+            <button
+              className="rounded-md border border-line bg-ivory px-2.5 py-1 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-ink-2 hover:bg-paper"
+              data-testid={`add-node-${type}`}
+              type="button"
+              onClick={() => onAddNode(type)}
+            >
+              {labels.nodeType[type]}
+            </button>
+            <span
+              className="pointer-events-none absolute left-0 top-[calc(100%+6px)] z-30 hidden w-72 rounded-lg border border-line bg-paper p-3 text-left shadow-[var(--shadow-lg)] group-hover:block"
+              role="tooltip"
+            >
+              <span className="block font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-ink">
+                {labels.nodeType[type]}
+              </span>
+              <span className="mt-1 block text-[11.5px] font-normal normal-case leading-[1.5] text-ink-2">
+                {labels.nodeTypeHint[type]}
+              </span>
+            </span>
+          </span>
         ))}
       </div>
 
@@ -169,13 +192,14 @@ export function FlowEditorToolbar({
       </div>
 
       <button
-        className="ml-auto rounded-md border border-line px-2.5 py-1 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-ink-2 hover:bg-paper disabled:opacity-50"
+        className="ml-auto inline-flex items-center gap-1.5 rounded-md border border-danger-line px-2.5 py-1 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-danger transition hover:bg-danger-soft disabled:opacity-50"
         data-disabled={disabledAttr}
         data-testid="remove-node"
         disabled={!hasSelection}
         type="button"
         onClick={onRemoveNode}
       >
+        <TrashIcon aria-hidden="true" className="h-3.5 w-3.5" />
         {labels.removeNode}
       </button>
     </div>
@@ -348,7 +372,13 @@ export default function FlowGraphEditor({
   onWriteSchemaFile,
   onChange,
   onSelectNode,
+  inspectorContainer,
 }: FlowGraphEditorProps): ReactElement {
+  // Sync React Flow's color mode to the app theme. Without this, React Flow
+  // tags its container `.react-flow.light` (its default), which matches the
+  // app's `.light` token rule and resets the design tokens to light values
+  // INSIDE the canvas even in dark mode — turning the minimap white.
+  const { resolvedTheme } = useTheme();
   const seeded = useMemo(
     () => toFlowGraphView(topology, layout),
     [topology, layout],
@@ -360,6 +390,10 @@ export default function FlowGraphEditor({
   );
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  // Minimap collapsed by default; toggled via the on-canvas button. Its default
+  // light styling reads poorly on the dark theme and small linear flows rarely
+  // need it, so it starts hidden.
+  const [minimapOpen, setMinimapOpen] = useState(false);
   const [manifest, setManifest] = useState<FlowYamlV1>(initialManifest);
   const [pendingConnection, setPendingConnection] = useState<{
     source: string;
@@ -620,6 +654,7 @@ export default function FlowGraphEditor({
             fitView
             nodesConnectable
             nodesDraggable
+            colorMode={resolvedTheme}
             edges={edges}
             nodeTypes={nodeTypes}
             nodes={renderedNodes}
@@ -630,64 +665,90 @@ export default function FlowGraphEditor({
             onPaneClick={() => select(null)}
           >
             <Background />
-            <MiniMap />
+            {minimapOpen ? (
+              <MiniMap pannable zoomable style={{ marginBottom: 44 }} />
+            ) : null}
             <Controls showInteractive={false} />
+            <Panel position="bottom-right">
+              <button
+                aria-label={labels.toggleMinimap}
+                aria-pressed={minimapOpen}
+                className={`rounded-md border px-1.5 py-1 ${
+                  minimapOpen
+                    ? "border-amber bg-amber-soft text-amber"
+                    : "border-line bg-paper text-mute hover:bg-ivory hover:text-ink"
+                }`}
+                title={labels.toggleMinimap}
+                type="button"
+                onClick={() => setMinimapOpen((open) => !open)}
+              >
+                <MapIcon aria-hidden="true" className="h-4 w-4" />
+              </button>
+            </Panel>
           </ReactFlow>
         </div>
       </div>
-      {sidebarOpen ? (
-        <aside
-          className="flex w-[clamp(420px,34vw,560px)] shrink-0 flex-col gap-3 overflow-y-auto border-l border-line bg-paper p-3"
-          data-testid="flow-graph-editor-sidebar"
-        >
-          <div className="flex items-center justify-end">
-            <button
-              aria-label={labels.toggleProperties}
-              className="rounded-md border border-line px-2 py-1 font-mono text-[11px] text-mute hover:bg-ivory hover:text-ink"
-              data-testid="flow-properties-toggle"
-              title={labels.toggleProperties}
-              type="button"
-              onClick={() => setSidebarOpen(false)}
-            >
-              ›
-            </button>
-          </div>
-          <EditorValidationSummary
-            labels={labels.validation}
-            result={validation}
-            onSelectNode={select}
-          />
-          <NodeSideForm
-            labels={labels.nodeForm}
-            node={selectedNode}
-            participantSources={participantSources}
-            schemaFiles={schemaFiles}
-            presentation={
-              selectedPresentation
-                ? {
-                    width: selectedPresentation.width,
-                    height: selectedPresentation.height,
-                    color: selectedPresentation.color,
-                  }
-                : undefined
-            }
-            onChange={handleNodeFormChange}
-            onWriteSchemaFile={onWriteSchemaFile}
-            onPresentationChange={handlePresentationChange}
-          />
-        </aside>
-      ) : (
-        <button
-          aria-label={labels.toggleProperties}
-          className="flex w-8 shrink-0 items-start justify-center border-l border-line bg-paper pt-3 font-mono text-[11px] text-mute hover:bg-ivory hover:text-ink"
-          data-testid="flow-properties-toggle"
-          title={labels.toggleProperties}
-          type="button"
-          onClick={() => setSidebarOpen(true)}
-        >
-          ‹
-        </button>
-      )}
+      {(() => {
+        const inspector = sidebarOpen ? (
+          <aside
+            className="flex w-[clamp(420px,34vw,560px)] shrink-0 flex-col gap-3 overflow-y-auto border-l border-line bg-paper p-3"
+            data-testid="flow-graph-editor-sidebar"
+          >
+            <div className="flex items-center justify-end">
+              <button
+                aria-label={labels.toggleProperties}
+                className="rounded-md border border-line px-2 py-1 font-mono text-[11px] text-mute hover:bg-ivory hover:text-ink"
+                data-testid="flow-properties-toggle"
+                title={labels.toggleProperties}
+                type="button"
+                onClick={() => setSidebarOpen(false)}
+              >
+                ›
+              </button>
+            </div>
+            <EditorValidationSummary
+              labels={labels.validation}
+              result={validation}
+              onSelectNode={select}
+            />
+            <NodeSideForm
+              labels={labels.nodeForm}
+              node={selectedNode}
+              participantSources={participantSources}
+              presentation={
+                selectedPresentation
+                  ? {
+                      width: selectedPresentation.width,
+                      height: selectedPresentation.height,
+                      color: selectedPresentation.color,
+                    }
+                  : undefined
+              }
+              schemaFiles={schemaFiles}
+              onChange={handleNodeFormChange}
+              onPresentationChange={handlePresentationChange}
+              onWriteSchemaFile={onWriteSchemaFile}
+            />
+          </aside>
+        ) : (
+          <button
+            aria-label={labels.toggleProperties}
+            className="flex w-8 shrink-0 items-start justify-center border-l border-line bg-paper pt-3 font-mono text-[11px] text-mute hover:bg-ivory hover:text-ink"
+            data-testid="flow-properties-toggle"
+            title={labels.toggleProperties}
+            type="button"
+            onClick={() => setSidebarOpen(true)}
+          >
+            ‹
+          </button>
+        );
+
+        return inspectorContainer === undefined
+          ? inspector
+          : inspectorContainer
+            ? createPortal(inspector, inspectorContainer)
+            : null;
+      })()}
       {pendingConnection ? (
         <EdgeConnectModal
           duplicate={outcomeExistsForSource(

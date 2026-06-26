@@ -37,6 +37,15 @@ import { useRunStream } from "@/lib/use-run-stream";
 const shell =
   "rounded-lg border border-line-soft bg-[color-mix(in_oklab,var(--ivory)_35%,var(--paper))]";
 
+// Lifted so a compact/docked host (Flow Studio) can render the run status +
+// token-budget meter on its own collapsible panel header (visible even when the
+// conversation body is collapsed), instead of the in-body header below.
+export type ScratchHeaderInfo = {
+  status: ScratchDialogStatus;
+  statusLabel: string;
+  usage: { used: number; size: number } | null;
+};
+
 function statusClass(status: ScratchDialogStatus): string {
   switch (status) {
     case "WaitingForUser":
@@ -71,6 +80,7 @@ export function ScratchConversation({
   sendDisabledReason = null,
   renderFlowActionResult,
   onMessageSettled,
+  onHeaderInfo,
 }: {
   runId: string;
   compact?: boolean;
@@ -83,6 +93,7 @@ export function ScratchConversation({
     payload: ScratchFlowActionResultPayload,
   ) => ReactElement | null;
   onMessageSettled?: () => void;
+  onHeaderInfo?: (info: ScratchHeaderInfo) => void;
 }): ReactElement {
   const t = useTranslations("scratch");
   const [detail, setDetail] = useState<ScratchDetail | null>(null);
@@ -229,6 +240,14 @@ export function ScratchConversation({
 
     return usage;
   }, [detail?.messages]);
+
+  useEffect(() => {
+    onHeaderInfo?.({
+      status,
+      statusLabel: t(`status.${status}`),
+      usage: latestUsage,
+    });
+  }, [status, latestUsage, onHeaderInfo, t]);
   const transcriptLabels: TranscriptLabels = {
     thinking: t("thinking"),
     rawEvent: t("rawEvent"),
@@ -437,41 +456,44 @@ export function ScratchConversation({
       )}
       data-testid="scratch-conversation"
     >
-      <header className="flex min-w-0 flex-wrap items-center justify-between gap-3 border-b border-line-soft px-4 py-3">
-        <span
-          className={clsx(
-            "rounded-full border px-2.5 py-1 font-mono text-[10.5px] font-semibold",
-            statusClass(status),
-          )}
-          data-testid="scratch-conversation-status"
-        >
-          {t(`status.${status}`)}
-        </span>
-        {latestUsage ? (
-          <div
-            className="flex items-center gap-1.5 font-mono text-[9.5px] text-mute"
-            title={t("tokens")}
+      {!compact ? (
+        <header className="flex min-w-0 flex-wrap items-center justify-between gap-3 border-b border-line-soft px-4 py-3">
+          <span
+            className={clsx(
+              "rounded-full border px-2.5 py-1 font-mono text-[10.5px] font-semibold",
+              statusClass(status),
+            )}
+            data-testid="scratch-conversation-status"
           >
-            <span className="h-1 w-20 overflow-hidden rounded-full bg-ivory">
-              <span
-                className="block h-full bg-amber"
-                style={{
-                  width: `${Math.min(
-                    100,
-                    Math.round(
-                      (latestUsage.used / Math.max(1, latestUsage.size)) * 100,
-                    ),
-                  )}%`,
-                }}
-              />
-            </span>
-            <span>
-              {latestUsage.used.toLocaleString()} /{" "}
-              {latestUsage.size.toLocaleString()}
-            </span>
-          </div>
-        ) : null}
-      </header>
+            {t(`status.${status}`)}
+          </span>
+          {latestUsage ? (
+            <div
+              className="flex items-center gap-1.5 font-mono text-[9.5px] text-mute"
+              title={t("tokens")}
+            >
+              <span className="h-1 w-20 overflow-hidden rounded-full bg-ivory">
+                <span
+                  className="block h-full bg-amber"
+                  style={{
+                    width: `${Math.min(
+                      100,
+                      Math.round(
+                        (latestUsage.used / Math.max(1, latestUsage.size)) *
+                          100,
+                      ),
+                    )}%`,
+                  }}
+                />
+              </span>
+              <span>
+                {latestUsage.used.toLocaleString()} /{" "}
+                {latestUsage.size.toLocaleString()}
+              </span>
+            </div>
+          ) : null}
+        </header>
+      ) : null}
 
       {globalAttachments.length > 0 ? (
         <ul className="flex min-w-0 list-none flex-wrap gap-1 border-b border-line-soft px-4 py-2 p-0">
@@ -527,6 +549,7 @@ export function ScratchConversation({
         agent={composerAgent}
         attachmentsEnabled={attachmentsEnabled}
         catalog={commandCatalog}
+        compact={compact}
         disabledReason={sendDisabledReason}
         pending={pendingAction === "send"}
         quickReplies={quickReplies}

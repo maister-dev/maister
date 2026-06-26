@@ -328,7 +328,7 @@ export function FlowNodeBody({
   }
   if (selected) {
     const selectedShadow =
-      "0 0 0 2px var(--amber), 0 0 0 5px color-mix(in srgb, var(--amber) 16%, transparent)";
+      "0 0 0 2px var(--amber), 0 0 30px 5px color-mix(in srgb, var(--amber) 70%, transparent)";
 
     cardStyle.boxShadow = cardStyle.boxShadow
       ? `${selectedShadow}, ${cardStyle.boxShadow}`

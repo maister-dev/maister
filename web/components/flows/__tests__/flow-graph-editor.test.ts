@@ -37,6 +37,16 @@ const labels: ToolbarProps["labels"] = {
     human: "Human",
     form: "Form",
   },
+  nodeTypeHint: {
+    ai_coding: "AI coding hint",
+    orchestrator: "Orchestrator hint",
+    cli: "CLI hint",
+    check: "Check hint",
+    judge: "Judge hint",
+    consensus: "Consensus hint",
+    human: "Human hint",
+    form: "Form hint",
+  },
   gateKind: {
     command_check: "Command check",
     skill_check: "Skill check",
