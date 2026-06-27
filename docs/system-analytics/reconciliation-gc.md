@@ -1,6 +1,6 @@
 # Reconciliation and GC domain
 
-> **M42 — Unified runner & session model (Designed).** Reconcile / resume /
+> **M42 — Unified runner & session model (Implemented).** Reconcile / resume /
 > recover read the per-session `run_sessions` snapshot (incl. `acp_session_id`)
 > instead of `runs.acp_session_id`; classification is session- and
 > `run_kind`-aware and must cover partial `run_sessions` insert,

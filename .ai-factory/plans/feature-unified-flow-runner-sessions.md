@@ -185,9 +185,15 @@ next migration idx = **0080**.
 - [x] **#14 P3.3** Fan `run_sessions` to ALL run creators (scratch×2/agent/consensus-child via `agents/launch.ts`) + runner-delete guard (`activeRunSession` ref) + **gate-chat ACTIVE-session live-delivery** (`services/gate-chat.ts` reads the latest `run_sessions.acp_session_id`). NOTE: `services/hitl.ts` resume path delegates to `resumeRun` (active-session lands in #16); UI read models still read the `runs.*` mirror (tsc-forced move to `run_sessions` at #24).
 
 ### Phase 4 — Reconcile / resume / recover / terminal
-- [ ] **#15 P4.1** Reconcile active-session-aware classification + run_kind branch + crash-window coverage.
-- [ ] **#16 P4.2** Resume + recover session-aware respawn + run_kind branch.
-- [ ] **#17 P4.3** Terminal transition closes ALL sessions (no leaked deferreds) + slot-release.
+> FOLDED with #24's migration 0082 (mirror-column drop) — readers are migrated
+> first (green, expand), then the columns drop (contract). All committed:
+> `39320ee8` (resume/recovery + runtime), `539a35b7` (writers/terminal),
+> `66c5f64c` (UI/list readers), `da62de97` (migration 0082 + test-mock sweep).
+> tsc 0, full unit 5161 green. Live crash-recovery/multi-session verify deferred
+> to the owner's #23 env (no live ACP agents in the sandbox).
+- [x] **#15 P4.1** Reconcile active-session-aware classification + run_kind branch + crash-window coverage.
+- [x] **#16 P4.2** Resume + recover session-aware respawn + run_kind branch.
+- [x] **#17 P4.3** Terminal transition closes ALL sessions (workbench stop close-all via `listRunSessionAcpIds` dep; promote/scratch drop the run-level marker) + slot-release.
 
 ### Phase 5 — Studio UI + i18n
 - [x] **#18 P5.1** Node-form runner picker (replace model field) + session selector.
@@ -200,7 +206,7 @@ next migration idx = **0080**.
 - [ ] **#23 P6.2** End-to-end success-criteria validation (2 runners/run, portable consensus, connect-time binding reuse, judge-on-own-runner).
 
 ### Phase 7 — Close-out
-- [ ] **#24 P7.1** As-built status flip + ADR/migration renumber check vs main + full verification gate.
+- [ ] **#24 P7.1** As-built status flip + ADR/migration renumber check vs main + full verification gate. (Migration 0082 mirror-column DROP **DONE** `da62de97` — folded with #15-17. Remaining: docs Designed→Implemented flip + ADR-114/migration 0080-0082 renumber check vs `main` + final gate.)
 
 ---
 

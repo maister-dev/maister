@@ -1,8 +1,8 @@
 # Runs domain
 
-> **M42 — Unified runner & session model (Designed).** Run runner state
+> **M42 — Unified runner & session model (Implemented).** Run runner state
 > (`runner_id`, `runner_resolution_tier`, `capability_agent`, `runner_snapshot`,
-> `acp_session_id`) moves OFF the `runs` row into the per-session `run_sessions`
+> `acp_session_id`) moved OFF the `runs` row (dropped in migration `0082`) into the per-session `run_sessions`
 > table (sole source of truth; exactly one `default` row for `scratch`/`agent`
 > runs). A flow run hosts N **sequential** sessions sharing one worktree.
 > Canonical: [`sessions.md`](sessions.md) /

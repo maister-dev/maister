@@ -10,7 +10,7 @@
 > promotion-gating readiness policy → **M15**; first-class `consensus` node →
 > **M41 Implemented**, see [`consensus.md`](consensus.md); per-node runner config
 > (`settings.runner`), node `session:` / top-level `sessions:` grouping, and
-> `judge` as a runner-bearing node → **M42 Designed**, see
+> `judge` as a runner-bearing node → **M42 Implemented**, see
 > [`sessions.md`](sessions.md). Decisions:
 > [ADR-026](../decisions.md#adr-026-flow-graph-manifest-v1-nodes--engine-version-bump),
 > [ADR-027](../decisions.md#adr-027-append-only-node_attempts-run-ledger),

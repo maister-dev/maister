@@ -4,7 +4,7 @@
 > [`../../.ai-factory/specs/feature-m41-consensus-node.md`](../../.ai-factory/specs/feature-m41-consensus-node.md).
 > Decision: [ADR-109](../decisions.md#adr-109-consensus-flow-graph-node--engine-owned-unanimous-draft-verification-and-human-resolution).
 >
-> **M42 (Designed):** participant/synthesizer `runner` uses the unified
+> **M42 (Implemented):** participant/synthesizer `runner` uses the unified
 > `flowRunnerConfigSchema` and resolves through portable per-slot bindings
 > (`consensus:<nodeId>:<participantId>` / `consensus:<nodeId>:synthesizer`), not a
 > direct `platform_acp_runners.id`; identical-intent participants stay distinct

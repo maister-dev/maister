@@ -1015,7 +1015,7 @@ components:
           maxLength: 128
           pattern: '^[A-Za-z0-9._-]+$'
           description: |
-            (M42 — Designed, ADR-114) Logical Flow session this ACP process
+            (M42 — Implemented, ADR-114) Logical Flow session this ACP process
             serves (`default` | solo node id | named session). Stamped onto
             `cost.jsonl` and `run.events.jsonl` so spend and events are
             attributable per logical session, not only per supervisor
@@ -1268,7 +1268,7 @@ components:
         sessionName:
           type: string
           description: |
-            (M42 — Designed, ADR-114) Logical Flow session name this record
+            (M42 — Implemented, ADR-114) Logical Flow session name this record
             serves (`default` for a single-session run), echoed from
             `StartSessionRequest.sessionName`.
     SupervisorErrorCode:

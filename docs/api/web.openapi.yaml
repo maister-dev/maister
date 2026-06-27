@@ -1035,7 +1035,7 @@ paths:
       summary: List Flow runner slot bindings
       description: |
         Project member route. Lists per-slot Flow runner bindings
-        (`Pending` / `Mapped`) for the project. **(M42 — Designed, ADR-114)**
+        (`Pending` / `Mapped`) for the project. **(M42 — Implemented, ADR-114)**
         re-keys bindings from per-step `(step_id, source_runner_id)` to per-slot
         `slot_key` (`session:<name>` | `consensus:<nodeId>:<participantId>` |
         `consensus:<nodeId>:synthesizer`); slots are NEVER deduped by intent. The
@@ -1049,7 +1049,7 @@ paths:
         - name: flowRevisionId
           in: query
           required: false
-          description: (M42 — Designed) Scope the listing to one flow revision's slots (connect-time).
+          description: (M42 — Implemented) Scope the listing to one flow revision's slots (connect-time).
           schema: { type: string }
       responses:
         "200":
@@ -1080,7 +1080,7 @@ paths:
       description: |
         Project owner/admin route. Binds one Flow runner `slot_key` to an
         available platform ACP runner (SET), or clears it (CLEAR → `Pending`).
-        **(M42 — Designed, ADR-114.)** `slot_key` is body-controlled and
+        **(M42 — Implemented, ADR-114.)** `slot_key` is body-controlled and
         validated ∈ the revision-declared slots (else 409/422); `mappedRunnerId`
         is body-controlled and validated ∈ `platform_acp_runners` (allow-list).
         DB-only, no downstream side-effect — no two-phase commit.
@@ -11534,7 +11534,7 @@ components:
         sessions:
           type: array
           description: |
-            (M42 — Designed, ADR-114) Per logical session of the selected flow:
+            (M42 — Implemented, ADR-114) Per logical session of the selected flow:
             the resolved runner and whether an ephemeral per-run override is
             offered at the Launch dialog. Empty/absent for a single-session flow.
           items:

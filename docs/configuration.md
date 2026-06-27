@@ -882,7 +882,7 @@ wiring for it. A Flow that uses the graph manifest (`nodes[]`) MUST declare
 `engine_min..engine_max` check above. `SUPPORTED_FLOW_SCHEMA_VERSIONS` stays
 `[1]` (the graph is additive — no `schemaVersion` bump).
 
-**M12 engine bump (Designed).** M12 bumps `MAISTER_ENGINE_VERSION`
+**M12 engine bump (Implemented).** M12 bumps `MAISTER_ENGINE_VERSION`
 `1.1.0 → 1.2.0`. `GRAPH_MIN_ENGINE_VERSION` stays `1.1.0` — a graph-manifest
 Flow still only needs `compat.engine_min: 1.1.0` to enable. The **declared-
 artifact gate** is the new threshold: validating `input.requires` /
@@ -912,7 +912,7 @@ blocking gate kinds (`command_check`/`ai_judgment`/`skill_check`/`artifact_requi
 optional/additive, so no engine floor change is required
 ([ADR-048](decisions.md#adr-048-readiness-enforcement-over-all-blocking-gate-kinds--verdict-calibration-m15)).
 
-**M26 engine bump (Designed).** M26 bumps `MAISTER_ENGINE_VERSION`
+**M26 engine bump (Implemented).** M26 bumps `MAISTER_ENGINE_VERSION`
 `1.2.0 → 1.3.0` in `web/lib/flows/engine-version.ts`
 ([ADR-063](decisions.md#adr-063-structured-node-output-channel-p1--run-context-file-p7)).
 `MAISTER_ENGINE_VERSION` is a **code constant, not an env var** — there is no
@@ -972,7 +972,7 @@ park/resume, verify, tally, synthesis, and HITL must use structured fields
 (`runId`, `nodeId`, `nodeAttemptId`, `round`, participant/verifier IDs, verdict
 status) and must not interpolate prompt, draft, debate, or resolution body text.
 
-**M42 engine bump (Designed).** M42 bumps `MAISTER_ENGINE_VERSION` `1.9.0 →
+**M42 engine bump (Implemented).** M42 bumps `MAISTER_ENGINE_VERSION` `1.9.0 →
 2.0.0` ([ADR-114](decisions.md#adr-114-unified-flow-runner-config-first-class-sessions-per-project-connect-time-bindings-and-run_sessions-as-the-sole-run-runner-source-of-truth))
 — the first stable clean-cutover baseline. The unified runner config (new
 `effort` / `env` fields), first-class `sessions:`, node `session:` / `runner:`,

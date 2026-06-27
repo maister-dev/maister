@@ -1,6 +1,6 @@
 # Platform ACP runner catalog domain
 
-> **M42 — Unified runner & session model (Designed).** Runner bindings move from
+> **M42 — Unified runner & session model (Implemented).** Runner bindings move from
 > the per-step `flow_runner_remaps` to **per-slot**
 > `(project_id, flow_revision_id, slot_key)` rows set at flow-connect / first
 > launch, covering every session and consensus slot (never deduped by intent);

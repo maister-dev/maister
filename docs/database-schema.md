@@ -35,12 +35,12 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `platform_runtime_settings`   | Singleton platform runtime row with the required default runner id.                                                                                                                                                                                                                                                         | `platform_acp_runners.id`                                                  |
 | `flows`                       | Current installed Flow pointer per project, tag-pinned. Planned M10 splits immutable package revisions from project enablement.                                                                                                                                                                                            | `projects.id`                                                              |
 | `project_flow_runner_defaults` | Per-project Flow attachment runner default. `runner_id = null` means inherit project default.                                                                                                                                                                                                                              | `projects.id`, `flows.id`, optional `platform_acp_runners.id`              |
-| `flow_runner_remaps`          | Per-slot binding records keyed `(project_id, flow_revision_id, slot_key)` mapping each unbound session / consensus runner slot to a platform runner. **(M42 — Designed, ADR-114, migration `0080`)** re-keys this from the per-step `(…, step_id, source_runner_id)` shape.                                                                                                                                                                | optional `projects.id`, `flow_revisions.id`, optional `platform_acp_runners.id` |
+| `flow_runner_remaps`          | Per-slot binding records keyed `(project_id, flow_revision_id, slot_key)` mapping each unbound session / consensus runner slot to a platform runner. **(M42 — Implemented, ADR-114, migration `0080`)** re-keys this from the per-step `(…, step_id, source_runner_id)` shape.                                                                                                                                                                | optional `projects.id`, `flow_revisions.id`, optional `platform_acp_runners.id` |
 | `capability_records`          | Project-visible registry for selectable MCP servers, skills, tools, agent settings, restrictions, and launch mappings.                                                                                                                                                                                                     | `projects.id`                                                              |
 | `project_flow_roles`          | **(M13 — Implemented, migration `0018`)** Project-scoped Flow routing labels; not auth roles.                                                                                                                                                                                                                              | `projects.id`                                                              |
 | `actor_identities`            | **(M13 — Implemented, migration `0018`)** Stable attribution identities for users, API-token systems, internal agents, and system events.                                                                                                                                                                                  | `projects.id`, optional `users.id`                                         |
 | `tasks`                       | Board cards. Status `Backlog\|InFlight\|Done\|Abandoned`. Stage `Backlog\|Prepare`.                                                                                                                                                                                                                                        | `projects.id`                                                              |
-| `runs`                        | Execution attempts. Flow runs are task attempts; scratch runs are manual coding-agent sessions with `run_kind = "scratch"`. Runner state (`runner_id`, `runner_resolution_tier`, `capability_agent`, `runner_snapshot`, `acp_session_id`) moves OFF this row to the per-session `run_sessions` table. **(M42 — Designed, ADR-114, migration `0080`.)** **(ADR-085 — Designed, migration `0047`)** snapshots resolved delivery policy. | `tasks.id`, `projects.id`, `flows.id`, optional `platform_acp_runners.id` |
+| `runs`                        | Execution attempts. Flow runs are task attempts; scratch runs are manual coding-agent sessions with `run_kind = "scratch"`. Runner state (`runner_id`, `runner_resolution_tier`, `capability_agent`, `runner_snapshot`, `acp_session_id`) moved OFF this row (dropped in migration 0082) to the per-session `run_sessions` table. **(M42 — Implemented, ADR-114, migration `0080`.)** **(ADR-085 — Designed, migration `0047`)** snapshots resolved delivery policy. | `tasks.id`, `projects.id`, `flows.id`, optional `platform_acp_runners.id` |
 | `workspaces`                  | `git worktree` instances tied to a run.                                                                                                                                                                                                                                                                                    | `runs.id`, `projects.id`                                                   |
 | `scratch_runs`                | Scratch-only metadata: dialog status, name, plan mode, links, branch base, target, and supervisor session. **(M36 `0059`, ADR-097)** `project_id` is NULLABLE; `local_package_id` is the project-less owner of a docked-assistant run (CHECK: exactly one of the two).                                                          | `runs.id`, optional `projects.id`, `local_packages.id`, `users.id`, optional `tasks.id` |
 | `scratch_messages`            | Append-only dialog message ledger with monotonic sequence per scratch run.                                                                                                                                                                                                                                                 | `scratch_runs.run_id`                                                      |
@@ -1032,17 +1032,17 @@ unread badge and inbox panel.
                                  //   (launch-time snapshot read by terminal/read
                                  //   paths)
   flowId?,                       // nullable for scratch runs
-  runnerId,                      // M42 (Designed, 0080): moves to run_sessions
-  runnerResolutionTier,          // M42 (Designed, 0080): moves to run_sessions
-  capabilityAgent,               // M42 (Designed, 0080): moves to run_sessions
-  runnerSnapshot,                // M42 (Designed, 0080): moves to run_sessions
+  runnerId,                      // M42 (Implemented, 0080-0082): moved to run_sessions (dropped 0082)
+  runnerResolutionTier,          // M42 (Implemented, 0080-0082): moved to run_sessions (dropped 0082)
+  capabilityAgent,               // M42 (Implemented, 0080-0082): moved to run_sessions (dropped 0082)
+  runnerSnapshot,                // M42 (Implemented, 0080-0082): moved to run_sessions (dropped 0082)
   status: 'Pending' | 'Running' | 'NeedsInput' | 'NeedsInputIdle'
         | 'HumanWorking'         // M11b manual-takeover claim (migration 0011, additive)
         | 'WaitingOnChildren'    // M37 (Implemented, ADR-098, migration 0060) orchestrator
                                  //   and M41 consensus parked on child drafts;
                                  //   holds NO scheduler slot
         | 'Review' | 'Crashed' | 'Done' | 'Abandoned' | 'Failed',
-  acpSessionId?,                 // resume handle; M42 (Designed, 0080): moves to
+  acpSessionId?,                 // resume handle; M42 (Implemented, 0080): moves to
                                  //   run_sessions (one acp_session_id per session)
   currentStepId?,                // id of the step the runner is on
   flowVersion,                   // Flow tag snapshot; "scratch" sentinel for
@@ -1186,9 +1186,9 @@ the explicit cancel action, which performs a CAS update from
 mapping as `projects.deliveryPolicyDefault`; scratch runs keep the M18
 `workspaces.promotionMode` behavior in this slice.
 
-## `run_sessions` (Designed — M42, ADR-114, migration `0080`)
+## `run_sessions` (Implemented — M42, ADR-114, migration `0080`)
 
-**(M42 — Designed, ADR-114, migration `0080`.)** Per-`(run, session)` runner
+**(M42 — Implemented, ADR-114, migration `0080`.)** Per-`(run, session)` runner
 state — the SOLE source of truth for a run's runner(s). The run-level
 `runs.{runner_id, runner_resolution_tier, capability_agent, runner_snapshot,
 acp_session_id}` columns are dropped in the same migration. A flow run has one

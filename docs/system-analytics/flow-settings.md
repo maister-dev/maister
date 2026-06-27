@@ -1,6 +1,6 @@
 # Flow node settings & the enforcement boundary (M11c)
 
-> **M42 — Unified runner & session model (Designed).** Node `settings.runner`
+> **M42 — Unified runner & session model (Implemented).** Node `settings.runner`
 > uses the unified `flowRunnerConfigSchema` and resolves through the node's
 > **session** runner; `judge` becomes a runner-bearing node and
 > `judge.settings.model` is removed entirely. Canonical:

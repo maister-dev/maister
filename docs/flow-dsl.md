@@ -398,9 +398,9 @@ Two halves remain deferred:
   `human_edit` node type (shown in the example above) and the `merge` node type +
   conflict-handoff promotion are M18; M11b implements neither.
 
-## Sessions and the unified runner config (M42 — Designed)
+## Sessions and the unified runner config (M42 — Implemented)
 
-**(M42 — Designed, ADR-114; requires `compat.engine_min >= 2.0.0`.)** One
+**(M42 — Implemented, ADR-114; requires `compat.engine_min >= 2.0.0`.)** One
 **unified runner config** replaces the three divergent runner shapes
 (`runner_profiles` values, per-node `settings.runner`, consensus
 participant/synthesizer runner). Its fields: `runner_type`, `capability_agent`,

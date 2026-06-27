@@ -1,6 +1,6 @@
 # ACP runners domain
 
-> **M42 — Unified runner & session model (Designed).** Manifest runner intent
+> **M42 — Unified runner & session model (Implemented).** Manifest runner intent
 > uses ONE `flowRunnerConfigSchema` (reuses `capability_agent` /
 > `permission_policy`, adds `effort` / `env`); resolution is **per session/slot**
 > (binding → auto-match → the `default`-session project-flow/platform-flow/

@@ -1,6 +1,6 @@
 # Flow runner & session model domain
 
-> **Status: Designed (M42).** Decision:
+> **Status: Implemented (M42).** Decision:
 > [ADR-114](../decisions.md#adr-114-unified-flow-runner-config-first-class-sessions-per-project-connect-time-bindings-and-run_sessions-as-the-sole-run-runner-source-of-truth).
 > Working spec: [`../../.ai-factory/plans/feature-unified-flow-runner-sessions.md`](../../.ai-factory/plans/feature-unified-flow-runner-sessions.md).
 
