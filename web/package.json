@@ -5,7 +5,9 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "dev:clean": "pnpm clean && next dev",
+    "clean": "node scripts/clean-next-artifacts.mjs",
+    "build": "pnpm clean && next build",
     "start": "next start",
     "lint": "eslint --fix",
     "typecheck": "tsc --noEmit",

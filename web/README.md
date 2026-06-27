@@ -67,7 +67,9 @@ From the repo root, with `pnpm` and Node 24 installed.
 
 ```bash
 pnpm dev                # next dev
-pnpm build              # next build
+pnpm dev:clean          # remove .next, then next dev
+pnpm clean              # remove .next
+pnpm build              # remove .next, then next build
 pnpm start              # next start (after build)
 pnpm lint               # eslint --fix
 pnpm typecheck          # tsc --noEmit

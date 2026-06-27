@@ -53,7 +53,7 @@ As the `maister` user, into `/opt/maister`:
 git clone <maister-repo-url> /opt/maister
 cd /opt/maister
 pnpm install --frozen-lockfile
-pnpm --filter maister-web build          # next build (required before `start`)
+pnpm --filter maister-web build          # cleans .next, then next build (required before `start`)
 ```
 
 ## 3. Postgres (Docker)
@@ -250,7 +250,7 @@ Then open `https://maister.example.com/login` and sign in with the seeded admin.
 ```bash
 cd /opt/maister && git pull
 pnpm install --frozen-lockfile
-pnpm --filter maister-web build
+pnpm --filter maister-web build          # cleans stale Next.js artifacts before rebuilding
 set -a; . /etc/maister/maister.env; set +a
 pnpm --filter maister-web db:migrate
 sudo systemctl restart maister-supervisor maister-web

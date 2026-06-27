@@ -175,7 +175,9 @@ part of this milestone.
 
 ```bash
 pnpm dev      # next dev — http://localhost:3000
-pnpm build    # next build
+pnpm dev:clean # remove .next, then next dev — use when dev cache keeps stale UI
+pnpm clean    # remove .next
+pnpm build    # remove .next, then next build
 pnpm start    # next start (after build)
 pnpm lint     # eslint --fix
 pnpm install-package          # ADR-088: install a multi-flow package (all flows + bundle)
