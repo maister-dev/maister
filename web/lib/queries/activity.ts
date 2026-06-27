@@ -7,6 +7,10 @@ import { desc, eq, inArray } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
+import {
+  activeSessionCapabilityAgent,
+  activeSessionRunnerSnapshot,
+} from "@/lib/runs/active-run-session";
 import { runnerAgentFromFields } from "@/lib/queries/runner-agent";
 
 const { hitlRequests, runs, stepRuns, workspaces } = schema;
@@ -60,8 +64,8 @@ export async function getActivityFeed(
       status: runs.status,
       startedAt: runs.startedAt,
       endedAt: runs.endedAt,
-      capabilityAgent: runs.capabilityAgent,
-      runnerSnapshot: runs.runnerSnapshot,
+      capabilityAgent: activeSessionCapabilityAgent(runs.id),
+      runnerSnapshot: activeSessionRunnerSnapshot(runs.id),
       branch: workspaces.branch,
       flowVersion: runs.flowVersion,
     })
@@ -103,8 +107,8 @@ export async function getActivityFeed(
         endedAt: stepRuns.endedAt,
         startedAt: stepRuns.startedAt,
         branch: workspaces.branch,
-        capabilityAgent: runs.capabilityAgent,
-        runnerSnapshot: runs.runnerSnapshot,
+        capabilityAgent: activeSessionCapabilityAgent(runs.id),
+        runnerSnapshot: activeSessionRunnerSnapshot(runs.id),
       })
       .from(stepRuns)
       .innerJoin(runs, eq(runs.id, stepRuns.runId))
@@ -141,8 +145,8 @@ export async function getActivityFeed(
         createdAt: hitlRequests.createdAt,
         branch: workspaces.branch,
         runId: runs.id,
-        capabilityAgent: runs.capabilityAgent,
-        runnerSnapshot: runs.runnerSnapshot,
+        capabilityAgent: activeSessionCapabilityAgent(runs.id),
+        runnerSnapshot: activeSessionRunnerSnapshot(runs.id),
       })
       .from(hitlRequests)
       .innerJoin(runs, eq(runs.id, hitlRequests.runId))

@@ -37,6 +37,11 @@ import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
 import { deriveTtlInfo } from "@/lib/gc/ttl";
+import {
+  activeSessionAcpSessionId,
+  activeSessionCapabilityAgent,
+  activeSessionRunnerSnapshot,
+} from "@/lib/runs/active-run-session";
 import { classifyRecover } from "@/lib/runs/recover-classify";
 import { requireRunProjectId } from "@/lib/runs/run-kind-invariants";
 import * as schema from "@/lib/db/schema";
@@ -210,7 +215,7 @@ export const getRunDetail = cache(async function getRunDetail(
       agentId: runs.agentId,
       currentStepId: runs.currentStepId,
       resumeTargetStepId: runs.resumeTargetStepId,
-      acpSessionId: runs.acpSessionId,
+      acpSessionId: activeSessionAcpSessionId(runs.id),
       flowId: runs.flowId,
       flowRevisionId: runs.flowRevisionId,
       projectSlug: projects.slug,
@@ -234,8 +239,8 @@ export const getRunDetail = cache(async function getRunDetail(
       deliveryPolicySnapshot: runs.deliveryPolicySnapshot,
       executionPolicy: runs.executionPolicy,
       budgetState: runs.budgetState,
-      capabilityAgent: runs.capabilityAgent,
-      runnerSnapshot: runs.runnerSnapshot,
+      capabilityAgent: activeSessionCapabilityAgent(runs.id),
+      runnerSnapshot: activeSessionRunnerSnapshot(runs.id),
       endedAt: runs.endedAt,
       scheduledRemovalAt: workspaces.scheduledRemovalAt,
       archivedBranch: workspaces.archivedBranch,
@@ -946,8 +951,8 @@ export async function getRunSettings(
       flowId: runs.flowId,
       flowRevisionId: runs.flowRevisionId,
       runId: runs.id,
-      capabilityAgent: runs.capabilityAgent,
-      runnerSnapshot: runs.runnerSnapshot,
+      capabilityAgent: activeSessionCapabilityAgent(runs.id),
+      runnerSnapshot: activeSessionRunnerSnapshot(runs.id),
     })
     .from(runs)
     .where(eq(runs.id, runId));

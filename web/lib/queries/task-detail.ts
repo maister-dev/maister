@@ -7,6 +7,11 @@ import { and, desc, eq, ne } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
+import {
+  activeSessionCapabilityAgent,
+  activeSessionRunnerId,
+  activeSessionRunnerSnapshot,
+} from "@/lib/runs/active-run-session";
 import { reconcileManyRunCostRollups } from "@/lib/runs/cost-rollups";
 import { actorDTO, resolveActorLabels } from "@/lib/social/actors";
 import {
@@ -302,9 +307,9 @@ export async function getTaskDetail(
       status: runs.status,
       flowRef: flows.flowRefId,
       flowVersion: runs.flowVersion,
-      runnerId: runs.runnerId,
-      capabilityAgent: runs.capabilityAgent,
-      runnerSnapshot: runs.runnerSnapshot,
+      runnerId: activeSessionRunnerId(runs.id),
+      capabilityAgent: activeSessionCapabilityAgent(runs.id),
+      runnerSnapshot: activeSessionRunnerSnapshot(runs.id),
       promotionMode: workspaces.promotionMode,
       prUrl: workspaces.prUrl,
       prNumber: workspaces.prNumber,

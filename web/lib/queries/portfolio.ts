@@ -27,6 +27,11 @@ import {
 import { getDb } from "@/lib/db/client";
 import { MaisterError } from "@/lib/errors";
 import { deriveTtlInfo } from "@/lib/gc/ttl";
+import {
+  activeSessionAcpSessionId,
+  activeSessionCapabilityAgent,
+  activeSessionRunnerSnapshot,
+} from "@/lib/runs/active-run-session";
 import { gcAgeDays, gcWarningDays } from "@/lib/instance-config";
 import { mapRowsToHitlItems } from "@/lib/queries/hitl";
 import { resolveStages } from "@/lib/queries/hitl-stage";
@@ -343,9 +348,9 @@ export async function getPortfolio(
         runKind: runs.runKind,
         agentId: runs.agentId,
         triggerSource: runs.triggerSource,
-        acpSessionId: runs.acpSessionId,
-        capabilityAgent: runs.capabilityAgent,
-        runnerSnapshot: runs.runnerSnapshot,
+        acpSessionId: activeSessionAcpSessionId(runs.id),
+        capabilityAgent: activeSessionCapabilityAgent(runs.id),
+        runnerSnapshot: activeSessionRunnerSnapshot(runs.id),
         workspaceId: workspaces.id,
         branch: workspaces.branch,
         archivedBranch: workspaces.archivedBranch,
@@ -375,8 +380,8 @@ export async function getPortfolio(
       .select({
         runId: runs.id,
         projectId: runs.projectId,
-        capabilityAgent: runs.capabilityAgent,
-        runnerSnapshot: runs.runnerSnapshot,
+        capabilityAgent: activeSessionCapabilityAgent(runs.id),
+        runnerSnapshot: activeSessionRunnerSnapshot(runs.id),
         branch: workspaces.branch,
         endedAt: runs.endedAt,
       })
@@ -396,8 +401,8 @@ export async function getPortfolio(
         projectId: assignments.projectId,
         runId: runs.id,
         prompt: assignments.title,
-        capabilityAgent: runs.capabilityAgent,
-        runnerSnapshot: runs.runnerSnapshot,
+        capabilityAgent: activeSessionCapabilityAgent(runs.id),
+        runnerSnapshot: activeSessionRunnerSnapshot(runs.id),
         branch: workspaces.branch,
         createdAt: assignments.createdAt,
         runStatus: runs.status,
@@ -420,8 +425,8 @@ export async function getPortfolio(
         projectId: runs.projectId,
         runId: runs.id,
         prompt: hitlRequests.prompt,
-        capabilityAgent: runs.capabilityAgent,
-        runnerSnapshot: runs.runnerSnapshot,
+        capabilityAgent: activeSessionCapabilityAgent(runs.id),
+        runnerSnapshot: activeSessionRunnerSnapshot(runs.id),
         branch: workspaces.branch,
         createdAt: hitlRequests.createdAt,
         runStatus: runs.status,
@@ -827,8 +832,8 @@ export async function getRailWorkspaceGroups(
       slug: projects.slug,
       projectName: projects.name,
       taskKey: projects.taskKey,
-      capabilityAgent: runs.capabilityAgent,
-      runnerSnapshot: runs.runnerSnapshot,
+      capabilityAgent: activeSessionCapabilityAgent(runs.id),
+      runnerSnapshot: activeSessionRunnerSnapshot(runs.id),
       status: runs.status,
       runKind: runs.runKind,
       createdByUserId: runs.createdByUserId,
@@ -1095,8 +1100,8 @@ export async function getCrossProjectHitlInbox(
       rawSchema: hitlRequests.schema,
       criticality: hitlRequests.criticality,
       createdAt: hitlRequests.createdAt,
-      capabilityAgent: runs.capabilityAgent,
-      runnerSnapshot: runs.runnerSnapshot,
+      capabilityAgent: activeSessionCapabilityAgent(runs.id),
+      runnerSnapshot: activeSessionRunnerSnapshot(runs.id),
       branch: workspaces.branch,
       flowRef: sql<string>`coalesce(${flows.flowRefId}, 'scratch')`,
       projectId: runs.projectId,

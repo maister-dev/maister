@@ -52,6 +52,7 @@ import {
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { MaisterError, type MaisterErrorCode } from "@/lib/errors";
 import { gcAgeDays, worktreesRoot } from "@/lib/instance-config";
+import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import { applyDefaultBudgetForUnattended } from "@/lib/runs/budget-default";
 import {
   permissionsFromSnapshot,
@@ -2128,18 +2129,24 @@ export async function sendAgentMessage(
     .select({
       status: runs.status,
       runKind: runs.runKind,
-      acpSessionId: runs.acpSessionId,
     })
     .from(runs)
     .where(eq(runs.id, childRunId));
-  const run = rows[0];
+  const baseRun = rows[0];
 
-  if (!run || run.runKind !== "agent") {
+  if (!baseRun || baseRun.runKind !== "agent") {
     throw new MaisterError(
       "PRECONDITION",
       `run ${childRunId} is not an agent run`,
     );
   }
+
+  // M42 (ADR-114): the agent run's resume handle is on its ACTIVE session.
+  const run = {
+    ...baseRun,
+    acpSessionId:
+      (await loadActiveRunSession(_db, childRunId))?.acpSessionId ?? null,
+  };
 
   // Parked: claim NeedsInputIdle → Running (startAgentSession early-returns on
   // any non-Running status), then respawn + resume + deliver the new prompt.

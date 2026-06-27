@@ -1,8 +1,10 @@
 import "server-only";
 
+import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { RunnerSnapshot } from "@/lib/db/schema";
+import type { AnyColumn, SQL } from "drizzle-orm";
 
-import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 
 import { runSessions } from "@/lib/db/schema";
 
@@ -34,6 +36,43 @@ function toActiveRunSession(row: Record<string, unknown>): ActiveRunSession {
     runnerId: (row.runnerId ?? null) as string | null,
     runnerResolutionTier: (row.runnerResolutionTier ?? null) as string | null,
   };
+}
+
+// M42 (ADR-114): a correlated scalar subquery for a column of a run's ACTIVE
+// session (live-handle-first, else newest), keyed on a `runs.id` column in the
+// outer query. Drop-in replacement for the dropped `runs.<mirror>` columns in
+// display/list selects — keeps the select's projected shape identical. `runIdCol`
+// is a trusted schema column (never user input); the column names are literal.
+function activeRunSessionScalar<T>(
+  runIdCol: AnyColumn,
+  sessionColumn: SQL,
+): SQL<T | null> {
+  return sql<T | null>`(SELECT ${sessionColumn} FROM ${runSessions} rs WHERE rs.run_id = ${runIdCol} ORDER BY (rs.acp_session_id IS NOT NULL) DESC, rs.updated_at DESC LIMIT 1)`;
+}
+
+export function activeSessionAcpSessionId(
+  runIdCol: AnyColumn,
+): SQL<string | null> {
+  return activeRunSessionScalar<string>(runIdCol, sql`rs.acp_session_id`);
+}
+
+export function activeSessionCapabilityAgent(
+  runIdCol: AnyColumn,
+): SQL<AdapterId | null> {
+  return activeRunSessionScalar<AdapterId>(runIdCol, sql`rs.capability_agent`);
+}
+
+export function activeSessionRunnerSnapshot(
+  runIdCol: AnyColumn,
+): SQL<RunnerSnapshot | null> {
+  return activeRunSessionScalar<RunnerSnapshot>(
+    runIdCol,
+    sql`rs.runner_snapshot`,
+  );
+}
+
+export function activeSessionRunnerId(runIdCol: AnyColumn): SQL<string | null> {
+  return activeRunSessionScalar<string>(runIdCol, sql`rs.runner_id`);
 }
 
 // The run's ACTIVE logical session — the one whose ACP process is live/paused.

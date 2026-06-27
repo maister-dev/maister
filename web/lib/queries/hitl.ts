@@ -8,6 +8,10 @@ import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
+import {
+  activeSessionCapabilityAgent,
+  activeSessionRunnerSnapshot,
+} from "@/lib/runs/active-run-session";
 import { resolveStages, type StageChip } from "@/lib/queries/hitl-stage";
 import { runnerAgentFromFields } from "@/lib/queries/runner-agent";
 
@@ -275,8 +279,8 @@ export async function getHitlInbox(projectId: string): Promise<HitlInbox> {
       rawSchema: hitlRequests.schema,
       criticality: hitlRequests.criticality,
       createdAt: hitlRequests.createdAt,
-      capabilityAgent: runs.capabilityAgent,
-      runnerSnapshot: runs.runnerSnapshot,
+      capabilityAgent: activeSessionCapabilityAgent(runs.id),
+      runnerSnapshot: activeSessionRunnerSnapshot(runs.id),
       branch: workspaces.branch,
       flowRef: sql<string>`coalesce(${flows.flowRefId}, 'scratch')`,
       taskNumber: tasks.number,

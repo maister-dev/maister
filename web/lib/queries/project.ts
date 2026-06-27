@@ -19,6 +19,11 @@ import {
 import { enumerateRunnerSlots } from "@/lib/acp-runners/runner-slots";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
+import {
+  activeSessionAcpSessionId,
+  activeSessionCapabilityAgent,
+  activeSessionRunnerSnapshot,
+} from "@/lib/runs/active-run-session";
 import { computeReadinessByRun } from "@/lib/queries/readiness-batch";
 import {
   ACTIVE_RUN_STATUSES,
@@ -310,9 +315,9 @@ export async function getProjectPageData(
           runKind: runs.runKind,
           agentId: runs.agentId,
           triggerSource: runs.triggerSource,
-          acpSessionId: runs.acpSessionId,
-          capabilityAgent: runs.capabilityAgent,
-          runnerSnapshot: runs.runnerSnapshot,
+          acpSessionId: activeSessionAcpSessionId(runs.id),
+          capabilityAgent: activeSessionCapabilityAgent(runs.id),
+          runnerSnapshot: activeSessionRunnerSnapshot(runs.id),
           workspaceId: workspaces.id,
           branch: workspaces.branch,
           archivedBranch: workspaces.archivedBranch,

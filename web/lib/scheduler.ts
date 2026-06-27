@@ -4,6 +4,7 @@ import { and, asc, count, eq, inArray, lt, ne, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
+import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
@@ -425,14 +426,12 @@ export async function promoteNextPending(
     // claim. The window is bounded by `cap` candidates (small).
     const candidates: Array<{
       id: string;
-      acpSessionId: string | null;
       runKind: string;
       workspaceMode: string | null;
       rootRunId: string | null;
     }> = await tx
       .select({
         id: runs.id,
-        acpSessionId: runs.acpSessionId,
         runKind: runs.runKind,
         workspaceMode: runs.workspaceMode,
         rootRunId: runs.rootRunId,
@@ -451,7 +450,6 @@ export async function promoteNextPending(
     let target:
       | {
           id: string;
-          acpSessionId: string | null;
           runKind: string;
           workspaceMode: string | null;
           rootRunId: string | null;
@@ -480,7 +478,11 @@ export async function promoteNextPending(
     if (!target) return null;
 
     const isAgent = target.runKind === "agent";
-    const isResume = !isAgent && target.acpSessionId != null;
+    // M42 (ADR-114): the resume handle lives on the run's ACTIVE session.
+    const targetAcpSessionId = isAgent
+      ? null
+      : ((await loadActiveRunSession(tx, target.id))?.acpSessionId ?? null);
+    const isResume = !isAgent && targetAcpSessionId != null;
     const now = new Date();
 
     const promotedRows: Array<{ projectId: string }> = await tx

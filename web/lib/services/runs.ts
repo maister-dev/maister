@@ -67,6 +67,7 @@ import {
   resolveExecutionPolicy,
   type ExecutionPolicy,
 } from "@/lib/runs/execution-policy";
+import { activeSessionRunnerId } from "@/lib/runs/active-run-session";
 import { applyDefaultBudgetForUnattended } from "@/lib/runs/budget-default";
 import { resolveAgentExecutionPolicy } from "@/lib/agents/execution-policy";
 import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
@@ -1202,7 +1203,7 @@ export async function getRunDTO(
       projectId: runs.projectId,
       status: runs.status,
       flowId: runs.flowId,
-      runnerId: runs.runnerId,
+      runnerId: activeSessionRunnerId(runs.id),
       currentStepId: runs.currentStepId,
       startedAt: runs.startedAt,
       finishedAt: runs.endedAt,

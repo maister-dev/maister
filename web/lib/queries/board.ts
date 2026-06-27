@@ -14,6 +14,11 @@ import { crashActionFor, deriveStage } from "@/lib/board";
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
 import {
+  activeSessionAcpSessionId,
+  activeSessionCapabilityAgent,
+  activeSessionRunnerSnapshot,
+} from "@/lib/runs/active-run-session";
+import {
   lifecycleActionsForWorkspace,
   type WorkbenchLifecycleAction,
 } from "@/lib/queries/portfolio";
@@ -385,11 +390,11 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
       runId: runs.id,
       taskId: runs.taskId,
       status: runs.status,
-      acpSessionId: runs.acpSessionId,
+      acpSessionId: activeSessionAcpSessionId(runs.id),
       startedAt: runs.startedAt,
       endedAt: runs.endedAt,
-      capabilityAgent: runs.capabilityAgent,
-      runnerSnapshot: runs.runnerSnapshot,
+      capabilityAgent: activeSessionCapabilityAgent(runs.id),
+      runnerSnapshot: activeSessionRunnerSnapshot(runs.id),
       workspaceId: workspaces.id,
       archivedBranch: workspaces.archivedBranch,
       removedAt: workspaces.removedAt,
