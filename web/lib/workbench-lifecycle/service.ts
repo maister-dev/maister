@@ -11,7 +11,6 @@ import pino from "pino";
 
 import { systemCloseActiveAssignmentsForRun } from "@/lib/assignments/service";
 import { getDb } from "@/lib/db/client";
-import { loadRunSessions } from "@/lib/runs/active-run-session";
 import * as schema from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { requireRunProjectId } from "@/lib/runs/run-kind-invariants";
@@ -131,9 +130,6 @@ export type WorkbenchLifecycleDeps = {
   authorize: (projectId: string, action: LifecycleAction) => Promise<void>;
   listSessions: () => Promise<SupervisorSessionRecord[]>;
   deleteSession: (sessionId: string) => Promise<void>;
-  // M42 (ADR-114): the run's logical-session acp handles (sole source of truth)
-  // — stop closes EVERY live one.
-  listRunSessionAcpIds: (runId: string) => Promise<string[]>;
   markStoppedAndCloseAssignments: (args: {
     runId: string;
     endedAt: Date;
@@ -1105,22 +1101,29 @@ async function stopLiveSupervisorSession(
   ctx: LifecycleContext,
   deps: WorkbenchLifecycleDeps,
 ): Promise<boolean> {
-  // M42 (ADR-114): a run may hold N logical sessions — stop EVERY live one.
-  const acpIds = new Set(await deps.listRunSessionAcpIds(ctx.run.id));
-
-  if (acpIds.size === 0) return false;
-
+  // Match the run's live supervisor sessions by the server-owned runId, NOT by
+  // run_sessions.acp_session_id: the graph runner persists acp_session_id only
+  // AFTER a node's prompt returns (runner-graph.ts), so a node still mid-prompt
+  // has a null column while its agent session is live. Matching on acp ids there
+  // finds nothing and the caller parks the run terminal while the agent keeps
+  // mutating the worktree (split-brain). runId is always present on the
+  // supervisor record and is the correct boundary — the same idiom the keepalive
+  // watchdog uses (keepalive-sweeper.ts). A run may hold N logical sessions
+  // (sequential, but stop EVERY live one); never narrow by stepId, which would
+  // spare a live session of a different node.
   const sessions = await deps.listSessions();
   let stoppedAny = false;
 
   for (const session of sessions) {
-    const acp = session.acpSessionId;
-
-    if (session.status !== "live" || acp == null || !acpIds.has(acp)) continue;
-    if (session.sessionId == null) continue;
+    if (session.status !== "live" || session.runId !== ctx.run.id) continue;
 
     await deps.deleteSession(session.sessionId);
     stoppedAny = true;
+
+    log.info(
+      { runId: ctx.run.id, supervisorSessionId: session.sessionId },
+      "workbench stop — live supervisor session killed",
+    );
   }
 
   return stoppedAny;
@@ -1379,10 +1382,6 @@ function defaultWorkbenchLifecycleDeps(): WorkbenchLifecycleDeps {
     },
     listSessions,
     deleteSession,
-    listRunSessionAcpIds: async (runId) =>
-      (await loadRunSessions(getDb(), runId))
-        .map((session) => session.acpSessionId)
-        .filter((id): id is string => id !== null),
     markStoppedAndCloseAssignments: markRunStoppedAndCloseAssignments,
     promoteNextPending: async () => {
       await promoteNextPending();

@@ -9,6 +9,7 @@ import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
+import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import {
   gateChatAvailability,
   listGateChatMessages,
@@ -112,11 +113,12 @@ export async function GET(
     // same bar as POST; a viewer's panel degrades to its empty initial state.
     await requireProjectAction(run.projectId, "answerHitl");
 
+    const activeSession = await loadActiveRunSession(db, runId);
     const availability = gateChatAvailability({
       runStatus: run.status,
       hitlKind: hitl.kind,
       hitlRespondedAt: hitl.respondedAt,
-      acpSessionId: run.acpSessionId,
+      acpSessionId: activeSession?.acpSessionId ?? null,
     });
     const messages = await listGateChatMessages({ runId, hitlRequestId });
 

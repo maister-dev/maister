@@ -233,19 +233,27 @@ async function seedRun(opts: SeedRunOpts = {}): Promise<string> {
     projectId,
     flowId,
     flowRevisionId,
-    runnerId: executorId,
-    capabilityAgent: "claude",
-    runnerSnapshot: testRunnerSnapshot(executorId),
     runKind: opts.runKind ?? "flow",
     status: opts.status ?? "Running",
-    acpSessionId:
-      opts.acpSessionId === undefined ? "acp-default" : opts.acpSessionId,
     currentStepId:
       opts.currentStepId === undefined ? "implement" : opts.currentStepId,
     flowVersion: "v1",
     startedAt: opts.startedAt ?? new Date(),
     resumeStartedAt: opts.resumeStartedAt ?? null,
     parentRunId: opts.parentRunId ?? null,
+  });
+  // M42 (ADR-114): the runner mirror + the resume handle moved off `runs` to
+  // the run's `default` `run_sessions` row — the sweep reads acp_session_id
+  // from there (loadActiveRunSessionsByRunId).
+  await db.insert(schema.runSessions).values({
+    id: randomUUID(),
+    runId,
+    sessionName: "default",
+    runnerId: executorId,
+    capabilityAgent: "claude",
+    runnerSnapshot: testRunnerSnapshot(executorId),
+    acpSessionId:
+      opts.acpSessionId === undefined ? "acp-default" : opts.acpSessionId,
   });
 
   return runId;
@@ -646,14 +654,21 @@ describe("runReconcileSweep (integration)", () => {
       projectId,
       flowId: linearFlowId,
       flowRevisionId: linearRevId,
-      executorId,
       runKind: "flow",
       status: "Running",
-      acpSessionId: null,
       currentStepId: "rework-review", // the human goto target after repark
       flowVersion: "v1",
       startedAt: new Date(),
       resumeStartedAt: null,
+    });
+    await db.insert(schema.runSessions).values({
+      id: randomUUID(),
+      runId,
+      sessionName: "default",
+      runnerId: executorId,
+      capabilityAgent: "claude",
+      runnerSnapshot: testRunnerSnapshot(executorId),
+      acpSessionId: null,
     });
     await seedWorkspace(runId, "/worktrees/linear-c");
 
@@ -736,10 +751,21 @@ describe("runReconcileSweep (integration)", () => {
     );
     // No workspace row → worktreePath is null in the candidate set.
     await pool.query(
-      `INSERT INTO "runs" ("id", "run_kind", "agent_id", "trigger_source", "agent_workspace", "task_id", "project_id", "flow_version", "flow_revision", "status", "acp_session_id", "current_step_id", "started_at")
-       VALUES ($1, 'agent', $2, 'manual', 'none', $3, $4, 'agent', 'manual', 'Running', 'acp-agent-noworktree', 'agent', now())`,
+      `INSERT INTO "runs" ("id", "run_kind", "agent_id", "trigger_source", "agent_workspace", "task_id", "project_id", "flow_version", "flow_revision", "status", "current_step_id", "started_at")
+       VALUES ($1, 'agent', $2, 'manual', 'none', $3, $4, 'agent', 'manual', 'Running', 'agent', now())`,
       [agentRunId, agentId, taskId, projectId],
     );
+    // M42 (ADR-114): the resume handle lives on the run's `default`
+    // `run_sessions` row, which the sweep reads for the live-session match.
+    await db.insert(schema.runSessions).values({
+      id: randomUUID(),
+      runId: agentRunId,
+      sessionName: "default",
+      runnerId: executorId,
+      capabilityAgent: "claude",
+      runnerSnapshot: testRunnerSnapshot(executorId),
+      acpSessionId: "acp-agent-noworktree",
+    });
 
     const { opts } = makeOpts({ worktreePaths: [], liveSessions: [] });
 

@@ -159,8 +159,9 @@ flowchart LR
 ```
 
 Resolution returns `{ runnerId, tier }`, where `tier` is one of
-`launchOverride`, `stepTarget`, `projectFlowDefault`, `platformFlowDefault`,
-`projectDefault`, or `platformDefault`.
+`launchOverride`, `stepTarget`, `binding`, `autoMatch`, `projectFlowDefault`,
+`platformFlowDefault`, `projectDefault`, or `platformDefault` (M42 adds the
+per-slot `binding` / `autoMatch` tiers).
 
 ## Flow load and attach remapping
 
@@ -356,7 +357,7 @@ sequenceDiagram
     alt not ready or missing
         Web-->>UI: EXECUTOR_UNAVAILABLE / CONFIG before side effects
     else ready
-        Web->>DB: insert run/workspace with runner_id + runner_snapshot
+        Web->>DB: insert run/workspace + run_sessions (runner_id + runner_snapshot via defaultRunSessionValues)
         Web->>Sup: POST /sessions with runner intent
         Sup->>Child: spawn allow-listed adapter args/env
     end

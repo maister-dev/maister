@@ -26,6 +26,10 @@ import {
 } from "@/lib/scratch-runs/events";
 import { scratchStepId } from "@/lib/scratch-runs/launch";
 import {
+  loadActiveRunSession,
+  persistRunSessionAcpSessionId,
+} from "@/lib/runs/active-run-session";
+import {
   assertLocalPackageAssistantActor,
   completeScratchPromptTurn,
   markScratchCrashed,
@@ -133,7 +137,12 @@ async function loadScratchRecoveryRows(db: Db, runId: string) {
       .where(eq(scratchCapabilityProfiles.runId, runId)),
   ]);
   const scratch = scratchRows[0];
-  const recoveredRunner = await loadScratchLaunchExecutor(db, run, runId);
+  const activeSession = await loadActiveRunSession(db, runId);
+  const recoveredRunner = await loadScratchLaunchExecutor(
+    db,
+    activeSession,
+    runId,
+  );
 
   if (!scratch) {
     throw new MaisterError(
@@ -198,6 +207,7 @@ async function loadScratchRecoveryRows(db: Db, runId: string) {
     workspaceRemoved,
     projectSlug,
     confineRoot,
+    acpSessionId: activeSession?.acpSessionId ?? null,
     executor: recoveredRunner.executor,
     runnerSnapshot: recoveredRunner.snapshot,
     profile: profileRows[0] ?? null,
@@ -206,31 +216,34 @@ async function loadScratchRecoveryRows(db: Db, runId: string) {
 
 async function loadScratchLaunchExecutor(
   db: Db,
-  run: Record<string, any>,
+  active: {
+    runnerSnapshot: RunnerSnapshot | null;
+    runnerId: string | null;
+  } | null,
   runId: string,
 ): Promise<ScratchRecoveredRunner> {
-  if (run.runnerSnapshot) {
+  if (active?.runnerSnapshot) {
     return {
       executor: {
-        agent: run.runnerSnapshot.capabilityAgent,
-        model: run.runnerSnapshot.model,
-        router: run.runnerSnapshot.sidecarId ? "ccr" : undefined,
+        agent: active.runnerSnapshot.capabilityAgent as AdapterId,
+        model: active.runnerSnapshot.model,
+        router: active.runnerSnapshot.sidecarId ? "ccr" : undefined,
       },
-      snapshot: run.runnerSnapshot,
+      snapshot: active.runnerSnapshot,
     };
   }
 
-  if (run.runnerId) {
+  if (active?.runnerId) {
     const runnerRows = await db
       .select()
       .from(platformAcpRunners)
-      .where(eq(platformAcpRunners.id, run.runnerId));
+      .where(eq(platformAcpRunners.id, active.runnerId));
     const runner = runnerRows[0];
 
     if (!runner) {
       throw new MaisterError(
         "PRECONDITION",
-        `ACP runner not found: ${run.runnerId}`,
+        `ACP runner not found: ${active.runnerId}`,
       );
     }
 
@@ -302,6 +315,7 @@ export async function POST(
       confineRoot,
       executor,
       runnerSnapshot,
+      acpSessionId,
       profile,
     } = await loadScratchRecoveryRows(db, runId);
 
@@ -324,7 +338,7 @@ export async function POST(
     const action = classifyScratchRecovery({
       runStatus: run.status,
       dialogStatus: scratch.dialogStatus,
-      acpSessionId: run.acpSessionId,
+      acpSessionId,
       supervisorSessionId: scratch.supervisorSessionId,
       workspaceRemoved,
       liveSupervisorSessionIds: liveSessionIds,
@@ -349,7 +363,7 @@ export async function POST(
         "prompt is required to recover a scratch session",
       );
     }
-    if (!run.acpSessionId) {
+    if (!acpSessionId) {
       throw new MaisterError(
         "PRECONDITION",
         `scratch run has no ACP resume session: ${runId}`,
@@ -366,7 +380,7 @@ export async function POST(
       stepId: scratchStepId(),
       executor,
       runner: runnerSupervisorInput({ snapshot: runnerSnapshot }),
-      resumeSessionId: run.acpSessionId,
+      resumeSessionId: acpSessionId,
       capabilityProfilePath: profile?.materializedPath ?? undefined,
       adapterLaunch: mergeRunnerAdapterLaunch(
         runnerSnapshot,
@@ -380,10 +394,15 @@ export async function POST(
         .update(runs)
         .set({
           status: "Running",
-          acpSessionId: session.acpSessionId,
           currentStepId: scratchStepId(),
         })
         .where(eq(runs.id, runId));
+      await persistRunSessionAcpSessionId(
+        tx,
+        runId,
+        "default",
+        session.acpSessionId,
+      );
       await tx
         .update(scratchRuns)
         .set({

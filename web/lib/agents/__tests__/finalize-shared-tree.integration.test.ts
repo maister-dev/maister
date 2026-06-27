@@ -256,10 +256,22 @@ async function insertRoot(): Promise<string> {
   const id = randomUUID();
 
   await pool.query(
-    `INSERT INTO "runs" ("id", "run_kind", "agent_id", "trigger_source", "project_id", "flow_version", "flow_revision", "status", "root_run_id", "runner_id")
-     VALUES ($1, 'agent', $2, 'manual', $3, 'agent', 'manual', 'WaitingOnChildren', $1, $4)`,
-    [id, "test-pkg:coordinator", projectId, executorId],
+    `INSERT INTO "runs" ("id", "run_kind", "agent_id", "trigger_source", "project_id", "flow_version", "flow_revision", "status", "root_run_id")
+     VALUES ($1, 'agent', $2, 'manual', $3, 'agent', 'manual', 'WaitingOnChildren', $1)`,
+    [id, "test-pkg:coordinator", projectId],
   );
+  // M42 (ADR-114): the runner mirror moved off `runs` to the run's `default`
+  // `run_sessions` row (launchAgentRun inserts its own for the children).
+  await (db as any)
+    .insert((await import("@/lib/db/schema")).runSessions)
+    .values({
+      id: randomUUID(),
+      runId: id,
+      sessionName: "default",
+      runnerId: executorId,
+      capabilityAgent: "claude",
+      runnerSnapshot: { capabilityAgent: "claude" },
+    });
 
   return id;
 }
@@ -272,9 +284,11 @@ async function runStatus(id: string): Promise<string | null> {
   return r.rows[0]?.status ?? null;
 }
 
+// M42 (ADR-114): the resume handle lives on the run's `default` `run_sessions`
+// row (sole source of truth); a delegated Review retains it.
 async function acpSessionId(id: string): Promise<string | null> {
   const r = await pool.query(
-    `SELECT "acp_session_id" FROM "runs" WHERE "id" = $1`,
+    `SELECT "acp_session_id" FROM "run_sessions" WHERE "run_id" = $1 AND "session_name" = 'default'`,
     [id],
   );
 
@@ -289,8 +303,13 @@ async function makeRunningWithSession(
   runId: string,
   session: string,
 ): Promise<void> {
+  // M42 (ADR-114): status stays on `runs`; the resume handle goes to the run's
+  // `default` `run_sessions` row (launchAgentRun seeded it with a null handle).
+  await pool.query(`UPDATE "runs" SET "status" = 'Running' WHERE "id" = $1`, [
+    runId,
+  ]);
   await pool.query(
-    `UPDATE "runs" SET "status" = 'Running', "acp_session_id" = $2 WHERE "id" = $1`,
+    `UPDATE "run_sessions" SET "acp_session_id" = $2 WHERE "run_id" = $1 AND "session_name" = 'default'`,
     [runId, session],
   );
 }

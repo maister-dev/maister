@@ -186,10 +186,7 @@ async function defaultCreateRunnerDraftRun(
     taskId: input.taskId,
     projectId: input.projectId,
     flowId: null,
-    runnerId: snapshot.id,
-    runnerResolutionTier: resolved.runnerResolutionTier,
-    capabilityAgent: snapshot.capabilityAgent,
-    runnerSnapshot: snapshot,
+    // M42 (ADR-114): runner identity lives on `run_sessions` (inserted below).
     status: "Pending",
     currentStepId: "consensus-draft",
     flowVersion: "agent",

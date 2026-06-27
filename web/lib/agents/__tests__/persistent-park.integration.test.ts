@@ -34,6 +34,7 @@ import {
 
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import * as schemaModule from "@/lib/db/schema";
+import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 
 const schema = schemaModule as unknown as Record<string, any>;
 
@@ -113,18 +114,34 @@ async function seedProject(): Promise<void> {
 }
 
 // A Running agent run (workspace=none so the clean Done-path has no worktree to
-// flip into Review) with a retained acp handle.
+// flip into Review) with a retained acp handle on its `default` run_session.
+//
+// M42 (ADR-114): the runner mirror + resume handle moved off `runs` to
+// `run_sessions`. A persistent park RETAINS the handle ('acp-keep-me'); the
+// non-persistent clean-Done path no longer nulls it on the run row (the column
+// is gone) — `finalizeAgentRun` leaves run_sessions untouched — so the
+// non-persistent run is seeded with a null handle to mirror the "no live
+// resume handle after a terminal Done" assertion.
 async function seedRunningAgent(persistent: boolean): Promise<string> {
   const runId = randomUUID();
 
   await pool.query(
     `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id",
        "status", "flow_version", "flow_revision", "agent_workspace",
-       "persistent", "addressable_key", "acp_session_id", "runner_snapshot", "runner_id")
+       "persistent", "addressable_key")
      VALUES ($1, 'agent', NULL, $2, 'Running', 'agent', 'manual', 'none',
-             $3, $4, 'acp-keep-me', '{"capabilityAgent":"claude"}'::jsonb, $5)`,
-    [runId, projectId, persistent, persistent ? "reviewer" : null, executorId],
+             $3, $4)`,
+    [runId, projectId, persistent, persistent ? "reviewer" : null],
   );
+  await (db as any).insert(schema.runSessions).values({
+    id: randomUUID(),
+    runId,
+    sessionName: "default",
+    runnerId: executorId,
+    capabilityAgent: "claude",
+    runnerSnapshot: { capabilityAgent: "claude" },
+    acpSessionId: persistent ? "acp-keep-me" : null,
+  });
 
   return runId;
 }
@@ -151,13 +168,17 @@ function cleanExit(sessionId: string): SupervisorEvent {
   };
 }
 
+// M42 (ADR-114): the run's resume handle lives on its ACTIVE `run_sessions` row
+// (sole source of truth) — surface it as `acpSessionId` so the assertions read
+// the same place production does (mirrors sendAgentMessage's lookup).
 async function getRun(runId: string): Promise<any> {
   const rows = await db
     .select()
     .from(schema.runs)
     .where(eq(schema.runs.id, runId));
+  const active = await loadActiveRunSession(db, runId);
 
-  return rows[0];
+  return { ...rows[0], acpSessionId: active?.acpSessionId ?? null };
 }
 
 describe("persistent park-vs-finalize (M37 Phase 8 T8.1)", () => {

@@ -120,11 +120,16 @@ async function seedGraphRun(
     taskId,
     projectId,
     flowId,
+    flowVersion: "v1.0.0",
+    status: "Running",
+  });
+  await db.insert(schema.runSessions).values({
+    id: randomUUID(),
+    runId,
+    sessionName: "default",
     runnerId: executorId,
     capabilityAgent: agent,
     runnerSnapshot: testRunnerSnapshot(executorId, agent),
-    flowVersion: "v1.0.0",
-    status: "Running",
   });
   await db.insert(schema.workspaces).values({
     id: randomUUID(),

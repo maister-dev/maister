@@ -81,7 +81,8 @@ async function seedReworkRun(): Promise<Seeded> {
   const attempt1Id = randomUUID();
   const attempt2Id = randomUUID();
 
-  await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
+  await db.insert(schema.projects).values({
+    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug,
     name: "Test",
@@ -101,7 +102,8 @@ async function seedReworkRun(): Promise<Seeded> {
     manifest: { schemaVersion: 1, name: "g", nodes: [] },
     schemaVersion: 1,
   });
-  await db.insert(schema.tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
+  await db.insert(schema.tasks).values({
+    number: Math.trunc(Math.random() * 1e9) + 1,
     id: taskId,
     projectId,
     title: "t",
@@ -115,12 +117,17 @@ async function seedReworkRun(): Promise<Seeded> {
     taskId,
     projectId,
     flowId,
-    runnerId: executorId,
-    capabilityAgent: "claude",
-    runnerSnapshot: testRunnerSnapshot(executorId),
     flowVersion: "v1.0.0",
     status: "Review",
     currentStepId: "review",
+  });
+  await db.insert(schema.runSessions).values({
+    id: randomUUID(),
+    runId,
+    sessionName: "default",
+    runnerId: executorId,
+    capabilityAgent: "claude",
+    runnerSnapshot: testRunnerSnapshot(executorId),
   });
   await db.insert(schema.workspaces).values({
     id: randomUUID(),

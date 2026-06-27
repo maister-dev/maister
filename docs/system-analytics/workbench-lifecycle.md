@@ -171,9 +171,13 @@ leave the claim retryable; non-transient failures finalize as `failed`.
   `deriveWorkbenchLifecycleActions(...) -> enabled action ids`.
 - The UI uses a shared `WorkbenchLifecycleActions` component across left rail,
   portfolio/project workspace rows, and run detail.
-- Stop resolves a live supervisor session by `runs.acp_session_id` via
-  `listSessions()` before calling `deleteSession(sessionId)`. Raw supervisor
-  handles are never serialized to the browser.
+- Stop resolves a run's live supervisor sessions by the server-owned `runId`
+  on each `listSessions()` record — NEVER by `run_sessions.acp_session_id`,
+  which is still null while a node is mid-prompt (the graph runner persists it
+  only after the dispatch returns) — before calling `deleteSession(sessionId)`.
+  Matching by the null column would miss the live process and park the run
+  terminal while the agent keeps mutating the worktree (split-brain). Raw
+  supervisor handles are never serialized to the browser.
 - Stop dispatches on `runs.run_kind` (allow-listed `flow | scratch | agent`,
   unknown → `PRECONDITION`): flow → `Review`, scratch → `Review` with a live
   worktree else `Abandoned`, agent → `Abandoned` via `finalizeAgentRun`. The

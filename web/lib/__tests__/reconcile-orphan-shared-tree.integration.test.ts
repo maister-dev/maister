@@ -92,14 +92,25 @@ beforeEach(async () => {
   );
 });
 
+// M42 (ADR-114): the runner mirror moved off `runs` to the run's `default`
+// `run_sessions` row.
+async function seedDefaultRunSession(runId: string): Promise<void> {
+  await pool.query(
+    `INSERT INTO "run_sessions" ("id", "run_id", "session_name", "runner_id", "capability_agent", "runner_snapshot")
+     VALUES ($1, $2, 'default', $3, 'claude', '{"capabilityAgent":"claude"}'::jsonb)`,
+    [randomUUID(), runId, executorId],
+  );
+}
+
 async function seedRoot(): Promise<string> {
   const id = randomUUID();
 
   await pool.query(
-    `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id", "status", "flow_version", "flow_revision", "root_run_id", "runner_id")
-     VALUES ($1, 'agent', 'test-pkg:worker', $2, 'WaitingOnChildren', 'agent', 'manual', $1, $3)`,
-    [id, projectId, executorId],
+    `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id", "status", "flow_version", "flow_revision", "root_run_id")
+     VALUES ($1, 'agent', 'test-pkg:worker', $2, 'WaitingOnChildren', 'agent', 'manual', $1)`,
+    [id, projectId],
   );
+  await seedDefaultRunSession(id);
 
   return id;
 }
@@ -116,18 +127,12 @@ async function seedSharedChild(args: {
   await pool.query(
     `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id", "status",
        "flow_version", "flow_revision", "parent_run_id", "root_run_id",
-       "agent_workspace", "workspace_mode", "runner_id", "started_at")
+       "agent_workspace", "workspace_mode", "started_at")
      VALUES ($1, 'agent', 'test-pkg:worker', $2, $3, 'agent', 'manual', $4, $4,
-             'worktree', 'shared', $5, $6)`,
-    [
-      id,
-      projectId,
-      args.status ?? "Review",
-      args.rootRunId,
-      executorId,
-      args.startedAt,
-    ],
+             'worktree', 'shared', $5)`,
+    [id, projectId, args.status ?? "Review", args.rootRunId, args.startedAt],
   );
+  await seedDefaultRunSession(id);
 
   return id;
 }

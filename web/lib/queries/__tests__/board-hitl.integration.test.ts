@@ -121,14 +121,19 @@ async function seedRun(
     taskId,
     projectId,
     flowId,
-    runnerId,
-    capabilityAgent: "claude",
-    runnerSnapshot: testRunnerSnapshot(runnerId),
     runKind: "flow",
     status,
     flowVersion: "v1.0.0",
-    acpSessionId,
     startedAt: new Date(),
+  });
+  await db.insert(schema.runSessions).values({
+    id: `rs-${id}`,
+    runId: id,
+    sessionName: "default",
+    runnerId,
+    capabilityAgent: "claude",
+    runnerSnapshot: testRunnerSnapshot(runnerId),
+    acpSessionId,
   });
 }
 

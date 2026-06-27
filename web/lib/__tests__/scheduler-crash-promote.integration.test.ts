@@ -66,7 +66,8 @@ beforeAll(async () => {
   projectId = randomUUID();
   executorId = randomUUID();
 
-  await db.insert(projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
+  await db.insert(projects).values({
+    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug: "sched-crash-app",
     name: "Sched Crash App",
@@ -122,7 +123,8 @@ async function seedRun(
   const taskId = randomUUID();
   const runId = randomUUID();
 
-  await db.insert(tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
+  await db.insert(tasks).values({
+    number: Math.trunc(Math.random() * 1e9) + 1,
     id: taskId,
     projectId,
     title: "t",
@@ -131,18 +133,28 @@ async function seedRun(
     status: "InFlight",
   });
 
+  // M42 (ADR-114): the runner mirror + acp_session_id moved off `runs` to the
+  // run's `default` `run_sessions` row; peel acpSessionId out of `fields`.
+  const { acpSessionId, ...runFields } = fields;
+
   await db.insert(runs).values({
     id: runId,
     taskId,
     projectId,
     flowId,
-    runnerId: executorId,
-    capabilityAgent: "claude",
-    runnerSnapshot: testRunnerSnapshot(executorId),
     status,
     flowVersion: "v1",
     startedAt: new Date(),
-    ...fields,
+    ...runFields,
+  });
+  await db.insert(schema.runSessions).values({
+    id: randomUUID(),
+    runId,
+    sessionName: "default",
+    runnerId: executorId,
+    capabilityAgent: "claude",
+    runnerSnapshot: testRunnerSnapshot(executorId),
+    acpSessionId: (acpSessionId ?? null) as string | null,
   });
 
   return runId;

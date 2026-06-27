@@ -74,7 +74,6 @@ function deps(
     authorize: vi.fn(async () => undefined),
     listSessions: vi.fn(async () => []),
     deleteSession: vi.fn(async () => undefined),
-    listRunSessionAcpIds: vi.fn(async () => []),
     markStoppedAndCloseAssignments: vi.fn(async () => undefined),
     promoteNextPending: vi.fn(async () => undefined),
     preserveWorktree: vi.fn(async () => ({

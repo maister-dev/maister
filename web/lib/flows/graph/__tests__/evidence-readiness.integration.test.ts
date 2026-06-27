@@ -65,7 +65,8 @@ async function seedGraphRun(manifest: unknown): Promise<Seeded> {
   const worktreePath = await mkdtemp(join(tmpdir(), "wt-"));
   const runtimeRoot = await mkdtemp(join(tmpdir(), "rt-"));
 
-  await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
+  await db.insert(schema.projects).values({
+    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug,
     name: "Test",
@@ -85,7 +86,8 @@ async function seedGraphRun(manifest: unknown): Promise<Seeded> {
     manifest,
     schemaVersion: 1,
   });
-  await db.insert(schema.tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
+  await db.insert(schema.tasks).values({
+    number: Math.trunc(Math.random() * 1e9) + 1,
     id: taskId,
     projectId,
     title: "t",
@@ -97,11 +99,16 @@ async function seedGraphRun(manifest: unknown): Promise<Seeded> {
     taskId,
     projectId,
     flowId,
+    flowVersion: "v1.0.0",
+    status: "Running",
+  });
+  await db.insert(schema.runSessions).values({
+    id: randomUUID(),
+    runId,
+    sessionName: "default",
     runnerId: executorId,
     capabilityAgent: "claude",
     runnerSnapshot: testRunnerSnapshot(executorId),
-    flowVersion: "v1.0.0",
-    status: "Running",
   });
   await db.insert(schema.workspaces).values({
     id: randomUUID(),

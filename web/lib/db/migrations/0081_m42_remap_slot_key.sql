@@ -1,3 +1,20 @@
+-- M42 (ADR-114): `flow_runner_remaps` is re-keyed from per-step
+-- (step_id, source_runner_id) to per-slot `slot_key` (`session:<name>` |
+-- `consensus:<nodeId>:<participantId>` | `consensus:<nodeId>:synthesizer`). The
+-- new key derives from each flow revision's COMPILED session/slot structure,
+-- which is NOT reconstructable in pure SQL from the old key — so existing rows
+-- cannot be deterministically migrated (multiple old step rows can collapse onto
+-- one session slot with conflicting runners). Abort loudly rather than silently
+-- discard a user's runner bindings. To proceed: export/record the existing
+-- bindings, clear the table, then re-run migrations; AFTER the upgrade
+-- completes, re-map runners per slot via the project Flow runner UI.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM "flow_runner_remaps") THEN
+    RAISE EXCEPTION 'M42 (ADR-114): flow_runner_remaps has rows that cannot be auto-remapped to the new slot_key. Export/record these bindings, clear the table, then re-run migrations; re-map runners per slot via the project Flow runner UI AFTER the upgrade completes.';
+  END IF;
+END $$;
+--> statement-breakpoint
 DROP TABLE IF EXISTS "flow_runner_remaps";
 --> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "flow_runner_remaps" (

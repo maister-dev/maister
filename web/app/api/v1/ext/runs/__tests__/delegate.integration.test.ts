@@ -324,10 +324,8 @@ async function seedOrchestratorRun(args: {
 
   await pool.query(
     `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id", "task_id",
-       "status", "flow_version", "flow_revision", "parent_run_id", "root_run_id",
-       "runner_snapshot", "runner_id")
-     VALUES ($1, 'agent', $2, $3, $4, 'Running', 'agent', 'manual', $5, $6,
-             '{"capabilityAgent":"claude"}'::jsonb, $7)`,
+       "status", "flow_version", "flow_revision", "parent_run_id", "root_run_id")
+     VALUES ($1, 'agent', $2, $3, $4, 'Running', 'agent', 'manual', $5, $6)`,
     [
       runId,
       args.orchestratorAgentId,
@@ -335,8 +333,13 @@ async function seedOrchestratorRun(args: {
       args.taskId ?? null,
       args.parentRunId ?? null,
       args.rootRunId ?? null,
-      executorId,
     ],
+  );
+
+  await pool.query(
+    `INSERT INTO "run_sessions" ("id", "run_id", "session_name", "runner_snapshot", "runner_id")
+     VALUES ($1, $2, 'default', '{"capabilityAgent":"claude"}'::jsonb, $3)`,
+    [randomUUID(), runId, executorId],
   );
 
   const { secret } = await issueOrchestratorRunToken({ projectId, runId, db });
@@ -486,9 +489,14 @@ describe("POST /api/v1/ext/runs/delegate", () => {
     const rootId = randomUUID();
 
     await pool.query(
-      `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id", "status", "flow_version", "flow_revision", "runner_id")
-       VALUES ($1, 'agent', $2, $3, 'Running', 'agent', 'manual', $4)`,
-      [rootId, orchestrator, projectId, executorId],
+      `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id", "status", "flow_version", "flow_revision")
+       VALUES ($1, 'agent', $2, $3, 'Running', 'agent', 'manual')`,
+      [rootId, orchestrator, projectId],
+    );
+    await pool.query(
+      `INSERT INTO "run_sessions" ("id", "run_id", "session_name", "runner_id")
+       VALUES ($1, $2, 'default', $3)`,
+      [randomUUID(), rootId, executorId],
     );
 
     const { runId: parentRunId, secret } = await seedOrchestratorRun({
@@ -511,8 +519,11 @@ describe("POST /api/v1/ext/runs/delegate", () => {
     const json = (await res.json()) as { childRunId: string };
 
     const childRunRows = await pool.query(
-      `SELECT "parent_run_id", "root_run_id", "delegation_snapshot", "runner_snapshot"
-       FROM "runs" WHERE "id" = $1`,
+      `SELECT r."parent_run_id", r."root_run_id", r."delegation_snapshot",
+              rs."runner_snapshot"
+       FROM "runs" r
+       LEFT JOIN "run_sessions" rs ON rs."run_id" = r."id"
+       WHERE r."id" = $1`,
       [json.childRunId],
     );
     const childRun = childRunRows.rows[0];
@@ -681,14 +692,24 @@ describe("POST /api/v1/ext/runs/delegate", () => {
     const r1 = randomUUID();
 
     await pool.query(
-      `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id", "status", "flow_version", "flow_revision", "runner_id")
-       VALUES ($1, 'agent', $2, $3, 'Running', 'agent', 'manual', $4)`,
-      [r0, orchestrator, projectId, executorId],
+      `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id", "status", "flow_version", "flow_revision")
+       VALUES ($1, 'agent', $2, $3, 'Running', 'agent', 'manual')`,
+      [r0, orchestrator, projectId],
     );
     await pool.query(
-      `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id", "status", "flow_version", "flow_revision", "parent_run_id", "root_run_id", "runner_id")
-       VALUES ($1, 'agent', $2, $3, 'Running', 'agent', 'manual', $4, $4, $5)`,
-      [r1, orchestrator, projectId, r0, executorId],
+      `INSERT INTO "run_sessions" ("id", "run_id", "session_name", "runner_id")
+       VALUES ($1, $2, 'default', $3)`,
+      [randomUUID(), r0, executorId],
+    );
+    await pool.query(
+      `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id", "status", "flow_version", "flow_revision", "parent_run_id", "root_run_id")
+       VALUES ($1, 'agent', $2, $3, 'Running', 'agent', 'manual', $4, $4)`,
+      [r1, orchestrator, projectId, r0],
+    );
+    await pool.query(
+      `INSERT INTO "run_sessions" ("id", "run_id", "session_name", "runner_id")
+       VALUES ($1, $2, 'default', $3)`,
+      [randomUUID(), r1, executorId],
     );
 
     // The bound orchestrator run is r2, child of r1 → parent chain depth = 2.
@@ -921,9 +942,14 @@ describe("POST /api/v1/ext/runs/collect + /cancel", () => {
     const strayId = randomUUID();
 
     await pool.query(
-      `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id", "status", "flow_version", "flow_revision", "runner_id")
-       VALUES ($1, 'agent', $2, $3, 'Running', 'agent', 'manual', $4)`,
-      [strayId, orchestrator, projectId, executorId],
+      `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id", "status", "flow_version", "flow_revision")
+       VALUES ($1, 'agent', $2, $3, 'Running', 'agent', 'manual')`,
+      [strayId, orchestrator, projectId],
+    );
+    await pool.query(
+      `INSERT INTO "run_sessions" ("id", "run_id", "session_name", "runner_id")
+       VALUES ($1, $2, 'default', $3)`,
+      [randomUUID(), strayId, executorId],
     );
 
     const req = new NextRequest("http://localhost/api/v1/ext/runs/collect", {
@@ -999,9 +1025,14 @@ describe("POST /api/v1/ext/runs/collect + /cancel", () => {
     const strayId = randomUUID();
 
     await pool.query(
-      `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id", "status", "flow_version", "flow_revision", "runner_id")
-       VALUES ($1, 'agent', $2, $3, 'Running', 'agent', 'manual', $4)`,
-      [strayId, orchestrator, projectId, executorId],
+      `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id", "status", "flow_version", "flow_revision")
+       VALUES ($1, 'agent', $2, $3, 'Running', 'agent', 'manual')`,
+      [strayId, orchestrator, projectId],
+    );
+    await pool.query(
+      `INSERT INTO "run_sessions" ("id", "run_id", "session_name", "runner_id")
+       VALUES ($1, $2, 'default', $3)`,
+      [randomUUID(), strayId, executorId],
     );
 
     const req = new NextRequest("http://localhost/api/v1/ext/runs/cancel", {

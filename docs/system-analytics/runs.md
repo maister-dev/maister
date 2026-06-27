@@ -32,7 +32,8 @@ domain projects state onto it.
 - **Assignment** — M13 ownership row for pending human-visible work. It points
   at a run for inbox/read-model purposes but does not add run statuses and does
   not participate in scheduler caps.
-- **ACP session id** — opaque resume handle (`runs.acp_session_id`).
+- **ACP session id** — opaque resume handle, per session on
+  `run_sessions.acp_session_id` (M42 — moved off `runs`).
   Lifecycle described in [`../decisions.md#adr-006-hybrid-hitl-keep-alive--checkpointresume`](../decisions.md#adr-006-hybrid-hitl-keep-alive--checkpointresume).
 - **Workspace** — git worktree under
   `.maister/<slug>/runs/<runId>/`. See [`workspaces.md`](workspaces.md).
@@ -173,9 +174,10 @@ machine:
    is no live ACP session) yet HOLDS a worktree, so it is **EXCLUDED from the
    startup recovery sweep classification** and never mis-flagged `Crashed`. The
    orphan→`Crashed` path is `runResumeRecoverySweep` in
-   `web/lib/runs/resume-recovery.ts` (there is no `reconcile.ts`), whose SELECT
-   filters `runs.status='NeedsInput' AND acpSessionId IS NOT NULL` — so
-   `HumanWorking` is excluded by construction.
+   `web/lib/runs/resume-recovery.ts`, whose SELECT filters
+   `runs.status='NeedsInput'` and then resolves the acp handle post-query via
+   `loadActiveRunSessionsByRunId` (`run_sessions`), skipping rows with no active
+   `acp_session_id` — so `HumanWorking` is excluded by construction.
 
 ### M19 reconcile-driven `Running → Crashed` + hybrid Recover (Designed)
 
@@ -662,12 +664,14 @@ already-inserted run) — never an orphan worktree or live ACP session.
   `Running`/`NeedsInput` — a claimed worktree holds a slot.
 - **(Implemented, M11b)** A `HumanWorking` run survives Next.js and
   supervisor restart WITHOUT being classified `Crashed`: it is session-less
-  by design and is excluded from the `runResumeRecoverySweep` SELECT
-  (`status='NeedsInput' AND acpSessionId IS NOT NULL`) by construction.
+  by design and is excluded from the `runResumeRecoverySweep` candidate set
+  (SELECT filters `status='NeedsInput'`, then the post-query
+  `run_sessions` acp-handle resolution drops it) by construction.
 - `NeedsInput` keep-alive window is `MAISTER_KEEPALIVE_MINUTES`
   (default 30 min); every web-activity event extends `keepalive_until`.
 - Idle past `keepalive_until` triggers graceful checkpoint → run becomes
-  `NeedsInputIdle` with `runs.acp_session_id` retained as the resume handle.
+  `NeedsInputIdle` with the active `run_sessions` row's `acp_session_id`
+  (via `loadActiveRunSession`) retained as the resume handle.
 - `NeedsInputIdle` resume respawns the adapter and restores context via the
   ACP `session/resume` call on `acp_session_id` (not a CLI flag) and incurs
   ~$0.28 cache-creation cost per respawn (operator-visible if surfaced).
@@ -686,8 +690,9 @@ already-inserted run) — never an orphan worktree or live ACP session.
   `Crashed → Running` (cap free) or `Crashed → Pending` (cap full, 202)
   BEFORE any `createSession`; it re-admits through the global cap and never
   over-spawns. See [`reconciliation-gc.md`](reconciliation-gc.md).
-- **(Designed)** Flow-run Recover is offered ONLY when
-  `runs.acp_session_id IS NOT NULL`; otherwise Discard is the sole
+- **(Designed)** Flow-run Recover is offered ONLY when the active
+  `run_sessions` row has `acp_session_id IS NOT NULL` (via
+  `loadActiveRunSession`); otherwise Discard is the sole
   option.
 - Every state transition is persisted to `runs` BEFORE the UI reflects
   it; UI never derives status from supervisor in-memory state.
@@ -869,9 +874,10 @@ runtime boot, BEFORE the keep-alive sweeper. The sweep catches HITL
 intents stranded across a web-process restart between the `/respond`
 202 (`state: "resume-in-progress"`) response and the in-process
 `queueMicrotask` driver attaching. The durable shape that flags a
-candidate is `runs.status='NeedsInput' AND acpSessionId IS NOT NULL`
-joined to the latest `hitl_requests` row where `response IS NOT NULL
-AND respondedAt IS NULL`.
+candidate is `runs.status='NeedsInput'` (joined to the latest
+`hitl_requests` row where `response IS NOT NULL AND respondedAt IS NULL`)
+whose ACTIVE `run_sessions` row carries a non-null `acp_session_id`
+(resolved post-query via `loadActiveRunSessionsByRunId`).
 
 | Supervisor state for the row's `acpSessionId` | Action |
 |------------------------------------------------|--------|

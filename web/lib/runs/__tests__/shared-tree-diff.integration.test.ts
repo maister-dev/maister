@@ -172,9 +172,14 @@ async function seedRoot(): Promise<string> {
 
   await pool.query(
     `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id",
-       "status", "flow_version", "flow_revision", "root_run_id", "runner_id")
-     VALUES ($1, 'agent', 'test-pkg:worker', $2, 'Running', 'agent', 'manual', $1, $3)`,
-    [runId, projectId, executorId],
+       "status", "flow_version", "flow_revision", "root_run_id")
+     VALUES ($1, 'agent', 'test-pkg:worker', $2, 'Running', 'agent', 'manual', $1)`,
+    [runId, projectId],
+  );
+  await pool.query(
+    `INSERT INTO "run_sessions" ("id", "run_id", "session_name", "runner_id")
+     VALUES ($1, $2, 'default', $3)`,
+    [randomUUID(), runId, executorId],
   );
 
   return runId;
@@ -192,10 +197,15 @@ async function seedSharedChild(args: {
   await pool.query(
     `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id",
        "status", "flow_version", "flow_revision", "parent_run_id", "root_run_id",
-       "launch_mode", "agent_workspace", "workspace_mode", "runner_snapshot", "runner_id")
+       "launch_mode", "agent_workspace", "workspace_mode")
      VALUES ($1, 'agent', 'test-pkg:worker', $2, 'Review', 'agent', 'manual', $3, $3,
-             'manual', 'worktree', 'shared', '{"capabilityAgent":"claude"}'::jsonb, $4)`,
-    [childRunId, projectId, args.rootRunId, executorId],
+             'manual', 'worktree', 'shared')`,
+    [childRunId, projectId, args.rootRunId],
+  );
+  await pool.query(
+    `INSERT INTO "run_sessions" ("id", "run_id", "session_name", "runner_snapshot", "runner_id")
+     VALUES ($1, $2, 'default', '{"capabilityAgent":"claude"}'::jsonb, $3)`,
+    [randomUUID(), childRunId, executorId],
   );
 
   if (args.withWorkspace && args.fx) {

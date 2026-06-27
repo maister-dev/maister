@@ -59,7 +59,9 @@ GC is the deferred removal that never destroys un-committed work.
   [`flow-packages.md`](flow-packages.md).
 - **Live session set** — supervisor `listSessions()` records keyed by
   `acp_session_id` with `status: 'live' | 'exited' | 'crashed'`. The
-  reconcile classifier joins this against `runs.acp_session_id`.
+  reconcile classifier (`reconcile.ts`) matches this against each run's ACTIVE
+  `run_sessions` `acp_session_id`, resolved via `loadActiveRunSessionsByRunId`
+  (M42 — no longer a `runs.acp_session_id` column join).
 - **Worktree set** — `listWorktrees(projectRepoPath)` paths, joined against
   `workspaces.worktree_path` (the "runs vs `git worktree list`" check).
 
@@ -355,7 +357,7 @@ to single-action nodes), `worktreeExists` (path ∈ `listWorktrees`),
 | status ∉ `{Running}` | any | **SKIP** | reconcile is **allow-list `Running`-only**; `NeedsInput`/`NeedsInputIdle`/`HumanWorking`/terminal owned by other sweeps |
 | `Running` | worktree MISSING | **CRASH** (`crashRunningRun`, reason `worktree-gone`) | the "runs vs `git worktree list`" check; cannot continue |
 | `Running` | worktree present, `liveSession` present | **RE-ATTACH** (`scheduleResumedSessionDrive`) or re-dispatch `runFlow` | live agent session with no attached runner (post web restart) — not crashed |
-| `Running` | worktree present, no `acpSessionId` match but a LIVE session exists for this `(runId, currentStepId)` | **SKIP** (reason `live-session-by-step`) | an agent node's prompt is in-flight — `acp_session_id` persists only AFTER it returns, so the run row's is still null; the node is genuinely running and must NOT be crashed (the bug this guards) or re-attached (double-drive) |
+| `Running` | worktree present, no `acpSessionId` match but a LIVE session exists for this `(runId, currentStepId)` | **SKIP** (reason `live-session-by-step`) | an agent node's prompt is in-flight — `acp_session_id` persists only AFTER it returns, so the active `run_sessions` row's is still null; the node is genuinely running and must NOT be crashed (the bug this guards) or re-attached (double-drive) |
 | `Running` | worktree present, no live session, current node is a **retry-safe gate eval** (`check`/`judge`/`guard`/`human`/`form`/null — read-only) in a **graph (`nodes[]`) flow** | **RE-DISPATCH** `runFlow` (CAS-guarded) | safe re-run of a read-only evaluation; avoids the FORBIDDEN false-positive crash on a gate executing between sessions |
 | `Running` | worktree present, no live session, current node is a gate/`human` orphan in a **linear (`steps[]`) flow** | **CRASH** (`crashRunningRun`, reason `linear-gate-orphan`) | a flat `steps[]` run cannot resume mid-flow via `runFlow` (bare re-entry restarts at step 0 and re-runs prior side-effects); crashing retains the node in `resume_target_step_id` so operator Recover resumes from it (ADR-056 window-(c)) |
 | `Running` | worktree present, no live session, current node is **`cli`** (arbitrary side effects, NOT retry-safe) | **CRASH** (`crashRunningRun`, reason `cli-not-retry-safe`) | CAS prevents concurrent runners, NOT re-run idempotency (Codex F4); a half-run `cli` may have partial file/network side effects — never silently re-run. Recoverable via explicit human Recover **only** when the node config declares `retry_safe: true` (accepted-risk re-dispatch); otherwise discard-only. |

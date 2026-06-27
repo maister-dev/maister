@@ -81,6 +81,36 @@ vi.mock("@/lib/db/client", () => ({
   getDb: () => fakeDb,
 }));
 
+// M42 (ADR-114): the recover route reads runner identity + resume handle from
+// the run's active run_sessions row; the fake DB models only `runs`, so derive
+// the session from the run fixture (which still carries the runner fields).
+vi.mock("@/lib/runs/active-run-session", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/runs/active-run-session")>()),
+  loadActiveRunSession: vi.fn(async (_db: unknown, runId: string) => {
+    const run = dbState.tables.runs.find((r) => r.id === runId);
+
+    return run
+      ? {
+          sessionName: "default",
+          acpSessionId: (run.acpSessionId ?? null) as string | null,
+          runnerSnapshot: (run.runnerSnapshot ?? null) as never,
+          capabilityAgent: (run.capabilityAgent ?? null) as string | null,
+          runnerId: (run.runnerId ?? null) as string | null,
+          runnerResolutionTier: (run.runnerResolutionTier ?? null) as
+            | string
+            | null,
+        }
+      : null;
+  }),
+  persistRunSessionAcpSessionId: vi.fn(
+    async (_db: unknown, runId: string, _name: string, acp: string) => {
+      const run = dbState.tables.runs.find((r) => r.id === runId);
+
+      if (run) run.acpSessionId = acp;
+    },
+  ),
+}));
+
 vi.mock("@/lib/authz", () => ({
   requireActiveSession: vi.fn(async () => ({
     id: "user-1",

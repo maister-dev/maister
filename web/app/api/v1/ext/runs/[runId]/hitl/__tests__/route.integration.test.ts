@@ -131,7 +131,8 @@ async function seedProject(slug: string) {
   const executorId = randomUUID();
   const revisionId = randomUUID();
 
-  await (db as any).insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
+  await (db as any).insert(schema.projects).values({
+    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug,
     name: `Project ${slug}`,
@@ -237,7 +238,8 @@ async function seedRun(
     .insert(schema.platformAcpRunners)
     .values(testPlatformRunnerRow(runnerId, "claude"));
 
-  await (db as any).insert(schema.tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
+  await (db as any).insert(schema.tasks).values({
+    number: Math.trunc(Math.random() * 1e9) + 1,
     id: taskId,
     projectId,
     title: "Test Task",
@@ -254,12 +256,18 @@ async function seedRun(
     projectId,
     taskId,
     flowId,
-    runnerId,
-    capabilityAgent: "claude",
-    runnerSnapshot: testRunnerSnapshot(runnerId),
     status,
     flowVersion: "v1.0.0",
     currentStepId: "step-1",
+  });
+
+  await (db as any).insert(schema.runSessions).values({
+    id: randomUUID(),
+    runId,
+    sessionName: "default",
+    runnerId,
+    capabilityAgent: "claude",
+    runnerSnapshot: testRunnerSnapshot(runnerId),
   });
 
   await (db as any).insert(schema.workspaces).values({
@@ -703,10 +711,14 @@ describe("POST /api/v1/ext/runs/[runId]/hitl/[hitlRequestId]/respond", () => {
     await (db as any)
       .update(schema.runs)
       .set({
-        acpSessionId: "existing-acp-session",
         checkpointAt: new Date(Date.now() - 60_000),
       })
       .where(eq(schema.runs.id, runId));
+
+    await (db as any)
+      .update(schema.runSessions)
+      .set({ acpSessionId: "existing-acp-session" })
+      .where(eq(schema.runSessions.runId, runId));
 
     const token = await issueToken(
       { projectId, name: "responder-token", createdByUserId: null },

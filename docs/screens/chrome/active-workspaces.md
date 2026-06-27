@@ -176,8 +176,8 @@ the row only when attention is required):
   label and the ticket-derived name (for scratch runs the task is reached via
   `scratch_runs.linked_task_id`), and `flows` (`flow_ref_id` + pinned version) →
   the flow chip name + tooltip (no link — see Navigation). Runner detail for the
-  tooltip comes from the existing `runs.runner_snapshot` (agent / model /
-  adapter / provider / sidecar) — no new column.
+  tooltip comes from the run's active `run_sessions.runner_snapshot` (agent /
+  model / adapter / provider / sidecar) — no new column.
 - **Rename** — `PATCH /api/scratch-runs/[runId]` writes `scratch_runs.name`
   (atomic, project-action gated, scratch runs only); the contract is unchanged.
   The redesign moves the editor out of the row into a `DialogShell` **modal**

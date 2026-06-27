@@ -40,6 +40,7 @@ import {
   testPlatformRunnerRow,
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
+import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 
 const schema = fullSchema as unknown as Record<string, any>;
 
@@ -227,11 +228,16 @@ async function seedOrchestratorRun(): Promise<{ runId: string }> {
     taskId,
     projectId,
     flowId,
+    flowVersion: "v1.0.0",
+    status: "Running",
+  });
+  await db.insert(schema.runSessions).values({
+    id: randomUUID(),
+    runId,
+    sessionName: "default",
     runnerId: executorId,
     capabilityAgent: "claude",
     runnerSnapshot: testRunnerSnapshot(executorId),
-    flowVersion: "v1.0.0",
-    status: "Running",
   });
   await db.insert(schema.workspaces).values({
     id: randomUUID(),
@@ -249,6 +255,7 @@ async function seedOrchestratorRun(): Promise<{ runId: string }> {
 // A child run under the orchestrator at the given status.
 async function seedChild(parentRunId: string, status: string): Promise<void> {
   const childTaskId = randomUUID();
+  const childRunId = randomUUID();
 
   await db.insert(schema.tasks).values({
     number: Number.parseInt(randomUUID().slice(0, 6), 16),
@@ -259,17 +266,22 @@ async function seedChild(parentRunId: string, status: string): Promise<void> {
     flowId,
   });
   await db.insert(schema.runs).values({
-    id: randomUUID(),
+    id: childRunId,
     taskId: childTaskId,
     projectId,
     flowId,
-    runnerId: executorId,
-    capabilityAgent: "claude",
-    runnerSnapshot: testRunnerSnapshot(executorId),
     flowVersion: "v1.0.0",
     status,
     parentRunId,
     rootRunId: parentRunId,
+  });
+  await db.insert(schema.runSessions).values({
+    id: randomUUID(),
+    runId: childRunId,
+    sessionName: "default",
+    runnerId: executorId,
+    capabilityAgent: "claude",
+    runnerSnapshot: testRunnerSnapshot(executorId),
   });
 }
 
@@ -296,7 +308,11 @@ describe("orchestrator park-vs-complete (M37 T5.1)", () => {
 
     expect(run.status).toBe("WaitingOnChildren");
     expect(run.currentStepId).toBe("coordinate");
-    expect(run.acpSessionId).toBe("acp-coordinator-1");
+    // M42 (ADR-114): the retained resume handle lives on the run's default
+    // run_sessions row, not a run-level mirror column.
+    const session = await loadActiveRunSession(db, runId);
+
+    expect(session?.acpSessionId).toBe("acp-coordinator-1");
 
     // The live session was checkpointed (SIGTERM) at park.
     expect(checkpointCalls).toEqual(["sup-coordinator-1"]);

@@ -335,7 +335,7 @@ sequenceDiagram
     S->>A: spawn claude-agent-acp with merged env (ANTHROPIC_BASE_URL/TOKEN injected for router=ccr)
     A-->>S: spawn event fires
     S-->>W: 201 { sessionId, pid, acpSessionId }
-    W->>DB: runs.acp_session_id = acpSessionId
+    W->>DB: run_sessions.acp_session_id = acpSessionId
 
     A->>LLM: Inference call
     LLM-->>A: Streamed response

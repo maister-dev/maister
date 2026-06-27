@@ -42,7 +42,7 @@ Expectations/Edge-cases carry that tag.
   [db/runs-domain.md](../db/runs-domain.md).
 - **`runs.delegation_snapshot`** (Implemented) — jsonb on the child run holding
   **only** the effective agent-definition id + pinned revision resolved at spawn;
-  the resolved runner stays in the existing `runs.runner_snapshot` (never
+  the resolved runner stays in the run's `run_sessions.runner_snapshot` (never
   duplicated). The terminal/enforcement path reads the snapshot, never a drifting
   live projection.
 - **`runs.launch_mode`** (Implemented) — `auto` | `manual`. `run_plan`-emitted child
@@ -255,7 +255,7 @@ flowchart TD
   enabled+trusted catalog (`resolveEffectiveAgentDefinition`); an unresolvable or
   untrusted target is refused `PRECONDITION` and creates NO child run.
 - A child run MUST snapshot its effective agent-definition id + pinned revision in
-  `runs.delegation_snapshot` and its resolved runner in `runs.runner_snapshot` at
+  `runs.delegation_snapshot` and its resolved runner in `run_sessions.runner_snapshot` at
   spawn; the terminal/enforcement path reads the snapshot, never a live projection.
 - A `requires` relation MUST release a dependent ONLY when the required task is
   `Done`; `Failed`/`Abandoned` MUST keep it blocked and wake the orchestrator.
@@ -268,7 +268,7 @@ flowchart TD
   MUST wake a parked parent via `orchestrator_resume` — `Failed`/`Crashed`/
   `Abandoned` unconditionally, a success-side settle (`run.done`/`run.review`)
   only once no non-settled (`SETTLED_RUN_STATUSES`) sibling remains — using ACP
-  `session/resume` on `runs.acp_session_id` after branching on `runs.run_kind`
+  `session/resume` on the active `run_sessions.acp_session_id` after branching on `runs.run_kind`
   and re-reading parent status under lock (skip if not `WaitingOnChildren`;
   concurrent resume converges to one).
 - A DELEGATED child reaching `Review` MUST emit `run.review` (a top-level Review

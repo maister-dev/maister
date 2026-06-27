@@ -1164,7 +1164,7 @@ components:
             ACP session id surfaced by `session/new` (or the SAME
             `resumeSessionId`, echoed back unchanged, on a `session/resume`).
             It is the M8 checkpoint/resume handle. Cached at
-            `runs.acp_session_id` by the web tier.
+            `run_sessions.acp_session_id` (per logical session) by the web tier.
     SendPromptRequest:
       type: object
       required: [stepId, prompt]

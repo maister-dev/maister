@@ -278,11 +278,16 @@ describe("portfolio queries (integration)", () => {
       taskId,
       projectId: project,
       flowId: flow,
+      status: "NeedsInput",
+      flowVersion: "v1.0.0",
+    });
+    await db.insert(schema.runSessions).values({
+      id: randomUUID(),
+      runId,
+      sessionName: "default",
       runnerId: executorId,
       capabilityAgent: "claude",
       runnerSnapshot: testRunnerSnapshot(executorId),
-      status: "NeedsInput",
-      flowVersion: "v1.0.0",
     });
     await db.insert(schema.workspaces).values({
       id: randomUUID(),
@@ -364,13 +369,18 @@ describe("portfolio queries (integration)", () => {
       taskId,
       projectId: project,
       flowId: flow,
-      runnerId: executorId,
-      capabilityAgent: "claude",
-      runnerSnapshot: testRunnerSnapshot(executorId),
       status: "HumanWorking",
       flowVersion: "v1.0.0",
       currentStepId: "review",
       startedAt: new Date(),
+    });
+    await db.insert(schema.runSessions).values({
+      id: randomUUID(),
+      runId,
+      sessionName: "default",
+      runnerId: executorId,
+      capabilityAgent: "claude",
+      runnerSnapshot: testRunnerSnapshot(executorId),
     });
     await db.insert(schema.workspaces).values({
       id: randomUUID(),
@@ -408,13 +418,18 @@ describe("portfolio queries (integration)", () => {
       id: runId,
       runKind: "scratch",
       projectId: project,
+      status: "Crashed",
+      flowVersion: "scratch",
+      flowRevision: "manual",
+    });
+    await db.insert(schema.runSessions).values({
+      id: randomUUID(),
+      runId,
+      sessionName: "default",
       runnerId: executorId,
       capabilityAgent: "claude",
       runnerSnapshot: testRunnerSnapshot(executorId),
-      status: "Crashed",
       acpSessionId: "acp-resume-1",
-      flowVersion: "scratch",
-      flowRevision: "manual",
     });
     await db.insert(schema.workspaces).values({
       id: randomUUID(),
@@ -505,14 +520,19 @@ describe("portfolio queries (integration)", () => {
       taskId,
       projectId: project,
       flowId: flow,
-      runnerId: executorId,
-      capabilityAgent: "claude",
-      runnerSnapshot: testRunnerSnapshot(executorId),
       status: opts.runStatus,
       flowVersion: "v1.0.0",
       currentStepId: "review",
       startedAt: new Date(),
       endedAt: opts.runStatus === "Review" ? undefined : new Date(),
+    });
+    await db.insert(schema.runSessions).values({
+      id: randomUUID(),
+      runId,
+      sessionName: "default",
+      runnerId: executorId,
+      capabilityAgent: "claude",
+      runnerSnapshot: testRunnerSnapshot(executorId),
     });
     await db.insert(schema.workspaces).values({
       id: randomUUID(),
@@ -671,13 +691,18 @@ describe("portfolio queries (integration)", () => {
       taskId,
       projectId: project,
       flowId: flow,
-      runnerId: executorId,
-      capabilityAgent: "claude",
-      runnerSnapshot: testRunnerSnapshot(executorId),
       status: "Review",
       flowVersion: "v1.0.0",
       currentStepId: "review",
       startedAt: new Date(),
+    });
+    await db.insert(schema.runSessions).values({
+      id: randomUUID(),
+      runId,
+      sessionName: "default",
+      runnerId: executorId,
+      capabilityAgent: "claude",
+      runnerSnapshot: testRunnerSnapshot(executorId),
     });
     await db.insert(schema.workspaces).values({
       id: randomUUID(),
@@ -773,13 +798,18 @@ describe("portfolio queries (integration)", () => {
       taskId,
       projectId: project,
       flowId: flow,
-      runnerId: executorId,
-      capabilityAgent: "claude",
-      runnerSnapshot: testRunnerSnapshot(executorId),
       status: "Review",
       flowVersion: "v1.0.0",
       currentStepId: "review",
       startedAt: new Date(),
+    });
+    await db.insert(schema.runSessions).values({
+      id: randomUUID(),
+      runId,
+      sessionName: "default",
+      runnerId: executorId,
+      capabilityAgent: "claude",
+      runnerSnapshot: testRunnerSnapshot(executorId),
     });
     await db.insert(schema.workspaces).values({
       id: randomUUID(),
@@ -873,12 +903,17 @@ describe("portfolio queries (integration)", () => {
         taskId: task,
         flowId: flow,
         runKind: "flow",
-        runnerId: executor,
-        capabilityAgent: "claude",
-        runnerSnapshot: testRunnerSnapshot(executor),
         status: opts.runStatus,
         flowVersion: "v1.0.0",
         startedAt: new Date(),
+      });
+      await db.insert(schema.runSessions).values({
+        id: randomUUID(),
+        runId,
+        sessionName: "default",
+        runnerId: executor,
+        capabilityAgent: "claude",
+        runnerSnapshot: testRunnerSnapshot(executor),
       });
 
       await db.insert(schema.workspaces).values({
@@ -1179,12 +1214,17 @@ describe("portfolio queries (integration)", () => {
         projectId: project,
         flowId: flow,
         runKind: "flow",
-        runnerId: executor,
-        capabilityAgent: "claude",
-        runnerSnapshot: testRunnerSnapshot(executor),
         status: "Running",
         flowVersion: "v1.0.0",
         startedAt: new Date(),
+      });
+      await db.insert(schema.runSessions).values({
+        id: randomUUID(),
+        runId,
+        sessionName: "default",
+        runnerId: executor,
+        capabilityAgent: "claude",
+        runnerSnapshot: testRunnerSnapshot(executor),
       });
       await db.insert(schema.workspaces).values({
         id: randomUUID(),
@@ -1236,12 +1276,17 @@ describe("portfolio queries (integration)", () => {
         projectId: project,
         flowId: flow,
         runKind: "flow",
-        runnerId: executor,
-        capabilityAgent: "claude",
-        runnerSnapshot: testRunnerSnapshot(executor),
         status: "Running",
         flowVersion: "v1.0.0",
         startedAt: new Date(),
+      });
+      await db.insert(schema.runSessions).values({
+        id: randomUUID(),
+        runId,
+        sessionName: "default",
+        runnerId: executor,
+        capabilityAgent: "claude",
+        runnerSnapshot: testRunnerSnapshot(executor),
       });
       await db.insert(schema.workspaces).values({
         id: randomUUID(),
@@ -1280,13 +1325,18 @@ describe("portfolio queries (integration)", () => {
         id: runId,
         runKind: "scratch",
         projectId: project,
-        runnerId: executor,
-        capabilityAgent: "claude",
-        runnerSnapshot: testRunnerSnapshot(executor),
         status: "Running",
         flowVersion: "scratch",
         flowRevision: "manual",
         startedAt: new Date(),
+      });
+      await db.insert(schema.runSessions).values({
+        id: randomUUID(),
+        runId,
+        sessionName: "default",
+        runnerId: executor,
+        capabilityAgent: "claude",
+        runnerSnapshot: testRunnerSnapshot(executor),
       });
       await db.insert(schema.workspaces).values({
         id: randomUUID(),
@@ -1345,12 +1395,17 @@ describe("portfolio queries (integration)", () => {
         id: runId,
         runKind: "agent",
         projectId: project,
-        runnerId: executor,
-        capabilityAgent: "claude",
-        runnerSnapshot: testRunnerSnapshot(executor),
         status: "Running",
         flowVersion: "agent",
         startedAt: new Date(),
+      });
+      await db.insert(schema.runSessions).values({
+        id: randomUUID(),
+        runId,
+        sessionName: "default",
+        runnerId: executor,
+        capabilityAgent: "claude",
+        runnerSnapshot: testRunnerSnapshot(executor),
       });
       await db.insert(schema.workspaces).values({
         id: randomUUID(),

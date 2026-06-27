@@ -205,7 +205,8 @@ async function seedProjectWithManifest(
   manifest: unknown,
   opts: { trustStatus?: string } = {},
 ): Promise<void> {
-  await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
+  await db.insert(schema.projects).values({
+    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id,
     slug,
     name: slug,
@@ -254,7 +255,8 @@ async function seedProjectWithManifest(
     userId: "u-member",
     role: "member",
   });
-  await db.insert(schema.tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
+  await db.insert(schema.tasks).values({
+    number: Math.trunc(Math.random() * 1e9) + 1,
     id: `task-${id}`,
     projectId: id,
     title: `${slug} task`,
@@ -365,8 +367,7 @@ beforeAll(async () => {
     id: "remap-proj-remap-mapped",
     projectId: "proj-remap-mapped",
     flowRevisionId: "rev-proj-remap-mapped",
-    stepId: "implement",
-    sourceRunnerId: "flow-claude",
+    slotKey: "session:implement",
     mappedRunnerId: "codex-ready",
     status: "Mapped",
   });
@@ -379,8 +380,7 @@ beforeAll(async () => {
     id: "remap-proj-remap-pending",
     projectId: "proj-remap-pending",
     flowRevisionId: "rev-proj-remap-pending",
-    stepId: "implement",
-    sourceRunnerId: "flow-claude",
+    slotKey: "session:implement",
     mappedRunnerId: null,
     status: "Pending",
   });
@@ -477,7 +477,7 @@ describe("POST /api/runs — settings-enforcement launch refusal (integration)",
     expect(task[0].status).toBe("InFlight");
   });
 
-  it("persists a mapped Flow step runner as stepTarget, not the platform default", async () => {
+  it("persists a mapped Flow step runner as a per-slot binding, not the platform default", async () => {
     const res = await POST(request("task-proj-remap-mapped"));
 
     expect(res.status).toBe(202);
@@ -489,10 +489,18 @@ describe("POST /api/runs — settings-enforcement launch refusal (integration)",
       .where(eq(schema.runs.taskId, "task-proj-remap-mapped"));
 
     expect(runRows).toHaveLength(1);
-    expect(runRows[0].runnerId).toBe("codex-ready");
-    expect(runRows[0].runnerResolutionTier).toBe("stepTarget");
-    expect(runRows[0].capabilityAgent).toBe("codex");
-    expect(runRows[0].runnerSnapshot).toMatchObject({
+
+    // M42 (ADR-114): runner identity lives on the run's default run_sessions row.
+    const sessionRows = await db
+      .select()
+      .from(schema.runSessions)
+      .where(eq(schema.runSessions.runId, runRows[0].id));
+
+    expect(sessionRows[0].runnerId).toBe("codex-ready");
+    // M42 (ADR-114): a Mapped per-slot remap resolves on the `binding` tier.
+    expect(sessionRows[0].runnerResolutionTier).toBe("binding");
+    expect(sessionRows[0].capabilityAgent).toBe("codex");
+    expect(sessionRows[0].runnerSnapshot).toMatchObject({
       id: "codex-ready",
       capabilityAgent: "codex",
     });
@@ -504,7 +512,9 @@ describe("POST /api/runs — settings-enforcement launch refusal (integration)",
 
     expect(res.status).toBe(400);
     expect(body.code).toBe("CONFIG");
-    expect(body.message).toContain("requires ACP runner remapping");
+    // M42 (ADR-114): a Pending per-slot remap is unresolved — the slot falls
+    // through to its (unbound) profile ref, refused before any side effect.
+    expect(body.message).toContain("unknown runner profile");
     expect(addWorktreeMock).not.toHaveBeenCalled();
 
     const runRows = await db
@@ -537,13 +547,19 @@ describe("POST /api/runs — settings-enforcement launch refusal (integration)",
       .where(eq(schema.runs.taskId, "task-proj-badexec"));
 
     expect(runs).toHaveLength(1);
+
+    const sessionRows = await db
+      .select()
+      .from(schema.runSessions)
+      .where(eq(schema.runSessions.runId, runs[0].id));
+
     // The retired settings.executors:["ghost"] ref is ignored — it is NOT a
     // step runner target, so resolution falls through the real chain. The seed
     // sets no launch override / step target / flow default, so the project
     // default runner (exec-proj-badexec, seeded by seedProjectWithManifest)
     // legitimately wins over the platform default per the §5 resolution order.
-    expect(runs[0].runnerId).toBe("exec-proj-badexec");
-    expect(runs[0].runnerResolutionTier).toBe("projectDefault");
+    expect(sessionRows[0].runnerId).toBe("exec-proj-badexec");
+    expect(sessionRows[0].runnerResolutionTier).toBe("projectDefault");
 
     const task = await db
       .select()

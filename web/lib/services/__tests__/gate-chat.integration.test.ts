@@ -258,12 +258,18 @@ async function seedChatPause(
     taskId,
     projectId,
     flowId,
-    runnerId: executorId,
-    capabilityAgent: "claude",
-    runnerSnapshot: testRunnerSnapshot(executorId),
     flowVersion: "v1.0.0",
     status: opts.runStatus ?? "NeedsInput",
     currentStepId: "review",
+  });
+  // M42 (ADR-114): runner identity + resume handle live on run_sessions.
+  await db.insert(schema.runSessions).values({
+    id: randomUUID(),
+    runId,
+    sessionName: "default",
+    runnerId: executorId,
+    capabilityAgent: "claude",
+    runnerSnapshot: testRunnerSnapshot(executorId),
     acpSessionId: opts.acpSessionId === undefined ? "acp-1" : opts.acpSessionId,
   });
   await db.insert(schema.workspaces).values({

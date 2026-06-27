@@ -44,6 +44,28 @@ vi.mock("@/lib/db/client", () => ({
   }),
 }));
 
+// M42 (ADR-114): the GET handler reads the resume handle from the run's active
+// run_sessions row; derive it from the single run fixture.
+vi.mock("@/lib/runs/active-run-session", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/runs/active-run-session")>()),
+  loadActiveRunSession: vi.fn(async () =>
+    dbRows.run
+      ? {
+          sessionName: "default",
+          acpSessionId: (dbRows.run.acpSessionId ?? null) as string | null,
+          runnerSnapshot: (dbRows.run.runnerSnapshot ?? null) as never,
+          capabilityAgent: (dbRows.run.capabilityAgent ?? null) as
+            | string
+            | null,
+          runnerId: (dbRows.run.runnerId ?? null) as string | null,
+          runnerResolutionTier: (dbRows.run.runnerResolutionTier ?? null) as
+            | string
+            | null,
+        }
+      : null,
+  ),
+}));
+
 const availabilitySpy = vi.fn();
 const listMessagesSpy = vi.fn();
 const sendTurnSpy = vi.fn();

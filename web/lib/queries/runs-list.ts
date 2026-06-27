@@ -229,6 +229,17 @@ function sourcePredicate(source: RunsListSource): SQL {
   return sql`r.trigger_source = ${source}`;
 }
 
+// M42 (ADR-114): the per-run runner mirror columns (capability_agent,
+// runner_snapshot, …) were dropped from `runs` — `run_sessions` is the SOLE
+// source of truth. This raw-SQL list reader projects them from the run's ACTIVE
+// session (live handle first, else newest), mirroring `activeRunSessionScalar`
+// in active-run-session.ts. It can't reuse that exported helper because this
+// query aliases `runs` as `r`; the inner alias `sess` also avoids the outer
+// `rs` (the run_schedules lateral). `field` is a literal column ref, never input.
+function activeRunSessionField(field: SQL): SQL {
+  return sql`(SELECT ${field} FROM run_sessions sess WHERE sess.run_id = r.id ORDER BY (sess.acp_session_id IS NOT NULL) DESC, sess.updated_at DESC LIMIT 1)`;
+}
+
 function buildRunPredicates(
   user: RunsListUser,
   filters: RunsListFilters,
@@ -242,7 +253,9 @@ function buildRunPredicates(
     predicates.push(sql`r.status = ${filters.status}`);
   }
   if (filters.agent) {
-    predicates.push(sql`r.capability_agent = ${filters.agent}`);
+    predicates.push(
+      sql`${activeRunSessionField(sql`sess.capability_agent`)} = ${filters.agent}`,
+    );
   }
   if (filters.source) {
     predicates.push(sourcePredicate(filters.source));
@@ -287,8 +300,8 @@ function runsListQuery(args: {
       r.trigger_source,
       r.started_at,
       r.ended_at,
-      r.capability_agent,
-      r.runner_snapshot,
+      ${activeRunSessionField(sql`sess.capability_agent`)} AS capability_agent,
+      ${activeRunSessionField(sql`sess.runner_snapshot`)} AS runner_snapshot,
       p.id AS project_id,
       p.slug AS project_slug,
       p.name AS project_name,

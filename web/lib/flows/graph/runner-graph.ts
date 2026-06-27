@@ -2524,8 +2524,8 @@ export async function runGraph(
 
       // M42 (ADR-114): persist this dispatch's acp_session_id onto the node's
       // run_sessions row — the per-session resume handle (sole source of truth).
-      // The run-level runs.acp_session_id mirror is still maintained by the
-      // branch sites below (expand phase) until the reader fan-out completes (#24).
+      // The run-level runs.acp_session_id mirror was dropped (migration 0082);
+      // every reader resolves the resume handle from run_sessions.
       if (result.acpSessionId) {
         await db
           .update(runSessions)

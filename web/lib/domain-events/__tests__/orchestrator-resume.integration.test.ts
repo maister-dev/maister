@@ -134,9 +134,14 @@ async function seedParkedOrchestrator(
   });
   await pool.query(
     `INSERT INTO "runs" ("id", "run_kind", "project_id", "task_id", "flow_id",
-       "status", "current_step_id", "acp_session_id", "flow_version", "flow_revision", "runner_id")
-     VALUES ($1, $2, $3, $4, $5, 'WaitingOnChildren', 'coordinate', 'acp-coord-1', 'v1.0.0', 'unknown', $6)`,
-    [runId, runKind, projectId, taskId, flowId, executorId],
+       "status", "current_step_id", "flow_version", "flow_revision")
+     VALUES ($1, $2, $3, $4, $5, 'WaitingOnChildren', 'coordinate', 'v1.0.0', 'unknown')`,
+    [runId, runKind, projectId, taskId, flowId],
+  );
+  await pool.query(
+    `INSERT INTO "run_sessions" ("id", "run_id", "session_name", "runner_id", "acp_session_id")
+     VALUES ($1, $2, 'default', $3, 'acp-coord-1')`,
+    [randomUUID(), runId, executorId],
   );
   await (db as any).insert(schema.nodeAttempts).values({
     id: nodeAttemptId,
@@ -170,8 +175,8 @@ async function seedChildTerminal(args: {
   });
   await pool.query(
     `INSERT INTO "runs" ("id", "run_kind", "project_id", "task_id", "flow_id",
-       "status", "flow_version", "flow_revision", "parent_run_id", "root_run_id", "runner_id")
-     VALUES ($1, 'agent', $2, $3, $4, $5, 'v1.0.0', 'unknown', $6, $6, $7)`,
+       "status", "flow_version", "flow_revision", "parent_run_id", "root_run_id")
+     VALUES ($1, 'agent', $2, $3, $4, $5, 'v1.0.0', 'unknown', $6, $6)`,
     [
       childRunId,
       projectId,
@@ -179,8 +184,12 @@ async function seedChildTerminal(args: {
       flowId,
       args.outcome,
       args.parentRunId,
-      executorId,
     ],
+  );
+  await pool.query(
+    `INSERT INTO "run_sessions" ("id", "run_id", "session_name", "runner_id")
+     VALUES ($1, $2, 'default', $3)`,
+    [randomUUID(), childRunId, executorId],
   );
 
   const kind =
@@ -228,9 +237,14 @@ async function seedPendingChild(parentRunId: string): Promise<void> {
   });
   await pool.query(
     `INSERT INTO "runs" ("id", "run_kind", "project_id", "task_id", "flow_id",
-       "status", "flow_version", "flow_revision", "parent_run_id", "root_run_id", "runner_id")
-     VALUES ($1, 'agent', $2, $3, $4, 'Running', 'v1.0.0', 'unknown', $5, $5, $6)`,
-    [r, projectId, t, flowId, parentRunId, executorId],
+       "status", "flow_version", "flow_revision", "parent_run_id", "root_run_id")
+     VALUES ($1, 'agent', $2, $3, $4, 'Running', 'v1.0.0', 'unknown', $5, $5)`,
+    [r, projectId, t, flowId, parentRunId],
+  );
+  await pool.query(
+    `INSERT INTO "run_sessions" ("id", "run_id", "session_name", "runner_id")
+     VALUES ($1, $2, 'default', $3)`,
+    [randomUUID(), r, executorId],
   );
 }
 

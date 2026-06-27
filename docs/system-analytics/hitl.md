@@ -363,8 +363,8 @@ question through **gate-chat**, persisted to `gate_chat_messages`. Chat NEVER
 resolves the HITL and NEVER flips the run to `Running`.
 
 **Availability (DD2)** — chat is enabled iff `runs.status ∈ {NeedsInput,
-NeedsInputIdle}` AND the open HITL `kind ∈ {human, form}` AND
-`runs.acp_session_id ≠ null`. Excluded by construction: `permission`-kind (the
+NeedsInputIdle}` AND the open HITL `kind ∈ {human, form}` AND the run's active
+`run_sessions.acp_session_id ≠ null`. Excluded by construction: `permission`-kind (the
 session is mid-prompt-turn — the in-flight `conn.prompt()` promise owns the
 session), `HumanWorking` (manual takeover owns the worktree, no live agent
 session), and the no-session case (explanatory empty state).
@@ -383,8 +383,8 @@ flowchart TD
 **Live vs idle (DD3).** `NeedsInput` (turn complete) → prompt the live session; the
 reply streams over the SSE bridge as a `session.chat_turn` event; status stays
 `NeedsInput`. `NeedsInputIdle` → **chat-resume**: `markResumed` claim
-(Idle→NeedsInput) BEFORE the respawn with ACP `session/resume` on
-`runs.acp_session_id`, then keepalive bump + prompt, then the sweeper re-idles —
+(Idle→NeedsInput) BEFORE the respawn with ACP `session/resume` on the active
+`run_sessions.acp_session_id`, then keepalive bump + prompt, then the sweeper re-idles —
 the same claim-before-spawn order as `resumeRun`, so a concurrent `/respond`
 resume or second chat turn loses the CAS with `CONFLICT` and never spawns a
 duplicate session; a failed spawn rolls the claim back to `NeedsInputIdle`.
@@ -705,8 +705,9 @@ fields:
   branch tip (`headCommit`) at each review-gate visit; it is the base for the
   `since-last-review` scope.
 - **(M30 — Implemented, ADR-078)** Gate-chat is available iff `runs.status ∈
-  {NeedsInput, NeedsInputIdle}` AND the open HITL `kind ∈ {human, form}` AND
-  `runs.acp_session_id ≠ null`; `permission`-kind and `HumanWorking` are excluded.
+  {NeedsInput, NeedsInputIdle}` AND the open HITL `kind ∈ {human, form}` AND the
+  run's active `run_sessions.acp_session_id ≠ null`; `permission`-kind and
+  `HumanWorking` are excluded.
 - **(M30 — Implemented, ADR-078)** A gate-chat turn NEVER resolves the HITL, NEVER
   writes `hitl_requests.responded_at`, and NEVER drives the run `→Running`; on
   `NeedsInputIdle` it may drive `Idle→NeedsInput` (chat-resume) and then re-idle.

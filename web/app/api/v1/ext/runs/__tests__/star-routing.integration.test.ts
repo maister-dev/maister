@@ -216,19 +216,25 @@ async function seedChildWithAgentToken(
 
   await pool.query(
     `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id",
-       "status", "flow_version", "flow_revision", "root_run_id",
-       "runner_snapshot", "runner_id")
-     VALUES ($1, 'agent', $2, $3, 'Running', 'agent', 'manual', $1,
-             '{"capabilityAgent":"claude"}'::jsonb, $4)`,
-    [rootRunId, agentId, projectId, executorId],
+       "status", "flow_version", "flow_revision", "root_run_id")
+     VALUES ($1, 'agent', $2, $3, 'Running', 'agent', 'manual', $1)`,
+    [rootRunId, agentId, projectId],
+  );
+  await pool.query(
+    `INSERT INTO "run_sessions" ("id", "run_id", "session_name", "runner_snapshot", "runner_id")
+     VALUES ($1, $2, 'default', '{"capabilityAgent":"claude"}'::jsonb, $3)`,
+    [randomUUID(), rootRunId, executorId],
   );
   await pool.query(
     `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id",
-       "status", "flow_version", "flow_revision", "parent_run_id", "root_run_id",
-       "runner_snapshot", "runner_id")
-     VALUES ($1, 'agent', $2, $3, 'Running', 'agent', 'manual', $4, $4,
-             '{"capabilityAgent":"claude"}'::jsonb, $5)`,
-    [runId, agentId, projectId, rootRunId, executorId],
+       "status", "flow_version", "flow_revision", "parent_run_id", "root_run_id")
+     VALUES ($1, 'agent', $2, $3, 'Running', 'agent', 'manual', $4, $4)`,
+    [runId, agentId, projectId, rootRunId],
+  );
+  await pool.query(
+    `INSERT INTO "run_sessions" ("id", "run_id", "session_name", "runner_snapshot", "runner_id")
+     VALUES ($1, $2, 'default', '{"capabilityAgent":"claude"}'::jsonb, $3)`,
+    [randomUUID(), runId, executorId],
   );
 
   const { secret } = await issueAgentRunToken({
@@ -248,11 +254,15 @@ async function seedOrchestratorRun(
 
   await pool.query(
     `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id",
-       "status", "flow_version", "flow_revision", "root_run_id",
-       "runner_snapshot", "runner_id")
-     VALUES ($1, 'agent', $2, $3, 'Running', 'agent', 'manual', $1,
-             '{"capabilityAgent":"claude"}'::jsonb, $4)`,
-    [runId, agentId, projectId, executorId],
+       "status", "flow_version", "flow_revision", "root_run_id")
+     VALUES ($1, 'agent', $2, $3, 'Running', 'agent', 'manual', $1)`,
+    [runId, agentId, projectId],
+  );
+
+  await pool.query(
+    `INSERT INTO "run_sessions" ("id", "run_id", "session_name", "runner_snapshot", "runner_id")
+     VALUES ($1, $2, 'default', '{"capabilityAgent":"claude"}'::jsonb, $3)`,
+    [randomUUID(), runId, executorId],
   );
 
   const { secret } = await issueOrchestratorRunToken({ projectId, runId, db });

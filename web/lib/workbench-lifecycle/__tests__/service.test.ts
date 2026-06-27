@@ -51,7 +51,6 @@ function deps(ctx: LifecycleContext): WorkbenchLifecycleDeps {
     authorize: vi.fn(async () => undefined),
     listSessions: vi.fn(async () => []),
     deleteSession: vi.fn(async () => undefined),
-    listRunSessionAcpIds: vi.fn(async () => []),
     markStoppedAndCloseAssignments: vi.fn(async () => undefined),
     promoteNextPending: vi.fn(async () => undefined),
     preserveWorktree: vi.fn(async () => ({
@@ -360,10 +359,9 @@ describe("workbench lifecycle service", () => {
     expect(d.loadContext).not.toHaveBeenCalled();
   });
 
-  it("stop resolves the live supervisor session by ACP id and parks the run in Review", async () => {
+  it("stop resolves the live supervisor session by runId and parks the run in Review", async () => {
     const d = deps(context({ run: { ...context().run, status: "Running" } }));
 
-    vi.mocked(d.listRunSessionAcpIds).mockResolvedValueOnce(["acp-1"]);
     vi.mocked(d.listSessions).mockResolvedValueOnce([
       {
         sessionId: "supervisor-1",
@@ -398,8 +396,7 @@ describe("workbench lifecycle service", () => {
     const d = deps(context({ run: { ...context().run, status: "Running" } }));
 
     // The run holds two logical sessions; an unrelated run's live session
-    // (acp-other) must NOT be closed.
-    vi.mocked(d.listRunSessionAcpIds).mockResolvedValueOnce(["acp-1", "acp-2"]);
+    // (run-9) must NOT be closed — the boundary is runId, not acp id.
     vi.mocked(d.listSessions).mockResolvedValueOnce([
       {
         sessionId: "supervisor-1",
@@ -448,6 +445,43 @@ describe("workbench lifecycle service", () => {
     // ...and the unrelated run's session is left alone.
     expect(d.deleteSession).not.toHaveBeenCalledWith("supervisor-other");
     expect(result).toMatchObject({ ok: true, supervisorStopped: true });
+  });
+
+  it("stop kills a mid-prompt live session matched by runId before parking the run (regression: split-brain)", async () => {
+    // Reproduces the in-flight-node window: the graph runner persists
+    // run_sessions.acp_session_id only AFTER executeNodeAction returns, so a node
+    // still mid-prompt has a live supervisor session whose acp id is NOT yet on
+    // any run_sessions row. Matching by acp id would miss it and park the run
+    // terminal while the agent keeps mutating the worktree. The supervisor record
+    // here carries the run's id (always server-owned) but no acpSessionId.
+    const d = deps(context({ run: { ...context().run, status: "Running" } }));
+
+    vi.mocked(d.listSessions).mockResolvedValueOnce([
+      {
+        sessionId: "supervisor-midprompt",
+        runId: "run-1",
+        projectSlug: "demo",
+        stepId: "implement",
+        status: "live",
+        pid: 77,
+        startedAt: "2026-06-09T08:00:00.000Z",
+        logPath: "/tmp/log",
+        monotonicId: 1,
+        // acpSessionId intentionally absent — run_sessions.acp_session_id is
+        // still NULL during the in-flight dispatch.
+      },
+    ]);
+
+    const result = await stopFlowWorkbench("run-1", { deps: d });
+
+    expect(d.deleteSession).toHaveBeenCalledWith("supervisor-midprompt");
+    expect(result).toMatchObject({ supervisorStopped: true });
+    // The live agent is torn down BEFORE the run is parked — no split-brain.
+    const killOrder = vi.mocked(d.deleteSession).mock.invocationCallOrder[0];
+    const parkOrder = vi.mocked(d.markStoppedAndCloseAssignments).mock
+      .invocationCallOrder[0];
+
+    expect(killOrder).toBeLessThan(parkOrder);
   });
 
   it("stop still succeeds when queue promotion fails after the run is parked", async () => {

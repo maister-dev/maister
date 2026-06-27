@@ -4,7 +4,6 @@ import {
   PostgreSqlContainer,
   type StartedPostgreSqlContainer,
 } from "@testcontainers/postgresql";
-import { eq } from "drizzle-orm";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { NextRequest } from "next/server";
@@ -148,6 +147,15 @@ async function seedPendingHitl(args: {
     projectId: args.projectId,
     taskId,
     flowId: args.flowId,
+    status: "NeedsInput",
+    flowVersion: "v1.0.0",
+    currentStepId: "review",
+  });
+
+  await (db as any).insert(schema.runSessions).values({
+    id: randomUUID(),
+    runId,
+    sessionName: "default",
     runnerId: args.runnerId,
     runnerSnapshot: {
       id: args.runnerId,
@@ -159,9 +167,6 @@ async function seedPendingHitl(args: {
       permissionPolicy: "default",
     },
     capabilityAgent: "claude",
-    status: "NeedsInput",
-    flowVersion: "v1.0.0",
-    currentStepId: "review",
   });
 
   await (db as any).insert(schema.workspaces).values({

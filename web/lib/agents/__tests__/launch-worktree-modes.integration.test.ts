@@ -257,10 +257,22 @@ async function insertRoot(): Promise<string> {
   const id = randomUUID();
 
   await pool.query(
-    `INSERT INTO "runs" ("id", "run_kind", "agent_id", "trigger_source", "project_id", "flow_version", "flow_revision", "status", "root_run_id", "runner_id")
-     VALUES ($1, 'agent', $2, 'manual', $3, 'agent', 'manual', 'WaitingOnChildren', $1, $4)`,
-    [id, "test-pkg:coordinator", projectId, executorId],
+    `INSERT INTO "runs" ("id", "run_kind", "agent_id", "trigger_source", "project_id", "flow_version", "flow_revision", "status", "root_run_id")
+     VALUES ($1, 'agent', $2, 'manual', $3, 'agent', 'manual', 'WaitingOnChildren', $1)`,
+    [id, "test-pkg:coordinator", projectId],
   );
+  // M42 (ADR-114): the runner mirror moved off `runs` to the run's `default`
+  // `run_sessions` row (launchAgentRun inserts its own for the children).
+  await (db as any)
+    .insert((await import("@/lib/db/schema")).runSessions)
+    .values({
+      id: randomUUID(),
+      runId: id,
+      sessionName: "default",
+      runnerId: executorId,
+      capabilityAgent: "claude",
+      runnerSnapshot: { capabilityAgent: "claude" },
+    });
 
   return id;
 }

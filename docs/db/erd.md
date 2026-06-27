@@ -47,7 +47,6 @@ erDiagram
     PLATFORM_ROUTER_SIDECARS ||--o{ PLATFORM_ACP_RUNNERS : "optional sidecar"
     PLATFORM_ACP_RUNNERS ||--|| PLATFORM_RUNTIME_SETTINGS : "default runner"
     PLATFORM_ACP_RUNNERS ||--o{ PROJECTS : "default override"
-    PLATFORM_ACP_RUNNERS ||--o{ RUNS : "launch runner"
     PLATFORM_ACP_RUNNERS ||--o{ PROJECT_FLOW_RUNNER_DEFAULTS : "flow binding"
     PROJECTS ||--o{ FLOWS : has
     FLOWS ||--o{ FLOW_REVISIONS : "revisions (M10)"

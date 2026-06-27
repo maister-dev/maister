@@ -176,13 +176,18 @@ describe("getCrossProjectHitlInbox (M17 P5, integration)", () => {
       projectId,
       taskId,
       flowId,
-      runnerId: executorId,
-      capabilityAgent: "claude",
-      runnerSnapshot: testRunnerSnapshot(executorId),
       runKind: "flow",
       status,
       flowVersion: "v1.0.0",
       startedAt: new Date(),
+    });
+    await db.insert(schema.runSessions).values({
+      id: randomUUID(),
+      runId: id,
+      sessionName: "default",
+      runnerId: executorId,
+      capabilityAgent: "claude",
+      runnerSnapshot: testRunnerSnapshot(executorId),
     });
 
     return id;
@@ -201,9 +206,6 @@ describe("getCrossProjectHitlInbox (M17 P5, integration)", () => {
       projectId,
       taskId: null,
       flowId: null,
-      runnerId: executorId,
-      capabilityAgent: "claude",
-      runnerSnapshot: testRunnerSnapshot(executorId),
       runKind: "scratch",
       status,
       currentStepId: "dialog",
@@ -211,6 +213,14 @@ describe("getCrossProjectHitlInbox (M17 P5, integration)", () => {
       flowRevision: "manual",
       createdByUserId: userId,
       startedAt: new Date(),
+    });
+    await db.insert(schema.runSessions).values({
+      id: randomUUID(),
+      runId: id,
+      sessionName: "default",
+      runnerId: executorId,
+      capabilityAgent: "claude",
+      runnerSnapshot: testRunnerSnapshot(executorId),
     });
     await db.insert(schema.scratchRuns).values({
       runId: id,

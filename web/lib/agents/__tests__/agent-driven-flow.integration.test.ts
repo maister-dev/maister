@@ -199,11 +199,18 @@ async function seedAgentDrivenFlowRun(
     flowId,
     flowRevisionId,
     agentId,
+    flowVersion: "v1.0.0",
+    status: "Running",
+  });
+  // M42 (ADR-114): the runner mirror moved off `runs` to the run's `default`
+  // `run_sessions` row — runFlow resolves the runner from there.
+  await db.insert(schema.runSessions).values({
+    id: randomUUID(),
+    runId,
+    sessionName: "default",
     runnerId: executorId,
     capabilityAgent: "claude",
     runnerSnapshot: testRunnerSnapshot(executorId),
-    flowVersion: "v1.0.0",
-    status: "Running",
   });
   await db.insert(schema.workspaces).values({
     id: randomUUID(),

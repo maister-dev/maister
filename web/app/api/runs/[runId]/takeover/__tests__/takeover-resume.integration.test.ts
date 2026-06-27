@@ -198,7 +198,8 @@ async function seedReadyForReturn(): Promise<Seed> {
     accountStatus: "active",
     passwordHash: "x",
   });
-  await db.insert(projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
+  await db.insert(projects).values({
+    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug,
     name: slug,
@@ -225,7 +226,8 @@ async function seedReadyForReturn(): Promise<Seed> {
     manifest: resumeManifest,
     schemaVersion: 1,
   });
-  await db.insert(tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
+  await db.insert(tasks).values({
+    number: Math.trunc(Math.random() * 1e9) + 1,
     id: taskId,
     projectId,
     title: "t",
@@ -238,13 +240,19 @@ async function seedReadyForReturn(): Promise<Seed> {
     taskId,
     projectId,
     flowId,
-    runnerId: executorId,
-    capabilityAgent: "claude",
-    runnerSnapshot: testRunnerSnapshot(executorId),
     status: "HumanWorking",
     currentStepId: TAKEOVER_NODE,
     flowVersion: "v1.0.0",
     startedAt: new Date(),
+  });
+
+  await db.insert(schema.runSessions).values({
+    id: randomUUID(),
+    runId,
+    sessionName: "default",
+    runnerId: executorId,
+    capabilityAgent: "claude",
+    runnerSnapshot: testRunnerSnapshot(executorId),
   });
   await db.insert(workspaces).values({
     id: randomUUID(),

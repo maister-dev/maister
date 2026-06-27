@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { test, expect } from "@playwright/test";
 
-import { withE2EDb } from "./_seed/db";
+import { seedDefaultRunSession, withE2EDb } from "./_seed/db";
 import { loadFixtures } from "./_seed/fixtures";
 
 type SeededMultiRunTask = {
@@ -30,16 +30,24 @@ async function seedMultiRunTask(): Promise<SeededMultiRunTask> {
     await pool.query(
       `
         INSERT INTO runs (
-          id, run_kind, task_id, project_id, flow_id, runner_id,
-          runner_resolution_tier, capability_agent, runner_snapshot,
+          id, run_kind, task_id, project_id, flow_id,
           status, flow_version, flow_revision, started_at, ended_at
         )
         VALUES
-          ($1, 'flow', $3, $4, $5, $6, 'project', 'claude', '{"model":"claude-sonnet-4-6"}', 'Failed', 'v1', 'rev-1', now() - interval '2 hours', now() - interval '90 minutes'),
-          ($2, 'flow', $3, $4, $5, $6, 'project', 'claude', '{"model":"claude-sonnet-4-6"}', 'Done', 'v1', 'rev-1', now() - interval '1 hour', now() - interval '10 minutes')
+          ($1, 'flow', $3, $4, $5, 'Failed', 'v1', 'rev-1', now() - interval '2 hours', now() - interval '90 minutes'),
+          ($2, 'flow', $3, $4, $5, 'Done', 'v1', 'rev-1', now() - interval '1 hour', now() - interval '10 minutes')
       `,
-      [firstRunId, secondRunId, taskId, fx.projectId, fx.flowId, fx.runnerId],
+      [firstRunId, secondRunId, taskId, fx.projectId, fx.flowId],
     );
+    for (const runId of [firstRunId, secondRunId]) {
+      await seedDefaultRunSession(pool, {
+        runId,
+        runnerId: fx.runnerId,
+        runnerResolutionTier: "project",
+        capabilityAgent: "claude",
+        runnerSnapshot: { model: "claude-sonnet-4-6" },
+      });
+    }
   });
 
   return { title, number };

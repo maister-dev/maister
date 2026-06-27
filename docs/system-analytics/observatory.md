@@ -74,7 +74,7 @@ project, Flow, and node. It does not read raw prompts, raw adapter lines, env
 values, or secret-bearing payloads. Its source inputs are:
 
 - `runs.started_at`, `runs.ended_at`, `runs.flow_id`, `runs.flow_revision_id`,
-  `runs.runner_snapshot`, and the run-level cost rollup;
+  `run_sessions.runner_snapshot` (active session), and the run-level cost rollup;
 - `node_attempts.started_at`, `node_attempts.ended_at`, and node-attempt cost
   rollups;
 - enriched `cost.jsonl` records as the reconciliation source of truth.

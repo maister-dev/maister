@@ -9,6 +9,7 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { extractOptions } from "@/lib/queries/hitl";
+import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import { assertLocalPackageAssistantActor } from "@/lib/scratch-runs/service";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -112,11 +113,24 @@ function errorResponse(err: unknown): NextResponse {
 
 async function loadScratchRun(db: Db, runId: string) {
   const runRows = await db.select().from(runs).where(eq(runs.id, runId));
-  const run = runRows[0];
+  const baseRun = runRows[0];
 
-  if (!run) {
+  if (!baseRun) {
     throw new MaisterError("PRECONDITION", `run not found: ${runId}`);
   }
+
+  // M42 (ADR-114): runner identity + resume handle come from the run's ACTIVE
+  // session (run_sessions), not the dropped runs columns.
+  const activeSession = await loadActiveRunSession(db, runId);
+  const run = {
+    ...baseRun,
+    runnerId: activeSession?.runnerId ?? null,
+    runnerResolutionTier: activeSession?.runnerResolutionTier ?? null,
+    capabilityAgent: activeSession?.capabilityAgent ?? null,
+    runnerSnapshot: activeSession?.runnerSnapshot ?? null,
+    acpSessionId: activeSession?.acpSessionId ?? null,
+  };
+
   if (run.runKind !== "scratch") {
     throw new MaisterError("PRECONDITION", `run is not scratch: ${runId}`);
   }

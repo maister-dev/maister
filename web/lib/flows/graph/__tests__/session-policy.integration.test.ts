@@ -221,11 +221,16 @@ async function seedRun(manifest: Record<string, unknown>): Promise<{
     taskId,
     projectId,
     flowId,
+    flowVersion: "v1.0.0",
+    status: "Running",
+  });
+  await db.insert(schema.runSessions).values({
+    id: randomUUID(),
+    runId,
+    sessionName: "default",
     runnerId: executorId,
     capabilityAgent: "claude",
     runnerSnapshot: testRunnerSnapshot(executorId),
-    flowVersion: "v1.0.0",
-    status: "Running",
   });
   await db.insert(schema.workspaces).values({
     id: randomUUID(),
@@ -260,6 +265,21 @@ async function seedRun(manifest: Record<string, unknown>): Promise<{
     },
     manifest,
     runner: testRunnerSnapshot(executorId),
+    // M42 (ADR-114): the engine reads per-session runner state from this map
+    // (built from run_sessions by loadRun); a single-session flow run has one
+    // `default` entry.
+    sessions: new Map([
+      [
+        "default",
+        {
+          sessionName: "default",
+          runner: testRunnerSnapshot(executorId),
+          acpSessionId: null,
+          capabilityAgent: "claude",
+          runnerResolutionTier: null,
+        },
+      ],
+    ]),
     workspace: {
       id: "ws",
       runId,

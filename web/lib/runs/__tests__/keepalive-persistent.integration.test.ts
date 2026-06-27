@@ -93,11 +93,15 @@ async function seedIdleAgent(persistent: boolean): Promise<string> {
   await pool.query(
     `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id",
        "status", "flow_version", "flow_revision", "agent_workspace",
-       "persistent", "addressable_key", "checkpoint_at", "runner_snapshot", "runner_id")
+       "persistent", "addressable_key", "checkpoint_at")
      VALUES ($1, 'agent', NULL, $2, 'NeedsInputIdle', 'agent', 'manual', 'none',
-             $3, $4, now() - interval '48 hours',
-             '{"capabilityAgent":"claude"}'::jsonb, $5)`,
-    [runId, projectId, persistent, persistent ? "reviewer" : null, executorId],
+             $3, $4, now() - interval '48 hours')`,
+    [runId, projectId, persistent, persistent ? "reviewer" : null],
+  );
+  await pool.query(
+    `INSERT INTO "run_sessions" ("id", "run_id", "session_name", "runner_id", "runner_snapshot")
+     VALUES ($1, $2, 'default', $3, '{"capabilityAgent":"claude"}'::jsonb)`,
+    [randomUUID(), runId, executorId],
   );
 
   return runId;

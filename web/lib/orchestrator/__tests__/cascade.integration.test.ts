@@ -148,9 +148,14 @@ async function seedOrchestrator(taskId: string): Promise<string> {
 
   await pool.query(
     `INSERT INTO "runs" ("id", "run_kind", "project_id", "task_id", "flow_id",
-       "status", "current_step_id", "acp_session_id", "flow_version", "flow_revision", "runner_id", "root_run_id")
-     VALUES ($1, 'flow', $2, $3, $4, 'WaitingOnChildren', 'coordinate', 'acp-coord-1', 'v1.0.0', 'unknown', $5, $1)`,
-    [runId, projectId, taskId, flowId, executorId],
+       "status", "current_step_id", "flow_version", "flow_revision", "root_run_id")
+     VALUES ($1, 'flow', $2, $3, $4, 'WaitingOnChildren', 'coordinate', 'v1.0.0', 'unknown', $1)`,
+    [runId, projectId, taskId, flowId],
+  );
+  await pool.query(
+    `INSERT INTO "run_sessions" ("id", "run_id", "session_name", "runner_id", "acp_session_id")
+     VALUES ($1, $2, 'default', $3, 'acp-coord-1')`,
+    [randomUUID(), runId, executorId],
   );
 
   return runId;
@@ -170,8 +175,8 @@ async function seedChild(args: {
 
   await pool.query(
     `INSERT INTO "runs" ("id", "run_kind", "project_id", "task_id", "flow_id",
-       "status", "flow_version", "flow_revision", "parent_run_id", "root_run_id", "runner_id", "started_at")
-     VALUES ($1, $10, $2, $3, $4, $5, 'v1.0.0', 'unknown', $6, $7, $8, $9)`,
+       "status", "flow_version", "flow_revision", "parent_run_id", "root_run_id", "started_at")
+     VALUES ($1, $9, $2, $3, $4, $5, 'v1.0.0', 'unknown', $6, $7, $8)`,
     [
       runId,
       projectId,
@@ -180,10 +185,14 @@ async function seedChild(args: {
       args.status,
       args.parentRunId,
       args.rootRunId,
-      executorId,
       args.startedAt ?? new Date(),
       args.runKind ?? "agent",
     ],
+  );
+  await pool.query(
+    `INSERT INTO "run_sessions" ("id", "run_id", "session_name", "runner_id")
+     VALUES ($1, $2, 'default', $3)`,
+    [randomUUID(), runId, executorId],
   );
 
   if (args.withWorkspace) {
@@ -212,9 +221,14 @@ async function seedStandalonePendingAgent(startedAt: Date): Promise<string> {
 
   await pool.query(
     `INSERT INTO "runs" ("id", "run_kind", "project_id", "task_id", "flow_id",
-       "status", "flow_version", "flow_revision", "runner_id", "started_at")
-     VALUES ($1, 'agent', $2, $3, $4, 'Pending', 'v1.0.0', 'unknown', $5, $6)`,
-    [runId, projectId, taskId, flowId, executorId, startedAt],
+       "status", "flow_version", "flow_revision", "started_at")
+     VALUES ($1, 'agent', $2, $3, $4, 'Pending', 'v1.0.0', 'unknown', $5)`,
+    [runId, projectId, taskId, flowId, startedAt],
+  );
+  await pool.query(
+    `INSERT INTO "run_sessions" ("id", "run_id", "session_name", "runner_id")
+     VALUES ($1, $2, 'default', $3)`,
+    [randomUUID(), runId, executorId],
   );
 
   return runId;

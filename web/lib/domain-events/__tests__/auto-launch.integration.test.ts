@@ -219,9 +219,14 @@ async function seedOrchestrator(): Promise<{
 
   await pool.query(
     `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id", "task_id",
-       "status", "flow_version", "flow_revision", "runner_id")
-     VALUES ($1, 'agent', $2, $3, $4, 'Running', 'agent', 'manual', $5)`,
-    [parentRunId, orchestratorAgentId, projectId, orchTaskId, executorId],
+       "status", "flow_version", "flow_revision")
+     VALUES ($1, 'agent', $2, $3, $4, 'Running', 'agent', 'manual')`,
+    [parentRunId, orchestratorAgentId, projectId, orchTaskId],
+  );
+  await pool.query(
+    `INSERT INTO "run_sessions" ("id", "run_id", "session_name", "runner_id")
+     VALUES ($1, $2, 'default', $3)`,
+    [randomUUID(), parentRunId, executorId],
   );
 
   return { parentRunId, orchTaskId };
@@ -303,8 +308,8 @@ async function emitChildTerminal(args: {
     childRunId = randomUUID();
     await pool.query(
       `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id", "task_id",
-         "status", "flow_version", "flow_revision", "parent_run_id", "root_run_id", "runner_id", "launch_mode")
-       VALUES ($1, 'agent', $2, $3, $4, $5, 'agent', 'manual', $6, $6, $7, 'auto')`,
+         "status", "flow_version", "flow_revision", "parent_run_id", "root_run_id", "launch_mode")
+       VALUES ($1, 'agent', $2, $3, $4, $5, 'agent', 'manual', $6, $6, 'auto')`,
       [
         childRunId,
         workerAgentId,
@@ -312,8 +317,12 @@ async function emitChildTerminal(args: {
         args.childTaskId,
         runStatus,
         args.parentRunId,
-        executorId,
       ],
+    );
+    await pool.query(
+      `INSERT INTO "run_sessions" ("id", "run_id", "session_name", "runner_id")
+       VALUES ($1, $2, 'default', $3)`,
+      [randomUUID(), childRunId, executorId],
     );
   }
   await pool.query(`UPDATE "tasks" SET "status" = $1 WHERE "id" = $2`, [
@@ -368,17 +377,21 @@ async function emitChildReview(args: {
 
   await pool.query(
     `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id", "task_id",
-       "status", "flow_version", "flow_revision", "parent_run_id", "root_run_id", "runner_id", "launch_mode")
-     VALUES ($1, 'agent', $2, $3, $4, 'Review', 'agent', 'manual', $5, $5, $6, $7)`,
+       "status", "flow_version", "flow_revision", "parent_run_id", "root_run_id", "launch_mode")
+     VALUES ($1, 'agent', $2, $3, $4, 'Review', 'agent', 'manual', $5, $5, $6)`,
     [
       childRunId,
       workerAgentId,
       projectId,
       args.childTaskId,
       args.parentRunId,
-      executorId,
       args.launchMode,
     ],
+  );
+  await pool.query(
+    `INSERT INTO "run_sessions" ("id", "run_id", "session_name", "runner_id")
+     VALUES ($1, $2, 'default', $3)`,
+    [randomUUID(), childRunId, executorId],
   );
 
   await emitDomainEvent({
@@ -584,9 +597,14 @@ describe("auto_launch_run_plan consumer", () => {
 
     await pool.query(
       `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id", "task_id",
-         "status", "flow_version", "flow_revision", "runner_id")
-       VALUES ($1, 'agent', $2, $3, $4, 'Done', 'agent', 'manual', $5)`,
-      [topRunId, workerAgentId, projectId, taskA, executorId],
+         "status", "flow_version", "flow_revision")
+       VALUES ($1, 'agent', $2, $3, $4, 'Done', 'agent', 'manual')`,
+      [topRunId, workerAgentId, projectId, taskA],
+    );
+    await pool.query(
+      `INSERT INTO "run_sessions" ("id", "run_id", "session_name", "runner_id")
+       VALUES ($1, $2, 'default', $3)`,
+      [randomUUID(), topRunId, executorId],
     );
     await emitDomainEvent({
       db,

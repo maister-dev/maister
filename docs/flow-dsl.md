@@ -1455,7 +1455,7 @@ The supervisor speaks ACP via `@agentclientprotocol/sdk@0.22.1`'s
 mode).
 
 - `initialize` is called once at connection time.
-- `newSession` produces the `acpSessionId` (persisted on `runs.acp_session_id`).
+- `newSession` produces the `acpSessionId` (persisted on `run_sessions.acp_session_id`).
 - `prompt` is the per-turn driver; its `PromptResponse.stopReason` IS
   the end-of-turn detector — no marker hunting, no idle-timeout
   fallback.

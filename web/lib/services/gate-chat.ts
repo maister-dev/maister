@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import { and, desc, eq, isNotNull, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { runnerSupervisorInput } from "@/lib/acp-runners/spawn-intent";
@@ -18,6 +18,7 @@ import {
   captureCheckpoint,
   checkpointRefName,
 } from "@/lib/flows/graph/workspace-checkpoint";
+import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import {
   bumpKeepalive,
   markResumed,
@@ -32,35 +33,8 @@ import {
 } from "@/lib/supervisor-client";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const {
-  gateChatMessages,
-  hitlRequests,
-  projects,
-  runs,
-  runSessions,
-  workspaces,
-} = schemaModule as unknown as Record<string, any>;
-
-// M42 (ADR-114): a gate-chat turn is delivered to the run's ACTIVE logical
-// session — the one whose ACP process is paused at the gate. That is the
-// most-recently-updated `run_sessions` row with a live `acp_session_id`. Falls
-// back to the run-level handle for a legacy run with no `run_sessions` rows.
-async function activeRunSessionAcpId(
-  db: Db,
-  runId: string,
-  fallback: string | null,
-): Promise<string | null> {
-  const rows = await db
-    .select({ acpSessionId: runSessions.acpSessionId })
-    .from(runSessions)
-    .where(
-      and(eq(runSessions.runId, runId), isNotNull(runSessions.acpSessionId)),
-    )
-    .orderBy(desc(runSessions.updatedAt))
-    .limit(1);
-
-  return (rows[0]?.acpSessionId as string | null | undefined) ?? fallback;
-}
+const { gateChatMessages, hitlRequests, projects, runs, workspaces } =
+  schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
@@ -354,22 +328,24 @@ export async function sendGateChatTurn(args: {
       .where(eq(hitlRequests.id, args.hitlRequestId)),
     d.select().from(workspaces).where(eq(workspaces.runId, args.runId)),
   ]);
-  const run = runRows[0];
+  const baseRun = runRows[0];
   const hitl = hitlRows[0];
   const workspace = workspaceRows[0];
 
-  if (!run) {
+  if (!baseRun) {
     throw new MaisterError("PRECONDITION", `run not found: ${args.runId}`);
   }
 
-  // M42 (ADR-114): target the active session's ACP process, not the run-level
-  // (primary) handle, so a multi-session run delivers the turn to the paused
-  // session.
-  const activeAcpSessionId = await activeRunSessionAcpId(
-    d,
-    args.runId,
-    run.acpSessionId,
-  );
+  // M42 (ADR-114): the resume handle + runner snapshot come from the run's
+  // ACTIVE session (run_sessions), not the dropped runs columns. A multi-session
+  // run delivers the turn to the active (paused) session.
+  const activeSession = await loadActiveRunSession(d, args.runId);
+  const run = {
+    ...baseRun,
+    acpSessionId: activeSession?.acpSessionId ?? null,
+    runnerSnapshot: activeSession?.runnerSnapshot ?? null,
+  };
+  const activeAcpSessionId = run.acpSessionId;
 
   // X-IDENT: both ids are url-params; the hitl row must belong to the run.
   if (!hitl || hitl.runId !== args.runId) {

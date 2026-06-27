@@ -115,8 +115,8 @@ describe("workbench stop — agent runs", () => {
       [taskId, projectId],
     );
     await pool.query(
-      `INSERT INTO "runs" ("id", "run_kind", "agent_id", "agent_workspace", "trigger_source", "task_id", "project_id", "flow_version", "flow_revision", "status", "acp_session_id")
-       VALUES ($1, 'agent', 'stop-agent', 'worktree', 'manual', $2, $3, 'agent', 'manual', 'Running', NULL)`,
+      `INSERT INTO "runs" ("id", "run_kind", "agent_id", "agent_workspace", "trigger_source", "task_id", "project_id", "flow_version", "flow_revision", "status")
+       VALUES ($1, 'agent', 'stop-agent', 'worktree', 'manual', $2, $3, 'agent', 'manual', 'Running')`,
       [runId, taskId, projectId],
     );
 
@@ -129,12 +129,11 @@ describe("workbench stop — agent runs", () => {
     });
 
     const { rows } = await pool.query(
-      `SELECT "status", "acp_session_id" FROM "runs" WHERE "id" = $1`,
+      `SELECT "status" FROM "runs" WHERE "id" = $1`,
       [runId],
     );
 
     expect(rows[0].status).toBe("Abandoned");
-    expect(rows[0].acp_session_id).toBeNull();
   });
 
   it("refuses to stop an already-terminal agent run", async () => {
@@ -260,7 +259,7 @@ describe("workbench stop — scratch runs", () => {
     const loadContext = vi.fn(
       async (rid: string): Promise<LifecycleContext> => {
         const runRows = await pool.query(
-          `SELECT "id","project_id","task_id","run_kind","status","acp_session_id","current_step_id" FROM "runs" WHERE "id" = $1`,
+          `SELECT "id","project_id","task_id","run_kind","status","current_step_id" FROM "runs" WHERE "id" = $1`,
           [rid],
         );
         const run = runRows.rows[0];
@@ -309,7 +308,6 @@ describe("workbench stop — scratch runs", () => {
       authorize: vi.fn(async () => undefined),
       listSessions: vi.fn(async () => []),
       deleteSession: vi.fn(async () => undefined),
-      listRunSessionAcpIds: vi.fn(async () => []),
       markStoppedAndCloseAssignments: vi.fn(async () => undefined),
       promoteNextPending: vi.fn(async () => undefined),
       preserveWorktree: vi.fn(async () => ({
@@ -423,8 +421,8 @@ describe("workbench stop — orchestrator cascade (M37 T7.4)", () => {
     // NULL so no supervisor call is attempted.
     await pool.query(
       `INSERT INTO "runs" ("id", "run_kind", "project_id", "task_id", "flow_id",
-         "status", "current_step_id", "acp_session_id", "flow_version", "flow_revision", "root_run_id")
-       VALUES ($1, 'flow', $2, $3, $4, 'Running', 'coordinate', NULL, 'v1.0.0', 'unknown', $1)`,
+         "status", "current_step_id", "flow_version", "flow_revision", "root_run_id")
+       VALUES ($1, 'flow', $2, $3, $4, 'Running', 'coordinate', 'v1.0.0', 'unknown', $1)`,
       [orchestratorRunId, projectId, orchTaskId, flowId],
     );
 

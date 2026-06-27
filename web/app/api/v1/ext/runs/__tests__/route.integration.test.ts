@@ -356,13 +356,13 @@ describe("POST /api/v1/ext/runs", () => {
     expect(res.status).toBe(202);
 
     const body = await res.json();
-    const runRows = await (db as any)
+    const sessionRows = await (db as any)
       .select()
-      .from(schema.runs)
-      .where(eq(schema.runs.id, body.runId))
+      .from(schema.runSessions)
+      .where(eq(schema.runSessions.runId, body.runId))
       .execute();
 
-    expect(runRows[0].runnerId).toBe(executorId);
+    expect(sessionRows[0].runnerId).toBe(executorId);
   });
 
   it("rejects session-only flow and delivery-policy overrides", async () => {

@@ -422,8 +422,7 @@ describe("POST /api/projects — flow-install failure saga (integration)", () =>
     expect(flowRows[0].enablementState).toBe("Disabled");
     expect(remaps).toHaveLength(1);
     expect(remaps[0]).toMatchObject({
-      stepId: "implement",
-      sourceRunnerId: "claude-glm",
+      slotKey: "session:implement",
       status: "Pending",
       mappedRunnerId: null,
     });

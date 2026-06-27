@@ -238,11 +238,15 @@ async function seedOrchestratorRun(
 
   await pool.query(
     `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id",
-       "status", "flow_version", "flow_revision", "root_run_id",
-       "runner_snapshot", "runner_id")
-     VALUES ($1, 'agent', $2, $3, 'Running', 'agent', 'manual', $1,
-             '{"capabilityAgent":"claude"}'::jsonb, $4)`,
-    [runId, orchestratorAgentId, projectId, executorId],
+       "status", "flow_version", "flow_revision", "root_run_id")
+     VALUES ($1, 'agent', $2, $3, 'Running', 'agent', 'manual', $1)`,
+    [runId, orchestratorAgentId, projectId],
+  );
+
+  await pool.query(
+    `INSERT INTO "run_sessions" ("id", "run_id", "session_name", "runner_snapshot", "runner_id")
+     VALUES ($1, $2, 'default', '{"capabilityAgent":"claude"}'::jsonb, $3)`,
+    [randomUUID(), runId, executorId],
   );
 
   const { secret } = await issueOrchestratorRunToken({ projectId, runId, db });
@@ -263,10 +267,10 @@ async function seedParkedChild(args: {
   await pool.query(
     `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id",
        "status", "flow_version", "flow_revision", "parent_run_id", "root_run_id",
-       "persistent", "addressable_key", "acp_session_id", "checkpoint_at",
-       "agent_workspace", "runner_snapshot", "runner_id")
+       "persistent", "addressable_key", "checkpoint_at",
+       "agent_workspace")
      VALUES ($1, 'agent', $2, $3, 'NeedsInputIdle', 'agent', 'manual', $4, $5,
-             true, $6, $7, now(), 'none', '{"capabilityAgent":"claude"}'::jsonb, $8)`,
+             true, $6, now(), 'none')`,
     [
       childRunId,
       args.agentId,
@@ -274,6 +278,15 @@ async function seedParkedChild(args: {
       args.parentRunId,
       args.rootRunId,
       args.addressableKey,
+    ],
+  );
+
+  await pool.query(
+    `INSERT INTO "run_sessions" ("id", "run_id", "session_name", "acp_session_id", "runner_snapshot", "runner_id")
+     VALUES ($1, $2, 'default', $3, '{"capabilityAgent":"claude"}'::jsonb, $4)`,
+    [
+      randomUUID(),
+      childRunId,
       args.acpSessionId ?? `acp-${childRunId}`,
       executorId,
     ],
@@ -296,10 +309,9 @@ async function seedRunningChild(args: {
   await pool.query(
     `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id",
        "status", "flow_version", "flow_revision", "parent_run_id", "root_run_id",
-       "persistent", "addressable_key", "acp_session_id", "agent_workspace",
-       "runner_snapshot", "runner_id")
+       "persistent", "addressable_key", "agent_workspace")
      VALUES ($1, 'agent', $2, $3, 'Running', 'agent', 'manual', $4, $5,
-             true, $6, $7, 'none', '{"capabilityAgent":"claude"}'::jsonb, $8)`,
+             true, $6, 'none')`,
     [
       childRunId,
       args.agentId,
@@ -307,9 +319,13 @@ async function seedRunningChild(args: {
       args.parentRunId,
       args.rootRunId,
       args.addressableKey,
-      args.acpSessionId,
-      executorId,
     ],
+  );
+
+  await pool.query(
+    `INSERT INTO "run_sessions" ("id", "run_id", "session_name", "acp_session_id", "runner_snapshot", "runner_id")
+     VALUES ($1, $2, 'default', $3, '{"capabilityAgent":"claude"}'::jsonb, $4)`,
+    [randomUUID(), childRunId, args.acpSessionId, executorId],
   );
 
   return childRunId;

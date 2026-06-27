@@ -64,6 +64,52 @@ const CCR_SIDECAR_ID = "ccr-default";
 const CCR_RUNNER_ID = "claude-code-ccr";
 const NOT_READY_RUNNER_ID = "codex-zai-glm";
 
+// M42 (ADR-114): `runs` no longer carries the runner/resume mirror columns
+// (runner_id, runner_resolution_tier, capability_agent, runner_snapshot,
+// acp_session_id) — `run_sessions` is the SOLE source of truth. Seeds insert the
+// run WITHOUT those columns, then add the run's `default` session via
+// `seedDefaultRunSession` (mirrors the production insert in lib/services/runs.ts).
+function e2eClaudeRunnerSnapshot(runnerId: string) {
+  return {
+    id: runnerId,
+    adapter: "claude",
+    capabilityAgent: "claude",
+    model: "claude-sonnet-4-6",
+    provider: { kind: "anthropic" },
+    providerKind: "anthropic",
+    permissionPolicy: "default",
+    sidecar: null,
+    sidecarId: null,
+  };
+}
+
+async function seedDefaultRunSession(
+  pool: Pool,
+  args: {
+    acpSessionId?: string | null;
+    capabilityAgent?: string | null;
+    runId: string;
+    runnerId: string | null;
+    runnerResolutionTier?: string | null;
+    runnerSnapshot?: unknown;
+  },
+): Promise<void> {
+  await pool.query(
+    `INSERT INTO run_sessions (id, run_id, session_name, runner_id, runner_resolution_tier, capability_agent, runner_snapshot, acp_session_id)
+     VALUES ($1, $2, 'default', $3, $4, $5, $6, $7)
+     ON CONFLICT (run_id, session_name) DO NOTHING`,
+    [
+      randomUUID(),
+      args.runId,
+      args.runnerId,
+      args.runnerResolutionTier ?? null,
+      args.capabilityAgent ?? null,
+      args.runnerSnapshot != null ? JSON.stringify(args.runnerSnapshot) : null,
+      args.acpSessionId ?? null,
+    ],
+  );
+}
+
 // --- M11a fixture: parked review→rework (no worktree, never resumes) --------
 
 const M11A_SLUG = "e2e-m11a";
@@ -1584,10 +1630,16 @@ async function seedM11aFixture(
     [ids.task, ids.project, "E2E review→rework", "do the thing", ids.flow],
   );
   await pool.query(
-    `INSERT INTO runs (id, task_id, project_id, flow_id, runner_id, capability_agent, runner_snapshot, status, current_step_id, flow_version)
-     VALUES ($1, $2, $3, $4, $5, 'claude', jsonb_build_object('id', $5::text, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'NeedsInput', 'review', 'v0.0.1')`,
-    [ids.run, ids.task, ids.project, ids.flow, ids.runner],
+    `INSERT INTO runs (id, task_id, project_id, flow_id, status, current_step_id, flow_version)
+     VALUES ($1, $2, $3, $4, 'NeedsInput', 'review', 'v0.0.1')`,
+    [ids.run, ids.task, ids.project, ids.flow],
   );
+  await seedDefaultRunSession(pool, {
+    capabilityAgent: "claude",
+    runId: ids.run,
+    runnerId: ids.runner,
+    runnerSnapshot: e2eClaudeRunnerSnapshot(ids.runner),
+  });
   await pool.query(
     `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path)
      VALUES ($1, $2, $3, $4, $5, $6)`,
@@ -1684,10 +1736,16 @@ async function seedM12EvidenceFixture(
     [ids.task, ids.project, "E2E evidence graph", "do the thing", ids.flow],
   );
   await pool.query(
-    `INSERT INTO runs (id, task_id, project_id, flow_id, runner_id, capability_agent, runner_snapshot, status, current_step_id, flow_version, started_at)
-     VALUES ($1, $2, $3, $4, $5, 'claude', jsonb_build_object('id', $5::text, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'NeedsInput', 'review', 'v0.0.1', now())`,
-    [ids.run, ids.task, ids.project, ids.flow, ids.runner],
+    `INSERT INTO runs (id, task_id, project_id, flow_id, status, current_step_id, flow_version, started_at)
+     VALUES ($1, $2, $3, $4, 'NeedsInput', 'review', 'v0.0.1', now())`,
+    [ids.run, ids.task, ids.project, ids.flow],
   );
+  await seedDefaultRunSession(pool, {
+    capabilityAgent: "claude",
+    runId: ids.run,
+    runnerId: ids.runner,
+    runnerSnapshot: e2eClaudeRunnerSnapshot(ids.runner),
+  });
   await pool.query(
     `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path)
      VALUES ($1, $2, $3, $4, $5, $6)`,
@@ -1883,10 +1941,16 @@ async function seedM11bFixture(
     [ids.task, ids.project, "E2E manual takeover", "do the thing", ids.flow],
   );
   await pool.query(
-    `INSERT INTO runs (id, task_id, project_id, flow_id, runner_id, capability_agent, runner_snapshot, status, current_step_id, flow_version, started_at)
-     VALUES ($1, $2, $3, $4, $5, 'claude', jsonb_build_object('id', $5::text, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'NeedsInput', $6, 'v0.0.1', now())`,
-    [ids.run, ids.task, ids.project, ids.flow, ids.runner, M11B_REVIEW_NODE],
+    `INSERT INTO runs (id, task_id, project_id, flow_id, status, current_step_id, flow_version, started_at)
+     VALUES ($1, $2, $3, $4, 'NeedsInput', $5, 'v0.0.1', now())`,
+    [ids.run, ids.task, ids.project, ids.flow, M11B_REVIEW_NODE],
   );
+  await seedDefaultRunSession(pool, {
+    capabilityAgent: "claude",
+    runId: ids.run,
+    runnerId: ids.runner,
+    runnerSnapshot: e2eClaudeRunnerSnapshot(ids.runner),
+  });
   await pool.query(
     `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path)
      VALUES ($1, $2, $3, $4, $5, $6)`,
@@ -2060,10 +2124,16 @@ async function seedReviewCommentsFixture(
     [ids.task, ids.project, "E2E review comments", "do the thing", ids.flow],
   );
   await pool.query(
-    `INSERT INTO runs (id, task_id, project_id, flow_id, runner_id, capability_agent, runner_snapshot, status, current_step_id, flow_version, started_at)
-     VALUES ($1, $2, $3, $4, $5, 'claude', jsonb_build_object('id', $5::text, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'NeedsInput', 'review', 'v0.0.1', now())`,
-    [ids.run, ids.task, ids.project, ids.flow, ids.runner],
+    `INSERT INTO runs (id, task_id, project_id, flow_id, status, current_step_id, flow_version, started_at)
+     VALUES ($1, $2, $3, $4, 'NeedsInput', 'review', 'v0.0.1', now())`,
+    [ids.run, ids.task, ids.project, ids.flow],
   );
+  await seedDefaultRunSession(pool, {
+    capabilityAgent: "claude",
+    runId: ids.run,
+    runnerId: ids.runner,
+    runnerSnapshot: e2eClaudeRunnerSnapshot(ids.runner),
+  });
   await pool.query(
     `INSERT INTO workspaces
        (id, run_id, project_id, branch, worktree_path, parent_repo_path,
@@ -2401,20 +2471,18 @@ async function seedLaunchableProjectFixture(
   ]);
   await pool.query(
     `INSERT INTO runs
-       (id, task_id, project_id, flow_id, runner_id, capability_agent, runner_snapshot, status, current_step_id,
+       (id, task_id, project_id, flow_id, status, current_step_id,
         flow_version, flow_revision, flow_revision_id, started_at)
-     VALUES ($1, $2, $3, $4, $5, 'claude', jsonb_build_object('id', $5::text, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'NeedsInput', 'review',
-        'v0.0.1', $6, $7, now())`,
-    [
-      ids.run,
-      hitlTaskId,
-      ids.project,
-      ids.flow,
-      ids.runner,
-      ids.revision,
-      ids.revision,
-    ],
+     VALUES ($1, $2, $3, $4, 'NeedsInput', 'review',
+        'v0.0.1', $5, $6, now())`,
+    [ids.run, hitlTaskId, ids.project, ids.flow, ids.revision, ids.revision],
   );
+  await seedDefaultRunSession(pool, {
+    capabilityAgent: "claude",
+    runId: ids.run,
+    runnerId: ids.runner,
+    runnerSnapshot: e2eClaudeRunnerSnapshot(ids.runner),
+  });
   await pool.query(
     `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path)
      VALUES ($1, $2, $3, $4, $5, $6)`,
@@ -2534,10 +2602,16 @@ async function seedM11cVisibleFixture(
     [ids.task, ids.project, "E2E settings visible", "do the thing", ids.flow],
   );
   await pool.query(
-    `INSERT INTO runs (id, task_id, project_id, flow_id, runner_id, capability_agent, runner_snapshot, status, current_step_id, flow_version)
-     VALUES ($1, $2, $3, $4, $5, 'claude', jsonb_build_object('id', $5::text, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'NeedsInput', 'review', 'v0.0.1')`,
-    [ids.run, ids.task, ids.project, ids.flow, ids.runner],
+    `INSERT INTO runs (id, task_id, project_id, flow_id, status, current_step_id, flow_version)
+     VALUES ($1, $2, $3, $4, 'NeedsInput', 'review', 'v0.0.1')`,
+    [ids.run, ids.task, ids.project, ids.flow],
   );
+  await seedDefaultRunSession(pool, {
+    capabilityAgent: "claude",
+    runId: ids.run,
+    runnerId: ids.runner,
+    runnerSnapshot: e2eClaudeRunnerSnapshot(ids.runner),
+  });
   await pool.query(
     `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path)
      VALUES ($1, $2, $3, $4, $5, $6)`,
@@ -2803,17 +2877,17 @@ async function seedM19Fixture(
   // retained in resume_target_step_id (ADR-034). Recover resolves ai_coding +
   // acp_session_id → resume-agent → recoverable.
   await pool.query(
-    `INSERT INTO runs (id, task_id, project_id, flow_id, runner_id, capability_agent, runner_snapshot, status, resume_target_step_id, acp_session_id, flow_version, started_at, ended_at)
-     VALUES ($1, $2, $3, $4, $5, 'claude', jsonb_build_object('id', $5::text, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'Crashed', $6, 'acp-m19-crashed', 'v0.0.1', now(), now())`,
-    [
-      ids.crashedRun,
-      ids.crashedTask,
-      ids.project,
-      ids.flow,
-      ids.runner,
-      M19_AGENT_NODE,
-    ],
+    `INSERT INTO runs (id, task_id, project_id, flow_id, status, resume_target_step_id, flow_version, started_at, ended_at)
+     VALUES ($1, $2, $3, $4, 'Crashed', $5, 'v0.0.1', now(), now())`,
+    [ids.crashedRun, ids.crashedTask, ids.project, ids.flow, M19_AGENT_NODE],
   );
+  await seedDefaultRunSession(pool, {
+    acpSessionId: "acp-m19-crashed",
+    capabilityAgent: "claude",
+    runId: ids.crashedRun,
+    runnerId: ids.runner,
+    runnerSnapshot: e2eClaudeRunnerSnapshot(ids.runner),
+  });
   await pool.query(
     `INSERT INTO node_attempts (id, run_id, node_id, node_type, attempt, status)
      VALUES ($1, $2, $3, 'ai_coding', 1, 'Crashed')`,
@@ -2849,17 +2923,22 @@ async function seedM19Fixture(
     ],
   );
   await pool.query(
-    `INSERT INTO runs (id, task_id, project_id, flow_id, runner_id, capability_agent, runner_snapshot, status, resume_target_step_id, flow_version, started_at, ended_at)
-     VALUES ($1, $2, $3, $4, $5, 'claude', jsonb_build_object('id', $5::text, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'Crashed', $6, 'v0.0.1', now(), now())`,
+    `INSERT INTO runs (id, task_id, project_id, flow_id, status, resume_target_step_id, flow_version, started_at, ended_at)
+     VALUES ($1, $2, $3, $4, 'Crashed', $5, 'v0.0.1', now(), now())`,
     [
       ids.notRecoverableRun,
       ids.notRecoverableTask,
       ids.project,
       ids.flow,
-      ids.runner,
       M19_AGENT_NODE,
     ],
   );
+  await seedDefaultRunSession(pool, {
+    capabilityAgent: "claude",
+    runId: ids.notRecoverableRun,
+    runnerId: ids.runner,
+    runnerSnapshot: e2eClaudeRunnerSnapshot(ids.runner),
+  });
   await pool.query(
     `INSERT INTO node_attempts (id, run_id, node_id, node_type, attempt, status)
      VALUES ($1, $2, $3, 'ai_coding', 1, 'Crashed')`,
@@ -2885,17 +2964,16 @@ async function seedM19Fixture(
     [ids.warningTask, ids.project, "E2E ttl warning", "do the thing", ids.flow],
   );
   await pool.query(
-    `INSERT INTO runs (id, task_id, project_id, flow_id, runner_id, capability_agent, runner_snapshot, status, current_step_id, flow_version, started_at, ended_at)
-     VALUES ($1, $2, $3, $4, $5, 'claude', jsonb_build_object('id', $5::text, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'Abandoned', $6, 'v0.0.1', now(), now())`,
-    [
-      ids.warningRun,
-      ids.warningTask,
-      ids.project,
-      ids.flow,
-      ids.runner,
-      M19_AGENT_NODE,
-    ],
+    `INSERT INTO runs (id, task_id, project_id, flow_id, status, current_step_id, flow_version, started_at, ended_at)
+     VALUES ($1, $2, $3, $4, 'Abandoned', $5, 'v0.0.1', now(), now())`,
+    [ids.warningRun, ids.warningTask, ids.project, ids.flow, M19_AGENT_NODE],
   );
+  await seedDefaultRunSession(pool, {
+    capabilityAgent: "claude",
+    runId: ids.warningRun,
+    runnerId: ids.runner,
+    runnerSnapshot: e2eClaudeRunnerSnapshot(ids.runner),
+  });
   await pool.query(
     `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path, scheduled_removal_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7)`,
@@ -2917,17 +2995,16 @@ async function seedM19Fixture(
     [ids.dueTask, ids.project, "E2E ttl due", "do the thing", ids.flow],
   );
   await pool.query(
-    `INSERT INTO runs (id, task_id, project_id, flow_id, runner_id, capability_agent, runner_snapshot, status, current_step_id, flow_version, started_at, ended_at)
-     VALUES ($1, $2, $3, $4, $5, 'claude', jsonb_build_object('id', $5::text, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'Abandoned', $6, 'v0.0.1', now(), now())`,
-    [
-      ids.dueRun,
-      ids.dueTask,
-      ids.project,
-      ids.flow,
-      ids.runner,
-      M19_AGENT_NODE,
-    ],
+    `INSERT INTO runs (id, task_id, project_id, flow_id, status, current_step_id, flow_version, started_at, ended_at)
+     VALUES ($1, $2, $3, $4, 'Abandoned', $5, 'v0.0.1', now(), now())`,
+    [ids.dueRun, ids.dueTask, ids.project, ids.flow, M19_AGENT_NODE],
   );
+  await seedDefaultRunSession(pool, {
+    capabilityAgent: "claude",
+    runId: ids.dueRun,
+    runnerId: ids.runner,
+    runnerSnapshot: e2eClaudeRunnerSnapshot(ids.runner),
+  });
   await pool.query(
     `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path, scheduled_removal_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7)`,
@@ -3032,10 +3109,16 @@ async function seedM15Fixture(
     ],
   );
   await pool.query(
-    `INSERT INTO runs (id, task_id, project_id, flow_id, runner_id, capability_agent, runner_snapshot, status, current_step_id, flow_version, started_at)
-     VALUES ($1, $2, $3, $4, $5, 'claude', jsonb_build_object('id', $5::text, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'Review', 'review', 'v0.0.1', now())`,
-    [ids.failedRun, ids.failedTask, ids.project, ids.flow, ids.runner],
+    `INSERT INTO runs (id, task_id, project_id, flow_id, status, current_step_id, flow_version, started_at)
+     VALUES ($1, $2, $3, $4, 'Review', 'review', 'v0.0.1', now())`,
+    [ids.failedRun, ids.failedTask, ids.project, ids.flow],
   );
+  await seedDefaultRunSession(pool, {
+    capabilityAgent: "claude",
+    runId: ids.failedRun,
+    runnerId: ids.runner,
+    runnerSnapshot: e2eClaudeRunnerSnapshot(ids.runner),
+  });
   await pool.query(
     `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path)
      VALUES ($1, $2, $3, $4, $5, $6)`,
@@ -3087,10 +3170,16 @@ async function seedM15Fixture(
     ],
   );
   await pool.query(
-    `INSERT INTO runs (id, task_id, project_id, flow_id, runner_id, capability_agent, runner_snapshot, status, current_step_id, flow_version, started_at)
-     VALUES ($1, $2, $3, $4, $5, 'claude', jsonb_build_object('id', $5::text, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'Review', 'review', 'v0.0.1', now())`,
-    [ids.overriddenRun, ids.overriddenTask, ids.project, ids.flow, ids.runner],
+    `INSERT INTO runs (id, task_id, project_id, flow_id, status, current_step_id, flow_version, started_at)
+     VALUES ($1, $2, $3, $4, 'Review', 'review', 'v0.0.1', now())`,
+    [ids.overriddenRun, ids.overriddenTask, ids.project, ids.flow],
   );
+  await seedDefaultRunSession(pool, {
+    capabilityAgent: "claude",
+    runId: ids.overriddenRun,
+    runnerId: ids.runner,
+    runnerSnapshot: e2eClaudeRunnerSnapshot(ids.runner),
+  });
   await pool.query(
     `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path)
      VALUES ($1, $2, $3, $4, $5, $6)`,
@@ -3210,27 +3299,27 @@ async function seedM16Fixture(
     [ids.task, base.projectId, "M16 external review", "do the thing", ids.flow],
   );
   await pool.query(
-    `INSERT INTO runs (id, task_id, project_id, flow_id, runner_id, runner_resolution_tier, capability_agent, runner_snapshot, status, current_step_id, flow_version, started_at)
-     VALUES ($1, $2, $3, $4, $5, 'projectDefault', 'claude', $6, 'NeedsInput', 'review', 'v0.0.1', now())`,
-    [
-      ids.run,
-      ids.task,
-      base.projectId,
-      ids.flow,
-      base.runnerId,
-      JSON.stringify({
-        id: base.runnerId,
-        adapter: "claude",
-        capabilityAgent: "claude",
-        model: "claude-sonnet-4-6",
-        provider: { kind: "anthropic" },
-        providerKind: "anthropic",
-        permissionPolicy: "default",
-        sidecar: null,
-        sidecarId: null,
-      }),
-    ],
+    `INSERT INTO runs (id, task_id, project_id, flow_id, status, current_step_id, flow_version, started_at)
+     VALUES ($1, $2, $3, $4, 'NeedsInput', 'review', 'v0.0.1', now())`,
+    [ids.run, ids.task, base.projectId, ids.flow],
   );
+  await seedDefaultRunSession(pool, {
+    capabilityAgent: "claude",
+    runId: ids.run,
+    runnerId: base.runnerId,
+    runnerResolutionTier: "projectDefault",
+    runnerSnapshot: {
+      id: base.runnerId,
+      adapter: "claude",
+      capabilityAgent: "claude",
+      model: "claude-sonnet-4-6",
+      provider: { kind: "anthropic" },
+      providerKind: "anthropic",
+      permissionPolicy: "default",
+      sidecar: null,
+      sidecarId: null,
+    },
+  });
   await pool.query(
     `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path)
      VALUES ($1, $2, $3, $4, $5, $6)`,
@@ -3369,10 +3458,16 @@ async function seedM17Fixture(
     ],
   );
   await pool.query(
-    `INSERT INTO runs (id, task_id, project_id, flow_id, runner_id, capability_agent, runner_snapshot, status, current_step_id, flow_version, started_at)
-     VALUES ($1, $2, $3, $4, $5, 'claude', jsonb_build_object('id', $5::text, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'NeedsInput', 'review', 'v0.0.1', now())`,
-    [ids.run1, ids.task1, ids.project1, ids.flow1, PLATFORM_DEFAULT_RUNNER_ID],
+    `INSERT INTO runs (id, task_id, project_id, flow_id, status, current_step_id, flow_version, started_at)
+     VALUES ($1, $2, $3, $4, 'NeedsInput', 'review', 'v0.0.1', now())`,
+    [ids.run1, ids.task1, ids.project1, ids.flow1],
   );
+  await seedDefaultRunSession(pool, {
+    capabilityAgent: "claude",
+    runId: ids.run1,
+    runnerId: PLATFORM_DEFAULT_RUNNER_ID,
+    runnerSnapshot: e2eClaudeRunnerSnapshot(PLATFORM_DEFAULT_RUNNER_ID),
+  });
   await pool.query(
     `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path)
      VALUES ($1, $2, $3, $4, $5, $6)`,
@@ -3442,10 +3537,16 @@ async function seedM17Fixture(
     ],
   );
   await pool.query(
-    `INSERT INTO runs (id, task_id, project_id, flow_id, runner_id, capability_agent, runner_snapshot, status, current_step_id, flow_version, started_at)
-     VALUES ($1, $2, $3, $4, $5, 'claude', jsonb_build_object('id', $5::text, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'NeedsInput', 'review', 'v0.0.1', now())`,
-    [ids.run2, ids.task2, ids.project2, ids.flow2, PLATFORM_DEFAULT_RUNNER_ID],
+    `INSERT INTO runs (id, task_id, project_id, flow_id, status, current_step_id, flow_version, started_at)
+     VALUES ($1, $2, $3, $4, 'NeedsInput', 'review', 'v0.0.1', now())`,
+    [ids.run2, ids.task2, ids.project2, ids.flow2],
   );
+  await seedDefaultRunSession(pool, {
+    capabilityAgent: "claude",
+    runId: ids.run2,
+    runnerId: PLATFORM_DEFAULT_RUNNER_ID,
+    runnerSnapshot: e2eClaudeRunnerSnapshot(PLATFORM_DEFAULT_RUNNER_ID),
+  });
   await pool.query(
     `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path)
      VALUES ($1, $2, $3, $4, $5, $6)`,
@@ -3581,10 +3682,16 @@ async function seedM40HookTripRun(
     [ids.task, projectId, taskTitle, "Loop on a boring task", flowId],
   );
   await pool.query(
-    `INSERT INTO runs (id, task_id, project_id, flow_id, runner_id, capability_agent, runner_snapshot, status, current_step_id, flow_version, started_at)
-     VALUES ($1, $2, $3, $4, $5, 'claude', jsonb_build_object('id', $5::text, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'NeedsInput', 'implement', 'v0.0.1', now())`,
-    [ids.run, ids.task, projectId, flowId, PLATFORM_DEFAULT_RUNNER_ID],
+    `INSERT INTO runs (id, task_id, project_id, flow_id, status, current_step_id, flow_version, started_at)
+     VALUES ($1, $2, $3, $4, 'NeedsInput', 'implement', 'v0.0.1', now())`,
+    [ids.run, ids.task, projectId, flowId],
   );
+  await seedDefaultRunSession(pool, {
+    capabilityAgent: "claude",
+    runId: ids.run,
+    runnerId: PLATFORM_DEFAULT_RUNNER_ID,
+    runnerSnapshot: e2eClaudeRunnerSnapshot(PLATFORM_DEFAULT_RUNNER_ID),
+  });
   await pool.query(
     `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path)
      VALUES ($1, $2, $3, $4, $5, $6)`,
@@ -4036,10 +4143,16 @@ async function seedM18Fixture(
       [s.taskId, ids.project, s.taskTitle, "do the thing", ids.flow],
     );
     await pool.query(
-      `INSERT INTO runs (id, task_id, project_id, flow_id, runner_id, capability_agent, runner_snapshot, status, current_step_id, flow_version, started_at)
-       VALUES ($1, $2, $3, $4, $5, 'claude', jsonb_build_object('id', $5::text, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'Review', $6, 'v0.0.1', now())`,
-      [s.runId, s.taskId, ids.project, ids.flow, ids.runner, M18_REVIEW_NODE],
+      `INSERT INTO runs (id, task_id, project_id, flow_id, status, current_step_id, flow_version, started_at)
+       VALUES ($1, $2, $3, $4, 'Review', $5, 'v0.0.1', now())`,
+      [s.runId, s.taskId, ids.project, ids.flow, M18_REVIEW_NODE],
     );
+    await seedDefaultRunSession(pool, {
+      capabilityAgent: "claude",
+      runId: s.runId,
+      runnerId: ids.runner,
+      runnerSnapshot: e2eClaudeRunnerSnapshot(ids.runner),
+    });
     await pool.query(
       `INSERT INTO workspaces
          (id, run_id, project_id, branch, worktree_path, parent_repo_path,
@@ -4175,10 +4288,16 @@ async function seedM27Fixture(
     [ids.flowTask, ids.project, ids.flow],
   );
   await pool.query(
-    `INSERT INTO runs (id, task_id, project_id, flow_id, runner_id, capability_agent, runner_snapshot, status, current_step_id, flow_version, created_by_user_id, started_at)
-     VALUES ($1, $2, $3, $4, $5, 'claude', jsonb_build_object('id', $5::text, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'Review', 'review', 'v0.0.1', $6, now())`,
-    [ids.flowRun, ids.flowTask, ids.project, ids.flow, ids.runner, userId],
+    `INSERT INTO runs (id, task_id, project_id, flow_id, status, current_step_id, flow_version, created_by_user_id, started_at)
+     VALUES ($1, $2, $3, $4, 'Review', 'review', 'v0.0.1', $5, now())`,
+    [ids.flowRun, ids.flowTask, ids.project, ids.flow, userId],
   );
+  await seedDefaultRunSession(pool, {
+    capabilityAgent: "claude",
+    runId: ids.flowRun,
+    runnerId: ids.runner,
+    runnerSnapshot: e2eClaudeRunnerSnapshot(ids.runner),
+  });
   await pool.query(
     `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path, base_branch, base_commit, target_branch)
      VALUES ($1, $2, $3, $4, $5, $6, 'main', $7, 'main')`,
@@ -4216,10 +4335,16 @@ async function seedM27Fixture(
     ],
   );
   await pool.query(
-    `INSERT INTO runs (id, run_kind, project_id, flow_id, runner_id, capability_agent, runner_snapshot, status, flow_version, created_by_user_id, started_at)
-     VALUES ($1, 'scratch', $2, $3, $4, 'claude', jsonb_build_object('id', $4::text, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'Review', 'scratch', $5, now())`,
-    [ids.scratchRun, ids.project, ids.flow, ids.runner, userId],
+    `INSERT INTO runs (id, run_kind, project_id, flow_id, status, flow_version, created_by_user_id, started_at)
+     VALUES ($1, 'scratch', $2, $3, 'Review', 'scratch', $4, now())`,
+    [ids.scratchRun, ids.project, ids.flow, userId],
   );
+  await seedDefaultRunSession(pool, {
+    capabilityAgent: "claude",
+    runId: ids.scratchRun,
+    runnerId: ids.runner,
+    runnerSnapshot: e2eClaudeRunnerSnapshot(ids.runner),
+  });
   await pool.query(
     `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path, base_branch, base_commit, target_branch)
      VALUES ($1, $2, $3, $4, $5, $6, 'main', $7, 'main')`,
@@ -4420,10 +4545,16 @@ async function seedM22Fixture(
     [ids.task, ids.project, "E2E workbench", "do the thing", ids.flow],
   );
   await pool.query(
-    `INSERT INTO runs (id, task_id, project_id, flow_id, runner_id, capability_agent, runner_snapshot, status, current_step_id, flow_version, started_at)
-     VALUES ($1, $2, $3, $4, $5, 'claude', jsonb_build_object('id', $5::text, 'adapter', 'claude', 'capabilityAgent', 'claude', 'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'), 'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null, 'sidecarId', null), 'Running', $6, 'v0.0.1', now())`,
-    [ids.run, ids.task, ids.project, ids.flow, ids.runner, M22_CURRENT_NODE],
+    `INSERT INTO runs (id, task_id, project_id, flow_id, status, current_step_id, flow_version, started_at)
+     VALUES ($1, $2, $3, $4, 'Running', $5, 'v0.0.1', now())`,
+    [ids.run, ids.task, ids.project, ids.flow, M22_CURRENT_NODE],
   );
+  await seedDefaultRunSession(pool, {
+    capabilityAgent: "claude",
+    runId: ids.run,
+    runnerId: ids.runner,
+    runnerSnapshot: e2eClaudeRunnerSnapshot(ids.runner),
+  });
   await pool.query(
     `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path, base_branch, base_commit, target_branch)
      VALUES ($1, $2, $3, $4, $5, $6, 'main', $7, 'main')`,
@@ -4485,41 +4616,6 @@ async function seedM22Fixture(
     viewerEmail: viewer.email,
     viewerPassword: viewer.password,
   };
-}
-
-function runnerSnapshotJson(
-  runnerId: string,
-  agent: SeedAdapterId = "claude",
-): string {
-  const providerKind =
-    agent === "claude"
-      ? "anthropic"
-      : agent === "codex"
-        ? "openai"
-        : agent === "gemini"
-          ? "google_gemini"
-          : "agent_native";
-
-  return JSON.stringify({
-    id: runnerId,
-    adapter: agent,
-    capabilityAgent: agent,
-    model:
-      agent === "claude"
-        ? "claude-sonnet-4-6"
-        : agent === "codex"
-          ? "gpt-5-codex"
-          : agent === "gemini"
-            ? "gemini-2.5-pro"
-            : agent === "opencode"
-              ? "opencode-native"
-              : "mimo-native",
-    provider: { kind: providerKind },
-    providerKind,
-    permissionPolicy: "default",
-    sidecar: null,
-    sidecarId: null,
-  });
 }
 
 // --- Scratch detail fixture (M35 T3.5) -------------------------------------
@@ -4599,10 +4695,16 @@ async function seedScratchDetailFixture(
   // run.status mirrors runStatusForDialogStatus("WaitingForUser") = "Running".
   // Pure scratch runs carry no task or flow (flow_id null).
   await pool.query(
-    `INSERT INTO runs (id, run_kind, project_id, runner_id, capability_agent, runner_snapshot, status, flow_version, created_by_user_id, started_at)
-     VALUES ($1, 'scratch', $2, $3, 'claude', $4::jsonb, 'Running', 'scratch', $5, now())`,
-    [ids.run, ids.project, ids.runner, runnerSnapshotJson(ids.runner), userId],
+    `INSERT INTO runs (id, run_kind, project_id, status, flow_version, created_by_user_id, started_at)
+     VALUES ($1, 'scratch', $2, 'Running', 'scratch', $3, now())`,
+    [ids.run, ids.project, userId],
   );
+  await seedDefaultRunSession(pool, {
+    capabilityAgent: "claude",
+    runId: ids.run,
+    runnerId: ids.runner,
+    runnerSnapshot: e2eClaudeRunnerSnapshot(ids.runner),
+  });
   await pool.query(
     `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path, base_branch, base_commit, target_branch)
      VALUES ($1, $2, $3, $4, $5, $6, 'main', $7, 'main')`,
@@ -4786,26 +4888,36 @@ async function seedM23Fixture(
   );
   await pool.query(
     `INSERT INTO runs
-       (id, task_id, project_id, flow_id, flow_revision_id, runner_id, capability_agent,
-        runner_snapshot, status, current_step_id, flow_version, started_at, ended_at)
+       (id, task_id, project_id, flow_id, flow_revision_id,
+        status, current_step_id, flow_version, started_at, ended_at)
      VALUES
-       ($1, $2, $3, $4, $10, $5, 'claude', $6::jsonb, 'Review', 'review', 'v0.0.1',
+       ($1, $2, $3, $4, $8, 'Review', 'review', 'v0.0.1',
         now() - interval '3 hours', now() - interval '2 hours'),
-       ($7, $8, $3, $4, $10, $5, 'claude', $6::jsonb, 'Running', $9, 'v0.0.1',
+       ($5, $6, $3, $4, $8, 'Running', $7, 'v0.0.1',
         now() - interval '90 minutes', null)`,
     [
       ids.firstRun,
       ids.firstTask,
       ids.project,
       ids.flow,
-      ids.runner,
-      runnerSnapshotJson(ids.runner),
       ids.secondRun,
       ids.secondTask,
       M23_NODE_ID,
       ids.revision,
     ],
   );
+  await seedDefaultRunSession(pool, {
+    capabilityAgent: "claude",
+    runId: ids.firstRun,
+    runnerId: ids.runner,
+    runnerSnapshot: e2eClaudeRunnerSnapshot(ids.runner),
+  });
+  await seedDefaultRunSession(pool, {
+    capabilityAgent: "claude",
+    runId: ids.secondRun,
+    runnerId: ids.runner,
+    runnerSnapshot: e2eClaudeRunnerSnapshot(ids.runner),
+  });
   await pool.query(
     `INSERT INTO node_attempts
        (id, run_id, node_id, node_type, attempt, status, error_code, exit_code, started_at, ended_at)

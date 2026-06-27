@@ -9075,8 +9075,9 @@ never baked into the git artifact.
    runner_snapshot, acp_session_id, resolution_source, timestamps`, with
    `UNIQUE(run_id, session_name)`. The run-level columns
    `runs.{runner_id, runner_resolution_tier, capability_agent, runner_snapshot,
-   acp_session_id}` are **DROPPED** (full clean-cutover migration, no run-data
-   migration), and the FK `runs.runner_id → platform_acp_runners` + index
+   acp_session_id}` are **DROPPED** in `0082` — which first backfills the same
+   state into each run's `default` `run_sessions` row, so live runs are
+   preserved — and the FK `runs.runner_id → platform_acp_runners` + index
    `runs_runner_idx` are recreated on `run_sessions.runner_id`. Non-flow runs
    (scratch / agent) have exactly one `default` row. **`step_runs.acp_session_id`
    stays** — it is a separate per-step-run column recording which session a step
@@ -9099,16 +9100,31 @@ never baked into the git artifact.
    `MAISTER_ENGINE_VERSION → "2.0.0"`; the new features' floor is `2.0.0`; all
    rewritten manifests declare `compat.engine_min: 2.0.0`. (Engine `1.9.0` was
    taken by ADR-109 consensus; this milestone is a clean cutover with no backward
-   compatibility and no run-data migration, which earns the major bump.)
+   compatibility — the `runs` runner mirror is dropped with no compat path —
+   which earns the major bump; migration `0082` backfills that state into
+   `run_sessions` first, so the cutover preserves live runs rather than
+   discarding them.)
 
 **Consequences:**
 - Flow packages become **portable**: runner intent travels as agent+model+provider
   in the git artifact, and the concrete host runner is bound per project at
   connect-time — a package installs and runs on any host without editing
   `flow.yaml`.
-- The `run_sessions` cutover is a **full schema migration with no run-data
-  migration** (migration `0080`). Existing in-flight runs must be terminal /
-  abandoned before deploy; this is an explicit clean-cutover, not a compat path.
+- The `run_sessions` cutover is a **full schema migration with a one-shot
+  run-data preservation backfill**, split across three migrations: `0080`
+  creates `run_sessions`; `0081` re-keys `flow_runner_remaps` to `slot_key`;
+  and `0082` backfills each existing run's runner/resume state into a `default`
+  `run_sessions` row **before** dropping the `runs.{runner_id,
+  runner_resolution_tier, capability_agent, runner_snapshot, acp_session_id}`
+  mirror columns (plus `runs_runner_idx` and the runner FK). Because `0082`
+  preserves the resume handle + runner snapshot, **in-flight runs survive the
+  deploy** — recovery, resume, stop, gate-chat, and diagnostics still target the
+  correct ACP session, so they do NOT need to be terminated or abandoned first.
+  The single remaining deploy precondition is `flow_runner_remaps`: if it holds
+  rows, `0081` aborts (the per-step key is not deterministically mappable to
+  `slot_key`), so operators MUST export/record those bindings and clear the
+  table **before** running migrations, then re-map per slot via the project
+  Flow runner UI **after** the upgrade succeeds.
 - Crash recovery, resume, reconcile, promote, and workbench-lifecycle all read the
   **snapshotted `run_sessions`** rows, never a mutable catalog/projection that can
   drift after launch (extends the ADR-089/106 "enforce on what the run DID"

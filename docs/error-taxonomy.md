@@ -368,7 +368,7 @@ Seventeen codes (M8 added `STEP_CHECKPOINTED`; M9 added `UNAUTHENTICATED`,
 > **`EXECUTOR_UNAVAILABLE`**. A session switch whose adapter does not advertise
 > `sessionCapabilities.resume` reuses the existing supervisor **`CHECKPOINT`**
 > terminal-resume failure. New call sites: `web/lib/config.ts`
-> (`loadFlowManifest` session validation), `web/lib/runs/resolve.ts`
+> (`loadFlowManifest` session validation), `web/lib/acp-runners/resolve.ts`
 > (per-session resolution), and the `POST /api/runs` launch precondition.
 
 ## Construction

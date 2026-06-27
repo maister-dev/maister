@@ -132,7 +132,8 @@ beforeAll(async () => {
     accountStatus: "active",
   });
 
-  await db.insert(projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
+  await db.insert(projects).values({
+    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug: "recover-app",
     name: "Recover App",
@@ -207,7 +208,8 @@ async function seedRun(opts: SeedRunOpts = {}): Promise<string> {
   const taskId = randomUUID();
   const runId = randomUUID();
 
-  await db.insert(tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
+  await db.insert(tasks).values({
+    number: Math.trunc(Math.random() * 1e9) + 1,
     id: taskId,
     projectId,
     title: "t",
@@ -222,18 +224,24 @@ async function seedRun(opts: SeedRunOpts = {}): Promise<string> {
     projectId,
     flowId,
     flowRevisionId,
-    runnerId: executorId,
-    capabilityAgent: "claude",
-    runnerSnapshot: testRunnerSnapshot(executorId),
     runKind: opts.runKind ?? "flow",
     status: opts.status ?? "Crashed",
-    acpSessionId:
-      opts.acpSessionId === undefined ? "acp-default" : opts.acpSessionId,
     currentStepId:
       opts.currentStepId === undefined ? "implement" : opts.currentStepId,
     flowVersion: "v1",
     startedAt: opts.startedAt ?? new Date(),
     resumeStartedAt: opts.resumeStartedAt ?? null,
+  });
+
+  await db.insert(schema.runSessions).values({
+    id: randomUUID(),
+    runId,
+    sessionName: "default",
+    runnerId: executorId,
+    capabilityAgent: "claude",
+    runnerSnapshot: testRunnerSnapshot(executorId),
+    acpSessionId:
+      opts.acpSessionId === undefined ? "acp-default" : opts.acpSessionId,
   });
 
   await db.insert(workspaces).values({
@@ -250,6 +258,17 @@ async function seedRun(opts: SeedRunOpts = {}): Promise<string> {
 
 async function readRun(runId: string): Promise<any> {
   const rows = await db.select().from(runs).where(eq(runs.id, runId));
+
+  return rows[0];
+}
+
+// M42 (ADR-114): acp_session_id moved off `runs` to the run's default
+// `run_sessions` row.
+async function readDefaultSession(runId: string): Promise<any> {
+  const rows = await db
+    .select()
+    .from(schema.runSessions)
+    .where(eq(schema.runSessions.runId, runId));
 
   return rows[0];
 }
@@ -407,7 +426,7 @@ describe("resumeCrashedRun — cap full → queued (Codex F2)", () => {
     const row = await readRun(crashed);
 
     expect(row.status).toBe("Pending");
-    expect(row.acpSessionId).toBe("acp-queued");
+    expect((await readDefaultSession(crashed)).acpSessionId).toBe("acp-queued");
     expect(row.resumeStartedAt).not.toBeNull();
     // The live run is untouched.
     expect((await readRun(live)).status).toBe("Running");

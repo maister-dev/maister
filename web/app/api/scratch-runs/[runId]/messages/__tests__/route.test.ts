@@ -119,6 +119,22 @@ vi.mock("@/lib/authz", () => ({
   requireProjectAction: mocks.requireProjectAction,
 }));
 vi.mock("@/lib/db/client", () => ({ getDb: () => fakeDb }));
+
+// M42 (ADR-114): the scratch service reads runner identity + writes the resume
+// handle on the run's active run_sessions row; the fake DB models only the
+// legacy tables, so stub the helper with a single default session.
+vi.mock("@/lib/runs/active-run-session", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/runs/active-run-session")>()),
+  loadActiveRunSession: vi.fn(async () => ({
+    sessionName: "default",
+    acpSessionId: null,
+    runnerSnapshot: null,
+    capabilityAgent: "claude",
+    runnerId: null,
+    runnerResolutionTier: null,
+  })),
+  persistRunSessionAcpSessionId: vi.fn(async () => {}),
+}));
 vi.mock("@/lib/supervisor-client", () => ({
   sendPrompt: mocks.sendPrompt,
 }));

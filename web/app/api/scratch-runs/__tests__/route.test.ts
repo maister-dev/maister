@@ -124,6 +124,22 @@ vi.mock("@/lib/authz", () => ({
   requireProjectAction: mocks.requireProjectAction,
 }));
 vi.mock("@/lib/db/client", () => ({ getDb: () => fakeDb }));
+
+// M42 (ADR-114): the scratch launch writes the resume handle on the run's
+// active run_sessions row; the fake DB models only the legacy tables, so stub
+// the helper (a fresh launch has a single default session).
+vi.mock("@/lib/runs/active-run-session", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/runs/active-run-session")>()),
+  loadActiveRunSession: vi.fn(async () => ({
+    sessionName: "default",
+    acpSessionId: null,
+    runnerSnapshot: null,
+    capabilityAgent: "claude",
+    runnerId: null,
+    runnerResolutionTier: null,
+  })),
+  persistRunSessionAcpSessionId: vi.fn(async () => {}),
+}));
 vi.mock("@/lib/scheduler", () => ({
   assertScratchCapacityAvailable: mocks.assertScratchCapacityAvailable,
   assertScratchCapacityAvailableInTransaction:
@@ -377,9 +393,14 @@ describe("POST /api/scratch-runs", () => {
       prompt: "Investigate the thing",
     });
     expect(state.inserts.length).toBeGreaterThanOrEqual(4);
+    // M42 (ADR-114): the runner identity lands on the run's `default`
+    // run_sessions row (via defaultRunSessionValues), not the runs insert.
     expect(
       state.inserts.find((call) =>
-        Object.prototype.hasOwnProperty.call(call.values as object, "runKind"),
+        Object.prototype.hasOwnProperty.call(
+          call.values as object,
+          "sessionName",
+        ),
       )?.values,
     ).toMatchObject({
       runnerId,

@@ -21,7 +21,7 @@ machine ([runs.md](runs.md)), generic graph traversal
 
 ## Domain entities
 
-- **Unified runner config** (Designed) — `flowRunnerConfigSchema`: `runner_type`,
+- **Unified runner config** — `flowRunnerConfigSchema`: `runner_type`,
   `capability_agent`, `adapter?`, `model?`, `model_family?`, `provider?`,
   `permission_policy`, `sidecar?`, **`effort?`** (the `thinkingEffort` enum), and
   **`env?`** (a passthrough NAME → `env:NAME` map, never secret literals). Used for
@@ -29,7 +29,7 @@ machine ([runs.md](runs.md)), generic graph traversal
   (ai_coding / orchestrator / judge), and consensus participant/synthesizer
   `runner`. Any runner slot accepts a profile-ref **string** or an inline
   **object**.
-- **Session** (Designed) — a logical group of one or more graph nodes that share
+- **Session** — a logical group of one or more graph nodes that share
   one ACP process and one continuous `acp_session_id`. Three kinds:
   - **`default`** — implicit; a node with neither `session:` nor `runner:` joins it
     (zero-ceremony, preserves single-session behavior);
@@ -37,20 +37,20 @@ machine ([runs.md](runs.md)), generic graph traversal
     session;
   - **named** — a top-level `sessions:` entry that one or more nodes opt into via
     `session: <name>`.
-- **`run_sessions` row** (Designed) — the per-`(run, session)` runner state record
+- **`run_sessions` row** — the per-`(run, session)` runner state record
   and the sole source of truth: `id, run_id, session_name, runner_id,
   runner_resolution_tier, capability_agent, runner_snapshot, acp_session_id,
   resolution_source`, timestamps, `UNIQUE(run_id, session_name)`. A non-flow run
   (scratch / agent) has exactly one `default` row. (See
   [db/runs-domain.md](../db/runs-domain.md).)
-- **Runner slot** (Designed) — the unit of binding, addressed by `slot_key ∈
+- **Runner slot** — the unit of binding, addressed by `slot_key ∈
   {session:<name>, consensus:<nodeId>:<participantId>,
   consensus:<nodeId>:synthesizer}`. Slot enumeration never dedups by intent.
-- **Per-project binding** (Designed) — a `(project_id, flow_revision_id, slot_key)`
+- **Per-project binding** — a `(project_id, flow_revision_id, slot_key)`
   → `mapped_runner_id` (`platform_acp_runners`) mapping with status `Pending |
   Mapped`, written at flow-connect or first launch (the generalized successor of
   the per-step `flow_runner_remaps`).
-- **Ephemeral per-run override** (Designed) — an optional per-session runner
+- **Ephemeral per-run override** — an optional per-session runner
   override offered at the Launch dialog for a single run; it does **not** persist
   (the successor of the old `launchOverride` resolution tier).
 
@@ -213,9 +213,7 @@ flowchart LR
   [`../supervisor.md`](../supervisor.md).
 - DB docs: [`../database-schema.md`](../database-schema.md),
   [`../db/runs-domain.md`](../db/runs-domain.md), [`../db/erd.md`](../db/erd.md).
-- Source (Designed): `web/lib/config.schema.ts`, `web/lib/config.ts`,
-  `web/lib/flows/compile.ts`, `web/lib/flows/graph/runner-graph.ts`,
-  `web/lib/runs/resolve.ts`, `web/lib/acp-runners/flow-reconfiguration.ts`,
+- Source: `web/lib/config.schema.ts`, `web/lib/config.ts`,
+  `web/lib/flows/graph/compile.ts`, `web/lib/flows/graph/runner-graph.ts`,
+  `web/lib/acp-runners/resolve.ts`, `web/lib/acp-runners/flow-reconfiguration.ts`,
   `web/lib/db/schema.ts`, `web/lib/reconcile.ts`, `supervisor/src/*`.
-</content>
-</invoke>

@@ -116,13 +116,22 @@ async function seedRunningAgent(): Promise<string> {
 
   await pool.query(
     `INSERT INTO "runs" ("id", "run_kind", "project_id", "status",
-       "flow_version", "agent_workspace", "acp_session_id",
-       "execution_policy", "runner_snapshot", "runner_id")
-     VALUES ($1, 'agent', $2, 'Running', 'agent', 'none', 'acp-keep-me',
-             '{"preset":"unattended"}'::jsonb,
-             '{"capabilityAgent":"claude"}'::jsonb, $3)`,
-    [runId, projectId, executorId],
+       "flow_version", "agent_workspace", "execution_policy")
+     VALUES ($1, 'agent', $2, 'Running', 'agent', 'none',
+             '{"preset":"unattended"}'::jsonb)`,
+    [runId, projectId],
   );
+  // M42 (ADR-114): the runner mirror + resume handle moved off `runs` to the
+  // run's `default` `run_sessions` row.
+  await (db as any).insert(schema.runSessions).values({
+    id: randomUUID(),
+    runId,
+    sessionName: "default",
+    runnerId: executorId,
+    capabilityAgent: "claude",
+    runnerSnapshot: { capabilityAgent: "claude" },
+    acpSessionId: "acp-keep-me",
+  });
 
   return runId;
 }

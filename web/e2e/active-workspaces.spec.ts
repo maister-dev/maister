@@ -2,7 +2,12 @@ import { randomUUID } from "node:crypto";
 
 import { test, expect } from "@playwright/test";
 
-import { singleValue, withE2EDb } from "./_seed/db";
+import {
+  e2eClaudeRunnerSnapshot,
+  seedDefaultRunSession,
+  singleValue,
+  withE2EDb,
+} from "./_seed/db";
 import { loadFixtures } from "./_seed/fixtures";
 
 // One shared self-seeded project for the whole file → run serially so the
@@ -14,12 +19,6 @@ test.describe.configure({ mode: "serial" });
 // Fixed slug + delete-first is idempotent across retries; afterAll cascades it.
 const SLUG = "e2e-active-ws";
 const TASK_KEY = "AWSE2E";
-const RUNNER_SNAPSHOT = `jsonb_build_object(
-  'id', $RUNNER::text, 'adapter', 'claude', 'capabilityAgent', 'claude',
-  'model', 'claude-sonnet-4-6', 'provider', jsonb_build_object('kind', 'anthropic'),
-  'providerKind', 'anthropic', 'permissionPolicy', 'default', 'sidecar', null,
-  'sidecarId', null)`;
-
 const ids = {
   project: randomUUID(),
   runner: randomUUID(),
@@ -77,13 +76,16 @@ test.beforeAll(async () => {
 
     // Flow run linked to the task → a ticket-derived name + KEY-N issue chip.
     await pool.query(
-      `INSERT INTO runs (id, task_id, project_id, flow_id, runner_id, run_kind, capability_agent, runner_snapshot, status, current_step_id, flow_version, started_at)
-       VALUES ($1, $2, $3, $4, $5, 'flow', 'claude', ${RUNNER_SNAPSHOT.replace(
-         /\$RUNNER/g,
-         "$5",
-       )}, 'Running', 'implement', 'v1.0.0', now())`,
-      [ids.flowRun, ids.task, ids.project, ids.flow, ids.runner],
+      `INSERT INTO runs (id, task_id, project_id, flow_id, run_kind, status, current_step_id, flow_version, started_at)
+       VALUES ($1, $2, $3, $4, 'flow', 'Running', 'implement', 'v1.0.0', now())`,
+      [ids.flowRun, ids.task, ids.project, ids.flow],
     );
+    await seedDefaultRunSession(pool, {
+      runId: ids.flowRun,
+      runnerId: ids.runner,
+      capabilityAgent: "claude",
+      runnerSnapshot: e2eClaudeRunnerSnapshot(ids.runner),
+    });
     await pool.query(
       `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path, base_branch, base_commit, target_branch)
        VALUES ($1, $2, $3, 'maister/rail-flow', $4, $5, 'main', '0000000', 'main')`,
@@ -98,13 +100,16 @@ test.beforeAll(async () => {
 
     // Scratch run owned by admin → renamable rail row.
     await pool.query(
-      `INSERT INTO runs (id, project_id, runner_id, run_kind, capability_agent, runner_snapshot, status, flow_version, flow_revision, created_by_user_id, started_at)
-       VALUES ($1, $2, $3, 'scratch', 'claude', ${RUNNER_SNAPSHOT.replace(
-         /\$RUNNER/g,
-         "$3",
-       )}, 'Running', 'scratch', 'manual', $4, now())`,
-      [ids.scratchRun, ids.project, ids.runner, adminId],
+      `INSERT INTO runs (id, project_id, run_kind, status, flow_version, flow_revision, created_by_user_id, started_at)
+       VALUES ($1, $2, 'scratch', 'Running', 'scratch', 'manual', $3, now())`,
+      [ids.scratchRun, ids.project, adminId],
     );
+    await seedDefaultRunSession(pool, {
+      runId: ids.scratchRun,
+      runnerId: ids.runner,
+      capabilityAgent: "claude",
+      runnerSnapshot: e2eClaudeRunnerSnapshot(ids.runner),
+    });
     await pool.query(
       `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path, base_branch, base_commit, target_branch)
        VALUES ($1, $2, $3, 'maister/rail-scratch', $4, $5, 'main', '0000000', 'main')`,

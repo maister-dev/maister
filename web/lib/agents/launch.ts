@@ -52,7 +52,10 @@ import {
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { MaisterError, type MaisterErrorCode } from "@/lib/errors";
 import { gcAgeDays, worktreesRoot } from "@/lib/instance-config";
-import { loadActiveRunSession } from "@/lib/runs/active-run-session";
+import {
+  loadActiveRunSession,
+  persistRunSessionAcpSessionId,
+} from "@/lib/runs/active-run-session";
 import { applyDefaultBudgetForUnattended } from "@/lib/runs/budget-default";
 import {
   permissionsFromSnapshot,
@@ -1067,10 +1070,7 @@ export async function launchAgentRun(
     taskId: input.taskId ?? null,
     projectId: input.projectId,
     flowId: null,
-    runnerId: resolution.runnerId,
-    runnerResolutionTier: resolution.runnerResolutionTier,
-    capabilityAgent: resolution.capabilityAgent,
-    runnerSnapshot: resolution.runnerSnapshot,
+    // M42 (ADR-114): runner identity lives on `run_sessions` (inserted below).
     status: "Pending" as const,
     currentStepId: "agent",
     flowVersion: "agent",
@@ -1665,10 +1665,12 @@ async function startConsensusRunnerDraftSession(args: {
         : {}),
     });
 
-    await args.db
-      .update(runs)
-      .set({ acpSessionId: session.acpSessionId })
-      .where(eq(runs.id, runId));
+    await persistRunSessionAcpSessionId(
+      args.db,
+      runId,
+      "default",
+      session.acpSessionId,
+    );
 
     queueMicrotask(() => {
       void consumeAgentSession({
@@ -2064,7 +2066,6 @@ export async function parkPersistentAgent(
         status: "NeedsInputIdle",
         checkpointAt: new Date(),
         keepaliveUntil: null,
-        ...(opts.acpSessionId ? { acpSessionId: opts.acpSessionId } : {}),
       })
       .where(
         and(
@@ -2074,6 +2075,18 @@ export async function parkPersistentAgent(
         ),
       )
       .returning({ id: runs.id });
+
+    // M42 (ADR-114): the resume handle lives on `run_sessions`, not a dropped
+    // runs column — refresh the active session's handle if a newer turn produced
+    // one.
+    if (rows.length > 0 && opts.acpSessionId) {
+      await persistRunSessionAcpSessionId(
+        tx,
+        runId,
+        "default",
+        opts.acpSessionId,
+      );
+    }
 
     return rows.length > 0;
   });
@@ -2493,11 +2506,24 @@ export async function startAgentSession(
   const api = opts.api ?? defaultSupervisorApi;
 
   const runRows = await _db.select().from(runs).where(eq(runs.id, runId));
-  const run = runRows[0];
+  const baseRun = runRows[0];
 
-  if (!run || run.runKind !== "agent") {
+  if (!baseRun || baseRun.runKind !== "agent") {
     throw new MaisterError("PRECONDITION", `run ${runId} is not an agent run`);
   }
+
+  // M42 (ADR-114): runner snapshot + resume handle come from the run's ACTIVE
+  // session (run_sessions), not the dropped runs columns. Merge once so every
+  // downstream `run.*` read (incl. the consensus-draft child) sees live values.
+  const activeSession = await loadActiveRunSession(_db, runId);
+  const run = {
+    ...baseRun,
+    acpSessionId: activeSession?.acpSessionId ?? null,
+    runnerSnapshot: activeSession?.runnerSnapshot ?? null,
+    runnerId: activeSession?.runnerId ?? null,
+    capabilityAgent: activeSession?.capabilityAgent ?? null,
+    runnerResolutionTier: activeSession?.runnerResolutionTier ?? null,
+  };
 
   if (run.status !== "Running") {
     log.warn(
@@ -2748,10 +2774,12 @@ export async function startAgentSession(
       ...(run.acpSessionId ? { resumeSessionId: run.acpSessionId } : {}),
     });
 
-    await _db
-      .update(runs)
-      .set({ acpSessionId: session.acpSessionId })
-      .where(eq(runs.id, runId));
+    await persistRunSessionAcpSessionId(
+      _db,
+      runId,
+      "default",
+      session.acpSessionId,
+    );
 
     queueMicrotask(() => {
       void consumeAgentSession({

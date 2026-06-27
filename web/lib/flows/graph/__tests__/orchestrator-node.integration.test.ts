@@ -38,6 +38,7 @@ import {
   testPlatformRunnerRow,
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
+import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 
 const schema = fullSchema as unknown as Record<string, any>;
 
@@ -48,20 +49,18 @@ const execFileAsync = promisify(execFile);
 const agentCalls: Array<{ stepId: string; prompt: string }> = [];
 
 vi.mock("@/lib/flows/runner-agent", () => ({
-  runAgentStep: vi.fn(
-    async (step: { id: string; prompt: string }) => {
-      agentCalls.push({ stepId: step.id, prompt: step.prompt });
+  runAgentStep: vi.fn(async (step: { id: string; prompt: string }) => {
+    agentCalls.push({ stepId: step.id, prompt: step.prompt });
 
-      return {
-        ok: true,
-        stdout: "",
-        vars: {},
-        durationMs: 1,
-        needsInput: true,
-        acpSessionId: "acp-coordinator-1",
-      };
-    },
-  ),
+    return {
+      ok: true,
+      stdout: "",
+      vars: {},
+      durationMs: 1,
+      needsInput: true,
+      acpSessionId: "acp-coordinator-1",
+    };
+  }),
 }));
 
 let container: StartedPostgreSqlContainer;
@@ -183,11 +182,16 @@ async function seedOrchestratorRun(): Promise<{
     taskId,
     projectId,
     flowId,
+    flowVersion: "v1.0.0",
+    status: "Running",
+  });
+  await db.insert(schema.runSessions).values({
+    id: randomUUID(),
+    runId,
+    sessionName: "default",
     runnerId: executorId,
     capabilityAgent: "claude",
     runnerSnapshot: testRunnerSnapshot(executorId),
-    flowVersion: "v1.0.0",
-    status: "Running",
   });
   await db.insert(schema.workspaces).values({
     id: randomUUID(),
@@ -230,7 +234,10 @@ describe("orchestrator node — supervisory lifecycle (M37)", () => {
     expect(run.status).toBe("WaitingOnChildren");
     expect(run.currentStepId).toBe("coordinate");
     // The pause persisted the coordinator's resume handle for Phase-5 wakeup.
-    expect(run.acpSessionId).toBe("acp-coordinator-1");
+    // M42 (ADR-114): the handle lives on the run's default run_sessions row.
+    const session = await loadActiveRunSession(db, runId);
+
+    expect(session?.acpSessionId).toBe("acp-coordinator-1");
 
     // The node_attempt ledger row is paused (NeedsInput), the orchestrator
     // park keeps the ledger mark.

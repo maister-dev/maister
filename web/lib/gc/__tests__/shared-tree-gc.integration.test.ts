@@ -111,9 +111,14 @@ async function seedRoot(): Promise<string> {
 
   await pool.query(
     `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id",
-       "status", "flow_version", "flow_revision", "root_run_id", "runner_id")
-     VALUES ($1, 'agent', 'test-pkg:worker', $2, 'Done', 'agent', 'manual', $1, $3)`,
-    [runId, projectId, executorId],
+       "status", "flow_version", "flow_revision", "root_run_id")
+     VALUES ($1, 'agent', 'test-pkg:worker', $2, 'Done', 'agent', 'manual', $1)`,
+    [runId, projectId],
+  );
+  await pool.query(
+    `INSERT INTO "run_sessions" ("id", "run_id", "session_name", "runner_id")
+     VALUES ($1, $2, 'default', $3)`,
+    [randomUUID(), runId, executorId],
   );
 
   return runId;
@@ -132,10 +137,15 @@ async function seedAllocator(args: {
   await pool.query(
     `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id",
        "status", "flow_version", "flow_revision", "parent_run_id", "root_run_id",
-       "launch_mode", "agent_workspace", "workspace_mode", "runner_snapshot", "runner_id", "ended_at")
+       "launch_mode", "agent_workspace", "workspace_mode", "ended_at")
      VALUES ($1, 'agent', 'test-pkg:worker', $2, $3, 'agent', 'manual', $4, $4,
-             'manual', 'worktree', 'shared', '{"capabilityAgent":"claude"}'::jsonb, $5, now())`,
-    [runId, projectId, args.status ?? "Abandoned", args.rootRunId, executorId],
+             'manual', 'worktree', 'shared', now())`,
+    [runId, projectId, args.status ?? "Abandoned", args.rootRunId],
+  );
+  await pool.query(
+    `INSERT INTO "run_sessions" ("id", "run_id", "session_name", "runner_id", "runner_snapshot")
+     VALUES ($1, $2, 'default', $3, '{"capabilityAgent":"claude"}'::jsonb)`,
+    [randomUUID(), runId, executorId],
   );
 
   await pool.query(
@@ -166,20 +176,24 @@ async function seedSibling(args: {
   await pool.query(
     `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id",
        "status", "flow_version", "flow_revision", "parent_run_id", "root_run_id",
-       "launch_mode", "agent_workspace", "workspace_mode", "runner_snapshot", "runner_id", "ended_at")
+       "launch_mode", "agent_workspace", "workspace_mode", "ended_at")
      VALUES ($1, 'agent', 'test-pkg:worker', $2, $3, 'agent', 'manual', $4, $4,
-             'manual', 'worktree', 'shared', '{"capabilityAgent":"claude"}'::jsonb, $5, $6)`,
+             'manual', 'worktree', 'shared', $5)`,
     [
       runId,
       projectId,
       args.status,
       args.rootRunId,
-      executorId,
       // Terminal siblings get an ended_at; live ones leave it null.
       ["Done", "Failed", "Crashed", "Abandoned"].includes(args.status)
         ? new Date()
         : null,
     ],
+  );
+  await pool.query(
+    `INSERT INTO "run_sessions" ("id", "run_id", "session_name", "runner_id", "runner_snapshot")
+     VALUES ($1, $2, 'default', $3, '{"capabilityAgent":"claude"}'::jsonb)`,
+    [randomUUID(), runId, executorId],
   );
 
   return runId;

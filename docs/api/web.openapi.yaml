@@ -4311,8 +4311,9 @@ paths:
         (`gate-chat-<hitlRequestId>`, dash not colon) are server-state.
 
         **Availability (DD2):** `runs.status ∈ {NeedsInput, NeedsInputIdle}` AND
-        the open HITL `kind ∈ {human, form}` AND `runs.acp_session_id ≠ null`; a
-        `permission`-kind pause, a `HumanWorking` run, or a session-less run
+        the open HITL `kind ∈ {human, form}` AND the run's active `run_sessions`
+        row has `acp_session_id ≠ null` (live handle first, else newest session);
+        a `permission`-kind pause, a `HumanWorking` run, or a session-less run
         returns 409 `PRECONDITION` (the UI renders a disabled empty-state).
 
         **Never resolves the HITL / never `→Running` (DD3):** the turn persists a
@@ -5495,8 +5496,8 @@ paths:
         Stops a live run without deleting its worktree, dispatching on
         `runs.run_kind` (allow-listed `flow | scratch | agent`; an unknown kind
         is refused with `PRECONDITION`). In every kind the route resolves the
-        live supervisor session from server-side `runs.acp_session_id` via
-        `listSessions()` and calls `deleteSession(sessionId)` when found, then
+        live supervisor session from the run's active `run_sessions.acp_session_id`
+        via `listSessions()` and calls `deleteSession(sessionId)` when found, then
         clears live ACP/current-step handles.
 
         - **flow** (Implemented) → `runs.status = Review`, active assignments

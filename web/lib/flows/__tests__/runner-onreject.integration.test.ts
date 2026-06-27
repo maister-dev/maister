@@ -159,7 +159,8 @@ beforeAll(async () => {
   projectId = randomUUID();
   executorId = randomUUID();
 
-  await db.insert(projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
+  await db.insert(projects).values({
+    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug: "demo-app",
     name: "Demo App",
@@ -208,7 +209,8 @@ async function seedRunWithHumanStep(args: {
   const taskId = randomUUID();
   const runId = randomUUID();
 
-  await db.insert(tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
+  await db.insert(tasks).values({
+    number: Math.trunc(Math.random() * 1e9) + 1,
     id: taskId,
     projectId,
     title: "Test task",
@@ -222,12 +224,18 @@ async function seedRunWithHumanStep(args: {
     taskId,
     projectId,
     flowId: args.flowId,
-    runnerId: executorId,
-    capabilityAgent: "claude",
-    runnerSnapshot: testRunnerSnapshot(executorId),
     status: "Pending",
     flowVersion: "local-dev",
     ...(args.flowRevisionId ? { flowRevisionId: args.flowRevisionId } : {}),
+  });
+
+  await db.insert(schema.runSessions).values({
+    id: randomUUID(),
+    runId,
+    sessionName: "default",
+    runnerId: executorId,
+    capabilityAgent: "claude",
+    runnerSnapshot: testRunnerSnapshot(executorId),
   });
 
   const worktreePath = join(workspaceRoot, "wt-" + runId);

@@ -205,9 +205,14 @@ async function seedLiveFlowRun(
   const runId = randomUUID();
 
   await pool.query(
-    `INSERT INTO "runs" ("id", "run_kind", "project_id", "task_id", "status", "flow_version", "flow_revision", "runner_id")
-     VALUES ($1, 'flow', $2, $3, $4, 'v1.0.0', 'rev-1', $5)`,
-    [runId, projectId, taskId, status, executorId],
+    `INSERT INTO "runs" ("id", "run_kind", "project_id", "task_id", "status", "flow_version", "flow_revision")
+     VALUES ($1, 'flow', $2, $3, $4, 'v1.0.0', 'rev-1')`,
+    [runId, projectId, taskId, status],
+  );
+  await pool.query(
+    `INSERT INTO "run_sessions" ("id", "run_id", "session_name", "runner_id")
+     VALUES ($1, $2, 'default', $3)`,
+    [randomUUID(), runId, executorId],
   );
 
   return runId;
@@ -223,17 +228,21 @@ async function seedTerminalFlowRun(
   const runId = randomUUID();
 
   await pool.query(
-    `INSERT INTO "runs" ("id", "run_kind", "project_id", "task_id", "status", "flow_version", "flow_revision", "runner_id", "started_at", "ended_at")
-     VALUES ($1, 'flow', $2, $3, $4, 'v1.0.0', 'rev-1', $5, $6, $7)`,
+    `INSERT INTO "runs" ("id", "run_kind", "project_id", "task_id", "status", "flow_version", "flow_revision", "started_at", "ended_at")
+     VALUES ($1, 'flow', $2, $3, $4, 'v1.0.0', 'rev-1', $5, $6)`,
     [
       runId,
       projectId,
       taskId,
       status,
-      executorId,
       new Date(endedAt.getTime() - 60_000),
       endedAt,
     ],
+  );
+  await pool.query(
+    `INSERT INTO "run_sessions" ("id", "run_id", "session_name", "runner_id")
+     VALUES ($1, $2, 'default', $3)`,
+    [randomUUID(), runId, executorId],
   );
 
   return runId;

@@ -114,7 +114,8 @@ async function seedReviewRun(opts: {
   const attemptId = randomUUID();
   const slug = `proj-${projectId.slice(0, 8)}`;
 
-  await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
+  await db.insert(schema.projects).values({
+    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug,
     name: "Board Evidence Test",
@@ -134,7 +135,8 @@ async function seedReviewRun(opts: {
     manifest: { schemaVersion: 1, name: "aif", nodes: [] },
     schemaVersion: 1,
   });
-  await db.insert(schema.tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
+  await db.insert(schema.tasks).values({
+    number: Math.trunc(Math.random() * 1e9) + 1,
     id: taskId,
     projectId,
     title: "evidence task",
@@ -148,13 +150,18 @@ async function seedReviewRun(opts: {
     taskId,
     projectId,
     flowId,
-    runnerId: executorId,
-    capabilityAgent: "claude",
-    runnerSnapshot: testRunnerSnapshot(executorId),
     status: opts.runStatus ?? "Review",
     flowVersion: "v1.0.0",
     currentStepId: "review",
     endedAt: opts.runStatus === "Done" ? new Date() : undefined,
+  });
+  await db.insert(schema.runSessions).values({
+    id: randomUUID(),
+    runId,
+    sessionName: "default",
+    runnerId: executorId,
+    capabilityAgent: "claude",
+    runnerSnapshot: testRunnerSnapshot(executorId),
   });
   await db.insert(schema.workspaces).values({
     id: workspaceId,
@@ -848,11 +855,16 @@ describe("getBoardData — orchestrator decomposition (integration)", () => {
       id: childRunId,
       taskId: childWithRunId,
       projectId,
+      status: "Running",
+      flowVersion: "v1.0.0",
+    });
+    await db.insert(schema.runSessions).values({
+      id: randomUUID(),
+      runId: childRunId,
+      sessionName: "default",
       runnerId: executorId,
       capabilityAgent: "claude",
       runnerSnapshot: testRunnerSnapshot(executorId),
-      status: "Running",
-      flowVersion: "v1.0.0",
     });
 
     await db.insert(schema.taskRelations).values([

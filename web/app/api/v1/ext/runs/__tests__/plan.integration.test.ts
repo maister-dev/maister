@@ -200,16 +200,15 @@ async function seedOrchestratorRun(args: {
 
   await pool.query(
     `INSERT INTO "runs" ("id", "run_kind", "agent_id", "project_id", "task_id",
-       "status", "flow_version", "flow_revision", "runner_snapshot", "runner_id")
-     VALUES ($1, 'agent', $2, $3, $4, 'Running', 'agent', 'manual',
-             '{"capabilityAgent":"claude"}'::jsonb, $5)`,
-    [
-      runId,
-      args.orchestratorAgentId,
-      projectId,
-      args.taskId ?? null,
-      executorId,
-    ],
+       "status", "flow_version", "flow_revision")
+     VALUES ($1, 'agent', $2, $3, $4, 'Running', 'agent', 'manual')`,
+    [runId, args.orchestratorAgentId, projectId, args.taskId ?? null],
+  );
+
+  await pool.query(
+    `INSERT INTO "run_sessions" ("id", "run_id", "session_name", "runner_snapshot", "runner_id")
+     VALUES ($1, $2, 'default', '{"capabilityAgent":"claude"}'::jsonb, $3)`,
+    [randomUUID(), runId, executorId],
   );
 
   const { secret } = await issueOrchestratorRunToken({ projectId, runId, db });
@@ -427,9 +426,14 @@ describe("POST /api/v1/ext/runs/plan", () => {
     ] as const) {
       await pool.query(
         `INSERT INTO "runs" ("id", "run_kind", "project_id", "status",
-           "flow_version", "flow_revision", "runner_id", "parent_run_id", "root_run_id")
-         VALUES ($1, 'agent', $2, 'Running', 'agent', 'manual', $3, $4, $5)`,
-        [id, projectId, executorId, parent, a1],
+           "flow_version", "flow_revision", "parent_run_id", "root_run_id")
+         VALUES ($1, 'agent', $2, 'Running', 'agent', 'manual', $3, $4)`,
+        [id, projectId, parent, a1],
+      );
+      await pool.query(
+        `INSERT INTO "run_sessions" ("id", "run_id", "session_name", "runner_id")
+         VALUES ($1, $2, 'default', $3)`,
+        [randomUUID(), id, executorId],
       );
     }
     await pool.query(

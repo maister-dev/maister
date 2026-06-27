@@ -35,7 +35,7 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `platform_runtime_settings`   | Singleton platform runtime row with the required default runner id.                                                                                                                                                                                                                                                         | `platform_acp_runners.id`                                                  |
 | `flows`                       | Current installed Flow pointer per project, tag-pinned. Planned M10 splits immutable package revisions from project enablement.                                                                                                                                                                                            | `projects.id`                                                              |
 | `project_flow_runner_defaults` | Per-project Flow attachment runner default. `runner_id = null` means inherit project default.                                                                                                                                                                                                                              | `projects.id`, `flows.id`, optional `platform_acp_runners.id`              |
-| `flow_runner_remaps`          | Per-slot binding records keyed `(project_id, flow_revision_id, slot_key)` mapping each unbound session / consensus runner slot to a platform runner. **(M42 — Implemented, ADR-114, migration `0080`)** re-keys this from the per-step `(…, step_id, source_runner_id)` shape.                                                                                                                                                                | optional `projects.id`, `flow_revisions.id`, optional `platform_acp_runners.id` |
+| `flow_runner_remaps`          | Per-slot binding records keyed `(project_id, flow_revision_id, slot_key)` mapping each unbound session / consensus runner slot to a platform runner. **(M42 — Implemented, ADR-114, migration `0081`)** re-keys this from the per-step `(…, step_id, source_runner_id)` shape.                                                                                                                                                                | optional `projects.id`, `flow_revisions.id`, optional `platform_acp_runners.id` |
 | `capability_records`          | Project-visible registry for selectable MCP servers, skills, tools, agent settings, restrictions, and launch mappings.                                                                                                                                                                                                     | `projects.id`                                                              |
 | `project_flow_roles`          | **(M13 — Implemented, migration `0018`)** Project-scoped Flow routing labels; not auth roles.                                                                                                                                                                                                                              | `projects.id`                                                              |
 | `actor_identities`            | **(M13 — Implemented, migration `0018`)** Stable attribution identities for users, API-token systems, internal agents, and system events.                                                                                                                                                                                  | `projects.id`, optional `users.id`                                         |
@@ -1189,11 +1189,16 @@ mapping as `projects.deliveryPolicyDefault`; scratch runs keep the M18
 ## `run_sessions` (Implemented — M42, ADR-114, migration `0080`)
 
 **(M42 — Implemented, ADR-114, migration `0080`.)** Per-`(run, session)` runner
-state — the SOLE source of truth for a run's runner(s). The run-level
-`runs.{runner_id, runner_resolution_tier, capability_agent, runner_snapshot,
-acp_session_id}` columns are dropped in the same migration. A flow run has one
+state — the SOLE source of truth for a run's runner(s). Migration `0080` only
+CREATEs this table; the run-level `runs.{runner_id, runner_resolution_tier,
+capability_agent, runner_snapshot, acp_session_id}` columns are dropped later in
+migration `0082`. A flow run has one
 row per logical session (`default` / solo / named); a `scratch` / `agent` run
-has exactly one `default` row. Clean cutover — no run-data migration.
+has exactly one `default` row. Clean **schema** cutover with a one-shot
+run-data preservation backfill: migration `0082` copies each existing run's
+runner/resume state into a `default` `run_sessions` row **before** dropping the
+`runs` mirror columns, so live runs keep their resume handle (recovery, resume,
+stop, gate-chat, and diagnostics still target the correct ACP session).
 
 ```ts
 {
@@ -1225,7 +1230,7 @@ has exactly one `default` row. Clean cutover — no run-data migration.
 
 ### `flow_runner_remaps` per-slot binding refactor (M42)
 
-Migration `0080` re-keys `flow_runner_remaps` from per-step
+Migration `0081` re-keys `flow_runner_remaps` from per-step
 `(project_id, flow_revision_id, step_id, source_runner_id)` to per-slot
 `(project_id, flow_revision_id, slot_key)` — dropping `step_id` +
 `source_runner_id`, adding `slot_key` (`session:<name>` |
@@ -1234,6 +1239,11 @@ Migration `0080` re-keys `flow_runner_remaps` from per-step
 `flow_runner_remaps_mapped_runner_idx` are unchanged; the unique constraint
 becomes `flow_runner_remaps_project_revision_slot_uq`. Slot rows are NEVER
 deduped by intent (identical-intent consensus participants are distinct slots).
+The old per-step rows are NOT auto-migrated: `0081` **aborts** when
+`flow_runner_remaps` is non-empty (the per-step key is not deterministically
+mappable to `slot_key`), so operators export/record and clear the table
+**before** running migrations, then re-map per slot via the project Flow runner
+UI **after** the upgrade succeeds.
 
 ## Cost rollup tables (Designed — ADR-085, migration `0047`)
 
@@ -2063,7 +2073,8 @@ Answer-only gate-chat turns between a reviewer and the parked agent at a
 
 **Write guard.** Rows are inserted only at an available pause (DD2):
 `runs.status ∈ {NeedsInput, NeedsInputIdle}` AND a pending `hitl_requests` row
-(`responded_at IS NULL`, `kind ∈ {human, form}`) AND `runs.acp_session_id` set.
+(`responded_at IS NULL`, `kind ∈ {human, form}`) AND the active session's
+`run_sessions.acp_session_id` set.
 A chat turn NEVER touches `runs.status` (no `→Running`) and NEVER writes
 `hitl_requests.responded_at`. Indexes: `(run_id)`, `(hitl_request_id)`.
 
@@ -2482,6 +2493,7 @@ projects
   │     ├── inbox_items      (FK taskId,   cascade)                ← ADR-083
   │     └── runs         (FK taskId,    cascade)
   │           ├── workspaces      (FK runId,        cascade)
+  │           ├── run_sessions    (FK runId,        cascade)       ← M42 ADR-114
   │           ├── step_runs       (FK runId,        cascade)
   │           ├── run_cost_rollups (FK runId,       cascade)       ← ADR-085
   │           ├── node_attempts   (FK runId,        cascade)   ← M11a

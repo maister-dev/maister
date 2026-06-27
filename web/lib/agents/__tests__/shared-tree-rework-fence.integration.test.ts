@@ -265,10 +265,22 @@ async function insertRoot(): Promise<string> {
   const id = randomUUID();
 
   await pool.query(
-    `INSERT INTO "runs" ("id", "run_kind", "agent_id", "trigger_source", "project_id", "flow_version", "flow_revision", "status", "root_run_id", "runner_id")
-     VALUES ($1, 'agent', 'test-pkg:worker', 'manual', $2, 'agent', 'manual', 'WaitingOnChildren', $1, $3)`,
-    [id, projectId, executorId],
+    `INSERT INTO "runs" ("id", "run_kind", "agent_id", "trigger_source", "project_id", "flow_version", "flow_revision", "status", "root_run_id")
+     VALUES ($1, 'agent', 'test-pkg:worker', 'manual', $2, 'agent', 'manual', 'WaitingOnChildren', $1)`,
+    [id, projectId],
   );
+  // M42 (ADR-114): the runner mirror moved off `runs` to the run's `default`
+  // `run_sessions` row (launchAgentRun inserts its own for the children).
+  await (db as any)
+    .insert((await import("@/lib/db/schema")).runSessions)
+    .values({
+      id: randomUUID(),
+      runId: id,
+      sessionName: "default",
+      runnerId: executorId,
+      capabilityAgent: "claude",
+      runnerSnapshot: { capabilityAgent: "claude" },
+    });
 
   return id;
 }
@@ -293,8 +305,13 @@ async function launchSharedReviewChild(
 
   if ("deduped" in result) throw new Error("unexpected dedup");
 
+  // M42 (ADR-114): status stays on `runs`; the delegated-Review resume handle
+  // goes to the run's `default` `run_sessions` row (seeded null by launch).
+  await pool.query(`UPDATE "runs" SET "status" = 'Review' WHERE "id" = $1`, [
+    result.runId,
+  ]);
   await pool.query(
-    `UPDATE "runs" SET "status" = 'Review', "acp_session_id" = $2 WHERE "id" = $1`,
+    `UPDATE "run_sessions" SET "acp_session_id" = $2 WHERE "run_id" = $1 AND "session_name" = 'default'`,
     [result.runId, `acp-${result.runId}`],
   );
 

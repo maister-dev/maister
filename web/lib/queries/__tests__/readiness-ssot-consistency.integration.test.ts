@@ -89,7 +89,8 @@ async function seedRunWithGatesAndArtifacts(opts: {
     passwordHash: null,
     role: "member",
   });
-  await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
+  await db.insert(schema.projects).values({
+    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug,
     name: `SSOT Project ${slug}`,
@@ -115,7 +116,8 @@ async function seedRunWithGatesAndArtifacts(opts: {
     manifest: { schemaVersion: 1, name: "ssot", nodes: [] },
     schemaVersion: 1,
   });
-  await db.insert(schema.tasks).values({ number: Math.trunc(Math.random() * 1e9) + 1,
+  await db.insert(schema.tasks).values({
+    number: Math.trunc(Math.random() * 1e9) + 1,
     id: taskId,
     projectId,
     title: "SSOT task",
@@ -129,13 +131,18 @@ async function seedRunWithGatesAndArtifacts(opts: {
     taskId,
     projectId,
     flowId,
-    runnerId: executorId,
-    capabilityAgent: "claude",
-    runnerSnapshot: testRunnerSnapshot(executorId, "claude"),
     status: "Review",
     flowVersion: "v1.0.0",
     currentStepId: "review",
     startedAt: new Date(),
+  });
+  await db.insert(schema.runSessions).values({
+    id: randomUUID(),
+    runId,
+    sessionName: "default",
+    runnerId: executorId,
+    capabilityAgent: "claude",
+    runnerSnapshot: testRunnerSnapshot(executorId, "claude"),
   });
   await db.insert(schema.workspaces).values({
     id: randomUUID(),

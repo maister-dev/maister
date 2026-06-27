@@ -38,6 +38,10 @@ import {
   type RunnerCatalogEntry,
 } from "@/lib/acp-runners/resolve";
 import {
+  loadActiveRunSession,
+  persistRunSessionAcpSessionId,
+} from "@/lib/runs/active-run-session";
+import {
   mergeRunnerAdapterLaunch,
   runnerExecutorInput,
   runnerSupervisorInput,
@@ -895,10 +899,7 @@ export async function* launchScratchRunStaged(
         taskId: null,
         projectId: project.id,
         flowId: null,
-        runnerId: runnerResolution.runnerId,
-        runnerResolutionTier: runnerResolution.runnerResolutionTier,
-        capabilityAgent: runnerResolution.capabilityAgent,
-        runnerSnapshot: runnerResolution.runnerSnapshot,
+        // M42 (ADR-114): runner identity lives on `run_sessions` (inserted below).
         status: "Running",
         currentStepId: scratchStepId(),
         flowVersion: "scratch",
@@ -1064,10 +1065,12 @@ export async function* launchScratchRunStaged(
         ? "Running"
         : "WaitingForUser";
 
-      await tx
-        .update(runs)
-        .set({ acpSessionId: session.acpSessionId })
-        .where(eq(runs.id, runId));
+      await persistRunSessionAcpSessionId(
+        tx,
+        runId,
+        "default",
+        session.acpSessionId,
+      );
       await tx
         .update(scratchRuns)
         .set({
@@ -1519,10 +1522,7 @@ export async function launchLocalPackageAssistant(args: {
       projectId: null,
       localPackageId: pkg.id,
       flowId: null,
-      runnerId: runnerResolution.runnerId,
-      runnerResolutionTier: runnerResolution.runnerResolutionTier,
-      capabilityAgent: runnerResolution.capabilityAgent,
-      runnerSnapshot: runnerResolution.runnerSnapshot,
+      // M42 (ADR-114): runner identity lives on `run_sessions` (inserted below).
       status: "Running",
       currentStepId: scratchStepId(),
       flowVersion: "scratch",
@@ -1622,10 +1622,12 @@ export async function launchLocalPackageAssistant(args: {
         ? "Running"
         : "WaitingForUser";
 
-      await tx
-        .update(runs)
-        .set({ acpSessionId: session.acpSessionId })
-        .where(eq(runs.id, runId));
+      await persistRunSessionAcpSessionId(
+        tx,
+        runId,
+        "default",
+        session.acpSessionId,
+      );
       await tx
         .update(scratchRuns)
         .set({
@@ -1982,11 +1984,13 @@ async function appendScratchUserMessage(args: {
       .set({ status: "Running", currentStepId: scratchStepId() })
       .where(eq(runs.id, args.runId));
 
+    const activeSession = await loadActiveRunSession(tx, args.runId);
+
     return {
       messageId,
       sequence,
       supervisorSessionId: scratch.supervisorSessionId as string,
-      capabilityAgent: run.capabilityAgent,
+      capabilityAgent: activeSession?.capabilityAgent ?? null,
       // ADR-097: project-less ⇒ a local-package assistant run; its turn-failure
       // path explicitly releases the supervisor deferred (see caller).
       isLocalPackageAssistant: !run.projectId,
@@ -2109,6 +2113,7 @@ export async function sendLocalPackageAssistantMessage(args: {
   }
   await assertHoldsLock(pkg.id, args.body.sessionId, db);
 
+  const activeSession = await loadActiveRunSession(db, args.runId);
   const intent = normalizeFlowAssistantIntent(args.body.intent);
   const appended = await appendScratchUserMessage({
     db,
@@ -2122,7 +2127,7 @@ export async function sendLocalPackageAssistantMessage(args: {
       localPackage: pkg,
       intent,
       focus: args.body.focus,
-      runnerLabel: `${run.runnerId ?? "platform default"} (${appended.capabilityAgent})`,
+      runnerLabel: `${activeSession?.runnerId ?? "platform default"} (${appended.capabilityAgent})`,
     });
     const messagePrompt = normalizeScratchPrompt(
       groundedFlowAssistantPrompt({

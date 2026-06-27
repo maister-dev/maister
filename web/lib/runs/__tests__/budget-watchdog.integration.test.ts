@@ -248,17 +248,25 @@ async function seedRun(opts: {
     rootRunId: opts.rootRunId ?? null,
     parentRunId: opts.parentRunId ?? null,
     agentId: opts.agentId ?? null,
-    runnerId: executorId,
-    capabilityAgent: "claude",
-    runnerSnapshot: testRunnerSnapshot(executorId),
     flowVersion: "v1.0.0",
     status: opts.status ?? "Running",
     currentStepId:
       opts.currentStepId === undefined ? defaultStep : opts.currentStepId,
-    acpSessionId: opts.acpSessionId ?? null,
     executionPolicy: opts.executionPolicy ?? { preset: "supervised" },
     budgetState: opts.budgetState ?? null,
     startedAt: opts.startedAt ?? new Date(),
+  });
+
+  // M42 (ADR-114): the runner mirror + acp_session_id moved off `runs` to the
+  // run's default `run_sessions` row.
+  await db.insert(schema.runSessions).values({
+    id: randomUUID(),
+    runId,
+    sessionName: "default",
+    runnerId: executorId,
+    capabilityAgent: "claude",
+    runnerSnapshot: testRunnerSnapshot(executorId),
+    acpSessionId: opts.acpSessionId ?? null,
   });
 
   return runId;
@@ -363,6 +371,16 @@ async function getRun(runId: string): Promise<any> {
     .select()
     .from(schema.runs)
     .where(eq(schema.runs.id, runId));
+
+  return rows[0];
+}
+
+// M42 (ADR-114): acp_session_id lives on the run's default run_sessions row.
+async function getRunSession(runId: string): Promise<any> {
+  const rows = await db
+    .select()
+    .from(schema.runSessions)
+    .where(eq(schema.runSessions.runId, runId));
 
   return rows[0];
 }
@@ -679,7 +697,9 @@ describe("budget watchdog — onBudgetBreach disposition (ADR-106 M39 Phase 5)",
 
     expect(run.status).toBe("NeedsInputIdle");
     expect(run.checkpointAt).not.toBeNull();
-    expect(run.acpSessionId).toBe("acp-restorable-flow"); // preserved for resume
+    expect((await getRunSession(runId)).acpSessionId).toBe(
+      "acp-restorable-flow",
+    ); // preserved for resume
 
     const hitl = await getHitl(runId);
 
@@ -715,7 +735,9 @@ describe("budget watchdog — onBudgetBreach disposition (ADR-106 M39 Phase 5)",
 
     // The owner's "no-escalate" never hard-fails — recoverable idle, not Failed.
     expect(run.status).toBe("NeedsInputIdle");
-    expect(run.acpSessionId).toBe("acp-restorable-agent");
+    expect((await getRunSession(runId)).acpSessionId).toBe(
+      "acp-restorable-agent",
+    );
     expect(await getHitl(runId)).toHaveLength(1);
   }, 60_000);
 
@@ -1039,12 +1061,17 @@ describe("budget watchdog — TREE scope (E6)", () => {
       rootRunId: rootId,
       status: "WaitingOnChildren",
       currentStepId: null,
-      runnerId: executorId,
-      capabilityAgent: "claude",
-      runnerSnapshot: testRunnerSnapshot(executorId),
       flowVersion: "v1.0.0",
       executionPolicy: policyWithBudget({ tree: { maxTokens: 1000 } }),
       startedAt: new Date(Date.now() - 60_000),
+    });
+    await db.insert(schema.runSessions).values({
+      id: randomUUID(),
+      runId: rootId,
+      sessionName: "default",
+      runnerId: executorId,
+      capabilityAgent: "claude",
+      runnerSnapshot: testRunnerSnapshot(executorId),
     });
     const childA = await seedRun({
       rootRunId: rootId,

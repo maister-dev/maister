@@ -372,11 +372,16 @@ async function seedOrchestratorRun(): Promise<{ runId: string }> {
     taskId,
     projectId,
     flowId,
+    flowVersion: "v1.0.0",
+    status: "Running",
+  });
+  await db.insert(schema.runSessions).values({
+    id: randomUUID(),
+    runId,
+    sessionName: "default",
     runnerId: executorId,
     capabilityAgent: "claude",
     runnerSnapshot: testRunnerSnapshot(executorId),
-    flowVersion: "v1.0.0",
-    status: "Running",
   });
   await db.insert(schema.workspaces).values({
     id: randomUUID(),
@@ -481,7 +486,10 @@ describe("M37 orchestrator full loop through the real supervisor-client wire", (
 
     // The parked coordinator retains its resume handle.
     const parkedRow = await pool.query(
-      `SELECT "acp_session_id", "current_step_id" FROM "runs" WHERE "id" = $1`,
+      `SELECT rs."acp_session_id", r."current_step_id"
+         FROM "runs" r
+         JOIN "run_sessions" rs ON rs."run_id" = r."id" AND rs."session_name" = 'default'
+        WHERE r."id" = $1`,
       [runId],
     );
 

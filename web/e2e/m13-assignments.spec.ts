@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import { test, expect } from "@playwright/test";
 
+import { e2eClaudeRunnerSnapshot, seedDefaultRunSession } from "./_seed/db";
 import { E2E_DB_URL } from "./_seed/db-url";
 import { loadFixtures } from "./_seed/fixtures";
 
@@ -129,23 +130,17 @@ async function seedAssignmentFixture(): Promise<SeededAssignmentFixture> {
     );
     await pool.query(
       `INSERT INTO runs
-         (id, task_id, project_id, flow_id, runner_id, capability_agent,
-          runner_snapshot, status, current_step_id, flow_version, started_at)
-       VALUES ($1, $2, $3, $4, $5, 'claude',
-          jsonb_build_object(
-            'id', $5::text,
-            'adapter', 'claude',
-            'capabilityAgent', 'claude',
-            'model', 'claude-sonnet-4-6',
-            'provider', jsonb_build_object('kind', 'anthropic'),
-            'providerKind', 'anthropic',
-            'permissionPolicy', 'default',
-            'sidecar', null,
-            'sidecarId', null
-          ),
-          'NeedsInput', 'review', 'v0.0.1', now())`,
-      [ids.run, ids.task, ids.project, ids.flow, ids.runner],
+         (id, task_id, project_id, flow_id,
+          status, current_step_id, flow_version, started_at)
+       VALUES ($1, $2, $3, $4, 'NeedsInput', 'review', 'v0.0.1', now())`,
+      [ids.run, ids.task, ids.project, ids.flow],
     );
+    await seedDefaultRunSession(pool, {
+      runId: ids.run,
+      runnerId: ids.runner,
+      capabilityAgent: "claude",
+      runnerSnapshot: e2eClaudeRunnerSnapshot(ids.runner),
+    });
     await pool.query(
       `INSERT INTO workspaces (id, run_id, project_id, branch, worktree_path, parent_repo_path)
        VALUES ($1, $2, $3, $4, $5, $6)`,

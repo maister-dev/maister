@@ -112,6 +112,10 @@ async function seedRun(
   const taskId = randomUUID();
   const runId = randomUUID();
 
+  // M42 (ADR-114): acp_session_id moved off `runs` to the run's default
+  // `run_sessions` row — route a seeded handle there.
+  const { acpSessionId, ...runFields } = fields;
+
   await db.insert(tasks).values({
     number: Math.trunc(Math.random() * 1e9) + 1,
     id: taskId,
@@ -127,13 +131,20 @@ async function seedRun(
     taskId,
     projectId,
     flowId,
-    runnerId: executorId,
-    capabilityAgent: "claude",
-    runnerSnapshot: testRunnerSnapshot(executorId),
     status,
     flowVersion: "v1",
     startedAt: new Date(),
-    ...fields,
+    ...runFields,
+  });
+
+  await db.insert(schema.runSessions).values({
+    id: randomUUID(),
+    runId,
+    sessionName: "default",
+    runnerId: executorId,
+    capabilityAgent: "claude",
+    runnerSnapshot: testRunnerSnapshot(executorId),
+    acpSessionId: (acpSessionId ?? null) as string | null,
   });
 
   return runId;
@@ -141,6 +152,16 @@ async function seedRun(
 
 async function readRun(runId: string): Promise<any> {
   const rows = await db.select().from(runs).where(eq(runs.id, runId));
+
+  return rows[0];
+}
+
+// M42 (ADR-114): the run's default session row carries acp_session_id + runner.
+async function readDefaultSession(runId: string): Promise<any> {
+  const rows = await db
+    .select()
+    .from(schema.runSessions)
+    .where(eq(schema.runSessions.runId, runId));
 
   return rows[0];
 }
@@ -229,7 +250,7 @@ describe("state-transitions — markWaitingOnChildren / markResumedFromWait (M37
 
     expect(after.status).toBe("Running");
     // The resume handle survives so startAgentSession can session/resume.
-    expect(after.acpSessionId).toBe("sess-rework");
+    expect((await readDefaultSession(runId)).acpSessionId).toBe("sess-rework");
     expect(after.keepaliveUntil).toBeNull();
   });
 

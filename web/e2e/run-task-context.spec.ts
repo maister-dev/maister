@@ -10,7 +10,7 @@ import { randomUUID } from "node:crypto";
 
 import { test, expect } from "@playwright/test";
 
-import { withE2EDb } from "./_seed/db";
+import { seedDefaultRunSession, withE2EDb } from "./_seed/db";
 import { loadFixtures } from "./_seed/fixtures";
 
 type Seeded = {
@@ -40,7 +40,8 @@ async function seedContextRun(): Promise<Seeded> {
     // m22 fixture run so the run page resolves a real manifest.
     const src = (
       await pool.query(
-        `SELECT r.project_id, r.flow_id, r.flow_revision, r.runner_id,
+        `SELECT r.project_id, r.flow_id, r.flow_revision,
+                (SELECT rs.runner_id FROM run_sessions rs WHERE rs.run_id = r.id ORDER BY (rs.acp_session_id IS NOT NULL) DESC, rs.updated_at DESC LIMIT 1) AS runner_id,
                 p.repo_path, p.slug, f.flow_ref_id
          FROM runs r
          JOIN projects p ON p.id = r.project_id
@@ -65,7 +66,7 @@ async function seedContextRun(): Promise<Seeded> {
     );
     // A complete runner snapshot — the active-workspaces rail's executorDisplay
     // throws unless the snapshot carries both `id` and `model`.
-    const runnerSnapshot = JSON.stringify({
+    const runnerSnapshot = {
       id: src.runner_id,
       adapter: "claude",
       capabilityAgent: "claude",
@@ -75,25 +76,23 @@ async function seedContextRun(): Promise<Seeded> {
       permissionPolicy: "default",
       sidecar: null,
       sidecarId: null,
-    });
+    };
 
     await pool.query(
       `INSERT INTO runs (
-         id, run_kind, task_id, project_id, flow_id, runner_id,
-         runner_resolution_tier, capability_agent, runner_snapshot,
+         id, run_kind, task_id, project_id, flow_id,
          status, flow_version, flow_revision, current_step_id, started_at
        )
-       VALUES ($1,'flow',$2,$3,$4,$5,'project','claude',$7,'Running','v1',$6,'implement', now())`,
-      [
-        runId,
-        taskId,
-        src.project_id,
-        src.flow_id,
-        src.runner_id,
-        src.flow_revision,
-        runnerSnapshot,
-      ],
+       VALUES ($1,'flow',$2,$3,$4,'Running','v1',$5,'implement', now())`,
+      [runId, taskId, src.project_id, src.flow_id, src.flow_revision],
     );
+    await seedDefaultRunSession(pool, {
+      runId,
+      runnerId: src.runner_id,
+      runnerResolutionTier: "project",
+      capabilityAgent: "claude",
+      runnerSnapshot,
+    });
     await pool.query(
       `INSERT INTO workspaces (id, project_id, run_id, branch, worktree_path, parent_repo_path, created_at)
        VALUES ($1,$2,$3,$4,$5,$6, now())`,
