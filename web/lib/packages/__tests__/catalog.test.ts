@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  classifyVersionTargets,
   deriveUpdateAvailable,
   parsePackageTags,
 } from "@/lib/packages/catalog";
@@ -78,6 +79,65 @@ describe("deriveUpdateAvailable", () => {
         discovered,
       }),
     ).toBe(false);
+  });
+});
+
+describe("classifyVersionTargets", () => {
+  it("never offers an older install as an upgrade (the reported downgrade-as-upgrade bug)", () => {
+    const result = classifyVersionTargets({
+      currentVersionLabel: "aif/v2.1.0",
+      candidates: [{ installId: "i-200", versionLabel: "aif/v2.0.0" }],
+    });
+
+    expect(result.upgrade).toBeNull();
+    expect(result.downgrade).toEqual([
+      { installId: "i-200", versionLabel: "aif/v2.0.0" },
+    ]);
+  });
+
+  it("upgrades to the NEWEST strictly-newer install and lists older ones as downgrades", () => {
+    const result = classifyVersionTargets({
+      currentVersionLabel: "aif/v2.1.0",
+      candidates: [
+        { installId: "i-200", versionLabel: "aif/v2.0.0" },
+        { installId: "i-220", versionLabel: "aif/v2.2.0" },
+        { installId: "i-300", versionLabel: "aif/v3.0.0" },
+        { installId: "i-100", versionLabel: "aif/v1.0.0" },
+      ],
+    });
+
+    expect(result.upgrade).toEqual({
+      installId: "i-300",
+      versionLabel: "aif/v3.0.0",
+    });
+    // Downgrades sorted closest-first (newest-of-the-older first).
+    expect(result.downgrade).toEqual([
+      { installId: "i-200", versionLabel: "aif/v2.0.0" },
+      { installId: "i-100", versionLabel: "aif/v1.0.0" },
+    ]);
+  });
+
+  it("skips off-catalog labels (local-*, no /v) and equal versions", () => {
+    expect(
+      classifyVersionTargets({
+        currentVersionLabel: "local-abcdef123456",
+        candidates: [{ installId: "i-200", versionLabel: "aif/v2.0.0" }],
+      }),
+    ).toEqual({ upgrade: null, downgrade: [] });
+
+    const result = classifyVersionTargets({
+      currentVersionLabel: "aif/v2.0.0",
+      candidates: [
+        { installId: "i-local", versionLabel: "local-deadbeef0001" },
+        { installId: "i-same", versionLabel: "aif/v2.0.0" },
+        { installId: "i-100", versionLabel: "aif/v1.0.0" },
+      ],
+    });
+
+    expect(result.upgrade).toBeNull();
+    expect(result.downgrade).toEqual([
+      { installId: "i-100", versionLabel: "aif/v1.0.0" },
+    ]);
   });
 });
 

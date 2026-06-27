@@ -21,6 +21,8 @@ const attachment = {
   trustStatus: "untrusted",
   attachedAt: "2026-06-12T10:00:00.000Z",
   updateAvailable: true,
+  upgradeTarget: { installId: "inst-2", versionLabel: "aif/v2.0.0" },
+  downgradeTargets: [] as { installId: string; versionLabel: string }[],
   flows: ["aif-dev", "aif-bugfix"],
 };
 
@@ -66,13 +68,39 @@ describe("ProjectPackagesSection", () => {
     expect(markup).toContain("attachmentsTitle");
     expect(markup).toContain("updateAvailable");
     expect(markup).toContain("/projects/demo/package-installs/att-1");
-    // Upgrade target is the OTHER aif install; trust shown for untrusted.
+    // Upgrade target comes from the DTO (a newer install); trust shown for untrusted.
     expect(markup).toContain("aif/v2.0.0");
     expect(markup).toContain(">trust<");
     expect(markup).toContain("detach");
     // Attach picker offers only packages not yet attached (core, not aif).
     expect(markup).toContain("core@core/v0.1.0");
     expect(markup).not.toContain("aif@aif/v2.0.0</option>");
+  });
+
+  it("offers a downgrade path but never lists an older version as an upgrade", () => {
+    const onNewest = {
+      ...attachment,
+      versionLabel: "aif/v2.1.0",
+      updateAvailable: false,
+      upgradeTarget: null,
+      downgradeTargets: [{ installId: "inst-2", versionLabel: "aif/v2.0.0" }],
+    };
+
+    const markup = renderToStaticMarkup(
+      createElement(ProjectPackagesSection, {
+        slug: "demo",
+        isAdmin: true,
+        canTrust: true,
+        attachments: [onNewest],
+        availableInstalls: installs,
+      }),
+    );
+
+    // On the newest installed version there is NO "Upgrade → …" affordance.
+    expect(markup).not.toContain("upgrade");
+    // The older version is reachable only through the explicit downgrade picker.
+    expect(markup).toContain("downgradePick");
+    expect(markup).toContain("aif/v2.0.0");
   });
 
   it("hides the trust button from project admins without the global role", () => {

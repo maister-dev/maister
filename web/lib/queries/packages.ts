@@ -10,7 +10,7 @@ import type { GraphTopology } from "@/lib/queries/flow-graph-view";
 
 import { join } from "node:path";
 
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
@@ -20,8 +20,10 @@ import { compileManifest } from "@/lib/flows/graph/compile";
 import { buildFlowNodeTooltipsFromManifest } from "@/lib/flows/graph/node-tooltips";
 import { presentationLayout } from "@/lib/flows/graph/presentation-layout";
 import {
+  classifyVersionTargets,
   defaultPackageSourceUrls,
   deriveUpdateAvailable,
+  type PackageVersionTarget,
 } from "@/lib/packages/catalog";
 import { buildGraphTopology } from "@/lib/queries/flow-graph-view";
 import { parseAgentDefinition } from "@/lib/agents/definition";
@@ -51,6 +53,11 @@ export type ProjectPackageAttachmentView = {
   trustStatus: string;
   attachedAt: string;
   updateAvailable: boolean;
+  // The single newest strictly-newer installed version (default one-click
+  // upgrade), and all strictly-older installed versions (explicit downgrade
+  // path). An older version is NEVER surfaced as an upgrade.
+  upgradeTarget: PackageVersionTarget | null;
+  downgradeTargets: PackageVersionTarget[];
   flows: string[];
 };
 
@@ -91,9 +98,38 @@ export async function getProjectPackageAttachments(
     sources.map((s: any) => [s.url, s.discovered ?? []]),
   );
 
+  const attachedNames = [
+    ...new Set(attachments.map((a: any) => a.packageName as string)),
+  ];
+  const siblingInstalls = await db
+    .select()
+    .from(packageInstalls)
+    .where(
+      and(
+        eq(packageInstalls.packageStatus, "Installed"),
+        inArray(packageInstalls.name, attachedNames),
+      ),
+    );
+
   return attachments.map((att: any) => {
     const install = installById.get(att.packageInstallId);
     const manifest = install?.manifest as PackageInstallManifest | undefined;
+    const { upgrade, downgrade } = classifyVersionTargets({
+      currentVersionLabel: install?.versionLabel ?? "",
+      candidates: install
+        ? siblingInstalls
+            .filter(
+              (s: any) =>
+                s.name === att.packageName &&
+                s.sourceUrl === install.sourceUrl &&
+                s.id !== install.id,
+            )
+            .map((s: any) => ({
+              installId: s.id as string,
+              versionLabel: s.versionLabel as string,
+            }))
+        : [],
+    });
 
     return {
       id: att.id,
@@ -113,6 +149,8 @@ export async function getProjectPackageAttachments(
             discovered: discoveredByUrl.get(install.sourceUrl) ?? [],
           })
         : false,
+      upgradeTarget: upgrade,
+      downgradeTargets: downgrade,
       flows: manifest?.spec.flows.map((f) => f.id) ?? [],
     };
   });

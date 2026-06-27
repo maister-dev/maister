@@ -2352,6 +2352,8 @@
     "enable": "Включить",
     "disable": "Отключить",
     "upgrade": "Обновить",
+    "downgrade": "Понизить версию",
+    "downgradePick": "Понизить до…",
     "rollback": "Откатить",
     "remove": "Удалить",
     "review": "Проверить",

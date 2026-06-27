@@ -2352,6 +2352,8 @@
     "enable": "Enable",
     "disable": "Disable",
     "upgrade": "Upgrade",
+    "downgrade": "Downgrade",
+    "downgradePick": "Downgrade to…",
     "rollback": "Roll back",
     "remove": "Remove",
     "review": "Review",

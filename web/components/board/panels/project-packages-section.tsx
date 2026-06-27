@@ -104,16 +104,18 @@ export function ProjectPackagesSection({
     setBusy(null);
   }
 
-  async function upgrade(att: ProjectPackageAttachmentView): Promise<void> {
-    const target = availableInstalls.find(
-      (i) => i.name === att.packageName && i.id !== att.packageInstallId,
-    );
-
-    if (!target) return;
-    setBusy(`upgrade:${att.id}`);
+  // Both upgrade and downgrade flip the attachment pointer through the same
+  // endpoint; the direction is decided server-side (att.upgradeTarget /
+  // att.downgradeTargets), never by picking an arbitrary other install.
+  async function switchVersion(
+    att: ProjectPackageAttachmentView,
+    targetInstallId: string,
+  ): Promise<void> {
+    if (!targetInstallId) return;
+    setBusy(`switch:${att.id}`);
     surface(
       await call(`/api/projects/${slug}/packages/${att.id}/upgrade`, "POST", {
-        packageInstallId: target.id,
+        packageInstallId: targetInstallId,
       }),
     );
     setBusy(null);
@@ -190,10 +192,7 @@ export function ProjectPackagesSection({
             </thead>
             <tbody>
               {attachments.map((att) => {
-                const upgradeTarget = availableInstalls.find(
-                  (i) =>
-                    i.name === att.packageName && i.id !== att.packageInstallId,
-                );
+                const upgradeTarget = att.upgradeTarget;
 
                 return (
                   <tr key={att.id} className="border-b border-line/60">
@@ -245,12 +244,35 @@ export function ProjectPackagesSection({
                             {upgradeTarget ? (
                               <button
                                 className="h-8 rounded-[8px] border border-line px-3 text-[12px] font-semibold text-ink hover:bg-ivory disabled:opacity-50"
-                                disabled={busy === `upgrade:${att.id}`}
+                                disabled={busy === `switch:${att.id}`}
                                 type="button"
-                                onClick={() => upgrade(att)}
+                                onClick={() =>
+                                  switchVersion(att, upgradeTarget.installId)
+                                }
                               >
                                 {t("upgrade")} → {upgradeTarget.versionLabel}
                               </button>
+                            ) : null}
+                            {att.downgradeTargets.length > 0 ? (
+                              <select
+                                aria-label={t("downgrade")}
+                                className="h-8 rounded-[8px] border border-line bg-paper px-2 font-mono text-[12px] text-ink disabled:opacity-50"
+                                disabled={busy === `switch:${att.id}`}
+                                value=""
+                                onChange={(e) =>
+                                  switchVersion(att, e.target.value)
+                                }
+                              >
+                                <option value="">{t("downgradePick")}</option>
+                                {att.downgradeTargets.map((tgt) => (
+                                  <option
+                                    key={tgt.installId}
+                                    value={tgt.installId}
+                                  >
+                                    {tgt.versionLabel}
+                                  </option>
+                                ))}
+                              </select>
                             ) : null}
                             <button
                               className="h-8 rounded-[8px] border border-red-500/40 px-3 text-[12px] font-semibold text-red-600 hover:bg-red-500/10 disabled:opacity-50"

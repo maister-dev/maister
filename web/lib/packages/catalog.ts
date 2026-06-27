@@ -106,6 +106,49 @@ export function deriveUpdateAvailable(opts: {
   return compareTagsDesc(newest, opts.versionLabel) < 0;
 }
 
+export type PackageVersionTarget = { installId: string; versionLabel: string };
+
+// Splits same-package INSTALLED candidates into the single newest strictly-newer
+// upgrade and the strictly-older downgrade list (newest-of-the-older first),
+// relative to the attached version. Off-catalog labels (`local-*` or no `/v`
+// semver suffix) have no comparable order and are skipped — an older version is
+// NEVER returned as an upgrade. Replaces the prior client-side `.find()` that
+// offered any other install as an "upgrade", including older ones.
+export function classifyVersionTargets(opts: {
+  currentVersionLabel: string;
+  candidates: PackageVersionTarget[];
+}): {
+  upgrade: PackageVersionTarget | null;
+  downgrade: PackageVersionTarget[];
+} {
+  const current = opts.currentVersionLabel;
+
+  if (current.startsWith("local-") || !current.includes("/v")) {
+    return { upgrade: null, downgrade: [] };
+  }
+
+  const newer: PackageVersionTarget[] = [];
+  const older: PackageVersionTarget[] = [];
+
+  for (const cand of opts.candidates) {
+    if (
+      cand.versionLabel.startsWith("local-") ||
+      !cand.versionLabel.includes("/v")
+    )
+      continue;
+
+    const cmp = compareTagsDesc(cand.versionLabel, current);
+
+    if (cmp < 0) newer.push(cand);
+    else if (cmp > 0) older.push(cand);
+  }
+
+  newer.sort((a, b) => compareTagsDesc(a.versionLabel, b.versionLabel));
+  older.sort((a, b) => compareTagsDesc(a.versionLabel, b.versionLabel));
+
+  return { upgrade: newer[0] ?? null, downgrade: older };
+}
+
 // --- sources CRUD ------------------------------------------------------------
 
 export async function listPackageSources(opts?: { db?: any }): Promise<any[]> {
