@@ -118,14 +118,25 @@ describe("ACP runner usage references", () => {
           projectId: "project-1",
           runKind: "flow",
           status: "Running",
-          runnerId: "runner-a",
-          runnerSnapshot: { id: "runner-a" },
         },
         {
           id: "scratch-1",
           projectId: "project-1",
           runKind: "scratch",
           status: "Done",
+        },
+      ],
+      // M42 (ADR-114): runner refs are per-session now.
+      run_sessions: [
+        {
+          runId: "run-active",
+          sessionName: "default",
+          runnerId: "runner-a",
+          runnerSnapshot: { id: "runner-a" },
+        },
+        {
+          runId: "scratch-1",
+          sessionName: "default",
           runnerId: "runner-a",
           runnerSnapshot: null,
         },
@@ -148,7 +159,7 @@ describe("ACP runner usage references", () => {
       "platformFlowDefault",
       "projectFlowDefault",
       "flowStepRemap",
-      "activeRun",
+      "activeRunSession",
       "historicalRunSnapshot",
       "scratchRun",
     ]);

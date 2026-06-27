@@ -314,13 +314,9 @@ export async function loadRunnerUsageReferences(
       slotKey: remap.slotKey,
       mappedRunnerId: remap.mappedRunnerId ?? null,
     })),
-    activeRuns: runRows
-      .filter((run) => ACTIVE_RUN_STATUSES.has(run.status))
-      .map((run) => ({
-        runId: run.id,
-        projectId: run.projectId,
-        runnerId: run.runnerId ?? null,
-      })),
+    // M42 (ADR-114): active runs are now covered entirely by the per-session
+    // refs below (the run-level runner mirror is gone) — leave this empty.
+    activeRuns: [],
     activeRunSessions: runSessionRows
       .filter((session) => {
         const run = runById.get(session.runId);
@@ -333,19 +329,21 @@ export async function loadRunnerUsageReferences(
         projectId: runById.get(session.runId)?.projectId ?? null,
         runnerId: session.runnerId ?? null,
       })),
-    historicalRunSnapshots: runRows
-      .filter((run) => snapshotRunnerId(run.runnerSnapshot) !== null)
-      .map((run) => ({
-        runId: run.id,
-        projectId: run.projectId,
-        runnerSnapshot: { id: snapshotRunnerId(run.runnerSnapshot) },
+    // M42 (ADR-114): historical (terminal-run) snapshot refs now come from each
+    // run's `run_sessions` snapshot.
+    historicalRunSnapshots: runSessionRows
+      .filter((session) => snapshotRunnerId(session.runnerSnapshot) !== null)
+      .map((session) => ({
+        runId: session.runId,
+        projectId: runById.get(session.runId)?.projectId ?? null,
+        runnerSnapshot: { id: snapshotRunnerId(session.runnerSnapshot) },
       })),
-    scratchRuns: runRows
-      .filter((run) => run.runKind === "scratch")
-      .map((run) => ({
-        runId: run.id,
-        projectId: run.projectId,
-        runnerId: run.runnerId ?? null,
+    scratchRuns: runSessionRows
+      .filter((session) => runById.get(session.runId)?.runKind === "scratch")
+      .map((session) => ({
+        runId: session.runId,
+        projectId: runById.get(session.runId)?.projectId ?? null,
+        runnerId: session.runnerId ?? null,
       })),
   });
 }

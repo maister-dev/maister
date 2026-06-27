@@ -1293,26 +1293,12 @@ export const runs = pgTable(
     flowId: text("flow_id").references(() => flows.id, {
       onDelete: "cascade",
     }),
-    runnerId: text("runner_id").references(() => platformAcpRunners.id, {
-      onDelete: "set null",
-    }),
-    runnerResolutionTier: text("runner_resolution_tier", {
-      enum: [
-        "launchOverride",
-        "stepTarget",
-        "projectFlowDefault",
-        "platformFlowDefault",
-        "projectDefault",
-        "platformDefault",
-        // M34 (ADR-089) standalone agent chain tiers.
-        "agentLinkOverride",
-        "agentDefault",
-      ],
-    }),
-    capabilityAgent: text("capability_agent", {
-      enum: ADAPTER_IDS,
-    }),
-    runnerSnapshot: jsonb("runner_snapshot").$type<RunnerSnapshot>(),
+    // M42 (ADR-114, migration 0082): the per-run runner mirror columns
+    // (runner_id, runner_resolution_tier, capability_agent, runner_snapshot,
+    // acp_session_id) + `runs_runner_idx` are DROPPED — `run_sessions` is the
+    // SOLE source of truth. Every reader resolves the run's runner/resume state
+    // via `loadActiveRunSession` / `loadRunSessions` / the activeSession* scalar
+    // subqueries.
     status: text("status", {
       enum: [
         "Pending",
@@ -1330,7 +1316,6 @@ export const runs = pgTable(
     })
       .notNull()
       .default("Pending"),
-    acpSessionId: text("acp_session_id"),
     currentStepId: text("current_step_id"),
     flowVersion: text("flow_version").notNull(),
     flowRevision: text("flow_revision").notNull().default("unknown"),
@@ -1426,7 +1411,6 @@ export const runs = pgTable(
     ),
     idxTask: index("runs_task_idx").on(t.taskId),
     idxKindTask: index("runs_kind_task_idx").on(t.runKind, t.taskId),
-    idxRunner: index("runs_runner_idx").on(t.runnerId),
     idxParentRun: index("runs_parent_run_id_idx").on(t.parentRunId),
     idxRootRun: index("runs_root_run_id_idx").on(t.rootRunId),
     // M34 (ADR-089): outbox→spawn no-dup claim under at-least-once redelivery.

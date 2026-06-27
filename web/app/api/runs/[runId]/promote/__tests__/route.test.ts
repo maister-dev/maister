@@ -237,7 +237,6 @@ describe("POST /api/runs/[runId]/promote", () => {
     });
     expect(dbState.tables.runs[0]).toMatchObject({
       status: "Done",
-      acpSessionId: null,
       currentStepId: null,
     });
     expect(dbState.tables.runs[0].endedAt).toBeInstanceOf(Date);

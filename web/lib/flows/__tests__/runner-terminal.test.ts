@@ -201,25 +201,36 @@ afterEach(async () => {
 
 describe("runFlow terminal-status precedence", () => {
   it("step result errorCode='CRASH' transitions runs.status to 'Crashed' (not 'Failed')", async () => {
+    const runnerSnapshot = {
+      id: "claude-code",
+      adapter: "claude",
+      capabilityAgent: "claude",
+      model: "claude-sonnet-4-6",
+      provider: { kind: "anthropic" },
+      providerKind: "anthropic",
+      permissionPolicy: "default",
+      sidecarId: null,
+    };
     const fixture = {
+      // M42 (ADR-114): the run's runner identity is the default session's runner.
+      run_sessions: [
+        {
+          id: "rs-run-1-default",
+          runId: "run-1",
+          sessionName: "default",
+          runnerId: "claude-code",
+          capabilityAgent: "claude",
+          runnerSnapshot,
+          acpSessionId: null,
+          updatedAt: new Date(0),
+        },
+      ],
       runs: [
         {
           id: "run-1",
           taskId: "task-1",
           projectId: "proj-1",
           flowId: "flow-1",
-          runnerId: "claude-code",
-          capabilityAgent: "claude",
-          runnerSnapshot: {
-            id: "claude-code",
-            adapter: "claude",
-            capabilityAgent: "claude",
-            model: "claude-sonnet-4-6",
-            provider: { kind: "anthropic" },
-            providerKind: "anthropic",
-            permissionPolicy: "default",
-            sidecarId: null,
-          },
           status: "Running",
           currentStepId: null,
           flowVersion: "v1",

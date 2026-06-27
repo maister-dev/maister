@@ -551,7 +551,6 @@ describe("promoteRun — happy path (flow local_merge)", () => {
     });
     expect(dbState.tables.runs[0]).toMatchObject({
       status: "Done",
-      acpSessionId: null,
       currentStepId: null,
     });
     expect(dbState.tables.runs[0].endedAt).toBeInstanceOf(Date);
@@ -818,7 +817,6 @@ describe("promoteRun — agent worktree dispatch", () => {
     });
     expect(dbState.tables.runs[0]).toMatchObject({
       status: "Done",
-      acpSessionId: null,
       currentStepId: null,
     });
     expect(dbState.tables.workspaces[0].promotionState).toBe("done");

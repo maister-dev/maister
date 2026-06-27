@@ -12,6 +12,13 @@ const TABLE_RUNS = { _t: "runs" } as const;
 vi.mock("@/lib/db/schema", () => ({
   hitlRequests: TABLE_HITL,
   runs: TABLE_RUNS,
+  // M42 (ADR-114): the resume handle now lives on run_sessions.
+  runSessions: {
+    _t: "run_sessions",
+    runId: { _t: "run_sessions.runId" },
+    acpSessionId: { _t: "run_sessions.acpSessionId" },
+    updatedAt: { _t: "run_sessions.updatedAt" },
+  },
   flows: { _t: "flows" },
   stepRuns: { _t: "step_runs" },
   // M11b: resume-recovery now also references these tags for the
@@ -58,6 +65,21 @@ function makeFakeDb(opts: {
         where: (..._args: unknown[]) => {
           if (table._t === "runs") {
             return Promise.resolve(opts.needsInputRuns);
+          }
+          if (table._t === "run_sessions") {
+            // M42 (ADR-114): each NeedsInput run's active session carries its
+            // seeded acp handle (loadActiveRunSessionsByRunId).
+            const rows = opts.needsInputRuns.map((run) => ({
+              runId: run.id,
+              sessionName: "default",
+              acpSessionId: run.acpSessionId,
+              runnerSnapshot: null,
+              capabilityAgent: null,
+              runnerId: null,
+              runnerResolutionTier: null,
+            }));
+
+            return { orderBy: () => Promise.resolve(rows) };
           }
           if (table._t === "hitl_requests") {
             return {

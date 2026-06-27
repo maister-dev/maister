@@ -147,14 +147,12 @@ describe("loadRun — per-session set (M42)", () => {
     expect(loaded.sessions.get("default")?.acpSessionId).toBe("acp-default");
   });
 
-  it("synthesizes a back-compat default session for a legacy run with no rows", async () => {
-    const loaded = await loadRun(fakeDb([]) as never, "run-1");
-
-    expect(loaded.sessions.get("default")).toMatchObject({
-      sessionName: "default",
-      // Falls back to the run-level runner snapshot + resume handle.
-      acpSessionId: "run-level-acp",
-      runner: expect.objectContaining({ id: "runner-default" }),
-    });
+  it("fails loud when a run has no run_sessions rows (no runner source post-cutover)", async () => {
+    // M42 (ADR-114): the run-level runner mirror is dropped, so a run that
+    // carries no `run_sessions` row has no runner to resolve — loadRun throws
+    // EXECUTOR_UNAVAILABLE rather than silently synthesizing a stale default.
+    await expect(loadRun(fakeDb([]) as never, "run-1")).rejects.toThrow(
+      /no ACP runner snapshot/,
+    );
   });
 });

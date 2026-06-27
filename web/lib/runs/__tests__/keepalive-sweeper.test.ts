@@ -66,6 +66,23 @@ const fakeDb = {
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => fakeDb }));
 
+// M42 (ADR-114): candidate queries resolve the resume handle from the run's
+// ACTIVE session — reflect each seeded candidate's acp here (and keep the fake's
+// select counter aligned, since this no longer hits the fake DB).
+vi.mock("@/lib/runs/active-run-session", () => ({
+  loadActiveRunSessionsByRunId: async (_db: unknown, runIds: string[]) => {
+    const map = new Map<string, { acpSessionId: string | null }>();
+
+    for (const row of [...state.pass1, ...state.pass2]) {
+      if (runIds.includes(row.id)) {
+        map.set(row.id, { acpSessionId: row.acpSessionId });
+      }
+    }
+
+    return map;
+  },
+}));
+
 let runSweepTick: (opts?: { db?: unknown }) => Promise<unknown>;
 
 beforeEach(async () => {

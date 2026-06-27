@@ -9,6 +9,7 @@ import {
   projectFlowRunnerDefaults,
   projects,
   runs,
+  runSessions,
   tasks,
   type PlatformAcpRunner,
   type RunnerSnapshot,
@@ -29,12 +30,17 @@ describe("platform runner persistence schema shape", () => {
     expect(getTableName(flowRunnerRemaps)).toBe("flow_runner_remaps");
   });
 
-  it("stores runner ids and snapshots on projects and runs", () => {
+  it("stores runner ids + snapshots on run_sessions (M42), not the runs row", () => {
     expect(Object.keys(projects)).toContain("defaultRunnerId");
-    expect(Object.keys(runs)).toContain("runnerId");
-    expect(Object.keys(runs)).toContain("runnerResolutionTier");
-    expect(Object.keys(runs)).toContain("capabilityAgent");
-    expect(Object.keys(runs)).toContain("runnerSnapshot");
+    // M42 (ADR-114): the per-run runner mirror was dropped from `runs` and is
+    // now the sole source of truth on `run_sessions`.
+    expect(Object.keys(runs)).not.toContain("runnerId");
+    expect(Object.keys(runs)).not.toContain("acpSessionId");
+    expect(Object.keys(runSessions)).toContain("runnerId");
+    expect(Object.keys(runSessions)).toContain("runnerResolutionTier");
+    expect(Object.keys(runSessions)).toContain("capabilityAgent");
+    expect(Object.keys(runSessions)).toContain("runnerSnapshot");
+    expect(Object.keys(runSessions)).toContain("acpSessionId");
   });
 
   it("does not keep task-level runner overrides in the schema", () => {

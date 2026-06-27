@@ -60,6 +60,22 @@ const callOrder: unknown[] = [];
 
 vi.mock("@/lib/db/client", () => ({ getDb: () => fakeDb }));
 
+// M42 (ADR-114): resumeRun now reads the resume handle + runner snapshot from the
+// run's ACTIVE session; the fake reflects the seeded run row's values.
+vi.mock("@/lib/runs/active-run-session", () => ({
+  loadActiveRunSession: async () =>
+    dbState.runRow
+      ? {
+          sessionName: "default",
+          acpSessionId: dbState.runRow.acpSessionId ?? null,
+          runnerSnapshot: dbState.runRow.runnerSnapshot ?? null,
+          capabilityAgent: null,
+          runnerId: null,
+          runnerResolutionTier: null,
+        }
+      : null,
+}));
+
 let resumeRun: (
   runId: string,
   opts?: { db?: unknown },

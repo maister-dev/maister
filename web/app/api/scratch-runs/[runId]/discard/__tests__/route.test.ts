@@ -173,7 +173,6 @@ describe("POST /api/scratch-runs/[runId]/discard", () => {
     });
     expect(dbState.tables.runs[0]).toMatchObject({
       status: "Abandoned",
-      acpSessionId: null,
       currentStepId: null,
     });
   });

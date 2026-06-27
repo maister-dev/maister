@@ -221,27 +221,39 @@ async function writeArtifact(
   await writeFile(join(dir, `input-${stepId}.json`), JSON.stringify(payload));
 }
 
+const baseRunnerSnapshot = {
+  id: "claude-code",
+  adapter: "claude",
+  capabilityAgent: "claude",
+  model: "claude-sonnet-4-6",
+  provider: { kind: "anthropic" },
+  providerKind: "anthropic",
+  permissionPolicy: "default",
+  sidecarId: null,
+};
+
 function baseFixture(): TableRows {
   return {
-    run_sessions: [],
+    // M42 (ADR-114): the run's runner identity is the DEFAULT session's runner.
+    run_sessions: [
+      {
+        id: "rs-run-1-default",
+        runId: "run-1",
+        sessionName: "default",
+        runnerId: "claude-code",
+        capabilityAgent: "claude",
+        runnerSnapshot: baseRunnerSnapshot,
+        acpSessionId: null,
+        resolutionSource: "platform-default",
+        updatedAt: new Date(0),
+      },
+    ],
     runs: [
       {
         id: "run-1",
         taskId: "task-1",
         projectId: "proj-1",
         flowId: "flow-1",
-        runnerId: "claude-code",
-        capabilityAgent: "claude",
-        runnerSnapshot: {
-          id: "claude-code",
-          adapter: "claude",
-          capabilityAgent: "claude",
-          model: "claude-sonnet-4-6",
-          provider: { kind: "anthropic" },
-          providerKind: "anthropic",
-          permissionPolicy: "default",
-          sidecarId: null,
-        },
         status: "Pending",
         currentStepId: null,
         flowVersion: "v1",
