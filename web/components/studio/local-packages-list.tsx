@@ -29,7 +29,12 @@ export type LocalPackageListItem = {
   slug: string;
   isDefault: boolean;
   status: "active" | "archived";
+  origin: LocalPackageOrigin;
 };
+
+export type LocalPackageOrigin =
+  | { kind: "forked"; packageName: string; versionLabel: string }
+  | { kind: "local" };
 
 const ICON_BTN =
   "shrink-0 rounded-[9px] border border-line bg-ivory p-2 text-ink-2 transition-colors hover:border-amber hover:text-ink disabled:opacity-50";
@@ -323,24 +328,29 @@ export function LocalPackagesList({
               ) : (
                 <>
                   <Link
-                    className="flex flex-1 flex-wrap items-center gap-2 px-5 py-4"
+                    className="flex flex-1 flex-col gap-1.5 px-5 py-4"
                     href={`/studio/edit/${pkg.id}`}
                   >
-                    <span className="text-[15px] font-semibold text-ink">
-                      {pkg.name}
+                    <span className="flex flex-wrap items-center gap-2">
+                      <span className="text-[15px] font-semibold text-ink">
+                        {pkg.name}
+                      </span>
+                      {pkg.isDefault ? (
+                        <span className="rounded-full border border-amber-line bg-amber-soft px-2 py-px font-mono text-[10px] uppercase tracking-[0.06em] text-amber">
+                          {t("local.defaultBadge")}
+                        </span>
+                      ) : null}
+                      {pkg.status === "archived" ? (
+                        <span className="rounded-full border border-line bg-ivory px-2 py-px font-mono text-[10px] uppercase tracking-[0.06em] text-mute">
+                          {t("local.archivedBadge")}
+                        </span>
+                      ) : null}
+                      <span className="ml-auto truncate font-mono text-[11.5px] text-mute">
+                        {pkg.slug}
+                      </span>
                     </span>
-                    {pkg.isDefault ? (
-                      <span className="rounded-full border border-amber-line bg-amber-soft px-2 py-px font-mono text-[10px] uppercase tracking-[0.06em] text-amber">
-                        {t("local.defaultBadge")}
-                      </span>
-                    ) : null}
-                    {pkg.status === "archived" ? (
-                      <span className="rounded-full border border-line bg-ivory px-2 py-px font-mono text-[10px] uppercase tracking-[0.06em] text-mute">
-                        {t("local.archivedBadge")}
-                      </span>
-                    ) : null}
-                    <span className="ml-auto truncate font-mono text-[11.5px] text-mute">
-                      {pkg.slug}
+                    <span className="font-mono text-[11.5px] leading-[1.35] text-mute">
+                      {localPackageOriginLabel(pkg.origin, t)}
                     </span>
                   </Link>
                   <div className="flex items-center gap-1.5 px-2 py-2">
@@ -433,4 +443,18 @@ export function LocalPackagesList({
       ) : null}
     </div>
   );
+}
+
+function localPackageOriginLabel(
+  origin: LocalPackageOrigin,
+  t: (key: string, values?: Record<string, string>) => string,
+): string {
+  if (origin.kind === "forked") {
+    return t("local.originForked", {
+      name: origin.packageName,
+      version: origin.versionLabel,
+    });
+  }
+
+  return t("local.originLocal");
 }

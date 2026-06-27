@@ -1,4 +1,9 @@
-import type { LocalPackageListItem } from "@/components/studio/local-packages-list";
+import type {
+  LocalPackageListItem,
+  LocalPackageOrigin,
+} from "@/components/studio/local-packages-list";
+import type { LocalPackage } from "@/lib/db/schema";
+import type { LocalPackageSourceInstall } from "@/lib/local-packages/service";
 import type { Metadata } from "next";
 import type { ReactElement } from "react";
 
@@ -7,7 +12,13 @@ import Link from "next/link";
 
 import { LocalPackagesList } from "@/components/studio/local-packages-list";
 import { requireSession } from "@/lib/authz";
-import { listAllLocalPackages } from "@/lib/local-packages/service";
+import { MaisterError } from "@/lib/errors";
+import {
+  listAllLocalPackages,
+  listSourceInstallsForLocalPackages,
+} from "@/lib/local-packages/service";
+
+type SourceInstallMap = Map<string, LocalPackageSourceInstall>;
 
 export async function generateMetadata(): Promise<Metadata> {
   const t = await getTranslations("studio");
@@ -19,15 +30,12 @@ export default async function StudioLocalPage(): Promise<ReactElement> {
   await requireSession();
   const t = await getTranslations("studio");
   const rows = await listAllLocalPackages();
+  const sourceInstalls = await listSourceInstallsForLocalPackages(rows);
 
   // Client-safe projection: `working_dir` + lock session stay server-side.
-  const packages: LocalPackageListItem[] = rows.map((row) => ({
-    id: row.id,
-    name: row.name,
-    slug: row.slug,
-    isDefault: row.isDefault,
-    status: row.status,
-  }));
+  const packages: LocalPackageListItem[] = rows.map((row) =>
+    toLocalPackageListItem(row, sourceInstalls),
+  );
 
   return (
     <div className="w-full">
@@ -49,4 +57,46 @@ export default async function StudioLocalPage(): Promise<ReactElement> {
       <LocalPackagesList packages={packages} />
     </div>
   );
+}
+
+function toLocalPackageListItem(
+  row: LocalPackage,
+  sourceInstalls: SourceInstallMap,
+): LocalPackageListItem {
+  return {
+    id: row.id,
+    name: row.name,
+    slug: row.slug,
+    isDefault: row.isDefault,
+    status: row.status,
+    origin: localPackageOrigin(row, sourceInstalls),
+  };
+}
+
+function localPackageOrigin(
+  row: LocalPackage,
+  sourceInstalls: SourceInstallMap,
+): LocalPackageOrigin {
+  if (!row.sourceInstallId) return { kind: "local" };
+
+  const sourceInstall = sourceInstalls.get(row.sourceInstallId);
+
+  if (!sourceInstall) {
+    throw new MaisterError(
+      "CONFIG",
+      `local package ${row.id} points to missing source install ${row.sourceInstallId}`,
+      {
+        details: {
+          localPackageId: row.id,
+          sourceInstallId: row.sourceInstallId,
+        },
+      },
+    );
+  }
+
+  return {
+    kind: "forked",
+    packageName: sourceInstall.name,
+    versionLabel: sourceInstall.versionLabel,
+  };
 }

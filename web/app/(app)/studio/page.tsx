@@ -5,7 +5,7 @@ import { getTranslations } from "next-intl/server";
 
 import { OverviewCards } from "@/components/studio/overview-cards";
 import { requireSession } from "@/lib/authz";
-import { loadStudioPackages } from "@/lib/studio/load";
+import { loadStudioOverview } from "@/lib/studio/load";
 
 export async function generateMetadata(): Promise<Metadata> {
   const t = await getTranslations("studio");
@@ -16,8 +16,8 @@ export async function generateMetadata(): Promise<Metadata> {
 export default async function StudioOverviewPage(): Promise<ReactElement> {
   const user = await requireSession();
   const t = await getTranslations("studio");
-  const groups = await loadStudioPackages(user.id, user.role);
   const isAdmin = user.role === "admin";
+  const overview = await loadStudioOverview(user.id, user.role);
 
   return (
     <div className="w-full">
@@ -33,7 +33,13 @@ export default async function StudioOverviewPage(): Promise<ReactElement> {
         </p>
       </header>
 
-      <OverviewCards groups={groups} isAdmin={isAdmin} />
+      <OverviewCards
+        groups={overview.groups}
+        isAdmin={isAdmin}
+        localSummary={overview.localSummary}
+        recentLocalPackages={overview.recentLocalPackages}
+        sourceSummary={overview.sourceSummary}
+      />
     </div>
   );
 }

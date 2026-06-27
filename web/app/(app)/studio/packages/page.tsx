@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import type { ReactElement } from "react";
 
 import { getTranslations } from "next-intl/server";
+import Link from "next/link";
 
 import { PackagesList } from "@/components/studio/packages-list";
 import { requireSession } from "@/lib/authz";
@@ -21,9 +22,12 @@ export default async function StudioPackagesPage(): Promise<ReactElement> {
   return (
     <div className="w-full">
       <header className="mb-7">
-        <div className="mb-2.5 inline-flex items-center gap-2 font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-mute before:h-px before:w-[18px] before:bg-amber before:content-['']">
-          {t("eyebrow")}
-        </div>
+        <Link
+          className="mb-4 inline-flex font-mono text-[11px] font-semibold uppercase tracking-[0.08em] text-mute hover:text-ink"
+          href="/studio"
+        >
+          {t("backToStudio")}
+        </Link>
         <h1 className="m-0 text-[28px] font-semibold leading-[1.1] tracking-[-0.022em] text-ink">
           {t("packagesTitle")}
         </h1>

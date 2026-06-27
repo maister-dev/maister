@@ -3,7 +3,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("next-intl", () => ({
-  useTranslations: () => (key: string) => key,
+  useTranslations: () =>
+    (key: string, values?: Record<string, string>) =>
+      values ? `${key}:${Object.values(values).join(":")}` : key,
 }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: () => {}, refresh: () => {} }),
@@ -20,6 +22,11 @@ const ACTIVE: LocalPackageListItem = {
   slug: "my-pack",
   isDefault: false,
   status: "active",
+  origin: {
+    kind: "forked",
+    packageName: "openspec",
+    versionLabel: "v1.2.3",
+  },
 };
 const ARCHIVED: LocalPackageListItem = {
   id: "p2",
@@ -27,6 +34,7 @@ const ARCHIVED: LocalPackageListItem = {
   slug: "old-pack",
   isDefault: false,
   status: "archived",
+  origin: { kind: "local" },
 };
 
 function render(packages: LocalPackageListItem[]): string {
@@ -52,6 +60,23 @@ describe("LocalPackagesList", () => {
     // Archived rows are hidden until the toggle is enabled (a client action).
     expect(html).not.toContain("Old Pack");
     expect(html).toContain('data-testid="local-show-archived"');
+  });
+
+  it("shows whether a local package was forked or created from scratch", () => {
+    const html = render([
+      ACTIVE,
+      {
+        id: "p3",
+        name: "Scratch Pack",
+        slug: "scratch-pack",
+        isDefault: false,
+        status: "active",
+        origin: { kind: "local" },
+      },
+    ]);
+
+    expect(html).toContain("local.originForked:openspec:v1.2.3");
+    expect(html).toContain("local.originLocal");
   });
 
   it("shows the empty state when there are no packages", () => {

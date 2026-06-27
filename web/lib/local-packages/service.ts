@@ -16,7 +16,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 
-import { and, desc, eq, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { gitCommitWorkingDir, gitDiscardPaths, gitInitWithCommit } from "./git";
@@ -79,6 +79,12 @@ export type LocalPackageFileMeta = {
 export type LocalPackageFileContent = LocalPackageFileMeta & {
   content: string;
   contentHash: string;
+};
+
+export type LocalPackageSourceInstall = {
+  id: string;
+  name: string;
+  versionLabel: string;
 };
 
 // Exported for the fork path (T2.6): a slug that does not collide with any
@@ -256,6 +262,43 @@ export async function listLocalPackages(db?: Db): Promise<LocalPackage[]> {
 // for every other reader (the API list route, attach flows).
 export async function listAllLocalPackages(db?: Db): Promise<LocalPackage[]> {
   return resolveDb(db).select().from(lp).orderBy(desc(lp.updatedAt));
+}
+
+export async function listSourceInstallsForLocalPackages(
+  localPackages: readonly LocalPackage[],
+  db?: Db,
+): Promise<Map<string, LocalPackageSourceInstall>> {
+  const sourceInstallIds = [
+    ...new Set(
+      localPackages.flatMap((pkg) =>
+        pkg.sourceInstallId ? [pkg.sourceInstallId] : [],
+      ),
+    ),
+  ];
+
+  if (sourceInstallIds.length === 0) return new Map();
+
+  const rows = await resolveDb(db)
+    .select({
+      id: schema.packageInstalls.id,
+      name: schema.packageInstalls.name,
+      versionLabel: schema.packageInstalls.versionLabel,
+    })
+    .from(schema.packageInstalls)
+    .where(inArray(schema.packageInstalls.id, sourceInstallIds));
+
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const missing = sourceInstallIds.filter((id) => !byId.has(id));
+
+  if (missing.length > 0) {
+    throw new MaisterError(
+      "CONFIG",
+      `local package source installs not found: ${missing.join(", ")}`,
+      { details: { sourceInstallIds: missing } },
+    );
+  }
+
+  return byId;
 }
 
 export async function getLocalPackage(

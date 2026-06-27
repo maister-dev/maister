@@ -1,14 +1,60 @@
 import "server-only";
 
-import type { GlobalRole } from "@/lib/db/schema";
+import type { GlobalRole, LocalPackage } from "@/lib/db/schema";
 
 import { groupPackages, type PackageGroup } from "./group-packages";
 
+import { MaisterError } from "@/lib/errors";
+import {
+  listAllLocalPackages,
+  listSourceInstallsForLocalPackages,
+  type LocalPackageSourceInstall,
+} from "@/lib/local-packages/service";
 import {
   getProjectPackageAttachments,
   getStudioPackageInstalls,
+  loadPackageSourcesView,
 } from "@/lib/queries/packages";
 import { getAccessibleProjects } from "@/lib/queries/platform-flows";
+
+type PackageSourcesView = Awaited<ReturnType<typeof loadPackageSourcesView>>;
+const RECENT_LOCAL_PACKAGE_LIMIT = 5;
+
+export type StudioLocalSummary = {
+  activeCount: number;
+  cutCount: number;
+  totalCount: number;
+  uncutCount: number;
+};
+
+export type StudioRecentLocalPackageOrigin =
+  | { kind: "forked"; packageName: string; versionLabel: string }
+  | { kind: "local" };
+
+export type StudioRecentLocalPackage = {
+  id: string;
+  name: string;
+  slug: string;
+  status: "active" | "archived";
+  isDefault: boolean;
+  origin: StudioRecentLocalPackageOrigin;
+  lastCutInstallId: string | null;
+  updatedAt: string;
+};
+
+export type StudioSourceSummary = {
+  sourceCount: number;
+  enabledSourceCount: number;
+  discoveredPackageCount: number;
+  discoveredTagCount: number;
+};
+
+export type StudioOverview = {
+  groups: PackageGroup[];
+  localSummary: StudioLocalSummary;
+  recentLocalPackages: StudioRecentLocalPackage[];
+  sourceSummary: StudioSourceSummary | null;
+};
 
 export type StudioPackageResolution =
   | { status: "not-found" }
@@ -64,4 +110,109 @@ export async function loadStudioPackages(
   );
 
   return groupPackages({ installs, attachments: attachmentBatches.flat() });
+}
+
+export async function loadStudioOverview(
+  userId: string,
+  userRole: GlobalRole,
+): Promise<StudioOverview> {
+  const [groups, localPackages, sourcesView] = await Promise.all([
+    loadStudioPackages(userId, userRole),
+    listAllLocalPackages(),
+    userRole === "admin"
+      ? loadPackageSourcesView()
+      : Promise.resolve<PackageSourcesView | null>(null),
+  ]);
+  const sourceInstalls = await listSourceInstallsForLocalPackages(localPackages);
+
+  return {
+    groups,
+    localSummary: summarizeLocalPackages(localPackages),
+    recentLocalPackages: localPackages
+      .slice(0, RECENT_LOCAL_PACKAGE_LIMIT)
+      .map((pkg) => toRecentLocalPackage(pkg, sourceInstalls)),
+    sourceSummary: sourcesView
+      ? summarizePackageSources(sourcesView.sources)
+      : null,
+  };
+}
+
+function summarizeLocalPackages(
+  localPackages: LocalPackage[],
+): StudioLocalSummary {
+  const active = localPackages.filter((pkg) => pkg.status === "active");
+  const cutCount = active.filter((pkg) => pkg.lastCutInstallId !== null).length;
+
+  return {
+    activeCount: active.length,
+    cutCount,
+    totalCount: localPackages.length,
+    uncutCount: active.filter((pkg) => pkg.lastCutInstallId === null).length,
+  };
+}
+
+function toRecentLocalPackage(
+  pkg: LocalPackage,
+  sourceInstalls: Map<string, LocalPackageSourceInstall>,
+): StudioRecentLocalPackage {
+  return {
+    id: pkg.id,
+    name: pkg.name,
+    slug: pkg.slug,
+    status: pkg.status,
+    isDefault: pkg.isDefault,
+    origin: recentLocalPackageOrigin(pkg, sourceInstalls),
+    lastCutInstallId: pkg.lastCutInstallId,
+    updatedAt: pkg.updatedAt.toISOString(),
+  };
+}
+
+function recentLocalPackageOrigin(
+  pkg: LocalPackage,
+  sourceInstalls: Map<string, LocalPackageSourceInstall>,
+): StudioRecentLocalPackageOrigin {
+  if (!pkg.sourceInstallId) return { kind: "local" };
+
+  const sourceInstall = sourceInstalls.get(pkg.sourceInstallId);
+
+  if (!sourceInstall) {
+    throw new MaisterError(
+      "CONFIG",
+      `local package ${pkg.id} points to missing source install ${pkg.sourceInstallId}`,
+      {
+        details: {
+          localPackageId: pkg.id,
+          sourceInstallId: pkg.sourceInstallId,
+        },
+      },
+    );
+  }
+
+  return {
+    kind: "forked",
+    packageName: sourceInstall.name,
+    versionLabel: sourceInstall.versionLabel,
+  };
+}
+
+function summarizePackageSources(
+  sources: PackageSourcesView["sources"],
+): StudioSourceSummary {
+  const discoveredPackages = new Set(
+    sources.flatMap((source) =>
+      source.discovered.map((pkg) => `${source.url}:${pkg.name}`),
+    ),
+  );
+
+  return {
+    sourceCount: sources.length,
+    enabledSourceCount: sources.filter((source) => source.enabled).length,
+    discoveredPackageCount: discoveredPackages.size,
+    discoveredTagCount: sources.reduce(
+      (sum, source) =>
+        sum +
+        source.discovered.reduce((tagSum, pkg) => tagSum + pkg.tags.length, 0),
+      0,
+    ),
+  };
 }
