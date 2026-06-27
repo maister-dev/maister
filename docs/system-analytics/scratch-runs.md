@@ -27,7 +27,14 @@ the same web, database, supervisor, and worktree contracts as Flow runs.
   A DB CHECK enforces exactly one of `project_id` / `local_package_id`. Launched
   by `launchLocalPackageAssistant`; the supervisor session confines
   content-block file URIs to the `working_dir` (`confineRoot`) and uses
-  `readOnlySession: true`. Flow/package edits are server-applied structured
+  `readOnlySession: true`. It holds the **separate assistant concurrency
+  budget** (`MAISTER_MAX_CONCURRENT_ASSISTANTS`, default 5 — counted by
+  `assertAssistantCapacity*` on `local_package_id`), never the flow/scratch
+  delivery pool, and the reconcile sweep now also scans `project_id IS NULL`
+  runs so a dead/idle assistant session is crashed and its slot freed. Manual
+  drop is the `project_id`-less branch of `POST /api/scratch-runs/{runId}/
+  discard` (gated by `created_by_user_id`). Flow/package edits are
+  server-applied structured
   actions per
   [ADR-110](../decisions.md#adr-110-flow-studio-ai-assistant-read-only-acp--structured-server-applied-actions);
   redacted action metadata is stored only in the run artifact tree
@@ -397,6 +404,12 @@ secret material.
   provisioning.
 - Project members MAY operate scratch runs in V1; `created_by_user_id` is audit
   and display metadata, not an ownership gate.
+- A project-less local-package assistant run (`project_id IS NULL`,
+  `local_package_id` set) MUST hold the separate
+  `MAISTER_MAX_CONCURRENT_ASSISTANTS` budget (counted by `local_package_id` in
+  `assertAssistantCapacity*`), MUST NOT count against the flow/scratch
+  (`MAISTER_MAX_CONCURRENT_RUNS`) pool, and MUST be crashed by the reconcile
+  sweep once its supervisor session is dead so its slot is freed.
 - Project-grouped active workspace views MUST include both Flow and scratch
   runs, while task boards MUST filter to `runs.run_kind = "flow"`.
 - Active workspace status labels MUST distinguish `Running`,

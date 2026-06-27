@@ -330,6 +330,7 @@
         "promptPlaceholder": "Describe the change — e.g. add a review gate to the bugfix flow",
         "launch": "Start assistant",
         "launching": "Starting…",
+        "drop": "Drop assistant run",
         "lockRequired": "Acquire the editor lock to use the assistant.",
         "runner": "Runner",
         "loadingRunners": "Loading runners…",

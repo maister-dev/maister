@@ -3,7 +3,7 @@ import "server-only";
 import type { RunResumedSessionOptions } from "@/lib/runs/resume-driver";
 import type { CreateSessionInput } from "@/lib/supervisor-client";
 
-import { and, count, eq, inArray } from "drizzle-orm";
+import { and, count, eq, inArray, isNull } from "drizzle-orm";
 import pino from "pino";
 
 import {
@@ -160,6 +160,10 @@ export async function resumeCrashedRun(
           // M34: recover gates against the flow/scratch pool only — agent
           // runs hold their own budget and must not block a flow recover.
           inArray(runs.runKind, ["flow", "scratch"]),
+          // Studio AI assistant runs hold the separate assistant budget — keep
+          // them out of the flow recover cap (sibling of the two scheduler
+          // counters that already exclude local_package_id).
+          isNull(runs.localPackageId),
         ),
       );
     const liveCount = Number(liveRows[0]?.count ?? 0);

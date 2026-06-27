@@ -63,6 +63,8 @@ import { normalizeFlowAssistantIntent } from "@/lib/studio/flow-assistant/protoc
 import { postProcessFlowAssistantTurn } from "@/lib/studio/flow-assistant/turn";
 import { runtimeRoot, worktreesRoot } from "@/lib/instance-config";
 import {
+  assertAssistantCapacityAvailable,
+  assertAssistantCapacityAvailableInTransaction,
   assertScratchCapacityAvailable,
   assertScratchCapacityAvailableInTransaction,
 } from "@/lib/scheduler";
@@ -1451,7 +1453,7 @@ export async function launchLocalPackageAssistant(args: {
     );
   }
 
-  await assertScratchCapacityAvailable({ db });
+  await assertAssistantCapacityAvailable({ db });
 
   const workingDir = pkg.workingDir as string;
   // Base branch/commit are read from the EXISTING working dir — no new branch.
@@ -1513,7 +1515,7 @@ export async function launchLocalPackageAssistant(args: {
   // local_package_id. NO workspace row (no managed worktree). The XOR CHECK on
   // scratch_runs enforces local_package_id-set / project_id-null.
   await db.transaction(async (tx: Db) => {
-    await assertScratchCapacityAvailableInTransaction(tx);
+    await assertAssistantCapacityAvailableInTransaction(tx);
 
     await tx.insert(runs).values({
       id: runId,

@@ -1,6 +1,17 @@
 import "server-only";
 
-import { and, asc, count, eq, inArray, lt, ne, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  count,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  lt,
+  ne,
+  sql,
+} from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
@@ -21,6 +32,10 @@ const log = pino({
 const DEFAULT_CAP = 6;
 // M34 (ADR-089): separate budget for platform-agent runs (run_kind='agent').
 const DEFAULT_AGENT_CAP = 3;
+// Studio local-package AI assistant runs (run_kind='scratch', project_id NULL,
+// local_package_id set) get their own dev-time budget so they never compete with
+// delivery + user scratch runs for the flow pool. Discriminator: local_package_id.
+const DEFAULT_ASSISTANT_CAP = 5;
 
 export type SchedulerPool = "flow" | "agent";
 
@@ -82,12 +97,23 @@ function agentCapFromEnv(): number {
   );
 }
 
+function assistantCapFromEnv(): number {
+  return parseCapEnv(
+    process.env.MAISTER_MAX_CONCURRENT_ASSISTANTS,
+    DEFAULT_ASSISTANT_CAP,
+  );
+}
+
 export function maxConcurrentRunsCap(): number {
   return capFromEnv();
 }
 
 export function maxConcurrentAgentRunsCap(): number {
   return agentCapFromEnv();
+}
+
+export function maxConcurrentAssistantRunsCap(): number {
+  return assistantCapFromEnv();
 }
 
 export function capForPool(pool: SchedulerPool): number {
@@ -113,6 +139,10 @@ export async function countLiveRuns(
         // count against the concurrency cap. Adding it would starve the pool.
         inArray(runs.status, ["Running", "NeedsInput", "HumanWorking"]),
         inArray(runs.runKind, POOL_RUN_KINDS[pool]),
+        // Studio AI assistant runs (local_package_id set) hold the SEPARATE
+        // assistant budget (assertAssistantCapacity*), never the flow/agent
+        // pool — exclude them so a dev-time assistant never starves delivery.
+        isNull(runs.localPackageId),
       ),
     );
 
@@ -192,6 +222,9 @@ export async function assertScratchCapacityAvailableInTransaction(
       and(
         inArray(runs.status, ["Running", "NeedsInput"]),
         inArray(runs.runKind, POOL_RUN_KINDS.flow),
+        // Assistant runs are on their own budget — keep them out of the
+        // flow/scratch capacity so they cannot exhaust delivery slots.
+        isNull(runs.localPackageId),
       ),
     );
 
@@ -207,6 +240,56 @@ export async function assertScratchCapacityAvailableInTransaction(
     throw new MaisterError(
       "CONFLICT",
       `scratch run capacity is full: liveCount=${liveCount}, cap=${cap}`,
+    );
+  }
+
+  return decision;
+}
+
+// The Studio AI assistant pool: project-less local-package assistant runs
+// (local_package_id set) counted against MAISTER_MAX_CONCURRENT_ASSISTANTS,
+// independent of the flow/scratch and agent budgets. Mirrors the scratch
+// cap-check shape; assistant runs never queue (a full pool throws CONFLICT at
+// launch — there is no Pending/promote path for them).
+export async function assertAssistantCapacityAvailable(
+  opts: { db?: Db } = {},
+): Promise<ScratchCapacityDecision> {
+  const db = opts.db ?? getDb();
+
+  return db.transaction(async (tx: Db) =>
+    assertAssistantCapacityAvailableInTransaction(tx),
+  );
+}
+
+export async function assertAssistantCapacityAvailableInTransaction(
+  tx: Db,
+): Promise<ScratchCapacityDecision> {
+  const cap = assistantCapFromEnv();
+
+  await takeSchedulerLock(tx);
+
+  const liveRows: Array<{ count: number }> = await tx
+    .select({ count: count() })
+    .from(runs)
+    .where(
+      and(
+        inArray(runs.status, ["Running", "NeedsInput"]),
+        isNotNull(runs.localPackageId),
+      ),
+    );
+
+  const liveCount = Number(liveRows[0]?.count ?? 0);
+  const decision = scratchCapacityDecision(liveCount, cap);
+
+  log.debug(
+    { liveCount: decision.liveCount, cap: decision.cap },
+    "assistant capacity cap-check",
+  );
+
+  if (!decision.allowed) {
+    throw new MaisterError(
+      "CONFLICT",
+      `assistant run capacity is full: liveCount=${liveCount}, cap=${cap}`,
     );
   }
 

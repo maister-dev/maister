@@ -780,6 +780,94 @@ describe("runReconcileSweep (integration)", () => {
     await pool.query(`DELETE FROM "agents" WHERE "id" = $1`, [agentId]);
   }, 60_000);
 
+  it("crashes a project-less assistant scratch run (project_id NULL, no workspace) whose session is dead, freeing its slot", async () => {
+    // The Studio local-package AI assistant: run_kind='scratch', project_id NULL,
+    // local_package_id set, NO workspaces row. The per-project candidate loop
+    // never sees it (no project references it) — the project-less candidate
+    // source must. Its null worktreePath reads as present (project_id IS NULL ⇒
+    // no worktree to lose), its grace anchor is run.started_at, so a dead session
+    // past grace classifies agent-session-gone → markScratchCrashed. Without the
+    // fix it stays Running forever and leaks its concurrency slot.
+    const lpId = randomUUID();
+
+    await pool.query(
+      `INSERT INTO "local_packages" ("id", "name", "slug", "working_dir") VALUES ($1, 'Recon LP', $2, '/tmp/recon-lp')`,
+      [lpId, `recon-lp-${randomUUID().slice(0, 8)}`],
+    );
+
+    const runId = randomUUID();
+
+    await pool.query(
+      `INSERT INTO "runs" ("id", "run_kind", "local_package_id", "project_id", "task_id", "flow_version", "flow_revision", "status", "current_step_id", "started_at")
+       VALUES ($1, 'scratch', $2, NULL, NULL, 'scratch', 'manual', 'Running', 'scratch-dialog', $3)`,
+      [runId, lpId, new Date(Date.now() - 5 * 60_000)],
+    );
+    await db.insert(schema.runSessions).values({
+      id: randomUUID(),
+      runId,
+      sessionName: "default",
+      runnerId: executorId,
+      capabilityAgent: "claude",
+      runnerSnapshot: testRunnerSnapshot(executorId),
+      acpSessionId: "acp-assistant-dead",
+    });
+
+    // Dead: the supervisor reports NO live session.
+    const { opts } = makeOpts({ worktreePaths: [], liveSessions: [] });
+
+    const summary = await runReconcileSweep(opts);
+
+    expect(summary.candidates).toBeGreaterThanOrEqual(1);
+    expect((await readRun(runId)).status).toBe("Crashed");
+    expect(summary.crashed).toBeGreaterThanOrEqual(1);
+
+    // Cascades the run + its run_sessions row.
+    await pool.query(`DELETE FROM "local_packages" WHERE "id" = $1`, [lpId]);
+  }, 60_000);
+
+  it("does NOT crash a LIVE project-less assistant scratch run — leaves it Running (live-scratch-session skip)", async () => {
+    // Load-bearing guard for the worktreeExists change: a project-less assistant
+    // run's null worktreePath must NOT read as worktree-gone (decision step 2,
+    // BEFORE the live-session skip), so a LIVE assistant chat is never crashed.
+    const lpId = randomUUID();
+
+    await pool.query(
+      `INSERT INTO "local_packages" ("id", "name", "slug", "working_dir") VALUES ($1, 'Recon LP Live', $2, '/tmp/recon-lp-live')`,
+      [lpId, `recon-lp-live-${randomUUID().slice(0, 8)}`],
+    );
+
+    const runId = randomUUID();
+
+    await pool.query(
+      `INSERT INTO "runs" ("id", "run_kind", "local_package_id", "project_id", "task_id", "flow_version", "flow_revision", "status", "current_step_id", "started_at")
+       VALUES ($1, 'scratch', $2, NULL, NULL, 'scratch', 'manual', 'Running', 'scratch-dialog', now())`,
+      [runId, lpId],
+    );
+    await db.insert(schema.runSessions).values({
+      id: randomUUID(),
+      runId,
+      sessionName: "default",
+      runnerId: executorId,
+      capabilityAgent: "claude",
+      runnerSnapshot: testRunnerSnapshot(executorId),
+      acpSessionId: "acp-assistant-live",
+    });
+
+    const { opts, scheduleResumedSessionDrive } = makeOpts({
+      worktreePaths: [],
+      liveSessions: [liveRecord(runId, "acp-assistant-live", "scratch-dialog")],
+    });
+
+    const summary = await runReconcileSweep(opts);
+
+    expect(summary.candidates).toBeGreaterThanOrEqual(1);
+    expect((await readRun(runId)).status).toBe("Running");
+    expect(summary.crashed).toBe(0);
+    expect(scheduleResumedSessionDrive).not.toHaveBeenCalled();
+
+    await pool.query(`DELETE FROM "local_packages" WHERE "id" = $1`, [lpId]);
+  }, 60_000);
+
   it("skips the whole tick (zeroed summary, nothing crashed) when listSessions throws", async () => {
     const orphan = await seedRun({
       status: "Running",

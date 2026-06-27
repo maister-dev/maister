@@ -9,6 +9,7 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { worktreesRoot } from "@/lib/instance-config";
+import { assertLocalPackageAssistantActor } from "@/lib/scratch-runs/service";
 import { deleteSession } from "@/lib/supervisor-client";
 import { removeOwnedWorktree } from "@/lib/worktree";
 
@@ -128,7 +129,7 @@ export async function POST(
   const { runId } = await params;
 
   try {
-    await requireActiveSession();
+    const sessionUser = await requireActiveSession();
 
     const db = getDb() as unknown as Db;
     const { run, scratch, workspace } = await loadScratchLifecycleRows(
@@ -136,7 +137,18 @@ export async function POST(
       runId,
     );
 
-    await requireProjectAction(run.projectId, "operateScratchRun");
+    // ADR-097: a project scratch run keeps its project-scoped gate; a
+    // project-less local-package assistant run (project_id NULL) is private to
+    // its launching user — gate on created_by_user_id (the same dual-authz
+    // branch the GET/recover/stream routes use). requireLock:false so the user
+    // can drop their own run even after the editor lock has lapsed.
+    if (run.projectId) {
+      await requireProjectAction(run.projectId, "operateScratchRun");
+    } else {
+      await assertLocalPackageAssistantActor(run, sessionUser.id, {
+        requireLock: false,
+      });
+    }
 
     if (scratch.dialogStatus === "Done" || run.status === "Done") {
       log.info(

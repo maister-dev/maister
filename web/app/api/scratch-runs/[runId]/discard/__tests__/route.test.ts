@@ -8,6 +8,7 @@ import {
 } from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
 import { worktreesRoot } from "@/lib/instance-config";
+import { assertLocalPackageAssistantActor } from "@/lib/scratch-runs/service";
 import { deleteSession } from "@/lib/supervisor-client";
 import { removeOwnedWorktree } from "@/lib/worktree";
 
@@ -89,6 +90,13 @@ vi.mock("@/lib/worktree", () => ({
   removeOwnedWorktree: vi.fn(async () => undefined),
 }));
 
+// Only assertLocalPackageAssistantActor is consumed from the (heavy) service —
+// stub it so the route's project-less authz branch is exercised without pulling
+// the full scratch-runs service dependency graph into this lightweight test.
+vi.mock("@/lib/scratch-runs/service", () => ({
+  assertLocalPackageAssistantActor: vi.fn(async () => undefined),
+}));
+
 function seedScratchRun(
   overrides: Partial<{
     runKind: "flow" | "scratch";
@@ -96,14 +104,23 @@ function seedScratchRun(
     dialogStatus: string;
     supervisorSessionId: string | null;
     removedAt: Date | null;
+    projectId: string | null;
+    localPackageId: string | null;
+    createdByUserId: string | null;
+    workspace: boolean;
   }> = {},
 ): string {
   const runId = "run-discard";
+  const projectId =
+    overrides.projectId === undefined ? "project-1" : overrides.projectId;
+  const hasWorkspace = overrides.workspace ?? true;
 
   dbState.tables.runs.push({
     id: runId,
     runKind: overrides.runKind ?? "scratch",
-    projectId: "project-1",
+    projectId,
+    localPackageId: overrides.localPackageId ?? null,
+    createdByUserId: overrides.createdByUserId ?? null,
     status: overrides.runStatus ?? "Running",
     acpSessionId: "acp-1",
     currentStepId: "scratch-dialog",
@@ -112,20 +129,22 @@ function seedScratchRun(
   if ((overrides.runKind ?? "scratch") === "scratch") {
     dbState.tables.scratch_runs.push({
       runId,
-      projectId: "project-1",
+      projectId,
       dialogStatus: overrides.dialogStatus ?? "Running",
       supervisorSessionId: overrides.supervisorSessionId ?? null,
       updatedAt: null,
     });
   }
-  dbState.tables.workspaces.push({
-    id: "workspace-1",
-    runId,
-    projectId: "project-1",
-    parentRepoPath: "/repos/demo",
-    worktreePath: "/tmp/maister-worktrees/demo/run-discard",
-    removedAt: overrides.removedAt ?? null,
-  });
+  if (hasWorkspace) {
+    dbState.tables.workspaces.push({
+      id: "workspace-1",
+      runId,
+      projectId,
+      parentRepoPath: "/repos/demo",
+      worktreePath: "/tmp/maister-worktrees/demo/run-discard",
+      removedAt: overrides.removedAt ?? null,
+    });
+  }
 
   return runId;
 }
@@ -148,6 +167,8 @@ beforeEach(() => {
   vi.mocked(removeOwnedWorktree).mockClear();
   vi.mocked(worktreesRoot).mockClear();
   vi.mocked(worktreesRoot).mockReturnValue("/tmp/maister-worktrees");
+  vi.mocked(assertLocalPackageAssistantActor).mockClear();
+  vi.mocked(assertLocalPackageAssistantActor).mockResolvedValue(undefined);
 });
 
 describe("POST /api/scratch-runs/[runId]/discard", () => {
@@ -267,5 +288,66 @@ describe("POST /api/scratch-runs/[runId]/discard", () => {
     expect(res.status).toBe(409);
     expect(deleteSession).not.toHaveBeenCalled();
     expect(removeOwnedWorktree).not.toHaveBeenCalled();
+  });
+
+  it("drops a project-less assistant run via the created-by gate (no worktree)", async () => {
+    const runId = seedScratchRun({
+      projectId: null,
+      localPackageId: "lp-1",
+      createdByUserId: "user-1",
+      workspace: false,
+      supervisorSessionId: "sup-live",
+    });
+
+    const res = await invokePost(runId);
+    const body = (await res.json()) as {
+      dialogStatus?: string;
+      supervisorStopped?: boolean;
+      workspaceRemoved?: boolean;
+    };
+
+    expect(res.status).toBe(200);
+    // Authorized by the assistant created-by gate, not requireProjectAction.
+    expect(assertLocalPackageAssistantActor).toHaveBeenCalledWith(
+      expect.objectContaining({
+        createdByUserId: "user-1",
+        localPackageId: "lp-1",
+        projectId: null,
+      }),
+      "user-1",
+      { requireLock: false },
+    );
+    expect(deleteSession).toHaveBeenCalledWith("sup-live");
+    // A project-less assistant run has no workspace — nothing to remove.
+    expect(removeOwnedWorktree).not.toHaveBeenCalled();
+    expect(body).toMatchObject({
+      dialogStatus: "Abandoned",
+      supervisorStopped: true,
+      workspaceRemoved: false,
+    });
+    expect(dbState.tables.runs[0].status).toBe("Abandoned");
+  });
+
+  it("rejects a project-less assistant drop by a non-owner before any side-effect", async () => {
+    const runId = seedScratchRun({
+      projectId: null,
+      localPackageId: "lp-1",
+      createdByUserId: "someone-else",
+      workspace: false,
+      supervisorSessionId: "sup-live",
+    });
+
+    vi.mocked(assertLocalPackageAssistantActor).mockRejectedValueOnce(
+      new MaisterError(
+        "UNAUTHORIZED",
+        "this assistant run belongs to another user",
+      ),
+    );
+
+    const res = await invokePost(runId);
+
+    expect(res.status).toBe(403);
+    expect(deleteSession).not.toHaveBeenCalled();
+    expect(dbState.tables.runs[0].status).toBe("Running");
   });
 });

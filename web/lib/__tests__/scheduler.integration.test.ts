@@ -34,6 +34,8 @@ import {
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
 import {
+  assertAssistantCapacityAvailable,
+  assertScratchCapacityAvailable,
   promoteNextPending,
   releaseSlotOnIdle,
   tryStartRun,
@@ -303,5 +305,61 @@ describe("scheduler — M11b HumanWorking cap semantics", () => {
     const after = await db.select().from(runs).where(eq(runs.id, pendingRunId));
 
     expect(after[0].status).toBe("Pending");
+  }, 60_000);
+});
+
+describe("scheduler — assistant pool separation (Fix 3)", () => {
+  it("excludes assistant runs (local_package_id) from the flow/scratch cap and counts them in the separate assistant cap", async () => {
+    // cap (MAISTER_MAX_CONCURRENT_RUNS) is 3 in this suite. Three RUNNING
+    // assistant runs (run_kind='scratch', project_id NULL, local_package_id set)
+    // MUST NOT consume the flow/scratch delivery pool — a real scratch launch is
+    // still admitted — and they DO occupy the separate assistant pool.
+    const lpId = randomUUID();
+
+    await pool.query(
+      `INSERT INTO "local_packages" ("id", "name", "slug", "working_dir") VALUES ($1, 'Sched LP', $2, '/tmp/sched-lp')`,
+      [lpId, `sched-lp-${randomUUID().slice(0, 8)}`],
+    );
+    for (let i = 0; i < 3; i++) {
+      await pool.query(
+        `INSERT INTO "runs" ("id", "run_kind", "local_package_id", "project_id", "task_id", "flow_version", "flow_revision", "status", "current_step_id", "started_at")
+         VALUES ($1, 'scratch', $2, NULL, NULL, 'scratch', 'manual', 'Running', 'scratch-dialog', now())`,
+        [randomUUID(), lpId],
+      );
+    }
+
+    // Flow/scratch pool sees zero — assistant runs are excluded.
+    const scratchDecision = await assertScratchCapacityAvailable({ db });
+
+    expect(scratchDecision.allowed).toBe(true);
+    expect(scratchDecision.liveCount).toBe(0);
+
+    // The assistant pool counts all three, enforced by its OWN cap — set the env
+    // explicitly so the assertion is independent of the default cap value.
+    const prev = process.env.MAISTER_MAX_CONCURRENT_ASSISTANTS;
+
+    try {
+      process.env.MAISTER_MAX_CONCURRENT_ASSISTANTS = "3";
+      await expect(assertAssistantCapacityAvailable({ db })).rejects.toThrow(
+        /assistant run capacity is full/,
+      );
+
+      // Raising the assistant cap admits a 4th.
+      process.env.MAISTER_MAX_CONCURRENT_ASSISTANTS = "4";
+      const assistantDecision = await assertAssistantCapacityAvailable({ db });
+
+      expect(assistantDecision.allowed).toBe(true);
+      expect(assistantDecision.liveCount).toBe(3);
+      expect(assistantDecision.cap).toBe(4);
+    } finally {
+      if (prev === undefined) {
+        delete process.env.MAISTER_MAX_CONCURRENT_ASSISTANTS;
+      } else {
+        process.env.MAISTER_MAX_CONCURRENT_ASSISTANTS = prev;
+      }
+    }
+
+    // Cascades the three assistant runs.
+    await pool.query(`DELETE FROM "local_packages" WHERE "id" = $1`, [lpId]);
   }, 60_000);
 });

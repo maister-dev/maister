@@ -6,6 +6,7 @@ import type { AuthoredFlowPackageFile } from "@/lib/catalog/authored-types";
 import type { ScratchFlowActionResultPayload } from "@/lib/scratch-runs/transcript";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { TrashIcon } from "@heroicons/react/24/outline";
 import { useTranslations } from "next-intl";
 
 import { CapabilityComposer } from "@/components/capabilities/capability-composer";
@@ -26,6 +27,7 @@ export type StudioAiTabLabels = {
   promptPlaceholder: string;
   launch: string;
   launching: string;
+  drop: string;
   lockRequired: string;
   runner: string;
   loadingRunners: string;
@@ -88,6 +90,7 @@ export function StudioAiTab({
   const [runId, setRunId] = useState<string | null>(null);
   const [prompt, setPrompt] = useState("");
   const [launching, setLaunching] = useState(false);
+  const [dropping, setDropping] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [runners, setRunners] = useState<RunnerOption[]>([]);
   const [selectedRunnerId, setSelectedRunnerId] = useState<string>("");
@@ -296,6 +299,36 @@ export function StudioAiTab({
     ensureLockHeld,
   ]);
 
+  // Drop the assistant run: terminate its (possibly idle/dead) supervisor
+  // session and mark it Abandoned, freeing its assistant-pool slot. Clears the
+  // run id so the panel returns to the launch state. Authorized server-side by
+  // created_by_user_id (no editor lock required).
+  const dropRun = useCallback(async (): Promise<void> => {
+    if (!runId || dropping) return;
+    setDropping(true);
+    setError(null);
+
+    try {
+      const res = await fetch(`/api/scratch-runs/${runId}/discard`, {
+        method: "POST",
+      });
+
+      if (!res.ok) {
+        setError(await readApiError(res, t));
+
+        return;
+      }
+
+      setRunId(null);
+      onBusyChange(false);
+      onActivity();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDropping(false);
+    }
+  }, [runId, dropping, t, onBusyChange, onActivity]);
+
   const renderFlowActionResult = useCallback(
     (payload: ScratchFlowActionResultPayload): ReactElement => (
       <FlowAssistantActionResult
@@ -315,19 +348,43 @@ export function StudioAiTab({
   if (runId) {
     return (
       <div className="flex h-full min-h-0 flex-col" data-testid="studio-ai-tab">
-        <ScratchConversation
-          compact
-          attachmentsEnabled={false}
-          messageBodyExtras={messageBodyExtras}
-          messageEndpoint={`/api/studio/local-packages/${packageId}/assistant/${runId}/messages`}
-          recoverEndpoint={null}
-          renderFlowActionResult={renderFlowActionResult}
-          runId={runId}
-          sendDisabledReason={sendDisabledReason}
-          onBeforeSend={onBeforeSend}
-          onHeaderInfo={onHeaderInfo}
-          onMessageSettled={onActivity}
-        />
+        <div className="flex items-center justify-end border-b border-line px-2 py-1">
+          <button
+            aria-label={labels.drop}
+            className="rounded-md p-1.5 text-mute transition hover:bg-danger-soft hover:text-danger disabled:cursor-not-allowed disabled:opacity-50"
+            data-testid="studio-ai-drop"
+            disabled={dropping}
+            title={labels.drop}
+            type="button"
+            onClick={() => void dropRun()}
+          >
+            <TrashIcon className="size-4" />
+          </button>
+        </div>
+        <div className="min-h-0 flex-1">
+          <ScratchConversation
+            compact
+            attachmentsEnabled={false}
+            messageBodyExtras={messageBodyExtras}
+            messageEndpoint={`/api/studio/local-packages/${packageId}/assistant/${runId}/messages`}
+            recoverEndpoint={null}
+            renderFlowActionResult={renderFlowActionResult}
+            runId={runId}
+            sendDisabledReason={sendDisabledReason}
+            onBeforeSend={onBeforeSend}
+            onHeaderInfo={onHeaderInfo}
+            onMessageSettled={onActivity}
+          />
+        </div>
+        {error ? (
+          <p
+            className="border-t border-danger-line bg-danger-soft px-3 py-2 font-mono text-[11px] text-danger"
+            data-testid="studio-ai-error"
+            role="alert"
+          >
+            {error}
+          </p>
+        ) : null}
       </div>
     );
   }

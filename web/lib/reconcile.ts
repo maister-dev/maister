@@ -14,6 +14,7 @@ import {
   eq,
   inArray,
   isNotNull,
+  isNull,
   notInArray,
 } from "drizzle-orm";
 import pino from "pino";
@@ -360,7 +361,10 @@ type CandidateRow = {
   taskId: string | null;
   // null = no workspaces row (M34 agent runs with workspace none/repo_read).
   worktreePath: string | null;
-  repoPath: string;
+  // null = a project-less run (the Studio local-package AI assistant). Such a
+  // run has no parent repo, so there is no worktree to lose either.
+  projectId: string | null;
+  repoPath: string | null;
 };
 
 async function runWithConcurrency<T>(
@@ -529,9 +533,70 @@ async function loadCandidates(db: Db): Promise<CandidateRow[]> {
       all.push({
         ...row,
         acpSessionId: activeByRun.get(row.runId)?.acpSessionId ?? null,
+        projectId: project.id,
         repoPath: project.repoPath,
       });
     }
+  }
+
+  // Project-less runs (the Studio local-package AI assistant: run_kind='scratch',
+  // project_id NULL, no workspace) are invisible to the per-project loop above —
+  // no project row references them. Without this pass a dead assistant session
+  // stays `Running` forever and leaks its concurrency slot: keep-alive/resume
+  // sweeps only act on NeedsInput*, and reconcile never saw it. repo_path is null
+  // (no parent repo) and there is no worktree to reconcile against.
+  const projectlessRows: Array<{
+    runId: string;
+    runKind: "flow" | "scratch" | "agent";
+    status: string;
+    acpSessionId: string | null;
+    currentStepId: string | null;
+    resumeStartedAt: Date | null;
+    runStartedAt: Date | null;
+    flowId: string | null;
+    flowRevisionId: string | null;
+    parentRunId: string | null;
+    taskId: string | null;
+    worktreePath: string | null;
+  }> = await db
+    .select({
+      runId: runs.id,
+      runKind: runs.runKind,
+      status: runs.status,
+      currentStepId: runs.currentStepId,
+      resumeStartedAt: runs.resumeStartedAt,
+      runStartedAt: runs.startedAt,
+      flowId: runs.flowId,
+      flowRevisionId: runs.flowRevisionId,
+      parentRunId: runs.parentRunId,
+      taskId: runs.taskId,
+      worktreePath: workspaces.worktreePath,
+    })
+    .from(runs)
+    .leftJoin(workspaces, eq(workspaces.runId, runs.id))
+    .where(
+      and(
+        isNull(runs.projectId),
+        inArray(runs.status, ["Running", "WaitingOnChildren"]),
+      ),
+    )
+    .orderBy(asc(runs.startedAt))
+    .limit(PER_TICK_LIMIT);
+
+  const activeProjectless = await loadActiveRunSessionsByRunId(
+    db,
+    projectlessRows.map((row: { runId: string }) => row.runId),
+  );
+
+  for (const row of projectlessRows) {
+    if (await isTakeoverReturnCandidate(db, row.runId)) continue;
+
+    all.push({
+      ...row,
+      acpSessionId: activeProjectless.get(row.runId)?.acpSessionId ?? null,
+      projectId: null,
+      repoPath: null,
+    });
   }
 
   return all;
@@ -757,6 +822,9 @@ export async function runReconcileSweep(
   const worktreesByRepo = new Map<string, Set<string>>();
 
   for (const repoPath of new Set(candidates.map((c) => c.repoPath))) {
+    // Project-less candidates carry a null repoPath (no parent repo) — there is
+    // no worktree list to fetch for them.
+    if (repoPath == null) continue;
     const infos = await worktreesFor(repoPath);
 
     worktreesByRepo.set(repoPath, new Set(infos.map((w) => w.path)));
@@ -771,12 +839,16 @@ export async function runReconcileSweep(
 
   await runWithConcurrency(candidates, PER_PASS_CONCURRENCY, async (cand) => {
     // M34: a null worktreePath is the no-workspace agent shape (none/
-    // repo_read) — there is no worktree to lose. Flow/scratch runs always
-    // carry a workspace row; a null there still reads as gone.
+    // repo_read) — there is no worktree to lose. A project-less assistant run
+    // (project_id NULL) likewise has no managed worktree by design, so its null
+    // path must NOT read as `worktree-gone` (which would crash even a LIVE chat,
+    // since that check precedes the live-session skip). Project-BOUND flow/scratch
+    // runs always carry a workspace row; a null there still reads as gone.
     const worktreeExists =
       cand.worktreePath == null
-        ? cand.runKind === "agent"
-        : (worktreesByRepo.get(cand.repoPath)?.has(cand.worktreePath) ?? false);
+        ? cand.runKind === "agent" || cand.projectId == null
+        : cand.repoPath != null &&
+          (worktreesByRepo.get(cand.repoPath)?.has(cand.worktreePath) ?? false);
     const live = cand.acpSessionId ? liveMap.get(cand.acpSessionId) : undefined;
     // acp_session_id unmatched but a live session exists for (runId, stepId) →
     // the agent's prompt is still in-flight (acp_session_id not yet persisted).
@@ -798,10 +870,11 @@ export async function runReconcileSweep(
             currentStepId: cand.currentStepId,
           });
 
-    // Agent runs have no node_attempts ledger — anchor the grace window on
-    // the run's own startedAt so a just-spawned session is never crashed.
+    // Agent runs (and project-less assistant scratch runs) have no node_attempts
+    // ledger — anchor the grace window on the run's own startedAt so a
+    // just-spawned session is never crashed before it registers.
     const attemptStartedAt =
-      cand.runKind === "agent"
+      cand.runKind === "agent" || cand.projectId == null
         ? cand.runStartedAt
         : await latestAttemptStartedAt(db, cand.runId);
 

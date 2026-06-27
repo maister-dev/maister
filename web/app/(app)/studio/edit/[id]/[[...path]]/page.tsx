@@ -140,6 +140,7 @@ export default async function StudioEditPage({
       promptPlaceholder: ts("local.ai.promptPlaceholder"),
       launch: ts("local.ai.launch"),
       launching: ts("local.ai.launching"),
+      drop: ts("local.ai.drop"),
       lockRequired: ts("local.ai.lockRequired"),
       runner: ts("local.ai.runner"),
       loadingRunners: ts("local.ai.loadingRunners"),
