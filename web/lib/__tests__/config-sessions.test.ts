@@ -206,9 +206,9 @@ describe("flowRunnerConfigSchema (M42 unified runner config)", () => {
 
 describe("judgeSettingsSchema (M42 — runner-bearing, model removed)", () => {
   it("accepts a runner slot", () => {
-    expect(judgeSettingsSchema.safeParse({ runner: "claude-opus" }).success).toBe(
-      true,
-    );
+    expect(
+      judgeSettingsSchema.safeParse({ runner: "claude-opus" }).success,
+    ).toBe(true);
   });
 
   it("rejects the removed model field", () => {

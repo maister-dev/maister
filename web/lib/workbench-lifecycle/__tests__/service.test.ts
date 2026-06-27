@@ -394,6 +394,62 @@ describe("workbench lifecycle service", () => {
     });
   });
 
+  it("stop closes EVERY live session of a multi-session run and skips non-member sessions (M42)", async () => {
+    const d = deps(context({ run: { ...context().run, status: "Running" } }));
+
+    // The run holds two logical sessions; an unrelated run's live session
+    // (acp-other) must NOT be closed.
+    vi.mocked(d.listRunSessionAcpIds).mockResolvedValueOnce(["acp-1", "acp-2"]);
+    vi.mocked(d.listSessions).mockResolvedValueOnce([
+      {
+        sessionId: "supervisor-1",
+        runId: "run-1",
+        projectSlug: "demo",
+        stepId: "plan",
+        status: "live",
+        pid: 1,
+        startedAt: "2026-06-09T08:00:00.000Z",
+        logPath: "/tmp/log-1",
+        monotonicId: 1,
+        acpSessionId: "acp-1",
+      },
+      {
+        sessionId: "supervisor-2",
+        runId: "run-1",
+        projectSlug: "demo",
+        stepId: "review",
+        status: "live",
+        pid: 2,
+        startedAt: "2026-06-09T08:01:00.000Z",
+        logPath: "/tmp/log-2",
+        monotonicId: 2,
+        acpSessionId: "acp-2",
+      },
+      {
+        sessionId: "supervisor-other",
+        runId: "run-9",
+        projectSlug: "demo",
+        stepId: "x",
+        status: "live",
+        pid: 9,
+        startedAt: "2026-06-09T08:02:00.000Z",
+        logPath: "/tmp/log-9",
+        monotonicId: 3,
+        acpSessionId: "acp-other",
+      },
+    ]);
+
+    const result = await stopFlowWorkbench("run-1", { deps: d });
+
+    // Both of THIS run's live sessions are closed...
+    expect(d.deleteSession).toHaveBeenCalledWith("supervisor-1");
+    expect(d.deleteSession).toHaveBeenCalledWith("supervisor-2");
+    expect(d.deleteSession).toHaveBeenCalledTimes(2);
+    // ...and the unrelated run's session is left alone.
+    expect(d.deleteSession).not.toHaveBeenCalledWith("supervisor-other");
+    expect(result).toMatchObject({ ok: true, supervisorStopped: true });
+  });
+
   it("stop still succeeds when queue promotion fails after the run is parked", async () => {
     const d = deps(context({ run: { ...context().run, status: "Running" } }));
 
