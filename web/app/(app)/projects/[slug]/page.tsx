@@ -16,7 +16,6 @@ import { ActivityPanel } from "@/components/board/panels/activity-panel";
 import { DeferredPanel } from "@/components/board/panels/deferred-panel";
 import { FlowPackagesPanel } from "@/components/board/panels/flow-packages-panel";
 import { ProjectPackagesSection } from "@/components/board/panels/project-packages-section";
-import { FlowsPanel } from "@/components/board/panels/flows-panel";
 import { IntegrationsPanel } from "@/components/board/panels/integrations-panel";
 import { McpPanel } from "@/components/board/panels/mcp-panel";
 import { RepoFilesPanel } from "@/components/board/panels/repo-files-panel";
@@ -63,7 +62,6 @@ const VALID_TABS: readonly ProjectTab[] = [
   "board",
   "activity",
   "prs",
-  "flows",
   "repo",
   "packages",
   "integrations",
@@ -432,13 +430,6 @@ export default async function ProjectBoardPage({
           isAdmin={isAdmin}
           servers={isAdmin ? await listProjectMcps(project.id) : []}
           slug={slug}
-        />
-      ) : null}
-      {tab === "flows" ? (
-        <FlowsPanel
-          canManageCatalog={isAdmin}
-          flows={pageData.flows}
-          projectSlug={slug}
         />
       ) : null}
       {tab === "repo" ? (
