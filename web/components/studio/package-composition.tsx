@@ -43,6 +43,7 @@ import {
   scaffoldArtifact,
   type ScaffoldKind,
 } from "@/lib/local-packages/scaffold";
+import { renameArtifact } from "@/lib/local-packages/rename-artifact";
 
 const TAB_LABEL_KEY: Record<CompositionTabId, string> = {
   flows: "viewer.tabFlows",
@@ -153,6 +154,7 @@ export function PackageComposition({
     graphLabels: buildGraphLabels(tWorkbench),
     onDraftFilesChange,
     onSaveDraft,
+    onCreateArtifact,
   });
 
   return (
@@ -216,6 +218,7 @@ function buildCompositionCards({
   graphLabels,
   onDraftFilesChange,
   onSaveDraft,
+  onCreateArtifact,
 }: {
   packageId: string;
   activeTab: CompositionTabId;
@@ -232,6 +235,10 @@ function buildCompositionCards({
   graphLabels: ReturnType<typeof buildGraphLabels>;
   onDraftFilesChange: (next: AuthoredFlowPackageFile[]) => void;
   onSaveDraft: () => void;
+  onCreateArtifact: (
+    files: AuthoredFlowPackageFile[],
+    navigate: string,
+  ) => void;
 }): ReactNode {
   switch (activeTab) {
     case "files":
@@ -242,13 +249,35 @@ function buildCompositionCards({
       );
     case "flows":
       return bom.flows.map((flow) => (
-        <FlowPreviewCard
-          key={flow.id}
-          flow={flow}
-          graphLabels={graphLabels}
-          href={flowCanvasHref(packageId, flow.path)}
-          t={t}
-        />
+        <div key={flow.id} className="flex flex-col gap-1.5">
+          <FlowPreviewCard
+            flow={flow}
+            graphLabels={graphLabels}
+            href={flowCanvasHref(packageId, flow.path)}
+            t={t}
+          />
+          {readOnly ? null : (
+            <RenameControl
+              currentName={flow.id}
+              labels={renameLabels(t)}
+              testidPrefix="composition-flow-rename"
+              onSubmit={(newName) =>
+                applyRename(
+                  {
+                    kind: "flows",
+                    id: flow.id,
+                    path: flow.path,
+                    newName,
+                    packageId,
+                    draftFiles,
+                  },
+                  t,
+                  onCreateArtifact,
+                )
+              }
+            />
+          )}
+        </div>
       ));
     case "skills":
       return bom.skills.map((skill) => (
@@ -278,6 +307,7 @@ function buildCompositionCards({
           saveLabel={saveLabel}
           selectedId={selectedId}
           t={t}
+          onCreateArtifact={onCreateArtifact}
           onDraftFilesChange={onDraftFilesChange}
           onSaveDraft={onSaveDraft}
         />
@@ -303,6 +333,7 @@ function InlineMasterDetail({
   t,
   onDraftFilesChange,
   onSaveDraft,
+  onCreateArtifact,
 }: {
   packageId: string;
   kind: CompositionKind;
@@ -317,6 +348,10 @@ function InlineMasterDetail({
   t: TFn;
   onDraftFilesChange: (next: AuthoredFlowPackageFile[]) => void;
   onSaveDraft: () => void;
+  onCreateArtifact: (
+    files: AuthoredFlowPackageFile[],
+    navigate: string,
+  ) => void;
 }): ReactElement {
   const items = inlineItems(kind, bom, t);
   const selectedPath = selectedId
@@ -344,18 +379,41 @@ function InlineMasterDetail({
         className="min-h-0 rounded-[12px] border border-line bg-ivory p-3"
         data-testid="composition-inline-detail"
       >
-        {selectedPath ? (
-          <InlineEditor
-            draftFiles={draftFiles}
-            filePath={selectedPath}
-            filesLabels={filesLabels}
-            frontmatterKind={FRONTMATTER_KIND_BY_COMPOSITION[kind]}
-            mcpCatalog={mcpCatalog}
-            readOnly={readOnly}
-            saveLabel={saveLabel}
-            onDraftFilesChange={onDraftFilesChange}
-            onSaveDraft={onSaveDraft}
-          />
+        {selectedPath && selectedId ? (
+          <div className="flex flex-col gap-3">
+            {readOnly ? null : (
+              <RenameControl
+                currentName={selectedId}
+                labels={renameLabels(t)}
+                testidPrefix="composition-inline-rename"
+                onSubmit={(newName) =>
+                  applyRename(
+                    {
+                      kind,
+                      id: selectedId,
+                      path: selectedPath,
+                      newName,
+                      packageId,
+                      draftFiles,
+                    },
+                    t,
+                    onCreateArtifact,
+                  )
+                }
+              />
+            )}
+            <InlineEditor
+              draftFiles={draftFiles}
+              filePath={selectedPath}
+              filesLabels={filesLabels}
+              frontmatterKind={FRONTMATTER_KIND_BY_COMPOSITION[kind]}
+              mcpCatalog={mcpCatalog}
+              readOnly={readOnly}
+              saveLabel={saveLabel}
+              onDraftFilesChange={onDraftFilesChange}
+              onSaveDraft={onSaveDraft}
+            />
+          </div>
         ) : (
           <p className="m-0 font-mono text-[11px] text-mute">
             {selectedId
@@ -443,6 +501,125 @@ const CREATE_KINDS: ScaffoldKind[] = [
   "mcp",
   "rule",
 ];
+
+type RenameLabels = { open: string; confirm: string; cancel: string };
+
+export function renameLabels(t: TFn): RenameLabels {
+  return {
+    open: t("composition.rename.open"),
+    confirm: t("composition.rename.confirm"),
+    cancel: t("composition.rename.cancel"),
+  };
+}
+
+// Run an identity rename and persist+navigate on success; returns a localized
+// error message on failure (or null on success), for the RenameControl to show.
+export function applyRename(
+  opts: Parameters<typeof renameArtifact>[0],
+  t: TFn,
+  onCreateArtifact: (
+    files: AuthoredFlowPackageFile[],
+    navigate: string,
+  ) => void,
+): string | null {
+  const result = renameArtifact(opts);
+
+  if (!result.ok) {
+    return result.code === "CONFLICT"
+      ? t("composition.create.errorConflict")
+      : result.code === "CONFIG"
+        ? t("composition.create.errorConfig")
+        : t("composition.create.errorInvalid");
+  }
+
+  onCreateArtifact(result.files, result.navigate);
+
+  return null;
+}
+
+// A compact "Rename" affordance: a button that opens a name input + confirm. The
+// `onSubmit` returns a localized error message (or null on success); the control
+// stays open on error so the user can correct the name (ADR-115 P6).
+export function RenameControl({
+  currentName,
+  labels,
+  testidPrefix,
+  onSubmit,
+}: {
+  currentName: string;
+  labels: RenameLabels;
+  testidPrefix: string;
+  onSubmit: (newName: string) => string | null;
+}): ReactElement {
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState(currentName);
+  const [error, setError] = useState<string | null>(null);
+
+  if (!open) {
+    return (
+      <button
+        className="self-start rounded-md border border-line px-2.5 py-1 font-mono text-[10.5px] font-semibold text-mute transition-colors hover:border-amber hover:text-ink"
+        data-testid={`${testidPrefix}-open`}
+        type="button"
+        onClick={() => {
+          setValue(currentName);
+          setError(null);
+          setOpen(true);
+        }}
+      >
+        {labels.open}
+      </button>
+    );
+  }
+
+  return (
+    <div
+      className="flex flex-wrap items-center gap-2"
+      data-testid={`${testidPrefix}-form`}
+    >
+      <input
+        aria-label={labels.open}
+        className="min-h-[30px] rounded-md border border-line bg-paper px-2 font-mono text-[11px] text-ink"
+        data-testid={`${testidPrefix}-name`}
+        value={value}
+        onChange={(event) => setValue(event.target.value)}
+      />
+      <button
+        className="min-h-[30px] rounded-md border border-amber bg-amber px-2.5 font-mono text-[10.5px] font-bold uppercase tracking-[0.08em] text-white hover:bg-amber-2"
+        data-testid={`${testidPrefix}-submit`}
+        type="button"
+        onClick={() => {
+          const err = onSubmit(value);
+
+          if (err) setError(err);
+          else setOpen(false);
+        }}
+      >
+        {labels.confirm}
+      </button>
+      <button
+        className="min-h-[30px] rounded-md border border-line px-2.5 font-mono text-[10.5px] font-semibold text-mute hover:text-ink"
+        data-testid={`${testidPrefix}-cancel`}
+        type="button"
+        onClick={() => {
+          setOpen(false);
+          setError(null);
+        }}
+      >
+        {labels.cancel}
+      </button>
+      {error ? (
+        <span
+          className="font-mono text-[10.5px] text-danger"
+          data-testid={`${testidPrefix}-error`}
+          role="alert"
+        >
+          {error}
+        </span>
+      ) : null}
+    </div>
+  );
+}
 
 // The global "+ Add <kind>" create control (ADR-115 P5). A kind whose tab is
 // hidden (empty) is still creatable here. A flow opens the canvas, a skill its

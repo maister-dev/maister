@@ -179,6 +179,53 @@ describe("PackageComposition create (ADR-115 §P5)", () => {
     expect(navigate).toBe("/studio/edit/pkg1?tab=rules&sel=style");
   });
 
+  it("renames a selected inline element via onCreateArtifact", () => {
+    nav.search = "tab=rules&sel=r1.md";
+    const onCreateArtifact = vi.fn();
+    const container = document.createElement("div");
+
+    document.body.appendChild(container);
+    mount(
+      container,
+      createElement(
+        PackageComposition,
+        baseProps({ onCreateArtifact }) as never,
+      ),
+    );
+
+    act(() =>
+      container
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="composition-inline-rename-open"]',
+        )
+        ?.click(),
+    );
+    act(() =>
+      setNativeValue(
+        container.querySelector(
+          '[data-testid="composition-inline-rename-name"]',
+        )!,
+        "renamed",
+      ),
+    );
+    act(() =>
+      container
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="composition-inline-rename-submit"]',
+        )
+        ?.click(),
+    );
+
+    expect(onCreateArtifact).toHaveBeenCalledTimes(1);
+    const [files, navigate] = onCreateArtifact.mock.calls[0] as [
+      Array<{ path: string }>,
+      string,
+    ];
+
+    expect(files.some((f) => f.path === "rules/renamed.md")).toBe(true);
+    expect(navigate).toBe("/studio/edit/pkg1?tab=rules&sel=renamed.md");
+  });
+
   it("shows a CONFLICT error and does not create on a colliding name", () => {
     nav.search = "tab=files";
     const onCreateArtifact = vi.fn();

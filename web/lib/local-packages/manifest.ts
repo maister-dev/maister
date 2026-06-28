@@ -161,6 +161,25 @@ export function appendManifestFlow(
   return stringifyYaml({ ...raw, flows: nextFlows });
 }
 
+// Rename a flow entry's identity in `flows[]` (id + path), preserving every other
+// field + key order, and re-serialize. Used by the card-level flow rename
+// (ADR-115 P6): a flow rename that updates the file but not the manifest is a
+// defect, so both move together. A no-match leaves the manifest unchanged.
+export function renameManifestFlow(
+  raw: Record<string, unknown>,
+  oldId: string,
+  entry: { id: string; path: string },
+): string {
+  const flows = Array.isArray(raw.flows) ? raw.flows : [];
+  const nextFlows = flows.map((f) =>
+    isRecord(f) && f.id === oldId
+      ? { ...f, id: entry.id, path: entry.path }
+      : f,
+  );
+
+  return stringifyYaml({ ...raw, flows: nextFlows });
+}
+
 // Strict validation against the install-time manifest schema. Returns the issue
 // list (empty = valid). Reused by the M39 commit-time gate (Phase A3) and the
 // editor's inline content-issues.

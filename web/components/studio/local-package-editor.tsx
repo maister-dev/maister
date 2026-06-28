@@ -30,7 +30,11 @@ import { useTranslations } from "next-intl";
 
 import { FlowEditorTabs } from "@/components/flows/flow-editor-tabs";
 import { PackageFilesEditor } from "@/components/flows/package-files-editor";
-import { PackageComposition } from "@/components/studio/package-composition";
+import {
+  applyRename,
+  PackageComposition,
+  renameLabels,
+} from "@/components/studio/package-composition";
 import { SkillScreen } from "@/components/studio/skill-screen";
 import { LocalPackageDiffDrawer } from "@/components/studio/local-package-diff-drawer";
 import {
@@ -804,6 +808,7 @@ export function LocalPackageEditor({
                   crumbSkills: tStudio("viewer.tabSkills"),
                   save: labels.home.save,
                   notFound: tStudio("composition.notFound"),
+                  rename: renameLabels(tStudio),
                 }}
                 mcpCatalog={mcpCatalog}
                 name={identity.project}
@@ -811,6 +816,20 @@ export function LocalPackageEditor({
                 readOnly={readOnly}
                 skillId={skillId}
                 onDraftFilesChange={handleDraftFilesChange}
+                onRename={(newName) =>
+                  applyRename(
+                    {
+                      kind: "skills",
+                      id: skillId,
+                      path: `skills/${skillId}`,
+                      newName,
+                      packageId,
+                      draftFiles,
+                    },
+                    tStudio,
+                    createArtifact,
+                  )
+                }
                 onSave={saveDraft}
               />
             ) : (

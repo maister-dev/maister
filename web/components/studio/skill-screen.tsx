@@ -11,6 +11,7 @@ import type { ReactElement } from "react";
 import Link from "next/link";
 
 import { PackageFilesEditor } from "@/components/flows/package-files-editor";
+import { RenameControl } from "@/components/studio/package-composition";
 import {
   compositionTabHref,
   mergeSkillFiles,
@@ -24,6 +25,7 @@ export type SkillScreenLabels = {
   crumbSkills: string;
   save: string;
   notFound: string;
+  rename: { open: string; confirm: string; cancel: string };
 };
 
 // The dedicated skill screen (ADR-115 P4): a PackageFilesEditor scoped to the
@@ -43,6 +45,7 @@ export function SkillScreen({
   mcpCatalog,
   onDraftFilesChange,
   onSave,
+  onRename,
 }: {
   packageId: string;
   name: string;
@@ -55,6 +58,8 @@ export function SkillScreen({
   mcpCatalog: PlatformMcpCatalogEntry[];
   onDraftFilesChange: (next: AuthoredFlowPackageFile[]) => void;
   onSave: () => void;
+  // Identity rename of the skill folder → localized error message, or null.
+  onRename: (newName: string) => string | null;
 }): ReactElement {
   const scoped = scopeSkillFiles(draftFiles, skillId);
 
@@ -110,6 +115,14 @@ export function SkillScreen({
       data-testid="skill-screen"
     >
       {breadcrumb}
+      {readOnly ? null : (
+        <RenameControl
+          currentName={skillId}
+          labels={labels.rename}
+          testidPrefix="skill-screen-rename"
+          onSubmit={onRename}
+        />
+      )}
       <div className="grid min-h-0 flex-1 gap-3">
         <PackageFilesEditor
           disabled={readOnly}

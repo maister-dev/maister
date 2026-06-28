@@ -24,6 +24,7 @@ const labels = {
   crumbSkills: "Skills",
   save: "Save",
   notFound: "No such skill",
+  rename: { open: "Rename", confirm: "Save name", cancel: "Cancel" },
 };
 
 const draftFiles = [
@@ -47,6 +48,7 @@ function render(skillId: string, readOnly = false): string {
       mcpCatalog: [],
       onDraftFilesChange: vi.fn(),
       onSave: vi.fn(),
+      onRename: vi.fn(),
     } as never),
   );
 }
@@ -65,13 +67,16 @@ describe("SkillScreen (ADR-115 §P4)", () => {
     expect(html).not.toContain("rules/r1.md");
     expect(html).not.toContain("maister-package.yaml");
     expect(html).toContain('data-testid="skill-screen-save"');
+    // The folder rename affordance is present (editable).
+    expect(html).toContain('data-testid="skill-screen-rename-open"');
   });
 
-  it("hides Save when readOnly", () => {
+  it("hides Save + Rename when readOnly", () => {
     const html = render("arch", true);
 
     expect(html).toContain('data-testid="skill-screen"');
     expect(html).not.toContain('data-testid="skill-screen-save"');
+    expect(html).not.toContain('data-testid="skill-screen-rename-open"');
   });
 
   it("shows a not-found state for an unknown skill", () => {
