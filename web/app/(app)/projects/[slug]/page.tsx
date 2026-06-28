@@ -14,7 +14,7 @@ import { NewTaskModal } from "@/components/board/new-task-modal";
 import { ProjectTabs } from "@/components/board/project-tabs";
 import { ActivityPanel } from "@/components/board/panels/activity-panel";
 import { DeferredPanel } from "@/components/board/panels/deferred-panel";
-import { FlowPackagesPanel } from "@/components/board/panels/flow-packages-panel";
+import { ProjectPackageContents } from "@/components/board/panels/project-package-contents";
 import { ProjectLocalPackages } from "@/components/board/panels/project-local-packages";
 import { ProjectPackagesSection } from "@/components/board/panels/project-packages-section";
 import { IntegrationsPanel } from "@/components/board/panels/integrations-panel";
@@ -33,7 +33,7 @@ import { WorkbenchLifecycleActions } from "@/components/workbench/lifecycle-acti
 import { getProjectRole, getSessionUser } from "@/lib/authz";
 import { getActivityFeed } from "@/lib/queries/activity";
 import { getBoardData } from "@/lib/queries/board";
-import { getFlowPackages } from "@/lib/queries/flow-packages";
+import { getProjectPackageContents } from "@/lib/queries/project-package-contents";
 import {
   getAvailablePackageInstalls,
   getProjectPackageAttachments,
@@ -460,9 +460,8 @@ export default async function ProjectBoardPage({
           <ProjectLocalPackages
             localPackages={await getProjectLocalPackages(project.id)}
           />
-          <FlowPackagesPanel
-            isAdmin={isAdmin}
-            packages={await getFlowPackages(project.id)}
+          <ProjectPackageContents
+            contents={await getProjectPackageContents(project.id)}
             slug={slug}
           />
         </>

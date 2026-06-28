@@ -353,7 +353,7 @@ function CustomizeButton({ refName }: { refName: string }): ReactElement {
 
 type TFn = ReturnType<typeof useTranslations>;
 
-function buildGraphLabels(t: TFn): FlowGraphViewLabels {
+export function buildGraphLabels(t: TFn): FlowGraphViewLabels {
   return {
     title: t("graph.title"),
     empty: t("graph.empty"),
@@ -403,7 +403,7 @@ function hasFlowFrontmatter(frontmatter: PackageBomFlowFrontmatter): boolean {
   );
 }
 
-function FlowPreviewCard({
+export function FlowPreviewCard({
   flow,
   href,
   labels,
