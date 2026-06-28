@@ -59,7 +59,6 @@ export function ProjectPackagesSection({
   availableInstalls,
 }: Props): ReactElement {
   const t = useTranslations("packages");
-  const tStudio = useTranslations("studio");
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [busy, setBusy] = useState<string | null>(null);
@@ -199,7 +198,7 @@ export function ProjectPackagesSection({
                     <td className="px-4 py-3 font-mono text-[12.5px] text-ink">
                       <Link
                         className="underline-offset-2 hover:underline"
-                        href={`/projects/${slug}/package-installs/${att.id}`}
+                        href={`/studio/packages/${encodeURIComponent(att.packageName)}`}
                       >
                         {att.packageName}
                       </Link>
@@ -223,12 +222,6 @@ export function ProjectPackagesSection({
                     </td>
                     <td className="px-4 py-3 text-right">
                       <div className="inline-flex items-center gap-2">
-                        <Link
-                          className="inline-flex h-8 items-center rounded-[8px] border border-line px-3 text-[12px] font-semibold text-ink hover:bg-ivory"
-                          href={`/studio/packages/${encodeURIComponent(att.packageName)}`}
-                        >
-                          {tStudio("openInStudio")}
-                        </Link>
                         {isAdmin ? (
                           <div className="inline-flex gap-2">
                             {canTrust && att.trustStatus === "untrusted" ? (
