@@ -1,6 +1,6 @@
 # Feature Spec: Flow Editor Prompt Assists
 
-Status: Designed
+Status: Implemented
 Date: 2026-06-28
 Plan: `.ai-factory/plans/feature-flow-editor-prompt-assists.md`
 
@@ -169,7 +169,7 @@ variables, seeded empty unless a rework path injects comments.
 | DB/migrations | None |
 | Deployment | None |
 | Error taxonomy | None |
-| Docs/system analytics/screens | Document Designed behavior, then flip to Implemented after code |
+| Docs/system analytics/screens | Implemented |
 | ADR | Add ADR-115 for the render-time default operator |
 
 ## Phase 0 Contract Audit

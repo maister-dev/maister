@@ -1399,7 +1399,7 @@ Templates use Mustache strict mode (`mustache@4`). Undefined paths throw
 rendering as empty string. HTML escaping is disabled — prompts/commands
 are not HTML.
 
-**Default operator (Designed — ADR-115).** Prompt authors may guard values that
+**Default operator (Implemented — ADR-115).** Prompt authors may guard values that
 can legitimately be absent with `{{ <dotpath> ?? '<literal>' }}` or
 `{{ <dotpath> ?? "<literal>" }}`. The guarded form renders the resolved value
 when present and the quoted literal when the path is missing or present-but-

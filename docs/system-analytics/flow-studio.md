@@ -461,16 +461,16 @@ agent options, schema options, `onWriteSchemaFile`, and the existing
 6. The feature MUST NOT add an API route, DB migration, engine bump, SSE event,
    deployment setting, or `MaisterError` code.
 
-## Coding-node prompt assists (Designed)
+## Coding-node prompt assists (Implemented)
 
-> **Status: Designed.** Spec:
+> **Status: Implemented.** Spec:
 > [`.ai-factory/specs/feature-flow-editor-prompt-assists.md`](../../.ai-factory/specs/feature-flow-editor-prompt-assists.md).
 > This extends the existing `CapabilityComposer` prompt editor. It adds no API
 > route, DB migration, AsyncAPI/SSE event, deployment setting, or new
 > `MaisterError` code. The only runtime behavior change is the render-time
 > default operator in `renderStrict` (`{{ path ?? '' }}`, ADR-115).
 
-### Scope (Designed)
+### Scope (Implemented)
 
 - **Package-local skill autocomplete.** Editable `ai_coding`, `judge`, and
   `orchestrator` node prompts continue to use the package-local skill catalog
@@ -492,7 +492,7 @@ agent options, schema options, `onWriteSchemaFile`, and the existing
   bare optional/conditional references surface non-blocking editor warnings.
   Runtime strict rendering remains the hard gate for bare `{{ path }}`.
 
-### Expectations (Designed)
+### Expectations (Implemented)
 
 1. Future nodes and the selected node's own outputs MUST NOT be suggested for an
    action prompt.

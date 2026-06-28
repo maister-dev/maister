@@ -752,7 +752,7 @@ This phase ships the only runtime change and lands BEFORE the editor inserts the
 
 ### Phase 5 - Documentation and Contract Reconciliation
 
-- [ ] **T5.1 - Reconcile docs to as-built behavior.**
+- [x] **T5.1 - Reconcile docs to as-built behavior.**
   - Flip the `flow-studio.md` / `editor.md` prompt-assist sections from
     `(Designed)` (set in T0.2) to `(Implemented)` now that code is in the branch.
   - Update the Phase 0 spec and docs if implementation made any acceptable
@@ -774,7 +774,7 @@ This phase ships the only runtime change and lands BEFORE the editor inserts the
   - Logging requirements: no runtime logging in docs.
   - Verify: `pnpm validate:docs`.
 
-- [ ] **T5.2 - Contract audit before completion.**
+- [x] **T5.2 - Contract audit before completion.**
   - Run and record:
     - `git --no-pager diff --name-only -- docs/api docs/db web/lib/db web/db supervisor`
     - `git --no-pager diff --name-only -- web/drizzle web/lib/db docs/database-schema.md docs/db`
