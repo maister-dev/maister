@@ -5,6 +5,10 @@ import type {
   ProjectCapabilityCatalogEntry,
   ProjectCapabilityKind,
 } from "@/lib/capabilities/project-catalog";
+import type {
+  TemplateVariableEntry,
+  TemplateVariableUsageWarning,
+} from "@/lib/flows/editor/template-variable-catalog";
 
 import {
   Extension,
@@ -25,6 +29,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   canonicalToSegments,
   chipToCanonical,
+  promoteComposerSkillTokens,
   segmentsToParagraphs,
   type ComposerSegment,
 } from "@/lib/capabilities/composer-serialize";
@@ -35,6 +40,12 @@ export type CapabilityComposerLabels = {
   unsupportedBadge: string;
   /** Empty-state placeholder. */
   placeholder: string;
+  /** Compact variable picker tooltip/aria label. */
+  variableButton?: string;
+  /** Badge for variables that may be absent. */
+  variableConditionalBadge?: string;
+  /** Generic variable warning heading/aria label. */
+  variableWarning?: string;
 };
 
 export type CapabilityComposerProps = {
@@ -48,6 +59,8 @@ export type CapabilityComposerProps = {
   className?: string;
   testId?: string;
   onSubmitShortcut?: () => void;
+  variableCatalog?: readonly TemplateVariableEntry[];
+  variableWarnings?: readonly TemplateVariableUsageWarning[];
 };
 
 type ChipAttrs = {
@@ -150,7 +163,25 @@ type SuggestionState = {
   range: Range | null;
 };
 
+type VariableSuggestionState = {
+  open: boolean;
+  items: TemplateVariableEntry[];
+  selected: number;
+  top: number;
+  left: number;
+  range: Range | null;
+};
+
 const EMPTY_SUGGESTION: SuggestionState = {
+  open: false,
+  items: [],
+  selected: 0,
+  top: 0,
+  left: 0,
+  range: null,
+};
+
+const EMPTY_VARIABLE_SUGGESTION: VariableSuggestionState = {
   open: false,
   items: [],
   selected: 0,
@@ -298,6 +329,121 @@ function buildSuggestionExtension(args: {
   });
 }
 
+function buildVariableSuggestionExtension(args: {
+  getCatalog: () => readonly TemplateVariableEntry[];
+  setState: (next: VariableSuggestionState) => void;
+  getState: () => VariableSuggestionState;
+}): Extension {
+  let commandRef: ((item: TemplateVariableEntry) => void) | null = null;
+
+  return Extension.create({
+    name: "templateVariableSuggestions",
+    addProseMirrorPlugins() {
+      const editor = this.editor;
+
+      return [
+        Suggestion<TemplateVariableEntry>({
+          editor,
+          pluginKey: new PluginKey("capabilityComposerSuggestion_variables"),
+          char: "{",
+          allowSpaces: false,
+          startOfLine: false,
+          allow: ({ state, range }) => {
+            if (range.from < 2) return false;
+
+            return state.doc.textBetween(range.from - 1, range.from) === "{";
+          },
+          items: ({ query }) => {
+            const q = query.toLowerCase();
+
+            return args
+              .getCatalog()
+              .filter(
+                (entry) =>
+                  entry.path.toLowerCase().includes(q) ||
+                  entry.label.toLowerCase().includes(q) ||
+                  (entry.nodeId?.toLowerCase().includes(q) ?? false) ||
+                  fieldName(entry).toLowerCase().includes(q),
+              )
+              .slice(0, 8);
+          },
+          command: ({ editor: ed, range, props }) => {
+            insertVariable(ed, { from: range.from - 1, to: range.to }, props);
+          },
+          render: () => ({
+            onStart: (p) => {
+              const rect = p.clientRect?.();
+
+              args.setState({
+                open: p.items.length > 0,
+                items: p.items,
+                selected: 0,
+                top: rect ? rect.bottom : 0,
+                left: rect ? rect.left : 0,
+                range: p.range,
+              });
+              commandRef = p.command;
+            },
+            onUpdate: (p) => {
+              const rect = p.clientRect?.();
+
+              args.setState({
+                ...args.getState(),
+                open: p.items.length > 0,
+                items: p.items,
+                selected: 0,
+                top: rect ? rect.bottom : args.getState().top,
+                left: rect ? rect.left : args.getState().left,
+                range: p.range,
+              });
+              commandRef = p.command;
+            },
+            onKeyDown: (p) => {
+              const s = args.getState();
+
+              if (!s.open) return false;
+              if (isSubmitShortcut(p.event)) return false;
+              if (p.event.key === "ArrowDown") {
+                args.setState({
+                  ...s,
+                  selected: (s.selected + 1) % s.items.length,
+                });
+
+                return true;
+              }
+              if (p.event.key === "ArrowUp") {
+                args.setState({
+                  ...s,
+                  selected: (s.selected - 1 + s.items.length) % s.items.length,
+                });
+
+                return true;
+              }
+              if (p.event.key === "Enter") {
+                const item = s.items[s.selected];
+
+                if (item && commandRef) commandRef(item);
+
+                return true;
+              }
+              if (p.event.key === "Escape") {
+                args.setState(EMPTY_VARIABLE_SUGGESTION);
+
+                return true;
+              }
+
+              return false;
+            },
+            onExit: () => {
+              args.setState(EMPTY_VARIABLE_SUGGESTION);
+            },
+          }),
+        }),
+      ];
+    },
+  });
+}
+
 function insertChip(
   editor: Editor,
   range: Range,
@@ -329,6 +475,30 @@ function insertChip(
       },
       { type: "text", text: " " },
     ])
+    .run();
+}
+
+function templateVariableText(entry: TemplateVariableEntry): string {
+  return `{{ ${entry.insertText} }}`;
+}
+
+function variableNeedsDefault(entry: TemplateVariableEntry): boolean {
+  return entry.availability === "conditional" || entry.presence === "optional";
+}
+
+function fieldName(entry: TemplateVariableEntry): string {
+  return entry.path.split(".").at(-1) ?? entry.path;
+}
+
+function insertVariable(
+  editor: Editor,
+  range: Range,
+  entry: TemplateVariableEntry,
+): void {
+  editor
+    .chain()
+    .focus()
+    .insertContentAt(range, templateVariableText(entry))
     .run();
 }
 
@@ -395,17 +565,57 @@ export function CapabilityComposer({
   className,
   testId,
   onSubmitShortcut,
+  variableCatalog = [],
+  variableWarnings = [],
 }: CapabilityComposerProps) {
   const [suggestion, setSuggestion] =
     useState<SuggestionState>(EMPTY_SUGGESTION);
+  const [variableSuggestion, setVariableSuggestion] =
+    useState<VariableSuggestionState>(EMPTY_VARIABLE_SUGGESTION);
+  const [variableMenuOpen, setVariableMenuOpen] = useState(false);
   const suggestionRef = useRef(suggestion);
+  const variableSuggestionRef = useRef(variableSuggestion);
   const submitShortcutRef = useRef(onSubmitShortcut);
+  const editorRef = useRef<Editor | null>(null);
+  const valueRef = useRef(value);
+  const onChangeRef = useRef(onChange);
+  const agentRef = useRef(agent);
 
   suggestionRef.current = suggestion;
+  variableSuggestionRef.current = variableSuggestion;
   submitShortcutRef.current = onSubmitShortcut;
+  valueRef.current = value;
+  onChangeRef.current = onChange;
+  agentRef.current = agent;
   const catalogRef = useRef(catalog);
+  const variableCatalogRef = useRef(variableCatalog);
 
   catalogRef.current = catalog;
+  variableCatalogRef.current = variableCatalog;
+
+  const commitPromotedValue = () => {
+    const currentEditor = editorRef.current;
+
+    if (!currentEditor) return;
+
+    const raw = docToCanonical(currentEditor);
+    const promoted = promoteComposerSkillTokens(raw, catalogRef.current);
+
+    if (promoted !== raw) {
+      currentEditor.commands.setContent(
+        segmentsToDoc(
+          canonicalToSegments(promoted),
+          agentRef.current,
+          catalogRef.current,
+        ),
+        { emitUpdate: false },
+      );
+    }
+
+    if (promoted !== valueRef.current) {
+      onChangeRef.current(promoted);
+    }
+  };
 
   const editor = useEditor({
     immediatelyRender: false,
@@ -422,6 +632,7 @@ export function CapabilityComposer({
         }
 
         event.preventDefault();
+        commitPromotedValue();
         submitShortcutRef.current();
 
         return true;
@@ -438,6 +649,11 @@ export function CapabilityComposer({
         setState: setSuggestion,
         getState: () => suggestionRef.current,
       }),
+      buildVariableSuggestionExtension({
+        getCatalog: () => variableCatalogRef.current,
+        setState: setVariableSuggestion,
+        getState: () => variableSuggestionRef.current,
+      }),
     ],
     content: segmentsToDoc(canonicalToSegments(value), agent, catalog),
     onUpdate: ({ editor: ed }) => {
@@ -446,6 +662,8 @@ export function CapabilityComposer({
       if (next !== value) onChange(next);
     },
   });
+
+  editorRef.current = editor;
 
   // External value / runner-switch sync: rebuild the doc so chips re-render
   // their per-runner wire form + validity (FR-D4/D10). Skip when the editor
@@ -471,12 +689,94 @@ export function CapabilityComposer({
     if (editor) editor.setEditable(!disabled);
   }, [editor, disabled]);
 
+  const showVariableControls = !disabled && variableCatalog.length > 0;
+
   return (
     <div
       className={`capability-composer ${className ?? ""}`}
       data-testid={testId}
+      onBlur={() => {
+        commitPromotedValue();
+      }}
     >
       <EditorContent editor={editor} />
+      {showVariableControls ? (
+        <div className="capability-composer__variables">
+          <button
+            aria-label={labels.variableButton ?? "Variables"}
+            className="capability-composer__variable-button"
+            data-testid="capability-variable-button"
+            title={labels.variableButton ?? "Variables"}
+            type="button"
+            onMouseDown={(event) => {
+              event.preventDefault();
+              setVariableMenuOpen((open) => !open);
+            }}
+          >
+            {"{}"}
+          </button>
+          <ul
+            className="capability-composer__variable-menu"
+            data-testid="capability-variable-menu"
+            hidden={!variableMenuOpen}
+          >
+            {variableCatalog.map((entry) => (
+              <li key={entry.path}>
+                <button
+                  className="capability-composer__variable-item"
+                  data-insert-text={entry.insertText}
+                  data-testid="capability-variable-item"
+                  data-suggestion-type="variable"
+                  data-variable-path={entry.path}
+                  type="button"
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    if (!editor) return;
+                    insertVariable(
+                      editor,
+                      {
+                        from: editor.state.selection.from,
+                        to: editor.state.selection.to,
+                      },
+                      entry,
+                    );
+                    setVariableMenuOpen(false);
+                  }}
+                >
+                  <span className="capability-composer__item-name">
+                    {entry.label}
+                  </span>
+                  <span className="capability-composer__item-desc">
+                    {entry.insertText}
+                  </span>
+                  {variableNeedsDefault(entry) ? (
+                    <span className="capability-composer__item-badge">
+                      {labels.variableConditionalBadge ?? "optional"}
+                    </span>
+                  ) : null}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {variableWarnings.length > 0 ? (
+        <ul
+          aria-label={labels.variableWarning ?? "Variable warnings"}
+          className="capability-composer__variable-warnings"
+          data-testid="capability-variable-warnings"
+        >
+          {variableWarnings.map((warning) => (
+            <li
+              key={`${warning.code}:${warning.path}`}
+              data-severity={warning.severity}
+              data-variable-path={warning.path}
+            >
+              {warning.message}
+            </li>
+          ))}
+        </ul>
+      ) : null}
       {suggestion.open ? (
         <ul
           className="capability-composer__popup"
@@ -518,6 +818,61 @@ export function CapabilityComposer({
                 {!item.supported ? (
                   <span className="capability-composer__item-badge">
                     {labels.unsupportedBadge}
+                  </span>
+                ) : null}
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {variableSuggestion.open ? (
+        <ul
+          className="capability-composer__popup"
+          data-testid="variable-suggestions"
+          style={{
+            position: "fixed",
+            top: variableSuggestion.top,
+            left: variableSuggestion.left,
+            zIndex: 50,
+          }}
+        >
+          {variableSuggestion.items.map((item, index) => (
+            <li key={item.path}>
+              <button
+                className={
+                  index === variableSuggestion.selected
+                    ? "capability-composer__item is-selected"
+                    : "capability-composer__item"
+                }
+                data-insert-text={item.insertText}
+                data-selected={index === variableSuggestion.selected}
+                data-suggestion-type="variable"
+                data-testid="variable-suggestion-item"
+                data-variable-path={item.path}
+                type="button"
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  if (!editor || !variableSuggestion.range) return;
+                  insertVariable(
+                    editor,
+                    {
+                      from: variableSuggestion.range.from - 1,
+                      to: variableSuggestion.range.to,
+                    },
+                    item,
+                  );
+                  setVariableSuggestion(EMPTY_VARIABLE_SUGGESTION);
+                }}
+              >
+                <span className="capability-composer__item-name">
+                  {item.label}
+                </span>
+                <span className="capability-composer__item-desc">
+                  {item.insertText}
+                </span>
+                {variableNeedsDefault(item) ? (
+                  <span className="capability-composer__item-badge">
+                    {labels.variableConditionalBadge ?? "optional"}
                   </span>
                 ) : null}
               </button>

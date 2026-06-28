@@ -1,5 +1,7 @@
 import type { CapabilityKind } from "@/lib/capabilities/token-normalizer";
 
+import { matchCapabilityTokens } from "@/lib/capabilities/token-matcher";
+
 // Pure, client-safe (used by the TipTap composer AND unit tests in the node
 // lane). Converts between the canonical-token STORAGE string (`@skill:<slug>` /
 // `@agent:<slug>`, FR-E1) and an ordered list of composer segments (plain text
@@ -8,6 +10,11 @@ import type { CapabilityKind } from "@/lib/capabilities/token-normalizer";
 export type ComposerSegment =
   | { type: "text"; text: string }
   | { type: "chip"; kind: CapabilityKind; slug: string };
+
+export type ComposerPromotionCatalogEntry = {
+  kind: string;
+  slug: string;
+};
 
 const CANONICAL_TOKEN_RE =
   /@(skill|agent):([a-z0-9](?:[a-z0-9._-]*[a-z0-9])?)/g;
@@ -100,4 +107,16 @@ export function canonicalToSegments(value: string): ComposerSegment[] {
   pushText(value.slice(lastIndex));
 
   return segments;
+}
+
+export function promoteComposerSkillTokens(
+  value: string,
+  catalog: readonly ComposerPromotionCatalogEntry[],
+): string {
+  return matchCapabilityTokens(
+    value,
+    catalog
+      .filter((entry) => entry.kind === "skill")
+      .map((entry) => ({ kind: "skill", slug: entry.slug })),
+  ).text;
 }

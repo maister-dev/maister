@@ -5,9 +5,11 @@ import {
   canonicalToSegments,
   chipToCanonical,
   paragraphsToCanonical,
+  promoteComposerSkillTokens,
   segmentsToCanonical,
   segmentsToParagraphs,
 } from "@/lib/capabilities/composer-serialize";
+import { flowYamlV1Schema } from "@/lib/config.schema";
 
 describe("composer-serialize (FR-D / FR-E1)", () => {
   it("chipToCanonical maps kind→prefix", () => {
@@ -99,5 +101,54 @@ describe("composer-serialize (FR-D / FR-E1)", () => {
     expect(
       paragraphsToCanonical(segmentsToParagraphs(canonicalToSegments(value))),
     ).toBe(value);
+  });
+
+  it("round-trips template variables as plain text, not chips", () => {
+    expect(canonicalToSegments("Use {{ steps.plan.vars.verdict ?? '' }}")).toEqual(
+      [{ type: "text", text: "Use {{ steps.plan.vars.verdict ?? '' }}" }],
+    );
+  });
+
+  it("promotes raw slash and dollar skills at the composer commit boundary", () => {
+    expect(
+      promoteComposerSkillTokens(
+        "run /aif-plan then $review and @reviewer",
+        [
+          { kind: "skill", slug: "aif-plan" },
+          { kind: "skill", slug: "review" },
+          { kind: "subagent", slug: "reviewer" },
+        ],
+      ),
+    ).toBe("run @skill:aif-plan then @skill:review and @reviewer");
+  });
+
+  it("leaves paths, shell vars, missing skills, commands, and canonical tokens intact", () => {
+    expect(
+      promoteComposerSkillTokens(
+        "@skill:aif-plan /usr/bin $HOME /missing /schedule",
+        [
+          { kind: "skill", slug: "aif-plan" },
+          { kind: "command", slug: "schedule" },
+        ],
+      ),
+    ).toBe("@skill:aif-plan /usr/bin $HOME /missing /schedule");
+  });
+
+  it("keeps promoted skills and template variables valid inside flow prompts", () => {
+    const prompt = promoteComposerSkillTokens(
+      "/aif-plan with {{ steps.plan.vars.verdict ?? '' }}",
+      [{ kind: "skill", slug: "aif-plan" }],
+    );
+
+    expect(() =>
+      flowYamlV1Schema.parse({
+        schemaVersion: 1,
+        name: "Prompt",
+        nodes: [
+          { id: "plan", type: "ai_coding", action: { prompt } },
+          { id: "review", type: "human" },
+        ],
+      }),
+    ).not.toThrow();
   });
 });

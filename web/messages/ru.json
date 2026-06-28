@@ -2797,7 +2797,10 @@
       "noGates": "Нет гейтов",
       "promptComposer": {
         "placeholder": "Введите промпт; / — вставить навык",
-        "unsupported": "недоступно для этого раннера"
+        "unsupported": "недоступно для этого раннера",
+        "variableButton": "Переменные",
+        "variableConditional": "может отсутствовать",
+        "variableWarning": "Предупреждения по переменным"
       },
       "multiSelect": {
         "add": "Добавить",

@@ -2797,7 +2797,10 @@
       "noGates": "No gates",
       "promptComposer": {
         "placeholder": "Type a prompt; use / to insert a skill",
-        "unsupported": "not on this runner"
+        "unsupported": "not on this runner",
+        "variableButton": "Variables",
+        "variableConditional": "may be absent",
+        "variableWarning": "Variable warnings"
       },
       "multiSelect": {
         "add": "Add",

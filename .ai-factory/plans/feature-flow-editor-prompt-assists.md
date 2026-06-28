@@ -562,7 +562,7 @@ This phase ships the only runtime change and lands BEFORE the editor inserts the
 
 ### Phase 2 - Composer Variable Suggestions and Raw Slash Backstop
 
-- [ ] **T2.1 - RED: composer serialization and raw-token tests.**
+- [x] **T2.1 - RED: composer serialization and raw-token tests.**
   - Extend existing capability composer unit tests or add focused tests under
     `web/lib/capabilities/__tests__/composer-serialize.test.ts`.
   - Cover:
@@ -583,7 +583,7 @@ This phase ships the only runtime change and lands BEFORE the editor inserts the
   - Verify RED:
     `pnpm --filter maister-web exec vitest run --project unit lib/capabilities components/capabilities`.
 
-- [ ] **T2.2 - GREEN: wire raw-token matcher into composer output.**
+- [x] **T2.2 - GREEN: wire raw-token matcher into composer output.**
   - Update `web/components/capabilities/capability-composer.tsx` and, if needed,
     `web/lib/capabilities/composer-serialize.ts`.
   - Apply `matchCapabilityTokens` only to serialized text using the current
@@ -601,7 +601,7 @@ This phase ships the only runtime change and lands BEFORE the editor inserts the
   - Verify GREEN: T2.1 command passes.
   - Refactor checkpoint: keep matcher usage as a small, testable seam.
 
-- [ ] **T2.3 - RED: variable suggestion interaction tests.**
+- [x] **T2.3 - RED: variable suggestion interaction tests.**
   - Add or extend static component tests in
     `web/components/capabilities/__tests__/capability-composer.test.ts`.
   - Add Playwright coverage later in T4 for actual TipTap popup behavior.
@@ -620,7 +620,7 @@ This phase ships the only runtime change and lands BEFORE the editor inserts the
   - Verify RED:
     `pnpm --filter maister-web exec vitest run --project unit components/capabilities/__tests__/capability-composer.test.ts`.
 
-- [ ] **T2.4 - GREEN: extend `CapabilityComposer` with variables.**
+- [x] **T2.4 - GREEN: extend `CapabilityComposer` with variables.**
   - Add optional `variableCatalog`, `variableWarnings`, and labels for:
     variable group names, conditional badge, unknown warning, and optional `{}`
     trigger button tooltip.

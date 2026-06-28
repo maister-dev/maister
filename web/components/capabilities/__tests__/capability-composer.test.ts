@@ -24,6 +24,88 @@ describe("CapabilityComposer — static render", () => {
 
     expect(html).toContain('data-testid="test-composer"');
   });
+
+  it("renders a compact variable affordance only when editable catalog entries exist", () => {
+    const html = renderToStaticMarkup(
+      createElement(CapabilityComposer, {
+        value: "",
+        onChange: () => {},
+        catalog: [],
+        agent: "claude",
+        labels: {
+          placeholder: "type…",
+          unsupportedBadge: "!",
+          variableButton: "Variables",
+        },
+        variableCatalog: [
+          {
+            path: "steps.plan.output",
+            label: "steps.plan.output",
+            source: "step",
+            availability: "definite",
+            presence: "required",
+            insertText: "steps.plan.output",
+          },
+          {
+            path: "steps.plan.vars.notes",
+            label: "steps.plan.vars.notes",
+            source: "step",
+            availability: "conditional",
+            presence: "optional",
+            insertText: "steps.plan.vars.notes ?? ''",
+          },
+        ],
+        testId: "test-composer",
+      }),
+    );
+
+    expect(html).toContain('data-testid="capability-variable-button"');
+    expect(html).toContain('data-variable-path="steps.plan.output"');
+    expect(html).toContain("steps.plan.vars.notes ?? &#x27;&#x27;");
+  });
+
+  it("does not expose variable controls when disabled or no catalog is present", () => {
+    const disabledHtml = renderToStaticMarkup(
+      createElement(CapabilityComposer, {
+        value: "",
+        onChange: () => {},
+        catalog: [],
+        agent: "claude",
+        labels: {
+          placeholder: "type…",
+          unsupportedBadge: "!",
+          variableButton: "Variables",
+        },
+        variableCatalog: [
+          {
+            path: "steps.plan.output",
+            label: "steps.plan.output",
+            source: "step",
+            availability: "definite",
+            presence: "required",
+            insertText: "steps.plan.output",
+          },
+        ],
+        disabled: true,
+      }),
+    );
+    const noCatalogHtml = renderToStaticMarkup(
+      createElement(CapabilityComposer, {
+        value: "",
+        onChange: () => {},
+        catalog: [],
+        agent: "claude",
+        labels: {
+          placeholder: "type…",
+          unsupportedBadge: "!",
+          variableButton: "Variables",
+        },
+      }),
+    );
+
+    expect(disabledHtml).not.toContain("capability-variable-button");
+    expect(noCatalogHtml).not.toContain("capability-variable-button");
+  });
 });
 
 describe("isSubmitShortcut", () => {
