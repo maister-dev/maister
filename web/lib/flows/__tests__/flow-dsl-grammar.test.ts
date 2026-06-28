@@ -206,4 +206,17 @@ describe("buildFlowDslGrammar drift guard", () => {
     }
     expect(grammar).toContain("current: true");
   });
+
+  it("documents assistant prompt-authoring conventions that live outside Zod", () => {
+    // These conventions are render-time/storage contracts rather than schema
+    // fields, so the Zod introspection guard above cannot detect drift.
+    expect(grammar).toContain("@skill:<slug>");
+    expect(grammar).toContain("@skill:aif-fix");
+    expect(grammar).toContain("@skill:aif-commit");
+    expect(grammar).toContain("{{ <path> ?? '<literal>' }}");
+    expect(grammar).toContain("{{ executor.router ?? '' }}");
+    expect(grammar.toLowerCase()).toContain("optional/conditional");
+    expect(grammar).not.toContain("        /aif-fix");
+    expect(grammar).not.toContain('prompt: "/aif-commit"');
+  });
 });

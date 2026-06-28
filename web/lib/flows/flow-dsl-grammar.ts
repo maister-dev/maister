@@ -2,7 +2,9 @@
 // shipped as the `/flow-authoring` skill's `references/flow-dsl.md`. Pure +
 // deterministic. A drift guard (flow-dsl-grammar.test.ts) introspects
 // config.schema.ts and fails if any node type / settings key / enum value is
-// absent here, so this reference stays complete and accurate as the schema moves.
+// absent here. This file also documents prompt render/storage conventions that
+// live outside Zod, so the assistant and the `/flow-authoring` skill stay aligned
+// with runtime prompt resolution.
 
 export function buildFlowDslGrammar(): string {
   return GRAMMAR;
@@ -10,8 +12,9 @@ export function buildFlowDslGrammar(): string {
 
 const GRAMMAR = `# Flow DSL grammar (authoritative, typed-node graph)
 
-This reference is generated from the runtime Zod schema (\`config.schema.ts\`) and
-is drift-guarded — when it lists a field, type, or enum value, that is the exact
+This reference is generated from the runtime Zod schema (\`config.schema.ts\`) plus
+the prompt render/storage contracts, and is drift-guarded — when it lists a field,
+type, enum value, skill mention form, or template expression form, that is the
 accepted shape. A flow manifest declares \`nodes[]\` (the canonical runtime graph)
 wired by named \`transitions\`, OR a legacy linear \`steps[]\` list. Author new
 flows as graphs.
@@ -141,6 +144,26 @@ Artifact \`kind\` is a platform artifact kind (e.g. \`diff\`, \`test_report\`,
 \`ai_judgment\`, \`generic_file\`). A required-but-absent artifact fails as
 PRECONDITION.
 
+## Prompt authoring: skills and template variables
+
+- In \`action.prompt\`, use the storage-canonical skill mention \`@skill:<slug>\`
+  for package skills, for example \`@skill:aif-fix\` or \`@skill:aif-commit\`.
+  The runner normalizes this mention to the adapter-specific invocation syntax
+  at launch time. Do not author runner-specific slash or dollar sigils in stored
+  Flow YAML.
+- Use the selected node's variable catalog when it is available. Insert the
+  catalog's \`insertText\` value inside \`{{ ... }}\` exactly.
+- Bare variables are safe only when the catalog says
+  \`availability=definite\` and \`presence=required\`, for example
+  \`{{ task.prompt }}\`.
+- Optional/conditional variables MUST use the guarded default form
+  \`{{ <path> ?? '<literal>' }}\`, for example \`{{ executor.router ?? '' }}\`,
+  \`{{ artifacts.plan_doc.uri ?? '' }}\`, or
+  \`{{ steps.plan.vars.notes ?? 'none' }}\`.
+- \`env.*\` variables are runtime-provided and deliberately unenumerated; use
+  them only when the runner environment supplies the key, and prefer a guarded
+  default unless absence is a hard failure.
+
 ## Transitions, rework, decide
 
 \`transitions\` maps a node's decision/outcome to the next node id (\`done\` is the
@@ -162,8 +185,8 @@ nodes:
     type: ai_coding
     action:
       prompt: |
-        /aif-fix {{ task.prompt }}
-        {{ review_comments }}
+        @skill:aif-fix {{ task.prompt }}
+        {{ review_comments ?? '' }}
     output:
       produces:
         - id: impl-diff
@@ -200,7 +223,7 @@ nodes:
 
   - id: commit
     type: ai_coding
-    action: { prompt: "/aif-commit" }
+    action: { prompt: "@skill:aif-commit" }
     transitions:
       success: done
 \`\`\`
@@ -209,6 +232,9 @@ nodes:
 
 ## Templating
 
-Prompts/commands use Mustache (\`{{ task.prompt }}\`, \`{{ steps.<id>.output }}\`,
-\`{{ <commentsVar> }}\`). Strict mode: an unknown variable throws CONFIG.
+Prompts/commands use strict Mustache tokens. The expression grammar is either a
+bare path (\`{{ task.prompt }}\`, \`{{ steps.<id>.output }}\`) or a path with a
+string-literal default (\`{{ <path> ?? '<literal>' }}\`). Unknown variables throw
+CONFIG. Optional or conditionally available paths should be defaulted because an
+unguarded absent value can fail at runtime.
 `;

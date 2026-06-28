@@ -1,6 +1,8 @@
 import "server-only";
 
+import type { FlowYamlV1 } from "@/lib/config.schema";
 import type { LocalPackage } from "@/lib/db/schema";
+import type { TemplateVariableCatalogResult } from "@/lib/flows/editor/template-variable-catalog";
 import type { FlowAssistantIntent } from "./protocol";
 
 import { parse as parseYaml } from "yaml";
@@ -10,6 +12,7 @@ import { packageFileHash } from "./actions";
 
 import { flowYamlV1Schema } from "@/lib/config.schema";
 import { classifyPackageFilePath } from "@/lib/flows/editor/package-file-tree";
+import { buildTemplateVariableCatalog } from "@/lib/flows/editor/template-variable-catalog";
 import { buildFlowDslGrammar } from "@/lib/flows/flow-dsl-grammar";
 import { readWorkingDirArtifactFiles } from "@/lib/local-packages/service";
 import { validatePackageArtifacts } from "@/lib/local-packages/validate";
@@ -44,6 +47,7 @@ type CapabilityCounts = {
 const ACTIVE_FLOW_MAX = 24_000;
 const MANIFEST_MAX = 8_000;
 const INVENTORY_MAX = 160;
+const TEMPLATE_VARIABLE_MAX = 120;
 
 export async function buildFlowAssistantContext(args: {
   localPackage: LocalPackage;
@@ -80,6 +84,14 @@ export async function buildFlowAssistantContext(args: {
     focus.selectedNodeId && graph?.nodeIds.has(focus.selectedNodeId)
       ? focus.selectedNodeId
       : null;
+  const variableCatalog =
+    graph?.manifest && selectedNodeId
+      ? buildTemplateVariableCatalog({
+          manifest: graph.manifest,
+          selectedNodeId,
+          files,
+        })
+      : null;
   const rejectedFocus =
     focus.selectedNodeId && selectedNodeId === null
       ? [
@@ -101,6 +113,8 @@ export async function buildFlowAssistantContext(args: {
       validationIssueCount: validationIssues.length,
       focusPath: focus.focusPath,
       selectedNodeId,
+      variableCount: variableCatalog?.entries.length ?? 0,
+      variableWarningCount: variableCatalog?.warnings.length ?? 0,
       rejectedFocusCount: rejectedFocus.length,
     },
     "built flow assistant context",
@@ -179,6 +193,12 @@ export async function buildFlowAssistantContext(args: {
       "## Graph summary",
       graph ? formatGraph(graph) : "Graph unavailable.",
       "",
+      "## Selected node template variables",
+      formatTemplateVariableCatalog({
+        selectedNodeId,
+        catalog: variableCatalog,
+      }),
+      "",
       "## Validation issues",
       validationIssues.length > 0
         ? validationIssues
@@ -243,6 +263,7 @@ function buildGraphSection(
   nodes: Array<{ id: string; type: string; label: string }>;
   edges: Array<{ source: string; target: string; label: string }>;
   nodeIds: Set<string>;
+  manifest: FlowYamlV1 | null;
   error: string | null;
 } {
   if (content === undefined) {
@@ -250,6 +271,7 @@ function buildGraphSection(
       nodes: [],
       edges: [],
       nodeIds: new Set(),
+      manifest: null,
       error: "flow file missing",
     };
   }
@@ -273,6 +295,7 @@ function buildGraphSection(
       nodes,
       edges,
       nodeIds: new Set(nodes.map((node) => node.id)),
+      manifest: parsed,
       error: null,
     };
   } catch (err) {
@@ -285,6 +308,7 @@ function buildGraphSection(
       nodes: [],
       edges: [],
       nodeIds: new Set(),
+      manifest: null,
       error: err instanceof Error ? err.message : String(err),
     };
   }
@@ -358,6 +382,70 @@ function formatGraph(graph: ReturnType<typeof buildGraphSection>): string {
       .slice(0, 120)
       .map((edge) => `- ${edge.source} -> ${edge.target} | ${edge.label}`),
   ].join("\n");
+}
+
+function formatTemplateVariableCatalog(args: {
+  selectedNodeId: string | null;
+  catalog: TemplateVariableCatalogResult | null;
+}): string {
+  if (!args.selectedNodeId) {
+    return "No selected node. Variable availability cannot be scoped.";
+  }
+
+  if (!args.catalog) {
+    return "Variable catalog unavailable because the active flow could not be parsed.";
+  }
+
+  const visibleEntries = args.catalog.entries.slice(0, TEMPLATE_VARIABLE_MAX);
+  const lines = [
+    `Selected node: ${args.selectedNodeId}`,
+    "Use `insertText` exactly inside prompts/commands. Bare paths are safe only when availability=definite and presence=required; optional/conditional entries include a `?? '<literal>'` guard.",
+    "Available variables:",
+    ...visibleEntries.map(formatTemplateVariableEntry),
+  ];
+
+  if (args.catalog.entries.length > visibleEntries.length) {
+    lines.push(
+      `- ... ${args.catalog.entries.length - visibleEntries.length} more variables omitted`,
+    );
+  }
+
+  if (args.catalog.unavailablePaths.length > 0) {
+    lines.push(
+      "Unavailable at selected node:",
+      ...args.catalog.unavailablePaths.slice(0, 30).map((path) => `- ${path}`),
+    );
+  }
+
+  if (args.catalog.warnings.length > 0) {
+    lines.push(
+      "Catalog warnings:",
+      ...args.catalog.warnings
+        .slice(0, 30)
+        .map(
+          (warning) =>
+            `- ${warning.nodeId} ${warning.schemaRef}: ${warning.message}`,
+        ),
+    );
+  }
+
+  return lines.join("\n");
+}
+
+function formatTemplateVariableEntry(
+  entry: TemplateVariableCatalogResult["entries"][number],
+): string {
+  const details = [
+    `source=${entry.source}`,
+    `availability=${entry.availability}`,
+    `presence=${entry.presence}`,
+    `insertText=\`{{ ${entry.insertText} }}\``,
+  ];
+
+  if (entry.valueType) details.push(`type=${entry.valueType}`);
+  if (entry.nodeId) details.push(`node=${entry.nodeId}`);
+
+  return `- ${entry.path} | ${details.join(" | ")}`;
 }
 
 function truncate(value: string, maxChars: number): string {
