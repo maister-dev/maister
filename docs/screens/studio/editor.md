@@ -218,11 +218,14 @@ controls; the persisted `flow.yaml` shapes are unchanged.
   `@skill:<slug>` token (the runtime adapts the wire form per runner). A package
   viewer with no catalog degrades to a plain read-only textarea.
 
-The docked **AI assistant** mirrors this: its first-prompt input is the same
-`/`-autosuggest composer, and the follow-up composer's **Send** is overlaid
-bottom-right over the input (attachment/busy chips bottom-left). The assistant
-also receives the complete, drift-guarded Flow DSL grammar on every turn, so
-`consensus` is authored as a first-class node — see
+The **AI assistant** (a right-hand drawer opened by the top-bar "AI" toggle,
+mutually exclusive with the node-properties inspector) mirrors this: its
+first-prompt input is the same `/`-autosuggest composer, and the follow-up
+composer's **Send** is overlaid bottom-right over the input (attachment/busy
+chips bottom-left); Enter sends, Shift+Enter adds a newline. The assistant
+receives the complete, drift-guarded Flow DSL grammar on **every** turn (launch
+and follow-up; the heavier per-package flow dump is launch-only), so `consensus`
+is authored as a first-class node — see
 [`../../system-analytics/flow-studio.md`](../../system-analytics/flow-studio.md)
 §"Assistant grammar + structured node-form controls".
 

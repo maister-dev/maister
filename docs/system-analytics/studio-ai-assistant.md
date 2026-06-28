@@ -197,29 +197,34 @@ Protocol rules:
   automatically; the user can inspect the working-tree diff and continue the
   conversation.
 
-## Bottom AI panel
+## AI assistant drawer
 
-The editor keeps canvas/properties visible above the docked assistant:
+The assistant lives in a right-hand drawer that shares the editor's single right
+slot with the node-properties inspector — the two are **mutually exclusive**:
 
-- the graph and right-side properties rail remain visible, with the properties
-  rail widened for forms;
-- the assistant sits below the canvas/properties area and is collapsible;
-- the transcript/composer owns its own scroll region, so long conversations do
-  not resize the graph unexpectedly;
+- an "AI" toolbar toggle (sparkles icon, top-right next to Commit/Publish/End
+  edit) opens the drawer; it is only shown once a flow file is open;
+- opening the drawer hides the properties inspector; selecting a node in the
+  graph closes the drawer and hands the slot back to the inspector. Re-open with
+  the toolbar toggle. This keeps the graph canvas at full height instead of
+  competing with a docked panel for vertical space;
+- both subtrees stay mounted and toggle via `hidden`, so the chat keeps its live
+  run + unsent composer text across open/close, and React Flow's inspector
+  portal target is never torn down;
+- the transcript/composer owns its own scroll region;
+- Enter sends the message (chat convention); Shift+Enter inserts a newline,
+  Cmd/Ctrl+Enter also sends, and IME-composition Enter does not send. While the
+  `/`,`@` capability autocomplete is open, Enter picks the highlighted item;
 - a compact runner selector lists enabled Ready platform ACP runners plus the
   platform default;
 - follow-up turns post to the Studio assistant route with `sessionId`, `intent`,
   and validated focus hints;
-- recover controls are hidden for the docked assistant until a Studio-specific
+- recover controls are hidden for the drawer assistant until a Studio-specific
   structured recovery route exists;
 - action result cards are rendered from sanitized scratch system messages and
   survive `router.refresh()` / page reload;
 - the UI blocks assistant sends while editor buffers have unsaved canvas/YAML or
   package-file edits, so server-side apply never races stale files.
-
-Lazyweb desktop references for coding/assistant panels support this placement:
-assistant input and status should stay in the editing context, while machine
-protocol details stay off the primary transcript.
 
 ## JSONL action audit artifact
 

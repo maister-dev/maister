@@ -623,6 +623,15 @@ input:-webkit-autofill:active {
 .capability-composer {
   position: relative;
   display: flex;
+  cursor: text;
+}
+/* The TipTap EditorContent host div sits between the wrapper and the editable;
+   stretch it (and the editable) so a click anywhere in the box lands on the
+   contenteditable and places the caret — not only on the first text line. */
+.capability-composer > div:first-child {
+  display: flex;
+  flex: 1;
+  min-height: 0;
 }
 .capability-composer__editor {
   flex: 1;

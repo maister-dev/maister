@@ -27,18 +27,42 @@ describe("CapabilityComposer — static render", () => {
 });
 
 describe("isSubmitShortcut", () => {
-  it("accepts Cmd+Enter and Ctrl+Enter only", () => {
-    expect(
-      isSubmitShortcut({ key: "Enter", metaKey: true, ctrlKey: false }),
-    ).toBe(true);
-    expect(
-      isSubmitShortcut({ key: "Enter", metaKey: false, ctrlKey: true }),
-    ).toBe(true);
-    expect(
-      isSubmitShortcut({ key: "Enter", metaKey: false, ctrlKey: false }),
-    ).toBe(false);
-    expect(isSubmitShortcut({ key: "k", metaKey: true, ctrlKey: false })).toBe(
-      false,
-    );
+  const ev = (
+    over: Partial<
+      Pick<
+        KeyboardEvent,
+        "key" | "metaKey" | "ctrlKey" | "shiftKey" | "isComposing" | "keyCode"
+      >
+    >,
+  ) => ({
+    key: "Enter",
+    metaKey: false,
+    ctrlKey: false,
+    shiftKey: false,
+    isComposing: false,
+    keyCode: 13,
+    ...over,
+  });
+
+  it("submits on plain Enter (chat convention)", () => {
+    expect(isSubmitShortcut(ev({}))).toBe(true);
+  });
+
+  it("also submits on Cmd+Enter / Ctrl+Enter", () => {
+    expect(isSubmitShortcut(ev({ metaKey: true }))).toBe(true);
+    expect(isSubmitShortcut(ev({ ctrlKey: true }))).toBe(true);
+  });
+
+  it("does NOT submit on Shift+Enter (newline)", () => {
+    expect(isSubmitShortcut(ev({ shiftKey: true }))).toBe(false);
+  });
+
+  it("does NOT submit while composing an IME candidate", () => {
+    expect(isSubmitShortcut(ev({ isComposing: true }))).toBe(false);
+    expect(isSubmitShortcut(ev({ keyCode: 229 }))).toBe(false);
+  });
+
+  it("ignores non-Enter keys", () => {
+    expect(isSubmitShortcut(ev({ key: "k", metaKey: true }))).toBe(false);
   });
 });
