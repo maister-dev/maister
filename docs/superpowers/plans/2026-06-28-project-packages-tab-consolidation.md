@@ -735,7 +735,7 @@ git commit -m "feat(packages): add getProjectPackageContents aggregator"
 ### Task 6: Per-package contents section + remove the old Flow Packages panel
 
 **Files:**
-- Modify: `web/components/studio/package-detail.tsx:406` (export `FlowPreviewCard`)
+- Modify: `web/components/studio/package-detail.tsx` (export `buildGraphLabels` L356 + `FlowPreviewCard` L406)
 - Create: `web/components/board/panels/project-package-contents.tsx`
 - Create: `web/components/board/panels/__tests__/project-package-contents.test.ts`
 - Modify: `web/app/(app)/projects/[slug]/page.tsx` (packages branch + imports)
@@ -746,21 +746,18 @@ git commit -m "feat(packages): add getProjectPackageContents aggregator"
 - Consumes: `ProjectPackageContentView[]` (Task 5); `FlowPreviewCard` (newly exported) + `ElementCardLabels` from `@/components/studio/element-card`; `FlowGraphViewLabels` from `@/components/board/flow-graph-view`.
 - Produces: `ProjectPackageContents({ contents, slug })` — client component; renders nothing when `contents` is empty.
 
-- [ ] **Step 1: Export `FlowPreviewCard`**
+- [ ] **Step 1: Export `FlowPreviewCard` and `buildGraphLabels`**
 
-In `web/components/studio/package-detail.tsx`, line 406, change:
+In `web/components/studio/package-detail.tsx`, export the two helpers the new
+section reuses (so the new component does NOT duplicate the ~40-line graph-label
+mapping that already lives here):
 
-```tsx
-function FlowPreviewCard({
-```
+- Line 356: `function buildGraphLabels(` → `export function buildGraphLabels(`
+- Line 406: `function FlowPreviewCard({` → `export function FlowPreviewCard({`
 
-to:
-
-```tsx
-export function FlowPreviewCard({
-```
-
-(Everything else in that file stays. `package-detail.tsx` is already `"use client"`, so the export is client-safe.)
+(Everything else in that file stays. `package-detail.tsx` is already `"use client"`,
+so both exports are client-safe. `buildGraphLabels` takes a `useTranslations`-shaped
+translator, which the new client component supplies via `useTranslations("workbench")`.)
 
 - [ ] **Step 2: Add i18n keys (EN + RU)**
 
@@ -860,12 +857,13 @@ Expected: FAIL with "Cannot find module '@/components/board/panels/project-packa
 
 - [ ] **Step 5: Write the component**
 
-Create `web/components/board/panels/project-package-contents.tsx`. The `buildGraphLabels` helper is the client mirror of the one in `app/(app)/projects/[slug]/packages/[flowRefId]/page.tsx` (same `workbench.graph.*` keys):
+Create `web/components/board/panels/project-package-contents.tsx`. It reuses the
+exported `FlowPreviewCard` + `buildGraphLabels` from `package-detail.tsx` — no
+local graph-label duplication:
 
 ```tsx
 "use client";
 
-import type { FlowGraphViewLabels } from "@/components/board/flow-graph-view";
 import type { ElementCardLabels } from "@/components/studio/element-card";
 import type { ProjectPackageContentView } from "@/lib/queries/project-package-contents";
 import type { ReactElement } from "react";
@@ -873,49 +871,10 @@ import type { ReactElement } from "react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 
-import { FlowPreviewCard } from "@/components/studio/package-detail";
-
-type TFn = ReturnType<typeof useTranslations>;
-
-function buildGraphLabels(t: TFn): FlowGraphViewLabels {
-  return {
-    title: t("graph.title"),
-    empty: t("graph.empty"),
-    currentNode: t("graph.currentNode"),
-    sessionChip: t("graph.sessionChip"),
-    declaredGateSummary: t("graph.declaredGateSummary"),
-    gateSummary: t("graph.gateSummary"),
-    blockingGateSummary: t("graph.blockingGateSummary"),
-    node: {
-      Pending: t("graph.node.Pending"),
-      Running: t("graph.node.Running"),
-      Succeeded: t("graph.node.Succeeded"),
-      Failed: t("graph.node.Failed"),
-      NeedsInput: t("graph.node.NeedsInput"),
-      Reworked: t("graph.node.Reworked"),
-      Stale: t("graph.node.Stale"),
-    },
-    role: {
-      agent: t("graph.role.agent"),
-      command: t("graph.role.command"),
-      check: t("graph.role.check"),
-      judge: t("graph.role.judge"),
-      human: t("graph.role.human"),
-      form: t("graph.role.form"),
-      terminal: t("graph.role.terminal"),
-      other: t("graph.role.other"),
-    },
-    edge: {
-      success: t("graph.edge.success"),
-      default: t("graph.edge.default"),
-      rework: t("graph.edge.rework"),
-      reject: t("graph.edge.reject"),
-      takeover: t("graph.edge.takeover"),
-      approve: t("graph.edge.approve"),
-      other: t("graph.edge.other"),
-    },
-  };
-}
+import {
+  buildGraphLabels,
+  FlowPreviewCard,
+} from "@/components/studio/package-detail";
 
 // Per-package contents on the project Packages tab: rich flow cards (reusing
 // Studio's FlowPreviewCard) + a non-flow artifact count line. Flow cards link to
