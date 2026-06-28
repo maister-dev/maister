@@ -384,6 +384,15 @@ agent options, schema options, `onWriteSchemaFile`, and the existing
 `packageFilesJson` hidden input. Schema create/edit never performs an immediate
 `PUT /files/{path}`; it upserts into `draftFiles` and waits for Save.
 
+> **Composition-view IA (ADR-115 — Designed).** The local editor's no-path
+> landing is being reworked from `PackageHome` (flow badges + raw file tree) into
+> a tabbed-by-kind **composition view** over a shared package-BOM source
+> abstraction, with inline master-detail editors, a dedicated skill screen, per-tab
+> create/rename, and a Files file-manager + import. The shared `draftFiles` +
+> lock + save substrate above is unchanged; the same draft still feeds the
+> composition view and the `FlowEditorTabs` Files drawer. Behavior SSOT:
+> [`local-packages.md`](local-packages.md) §Composition view.
+
 ### Expectations (Implemented)
 
 1. A consensus source picker MUST preserve the exact existing DSL shape by

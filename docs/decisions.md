@@ -141,6 +141,7 @@
 | [ADR-113](#adr-113-pr-to-source-for-local-packages--trusted-source-picker--stable-publish-branch) | PR-to-source for local packages — trusted-source picker + stable publish branch (M39 Stream B) | Accepted | 2026-06-25 |
 | [ADR-114](#adr-114-unified-flow-runner-config-first-class-sessions-per-project-connect-time-bindings-and-run_sessions-as-the-sole-run-runner-source-of-truth) | Unified Flow runner config, first-class sessions, per-project connect-time bindings, `run_sessions` sole source of truth, engine 2.0.0 (M42) | Accepted | 2026-06-26 |
 | [ADR-115](#adr-115-strict-template-default-operator-for-prompt-authoring) | Strict template default operator for prompt authoring | Accepted | 2026-06-28 |
+| [ADR-115](#adr-115-local-package-composition-view-shared-package-bom-source-abstraction-tabbed-editor-ia) | Local-package composition view: shared package BOM source abstraction, tabbed editor IA | Accepted | 2026-06-28 |
 
 ---
 
@@ -9217,6 +9218,105 @@ implemented in `web/lib/flows/templating.ts` and documented in `docs/flow-dsl.md
   throws before a missing section can behave like an ordinary Mustache guard.
 - **Full expression language:** rejected as too broad; string-literal defaults
   solve the prompt-assist need without changing the DSL shape.
+
+---
+
+### ADR-115: Local-package composition view: shared package BOM source abstraction, tabbed editor IA
+
+**Date:** 2026-06-28
+**Status:** Accepted
+**Context:** The **installed**-package viewer (`/studio/packages/{ref}`,
+`PackageDetail` → `PackageTabs` + `ElementCard`) answers "what is in this package,
+how much of each kind, what are they" at a glance via a computed `PackageBom`
+(`getStudioPackageBom`, `web/lib/queries/packages.ts`). The **editable
+local**-package editor (`/studio/edit/{id}`) does not: its no-path landing
+(`PackageHome`) shows flows as opaque badges plus a raw, non-interactive file
+tree (`PackageFilesEditor`), and skills/agents/subagents/MCPs/rules are visible
+only as scattered files. The BOM builder is hard-wired to a `package_installs`
+row (`installedPath` + stored `manifest`), so the local editor — whose content
+lives in a git-backed `working_dir` and whose inventory is not pre-computed in a
+stored manifest — cannot reuse it. Two further frictions: file moves work only
+through a free-text "Rename path" popup (no drag-and-drop, folder creation, or
+batch import surfaced from the landing); and `classifyPackageFilePath` returns
+`"asset"` for `mcps/` so MCP descriptors are invisible to any kind-grouped view.
+
+**Decision:**
+1. **Decouple the BOM from install.** Introduce a `PackageSource` abstraction
+   (`{ manifest, inventory, listFiles(), readFile() }`) and a pure
+   `buildPackageBom(source)` (`web/lib/queries/package-bom.ts`). `getStudioPackageBom`
+   is re-pointed at it through an **installed** source (today's behavior, kept
+   byte-identical — a characterization snapshot is the regression guard). A new
+   `getLocalPackageBom(pkg)` (`web/lib/local-packages/bom.ts`) builds a **local**
+   source over the `working_dir`: `manifest` parsed from `maister-package.yaml`,
+   `inventory` **computed** at BOM time by walking the working dir (the
+   install-time `collectInventory` logic factored to run over a file list),
+   `listFiles`/`readFile` confined to `working_dir`. Per-element parse failures
+   degrade to id-only cards; the builder never throws.
+2. **Tabbed-by-kind composition landing.** Replace `PackageHome` with a
+   `PackageComposition` view reusing `PackageTabs`/`ElementCard`/`FlowPreviewCard`.
+   Seven tabs with live counts — `Flows · Skills · Subagents · Agents · MCP ·
+   Rules · Files` — where empty kinds hide their tab and Files is always shown.
+   **Open model per kind:** flows route to the existing canvas
+   (`FlowEditorTabs`); skills route to a dedicated skill screen (own nested
+   file-navigator, because skills have nested folders); subagents / platform
+   agents / MCP / rules open **inline** master-detail (card list + side editor
+   reusing `FrontmatterArtifactEditor` / `McpTemplateEditor`); Files is a
+   file-manager tab (raw tree + breadcrumbs + drag-and-drop + create/rename
+   folder + a shared Import button).
+3. **Create + rename are identity operations on the draft file set.** Per-tab
+   `+ Add <Kind>` scaffolds the exact file shape (and appends `manifest.spec.flows[]`
+   for flows) into the draft set and opens the right editor. A card-level
+   `Rename <Kind>` renames the artifact **identity** (file / folder; the id derives
+   from the filename/folder), distinct from editing **metadata** (frontmatter) in
+   the editor. Both reduce to the existing lock-guarded save-diff (`PUT`/`DELETE
+   /api/studio/local-packages/{id}/files/{path}`) — **no new HTTP route, no new
+   `MaisterError` code, no DB migration**. Collisions → `CONFLICT`; path escape /
+   missing → `PRECONDITION` via the existing `resolveWithinWorkingDir` confinement.
+4. **BOM is server-computed, last-saved-disk truth.** The composition `PackageBom`
+   is derived at RSC load and re-derived on `router.refresh()` after a save
+   (matching the existing editor refresh pattern). Inline content edits mutate the
+   existing `draftFiles` and persist through the existing save channel; identity
+   changes (create/rename/delete) are save-then-refresh, so a new/renamed card
+   appears after the round-trip. No client-side flow compilation (KISS).
+5. **MCP descriptors handled by a local predicate.** A small `isMcpDescriptorPath`
+   (`mcps/*.yaml`) is used at the composition + editor-routing call sites;
+   `classifyPackageFilePath` is **not** broadened (that would ripple into the
+   installed reader).
+6. **New folder is virtual (client-only), no sentinel.** The draft model is a
+   flat `{path, content}[]`; an empty folder that never receives a file simply
+   never reaches disk — no `.gitkeep` is written. Empty-folder persistence, if ever
+   needed, is a cut-version concern, out of scope.
+
+**Consequences:**
+- Installed and local packages share one BOM parser; the installed output is
+  pinned by a byte-identical characterization test, so the refactor cannot
+  regress the existing viewer.
+- The local editor gains the same readability + create/rename/file-manager/import
+  affordances as the installed viewer, layered over the existing
+  draft-files + lock + save substrate with zero new wire surface.
+- `PackageHome` (and the flow-badge helpers / tests it pulled in) is deleted; the
+  manifest form is reused inside the composition header.
+- Because the BOM reflects last-saved disk state, a created/renamed artifact
+  appears only after the save round-trip — an accepted, documented invariant.
+
+**Alternatives Considered:**
+- **Broaden `classifyPackageFilePath` to recognize `mcps/`:** rejected — it is
+  shared with the installed reader and would change installed-package file
+  classification; a local predicate keeps the blast radius contained.
+- **Client-side flow compilation for instant card updates:** rejected — pulls
+  the compiler into the browser and duplicates server logic; save-then-refresh is
+  simpler and already the editor's pattern.
+- **A `move` HTTP route (the OpenAPI `POST .../files/{path}/move`, Designed):**
+  rejected for this plan — rename/move reduce to the existing save-diff (PUT new +
+  DELETE old), so the Designed route stays Designed and unimplemented.
+- **`.gitkeep` sentinels for empty folders:** rejected — local empty dirs are
+  harmless; manufacturing sentinels litters the working tree for a push/cut-only
+  concern.
+
+**Numbering note.** ADR-115 is the next free number at branch HEAD (highest is
+ADR-114). No migration is taken (the next free `0083` stays unused); if a parallel
+branch lands ADR-115 first, this renumbers (the body, the Index row, and every
+`ADR-115` cross-reference in `local-packages.md` / `flow-studio.md`).
 
 ---
 

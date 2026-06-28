@@ -3,7 +3,7 @@
 > Behavior SSOT for **editable local packages** — a platform-scoped, git-backed
 > working directory a member authors/forks artifacts in, edits in Flow Studio
 > under a session lock, and **cuts versions** from into the existing
-> package-install substrate. **Status: Implemented (ADR-096 base; ADR-105 Stream A; ADR-107/110 Stream B — version-adopt launch + PR-to-source, migration 0078).** Surface:
+> package-install substrate. **Status: Implemented (ADR-096 base; ADR-105 Stream A; ADR-107/110 Stream B — version-adopt launch + PR-to-source, migration 0078); the tabbed composition-view editor IA is ADR-115 — Designed (web-only, no migration).** Surface:
 > [`../screens/studio/README.md`](../screens/studio/README.md) §Local workspace +
 > [`../screens/studio/editor.md`](../screens/studio/editor.md). Data:
 > [`../db/projects-domain.md`](../db/projects-domain.md).
@@ -389,6 +389,144 @@ PR automation needs the provider CLI (`gh`/`glab`) + a host-ambient token
 (`GH_TOKEN` / `GITLAB_TOKEN` / `GITEA_TOKEN` / `GITVERSE_TOKEN`); absent → the push-only
 fallback. See [`../configuration.md`](../configuration.md).
 
+## Composition view — tabbed local-package editor (ADR-115 — Designed)
+
+The local editor's no-path landing becomes a **tabbed-by-kind composition view**,
+reusing the installed viewer's `PackageTabs` / `ElementCard` / `FlowPreviewCard`
+pattern over a BOM **decoupled from install** into a shared source abstraction. It
+is **web-only** — no migration, no new HTTP route, no new `MaisterError` code; all
+create / rename / move / import mutations reduce to the existing lock-guarded
+save-diff (`PUT`/`DELETE /api/studio/local-packages/{id}/files/{path}`) and import
+(`POST /api/studio/local-packages/{id}/import`) routes.
+
+### Additional domain entities
+
+- **`PackageSource`** (server-only abstraction, NOT persisted): `{ manifest,
+  inventory, listFiles(), readFile(rel) }` — the input the BOM builder consumes.
+  An **installed** source reads `package_installs.manifest` + `installedPath`
+  (unchanged); a **local** source parses `maister-package.yaml` from `working_dir`,
+  **computes** `inventory` by walking the dir (the install-time `collectInventory`
+  logic factored over a file list), and confines `listFiles`/`readFile` to
+  `working_dir`.
+- **`PackageBom` (local)** — the same `PackageBom` shape the installed viewer uses
+  (`flows`/`skills`/`subagents`/`platformAgents`/`mcps`/`rules`), produced by the
+  shared `buildPackageBom(source)`. **Derived, never stored** — computed at RSC
+  load and re-derived on `router.refresh()` after a save.
+- **Composition tabs** — seven view groups: `Flows · Skills · Subagents · Agents ·
+  MCP · Rules · Files`. Counts equal the BOM array lengths; an empty kind hides its
+  tab; **Files is always shown**.
+
+### State machine
+
+The package + edit-lock FSMs are **unchanged** (see above). The only new
+invariant: the composition BOM is **derived from the last-saved disk state**, not
+stored — every identity change (create / rename / delete) is a
+save-then-`router.refresh()` round-trip before the BOM (and thus the tab
+counts/cards) reflects it.
+
+### Process flows
+
+Open-model routing per kind:
+
+```mermaid
+flowchart TD
+    A[Composition tab card clicked] --> B{kind?}
+    B -->|flow| C[route to canvas FlowEditorTabs]
+    B -->|skill| D["route to dedicated skill screen (nested navigator)"]
+    B -->|subagent / agent / mcp / rule| E[select inline master-detail editor]
+    E --> F[load file content from already-loaded draftFiles]
+    F --> G[edit → onChange mutates draftFiles → existing save channel]
+```
+
+Create artifact (`+ Add <Kind>`) — scaffold → save → refresh:
+
+```mermaid
+flowchart TD
+    A["+ Add <Kind> (name input)"] --> B{collision with existing path?}
+    B -->|yes| C["reject CONFLICT (inline)"]
+    B -->|no| D[scaffold exact file shape into draft set]
+    D --> E{kind == flow?}
+    E -->|yes| F["also appendManifestFlow (manifest.spec.flows[] id+path)"]
+    E -->|no| G[draft updated]
+    F --> G
+    G --> H[save-diff persists] --> I[router.refresh re-derives BOM]
+    I --> J{kind?}
+    J -->|flow| K[navigate canvas]
+    J -->|skill| L[navigate skill screen]
+    J -->|other| M[select new inline card]
+```
+
+Rename identity (card `Rename <Kind>`) — save-diff (D8):
+
+```mermaid
+flowchart TD
+    A["Rename <Kind> (new name)"] --> B{collision with existing path?}
+    B -->|yes| C[reject CONFLICT]
+    B -->|no| D{kind?}
+    D -->|single-file agent/subagent/rule/mcp| E[rename one path]
+    D -->|skill folder| F["rewrite skills/old/ prefix on every child file"]
+    D -->|flow| G["rename flows/old.yaml→new.yaml AND update manifest.spec.flows[]"]
+    E --> H[save-diff: PUT new + DELETE old] --> I[router.refresh]
+    F --> H
+    G --> H
+```
+
+Files-tab move / new folder (flat draft list, no sentinel — D7):
+
+```mermaid
+flowchart TD
+    A[Files tab] --> B{action}
+    B -->|drag file to folder| C[rewrite path prefix on the draft list]
+    B -->|new virtual folder| D["client-only tree node (no write, no .gitkeep)"]
+    B -->|new file / rename / delete| E[mutate draft list]
+    D --> F[targets file placement only; empty folder never reaches disk]
+    C --> G[save-diff persists]
+    E --> G
+```
+
+Batch import is unchanged — see **Batch import (M36)** above; the composition Files
+tab surfaces one shared **Import** button wired to the existing
+`POST .../import` (`mode=preview` → confirm → `mode=commit`).
+
+### Composition-view expectations (ADR-115 — Designed)
+
+- The local editor landing MUST render the 7-tab composition view; each tab count
+  MUST equal its BOM array length; an empty kind MUST hide its tab; **Files** MUST
+  always be present.
+- `buildPackageBom` MUST be shared by installed + local sources; `getStudioPackageBom`
+  output for a fixture install MUST be byte-identical before/after the refactor
+  (characterization snapshot).
+- The composition BOM MUST be server-computed and re-derived on `router.refresh()`;
+  it MUST NOT be persisted and MUST NOT compile flows client-side.
+- A card click MUST honor the open model exactly: flow → canvas, skill → its own
+  screen, subagent/agent/mcp/rule → inline master-detail.
+- `+ Add <Kind>` MUST scaffold the exact path shape per kind, and a flow scaffold
+  MUST append `manifest.spec.flows[]` (id + path); a name colliding with any
+  existing draft path MUST be rejected with `MaisterError("CONFLICT")`.
+- Card `Rename <Kind>` MUST rewrite **identity** only (a skill-folder rename moves
+  every child; a flow rename updates `manifest.spec.flows[]` id+path); it MUST NOT
+  touch frontmatter and MUST reject a colliding target with `CONFLICT`.
+- The Files tab "new folder" MUST be virtual/client-only — it MUST NOT persist and
+  MUST NOT write a `.gitkeep` sentinel; an empty folder never reaches disk.
+- `mcps/*.yaml` MUST be recognized via a local `isMcpDescriptorPath` predicate;
+  `classifyPackageFilePath` MUST NOT be broadened (it stays shared with the
+  installed reader).
+- `readOnly` (lock lost / no manage / assistant busy) MUST disable every
+  composition mutation (create / rename / inline edit / files-tab move / import).
+- The local BOM MUST degrade any per-element parse failure to an id-only card and
+  MUST NEVER throw.
+
+### Composition-view edge cases (ADR-115 — Designed)
+
+- Create/rename target collides with an existing draft path → `MaisterError("CONFLICT")`,
+  surfaced inline, never a silent overwrite.
+- Rename/move path escape (`..`/abs/symlink/`.git`) → `MaisterError("PRECONDITION")`
+  via `resolveWithinWorkingDir`, before any write (the existing confinement guard).
+- A flow rename that updates the file but not `manifest.spec.flows[]` is a defect
+  (the rename helper updates both atomically in the draft set).
+- Malformed `maister-package.yaml` in the local source → empty/degraded BOM
+  (manifest parse → `CONFIG`/empty), never a thrown landing.
+
 ## Expectations
 
 - A `local_packages` row MUST have a UNIQUE `slug`; its `working_dir` MUST
@@ -511,7 +649,8 @@ fallback. See [`../configuration.md`](../configuration.md).
 
 - **ADRs:** ADR-096 (this domain), ADR-105 (Stream A — first-class kinds + centralized
   model), ADR-107 (Stream B — version-adopt launch), ADR-113 (Stream B — PR-to-source),
-  ADR-092 (unified Studio + editable-local-package direction), ADR-088 (package
+  ADR-115 (composition-view tabbed editor IA + shared package-BOM source abstraction —
+  Designed), ADR-092 (unified Studio + editable-local-package direction), ADR-088 (package
   management), ADR-021 (fetch-then-execute trust separation) — see
   [`../decisions.md`](../decisions.md).
 - **ERD:** [`../db/projects-domain.md`](../db/projects-domain.md),
