@@ -136,6 +136,38 @@ export function mcpStem(relPath: string): string {
   return base.replace(/\.ya?ml$/, "");
 }
 
+// The working-dir prefix of a skill's nested subtree (skills have folders, so the
+// dedicated skill screen scopes the file navigator to this prefix — ADR-115 P4).
+export function skillSubtreePrefix(skillId: string): string {
+  return `skills/${skillId}/`;
+}
+
+// The draft files under a skill's subtree (its dedicated screen edits only these).
+export function scopeSkillFiles(
+  files: ReadonlyArray<AuthoredFlowPackageFile>,
+  skillId: string,
+): AuthoredFlowPackageFile[] {
+  const prefix = skillSubtreePrefix(skillId);
+
+  return files.filter((file) => file.path.startsWith(prefix));
+}
+
+// Merge the skill screen's edited subtree back into the full draft: replace the
+// skill's files, preserve everything else. The edited set carries full paths, so
+// a file renamed within the subtree stays under the prefix.
+export function mergeSkillFiles(
+  files: ReadonlyArray<AuthoredFlowPackageFile>,
+  skillId: string,
+  scopedNext: ReadonlyArray<AuthoredFlowPackageFile>,
+): AuthoredFlowPackageFile[] {
+  const prefix = skillSubtreePrefix(skillId);
+
+  return [
+    ...files.filter((file) => !file.path.startsWith(prefix)),
+    ...scopedNext,
+  ];
+}
+
 // Resolve the working-dir file path backing an inline-kind element. Single-file
 // kinds carry their path on the BOM card; an MCP's id maps to its `mcps/*.yaml`
 // file (found in the draft, or the canonical `mcps/<id>.yaml`).

@@ -90,6 +90,17 @@ export default async function StudioEditPage({
   const flowPath =
     selectedPath && isFlowPath(selectedPath) ? selectedPath : null;
 
+  // A `skills/<id>` path opens the dedicated skill screen (ADR-115 P4). The id is
+  // the first segment after `skills/`; an unknown skill (no files under it) 404s.
+  const skillId =
+    !flowPath && selectedPath?.startsWith("skills/")
+      ? (selectedPath.split("/")[1] ?? "")
+      : "";
+
+  if (skillId && !files.some((f) => f.path.startsWith(`skills/${skillId}/`))) {
+    notFound();
+  }
+
   // Server-compile the selected flow file for the canvas (compile is
   // server-only). A file that does not parse/compile falls back to YAML-only.
   let canvasAvailable = false;
@@ -199,6 +210,7 @@ export default async function StudioEditPage({
         layout={layout}
         mcpCatalog={mcpCatalog}
         packageId={id}
+        skillId={skillId || null}
         topology={topology}
       />
     </div>

@@ -1,3 +1,4 @@
+import type { AuthoredFlowPackageFile } from "@/lib/catalog/authored-types";
 import type { PackageBom } from "@/lib/queries/package-bom";
 
 import { describe, expect, it } from "vitest";
@@ -9,9 +10,12 @@ import {
   inlineSelectHref,
   isInlineKind,
   isMcpDescriptorPath,
+  mergeSkillFiles,
   resolveCompositionTab,
   resolveInlineFilePath,
+  scopeSkillFiles,
   skillScreenHref,
+  skillSubtreePrefix,
   visibleCompositionTabs,
 } from "@/lib/local-packages/composition";
 
@@ -192,5 +196,44 @@ describe("resolveInlineFilePath (ADR-115 §P3)", () => {
 
   it("returns null for an unknown id", () => {
     expect(resolveInlineFilePath("rules", "ghost.md", bom, [])).toBeNull();
+  });
+});
+
+describe("skill subtree scope/merge (ADR-115 §P4)", () => {
+  const files: AuthoredFlowPackageFile[] = [
+    { kind: "manifest", path: "maister-package.yaml", content: "x" },
+    { kind: "skill", path: "skills/arch/SKILL.md", content: "a" },
+    { kind: "asset", path: "skills/arch/references/x.md", content: "r" },
+    { kind: "skill", path: "skills/other/SKILL.md", content: "o" },
+    { kind: "rule", path: "rules/r1.md", content: "rule" },
+  ];
+
+  it("prefix + scope select only the skill's nested files", () => {
+    expect(skillSubtreePrefix("arch")).toBe("skills/arch/");
+    expect(scopeSkillFiles(files, "arch").map((f) => f.path)).toEqual([
+      "skills/arch/SKILL.md",
+      "skills/arch/references/x.md",
+    ]);
+  });
+
+  it("merge replaces the skill's subtree and preserves everything else", () => {
+    const edited: AuthoredFlowPackageFile[] = [
+      { kind: "skill", path: "skills/arch/SKILL.md", content: "EDITED" },
+    ];
+    const merged = mergeSkillFiles(files, "arch", edited);
+
+    expect(merged.map((f) => f.path)).toEqual([
+      "maister-package.yaml",
+      "skills/other/SKILL.md",
+      "rules/r1.md",
+      "skills/arch/SKILL.md",
+    ]);
+    expect(merged.find((f) => f.path === "skills/arch/SKILL.md")?.content).toBe(
+      "EDITED",
+    );
+    // The dropped reference file is gone; sibling skill + rule untouched.
+    expect(merged.some((f) => f.path === "skills/arch/references/x.md")).toBe(
+      false,
+    );
   });
 });

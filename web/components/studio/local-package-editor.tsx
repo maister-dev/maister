@@ -31,6 +31,7 @@ import { useTranslations } from "next-intl";
 import { FlowEditorTabs } from "@/components/flows/flow-editor-tabs";
 import { PackageFilesEditor } from "@/components/flows/package-files-editor";
 import { PackageComposition } from "@/components/studio/package-composition";
+import { SkillScreen } from "@/components/studio/skill-screen";
 import { LocalPackageDiffDrawer } from "@/components/studio/local-package-diff-drawer";
 import {
   ChangeReviewDialog,
@@ -167,6 +168,7 @@ export function LocalPackageEditor({
   initialTitle,
   identity,
   flowPath,
+  skillId,
   initialYaml,
   initialManifest,
   topology,
@@ -188,6 +190,9 @@ export function LocalPackageEditor({
   // The working-dir path of the flow file the canvas edits (when the route
   // targets a `flows/*` / `flow.yaml` file); null when no flow is selected.
   flowPath: string | null;
+  // The skill being edited on its dedicated screen (when the route targets a
+  // `skills/<id>` path); null otherwise. Mutually exclusive with `flowPath`.
+  skillId: string | null;
   initialYaml: string;
   initialManifest: FlowYamlV1 | null;
   topology: GraphTopology | null;
@@ -769,41 +774,63 @@ export function LocalPackageEditor({
       <div className="flex min-h-0 flex-1 gap-3">
         <div className="min-h-0 min-w-0 flex-1">
           {flowPath === null ? (
-            <PackageComposition
-              bom={bom}
-              draftFiles={draftFiles}
-              fileCount={draftFiles.length}
-              filesEditor={
-                <form action={saveAction} className="grid min-h-0 gap-3">
-                  <PackageFilesEditor
-                    disabled={readOnly}
-                    files={draftFiles}
-                    initialSelectedPath={PACKAGE_MANIFEST_FILENAME}
-                    kindLabels={fileKindLabels}
-                    labels={filesLabels}
-                    mcpCatalog={mcpCatalog}
-                    onFilesChange={handleDraftFilesChange}
-                  />
-                  {readOnly ? null : (
-                    <button
-                      className="justify-self-start rounded-md border border-amber bg-amber px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-white hover:bg-amber-2"
-                      data-testid="composition-files-save"
-                      type="submit"
-                    >
-                      {labels.home.save}
-                    </button>
-                  )}
-                </form>
-              }
-              filesLabels={filesLabels}
-              mcpCatalog={mcpCatalog}
-              name={identity.project}
-              packageId={packageId}
-              readOnly={readOnly}
-              saveLabel={labels.home.save}
-              onDraftFilesChange={handleDraftFilesChange}
-              onSaveDraft={saveDraft}
-            />
+            skillId !== null ? (
+              <SkillScreen
+                draftFiles={draftFiles}
+                fileKindLabels={fileKindLabels}
+                filesLabels={filesLabels}
+                labels={{
+                  crumbStudio: labels.crumbStudio,
+                  crumbLocal: labels.crumbLocal,
+                  crumbSkills: tStudio("viewer.tabSkills"),
+                  save: labels.home.save,
+                  notFound: tStudio("composition.notFound"),
+                }}
+                mcpCatalog={mcpCatalog}
+                name={identity.project}
+                packageId={packageId}
+                readOnly={readOnly}
+                skillId={skillId}
+                onDraftFilesChange={handleDraftFilesChange}
+                onSave={saveDraft}
+              />
+            ) : (
+              <PackageComposition
+                bom={bom}
+                draftFiles={draftFiles}
+                fileCount={draftFiles.length}
+                filesEditor={
+                  <form action={saveAction} className="grid min-h-0 gap-3">
+                    <PackageFilesEditor
+                      disabled={readOnly}
+                      files={draftFiles}
+                      initialSelectedPath={PACKAGE_MANIFEST_FILENAME}
+                      kindLabels={fileKindLabels}
+                      labels={filesLabels}
+                      mcpCatalog={mcpCatalog}
+                      onFilesChange={handleDraftFilesChange}
+                    />
+                    {readOnly ? null : (
+                      <button
+                        className="justify-self-start rounded-md border border-amber bg-amber px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-white hover:bg-amber-2"
+                        data-testid="composition-files-save"
+                        type="submit"
+                      >
+                        {labels.home.save}
+                      </button>
+                    )}
+                  </form>
+                }
+                filesLabels={filesLabels}
+                mcpCatalog={mcpCatalog}
+                name={identity.project}
+                packageId={packageId}
+                readOnly={readOnly}
+                saveLabel={labels.home.save}
+                onDraftFilesChange={handleDraftFilesChange}
+                onSaveDraft={saveDraft}
+              />
+            )
           ) : (
             <FlowEditorTabs
               canManage={!readOnly}
