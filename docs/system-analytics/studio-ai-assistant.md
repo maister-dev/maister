@@ -115,6 +115,19 @@ generic scratch message route. The route joins `runs.local_package_id = id`,
 `scratch_runs.run_id = runId`, and `runs.created_by_user_id = current user`
 before it sends anything to the supervisor.
 
+The **heavy** grounding context (editing contract, file inventory, full flow
+dump) is sent **only on the launch (first) prompt** — the assistant runs in one
+persistent ACP session that retains it in history. Follow-up turns send a slim
+grounding: the drift-guarded Flow DSL grammar (kept on every turn so
+`consensus`/etc. author correctly) plus a one-line editor-focus hint and the
+user's message. Re-sending the whole ~28k-token block on every turn previously
+made the model re-anchor on the original framing and repeat its first answer.
+
+Event projection resumes from the highest already-projected supervisor event id
+(`Last-Event-ID`), so a follow-up turn does not re-stream and re-persist the
+whole session history (which previously duplicated prior thoughts/answers in the
+transcript).
+
 ## Structured action protocol
 
 The model may answer ordinary questions with plain markdown. For edit requests,

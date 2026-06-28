@@ -4,7 +4,7 @@ import type { ScratchDialogStatus, ScratchMessageRole } from "@/lib/db/schema";
 
 import { randomUUID } from "node:crypto";
 
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
@@ -489,6 +489,42 @@ function createTranscriptProjector(args: { db: DbClientLike; runId: string }) {
   return { handleUpdate, resetOpenText };
 }
 
+// The supervisor's per-session event log is monotonic and shared across every
+// prompt of the session. `streamSession` WITHOUT a `Last-Event-ID` replays the
+// log from the start — so a follow-up turn re-projected every prior thought and
+// assistant chunk, accumulating duplicated text in the transcript ("repeats all
+// previous + new"). Resume from the highest event id we already projected.
+async function lastProjectedEventId(
+  db: DbClientLike,
+  runId: string,
+): Promise<number | undefined> {
+  try {
+    const rows: Array<{ maxId: string | null }> = await db
+      .select({
+        maxId: sql<
+          string | null
+        >`max(${scratchMessages.supervisorEventId}::bigint)`,
+      })
+      .from(scratchMessages)
+      .where(eq(scratchMessages.runId, runId));
+    const raw = rows[0]?.maxId;
+
+    if (raw === null || raw === undefined) return undefined;
+    const parsed = Number.parseInt(raw, 10);
+
+    return Number.isFinite(parsed) ? parsed : undefined;
+    // A failed offset read must NOT abort the consumer — fall back to streaming
+    // from the start (at worst a one-time re-projection, never a dead turn).
+  } catch (err) {
+    log.warn(
+      { runId, err: err instanceof Error ? err.message : String(err) },
+      "scratch resume-offset read failed; streaming from start",
+    );
+
+    return undefined;
+  }
+}
+
 function startScratchEventConsumer(args: {
   db: DbClientLike;
   runId: string;
@@ -510,7 +546,12 @@ function startScratchEventConsumer(args: {
   // monotonic transcript order and keeps the coalescing buffers race-free.
   const done = (async () => {
     try {
+      // Resume after the last event we already projected so a follow-up prompt
+      // does not re-stream (and re-persist) the whole session history.
+      const lastEventId = await lastProjectedEventId(args.db, args.runId);
+
       for await (const event of args.api.streamSession(args.sessionId, {
+        lastEventId,
         signal: abort.signal,
       })) {
         if (event.type === "session.permission_request") {
