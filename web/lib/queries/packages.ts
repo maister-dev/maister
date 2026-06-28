@@ -179,6 +179,21 @@ export async function getAvailablePackageInstalls(): Promise<
   });
 }
 
+// The set of project ids that have the named package attached (any version) —
+// powers the Studio "attach to a project" dialog's already-attached markers.
+export async function getProjectIdsAttachedToPackage(
+  packageName: string,
+): Promise<string[]> {
+  const db = getDb() as any;
+  const rows = await db
+    .select({ projectId: projectPackageAttachments.projectId })
+    .from(projectPackageAttachments)
+    .where(eq(projectPackageAttachments.packageName, packageName));
+  const projectIds = rows.map((r: any) => r.projectId as string) as string[];
+
+  return [...new Set(projectIds)];
+}
+
 export type StudioPackageInstallView = {
   id: string;
   name: string;

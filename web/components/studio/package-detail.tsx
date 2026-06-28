@@ -18,6 +18,10 @@ import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
 import { FlowGraphViewSection } from "@/components/board/flow-graph-view-section";
+import {
+  AttachToProjectButton,
+  type AttachTarget,
+} from "@/components/studio/attach-to-project-button";
 import { ElementCard } from "@/components/studio/element-card";
 import { ForkToEditButton } from "@/components/studio/fork-to-edit-button";
 import {
@@ -76,6 +80,8 @@ export function PackageDetail({
   basePath,
   activeTab,
   page,
+  attachTargets,
+  attachInstallId,
 }: {
   pkg: PackageDetailView;
   canManage: boolean;
@@ -85,6 +91,10 @@ export function PackageDetail({
   basePath: string;
   activeTab: string;
   page: number;
+  // The viewer's manageable projects + whether this package is already attached
+  // (drives the "attach to a project" dialog); undefined in non-attach contexts.
+  attachTargets?: AttachTarget[];
+  attachInstallId?: string;
 }): ReactElement {
   const t = useTranslations("studio");
   const tWorkbench = useTranslations("workbench");
@@ -162,12 +172,11 @@ export function PackageDetail({
         </div>
         <div className="mt-2 flex flex-wrap gap-2">
           {canManage ? (
-            <Link
-              className="rounded-[10px] border border-line bg-ivory px-3 py-1.5 text-[12.5px] font-semibold text-ink transition-colors hover:border-amber"
-              href="/projects"
-            >
-              {t("attach")}
-            </Link>
+            <AttachToProjectButton
+              installId={attachInstallId ?? ""}
+              targets={attachTargets ?? []}
+              triggerClassName="rounded-[10px] border border-line bg-ivory px-3 py-1.5 text-[12.5px] font-semibold text-ink transition-colors hover:border-amber"
+            />
           ) : null}
           {canTrust && newest && newest.trustStatus === "untrusted" ? (
             <TrustButton installId={newest.installId} />

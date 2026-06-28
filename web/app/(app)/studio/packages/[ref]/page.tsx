@@ -8,7 +8,10 @@ import pino from "pino";
 
 import { PackageDetail } from "@/components/studio/package-detail";
 import { requireSession } from "@/lib/authz";
-import { getStudioPackageBom } from "@/lib/queries/packages";
+import {
+  getProjectIdsAttachedToPackage,
+  getStudioPackageBom,
+} from "@/lib/queries/packages";
 import { getAccessibleProjects } from "@/lib/queries/platform-flows";
 import { loadStudioPackages } from "@/lib/studio/load";
 
@@ -97,6 +100,16 @@ export default async function StudioPackageDetailPage({
   const canManage = projects.some((project) => project.canManageCatalog);
   const canTrust = user.role === "admin";
   const installId = group.versions[0]?.installId ?? "";
+  const attachedProjectIds = new Set(
+    await getProjectIdsAttachedToPackage(group.name),
+  );
+  const attachTargets = projects
+    .filter((project) => project.canManageCatalog)
+    .map((project) => ({
+      slug: project.slug,
+      name: project.name,
+      attached: attachedProjectIds.has(project.id),
+    }));
   const bom = (await getStudioPackageBom(installId)) ?? {
     flows: [],
     platformAgents: [],
@@ -116,6 +129,8 @@ export default async function StudioPackageDetailPage({
       {header}
       <PackageDetail
         activeTab={tab}
+        attachInstallId={installId}
+        attachTargets={attachTargets}
         basePath={`/studio/packages/${encodeURIComponent(group.name)}`}
         canManage={canManage}
         canTrust={canTrust}
