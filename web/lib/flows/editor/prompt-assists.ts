@@ -78,5 +78,11 @@ function isPromptNode(node: NodeDef): boolean {
 function promptForNode(node: NodeDef): string {
   if (!isPromptNode(node)) return "";
 
-  return node.action.prompt;
+  const action = isRecord(node.action) ? node.action : {};
+
+  return typeof action.prompt === "string" ? action.prompt : "";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }

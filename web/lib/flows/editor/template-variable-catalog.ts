@@ -90,6 +90,10 @@ type NodeLike = NonNullable<FlowYamlV1["nodes"]>[number];
 type StepLike = NonNullable<FlowYamlV1["steps"]>[number];
 type EdgeMap = Map<string, Set<string>>;
 type SchemaField = FormSchema["fields"][number];
+type ProducerOutput = {
+  result?: { schema?: string; on_mismatch?: string };
+  produces?: readonly { id: string }[];
+};
 
 const TEMPLATE_PATH_RE = /^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/;
 
@@ -599,22 +603,58 @@ function isCliLike(type: string): boolean {
 
 function nodeOutput(
   node: NodeLike | StepLike,
-): NonNullable<NodeLike["output"]> | undefined {
-  return "output" in node ? node.output : undefined;
+): ProducerOutput | undefined {
+  if (!("output" in node) || !isRecord(node.output)) return undefined;
+
+  const result = isRecord(node.output.result)
+    ? {
+        schema:
+          typeof node.output.result.schema === "string"
+            ? node.output.result.schema
+            : undefined,
+        on_mismatch:
+          typeof node.output.result.on_mismatch === "string"
+            ? node.output.result.on_mismatch
+            : undefined,
+      }
+    : undefined;
+  const produces = Array.isArray(node.output.produces)
+    ? node.output.produces.flatMap((artifact) =>
+        isRecord(artifact) && typeof artifact.id === "string"
+          ? [{ id: artifact.id }]
+          : [],
+      )
+    : undefined;
+
+  return { result, produces };
 }
 
 function nodeSettings(node: NodeLike | StepLike): { form_schema?: string } {
-  return "settings" in node ? node.settings ?? {} : {};
+  if (!("settings" in node) || !isRecord(node.settings)) return {};
+
+  return typeof node.settings.form_schema === "string"
+    ? { form_schema: node.settings.form_schema }
+    : {};
 }
 
 function nodeLegacyFormSchema(node: NodeLike | StepLike): string | undefined {
-  return "form_schema" in node ? node.form_schema : undefined;
+  return "form_schema" in node && typeof node.form_schema === "string"
+    ? node.form_schema
+    : undefined;
 }
 
 function nodeRework(
   node: NodeLike | StepLike,
 ): { commentsVar?: string } | undefined {
-  return "rework" in node ? node.rework : undefined;
+  if (!("rework" in node) || !isRecord(node.rework)) return undefined;
+
+  return typeof node.rework.commentsVar === "string"
+    ? { commentsVar: node.rework.commentsVar }
+    : {};
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 type ParsedTemplateToken = {

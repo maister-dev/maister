@@ -795,7 +795,7 @@ This phase ships the only runtime change and lands BEFORE the editor inserts the
 
 ### Phase 6 - Suite Green and Implementation Handoff
 
-- [ ] **T6.1 - Focused test gate.**
+- [x] **T6.1 - Focused test gate.**
   - Run focused tests for new code:
     - the `??` templating test in its server-capable project (Phase 0b);
     - `pnpm --filter maister-web exec vitest run --project unit lib/flows/editor/__tests__/template-variable-catalog.test.ts lib/flows/editor/__tests__/template-variable-usage.test.ts`
@@ -804,7 +804,7 @@ This phase ships the only runtime change and lands BEFORE the editor inserts the
   - Acceptance: every new test is actually discovered by its runner and green.
   - Logging requirements: no runtime logging.
 
-- [ ] **T6.2 - Full validation gate.**
+- [x] **T6.2 - Full validation gate.**
   - Run:
     - `pnpm --filter maister-web typecheck`
     - `pnpm --filter maister-web test:unit`
