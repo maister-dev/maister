@@ -22,6 +22,7 @@ import type { PlatformMcpCatalogEntry } from "@/lib/queries/platform-mcp-catalog
 import type { ReactElement, ReactNode } from "react";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { SparklesIcon } from "@heroicons/react/24/outline";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
@@ -230,7 +231,10 @@ export function LocalPackageEditor({
   // M36 T5.7: while the assistant holds a turn the human editor is read-only;
   // control returns on turn end (assistantBusy → false).
   const [assistantBusy, setAssistantBusy] = useState(false);
-  const [assistantCollapsed, setAssistantCollapsed] = useState(false);
+  // The AI assistant now lives in a right-hand drawer that shares the single
+  // right slot with the node-properties inspector (mutually exclusive): opening
+  // it hides the inspector; selecting a node in the graph closes it again.
+  const [aiOpen, setAiOpen] = useState(false);
   const [aiHeader, setAiHeader] = useState<ScratchHeaderInfo | null>(null);
   const [inspectorEl, setInspectorEl] = useState<HTMLDivElement | null>(null);
   const [flowEditorDirty, setFlowEditorDirty] = useState(false);
@@ -252,6 +256,12 @@ export function LocalPackageEditor({
     setDiffRefresh((n) => n + 1);
     router.refresh();
   }, [router]);
+
+  // The AI drawer and the node-properties inspector are mutually exclusive in
+  // the single right slot: picking a node hands the slot back to the inspector.
+  const handleNodeSelected = useCallback((nodeId: string | null): void => {
+    if (nodeId !== null) setAiOpen(false);
+  }, []);
 
   const applyLock = useCallback((lock: LockState | LockSnapshot): void => {
     setLockHeldByMe(lock.heldByMe);
@@ -645,6 +655,29 @@ export function LocalPackageEditor({
               <span>{tPublish("openButton")}</span>
             </button>
           ) : null}
+          {flowPath !== null ? (
+            <button
+              aria-pressed={aiOpen}
+              className={`inline-flex items-center gap-1.5 rounded-[10px] border px-3 py-1.5 font-mono text-[11px] font-semibold transition-colors ${
+                aiOpen
+                  ? "border-amber bg-amber-soft text-amber"
+                  : "border-line bg-ivory text-ink hover:border-amber"
+              }`}
+              data-testid="local-editor-ai-toggle"
+              title={labels.tabAi}
+              type="button"
+              onClick={() => setAiOpen((open) => !open)}
+            >
+              <SparklesIcon aria-hidden className="h-3.5 w-3.5" />
+              <span>{labels.tabAi}</span>
+              {assistantBusy ? (
+                <span
+                  className="h-1.5 w-1.5 rounded-full bg-amber"
+                  data-testid="local-editor-ai-toggle-busy"
+                />
+              ) : null}
+            </button>
+          ) : null}
           <button
             className="rounded-[10px] border border-line bg-ivory px-3 py-1.5 font-mono text-[11px] font-semibold text-ink transition-colors hover:border-amber"
             data-testid="local-editor-end-edit"
@@ -720,177 +753,183 @@ export function LocalPackageEditor({
       ) : null}
 
       <div className="flex min-h-0 flex-1 gap-3">
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
-          <div className="min-h-0 flex-1">
-            {flowPath === null ? (
-              <PackageHome
-                fileKindLabels={fileKindLabels}
-                files={draftFiles}
-                filesLabels={filesLabels}
-                labels={labels.home}
-                mcpCatalog={mcpCatalog}
-                name={identity.project}
-                packageId={packageId}
-                readOnly={readOnly}
-                saveAction={saveAction}
-                onFilesChange={handleDraftFilesChange}
-              />
-            ) : (
-              <FlowEditorTabs
-                canManage={!readOnly}
-                canvasAvailable={canvasAvailable}
-                capId={identity.slug}
-                diff={diff}
-                diffDrawer={
-                  <LocalPackageDiffDrawer
-                    canManage={!readOnly}
-                    diffViewLabels={labels.diffView}
-                    labels={labels.diff}
-                    packageId={packageId}
-                    refreshSignal={diffRefresh}
-                    sessionId={sessionIdRef.current}
-                    onChanged={setChangedCount}
-                  />
-                }
-                draftVersion={0}
-                filesDrawer={
-                  <PackageFilesEditor
-                    disabled={readOnly}
-                    files={draftFiles}
-                    kindLabels={fileKindLabels}
-                    labels={filesLabels}
-                    mcpCatalog={mcpCatalog}
-                    onFilesChange={handleDraftFilesChange}
-                  />
-                }
-                hasDraft={false}
-                identity={identity}
-                initialManifest={canvasAvailable ? initialManifest : null}
-                initialTitle={initialTitle}
-                initialYaml={initialYaml}
-                inspectorContainer={inspectorEl}
-                labels={labels.editor}
-                layout={layout}
-                lifecycleLabel={identity.kind}
-                mcpOptions={mcpOptions}
-                participantSources={participantSources}
-                projectSlug={identity.slug}
-                promptAdapter={promptAdapter}
-                promptCatalog={promptCatalog}
-                publishAction={saveAction}
-                readinessReady={false}
-                saveAction={saveAction}
-                schemaFiles={schemaFiles}
-                skillOptions={skillOptions}
-                topology={topology}
-                onDirtyChange={setFlowEditorDirty}
-                onWriteSchemaFile={handleWriteSchemaFile}
-                onYamlChange={handleYamlChange}
-              />
-            )}
-          </div>
-
-          <section
-            className={
-              assistantCollapsed
-                ? "flex shrink-0 flex-col overflow-hidden rounded-xl border border-line bg-paper"
-                : "flex h-[28vh] min-h-[220px] max-h-[340px] shrink-0 flex-col overflow-hidden rounded-xl border border-line bg-paper"
-            }
-            data-testid="local-editor-ai-panel"
-          >
-            <div className="flex shrink-0 items-center justify-between border-b border-line px-3 py-2">
-              <div className="flex min-w-0 items-center gap-2">
-                <h2 className="font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-mute">
-                  {labels.tabAi}
-                </h2>
-                {aiHeader ? (
-                  <span
-                    className={`rounded-full border px-2 py-0.5 font-mono text-[9.5px] font-semibold uppercase tracking-[0.06em] ${
-                      aiHeader.status === "Crashed"
-                        ? "border-[#d9534f]/40 bg-[#d9534f]/10 text-[#d9534f]"
-                        : ["Done", "Review", "WaitingForUser"].includes(
-                              aiHeader.status,
-                            )
-                          ? "border-accent-4 bg-accent-4-soft text-accent-4"
-                          : aiHeader.status === "Abandoned"
-                            ? "border-line bg-ivory text-mute"
-                            : "border-amber-line bg-amber-soft text-amber"
-                    }`}
-                    data-testid="local-editor-ai-header-status"
-                  >
-                    {aiHeader.statusLabel}
-                  </span>
-                ) : null}
-              </div>
-              <div className="flex items-center gap-2">
-                {aiHeader?.usage ? (
-                  <span
-                    className="flex items-center gap-1.5 font-mono text-[9.5px] text-mute"
-                    data-testid="local-editor-ai-header-summary"
-                  >
-                    <span className="h-1 w-16 overflow-hidden rounded-full bg-ivory">
-                      <span
-                        className="block h-full bg-amber"
-                        style={{
-                          width: `${Math.min(100, Math.round((aiHeader.usage.used / Math.max(1, aiHeader.usage.size)) * 100))}%`,
-                        }}
-                      />
-                    </span>
-                    <span>
-                      {aiHeader.usage.used.toLocaleString()} /{" "}
-                      {aiHeader.usage.size.toLocaleString()}
-                    </span>
-                  </span>
-                ) : null}
-                {assistantBusy ? (
-                  <span
-                    className="rounded-full border border-amber-line bg-amber-soft px-2 py-0.5 font-mono text-[10px] font-semibold text-amber"
-                    data-testid="local-editor-ai-working-panel"
-                    role="status"
-                  >
-                    {labels.aiWorking}
-                  </span>
-                ) : null}
-                <button
-                  aria-expanded={!assistantCollapsed}
-                  aria-label={
-                    assistantCollapsed ? labels.aiExpand : labels.aiCollapse
-                  }
-                  className="rounded-md border border-line px-2 py-1 font-mono text-[11px] text-mute hover:bg-ivory hover:text-ink"
-                  data-testid="local-editor-ai-collapse"
-                  title={
-                    assistantCollapsed ? labels.aiExpand : labels.aiCollapse
-                  }
-                  type="button"
-                  onClick={() =>
-                    setAssistantCollapsed((collapsed) => !collapsed)
-                  }
-                >
-                  {assistantCollapsed ? "⌃" : "⌄"}
-                </button>
-              </div>
-            </div>
-            <div className={assistantCollapsed ? "hidden" : "min-h-0 flex-1"}>
-              <StudioAiTab
-                canManage={canManage && lockHeldByMe && lockConfirmedByMe}
-                files={draftFiles}
-                focusPath={flowPath}
-                labels={labels.ai}
-                packageId={packageId}
-                sessionId={sessionIdRef.current}
-                onActivity={onAssistantActivity}
-                onBeforeSend={flushBeforeAssistant}
-                onBusyChange={setAssistantBusy}
-                onHeaderInfo={setAiHeader}
-              />
-            </div>
-          </section>
+        <div className="min-h-0 min-w-0 flex-1">
+          {flowPath === null ? (
+            <PackageHome
+              fileKindLabels={fileKindLabels}
+              files={draftFiles}
+              filesLabels={filesLabels}
+              labels={labels.home}
+              mcpCatalog={mcpCatalog}
+              name={identity.project}
+              packageId={packageId}
+              readOnly={readOnly}
+              saveAction={saveAction}
+              onFilesChange={handleDraftFilesChange}
+            />
+          ) : (
+            <FlowEditorTabs
+              canManage={!readOnly}
+              canvasAvailable={canvasAvailable}
+              capId={identity.slug}
+              diff={diff}
+              diffDrawer={
+                <LocalPackageDiffDrawer
+                  canManage={!readOnly}
+                  diffViewLabels={labels.diffView}
+                  labels={labels.diff}
+                  packageId={packageId}
+                  refreshSignal={diffRefresh}
+                  sessionId={sessionIdRef.current}
+                  onChanged={setChangedCount}
+                />
+              }
+              draftVersion={0}
+              filesDrawer={
+                <PackageFilesEditor
+                  disabled={readOnly}
+                  files={draftFiles}
+                  kindLabels={fileKindLabels}
+                  labels={filesLabels}
+                  mcpCatalog={mcpCatalog}
+                  onFilesChange={handleDraftFilesChange}
+                />
+              }
+              hasDraft={false}
+              identity={identity}
+              initialManifest={canvasAvailable ? initialManifest : null}
+              initialTitle={initialTitle}
+              initialYaml={initialYaml}
+              inspectorContainer={inspectorEl}
+              labels={labels.editor}
+              layout={layout}
+              lifecycleLabel={identity.kind}
+              mcpOptions={mcpOptions}
+              participantSources={participantSources}
+              projectSlug={identity.slug}
+              promptAdapter={promptAdapter}
+              promptCatalog={promptCatalog}
+              publishAction={saveAction}
+              readinessReady={false}
+              saveAction={saveAction}
+              schemaFiles={schemaFiles}
+              skillOptions={skillOptions}
+              topology={topology}
+              onDirtyChange={setFlowEditorDirty}
+              onSelectNode={handleNodeSelected}
+              onWriteSchemaFile={handleWriteSchemaFile}
+              onYamlChange={handleYamlChange}
+            />
+          )}
         </div>
-        <div
-          ref={setInspectorEl}
-          className="flex min-h-0 shrink-0"
-          data-testid="local-editor-inspector-column"
-        />
+
+        {/* Single right slot. The node-properties inspector portals into
+            `inspectorEl`; opening the AI drawer hides that portal target and
+            shows the chat instead (mutually exclusive). Both subtrees stay
+            MOUNTED and toggle via `hidden` — the chat keeps its live run across
+            open/close, and React Flow's createPortal target never tears down. */}
+        <aside
+          className={
+            aiOpen
+              ? "flex w-[clamp(420px,34vw,560px)] min-h-0 shrink-0 flex-col overflow-hidden rounded-xl border border-line bg-paper"
+              : "flex min-h-0 shrink-0"
+          }
+          data-testid="local-editor-right-slot"
+        >
+          {/* Mounted only once a flow is open — the AI assistant targets a flow
+              file. Hidden (not unmounted) while the inspector shows. */}
+          {flowPath !== null ? (
+            <div
+              className={aiOpen ? "flex min-h-0 flex-1 flex-col" : "hidden"}
+              data-testid="local-editor-ai-panel"
+            >
+              <div className="flex shrink-0 items-center justify-between border-b border-line px-3 py-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  <h2 className="font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-mute">
+                    {labels.tabAi}
+                  </h2>
+                  {aiHeader ? (
+                    <span
+                      className={`rounded-full border px-2 py-0.5 font-mono text-[9.5px] font-semibold uppercase tracking-[0.06em] ${
+                        aiHeader.status === "Crashed"
+                          ? "border-[#d9534f]/40 bg-[#d9534f]/10 text-[#d9534f]"
+                          : ["Done", "Review", "WaitingForUser"].includes(
+                                aiHeader.status,
+                              )
+                            ? "border-accent-4 bg-accent-4-soft text-accent-4"
+                            : aiHeader.status === "Abandoned"
+                              ? "border-line bg-ivory text-mute"
+                              : "border-amber-line bg-amber-soft text-amber"
+                      }`}
+                      data-testid="local-editor-ai-header-status"
+                    >
+                      {aiHeader.statusLabel}
+                    </span>
+                  ) : null}
+                </div>
+                <div className="flex items-center gap-2">
+                  {aiHeader?.usage ? (
+                    <span
+                      className="flex items-center gap-1.5 font-mono text-[9.5px] text-mute"
+                      data-testid="local-editor-ai-header-summary"
+                    >
+                      <span className="h-1 w-16 overflow-hidden rounded-full bg-ivory">
+                        <span
+                          className="block h-full bg-amber"
+                          style={{
+                            width: `${Math.min(100, Math.round((aiHeader.usage.used / Math.max(1, aiHeader.usage.size)) * 100))}%`,
+                          }}
+                        />
+                      </span>
+                      <span>
+                        {aiHeader.usage.used.toLocaleString()} /{" "}
+                        {aiHeader.usage.size.toLocaleString()}
+                      </span>
+                    </span>
+                  ) : null}
+                  {assistantBusy ? (
+                    <span
+                      className="rounded-full border border-amber-line bg-amber-soft px-2 py-0.5 font-mono text-[10px] font-semibold text-amber"
+                      data-testid="local-editor-ai-working-panel"
+                      role="status"
+                    >
+                      {labels.aiWorking}
+                    </span>
+                  ) : null}
+                  <button
+                    aria-label={labels.aiCollapse}
+                    className="rounded-md border border-line px-2 py-1 font-mono text-[11px] text-mute hover:bg-ivory hover:text-ink"
+                    data-testid="local-editor-ai-close"
+                    title={labels.aiCollapse}
+                    type="button"
+                    onClick={() => setAiOpen(false)}
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+              <div className="min-h-0 flex-1">
+                <StudioAiTab
+                  canManage={canManage && lockHeldByMe && lockConfirmedByMe}
+                  files={draftFiles}
+                  focusPath={flowPath}
+                  labels={labels.ai}
+                  packageId={packageId}
+                  sessionId={sessionIdRef.current}
+                  onActivity={onAssistantActivity}
+                  onBeforeSend={flushBeforeAssistant}
+                  onBusyChange={setAssistantBusy}
+                  onHeaderInfo={setAiHeader}
+                />
+              </div>
+            </div>
+          ) : null}
+          <div
+            ref={setInspectorEl}
+            className={aiOpen ? "hidden" : "flex min-h-0"}
+            data-testid="local-editor-inspector-column"
+          />
+        </aside>
       </div>
     </div>
   );

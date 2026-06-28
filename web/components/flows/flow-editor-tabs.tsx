@@ -93,6 +93,7 @@ export function FlowEditorTabs({
   diffDrawer,
   onWriteSchemaFile,
   inspectorContainer,
+  onSelectNode,
   onDirtyChange,
   onYamlChange,
 }: {
@@ -129,6 +130,9 @@ export function FlowEditorTabs({
   // Host container for the hoisted properties inspector (portal target). Threaded
   // to FlowGraphEditor; absent → inspector renders inline beside the canvas.
   inspectorContainer?: HTMLElement | null;
+  // Bubbled on every node selection change (id, or null on deselect). The shell
+  // uses it to close the mutually-exclusive AI drawer when a node is picked.
+  onSelectNode?: (nodeId: string | null) => void;
   onDirtyChange?: (dirty: boolean) => void;
   // Reports the live flow-YAML buffer so the host can persist it (e.g. flush
   // before the AI assistant reads the working dir). Fires on every edit.
@@ -347,6 +351,7 @@ export function FlowEditorTabs({
               skillOptions={skillOptions}
               topology={seed.topology}
               onChange={handleCanvasChange}
+              onSelectNode={onSelectNode}
               onWriteSchemaFile={onWriteSchemaFile}
             />
           ) : (

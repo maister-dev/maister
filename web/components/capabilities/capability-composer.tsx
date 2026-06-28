@@ -159,10 +159,20 @@ const EMPTY_SUGGESTION: SuggestionState = {
   range: null,
 };
 
+// Submit on Enter (chat convention). Shift+Enter inserts a newline; Cmd/Ctrl+
+// Enter also submits for muscle-memory. IME composition Enter (keyCode 229) must
+// NOT submit — it commits the candidate. The suggestion popup consumes Enter
+// first (pick item), so this only fires when the popup is closed.
 export function isSubmitShortcut(
-  event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey">,
+  event: Pick<
+    KeyboardEvent,
+    "key" | "metaKey" | "ctrlKey" | "shiftKey" | "isComposing" | "keyCode"
+  >,
 ): boolean {
-  return event.key === "Enter" && (event.metaKey || event.ctrlKey);
+  if (event.key !== "Enter") return false;
+  if (event.isComposing || event.keyCode === 229) return false;
+
+  return !event.shiftKey;
 }
 
 function buildSuggestionExtension(args: {
@@ -234,7 +244,14 @@ function buildSuggestionExtension(args: {
               const s = args.getState();
 
               if (!s.open) return false;
-              if (isSubmitShortcut(p.event)) return false;
+              // Cmd/Ctrl+Enter still submits even with the popup open; plain
+              // Enter below picks the highlighted item instead.
+              if (
+                p.event.key === "Enter" &&
+                (p.event.metaKey || p.event.ctrlKey)
+              ) {
+                return false;
+              }
               if (p.event.key === "ArrowDown") {
                 args.setState({
                   ...s,
