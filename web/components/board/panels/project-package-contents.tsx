@@ -3,6 +3,7 @@
 import type { ProjectPackageContentView } from "@/lib/queries/project-package-contents";
 import type { ReactElement } from "react";
 
+import { ArrowTopRightOnSquareIcon } from "@heroicons/react/24/outline";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 
@@ -71,10 +72,11 @@ export function ProjectPackageContents({
                   </span>
                 </div>
                 <Link
-                  className="shrink-0 rounded-[8px] border border-line bg-paper px-3 py-1.5 text-[12px] font-semibold text-ink hover:border-amber"
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-[8px] border border-line bg-paper px-3 py-1.5 text-[12px] font-semibold text-ink hover:border-amber"
                   href={`/studio/packages/${encodeURIComponent(pkg.packageName)}`}
                 >
                   {t("openInStudio")}
+                  <ArrowTopRightOnSquareIcon className="h-3.5 w-3.5" />
                 </Link>
               </div>
 
