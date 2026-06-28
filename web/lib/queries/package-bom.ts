@@ -122,7 +122,7 @@ export interface PackageSource {
   loadFlow(flowPath: string): Promise<FlowYamlV1>;
 }
 
-export const EMPTY_FLOW_FRONTMATTER: PackageBomFlowFrontmatter = {
+const EMPTY_FLOW_FRONTMATTER: PackageBomFlowFrontmatter = {
   title: null,
   summary: null,
   labels: [],
