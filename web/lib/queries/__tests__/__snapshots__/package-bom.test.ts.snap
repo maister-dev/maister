@@ -1,0 +1,63 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`getStudioPackageBom characterization (ADR-115 refactor guard) > installed BOM output is stable through the shared-builder refactor 1`] = `
+{
+  "flows": [
+    {
+      "engine": null,
+      "frontmatter": {
+        "labels": [],
+        "links": [],
+        "routeWhen": null,
+        "sources": [],
+        "summary": null,
+        "title": null,
+      },
+      "gateCount": 0,
+      "hasGraph": true,
+      "id": "dev",
+      "nodeCount": 2,
+      "path": "flows/dev",
+    },
+  ],
+  "mcps": [
+    {
+      "id": "m1",
+    },
+  ],
+  "platformAgents": [
+    {
+      "description": "A platform agent",
+      "id": "p1",
+      "path": "maister-agents/p1.md",
+      "riskTier": "read_only",
+      "triggers": [
+        "manual",
+      ],
+      "workspace": "none",
+    },
+  ],
+  "rules": [
+    {
+      "id": "r1.md",
+      "path": "rules/r1.md",
+    },
+  ],
+  "skills": [
+    {
+      "description": "Use for architecture work.",
+      "fileCount": 2,
+      "id": "s1",
+      "path": "skills/s1",
+      "subfolderCount": 1,
+    },
+  ],
+  "subagents": [
+    {
+      "description": "An agent",
+      "id": "a1",
+      "path": "agents/a1.md",
+    },
+  ],
+}
+`;

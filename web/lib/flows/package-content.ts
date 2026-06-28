@@ -32,9 +32,9 @@ const relPathSchema = z
 
 type InstalledPackageRef = { installedPath: string };
 
-type PackageFileEntry = { path: string; kind: string; size: number };
+export type PackageFileEntry = { path: string; kind: string; size: number };
 
-type ListResult =
+export type ListResult =
   | { bundleMissing: true }
   | {
       bundleMissing: false;
@@ -49,7 +49,7 @@ type ReadState =
   | "not-found"
   | "bundle-missing";
 
-type ReadResult = { state: ReadState; content?: string; kind?: string };
+export type ReadResult = { state: ReadState; content?: string; kind?: string };
 
 // Image preview read (M36 T1.5): a confined image file rendered as a data URI so
 // the bytes can show in an <img> without ever exposing the disk path. Non-image
