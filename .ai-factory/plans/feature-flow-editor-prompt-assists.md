@@ -399,7 +399,7 @@ catalog row, it must stop and amend this plan with a migration, ERD updates,
 This phase ships the only runtime change and lands BEFORE the editor inserts the
 `?? ''` form (the editor depends on the renderer understanding it).
 
-- [ ] **T0b.1 - RED: `??` default operator tests.**
+- [x] **T0b.1 - RED: `??` default operator tests.**
   - Add failing tests in the existing templating test home
     (`web/lib/flows/__tests__/templating.test.ts`; confirm exact path, create if
     absent and wire into the server-capable test project).
@@ -418,7 +418,7 @@ This phase ships the only runtime change and lands BEFORE the editor inserts the
   - Logging requirements: keep the existing DEBUG trace; no new logging.
   - Verify RED: focused vitest run of the templating test in the server project.
 
-- [ ] **T0b.2 - GREEN: implement the `??` operator in `renderStrict`.**
+- [x] **T0b.2 - GREEN: implement the `??` operator in `renderStrict`.**
   - Update `web/lib/flows/templating.ts`. Suggested approach: a pre-render pass
     extracts `{{ <dotpath> ?? <string-literal> }}` tags, resolves `<dotpath>`
     with a NON-throwing deep getter over the raw (un-proxied) context, swaps each

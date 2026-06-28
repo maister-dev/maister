@@ -123,4 +123,68 @@ describe("renderStrict — Mustache strict resolver", () => {
       "PATH=/usr/bin",
     );
   });
+
+  it("resolves guarded default operator paths to present values", () => {
+    expect(renderStrict("{{ executor.model ?? '' }}", baseContext)).toBe(
+      "claude-sonnet-4-6",
+    );
+  });
+
+  it("resolves guarded default operator paths to empty literals when absent", () => {
+    expect(renderStrict("{{ executor.router ?? '' }}", baseContext)).toBe("");
+  });
+
+  it("resolves guarded nested paths to double-quoted literals when absent", () => {
+    expect(renderStrict('{{ steps.plan.vars.maybe ?? "n/a" }}', baseContext)).toBe(
+      "n/a",
+    );
+  });
+
+  it("resolves guarded nested paths to values when present", () => {
+    const ctx = {
+      ...baseContext,
+      steps: {
+        ...baseContext.steps,
+        plan: {
+          ...baseContext.steps.plan,
+          vars: { maybe: "structured verdict" },
+        },
+      },
+    };
+
+    expect(renderStrict('{{ steps.plan.vars.maybe ?? "n/a" }}', ctx)).toBe(
+      "structured verdict",
+    );
+  });
+
+  it("keeps bare paths strict when guarded paths use defaults", () => {
+    expect(() => renderStrict("{{ executor.router }}", baseContext)).toThrow(
+      MaisterError,
+    );
+  });
+
+  it("parses single-quote, double-quote, and empty guarded literals", () => {
+    expect(renderStrict("{{ executor.router ?? 'single' }}", baseContext)).toBe(
+      "single",
+    );
+    expect(renderStrict('{{ executor.router ?? "double" }}', baseContext)).toBe(
+      "double",
+    );
+    expect(renderStrict('{{ executor.router ?? "" }}', baseContext)).toBe("");
+  });
+
+  it("renders templates that mix bare required and guarded optional paths", () => {
+    expect(
+      renderStrict(
+        "{{ task.prompt }} / {{ executor.router ?? 'no router' }}",
+        baseContext,
+      ),
+    ).toBe("Hello / no router");
+  });
+
+  it("inserts guarded literals containing braces without re-parsing them", () => {
+    expect(
+      renderStrict("{{ executor.router ?? '{{ task.prompt }}' }}", baseContext),
+    ).toBe("{{ task.prompt }}");
+  });
 });
