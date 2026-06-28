@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   CapabilityComposer,
+  shouldResetComposerDocument,
   isSubmitShortcut,
 } from "@/components/capabilities/capability-composer";
 
@@ -23,6 +24,23 @@ describe("CapabilityComposer — static render", () => {
     );
 
     expect(html).toContain('data-testid="test-composer"');
+  });
+
+  it("marks the wrapper as a protected React Flow interaction zone", () => {
+    const html = renderToStaticMarkup(
+      createElement(CapabilityComposer, {
+        value: "do work",
+        onChange: () => {},
+        catalog: [],
+        agent: "claude",
+        labels: { placeholder: "type…", unsupportedBadge: "!" },
+        testId: "test-composer",
+      }),
+    );
+
+    expect(html).toMatch(
+      /class="[^"]*capability-composer[^"]*nodrag[^"]*nopan[^"]*nowheel[^"]*nokey/u,
+    );
   });
 
   it("renders a compact variable affordance only when editable catalog entries exist", () => {
@@ -146,5 +164,37 @@ describe("isSubmitShortcut", () => {
 
   it("ignores non-Enter keys", () => {
     expect(isSubmitShortcut(ev({ key: "k", metaKey: true }))).toBe(false);
+  });
+});
+
+describe("shouldResetComposerDocument", () => {
+  it("does not reset the editor when a local edit already matches the next value", () => {
+    expect(
+      shouldResetComposerDocument({
+        currentCanonical: "compose regression",
+        nextValue: "compose regression",
+        currentDisplaySignature: "claude|skill:aif-plan:@skill:aif-plan:true",
+        nextDisplaySignature: "claude|skill:aif-plan:@skill:aif-plan:true",
+      }),
+    ).toBe(false);
+  });
+
+  it("resets for external value changes and runner/catalog display changes", () => {
+    expect(
+      shouldResetComposerDocument({
+        currentCanonical: "old",
+        nextValue: "new",
+        currentDisplaySignature: "claude|skill:aif-plan:@skill:aif-plan:true",
+        nextDisplaySignature: "claude|skill:aif-plan:@skill:aif-plan:true",
+      }),
+    ).toBe(true);
+    expect(
+      shouldResetComposerDocument({
+        currentCanonical: "compose regression",
+        nextValue: "compose regression",
+        currentDisplaySignature: "claude|skill:aif-plan:@skill:aif-plan:true",
+        nextDisplaySignature: "codex|skill:aif-plan:$aif-plan:true",
+      }),
+    ).toBe(true);
   });
 });

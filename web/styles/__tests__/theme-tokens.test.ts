@@ -19,3 +19,19 @@ describe("theme token contract", () => {
     );
   });
 });
+
+describe("capability composer CSS contract", () => {
+  it("renders the manual variable picker as a bounded overlay menu", async () => {
+    const css = await readFile(
+      join(process.cwd(), "styles/globals.css"),
+      "utf8",
+    );
+    const variableMenu = css.match(
+      /\.capability-composer__variable-menu\s*\{(?<body>[\s\S]*?)\n\}/u,
+    );
+
+    expect(variableMenu?.groups?.body).toContain("position: fixed;");
+    expect(variableMenu?.groups?.body).toContain("overflow-y: auto;");
+    expect(variableMenu?.groups?.body).toContain("max-height:");
+  });
+});

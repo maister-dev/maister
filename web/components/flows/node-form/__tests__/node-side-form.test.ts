@@ -463,6 +463,17 @@ describe("NodeSideForm — ai_coding", () => {
     expect(html).toContain("capability-composer");
   });
 
+  it("does not nest the prompt composer inside a label element", () => {
+    const html = render(nodeById("plan"), {
+      promptCatalog: [],
+      promptAdapter: "claude",
+    });
+
+    expect(html).not.toMatch(
+      /<label[^>]*>\s*<span[^>]*>Prompt<\/span>[\s\S]*data-testid="node-action-prompt"/u,
+    );
+  });
+
   it("passes variable assists and warnings to prompt-bearing coding nodes", () => {
     const html = render(nodeById("plan"), {
       promptCatalog: [],

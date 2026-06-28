@@ -359,6 +359,27 @@ test("local editor structured controls: skills multiselect, /-autosuggest prompt
   await expect(promptEditor).toBeVisible();
   await expect(packageFilesInput).toHaveValue(/skills\/aif-plan\/SKILL\.md/);
 
+  await promptEditor.click();
+  await promptEditor.focus();
+  await page.keyboard.press(
+    process.platform === "darwin" ? "Meta+A" : "Control+A",
+  );
+  await page.keyboard.type("compose regression");
+  await expect(promptEditor).toContainText("compose regression");
+  await expect(promptEditor).toBeFocused();
+  await page.keyboard.press("Backspace");
+  await expect(promptEditor).toContainText("compose regressio");
+  await expect(promptEditor).toBeFocused();
+  await expect(page.locator('.react-flow__node[data-id="code"]')).toBeVisible();
+
+  await page.getByTestId("capability-variable-button").click();
+  const variableMenu = page.getByTestId("capability-variable-menu");
+
+  await expect(variableMenu).toBeVisible();
+  await expect(variableMenu).toHaveCSS("position", "fixed");
+  await expect(variableMenu).toHaveCSS("overflow-y", "auto");
+  await page.getByTestId("capability-variable-button").click();
+
   // (c) skills MultiSelectField: free-add a chip, then remove it
   await page.getByTestId("node-skills-input").fill("extra-skill");
   await page.getByTestId("node-skills-free-add").click();

@@ -700,40 +700,41 @@ export function NodeSideForm({
 
       <section className="grid gap-2">
         <h3 className={SECTION_CLS}>{labels.action}</h3>
-        {isPromptType ? (
+        {isPromptType && promptCatalog ? (
+          <div className="grid gap-1">
+            <span className={LABEL_CLS}>{labels.prompt}</span>
+            <CapabilityComposer
+              agent={promptAdapter ?? "claude"}
+              ariaLabel={labels.prompt}
+              catalog={promptCatalog}
+              className={`${FIELD_CLS} min-h-[90px] overflow-y-auto`}
+              disabled={readOnly}
+              labels={{
+                placeholder: labels.promptComposer.placeholder,
+                unsupportedBadge: labels.promptComposer.unsupported,
+                variableButton: labels.promptComposer.variableButton,
+                variableConditionalBadge:
+                  labels.promptComposer.variableConditional,
+                variableWarning: labels.promptComposer.variableWarning,
+              }}
+              testId="node-action-prompt"
+              value={str(action.prompt)}
+              variableCatalog={promptVariableCatalog}
+              variableWarnings={promptVariableWarnings}
+              onChange={(v) => setAction("prompt", v)}
+            />
+          </div>
+        ) : isPromptType ? (
           <label className="grid gap-1">
             <span className={LABEL_CLS}>{labels.prompt}</span>
-            {promptCatalog ? (
-              <CapabilityComposer
-                agent={promptAdapter ?? "claude"}
-                ariaLabel={labels.prompt}
-                catalog={promptCatalog}
-                className={`${FIELD_CLS} min-h-[90px] overflow-y-auto`}
-                disabled={readOnly}
-                labels={{
-                  placeholder: labels.promptComposer.placeholder,
-                  unsupportedBadge: labels.promptComposer.unsupported,
-                  variableButton: labels.promptComposer.variableButton,
-                  variableConditionalBadge:
-                    labels.promptComposer.variableConditional,
-                  variableWarning: labels.promptComposer.variableWarning,
-                }}
-                testId="node-action-prompt"
-                value={str(action.prompt)}
-                variableCatalog={promptVariableCatalog}
-                variableWarnings={promptVariableWarnings}
-                onChange={(v) => setAction("prompt", v)}
-              />
-            ) : (
-              <textarea
-                className={`${FIELD_CLS} min-h-[90px] resize-y`}
-                data-testid="node-action-prompt"
-                readOnly={readOnly}
-                spellCheck={false}
-                value={str(action.prompt)}
-                onChange={(e) => setAction("prompt", e.target.value)}
-              />
-            )}
+            <textarea
+              className={`${FIELD_CLS} min-h-[90px] resize-y`}
+              data-testid="node-action-prompt"
+              readOnly={readOnly}
+              spellCheck={false}
+              value={str(action.prompt)}
+              onChange={(e) => setAction("prompt", e.target.value)}
+            />
           </label>
         ) : null}
         {isConsensusType ? (

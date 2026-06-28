@@ -24,7 +24,7 @@ import Text from "@tiptap/extension-text";
 import { PluginKey } from "@tiptap/pm/state";
 import { EditorContent, useEditor } from "@tiptap/react";
 import Suggestion from "@tiptap/suggestion";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   canonicalToSegments,
@@ -172,6 +172,19 @@ type VariableSuggestionState = {
   range: Range | null;
 };
 
+type VariableMenuState = {
+  open: boolean;
+  top: number;
+  left: number;
+};
+
+export type ComposerDocumentSyncInput = {
+  currentCanonical: string;
+  nextValue: string;
+  currentDisplaySignature: string;
+  nextDisplaySignature: string;
+};
+
 const EMPTY_SUGGESTION: SuggestionState = {
   open: false,
   items: [],
@@ -189,6 +202,43 @@ const EMPTY_VARIABLE_SUGGESTION: VariableSuggestionState = {
   left: 0,
   range: null,
 };
+
+const EMPTY_VARIABLE_MENU: VariableMenuState = {
+  open: false,
+  top: 0,
+  left: 0,
+};
+
+const VARIABLE_MENU_WIDTH = 320;
+const VARIABLE_MENU_GUTTER = 8;
+
+export function shouldResetComposerDocument({
+  currentCanonical,
+  nextValue,
+  currentDisplaySignature,
+  nextDisplaySignature,
+}: ComposerDocumentSyncInput): boolean {
+  return (
+    currentCanonical !== nextValue ||
+    currentDisplaySignature !== nextDisplaySignature
+  );
+}
+
+function buildComposerDisplaySignature(
+  agent: AdapterId,
+  catalog: readonly ProjectCapabilityCatalogEntry[],
+): string {
+  return JSON.stringify([
+    agent,
+    ...catalog.map((entry) => [
+      entry.kind,
+      entry.slug,
+      entry.displayName,
+      entry.surfaceForm,
+      entry.supported,
+    ]),
+  ]);
+}
 
 // Submit on Enter (chat convention). Shift+Enter inserts a newline; Cmd/Ctrl+
 // Enter also submits for muscle-memory. IME composition Enter (keyCode 229) must
@@ -569,11 +619,13 @@ export function CapabilityComposer({
     useState<SuggestionState>(EMPTY_SUGGESTION);
   const [variableSuggestion, setVariableSuggestion] =
     useState<VariableSuggestionState>(EMPTY_VARIABLE_SUGGESTION);
-  const [variableMenuOpen, setVariableMenuOpen] = useState(false);
+  const [variableMenu, setVariableMenu] =
+    useState<VariableMenuState>(EMPTY_VARIABLE_MENU);
   const suggestionRef = useRef(suggestion);
   const variableSuggestionRef = useRef(variableSuggestion);
   const submitShortcutRef = useRef(onSubmitShortcut);
   const editorRef = useRef<Editor | null>(null);
+  const composerRootRef = useRef<HTMLDivElement | null>(null);
   const valueRef = useRef(value);
   const onChangeRef = useRef(onChange);
   const agentRef = useRef(agent);
@@ -589,6 +641,11 @@ export function CapabilityComposer({
 
   catalogRef.current = catalog;
   variableCatalogRef.current = variableCatalog;
+  const displaySignature = useMemo(
+    () => buildComposerDisplaySignature(agent, catalog),
+    [agent, catalog],
+  );
+  const renderedDisplaySignatureRef = useRef(displaySignature);
 
   const commitPromotedValue = () => {
     const currentEditor = editorRef.current;
@@ -622,6 +679,18 @@ export function CapabilityComposer({
         class: "capability-composer__editor",
         "data-testid": "capability-composer-input",
         ...(ariaLabel ? { "aria-label": ariaLabel } : {}),
+      },
+      handleDOMEvents: {
+        keydown: (_view, event) => {
+          event.stopPropagation();
+
+          return false;
+        },
+        keyup: (_view, event) => {
+          event.stopPropagation();
+
+          return false;
+        },
       },
       handleKeyDown: (_view, event) => {
         if (!isSubmitShortcut(event) || !submitShortcutRef.current) {
@@ -662,44 +731,92 @@ export function CapabilityComposer({
 
   editorRef.current = editor;
 
-  // External value / runner-switch sync: rebuild the doc so chips re-render
-  // their per-runner wire form + validity (FR-D4/D10). Skip when the editor
-  // already reflects the value (avoids clobbering the cursor on self-edits).
+  // External value / runner-switch sync: rebuild only when the canonical value
+  // truly changed externally, or when chip display metadata changed.
   useEffect(() => {
     if (!editor) return;
-    if (docToCanonical(editor) === value) {
-      // value unchanged, but the runner may have switched → rebuild for display.
+    if (
+      shouldResetComposerDocument({
+        currentCanonical: docToCanonical(editor),
+        nextValue: value,
+        currentDisplaySignature: renderedDisplaySignatureRef.current,
+        nextDisplaySignature: displaySignature,
+      })
+    ) {
       editor.commands.setContent(
         segmentsToDoc(canonicalToSegments(value), agent, catalog),
         { emitUpdate: false },
       );
-
-      return;
     }
-    editor.commands.setContent(
-      segmentsToDoc(canonicalToSegments(value), agent, catalog),
-      { emitUpdate: false },
-    );
-  }, [editor, value, agent]);
+
+    renderedDisplaySignatureRef.current = displaySignature;
+  }, [editor, value, agent, catalog, displaySignature]);
 
   useEffect(() => {
     if (editor) editor.setEditable(!disabled);
   }, [editor, disabled]);
 
+  useEffect(() => {
+    const root = composerRootRef.current;
+
+    if (!root) return;
+
+    // React Flow listens for Backspace on document; Firefox can target text
+    // nodes inside contenteditable, so stop keyboard bubbling at the composer.
+    const stopKeyboardPropagation = (event: KeyboardEvent): void => {
+      event.stopPropagation();
+    };
+
+    root.addEventListener("keydown", stopKeyboardPropagation);
+    root.addEventListener("keyup", stopKeyboardPropagation);
+
+    return () => {
+      root.removeEventListener("keydown", stopKeyboardPropagation);
+      root.removeEventListener("keyup", stopKeyboardPropagation);
+    };
+  }, []);
+
   const showVariableControls = !disabled && variableCatalog.length > 0;
+  const toggleVariableMenu = (button: HTMLButtonElement): void => {
+    if (!editor) return;
+    editor.commands.focus();
+
+    if (variableMenu.open) {
+      setVariableMenu(EMPTY_VARIABLE_MENU);
+
+      return;
+    }
+
+    const rect = button.getBoundingClientRect();
+    const availableLeft =
+      window.innerWidth - VARIABLE_MENU_WIDTH - VARIABLE_MENU_GUTTER;
+    const left = Math.max(
+      VARIABLE_MENU_GUTTER,
+      Math.min(rect.right - VARIABLE_MENU_WIDTH, availableLeft),
+    );
+
+    setVariableMenu({
+      open: true,
+      top: rect.bottom + 6,
+      left,
+    });
+  };
 
   return (
     <div
-      className={`capability-composer ${className ?? ""}`}
+      ref={composerRootRef}
+      className={`capability-composer nodrag nopan nowheel nokey ${className ?? ""}`}
       data-testid={testId}
       onBlur={() => {
         commitPromotedValue();
+        setVariableMenu(EMPTY_VARIABLE_MENU);
       }}
     >
       <EditorContent editor={editor} />
       {showVariableControls ? (
         <div className="capability-composer__variables">
           <button
+            aria-expanded={variableMenu.open}
             aria-label={labels.variableButton ?? "Variables"}
             className="capability-composer__variable-button"
             data-testid="capability-variable-button"
@@ -707,7 +824,7 @@ export function CapabilityComposer({
             type="button"
             onMouseDown={(event) => {
               event.preventDefault();
-              setVariableMenuOpen((open) => !open);
+              toggleVariableMenu(event.currentTarget);
             }}
           >
             {"{}"}
@@ -715,7 +832,11 @@ export function CapabilityComposer({
           <ul
             className="capability-composer__variable-menu"
             data-testid="capability-variable-menu"
-            hidden={!variableMenuOpen}
+            hidden={!variableMenu.open}
+            style={{
+              top: variableMenu.top,
+              left: variableMenu.left,
+            }}
           >
             {variableCatalog.map((entry) => (
               <li key={entry.path}>
@@ -737,7 +858,7 @@ export function CapabilityComposer({
                       },
                       entry,
                     );
-                    setVariableMenuOpen(false);
+                    setVariableMenu(EMPTY_VARIABLE_MENU);
                   }}
                 >
                   <span className="capability-composer__item-name">
