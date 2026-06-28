@@ -8,6 +8,10 @@ import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { ProjectCapabilityCatalogEntry } from "@/lib/capabilities/project-catalog";
 import type { FlowYamlV1 } from "@/lib/config.schema";
 import type {
+  TemplateVariableEntry,
+  TemplateVariableUsageWarning,
+} from "@/lib/flows/editor/template-variable-catalog";
+import type {
   CapabilityOption,
   ReferenceSourceGroup,
   ReferenceSourceKind,
@@ -101,7 +105,13 @@ export type NodeSideFormLabels = {
   consensus: ConsensusFormLabels;
   decide: DecideFormLabels;
   hooks: HooksFormLabels;
-  promptComposer: { placeholder: string; unsupported: string };
+  promptComposer: {
+    placeholder: string;
+    unsupported: string;
+    variableButton: string;
+    variableConditional: string;
+    variableWarning: string;
+  };
   multiSelect: MultiSelectFieldLabels;
   stringList: StringListFieldLabels;
   gate: GateFormLabels;
@@ -356,6 +366,8 @@ export function NodeSideForm({
   schemaFiles,
   promptCatalog,
   promptAdapter,
+  promptVariableCatalog,
+  promptVariableWarnings,
   skillOptions,
   mcpOptions,
   presentation,
@@ -376,6 +388,8 @@ export function NodeSideForm({
   // (editor mount). Absent → the read-only viewer degrades to a plain textarea.
   promptCatalog?: ProjectCapabilityCatalogEntry[];
   promptAdapter?: AdapterId;
+  promptVariableCatalog?: readonly TemplateVariableEntry[];
+  promptVariableWarnings?: readonly TemplateVariableUsageWarning[];
   // Catalog options for the `skills` / `mcps` multiselects (free-add allowed);
   // absent → empty catalog (free-add still works in the editor).
   skillOptions?: CapabilityOption[];
@@ -699,9 +713,15 @@ export function NodeSideForm({
                 labels={{
                   placeholder: labels.promptComposer.placeholder,
                   unsupportedBadge: labels.promptComposer.unsupported,
+                  variableButton: labels.promptComposer.variableButton,
+                  variableConditionalBadge:
+                    labels.promptComposer.variableConditional,
+                  variableWarning: labels.promptComposer.variableWarning,
                 }}
                 testId="node-action-prompt"
                 value={str(action.prompt)}
+                variableCatalog={promptVariableCatalog}
+                variableWarnings={promptVariableWarnings}
                 onChange={(v) => setAction("prompt", v)}
               />
             ) : (

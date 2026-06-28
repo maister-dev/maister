@@ -63,6 +63,7 @@ import {
 } from "@/lib/flows/editor/editor-state";
 import { readPresentation } from "@/lib/flows/editor/manifest-io";
 import { GATE_KINDS, NODE_TYPES } from "@/lib/flows/editor/node-form";
+import { buildPromptAssistsForNode } from "@/lib/flows/editor/prompt-assists";
 import { validateEditorManifest } from "@/lib/flows/editor/validation";
 import { buildFlowNodeTooltipsFromManifest } from "@/lib/flows/graph/node-tooltips";
 
@@ -637,6 +638,15 @@ export default function FlowGraphEditor({
     selectedNodeId === null
       ? undefined
       : readPresentation(manifest).find((p) => p.id === selectedNodeId);
+  const promptAssists = useMemo(
+    () =>
+      buildPromptAssistsForNode({
+        manifest,
+        selectedNodeId,
+        files: schemaFiles ?? [],
+      }),
+    [manifest, selectedNodeId, schemaFiles],
+  );
 
   const validation = validateEditorManifest(manifest);
   const nodeTooltips = useMemo(
@@ -770,6 +780,8 @@ export default function FlowGraphEditor({
               }
               promptAdapter={promptAdapter}
               promptCatalog={promptCatalog}
+              promptVariableCatalog={promptAssists.variableCatalog}
+              promptVariableWarnings={promptAssists.variableWarnings}
               schemaFiles={schemaFiles}
               sessionNames={sessionNames}
               skillOptions={skillOptions}

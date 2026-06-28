@@ -643,7 +643,7 @@ This phase ships the only runtime change and lands BEFORE the editor inserts the
 
 ### Phase 3 - Flow Studio Wiring
 
-- [ ] **T3.1 - RED: `NodeSideForm` prompt-assist prop tests.**
+- [x] **T3.1 - RED: `NodeSideForm` prompt-assist prop tests.**
   - Update `web/components/flows/node-form/__tests__/node-side-form.test.ts`.
   - Cover:
     - `ai_coding`, `judge`, and `orchestrator` prompts pass variable catalogs to
@@ -661,7 +661,7 @@ This phase ships the only runtime change and lands BEFORE the editor inserts the
   - Verify RED:
     `pnpm --filter maister-web exec vitest run --project unit components/flows/node-form/__tests__/node-side-form.test.ts`.
 
-- [ ] **T3.2 - GREEN: pass variable assists through `NodeSideForm`.**
+- [x] **T3.2 - GREEN: pass variable assists through `NodeSideForm`.**
   - Extend `NodeSideForm` props with:
     - `promptVariableCatalog?: TemplateVariableEntry[]`
     - `promptVariableWarnings?: TemplateVariableWarning[]`
@@ -673,7 +673,7 @@ This phase ships the only runtime change and lands BEFORE the editor inserts the
   - Logging requirements: no client logging.
   - Verify GREEN: T3.1 command passes.
 
-- [ ] **T3.3 - RED: flow-editor selected-node catalog tests.**
+- [x] **T3.3 - RED: flow-editor selected-node catalog tests.**
   - Add unit tests for the editor composition seam where possible, using pure
     helper tests if React Flow makes static rendering too noisy.
   - Cover:
@@ -696,7 +696,7 @@ This phase ships the only runtime change and lands BEFORE the editor inserts the
   - Verify RED:
     `pnpm --filter maister-web exec vitest run --project unit components/flows lib/flows/editor`.
 
-- [ ] **T3.4 - GREEN: compute and pass node-aware variable catalogs.**
+- [x] **T3.4 - GREEN: compute and pass node-aware variable catalogs.**
   - Update `FlowGraphEditor` to derive the selected node's variable catalog from
     the current manifest, topology, selected node id, and package draft files.
   - Update `LocalPackageEditor` to pass the relevant draft schema files into the

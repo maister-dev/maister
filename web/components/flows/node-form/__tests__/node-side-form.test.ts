@@ -238,6 +238,9 @@ const labels: NodeSideFormProps["labels"] = {
   promptComposer: {
     placeholder: "Type a prompt",
     unsupported: "not on this runner",
+    variableButton: "Variables",
+    variableConditional: "may be absent",
+    variableWarning: "Variable warnings",
   },
   multiSelect: {
     add: "Add",
@@ -323,6 +326,12 @@ const NEW_NODE_RUNNER_LABEL_KEYS = [
   "sessionDefault",
 ] as const;
 
+const NEW_PROMPT_COMPOSER_LABEL_KEYS = [
+  "variableButton",
+  "variableConditional",
+  "variableWarning",
+] as const;
+
 type JsonObject = Record<string, unknown>;
 
 function messageAt(catalog: JsonObject, path: readonly string[]): string {
@@ -390,6 +399,20 @@ describe("NodeSideForm labels", () => {
       expect(messageAt(ru, ["flowEditor", "nodeForm", key])).not.toBe("");
     }
   });
+
+  it("builds + completes prompt variable composer labels in EN and RU", () => {
+    const built = buildNodeSideFormLabels((key) => key);
+
+    for (const key of NEW_PROMPT_COMPOSER_LABEL_KEYS) {
+      expect(built.promptComposer[key]).toBe(`nodeForm.promptComposer.${key}`);
+      expect(
+        messageAt(en, ["flowEditor", "nodeForm", "promptComposer", key]),
+      ).not.toBe("");
+      expect(
+        messageAt(ru, ["flowEditor", "nodeForm", "promptComposer", key]),
+      ).not.toBe("");
+    }
+  });
 });
 
 describe("NodeSideForm — ai_coding", () => {
@@ -438,6 +461,55 @@ describe("NodeSideForm — ai_coding", () => {
 
     expect(html).toContain('data-testid="node-action-prompt"');
     expect(html).toContain("capability-composer");
+  });
+
+  it("passes variable assists and warnings to prompt-bearing coding nodes", () => {
+    const html = render(nodeById("plan"), {
+      promptCatalog: [],
+      promptAdapter: "claude",
+      promptVariableCatalog: [
+        {
+          path: "steps.intake.vars.request",
+          label: "steps.intake.vars.request",
+          source: "step",
+          availability: "definite",
+          presence: "required",
+          insertText: "steps.intake.vars.request",
+        },
+      ],
+      promptVariableWarnings: [
+        {
+          code: "unknown_path",
+          severity: "error",
+          path: "steps.future.output",
+          message: "Variable is not known at the selected node.",
+        },
+      ],
+    });
+
+    expect(html).toContain('data-testid="capability-variable-button"');
+    expect(html).toContain('data-variable-path="steps.intake.vars.request"');
+    expect(html).toContain('data-testid="capability-variable-warnings"');
+    expect(html).toContain("Variable is not known at the selected node.");
+  });
+
+  it("does not expose variable controls for non-prompt node types", () => {
+    const html = render(nodeById("build"), {
+      promptCatalog: [],
+      promptAdapter: "claude",
+      promptVariableCatalog: [
+        {
+          path: "steps.plan.output",
+          label: "steps.plan.output",
+          source: "step",
+          availability: "definite",
+          presence: "required",
+          insertText: "steps.plan.output",
+        },
+      ],
+    });
+
+    expect(html).not.toContain("capability-variable-button");
   });
 
   it("renders skills/mcps as multiselects and rework lists as string rows", () => {

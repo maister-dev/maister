@@ -139,6 +139,9 @@ export function buildNodeSideFormLabels(te: Translator): NodeSideFormLabels {
     promptComposer: {
       placeholder: te("nodeForm.promptComposer.placeholder"),
       unsupported: te("nodeForm.promptComposer.unsupported"),
+      variableButton: te("nodeForm.promptComposer.variableButton"),
+      variableConditional: te("nodeForm.promptComposer.variableConditional"),
+      variableWarning: te("nodeForm.promptComposer.variableWarning"),
     },
     multiSelect: {
       add: te("nodeForm.multiSelect.add"),
