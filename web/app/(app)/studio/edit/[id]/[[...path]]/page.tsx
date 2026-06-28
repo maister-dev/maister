@@ -21,6 +21,7 @@ import {
   packageFileKindLabels,
   packageFilesEditorLabels,
 } from "@/lib/flows/editor/editor-labels";
+import { getLocalPackageBom } from "@/lib/local-packages/bom";
 import { readLockState } from "@/lib/local-packages/lock";
 import {
   getLocalPackage,
@@ -117,9 +118,10 @@ export default async function StudioEditPage({
     }
   }
 
-  const [mcpCatalog, lock] = await Promise.all([
+  const [mcpCatalog, lock, bom] = await Promise.all([
     listPlatformMcpCatalog(),
     readLockState(id, ""),
+    getLocalPackageBom(pkg),
   ]);
 
   const labels: LocalPackageEditorLabels = {
@@ -161,12 +163,7 @@ export default async function StudioEditPage({
     },
     diff: localPackageDiffLabels(tld),
     diffView: diffViewLabels(td),
-    home: {
-      orientation: ts("local.home.orientation"),
-      flowsHeading: ts("local.home.flowsHeading"),
-      noFlows: ts("local.home.noFlows"),
-      save: ts("local.home.save"),
-    },
+    home: { save: ts("local.home.save") },
     crumbStudio: ts("local.crumbStudio"),
     crumbLocal: ts("local.crumbLocal"),
     endEdit: ts("local.endEdit"),
@@ -178,6 +175,7 @@ export default async function StudioEditPage({
     <div className="flex h-[calc(100vh-130px)] min-h-[560px] w-full flex-col">
       <LocalPackageEditor
         canManage
+        bom={bom}
         canvasAvailable={canvasAvailable}
         diff=""
         fileKindLabels={packageFileKindLabels(t)}

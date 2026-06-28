@@ -1,0 +1,120 @@
+import type { PackageBom } from "@/lib/queries/package-bom";
+
+// Pure, client-safe helpers for the tabbed composition view (ADR-115). NO
+// `server-only`, NO `node:*` — imported by the `"use client"` PackageComposition
+// and unit-tested directly. Routing + tab-resolution logic lives here so the
+// component stays a thin renderer.
+
+// The six BOM-backed kinds + the always-present Files tab, in display order.
+export const COMPOSITION_KINDS = [
+  "flows",
+  "skills",
+  "subagents",
+  "agents",
+  "mcps",
+  "rules",
+] as const;
+
+export type CompositionKind = (typeof COMPOSITION_KINDS)[number];
+
+export const COMPOSITION_TAB_IDS = [...COMPOSITION_KINDS, "files"] as const;
+
+export type CompositionTabId = (typeof COMPOSITION_TAB_IDS)[number];
+
+// The kinds whose cards open INLINE (master-detail), as opposed to routing away
+// (flows → canvas, skills → dedicated screen).
+const INLINE_KINDS = new Set<CompositionKind>([
+  "subagents",
+  "agents",
+  "mcps",
+  "rules",
+]);
+
+export function isInlineKind(kind: string): kind is CompositionKind {
+  return INLINE_KINDS.has(kind as CompositionKind);
+}
+
+function isCompositionTabId(value: string): value is CompositionTabId {
+  return (COMPOSITION_TAB_IDS as readonly string[]).includes(value);
+}
+
+// Per-kind member counts (tab counts equal BOM array lengths — invariant).
+export function compositionCounts(
+  bom: PackageBom,
+): Record<CompositionKind, number> {
+  return {
+    flows: bom.flows.length,
+    skills: bom.skills.length,
+    subagents: bom.subagents.length,
+    agents: bom.platformAgents.length,
+    mcps: bom.mcps.length,
+    rules: bom.rules.length,
+  };
+}
+
+// Tabs to render: a kind tab is shown iff its count > 0; Files is ALWAYS shown
+// (the disk-level escape hatch). Order follows COMPOSITION_TAB_IDS.
+export function visibleCompositionTabs(bom: PackageBom): CompositionTabId[] {
+  const counts = compositionCounts(bom);
+
+  return COMPOSITION_TAB_IDS.filter(
+    (id) => id === "files" || counts[id as CompositionKind] > 0,
+  );
+}
+
+// Resolve the active tab: the requested one if visible, else the first visible
+// kind, else Files (always visible).
+export function resolveCompositionTab(
+  requested: string | null | undefined,
+  bom: PackageBom,
+): CompositionTabId {
+  const visible = visibleCompositionTabs(bom);
+
+  if (
+    requested &&
+    isCompositionTabId(requested) &&
+    visible.includes(requested)
+  ) {
+    return requested;
+  }
+
+  return visible.find((id) => id !== "files") ?? "files";
+}
+
+function encodePathSegments(path: string): string {
+  return path.split("/").map(encodeURIComponent).join("/");
+}
+
+// A flow opens on the canvas: the route must carry a flow-manifest path the page
+// recognizes (`flows/<…>/flow.yaml` or a `*.yaml` under `flows/`). A BOM flow's
+// `path` is the flow DIRECTORY (`flows/<id>`), so append `flow.yaml`; a path that
+// is already a yaml file is used verbatim.
+export function flowCanvasHref(packageId: string, flowPath: string): string {
+  const manifestPath = /\.ya?ml$/i.test(flowPath)
+    ? flowPath
+    : `${flowPath.replace(/\/+$/, "")}/flow.yaml`;
+
+  return `/studio/edit/${packageId}/${encodePathSegments(manifestPath)}`;
+}
+
+// A skill opens its own dedicated screen (nested navigator, Phase 4).
+export function skillScreenHref(packageId: string, skillId: string): string {
+  return `/studio/edit/${packageId}/skills/${encodePathSegments(skillId)}`;
+}
+
+// The composition landing (no path segments). Tab + inline selection live in the
+// query so back/forward + refresh + deep-link work (the data-management rule).
+export function compositionTabHref(
+  packageId: string,
+  tab: CompositionTabId,
+): string {
+  return `/studio/edit/${packageId}?tab=${tab}`;
+}
+
+export function inlineSelectHref(
+  packageId: string,
+  tab: CompositionKind,
+  id: string,
+): string {
+  return `/studio/edit/${packageId}?tab=${tab}&sel=${encodeURIComponent(id)}`;
+}

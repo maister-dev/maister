@@ -20,6 +20,7 @@ import type { GraphTopology } from "@/lib/queries/flow-graph-view";
 import type { LockState } from "@/lib/local-packages/lock";
 import type { PlatformMcpCatalogEntry } from "@/lib/queries/platform-mcp-catalog";
 import type { ReactElement, ReactNode } from "react";
+import type { PackageBom } from "@/lib/queries/package-bom";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SparklesIcon } from "@heroicons/react/24/outline";
@@ -29,10 +30,7 @@ import { useTranslations } from "next-intl";
 
 import { FlowEditorTabs } from "@/components/flows/flow-editor-tabs";
 import { PackageFilesEditor } from "@/components/flows/package-files-editor";
-import {
-  PackageHome,
-  type PackageHomeLabels,
-} from "@/components/studio/package-home";
+import { PackageComposition } from "@/components/studio/package-composition";
 import { LocalPackageDiffDrawer } from "@/components/studio/local-package-diff-drawer";
 import {
   ChangeReviewDialog,
@@ -65,6 +63,7 @@ import {
   parsePackageFilesJson,
   planWorkingDirWrites,
 } from "@/lib/local-packages/working-dir-save";
+import { PACKAGE_MANIFEST_FILENAME } from "@/lib/local-packages/manifest";
 
 // Client-projected lock state (Date → ISO string for the RSC boundary).
 export type LockSnapshot = {
@@ -96,8 +95,9 @@ export type LocalPackageEditorLabels = {
   aiCollapse: string;
   aiExpand: string;
   ai: StudioAiTabLabels;
-  // M39 (ADR-105): the package-home landing + breadcrumb + End-edit.
-  home: PackageHomeLabels;
+  // The Files-tab save button label (the composition landing replaced the old
+  // package-home; ADR-115).
+  home: { save: string };
   crumbStudio: string;
   crumbLocal: string;
   endEdit: string;
@@ -174,6 +174,7 @@ export function LocalPackageEditor({
   diff,
   canvasAvailable,
   files,
+  bom,
   labels,
   filesLabels,
   fileKindLabels,
@@ -194,6 +195,9 @@ export function LocalPackageEditor({
   diff: string;
   canvasAvailable: boolean;
   files: AuthoredFlowPackageFile[];
+  // Server-computed bill-of-materials from the last-saved working dir (ADR-115),
+  // driving the tabbed composition landing.
+  bom: PackageBom;
   labels: LocalPackageEditorLabels;
   // The PackageFilesEditor is built HERE (not handed in) so its read-only state
   // tracks the live lock — a lost/foreign lock disables editing, not just
@@ -755,17 +759,34 @@ export function LocalPackageEditor({
       <div className="flex min-h-0 flex-1 gap-3">
         <div className="min-h-0 min-w-0 flex-1">
           {flowPath === null ? (
-            <PackageHome
-              fileKindLabels={fileKindLabels}
-              files={draftFiles}
-              filesLabels={filesLabels}
-              labels={labels.home}
-              mcpCatalog={mcpCatalog}
+            <PackageComposition
+              bom={bom}
+              fileCount={draftFiles.length}
+              filesEditor={
+                <form action={saveAction} className="grid min-h-0 gap-3">
+                  <PackageFilesEditor
+                    disabled={readOnly}
+                    files={draftFiles}
+                    initialSelectedPath={PACKAGE_MANIFEST_FILENAME}
+                    kindLabels={fileKindLabels}
+                    labels={filesLabels}
+                    mcpCatalog={mcpCatalog}
+                    onFilesChange={handleDraftFilesChange}
+                  />
+                  {readOnly ? null : (
+                    <button
+                      className="justify-self-start rounded-md border border-amber bg-amber px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-white hover:bg-amber-2"
+                      data-testid="composition-files-save"
+                      type="submit"
+                    >
+                      {labels.home.save}
+                    </button>
+                  )}
+                </form>
+              }
               name={identity.project}
               packageId={packageId}
               readOnly={readOnly}
-              saveAction={saveAction}
-              onFilesChange={handleDraftFilesChange}
             />
           ) : (
             <FlowEditorTabs

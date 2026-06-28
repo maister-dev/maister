@@ -215,6 +215,10 @@
     "ambiguousTitle": "Multiple packages share this name",
     "ambiguousHint": "Pick the source you mean.",
     "openInStudio": "Open in Studio",
+    "composition": {
+      "selectHint": "Select an item to view it.",
+      "notFound": "This item is no longer present."
+    },
     "viewer": {
       "tabFlows": "Flows",
       "tabSkills": "Skills",
@@ -222,6 +226,7 @@
       "tabSubagents": "Subagents",
       "tabMcps": "MCPs",
       "tabRules": "Rules",
+      "tabFiles": "Files",
       "tabEmpty": "This package ships nothing to browse.",
       "loadMore": "Load more",
       "page": "Page {page}",
@@ -352,9 +357,6 @@
       "crumbLocal": "Local",
       "endEdit": "End edit",
       "home": {
-        "orientation": "Package home — edit the manifest below, open a flow on the canvas, or pick a file to edit.",
-        "flowsHeading": "Flows",
-        "noFlows": "No flows yet.",
         "save": "Save changes"
       },
       "tabAi": "AI",
