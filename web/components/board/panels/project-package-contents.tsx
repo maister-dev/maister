@@ -38,7 +38,7 @@ export function ProjectPackageContents({
 
   return (
     <section className="mb-6 rounded-[16px] border border-line bg-paper p-6">
-      <h3 className="mb-4 m-0 font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute">
+      <h3 className="m-0 mb-4 font-mono text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute">
         {tPackages("contentsTitle")}
       </h3>
       <div className="flex flex-col gap-6">
@@ -100,7 +100,7 @@ export function ProjectPackageContents({
               ) : null}
 
               {countParts.length > 0 ? (
-                <p className="mt-3 m-0 font-mono text-[11.5px] text-mute">
+                <p className="m-0 mt-3 font-mono text-[11.5px] text-mute">
                   {countParts.join(" · ")}
                 </p>
               ) : null}

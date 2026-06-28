@@ -27,6 +27,7 @@ export type ProjectLocalPackageView = {
 export async function getProjectLocalPackages(
   projectId: string,
 ): Promise<ProjectLocalPackageView[]> {
+  // FIXME(any): drizzle dialect-union getDb() (matches lib/queries/packages.ts).
   const db = getDb() as any;
   const rows = await db
     .select()
