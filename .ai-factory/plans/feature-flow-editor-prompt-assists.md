@@ -436,7 +436,7 @@ This phase ships the only runtime change and lands BEFORE the editor inserts the
 
 ### Phase 1 - Pure Variable Catalog and Prompt Analysis
 
-- [ ] **T1.1 - RED: template variable catalog tests.**
+- [x] **T1.1 - RED: template variable catalog tests.**
   - Add failing unit tests in
     `web/lib/flows/editor/__tests__/template-variable-catalog.test.ts`.
   - Cover:
@@ -482,7 +482,7 @@ This phase ships the only runtime change and lands BEFORE the editor inserts the
   - Verify RED:
     `pnpm --filter maister-web exec vitest run --project unit lib/flows/editor/__tests__/template-variable-catalog.test.ts`.
 
-- [ ] **T1.2 - GREEN: implement `template-variable-catalog.ts`.**
+- [x] **T1.2 - GREEN: implement `template-variable-catalog.ts`.**
   - Create `web/lib/flows/editor/template-variable-catalog.ts`.
   - Export typed entries such as:
     - `TemplateVariablePath`
@@ -525,7 +525,7 @@ This phase ships the only runtime change and lands BEFORE the editor inserts the
   - Refactor checkpoint: remove duplication only inside this helper and adjacent
     test fixtures.
 
-- [ ] **T1.3 - RED: prompt template token warning tests.**
+- [x] **T1.3 - RED: prompt template token warning tests.**
   - Add failing tests for a pure scanner in
     `web/lib/flows/editor/__tests__/template-variable-usage.test.ts`.
   - Cover:
@@ -550,7 +550,7 @@ This phase ships the only runtime change and lands BEFORE the editor inserts the
   - Verify RED:
     `pnpm --filter maister-web exec vitest run --project unit lib/flows/editor/__tests__/template-variable-usage.test.ts`.
 
-- [ ] **T1.4 - GREEN: implement prompt template usage analysis.**
+- [x] **T1.4 - GREEN: implement prompt template usage analysis.**
   - Implement `analyzeTemplateVariableUsage(prompt, catalog)` in the same
     editor helper area.
   - Keep warnings non-blocking. Runtime strict Mustache remains the hard gate.
