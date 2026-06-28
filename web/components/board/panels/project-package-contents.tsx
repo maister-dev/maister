@@ -1,6 +1,5 @@
 "use client";
 
-import type { ElementCardLabels } from "@/components/studio/element-card";
 import type { ProjectPackageContentView } from "@/lib/queries/project-package-contents";
 import type { ReactElement } from "react";
 
@@ -29,11 +28,6 @@ export function ProjectPackageContents({
 
   if (contents.length === 0) return null;
 
-  const cardLabels: ElementCardLabels = {
-    view: t("viewer.view"),
-    fork: t("viewer.fork"),
-    forkPhase2Hint: t("viewer.forkPhase2Hint"),
-  };
   const graphLabels = buildGraphLabels(tWorkbench);
 
   return (
@@ -92,7 +86,7 @@ export function ProjectPackageContents({
                       flow={flow}
                       graphLabels={graphLabels}
                       href={`/projects/${slug}/packages/${encodeURIComponent(flow.id)}`}
-                      labels={cardLabels}
+                      studioHref={`/studio/packages/${encodeURIComponent(pkg.packageName)}/flows/${encodeURIComponent(flow.id)}`}
                       t={t}
                     />
                   ))}

@@ -11,6 +11,7 @@ import type {
 import type { PackageVersion } from "@/lib/studio/group-packages";
 import type { ReactElement, ReactNode } from "react";
 
+import { ArrowTopRightOnSquareIcon } from "@heroicons/react/24/outline";
 import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -406,13 +407,16 @@ function hasFlowFrontmatter(frontmatter: PackageBomFlowFrontmatter): boolean {
 export function FlowPreviewCard({
   flow,
   href,
-  labels,
+  studioHref,
   graphLabels,
   t,
 }: {
   flow: PackageBomFlow;
   href: string;
-  labels: ElementCardLabels;
+  // When set, a right-aligned "Open in Studio" icon link is shown next to the
+  // title (the project packages tab passes the Studio flow URL; inside Studio
+  // itself it is omitted, since the title already links there).
+  studioHref?: string;
   graphLabels: FlowGraphViewLabels;
   t: TFn;
 }): ReactElement {
@@ -426,20 +430,35 @@ export function FlowPreviewCard({
       data-testid="flow-preview-card"
     >
       <div className="flex min-w-0 flex-col gap-3">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <h4 className="m-0 text-[16px] font-semibold leading-tight text-ink">
-              {title}
-            </h4>
-            {flow.engine ? (
-              <span className="rounded-full border border-line bg-ivory px-2 py-px font-mono text-[10px] uppercase tracking-[0.06em] text-mute">
-                {flow.engine}
-              </span>
-            ) : null}
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h4 className="m-0 text-[16px] font-semibold leading-tight text-ink">
+                <Link className="hover:underline" href={href}>
+                  {title}
+                </Link>
+              </h4>
+              {flow.engine ? (
+                <span className="rounded-full border border-line bg-ivory px-2 py-px font-mono text-[10px] uppercase tracking-[0.06em] text-mute">
+                  {flow.engine}
+                </span>
+              ) : null}
+            </div>
+            <p className="mt-1 truncate font-mono text-[11px] text-mute">
+              {flow.id}
+            </p>
           </div>
-          <p className="mt-1 truncate font-mono text-[11px] text-mute">
-            {flow.id}
-          </p>
+          {studioHref ? (
+            <Link
+              aria-label={t("openInStudio")}
+              className="inline-flex shrink-0 items-center rounded-[8px] border border-line bg-ivory p-1.5 text-mute transition-colors hover:border-amber hover:text-ink"
+              data-testid="flow-card-open-in-studio"
+              href={studioHref}
+              title={t("openInStudio")}
+            >
+              <ArrowTopRightOnSquareIcon className="h-4 w-4" />
+            </Link>
+          ) : null}
         </div>
 
         {frontmatter.summary ? (
@@ -518,13 +537,6 @@ export function FlowPreviewCard({
             </p>
           )}
         </div>
-
-        <Link
-          className="inline-flex w-fit rounded-[10px] border border-line bg-ivory px-3 py-1.5 text-[12.5px] font-semibold text-ink transition-colors hover:border-amber"
-          href={href}
-        >
-          {labels.view}
-        </Link>
       </div>
 
       <div className="min-w-0">
@@ -596,7 +608,6 @@ function buildCards({
             flow={flow}
             graphLabels={graphLabels}
             href={`${basePath}/flows/${encodeURIComponent(flow.id)}`}
-            labels={labels}
             t={t}
           />
         ));

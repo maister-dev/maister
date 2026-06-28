@@ -12,8 +12,18 @@ vi.mock("@/components/studio/package-detail", async (importOriginal) => {
 
   return {
     ...actual,
-    FlowPreviewCard: ({ href }: { href: string }) =>
-      createElement("a", { "data-testid": "flow-card", href }, "flow"),
+    FlowPreviewCard: ({
+      href,
+      studioHref,
+    }: {
+      href: string;
+      studioHref?: string;
+    }) =>
+      createElement(
+        "a",
+        { "data-testid": "flow-card", "data-studio-href": studioHref, href },
+        "flow",
+      ),
   };
 });
 
@@ -55,6 +65,10 @@ describe("ProjectPackageContents", () => {
     expect(markup).toContain("contentsTitle");
     expect(markup).toContain("/studio/packages/aif");
     expect(markup).toContain("/projects/demo/packages/dev");
+    // Each flow card also carries the Studio flow URL (right-aligned icon link).
+    expect(markup).toContain(
+      'data-studio-href="/studio/packages/aif/flows/dev"',
+    );
     // Non-zero kinds only, joined " · ".
     expect(markup).toContain("3 countSkills");
     expect(markup).toContain("2 countAgents");
