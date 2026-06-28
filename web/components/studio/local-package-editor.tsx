@@ -36,6 +36,7 @@ import {
   renameLabels,
 } from "@/components/studio/package-composition";
 import { SkillScreen } from "@/components/studio/skill-screen";
+import { FilesManager } from "@/components/studio/files-manager";
 import { LocalPackageDiffDrawer } from "@/components/studio/local-package-diff-drawer";
 import {
   ChangeReviewDialog,
@@ -838,26 +839,46 @@ export function LocalPackageEditor({
                 draftFiles={draftFiles}
                 fileCount={draftFiles.length}
                 filesEditor={
-                  <form action={saveAction} className="grid min-h-0 gap-3">
-                    <PackageFilesEditor
-                      disabled={readOnly}
-                      files={draftFiles}
-                      initialSelectedPath={PACKAGE_MANIFEST_FILENAME}
-                      kindLabels={fileKindLabels}
-                      labels={filesLabels}
-                      mcpCatalog={mcpCatalog}
-                      onFilesChange={handleDraftFilesChange}
+                  <div className="flex flex-col gap-3">
+                    <FilesManager
+                      draftFiles={draftFiles}
+                      labels={{
+                        moveTitle: tStudio("composition.files.moveTitle"),
+                        moveHint: tStudio("composition.files.moveHint"),
+                        root: tStudio("composition.files.root"),
+                        newFolder: tStudio("composition.files.newFolder"),
+                        add: tStudio("composition.files.add"),
+                        errorConflict: tStudio(
+                          "composition.files.errorConflict",
+                        ),
+                        errorPrecondition: tStudio(
+                          "composition.files.errorPrecondition",
+                        ),
+                      }}
+                      readOnly={readOnly}
+                      onDraftFilesChange={handleDraftFilesChange}
                     />
-                    {readOnly ? null : (
-                      <button
-                        className="justify-self-start rounded-md border border-amber bg-amber px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-white hover:bg-amber-2"
-                        data-testid="composition-files-save"
-                        type="submit"
-                      >
-                        {labels.home.save}
-                      </button>
-                    )}
-                  </form>
+                    <form action={saveAction} className="grid min-h-0 gap-3">
+                      <PackageFilesEditor
+                        disabled={readOnly}
+                        files={draftFiles}
+                        initialSelectedPath={PACKAGE_MANIFEST_FILENAME}
+                        kindLabels={fileKindLabels}
+                        labels={filesLabels}
+                        mcpCatalog={mcpCatalog}
+                        onFilesChange={handleDraftFilesChange}
+                      />
+                      {readOnly ? null : (
+                        <button
+                          className="justify-self-start rounded-md border border-amber bg-amber px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-white hover:bg-amber-2"
+                          data-testid="composition-files-save"
+                          type="submit"
+                        >
+                          {labels.home.save}
+                        </button>
+                      )}
+                    </form>
+                  </div>
                 }
                 filesLabels={filesLabels}
                 mcpCatalog={mcpCatalog}

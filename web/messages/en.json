@@ -223,6 +223,16 @@
         "confirm": "Save name",
         "cancel": "Cancel"
       },
+      "files": {
+        "moveTitle": "Move",
+        "moveHint": "Pick a file, then a destination folder (or drag a file onto one).",
+        "root": "(root)",
+        "newFolder": "New folder",
+        "add": "Add",
+        "move": "Move here",
+        "errorConflict": "A file already exists at the destination.",
+        "errorPrecondition": "Cannot move a folder into itself."
+      },
       "create": {
         "open": "Add",
         "name": "Name",

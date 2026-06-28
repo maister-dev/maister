@@ -1,6 +1,8 @@
 import type { AuthoredFlowPackageFile } from "@/lib/catalog/authored-types";
 import type { PackageBom } from "@/lib/queries/package-bom";
 
+import { classifyPackageFilePath } from "@/lib/flows/editor/package-file-tree";
+
 // Pure, client-safe helpers for the tabbed composition view (ADR-115). NO
 // `server-only`, NO `node:*` — imported by the `"use client"` PackageComposition
 // and unit-tested directly. Routing + tab-resolution logic lives here so the
@@ -134,6 +136,96 @@ export function mcpStem(relPath: string): string {
   const base = relPath.split("/").pop() ?? relPath;
 
   return base.replace(/\.ya?ml$/, "");
+}
+
+function basename(path: string): string {
+  return path.slice(path.lastIndexOf("/") + 1);
+}
+
+function isFolderPath(
+  files: ReadonlyArray<AuthoredFlowPackageFile>,
+  path: string,
+): boolean {
+  return files.some((f) => f.path.startsWith(`${path}/`));
+}
+
+export type MoveResult =
+  | { ok: true; files: AuthoredFlowPackageFile[] }
+  | { ok: false; code: "CONFLICT" | "PRECONDITION" };
+
+// Move a file OR a folder (by prefix rewrite) into `targetFolder` (`""` = root)
+// on the flat draft list (ADR-115 P7, D7). Folders materialize implicitly from
+// the rewritten paths — no sentinel. Rejects a destination collision or a folder
+// moved into its own subtree; a no-op move returns the draft unchanged.
+export function movePathInDraft(
+  files: ReadonlyArray<AuthoredFlowPackageFile>,
+  source: string,
+  targetFolder: string,
+): MoveResult {
+  const base = basename(source);
+  const dest = targetFolder ? `${targetFolder}/${base}` : base;
+
+  if (isFolderPath(files, source)) {
+    const oldPrefix = `${source}/`;
+    const newPrefix = `${dest}/`;
+
+    if (newPrefix === oldPrefix) return { ok: true, files: [...files] };
+    if (newPrefix.startsWith(oldPrefix))
+      return { ok: false, code: "PRECONDITION" };
+    if (
+      files.some(
+        (f) => f.path.startsWith(newPrefix) && !f.path.startsWith(oldPrefix),
+      )
+    ) {
+      return { ok: false, code: "CONFLICT" };
+    }
+
+    return {
+      ok: true,
+      files: files.map((f) =>
+        f.path.startsWith(oldPrefix)
+          ? {
+              ...f,
+              path: newPrefix + f.path.slice(oldPrefix.length),
+              kind: classifyPackageFilePath(
+                newPrefix + f.path.slice(oldPrefix.length),
+              ),
+            }
+          : { ...f },
+      ),
+    };
+  }
+
+  if (dest === source) return { ok: true, files: [...files] };
+  if (files.some((f) => f.path === dest))
+    return { ok: false, code: "CONFLICT" };
+
+  return {
+    ok: true,
+    files: files.map((f) =>
+      f.path === source
+        ? { ...f, path: dest, kind: classifyPackageFilePath(dest) }
+        : { ...f },
+    ),
+  };
+}
+
+// Every folder path implied by the draft files (each file's ancestor dirs),
+// deduped + sorted, for the move-target picker + tree (ADR-115 P7).
+export function folderPathsOf(
+  files: ReadonlyArray<AuthoredFlowPackageFile>,
+): string[] {
+  const folders = new Set<string>();
+
+  for (const file of files) {
+    const segs = file.path.split("/");
+
+    for (let i = 1; i < segs.length; i += 1) {
+      folders.add(segs.slice(0, i).join("/"));
+    }
+  }
+
+  return [...folders].sort();
 }
 
 // The capability bundles present in the draft (`capability/<cap>/…`), for the

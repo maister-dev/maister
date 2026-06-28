@@ -7,11 +7,13 @@ import {
   compositionCounts,
   compositionTabHref,
   flowCanvasHref,
+  folderPathsOf,
   inlineSelectHref,
   isInlineKind,
   isMcpDescriptorPath,
   listCapabilities,
   mergeSkillFiles,
+  movePathInDraft,
   resolveCompositionTab,
   resolveInlineFilePath,
   scopeSkillFiles,
@@ -211,6 +213,72 @@ describe("listCapabilities (ADR-115 §P5)", () => {
 
     expect(listCapabilities(files)).toEqual(["aux", "core"]);
     expect(listCapabilities([])).toEqual([]);
+  });
+});
+
+describe("movePathInDraft + folderPathsOf (ADR-115 §P7, D7)", () => {
+  const files: AuthoredFlowPackageFile[] = [
+    { kind: "rule", path: "rules/r1.md", content: "a" },
+    { kind: "asset", path: "assets/logo.png", content: "" },
+    { kind: "skill", path: "skills/arch/SKILL.md", content: "s" },
+    { kind: "asset", path: "skills/arch/references/x.md", content: "r" },
+  ];
+
+  it("lists every implied folder, deduped + sorted", () => {
+    expect(folderPathsOf(files)).toEqual([
+      "assets",
+      "rules",
+      "skills",
+      "skills/arch",
+      "skills/arch/references",
+    ]);
+  });
+
+  it("moves a file into a target folder (rewrites path, reclassifies)", () => {
+    const res = movePathInDraft(files, "assets/logo.png", "skills/arch");
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.files.some((f) => f.path === "skills/arch/logo.png")).toBe(true);
+    expect(res.files.some((f) => f.path === "assets/logo.png")).toBe(false);
+  });
+
+  it("moves a file to root", () => {
+    const res = movePathInDraft(files, "rules/r1.md", "");
+
+    expect(res.ok && res.files.some((f) => f.path === "r1.md")).toBe(true);
+  });
+
+  it("moves a whole folder (all children) by prefix rewrite", () => {
+    const res = movePathInDraft(files, "skills/arch", "vendor");
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(
+      res.files.filter((f) => f.path.startsWith("vendor/arch/")),
+    ).toHaveLength(2);
+    expect(res.files.some((f) => f.path.startsWith("skills/arch/"))).toBe(
+      false,
+    );
+  });
+
+  it("rejects a destination collision with CONFLICT", () => {
+    const res = movePathInDraft(
+      [
+        { kind: "rule", path: "rules/a.md", content: "" },
+        { kind: "rule", path: "dst/a.md", content: "" },
+      ],
+      "rules/a.md",
+      "dst",
+    );
+
+    expect(res).toEqual({ ok: false, code: "CONFLICT" });
+  });
+
+  it("rejects moving a folder into its own subtree with PRECONDITION", () => {
+    const res = movePathInDraft(files, "skills/arch", "skills/arch/references");
+
+    expect(res).toEqual({ ok: false, code: "PRECONDITION" });
   });
 });
 
