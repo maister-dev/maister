@@ -15,6 +15,7 @@ import { ProjectTabs } from "@/components/board/project-tabs";
 import { ActivityPanel } from "@/components/board/panels/activity-panel";
 import { DeferredPanel } from "@/components/board/panels/deferred-panel";
 import { FlowPackagesPanel } from "@/components/board/panels/flow-packages-panel";
+import { ProjectLocalPackages } from "@/components/board/panels/project-local-packages";
 import { ProjectPackagesSection } from "@/components/board/panels/project-packages-section";
 import { IntegrationsPanel } from "@/components/board/panels/integrations-panel";
 import { McpPanel } from "@/components/board/panels/mcp-panel";
@@ -37,6 +38,7 @@ import {
   getAvailablePackageInstalls,
   getProjectPackageAttachments,
 } from "@/lib/queries/packages";
+import { getProjectLocalPackages } from "@/lib/queries/project-local-packages";
 import { getHitlInbox } from "@/lib/queries/hitl";
 import { getUnreadInboxCount } from "@/lib/queries/inbox";
 import {
@@ -454,6 +456,9 @@ export default async function ProjectBoardPage({
             canTrust={canTrustPackages}
             isAdmin={isAdmin}
             slug={slug}
+          />
+          <ProjectLocalPackages
+            localPackages={await getProjectLocalPackages(project.id)}
           />
           <FlowPackagesPanel
             isAdmin={isAdmin}
