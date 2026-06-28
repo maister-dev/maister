@@ -461,6 +461,51 @@ agent options, schema options, `onWriteSchemaFile`, and the existing
 6. The feature MUST NOT add an API route, DB migration, engine bump, SSE event,
    deployment setting, or `MaisterError` code.
 
+## Coding-node prompt assists (Designed)
+
+> **Status: Designed.** Spec:
+> [`.ai-factory/specs/feature-flow-editor-prompt-assists.md`](../../.ai-factory/specs/feature-flow-editor-prompt-assists.md).
+> This extends the existing `CapabilityComposer` prompt editor. It adds no API
+> route, DB migration, AsyncAPI/SSE event, deployment setting, or new
+> `MaisterError` code. The only runtime behavior change is the render-time
+> default operator in `renderStrict` (`{{ path ?? '' }}`, ADR-115).
+
+### Scope (Designed)
+
+- **Package-local skill autocomplete.** Editable `ai_coding`, `judge`, and
+  `orchestrator` node prompts continue to use the package-local skill catalog
+  derived from `skills/<slug>/SKILL.md`. Selected chips store
+  `@skill:<slug>`. Raw typed or pasted `/skill` and `$skill` are promoted to
+  `@skill:<slug>` only at the prompt blur/save commit boundary and only when the
+  token exactly matches a package-local skill. No YAML-wide normalizer is added.
+- **Node-aware `{{ }}` variable catalog.** Typing `{{` opens variable
+  suggestions sourced from the current manifest, selected node, package draft
+  schemas, declared structured outputs, form schemas, rework comments vars, and
+  upstream declared artifacts.
+- **Two-axis safety classification.** Suggestions carry graph availability
+  (`definite | conditional`) and value presence (`required | optional`).
+  Optional values include `executor.router`, non-`cli`/`check`
+  `steps.<id>.exitCode`, schema fields absent from JSON Schema `required`, and
+  `artifacts.<id>.uri`. `definite + required` inserts `{{ path }}`; every
+  `conditional` or `optional` suggestion inserts `{{ path ?? '' }}`.
+- **Warnings stay authoring-only.** Unknown/future/current-node variables and
+  bare optional/conditional references surface non-blocking editor warnings.
+  Runtime strict rendering remains the hard gate for bare `{{ path }}`.
+
+### Expectations (Designed)
+
+1. Future nodes and the selected node's own outputs MUST NOT be suggested for an
+   action prompt.
+2. Rework edges MUST include `rework.allowedTargets`; `decide`,
+   `output.result.on_mismatch`, and `finish.human.decisions` route through
+   matching `transitions` outcomes.
+3. Legacy linear `steps[]` manifests MUST degrade to a predecessor chain rather
+   than throwing in the editor.
+4. Schema refs MUST resolve only from package draft files under root
+   `schemas/*.json`; invalid or missing schema files produce warnings.
+5. The hidden `flowYaml` value MUST still parse after skill and variable edits.
+6. Read-only viewer mounts MUST NOT fetch or compute edit-only catalogs.
+
 ## Studio redesign (Phase A IA + editable-local-package direction)
 
 > **Status: Phase A — IA & surfacing (Implemented).** Surface SSOT: [`../screens/studio/README.md`](../screens/studio/README.md).

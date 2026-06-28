@@ -140,6 +140,7 @@
 | [ADR-112](#adr-112-triager-agent--duplicate_offlagged-dedup-substrate-auto_launch_triaged-tick-flowrunner-discovery-no-silent-stall-guards) | Triager agent — duplicate_of/flagged dedup substrate, auto_launch_triaged tick, flow/runner discovery, no-silent-stall guards | Accepted | 2026-06-25 |
 | [ADR-113](#adr-113-pr-to-source-for-local-packages--trusted-source-picker--stable-publish-branch) | PR-to-source for local packages — trusted-source picker + stable publish branch (M39 Stream B) | Accepted | 2026-06-25 |
 | [ADR-114](#adr-114-unified-flow-runner-config-first-class-sessions-per-project-connect-time-bindings-and-run_sessions-as-the-sole-run-runner-source-of-truth) | Unified Flow runner config, first-class sessions, per-project connect-time bindings, `run_sessions` sole source of truth, engine 2.0.0 (M42) | Accepted | 2026-06-26 |
+| [ADR-115](#adr-115-strict-template-default-operator-for-prompt-authoring) | Strict template default operator for prompt authoring | Accepted | 2026-06-28 |
 
 ---
 
@@ -9172,6 +9173,50 @@ never baked into the git artifact.
 ADR **114**, migration **0080** — all reserved at HEAD `fa68deec`. If a parallel
 branch lands 114/`0080` first, Phase 7 renumbers (the ADR body, the Index row, the
 migration file + `_journal.json` entry, and every `ADR-114`/`0080` cross-reference).
+
+---
+
+### ADR-115: Strict template default operator for prompt authoring
+
+**Date:** 2026-06-28
+**Status:** Accepted
+**Context:** Flow Studio prompt assists need to show authors variables that are
+available at the selected node. Graph availability alone is insufficient because
+`renderStrict` throws when a key is missing or present-but-`undefined`.
+Legitimate runtime values such as `executor.router`, non-CLI/check
+`steps.<id>.exitCode`, JSON-Schema optional fields, and `artifacts.<id>.uri` may
+be absent even when their producer ran. Suggesting those as bare
+`{{ path }}` variables would create launch-time `CONFIG` failures.
+
+**Decision:** Keep bare Mustache tags strict and add a single render-time default
+operator: `{{ <dotpath> ?? <quoted-string-literal> }}`. If the dot path resolves,
+the value is rendered. If the path is missing or resolves to `undefined`, the
+literal is rendered and no `CONFIG` error is thrown. The editor inserts bare
+`{{ path }}` only for `definite + required` variables and inserts
+`{{ path ?? '' }}` for `conditional` or `optional` variables. The operator is
+implemented in `web/lib/flows/templating.ts` and documented in `docs/flow-dsl.md`.
+
+**Consequences:**
+- Prompt authors get safe autocomplete for optional context, optional schema
+  fields, and conditional predecessors without weakening typo protection.
+- Existing prompts are byte-identical: no prompt currently uses `??`, and bare
+  `{{ path }}` remains strict.
+- No `compat.engine_min` floor is required. The feature is a render-time additive
+  behavior, matching ADR-091's precedent for launch/render-time additions that do
+  not change manifest shape or compile semantics.
+- No new `MaisterError` code is added; the guarded form removes an existing
+  throw, while the bare form keeps throwing `CONFIG`.
+
+**Alternatives Considered:**
+- **Omit optional variables from suggestions:** rejected because values such as
+  `executor.router`, optional schema fields, and artifact URIs are legitimate
+  authoring needs.
+- **Render all missing variables as empty strings:** rejected because it destroys
+  the current strict typo-protection contract.
+- **Mustache sections for presence checks:** rejected because the strict proxy
+  throws before a missing section can behave like an ordinary Mustache guard.
+- **Full expression language:** rejected as too broad; string-literal defaults
+  solve the prompt-assist need without changing the DSL shape.
 
 ---
 

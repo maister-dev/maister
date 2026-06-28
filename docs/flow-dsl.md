@@ -1399,6 +1399,15 @@ Templates use Mustache strict mode (`mustache@4`). Undefined paths throw
 rendering as empty string. HTML escaping is disabled — prompts/commands
 are not HTML.
 
+**Default operator (Designed — ADR-115).** Prompt authors may guard values that
+can legitimately be absent with `{{ <dotpath> ?? '<literal>' }}` or
+`{{ <dotpath> ?? "<literal>" }}`. The guarded form renders the resolved value
+when present and the quoted literal when the path is missing or present-but-
+`undefined`; it never throws for that absence. Bare `{{ <dotpath> }}` remains
+strict and still throws `CONFIG` on missing/undefined values. The operator is
+render-time only, does not change the manifest shape, and does not require an
+engine-floor bump.
+
 Context paths available inside templates:
 
 | path                     | source                                                                                          |
@@ -1410,20 +1419,24 @@ Context paths available inside templates:
 | `run.id`                 | `runs.id`                                                                                       |
 | `run.attemptNumber`      | mirrors `task.attemptNumber` until run-level attempts land                                      |
 | `run.projectSlug`        | `projects.slug`                                                                                 |
-| `runner.id`              | Resolved platform ACP runner id                                                                 |
-| `runner.capabilityAgent` | Adapter-registry identity, e.g. `claude` or `codex`                                             |
-| `runner.model`           | Snapshotted runner model label                                                                  |
-| `runner.providerKind`    | Snapshotted provider kind                                                                       |
-| `runner.resolutionTier`  | Launch override, step target, project Flow, platform Flow, project default, or platform default |
+| `executor.id`            | Resolved platform ACP runner id                                                                 |
+| `executor.agent`         | Adapter-registry identity, e.g. `claude` or `codex`                                             |
+| `executor.model`         | Snapshotted runner model label                                                                  |
+| `executor.router`        | Optional runner router, e.g. `ccr`                                                              |
 | `steps.<id>.output`      | `node_attempts.stdout` (highest attempt), `step_runs.stdout` fallback, truncated to 8 KiB       |
 | `steps.<id>.vars.<name>` | `node_attempts.vars` jsonb (highest attempt), `step_runs.vars` fallback                         |
 | `steps.<id>.exitCode`    | `node_attempts.exit_code` (highest attempt), `step_runs.exit_code` fallback                     |
 | `env.<KEY>`              | filtered process.env (see below)                                                                |
+| `artifacts.<id>.kind`    | current artifact instance kind                                                                  |
+| `artifacts.<id>.uri`     | current artifact locator URI; optional, use `??` if it may be absent                            |
+| `artifacts.<id>.validity` | artifact validity (`current`, `stale`, etc.)                                                    |
+| `artifacts.<id>.nodeId`  | producing node id; optional, use `??` if it may be absent                                       |
 
 Highest-attempt-wins: when a node has been retried (or reworked, M11a),
 `steps.<id>` resolves to the highest-`attempt` `node_attempts` row, falling back
 to `step_runs` for legacy runs that predate the ledger
 ([ADR-027](decisions.md#adr-027-append-only-node_attempts-run-ledger)).
+Current templates use `executor.*`; `runner.*` is not a template-context alias.
 
 ## env whitelist + secret blocklist
 

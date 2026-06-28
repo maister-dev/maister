@@ -217,6 +217,15 @@ controls; the persisted `flow.yaml` shapes are unchanged.
   `CapabilityComposer`; typing `/` offers package skills and inserts a canonical
   `@skill:<slug>` token (the runtime adapts the wire form per runner). A package
   viewer with no catalog degrades to a plain read-only textarea.
+- **`{{ }}` variable assists (Designed)** — editable coding-node prompts open a
+  variable picker when the author types `{{` or uses the compact `{}` affordance.
+  Suggestions are scoped to the selected node and show static globals, previous
+  step output/vars, structured-output/form-schema fields, rework comments vars,
+  and upstream artifacts. Each row distinguishes availability (`definite` /
+  `conditional`) from value presence (`required` / `optional`); optional or
+  conditional values insert the guarded `{{ path ?? '' }}` form. Unknown paths
+  and bare optional references render non-blocking warnings in the prompt
+  surface. This slice adds no route, DB migration, or new error code.
 
 The **AI assistant** (a right-hand drawer opened by the top-bar "AI" toggle,
 mutually exclusive with the node-properties inspector) mirrors this: its
@@ -235,6 +244,9 @@ is authored as a first-class node — see
   only the three enum values; list fields add and remove rows.
 - The node prompt composer stores `@skill:<slug>`; an existing plain-text prompt
   renders unchanged until a token is inserted.
+- Designed prompt-variable insertion uses `{{ path }}` only for
+  definite-required values; conditional or optional suggestions insert
+  `{{ path ?? '' }}`.
 - Read-only viewer mounts degrade to text/chips with no fetch.
 - EN and RU labels exist for every new multiselect, string-list, and composer
   control.
