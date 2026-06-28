@@ -10,6 +10,7 @@ import {
   inlineSelectHref,
   isInlineKind,
   isMcpDescriptorPath,
+  listCapabilities,
   mergeSkillFiles,
   resolveCompositionTab,
   resolveInlineFilePath,
@@ -196,6 +197,20 @@ describe("resolveInlineFilePath (ADR-115 §P3)", () => {
 
   it("returns null for an unknown id", () => {
     expect(resolveInlineFilePath("rules", "ghost.md", bom, [])).toBeNull();
+  });
+});
+
+describe("listCapabilities (ADR-115 §P5)", () => {
+  it("returns the distinct sorted capability bundles in the draft", () => {
+    const files: AuthoredFlowPackageFile[] = [
+      { kind: "subagent", path: "capability/core/agents/a.md", content: "" },
+      { kind: "subagent", path: "capability/aux/agents/b.md", content: "" },
+      { kind: "asset", path: "capability/core/skills/s/SKILL.md", content: "" },
+      { kind: "rule", path: "rules/r.md", content: "" },
+    ];
+
+    expect(listCapabilities(files)).toEqual(["aux", "core"]);
+    expect(listCapabilities([])).toEqual([]);
   });
 });
 

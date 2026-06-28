@@ -217,7 +217,25 @@
     "openInStudio": "Open in Studio",
     "composition": {
       "selectHint": "Select an item to view it.",
-      "notFound": "This item is no longer present."
+      "notFound": "This item is no longer present.",
+      "create": {
+        "open": "Add",
+        "name": "Name",
+        "capability": "Capability",
+        "create": "Create",
+        "cancel": "Cancel",
+        "errorConflict": "That name already exists.",
+        "errorInvalid": "Invalid name.",
+        "errorConfig": "The manifest is invalid — fix it first.",
+        "kind": {
+          "flow": "Flow",
+          "skill": "Skill",
+          "subagent": "Subagent",
+          "agent": "Agent",
+          "mcp": "MCP",
+          "rule": "Rule"
+        }
+      }
     },
     "viewer": {
       "tabFlows": "Flows",

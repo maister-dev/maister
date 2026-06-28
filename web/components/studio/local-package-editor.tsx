@@ -559,6 +559,25 @@ export function LocalPackageEditor({
     void runSave(formData);
   }, [draftFiles, initialTitle, runSave]);
 
+  // Create = scaffold → save → navigate (ADR-115 P5). The scaffolded files are
+  // passed explicitly (not via state, which has not re-rendered yet) so the save
+  // persists them BEFORE navigating to the target editor, which reads from disk.
+  const createArtifact = useCallback(
+    (next: AuthoredFlowPackageFile[], navigate: string): void => {
+      setDraftFiles(next);
+      setPackageFilesDirty(true);
+
+      const formData = new FormData();
+
+      formData.set("packageFilesJson", packageFilesToSubmitValue(next));
+      formData.set("title", initialTitle);
+      void runSave(formData).then((ok) => {
+        if (ok) router.push(navigate);
+      });
+    },
+    [initialTitle, router, runSave],
+  );
+
   // The assistant edits files on DISK, so before each turn the unsaved editor
   // buffer (flow YAML + package files) is flushed there first — this replaces the
   // old "save before using the assistant" gate. A failed flush aborts the send.
@@ -827,6 +846,7 @@ export function LocalPackageEditor({
                 packageId={packageId}
                 readOnly={readOnly}
                 saveLabel={labels.home.save}
+                onCreateArtifact={createArtifact}
                 onDraftFilesChange={handleDraftFilesChange}
                 onSaveDraft={saveDraft}
               />

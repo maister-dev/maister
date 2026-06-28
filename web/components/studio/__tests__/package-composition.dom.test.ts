@@ -61,6 +61,47 @@ function mount(
   act(() => root.render(element));
 }
 
+function baseProps(
+  overrides: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    packageId: "pkg1",
+    name: "my-pkg",
+    bom,
+    fileCount: 1,
+    readOnly: false,
+    draftFiles: [{ kind: "rule", path: "rules/r1.md", content: "x" }],
+    filesLabels,
+    mcpCatalog: [],
+    saveLabel: "Save",
+    filesEditor: createElement("div"),
+    onDraftFilesChange: vi.fn(),
+    onSaveDraft: vi.fn(),
+    onCreateArtifact: vi.fn(),
+    ...overrides,
+  };
+}
+
+function setNativeValue(el: HTMLInputElement, value: string): void {
+  const desc = Object.getOwnPropertyDescriptor(
+    Object.getPrototypeOf(el),
+    "value",
+  );
+
+  desc?.set?.call(el, value);
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+function selectValue(el: HTMLSelectElement, value: string): void {
+  const desc = Object.getOwnPropertyDescriptor(
+    Object.getPrototypeOf(el),
+    "value",
+  );
+
+  desc?.set?.call(el, value);
+  el.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
 describe("PackageComposition inline Save (ADR-115 §P3)", () => {
   it("the inline Save button persists the draft via onSaveDraft", () => {
     nav.search = "tab=rules&sel=r1.md";
@@ -70,20 +111,7 @@ describe("PackageComposition inline Save (ADR-115 §P3)", () => {
     document.body.appendChild(container);
     mount(
       container,
-      createElement(PackageComposition, {
-        packageId: "pkg1",
-        name: "my-pkg",
-        bom,
-        fileCount: 1,
-        readOnly: false,
-        draftFiles: [{ kind: "rule", path: "rules/r1.md", content: "x" }],
-        filesLabels,
-        mcpCatalog: [],
-        saveLabel: "Save",
-        filesEditor: createElement("div"),
-        onDraftFilesChange: vi.fn(),
-        onSaveDraft,
-      } as never),
+      createElement(PackageComposition, baseProps({ onSaveDraft }) as never),
     );
 
     const saveBtn = container.querySelector<HTMLButtonElement>(
@@ -94,5 +122,115 @@ describe("PackageComposition inline Save (ADR-115 §P3)", () => {
     act(() => saveBtn?.click());
 
     expect(onSaveDraft).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("PackageComposition create (ADR-115 §P5)", () => {
+  it("scaffolds a rule and persists it via onCreateArtifact", () => {
+    nav.search = "tab=files";
+    const onCreateArtifact = vi.fn();
+    const container = document.createElement("div");
+
+    document.body.appendChild(container);
+    mount(
+      container,
+      createElement(
+        PackageComposition,
+        baseProps({ onCreateArtifact }) as never,
+      ),
+    );
+
+    act(() =>
+      container
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="composition-create-open"]',
+        )
+        ?.click(),
+    );
+
+    act(() =>
+      selectValue(
+        container.querySelector('[data-testid="composition-create-kind"]')!,
+        "rule",
+      ),
+    );
+
+    const nameInput = container.querySelector<HTMLInputElement>(
+      '[data-testid="composition-create-name"]',
+    );
+
+    expect(nameInput).not.toBeNull();
+    act(() => setNativeValue(nameInput as HTMLInputElement, "style"));
+    act(() =>
+      container
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="composition-create-submit"]',
+        )
+        ?.click(),
+    );
+
+    expect(onCreateArtifact).toHaveBeenCalledTimes(1);
+    const [files, navigate] = onCreateArtifact.mock.calls[0] as [
+      Array<{ path: string }>,
+      string,
+    ];
+
+    expect(files.some((f) => f.path === "rules/style.md")).toBe(true);
+    expect(navigate).toBe("/studio/edit/pkg1?tab=rules&sel=style");
+  });
+
+  it("shows a CONFLICT error and does not create on a colliding name", () => {
+    nav.search = "tab=files";
+    const onCreateArtifact = vi.fn();
+    const container = document.createElement("div");
+
+    document.body.appendChild(container);
+    mount(
+      container,
+      createElement(
+        PackageComposition,
+        baseProps({ onCreateArtifact }) as never,
+      ),
+    );
+
+    act(() =>
+      container
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="composition-create-open"]',
+        )
+        ?.click(),
+    );
+    // Default kind is "flow"; type the existing rule name as a rule instead.
+    const kindSelect = container.querySelector<HTMLSelectElement>(
+      '[data-testid="composition-create-kind"]',
+    );
+
+    if (kindSelect) {
+      const desc = Object.getOwnPropertyDescriptor(
+        Object.getPrototypeOf(kindSelect),
+        "value",
+      );
+
+      desc?.set?.call(kindSelect, "rule");
+      kindSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    act(() =>
+      setNativeValue(
+        container.querySelector('[data-testid="composition-create-name"]')!,
+        "r1",
+      ),
+    );
+    act(() =>
+      container
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="composition-create-submit"]',
+        )
+        ?.click(),
+    );
+
+    expect(onCreateArtifact).not.toHaveBeenCalled();
+    expect(
+      container.querySelector('[data-testid="composition-create-error"]'),
+    ).not.toBeNull();
   });
 });

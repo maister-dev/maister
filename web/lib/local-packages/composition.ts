@@ -136,6 +136,22 @@ export function mcpStem(relPath: string): string {
   return base.replace(/\.ya?ml$/, "");
 }
 
+// The capability bundles present in the draft (`capability/<cap>/…`), for the
+// subagent create picker — a new subagent must land in a capability (ADR-115 P5).
+export function listCapabilities(
+  files: ReadonlyArray<AuthoredFlowPackageFile>,
+): string[] {
+  const caps = new Set<string>();
+
+  for (const file of files) {
+    const match = /^capability\/([^/]+)\//.exec(file.path);
+
+    if (match) caps.add(match[1]);
+  }
+
+  return [...caps].sort();
+}
+
 // The working-dir prefix of a skill's nested subtree (skills have folders, so the
 // dedicated skill screen scopes the file navigator to this prefix — ADR-115 P4).
 export function skillSubtreePrefix(skillId: string): string {

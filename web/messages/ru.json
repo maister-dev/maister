@@ -217,7 +217,25 @@
     "openInStudio": "Открыть в Студии",
     "composition": {
       "selectHint": "Выберите элемент для просмотра.",
-      "notFound": "Этого элемента больше нет."
+      "notFound": "Этого элемента больше нет.",
+      "create": {
+        "open": "Добавить",
+        "name": "Имя",
+        "capability": "Capability",
+        "create": "Создать",
+        "cancel": "Отмена",
+        "errorConflict": "Такое имя уже существует.",
+        "errorInvalid": "Недопустимое имя.",
+        "errorConfig": "Манифест некорректен — сначала исправьте его.",
+        "kind": {
+          "flow": "Флоу",
+          "skill": "Навык",
+          "subagent": "Сабагент",
+          "agent": "Агент",
+          "mcp": "MCP",
+          "rule": "Правило"
+        }
+      }
     },
     "viewer": {
       "tabFlows": "Флоу",

@@ -7,6 +7,7 @@ import type { PackageBom } from "@/lib/queries/package-bom";
 import type { CompositionKind } from "@/lib/local-packages/composition";
 import type { ReactElement, ReactNode } from "react";
 
+import { useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 
@@ -32,11 +33,16 @@ import {
   flowCanvasHref,
   inlineSelectHref,
   isMcpDescriptorPath,
+  listCapabilities,
   resolveCompositionTab,
   resolveInlineFilePath,
   skillScreenHref,
   type CompositionTabId,
 } from "@/lib/local-packages/composition";
+import {
+  scaffoldArtifact,
+  type ScaffoldKind,
+} from "@/lib/local-packages/scaffold";
 
 const TAB_LABEL_KEY: Record<CompositionTabId, string> = {
   flows: "viewer.tabFlows",
@@ -86,6 +92,7 @@ export function PackageComposition({
   saveLabel,
   onDraftFilesChange,
   onSaveDraft,
+  onCreateArtifact,
 }: {
   packageId: string;
   name: string;
@@ -101,6 +108,11 @@ export function PackageComposition({
   saveLabel: string;
   onDraftFilesChange: (next: AuthoredFlowPackageFile[]) => void;
   onSaveDraft: () => void;
+  // Persist the scaffolded files then navigate (create = scaffold→save→refresh).
+  onCreateArtifact: (
+    files: AuthoredFlowPackageFile[],
+    navigate: string,
+  ) => void;
 }): ReactElement {
   const t = useTranslations("studio");
   const tWorkbench = useTranslations("workbench");
@@ -153,6 +165,14 @@ export function PackageComposition({
         <span className="rounded-full border border-line bg-ivory px-2 py-px font-mono text-[10px] uppercase tracking-[0.06em] text-mute">
           {t("localBadge")}
         </span>
+        {readOnly ? null : (
+          <CreateArtifactControl
+            draftFiles={draftFiles}
+            packageId={packageId}
+            t={t}
+            onCreateArtifact={onCreateArtifact}
+          />
+        )}
       </header>
 
       <PackageTabs
@@ -411,6 +431,157 @@ function InlineEditor({
           {saveLabel}
         </button>
       )}
+    </div>
+  );
+}
+
+const CREATE_KINDS: ScaffoldKind[] = [
+  "flow",
+  "skill",
+  "subagent",
+  "agent",
+  "mcp",
+  "rule",
+];
+
+// The global "+ Add <kind>" create control (ADR-115 P5). A kind whose tab is
+// hidden (empty) is still creatable here. A flow opens the canvas, a skill its
+// screen, the rest inline — after the scaffold is saved (create = scaffold →
+// save → refresh), so the navigated target reads it off disk.
+function CreateArtifactControl({
+  packageId,
+  draftFiles,
+  t,
+  onCreateArtifact,
+}: {
+  packageId: string;
+  draftFiles: AuthoredFlowPackageFile[];
+  t: TFn;
+  onCreateArtifact: (
+    files: AuthoredFlowPackageFile[],
+    navigate: string,
+  ) => void;
+}): ReactElement {
+  const [open, setOpen] = useState(false);
+  const [kind, setKind] = useState<ScaffoldKind>("flow");
+  const [name, setName] = useState("");
+  const capabilities = useMemo(
+    () => listCapabilities(draftFiles),
+    [draftFiles],
+  );
+  const [capability, setCapability] = useState(capabilities[0] ?? "");
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = (): void => {
+    const result = scaffoldArtifact({
+      kind,
+      name,
+      packageId,
+      draftFiles,
+      capability: kind === "subagent" ? capability : undefined,
+    });
+
+    if (!result.ok) {
+      setError(
+        result.code === "CONFLICT"
+          ? t("composition.create.errorConflict")
+          : result.code === "CONFIG"
+            ? t("composition.create.errorConfig")
+            : t("composition.create.errorInvalid"),
+      );
+
+      return;
+    }
+
+    setOpen(false);
+    setName("");
+    setError(null);
+    onCreateArtifact(result.files, result.navigate);
+  };
+
+  if (!open) {
+    return (
+      <button
+        className="ml-auto rounded-[10px] border border-line bg-ivory px-3 py-1.5 font-mono text-[11px] font-semibold text-ink transition-colors hover:border-amber"
+        data-testid="composition-create-open"
+        type="button"
+        onClick={() => setOpen(true)}
+      >
+        + {t("composition.create.open")}
+      </button>
+    );
+  }
+
+  return (
+    <div
+      className="ml-auto flex flex-wrap items-center gap-2"
+      data-testid="composition-create-form"
+    >
+      <select
+        aria-label={t("composition.create.open")}
+        className="min-h-[32px] rounded-md border border-line bg-paper px-2 font-mono text-[11px] text-ink"
+        data-testid="composition-create-kind"
+        value={kind}
+        onChange={(event) => setKind(event.target.value as ScaffoldKind)}
+      >
+        {CREATE_KINDS.map((k) => (
+          <option key={k} value={k}>
+            {t(`composition.create.kind.${k}`)}
+          </option>
+        ))}
+      </select>
+      <input
+        aria-label={t("composition.create.name")}
+        className="min-h-[32px] rounded-md border border-line bg-paper px-2 font-mono text-[11px] text-ink"
+        data-testid="composition-create-name"
+        placeholder={t("composition.create.name")}
+        value={name}
+        onChange={(event) => setName(event.target.value)}
+      />
+      {kind === "subagent" ? (
+        <input
+          aria-label={t("composition.create.capability")}
+          className="min-h-[32px] rounded-md border border-line bg-paper px-2 font-mono text-[11px] text-ink"
+          data-testid="composition-create-capability"
+          list="composition-capabilities"
+          placeholder={t("composition.create.capability")}
+          value={capability}
+          onChange={(event) => setCapability(event.target.value)}
+        />
+      ) : null}
+      <datalist id="composition-capabilities">
+        {capabilities.map((cap) => (
+          <option key={cap} value={cap} />
+        ))}
+      </datalist>
+      <button
+        className="min-h-[32px] rounded-md border border-amber bg-amber px-3 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-white hover:bg-amber-2"
+        data-testid="composition-create-submit"
+        type="button"
+        onClick={submit}
+      >
+        {t("composition.create.create")}
+      </button>
+      <button
+        className="min-h-[32px] rounded-md border border-line px-3 font-mono text-[11px] font-semibold text-mute hover:text-ink"
+        data-testid="composition-create-cancel"
+        type="button"
+        onClick={() => {
+          setOpen(false);
+          setError(null);
+        }}
+      >
+        {t("composition.create.cancel")}
+      </button>
+      {error ? (
+        <span
+          className="font-mono text-[10.5px] text-danger"
+          data-testid="composition-create-error"
+          role="alert"
+        >
+          {error}
+        </span>
+      ) : null}
     </div>
   );
 }
