@@ -5,6 +5,7 @@ import type {
 } from "@/lib/queries/flow-packages";
 import type { ReactElement } from "react";
 
+import { ArrowTopRightOnSquareIcon } from "@heroicons/react/24/outline";
 import { getTranslations } from "next-intl/server";
 import { notFound } from "next/navigation";
 import Link from "next/link";
@@ -15,6 +16,7 @@ import {
   CodeEditor,
   type CodeEditorKind,
 } from "@/components/flows/code-editor";
+import { FlowYamlDisclosure } from "@/components/flows/flow-yaml-disclosure";
 import {
   PackageForkButton,
   type ForkButtonLabels,
@@ -45,6 +47,7 @@ import {
 } from "@/lib/flows/graph/presentation-layout";
 import { buildGraphTopology } from "@/lib/queries/flow-graph-view";
 import { getFlowPackageDetail } from "@/lib/queries/flow-packages";
+import { getProjectPackageAttachments } from "@/lib/queries/packages";
 import { getFlowRunnerBindingScope } from "@/lib/queries/project";
 
 interface PageProps {
@@ -192,6 +195,7 @@ export default async function FlowPackageViewerPage({
   const t = await getTranslations("packages");
   const tViewer = await getTranslations("packages.viewer");
   const tWorkbench = await getTranslations("workbench");
+  const tStudio = await getTranslations("studio");
 
   const headerLabels: PackageViewerHeaderLabels = {
     versionLabel: t("versionLabel"),
@@ -261,14 +265,37 @@ export default async function FlowPackageViewerPage({
       ? await getFlowRunnerBindingScope(detail.project.id, enabledRevisionId)
       : null;
 
+  // The package that owns this flow (its name is the Studio package ref), used
+  // to deep-link into the Studio flow viewer. Resolved from the project's
+  // attachments by which package's manifest declares this flow id.
+  const attachments = await getProjectPackageAttachments(detail.project.id);
+  const studioPackageName =
+    attachments.find((att) => att.flows.includes(flowRefId))?.packageName ??
+    null;
+  const studioFlowHref = studioPackageName
+    ? `/studio/packages/${encodeURIComponent(studioPackageName)}/flows/${encodeURIComponent(flowRefId)}`
+    : null;
+
   return (
     <div className="mx-auto w-full max-w-[1120px]">
-      <Link
-        className="mb-4 inline-flex font-mono text-[11px] font-semibold uppercase tracking-[0.08em] text-mute hover:text-ink"
-        href={`/projects/${slug}?tab=packages`}
-      >
-        {tViewer("backToPackages")}
-      </Link>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <Link
+          className="inline-flex font-mono text-[11px] font-semibold uppercase tracking-[0.08em] text-mute hover:text-ink"
+          href={`/projects/${slug}?tab=packages`}
+        >
+          {tViewer("backToPackages")}
+        </Link>
+        {studioFlowHref ? (
+          <Link
+            className="inline-flex items-center gap-1.5 rounded-[10px] border border-line bg-ivory px-3 py-1.5 text-[12.5px] font-semibold text-ink transition-colors hover:border-amber"
+            data-testid="open-flow-in-studio"
+            href={studioFlowHref}
+          >
+            {tStudio("openInStudio")}
+            <ArrowTopRightOnSquareIcon className="h-3.5 w-3.5" />
+          </Link>
+        ) : null}
+      </div>
 
       <PackageViewerHeader
         enablementState={dto.enablementState}
@@ -315,20 +342,21 @@ export default async function FlowPackageViewerPage({
           ) : (
             <>
               <section>
-                <h2 className="mb-3 font-sans text-[14px] font-bold tracking-[-0.01em] text-ink">
-                  {tViewer("flowYamlTitle")}
-                </h2>
                 {listing.flowYaml !== null ? (
-                  <CodeEditor
-                    readOnly
+                  <FlowYamlDisclosure
                     ariaLabel={tViewer("flowYamlTitle")}
-                    kind="flow"
+                    title={tViewer("flowYamlTitle")}
                     value={listing.flowYaml}
                   />
                 ) : (
-                  <PackageBundleMissingNotice
-                    message={tViewer("fileNotFound")}
-                  />
+                  <>
+                    <h2 className="mb-3 font-sans text-[14px] font-bold tracking-[-0.01em] text-ink">
+                      {tViewer("flowYamlTitle")}
+                    </h2>
+                    <PackageBundleMissingNotice
+                      message={tViewer("fileNotFound")}
+                    />
+                  </>
                 )}
               </section>
 
