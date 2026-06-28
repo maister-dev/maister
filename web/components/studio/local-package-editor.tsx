@@ -544,6 +544,16 @@ export function LocalPackageEditor({
     [runSave],
   );
 
+  // Persist the current draft file set without a form submit — used by the
+  // composition inline editors' Save action (ADR-115).
+  const saveDraft = useCallback((): void => {
+    const formData = new FormData();
+
+    formData.set("packageFilesJson", packageFilesToSubmitValue(draftFiles));
+    formData.set("title", initialTitle);
+    void runSave(formData);
+  }, [draftFiles, initialTitle, runSave]);
+
   // The assistant edits files on DISK, so before each turn the unsaved editor
   // buffer (flow YAML + package files) is flushed there first — this replaces the
   // old "save before using the assistant" gate. A failed flush aborts the send.
@@ -761,6 +771,7 @@ export function LocalPackageEditor({
           {flowPath === null ? (
             <PackageComposition
               bom={bom}
+              draftFiles={draftFiles}
               fileCount={draftFiles.length}
               filesEditor={
                 <form action={saveAction} className="grid min-h-0 gap-3">
@@ -784,9 +795,14 @@ export function LocalPackageEditor({
                   )}
                 </form>
               }
+              filesLabels={filesLabels}
+              mcpCatalog={mcpCatalog}
               name={identity.project}
               packageId={packageId}
               readOnly={readOnly}
+              saveLabel={labels.home.save}
+              onDraftFilesChange={handleDraftFilesChange}
+              onSaveDraft={saveDraft}
             />
           ) : (
             <FlowEditorTabs

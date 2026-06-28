@@ -1,3 +1,4 @@
+import type { AuthoredFlowPackageFile } from "@/lib/catalog/authored-types";
 import type { PackageBom } from "@/lib/queries/package-bom";
 
 // Pure, client-safe helpers for the tabbed composition view (ADR-115). NO
@@ -117,4 +118,48 @@ export function inlineSelectHref(
   id: string,
 ): string {
   return `/studio/edit/${packageId}?tab=${tab}&sel=${encodeURIComponent(id)}`;
+}
+
+// (ADR-115 §D6) MCP descriptors in a local working dir are authored as files
+// `mcps/<name>.yaml` (the McpTemplateEditor), NOT manifest-inline entries like an
+// installed package. `classifyPackageFilePath` returns "asset" for `mcps/`, so the
+// composition view + local BOM + editor-routing special-case the path here rather
+// than broadening the shared classifier (which feeds the installed reader).
+// Matches a DIRECT child of `mcps/` with a `.yaml`/`.yml` extension only.
+export function isMcpDescriptorPath(relPath: string): boolean {
+  return /^mcps\/[^/]+\.ya?ml$/.test(relPath);
+}
+
+export function mcpStem(relPath: string): string {
+  const base = relPath.split("/").pop() ?? relPath;
+
+  return base.replace(/\.ya?ml$/, "");
+}
+
+// Resolve the working-dir file path backing an inline-kind element. Single-file
+// kinds carry their path on the BOM card; an MCP's id maps to its `mcps/*.yaml`
+// file (found in the draft, or the canonical `mcps/<id>.yaml`).
+export function resolveInlineFilePath(
+  kind: CompositionKind,
+  id: string,
+  bom: PackageBom,
+  draftFiles: ReadonlyArray<AuthoredFlowPackageFile>,
+): string | null {
+  switch (kind) {
+    case "subagents":
+      return bom.subagents.find((s) => s.id === id)?.path ?? null;
+    case "agents":
+      return bom.platformAgents.find((a) => a.id === id)?.path ?? null;
+    case "rules":
+      return bom.rules.find((r) => r.id === id)?.path ?? null;
+    case "mcps": {
+      const file = draftFiles.find(
+        (f) => isMcpDescriptorPath(f.path) && mcpStem(f.path) === id,
+      );
+
+      return file?.path ?? `mcps/${id}.yaml`;
+    }
+    default:
+      return null;
+  }
 }

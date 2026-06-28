@@ -10,6 +10,7 @@ import {
   listInstalledPackageFiles,
   readInstalledPackageFile,
 } from "@/lib/flows/package-content";
+import { isMcpDescriptorPath, mcpStem } from "@/lib/local-packages/composition";
 import {
   PACKAGE_MANIFEST_FILENAME,
   parsePackageManifest,
@@ -21,26 +22,14 @@ import {
   type PackageSource,
 } from "@/lib/queries/package-bom";
 
+// Re-exported for existing importers/tests (the predicate is shared with the
+// client-safe composition helpers — ADR-115 §D6).
+export { isMcpDescriptorPath } from "@/lib/local-packages/composition";
+
 const log = pino({
   name: "local-packages/bom",
   level: process.env.LOG_LEVEL ?? "info",
 });
-
-// (ADR-115 §D6) MCP descriptors in a local working dir are authored as files
-// `mcps/<name>.yaml` (the McpTemplateEditor), NOT manifest-inline entries like an
-// installed package. `classifyPackageFilePath` returns "asset" for `mcps/`, so the
-// composition view + editor-routing special-case the path here rather than
-// broadening the shared classifier (which feeds the installed reader). Matches a
-// DIRECT child of `mcps/` with a `.yaml`/`.yml` extension only.
-export function isMcpDescriptorPath(relPath: string): boolean {
-  return /^mcps\/[^/]+\.ya?ml$/.test(relPath);
-}
-
-function mcpStem(relPath: string): string {
-  const base = relPath.split("/").pop() ?? relPath;
-
-  return base.replace(/\.ya?ml$/, "");
-}
 
 // (ADR-115 §D4) The install-time `collectInventory` (lib/packages/attach.ts)
 // walks a real pkgRoot; this is its file-list variant for the local source, where

@@ -8,7 +8,9 @@ import {
   flowCanvasHref,
   inlineSelectHref,
   isInlineKind,
+  isMcpDescriptorPath,
   resolveCompositionTab,
+  resolveInlineFilePath,
   skillScreenHref,
   visibleCompositionTabs,
 } from "@/lib/local-packages/composition";
@@ -133,5 +135,62 @@ describe("composition href builders (ADR-115 §P2 routing targets)", () => {
     expect(compositionTabHref("pkg1", "skills")).toBe(
       "/studio/edit/pkg1?tab=skills",
     );
+  });
+});
+
+describe("isMcpDescriptorPath (ADR-115 §D6)", () => {
+  it("matches a direct mcps/*.yaml|yml child only", () => {
+    expect(isMcpDescriptorPath("mcps/github.yaml")).toBe(true);
+    expect(isMcpDescriptorPath("mcps/github.yml")).toBe(true);
+    expect(isMcpDescriptorPath("mcps/nested/x.yaml")).toBe(false);
+    expect(isMcpDescriptorPath("mcps/readme.md")).toBe(false);
+  });
+});
+
+describe("resolveInlineFilePath (ADR-115 §P3)", () => {
+  const bom = bomOf({
+    subagents: [
+      { id: "sub1", path: "capability/c/agents/sub1.md", description: "" },
+    ],
+    platformAgents: [
+      {
+        id: "p1",
+        path: "maister-agents/p1.md",
+        description: "",
+        triggers: [],
+        riskTier: "",
+        workspace: "",
+      },
+    ],
+    rules: [{ id: "r1.md", path: "rules/r1.md" }],
+    mcps: [{ id: "github" }],
+  });
+
+  it("resolves single-file kinds from the BOM card path", () => {
+    expect(resolveInlineFilePath("subagents", "sub1", bom, [])).toBe(
+      "capability/c/agents/sub1.md",
+    );
+    expect(resolveInlineFilePath("agents", "p1", bom, [])).toBe(
+      "maister-agents/p1.md",
+    );
+    expect(resolveInlineFilePath("rules", "r1.md", bom, [])).toBe(
+      "rules/r1.md",
+    );
+  });
+
+  it("resolves an MCP id to its mcps/*.yaml file (draft, else canonical)", () => {
+    expect(
+      resolveInlineFilePath("mcps", "github", bom, [
+        { kind: "asset", path: "mcps/github.yml", content: "" },
+      ]),
+    ).toBe("mcps/github.yml");
+    // No draft file → canonical path.
+    expect(resolveInlineFilePath("mcps", "github", bom, [])).toBe(
+      "mcps/github.yaml",
+    );
+  });
+
+  it("returns null for an unknown id", () => {
+    expect(resolveInlineFilePath("rules", "ghost.md", bom, [])).toBeNull();
   });
 });

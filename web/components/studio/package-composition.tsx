@@ -1,5 +1,8 @@
 "use client";
 
+import type { AuthoredFlowPackageFile } from "@/lib/catalog/authored-types";
+import type { PackageFilesEditorLabels } from "@/components/flows/package-files-editor";
+import type { PlatformMcpCatalogEntry } from "@/lib/queries/platform-mcp-catalog";
 import type { PackageBom } from "@/lib/queries/package-bom";
 import type { CompositionKind } from "@/lib/local-packages/composition";
 import type { ReactElement, ReactNode } from "react";
@@ -7,6 +10,11 @@ import type { ReactElement, ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 
+import {
+  FrontmatterArtifactEditor,
+  type FrontmatterArtifactKind,
+} from "@/components/flows/artifact-editors/frontmatter-artifact-editor";
+import { McpTemplateEditor } from "@/components/flows/artifact-editors/mcp-template-editor";
 import {
   buildGraphLabels,
   FlowPreviewCard,
@@ -16,13 +24,16 @@ import {
   PackageTabs,
   type PackageTabDescriptor,
 } from "@/components/studio/package-tabs";
+import { upsertPackageFile } from "@/lib/flows/editor/package-files-draft";
 import {
   COMPOSITION_TAB_IDS,
   compositionCounts,
   compositionTabHref,
   flowCanvasHref,
   inlineSelectHref,
+  isMcpDescriptorPath,
   resolveCompositionTab,
+  resolveInlineFilePath,
   skillScreenHref,
   type CompositionTabId,
 } from "@/lib/local-packages/composition";
@@ -37,11 +48,31 @@ const TAB_LABEL_KEY: Record<CompositionTabId, string> = {
   files: "viewer.tabFiles",
 };
 
+// Local composition has small N — render every member (no pagination).
+const PACKAGE_TAB_PAGE_SIZE_LOCAL = 10_000;
+
+// The frontmatter-artifact kind each inline composition kind edits as (MCP is
+// dispatched separately to McpTemplateEditor, so its value here is unused).
+const FRONTMATTER_KIND_BY_COMPOSITION: Record<
+  CompositionKind,
+  FrontmatterArtifactKind
+> = {
+  subagents: "subagent",
+  agents: "agent_definition",
+  rules: "rule",
+  skills: "skill",
+  mcps: "rule",
+  flows: "rule",
+};
+
+type TFn = ReturnType<typeof useTranslations>;
+
 // The tabbed-by-kind composition landing for the local-package editor (ADR-115).
 // Reuses the installed viewer's PackageTabs + ElementCard + FlowPreviewCard over
 // the local BOM. Flows route to the canvas, skills to a dedicated screen, the
-// remaining kinds open inline (master-detail). Files is always present and hosts
-// the file-manager (`filesEditor` slot, owned by the parent which holds the draft).
+// remaining kinds open inline (master-detail: card list + side editor). Files is
+// always present and hosts the file-manager (`filesEditor` slot, owned by the
+// parent which holds the draft).
 export function PackageComposition({
   packageId,
   name,
@@ -49,7 +80,12 @@ export function PackageComposition({
   fileCount,
   readOnly,
   filesEditor,
-  inlineDetail,
+  draftFiles,
+  filesLabels,
+  mcpCatalog,
+  saveLabel,
+  onDraftFilesChange,
+  onSaveDraft,
 }: {
   packageId: string;
   name: string;
@@ -58,9 +94,13 @@ export function PackageComposition({
   readOnly: boolean;
   // The Files-tab content (the parent owns the editable draft + its editor).
   filesEditor: ReactNode;
-  // The inline editor panel for the selected element (Phase 3). When omitted, a
-  // read-only summary of the selected element is shown.
-  inlineDetail?: ReactNode;
+  // The draft file set + change/save callbacks for the inline editors.
+  draftFiles: AuthoredFlowPackageFile[];
+  filesLabels: PackageFilesEditorLabels;
+  mcpCatalog: PlatformMcpCatalogEntry[];
+  saveLabel: string;
+  onDraftFilesChange: (next: AuthoredFlowPackageFile[]) => void;
+  onSaveDraft: () => void;
 }): ReactElement {
   const t = useTranslations("studio");
   const tWorkbench = useTranslations("workbench");
@@ -90,12 +130,17 @@ export function PackageComposition({
     activeTab,
     bom,
     cardLabels,
+    draftFiles,
     filesEditor,
-    inlineDetail,
+    filesLabels,
+    mcpCatalog,
+    saveLabel,
     selectedId,
     readOnly,
     t,
     graphLabels: buildGraphLabels(tWorkbench),
+    onDraftFilesChange,
+    onSaveDraft,
   });
 
   return (
@@ -135,33 +180,38 @@ export function PackageComposition({
   );
 }
 
-// Local composition has small N — render every member (no pagination).
-const PACKAGE_TAB_PAGE_SIZE_LOCAL = 10_000;
-
-type TFn = ReturnType<typeof useTranslations>;
-
 function buildCompositionCards({
   packageId,
   activeTab,
   bom,
   cardLabels,
+  draftFiles,
   filesEditor,
-  inlineDetail,
+  filesLabels,
+  mcpCatalog,
+  saveLabel,
   selectedId,
   readOnly,
   t,
   graphLabels,
+  onDraftFilesChange,
+  onSaveDraft,
 }: {
   packageId: string;
   activeTab: CompositionTabId;
   bom: PackageBom;
   cardLabels: { view: string; fork: string; forkPhase2Hint: string };
+  draftFiles: AuthoredFlowPackageFile[];
   filesEditor: ReactNode;
-  inlineDetail?: ReactNode;
+  filesLabels: PackageFilesEditorLabels;
+  mcpCatalog: PlatformMcpCatalogEntry[];
+  saveLabel: string;
   selectedId: string | null;
   readOnly: boolean;
   t: TFn;
   graphLabels: ReturnType<typeof buildGraphLabels>;
+  onDraftFilesChange: (next: AuthoredFlowPackageFile[]) => void;
+  onSaveDraft: () => void;
 }): ReactNode {
   switch (activeTab) {
     case "files":
@@ -199,37 +249,59 @@ function buildCompositionCards({
         <InlineMasterDetail
           bom={bom}
           cardLabels={cardLabels}
-          inlineDetail={inlineDetail}
+          draftFiles={draftFiles}
+          filesLabels={filesLabels}
           kind={activeTab}
+          mcpCatalog={mcpCatalog}
           packageId={packageId}
+          readOnly={readOnly}
+          saveLabel={saveLabel}
           selectedId={selectedId}
           t={t}
+          onDraftFilesChange={onDraftFilesChange}
+          onSaveDraft={onSaveDraft}
         />
       );
   }
 }
 
 // Card-list + side editor for the inline kinds (subagents / agents / mcps /
-// rules). The card list links to `?sel=`; the detail panel renders the parent's
-// `inlineDetail` slot (the real editor, Phase 3) or a read-only summary.
+// rules). The card list links to `?sel=`; the detail panel renders the kind's
+// real editor wired to the draft (MCP → McpTemplateEditor; everything else →
+// FrontmatterArtifactEditor) plus a Save action.
 function InlineMasterDetail({
   packageId,
   kind,
   bom,
+  draftFiles,
+  filesLabels,
+  mcpCatalog,
+  readOnly,
+  saveLabel,
   selectedId,
   cardLabels,
-  inlineDetail,
   t,
+  onDraftFilesChange,
+  onSaveDraft,
 }: {
   packageId: string;
   kind: CompositionKind;
   bom: PackageBom;
+  draftFiles: AuthoredFlowPackageFile[];
+  filesLabels: PackageFilesEditorLabels;
+  mcpCatalog: PlatformMcpCatalogEntry[];
+  readOnly: boolean;
+  saveLabel: string;
   selectedId: string | null;
   cardLabels: { view: string; fork: string; forkPhase2Hint: string };
-  inlineDetail?: ReactNode;
   t: TFn;
+  onDraftFilesChange: (next: AuthoredFlowPackageFile[]) => void;
+  onSaveDraft: () => void;
 }): ReactElement {
   const items = inlineItems(kind, bom, t);
+  const selectedPath = selectedId
+    ? resolveInlineFilePath(kind, selectedId, bom, draftFiles)
+    : null;
 
   return (
     <div
@@ -252,19 +324,93 @@ function InlineMasterDetail({
         className="min-h-0 rounded-[12px] border border-line bg-ivory p-3"
         data-testid="composition-inline-detail"
       >
-        {inlineDetail ??
-          (selectedId ? (
-            <InlineSummary
-              item={items.find((i) => i.id === selectedId)}
-              selectedId={selectedId}
-              t={t}
-            />
-          ) : (
-            <p className="m-0 font-mono text-[11px] text-mute">
-              {t("composition.selectHint")}
-            </p>
-          ))}
+        {selectedPath ? (
+          <InlineEditor
+            draftFiles={draftFiles}
+            filePath={selectedPath}
+            filesLabels={filesLabels}
+            frontmatterKind={FRONTMATTER_KIND_BY_COMPOSITION[kind]}
+            mcpCatalog={mcpCatalog}
+            readOnly={readOnly}
+            saveLabel={saveLabel}
+            onDraftFilesChange={onDraftFilesChange}
+            onSaveDraft={onSaveDraft}
+          />
+        ) : (
+          <p className="m-0 font-mono text-[11px] text-mute">
+            {selectedId
+              ? t("composition.notFound")
+              : t("composition.selectHint")}
+          </p>
+        )}
       </div>
+    </div>
+  );
+}
+
+// The single-file inline editor: dispatches MCP descriptors to McpTemplateEditor
+// and every other artifact to FrontmatterArtifactEditor (kind inferred from the
+// path). `onChange` upserts the draft; Save persists through the parent.
+function InlineEditor({
+  filePath,
+  draftFiles,
+  filesLabels,
+  frontmatterKind,
+  mcpCatalog,
+  readOnly,
+  saveLabel,
+  onDraftFilesChange,
+  onSaveDraft,
+}: {
+  filePath: string;
+  draftFiles: AuthoredFlowPackageFile[];
+  filesLabels: PackageFilesEditorLabels;
+  frontmatterKind: FrontmatterArtifactKind;
+  mcpCatalog: PlatformMcpCatalogEntry[];
+  readOnly: boolean;
+  saveLabel: string;
+  onDraftFilesChange: (next: AuthoredFlowPackageFile[]) => void;
+  onSaveDraft: () => void;
+}): ReactElement {
+  const content =
+    draftFiles.find((file) => file.path === filePath)?.content ?? "";
+  const onChange = (next: string): void =>
+    onDraftFilesChange(upsertPackageFile(draftFiles, filePath, next));
+
+  return (
+    <div
+      className="flex flex-col gap-3"
+      data-testid="composition-inline-editor"
+    >
+      <div className="truncate font-mono text-[11px] text-mute">{filePath}</div>
+      {isMcpDescriptorPath(filePath) && filesLabels.mcp ? (
+        <McpTemplateEditor
+          catalog={mcpCatalog}
+          content={content}
+          fileName={filePath}
+          labels={filesLabels.mcp}
+          readOnly={readOnly}
+          onChange={onChange}
+        />
+      ) : (
+        <FrontmatterArtifactEditor
+          content={content}
+          kind={frontmatterKind}
+          labels={filesLabels.frontmatter}
+          readOnly={readOnly}
+          onChange={onChange}
+        />
+      )}
+      {readOnly ? null : (
+        <button
+          className="justify-self-start rounded-md border border-amber bg-amber px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-white hover:bg-amber-2"
+          data-testid="composition-inline-save"
+          type="button"
+          onClick={onSaveDraft}
+        >
+          {saveLabel}
+        </button>
+      )}
     </div>
   );
 }
@@ -304,39 +450,4 @@ function inlineItems(
     default:
       return [];
   }
-}
-
-function InlineSummary({
-  item,
-  selectedId,
-  t,
-}: {
-  item: InlineItem | undefined;
-  selectedId: string;
-  t: TFn;
-}): ReactElement {
-  if (!item) {
-    return (
-      <p className="m-0 font-mono text-[11px] text-mute">
-        {t("composition.notFound")}
-      </p>
-    );
-  }
-
-  return (
-    <div
-      className="flex flex-col gap-2"
-      data-testid="composition-inline-summary"
-    >
-      <h3 className="m-0 text-[14px] font-semibold text-ink">{selectedId}</h3>
-      {item.description ? (
-        <p className="m-0 text-[12px] leading-[1.45] text-ink-2">
-          {item.description}
-        </p>
-      ) : null}
-      {item.meta ? (
-        <p className="m-0 font-mono text-[11px] text-mute">{item.meta}</p>
-      ) : null}
-    </div>
-  );
 }

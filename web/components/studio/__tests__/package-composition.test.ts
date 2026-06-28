@@ -4,6 +4,8 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
+import { packageFilesEditorLabels } from "@/lib/flows/editor/editor-labels";
+
 const nav = vi.hoisted(() => ({ search: "" }));
 
 vi.mock("next-intl", () => ({
@@ -17,6 +19,26 @@ vi.mock("next/navigation", () => ({
 }));
 
 import { PackageComposition } from "@/components/studio/package-composition";
+
+const stubT = Object.assign((key: string) => key, {
+  raw: (key: string) => key,
+});
+const filesLabels = packageFilesEditorLabels(
+  stubT as never,
+  stubT as never,
+  true,
+);
+const mcpCatalog = [
+  {
+    id: "github",
+    transport: "stdio",
+    command: "x",
+    args: [],
+    url: null,
+    envKeys: [],
+    headerKeys: [],
+  },
+];
 
 const flow = {
   id: "dev",
@@ -49,7 +71,11 @@ function bomOf(partial: Partial<PackageBom>): PackageBom {
 
 function render(
   bom: PackageBom,
-  opts: { search?: string; readOnly?: boolean } = {},
+  opts: {
+    search?: string;
+    readOnly?: boolean;
+    draftFiles?: Array<{ kind: string; path: string; content: string }>;
+  } = {},
 ): string {
   nav.search = opts.search ?? "";
 
@@ -60,23 +86,27 @@ function render(
       bom,
       fileCount: 3,
       readOnly: opts.readOnly ?? false,
+      draftFiles: opts.draftFiles ?? [],
+      filesLabels,
+      mcpCatalog,
+      saveLabel: "Save",
       filesEditor: createElement("div", {
         "data-testid": "files-slot-content",
       }),
+      onDraftFilesChange: vi.fn(),
+      onSaveDraft: vi.fn(),
     } as never),
   );
 }
 
-describe("PackageComposition (ADR-115 §P2)", () => {
+describe("PackageComposition (ADR-115 §P2/P3)", () => {
   it("renders tab counts and hides empty kind tabs; Files is always present", () => {
     const html = render(bomOf({ flows: [flow] }));
 
     expect(html).toContain('data-testid="package-tab-flows"');
     expect(html).toContain('data-testid="package-tab-files"');
-    // Skills/rules/etc are empty → no tab.
     expect(html).not.toContain('data-testid="package-tab-skills"');
     expect(html).not.toContain('data-testid="package-tab-rules"');
-    // Default active tab is the first non-empty kind → flows preview card.
     expect(html).toContain('data-testid="flow-preview-card"');
   });
 
@@ -113,20 +143,41 @@ describe("PackageComposition (ADR-115 §P2)", () => {
     expect(html).toContain("composition.selectHint");
   });
 
-  it("shows the selected inline item summary when ?sel is set", () => {
-    const bom = bomOf({
-      subagents: [
-        {
-          id: "sub1",
-          path: "capability/c/agents/sub1.md",
-          description: "A sub",
-        },
+  it("mounts the frontmatter editor + Save for a selected rule", () => {
+    const bom = bomOf({ rules: [{ id: "r1.md", path: "rules/r1.md" }] });
+    const html = render(bom, {
+      search: "tab=rules&sel=r1.md",
+      draftFiles: [{ kind: "rule", path: "rules/r1.md", content: "x" }],
+    });
+
+    expect(html).toContain('data-testid="composition-inline-editor"');
+    expect(html).toContain("rules/r1.md");
+    expect(html).toContain('data-testid="composition-inline-save"');
+  });
+
+  it("hides the inline Save button when readOnly", () => {
+    const bom = bomOf({ rules: [{ id: "r1.md", path: "rules/r1.md" }] });
+    const html = render(bom, {
+      search: "tab=rules&sel=r1.md",
+      readOnly: true,
+      draftFiles: [{ kind: "rule", path: "rules/r1.md", content: "x" }],
+    });
+
+    expect(html).toContain('data-testid="composition-inline-editor"');
+    expect(html).not.toContain('data-testid="composition-inline-save"');
+  });
+
+  it("routes a selected MCP to the McpTemplateEditor", () => {
+    const bom = bomOf({ mcps: [{ id: "github" }] });
+    const html = render(bom, {
+      search: "tab=mcps&sel=github",
+      draftFiles: [
+        { kind: "asset", path: "mcps/github.yaml", content: "id: github" },
       ],
     });
-    const html = render(bom, { search: "tab=subagents&sel=sub1" });
 
-    expect(html).toContain('data-testid="composition-inline-summary"');
-    expect(html).toContain("A sub");
+    expect(html).toContain('data-testid="composition-inline-editor"');
+    expect(html).toContain('data-testid="mcp-template-catalog"');
   });
 
   it("hosts the files editor slot on the Files tab and reflects readOnly", () => {
