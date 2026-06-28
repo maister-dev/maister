@@ -40,9 +40,13 @@ Replaces the flat chip lists with a **tabbed, paged, card-based** bill-of-materi
 
 - **Header (kept):** name · Local/Installed badge · newest version label · source
   URL · lifecycle actions (**Attach to project**, **Trust** (admin)) ·
-  **Rework**. Rework forks the installed package into a local package, then opens
-  the local editor. The **Import (⤓)** affordance is intentionally **ABSENT** on
-  installed packages — only local packages can import external archives.
+  **Rework**. **Attach to project** opens a dialog over the viewer's manageable
+  projects: a project the package is already attached to appears as a link to its
+  project Packages tab, while a project it is not yet attached to gets a one-click
+  attach of the newest install. Rework forks the installed package into a local
+  package, then opens the local editor. The **Import (⤓)** affordance is
+  intentionally **ABSENT** on installed packages — only local packages can import
+  external archives.
 - **Bill-of-materials → tab bar + cards grid + paging:**
   - One **tab per kind** — Flows · Skills · Agents · Subagents · MCPs · Rules —
     each with a member **count**. A kind whose count is **0 is hidden** (never an
@@ -58,11 +62,14 @@ Replaces the flat chip lists with a **tabbed, paged, card-based** bill-of-materi
     carries a name, a kind-specific meta line and a **View** link into the
     relevant detail surface.
   - The active **Flows** tab renders **wide stacked preview cards**. Each card
-    carries the flow title/id, engine chip, node/gate/frontmatter stats, summary,
-    a separate frontmatter block (`metadata.labels`, `route_when`, `links`,
-    `sources`), a **View** link, and a right-side static graph preview. If the
-    manifest cannot compile, the preview area degrades to a typed placeholder
-    while the card still renders.
+    carries the flow title/id (the **title links into the flow detail**), engine
+    chip, node/gate/frontmatter stats, summary, a separate frontmatter block
+    (`metadata.labels`, `route_when`, `links`, `sources`), and a right-side static
+    graph preview. If the manifest cannot compile, the preview area degrades to a
+    typed placeholder while the card still renders. The same card is reused on the
+    project Packages tab, where it adds a right-aligned icon-only **Open in
+    Studio** link into this Studio flow detail (omitted here, since the title
+    already links there).
   - **Paging:** numbered page links; page size 12. Counts equal the totals across
     pages.
   - **URL state:** active tab + page live in the query (`?tab=skills`, `?page=2`),
@@ -199,8 +206,8 @@ workspace, and mode — no raw enum is rendered. The generic file-state strings
 - **Behavior:** flow-studio · packages · agents · flow-graph system-analytics
   docs (linked above).
 - **Components:** `components/studio/{package-tabs,element-card,package-detail,
-  studio-flow-viewer,flow-node-inspector,fork-to-edit-button,skill-bundle-view,
-  agent-view}.tsx`,
+  attach-to-project-button,studio-flow-viewer,flow-node-inspector,
+  fork-to-edit-button,skill-bundle-view,agent-view}.tsx`,
   `components/flows/package-viewer.tsx` (file-state + image preview),
   `components/board/flow-graph-view*.tsx`,
   `lib/flows/graph/node-tooltips.ts`.

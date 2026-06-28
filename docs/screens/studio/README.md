@@ -49,7 +49,7 @@ Where each capability lives **today** (all Implemented):
 | Capability | Today | Source |
 | --- | --- | --- |
 | Add git source · discover · install by tag | admin `/settings` | `components/settings/package-sources-panel.tsx`, `package-source-modal.tsx` |
-| Attach / detach / upgrade / trust → project | board `?tab=packages` | `components/board/panels/project-packages-section.tsx`, `flow-packages-panel.tsx`, `package-actions.tsx` |
+| Attach / detach / upgrade / trust → project | board `?tab=packages` | `components/board/panels/project-packages-section.tsx`, `project-package-contents.tsx`, `project-local-packages.tsx`, `package-actions.tsx` |
 | Package bill-of-materials | `/projects/{slug}/package-installs/{attachmentId}` | that page |
 | Browse package (graph + yaml + files) + Fork | `/projects/{slug}/packages/{flowRefId}` | `package-viewer.tsx`, `flow-graph-view-section.tsx`, `code-editor.tsx`, `package-fork-button.tsx` |
 | Author/edit a Flow (Graph · YAML · Diff + file editors) | `/flows/{projectSlug}/{capId}` | `flow-editor-tabs.tsx`, `flow-graph-editor.tsx`, `package-files-editor.tsx`, `artifact-editors/*` |
@@ -201,10 +201,12 @@ palette (muted, not rainbow); these are roles, not hex.
     image preview + SKILL.md frontmatter), **agent** (metadata panel — **no
     runner** — + rendered prompt), **subagent** (frontmatter summary +
     markdown Preview/Code definition).
-  - **Lifecycle actions:** **Attach to project** (deep-links to board config),
-    **Trust** (admin), **Versions** (list). **Rework** forks an installed package
-    into a local package and opens `/studio/edit/{localPackageId}`; the **Import
-    (⤓)** affordance is absent on installed (immutable) packages.
+  - **Lifecycle actions:** **Attach to project** (a dialog over the viewer's
+    manageable projects — already-attached ones link to their packages tab, the
+    rest one-click attach the newest install), **Trust** (admin), **Versions**
+    (list). **Rework** forks an installed package into a local package and opens
+    `/studio/edit/{localPackageId}`; the **Import (⤓)** affordance is absent on
+    installed (immutable) packages.
 - **Data & APIs:** the package-install manifest + the M36 bill-of-materials
   contract (`getStudioPackageBom`), confined bundle file/image reads
   (`installed_path`, server-only), and `POST /api/studio/packages/{ref}/fork` for
@@ -304,7 +306,7 @@ canvas.
 | --- | --- |
 | `flows/page.tsx` (two-column) | `studio/overview.tsx` (at-a-glance + areas) |
 | `package-sources-panel.tsx` on `/settings` | same panel mounted at `/studio/sources` |
-| `project-packages-section` + `flow-packages-panel` | **stay on the board** (config); gain "Open in Studio" deep-link |
+| `project-packages-section` + `flow-packages-panel` | config table **stays on the board**; the separate project Flows tab and the `flow-packages-panel` cards are dropped, replaced by per-package **Contents** (`project-package-contents`, reusing the Studio flow preview cards) + a **local packages** subsection (`project-local-packages`); package name + Contents header deep-link to Studio |
 | `package-installs/{id}` + `packages/{flowRefId}` viewer | merge → `studio/packages/{ref}` detail |
 | `flow-editor-tabs` + `package-files-editor` | `studio/edit` — canvas + right properties + top-bar drawers |
 | `flow-graph-view-section` (static) | the shared read-only canvas in package detail |

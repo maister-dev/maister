@@ -31,8 +31,9 @@ launch capability gates.
 
 - **Entry:** portfolio project card, active workspace group, runs ledger,
   launch dialog return path.
-- **Exit:** task detail, flow run detail, project settings tabs, Flow Studio
-  package detail links.
+- **Exit:** task detail, flow run detail, project settings tabs, the project
+  per-flow viewer (`/projects/{slug}/packages/{flowRefId}`), and Flow Studio
+  package / flow detail links from the Packages tab.
 
 ```mermaid
 flowchart TD
@@ -40,7 +41,9 @@ flowchart TD
     Board --> Task["Task detail /projects/{slug}/tasks/{number}"]
     Board --> Run["Flow run /runs/{runId}"]
     Board --> Settings["Project settings tabs"]
-    Board --> Studio["Flow Studio package detail"]
+    Board --> FlowView["Per-flow viewer /projects/{slug}/packages/{flowRefId}"]
+    Board --> Studio["Flow Studio package / flow detail"]
+    FlowView --> Studio
 ```
 
 ## Layout & Regions
@@ -86,6 +89,20 @@ The board is a horizontally scrollable set of columns:
   tokens table lists only tokens with `project_id` set to this project; global
   personal API tokens live on [`../account.md`](../account.md) and are not
   created or listed here.
+- **Packages tab** (`?tab=packages`) consolidates package management for the
+  project — the standalone Flows tab is gone. It stacks three regions: the
+  **attached-packages** config table (each package **name links to its Flow
+  Studio package detail**, plus version · trust · flows · attach / trust /
+  upgrade / downgrade / detach actions), a **local packages** subsection, and
+  per-package **Contents** — the shared Studio flow preview cards (the card
+  **title opens the project per-flow viewer** at
+  `/projects/{slug}/packages/{flowRefId}` and a right-aligned **Open in Studio**
+  icon opens the Studio flow detail) followed by an artifact count line
+  (`N skills · N agents · …`); the Contents block header carries an **Open in
+  Studio** link to the package detail. The per-flow viewer shows the static
+  graph, a **View in Studio** link, and the stored `flow.yaml` collapsed behind a
+  disclosure toggle. The flow preview card surface is described in
+  [`../studio/package-viewer.md`](../studio/package-viewer.md).
 
 ## States
 
