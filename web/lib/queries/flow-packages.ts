@@ -3,7 +3,7 @@ import "server-only";
 import type { FlowYamlV1 } from "@/lib/config.schema";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
-import { and, asc, eq, inArray, notInArray } from "drizzle-orm";
+import { and, asc, eq, inArray, notInArray, sql } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
 import * as schema from "@/lib/db/schema";
@@ -366,7 +366,11 @@ export async function getFlowPackageDetail(
     .where(
       and(
         eq(flowRevisions.flowRefId, flow.flowRefId),
-        eq(flowRevisions.source, flow.source),
+        // flows.source can carry a `file://` scheme that flow_revisions.source
+        // lacks (inconsistent install/attach write paths); strip it on both
+        // sides so the same install path matches. The ADR-021 source-scope
+        // guard still holds on the normalized path.
+        sql`replace(${flowRevisions.source}, 'file://', '') = ${flow.source.replace("file://", "")}`,
         notInArray(flowRevisions.packageStatus, ["Removed"]),
       ),
     )
