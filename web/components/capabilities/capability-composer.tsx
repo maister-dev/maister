@@ -225,6 +225,7 @@ function buildSuggestionExtension(args: {
           // `suggestion$` collides across the three instances.
           pluginKey: new PluginKey(`capabilityComposerSuggestion_${char}`),
           char,
+          allowedPrefixes: null,
           allowSpaces: false,
           startOfLine: false,
           items: ({ query }) => {
@@ -345,14 +346,10 @@ function buildVariableSuggestionExtension(args: {
         Suggestion<TemplateVariableEntry>({
           editor,
           pluginKey: new PluginKey("capabilityComposerSuggestion_variables"),
-          char: "{",
+          char: "{{",
+          allowedPrefixes: null,
           allowSpaces: false,
           startOfLine: false,
-          allow: ({ state, range }) => {
-            if (range.from < 2) return false;
-
-            return state.doc.textBetween(range.from - 1, range.from) === "{";
-          },
           items: ({ query }) => {
             const q = query.toLowerCase();
 
@@ -368,7 +365,7 @@ function buildVariableSuggestionExtension(args: {
               .slice(0, 8);
           },
           command: ({ editor: ed, range, props }) => {
-            insertVariable(ed, { from: range.from - 1, to: range.to }, props);
+            insertVariable(ed, range, props);
           },
           render: () => ({
             onStart: (p) => {
@@ -853,14 +850,7 @@ export function CapabilityComposer({
                 onMouseDown={(event) => {
                   event.preventDefault();
                   if (!editor || !variableSuggestion.range) return;
-                  insertVariable(
-                    editor,
-                    {
-                      from: variableSuggestion.range.from - 1,
-                      to: variableSuggestion.range.to,
-                    },
-                    item,
-                  );
+                  insertVariable(editor, variableSuggestion.range, item);
                   setVariableSuggestion(EMPTY_VARIABLE_SUGGESTION);
                 }}
               >

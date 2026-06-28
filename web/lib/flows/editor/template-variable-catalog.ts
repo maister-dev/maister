@@ -112,7 +112,7 @@ export function buildTemplateVariableCatalog({
   selectedNodeId,
   files,
 }: BuildTemplateVariableCatalogInput): TemplateVariableCatalogResult {
-  const entries: TemplateVariableEntry[] = [...STATIC_TEMPLATE_VARIABLES];
+  const entries: TemplateVariableEntry[] = [];
   const warnings: TemplateVariableCatalogWarning[] = [];
   const unavailablePaths = [
     `steps.${selectedNodeId}.output`,
@@ -127,6 +127,8 @@ export function buildTemplateVariableCatalog({
   for (const producer of producers) {
     addProducerEntries(entries, warnings, schemaFiles, producer);
   }
+
+  entries.push(...STATIC_TEMPLATE_VARIABLES);
 
   return {
     entries,

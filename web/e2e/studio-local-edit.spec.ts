@@ -127,6 +127,7 @@ function buildStructuredControlsPackageRepo(): string {
 
   mkdirSync(join(pkgDir, "flows/e2e-flow"), { recursive: true });
   mkdirSync(join(pkgDir, "skills/aif-plan"), { recursive: true });
+  mkdirSync(join(pkgDir, "schemas"), { recursive: true });
   writeFileSync(
     join(pkgDir, "maister-package.yaml"),
     `schemaVersion: 1\nname: ${STRUCT_RUN_TAG}\nflows:\n  - { id: ${STRUCT_RUN_TAG}-flow, path: flows/e2e-flow }\n`,
@@ -136,12 +137,39 @@ function buildStructuredControlsPackageRepo(): string {
     `---\nname: aif-plan\ndescription: Plan a feature\n---\n# aif-plan\n`,
   );
   writeFileSync(
+    join(pkgDir, "schemas/intake.json"),
+    `{"schemaVersion":1,"fields":[{"name":"title","type":"string","required":true}]}\n`,
+  );
+  writeFileSync(
+    join(pkgDir, "schemas/plan.json"),
+    `{"schemaVersion":1,"fields":[{"name":"verdict","type":"string","required":true},{"name":"notes","type":"string"}]}\n`,
+  );
+  writeFileSync(
     join(pkgDir, "flows/e2e-flow/flow.yaml"),
     `schemaVersion: 1
 name: ${STRUCT_RUN_TAG}-flow
 compat:
   engine_min: 1.3.0
 nodes:
+  - id: intake
+    type: form
+    settings:
+      form_schema: ./schemas/intake.json
+    transitions:
+      plan: plan
+      skip: code
+  - id: plan
+    type: ai_coding
+    action:
+      prompt: "draft a plan"
+    output:
+      result:
+        schema: ./schemas/plan.json
+      produces:
+        - id: plan_doc
+          kind: plan
+    transitions:
+      success: code
   - id: code
     type: ai_coding
     action:
@@ -317,15 +345,19 @@ test("local editor structured controls: skills multiselect, /-autosuggest prompt
   });
 
   const flowYamlInput = page.locator('input[name="flowYaml"]');
+  const packageFilesInput = page.locator('input[name="packageFilesJson"]');
 
   // --- ai_coding node: skills multiselect + /-autosuggest prompt composer ---
   await selectGraphNode(page, "code");
 
   // (a/c) the action.prompt is the capability composer, not a plain textarea
   const prompt = page.getByTestId("node-action-prompt");
+  const promptEditor = prompt.locator(".ProseMirror");
 
   await expect(prompt).toBeVisible();
   await expect(prompt.locator(".capability-composer__editor")).toBeVisible();
+  await expect(promptEditor).toBeVisible();
+  await expect(packageFilesInput).toHaveValue(/skills\/aif-plan\/SKILL\.md/);
 
   // (c) skills MultiSelectField: free-add a chip, then remove it
   await page.getByTestId("node-skills-input").fill("extra-skill");
@@ -342,8 +374,10 @@ test("local editor structured controls: skills multiselect, /-autosuggest prompt
   await expect(flowYamlInput).not.toHaveValue(/extra-skill/);
 
   // (c) insert a skill chip via `/` autosuggest → stores a canonical token
-  await prompt.locator(".capability-composer__editor").click();
-  await page.keyboard.type(" /");
+  await promptEditor.click();
+  await promptEditor.focus();
+  await expect(promptEditor).toBeFocused();
+  await promptEditor.pressSequentially(" /", { delay: 25 });
   await expect(page.getByTestId("capability-suggestions")).toBeVisible();
   await page
     .getByTestId("capability-suggestion-item")
@@ -352,6 +386,57 @@ test("local editor structured controls: skills multiselect, /-autosuggest prompt
     .click();
   await expect(prompt.getByTestId("capability-chip")).toBeVisible();
   await expect(flowYamlInput).toHaveValue(/@skill:aif-plan/);
+
+  // Raw typed slash skills promote only at the blur/save boundary.
+  await promptEditor.click();
+  await promptEditor.focus();
+  await promptEditor.pressSequentially(" /aif-plan ", { delay: 25 });
+  await page.getByTestId("node-skills-input").click();
+  await expect(flowYamlInput).toHaveValue(/@skill:aif-plan/);
+
+  // `{{` autosuggest inserts definite required variables as bare template refs.
+  await promptEditor.click();
+  await promptEditor.focus();
+  await promptEditor.pressSequentially(" {{", { delay: 25 });
+  await expect(page.getByTestId("variable-suggestions")).toBeVisible();
+  await page
+    .getByTestId("variable-suggestion-item")
+    .filter({ hasText: "steps.intake.vars.title" })
+    .first()
+    .click();
+  await expect(flowYamlInput).toHaveValue(/steps\.intake\.vars\.title/);
+  await expect(flowYamlInput).not.toHaveValue(
+    /steps\.intake\.vars\.title \?\? ''/,
+  );
+
+  // The compact variable picker inserts optional artifact vars and conditional
+  // upstream vars with the explicit `?? ''` default.
+  await page.getByTestId("capability-variable-button").click();
+  await page
+    .getByTestId("capability-variable-item")
+    .filter({ hasText: "artifacts.plan_doc.uri" })
+    .first()
+    .click();
+  await expect(flowYamlInput).toHaveValue(
+    /artifacts\.plan_doc\.uri \?\? ''/,
+  );
+  await page.getByTestId("capability-variable-button").click();
+  const conditionalVerdict = page
+    .getByTestId("capability-variable-item")
+    .filter({ hasText: "steps.plan.vars.verdict" })
+    .first();
+
+  await expect(conditionalVerdict).toContainText("may be absent");
+  await conditionalVerdict.click();
+  await expect(flowYamlInput).toHaveValue(
+    /steps\.plan\.vars\.verdict \?\? ''/,
+  );
+  await page.getByTestId("capability-variable-button").click();
+  await expect(
+    page
+      .getByTestId("capability-variable-item")
+      .filter({ hasText: "steps.review.output" }),
+  ).toHaveCount(0);
 
   // --- human node: roles StringListField add/remove a row ---
   await selectGraphNode(page, "review");

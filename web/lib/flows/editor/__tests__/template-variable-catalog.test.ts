@@ -162,6 +162,13 @@ describe("buildTemplateVariableCatalog", () => {
     expect(entries.has("steps.done.output")).toBe(false);
     expect(entries.has("artifacts.future_doc.kind")).toBe(false);
     expect(catalog.unavailablePaths).toContain("steps.review.output");
+    expect(
+      catalog.entries.findIndex(
+        (entry) => entry.path === "steps.intake.vars.request.id",
+      ),
+    ).toBeLessThan(
+      catalog.entries.findIndex((entry) => entry.path === "task.id"),
+    );
   });
 
   it("discovers rework-only predecessors and exposes declared rework comments", () => {

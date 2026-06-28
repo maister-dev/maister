@@ -714,7 +714,7 @@ This phase ships the only runtime change and lands BEFORE the editor inserts the
 
 ### Phase 4 - Browser E2E and Edge Cases
 
-- [ ] **T4.1 - RED: Flow Studio prompt-assist E2E.**
+- [x] **T4.1 - RED: Flow Studio prompt-assist E2E.**
   - Extend `web/e2e/studio-local-edit.spec.ts` or add
     `web/e2e/studio-prompt-assists.spec.ts`.
   - Cover one browser path with minimum overlap:
@@ -740,7 +740,7 @@ This phase ships the only runtime change and lands BEFORE the editor inserts the
   - Verify RED: run the focused Playwright command used by the existing Studio
     E2E lane.
 
-- [ ] **T4.2 - GREEN: finish interaction details and edge-case fixes.**
+- [x] **T4.2 - GREEN: finish interaction details and edge-case fixes.**
   - Implement any missing keyboard/mouse behavior surfaced by T4.1.
   - Ensure text does not overflow suggestion rows; keep popup dimensions stable.
   - Ensure `{}` variable button, if implemented, is keyboard accessible and has a
