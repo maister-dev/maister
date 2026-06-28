@@ -17,7 +17,10 @@ function stepManifest(steps: FlowYamlV1["steps"]): FlowYamlV1 {
   return { schemaVersion: 1, name: "Legacy", steps } as FlowYamlV1;
 }
 
-function file(path: string, content: string): { path: string; content: string } {
+function file(
+  path: string,
+  content: string,
+): { path: string; content: string } {
   return { path, content };
 }
 

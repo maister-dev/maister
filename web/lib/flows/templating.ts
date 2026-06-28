@@ -4,6 +4,10 @@ import Mustache from "mustache";
 import pino, { type Logger } from "pino";
 
 import { MaisterError } from "@/lib/errors";
+import {
+  findMustacheClose,
+  parseDefaultExpression,
+} from "@/lib/flows/template-expressions";
 
 Mustache.escape = (s) => String(s);
 
@@ -13,11 +17,6 @@ const log = pino({
 });
 
 const MAX_TRACE_VALUE_LEN = 200;
-
-type DefaultExpression = {
-  path: string;
-  literal: string;
-};
 
 type DefaultResolution = {
   placeholder: string;
@@ -44,96 +43,6 @@ function isPlainRecord(v: unknown): v is Record<string, unknown> {
 
 function isObjectLike(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
-}
-
-function findMustacheClose(template: string, start: number): number {
-  let quote: "'" | '"' | null = null;
-  let escaped = false;
-
-  for (let index = start + 2; index < template.length - 1; index += 1) {
-    const char = template[index];
-
-    if (quote !== null) {
-      if (escaped) {
-        escaped = false;
-        continue;
-      }
-      if (char === "\\") {
-        escaped = true;
-        continue;
-      }
-      if (char === quote) {
-        quote = null;
-      }
-      continue;
-    }
-
-    if (char === "'" || char === '"') {
-      quote = char;
-      continue;
-    }
-
-    if (char === "}" && template[index + 1] === "}") {
-      return index;
-    }
-  }
-
-  return -1;
-}
-
-function readQuotedLiteral(input: string): { literal: string; end: number } | null {
-  const quote = input[0];
-
-  if (quote !== "'" && quote !== '"') return null;
-
-  let literal = "";
-  let escaped = false;
-
-  for (let index = 1; index < input.length; index += 1) {
-    const char = input[index];
-
-    if (escaped) {
-      if (char === "n") literal += "\n";
-      else if (char === "r") literal += "\r";
-      else if (char === "t") literal += "\t";
-      else literal += char;
-      escaped = false;
-      continue;
-    }
-
-    if (char === "\\") {
-      escaped = true;
-      continue;
-    }
-
-    if (char === quote) {
-      return { literal, end: index + 1 };
-    }
-
-    literal += char;
-  }
-
-  return null;
-}
-
-function parseDefaultExpression(tag: string): DefaultExpression | null {
-  const match = tag.match(
-    /^([A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*)\s*\?\?\s*/,
-  );
-
-  if (!match) return null;
-
-  const literalInput = tag.slice(match[0].length);
-  const parsed = readQuotedLiteral(literalInput);
-
-  if (!parsed) return null;
-
-  if (literalInput.slice(parsed.end).trim() !== "") return null;
-
-  return {
-    path: match[1],
-    literal: parsed.literal,
-  };
 }
 
 function resolvePath(
@@ -166,7 +75,11 @@ function renderScalar(value: unknown): string {
   return String(value);
 }
 
-function makePlaceholder(template: string, index: number, start: number): string {
+function makePlaceholder(
+  template: string,
+  index: number,
+  start: number,
+): string {
   let suffix = 0;
   let placeholder = `__MAISTER_TEMPLATE_DEFAULT_${index}_${template.length}_${start}__`;
 
@@ -213,7 +126,9 @@ function protectDefaultExpressions(
 
     const resolved = resolvePath(context, expression.path);
     const usedDefault = !resolved.found;
-    const value = resolved.found ? renderScalar(resolved.value) : expression.literal;
+    const value = resolved.found
+      ? renderScalar(resolved.value)
+      : expression.literal;
     const placeholder = makePlaceholder(template, resolutions.length, start);
 
     log.debug(
@@ -244,10 +159,24 @@ function restoreDefaultExpressions(
   rendered: string,
   resolutions: DefaultResolution[],
 ): string {
-  let output = rendered;
+  if (resolutions.length === 0) return rendered;
 
-  for (const resolution of resolutions) {
-    output = output.split(resolution.placeholder).join(resolution.value);
+  let output = "";
+  let cursor = 0;
+
+  while (cursor < rendered.length) {
+    const resolution = resolutions.find((item) =>
+      rendered.startsWith(item.placeholder, cursor),
+    );
+
+    if (resolution) {
+      output += resolution.value;
+      cursor += resolution.placeholder.length;
+      continue;
+    }
+
+    output += rendered[cursor];
+    cursor += 1;
   }
 
   return output;
@@ -321,7 +250,11 @@ export function renderStrict(
   });
 
   try {
-    const protectedTemplate = protectDefaultExpressions(template, context, opts);
+    const protectedTemplate = protectDefaultExpressions(
+      template,
+      context,
+      opts,
+    );
     const rendered = Mustache.render(protectedTemplate.template, view);
 
     return restoreDefaultExpressions(rendered, protectedTemplate.resolutions);

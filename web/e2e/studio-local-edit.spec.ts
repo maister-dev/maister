@@ -417,9 +417,7 @@ test("local editor structured controls: skills multiselect, /-autosuggest prompt
     .filter({ hasText: "artifacts.plan_doc.uri" })
     .first()
     .click();
-  await expect(flowYamlInput).toHaveValue(
-    /artifacts\.plan_doc\.uri \?\? ''/,
-  );
+  await expect(flowYamlInput).toHaveValue(/artifacts\.plan_doc\.uri \?\? ''/);
   await page.getByTestId("capability-variable-button").click();
   const conditionalVerdict = page
     .getByTestId("capability-variable-item")
@@ -428,9 +426,7 @@ test("local editor structured controls: skills multiselect, /-autosuggest prompt
 
   await expect(conditionalVerdict).toContainText("may be absent");
   await conditionalVerdict.click();
-  await expect(flowYamlInput).toHaveValue(
-    /steps\.plan\.vars\.verdict \?\? ''/,
-  );
+  await expect(flowYamlInput).toHaveValue(/steps\.plan\.vars\.verdict \?\? ''/);
   await page.getByTestId("capability-variable-button").click();
   await expect(
     page

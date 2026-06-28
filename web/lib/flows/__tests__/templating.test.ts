@@ -135,9 +135,9 @@ describe("renderStrict — Mustache strict resolver", () => {
   });
 
   it("resolves guarded nested paths to double-quoted literals when absent", () => {
-    expect(renderStrict('{{ steps.plan.vars.maybe ?? "n/a" }}', baseContext)).toBe(
-      "n/a",
-    );
+    expect(
+      renderStrict('{{ steps.plan.vars.maybe ?? "n/a" }}', baseContext),
+    ).toBe("n/a");
   });
 
   it("resolves guarded nested paths to values when present", () => {
@@ -186,5 +186,18 @@ describe("renderStrict — Mustache strict resolver", () => {
     expect(
       renderStrict("{{ executor.router ?? '{{ task.prompt }}' }}", baseContext),
     ).toBe("{{ task.prompt }}");
+  });
+
+  it("restores resolved guarded values that look like later placeholders without corrupting them", () => {
+    const template =
+      '{{ executor.model ?? "unused" }} {{ executor.router ?? "tail" }}';
+    const secondStart = template.lastIndexOf("{{");
+    const collisionValue = `__MAISTER_TEMPLATE_DEFAULT_1_${template.length}_${secondStart}__`;
+    const ctx = {
+      ...baseContext,
+      executor: { ...baseContext.executor, model: collisionValue },
+    };
+
+    expect(renderStrict(template, ctx)).toBe(`${collisionValue} tail`);
   });
 });

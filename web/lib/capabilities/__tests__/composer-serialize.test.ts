@@ -104,21 +104,20 @@ describe("composer-serialize (FR-D / FR-E1)", () => {
   });
 
   it("round-trips template variables as plain text, not chips", () => {
-    expect(canonicalToSegments("Use {{ steps.plan.vars.verdict ?? '' }}")).toEqual(
-      [{ type: "text", text: "Use {{ steps.plan.vars.verdict ?? '' }}" }],
-    );
+    expect(
+      canonicalToSegments("Use {{ steps.plan.vars.verdict ?? '' }}"),
+    ).toEqual([
+      { type: "text", text: "Use {{ steps.plan.vars.verdict ?? '' }}" },
+    ]);
   });
 
   it("promotes raw slash and dollar skills at the composer commit boundary", () => {
     expect(
-      promoteComposerSkillTokens(
-        "run /aif-plan then $review and @reviewer",
-        [
-          { kind: "skill", slug: "aif-plan" },
-          { kind: "skill", slug: "review" },
-          { kind: "subagent", slug: "reviewer" },
-        ],
-      ),
+      promoteComposerSkillTokens("run /aif-plan then $review and @reviewer", [
+        { kind: "skill", slug: "aif-plan" },
+        { kind: "skill", slug: "review" },
+        { kind: "subagent", slug: "reviewer" },
+      ]),
     ).toBe("run @skill:aif-plan then @skill:review and @reviewer");
   });
 

@@ -122,6 +122,24 @@ describe("analyzeTemplateVariableUsage", () => {
     ]);
   });
 
+  it("downgrades unenumerated env paths because runtime env keys are dynamic", () => {
+    const result = analyzeTemplateVariableUsage("{{ env.LANG }}", catalog([]));
+
+    expect(result.tokens).toEqual([
+      expect.objectContaining({
+        path: "env.LANG",
+        defaulted: false,
+      }),
+    ]);
+    expect(result.warnings).toEqual([
+      expect.objectContaining({
+        code: "unknown_path",
+        path: "env.LANG",
+        severity: "warning",
+      }),
+    ]);
+  });
+
   it("classifies bare artifact variables with the same safety rules", () => {
     const result = analyzeTemplateVariableUsage(
       "{{ artifacts.plan_doc.uri }}",

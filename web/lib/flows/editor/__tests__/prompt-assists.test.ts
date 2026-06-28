@@ -4,7 +4,10 @@ import { describe, expect, it } from "vitest";
 
 import { buildPromptAssistsForNode } from "@/lib/flows/editor/prompt-assists";
 
-function file(path: string, content: string): { path: string; content: string } {
+function file(
+  path: string,
+  content: string,
+): { path: string; content: string } {
   return { path, content };
 }
 
@@ -26,7 +29,9 @@ const manifest: FlowYamlV1 = {
     {
       id: "review",
       type: "judge",
-      action: { prompt: "{{ steps.plan.vars.verdict }} {{ steps.review.output }}" },
+      action: {
+        prompt: "{{ steps.plan.vars.verdict }} {{ steps.review.output }}",
+      },
     },
     {
       id: "shell",

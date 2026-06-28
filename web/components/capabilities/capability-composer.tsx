@@ -722,8 +722,8 @@ export function CapabilityComposer({
                 <button
                   className="capability-composer__variable-item"
                   data-insert-text={entry.insertText}
-                  data-testid="capability-variable-item"
                   data-suggestion-type="variable"
+                  data-testid="capability-variable-item"
                   data-variable-path={entry.path}
                   type="button"
                   onMouseDown={(event) => {

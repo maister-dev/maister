@@ -5,6 +5,11 @@ import {
   isRootSchemaFilePath,
   schemaRefToFilePath,
 } from "@/lib/flows/editor/reference-sources";
+import {
+  findMustacheClose,
+  parseDefaultExpression,
+  TEMPLATE_PATH_RE,
+} from "@/lib/flows/template-expressions";
 
 export type TemplateVariableAvailability = "definite" | "conditional";
 export type TemplateVariablePresence = "required" | "optional";
@@ -95,8 +100,6 @@ type ProducerOutput = {
   produces?: readonly { id: string }[];
 };
 
-const TEMPLATE_PATH_RE = /^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/;
-
 export const STATIC_TEMPLATE_VARIABLES: readonly TemplateVariableEntry[] = [
   staticEntry("task.id"),
   staticEntry("task.title"),
@@ -164,6 +167,19 @@ export function analyzeTemplateVariableUsage(
           path: token.path,
           message: "Variable is not available for the selected node.",
         });
+        continue;
+      }
+
+      if (isRuntimeEnvPath(token.path)) {
+        if (!token.defaulted) {
+          warnings.push({
+            code: "unknown_path",
+            severity: "warning",
+            path: token.path,
+            message:
+              "Environment variable is resolved at runtime and is not enumerated in the editor.",
+          });
+        }
         continue;
       }
 
@@ -507,12 +523,7 @@ function entriesForFields(
 
     return [
       entry,
-      ...entriesForFields(
-        producer,
-        field.fields ?? [],
-        path,
-        fieldRequired,
-      ),
+      ...entriesForFields(producer, field.fields ?? [], path, fieldRequired),
     ];
   });
 }
@@ -563,9 +574,7 @@ function resolveSchema(
           code: "schema_invalid",
           nodeId,
           schemaRef,
-          message: result.error.issues
-            .map((issue) => issue.message)
-            .join("; "),
+          message: result.error.issues.map((issue) => issue.message).join("; "),
         },
       };
     }
@@ -591,7 +600,8 @@ function schemaRefsForProducer(node: NodeLike | StepLike): string[] {
   const legacyFormSchema = nodeLegacyFormSchema(node);
 
   if (output?.result?.schema) refs.push(output.result.schema);
-  if (typeof settings?.form_schema === "string") refs.push(settings.form_schema);
+  if (typeof settings?.form_schema === "string")
+    refs.push(settings.form_schema);
   if (legacyFormSchema) refs.push(legacyFormSchema);
 
   return refs;
@@ -601,9 +611,7 @@ function isCliLike(type: string): boolean {
   return type === "cli" || type === "check";
 }
 
-function nodeOutput(
-  node: NodeLike | StepLike,
-): ProducerOutput | undefined {
+function nodeOutput(node: NodeLike | StepLike): ProducerOutput | undefined {
   if (!("output" in node) || !isRecord(node.output)) return undefined;
 
   const result = isRecord(node.output.result)
@@ -713,84 +721,6 @@ function parseVariableToken(
   return { path: raw, defaulted: false };
 }
 
-function findMustacheClose(template: string, start: number): number {
-  let quote: "'" | '"' | null = null;
-  let escaped = false;
-
-  for (let index = start + 2; index < template.length - 1; index += 1) {
-    const char = template[index];
-
-    if (quote !== null) {
-      if (escaped) {
-        escaped = false;
-        continue;
-      }
-      if (char === "\\") {
-        escaped = true;
-        continue;
-      }
-      if (char === quote) quote = null;
-      continue;
-    }
-
-    if (char === "'" || char === '"') {
-      quote = char;
-      continue;
-    }
-
-    if (char === "}" && template[index + 1] === "}") return index;
-  }
-
-  return -1;
-}
-
-function parseDefaultExpression(
-  raw: string,
-): { path: string; literal: string } | null {
-  const match = raw.match(/^([A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*)\s*\?\?\s*/);
-
-  if (!match) return null;
-
-  const literalInput = raw.slice(match[0].length);
-  const literal = readQuotedLiteral(literalInput);
-
-  if (!literal) return null;
-  if (literalInput.slice(literal.end).trim() !== "") return null;
-
-  return { path: match[1], literal: literal.value };
-}
-
-function readQuotedLiteral(
-  input: string,
-): { value: string; end: number } | null {
-  const quote = input[0];
-
-  if (quote !== "'" && quote !== '"') return null;
-
-  let value = "";
-  let escaped = false;
-
-  for (let index = 1; index < input.length; index += 1) {
-    const char = input[index];
-
-    if (escaped) {
-      if (char === "n") value += "\n";
-      else if (char === "r") value += "\r";
-      else if (char === "t") value += "\t";
-      else value += char;
-      escaped = false;
-      continue;
-    }
-
-    if (char === "\\") {
-      escaped = true;
-      continue;
-    }
-
-    if (char === quote) return { value, end: index + 1 };
-
-    value += char;
-  }
-
-  return null;
+function isRuntimeEnvPath(path: string): boolean {
+  return path.startsWith("env.");
 }
