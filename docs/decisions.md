@@ -7034,6 +7034,16 @@ promotion.
   host-read env var** is added (`MAISTER_GIT_TOKEN` is transient child-process env).
 - `gh` is an **optional** host tool; absent or unauthed degrades gracefully to the
   unified token / SSH path.
+- **Default commit author when host identity is unset.** Host-ambient auth covers
+  *credentials* but not the git *author* (`user.name`/`user.email`), which a
+  freshly-provisioned host or CI runner may lack — a bare `git commit` then aborts
+  with "empty ident name not allowed". Every MAIster-authored commit therefore
+  supplies a per-field default identity (`maister` / `noreply@maister.local`) via
+  `-c user.*` only for whichever field is unset (a configured host value is never
+  overridden), through the shared `commitIdentityArgs` helper in
+  `web/lib/worktree.ts`. Applies to all commit sites: `commitFile` (persist-config),
+  `snapshotDirtyWorktree` (auto-commit-dirty before a review gate), and
+  `squashRunBranch` (squash-on-promote).
 - Work is phased and each phase is independently shippable: **P1** onboarding core
   (optional manifest + three modes + prefill; owns the migration) → **P2** git
   access (clone classification + token + `gh` + SSH) → **P3** Git in settings

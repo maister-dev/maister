@@ -1069,6 +1069,24 @@ async function gitConfigValue(
   }
 }
 
+// ADR-093: per-field `-c user.*` default args for `git commit` when the host git
+// author is unset — a configured host name/email is never overridden, only the
+// missing field is defaulted. Without this a `git commit` on a host (or CI
+// runner) with no global identity fails with "empty ident name not allowed".
+// Shared by commitFile, snapshotDirtyWorktree, and squashRunBranch.
+async function commitIdentityArgs(repo: string): Promise<string[]> {
+  const [name, email] = await Promise.all([
+    gitConfigValue(repo, "user.name"),
+    gitConfigValue(repo, "user.email"),
+  ]);
+  const identityArgs: string[] = [];
+
+  if (!name) identityArgs.push("-c", "user.name=maister");
+  if (!email) identityArgs.push("-c", "user.email=noreply@maister.local");
+
+  return identityArgs;
+}
+
 export type CommitFileArgs = {
   repo: string;
   file: string;
@@ -1097,14 +1115,7 @@ export async function commitFile(
   try {
     await runGit(repo, ["add", "--", file]);
 
-    const [name, email] = await Promise.all([
-      gitConfigValue(repo, "user.name"),
-      gitConfigValue(repo, "user.email"),
-    ]);
-    const identityArgs: string[] = [];
-
-    if (!name) identityArgs.push("-c", "user.name=maister");
-    if (!email) identityArgs.push("-c", "user.email=noreply@maister.local");
+    const identityArgs = await commitIdentityArgs(repo);
     const usedDefaultAuthor = identityArgs.length > 0;
 
     const { stdout, stderr } = await runGit(repo, [
@@ -2123,7 +2134,16 @@ export async function snapshotDirtyWorktree(
   }
 
   await runGit(wt, ["add", "-A"]);
-  await runGit(wt, ["commit", "--no-verify", "-m", commitMessage]);
+
+  const identityArgs = await commitIdentityArgs(wt);
+
+  await runGit(wt, [
+    ...identityArgs,
+    "commit",
+    "--no-verify",
+    "-m",
+    commitMessage,
+  ]);
 
   return true;
 }
@@ -2180,7 +2200,10 @@ export async function squashRunBranch(
     }
 
     await runGit(wt, ["reset", "--soft", base]);
-    await runGit(wt, ["commit", "--no-verify", "-m", message]);
+
+    const identityArgs = await commitIdentityArgs(wt);
+
+    await runGit(wt, [...identityArgs, "commit", "--no-verify", "-m", message]);
 
     const newTree = (
       await runGit(wt, ["rev-parse", "HEAD^{tree}"])
