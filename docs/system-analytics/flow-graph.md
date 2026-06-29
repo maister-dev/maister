@@ -288,7 +288,7 @@ declaring neither stay valid at any `engine_min`.
 > `MAISTER_ENGINE_VERSION` `2.0.0 → 2.1.0` (`REWORK_RESET_ENGINE_MIN`).
 
 **Baseline-aware attempt counting.** Each `node_attempts` row carries a nullable
-`rework_baseline` (migration `0085`); `NULL ⇒ 0`. The **effective** attempt count
+`rework_baseline` (migration `0086`); `NULL ⇒ 0`. The **effective** attempt count
 the loop bounds against is `effective = nodeAttemptNumber − (baseline ?? 0)`,
 evaluated identically at BOTH exhaustion sites — the loop-top backstop and the
 decision-time check (`effective > maxLoops`, total allowed `maxLoops + 1`).

@@ -9549,7 +9549,7 @@ tech debt). This ADR adds the two missing primitives as additive, opt-in
    loop (per the rework-prompt contract). `resetTargets` is **server-side**, not a
    reviewer choice — the HITL wire contract is unchanged (§8 below).
 
-3. **Baseline storage = `node_attempts.rework_baseline` (migration `0085`, nullable
+3. **Baseline storage = `node_attempts.rework_baseline` (migration `0086`, nullable
    integer, no default).** Chosen over a jsonb map on `runs`: the value is
    per-node and lives on the same ledger row that already owns attempt counting,
    so it is normalized, carries forward with each attempt, and needs no cross-row
@@ -9618,7 +9618,7 @@ tech debt). This ADR adds the two missing primitives as additive, opt-in
   so there is no new partial state; recovery is the persisted-baseline carry
   forward.
 - **One column added** (`node_attempts.rework_baseline integer`, nullable,
-  migration `0085`) and a `+1` engine minor. No `runs` migration, no env var, no
+  migration `0086`) and a `+1` engine minor. No `runs` migration, no env var, no
   port, no sidecar, no HTTP route, no SSE/AsyncAPI event, no `runs.status`/enum
   value, no new `MaisterError` code, no `compose.yml` change.
 - **Two `maxLoops` is now a documented contract** (loop iterations per round ≠
