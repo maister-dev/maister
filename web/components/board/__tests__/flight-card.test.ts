@@ -44,6 +44,12 @@ const labels: FlightCardLabels = {
   flagged: "Needs review",
   waitingOnChildren: "Waiting on children",
   openRun: "Open run",
+  activeNodeStatus: {
+    running: "running",
+    needs: "needs input",
+    failed: "failed",
+    waiting: "waiting",
+  },
   decomposition: {
     title: (count: number) => `Decomposition (${count})`,
     noRun: "no run",
@@ -89,6 +95,7 @@ function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
     prNumber: null,
     blockedBy: [],
     childTasks: [],
+    activeNode: null,
     ...over,
   };
 }
@@ -172,6 +179,48 @@ describe("FlightCard — WaitingOnChildren orchestrator (M37, T1.2 affordance)",
 
     expect(html).not.toContain('data-testid="flight-card-waiting"');
     expect(html).not.toContain("Waiting on children");
+  });
+});
+
+describe("FlightCard — overall spine and active node status", () => {
+  it("keeps completed spine progress separate from the active-node status chip", () => {
+    const html = render(
+      baseCard({
+        activeNode: { label: "tests", state: "failed" },
+        spine: [
+          { state: "done" },
+          { state: "active", tone: "failed" },
+          { state: "todo" },
+        ],
+        stepLabel: "tests",
+      }),
+    );
+
+    expect(html).toContain('data-active-node-state="failed"');
+    expect(html).toContain("tests");
+    expect(html).toContain("failed");
+    expect(html).toContain('data-spine-state="done"');
+    expect(html).toContain('data-spine-state="active"');
+    expect(html).toContain('data-spine-tone="failed"');
+  });
+
+  it("pulses the active segment with the current node tone, including NeedsInput", () => {
+    const html = render(
+      baseCard({
+        activeNode: { label: "review", state: "needs" },
+        status: "needs",
+        spine: [
+          { state: "done" },
+          { state: "active", tone: "needs" },
+          { state: "todo" },
+        ],
+        stepLabel: "review",
+      }),
+    );
+
+    expect(html).toContain('data-active-node-state="needs"');
+    expect(html).toContain('data-spine-tone="needs"');
+    expect(html).toContain("animate-[pulse-seg_2.4s_ease-out_infinite]");
   });
 });
 

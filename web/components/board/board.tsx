@@ -108,6 +108,12 @@ export async function Board({
     flagged: t("flagged"),
     waitingOnChildren: t("waitingOnChildren"),
     openRun: t("openRun"),
+    activeNodeStatus: {
+      running: t("activeNodeRunning"),
+      needs: t("activeNodeNeeds"),
+      failed: t("activeNodeFailed"),
+      waiting: t("activeNodeWaiting"),
+    },
     decomposition: decompositionLabels,
   };
   const launchDisabledReason =

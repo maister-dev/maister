@@ -19,6 +19,10 @@ import {
   activeSessionRunnerSnapshot,
 } from "@/lib/runs/active-run-session";
 import {
+  buildFlightProgress,
+  type ProgressNodeAttempt,
+} from "@/lib/queries/board-progress";
+import {
   lifecycleActionsForWorkspace,
   type WorkbenchLifecycleAction,
 } from "@/lib/queries/portfolio";
@@ -60,7 +64,15 @@ export type CardStatus =
 export type CardPriority = "high" | "med" | "low";
 
 export interface SpineSegment {
-  state: "done" | "now" | "skip" | "todo";
+  state: "done" | "active" | "skip" | "todo";
+  tone?: ActiveNodeState;
+}
+
+export type ActiveNodeState = "running" | "needs" | "failed" | "waiting";
+
+export interface ActiveNodeStatus {
+  label: string;
+  state: ActiveNodeState;
 }
 
 // M37 Phase 6 (ADR-098): a child task of a `parent_of` SOURCE (orchestrator)
@@ -118,6 +130,7 @@ export interface FlightCard {
   status: CardStatus;
   stepLabel: string;
   spine: SpineSegment[];
+  activeNode: ActiveNodeStatus | null;
   time: string;
   // M11a: the latest run has at least one Reworked node attempt (review-driven
   // rework loop in flight). Minimal hint; the full timeline is M11b.
@@ -180,8 +193,6 @@ export interface BoardData {
   merged7d: number;
 }
 
-const SPINE_LENGTH = 7;
-
 function relativeTime(from: Date, now: Date): string {
   const seconds = Math.max(
     0,
@@ -211,31 +222,6 @@ function runStatusToCard(status: RunStatus): CardStatus {
   return "running";
 }
 
-function stepRunStatusToSegment(
-  status: StepRun["status"],
-): SpineSegment["state"] {
-  if (status === "Succeeded") return "done";
-  if (status === "Skipped") return "skip";
-  if (status === "Running" || status === "NeedsInput") return "now";
-
-  return "todo";
-}
-
-function buildSpine(steps: StepRun[]): SpineSegment[] {
-  const ordered = [...steps].sort(
-    (a, b) => a.startedAt.getTime() - b.startedAt.getTime(),
-  );
-  const segments: SpineSegment[] = ordered
-    .slice(0, SPINE_LENGTH)
-    .map((step) => ({ state: stepRunStatusToSegment(step.status) }));
-
-  while (segments.length < SPINE_LENGTH) {
-    segments.push({ state: "todo" });
-  }
-
-  return segments;
-}
-
 function priorityFor(index: number): CardPriority {
   if (index === 0) return "high";
   if (index <= 2) return "med";
@@ -263,6 +249,7 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
       stage: tasks.stage,
       createdAt: tasks.createdAt,
       flowRef: flows.flowRefId,
+      flowManifest: flows.manifest,
       flowId: tasks.flowId,
       triageStatus: tasks.triageStatus,
       runnerId: tasks.runnerId,
@@ -391,6 +378,7 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
       taskId: runs.taskId,
       status: runs.status,
       acpSessionId: activeSessionAcpSessionId(runs.id),
+      currentStepId: runs.currentStepId,
       startedAt: runs.startedAt,
       endedAt: runs.endedAt,
       capabilityAgent: activeSessionCapabilityAgent(runs.id),
@@ -419,6 +407,7 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
 
   const latestRunIds = [...latestRunByTask.values()].map((r) => r.runId);
   const stepsByRun = new Map<string, StepRun[]>();
+  const nodeAttemptsByRun = new Map<string, ProgressNodeAttempt[]>();
 
   if (latestRunIds.length > 0) {
     const stepRows = await client
@@ -431,6 +420,24 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
 
       list.push(step);
       stepsByRun.set(step.runId, list);
+    }
+
+    const nodeAttemptRows = await client
+      .select({
+        attempt: nodeAttempts.attempt,
+        nodeId: nodeAttempts.nodeId,
+        runId: nodeAttempts.runId,
+        startedAt: nodeAttempts.startedAt,
+        status: nodeAttempts.status,
+      })
+      .from(nodeAttempts)
+      .where(inArray(nodeAttempts.runId, latestRunIds));
+
+    for (const attempt of nodeAttemptRows) {
+      const list = nodeAttemptsByRun.get(attempt.runId) ?? [];
+
+      list.push(attempt);
+      nodeAttemptsByRun.set(attempt.runId, list);
     }
   }
 
@@ -565,10 +572,14 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
     }
 
     const steps = stepsByRun.get(run.runId) ?? [];
-    const current = steps.find(
-      (s) => s.status === "Running" || s.status === "NeedsInput",
-    );
     const cardStatus = runStatusToCard(run.status);
+    const progress = buildFlightProgress({
+      currentStepId: run.currentStepId,
+      manifest: task.flowManifest,
+      nodeAttempts: nodeAttemptsByRun.get(run.runId) ?? [],
+      runStatus: run.status,
+      stepRuns: steps,
+    });
     const takeover =
       cardStatus === "humanworking"
         ? (takeoverByRun.get(run.runId) ?? null)
@@ -592,8 +603,9 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
             context: run.runId,
           }),
       status: cardStatus,
-      stepLabel: current?.stepId ?? run.status.toLowerCase(),
-      spine: buildSpine(steps),
+      stepLabel: progress.stepLabel,
+      spine: progress.spine,
+      activeNode: progress.activeNode,
       // Elapsed: a takeover card counts from the claim time; a done card from
       // its end time; everything else from the run start.
       time: takeover

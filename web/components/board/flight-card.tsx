@@ -1,4 +1,5 @@
 import type {
+  ActiveNodeState,
   FlightCard as FlightCardData,
   SpineSegment,
 } from "@/lib/queries/board";
@@ -44,6 +45,7 @@ export interface FlightCardLabels {
   // ADR-112: "needs review" chip for a flagged task (held for a human).
   flagged: string;
   openRun: string;
+  activeNodeStatus: Record<ActiveNodeState, string>;
   // M37 Phase 6 (ADR-098): localized labels for the orchestrator decomposition
   // group rendered under a parent task's flight card.
   decomposition: TaskDecompositionLabels;
@@ -86,13 +88,35 @@ const AGENT_PILL: Record<FlightCardData["agent"], string> = {
 const BADGE =
   "rounded-full border px-2 py-[3px] font-mono text-[10px] font-bold tracking-[0.04em]";
 
+const ACTIVE_SEGMENT: Record<ActiveNodeState, string> = {
+  running: "bg-accent-4 shadow-[0_0_0_0_var(--accent-4)]",
+  needs: "bg-amber shadow-[0_0_0_0_var(--amber)]",
+  failed: "bg-red-500 shadow-[0_0_0_0_rgb(239_68_68)]",
+  waiting: "bg-accent-2 shadow-[0_0_0_0_var(--accent-2)]",
+};
+
+const ACTIVE_NODE_BADGE: Record<ActiveNodeState, string> = {
+  running:
+    "border-[color-mix(in_oklab,var(--accent-4)_35%,var(--line))] bg-accent-4-soft text-accent-4",
+  needs: "border-amber-line bg-amber-soft text-amber",
+  failed:
+    "border-[color-mix(in_oklab,rgb(239_68_68)_45%,var(--line))] bg-[color-mix(in_oklab,rgb(239_68_68)_14%,var(--paper))] text-red-500",
+  waiting: "border-line bg-paper text-accent-2",
+};
+
+function activeSegmentTone(seg: SpineSegment, needs: boolean): ActiveNodeState {
+  if (seg.tone) return seg.tone;
+
+  return needs ? "needs" : "running";
+}
+
 function segClass(seg: SpineSegment, needs: boolean): string {
   if (seg.state === "done") return "bg-accent-4 opacity-[0.65]";
   if (seg.state === "skip") {
     return "bg-[repeating-linear-gradient(45deg,var(--line)_0_2px,transparent_2px_4px)]";
   }
-  if (seg.state === "now") {
-    return needs ? "bg-amber" : "bg-accent-4";
+  if (seg.state === "active") {
+    return ACTIVE_SEGMENT[activeSegmentTone(seg, needs)];
   }
 
   return "bg-line";
@@ -215,6 +239,20 @@ export function FlightCard({
             {labels.waitingOnChildren}
           </span>
         ) : null}
+        {card.activeNode ? (
+          <span
+            className={clsx(
+              BADGE,
+              "max-w-full truncate",
+              ACTIVE_NODE_BADGE[card.activeNode.state],
+            )}
+            data-active-node-state={card.activeNode.state}
+            title={`${card.activeNode.label} · ${labels.activeNodeStatus[card.activeNode.state]}`}
+          >
+            {card.activeNode.label} ·{" "}
+            {labels.activeNodeStatus[card.activeNode.state]}
+          </span>
+        ) : null}
         {card.triageStatus === "flagged" ? (
           <span
             className={clsx(
@@ -309,10 +347,15 @@ export function FlightCard({
                 className={clsx(
                   "h-1 flex-1 rounded-[2px]",
                   segClass(seg, isNeeds),
-                  seg.state === "now" &&
-                    !isNeeds &&
-                    "shadow-[0_0_0_0_var(--accent-4)] animate-[pulse-seg_2.4s_ease-out_infinite]",
+                  seg.state === "active" &&
+                    "animate-[pulse-seg_2.4s_ease-out_infinite] motion-reduce:animate-none",
                 )}
+                data-spine-state={seg.state}
+                data-spine-tone={
+                  seg.state === "active"
+                    ? activeSegmentTone(seg, isNeeds)
+                    : undefined
+                }
               />
             ))}
           </div>

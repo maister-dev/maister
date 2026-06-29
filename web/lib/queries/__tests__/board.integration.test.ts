@@ -257,6 +257,168 @@ async function anyFlightCard(projectId: string, runId: string) {
   return undefined;
 }
 
+async function seedGraphProgressRun(opts: {
+  runStatus: "Running" | "NeedsInput" | "Crashed";
+  currentStepId: string | null;
+  attempts: Array<{
+    nodeId: string;
+    status: "Succeeded" | "Running" | "NeedsInput" | "Failed";
+    attempt?: number;
+  }>;
+}): Promise<{ projectId: string; runId: string }> {
+  const projectId = randomUUID();
+  const executorId = randomUUID();
+  const flowId = randomUUID();
+  const taskId = randomUUID();
+  const runId = randomUUID();
+  const workspaceId = randomUUID();
+  const slug = `progress-${projectId.slice(0, 8)}`;
+
+  await db.insert(schema.projects).values({
+    taskKey: `P${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
+    id: projectId,
+    slug,
+    name: "Board Progress Test",
+    repoPath: `/tmp/${slug}`,
+    maisterYamlPath: `/tmp/${slug}/maister.yaml`,
+  });
+  await db
+    .insert(schema.platformAcpRunners)
+    .values(testPlatformRunnerRow(executorId, "claude"));
+  await db.insert(schema.flows).values({
+    id: flowId,
+    projectId,
+    flowRefId: "aif",
+    source: "github.com/x/y",
+    version: "v1.0.0",
+    installedPath: "/tmp/flows/aif",
+    manifest: {
+      schemaVersion: 1,
+      name: "aif",
+      nodes: [
+        {
+          action: { prompt: "plan" },
+          id: "plan",
+          type: "ai_coding",
+          transitions: { success: "implement" },
+        },
+        {
+          action: { prompt: "implement" },
+          id: "implement",
+          type: "ai_coding",
+          transitions: { success: "review" },
+        },
+        {
+          action: { prompt: "review" },
+          id: "review",
+          type: "judge",
+          transitions: { approve: "done" },
+        },
+      ],
+    },
+    schemaVersion: 1,
+  });
+  await db.insert(schema.tasks).values({
+    number: Math.trunc(Math.random() * 1e9) + 1,
+    id: taskId,
+    projectId,
+    title: "progress task",
+    prompt: "p",
+    flowId,
+    status: "InFlight",
+    stage: "Backlog",
+  });
+  await db.insert(schema.runs).values({
+    id: runId,
+    taskId,
+    projectId,
+    flowId,
+    status: opts.runStatus,
+    flowVersion: "v1.0.0",
+    currentStepId: opts.currentStepId,
+    endedAt: opts.runStatus === "Crashed" ? new Date() : undefined,
+  });
+  await db.insert(schema.runSessions).values({
+    id: randomUUID(),
+    runId,
+    sessionName: "default",
+    runnerId: executorId,
+    capabilityAgent: "claude",
+    runnerSnapshot: testRunnerSnapshot(executorId),
+  });
+  await db.insert(schema.workspaces).values({
+    id: workspaceId,
+    projectId,
+    runId,
+    branch: "maister/progress-1",
+    worktreePath: `/tmp/${slug}/wt`,
+    parentRepoPath: `/tmp/${slug}`,
+  });
+
+  for (const [idx, attempt] of opts.attempts.entries()) {
+    await db.insert(schema.nodeAttempts).values({
+      id: randomUUID(),
+      runId,
+      nodeId: attempt.nodeId,
+      nodeType: attempt.nodeId === "review" ? "judge" : "ai_coding",
+      attempt: attempt.attempt ?? 1,
+      status: attempt.status,
+      startedAt: new Date(Date.UTC(2026, 4, 31, 10, idx)),
+    });
+  }
+
+  return { projectId, runId };
+}
+
+describe("getBoardData — graph spine and active node status", () => {
+  it("uses graph node order for overall progress and the current node for the active chip", async () => {
+    const { projectId, runId } = await seedGraphProgressRun({
+      runStatus: "Running",
+      currentStepId: "implement",
+      attempts: [
+        { nodeId: "plan", status: "Succeeded" },
+        { nodeId: "implement", status: "Running" },
+      ],
+    });
+
+    const card = await anyFlightCard(projectId, runId);
+
+    expect(card?.stepLabel).toBe("implement");
+    expect(card?.activeNode).toEqual({
+      label: "implement",
+      state: "running",
+    });
+    expect(card?.spine).toEqual([
+      { state: "done" },
+      { state: "active", tone: "running" },
+      { state: "todo" },
+    ]);
+  });
+
+  it("marks the active node and segment as failed for a crashed run with a failed latest attempt", async () => {
+    const { projectId, runId } = await seedGraphProgressRun({
+      runStatus: "Crashed",
+      currentStepId: null,
+      attempts: [
+        { nodeId: "plan", status: "Succeeded" },
+        { nodeId: "implement", status: "Failed" },
+      ],
+    });
+
+    const card = await anyFlightCard(projectId, runId);
+
+    expect(card?.activeNode).toEqual({
+      label: "implement",
+      state: "failed",
+    });
+    expect(card?.spine).toEqual([
+      { state: "done" },
+      { state: "active", tone: "failed" },
+      { state: "todo" },
+    ]);
+  });
+});
+
 // MIGRATED (T15): the M12 evidenceStale + mergeBlocked board booleans collapse
 // into the unified `readiness` state. The scenarios that drove the two booleans
 // are preserved, now asserting the rolled-up readiness verdict (stale > blocked
