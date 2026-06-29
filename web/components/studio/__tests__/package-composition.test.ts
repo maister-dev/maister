@@ -99,7 +99,7 @@ function render(
   );
 }
 
-describe("PackageComposition (ADR-115 §P2/P3)", () => {
+describe("PackageComposition (ADR-116 §P2/P3)", () => {
   it("renders tab counts and hides empty kind tabs; Files is always present", () => {
     const html = render(bomOf({ flows: [flow] }));
 

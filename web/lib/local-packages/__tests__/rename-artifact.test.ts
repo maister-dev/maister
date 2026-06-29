@@ -8,7 +8,7 @@ function paths(files: AuthoredFlowPackageFile[]): string[] {
   return files.map((f) => f.path).sort();
 }
 
-describe("renameArtifact (ADR-115 P6, D8)", () => {
+describe("renameArtifact (ADR-116 P6, D8)", () => {
   it("single-file kinds rename one path; frontmatter untouched", () => {
     const draftFiles: AuthoredFlowPackageFile[] = [
       {

@@ -77,7 +77,7 @@ function byTarget(container: HTMLElement, folder: string): HTMLButtonElement {
   return el;
 }
 
-describe("FilesManager (ADR-115 §P7, D7)", () => {
+describe("FilesManager (ADR-116 §P7, D7)", () => {
   it("moves a selected file into a folder via click", () => {
     const onDraftFilesChange = vi.fn();
     const container = mount(false, onDraftFilesChange);

@@ -12,7 +12,7 @@ import {
   parsePackageManifest,
 } from "@/lib/local-packages/manifest";
 
-// Pure, client-safe per-kind artifact scaffolders (ADR-115 P5). Each produces the
+// Pure, client-safe per-kind artifact scaffolders (ADR-116 P5). Each produces the
 // exact working-dir file shape into the draft set and returns where to navigate
 // after the create is saved (flow → canvas, skill → skill screen, the rest →
 // inline). A flow ALSO appends `manifest.spec.flows[]` (a file-only flow is dead

@@ -101,7 +101,7 @@ async function seedPackage(at: string): Promise<void> {
   await writeFile(join(at, "rules", "r1.md"), "rule\n");
 }
 
-describe("buildPackageBom (ADR-115 shared builder)", () => {
+describe("buildPackageBom (ADR-116 shared builder)", () => {
   it("enriches every kind from an installed source; agent carries NO runner", async () => {
     await seedPackage(root);
 
@@ -214,7 +214,7 @@ describe("buildPackageBom (ADR-115 shared builder)", () => {
   });
 });
 
-describe("getStudioPackageBom characterization (ADR-115 refactor guard)", () => {
+describe("getStudioPackageBom characterization (ADR-116 refactor guard)", () => {
   it("installed BOM output is stable through the shared-builder refactor", async () => {
     await seedPackage(root);
     dbState.rows = [{ id: "inst-1", installedPath: root, manifest }];

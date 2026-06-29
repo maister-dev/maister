@@ -25,7 +25,7 @@ import {
 } from "@/lib/queries/package-bom";
 
 // Re-exported for existing importers/tests (the predicate is shared with the
-// client-safe composition helpers — ADR-115 §D6).
+// client-safe composition helpers — ADR-116 §D6).
 export { isMcpDescriptorPath } from "@/lib/local-packages/composition";
 
 const log = pino({
@@ -33,7 +33,7 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-// (ADR-115 §D4) The install-time `collectInventory` (lib/packages/attach.ts)
+// (ADR-116 §D4) The install-time `collectInventory` (lib/packages/attach.ts)
 // walks a real pkgRoot; this is its file-list variant for the local source, where
 // the BOM is computed over a working-dir file walk. Layout-agnostic to match the
 // BOM's own resolvers (`resolveBundledSkillPrefix`/`resolveBundledAgentPath`),
@@ -94,7 +94,7 @@ function manifestMcpIds(raw: Record<string, unknown>): string[] {
   );
 }
 
-// Build a `PackageSource` over a local package's working dir (ADR-115 §D4). The
+// Build a `PackageSource` over a local package's working dir (ADR-116 §D4). The
 // manifest is parsed from `maister-package.yaml`; inventory is COMPUTED from a
 // confined file walk (no stored inventory exists for a working dir); MCPs are the
 // union of manifest-declared ids and `mcps/*.yaml` file stems (D6). Every read is
@@ -169,7 +169,7 @@ export async function localPackageSource(opts: {
 }
 
 // The local-package bill-of-materials — server-computed from the last-saved disk
-// state of the working dir (ADR-115 §D5). Drives the tabbed composition view.
+// state of the working dir (ADR-116 §D5). Drives the tabbed composition view.
 export async function getLocalPackageBom(pkg: {
   slug: string;
   workingDir: string;

@@ -28,7 +28,7 @@ const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
 });
 
-// Enriched per-kind bill-of-materials items (M36 T1.2; ADR-115: decoupled from
+// Enriched per-kind bill-of-materials items (M36 T1.2; ADR-116: decoupled from
 // install into a shared `PackageSource`). Each kind carries a kind-specific meta
 // line the viewer cards render; a member missing/unreadable on disk degrades to
 // an id-only shape, never throws. `installed_path` / `working_dir` never leave
@@ -108,7 +108,7 @@ export type PackageBomInventory = {
   platformAgents: string[];
 };
 
-// The input the shared BOM builder consumes (ADR-115 §D4). `installedPackageSource`
+// The input the shared BOM builder consumes (ADR-116 §D4). `installedPackageSource`
 // and the local `localPackageSource` both produce one; the builder never touches
 // a DB row or a concrete root path directly.
 export interface PackageSource {
@@ -202,7 +202,7 @@ export function installedPackageSource(install: {
 // node/gate/engine counts; skills/rules come from a single confined disk walk;
 // platform-agents parse `maister-agents/<stem>.md` for routing metadata (NO
 // runner); subagents are read leniently. Every per-element disk/parse failure
-// degrades to id-only and is logged — never thrown (ADR-115 §D4).
+// degrades to id-only and is logged — never thrown (ADR-116 §D4).
 export async function buildPackageBom(
   source: PackageSource,
 ): Promise<PackageBom> {

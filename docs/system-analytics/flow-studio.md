@@ -384,7 +384,7 @@ agent options, schema options, `onWriteSchemaFile`, and the existing
 `packageFilesJson` hidden input. Schema create/edit never performs an immediate
 `PUT /files/{path}`; it upserts into `draftFiles` and waits for Save.
 
-> **Composition-view IA (ADR-115 — Implemented).** The local editor's no-path
+> **Composition-view IA (ADR-116 — Implemented).** The local editor's no-path
 > landing was reworked from `PackageHome` (flow badges + raw file tree) into
 > a tabbed-by-kind **composition view** over a shared package-BOM source
 > abstraction, with inline master-detail editors, a dedicated skill screen, per-tab

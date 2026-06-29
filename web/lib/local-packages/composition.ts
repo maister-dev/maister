@@ -3,7 +3,7 @@ import type { PackageBom } from "@/lib/queries/package-bom";
 
 import { classifyPackageFilePath } from "@/lib/flows/editor/package-file-tree";
 
-// Pure, client-safe helpers for the tabbed composition view (ADR-115). NO
+// Pure, client-safe helpers for the tabbed composition view (ADR-116). NO
 // `server-only`, NO `node:*` — imported by the `"use client"` PackageComposition
 // and unit-tested directly. Routing + tab-resolution logic lives here so the
 // component stays a thin renderer.
@@ -122,7 +122,7 @@ export function inlineSelectHref(
   return `/studio/edit/${packageId}?tab=${tab}&sel=${encodeURIComponent(id)}`;
 }
 
-// (ADR-115 §D6) MCP descriptors in a local working dir are authored as files
+// (ADR-116 §D6) MCP descriptors in a local working dir are authored as files
 // `mcps/<name>.yaml` (the McpTemplateEditor), NOT manifest-inline entries like an
 // installed package. `classifyPackageFilePath` returns "asset" for `mcps/`, so the
 // composition view + local BOM + editor-routing special-case the path here rather
@@ -154,7 +154,7 @@ export type MoveResult =
   | { ok: false; code: "CONFLICT" | "PRECONDITION" };
 
 // Move a file OR a folder (by prefix rewrite) into `targetFolder` (`""` = root)
-// on the flat draft list (ADR-115 P7, D7). Folders materialize implicitly from
+// on the flat draft list (ADR-116 P7, D7). Folders materialize implicitly from
 // the rewritten paths — no sentinel. Rejects a destination collision or a folder
 // moved into its own subtree; a no-op move returns the draft unchanged.
 export function movePathInDraft(
@@ -211,7 +211,7 @@ export function movePathInDraft(
 }
 
 // Every folder path implied by the draft files (each file's ancestor dirs),
-// deduped + sorted, for the move-target picker + tree (ADR-115 P7).
+// deduped + sorted, for the move-target picker + tree (ADR-116 P7).
 export function folderPathsOf(
   files: ReadonlyArray<AuthoredFlowPackageFile>,
 ): string[] {
@@ -229,7 +229,7 @@ export function folderPathsOf(
 }
 
 // The capability bundles present in the draft (`capability/<cap>/…`), for the
-// subagent create picker — a new subagent must land in a capability (ADR-115 P5).
+// subagent create picker — a new subagent must land in a capability (ADR-116 P5).
 export function listCapabilities(
   files: ReadonlyArray<AuthoredFlowPackageFile>,
 ): string[] {
@@ -245,7 +245,7 @@ export function listCapabilities(
 }
 
 // The working-dir prefix of a skill's nested subtree (skills have folders, so the
-// dedicated skill screen scopes the file navigator to this prefix — ADR-115 P4).
+// dedicated skill screen scopes the file navigator to this prefix — ADR-116 P4).
 export function skillSubtreePrefix(skillId: string): string {
   return `skills/${skillId}/`;
 }

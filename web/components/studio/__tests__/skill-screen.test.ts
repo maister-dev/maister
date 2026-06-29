@@ -53,7 +53,7 @@ function render(skillId: string, readOnly = false): string {
   );
 }
 
-describe("SkillScreen (ADR-115 §P4)", () => {
+describe("SkillScreen (ADR-116 §P4)", () => {
   it("scopes the navigator to the skill's nested files + breadcrumb back to Skills", () => {
     const html = render("arch");
 

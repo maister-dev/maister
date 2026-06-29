@@ -272,7 +272,7 @@ async function resolveConfinedFile(
 // from a package manifest — validated at install time for an installed package, but
 // UNTRUSTED for a local working dir (the editor parses `maister-package.yaml`
 // leniently), so every BOM / preview flow load resolves through this gate instead
-// of join()-ing the raw path straight into `loadFlowManifest` (ADR-115 confinement
+// of join()-ing the raw path straight into `loadFlowManifest` (ADR-116 confinement
 // fix). Reuses the single `resolveConfinedFile` gate, so a lexical/symlink escape
 // is logged once at warn here, then degrades the caller's flow to id-only.
 export async function resolveConfinedFlowYaml(

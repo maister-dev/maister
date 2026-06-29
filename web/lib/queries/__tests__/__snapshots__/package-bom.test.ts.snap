@@ -1,6 +1,6 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`getStudioPackageBom characterization (ADR-115 refactor guard) > installed BOM output is stable through the shared-builder refactor 1`] = `
+exports[`getStudioPackageBom characterization (ADR-116 refactor guard) > installed BOM output is stable through the shared-builder refactor 1`] = `
 {
   "flows": [
     {

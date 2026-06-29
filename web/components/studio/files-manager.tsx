@@ -20,7 +20,7 @@ export type FilesManagerLabels = {
   errorPrecondition: string;
 };
 
-// The Files-tab move + virtual-folder layer (ADR-115 P7, D7). The raw tree +
+// The Files-tab move + virtual-folder layer (ADR-116 P7, D7). The raw tree +
 // content editing + new file + rename + delete live in the sibling
 // PackageFilesEditor; this adds: a breadcrumb of the picked source, drag-and-drop
 // (or click) move of a file/folder into a destination folder, and client-only

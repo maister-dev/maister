@@ -28,7 +28,7 @@ export type SkillScreenLabels = {
   rename: { open: string; confirm: string; cancel: string };
 };
 
-// The dedicated skill screen (ADR-115 P4): a PackageFilesEditor scoped to the
+// The dedicated skill screen (ADR-116 P4): a PackageFilesEditor scoped to the
 // `skills/<id>/` subtree (skills have nested folders, which a side panel cannot
 // hold) + a breadcrumb back to the composition Skills tab. SKILL.md opens in the
 // FrontmatterArtifactEditor (the editor dispatches by path). Edits merge back into

@@ -102,7 +102,7 @@ function selectValue(el: HTMLSelectElement, value: string): void {
   el.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
-describe("PackageComposition inline Save (ADR-115 §P3)", () => {
+describe("PackageComposition inline Save (ADR-116 §P3)", () => {
   it("the inline Save button persists the draft via onSaveDraft", () => {
     nav.search = "tab=rules&sel=r1.md";
     const onSaveDraft = vi.fn();
@@ -125,7 +125,7 @@ describe("PackageComposition inline Save (ADR-115 §P3)", () => {
   });
 });
 
-describe("PackageComposition create (ADR-115 §P5)", () => {
+describe("PackageComposition create (ADR-116 §P5)", () => {
   it("scaffolds a rule and persists it via onCreateArtifact", () => {
     nav.search = "tab=files";
     const onCreateArtifact = vi.fn();

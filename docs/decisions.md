@@ -141,7 +141,7 @@
 | [ADR-113](#adr-113-pr-to-source-for-local-packages--trusted-source-picker--stable-publish-branch) | PR-to-source for local packages — trusted-source picker + stable publish branch (M39 Stream B) | Accepted | 2026-06-25 |
 | [ADR-114](#adr-114-unified-flow-runner-config-first-class-sessions-per-project-connect-time-bindings-and-run_sessions-as-the-sole-run-runner-source-of-truth) | Unified Flow runner config, first-class sessions, per-project connect-time bindings, `run_sessions` sole source of truth, engine 2.0.0 (M42) | Accepted | 2026-06-26 |
 | [ADR-115](#adr-115-strict-template-default-operator-for-prompt-authoring) | Strict template default operator for prompt authoring | Accepted | 2026-06-28 |
-| [ADR-115](#adr-115-local-package-composition-view-shared-package-bom-source-abstraction-tabbed-editor-ia) | Local-package composition view: shared package BOM source abstraction, tabbed editor IA | Accepted | 2026-06-28 |
+| [ADR-116](#adr-116-local-package-composition-view-shared-package-bom-source-abstraction-tabbed-editor-ia) | Local-package composition view: shared package BOM source abstraction, tabbed editor IA | Accepted | 2026-06-28 |
 
 ---
 
@@ -9221,7 +9221,7 @@ implemented in `web/lib/flows/templating.ts` and documented in `docs/flow-dsl.md
 
 ---
 
-### ADR-115: Local-package composition view: shared package BOM source abstraction, tabbed editor IA
+### ADR-116: Local-package composition view: shared package BOM source abstraction, tabbed editor IA
 
 **Date:** 2026-06-28
 **Status:** Accepted
@@ -9320,10 +9320,9 @@ batch import surfaced from the landing); and `classifyPackageFilePath` returns
   harmless; manufacturing sentinels litters the working tree for a push/cut-only
   concern.
 
-**Numbering note.** ADR-115 is the next free number at branch HEAD (highest is
-ADR-114). No migration is taken (the next free `0083` stays unused); if a parallel
-branch lands ADR-115 first, this renumbers (the body, the Index row, and every
-`ADR-115` cross-reference in `local-packages.md` / `flow-studio.md`).
+**Numbering note.** Originally reserved as ADR-115 at branch HEAD; renumbered to
+**ADR-116** on rebase onto main, which had landed ADR-115 (strict template default
+operator) first. No migration is taken (the next free `0083` stays unused).
 
 ---
 

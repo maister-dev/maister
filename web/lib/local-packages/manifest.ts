@@ -163,7 +163,7 @@ export function appendManifestFlow(
 
 // Rename a flow entry's identity in `flows[]` (id + path), preserving every other
 // field + key order, and re-serialize. Used by the card-level flow rename
-// (ADR-115 P6): a flow rename that updates the file but not the manifest is a
+// (ADR-116 P6): a flow rename that updates the file but not the manifest is a
 // defect, so both move together. A no-match leaves the manifest unchanged.
 export function renameManifestFlow(
   raw: Record<string, unknown>,

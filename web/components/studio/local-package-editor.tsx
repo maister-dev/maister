@@ -102,7 +102,7 @@ export type LocalPackageEditorLabels = {
   aiExpand: string;
   ai: StudioAiTabLabels;
   // The Files-tab save button label (the composition landing replaced the old
-  // package-home; ADR-115).
+  // package-home; ADR-116).
   home: { save: string };
   crumbStudio: string;
   crumbLocal: string;
@@ -205,7 +205,7 @@ export function LocalPackageEditor({
   diff: string;
   canvasAvailable: boolean;
   files: AuthoredFlowPackageFile[];
-  // Server-computed bill-of-materials from the last-saved working dir (ADR-115),
+  // Server-computed bill-of-materials from the last-saved working dir (ADR-116),
   // driving the tabbed composition landing.
   bom: PackageBom;
   labels: LocalPackageEditorLabels;
@@ -555,7 +555,7 @@ export function LocalPackageEditor({
   );
 
   // Persist the current draft file set without a form submit — used by the
-  // composition inline editors' Save action (ADR-115).
+  // composition inline editors' Save action (ADR-116).
   const saveDraft = useCallback((): void => {
     const formData = new FormData();
 
@@ -564,7 +564,7 @@ export function LocalPackageEditor({
     void runSave(formData);
   }, [draftFiles, initialTitle, runSave]);
 
-  // Create = scaffold → save → navigate (ADR-115 P5). The scaffolded files are
+  // Create = scaffold → save → navigate (ADR-116 P5). The scaffolded files are
   // passed explicitly (not via state, which has not re-rendered yet) so the save
   // persists them BEFORE navigating to the target editor, which reads from disk.
   const createArtifact = useCallback(

@@ -3,7 +3,7 @@
 > Behavior SSOT for **editable local packages** — a platform-scoped, git-backed
 > working directory a member authors/forks artifacts in, edits in Flow Studio
 > under a session lock, and **cuts versions** from into the existing
-> package-install substrate. **Status: Implemented (ADR-096 base; ADR-105 Stream A; ADR-107/110 Stream B — version-adopt launch + PR-to-source, migration 0078); the tabbed composition-view editor IA is ADR-115 — Implemented (web-only, no migration).** Surface:
+> package-install substrate. **Status: Implemented (ADR-096 base; ADR-105 Stream A; ADR-107/110 Stream B — version-adopt launch + PR-to-source, migration 0078); the tabbed composition-view editor IA is ADR-116 — Implemented (web-only, no migration).** Surface:
 > [`../screens/studio/README.md`](../screens/studio/README.md) §Local workspace +
 > [`../screens/studio/editor.md`](../screens/studio/editor.md). Data:
 > [`../db/projects-domain.md`](../db/projects-domain.md).
@@ -389,7 +389,7 @@ PR automation needs the provider CLI (`gh`/`glab`) + a host-ambient token
 (`GH_TOKEN` / `GITLAB_TOKEN` / `GITEA_TOKEN` / `GITVERSE_TOKEN`); absent → the push-only
 fallback. See [`../configuration.md`](../configuration.md).
 
-## Composition view — tabbed local-package editor (ADR-115 — Implemented)
+## Composition view — tabbed local-package editor (ADR-116 — Implemented)
 
 The local editor's no-path landing is a **tabbed-by-kind composition view**,
 reusing the installed viewer's `PackageTabs` / `ElementCard` / `FlowPreviewCard`
@@ -491,7 +491,7 @@ Batch import is unchanged — see **Batch import (M36)** above; the composition 
 tab surfaces one shared **Import** button wired to the existing
 `POST .../import` (`mode=preview` → confirm → `mode=commit`).
 
-### Composition-view expectations (ADR-115 — Implemented)
+### Composition-view expectations (ADR-116 — Implemented)
 
 - The local editor landing MUST render the 7-tab composition view; each tab count
   MUST equal its BOM array length; an empty kind MUST hide its tab; **Files** MUST
@@ -525,7 +525,7 @@ tab surfaces one shared **Import** button wired to the existing
   parsed leniently, so a `..`/absolute/symlink path MUST be refused (read nothing
   outside the root) and the flow MUST degrade to an id-only card.
 
-### Composition-view edge cases (ADR-115 — Implemented)
+### Composition-view edge cases (ADR-116 — Implemented)
 
 - Create/rename target collides with an existing draft path → `MaisterError("CONFLICT")`,
   surfaced inline, never a silent overwrite.
@@ -661,7 +661,7 @@ tab surfaces one shared **Import** button wired to the existing
 
 - **ADRs:** ADR-096 (this domain), ADR-105 (Stream A — first-class kinds + centralized
   model), ADR-107 (Stream B — version-adopt launch), ADR-113 (Stream B — PR-to-source),
-  ADR-115 (composition-view tabbed editor IA + shared package-BOM source abstraction —
+  ADR-116 (composition-view tabbed editor IA + shared package-BOM source abstraction —
   Implemented), ADR-092 (unified Studio + editable-local-package direction), ADR-088 (package
   management), ADR-021 (fetch-then-execute trust separation) — see
   [`../decisions.md`](../decisions.md).
@@ -682,7 +682,7 @@ tab surfaces one shared **Import** button wired to the existing
   `web/app/api/studio/local-packages/*` (incl. `[id]/cut-version`),
   `web/app/api/studio/packages/[ref]/{fork,fork-element}/`,
   `web/app/(app)/studio/local/`, `web/app/(app)/studio/edit/[id]/`.
-- **Source (ADR-115 composition view):** `web/lib/queries/package-bom.ts`
+- **Source (ADR-116 composition view):** `web/lib/queries/package-bom.ts`
   (`PackageSource` + `buildPackageBom` + `installedPackageSource`),
   `web/lib/local-packages/bom.ts` (`getLocalPackageBom` + `localPackageSource` +
   `collectInventoryFromFiles`), `web/lib/local-packages/composition.ts` (tab/route

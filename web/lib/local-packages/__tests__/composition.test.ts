@@ -51,7 +51,7 @@ const flow = {
   graph: null,
 };
 
-describe("composition tab logic (ADR-115 §P2)", () => {
+describe("composition tab logic (ADR-116 §P2)", () => {
   it("counts equal BOM array lengths", () => {
     const bom = bomOf({
       flows: [flow],
@@ -112,7 +112,7 @@ describe("composition tab logic (ADR-115 §P2)", () => {
   });
 });
 
-describe("composition href builders (ADR-115 §P2 routing targets)", () => {
+describe("composition href builders (ADR-116 §P2 routing targets)", () => {
   it("flow → canvas manifest path (appends flow.yaml to a dir)", () => {
     expect(flowCanvasHref("pkg1", "flows/dev")).toBe(
       "/studio/edit/pkg1/flows/dev/flow.yaml",
@@ -145,7 +145,7 @@ describe("composition href builders (ADR-115 §P2 routing targets)", () => {
   });
 });
 
-describe("isMcpDescriptorPath (ADR-115 §D6)", () => {
+describe("isMcpDescriptorPath (ADR-116 §D6)", () => {
   it("matches a direct mcps/*.yaml|yml child only", () => {
     expect(isMcpDescriptorPath("mcps/github.yaml")).toBe(true);
     expect(isMcpDescriptorPath("mcps/github.yml")).toBe(true);
@@ -154,7 +154,7 @@ describe("isMcpDescriptorPath (ADR-115 §D6)", () => {
   });
 });
 
-describe("resolveInlineFilePath (ADR-115 §P3)", () => {
+describe("resolveInlineFilePath (ADR-116 §P3)", () => {
   const bom = bomOf({
     subagents: [
       { id: "sub1", path: "capability/c/agents/sub1.md", description: "" },
@@ -202,7 +202,7 @@ describe("resolveInlineFilePath (ADR-115 §P3)", () => {
   });
 });
 
-describe("listCapabilities (ADR-115 §P5)", () => {
+describe("listCapabilities (ADR-116 §P5)", () => {
   it("returns the distinct sorted capability bundles in the draft", () => {
     const files: AuthoredFlowPackageFile[] = [
       { kind: "subagent", path: "capability/core/agents/a.md", content: "" },
@@ -216,7 +216,7 @@ describe("listCapabilities (ADR-115 §P5)", () => {
   });
 });
 
-describe("movePathInDraft + folderPathsOf (ADR-115 §P7, D7)", () => {
+describe("movePathInDraft + folderPathsOf (ADR-116 §P7, D7)", () => {
   const files: AuthoredFlowPackageFile[] = [
     { kind: "rule", path: "rules/r1.md", content: "a" },
     { kind: "asset", path: "assets/logo.png", content: "" },
@@ -282,7 +282,7 @@ describe("movePathInDraft + folderPathsOf (ADR-115 §P7, D7)", () => {
   });
 });
 
-describe("skill subtree scope/merge (ADR-115 §P4)", () => {
+describe("skill subtree scope/merge (ADR-116 §P4)", () => {
   const files: AuthoredFlowPackageFile[] = [
     { kind: "manifest", path: "maister-package.yaml", content: "x" },
     { kind: "skill", path: "skills/arch/SKILL.md", content: "a" },

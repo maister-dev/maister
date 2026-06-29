@@ -17,7 +17,7 @@ import {
   renameManifestFlow,
 } from "@/lib/local-packages/manifest";
 
-// Pure, client-safe per-kind IDENTITY rename (ADR-115 P6, D8). Renames an
+// Pure, client-safe per-kind IDENTITY rename (ADR-116 P6, D8). Renames an
 // artifact's file/folder (the id derives from filename/folder) — distinct from
 // editing its metadata (frontmatter), which happens in the editor. Operates on
 // the flat draft list; a flow rename ALSO rewrites `manifest.spec.flows[]`; a

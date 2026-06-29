@@ -84,10 +84,10 @@ fail) on missing linkage alone.
 
 ### D1. Reservations (allocate up front)
 
-- **ADR:** **ADR-115** — "Local-package composition view: package BOM decoupled
+- **ADR:** **ADR-116** — "Local-package composition view: package BOM decoupled
   from install into a shared source abstraction; tabbed editor IA." Highest ADR
   at branch HEAD is ADR-114 (`docs/decisions.md:9008`); 115 is free. A stub
-  `### ADR-115` header + index anchor is written in Phase 0 **before** any
+  `### ADR-116` header + index anchor is written in Phase 0 **before** any
   citation (a cited-but-headerless ADR is a build break, per project rule).
 - **Migration:** **NONE.** `local_packages` already carries every column; files
   are filesystem-only with no DB index. Next free migration `0083` stays unused.
@@ -226,7 +226,7 @@ code is reported, not deleted.
 
 ### Phase 0 — Analytics & contract spec (docs-first, blocks all code)
 
-**P0.1** Reserve **ADR-115** in `docs/decisions.md`: write the `### ADR-115`
+**P0.1** Reserve **ADR-116** in `docs/decisions.md`: write the `### ADR-116`
 header + index-table anchor + the decision body (BOM-decoupling + tabbed local
 editor IA + open-model + no-migration/no-new-route rationale). Verify
 `pnpm validate:docs:adr` green.
@@ -256,7 +256,7 @@ routes already exist; confirm no OpenAPI edit is required; confirm no migration.
 **Exit:** `pnpm validate:docs:all` + `validate:docs:adr:all` + redocly lint green;
 docs internally consistent; every later-phase surface traces to a doc section.
 
-*Commit checkpoint:* `docs(studio): ADR-115 + local-package composition analytics`
+*Commit checkpoint:* `docs(studio): ADR-116 + local-package composition analytics`
 
 ### Phase 1 — Shared BOM abstraction (backend, TDD) — **main backend work**
 
@@ -401,7 +401,7 @@ the typed error.
 ### Phase 8 — As-built docs sync + verification (mandatory docs checkpoint)
 
 **P8.1** Flip Phase-0 `Designed` tags → `Implemented` in
-`docs/system-analytics/local-packages.md`; finalize ADR-115 status; update the
+`docs/system-analytics/local-packages.md`; finalize ADR-116 status; update the
 `flow-studio.md` cross-ref. Confirm `database-schema.md` unchanged (no migration).
 Route doc changes through `/aif-docs`.
 
@@ -417,7 +417,7 @@ free :3000 to run them; static-only otherwise, documented).
 
 ## Commit Plan
 
-1. Phase 0 → `docs(studio): ADR-115 + local-package composition analytics`
+1. Phase 0 → `docs(studio): ADR-116 + local-package composition analytics`
 2. Phase 1 → `feat(studio): shared package BOM builder + local BOM`
 3. Phase 2 → `feat(studio): tabbed composition landing for local packages`
 4. Phase 3 → `feat(studio): inline master-detail editors in composition tabs`
@@ -448,7 +448,7 @@ free :3000 to run them; static-only otherwise, documented).
 - readOnly (lock lost / no manage / assistant busy) disables every mutation.
 - All new tests green via the correct runner; no trivial tests; minimal overlap;
   RED→GREEN history preserved per phase.
-- Docs (ADR-115 + `local-packages.md` + `flow-studio.md`) complete, consistent,
+- Docs (ADR-116 + `local-packages.md` + `flow-studio.md`) complete, consistent,
   status-tagged Implemented; `validate:docs:all`, `validate:docs:adr:all`,
   redocly lint green. No DB migration; no OpenAPI route change.
 

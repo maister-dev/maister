@@ -17,7 +17,7 @@ function find(
   return files.find((f) => f.path === path)?.content;
 }
 
-describe("scaffoldArtifact (ADR-115 P5)", () => {
+describe("scaffoldArtifact (ADR-116 P5)", () => {
   it("flow → flows/<name>/flow.yaml + appends manifest flows[] + canvas nav", () => {
     const res = scaffoldArtifact({
       kind: "flow",

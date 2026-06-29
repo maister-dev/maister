@@ -27,7 +27,7 @@ async function write(rel: string, content: string): Promise<void> {
   await writeFile(abs, content);
 }
 
-describe("isMcpDescriptorPath (ADR-115 §D6)", () => {
+describe("isMcpDescriptorPath (ADR-116 §D6)", () => {
   it("matches a direct mcps/*.yaml|yml child only", () => {
     expect(isMcpDescriptorPath("mcps/github.yaml")).toBe(true);
     expect(isMcpDescriptorPath("mcps/github.yml")).toBe(true);
@@ -37,7 +37,7 @@ describe("isMcpDescriptorPath (ADR-115 §D6)", () => {
   });
 });
 
-describe("collectInventoryFromFiles (ADR-115 §D4 file-list inventory)", () => {
+describe("collectInventoryFromFiles (ADR-116 §D4 file-list inventory)", () => {
   it("discovers skills, capability subagents, and platform agents under both layouts", () => {
     const inv = collectInventoryFromFiles([
       { path: "skills/arch/SKILL.md" },
@@ -71,7 +71,7 @@ async function seedManifest(flows: string, mcps = ""): Promise<void> {
   );
 }
 
-describe("getLocalPackageBom (ADR-115 §D4/D5)", () => {
+describe("getLocalPackageBom (ADR-116 §D4/D5)", () => {
   it("builds a BOM over a working dir: nested skill, capability subagent, platform agent, mcp file", async () => {
     await seedManifest(
       ["flows:", "  - id: dev", "    path: flows/dev"].join("\n"),

@@ -28,7 +28,7 @@ import {
   installedPackageSource,
 } from "@/lib/queries/package-bom";
 
-// Re-exported for existing importers of `@/lib/queries/packages` (ADR-115 moved
+// Re-exported for existing importers of `@/lib/queries/packages` (ADR-116 moved
 // the canonical definitions to `package-bom.ts`).
 export type {
   PackageBom,
@@ -284,7 +284,7 @@ export async function loadPackageSourcesView(): Promise<{
   };
 }
 
-// Bill-of-materials for one package install (ADR-115: now a thin adapter over the
+// Bill-of-materials for one package install (ADR-116: now a thin adapter over the
 // shared `buildPackageBom` via an installed `PackageSource` — output is unchanged,
 // pinned by a characterization snapshot). `installed_path` never leaves the server.
 export async function getStudioPackageBom(

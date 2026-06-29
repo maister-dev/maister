@@ -72,7 +72,7 @@ const FRONTMATTER_KIND_BY_COMPOSITION: Partial<
 
 type TFn = ReturnType<typeof useTranslations>;
 
-// The tabbed-by-kind composition landing for the local-package editor (ADR-115).
+// The tabbed-by-kind composition landing for the local-package editor (ADR-116).
 // Reuses the installed viewer's PackageTabs + ElementCard + FlowPreviewCard over
 // the local BOM. Flows route to the canvas, skills to a dedicated screen, the
 // remaining kinds open inline (master-detail: card list + side editor). Files is
@@ -540,7 +540,7 @@ export function applyRename(
 
 // A compact "Rename" affordance: a button that opens a name input + confirm. The
 // `onSubmit` returns a localized error message (or null on success); the control
-// stays open on error so the user can correct the name (ADR-115 P6).
+// stays open on error so the user can correct the name (ADR-116 P6).
 export function RenameControl({
   currentName,
   labels,
@@ -622,7 +622,7 @@ export function RenameControl({
   );
 }
 
-// The global "+ Add <kind>" create control (ADR-115 P5). A kind whose tab is
+// The global "+ Add <kind>" create control (ADR-116 P5). A kind whose tab is
 // hidden (empty) is still creatable here. A flow opens the canvas, a skill its
 // screen, the rest inline — after the scaffold is saved (create = scaffold →
 // save → refresh), so the navigated target reads it off disk.
