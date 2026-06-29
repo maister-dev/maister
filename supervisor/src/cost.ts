@@ -150,18 +150,31 @@ export function extractCost(
   if (context.stepId) record.stepId = context.stepId;
   if (context.nodeAttemptId) record.nodeAttemptId = context.nodeAttemptId;
 
-  if (typeof usage.input_tokens === "number") {
-    record.input_tokens = usage.input_tokens;
+  // Accept BOTH the Anthropic snake_case streaming usage and the ACP adapter's
+  // camelCase end-turn `result.usage` (inputTokens / outputTokens /
+  // cachedWriteTokens = cache-creation / cachedReadTokens = cache-read). Per
+  // field, snake_case wins so a usage object carrying both shapes is never
+  // double-counted (T-D2). Without this the camelCase end-turn usage was dropped
+  // and every node session after the first recorded zero tokens.
+  const input = numberField(usage, "input_tokens", "inputTokens");
+  const output = numberField(usage, "output_tokens", "outputTokens");
+  const cacheCreation = numberField(
+    usage,
+    "cache_creation_input_tokens",
+    "cachedWriteTokens",
+  );
+  const cacheRead = numberField(
+    usage,
+    "cache_read_input_tokens",
+    "cachedReadTokens",
+  );
+
+  if (input !== undefined) record.input_tokens = input;
+  if (output !== undefined) record.output_tokens = output;
+  if (cacheCreation !== undefined) {
+    record.cache_creation_input_tokens = cacheCreation;
   }
-  if (typeof usage.output_tokens === "number") {
-    record.output_tokens = usage.output_tokens;
-  }
-  if (typeof usage.cache_creation_input_tokens === "number") {
-    record.cache_creation_input_tokens = usage.cache_creation_input_tokens;
-  }
-  if (typeof usage.cache_read_input_tokens === "number") {
-    record.cache_read_input_tokens = usage.cache_read_input_tokens;
-  }
+  if (cacheRead !== undefined) record.cache_read_input_tokens = cacheRead;
 
   if (
     record.input_tokens === undefined &&
@@ -177,6 +190,19 @@ export function extractCost(
   if (model) record.model = model;
 
   return record;
+}
+
+// Read a numeric usage field, preferring the canonical snake_case key and
+// falling back to the camelCase alias (per field → no double-count).
+function numberField(
+  usage: Record<string, unknown>,
+  snakeKey: string,
+  camelKey: string,
+): number | undefined {
+  if (typeof usage[snakeKey] === "number") return usage[snakeKey] as number;
+  if (typeof usage[camelKey] === "number") return usage[camelKey] as number;
+
+  return undefined;
 }
 
 function findKeyObject(

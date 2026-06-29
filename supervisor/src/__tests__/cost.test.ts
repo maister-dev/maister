@@ -89,6 +89,48 @@ describe("extractCost", () => {
     });
   });
 
+  it("extracts the camelCase end-turn result.usage shape (T-D2)", () => {
+    const record = extractCost(
+      JSON.stringify({
+        result: {
+          usage: {
+            inputTokens: 100,
+            outputTokens: 200,
+            cachedWriteTokens: 5000,
+            cachedReadTokens: 42,
+          },
+        },
+      }),
+      "s1",
+    );
+
+    expect(record).not.toBeNull();
+    expect(record?.input_tokens).toBe(100);
+    expect(record?.output_tokens).toBe(200);
+    expect(record?.cache_creation_input_tokens).toBe(5000);
+    expect(record?.cache_read_input_tokens).toBe(42);
+  });
+
+  it("does not double-count when a usage object carries both shapes (snake wins)", () => {
+    const record = extractCost(
+      JSON.stringify({
+        usage: {
+          input_tokens: 100,
+          inputTokens: 999,
+          output_tokens: 200,
+          outputTokens: 999,
+          cache_read_input_tokens: 7,
+          cachedReadTokens: 999,
+        },
+      }),
+      "s1",
+    );
+
+    expect(record?.input_tokens).toBe(100);
+    expect(record?.output_tokens).toBe(200);
+    expect(record?.cache_read_input_tokens).toBe(7);
+  });
+
   it("returns null when usage object has no token fields", () => {
     const record = extractCost(
       JSON.stringify({ usage: { service_tier: "standard" } }),
