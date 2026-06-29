@@ -229,6 +229,7 @@
         "newFile": "File",
         "newFolder": "Folder",
         "newFolderName": "Folder name",
+        "upload": "Upload",
         "root": "Package",
         "save": "Save",
         "empty": "No files yet — add one.",

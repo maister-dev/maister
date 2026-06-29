@@ -191,6 +191,25 @@ export async function POST(
       });
     }
 
+    // Optional `targetDir` lands the import under a folder instead of the root
+    // (the navigator passes its current folder). Prefixed uniformly for folder +
+    // archive; the per-entry confinement in preview/commit rejects an escaping
+    // (`..`/absolute) targetDir, so no extra validation is needed here.
+    const targetDirRaw = form.get("targetDir");
+    const targetDir =
+      typeof targetDirRaw === "string"
+        ? targetDirRaw.replace(/^\/+|\/+$/g, "")
+        : "";
+
+    if (targetDir) {
+      collected = {
+        entries: collected.entries.map((entry) => ({
+          ...entry,
+          path: `${targetDir}/${entry.path}`,
+        })),
+      };
+    }
+
     if (collected.entries.length === 0) {
       throw new MaisterError("PRECONDITION", "the import contains no files");
     }

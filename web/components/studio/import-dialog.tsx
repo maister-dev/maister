@@ -85,12 +85,16 @@ function fmtBytes(n: number): string {
 export function ImportDialog({
   packageId,
   sessionId,
+  targetFolder,
   labels,
   onClose,
   onImported,
 }: {
   packageId: string;
   sessionId?: string;
+  // When set, the import lands under this working-dir folder instead of the root
+  // (the file navigator passes its current folder). Empty/undefined = root.
+  targetFolder?: string;
   labels: ImportDialogLabels;
   onClose: () => void;
   onImported?: () => void;
@@ -161,6 +165,7 @@ export function ImportDialog({
 
     form.set("mode", mode);
     form.set("sessionId", session);
+    if (targetFolder) form.set("targetDir", targetFolder);
 
     if (staged?.kind === "folder") {
       form.set("kind", "folder");

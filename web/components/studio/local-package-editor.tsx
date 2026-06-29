@@ -869,12 +869,14 @@ export function LocalPackageEditor({
                   <PackageFileNavigator
                     draftFiles={draftFiles}
                     filesLabels={filesLabels}
+                    importLabels={buildImportDialogLabels(tStudio)}
                     labels={{
                       viewFinder: tStudio("composition.files.viewFinder"),
                       viewTree: tStudio("composition.files.viewTree"),
                       newFile: tStudio("composition.files.newFile"),
                       newFolder: tStudio("composition.files.newFolder"),
                       newFolderName: tStudio("composition.files.newFolderName"),
+                      upload: tStudio("composition.files.upload"),
                       root: tStudio("composition.files.root"),
                       save: tStudio("composition.files.save"),
                       empty: tStudio("composition.files.empty"),
@@ -889,7 +891,9 @@ export function LocalPackageEditor({
                       ),
                     }}
                     mcpCatalog={mcpCatalog}
+                    packageId={packageId}
                     readOnly={readOnly}
+                    sessionId={sessionIdRef.current}
                     onDraftFilesChange={handleDraftFilesChange}
                     onSaveDraft={saveDraft}
                   />

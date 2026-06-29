@@ -2,6 +2,7 @@
 
 import type { AuthoredFlowPackageFile } from "@/lib/catalog/authored-types";
 import type { PackageFilesEditorLabels } from "@/components/flows/package-files-editor";
+import type { ImportDialogLabels } from "@/components/studio/import-dialog";
 import type { PlatformMcpCatalogEntry } from "@/lib/queries/platform-mcp-catalog";
 import type { ComponentPropsWithoutRef, ReactElement } from "react";
 
@@ -12,6 +13,7 @@ import {
   ContentEditor,
   uniqueNewPath,
 } from "@/components/flows/package-files-editor";
+import { ImportDialog } from "@/components/studio/import-dialog";
 import { classifyPackageFilePath } from "@/lib/flows/editor/package-file-tree";
 import {
   removePackageFile,
@@ -32,6 +34,7 @@ export type PackageFileNavigatorLabels = {
   newFile: string;
   newFolder: string;
   newFolderName: string;
+  upload: string;
   root: string;
   save: string;
   empty: string;
@@ -78,18 +81,24 @@ function FocusInput({
 // a file lands in it, so it never needs a `.gitkeep` sentinel. All mutations go
 // through the existing pure draft helpers and the one lock-guarded save channel.
 export function PackageFileNavigator({
+  packageId,
+  sessionId,
   draftFiles,
   readOnly,
   labels,
   filesLabels,
+  importLabels,
   mcpCatalog,
   onDraftFilesChange,
   onSaveDraft,
 }: {
+  packageId: string;
+  sessionId?: string;
   draftFiles: AuthoredFlowPackageFile[];
   readOnly: boolean;
   labels: PackageFileNavigatorLabels;
   filesLabels: PackageFilesEditorLabels;
+  importLabels: ImportDialogLabels;
   mcpCatalog: PlatformMcpCatalogEntry[];
   onDraftFilesChange: (next: AuthoredFlowPackageFile[]) => void;
   onSaveDraft: () => void;
@@ -108,6 +117,7 @@ export function PackageFileNavigator({
   const [newFolderName, setNewFolderName] = useState<string | null>(null);
   const [dragged, setDragged] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
 
   const selectedFile =
     draftFiles.find((file) => file.path === selectedPath) ?? null;
@@ -421,204 +431,226 @@ export function PackageFileNavigator({
   const crumbs = cwd ? cwd.split("/") : [];
 
   return (
-    <div
-      className="grid min-h-0 gap-3 md:grid-cols-[minmax(0,300px)_minmax(0,1fr)]"
-      data-testid="file-navigator"
-    >
-      <div className="flex min-h-0 flex-col gap-2 rounded-[12px] border border-line bg-ivory p-2">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <div className="flex overflow-hidden rounded-md border border-line">
-            <button
-              aria-pressed={viewMode === "tree"}
-              className={`px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-[0.06em] ${
-                viewMode === "tree"
-                  ? "bg-amber text-white"
-                  : "bg-paper text-mute hover:text-ink"
-              }`}
-              data-testid="file-nav-view-tree"
-              type="button"
-              onClick={() => setViewMode("tree")}
-            >
-              {labels.viewTree}
-            </button>
-            <button
-              aria-pressed={viewMode === "finder"}
-              className={`px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-[0.06em] ${
-                viewMode === "finder"
-                  ? "bg-amber text-white"
-                  : "bg-paper text-mute hover:text-ink"
-              }`}
-              data-testid="file-nav-view-finder"
-              type="button"
-              onClick={() => setViewMode("finder")}
-            >
-              {labels.viewFinder}
-            </button>
-          </div>
-          {readOnly ? null : (
-            <>
+    <>
+      <div
+        className="grid min-h-0 gap-3 md:grid-cols-[minmax(0,300px)_minmax(0,1fr)]"
+        data-testid="file-navigator"
+      >
+        <div className="flex min-h-0 flex-col gap-2 rounded-[12px] border border-line bg-ivory p-2">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <div className="flex overflow-hidden rounded-md border border-line">
               <button
-                className="rounded-md border border-line px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-ink-2 hover:border-amber"
-                data-testid="file-nav-new-file"
+                aria-pressed={viewMode === "tree"}
+                className={`px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-[0.06em] ${
+                  viewMode === "tree"
+                    ? "bg-amber text-white"
+                    : "bg-paper text-mute hover:text-ink"
+                }`}
+                data-testid="file-nav-view-tree"
                 type="button"
-                onClick={createFile}
+                onClick={() => setViewMode("tree")}
               >
-                + {labels.newFile}
+                {labels.viewTree}
               </button>
               <button
-                className="rounded-md border border-line px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-ink-2 hover:border-amber"
-                data-testid="file-nav-new-folder"
+                aria-pressed={viewMode === "finder"}
+                className={`px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-[0.06em] ${
+                  viewMode === "finder"
+                    ? "bg-amber text-white"
+                    : "bg-paper text-mute hover:text-ink"
+                }`}
+                data-testid="file-nav-view-finder"
                 type="button"
-                onClick={() => setNewFolderName("")}
+                onClick={() => setViewMode("finder")}
               >
-                + {labels.newFolder}
+                {labels.viewFinder}
               </button>
-            </>
-          )}
-        </div>
-
-        {viewMode === "finder" ? (
-          <nav
-            aria-label="breadcrumb"
-            className="flex flex-wrap items-center gap-1 font-mono text-[10.5px] text-mute"
-            data-testid="file-nav-breadcrumb"
-          >
-            <button
-              className="hover:text-ink"
-              data-folder=""
-              data-testid="file-nav-crumb"
-              type="button"
-              onClick={() => setCwd("")}
-              onDragOver={(event) => event.preventDefault()}
-              onDrop={(event) => {
-                event.preventDefault();
-                if (dragged !== null) move(dragged, "");
-                setDragged(null);
-              }}
-            >
-              {labels.root}
-            </button>
-            {crumbs.map((seg, index) => {
-              const folder = crumbs.slice(0, index + 1).join("/");
-
-              return (
-                <span key={folder} className="flex items-center gap-1">
-                  <span aria-hidden>/</span>
-                  <button
-                    className="hover:text-ink"
-                    data-folder={folder}
-                    data-testid="file-nav-crumb"
-                    type="button"
-                    onClick={() => setCwd(folder)}
-                  >
-                    {seg}
-                  </button>
-                </span>
-              );
-            })}
-          </nav>
-        ) : null}
-
-        {newFolderName !== null ? (
-          <div className="flex items-center gap-1.5">
-            <FocusInput
-              className="min-w-0 flex-1 rounded border border-amber bg-paper px-1.5 py-0.5 font-mono text-[11px] text-ink"
-              data-testid="file-nav-new-folder-input"
-              placeholder={labels.newFolderName}
-              value={newFolderName}
-              onChange={(event) => setNewFolderName(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  submitNewFolder();
-                } else if (event.key === "Escape") {
-                  setNewFolderName(null);
-                }
-              }}
-            />
-            <button
-              className="rounded border border-amber bg-amber px-2 py-0.5 font-mono text-[10px] font-bold uppercase text-white"
-              data-testid="file-nav-new-folder-confirm"
-              type="button"
-              onClick={submitNewFolder}
-            >
-              {labels.confirm}
-            </button>
-          </div>
-        ) : null}
-
-        <div
-          className="min-h-0 flex-1 overflow-auto"
-          data-testid="file-nav-list"
-        >
-          {isEmpty ? (
-            <p className="m-0 px-2 py-2 font-mono text-[11px] text-mute">
-              {labels.empty}
-            </p>
-          ) : viewMode === "finder" ? (
-            <>
-              {folders.map((sub) => folderRow(cwd ? `${cwd}/${sub}` : sub, 0))}
-              {files.map((file) => fileRow(file, 0))}
-            </>
-          ) : (
-            treeLevel("", 0)
-          )}
-        </div>
-
-        {error ? (
-          <span
-            className="font-mono text-[10.5px] text-danger"
-            data-testid="file-nav-error"
-            role="alert"
-          >
-            {error}
-          </span>
-        ) : null}
-      </div>
-
-      <div className="min-h-0 rounded-[12px] border border-line bg-ivory p-3">
-        {selectedFile ? (
-          <div className="grid gap-3">
-            <div className="truncate font-mono text-[11px] text-mute">
-              {selectedFile.path}
             </div>
-            <ContentEditor
-              key={selectedFile.path}
-              disabled={readOnly}
-              file={selectedFile}
-              inferredKind={classifyPackageFilePath(selectedFile.path)}
-              labels={filesLabels}
-              mcpCatalog={mcpCatalog}
-              onChangeContent={(next) =>
-                commit(
-                  replacePackageFileContent(
-                    draftFiles,
-                    selectedFile.path,
-                    next,
-                  ),
-                )
-              }
-            />
             {readOnly ? null : (
-              <button
-                className="justify-self-start rounded-md border border-amber bg-amber px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-white hover:bg-amber-2"
-                data-testid="file-nav-save"
-                type="button"
-                onClick={onSaveDraft}
-              >
-                {labels.save}
-              </button>
+              <>
+                <button
+                  className="rounded-md border border-line px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-ink-2 hover:border-amber"
+                  data-testid="file-nav-new-file"
+                  type="button"
+                  onClick={createFile}
+                >
+                  + {labels.newFile}
+                </button>
+                <button
+                  className="rounded-md border border-line px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-ink-2 hover:border-amber"
+                  data-testid="file-nav-new-folder"
+                  type="button"
+                  onClick={() => setNewFolderName("")}
+                >
+                  + {labels.newFolder}
+                </button>
+                <button
+                  className="rounded-md border border-line px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-ink-2 hover:border-amber"
+                  data-testid="file-nav-upload"
+                  title={cwd ? `${labels.upload}: ${cwd}` : labels.upload}
+                  type="button"
+                  onClick={() => setImportOpen(true)}
+                >
+                  ⤓ {labels.upload}
+                </button>
+              </>
             )}
           </div>
-        ) : (
-          <p
-            className="m-0 font-mono text-[11px] text-mute"
-            data-testid="file-nav-select-hint"
+
+          {viewMode === "finder" ? (
+            <nav
+              aria-label="breadcrumb"
+              className="flex flex-wrap items-center gap-1 font-mono text-[10.5px] text-mute"
+              data-testid="file-nav-breadcrumb"
+            >
+              <button
+                className="hover:text-ink"
+                data-folder=""
+                data-testid="file-nav-crumb"
+                type="button"
+                onClick={() => setCwd("")}
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  if (dragged !== null) move(dragged, "");
+                  setDragged(null);
+                }}
+              >
+                {labels.root}
+              </button>
+              {crumbs.map((seg, index) => {
+                const folder = crumbs.slice(0, index + 1).join("/");
+
+                return (
+                  <span key={folder} className="flex items-center gap-1">
+                    <span aria-hidden>/</span>
+                    <button
+                      className="hover:text-ink"
+                      data-folder={folder}
+                      data-testid="file-nav-crumb"
+                      type="button"
+                      onClick={() => setCwd(folder)}
+                    >
+                      {seg}
+                    </button>
+                  </span>
+                );
+              })}
+            </nav>
+          ) : null}
+
+          {newFolderName !== null ? (
+            <div className="flex items-center gap-1.5">
+              <FocusInput
+                className="min-w-0 flex-1 rounded border border-amber bg-paper px-1.5 py-0.5 font-mono text-[11px] text-ink"
+                data-testid="file-nav-new-folder-input"
+                placeholder={labels.newFolderName}
+                value={newFolderName}
+                onChange={(event) => setNewFolderName(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    submitNewFolder();
+                  } else if (event.key === "Escape") {
+                    setNewFolderName(null);
+                  }
+                }}
+              />
+              <button
+                className="rounded border border-amber bg-amber px-2 py-0.5 font-mono text-[10px] font-bold uppercase text-white"
+                data-testid="file-nav-new-folder-confirm"
+                type="button"
+                onClick={submitNewFolder}
+              >
+                {labels.confirm}
+              </button>
+            </div>
+          ) : null}
+
+          <div
+            className="min-h-0 flex-1 overflow-auto"
+            data-testid="file-nav-list"
           >
-            {labels.selectHint}
-          </p>
-        )}
+            {isEmpty ? (
+              <p className="m-0 px-2 py-2 font-mono text-[11px] text-mute">
+                {labels.empty}
+              </p>
+            ) : viewMode === "finder" ? (
+              <>
+                {folders.map((sub) =>
+                  folderRow(cwd ? `${cwd}/${sub}` : sub, 0),
+                )}
+                {files.map((file) => fileRow(file, 0))}
+              </>
+            ) : (
+              treeLevel("", 0)
+            )}
+          </div>
+
+          {error ? (
+            <span
+              className="font-mono text-[10.5px] text-danger"
+              data-testid="file-nav-error"
+              role="alert"
+            >
+              {error}
+            </span>
+          ) : null}
+        </div>
+
+        <div className="min-h-0 rounded-[12px] border border-line bg-ivory p-3">
+          {selectedFile ? (
+            <div className="grid gap-3">
+              <div className="truncate font-mono text-[11px] text-mute">
+                {selectedFile.path}
+              </div>
+              <ContentEditor
+                key={selectedFile.path}
+                disabled={readOnly}
+                file={selectedFile}
+                inferredKind={classifyPackageFilePath(selectedFile.path)}
+                labels={filesLabels}
+                mcpCatalog={mcpCatalog}
+                onChangeContent={(next) =>
+                  commit(
+                    replacePackageFileContent(
+                      draftFiles,
+                      selectedFile.path,
+                      next,
+                    ),
+                  )
+                }
+              />
+              {readOnly ? null : (
+                <button
+                  className="justify-self-start rounded-md border border-amber bg-amber px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-white hover:bg-amber-2"
+                  data-testid="file-nav-save"
+                  type="button"
+                  onClick={onSaveDraft}
+                >
+                  {labels.save}
+                </button>
+              )}
+            </div>
+          ) : (
+            <p
+              className="m-0 font-mono text-[11px] text-mute"
+              data-testid="file-nav-select-hint"
+            >
+              {labels.selectHint}
+            </p>
+          )}
+        </div>
       </div>
-    </div>
+      {importOpen ? (
+        <ImportDialog
+          labels={importLabels}
+          packageId={packageId}
+          sessionId={sessionId}
+          targetFolder={cwd}
+          onClose={() => setImportOpen(false)}
+        />
+      ) : null}
+    </>
   );
 }

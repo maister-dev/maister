@@ -165,6 +165,53 @@ describe("local-package batch import (integration)", () => {
     await deleteLocalPackage(pkg.id, db);
   });
 
+  it("targetDir prefix lands the import under a folder; an escaping prefix is refused", async () => {
+    const pkg = await freshPkg("Target Folder Import");
+    const lock = await acquireLock(pkg.id, userId, "s-target", db);
+
+    expect(lock.heldByMe).toBe(true);
+
+    const collected = await collectImportEntries({
+      kind: "folder",
+      files: [
+        {
+          relativePath: "a.md",
+          bytes: new TextEncoder().encode("a\n"),
+        },
+        {
+          relativePath: "nested/b.md",
+          bytes: new TextEncoder().encode("b\n"),
+        },
+      ],
+    });
+
+    // The route prefixes every entry path with `targetDir/` (folder + archive).
+    const prefixed = collected.entries.map((entry) => ({
+      ...entry,
+      path: `rules/sub/${entry.path}`,
+    }));
+    const plan = await commitImport(pkg, prefixed);
+
+    expect(plan.files.map((f) => f.path).sort()).toEqual([
+      "rules/sub/a.md",
+      "rules/sub/nested/b.md",
+    ]);
+
+    // An escaping targetDir resolves outside the working dir → rejected, nothing
+    // written (the per-entry confinement in commitImport is the guard).
+    const escaping = collected.entries.map((entry) => ({
+      ...entry,
+      path: `../escape/${entry.path}`,
+    }));
+
+    await expect(commitImport(pkg, escaping)).rejects.toMatchObject({
+      code: "PRECONDITION",
+    });
+
+    await releaseLock(pkg.id, "s-target", db);
+    await deleteLocalPackage(pkg.id, db);
+  });
+
   it("zip and tar.gz extract the identical tree (parity)", async () => {
     const members = [
       {

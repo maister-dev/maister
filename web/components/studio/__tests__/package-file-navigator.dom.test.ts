@@ -24,6 +24,10 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(nav.search),
 }));
 
+vi.mock("next-intl", () => ({
+  useTranslations: () => (key: string) => key,
+}));
+
 // Stub the heavy per-kind content editor — the navigator owns the left pane.
 vi.mock("@/components/flows/package-files-editor", async (importActual) => {
   const actual =
@@ -46,6 +50,7 @@ const labels = {
   newFile: "File",
   newFolder: "Folder",
   newFolderName: "Folder name",
+  upload: "Upload",
   root: "Package",
   save: "Save",
   empty: "empty",
@@ -85,10 +90,12 @@ function mount(
   act(() =>
     root.render(
       createElement(PackageFileNavigator, {
+        packageId: "p1",
         draftFiles: files,
         readOnly: false,
         labels,
         filesLabels: {} as never,
+        importLabels: {} as never,
         mcpCatalog: [],
         onDraftFilesChange,
         onSaveDraft: vi.fn(),
@@ -288,5 +295,21 @@ describe("PackageFileNavigator (ADR-116 file navigator)", () => {
     );
 
     expect(folderRow(c, "vendor")).toBeTruthy();
+  });
+
+  it("opens the import dialog from the upload button", () => {
+    const c = mount();
+
+    expect(c.querySelector('[data-testid="file-nav-upload"]')).toBeTruthy();
+    act(() =>
+      c
+        .querySelector<HTMLButtonElement>('[data-testid="file-nav-upload"]')
+        ?.click(),
+    );
+
+    // The ImportDialog renders into document.body (fixed overlay).
+    expect(
+      document.body.querySelector('[data-testid="import-folder-input"]'),
+    ).toBeTruthy();
   });
 });
