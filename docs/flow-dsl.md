@@ -899,9 +899,9 @@ nodes:
 to malformed-output exhaustion — shipping invalid structured output is unsafe.
 Declaring `on_mismatch` (like `decide`) requires `compat.engine_min >= 1.7.0`.
 
-## Rework loop `onExhaustion` routing + human-driven reset (Designed — ADR-118)
+## Rework loop `onExhaustion` routing + human-driven reset (Implemented — ADR-118)
 
-**(Designed, [ADR-118](decisions.md#adr-118-rework-loop-onexhaustion-routing--human-driven-counter-reset-resettargets--engine-210).)**
+**(Implemented, [ADR-118](decisions.md#adr-118-rework-loop-onexhaustion-routing--human-driven-counter-reset-resettargets--engine-210).)**
 Two optional `rework` fields let a bounded auto fix↔verify↔review loop escalate
 to a human deterministically on `maxLoops` exhaustion, and let that human restart
 the loop with a fresh budget — bounded, no execution-policy dependency.

@@ -281,7 +281,7 @@ and no raw `goto_step` is accepted from the client. See
 [`flow-graph.md`](flow-graph.md) and
 [`../api/web.openapi.yaml`](../api/web.openapi.yaml).
 
-**(Designed — ADR-118) `rework.resetTargets` is server-side — no HITL wire
+**(Implemented — ADR-118) `rework.resetTargets` is server-side — no HITL wire
 change.** When a `human` node declares `rework.resetTargets`, a `rework` decision
 re-baselines the listed loop nodes' attempt counters server-side (inside the same
 transaction as the rework). It is NOT a reviewer-selectable field and is NOT added

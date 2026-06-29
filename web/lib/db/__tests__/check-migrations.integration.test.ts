@@ -56,6 +56,6 @@ describe("findPendingMigrations", () => {
 
     const pending = await findPendingMigrations(db);
 
-    expect(pending).toContain("0085_run_messages");
+    expect(pending).toContain("0086_yellow_pyro");
   });
 });

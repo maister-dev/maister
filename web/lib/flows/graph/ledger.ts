@@ -93,7 +93,12 @@ export async function appendNodeAttempt(args: {
   const priorBaselineRows: Array<{ reworkBaseline: number | null }> = await db
     .select({ reworkBaseline: nodeAttempts.reworkBaseline })
     .from(nodeAttempts)
-    .where(and(eq(nodeAttempts.runId, args.runId), eq(nodeAttempts.nodeId, args.nodeId)))
+    .where(
+      and(
+        eq(nodeAttempts.runId, args.runId),
+        eq(nodeAttempts.nodeId, args.nodeId),
+      ),
+    )
     .orderBy(sql`${nodeAttempts.attempt} desc`)
     .limit(1);
   const reworkBaseline = priorBaselineRows[0]?.reworkBaseline ?? null;

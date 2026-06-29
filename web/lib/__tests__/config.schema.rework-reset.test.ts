@@ -56,9 +56,9 @@ describe("reworkSchema — onExhaustion / resetTargets fields (ADR-118)", () => 
   });
 
   it("rejects a resetTargets entry that is an empty string", () => {
-    expect(reworkSchema.safeParse({ ...base, resetTargets: [""] }).success).toBe(
-      false,
-    );
+    expect(
+      reworkSchema.safeParse({ ...base, resetTargets: [""] }).success,
+    ).toBe(false);
   });
 
   it("rejects a non-array resetTargets", () => {

@@ -281,8 +281,10 @@ describe("runGraph — ADR-118 onExhaustion routing", () => {
     // human_final opened a usable HITL with its own non-empty decisions.
     const hitl = await getHitl(seeded.runId);
     const finalHitl = hitl.find((h) =>
-      ((h.schema as { allowedDecisions?: string[] } | null)?.allowedDecisions ??
-        []).includes("end"),
+      (
+        (h.schema as { allowedDecisions?: string[] } | null)
+          ?.allowedDecisions ?? []
+      ).includes("end"),
     );
 
     expect(finalHitl).toBeDefined();

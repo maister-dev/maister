@@ -178,7 +178,7 @@ stateDiagram-v2
   absent / malformed snapshot (`checks→strict`, `crashRetry→fail`,
   `reworkExhaustion→escalate`, `permissions→ask`, `humanGate→stop`,
   `onStuck→escalate`, `promotion→manual`, `commits→keep_all`, `dirtyResolve→ask`).
-- **(Designed — ADR-118)** A loop node declaring `rework.onExhaustion` OVERRIDES
+- **(Implemented — ADR-118)** A loop node declaring `rework.onExhaustion` OVERRIDES
   the `reworkExhaustion` (A1) axis at that node: on `effective > maxLoops` the
   runner routes via `transitions[<onExhaustion>]` (typically to a `human` node)
   instead of invoking `reworkExhaustionFromSnapshot`. When `onExhaustion` is
