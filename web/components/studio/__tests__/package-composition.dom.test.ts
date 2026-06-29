@@ -418,3 +418,45 @@ describe("PackageComposition create (ADR-116 §P5)", () => {
     ).not.toBeNull();
   });
 });
+
+describe("PackageComposition live filter", () => {
+  it("filters the subagents list by name substring", () => {
+    nav.search = "tab=subagents";
+    const container = document.createElement("div");
+
+    document.body.appendChild(container);
+    mount(
+      container,
+      createElement(
+        PackageComposition,
+        baseProps({
+          bom: {
+            ...bom,
+            subagents: [
+              { id: "helper", path: "a/helper.md", description: "" },
+              { id: "worker", path: "a/worker.md", description: "" },
+            ],
+          },
+        }) as never,
+      ),
+    );
+
+    expect(
+      container.querySelectorAll('[data-testid="element-card"]').length,
+    ).toBe(2);
+
+    act(() =>
+      setNativeValue(
+        container.querySelector('[data-testid="composition-filter"]')!,
+        "help",
+      ),
+    );
+
+    const cards = [
+      ...container.querySelectorAll('[data-testid="element-card"]'),
+    ];
+
+    expect(cards.length).toBe(1);
+    expect(cards[0].textContent).toContain("helper");
+  });
+});

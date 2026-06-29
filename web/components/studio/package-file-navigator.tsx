@@ -41,6 +41,7 @@ export type PackageFileNavigatorLabels = {
   selectHint: string;
   rename: string;
   remove: string;
+  confirmDelete: string;
   confirm: string;
   cancel: string;
   errorConflict: string;
@@ -130,6 +131,10 @@ export function PackageFileNavigator({
   const [dragged, setDragged] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<{
+    path: string;
+    isFolder: boolean;
+  } | null>(null);
 
   const selectedFile =
     draftFiles.find((file) => file.path === selectedPath) ?? null;
@@ -256,7 +261,40 @@ export function PackageFileNavigator({
   const isEmpty = draftFiles.length === 0 && virtualFolders.length === 0;
 
   const rowActions = (path: string, isFolder: boolean): ReactElement | null =>
-    readOnly ? null : (
+    readOnly ? null : confirmDelete?.path === path ? (
+      <span className="ml-auto flex shrink-0 items-center gap-1">
+        <span className="font-mono text-[10px] text-danger">
+          {labels.confirmDelete}
+        </span>
+        <button
+          aria-label={labels.remove}
+          className="rounded border border-danger px-1.5 py-0.5 font-mono text-[10px] font-bold text-danger hover:bg-danger hover:text-white"
+          data-testid="file-nav-remove-confirm"
+          title={labels.remove}
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            deleteEntry(path, isFolder);
+            setConfirmDelete(null);
+          }}
+        >
+          ✓
+        </button>
+        <button
+          aria-label={labels.cancel}
+          className="rounded border border-line px-1.5 py-0.5 font-mono text-[10px] text-mute hover:border-ink hover:text-ink"
+          data-testid="file-nav-remove-cancel"
+          title={labels.cancel}
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            setConfirmDelete(null);
+          }}
+        >
+          ✗
+        </button>
+      </span>
+    ) : (
       <span className="ml-auto flex shrink-0 items-center gap-1">
         <button
           aria-label={labels.rename}
@@ -266,6 +304,7 @@ export function PackageFileNavigator({
           type="button"
           onClick={(event) => {
             event.stopPropagation();
+            setConfirmDelete(null);
             setRename({ path, isFolder, value: basename(path) });
           }}
         >
@@ -279,7 +318,7 @@ export function PackageFileNavigator({
           type="button"
           onClick={(event) => {
             event.stopPropagation();
-            deleteEntry(path, isFolder);
+            setConfirmDelete({ path, isFolder });
           }}
         >
           ✕

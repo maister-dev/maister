@@ -7,7 +7,7 @@ import type { PackageBom } from "@/lib/queries/package-bom";
 import type { CompositionKind } from "@/lib/local-packages/composition";
 import type { ReactElement, ReactNode } from "react";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 
@@ -32,6 +32,7 @@ import {
   compositionTabHref,
   flowCanvasHref,
   inlineSelectHref,
+  isInlineKind,
   isMcpDescriptorPath,
   listCapabilities,
   resolveCompositionTab,
@@ -124,6 +125,16 @@ export function PackageComposition({
   const activeTab = resolveCompositionTab(searchParams.get("tab"), bom);
   const selectedId = searchParams.get("sel");
 
+  // Live substring filter over the current list's names. Available on the
+  // by-name kinds (skills + inline: subagents/agents/mcps/rules); reset on tab
+  // switch so a filter from one kind never silently hides another's members.
+  const [filter, setFilter] = useState("");
+  const filterable = activeTab === "skills" || isInlineKind(activeTab);
+
+  useEffect(() => {
+    setFilter("");
+  }, [activeTab]);
+
   const tabs: PackageTabDescriptor[] = COMPOSITION_TAB_IDS.map((id) => ({
     id,
     label: t(TAB_LABEL_KEY[id]),
@@ -150,6 +161,7 @@ export function PackageComposition({
     mcpCatalog,
     saveLabel,
     dirty,
+    filter,
     selectedId,
     readOnly,
     t,
@@ -169,6 +181,17 @@ export function PackageComposition({
         <span className="rounded-full border border-line bg-ivory px-2 py-px font-mono text-[10px] uppercase tracking-[0.06em] text-mute">
           {t("localBadge")}
         </span>
+        {filterable ? (
+          <input
+            aria-label={t("composition.filter")}
+            className="min-h-[28px] w-[160px] rounded-md border border-line bg-paper px-2 font-mono text-[11px] text-ink"
+            data-testid="composition-filter"
+            placeholder={t("composition.filter")}
+            type="search"
+            value={filter}
+            onChange={(event) => setFilter(event.target.value)}
+          />
+        ) : null}
         {readOnly ? null : (
           <CreateArtifactControl
             draftFiles={draftFiles}
@@ -215,6 +238,7 @@ function buildCompositionCards({
   mcpCatalog,
   saveLabel,
   dirty,
+  filter,
   selectedId,
   readOnly,
   t,
@@ -233,6 +257,7 @@ function buildCompositionCards({
   mcpCatalog: PlatformMcpCatalogEntry[];
   saveLabel: string;
   dirty: boolean;
+  filter: string;
   selectedId: string | null;
   readOnly: boolean;
   t: TFn;
@@ -262,21 +287,25 @@ function buildCompositionCards({
         />
       ));
     case "skills":
-      return bom.skills.map((skill) => (
-        <ElementCard
-          key={skill.id}
-          clickableCard
-          description={skill.description || null}
-          href={skillScreenHref(packageId, skill.id)}
-          labels={cardLabels}
-          meta={t("viewer.skillMeta", {
-            files: skill.fileCount,
-            subfolders: skill.subfolderCount,
-          })}
-          name={skill.id}
-          showFork={false}
-        />
-      ));
+      return bom.skills
+        .filter((skill) =>
+          skill.id.toLowerCase().includes(filter.trim().toLowerCase()),
+        )
+        .map((skill) => (
+          <ElementCard
+            key={skill.id}
+            clickableCard
+            description={skill.description || null}
+            href={skillScreenHref(packageId, skill.id)}
+            labels={cardLabels}
+            meta={t("viewer.skillMeta", {
+              files: skill.fileCount,
+              subfolders: skill.subfolderCount,
+            })}
+            name={skill.id}
+            showFork={false}
+          />
+        ));
     default:
       return (
         <InlineMasterDetail
@@ -285,6 +314,7 @@ function buildCompositionCards({
           dirty={dirty}
           draftFiles={draftFiles}
           filesLabels={filesLabels}
+          filter={filter}
           kind={activeTab}
           mcpCatalog={mcpCatalog}
           packageId={packageId}
@@ -314,6 +344,7 @@ function InlineMasterDetail({
   readOnly,
   saveLabel,
   dirty,
+  filter,
   selectedId,
   cardLabels,
   t,
@@ -330,6 +361,7 @@ function InlineMasterDetail({
   readOnly: boolean;
   saveLabel: string;
   dirty: boolean;
+  filter: string;
   selectedId: string | null;
   cardLabels: { view: string; fork: string; forkPhase2Hint: string };
   t: TFn;
@@ -340,7 +372,9 @@ function InlineMasterDetail({
     navigate: string,
   ) => void;
 }): ReactElement {
-  const items = inlineItems(kind, bom, t);
+  const items = inlineItems(kind, bom, t).filter((item) =>
+    item.id.toLowerCase().includes(filter.trim().toLowerCase()),
+  );
   const selectedPath = selectedId
     ? resolveInlineFilePath(kind, selectedId, bom, draftFiles)
     : null;

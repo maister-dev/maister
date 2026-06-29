@@ -57,6 +57,7 @@ const labels = {
   selectHint: "select a file",
   rename: "Rename",
   remove: "Delete",
+  confirmDelete: "Delete?",
   confirm: "Add",
   cancel: "Cancel",
   errorConflict: "conflict",
@@ -217,17 +218,47 @@ describe("PackageFileNavigator (ADR-116 file navigator)", () => {
     expect(next.some((f) => f.path === "rules/r1.md")).toBe(false);
   });
 
-  it("deletes a file", () => {
+  it("deletes a file only after a two-step confirmation", () => {
     const onChange = vi.fn();
     const c = mount(onChange);
 
+    // First click only ARMS the confirmation — nothing is deleted yet.
     act(() =>
       fileRow(c, "maister-package.yaml")
         .querySelector<HTMLButtonElement>('[data-testid="file-nav-remove"]')
         ?.click(),
     );
+    expect(onChange).not.toHaveBeenCalled();
 
-    const next = onChange.mock.calls[0][0] as AuthoredFlowPackageFile[];
+    // Cancel disarms it.
+    act(() =>
+      fileRow(c, "maister-package.yaml")
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="file-nav-remove-cancel"]',
+        )
+        ?.click(),
+    );
+    expect(
+      fileRow(c, "maister-package.yaml").querySelector(
+        '[data-testid="file-nav-remove-confirm"]',
+      ),
+    ).toBeNull();
+
+    // Re-arm and confirm → deleted.
+    act(() =>
+      fileRow(c, "maister-package.yaml")
+        .querySelector<HTMLButtonElement>('[data-testid="file-nav-remove"]')
+        ?.click(),
+    );
+    act(() =>
+      fileRow(c, "maister-package.yaml")
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="file-nav-remove-confirm"]',
+        )
+        ?.click(),
+    );
+
+    const next = onChange.mock.calls.at(-1)?.[0] as AuthoredFlowPackageFile[];
 
     expect(next.some((f) => f.path === "maister-package.yaml")).toBe(false);
   });

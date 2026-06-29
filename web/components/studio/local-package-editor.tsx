@@ -679,6 +679,7 @@ export function LocalPackageEditor({
     selectHint: tStudio("composition.files.selectHint"),
     rename: tStudio("composition.files.rename"),
     remove: tStudio("composition.files.remove"),
+    confirmDelete: tStudio("composition.files.confirmDelete"),
     confirm: tStudio("composition.files.confirm"),
     cancel: tStudio("composition.files.cancel"),
     errorConflict: tStudio("composition.files.errorConflict"),
