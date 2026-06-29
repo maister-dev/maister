@@ -28,15 +28,22 @@ type Row = {
   sequence: number;
   role: "user" | "assistant" | "tool" | "system";
   content: string;
+  supervisorEventId?: string | null;
 };
 
 function makeFakeDb(rows: Row[]) {
   return {
-    select() {
+    select(selection?: Record<string, unknown>) {
       return {
         from() {
           return {
             async where() {
+              if (selection && "supervisorEventId" in selection) {
+                return rows.map((row) => ({
+                  supervisorEventId: row.supervisorEventId ?? null,
+                }));
+              }
+
               return rows.map((row) => ({ sequence: row.sequence }));
             },
           };
@@ -52,12 +59,16 @@ function makeFakeDb(rows: Row[]) {
     },
     update() {
       return {
-        set(patch: { content: string }) {
+        set(patch: { content?: string; supervisorEventId?: string | null }) {
           return {
             async where(id: string) {
               const row = rows.find((candidate) => candidate.id === id);
 
-              if (row) row.content = patch.content;
+              if (!row) return;
+              if (patch.content !== undefined) row.content = patch.content;
+              if (patch.supervisorEventId !== undefined) {
+                row.supervisorEventId = patch.supervisorEventId;
+              }
             },
           };
         },
@@ -67,18 +78,31 @@ function makeFakeDb(rows: Row[]) {
 }
 
 function makeApi(updates: unknown[]) {
+  const lastEventIds: Array<number | undefined> = [];
+
   return {
+    lastEventIds,
     async cancelPermission() {
       return { ok: true as const };
     },
     async sendPrompt() {
       return { stopReason: "end_turn" as const };
     },
-    async *streamSession() {
+    async *streamSession(
+      _sessionId: string,
+      opts: { lastEventId?: number } = {},
+    ) {
+      lastEventIds.push(opts.lastEventId);
       let monotonicId = 0;
 
       for (const update of updates) {
         monotonicId += 1;
+        if (
+          opts.lastEventId !== undefined &&
+          monotonicId <= opts.lastEventId
+        ) {
+          continue;
+        }
         yield {
           type: "session.update" as const,
           sessionId: "sup-1",
@@ -361,6 +385,60 @@ describe("transcript coalescing", () => {
 
     expect(assistant).toHaveLength(1);
     expect(assistant[0].content).toBe("Hello world");
+  });
+
+  it("resumes follow-up projection after the latest coalesced assistant chunk", async () => {
+    const rows: Row[] = [];
+
+    await sendScratchPromptAndProjectEvents({
+      runId: "run-1",
+      sessionId: "sup-1",
+      stepId: "dialog",
+      prompt: "first",
+      db: makeFakeDb(rows),
+      api: makeApi([
+        {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "Previous " },
+        },
+        {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "answer" },
+        },
+      ]),
+    });
+
+    const followUpApi = makeApi([
+      {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "Previous " },
+      },
+      {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "answer" },
+      },
+      {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "New reply" },
+      },
+    ]);
+
+    await sendScratchPromptAndProjectEvents({
+      runId: "run-1",
+      sessionId: "sup-1",
+      stepId: "dialog",
+      prompt: "follow-up",
+      db: makeFakeDb(rows),
+      api: followUpApi,
+    });
+
+    const assistant = rows.filter((row) => row.role === "assistant");
+
+    expect(followUpApi.lastEventIds).toEqual([2]);
+    expect(assistant.map((row) => row.content)).toEqual([
+      "Previous answer",
+      "New reply",
+    ]);
   });
 
   it("merges tool_call and its updates into one tool row", async () => {

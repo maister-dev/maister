@@ -4,7 +4,7 @@ import type { ScratchDialogStatus, ScratchMessageRole } from "@/lib/db/schema";
 
 import { randomUUID } from "node:crypto";
 
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
@@ -185,10 +185,14 @@ async function updateScratchMessageRow(args: {
   db: DbClientLike;
   messageId: string;
   content: string;
+  supervisorEventId: string;
 }): Promise<void> {
   await args.db
     .update(scratchMessages)
-    .set({ content: args.content })
+    .set({
+      content: args.content,
+      supervisorEventId: args.supervisorEventId,
+    })
     .where(eq(scratchMessages.id, args.messageId));
 }
 
@@ -354,6 +358,7 @@ function createTranscriptProjector(args: { db: DbClientLike; runId: string }) {
             db: args.db,
             messageId: openText.id,
             content: openText.text,
+            supervisorEventId,
           });
         } else {
           const id = await appendScratchMessageRow({
@@ -377,6 +382,7 @@ function createTranscriptProjector(args: { db: DbClientLike; runId: string }) {
             db: args.db,
             messageId: openThought.id,
             content: encodeThoughtPayload(openThought.text),
+            supervisorEventId,
           });
         } else {
           const text = interpreted.text;
@@ -456,6 +462,7 @@ function createTranscriptProjector(args: { db: DbClientLike; runId: string }) {
           db: args.db,
           messageId: existing.id,
           content: encodeToolPayload(existing),
+          supervisorEventId,
         });
 
         return;
@@ -468,6 +475,7 @@ function createTranscriptProjector(args: { db: DbClientLike; runId: string }) {
             db: args.db,
             messageId: usageRow.id,
             content,
+            supervisorEventId,
           });
         } else {
           const id = await appendScratchMessageRow({
@@ -499,20 +507,22 @@ async function lastProjectedEventId(
   runId: string,
 ): Promise<number | undefined> {
   try {
-    const rows: Array<{ maxId: string | null }> = await db
+    const rows: Array<{ supervisorEventId: string | null }> = await db
       .select({
-        maxId: sql<
-          string | null
-        >`max(${scratchMessages.supervisorEventId}::bigint)`,
+        supervisorEventId: scratchMessages.supervisorEventId,
       })
       .from(scratchMessages)
       .where(eq(scratchMessages.runId, runId));
-    const raw = rows[0]?.maxId;
+    const maxId = rows.reduce<number | undefined>((current, row) => {
+      if (!row.supervisorEventId) return current;
+      const parsed = Number.parseInt(row.supervisorEventId, 10);
 
-    if (raw === null || raw === undefined) return undefined;
-    const parsed = Number.parseInt(raw, 10);
+      if (!Number.isFinite(parsed)) return current;
 
-    return Number.isFinite(parsed) ? parsed : undefined;
+      return current === undefined ? parsed : Math.max(current, parsed);
+    }, undefined);
+
+    return maxId;
     // A failed offset read must NOT abort the consumer — fall back to streaming
     // from the start (at worst a one-time re-projection, never a dead turn).
   } catch (err) {
