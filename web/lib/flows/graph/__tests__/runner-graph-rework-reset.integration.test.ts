@@ -423,9 +423,10 @@ describe("runGraph — ADR-118 resetTargets re-baseline", () => {
     const seeded = await driveToHumanFinal(false);
 
     // Retry reworks to implement but does NOT reset review's counter. The loop
-    // stays exhausted: re-entering review (attempt 3, baseline 0 → effective
-    // 2 > maxLoops 1) trips the baseline-aware loop-top backstop → CONFIG. This
-    // is the contrast to AC-7: without a reset the loop cannot make progress.
+    // stays exhausted: re-entering review (2 attempts already on the ledger,
+    // baseline 0 → effective 2 > maxLoops 1) trips the baseline-aware loop-top
+    // backstop BEFORE the would-be 3rd visit is appended → CONFIG. This is the
+    // contrast to AC-7: without a reset the loop cannot make progress.
     await writeDecision(seeded, "human_final", "retry", { comments: "again" });
     await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
 
