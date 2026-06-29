@@ -2063,6 +2063,13 @@ export const nodeAttempts = pgTable(
     // captured at dispatch (migration 0053). Null for cli/check/human nodes and
     // for attempts created before the column shipped.
     resolvedPrompt: text("resolved_prompt"),
+    // ADR-118 (migration 0086): the attempt number at which this node's CURRENT
+    // rework epoch began. NULL ⇒ baseline 0 (byte-identical to pre-0085). The
+    // effective attempt count the loop bounds against is
+    // `attempt - (rework_baseline ?? 0)`; appendNodeAttempt carries it forward,
+    // a human-node rework with `resetTargets` re-stamps it to the target's
+    // current attempt count → a fresh maxLoops budget.
+    reworkBaseline: integer("rework_baseline"),
     vars: jsonb("vars").$type<Record<string, unknown>>().notNull().default({}),
     exitCode: integer("exit_code"),
     errorCode: text("error_code"),

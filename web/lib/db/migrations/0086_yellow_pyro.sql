@@ -1,0 +1,1 @@
+ALTER TABLE "node_attempts" ADD COLUMN "rework_baseline" integer;
