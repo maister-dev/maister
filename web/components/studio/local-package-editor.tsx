@@ -426,6 +426,22 @@ export function LocalPackageEditor({
     },
     [],
   );
+
+  // Warn before a browser-level navigation (close / refresh / external URL)
+  // while the draft has unsaved artifact edits. In-app route changes keep the
+  // draft in memory; this guards the cases where it would be lost.
+  useEffect(() => {
+    if (!packageFilesDirty && !flowEditorDirty) return;
+
+    const onBeforeUnload = (event: BeforeUnloadEvent): void => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+
+    window.addEventListener("beforeunload", onBeforeUnload);
+
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [packageFilesDirty, flowEditorDirty]);
   const schemaFiles = useMemo(
     () =>
       draftFiles
@@ -847,6 +863,7 @@ export function LocalPackageEditor({
           {flowPath === null ? (
             skillId !== null ? (
               <SkillScreen
+                dirty={packageFilesDirty}
                 draftFiles={draftFiles}
                 filesLabels={filesLabels}
                 importLabels={buildImportDialogLabels(tStudio)}
@@ -884,10 +901,12 @@ export function LocalPackageEditor({
             ) : (
               <PackageComposition
                 bom={bom}
+                dirty={packageFilesDirty}
                 draftFiles={draftFiles}
                 fileCount={draftFiles.length}
                 filesEditor={
                   <PackageFileNavigator
+                    dirty={packageFilesDirty}
                     draftFiles={draftFiles}
                     filesLabels={filesLabels}
                     importLabels={buildImportDialogLabels(tStudio)}

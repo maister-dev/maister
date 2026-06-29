@@ -86,6 +86,7 @@ function render(
       bom,
       fileCount: 3,
       readOnly: opts.readOnly ?? false,
+      dirty: true,
       draftFiles: opts.draftFiles ?? [],
       filesLabels,
       mcpCatalog,

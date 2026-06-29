@@ -40,6 +40,7 @@ export function SkillScreen({
   skillId,
   draftFiles,
   readOnly,
+  dirty,
   labels,
   navigatorLabels,
   filesLabels,
@@ -55,6 +56,7 @@ export function SkillScreen({
   skillId: string;
   draftFiles: AuthoredFlowPackageFile[];
   readOnly: boolean;
+  dirty: boolean;
   labels: SkillScreenLabels;
   navigatorLabels: PackageFileNavigatorLabels;
   filesLabels: PackageFilesEditorLabels;
@@ -137,6 +139,7 @@ export function SkillScreen({
       )}
       <div className="min-h-0 flex-1">
         <PackageFileNavigator
+          dirty={dirty}
           draftFiles={scopedRel}
           filesLabels={filesLabels}
           importLabels={importLabels}

@@ -89,6 +89,7 @@ export function PackageComposition({
   filesLabels,
   mcpCatalog,
   saveLabel,
+  dirty,
   onDraftFilesChange,
   onSaveDraft,
   onCreateArtifact,
@@ -105,6 +106,8 @@ export function PackageComposition({
   filesLabels: PackageFilesEditorLabels;
   mcpCatalog: PlatformMcpCatalogEntry[];
   saveLabel: string;
+  // Whether the draft differs from the last-saved disk state (enables Save).
+  dirty: boolean;
   onDraftFilesChange: (next: AuthoredFlowPackageFile[]) => void;
   onSaveDraft: () => void;
   // Persist the scaffolded files then navigate (create = scaffold→save→refresh).
@@ -146,6 +149,7 @@ export function PackageComposition({
     filesLabels,
     mcpCatalog,
     saveLabel,
+    dirty,
     selectedId,
     readOnly,
     t,
@@ -210,6 +214,7 @@ function buildCompositionCards({
   filesLabels,
   mcpCatalog,
   saveLabel,
+  dirty,
   selectedId,
   readOnly,
   t,
@@ -227,6 +232,7 @@ function buildCompositionCards({
   filesLabels: PackageFilesEditorLabels;
   mcpCatalog: PlatformMcpCatalogEntry[];
   saveLabel: string;
+  dirty: boolean;
   selectedId: string | null;
   readOnly: boolean;
   t: TFn;
@@ -298,6 +304,7 @@ function buildCompositionCards({
         <InlineMasterDetail
           bom={bom}
           cardLabels={cardLabels}
+          dirty={dirty}
           draftFiles={draftFiles}
           filesLabels={filesLabels}
           kind={activeTab}
@@ -328,6 +335,7 @@ function InlineMasterDetail({
   mcpCatalog,
   readOnly,
   saveLabel,
+  dirty,
   selectedId,
   cardLabels,
   t,
@@ -343,6 +351,7 @@ function InlineMasterDetail({
   mcpCatalog: PlatformMcpCatalogEntry[];
   readOnly: boolean;
   saveLabel: string;
+  dirty: boolean;
   selectedId: string | null;
   cardLabels: { view: string; fork: string; forkPhase2Hint: string };
   t: TFn;
@@ -409,6 +418,7 @@ function InlineMasterDetail({
               // selection — without this, switching cards keeps the prior file's
               // text (the editors seed internal state from `content` on mount).
               key={selectedPath}
+              dirty={dirty}
               draftFiles={draftFiles}
               filePath={selectedPath}
               filesLabels={filesLabels}
@@ -443,6 +453,7 @@ function InlineEditor({
   mcpCatalog,
   readOnly,
   saveLabel,
+  dirty,
   onDraftFilesChange,
   onSaveDraft,
 }: {
@@ -453,6 +464,7 @@ function InlineEditor({
   mcpCatalog: PlatformMcpCatalogEntry[];
   readOnly: boolean;
   saveLabel: string;
+  dirty: boolean;
   onDraftFilesChange: (next: AuthoredFlowPackageFile[]) => void;
   onSaveDraft: () => void;
 }): ReactElement {
@@ -461,12 +473,31 @@ function InlineEditor({
   const onChange = (next: string): void =>
     onDraftFilesChange(upsertPackageFile(draftFiles, filePath, next));
 
+  // Save persists the whole draft; enabled only when dirty. Shown top + bottom
+  // so a long artifact does not force a scroll to reach Save.
+  const saveButton = (testid: string): ReactElement => (
+    <button
+      className="shrink-0 justify-self-start rounded-md border border-amber bg-amber px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-white hover:bg-amber-2 disabled:cursor-not-allowed disabled:border-line disabled:bg-ivory disabled:text-mute"
+      data-testid={testid}
+      disabled={!dirty}
+      type="button"
+      onClick={onSaveDraft}
+    >
+      {saveLabel}
+    </button>
+  );
+
   return (
     <div
       className="flex flex-col gap-3"
       data-testid="composition-inline-editor"
     >
-      <div className="truncate font-mono text-[11px] text-mute">{filePath}</div>
+      <div className="flex items-center justify-between gap-2">
+        <div className="truncate font-mono text-[11px] text-mute">
+          {filePath}
+        </div>
+        {readOnly ? null : saveButton("composition-inline-save-top")}
+      </div>
       {isMcpDescriptorPath(filePath) ? (
         <McpTemplateEditor
           catalog={mcpCatalog}
@@ -488,16 +519,7 @@ function InlineEditor({
           onChange={onChange}
         />
       )}
-      {readOnly ? null : (
-        <button
-          className="justify-self-start rounded-md border border-amber bg-amber px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-white hover:bg-amber-2"
-          data-testid="composition-inline-save"
-          type="button"
-          onClick={onSaveDraft}
-        >
-          {saveLabel}
-        </button>
-      )}
+      {readOnly ? null : saveButton("composition-inline-save")}
     </div>
   );
 }

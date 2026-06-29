@@ -93,6 +93,7 @@ function mount(
         packageId: "p1",
         draftFiles: files,
         readOnly: false,
+        dirty: true,
         labels,
         filesLabels: {} as never,
         importLabels: {} as never,

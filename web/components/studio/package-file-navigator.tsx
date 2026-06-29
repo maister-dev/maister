@@ -85,6 +85,7 @@ export function PackageFileNavigator({
   sessionId,
   draftFiles,
   readOnly,
+  dirty,
   labels,
   filesLabels,
   importLabels,
@@ -98,6 +99,8 @@ export function PackageFileNavigator({
   sessionId?: string;
   draftFiles: AuthoredFlowPackageFile[];
   readOnly: boolean;
+  // Whether the draft differs from the last-saved disk state (enables Save).
+  dirty: boolean;
   labels: PackageFileNavigatorLabels;
   filesLabels: PackageFilesEditorLabels;
   importLabels: ImportDialogLabels;
@@ -437,6 +440,21 @@ export function PackageFileNavigator({
     return rows;
   }
 
+  // Save persists the whole draft to disk; enabled only when it differs from the
+  // last-saved state. Rendered at both the top and bottom of the editor pane so a
+  // long file does not force a scroll to reach it.
+  const saveButton = (testid: string): ReactElement => (
+    <button
+      className="shrink-0 justify-self-start rounded-md border border-amber bg-amber px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-white hover:bg-amber-2 disabled:cursor-not-allowed disabled:border-line disabled:bg-ivory disabled:text-mute"
+      data-testid={testid}
+      disabled={!dirty}
+      type="button"
+      onClick={onSaveDraft}
+    >
+      {labels.save}
+    </button>
+  );
+
   const crumbs = cwd ? cwd.split("/") : [];
 
   return (
@@ -610,8 +628,11 @@ export function PackageFileNavigator({
         <div className="min-h-0 rounded-[12px] border border-line bg-ivory p-3">
           {selectedFile ? (
             <div className="grid gap-3">
-              <div className="truncate font-mono text-[11px] text-mute">
-                {selectedFile.path}
+              <div className="flex items-center justify-between gap-2">
+                <div className="truncate font-mono text-[11px] text-mute">
+                  {selectedFile.path}
+                </div>
+                {readOnly ? null : saveButton("file-nav-save-top")}
               </div>
               <ContentEditor
                 key={selectedFile.path}
@@ -630,16 +651,7 @@ export function PackageFileNavigator({
                   )
                 }
               />
-              {readOnly ? null : (
-                <button
-                  className="justify-self-start rounded-md border border-amber bg-amber px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-white hover:bg-amber-2"
-                  data-testid="file-nav-save"
-                  type="button"
-                  onClick={onSaveDraft}
-                >
-                  {labels.save}
-                </button>
-              )}
+              {readOnly ? null : saveButton("file-nav-save")}
             </div>
           ) : (
             <p

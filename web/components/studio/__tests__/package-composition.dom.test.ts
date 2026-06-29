@@ -70,6 +70,7 @@ function baseProps(
     bom,
     fileCount: 1,
     readOnly: false,
+    dirty: true,
     draftFiles: [{ kind: "rule", path: "rules/r1.md", content: "x" }],
     filesLabels,
     mcpCatalog: [],
@@ -122,6 +123,29 @@ describe("PackageComposition inline Save (ADR-116 §P3)", () => {
     act(() => saveBtn?.click());
 
     expect(onSaveDraft).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a top + bottom Save, both disabled when the draft is clean", () => {
+    nav.search = "tab=rules&sel=r1.md";
+    const container = document.createElement("div");
+
+    document.body.appendChild(container);
+    mount(
+      container,
+      createElement(PackageComposition, baseProps({ dirty: false }) as never),
+    );
+
+    const top = container.querySelector<HTMLButtonElement>(
+      '[data-testid="composition-inline-save-top"]',
+    );
+    const bottom = container.querySelector<HTMLButtonElement>(
+      '[data-testid="composition-inline-save"]',
+    );
+
+    expect(top).not.toBeNull();
+    expect(bottom).not.toBeNull();
+    expect(top?.disabled).toBe(true);
+    expect(bottom?.disabled).toBe(true);
   });
 });
 
