@@ -56,9 +56,9 @@ export type CapabilitySurface = {
 
 // Per-adapter materialization target (acp-runners.md §"Per-adapter
 // materialization target", FR-C1/T0.4). `cwd-dir` writes a worktree-relative
-// dir the agent auto-discovers from cwd (claude `.claude/`); `home-redirect`
-// writes a per-session dir and points the agent at it via `redirectEnv` on
-// spawn. Frozen 2026-06-16 vs the installed CLIs.
+// dir the agent auto-discovers from cwd (claude `.claude/`, gemini `.gemini/`);
+// `home-redirect` writes a per-session dir and points the agent at it via
+// `redirectEnv` on spawn. Frozen 2026-06-16 vs the installed CLIs.
 export type AdapterMaterialization = {
   readonly mode: "cwd-dir" | "home-redirect";
   /** cwd-relative subdir (cwd-dir) or per-session subdir name (home-redirect). */
@@ -127,11 +127,7 @@ export const ADAPTER_SUPPORT = [
     mcpTransports: ["stdio", "sse", "http"],
     fsPolicy: "none",
     capabilitySurface: { skills: true, subagents: false, skillSigil: "/" },
-    materialization: {
-      mode: "home-redirect",
-      dir: "gemini-home",
-      redirectEnv: "GEMINI_CLI_HOME",
-    },
+    materialization: { mode: "cwd-dir", dir: ".gemini" },
   },
   {
     id: "opencode",

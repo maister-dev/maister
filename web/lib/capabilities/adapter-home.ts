@@ -88,13 +88,16 @@ async function listDir(dir: string): Promise<string[]> {
  *
  * - claude (cwd-dir): copy each bundle's `skills/` + `agents/` into the worktree
  *   `.claude/` (the agent auto-discovers from cwd). No redirect env.
+ * - gemini (cwd-dir): copy project bundle `skills/` into the worktree
+ *   `.gemini/skills/` so Gemini keeps using its native user home/auth and
+ *   merges workspace skills through its own settings model. No redirect env.
  * - codex (home-redirect): compose a per-session `CODEX_HOME` — symlink the
  *   global `auth.json`/`config.toml`, symlink each global `~/.codex/skills/*`,
  *   then copy the project bundle skills (**project wins** on name collision).
  *   codex#21907: codex does not auto-read cwd `.codex/skills` yet, hence the
  *   composed home. Returns `{ CODEX_HOME }`.
- * - gemini/opencode/mimo (home-redirect): write bundle skills under a per-session
- *   home dir and return the adapter's redirect env. The exact per-agent skills
+ * - opencode/mimo (home-redirect): write bundle skills under a per-session home
+ *   dir and return the adapter's redirect env. The exact per-agent skills
  *   subpath is T3.5-verified via smoke; this lands the dir + env contract.
  *
  * Single-host assumption: the worktree + `~/.codex` are on the agent host (the
@@ -112,8 +115,24 @@ export async function materializeAdapterCapabilityHome(args: {
   const worktreePath = path.resolve(args.worktreePath);
   const materialization = getAdapterSupportById(args.agent)?.materialization;
 
-  // claude (or unknown) → cwd-dir `.claude/` copy (existing behavior).
-  if (!materialization || materialization.mode === "cwd-dir") {
+  if (!materialization) {
+    for (const installedPath of args.installedPaths) {
+      await copyBundleArtifactsToWorktree({ installedPath, worktreePath });
+    }
+
+    return { env: {}, materializedRoots: [] };
+  }
+
+  if (materialization.mode === "cwd-dir") {
+    if (args.agent === "gemini") {
+      await copyBundleSkills(
+        path.join(worktreePath, materialization.dir, "skills"),
+        args.installedPaths,
+      );
+
+      return { env: {}, materializedRoots: [] };
+    }
+
     for (const installedPath of args.installedPaths) {
       await copyBundleArtifactsToWorktree({ installedPath, worktreePath });
     }
@@ -139,8 +158,8 @@ export async function materializeAdapterCapabilityHome(args: {
       codexGlobalHome: args.codexGlobalHome ?? path.join(homedir(), ".codex"),
     });
   } else {
-    // gemini/opencode/mimo: skills under `<home>/skills/` (exact per-agent
-    // subpath is T3.5-verified via smoke; this lands the dir + env contract).
+    // opencode/mimo: skills under `<home>/skills/` (exact per-agent subpath is
+    // T3.5-verified via smoke; this lands the dir + env contract).
     await copyBundleSkills(path.join(homeRoot, "skills"), args.installedPaths);
   }
 
@@ -231,9 +250,9 @@ async function copyBundleSkills(
  * agent discovers it as `/flow-authoring`. The assistant carries NO project
  * catalog and NO installed bundles, so this is the ONLY skill materialization on
  * its path. Reuses `materializeAdapterCapabilityHome` by staging the skill as a
- * synthetic single-skill bundle in a tmp dir (claude → cwd `.claude/skills`,
- * codex/gemini/… → composed home + redirect env). Returns the redirect env to
- * merge into the session's adapterLaunch (empty for claude).
+ * synthetic single-skill bundle in a tmp dir (claude/gemini → cwd skills,
+ * codex/opencode/mimo → composed home + redirect env where required). Returns
+ * the redirect env to merge into the session's adapterLaunch.
  */
 export async function materializeFlowAuthoringSkill(args: {
   agent: AdapterId;

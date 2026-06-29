@@ -353,6 +353,28 @@ describe("adapter compatibility fixtures", () => {
     });
   });
 
+  it("does not call ACP authenticate for a Gemini CLI-native runner", async () => {
+    const child = spawnFixture(["--gemini-reject-authenticate"]);
+    const emitter = new EventEmitter();
+    const record = recordFor("gemini");
+
+    await expect(
+      createAcpConnection({
+        stdin: child.stdin,
+        stdoutSource: child.stdout,
+        sessionId: record.sessionId,
+        worktreePath: process.cwd(),
+        record,
+        emitter,
+        logger,
+        adapter: "gemini",
+        runner: runnerFor("gemini"),
+      }),
+    ).resolves.toMatchObject({
+      acpSessionId: expect.stringMatching(/^compat-/),
+    });
+  });
+
   it("refuses Gemini loadSession-only resume without falling back to newSession", async () => {
     const child = spawnFixture(["--gemini-load-only"]);
     const emitter = new EventEmitter();

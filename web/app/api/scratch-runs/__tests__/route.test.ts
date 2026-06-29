@@ -637,6 +637,56 @@ describe("POST /api/scratch-runs", () => {
     expect(mocks.createSession).toHaveBeenCalledTimes(1);
   });
 
+  it("leaves the scratch dialog retryable when the initial prompt hits transient runner auth", async () => {
+    const { MaisterError } = (await import("@/lib/errors")) as {
+      MaisterError: typeof RuntimeMaisterError;
+    };
+
+    mocks.sendScratchPromptAndProjectEvents.mockRejectedValueOnce(
+      new MaisterError(
+        "EXECUTOR_UNAVAILABLE",
+        "ACP prompt failed because adapter authentication is unavailable: API key not valid",
+      ),
+    );
+
+    const res = await POST(launchRequest());
+    const frames = parseSseFrames(await res.text());
+
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+    expect(frames.find((f) => f.stage === "session_ready")).toBeTruthy();
+    expect(frames.find((f) => f.type === "error")).toMatchObject({
+      type: "error",
+      code: "EXECUTOR_UNAVAILABLE",
+    });
+    expect(state.updates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          values: expect.objectContaining({
+            dialogStatus: "WaitingForUser",
+            errorCode: "EXECUTOR_UNAVAILABLE",
+            errorMessage: expect.stringContaining("API key not valid"),
+          }),
+        }),
+        expect.objectContaining({
+          values: expect.objectContaining({
+            status: "Running",
+            currentStepId: "dialog",
+          }),
+        }),
+      ]),
+    );
+    expect(state.updates).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          values: expect.objectContaining({ status: "Crashed" }),
+        }),
+        expect.objectContaining({
+          values: expect.objectContaining({ dialogStatus: "Crashed" }),
+        }),
+      ]),
+    );
+  });
+
   it("surfaces a typed in-stream error frame and compensates when materialization fails after worktree", async () => {
     mocks.materializeCapabilityProfile.mockRejectedValueOnce(
       new Error("materialize failed"),

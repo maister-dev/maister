@@ -172,9 +172,14 @@ export function resolveAutoApproveOption(
   );
 }
 
-type AcpMethod = "initialize" | "newSession" | "resumeSession" | "prompt";
+type AcpMethod =
+  | "initialize"
+  | "newSession"
+  | "resumeSession"
+  | "prompt";
 
 const ACP_HANDSHAKE_TIMEOUT_ENV = "MAISTER_ACP_HANDSHAKE_TIMEOUT_MS";
+
 export const DEFAULT_ACP_HANDSHAKE_TIMEOUT_MS = 30_000;
 
 function errorText(err: unknown): string {
@@ -192,7 +197,11 @@ export function resolveAcpHandshakeTimeoutMs(
 
   const parsed = Number.parseInt(raw, 10);
 
-  if (!Number.isFinite(parsed) || parsed <= 0 || String(parsed) !== raw.trim()) {
+  if (
+    !Number.isFinite(parsed) ||
+    parsed <= 0 ||
+    String(parsed) !== raw.trim()
+  ) {
     throw new SupervisorError(
       "PRECONDITION",
       `${ACP_HANDSHAKE_TIMEOUT_ENV} must be a positive integer number of milliseconds`,

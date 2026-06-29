@@ -120,7 +120,7 @@ describe("materializeAdapterCapabilityHome — per-adapter target (FR-C1/C2)", (
     );
   });
 
-  it("gemini (home-redirect): writes skills under the home + returns GEMINI_CLI_HOME", async () => {
+  it("gemini (cwd-dir): materializes project skills into worktree .gemini without redirecting native auth", async () => {
     const res = await materializeAdapterCapabilityHome({
       agent: "gemini",
       worktreePath: work,
@@ -128,10 +128,10 @@ describe("materializeAdapterCapabilityHome — per-adapter target (FR-C1/C2)", (
       installedPaths: [pkg],
     });
 
-    expect(res.env.GEMINI_CLI_HOME).toBeTruthy();
+    expect(res.env).toEqual({});
     expect(
       await readFile(
-        path.join(res.env.GEMINI_CLI_HOME, "skills", "aif-plan", "SKILL.md"),
+        path.join(work, ".gemini", "skills", "aif-plan", "SKILL.md"),
         "utf8",
       ),
     ).toBe("PROJECT aif-plan");

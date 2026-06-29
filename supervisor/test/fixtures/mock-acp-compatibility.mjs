@@ -6,6 +6,8 @@ import * as acp from "@agentclientprotocol/sdk";
 
 const mode = process.argv.includes("--gemini-load-only")
   ? "gemini-load-only"
+  : process.argv.includes("--gemini-reject-authenticate")
+    ? "gemini-reject-authenticate"
   : "opencode-resume";
 
 // The kind reported in the single permission request the agent emits per
@@ -86,6 +88,10 @@ class CompatibilityAgent {
   }
 
   async authenticate() {
+    if (mode === "gemini-reject-authenticate") {
+      throw new Error("Gemini CLI-native auth must not use ACP authenticate");
+    }
+
     return {};
   }
 

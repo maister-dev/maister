@@ -846,9 +846,11 @@ export async function* launchScratchRunStaged(
   yield launchProgress("worktree_created");
 
   let materialized: Awaited<ReturnType<typeof materializeCapabilityProfile>>;
-  // FR-C2/C3: per-adapter capability home env (e.g. codex CODEX_HOME), merged
-  // into the session adapterLaunch below. Empty for claude (cwd `.claude/`).
+  // FR-C2/C3: per-adapter capability env (e.g. codex CODEX_HOME), merged into
+  // the session adapterLaunch below. Empty for cwd adapters (claude/gemini).
   let adapterHomeEnv: Record<string, string> = {};
+
+  let initialPromptStarted = false;
 
   try {
     // Cancel here (pre-commit) compensates the worktree+branch via this catch.
@@ -869,7 +871,7 @@ export async function* launchScratchRunStaged(
     });
 
     // FR-C2/C3: materialize the broad bundle skills (+ subagents for claude)
-    // into the per-adapter target and capture the runner home redirect env.
+    // into the per-adapter target and capture any runner redirect env.
     const installedImports: Array<{ installedPath: string }> = await db
       .select({ installedPath: capabilityImports.installedPath })
       .from(capabilityImports)
@@ -1128,6 +1130,8 @@ export async function* launchScratchRunStaged(
     const launchPrompt = normalizeScratchPrompt(prompt, executor.agent, {
       runId,
     });
+
+    initialPromptStarted = true;
     const promptResult = await sendScratchPromptAndProjectEvents({
       runId,
       sessionId: session.sessionId,
@@ -1175,6 +1179,24 @@ export async function* launchScratchRunStaged(
       planMode: policy.planMode,
     });
   } catch (err) {
+    if (
+      initialPromptStarted &&
+      isMaisterError(err) &&
+      err.code === "EXECUTOR_UNAVAILABLE"
+    ) {
+      await markScratchPromptRetryable({ db, runId, err }).catch((markErr) =>
+        log.error(
+          {
+            runId,
+            markErr:
+              markErr instanceof Error ? markErr.message : String(markErr),
+          },
+          "failed to mark scratch launch prompt retryable",
+        ),
+      );
+      throw err;
+    }
+
     await markScratchCrashed({ db, runId, err }).catch((markErr) =>
       log.error(
         {
@@ -1528,8 +1550,8 @@ export async function* launchLocalPackageAssistantStaged(
 
   // T5.3: seed the flow-authoring skill into the session's per-adapter target
   // (the assistant has no project catalog, so this is its only skill). The
-  // returned env (codex CODEX_HOME redirect; empty for claude) is merged into
-  // the session adapterLaunch below.
+  // returned env (codex CODEX_HOME redirect; empty for cwd adapters) is merged
+  // into the session adapterLaunch below.
   const authoringSkill = await materializeFlowAuthoringSkill({
     agent: executor.agent,
     worktreePath: workingDir,

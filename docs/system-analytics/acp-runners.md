@@ -128,7 +128,7 @@ per-adapter smoke in T3.5 and tagged accordingly.
 | --- | --- | --- | --- | --- |
 | `claude` | `cwd-dir` | worktree `.claude/` (no redirect env) | `skills/<slug>/SKILL.md`, `agents/<stem>.md`, `settings.local.json` | ✓ / ✓ / ✓ / ✓ |
 | `codex` | `home-redirect` | `CODEX_HOME` → per-session composed dir | `skills/<slug>/`, symlinked global `auth.json`+`config.toml`, MCP in `config.toml` | ✓ / ✗ / ✓ / ✓ |
-| `gemini` | `home-redirect` | `GEMINI_CLI_HOME` → `.gemini` | `settings.json` (MCP), `GEMINI.md` (context); skills via `gemini skills install --scope project` *(T3.5)* | ✓ / ✗ / ✓ / ✓ |
+| `gemini` | `cwd-dir` | worktree `.gemini/` (no redirect env) | `skills/<slug>/SKILL.md`; user auth/config stays in native `~/.gemini`; workspace `settings.json` can merge MCP/config when needed | ✓ / ✗ / ✓ / ✓ |
 | `opencode` | `home-redirect` | `OPENCODE_CONFIG_DIR` | `opencode.jsonc` (config+MCP), `agent/`; reads Claude-Code `.claude/skills` unless `OPENCODE_DISABLE_CLAUDE_CODE_SKILLS` *(T3.5)* | ✓ / ✗ / ✓ / ✓ |
 | `mimo` | `home-redirect` | `XDG_CONFIG_HOME`/`XDG_DATA_HOME` → `mimocode` | opencode-shaped; skills via `OPENCODE_SKILLS` / claude-compat *(T3.5)* | ✓ / ✗ / ✓ / ✓ |
 
@@ -139,6 +139,16 @@ Notes:
   `auth.json`/`config.toml` + per-skill symlinks of `~/.codex/skills/*`, then
   materialize the project `skills/` (**project wins on name collision**). Flip to
   `cwd-dir` when #21907 lands.
+- **gemini** MUST NOT receive a per-run `GEMINI_CLI_HOME` for scratch capability
+  skills. Gemini CLI merges user settings from native `~/.gemini/settings.json`
+  with workspace settings under `<worktree>/.gemini/settings.json`, and discovers
+  workspace skills from `<worktree>/.gemini/skills`. Keeping the native home is
+  what preserves the operator's existing Gemini CLI login.
+- **Gemini CLI-native auth** (`provider.kind: google_gemini` without
+  `apiKeyEnv`) is left to Gemini CLI's native user configuration. MAIster does
+  not call ACP `authenticate` and does not pass a Gemini API key in this mode;
+  the spawned CLI reads the operator's default auth selection and credentials
+  from `~/.gemini`.
 - **Subagents stay claude-only** in this contract (FR-B3/FR-C4/D5): only `claude`
   has `subagents: true`. Empirically `opencode`/`mimo` expose a native `agent`
   surface (subagent-equivalent) and read Claude-Code `.claude/skills`; mapping
