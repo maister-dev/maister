@@ -651,7 +651,32 @@ export async function markScratchPromptRetryable(args: {
     args.err instanceof Error ? args.err.message : String(args.err);
   const now = new Date();
 
-  await db.transaction(async (tx: Db) => {
+  const applied = await db.transaction(async (tx: Db) => {
+    await lockRunRows(tx, args.runId);
+
+    const rows = await tx
+      .select({ dialogStatus: scratchRuns.dialogStatus })
+      .from(scratchRuns)
+      .where(eq(scratchRuns.runId, args.runId));
+    const current = rows[0]?.dialogStatus as ScratchDialogStatus | undefined;
+
+    // Fence: only an IN-FLIGHT prompt (dialogStatus Starting/Running) is
+    // retryable. `session_ready` is emitted BEFORE the prompt is posted, so a
+    // concurrent discard/stop/recover or a live supervisor event may already
+    // have moved the run to a terminal / NeedsInput / WaitingForUser state while
+    // the prompt was in flight — a late EXECUTOR_UNAVAILABLE must NOT resurrect
+    // or clobber that newer state. lockRunRows serializes against those writers
+    // and the guard is re-read under the lock (sibling pattern:
+    // completeScratchPromptTurn / markScratchCrashed).
+    if (current !== "Starting" && current !== "Running") {
+      log.warn(
+        { runId: args.runId, dialogStatus: current ?? "(missing)", errorCode },
+        "scratch prompt failed but dialog already moved; retryable marking skipped",
+      );
+
+      return false;
+    }
+
     await tx
       .update(scratchRuns)
       .set({
@@ -665,12 +690,16 @@ export async function markScratchPromptRetryable(args: {
       .update(runs)
       .set({ status: "Running", currentStepId: scratchStepId() })
       .where(eq(runs.id, args.runId));
+
+    return true;
   });
 
-  log.warn(
-    { runId: args.runId, errorCode, errorMessage },
-    "scratch prompt failed after message persistence; dialog left retryable",
-  );
+  if (applied) {
+    log.warn(
+      { runId: args.runId, errorCode, errorMessage },
+      "scratch prompt failed after message persistence; dialog left retryable",
+    );
+  }
 }
 
 export async function completeScratchPromptTurn(args: {
