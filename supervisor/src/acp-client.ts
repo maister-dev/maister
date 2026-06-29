@@ -945,6 +945,12 @@ export async function sendPromptOnConnection(
     stepId: string;
     prompt: string;
     contentBlocks?: acp.ContentBlock[];
+    // Interrupt: when the turn ends with the `cancelled` stop reason and this
+    // returns true, the cancel was operator-requested (session/cancel) — the
+    // response is returned verbatim instead of throwing. A `cancelled` reason
+    // WITHOUT this (hook halt, unexpected abort) still throws ACP_PROTOCOL so
+    // the flow/agent path marks the run crashed as before.
+    isUserCancel?: () => boolean;
   },
   logger: Logger,
 ): Promise<acp.PromptResponse> {
@@ -986,7 +992,7 @@ export async function sendPromptOnConnection(
     "acp prompt-end",
   );
 
-  if (resp.stopReason === "cancelled") {
+  if (resp.stopReason === "cancelled" && !args.isUserCancel?.()) {
     throw new SupervisorError(
       "ACP_PROTOCOL",
       `prompt cancelled (sessionId=${args.acpSessionId}, stepId=${args.stepId})`,

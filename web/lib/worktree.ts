@@ -1716,11 +1716,14 @@ async function withIntentToAddTempIndex<T>(
 
 export async function diffWorkingTree(
   worktreePath: string,
+  baseRef: string = "HEAD",
 ): Promise<WorkingTreeDiffResult> {
   const wt = validate(absolutePathSchema, worktreePath, "worktreePath");
+  const base =
+    baseRef === "HEAD" ? "HEAD" : validate(gitRefSchema, baseRef, "baseRef");
 
   return await withIntentToAddTempIndex(wt, async (env) => {
-    const diffArgs = ["diff", "--no-color", "--end-of-options", "HEAD"];
+    const diffArgs = ["diff", "--no-color", "--end-of-options", base];
     let text: string;
     let truncated = false;
 
@@ -1763,7 +1766,7 @@ export async function diffWorkingTree(
         "--name-status",
         "--no-color",
         "--end-of-options",
-        "HEAD",
+        base,
       ],
       {
         signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
@@ -1997,12 +2000,20 @@ export async function diffChangeStats(
   }
 }
 
+// HEAD-vs-working-tree change stats (untracked rendered as additions). Pass
+// `baseRef` to diff an arbitrary commit → working tree instead of HEAD — used
+// by the scratch inspector to show base→worktree changes (committed +
+// uncommitted + untracked) since a scratch agent edits files without
+// committing, so the commit-range `base..branch` diff would be empty.
 export async function diffWorkingTreeChangeStats(
   worktreePath: string,
+  baseRef: string = "HEAD",
 ): Promise<DiffChangeStatEntry[]> {
   const wt = validate(absolutePathSchema, worktreePath, "worktreePath");
+  const base =
+    baseRef === "HEAD" ? "HEAD" : validate(gitRefSchema, baseRef, "baseRef");
 
-  log.debug({ worktreePath: wt }, "diffWorkingTreeChangeStats");
+  log.debug({ worktreePath: wt, baseRef: base }, "diffWorkingTreeChangeStats");
 
   return await withIntentToAddTempIndex(wt, async (env) => {
     try {
@@ -2016,7 +2027,7 @@ export async function diffWorkingTreeChangeStats(
             "--name-status",
             "--no-color",
             "--end-of-options",
-            "HEAD",
+            base,
           ],
           {
             signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
@@ -2034,7 +2045,7 @@ export async function diffWorkingTreeChangeStats(
             "--no-color",
             "--find-renames",
             "--end-of-options",
-            "HEAD",
+            base,
           ],
           {
             signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
@@ -2054,7 +2065,7 @@ export async function diffWorkingTreeChangeStats(
 
       throw new MaisterError(
         "CONFLICT",
-        `git diff --numstat HEAD failed: ${(e.stderr ?? e.message).toString().trim()}`,
+        `git diff --numstat ${base} failed: ${(e.stderr ?? e.message).toString().trim()}`,
         { cause: asError(err) },
       );
     }

@@ -240,10 +240,11 @@ function buildComposerDisplaySignature(
   ]);
 }
 
-// Submit on Enter (chat convention). Shift+Enter inserts a newline; Cmd/Ctrl+
-// Enter also submits for muscle-memory. IME composition Enter (keyCode 229) must
-// NOT submit — it commits the candidate. The suggestion popup consumes Enter
-// first (pick item), so this only fires when the popup is closed.
+// Submit on Cmd/Ctrl+Enter only — the editor is multi-line, so a plain Enter
+// inserts a newline (TipTap default) instead of sending. IME composition Enter
+// (keyCode 229) must NOT submit — it commits the candidate. The suggestion
+// popup consumes plain Enter first (pick item); Cmd/Ctrl+Enter submits even
+// with the popup open.
 export function isSubmitShortcut(
   event: Pick<
     KeyboardEvent,
@@ -253,7 +254,7 @@ export function isSubmitShortcut(
   if (event.key !== "Enter") return false;
   if (event.isComposing || event.keyCode === 229) return false;
 
-  return !event.shiftKey;
+  return event.metaKey || event.ctrlKey;
 }
 
 function buildSuggestionExtension(args: {

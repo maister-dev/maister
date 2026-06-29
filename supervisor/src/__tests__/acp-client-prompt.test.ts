@@ -90,3 +90,35 @@ describe("sendPromptOnConnection — content blocks vs string", () => {
     });
   });
 });
+
+// Interrupt (session/cancel): a `cancelled` stop reason throws ACP_PROTOCOL by
+// default (unexpected abort → crash), but is returned verbatim when the caller
+// flags it as an operator-requested cancel (the session stays live).
+describe("sendPromptOnConnection — cancelled stop reason", () => {
+  const baseArgs = {
+    adapter: "claude" as const,
+    acpSessionId: "s1",
+    stepId: "step",
+    prompt: "hello",
+  };
+
+  it("throws ACP_PROTOCOL on cancelled without a user-cancel flag", async () => {
+    const prompt = vi.fn().mockResolvedValue({ stopReason: "cancelled" });
+
+    await expect(
+      sendPromptOnConnection(fakeConn(prompt), baseArgs, fakeLogger()),
+    ).rejects.toMatchObject({ code: "ACP_PROTOCOL" });
+  });
+
+  it("returns the cancelled response when the cancel was user-requested", async () => {
+    const prompt = vi.fn().mockResolvedValue({ stopReason: "cancelled" });
+
+    const resp = await sendPromptOnConnection(
+      fakeConn(prompt),
+      { ...baseArgs, isUserCancel: () => true },
+      fakeLogger(),
+    );
+
+    expect(resp.stopReason).toBe("cancelled");
+  });
+});

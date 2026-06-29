@@ -32,9 +32,13 @@ moment.
 | Project admin / owner | Has member capabilities plus project-level delivery actions where configured. |
 | Global admin | Bypasses project role checks as owner-equivalent. |
 
-The conversation composer must disable itself when the run is not waiting for
-user input. A crashed run may expose a recover composer that sends the resume
-prompt instead of a normal message.
+While the agent is working the composer stays editable so the user can draft
+the next message; its primary button becomes **Stop**, which interrupts the
+current turn (ACP `session/cancel`) while keeping the session live. A non-empty
+draft auto-sends once the interrupted turn settles back to `WaitingForUser`.
+Sending a new message is only enabled in `WaitingForUser`. A crashed run may
+expose a recover composer that sends the resume prompt instead of a normal
+message.
 
 ## Navigation
 
@@ -57,7 +61,8 @@ flowchart TD
     Scratch --> Workbench["Workbench"]
     Conversation --> Message["Send message / recover prompt"]
     Conversation --> Permission["Permission or HITL response"]
-    Inspector --> Actions["Stop / snapshot / export / promote / discard"]
+    Conversation --> Interrupt["Stop (interrupt turn)"]
+    Inspector --> Actions["Terminate / snapshot / export / promote (merge·rebase·PR) / discard"]
     Workbench --> Diff["Diff"]
     Workbench --> Files["Files"]
 ```
@@ -76,17 +81,23 @@ The scratch screen uses the conversation as the primary center:
    them from the audit trail.
 3. **Composer** - fixed at the bottom of the conversation. It sends a normal
    message while the run waits for the user, and a recover prompt when the run
-   is crashed and resumable. It supports structured attachments and uploaded
+   is crashed and resumable. The editor is multi-line: `Cmd+Enter` on macOS and
+   `Ctrl+Enter` on Windows/Linux submit; a plain `Enter` inserts a newline. It
+   stays editable while the agent is busy, where the send control becomes a red
+   **Stop** button that interrupts the current turn; a typed draft is queued and
+   auto-sent once the turn ends. It supports structured attachments and uploaded
    files. Slash suggestions include package skills plus the live ACP session's
    available commands; native runner commands are inserted as their exact raw
-   command text rather than converted into capability chips. `Cmd+Enter` on
-   macOS and `Ctrl+Enter` on Windows/Linux submit the composer.
+   command text rather than converted into capability chips.
 4. **Inline HITL** - permission/form/human responses appear in the conversation
    path instead of a separate workflow page.
 5. **Run inspector** - a collapsible right sidebar documented in
-   [`run-inspector.md`](run-inspector.md). It shows branch/worktree, change size,
-   token usage breakdown, wall-clock session time, action shortcuts,
-   attachments, capability profile, and promotion state.
+   [`run-inspector.md`](run-inspector.md). It shows branch/base/target,
+   worktree, change size, a live token usage breakdown and wall-clock session
+   time (both refresh during a live run), action shortcuts including the merge-
+   mode promote selector and a red terminate (Stop) action, attachments,
+   capability profile, and promotion state. Base/target branch fall back to the
+   scratch metadata when the workspace row's columns are null.
 6. **Secondary workbench** - Timeline and Evidence are available as lightweight
    secondary tabs. Files and Diff are grouped inside one collapsed-by-default
    **Files / Diff** disclosure below the run interaction surface, and deep links
@@ -117,7 +128,7 @@ stateDiagram-v2
 
 | State | Main focus |
 | --- | --- |
-| `Starting` / `Running` | Transcript with latest tool group expanded |
+| `Starting` / `Running` | Transcript with latest tool group expanded; composer editable for a draft with a red Stop button to interrupt the turn |
 | `WaitingForUser` | Transcript plus enabled composer and live slash-command suggestions |
 | `NeedsInput` | Pending permission/HITL prompt in the conversation |
 | `Review` | Transcript plus inspector action shortcuts and change size |
@@ -136,10 +147,19 @@ stateDiagram-v2
   the command or delete stored messages.
 - `POST /api/scratch-runs/{runId}/recover` resumes a crashed scratch session
   with a user prompt.
-- `POST /api/scratch-runs/{runId}/stop` moves a live scratch run to review.
+- `POST /api/scratch-runs/{runId}/interrupt` interrupts the agent's in-flight
+  turn (composer Stop) without ending the session; the dialog returns to
+  `WaitingForUser` on its own.
+- `POST /api/scratch-runs/{runId}/stop` ends the run and closes its session
+  (the terminate action in the inspector, distinct from the composer Stop),
+  moving it to review.
 - `POST /api/scratch-runs/{runId}/discard` abandons a scratch workspace.
-- `GET /api/runs/{runId}/diff` uses the shared run diff renderer for scratch
-  changes once the scratch response exposes the prepared diff shape.
+- `POST /api/runs/{runId}/promote` promotes the branch; the inspector exposes a
+  merge-mode selector — `local_merge` (`--no-ff`), `rebase_merge`, or
+  `pull_request`.
+- `GET /api/runs/{runId}/diff` and `GET /api/runs/{runId}/change-summary` render
+  the scratch changes as base commit → working tree (committed, uncommitted, and
+  untracked files), since a scratch agent edits files without committing.
 - `POST /api/runs/{runId}/hitl/{hitlRequestId}/respond` answers permission,
   form, or human prompts.
 - Workbench routes are listed in [`workbench.md`](workbench.md).

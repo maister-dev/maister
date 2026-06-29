@@ -133,7 +133,10 @@ export type PromptStopReason =
   | "end_turn"
   | "max_tokens"
   | "max_turn_requests"
-  | "refusal";
+  | "refusal"
+  // Interrupt (session/cancel): a user-requested cancel ends the turn cleanly —
+  // the session stays live and the scratch dialog returns to WaitingForUser.
+  | "cancelled";
 
 export type PromptResult = {
   stopReason: PromptStopReason;
@@ -793,6 +796,37 @@ export async function cancelPermission(
     },
     "cancelPermission",
   );
+}
+
+// Interrupt the in-flight prompt turn (session/cancel) without ending the
+// session. Best-effort + idempotent: the supervisor acks cancelled:false when
+// there is no live turn. The blocked sendPrompt call resolves with the
+// `cancelled` stop reason, which the scratch turn path treats as a clean
+// completion (dialog → WaitingForUser).
+export async function cancelPrompt(
+  sessionId: string,
+): Promise<{ cancelled: boolean }> {
+  const url = `${baseUrl()}/sessions/${encodeURIComponent(sessionId)}/cancel`;
+
+  logger.debug({ url, sessionId }, "cancelPrompt");
+  let res: Response;
+
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+  } catch (err) {
+    throw networkErrorToMaister(err, "cancelPrompt");
+  }
+  if (!res.ok) {
+    throw await asMaisterError(res, "ACP_PROTOCOL");
+  }
+
+  const body = (await res.json().catch(() => ({}))) as { cancelled?: boolean };
+
+  return { cancelled: body.cancelled === true };
 }
 
 // M8 T5: typed CheckpointResponse mirrors the supervisor's response

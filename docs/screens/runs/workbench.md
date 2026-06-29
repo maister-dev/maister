@@ -119,7 +119,11 @@ large code-review surfaces sit in one expandable block.
    server-provided review context allows it; loading existing threads may show a
    warning but must not remove the root-comment affordance. The current
    implementation shows one selected file at a time; grouped/collapsible
-   multi-file sections are a later refinement.
+   multi-file sections are a later refinement. For a scratch run the default
+   `run` scope diffs the launch base commit against the WORKING TREE (committed,
+   uncommitted, and untracked files render as additions), because a scratch
+   agent edits files without committing — the commit-range `base..branch` diff
+   would otherwise look empty.
 5. **Files** - git-tracked file tree, search/filter, file-type icons, selected
    file header, copy/open controls, and `Preview / Source` toggle where a
    preview exists. Markdown preview supports GFM, Mermaid, syntax-highlighted

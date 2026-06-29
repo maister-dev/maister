@@ -3506,6 +3506,51 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
 
+  /api/scratch-runs/{runId}/interrupt:
+    post:
+      tags: [scratch-runs]
+      summary: Implemented — interrupt the agent's in-flight turn (keeps the session)
+      description: |
+        Stop control in the composer. Forwards a protocol-level
+        `session/cancel` to the supervisor (`operateScratchRun`), interrupting
+        the current turn while keeping the ACP session live. Does NOT mutate the
+        dialog status — the in-flight message turn settles `Running →
+        WaitingForUser` on its own when the supervisor resolves the cancelled
+        prompt. Idempotent: a terminal run or a run without a live supervisor
+        session returns 200 with `cancelled: false`.
+      operationId: interruptScratchRun
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Interrupt requested (or no-op for a terminal run).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [runId, cancelled, dialogStatus]
+                properties:
+                  runId: { type: string, format: uuid }
+                  cancelled: { type: boolean }
+                  dialogStatus: { type: string }
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Scratch run not found or not scratch (`PRECONDITION`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "503":
+          description: Supervisor unavailable (`EXECUTOR_UNAVAILABLE`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
   /api/scratch-runs/{runId}/discard:
     post:
       tags: [scratch-runs]
@@ -3835,6 +3880,57 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
+  /api/runs/{runId}/cost-summary:
+    get:
+      tags: [runs]
+      summary: Implemented — read the live token-cost rollup for the run inspector
+      description: |
+        Reconciles `cost.jsonl` into the run cost rollup and returns the token
+        totals. The live run inspector polls this on each SSE tick so its token
+        and wall-clock facts grow during a live run instead of being frozen at
+        the server-rendered snapshot. Flow/agent runs require `readBoard`;
+        scratch runs require `readScratchRun`. A project-less local-package
+        assistant run returns 404 (it surfaces its own token-budget meter).
+      operationId: getRunCostSummary
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Token-cost rollup.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - inputTokens
+                  - outputTokens
+                  - cacheReadTokens
+                  - cacheCreationTokens
+                  - resumeTokens
+                  - totalTokens
+                  - byModel
+                properties:
+                  inputTokens: { type: integer }
+                  outputTokens: { type: integer }
+                  cacheReadTokens: { type: integer }
+                  cacheCreationTokens: { type: integer }
+                  resumeTokens: { type: integer }
+                  totalTokens: { type: integer }
+                  byModel:
+                    type: object
+                    additionalProperties:
+                      type: object
+                      additionalProperties: { type: integer }
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /api/runs/{runId}/graph:
     get:
@@ -7829,6 +7925,57 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422": { $ref: "#/components/responses/Config" }
+        "503":
+          description: Supervisor readiness or executor unavailable (`EXECUTOR_UNAVAILABLE`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
+  /api/studio/local-packages/{id}/assistant/{runId}/interrupt:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: runId
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [flow-packages]
+      summary: (ADR-110) Interrupt the Flow Studio assistant's in-flight turn
+      description: |
+        Stop control for the docked assistant — the same `session/cancel`
+        interrupt as a project scratch run, lock-gated by the editor
+        `sessionId` (`assertHoldsLock(id, sessionId)`) so only the lock holder
+        can cancel its own turn. The session stays live; the in-flight turn
+        settles back to `WaitingForUser`. Idempotent for a non-live turn.
+      operationId: interruptStudioLocalPackageAssistant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sessionId]
+              properties:
+                sessionId: { type: string }
+      responses:
+        "200":
+          description: Interrupt requested (or no-op for a non-live turn).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [runId, cancelled, dialogStatus]
+                properties:
+                  runId: { type: string }
+                  cancelled: { type: boolean }
+                  dialogStatus: { type: string }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/Config" }
         "503":
           description: Supervisor readiness or executor unavailable (`EXECUTOR_UNAVAILABLE`).

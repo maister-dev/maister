@@ -341,21 +341,19 @@ export async function GET(
       await requireProjectAction(run.projectId, "readScratchRun");
 
       const targetBranch = scratch.targetBranch ?? scratch.baseBranch;
-      const { text: diff, truncated } = await diffRunWorkspace({
-        projectRepoPath: workspace.parentRepoPath,
-        baseCommit: scratch.baseCommit,
-        branch: workspace.branch,
-      });
-      // M35 (T3.3): scratch diffs now ride the prepared `files`/`perFile` shape
-      // the shared <RunDiff> consumes, while keeping the raw `diff` string for
-      // backward compatibility. Scratch has a single `run` scope (workspace
-      // base -> branch) — the flow multi-scope base resolution does not apply.
-      // The name-status runs in the parent repo, the same tree as the diff.
-      const nameStatus = await diffNameStatus({
-        worktreePath: workspace.parentRepoPath,
-        baseRef: scratch.baseCommit,
-        branch: workspace.branch,
-      });
+      // The scratch agent edits files without committing, so the diff must be
+      // base commit → WORKING TREE (committed + uncommitted + untracked), not
+      // the commit-range `base..branch` (which is empty until a commit lands).
+      // Untracked files render as additions via the intent-to-add temp index.
+      const {
+        text: diff,
+        truncated,
+        nameStatus,
+      } = await diffWorkingTree(workspace.worktreePath, scratch.baseCommit);
+      // M35 (T3.3): scratch diffs ride the prepared `files`/`perFile` shape the
+      // shared <RunDiff> consumes, while keeping the raw `diff` string for
+      // backward compatibility. Scratch has a single `run` scope (base ->
+      // working tree) — the flow multi-scope base resolution does not apply.
       const { prepared, renderUnavailableReason } =
         await prepareDiffForResponse({ runId, scope: "run", diff, truncated });
       const countsByPath = new Map(prepared.files.map((f) => [f.path, f]));

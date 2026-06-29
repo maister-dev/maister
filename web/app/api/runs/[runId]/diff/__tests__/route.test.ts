@@ -14,6 +14,7 @@ import { MaisterError } from "@/lib/errors";
 import {
   diffNameStatus,
   diffRunWorkspace,
+  diffWorkingTree,
   resolveBaseRef,
 } from "@/lib/worktree";
 
@@ -156,6 +157,7 @@ function seedScratchRun(
     runId,
     projectId: "project-1",
     branch: "scratch/demo",
+    worktreePath: "/repos/demo/.maister/scratch-1",
     parentRepoPath: "/repos/demo",
     removedAt: overrides.removedAt ?? null,
   });
@@ -232,6 +234,12 @@ beforeEach(() => {
   vi.mocked(diffNameStatus).mockResolvedValue([
     { path: "file.txt", status: "M" },
   ]);
+  vi.mocked(diffWorkingTree).mockClear();
+  vi.mocked(diffWorkingTree).mockResolvedValue({
+    text: "diff --git a/file.txt b/file.txt\n",
+    truncated: false,
+    nameStatus: [{ path: "file.txt", status: "M" }],
+  });
   vi.mocked(resolveBaseRef).mockClear();
   vi.mocked(resolveBaseRef).mockResolvedValue(
     "resolvedbase0000000000000000000000000000",
@@ -260,11 +268,12 @@ describe("GET /api/runs/[runId]/diff — scratch (prepared shape, M35 T3.3)", ()
     };
 
     expect(res.status).toBe(200);
-    expect(diffRunWorkspace).toHaveBeenCalledWith({
-      projectRepoPath: "/repos/demo",
-      baseCommit: "abc1234",
-      branch: "scratch/demo",
-    });
+    // Base commit → working tree (incl. untracked), run in the worktree.
+    expect(diffWorkingTree).toHaveBeenCalledWith(
+      "/repos/demo/.maister/scratch-1",
+      "abc1234",
+    );
+    expect(diffRunWorkspace).not.toHaveBeenCalled();
     expect(body.diff).toContain("diff --git");
     expect(body.sourceBranch).toBe("scratch/demo");
     expect(body.targetBranch).toBe("release");
@@ -298,18 +307,13 @@ describe("GET /api/runs/[runId]/diff — scratch (prepared shape, M35 T3.3)", ()
     };
 
     expect(res.status).toBe(200);
-    // The shared <RunDiff> consumes files/perFile; scratch now provides them
-    // (computed over the parent repo, same tree as the raw diff).
+    // The shared <RunDiff> consumes files/perFile; scratch derives them from the
+    // working-tree name-status (base → worktree, same tree as the raw diff).
     expect(body.files).toEqual([
       { path: "file.txt", status: "M", additions: 0, deletions: 0 },
     ]);
     expect(Array.isArray(body.perFile)).toBe(true);
     expect(body.scope).toBe("run");
-    expect(diffNameStatus).toHaveBeenCalledWith({
-      worktreePath: "/repos/demo",
-      baseRef: "abc1234",
-      branch: "scratch/demo",
-    });
     // The raw diff string is preserved for backward compatibility.
     expect(body.diff).toContain("diff --git");
   });
@@ -317,11 +321,11 @@ describe("GET /api/runs/[runId]/diff — scratch (prepared shape, M35 T3.3)", ()
   it("returns an empty files list for an empty scratch diff", async () => {
     const runId = seedScratchRun();
 
-    vi.mocked(diffRunWorkspace).mockResolvedValueOnce({
+    vi.mocked(diffWorkingTree).mockResolvedValueOnce({
       text: "",
       truncated: false,
+      nameStatus: [],
     });
-    vi.mocked(diffNameStatus).mockResolvedValueOnce([]);
 
     const res = await invokeGet(runId);
     const body = (await res.json()) as {
@@ -339,9 +343,10 @@ describe("GET /api/runs/[runId]/diff — scratch (prepared shape, M35 T3.3)", ()
   it("propagates truncated:true for an oversized scratch diff", async () => {
     const runId = seedScratchRun();
 
-    vi.mocked(diffRunWorkspace).mockResolvedValueOnce({
+    vi.mocked(diffWorkingTree).mockResolvedValueOnce({
       text: "diff --git a/file.txt b/file.txt\n+partial\n",
       truncated: true,
+      nameStatus: [{ path: "file.txt", status: "M" }],
     });
 
     const res = await invokeGet(runId);
@@ -355,9 +360,10 @@ describe("GET /api/runs/[runId]/diff — scratch (prepared shape, M35 T3.3)", ()
   it("does not include upload artifact storage paths in scratch diff responses", async () => {
     const runId = seedScratchRun();
 
-    vi.mocked(diffRunWorkspace).mockResolvedValueOnce({
+    vi.mocked(diffWorkingTree).mockResolvedValueOnce({
       text: "",
       truncated: false,
+      nameStatus: [],
     });
 
     const res = await invokeGet(runId);
@@ -375,7 +381,7 @@ describe("GET /api/runs/[runId]/diff — scratch (prepared shape, M35 T3.3)", ()
     const res = await invokeGet(runId);
 
     expect(res.status).toBe(409);
-    expect(diffRunWorkspace).not.toHaveBeenCalled();
+    expect(diffWorkingTree).not.toHaveBeenCalled();
   });
 
   it("enforces project visibility before reading git diff", async () => {
@@ -388,7 +394,7 @@ describe("GET /api/runs/[runId]/diff — scratch (prepared shape, M35 T3.3)", ()
     const res = await invokeGet(runId);
 
     expect(res.status).toBe(403);
-    expect(diffRunWorkspace).not.toHaveBeenCalled();
+    expect(diffWorkingTree).not.toHaveBeenCalled();
   });
 });
 

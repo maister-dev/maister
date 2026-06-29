@@ -10,7 +10,7 @@ import type {
 import type { QuickReply } from "@/lib/scratch-runs/transcript";
 import type { ReactElement } from "react";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
 
@@ -41,6 +41,10 @@ export interface ScratchComposerProps {
     files: File[];
   }) => Promise<boolean>;
   onRecover: (prompt: string) => Promise<boolean>;
+  // Interrupt the agent's in-flight turn (session/cancel). Returns true when the
+  // cancel was accepted. While the agent is busy the Send button becomes Stop;
+  // a non-empty draft is auto-sent once the turn ends (back to WaitingForUser).
+  onInterrupt?: () => Promise<boolean>;
 }
 
 // The scratch message composer (M35 T3.2): capability-aware prompt editor +
@@ -59,6 +63,7 @@ export function ScratchComposer({
   disabledReason = null,
   onSend,
   onRecover,
+  onInterrupt,
 }: ScratchComposerProps): ReactElement {
   const t = useTranslations("scratch");
   const [content, setContent] = useState("");
@@ -66,6 +71,11 @@ export function ScratchComposer({
     ComposerAttachment[]
   >([]);
   const [composerFiles, setComposerFiles] = useState<File[]>([]);
+  const [interrupting, setInterrupting] = useState(false);
+  // Armed by a Stop click (or Cmd/Ctrl+Enter while busy) that had a non-empty
+  // draft: the draft auto-sends once the cancelled turn returns to
+  // WaitingForUser. See the effect below.
+  const [autoSendArmed, setAutoSendArmed] = useState(false);
   const composerFileBytes = useMemo(
     () => composerFiles.reduce((sum, file) => sum + file.size, 0),
     [composerFiles],
@@ -75,14 +85,70 @@ export function ScratchComposer({
     canCompose(status) &&
     disabledReason === null &&
     (recoverEnabled || !canRecover(status));
+  // The editor stays editable while the agent is busy so the user can draft the
+  // next message (and Stop-then-send it) instead of waiting for the turn.
+  const composerEditable =
+    disabledReason === null && (canUseComposer || agentBusy);
+  const showStop = agentBusy && !!onInterrupt;
   const canSubmitMessage = !!content.trim() && canUseComposer;
   const placeholder = disabledReason
     ? disabledReason
     : canSend(status)
       ? t("messagePlaceholder")
-      : canRecover(status) && recoverEnabled
-        ? t("recoverPlaceholder")
-        : t("messageDisabled");
+      : agentBusy
+        ? t("draftWhileBusy")
+        : canRecover(status) && recoverEnabled
+          ? t("recoverPlaceholder")
+          : t("messageDisabled");
+
+  async function handleStop(): Promise<void> {
+    if (!onInterrupt || interrupting) return;
+    setInterrupting(true);
+
+    try {
+      const ok = await onInterrupt();
+
+      if (ok && content.trim()) setAutoSendArmed(true);
+    } finally {
+      setInterrupting(false);
+    }
+  }
+
+  // Auto-send the armed draft once the interrupted turn settles back to a
+  // sendable state. Sends directly (the WaitingForUser path is always a plain
+  // send, never recover) and clears the draft on success.
+  useEffect(() => {
+    if (!autoSendArmed || !canSend(status) || pending) return;
+    const trimmed = content.trim();
+
+    if (!trimmed) {
+      setAutoSendArmed(false);
+
+      return;
+    }
+    setAutoSendArmed(false);
+    void (async () => {
+      const sent = await onSend({
+        content: trimmed,
+        attachments: composerAttachments,
+        files: composerFiles,
+      });
+
+      if (sent) {
+        setContent("");
+        setComposerAttachments([]);
+        setComposerFiles([]);
+      }
+    })();
+  }, [
+    autoSendArmed,
+    status,
+    pending,
+    content,
+    composerAttachments,
+    composerFiles,
+    onSend,
+  ]);
 
   function updateComposerAttachment(
     index: number,
@@ -168,6 +234,23 @@ export function ScratchComposer({
       {pending ? t("sending") : canRecover(status) ? t("recover") : t("send")}
     </button>
   );
+  const stopButton = (
+    <button
+      className="inline-flex items-center gap-1.5 rounded-full border border-[#d9534f]/40 bg-[#d9534f]/10 px-4 py-2 text-[13px] font-semibold text-[#d9534f] transition hover:bg-[#d9534f] hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+      data-testid="scratch-composer-stop"
+      disabled={interrupting}
+      title={t("interruptTitle")}
+      type="button"
+      onClick={() => void handleStop()}
+    >
+      <span
+        aria-hidden="true"
+        className="h-2.5 w-2.5 rounded-[2px] bg-current"
+      />
+      {interrupting ? t("interrupting") : t("interrupt")}
+    </button>
+  );
+  const primaryButton = showStop ? stopButton : sendButton;
   const composer = (
     <CapabilityComposer
       agent={agent}
@@ -177,7 +260,7 @@ export function ScratchComposer({
         inputBase,
         compact ? "min-h-[84px] pb-12" : "min-h-[110px]",
       )}
-      disabled={!canUseComposer}
+      disabled={!composerEditable}
       labels={{
         placeholder,
         unsupportedBadge: t("composerUnsupported"),
@@ -186,7 +269,14 @@ export function ScratchComposer({
       value={content}
       onChange={setContent}
       onSubmitShortcut={() => {
-        if (canSubmitMessage && !pending) void submit();
+        if (canSubmitMessage && !pending) {
+          void submit();
+
+          return;
+        }
+        // Cmd/Ctrl+Enter while the agent is busy stops the turn and queues the
+        // draft to auto-send once it settles.
+        if (showStop && content.trim() && !interrupting) void handleStop();
       }}
     />
   );
@@ -224,7 +314,9 @@ export function ScratchComposer({
               {attachmentCluster}
             </div>
           ) : null}
-          <div className="absolute bottom-2.5 right-2.5 z-10">{sendButton}</div>
+          <div className="absolute bottom-2.5 right-2.5 z-10">
+            {primaryButton}
+          </div>
         </div>
       ) : (
         composer
@@ -318,7 +410,7 @@ export function ScratchComposer({
       {!compact ? (
         <div className="mt-2 flex min-w-0 flex-wrap items-center justify-between gap-2">
           {attachmentCluster}
-          {sendButton}
+          {primaryButton}
         </div>
       ) : null}
     </form>

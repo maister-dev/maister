@@ -174,23 +174,33 @@ export default async function ScratchRunDetailLayout({
   const wallDurationMs = detail.endedAt
     ? Math.max(0, detail.endedAt.getTime() - detail.startedAt.getTime())
     : Math.max(0, Date.now() - detail.startedAt.getTime());
-  const costFacts = buildCostSummaryFacts(costSummary, {
+  const costLabels = {
     tokenTotal: t("tokenTotal"),
     inputTokens: t("inputTokens"),
     outputTokens: t("outputTokens"),
     cacheReadTokens: t("cacheReadTokens"),
     cacheCreationTokens: t("cacheCreationTokens"),
     resumeTax: t("resumeTax"),
-  });
+  };
+  const costFacts = buildCostSummaryFacts(costSummary, costLabels);
+  const wallClockLabel = t("wallClock");
+
+  // Scratch base/target are authoritative on scratch_runs; the workspace row's
+  // columns are null on legacy rows, so fall back to the session summary then
+  // the project main branch (which is what promote merges into).
+  const baseBranch =
+    detail.baseBranch ?? session?.baseBranch ?? detail.projectMainBranch;
+  const targetBranch =
+    detail.targetBranch ?? session?.targetBranch ?? baseBranch;
 
   const inspectorFacts = [
     { label: t("flowCenterStatus"), value: detail.status },
     { label: t("agentCenterRunner"), value: detail.agent },
     { label: t("headerBranch"), value: detail.branch },
-    { label: t("baseBranch"), value: detail.baseBranch ?? "-" },
-    { label: t("targetBranch"), value: detail.targetBranch ?? "-" },
+    { label: t("baseBranch"), value: baseBranch },
+    { label: t("targetBranch"), value: targetBranch },
     ...costFacts,
-    { label: t("wallClock"), value: formatDuration(wallDurationMs) },
+    { label: wallClockLabel, value: formatDuration(wallDurationMs) },
     {
       label: t("inspectorWorktree"),
       value: detail.pruned
@@ -207,8 +217,7 @@ export default async function ScratchRunDetailLayout({
       href: `/scratch-runs/${detail.runId}?wb=diff`,
     },
   ];
-  const promoteTargetBranch =
-    detail.targetBranch ?? detail.baseBranch ?? detail.projectMainBranch;
+  const promoteTargetBranch = targetBranch;
   const shellSubtitle = `${t("eyebrow")} / ${detail.projectSlug}`;
 
   return (
@@ -224,6 +233,12 @@ export default async function ScratchRunDetailLayout({
             facts={inspectorFacts}
             flowSummary={sessionSummary}
             labels={inspectorLabels}
+            liveCost={{ initial: costSummary, labels: costLabels }}
+            liveWallClock={{
+              startedAtMs: detail.startedAt.getTime(),
+              endedAtMs: detail.endedAt ? detail.endedAt.getTime() : null,
+              label: wallClockLabel,
+            }}
             pathname={`/scratch-runs/${detail.runId}`}
             runId={detail.runId}
             runStatus={detail.status}
@@ -240,7 +255,7 @@ export default async function ScratchRunDetailLayout({
       projectLabel={t("backToBoard")}
       status={detail.status}
       subtitle={shellSubtitle}
-      targetBranch={detail.targetBranch}
+      targetBranch={targetBranch}
       title={detail.branch}
     >
       <div className="grid min-w-0 max-w-full gap-5">

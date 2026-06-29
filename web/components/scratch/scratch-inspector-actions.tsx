@@ -20,6 +20,8 @@ export interface ScratchInspectorActionsProps {
 // (M35 T3.4): the derived lifecycle actions plus a local-merge promote, both
 // calling the existing run routes. Replaces the former conversation sidebar's
 // action block.
+type PromoteMode = "local_merge" | "rebase_merge" | "pull_request";
+
 export function ScratchInspectorActions({
   runId,
   lifecycleActions,
@@ -30,6 +32,7 @@ export function ScratchInspectorActions({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  const [mode, setMode] = useState<PromoteMode>("local_merge");
 
   async function promote(): Promise<void> {
     setPending(true);
@@ -41,7 +44,7 @@ export function ScratchInspectorActions({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          mode: "local_merge",
+          mode,
           targetBranch: promoteTargetBranch,
         }),
       });
@@ -77,15 +80,37 @@ export function ScratchInspectorActions({
           variant="detail"
         />
       ) : null}
-      <button
-        className="rounded-[6px] border border-line bg-paper px-3 py-2 text-[12px] font-semibold text-ink-2 hover:border-amber hover:text-amber disabled:cursor-not-allowed disabled:opacity-60"
-        data-testid="scratch-promote"
-        disabled={pending}
-        type="button"
-        onClick={() => void promote()}
-      >
-        {pending ? t("pendingAction", { action: "promote" }) : t("promote")}
-      </button>
+      <div className="flex flex-col gap-1.5 rounded-[6px] border border-line bg-paper p-2">
+        <label className="flex flex-col gap-1">
+          <span className="font-mono text-[9.5px] font-semibold uppercase tracking-[0.06em] text-mute">
+            {t("promoteMode")}
+          </span>
+          <select
+            aria-label={t("promoteMode")}
+            className="rounded-[6px] border border-line bg-paper px-2 py-1.5 text-[12px] text-ink outline-none focus:border-amber"
+            data-testid="scratch-promote-mode"
+            disabled={pending}
+            value={mode}
+            onChange={(event) => setMode(event.target.value as PromoteMode)}
+          >
+            <option value="local_merge">{t("promoteModeLocalMerge")}</option>
+            <option value="rebase_merge">{t("promoteModeRebaseMerge")}</option>
+            <option value="pull_request">{t("promoteModePullRequest")}</option>
+          </select>
+        </label>
+        <span className="font-mono text-[10px] text-mute">
+          {t("promoteInto", { branch: promoteTargetBranch })}
+        </span>
+        <button
+          className="rounded-[6px] border border-line bg-paper px-3 py-2 text-[12px] font-semibold text-ink-2 hover:border-amber hover:text-amber disabled:cursor-not-allowed disabled:opacity-60"
+          data-testid="scratch-promote"
+          disabled={pending}
+          type="button"
+          onClick={() => void promote()}
+        >
+          {pending ? t("pendingAction", { action: "promote" }) : t("promote")}
+        </button>
+      </div>
       {error ? (
         <p className="font-mono text-[10.5px] text-[#d9534f]" role="alert">
           {error}

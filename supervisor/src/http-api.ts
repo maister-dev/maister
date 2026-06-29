@@ -641,11 +641,13 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
           // Validated by SendPromptRequestSchema; cast to the SDK block type at
           // this trust boundary for verbatim forward (T5.4).
           contentBlocks: body.contentBlocks as acp.ContentBlock[] | undefined,
+          isUserCancel: () => entry.record.cancelRequested === true,
         },
         logger,
       );
     } finally {
       entry.record.readOnlyTurn = false;
+      entry.record.cancelRequested = false;
       if (chatHitlId) {
         entry.emitter.off(SESSION_EVENT_CHANNEL, chatListener);
       }
@@ -676,6 +678,54 @@ export function registerRoutes(opts: RegisterRoutesOptions): void {
       "http POST /sessions/:id/prompt",
     );
     reply.status(200).send({ stopReason: resp.stopReason, meta: resp._meta });
+  });
+
+  // Interrupt the in-flight prompt turn WITHOUT tearing the session down: a
+  // protocol-level `session/cancel` notification (adapter-agnostic — claude,
+  // codex, gemini, opencode all honour it). The blocked /sessions/:id/prompt
+  // request resolves with the `cancelled` stop reason; the cancelRequested flag
+  // makes sendPromptOnConnection treat that as a clean turn end (session stays
+  // live, dialog returns to WaitingForUser) rather than a crash. Idempotent: a
+  // non-live or connectionless session acks with cancelled:false.
+  app.post<SessionIdParams>("/sessions/:id/cancel", async (req, reply) => {
+    const sessionId = req.params.id;
+    const entry = registry.get(sessionId);
+
+    if (!entry) {
+      reply
+        .status(404)
+        .send({ code: "PRECONDITION", message: "unknown session" });
+
+      return;
+    }
+
+    if (
+      entry.record.status !== "live" ||
+      !entry.connection ||
+      !entry.acpSessionId
+    ) {
+      logger.info(
+        { sessionId, status: entry.record.status },
+        "cancel endpoint idempotent ack (no live turn)",
+      );
+      reply.status(200).send({ cancelled: false, sessionId });
+
+      return;
+    }
+
+    entry.record.cancelRequested = true;
+
+    // A turn blocked on a permission HITL must unblock too: resolve every open
+    // deferred with the cancelled outcome (ACP requires the client to answer a
+    // pending requestPermission with Cancelled when it cancels the turn).
+    for (const requestId of pendingPermissions.requestIds(sessionId)) {
+      pendingPermissions.cancel(sessionId, requestId, "user-cancel");
+    }
+
+    await entry.connection.cancel({ sessionId: entry.acpSessionId });
+
+    logger.info({ sessionId }, "http POST /sessions/:id/cancel");
+    reply.status(200).send({ cancelled: true, sessionId });
   });
 
   app.delete<SessionIdParams>("/sessions/:id", async (req, reply) => {

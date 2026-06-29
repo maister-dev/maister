@@ -308,11 +308,13 @@ describe("GET /api/runs/[runId]/change-summary", () => {
       "project-1",
       "readScratchRun",
     );
-    expect(diffChangeStats).toHaveBeenCalledWith({
-      worktreePath: "/repos/demo",
-      baseRef: "abc1234",
-      branch: "scratch/demo",
-    });
+    // The scratch `run` scope diffs the base commit against the WORKING TREE
+    // (incl. untracked), not the commit-range `base..branch`.
+    expect(diffWorkingTreeChangeStats).toHaveBeenCalledWith(
+      "/repos/demo/.maister/scratch-1",
+      "abc1234",
+    );
+    expect(diffChangeStats).not.toHaveBeenCalled();
     expect(JSON.stringify(body)).not.toContain("/repos/demo");
   });
 

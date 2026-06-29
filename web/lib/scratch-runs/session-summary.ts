@@ -13,6 +13,10 @@ export interface ScratchSessionSummary {
   mcpCount: number;
   skillCount: number;
   ruleCount: number;
+  // Authoritative scratch base/target from scratch_runs — the inspector falls
+  // back to these when the workspace row's columns are null (legacy rows).
+  baseBranch: string | null;
+  targetBranch: string | null;
 }
 
 export interface ScratchSessionLabels {
@@ -49,7 +53,11 @@ export async function getScratchSessionSummary(
   const db = getDb() as unknown as NodePgDatabase<typeof schema>;
   const [scratchRows, profileRows] = await Promise.all([
     db
-      .select({ dialogStatus: scratchRuns.dialogStatus })
+      .select({
+        dialogStatus: scratchRuns.dialogStatus,
+        baseBranch: scratchRuns.baseBranch,
+        targetBranch: scratchRuns.targetBranch,
+      })
       .from(scratchRuns)
       .where(eq(scratchRuns.runId, runId)),
     db
@@ -72,5 +80,7 @@ export async function getScratchSessionSummary(
     mcpCount: profile?.selectedMcpIds?.length ?? 0,
     skillCount: profile?.selectedSkillIds?.length ?? 0,
     ruleCount: profile?.selectedRuleIds?.length ?? 0,
+    baseBranch: scratch.baseBranch ?? null,
+    targetBranch: scratch.targetBranch ?? null,
   };
 }

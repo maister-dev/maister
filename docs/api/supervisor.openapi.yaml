@@ -369,6 +369,49 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
+  /sessions/{id}/cancel:
+    post:
+      tags: [sessions]
+      summary: Interrupt the in-flight prompt turn (session/cancel)
+      description: |
+        Sends a protocol-level ACP `session/cancel` notification to the agent
+        without tearing the session down — the adapter-agnostic interrupt used
+        by the composer Stop control (claude, codex, gemini, opencode all honor
+        it). Sets a per-session `cancelRequested` flag so the blocked
+        `POST /sessions/{id}/prompt` resolves with the `cancelled` stop reason
+        as a clean turn end (the session stays live) rather than an
+        `ACP_PROTOCOL` abort. Also resolves every open `pendingPermissions`
+        deferred for the session with `{outcome: "cancelled"}` so a turn blocked
+        on a permission HITL unblocks. Idempotent: a non-live or
+        connectionless session returns 200 with `cancelled: false`.
+      operationId: cancelSessionTurn
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+      responses:
+        "200":
+          description: Cancel requested (or idempotent ack when no live turn).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [cancelled, sessionId]
+                properties:
+                  cancelled:
+                    type: boolean
+                    description: True when a live turn was cancelled.
+                  sessionId: { type: string }
+        "404":
+          description: No session with that id.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SupervisorErrorBody" }
   /sessions/{id}/input:
     post:
       tags: [hitl]

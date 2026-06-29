@@ -755,12 +755,15 @@ export function WorkbenchLifecycleActions({
               variant === "detail"
                 ? "px-3 py-1.5 text-[10.5px]"
                 : "px-2 py-1 text-[9.5px]",
-              action === "drop"
-                ? "border-amber-line bg-amber-soft text-amber hover:bg-ivory"
-                : "border-line bg-paper text-mute hover:border-mute hover:text-ink-2",
+              action === "stop"
+                ? "border-[#d9534f]/40 bg-[#d9534f]/10 text-[#d9534f] hover:bg-[#d9534f] hover:text-white"
+                : action === "drop"
+                  ? "border-amber-line bg-amber-soft text-amber hover:bg-ivory"
+                  : "border-line bg-paper text-mute hover:border-mute hover:text-ink-2",
               busyAction === action && "opacity-60",
             )}
             disabled={busyAction !== null}
+            title={action === "stop" ? t("tooltip.stop") : undefined}
             type="button"
             onClick={() => openDialog(action)}
           >

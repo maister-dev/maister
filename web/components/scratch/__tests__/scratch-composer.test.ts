@@ -41,7 +41,11 @@ async function noop(): Promise<boolean> {
   return true;
 }
 
-function render(status: ScratchDialogStatus, quickReplies: QuickReply[] = []) {
+function render(
+  status: ScratchDialogStatus,
+  quickReplies: QuickReply[] = [],
+  extra: { onInterrupt?: () => Promise<boolean> } = {},
+) {
   return renderToStaticMarkup(
     createElement(ScratchComposer, {
       status,
@@ -63,6 +67,7 @@ function render(status: ScratchDialogStatus, quickReplies: QuickReply[] = []) {
       ],
       onSend: noop,
       onRecover: noop,
+      ...extra,
     }),
   );
 }
@@ -100,8 +105,12 @@ describe("ScratchComposer", () => {
     expect(render("Crashed")).toContain("scratch.recover");
   });
 
-  it("disables the capability composer when the dialog is not composable", () => {
-    expect(render("Running")).toContain('data-disabled="true"');
+  it("disables the capability composer for a terminal dialog", () => {
+    expect(render("Abandoned")).toContain('data-disabled="true"');
+  });
+
+  it("keeps the composer editable while the agent is working (draft-while-busy)", () => {
+    expect(render("Running")).toContain('data-disabled="false"');
   });
 
   it("shows a busy indicator while the agent is working", () => {
@@ -109,6 +118,21 @@ describe("ScratchComposer", () => {
 
     expect(html).toContain('data-testid="scratch-agent-busy"');
     expect(html).toContain("scratch.agentBusy");
+  });
+
+  it("swaps Send for a Stop button while busy when onInterrupt is provided", () => {
+    const html = render("Running", [], { onInterrupt: noop });
+
+    expect(html).toContain('data-testid="scratch-composer-stop"');
+    expect(html).toContain("scratch.interrupt");
+    expect(html).not.toContain('data-testid="scratch-composer-send"');
+  });
+
+  it("keeps the Send button while busy when no onInterrupt is wired", () => {
+    const html = render("Running");
+
+    expect(html).toContain('data-testid="scratch-composer-send"');
+    expect(html).not.toContain('data-testid="scratch-composer-stop"');
   });
 
   it("renders quick replies when present", () => {

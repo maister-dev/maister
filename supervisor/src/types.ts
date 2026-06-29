@@ -484,6 +484,12 @@ export type SessionRecord = {
   // ADR-108 (M40): WARN-once-per-session guard for the kind-only path-guard
   // fallback (adapters that do not populate toolCall.locations).
   hookFallbackWarned?: boolean;
+  // Interrupt (session/cancel): set by POST /sessions/:id/cancel just before the
+  // protocol-level cancel notification, so the in-flight prompt's `cancelled`
+  // stop reason is classified as a user interrupt (turn ends, session stays
+  // live) rather than an unexpected protocol abort (which marks the run crashed).
+  // Cleared once the prompt request settles.
+  cancelRequested?: boolean;
 };
 
 export type PermissionOptionDescriptor = {

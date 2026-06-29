@@ -144,17 +144,21 @@ describe("isSubmitShortcut", () => {
     ...over,
   });
 
-  it("submits on plain Enter (chat convention)", () => {
-    expect(isSubmitShortcut(ev({}))).toBe(true);
+  it("does NOT submit on plain Enter (multi-line: inserts a newline)", () => {
+    expect(isSubmitShortcut(ev({}))).toBe(false);
   });
 
-  it("also submits on Cmd+Enter / Ctrl+Enter", () => {
+  it("submits on Cmd+Enter / Ctrl+Enter", () => {
     expect(isSubmitShortcut(ev({ metaKey: true }))).toBe(true);
     expect(isSubmitShortcut(ev({ ctrlKey: true }))).toBe(true);
   });
 
   it("does NOT submit on Shift+Enter (newline)", () => {
     expect(isSubmitShortcut(ev({ shiftKey: true }))).toBe(false);
+  });
+
+  it("submits on Cmd/Ctrl+Enter even with Shift held", () => {
+    expect(isSubmitShortcut(ev({ metaKey: true, shiftKey: true }))).toBe(true);
   });
 
   it("does NOT submit while composing an IME candidate", () => {

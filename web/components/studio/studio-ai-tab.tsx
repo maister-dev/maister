@@ -396,6 +396,7 @@ export function StudioAiTab({
           <ScratchConversation
             compact
             attachmentsEnabled={false}
+            interruptEndpoint={`/api/studio/local-packages/${packageId}/assistant/${runId}/interrupt`}
             messageBodyExtras={messageBodyExtras}
             messageEndpoint={`/api/studio/local-packages/${packageId}/assistant/${runId}/messages`}
             recoverEndpoint={null}

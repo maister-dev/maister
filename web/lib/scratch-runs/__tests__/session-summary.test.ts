@@ -33,6 +33,8 @@ describe("buildScratchSessionFlowSummary", () => {
         mcpCount: 2,
         skillCount: 1,
         ruleCount: 0,
+        baseBranch: "main",
+        targetBranch: "main",
       },
       { title: "Session", dialog: "Dialog", capabilities: "Capabilities" },
     );
@@ -66,7 +68,13 @@ describe("getScratchSessionSummary", () => {
 
   it("counts the selected capability ids from the profile row", async () => {
     dbMock.state.queue = [
-      [{ dialogStatus: "WaitingForUser" }],
+      [
+        {
+          dialogStatus: "WaitingForUser",
+          baseBranch: "main",
+          targetBranch: "release",
+        },
+      ],
       [
         {
           selectedMcpIds: ["a", "b"],
@@ -81,17 +89,24 @@ describe("getScratchSessionSummary", () => {
       mcpCount: 2,
       skillCount: 1,
       ruleCount: 0,
+      baseBranch: "main",
+      targetBranch: "release",
     });
   });
 
   it("falls back to zero counts when no capability profile exists", async () => {
-    dbMock.state.queue = [[{ dialogStatus: "Running" }], []];
+    dbMock.state.queue = [
+      [{ dialogStatus: "Running", baseBranch: null, targetBranch: null }],
+      [],
+    ];
 
     expect(await getScratchSessionSummary("run-1")).toEqual({
       dialogStatus: "Running",
       mcpCount: 0,
       skillCount: 0,
       ruleCount: 0,
+      baseBranch: null,
+      targetBranch: null,
     });
   });
 

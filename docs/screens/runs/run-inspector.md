@@ -70,9 +70,13 @@ inspector must not repeat branch/worktree facts already visible there.
    input tokens, output tokens, cache-read input tokens, cache-creation input
    tokens, and resume tax when present), separate time facts (active time where
    attempt durations exist and wall-clock duration), delivery policy, settings
-   count, capability count, and resolved capability-set count. Branch, target
-   branch, base branch, and worktree path stay in the header or dedicated action
-   dialogs instead of being duplicated here.
+   count, capability count, and resolved capability-set count. While the run is
+   live the token facts re-poll on each SSE tick and the wall-clock fact ticks
+   client-side, so spend and elapsed time advance without a reload. Branch,
+   target branch, base branch, and worktree path stay in the header or dedicated
+   action dialogs instead of being duplicated here; the scratch inspector keeps
+   its branch/base/target facts and falls back to the scratch metadata when the
+   workspace row's columns are null.
 2. **Changes** - total additions/deletions, file count, dirty-state badge, scope
    selector summary, directory-grouped changed files, file status icons, comment
    badges, and generated/large/truncated indicators where available.
@@ -83,8 +87,12 @@ inspector must not repeat branch/worktree facts already visible there.
 4. **Actions** - action shortcuts grouped by risk: conversation/session
    controls, branch preservation, delivery, and destructive cleanup. Examples:
    stop, recover, snapshot, export branch, handoff branch, promote, open PR
-   through the promotion flow, archive, discard, and drop. The inspector does
-   not expose an arbitrary push-to-remote action in this slice.
+   through the promotion flow, archive, discard, and drop. The inspector **stop**
+   action is the destructive terminate (ends the run and closes its session) and
+   is rendered in a danger/red tone with a hover tooltip; it is distinct from the
+   composer's turn-interrupt Stop. The scratch promote shortcut exposes a
+   merge-mode selector (`local_merge` / `rebase_merge` / `pull_request`). The
+   inspector does not expose an arbitrary push-to-remote action in this slice.
 
 The inspector should keep text compact and use icons for repeated controls. It
 must not duplicate the main Flow result, conversation, or full diff.
@@ -120,7 +128,8 @@ Disabled actions display one-line reasons:
 ## Data & APIs
 
 - Overview uses `getRunDetail`, `getRunCostSummary`, `getRunTimeline`, and
-  workspace metadata.
+  workspace metadata; the live token facts re-poll `GET /api/runs/{runId}/cost-summary`
+  on each SSE tick while the run is live.
 - Changes uses lightweight change-summary data when available, plus the same
   scope model as `GET /api/runs/{runId}/diff` and
   [`workbench.md`](workbench.md).
@@ -135,8 +144,9 @@ Disabled actions display one-line reasons:
   `POST /api/runs/{runId}/export-branch`,
   `POST /api/runs/{runId}/handoff-branch`,
   `POST /api/runs/{runId}/snapshot-commit`,
-  `POST /api/scratch-runs/{runId}/stop`, and
-  `POST /api/scratch-runs/{runId}/discard`.
+  `POST /api/scratch-runs/{runId}/stop`,
+  `POST /api/scratch-runs/{runId}/interrupt` (composer turn-interrupt, not an
+  inspector action), and `POST /api/scratch-runs/{runId}/discard`.
 
 ## i18n
 

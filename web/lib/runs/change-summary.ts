@@ -433,11 +433,17 @@ async function getScratchChangeSummary(input: {
     });
   }
 
-  const files = await diffChangeStats({
-    worktreePath: workspace.parentRepoPath,
-    baseRef: scratch.baseCommit,
-    branch: workspace.branch,
-  });
+  // The default `run` scope diffs the launch base commit against the WORKING
+  // TREE (committed + uncommitted + untracked) rather than `base..branch` — a
+  // scratch agent edits files without committing, so the commit-range diff is
+  // empty even though the worktree has changes. Untracked files render as
+  // additions via the intent-to-add temp index (respects .gitignore).
+  const files = filterReviewableChangeEntries(
+    await diffWorkingTreeChangeStats(
+      workspace.worktreePath,
+      scratch.baseCommit,
+    ),
+  );
 
   return buildResponse({
     runId: input.run.id,

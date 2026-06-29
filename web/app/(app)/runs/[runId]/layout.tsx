@@ -910,14 +910,16 @@ export default async function RunDetailLayout({
     disabled: t("inspectorDisabled"),
     stale: t("inspectorStale"),
   };
-  const costFacts = buildCostSummaryFacts(costSummary, {
+  const costLabels = {
     tokenTotal: t("tokenTotal"),
     inputTokens: t("inputTokens"),
     outputTokens: t("outputTokens"),
     cacheReadTokens: t("cacheReadTokens"),
     cacheCreationTokens: t("cacheCreationTokens"),
     resumeTax: t("resumeTax"),
-  });
+  };
+  const costFacts = buildCostSummaryFacts(costSummary, costLabels);
+  const wallClockLabel = t("wallClock");
   const inspectorFacts = [
     { label: t("flowCenterStatus"), value: detail.status },
     { label: t("agentCenterRunner"), value: detail.agent },
@@ -946,7 +948,7 @@ export default async function RunDetailLayout({
       : []),
     ...costFacts,
     { label: t("activeTime"), value: formatDuration(activeDurationMs) },
-    { label: t("wallClock"), value: formatDuration(wallDurationMs) },
+    { label: wallClockLabel, value: formatDuration(wallDurationMs) },
     {
       label: t("deliveryPolicyTitle"),
       value: policy
@@ -1135,6 +1137,12 @@ export default async function RunDetailLayout({
           facts={inspectorFacts}
           flowSummary={flowSummary}
           labels={inspectorLabels}
+          liveCost={{ initial: costSummary, labels: costLabels }}
+          liveWallClock={{
+            startedAtMs: detail.startedAt.getTime(),
+            endedAtMs: detail.endedAt ? detail.endedAt.getTime() : null,
+            label: wallClockLabel,
+          }}
           runId={detail.runId}
           runStatus={detail.status}
           search={changeSummary?.dirty ? "scope=uncommitted" : ""}

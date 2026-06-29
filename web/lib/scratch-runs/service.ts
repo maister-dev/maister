@@ -104,6 +104,7 @@ import {
   runStatusForDialogStatus,
 } from "@/lib/scratch-runs/state";
 import {
+  cancelPrompt,
   checkSupervisorHealth,
   createSession,
   deleteSession,
@@ -2341,6 +2342,63 @@ async function deleteScratchSupervisorSessionIfLive(
 // Review (when it still has a worktree) or Abandoned. The caller authorizes;
 // this primitive is shared by the scratch stop route and the combined
 // workbench stop+archive op. Terminal runs are an idempotent no-op.
+export type InterruptScratchRunResult = {
+  runId: string;
+  cancelled: boolean;
+  dialogStatus: ScratchDialogStatus;
+};
+
+// Interrupt the in-flight prompt turn (session/cancel) while keeping the
+// session live — the Stop control in the composer. It does NOT mutate the
+// dialog status: the still-in-flight sendScratchUserMessage / launch turn owns
+// the transition (the supervisor resolves the blocked prompt with the
+// `cancelled` stop reason, which completeScratchPromptTurn maps Running →
+// WaitingForUser). A terminal run is a no-op; a session without a live turn
+// acks cancelled:false from the supervisor. Works for both project scratch runs
+// and project-less local-package assistant runs (both run_kind='scratch').
+export async function interruptScratchRun(
+  runId: string,
+  opts: { db?: Db } = {},
+): Promise<InterruptScratchRunResult> {
+  const db = opts.db ?? getDb();
+
+  const runRows = await db.select().from(runs).where(eq(runs.id, runId));
+  const run = runRows[0];
+
+  if (!run) {
+    throw new MaisterError("PRECONDITION", `run not found: ${runId}`);
+  }
+  if (run.runKind !== "scratch") {
+    throw new MaisterError("PRECONDITION", `run is not scratch: ${runId}`);
+  }
+
+  const scratchRows = await db
+    .select()
+    .from(scratchRuns)
+    .where(eq(scratchRuns.runId, runId));
+  const scratch = scratchRows[0];
+
+  if (!scratch) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `scratch metadata not found: ${runId}`,
+    );
+  }
+
+  if (
+    isTerminalScratchDialogStatus(scratch.dialogStatus) ||
+    !scratch.supervisorSessionId
+  ) {
+    return { runId, cancelled: false, dialogStatus: scratch.dialogStatus };
+  }
+
+  const { cancelled } = await cancelPrompt(scratch.supervisorSessionId);
+
+  log.info({ runId, cancelled }, "scratch run interrupt requested");
+
+  return { runId, cancelled, dialogStatus: scratch.dialogStatus };
+}
+
 export async function stopScratchWorkbench(
   runId: string,
   opts: { db?: Db } = {},

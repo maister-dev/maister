@@ -77,6 +77,7 @@ export function ScratchConversation({
   messageBodyExtras,
   attachmentsEnabled = true,
   recoverEndpoint,
+  interruptEndpoint,
   sendDisabledReason = null,
   renderFlowActionResult,
   onBeforeSend,
@@ -89,6 +90,7 @@ export function ScratchConversation({
   messageBodyExtras?: Record<string, unknown>;
   attachmentsEnabled?: boolean;
   recoverEndpoint?: string | null;
+  interruptEndpoint?: string;
   sendDisabledReason?: string | null;
   renderFlowActionResult?: (
     payload: ScratchFlowActionResultPayload,
@@ -115,6 +117,8 @@ export function ScratchConversation({
     recoverEndpoint === undefined
       ? `/api/scratch-runs/${runId}/recover`
       : recoverEndpoint;
+  const resolvedInterruptEndpoint =
+    interruptEndpoint ?? `/api/scratch-runs/${runId}/interrupt`;
 
   const loadDetail = useCallback(async (): Promise<void> => {
     setLoading(true);
@@ -404,6 +408,35 @@ export function ScratchConversation({
     [loadDetail, onMessageSettled, resolvedRecoverEndpoint],
   );
 
+  const interrupt = useCallback(async (): Promise<boolean> => {
+    setError(null);
+
+    try {
+      const response = await fetch(resolvedInterruptEndpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        // Studio's assistant interrupt is lock-gated and needs the editor
+        // sessionId — carried in messageBodyExtras (ignored by the scratch
+        // route, which takes an empty body).
+        body: JSON.stringify(messageBodyExtras ?? {}),
+      });
+
+      if (!response.ok) {
+        setError(errorText(await response.json().catch(() => null)));
+
+        return false;
+      }
+
+      // The in-flight turn settles to WaitingForUser on its own; the SSE tick
+      // refreshes the detail. No loadDetail here to avoid racing that turn.
+      return true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+
+      return false;
+    }
+  }, [messageBodyExtras, resolvedInterruptEndpoint]);
+
   const answerHitl = useCallback(
     async (payload: Record<string, unknown>): Promise<void> => {
       if (!detail?.pendingHitl) return;
@@ -566,6 +599,7 @@ export function ScratchConversation({
         quickReplies={quickReplies}
         recoverEnabled={resolvedRecoverEndpoint !== null}
         status={status}
+        onInterrupt={interrupt}
         onRecover={recover}
         onSend={sendMessage}
       />
