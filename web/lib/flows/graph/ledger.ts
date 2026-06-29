@@ -86,6 +86,18 @@ export async function appendNodeAttempt(args: {
   const attempt =
     args.attempt ?? (await nextAttemptFor(args.runId, args.nodeId, db));
 
+  // ADR-118: carry the rework epoch baseline forward from the node's prior
+  // attempt (NULL when this is the node's first attempt ⇒ effective baseline 0).
+  // A human-node rework with `resetTargets` re-stamps a target's latest attempt
+  // baseline to its current count; the next append carries that fresh budget on.
+  const priorBaselineRows: Array<{ reworkBaseline: number | null }> = await db
+    .select({ reworkBaseline: nodeAttempts.reworkBaseline })
+    .from(nodeAttempts)
+    .where(and(eq(nodeAttempts.runId, args.runId), eq(nodeAttempts.nodeId, args.nodeId)))
+    .orderBy(sql`${nodeAttempts.attempt} desc`)
+    .limit(1);
+  const reworkBaseline = priorBaselineRows[0]?.reworkBaseline ?? null;
+
   await db.insert(nodeAttempts).values({
     id,
     runId: args.runId,
@@ -96,6 +108,7 @@ export async function appendNodeAttempt(args: {
     reworkFromNode: args.reworkFromNode ?? null,
     autoRetry: args.autoRetry ?? false,
     sessionPolicy: args.sessionPolicy ?? null,
+    reworkBaseline,
   });
 
   log.info(
@@ -226,6 +239,8 @@ export async function latestAttemptForNode(
   attempt: number;
   checkpointRef: string | null;
   acpSessionId: string | null;
+  // ADR-118: the current rework epoch baseline (NULL ⇒ 0).
+  reworkBaseline: number | null;
 } | null> {
   const d = db ?? getDb();
 
@@ -234,12 +249,14 @@ export async function latestAttemptForNode(
     attempt: number;
     checkpointRef: string | null;
     acpSessionId: string | null;
+    reworkBaseline: number | null;
   }> = await d
     .select({
       id: nodeAttempts.id,
       attempt: nodeAttempts.attempt,
       checkpointRef: nodeAttempts.checkpointRef,
       acpSessionId: nodeAttempts.acpSessionId,
+      reworkBaseline: nodeAttempts.reworkBaseline,
     })
     .from(nodeAttempts)
     .where(and(eq(nodeAttempts.runId, runId), eq(nodeAttempts.nodeId, nodeId)))
@@ -247,6 +264,40 @@ export async function latestAttemptForNode(
     .limit(1);
 
   return rows[0] ?? null;
+}
+
+// ADR-118: re-baseline a rework-loop node's attempt counter to its current
+// persisted attempt count, granting a fresh `maxLoops` budget on re-entry
+// (effective = attempt - baseline). No-op when the node has no attempts yet (its
+// epoch already starts at 0). The next appendNodeAttempt carries the new baseline
+// forward, so a crash after commit is recovered. Returns the baseline written
+// (or null on no-op) for observability. Caller passes the rework transaction.
+export async function resetReworkBaseline(
+  runId: string,
+  nodeId: string,
+  db?: Db,
+): Promise<number | null> {
+  const d = db ?? getDb();
+  const latest = await latestAttemptForNode(runId, nodeId, d);
+
+  if (!latest) return null;
+
+  await d
+    .update(nodeAttempts)
+    .set({ reworkBaseline: latest.attempt })
+    .where(eq(nodeAttempts.id, latest.id));
+
+  log.info(
+    {
+      runId,
+      nodeId,
+      reworkBaseline: latest.attempt,
+      attemptId: latest.id,
+    },
+    "[rework.resetTargets] counter re-baselined",
+  );
+
+  return latest.attempt;
 }
 
 // M30 (ADR-081): record that `resume` was requested but the prior session was

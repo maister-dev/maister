@@ -56,11 +56,13 @@ import {
   markNodeReworked,
   markNodeRunning,
   markNodeSucceeded,
+  resetReworkBaseline,
   setCheckpointRef,
   setEnforcementSnapshot,
   setMaterializationPlan,
   setSessionFallback,
 } from "./ledger";
+import { effectiveAttempts } from "./rework-baseline";
 import {
   applyWorkspacePolicy,
   captureCheckpoint,
@@ -2131,6 +2133,12 @@ export async function runGraph(
         .reverse()
         .find((a) => a.nodeId === node.id);
 
+      // ADR-118: the node's CURRENT rework epoch baseline (NULL ⇒ 0). It carries
+      // forward from the prior attempt and is re-stamped by a human-node rework
+      // with `resetTargets`; subtracting it makes both exhaustion checks count
+      // per-epoch (effective = attempt - baseline, total allowed = maxLoops + 1).
+      const nodeReworkBaseline = lastForNode?.reworkBaseline ?? 0;
+
       const resumingThisNode =
         isResume &&
         node.id === resumeNodeId &&
@@ -2153,7 +2161,8 @@ export async function runGraph(
       if (
         node.rework &&
         !reusesCurrentAttempt &&
-        nodeAttemptCount > node.rework.maxLoops
+        effectiveAttempts(nodeAttemptCount, nodeReworkBaseline) >
+          node.rework.maxLoops
       ) {
         throw new MaisterError(
           "CONFIG",
@@ -3359,8 +3368,68 @@ export async function runGraph(
       if (
         isRework &&
         node.rework !== undefined &&
-        nodeAttemptNumber > node.rework.maxLoops
+        effectiveAttempts(nodeAttemptNumber, nodeReworkBaseline) >
+          node.rework.maxLoops
       ) {
+        // ADR-118: a loop node with `rework.onExhaustion` routes exhaustion via
+        // transitions[onExhaustion] (typically a human node) INSTEAD of the
+        // execution-policy A1 `reworkExhaustion` action. Absent → A1 unchanged
+        // (byte-identical). This is a forward route, NOT a rework jump: it does
+        // not stale or increment the loop node.
+        if (node.rework.onExhaustion !== undefined) {
+          const onExhaustion = node.rework.onExhaustion;
+
+          // Runtime allow-list guard (defense in depth over the compile check).
+          if (!(onExhaustion in node.transitions)) {
+            const msg = `node "${node.id}" rework.onExhaustion "${onExhaustion}" is not a declared transition (run ${runId})`;
+
+            await markNodeFailed(
+              nodeAttemptId,
+              { errorCode: "CONFIG", stdout: msg },
+              db,
+            );
+            failed = true;
+            runErrorCode = "CONFIG";
+            break;
+          }
+
+          await markNodeSucceeded(
+            nodeAttemptId,
+            {
+              stdout: result.stdout,
+              vars: result.vars as Record<string, unknown>,
+              exitCode: result.exitCode,
+              decision: onExhaustion,
+              acpSessionId: result.acpSessionId,
+            },
+            db,
+          );
+          if (materialized) {
+            await cleanupNodeMaterialization({
+              nodeAttemptId,
+              runId: loaded.run.id,
+              worktreePath,
+              db,
+            });
+          }
+
+          const next = resolveTransition(node, onExhaustion);
+
+          log2.info(
+            {
+              from: node.id,
+              onExhaustion,
+              to: next ?? "(terminal)",
+              attempt: nodeAttemptNumber,
+              baseline: nodeReworkBaseline,
+            },
+            "[rework.onExhaustion] routed past exhausted loop",
+          );
+          await safeProject();
+          currentNodeId = next;
+          continue;
+        }
+
         const action = reworkExhaustionFromSnapshot(
           loaded.run.executionPolicy ?? null,
         );
@@ -3590,60 +3659,79 @@ export async function runGraph(
           }
         }
 
-        await markNodeReworked(
-          nodeAttemptId,
-          // outcome is defined here: isRework ⟹ target defined ⟹ outcome defined.
-          { decision: outcome!, workspacePolicy: chosenPolicy },
-          db,
-        );
-
-        // M30 (ADR-081): resolve the rework session policy for the TARGET's
-        // next attempt — rework-transition > target node > flow defaults >
-        // engine default `resume`.
-        if (target) {
-          const targetDef =
-            graph.nodes.get(target)?.source.kind === "node"
-              ? (
-                  graph.nodes.get(target)?.source as {
-                    node: { session_policy?: SessionPolicy };
-                  }
-                ).node
-              : undefined;
-          const resolved = resolveSessionPolicy({
-            reworkPolicy: node.rework?.session_policy,
-            nodePolicy: targetDef?.session_policy,
-            flowDefault: (
-              loaded.manifest as {
-                defaults?: { session_policy?: SessionPolicy };
-              }
-            ).defaults?.session_policy,
-          });
-
-          pendingSessionPolicy = { nodeId: target, policy: resolved.policy };
-          log2.info(
-            {
-              nodeId: target,
-              resolved: resolved.policy,
-              source: resolved.source,
-            },
-            "[session-policy] resolved for rework re-entry",
+        // ADR-118: the rework write, the optional `resetTargets` counter
+        // re-baseline, and the downstream-stale flip commit in ONE transaction —
+        // no partial-state crash window. A crash after commit self-heals (the
+        // next appendNodeAttempt reads the persisted baseline). The git
+        // workspace-policy apply above is the only non-DB mutation and stays
+        // before the transaction; the session-policy resolution below writes no
+        // DB rows (it sets in-memory `pendingSessionPolicy` for the next append).
+        await db.transaction(async (tx: Db) => {
+          await markNodeReworked(
+            nodeAttemptId,
+            // outcome is defined here: isRework ⟹ target defined ⟹ outcome defined.
+            { decision: outcome!, workspacePolicy: chosenPolicy },
+            tx,
           );
-        }
 
-        // Flip downstream nodes/gates stale so they rerun on the next attempt
-        // (Issue 2 fix / AC-3 staleness). `target` is the rework jump destination;
-        // everything forward-reachable from it (excluding itself) goes stale.
-        if (target) {
-          const downstream = downstreamOf(graph, target);
+          // ADR-118: a human-node rework with `resetTargets` re-baselines each
+          // listed loop node's attempt counter → a fresh `maxLoops` budget when
+          // the loop is re-entered. The human's comment rides the unchanged
+          // commentsVar → pendingInjectedVars channel (below).
+          if (node.rework?.resetTargets) {
+            for (const resetTargetId of node.rework.resetTargets) {
+              await resetReworkBaseline(runId, resetTargetId, tx);
+            }
+          }
 
-          if (downstream.length > 0) {
-            await markDownstreamStale(runId, downstream, db);
+          // M30 (ADR-081): resolve the rework session policy for the TARGET's
+          // next attempt — rework-transition > target node > flow defaults >
+          // engine default `resume`.
+          if (target) {
+            const targetDef =
+              graph.nodes.get(target)?.source.kind === "node"
+                ? (
+                    graph.nodes.get(target)?.source as {
+                      node: { session_policy?: SessionPolicy };
+                    }
+                  ).node
+                : undefined;
+            const resolved = resolveSessionPolicy({
+              reworkPolicy: node.rework?.session_policy,
+              nodePolicy: targetDef?.session_policy,
+              flowDefault: (
+                loaded.manifest as {
+                  defaults?: { session_policy?: SessionPolicy };
+                }
+              ).defaults?.session_policy,
+            });
+
+            pendingSessionPolicy = { nodeId: target, policy: resolved.policy };
             log2.info(
-              { from: node.id, reworkTarget: target, downstream },
-              "rework: downstream nodes staled",
+              {
+                nodeId: target,
+                resolved: resolved.policy,
+                source: resolved.source,
+              },
+              "[session-policy] resolved for rework re-entry",
             );
           }
-        }
+
+          // Flip downstream nodes/gates stale so they rerun on the next attempt
+          // (Issue 2 fix / AC-3 staleness). `target` is the rework jump destination;
+          // everything forward-reachable from it (excluding itself) goes stale.
+          if (target) {
+            const downstream = downstreamOf(graph, target);
+
+            if (downstream.length > 0) {
+              await markDownstreamStale(runId, downstream, tx);
+              log2.info(
+                { from: node.id, reworkTarget: target, downstream },
+                "rework: downstream nodes staled",
+              );
+            }
+          }
+        });
 
         // Inject the reviewer's comments into the rework target's next-attempt
         // context under the node's commentsVar (Phase 5.4). The reviewer submits
