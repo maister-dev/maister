@@ -54,7 +54,7 @@ the same web, database, supervisor, and worktree contracts as Flow runs.
   `dialog_status`, supervisor session id, legacy creator fallback, error fields,
   and last message timestamps.
 - **Run message** - Implemented. `run_messages` (generalized from
-  `scratch_messages`, migration `0083`; shared with flow node transcripts — see
+  `scratch_messages`, migration `0085`; shared with flow node transcripts — see
   [`runs.md`](runs.md) "Run transparency") is an append-only dialog
   ledger with monotonic `sequence`, `role`, `content`,
   optional `supervisor_event_id`, and timestamps (scratch rows have NULL

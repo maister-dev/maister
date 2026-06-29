@@ -25,7 +25,7 @@ let db: Db;
 
 beforeAll(async () => {
   container = await new PostgreSqlContainer("postgres:16-alpine")
-    .withDatabase("maister_migration_0083_test")
+    .withDatabase("maister_migration_0085_test")
     .withUsername("test")
     .withPassword("test")
     .start();
@@ -81,7 +81,7 @@ async function seedNodeAttempt(runId: string): Promise<string> {
   return id;
 }
 
-describe("migration 0083 — scratch_messages → run_messages", () => {
+describe("migration 0085 — scratch_messages → run_messages", () => {
   it("renamed the table (run_messages present, scratch_messages gone)", async () => {
     const present = await db.execute<CountRow>(
       sql`SELECT count(*)::text AS n FROM information_schema.tables WHERE table_name = 'run_messages'`,

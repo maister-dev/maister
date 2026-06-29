@@ -1819,7 +1819,7 @@ export const scratchRuns = pgTable(
   }),
 );
 
-// Run-detail transparency (T-B1b, migration 0083): generalized from
+// Run-detail transparency (T-B1b, migration 0085): generalized from
 // `scratch_messages`. Run-kind-agnostic transcript store shared by scratch AND
 // flow `ai_coding` node sessions. `run_id` references the general `runs` table
 // (scratch_runs.run_id == runs.id, so the rename preserved every existing row);
