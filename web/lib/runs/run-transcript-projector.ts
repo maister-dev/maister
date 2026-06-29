@@ -175,46 +175,73 @@ export async function projectRunTranscript(
     byAttempt.set(attemptId, entries);
   }
 
+  // Ownership guard: only attribute to node attempts that genuinely belong to
+  // this run. A `nodeAttemptId` stamped on the log is supervisor-supplied; a
+  // mis-attributed line must never create a row whose run_id and node_attempt_id
+  // point at different runs (which would let the run-scoped transcript route
+  // surface another run's output).
+  const ownedAttempts = await client
+    .select({ id: schema.nodeAttempts.id })
+    .from(schema.nodeAttempts)
+    .where(eq(schema.nodeAttempts.runId, runId));
+  const ownedAttemptIds = new Set(ownedAttempts.map((a) => a.id));
+
   let rowsUpserted = 0;
+  let projectedAttempts = 0;
 
-  for (const [nodeAttemptId, entries] of byAttempt) {
-    const messages = coalesceSessionUpdates(entries);
+  // Atomic: all attempts/messages commit together or none do. This keeps the
+  // resume-cursor (max supervisor_event_id) honest — it can only advance after a
+  // COMPLETE projection, so a mid-batch failure rolls back and the next call
+  // re-derives the full transcript from `run.events.jsonl` instead of leaving
+  // some attempts permanently skipped.
+  await client.transaction(async (tx) => {
+    for (const [nodeAttemptId, entries] of byAttempt) {
+      if (!ownedAttemptIds.has(nodeAttemptId)) {
+        log.warn(
+          { runId, nodeAttemptId },
+          "skipping transcript lines attributed to a node attempt not owned by this run",
+        );
+        continue;
+      }
+      projectedAttempts += 1;
+      const messages = coalesceSessionUpdates(entries);
 
-    for (const message of messages) {
-      await client
-        .insert(runMessages)
-        .values({
-          id: randomUUID(),
-          runId,
-          nodeAttemptId,
-          sequence: message.sequence,
-          role: message.role,
-          content: message.content,
-          supervisorEventId: message.supervisorEventId,
-        })
-        .onConflictDoUpdate({
-          target: [
-            runMessages.runId,
-            runMessages.nodeAttemptId,
-            runMessages.sequence,
-          ],
-          set: {
+      for (const message of messages) {
+        await tx
+          .insert(runMessages)
+          .values({
+            id: randomUUID(),
+            runId,
+            nodeAttemptId,
+            sequence: message.sequence,
+            role: message.role,
             content: message.content,
             supervisorEventId: message.supervisorEventId,
-          },
-        });
-      rowsUpserted += 1;
+          })
+          .onConflictDoUpdate({
+            target: [
+              runMessages.runId,
+              runMessages.nodeAttemptId,
+              runMessages.sequence,
+            ],
+            set: {
+              content: message.content,
+              supervisorEventId: message.supervisorEventId,
+            },
+          });
+        rowsUpserted += 1;
+      }
     }
-  }
+  });
 
   log.debug(
-    { runId, lines: lines.length, attempts: byAttempt.size, rowsUpserted },
+    { runId, lines: lines.length, attempts: projectedAttempts, rowsUpserted },
     "projected run transcript",
   );
 
   return {
     status: "projected",
-    nodeAttempts: byAttempt.size,
+    nodeAttempts: projectedAttempts,
     rowsUpserted,
   };
 }
@@ -257,7 +284,15 @@ export async function getRunNodeTranscript(
       createdAt: runMessages.createdAt,
     })
     .from(runMessages)
-    .where(eq(runMessages.nodeAttemptId, attempt.id))
+    // Filter by BOTH runId and nodeAttemptId — defense-in-depth so a row that
+    // was somehow mis-attributed (its run_id ≠ this run) can never surface
+    // under this run's authorization.
+    .where(
+      and(
+        eq(runMessages.runId, runId),
+        eq(runMessages.nodeAttemptId, attempt.id),
+      ),
+    )
     .orderBy(asc(runMessages.sequence));
 
   const messages: TranscriptMessage[] = rows.map((r) => ({

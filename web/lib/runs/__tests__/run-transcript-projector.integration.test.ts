@@ -7,6 +7,7 @@ import {
   PostgreSqlContainer,
   type StartedPostgreSqlContainer,
 } from "@testcontainers/postgresql";
+import { eq } from "drizzle-orm";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool } from "pg";
@@ -253,4 +254,139 @@ describe("projectRunTranscript", () => {
 
     expect(empty?.messages).toEqual([]);
   });
+
+  // Codex adversarial finding #2: cross-run attribution must not leak.
+  it("never attributes transcript rows to a node attempt owned by a different run", async () => {
+    const a = await seed();
+    const b = await seed();
+
+    // Run A's durable log carries a line mis-stamped with run B's attempt id.
+    await writeEvents(a.slug, a.runId, [
+      textLine(a.planAttemptId, 1, "legit A output"),
+      textLine(b.planAttemptId, 2, "would leak into A's transcript"),
+    ]);
+
+    await projectRunTranscript(a.runId, { client: db, runtimeRoot });
+
+    // A's own attempt projected correctly.
+    const aPlan = await getRunNodeTranscript(a.runId, "plan", { client: db });
+
+    expect(aPlan?.messages).toHaveLength(1);
+    expect(aPlan?.messages[0].content).toBe("legit A output");
+
+    // The mis-attributed line created NO row for run B's attempt (insert-side
+    // ownership guard), and run B's transcript stays empty.
+    const bRows = await db
+      .select()
+      .from(schema.runMessages)
+      .where(eq(schema.runMessages.nodeAttemptId, b.planAttemptId));
+
+    expect(bRows).toHaveLength(0);
+
+    const bPlan = await getRunNodeTranscript(b.runId, "plan", { client: db });
+
+    expect(bPlan?.messages).toEqual([]);
+
+    // Read-side defense-in-depth: even a hand-inserted cross-run row (run B's
+    // id, run A's attempt) is excluded by getRunNodeTranscript's runId filter.
+    await db.insert(schema.runMessages).values({
+      id: randomUUID(),
+      runId: b.runId,
+      nodeAttemptId: a.planAttemptId,
+      sequence: 999,
+      role: "assistant",
+      content: "cross-run row",
+    });
+
+    const aPlanAfter = await getRunNodeTranscript(a.runId, "plan", {
+      client: db,
+    });
+
+    expect(aPlanAfter?.messages.map((m) => m.content)).toEqual([
+      "legit A output",
+    ]);
+  });
+
+  // Codex adversarial finding #1: a partial/failed projection must not advance
+  // the cursor and strand rows — projection is atomic, so a failure rolls back
+  // and the next call repairs the full transcript.
+  it("rolls back a failed projection and repairs the full transcript on the next call", async () => {
+    const { runId, slug, planAttemptId, implAttemptId } = await seed();
+
+    await writeEvents(slug, runId, [
+      textLine(planAttemptId, 1, "plan output"),
+      textLine(implAttemptId, 2, "impl output"),
+    ]);
+
+    // Inject a failure on the 2nd insert INSIDE the projection transaction.
+    await expect(
+      projectRunTranscript(runId, {
+        client: clientFailingOnNthInsert(db, 2),
+        runtimeRoot,
+      }),
+    ).rejects.toThrow();
+
+    // The transaction rolled back — nothing committed, so the cursor (max
+    // supervisor_event_id) never advanced past the missing rows.
+    const afterFailure = await db
+      .select()
+      .from(schema.runMessages)
+      .where(eq(schema.runMessages.runId, runId));
+
+    expect(afterFailure).toHaveLength(0);
+
+    // A clean re-projection derives and commits the FULL transcript.
+    const repaired = await projectRunTranscript(runId, {
+      client: db,
+      runtimeRoot,
+    });
+
+    expect(repaired.status).toBe("projected");
+
+    const plan = await getRunNodeTranscript(runId, "plan", { client: db });
+    const impl = await getRunNodeTranscript(runId, "implement", { client: db });
+
+    expect(plan?.messages).toHaveLength(1);
+    expect(impl?.messages).toHaveLength(1);
+  });
 });
+
+// Wraps the real client so the Nth `insert` issued inside a `transaction`
+// throws — simulating a mid-batch DB/timeout failure to prove atomic rollback.
+function clientFailingOnNthInsert(real: Db, failOnNth: number): Db {
+  let inserts = 0;
+  const bound = (target: any, prop: PropertyKey) => {
+    const value = target[prop];
+
+    return typeof value === "function" ? value.bind(target) : value;
+  };
+
+  return new Proxy(real as unknown as Record<PropertyKey, unknown>, {
+    get(target, prop) {
+      if (prop !== "transaction") return bound(target, prop);
+
+      return (cb: (tx: unknown) => unknown, ...rest: unknown[]) =>
+        (target as any).transaction(
+          (tx: any) => {
+            const txProxy = new Proxy(tx, {
+              get(t, p) {
+                if (p !== "insert") return bound(t, p);
+
+                return (...args: unknown[]) => {
+                  inserts += 1;
+                  if (inserts >= failOnNth) {
+                    throw new Error("injected projection failure");
+                  }
+
+                  return t.insert(...args);
+                };
+              },
+            });
+
+            return cb(txProxy);
+          },
+          ...rest,
+        );
+    },
+  }) as unknown as Db;
+}
