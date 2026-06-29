@@ -244,6 +244,87 @@ export function listCapabilities(
   return [...caps].sort();
 }
 
+// Immediate children of a folder (`""` = root), for the Finder-style navigator:
+// the direct subfolder names + the files that live directly in the folder. Pure;
+// folders are implied by `/` in paths (no folder entities). Both lists sorted.
+export type DirEntries = {
+  folders: string[];
+  files: AuthoredFlowPackageFile[];
+};
+
+export function dirEntries(
+  files: ReadonlyArray<AuthoredFlowPackageFile>,
+  cwd: string,
+): DirEntries {
+  const prefix = cwd ? `${cwd}/` : "";
+  const folders = new Set<string>();
+  const childFiles: AuthoredFlowPackageFile[] = [];
+
+  for (const file of files) {
+    if (!file.path.startsWith(prefix)) continue;
+    const rest = file.path.slice(prefix.length);
+    const slash = rest.indexOf("/");
+
+    if (slash === -1) childFiles.push(file);
+    else folders.add(rest.slice(0, slash));
+  }
+
+  return {
+    folders: [...folders].sort(),
+    files: childFiles.sort((a, b) => a.path.localeCompare(b.path)),
+  };
+}
+
+// The parent folder path of a folder path (`""` = root). Used by the Finder
+// breadcrumb to walk back up.
+export function parentFolder(folder: string): string {
+  const slash = folder.lastIndexOf("/");
+
+  return slash >= 0 ? folder.slice(0, slash) : "";
+}
+
+// Rename a folder in place (keep its parent, change the last segment) by
+// rewriting the prefix of every child. Rejects a name with a slash and a
+// destination collision. A no-op (same name) returns the draft unchanged.
+export function renameFolderInDraft(
+  files: ReadonlyArray<AuthoredFlowPackageFile>,
+  folderPath: string,
+  newName: string,
+): MoveResult {
+  if (!newName || newName.includes("/")) {
+    return { ok: false, code: "PRECONDITION" };
+  }
+
+  const parent = parentFolder(folderPath);
+  const newPath = parent ? `${parent}/${newName}` : newName;
+  const oldPrefix = `${folderPath}/`;
+  const newPrefix = `${newPath}/`;
+
+  if (newPrefix === oldPrefix) return { ok: true, files: [...files] };
+  if (
+    files.some(
+      (f) => f.path.startsWith(newPrefix) && !f.path.startsWith(oldPrefix),
+    )
+  ) {
+    return { ok: false, code: "CONFLICT" };
+  }
+
+  return {
+    ok: true,
+    files: files.map((f) =>
+      f.path.startsWith(oldPrefix)
+        ? {
+            ...f,
+            path: newPrefix + f.path.slice(oldPrefix.length),
+            kind: classifyPackageFilePath(
+              newPrefix + f.path.slice(oldPrefix.length),
+            ),
+          }
+        : { ...f },
+    ),
+  };
+}
+
 // The canonical (root-layout) prefix of a skill's nested subtree.
 export function skillSubtreePrefix(skillId: string): string {
   return `skills/${skillId}/`;

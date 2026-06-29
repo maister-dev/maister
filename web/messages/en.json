@@ -224,14 +224,21 @@
         "cancel": "Cancel"
       },
       "files": {
-        "moveTitle": "Move",
-        "moveHint": "Pick a file, then a destination folder (or drag a file onto one).",
-        "root": "(root)",
-        "newFolder": "New folder",
-        "add": "Add",
-        "move": "Move here",
-        "errorConflict": "A file already exists at the destination.",
-        "errorPrecondition": "Cannot move a folder into itself."
+        "viewFinder": "Finder",
+        "viewTree": "Tree",
+        "newFile": "File",
+        "newFolder": "Folder",
+        "newFolderName": "Folder name",
+        "root": "Package",
+        "save": "Save",
+        "empty": "No files yet — add one.",
+        "selectHint": "Select a file to edit.",
+        "rename": "Rename",
+        "remove": "Delete",
+        "confirm": "Add",
+        "cancel": "Cancel",
+        "errorConflict": "Something already exists at the destination.",
+        "errorPrecondition": "Invalid name, or a folder cannot move into itself."
       },
       "create": {
         "open": "Add",

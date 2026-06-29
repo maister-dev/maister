@@ -12,8 +12,11 @@ import {
   isInlineKind,
   isMcpDescriptorPath,
   listCapabilities,
+  dirEntries,
   mergeSkillFiles,
   movePathInDraft,
+  parentFolder,
+  renameFolderInDraft,
   resolveCompositionTab,
   resolveInlineFilePath,
   resolveSkillSubtreePrefix,
@@ -322,10 +325,67 @@ describe("skill subtree scope/merge (ADR-116 §P4)", () => {
   });
 });
 
+describe("dirEntries + parentFolder + renameFolderInDraft (file navigator)", () => {
+  const files: AuthoredFlowPackageFile[] = [
+    { kind: "manifest", path: "maister-package.yaml", content: "m" },
+    { kind: "rule", path: "rules/r1.md", content: "1" },
+    { kind: "rule", path: "rules/sub/r2.md", content: "2" },
+    { kind: "asset", path: "flows/dev/flow.yaml", content: "f" },
+  ];
+
+  it("lists immediate folders + files of a cwd", () => {
+    const root = dirEntries(files, "");
+
+    expect(root.folders).toEqual(["flows", "rules"]);
+    expect(root.files.map((f) => f.path)).toEqual(["maister-package.yaml"]);
+
+    const rules = dirEntries(files, "rules");
+
+    expect(rules.folders).toEqual(["sub"]);
+    expect(rules.files.map((f) => f.path)).toEqual(["rules/r1.md"]);
+  });
+
+  it("parentFolder walks up one level", () => {
+    expect(parentFolder("rules/sub")).toBe("rules");
+    expect(parentFolder("rules")).toBe("");
+  });
+
+  it("renameFolderInDraft rewrites every child prefix", () => {
+    const res = renameFolderInDraft(files, "rules", "policies");
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.files.map((f) => f.path).sort()).toEqual([
+      "flows/dev/flow.yaml",
+      "maister-package.yaml",
+      "policies/r1.md",
+      "policies/sub/r2.md",
+    ]);
+  });
+
+  it("renameFolderInDraft rejects a colliding destination", () => {
+    const res = renameFolderInDraft(files, "rules", "flows");
+
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.code).toBe("CONFLICT");
+  });
+
+  it("renameFolderInDraft rejects a name with a slash", () => {
+    const res = renameFolderInDraft(files, "rules", "a/b");
+
+    expect(res.ok).toBe(false);
+  });
+});
+
 describe("resolveSkillSubtreePrefix — capability-nested layout (ADR-116 404 fix)", () => {
   const nested: AuthoredFlowPackageFile[] = [
     { kind: "manifest", path: "maister-package.yaml", content: "x" },
-    { kind: "skill", path: "capability/core/skills/aif/SKILL.md", content: "a" },
+    {
+      kind: "skill",
+      path: "capability/core/skills/aif/SKILL.md",
+      content: "a",
+    },
     {
       kind: "asset",
       path: "capability/core/skills/aif/references/x.md",

@@ -141,7 +141,11 @@ describe("PackageComposition (ADR-116 §P2/P3)", () => {
   it("makes inline-kind cards whole-card clickable, no fork/View", () => {
     const bom = bomOf({
       subagents: [
-        { id: "helper", path: "capability/c/agents/helper.md", description: "" },
+        {
+          id: "helper",
+          path: "capability/c/agents/helper.md",
+          description: "",
+        },
       ],
     });
     const html = render(bom, { search: "tab=subagents" });

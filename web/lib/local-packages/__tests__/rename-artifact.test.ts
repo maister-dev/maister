@@ -89,7 +89,11 @@ describe("renameArtifact (ADR-116 P6, D8)", () => {
 
   it("renames a capability-nested skill at its real prefix", () => {
     const draftFiles: AuthoredFlowPackageFile[] = [
-      { kind: "skill", path: "capability/core/skills/aif/SKILL.md", content: "s" },
+      {
+        kind: "skill",
+        path: "capability/core/skills/aif/SKILL.md",
+        content: "s",
+      },
       {
         kind: "asset",
         path: "capability/core/skills/aif/references/a.md",

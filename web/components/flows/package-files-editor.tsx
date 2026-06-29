@@ -394,7 +394,7 @@ function SelectedFileEditor({
   );
 }
 
-function ContentEditor({
+export function ContentEditor({
   disabled,
   file,
   inferredKind,
@@ -665,7 +665,7 @@ function DialogShell({
   );
 }
 
-function uniqueNewPath(
+export function uniqueNewPath(
   files: readonly AuthoredFlowPackageFile[],
   folder: string,
 ): string {

@@ -36,7 +36,7 @@ import {
   renameLabels,
 } from "@/components/studio/package-composition";
 import { SkillScreen } from "@/components/studio/skill-screen";
-import { FilesManager } from "@/components/studio/files-manager";
+import { PackageFileNavigator } from "@/components/studio/package-file-navigator";
 import { LocalPackageDiffDrawer } from "@/components/studio/local-package-diff-drawer";
 import {
   ChangeReviewDialog,
@@ -69,7 +69,6 @@ import {
   parsePackageFilesJson,
   planWorkingDirWrites,
 } from "@/lib/local-packages/working-dir-save";
-import { PACKAGE_MANIFEST_FILENAME } from "@/lib/local-packages/manifest";
 
 // Client-projected lock state (Date → ISO string for the RSC boundary).
 export type LockSnapshot = {
@@ -867,46 +866,33 @@ export function LocalPackageEditor({
                 draftFiles={draftFiles}
                 fileCount={draftFiles.length}
                 filesEditor={
-                  <div className="flex flex-col gap-3">
-                    <FilesManager
-                      draftFiles={draftFiles}
-                      labels={{
-                        moveTitle: tStudio("composition.files.moveTitle"),
-                        moveHint: tStudio("composition.files.moveHint"),
-                        root: tStudio("composition.files.root"),
-                        newFolder: tStudio("composition.files.newFolder"),
-                        add: tStudio("composition.files.add"),
-                        errorConflict: tStudio(
-                          "composition.files.errorConflict",
-                        ),
-                        errorPrecondition: tStudio(
-                          "composition.files.errorPrecondition",
-                        ),
-                      }}
-                      readOnly={readOnly}
-                      onDraftFilesChange={handleDraftFilesChange}
-                    />
-                    <form action={saveAction} className="grid min-h-0 gap-3">
-                      <PackageFilesEditor
-                        disabled={readOnly}
-                        files={draftFiles}
-                        initialSelectedPath={PACKAGE_MANIFEST_FILENAME}
-                        kindLabels={fileKindLabels}
-                        labels={filesLabels}
-                        mcpCatalog={mcpCatalog}
-                        onFilesChange={handleDraftFilesChange}
-                      />
-                      {readOnly ? null : (
-                        <button
-                          className="justify-self-start rounded-md border border-amber bg-amber px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-white hover:bg-amber-2"
-                          data-testid="composition-files-save"
-                          type="submit"
-                        >
-                          {labels.home.save}
-                        </button>
-                      )}
-                    </form>
-                  </div>
+                  <PackageFileNavigator
+                    draftFiles={draftFiles}
+                    filesLabels={filesLabels}
+                    labels={{
+                      viewFinder: tStudio("composition.files.viewFinder"),
+                      viewTree: tStudio("composition.files.viewTree"),
+                      newFile: tStudio("composition.files.newFile"),
+                      newFolder: tStudio("composition.files.newFolder"),
+                      newFolderName: tStudio("composition.files.newFolderName"),
+                      root: tStudio("composition.files.root"),
+                      save: tStudio("composition.files.save"),
+                      empty: tStudio("composition.files.empty"),
+                      selectHint: tStudio("composition.files.selectHint"),
+                      rename: tStudio("composition.files.rename"),
+                      remove: tStudio("composition.files.remove"),
+                      confirm: tStudio("composition.files.confirm"),
+                      cancel: tStudio("composition.files.cancel"),
+                      errorConflict: tStudio("composition.files.errorConflict"),
+                      errorPrecondition: tStudio(
+                        "composition.files.errorPrecondition",
+                      ),
+                    }}
+                    mcpCatalog={mcpCatalog}
+                    readOnly={readOnly}
+                    onDraftFilesChange={handleDraftFilesChange}
+                    onSaveDraft={saveDraft}
+                  />
                 }
                 filesLabels={filesLabels}
                 mcpCatalog={mcpCatalog}
