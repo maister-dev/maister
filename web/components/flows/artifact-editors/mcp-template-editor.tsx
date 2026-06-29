@@ -98,6 +98,12 @@ export function McpTemplateEditor({
   onChange,
 }: McpTemplateEditorProps): ReactElement {
   const [selected, setSelected] = useState("");
+  // `CodeEditor` seeds its buffer once and ignores later `value` swaps on a
+  // mounted instance (see code-editor.tsx) — applying a template REPLACES the
+  // whole document, so we must remount the editor to re-seed it. Bumping this
+  // key on apply does exactly that; ordinary typing flows through onChange and
+  // needs no remount.
+  const [rawSeed, setRawSeed] = useState(0);
 
   const parsedValid = useMemo(() => {
     if (content.trim() === "") return true;
@@ -115,6 +121,7 @@ export function McpTemplateEditor({
 
     if (!entry) return;
     onChange(stringifyYaml(materialize(entry, fileName)));
+    setRawSeed((seed) => seed + 1);
   };
 
   return (
@@ -180,6 +187,7 @@ export function McpTemplateEditor({
           </p>
         )}
         <CodeEditor
+          key={rawSeed}
           ariaLabel={`${labels.rawHeading}: ${fileName}`}
           kind="asset"
           readOnly={readOnly}
