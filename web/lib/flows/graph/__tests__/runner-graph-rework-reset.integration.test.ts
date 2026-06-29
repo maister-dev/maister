@@ -22,6 +22,7 @@ import {
   testRunnerSnapshot,
 } from "@/lib/__tests__/runner-fixtures";
 import { closeDb } from "@/lib/db/client";
+import { recordArtifact } from "@/lib/flows/graph/artifact-store";
 import { runFlow } from "@/lib/flows/runner";
 
 // ADR-118 runtime: baseline-aware exhaustion + rework `onExhaustion` routing
@@ -461,4 +462,111 @@ describe("runGraph — ADR-118 resetTargets re-baseline", () => {
 
     expect(reviewReentry?.reworkBaseline).toBe(2);
   }, 90_000);
+});
+
+// work -> review (human, maxLoops:1); onExhaustion routes to a TERMINAL target
+// ("done"), the config my compile loop-back guard still allows (done is not an
+// allowedTarget). Adversarial-review F1: this terminal route must re-run the
+// review-evidence gate the `!isRework` path runs, else an exhausted loop ships to
+// Review with stale/missing requiredFor:[review] evidence.
+function onExhaustionTerminalFlow() {
+  return {
+    schemaVersion: 1,
+    name: "g",
+    compat: { engine_min: "2.1.0" },
+    nodes: [
+      {
+        id: "work",
+        type: "cli",
+        action: { command: "echo work" },
+        transitions: { success: "review" },
+      },
+      {
+        id: "review",
+        type: "human",
+        finish: { human: { decisions: ["approve", "rework"] } },
+        transitions: { approve: "done", rework: "work", exhausted: "done" },
+        rework: {
+          allowedTargets: ["work"],
+          workspacePolicies: ["keep"],
+          maxLoops: 1,
+          onExhaustion: "exhausted",
+        },
+      },
+    ],
+  };
+}
+
+describe("runGraph — ADR-118 onExhaustion to a TERMINAL target re-runs the review-evidence gate (adversarial-review F1)", () => {
+  it("AC-11: onExhaustion->done with a STALE requiredFor:[review] def refuses (Failed, not Review)", async () => {
+    const seeded = await seedGraphRun(onExhaustionTerminalFlow(), {
+      executionPolicy: { preset: "supervised" },
+    });
+
+    // work a1 -> review a1 (NeedsInput).
+    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+    expect((await getRun(seeded.runId)).status).toBe("NeedsInput");
+
+    // Rework 1 (within maxLoops:1): review a1 -> work a2 -> review a2.
+    await writeDecision(seeded, "review", "rework");
+    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+    expect((await getRun(seeded.runId)).status).toBe("NeedsInput");
+
+    // A requiredFor:[review] def exists but only as a STALE row. Recorded AFTER
+    // the rework so no further staling touches it before the exhausting step.
+    await recordArtifact(
+      {
+        runId: seeded.runId,
+        nodeId: "work",
+        kind: "diff",
+        producer: "runner",
+        artifactDefId: "impl-diff",
+        locator: { kind: "inline", text: "v1" },
+        validity: "stale",
+        requiredFor: ["review"],
+      },
+      db,
+    );
+
+    // Rework 2 (overruns maxLoops:1) -> onExhaustion -> "done" (TERMINAL). The
+    // runner MUST re-run assertEvidenceReady on this terminal route; the stale
+    // requiredFor:[review] def refuses -> Failed, NOT Review.
+    await writeDecision(seeded, "review", "rework");
+    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+
+    const run = await getRun(seeded.runId);
+
+    expect(run.status).not.toBe("Review");
+    expect(run.status).toBe("Failed");
+  }, 60_000);
+
+  it("AC-12: onExhaustion->done with a CURRENT requiredFor:[review] def reaches Review", async () => {
+    const seeded = await seedGraphRun(onExhaustionTerminalFlow(), {
+      executionPolicy: { preset: "supervised" },
+    });
+
+    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+    await writeDecision(seeded, "review", "rework");
+    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+
+    // Same def, but CURRENT — the terminal onExhaustion route is allowed through.
+    await recordArtifact(
+      {
+        runId: seeded.runId,
+        nodeId: "work",
+        kind: "diff",
+        producer: "runner",
+        artifactDefId: "impl-diff",
+        locator: { kind: "inline", text: "v1" },
+        validity: "current",
+        requiredFor: ["review"],
+      },
+      db,
+    );
+
+    await writeDecision(seeded, "review", "rework");
+    await runFlow(seeded.runId, { db, runtimeRoot: seeded.runtimeRoot });
+
+    expect((await getRun(seeded.runId)).status).toBe("Review");
+  }, 60_000);
 });

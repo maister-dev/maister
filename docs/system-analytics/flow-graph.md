@@ -306,6 +306,10 @@ staleness / transition fan-out — it does NOT call `reworkExhaustionFromSnapsho
 allow-list guard** re-asserts `onExhaustion ∈ transitions` keys (else `CONFIG`),
 mirroring the `decide` guard. `onExhaustion` is a routing transition (typically to
 a `human` node), not a rework jump — it does not stale or increment the loop node.
+When `onExhaustion` resolves to a **terminal** target (`done`), the run is subject
+to the SAME `assertEvidenceReady("review")` gate as a normal terminal decision (a
+stale/missing `requiredFor:[review]` def or a failed blocking gate refuses →
+`PRECONDITION`), so an exhausted loop cannot reach Review with bypassed evidence.
 
 **`resetTargets` re-baseline (human-node rework, atomic).** When a `human` node
 finishes with a **rework** decision and declares `rework.resetTargets`, then in the

@@ -3393,6 +3393,37 @@ export async function runGraph(
             break;
           }
 
+          const next = resolveTransition(node, onExhaustion);
+
+          // When onExhaustion resolves to a TERMINAL target (done), the run
+          // reaches Review exactly like a normal terminal decision — but the
+          // `!isRework` review-evidence gate above was skipped because this IS a
+          // rework outcome. Re-run the same assertEvidenceReady check here so an
+          // exhausted loop routed to `done` cannot ship stale/missing
+          // requiredFor:[review] evidence or a failed blocking gate. A
+          // non-terminal onExhaustion (the typical human-node route) is gated at
+          // that target node's own terminal transition, so it is unaffected.
+          if (next === null) {
+            const readiness = await assertEvidenceReady(runId, "review", db);
+
+            if (!readiness.ready) {
+              const msg = `review refused: evidence not ready — ${readiness.reasons.join("; ")}`;
+
+              await markNodeFailed(
+                nodeAttemptId,
+                { errorCode: "PRECONDITION", stdout: msg },
+                db,
+              );
+              failed = true;
+              runErrorCode = "PRECONDITION";
+              log2.info(
+                { runId, blockedBy: readiness.reasons },
+                "review refusal (evidence not ready) — onExhaustion terminal",
+              );
+              break;
+            }
+          }
+
           await markNodeSucceeded(
             nodeAttemptId,
             {
@@ -3412,8 +3443,6 @@ export async function runGraph(
               db,
             });
           }
-
-          const next = resolveTransition(node, onExhaustion);
 
           log2.info(
             {
