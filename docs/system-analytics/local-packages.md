@@ -429,13 +429,16 @@ counts/cards) reflects it.
 
 ### Process flows
 
-Open-model routing per kind:
+Open-model routing per kind. In the **local** composition the whole `ElementCard`
+is the open affordance (`clickableCard`); the Phase-2 fork stub is dropped
+(`showFork={false}` — a local package is already an editable working copy). The
+installed viewer keeps its explicit View button + fork.
 
 ```mermaid
 flowchart TD
     A[Composition tab card clicked] --> B{kind?}
     B -->|flow| C[route to canvas FlowEditorTabs]
-    B -->|skill| D["route to dedicated skill screen (nested navigator)"]
+    B -->|skill| D["route to dedicated skill screen (resolve real subtree prefix: root OR capability-nested)"]
     B -->|subagent / agent / mcp / rule| E[select inline master-detail editor]
     E --> F[load file content from already-loaded draftFiles]
     F --> G[edit → onChange mutates draftFiles → existing save channel]
@@ -474,17 +477,27 @@ flowchart TD
     G --> H
 ```
 
-Files-tab move / new folder (flat draft list, no sentinel — D7):
+Files tab = the unified **`PackageFileNavigator`** (one surface over the flat
+draft list, no sentinel — D7). A URL-persisted `?fileview` switch toggles a
+**Finder** (one folder at a time, double-click to descend, breadcrumb up) and an
+expandable **Tree**; the selected file opens in the shared `ContentEditor` on the
+right. Row-level inline rename + delete, toolbar new-file / new-folder in the
+current folder, and drag-move onto folders all reduce to the same pure draft
+helpers + the one save-diff channel:
 
 ```mermaid
 flowchart TD
-    A[Files tab] --> B{action}
-    B -->|drag file to folder| C[rewrite path prefix on the draft list]
-    B -->|new virtual folder| D["client-only tree node (no write, no .gitkeep)"]
-    B -->|new file / rename / delete| E[mutate draft list]
-    D --> F[targets file placement only; empty folder never reaches disk]
-    C --> G[save-diff persists]
-    E --> G
+    A[Files tab navigator] --> B{action}
+    B -->|drag file/folder to folder| C["movePathInDraft (rewrite path prefix)"]
+    B -->|new folder| D["client-only virtual node (no write, no .gitkeep)"]
+    B -->|new file in cwd| E["upsertPackageFile"]
+    B -->|inline rename| F["renamePackageFilePath / renameFolderInDraft"]
+    B -->|delete| G["removePackageFile / drop subtree"]
+    D --> H[materializes only when a file lands in it]
+    C --> I[save-diff persists]
+    E --> I
+    F --> I
+    G --> I
 ```
 
 Batch import is unchanged — see **Batch import (M36)** above; the composition Files
@@ -502,7 +515,11 @@ tab surfaces one shared **Import** button wired to the existing
 - The composition BOM MUST be server-computed and re-derived on `router.refresh()`;
   it MUST NOT be persisted and MUST NOT compile flows client-side.
 - A card click MUST honor the open model exactly: flow → canvas, skill → its own
-  screen, subagent/agent/mcp/rule → inline master-detail.
+  screen, subagent/agent/mcp/rule → inline master-detail. The skill 404-gate,
+  screen scoping, and rename MUST resolve the skill's REAL subtree prefix
+  (`resolveSkillSubtreePrefix`: root `skills/<id>/` OR capability-nested
+  `capability/<cap>/skills/<id>/`), so a bundled skill the BOM surfaces is never
+  falsely 404'd.
 - `+ Add <Kind>` MUST scaffold the exact path shape per kind, and a flow scaffold
   MUST append `manifest.spec.flows[]` (id + path); a name colliding with any
   existing draft path MUST be rejected with `MaisterError("CONFLICT")`.
