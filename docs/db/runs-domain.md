@@ -239,6 +239,7 @@ erDiagram
         text acp_session_id
         text stdout "truncated to 1 MiB"
         text resolved_prompt "0053 captured resolved agent prompt; nullable, pre-0053 rows null"
+        integer rework_baseline "ADR-118 0085 Designed: attempt at which current rework epoch began; NULL means 0; effective = attempt - (rework_baseline ?? 0)"
         jsonb vars "DEFAULT {}"
         integer exit_code
         text error_code "MaisterErrorCode literal"

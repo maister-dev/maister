@@ -899,6 +899,82 @@ nodes:
 to malformed-output exhaustion — shipping invalid structured output is unsafe.
 Declaring `on_mismatch` (like `decide`) requires `compat.engine_min >= 1.7.0`.
 
+## Rework loop `onExhaustion` routing + human-driven reset (Designed — ADR-118)
+
+**(Designed, [ADR-118](decisions.md#adr-118-rework-loop-onexhaustion-routing--human-driven-counter-reset-resettargets--engine-210).)**
+Two optional `rework` fields let a bounded auto fix↔verify↔review loop escalate
+to a human deterministically on `maxLoops` exhaustion, and let that human restart
+the loop with a fresh budget — bounded, no execution-policy dependency.
+
+```yaml
+nodes:
+  # The loop-owning node: route exhaustion to a human node instead of the
+  # execution-policy A1 reworkExhaustion action.
+  - id: verify
+    type: judge
+    transitions:
+      success: review
+      fix: implement          # the in-budget rework jump
+      exhausted: human_final  # NEW: where onExhaustion routes
+    rework:
+      allowedTargets: [implement]
+      workspacePolicies: [keep]
+      maxLoops: 3
+      commentsVar: review_comments
+      onExhaustion: exhausted # NEW: outcome key (any transitions key)
+
+  # The human node: a rework decision re-baselines the loop node's counter,
+  # granting it a full fresh maxLoops budget on re-entry.
+  - id: human_final
+    type: human
+    finish:
+      human:
+        decisions: [approve, retry_loop, stop]
+    transitions:
+      approve: review
+      retry_loop: implement
+      stop: done
+    rework:
+      allowedTargets: [implement]
+      workspacePolicies: [keep]
+      maxLoops: 3             # bounds the number of RESET ROUNDS (not loop iters)
+      commentsVar: human_notes
+      resetTargets: [verify]  # NEW: loop nodes whose counter is re-baselined
+```
+
+- **`rework.onExhaustion: <outcome>`** (string, a `transitions` key) — on
+  effective-attempt exhaustion the runner routes via `transitions[<outcome>]`
+  through the **unchanged** transition fan-out, INSTEAD of the execution-policy
+  **A1 `reworkExhaustion`** action. Absent → the A1 branch
+  (`fail`/`escalate`/`ship_with_warning`) runs byte-identical to today. It is a
+  routing transition (typically to a `human` node), not a rework jump — it does
+  not stale or increment the loop node further.
+- **`rework.resetTargets: [<nodeId>...]`** (non-empty array) — on a `human` node;
+  a **rework** decision re-baselines each listed loop node's attempt counter to
+  its current attempt count, so the node runs a full fresh `maxLoops` budget on
+  re-entry. The reviewer's `commentsVar` comment rides into the re-entered loop's
+  prompt as today. The reset commits in the same transaction as the human rework.
+
+**Validation (compile/load, `CONFIG`):**
+
+- `onExhaustion` present without `rework`, or with an outcome ∉ `transitions`
+  keys → refused.
+- `resetTargets` present without `rework` → refused.
+- any `resetTargets[i]` that is not a graph node id, not itself a rework-loop
+  node (has no `rework`), or not reachable from the human node via its
+  `rework.allowedTargets` transitive forward chain → refused.
+- A manifest where ANY node's `rework` declares `onExhaustion` or `resetTargets`
+  MUST declare `compat.engine_min >= 2.1.0` (`REWORK_RESET_ENGINE_MIN`); else
+  `loadFlowManifest` refuses (`CONFIG`).
+
+**Two `maxLoops` bound the system.** The loop node's `maxLoops` bounds iterations
+**per round**; the human node's own `rework.maxLoops` bounds the number of
+**reset rounds** (each human rework increments the human node's `gateAttempt`).
+The human node's own exhaustion uses the standard A1 path (default `escalate`
+re-pauses it — "rounds spent, approve or end") → no recursion, naturally bounded.
+See [`system-analytics/flow-graph.md`](system-analytics/flow-graph.md) for the
+baseline-aware attempt counting and routing semantics.
+
 ## Rework `session_policy` (M30 — Implemented)
 
 **(M30 — Implemented, [ADR-081](decisions.md#adr-081-rework-session-policy-with-resume-by-default).)**

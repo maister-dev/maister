@@ -278,6 +278,50 @@ sequence is unchanged from human-rework, so a crash between `markNodeReworked` a
 `compat.engine_min >= 1.7.0` (`MAISTER_ENGINE_VERSION` `1.6.0 → 1.7.0`); flows
 declaring neither stay valid at any `engine_min`.
 
+### Rework loop `onExhaustion` routing + human-driven counter reset (Designed — ADR-118)
+
+> **Status (Designed.)** Two optional `rework` fields —
+> `rework.onExhaustion` (loop-owning node) and `rework.resetTargets` (human node)
+> — let a bounded loop escalate exhaustion to a named human node and let that
+> human grant the loop a fresh budget, without an execution-policy dependency.
+> [ADR-118](../decisions.md#adr-118-rework-loop-onexhaustion-routing--human-driven-counter-reset-resettargets--engine-210);
+> `MAISTER_ENGINE_VERSION` `2.0.0 → 2.1.0` (`REWORK_RESET_ENGINE_MIN`).
+
+**Baseline-aware attempt counting.** Each `node_attempts` row carries a nullable
+`rework_baseline` (migration `0085`); `NULL ⇒ 0`. The **effective** attempt count
+the loop bounds against is `effective = nodeAttemptNumber − (baseline ?? 0)`,
+evaluated identically at BOTH exhaustion sites — the loop-top backstop and the
+decision-time check (`effective > maxLoops`, total allowed `maxLoops + 1`).
+`appendNodeAttempt` **carries the baseline forward** (new row's `rework_baseline`
+= the node's prior attempt's value). A flow declaring neither new field has a
+`NULL` baseline everywhere → `effective == nodeAttemptNumber` → a byte-identical
+attempt ledger and exhaustion behavior vs today (back-compat).
+
+**`onExhaustion` routing (decision-time).** When `isRework && effective > maxLoops`
+and the node declares `rework.onExhaustion`, the runner routes via
+`transitions[<onExhaustion>]` through the **unchanged** `resolveTransition` /
+staleness / transition fan-out — it does NOT call `reworkExhaustionFromSnapshot`
+(the execution-policy A1 `reworkExhaustion` action). Absent → the A1 branch
+(`fail`/`escalate`/`ship_with_warning`) runs byte-identical to today. A **runtime
+allow-list guard** re-asserts `onExhaustion ∈ transitions` keys (else `CONFIG`),
+mirroring the `decide` guard. `onExhaustion` is a routing transition (typically to
+a `human` node), not a rework jump — it does not stale or increment the loop node.
+
+**`resetTargets` re-baseline (human-node rework, atomic).** When a `human` node
+finishes with a **rework** decision and declares `rework.resetTargets`, then in the
+SAME `db.transaction` as `markNodeReworked` + `markDownstreamStale`, each target
+node's latest attempt row has its `rework_baseline` `UPDATE`d to that node's current
+persisted attempt count — granting a fresh `maxLoops` budget on re-entry. The
+human's comment rides the existing `commentsVar → pendingInjectedVars` top-level
+channel into the re-entered loop's prompt. A target with zero prior attempts is a
+no-op. A crash after commit self-heals: the next `appendNodeAttempt` reads the
+persisted baseline.
+
+**Two `maxLoops`.** The loop node's `maxLoops` bounds iterations per round; the
+human node's own `rework.maxLoops` bounds the number of reset rounds (each human
+rework increments the human node's `gateAttempt`). The human node's own exhaustion
+uses the standard A1 path (default `escalate` re-pauses it) → no recursion.
+
 ### Run-context file (M26 — Implemented M38)
 
 > **Status (P7 — Implemented in M38.)** A session-independent JSON blackboard
@@ -531,6 +575,28 @@ flows write `node_attempts` and behave identically to the pre-M11a runner.
   effective policy is snapshotted into `node_attempts.session_policy`.
 - `rework.maxLoops` bounds the loop (plus a hard const ceiling); exhausting it
   ends the run `Failed` with a clear error — never an unbounded cycle.
+- **(Designed — ADR-118)** A manifest where ANY node's `rework` declares
+  `onExhaustion` or `resetTargets` MUST declare `compat.engine_min >= 2.1.0`
+  (`REWORK_RESET_ENGINE_MIN`); else `loadFlowManifest` refuses `CONFIG` (AC-1).
+- **(Designed — ADR-118)** `onExhaustion` without `rework` / with an outcome ∉
+  `transitions`, and `resetTargets` without `rework` / with an unknown,
+  non-loop, or unreachable target id, are refused at compile with `CONFIG`
+  (AC-2/AC-3).
+- **(Designed — ADR-118)** `node_attempts.rework_baseline` is `NULL`-default
+  (`NULL ⇒ 0`); `effective = nodeAttemptNumber − (baseline ?? 0)` holds at BOTH
+  the loop-top backstop and the decision-time check (total allowed `maxLoops + 1`,
+  no off-by-one), and a flow using neither new field has a byte-identical attempt
+  ledger and exhaustion behavior vs `main` (AC-4/AC-10).
+- **(Designed — ADR-118)** A loop node with `onExhaustion: X` reaching
+  `effective > maxLoops` routes to `transitions[X]` (NOT the A1
+  `reworkExhaustion` action, NOT a `CONFIG` fail, NOT an A1-escalate on the loop
+  node); absent `onExhaustion`, exhaustion is byte-identical to today's A1
+  (AC-5/AC-6).
+- **(Designed — ADR-118)** A `human` rework with `resetTargets: [L]` re-baselines
+  `L` to its current attempt count so `L` runs a full fresh `maxLoops` budget, and
+  the human comment is present in `L`'s next resolved prompt; the re-baseline
+  `UPDATE`(s) commit in the SAME transaction as `markNodeReworked` +
+  `markDownstreamStale` (AC-7/AC-9).
 - M11a `gate_results` **feed but do not gate promotion**; refusing a merge on an
   unsatisfied required gate is the M15/M18 readiness policy, not M11a.
 - **(M26 — Implemented)** A node declaring `output.result` MUST have its payload

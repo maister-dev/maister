@@ -143,6 +143,7 @@
 | [ADR-115](#adr-115-strict-template-default-operator-for-prompt-authoring) | Strict template default operator for prompt authoring | Accepted | 2026-06-28 |
 | [ADR-116](#adr-116-local-package-composition-view-shared-package-bom-source-abstraction-tabbed-editor-ia) | Local-package composition view: shared package BOM source abstraction, tabbed editor IA | Accepted | 2026-06-28 |
 | [ADR-117](#adr-117-reliable-cost-rollup-reconciliation-and-per-runner-cost-attribution) | Reliable cost-rollup reconciliation (sweep guarantee + fast-path consumer) + per-runner cost attribution | Accepted | 2026-06-29 |
+| [ADR-118](#adr-118-rework-loop-onexhaustion-routing--human-driven-counter-reset-resettargets--engine-210) | Rework loop `onExhaustion` routing + human-driven counter reset (`resetTargets`) + engine 2.1.0 | Accepted | 2026-06-29 |
 
 ---
 
@@ -9487,6 +9488,163 @@ fix cannot be "reconcile on read".
 - **Catalog-FK runner key** (`runner_id`): rejected as the primary key — a
   deleted runner row would erase historical attribution; `runner_id` is carried
   only as a secondary display field.
+
+---
+
+### ADR-118: Rework loop `onExhaustion` routing + human-driven counter reset (`resetTargets`) + engine 2.1.0
+
+**Date:** 2026-06-29
+**Status:** Accepted
+**Context:** A bounded `rework` loop (`rework.maxLoops`) on a graph node — the
+spine of the autonomous fix↔verify↔review loops authored in flow packages — has
+exactly one terminal behavior on attempt exhaustion: the execution-policy **A1
+`reworkExhaustion`** action (`fail | escalate | ship_with_warning`,
+[ADR-095](#adr-095-flow-execution-control-policy--snapshotted-preset--composable-autonomy-axes-fail-closed-no-blind-ship)/[ADR-101](#adr-101-cost-budget-governance--budget-execution-policy-axis-token-metered-warn-escalate-terminate-ladder-fail-open)).
+Two capabilities are missing for an autonomous loop that wants a human in the
+exhaustion path *without* discarding its accumulated worktree:
+
+1. There is no way for the loop author to route exhaustion to a **specific**
+   node (e.g. a `human_review` that renders "the loop spent its budget —
+   decide") instead of the policy-driven A1 action. A1 is run-policy-scoped, not
+   author-scoped, so a flow cannot express "on this loop, hand off to *this*
+   reviewer node".
+2. Even when a human is reached, there is no way for that human to **restart the
+   loop with a fresh budget**. A node's `node_attempts` counter is monotonic;
+   once `attemptNumber > maxLoops` the loop is permanently exhausted for the life
+   of the run. A reviewer who says "try N more times with this guidance" has no
+   engine primitive to grant it.
+
+[ADR-103](#adr-103-output-driven-dynamic-routing-decide--on_mismatch-rework--engine-170)'s
+`on_mismatch` exhaustion carries the same fail-closed limitation (noted there as
+tech debt). This ADR adds the two missing primitives as additive, opt-in
+`rework` fields, reusing the existing transition fan-out + `node_attempts` ledger
++ `commentsVar` injection machinery, gated behind an engine bump.
+[ADR-041](#adr-041-capability-registry-refs--agent-aware-mapping--runner-owned-native-materialization)
+(capability enforcement) is untouched; **no migration of `runs`**, **no new
+`MaisterError` code** (ADR-008 closed union → every refusal reuses `CONFIG`),
+**no HITL wire change**.
+
+**Decision:**
+
+1. **`rework.onExhaustion: <outcome>` (on the loop-owning node) overrides A1 at
+   that node.** When a node carries `rework` and the decision-time exhaustion
+   check fires (`isRework && effective > maxLoops`), if `rework.onExhaustion` is
+   set the runner routes via `transitions[onExhaustion]` through the **unchanged**
+   `resolveTransition` + staleness/transition fan-out — it does NOT call
+   `reworkExhaustionFromSnapshot` (the A1 path). The outcome is a free transition
+   key (any string ∈ `transitions`), typically wired to a `human_review` node so
+   the reviewer renders exhaustion context. When `onExhaustion` is **absent** the
+   A1 branch (`fail | escalate | ship_with_warning`) runs **byte-identical** to
+   today. `onExhaustion` is a routing transition, not a rework jump: it does not
+   itself stale or increment the loop node further. A runtime allow-list guard
+   re-asserts `onExhaustion ∈ transitions` keys (defense in depth, `CONFIG`
+   otherwise) — mirroring the `decide` outcome guard.
+
+2. **`rework.resetTargets: [<nodeId>...]` (on a human node) re-baselines loop
+   counters.** When a `human` node finishes with a **rework** decision and its
+   `rework.resetTargets` is set, each listed loop node's attempt counter is
+   re-baselined to its current persisted attempt count, granting it a full fresh
+   `maxLoops` budget on re-entry. The human's comment rides the existing
+   `commentsVar → pendingInjectedVars` top-level-var channel into the re-entered
+   loop (per the rework-prompt contract). `resetTargets` is **server-side**, not a
+   reviewer choice — the HITL wire contract is unchanged (§8 below).
+
+3. **Baseline storage = `node_attempts.rework_baseline` (migration `0085`, nullable
+   integer, no default).** Chosen over a jsonb map on `runs`: the value is
+   per-node and lives on the same ledger row that already owns attempt counting,
+   so it is normalized, carries forward with each attempt, and needs no cross-row
+   coordination. **Semantics:** `NULL ⇒ baseline 0` (byte-identical to today's
+   ledger). The value is the attempt number at which the node's current rework
+   *epoch* began. **Carry-forward (write):** `appendNodeAttempt` stamps the new
+   row's `rework_baseline` = the node's prior attempt's `rework_baseline` (or
+   `NULL`/0 if none). **Reset (write):** `UPDATE` the node's latest attempt row's
+   `rework_baseline` to that node's current persisted attempt count; the next
+   `appendNodeAttempt` carries it forward.
+
+4. **Effective attempts are baseline-aware at BOTH exhaustion sites.**
+   `effective = nodeAttemptNumber − (baseline ?? 0)`, evaluated identically at the
+   loop-top backstop and the decision-time exhaustion check (total allowed =
+   `maxLoops + 1`, no off-by-one). A shared pure helper
+   `effectiveAttempts(attemptNumber, baseline)` owns the subtraction (DRY,
+   unit-tested at the `maxLoops+1` boundary). A flow using neither new field has a
+   `NULL` baseline at every node → effective == attemptNumber → identical
+   exhaustion behavior and an identical attempt ledger vs `main` (back-compat).
+
+5. **Compile-time + load-time validation.** A node is refused (`CONFIG`) when:
+   `onExhaustion` is present without `rework` or with an outcome ∉ `transitions`
+   keys; `resetTargets` is present without `rework`; any `resetTargets[i]` is not a
+   graph node id, is not itself a rework-loop node (target has no `rework`), or is
+   not reachable from the human node via its `rework.allowedTargets` transitive
+   forward chain (a reset must target a loop the rework re-enters). The validator
+   `verifyReworkReset` mirrors `verifyDecideAndOnMismatch` and wires into
+   `compileGraph`.
+
+6. **Engine `2.0.0 → 2.1.0` (additive, backward compatible).** A manifest where
+   ANY node's `rework` declares `onExhaustion` or `resetTargets` MUST declare
+   `compat.engine_min >= 2.1.0`; `loadFlowManifest` rejects otherwise (`CONFIG`),
+   mirroring the `DECIDE_ENGINE_MIN`/`SESSIONS_ENGINE_MIN` gates
+   (`REWORK_RESET_ENGINE_MIN = "2.1.0"`). Manifests declaring neither field stay
+   valid at their pinned floor.
+
+7. **Bounding — two independent `maxLoops` close the recursion hole.** The loop
+   node's `maxLoops` bounds iterations **per round**; the human node's OWN
+   `rework.maxLoops` bounds the number of **reset rounds** (each human rework is a
+   visit to the human node → its `gateAttempt` increments). The human node's own
+   exhaustion uses the STANDARD A1 path (it is a human node with a non-empty
+   `finishHuman.decisions`), which default-`escalate`s to re-pause it
+   ("rounds spent — approve or end"). No recursion; naturally bounded.
+
+8. **Single-transaction reset; HITL wire unchanged.** The reset `UPDATE`s commit
+   in the SAME `db.transaction` as `markNodeReworked` (human node) +
+   `markDownstreamStale` — no partial-state crash window, and a crash after commit
+   self-heals because the next `appendNodeAttempt` reads the persisted baseline. A
+   target with zero prior attempts is a no-op (its epoch already starts at 0). The
+   human node's HITL already carries `{allowedDecisions, transitions,
+   reworkTargets, workspacePolicies, maxLoops, gateAttempt}`; `resetTargets` is a
+   server-side rework effect, not a reviewer-selectable field → **no new HITL wire
+   field**.
+
+**Consequences:**
+- An authored autonomous loop can deterministically escalate exhaustion to a
+  named human node and let that human grant a fresh budget — closing the
+  ADR-103 "fail-closed, discards the worktree" gap for human-supervised loops,
+  without an execution-policy dependency.
+- The transition fan-out, readiness guard, and `isRework`/loop-advance logic are
+  **unchanged** — `onExhaustion` is just another outcome string the existing
+  machinery maps to a target/terminal.
+- **Crash-window parity for reset:** unlike ADR-103's non-transactional
+  `on_mismatch` rework, the `resetTargets` re-baseline is folded into the
+  existing human-rework transaction (`markNodeReworked` + `markDownstreamStale`),
+  so there is no new partial state; recovery is the persisted-baseline carry
+  forward.
+- **One column added** (`node_attempts.rework_baseline integer`, nullable,
+  migration `0085`) and a `+1` engine minor. No `runs` migration, no env var, no
+  port, no sidecar, no HTTP route, no SSE/AsyncAPI event, no `runs.status`/enum
+  value, no new `MaisterError` code, no `compose.yml` change.
+- **Two `maxLoops` is now a documented contract** (loop iterations per round ≠
+  reset rounds) — a flow author wiring `onExhaustion`/`resetTargets` must
+  understand both bounds (captured in `flow-dsl.md` + `flow-graph.md`).
+
+**Alternatives Considered:**
+- **jsonb baseline map on `runs`:** rejected — the baseline is per-node and the
+  `node_attempts` row already owns attempt counting; a normalized column carries
+  forward per attempt with no cross-row coordination, whereas a `runs` jsonb
+  would need a read-modify-write under the run lock on every reset and a parallel
+  read at both exhaustion sites.
+- **Reuse the A1 `escalate` action for the human handoff:** rejected — A1 is
+  run-policy-scoped (`reworkExhaustion`), so it cannot target a specific author-
+  chosen node, and it does not grant a fresh budget. `onExhaustion` is an
+  author-scoped routing override that composes with `resetTargets`.
+- **A fixed `exhausted` literal outcome** (instead of a free transition key):
+  rejected — a free key lets the author name the outcome to match their
+  transition table (`exhausted`, `escalate_to_lead`, …) and render distinct
+  human context; the compile + runtime allow-list guards already constrain it to
+  declared `transitions`.
+- **A `rework_epoch` counter column** (increment per reset) instead of
+  `rework_baseline` (snapshot the attempt count): rejected — the baseline is read
+  directly as the subtrahend at both exhaustion sites (`attemptNumber − baseline`)
+  with no extra arithmetic, and carry-forward is a literal copy; an epoch counter
+  would require a second per-attempt count to derive the effective number.
 
 ---
 

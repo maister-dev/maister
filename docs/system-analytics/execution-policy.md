@@ -178,6 +178,13 @@ stateDiagram-v2
   absent / malformed snapshot (`checks→strict`, `crashRetry→fail`,
   `reworkExhaustion→escalate`, `permissions→ask`, `humanGate→stop`,
   `onStuck→escalate`, `promotion→manual`, `commits→keep_all`, `dirtyResolve→ask`).
+- **(Designed — ADR-118)** A loop node declaring `rework.onExhaustion` OVERRIDES
+  the `reworkExhaustion` (A1) axis at that node: on `effective > maxLoops` the
+  runner routes via `transitions[<onExhaustion>]` (typically to a `human` node)
+  instead of invoking `reworkExhaustionFromSnapshot`. When `onExhaustion` is
+  absent the A1 action (`fail`/`escalate`/`ship_with_warning`) applies unchanged.
+  This is author-scoped per-loop, distinct from the run-scoped A1 axis. See
+  [`flow-graph.md`](flow-graph.md).
 - A launch whose resolved policy is a blind ship (relaxed `checks` + auto-pass
   human gate OR auto-promote) MUST be rejected with `MaisterError("PRECONDITION")`
   by `assertNoBlindShip`, server-side, before the run row is created.
