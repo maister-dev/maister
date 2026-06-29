@@ -148,6 +148,36 @@ describe("prepareDiff — perFile split + payload", () => {
   });
 });
 
+describe("prepareDiff — compact serializable rich payload", () => {
+  const markdown = Array.from(
+    { length: 60 },
+    (_, index) =>
+      `- [ ] Item ${index + 1}: keep generated syntax payload bounded for markdown diff rendering.`,
+  ).join("\n");
+
+  const markdownDiff = `${[
+    "diff --git a/docs/plan.md b/docs/plan.md",
+    "new file mode 100644",
+    "index 0000000..1111111",
+    "--- /dev/null",
+    "+++ b/docs/plan.md",
+    "@@ -0,0 +1,60 @@",
+    ...markdown.split("\n").map((line) => `+${line}`),
+  ].join("\n")}\n`;
+
+  it("strips server-only syntax wrapper trees before returning the client DTO", async () => {
+    const result = await prepareDiff(markdownDiff);
+    const serialized = JSON.stringify(result);
+
+    expect(result.files).toHaveLength(1);
+    expect(result.perFile).toHaveLength(1);
+    expect(serialized.length).toBeLessThan(1_000_000);
+    expect(serialized).not.toContain('"ast"');
+    expect(serialized).not.toContain('"children"');
+    expect(serialized).not.toContain('"template"');
+  });
+});
+
 describe("prepareDiff — binary + empty inputs do not throw", () => {
   it("handles a binary-file section without throwing, returning a well-formed DTO", async () => {
     const binaryDiff = [

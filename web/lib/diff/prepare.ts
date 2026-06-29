@@ -1,6 +1,10 @@
 import "server-only";
 
-import { DiffFile } from "@git-diff-view/core";
+import {
+  DiffFile,
+  getEnableBuildTemplate,
+  setEnableBuildTemplate,
+} from "@git-diff-view/core";
 import pino from "pino";
 
 import { shikiDiffHighlighter } from "@/lib/diff/shiki-adapter";
@@ -32,6 +36,13 @@ export type DiffPrepResult = {
   // rather than treat the prefix as the full change.
   truncated: boolean;
 };
+
+const OMITTED_DIFF_BUNDLE_KEYS = new Set([
+  "ast",
+  "plainTemplate",
+  "syntaxTemplate",
+  "template",
+]);
 
 type ParsedSection = {
   section: string;
@@ -170,6 +181,21 @@ function buildBundle(
   return file._getFullBundle();
 }
 
+function diffBundleReplacer(key: string, value: unknown): unknown {
+  if (OMITTED_DIFF_BUNDLE_KEYS.has(key)) return undefined;
+
+  if (
+    key === "wrapper" &&
+    value !== null &&
+    typeof value === "object" &&
+    "properties" in value
+  ) {
+    return { properties: value.properties };
+  }
+
+  return value;
+}
+
 export async function prepareDiff(
   rawDiff: string,
   truncated = false,
@@ -190,11 +216,19 @@ export async function prepareDiff(
 
   const files = summarizeSections(sections);
 
-  const perFile: PreparedFile[] = sections.map((s) => {
-    const fileLang = langByPath.get(s.path) ?? "plaintext";
+  const wasBuildingTemplates = getEnableBuildTemplate();
+  let perFile: PreparedFile[];
 
-    return { path: s.path, fileLang, bundle: buildBundle(s, fileLang) };
-  });
+  setEnableBuildTemplate(false);
+  try {
+    perFile = sections.map((s) => {
+      const fileLang = langByPath.get(s.path) ?? "plaintext";
+
+      return { path: s.path, fileLang, bundle: buildBundle(s, fileLang) };
+    });
+  } finally {
+    setEnableBuildTemplate(wasBuildingTemplates);
+  }
 
   const totalAdditions = files.reduce((n, f) => n + f.additions, 0);
   const totalDeletions = files.reduce((n, f) => n + f.deletions, 0);
@@ -214,6 +248,6 @@ export async function prepareDiff(
   // bundle is already JSON-representable (it ships JSON via the /diff route),
   // so this roundtrip is lossless and doubles as the FINDING-C plain projection.
   return JSON.parse(
-    JSON.stringify({ files, perFile, truncated }),
+    JSON.stringify({ files, perFile, truncated }, diffBundleReplacer),
   ) as DiffPrepResult;
 }
