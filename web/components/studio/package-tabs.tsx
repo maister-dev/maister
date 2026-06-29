@@ -1,8 +1,7 @@
 import type { ReactElement, ReactNode } from "react";
 
-import Link from "next/link";
-
 import { NumberedPagination } from "@/components/navigation/numbered-pagination";
+import { Tabs, type TabItem } from "@/components/navigation/tabs";
 
 // Tab bar + per-tab paged cards grid for the package detail (T1.3). Pure
 // presentational Server Component: the page resolves the active tab + page slice
@@ -77,37 +76,17 @@ export function PackageTabs({
   const pageCount = Math.max(1, Math.ceil(totalForActive / pageSize));
   const shownThrough = Math.min(page * pageSize, totalForActive);
 
+  const tabItems: TabItem[] = visibleTabs.map((tab) => ({
+    key: tab.id,
+    label: tab.label,
+    href: hrefFor(tab.id, 1),
+    count: tab.count,
+    testId: `package-tab-${tab.id}`,
+  }));
+
   return (
     <div className="flex flex-col gap-4" data-testid="package-tabs">
-      <div
-        className="flex flex-wrap items-center gap-1.5 border-b border-line pb-2"
-        role="tablist"
-      >
-        {visibleTabs.map((tab) => {
-          const isActive = tab.id === activeTab;
-
-          return (
-            <Link
-              key={tab.id}
-              aria-current={isActive ? "page" : undefined}
-              aria-selected={isActive}
-              className={
-                isActive
-                  ? "rounded-[10px] border border-amber-line bg-amber-soft px-3 py-1.5 text-[12.5px] font-semibold text-ink"
-                  : "rounded-[10px] border border-transparent px-3 py-1.5 text-[12.5px] font-semibold text-mute transition-colors hover:text-ink"
-              }
-              data-testid={`package-tab-${tab.id}`}
-              href={hrefFor(tab.id, 1)}
-              role="tab"
-            >
-              {tab.label}
-              <span className="ml-1.5 font-mono text-[11px] text-mute">
-                {tab.count}
-              </span>
-            </Link>
-          );
-        })}
-      </div>
+      <Tabs activeKey={activeTab} items={tabItems} />
 
       <div
         className={

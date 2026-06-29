@@ -20,6 +20,9 @@ One file per:
   block, the active-workspaces list).
 - **chrome** — persistent shell present on every screen (left rail, status bar,
   top nav, launch dialog).
+- **primitive** — a reusable UI building block shared across screens, blocks and
+  chrome that must look identical everywhere (tabs, chips/badges, card shells).
+  Collected in `components.md`.
 
 Keep the tree **flat plus `chrome/`** while small. Once an IA area reaches **≥ 3
 files**, group it into an area subdirectory (`project/`, `admin/`, `flows/`, …).
@@ -28,6 +31,7 @@ Cross-cutting chrome always stays under `chrome/`.
 ```
 docs/screens/
   README.md          # this file — index + IA map + template + classification rule
+  components.md      # shared UI primitives (Tabs, chips/badges, card shells)
   chrome/            # cross-cutting shell present on every screen
     left-rail.md     # nav sections + collapsed icon rail + flyouts + launch + Needs-you badge
     active-workspaces.md # per-project live-run rows inside the rail (block)

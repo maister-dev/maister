@@ -1,8 +1,6 @@
 import type { ReactElement } from "react";
 
-import Link from "next/link";
-import clsx from "clsx";
-
+import { Tabs, type TabItem } from "@/components/navigation/tabs";
 import {
   buildRunHref,
   type RunSearchParamsInput,
@@ -45,31 +43,11 @@ export function WorkbenchTabs({
 }: WorkbenchTabsProps): ReactElement {
   const hrefPath = pathname ?? `/runs/${runId}`;
 
-  return (
-    <div
-      className="mb-[18px] inline-flex gap-0.5 rounded-full border border-line bg-ivory p-[3px]"
-      role="tablist"
-    >
-      {tabs.map((tab) => {
-        const isActive = tab === active;
+  const items: TabItem[] = tabs.map((tab) => ({
+    key: tab,
+    label: labels[tab],
+    href: buildRunHref(hrefPath, searchParams, { wb: tab }),
+  }));
 
-        return (
-          <Link
-            key={tab}
-            aria-selected={isActive}
-            className={clsx(
-              "inline-flex items-center gap-1.5 rounded-full px-3.5 py-[7px] font-mono text-[11px] font-semibold uppercase leading-none tracking-[0.06em]",
-              isActive
-                ? "bg-paper text-ink shadow-[var(--shadow-sm)]"
-                : "text-mute hover:text-ink",
-            )}
-            href={buildRunHref(hrefPath, searchParams, { wb: tab })}
-            role="tab"
-          >
-            {labels[tab]}
-          </Link>
-        );
-      })}
-    </div>
-  );
+  return <Tabs activeKey={active} className="mb-[18px]" items={items} />;
 }

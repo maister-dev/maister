@@ -20,6 +20,7 @@ import {
 } from "@heroicons/react/24/outline";
 import clsx from "clsx";
 
+import { Tabs } from "@/components/navigation/tabs";
 import {
   RunInspectorChildRunsList,
   type RunInspectorChildRun,
@@ -257,28 +258,12 @@ export function RunInspector({
       className="flex flex-col gap-3"
       data-testid="run-inspector"
     >
-      <div
-        className="grid grid-cols-4 gap-1 rounded-[8px] border border-line bg-ivory p-1"
-        role="tablist"
-      >
-        {TABS.map((tab) => (
-          <button
-            key={tab}
-            aria-selected={activeTab === tab}
-            className={clsx(
-              "rounded-[6px] px-2 py-1.5 text-center font-mono text-[10px] font-semibold uppercase leading-none",
-              activeTab === tab
-                ? "bg-paper text-ink shadow-[var(--shadow-sm)]"
-                : "text-mute hover:text-ink",
-            )}
-            role="tab"
-            type="button"
-            onClick={() => setActiveTab(tab)}
-          >
-            {labels[tab]}
-          </button>
-        ))}
-      </div>
+      <Tabs
+        activeKey={activeTab}
+        items={TABS.map((tab) => ({ key: tab, label: labels[tab] }))}
+        layout="fill"
+        onSelect={(key) => setActiveTab(key as RunInspectorTab)}
+      />
 
       {childRuns && childRuns.length > 0 && childRunsLabels ? (
         <RunInspectorChildRunsList
