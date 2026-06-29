@@ -18,6 +18,7 @@ import pino from "pino";
 
 import { deleteSession as defaultDeleteSession } from "@/lib/supervisor-client";
 import { MaisterError } from "@/lib/errors";
+import { runtimeRoot as configuredRuntimeRoot } from "@/lib/runtime-root";
 import { requireRunProjectId } from "@/lib/runs/run-kind-invariants";
 import * as schemaModule from "@/lib/db/schema";
 import { systemCachePath } from "@/lib/flow-paths";
@@ -99,6 +100,10 @@ export type LoadedRun = {
   // M27/T-C8b: exec-trust of the pinned flow revision; gates stdio-MCP spawn.
   execTrust: FlowRevisionExecTrust;
 };
+
+export function resolveFlowRuntimeRoot(override?: string): string {
+  return override ?? configuredRuntimeRoot();
+}
 
 export function asError(err: unknown): Error {
   return err instanceof Error ? err : new Error(String(err));

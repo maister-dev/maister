@@ -27,6 +27,7 @@ import {
   asError,
   cleanupSlashSession,
   loadRun,
+  resolveFlowRuntimeRoot,
   type Db,
   type LoadedRun,
   type RunFlowOptions,
@@ -163,10 +164,10 @@ export async function runFlow(
   opts: RunFlowOptions = {},
 ): Promise<void> {
   const db: Db = opts.db ?? getDb();
-  const runtimeRoot = opts.runtimeRoot ?? process.cwd();
+  const runtimeRoot = resolveFlowRuntimeRoot(opts.runtimeRoot);
   const log2 = log.child({ runId });
 
-  log2.info({}, "runFlow start");
+  log2.info({ runtimeRoot }, "runFlow start");
 
   let loaded: LoadedRun;
 

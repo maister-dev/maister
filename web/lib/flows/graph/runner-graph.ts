@@ -33,6 +33,7 @@ import {
   cleanupSlashSession,
   asError,
   executorFromRunnerSnapshot,
+  resolveFlowRuntimeRoot,
 } from "./runner-core";
 import { compileManifest, resolveTransition } from "./compile";
 import { computeDecideOutcome, type DecideVerdict } from "./decide-eval";
@@ -1566,7 +1567,7 @@ export async function runGraph(
   opts: RunFlowOptions = {},
 ): Promise<void> {
   const db: Db = opts.db ?? getDb();
-  const runtimeRoot = opts.runtimeRoot ?? process.cwd();
+  const runtimeRoot = resolveFlowRuntimeRoot(opts.runtimeRoot);
   const runId = loaded.run.id;
   const log2 = log.child({ runId });
 
@@ -1583,7 +1584,7 @@ export async function runGraph(
     }
   };
 
-  log2.info({}, "runGraph start");
+  log2.info({ runtimeRoot }, "runGraph start");
 
   if (loaded.run.status !== "Running" && loaded.run.status !== "NeedsInput") {
     throw new MaisterError(

@@ -221,6 +221,25 @@ async function writeArtifact(
   await writeFile(join(dir, `input-${stepId}.json`), JSON.stringify(payload));
 }
 
+async function withRuntimeRootEnv<T>(
+  value: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const previous = process.env.MAISTER_RUNTIME_ROOT;
+
+  process.env.MAISTER_RUNTIME_ROOT = value;
+
+  try {
+    return await fn();
+  } finally {
+    if (previous === undefined) {
+      delete process.env.MAISTER_RUNTIME_ROOT;
+    } else {
+      process.env.MAISTER_RUNTIME_ROOT = previous;
+    }
+  }
+}
+
 const baseRunnerSnapshot = {
   id: "claude-code",
   adapter: "claude",
@@ -361,6 +380,56 @@ describe("runFlow re-entry", () => {
 
     expect(stepRunInserts).toHaveLength(1);
     expect(stepRunInserts[0].row.stepId).toBe("first");
+  });
+
+  it("uses the configured runtime root by default while resuming from human input", async () => {
+    const fixture = baseFixture();
+
+    fixture.runs[0].status = "NeedsInput";
+    fixture.runs[0].currentStepId = "first";
+    fixture.flows[0].manifest = {
+      schemaVersion: 1,
+      name: "tf",
+      steps: [
+        { id: "first", type: "human" as const, form_schema: "schema.json" },
+      ],
+    };
+    fixture.step_runs.push({
+      id: "sr-first-existing",
+      runId: "run-1",
+      stepId: "first",
+      stepType: "human",
+      status: "NeedsInput",
+      attempt: 1,
+      vars: {},
+      stdout: null,
+      exitCode: null,
+      startedAt: new Date(0),
+    });
+
+    const { client, inserts, updates } = makeFakeDb(fixture);
+
+    await writeArtifact("first", { approved: true });
+
+    await withRuntimeRootEnv(runtimeRoot, async () => {
+      await runFlow("run-1", { db: client });
+    });
+
+    expect(inserts.filter((i) => i.table === "hitl_requests")).toHaveLength(0);
+    expect(inserts.filter((i) => i.table === "assignments")).toHaveLength(0);
+
+    const stepRunStatuses = updates
+      .filter((u) => u.table === "step_runs" && "status" in u.set)
+      .map((u) => u.set.status);
+
+    expect(stepRunStatuses).toContain("Succeeded");
+
+    const runStatuses = updates
+      .filter((u) => u.table === "runs" && "status" in u.set)
+      .map((u) => u.set.status);
+
+    expect(runStatuses).toContain("Running");
+    expect(runStatuses).toContain("Review");
   });
 
   it("boot on NeedsInput with currentStepId='second' transitions NeedsInput→Running and skips the 'first' step", async () => {

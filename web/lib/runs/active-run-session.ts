@@ -4,7 +4,15 @@ import type { AdapterId } from "@/lib/acp-runners/adapter-support";
 import type { RunnerSnapshot } from "@/lib/db/schema";
 import type { AnyColumn, SQL } from "drizzle-orm";
 
-import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import {
+  and,
+  desc,
+  eq,
+  getTableName,
+  inArray,
+  isNotNull,
+  sql,
+} from "drizzle-orm";
 
 import { runSessions } from "@/lib/db/schema";
 
@@ -47,7 +55,11 @@ function activeRunSessionScalar<T>(
   runIdCol: AnyColumn,
   sessionColumn: SQL,
 ): SQL<T | null> {
-  return sql<T | null>`(SELECT ${sessionColumn} FROM ${runSessions} rs WHERE rs.run_id = ${runIdCol} ORDER BY (rs.acp_session_id IS NOT NULL) DESC, rs.updated_at DESC LIMIT 1)`;
+  const qualifiedRunId = sql`${sql.identifier(
+    getTableName(runIdCol.table),
+  )}.${sql.identifier(runIdCol.name)}`;
+
+  return sql<T | null>`(SELECT ${sessionColumn} FROM ${runSessions} rs WHERE rs.run_id = ${qualifiedRunId} ORDER BY (rs.acp_session_id IS NOT NULL) DESC, rs.updated_at DESC LIMIT 1)`;
 }
 
 export function activeSessionAcpSessionId(
