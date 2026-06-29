@@ -623,6 +623,7 @@ export async function listSessions(): Promise<SupervisorSessionRecord[]> {
 export async function sendPrompt(
   sessionId: string,
   input: SendPromptInput,
+  opts: { signal?: AbortSignal } = {},
 ): Promise<PromptResult> {
   const url = `${baseUrl()}/sessions/${encodeURIComponent(sessionId)}/prompt`;
 
@@ -640,6 +641,10 @@ export async function sendPrompt(
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(input),
+        // Optional cancel: a caller (e.g. the staged assistant launch) forwards
+        // its request signal so a client disconnect aborts the in-flight turn
+        // and lets the caller's compensation tear the session down.
+        signal: opts.signal,
       },
       "sendPrompt",
     );

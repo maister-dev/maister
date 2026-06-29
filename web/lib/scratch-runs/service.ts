@@ -1415,10 +1415,23 @@ async function loadActiveLocalPackage(db: Db, localPackageId: string) {
 // Launch a docked AI authoring assistant session against a local-package
 // working dir. Project-less; runs IN the existing git-backed working dir (no
 // worktree add, no workspace row); base branch/commit are read from it.
-export async function launchLocalPackageAssistant(args: {
-  body: LocalPackageAssistantLaunchInput;
-  userId: string;
-}): Promise<ScratchRunResponse> {
+//
+// ADR-110 staged-stream addendum (2026-06-29): mirrors launchScratchRunStaged —
+// runs every precondition up to the first `yield "precondition"`, so the route
+// can drive ONE `.next()` and turn a head-check failure into a JSON error
+// (status preserved) BEFORE committing to a `text/event-stream` response.
+// `session_ready` is yielded after the run row is persisted with the resume
+// handle but BEFORE the first turn, so the editor attaches the live SSE
+// (transcript + working badge) before turn 1 streams. `opts.signal` is checked
+// at each side-effect boundary so a client cancel marks the run Crashed — no
+// orphan supervisor session.
+export async function* launchLocalPackageAssistantStaged(
+  args: {
+    body: LocalPackageAssistantLaunchInput;
+    userId: string;
+  },
+  opts: { signal?: AbortSignal } = {},
+): AsyncGenerator<LaunchProgressEvent, ScratchRunResponse, void> {
   const db = getDb() as Db;
 
   // Member-level RBAC (ADR-096): authoring a local package is any active user.
@@ -1456,6 +1469,10 @@ export async function launchLocalPackageAssistant(args: {
 
   await assertAssistantCapacityAvailable({ db });
 
+  // Every precondition has passed; the route turns this first yield into the
+  // signal to start streaming (a throw above here is still a JSON error).
+  yield launchProgress("precondition");
+
   const workingDir = pkg.workingDir as string;
   // Base branch/commit are read from the EXISTING working dir — no new branch.
   const baseBranch =
@@ -1487,6 +1504,12 @@ export async function launchLocalPackageAssistant(args: {
   const initialMessage = hasInitialPrompt
     ? userScratchMessageDraft({ sequence: 1, content: rawPrompt })
     : null;
+
+  // Cancel here (pre-commit) propagates out with no run row and no session —
+  // materialization is post-`precondition` (an in-stream error frame), so a
+  // failure leaves nothing to compensate (createdSessionId null).
+  opts.signal?.throwIfAborted();
+  yield launchProgress("materializing", executor.agent);
 
   const materialized = await materializeCapabilityProfile({
     runId,
@@ -1592,6 +1615,11 @@ export async function launchLocalPackageAssistant(args: {
   let createdSessionId: string | null = null;
 
   try {
+    // Cancel here (post-commit) marks the run Crashed via this catch — the
+    // run row is a tracked row, not an orphan.
+    opts.signal?.throwIfAborted();
+    yield launchProgress("spawning");
+
     const session = await createSession({
       runId,
       // No project — the local-package slug names the runtime/cost subtree
@@ -1641,6 +1669,13 @@ export async function launchLocalPackageAssistant(args: {
         .where(eq(scratchRuns.runId, runId));
     });
 
+    // Run row is persisted with the resume handle; surface `runId` so the
+    // editor attaches the live run SSE BEFORE the first turn streams.
+    yield launchProgress("session_ready", undefined, {
+      runId,
+      dialogUrl: `/scratch-runs/${runId}`,
+    });
+
     if (!hasInitialPrompt) {
       return localPackageAssistantResponse({
         runId,
@@ -1661,11 +1696,19 @@ export async function launchLocalPackageAssistant(args: {
       executor.agent,
       { runId },
     );
+
+    // A client disconnect after session_ready (the run is now a tracked row +
+    // live session) routes into this try's catch → session teardown + Crashed.
+    // The boundary check covers an abort already observed here; the forwarded
+    // signal aborts the in-flight prompt fetch if the disconnect lands mid-turn.
+    opts.signal?.throwIfAborted();
+
     const promptResult = await sendScratchPromptAndProjectEvents({
       runId,
       sessionId: session.sessionId,
       stepId: scratchStepId(),
       prompt: launchPrompt,
+      signal: opts.signal,
     });
     const dialogStatus = await completeScratchPromptTurn({ db, runId });
     const actionResult = await postProcessFlowAssistantTurn({
@@ -1731,6 +1774,21 @@ export async function launchLocalPackageAssistant(args: {
     );
     throw err;
   }
+}
+
+// Back-compat drain: non-route callers get a Promise<ScratchRunResponse>,
+// running the staged generator to completion. Mirrors how `launchScratchRun`
+// wraps `launchScratchRunStaged` so existing direct callers/tests are unchanged.
+export async function launchLocalPackageAssistant(args: {
+  body: LocalPackageAssistantLaunchInput;
+  userId: string;
+}): Promise<ScratchRunResponse> {
+  const gen = launchLocalPackageAssistantStaged(args);
+  let step = await gen.next();
+
+  while (!step.done) step = await gen.next();
+
+  return step.value;
 }
 
 function localPackageAssistantResponse(args: {

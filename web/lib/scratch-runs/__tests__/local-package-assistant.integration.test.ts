@@ -81,6 +81,7 @@ vi.mock("@/lib/supervisor-client", () => supervisorMock);
 
 let markScratchCrashed: typeof import("@/lib/scratch-runs/service").markScratchCrashed;
 let launchLocalPackageAssistant: typeof import("@/lib/scratch-runs/service").launchLocalPackageAssistant;
+let launchLocalPackageAssistantStaged: typeof import("@/lib/scratch-runs/service").launchLocalPackageAssistantStaged;
 let sendLocalPackageAssistantMessage: typeof import("@/lib/scratch-runs/service").sendLocalPackageAssistantMessage;
 let createLocalPackage: typeof import("@/lib/local-packages/service").createLocalPackage;
 let diffWorkingDir: typeof import("@/lib/local-packages/service").diffWorkingDir;
@@ -91,6 +92,7 @@ const {
   domainEvents,
   localPackages,
   runs,
+  runSessions,
   scratchMessages,
   scratchRuns,
   webhookEvents,
@@ -121,6 +123,7 @@ beforeAll(async () => {
   ({
     markScratchCrashed,
     launchLocalPackageAssistant,
+    launchLocalPackageAssistantStaged,
     sendLocalPackageAssistantMessage,
   } = await import("@/lib/scratch-runs/service"));
   ({ createLocalPackage, diffWorkingDir, getLocalPackage } = await import(
@@ -792,5 +795,210 @@ describe("deferred-release on a failure path (ADR-097 T5.6)", () => {
     ).rejects.toThrow(/turn crash/);
 
     expect(supervisorMock.deleteSession).toHaveBeenCalledWith("sup-1");
+  });
+});
+
+// --- ADR-110 addendum: staged-stream launch (surface runId before turn 1) ----
+
+type StagedEvent = { stage: string; runId?: string; dialogUrl?: string };
+
+describe("launchLocalPackageAssistantStaged (staged-stream, ADR-110 addendum)", () => {
+  it("yields ordered stages and session_ready(runId) before sendPrompt (AC1)", async () => {
+    const pkg = await createLocalPackage({
+      name: `staged-order-${randomUUID().slice(0, 8)}`,
+      createdBy: userId,
+      db: db as never,
+    });
+    const sessionId = await lockLocalPackage(pkg.id, "staged-order");
+
+    streamAssistantText("done");
+
+    const gen = launchLocalPackageAssistantStaged({
+      body: { localPackageId: pkg.id, sessionId, prompt: "hi" },
+      userId,
+    });
+    const stages: string[] = [];
+    let readyRunId: string | undefined;
+    let sendPromptCallsAtReady = -1;
+    let step = await gen.next();
+
+    while (!step.done) {
+      const ev = step.value as StagedEvent;
+
+      stages.push(ev.stage);
+      if (ev.stage === "session_ready") {
+        readyRunId = ev.runId;
+        sendPromptCallsAtReady = supervisorMock.sendPrompt.mock.calls.length;
+      }
+      step = await gen.next();
+    }
+
+    expect(stages).toEqual([
+      "precondition",
+      "materializing",
+      "spawning",
+      "session_ready",
+    ]);
+    expect(readyRunId).toBeTruthy();
+    expect(sendPromptCallsAtReady).toBe(0);
+    expect(supervisorMock.sendPrompt).toHaveBeenCalledTimes(1);
+    expect(step.value.runId).toBe(readyRunId);
+  });
+
+  it("persists Running run + acpSessionId at session_ready, before the turn (AC2)", async () => {
+    const pkg = await createLocalPackage({
+      name: `staged-persist-${randomUUID().slice(0, 8)}`,
+      createdBy: userId,
+      db: db as never,
+    });
+    const sessionId = await lockLocalPackage(pkg.id, "staged-persist");
+
+    streamAssistantText("done");
+
+    const gen = launchLocalPackageAssistantStaged({
+      body: { localPackageId: pkg.id, sessionId, prompt: "hi" },
+      userId,
+    });
+    let step = await gen.next();
+
+    while (
+      !step.done &&
+      (step.value as StagedEvent).stage !== "session_ready"
+    ) {
+      step = await gen.next();
+    }
+
+    expect(step.done).toBe(false);
+
+    const runId = (step.value as StagedEvent).runId as string;
+
+    expect(runId).toBeTruthy();
+    // The status tx committed before session_ready; the turn has NOT started.
+    expect(supervisorMock.sendPrompt).not.toHaveBeenCalled();
+
+    const runRows = await db
+      .select({ status: runs.status })
+      .from(runs)
+      .where(eq(runs.id, runId));
+    const sessRows = await db
+      .select({ acpSessionId: runSessions.acpSessionId })
+      .from(runSessions)
+      .where(eq(runSessions.runId, runId));
+    const scratchRows = await db
+      .select({ dialogStatus: scratchRuns.dialogStatus })
+      .from(scratchRuns)
+      .where(eq(scratchRuns.runId, runId));
+
+    expect(runRows[0].status).toBe("Running");
+    expect(sessRows[0].acpSessionId).toBe("acp-1");
+    expect(scratchRows[0].dialogStatus).toBe("Running");
+
+    while (!step.done) step = await gen.next();
+    expect(step.value.runId).toBe(runId);
+  });
+
+  it("promptless launch yields session_ready then WaitingForUser, no turn (FR3)", async () => {
+    const pkg = await createLocalPackage({
+      name: `staged-promptless-${randomUUID().slice(0, 8)}`,
+      createdBy: userId,
+      db: db as never,
+    });
+    const sessionId = await lockLocalPackage(pkg.id, "staged-promptless");
+
+    const gen = launchLocalPackageAssistantStaged({
+      body: { localPackageId: pkg.id, sessionId, prompt: "" },
+      userId,
+    });
+    const stages: string[] = [];
+    let step = await gen.next();
+
+    while (!step.done) {
+      stages.push((step.value as StagedEvent).stage);
+      step = await gen.next();
+    }
+
+    expect(stages).toEqual([
+      "precondition",
+      "materializing",
+      "spawning",
+      "session_ready",
+    ]);
+    expect(step.value.status.dialogStatus).toBe("WaitingForUser");
+    expect(supervisorMock.sendPrompt).not.toHaveBeenCalled();
+  });
+
+  it("compensates (teardown + Crashed) on a client abort after session_ready", async () => {
+    const pkg = await createLocalPackage({
+      name: `staged-abort-${randomUUID().slice(0, 8)}`,
+      createdBy: userId,
+      db: db as never,
+    });
+    const sessionId = await lockLocalPackage(pkg.id, "staged-abort");
+
+    streamAssistantText("done");
+
+    const controller = new AbortController();
+    const gen = launchLocalPackageAssistantStaged(
+      { body: { localPackageId: pkg.id, sessionId, prompt: "hi" }, userId },
+      { signal: controller.signal },
+    );
+    let step = await gen.next();
+
+    while (
+      !step.done &&
+      (step.value as StagedEvent).stage !== "session_ready"
+    ) {
+      step = await gen.next();
+    }
+
+    expect(step.done).toBe(false);
+
+    const runId = (step.value as StagedEvent).runId as string;
+
+    // The session exists (spawned before session_ready) but the turn has not run.
+    expect(supervisorMock.createSession).toHaveBeenCalledTimes(1);
+    expect(supervisorMock.sendPrompt).not.toHaveBeenCalled();
+
+    // Client disconnects after the run is visible → the next step throws into the
+    // post-commit catch, which tears the session down and marks the run Crashed.
+    controller.abort();
+    await expect(gen.next()).rejects.toThrow();
+
+    expect(supervisorMock.deleteSession).toHaveBeenCalledWith("sup-1");
+    expect(supervisorMock.sendPrompt).not.toHaveBeenCalled();
+
+    const rows = await db
+      .select({ status: runs.status })
+      .from(runs)
+      .where(eq(runs.id, runId));
+
+    expect(rows[0].status).toBe("Crashed");
+  });
+
+  it("drain wrapper returns the same terminal result as today (AC3)", async () => {
+    const pkg = await createLocalPackage({
+      name: `staged-drain-${randomUUID().slice(0, 8)}`,
+      createdBy: userId,
+      db: db as never,
+    });
+    const sessionId = await lockLocalPackage(pkg.id, "staged-drain");
+
+    streamAssistantText(
+      assistantActionMarkdown({
+        actionId: "act_drain",
+        summary: "Add drain rule",
+        path: "rules/drain.md",
+        content: "# drain\n",
+      }),
+    );
+
+    const result = await launchLocalPackageAssistant({
+      body: { localPackageId: pkg.id, sessionId, prompt: "do" },
+      userId,
+    });
+
+    expect(result.runId).toBeTruthy();
+    expect(result.actionResult?.status).toBe("applied");
+    expect(result.status.dialogStatus).toBeTruthy();
   });
 });

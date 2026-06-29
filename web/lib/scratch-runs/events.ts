@@ -700,6 +700,9 @@ export async function sendScratchPromptAndProjectEvents(args: {
   contentBlocks?: PromptContentBlock[];
   db?: DbClientLike;
   api?: ScratchSupervisorApi;
+  // Optional cancel forwarded to the supervisor prompt fetch (staged assistant
+  // launch passes its request signal); a disconnect aborts the in-flight turn.
+  signal?: AbortSignal;
 }): Promise<PromptResult> {
   const db = args.db ?? getDb();
   const api = args.api ?? defaultSupervisorApi;
@@ -714,11 +717,15 @@ export async function sendScratchPromptAndProjectEvents(args: {
   let promptResult: PromptResult;
 
   try {
-    promptResult = await api.sendPrompt(args.sessionId, {
-      stepId: args.stepId,
-      prompt: args.prompt,
-      contentBlocks: args.contentBlocks,
-    });
+    promptResult = await api.sendPrompt(
+      args.sessionId,
+      {
+        stepId: args.stepId,
+        prompt: args.prompt,
+        contentBlocks: args.contentBlocks,
+      },
+      { signal: args.signal },
+    );
   } finally {
     consumer.abort.abort();
     await consumer.done;
