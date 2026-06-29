@@ -800,6 +800,17 @@ export default async function RunDetailLayout({
       Stale: t("nodeStatus.Stale"),
       Skipped: t("nodeStatus.Skipped"),
     },
+    transcript: {
+      title: t("transcript.title"),
+      empty: t("transcript.empty"),
+      thinking: t("transcript.thinking"),
+      rawEvent: t("transcript.rawEvent"),
+      input: t("transcript.input"),
+      result: t("transcript.result"),
+      copy: t("transcript.copy"),
+      copied: t("transcript.copied"),
+      toolCount: "{name} ×{count}",
+    },
   };
   const activeDurationMs = timeline.entries.reduce<number>(
     (sum, entry) => sum + (entry.durationMs ?? 0),

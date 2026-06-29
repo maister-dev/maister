@@ -20,6 +20,12 @@ import { usePathname, useSearchParams } from "next/navigation";
 import clsx from "clsx";
 
 import { NodeStatusIcon } from "@/components/runs/node-status-icon";
+import {
+  NodeTranscriptPanel,
+  type NodeTranscriptPanelLabels,
+  isLiveRunStatus,
+  transcriptPanelDefaultOpen,
+} from "@/components/runs/node-transcript-panel";
 import { buildFlowNodeResult } from "@/lib/runs/flow-node-result";
 import { buildRunHref, parseRunQueryState } from "@/lib/runs/run-query-state";
 
@@ -50,6 +56,8 @@ export interface FlowRunCenterLabels {
   noNode: string;
   // Localized node-status labels keyed by node_attempts.status (run.nodeStatus.*).
   nodeStatus: Record<string, string>;
+  // Per-node agent transcript panel labels (run.transcript.*).
+  transcript: NodeTranscriptPanelLabels;
 }
 
 export function selectFlowRunNode(
@@ -525,6 +533,17 @@ export function FlowRunCenter({
                   </div>
                 ))}
               </dl>
+
+              <NodeTranscriptPanel
+                defaultOpen={transcriptPanelDefaultOpen(
+                  Boolean(selected.current),
+                  isLiveRunStatus(result.run.status),
+                )}
+                labels={labels.transcript}
+                live={isLiveRunStatus(result.run.status)}
+                nodeId={selected.id}
+                runId={result.run.runId}
+              />
 
               {selectedResult ? (
                 <NodeResultDetails labels={labels} result={selectedResult} />

@@ -60,6 +60,17 @@ const LABELS: FlowRunCenterLabels = {
     Stale: "Stale",
     Skipped: "Skipped",
   },
+  transcript: {
+    title: "Agent activity",
+    empty: "No agent output for this node yet.",
+    thinking: "Thinking",
+    rawEvent: "Raw event",
+    input: "Input",
+    result: "Result",
+    copy: "Copy",
+    copied: "Copied",
+    toolCount: "{name} ×{count}",
+  },
 };
 
 const cost: RunCostSummary = {
@@ -260,6 +271,14 @@ describe("FlowRunCenter", () => {
     expect(html).toContain('data-node-status="Running"');
     // The Pending node ("review") surfaces its icon too.
     expect(html).toContain('data-node-status="Pending"');
+  });
+
+  it("mounts the per-node agent transcript panel for the selected node", () => {
+    query = new URLSearchParams("node=implement");
+    const html = render();
+
+    expect(html).toContain('data-testid="node-transcript-panel"');
+    expect(html).toContain("Agent activity");
   });
 
   it("renders the per-attempt resolved prompt disclosure for the selected node", () => {

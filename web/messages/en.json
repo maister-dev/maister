@@ -2002,6 +2002,17 @@
       "Reworked": "Reworked",
       "Stale": "Stale",
       "Skipped": "Skipped"
+    },
+    "transcript": {
+      "title": "Agent activity",
+      "empty": "No agent output for this node yet.",
+      "thinking": "Thinking",
+      "rawEvent": "Raw event",
+      "input": "Input",
+      "result": "Result",
+      "copy": "Copy",
+      "copied": "Copied",
+      "toolCount": "{name} ×{count}"
     }
   },
   "evidence": {
