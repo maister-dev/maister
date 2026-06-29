@@ -132,6 +132,26 @@ describe("PackageComposition (ADR-116 §P2/P3)", () => {
 
     expect(html).toContain('href="/studio/edit/pkg1/skills/arch"');
     expect(html).toContain("Arch skill");
+    // Local composition cards are whole-card clickable with no fork stub and no
+    // separate View button (ADR-116 follow-up).
+    expect(html).not.toContain('data-testid="element-card-fork"');
+    expect(html).not.toContain('data-testid="element-card-view"');
+  });
+
+  it("makes inline-kind cards whole-card clickable, no fork/View", () => {
+    const bom = bomOf({
+      subagents: [
+        { id: "helper", path: "capability/c/agents/helper.md", description: "" },
+      ],
+    });
+    const html = render(bom, { search: "tab=subagents" });
+
+    // The card itself is the link (anchor carrying the ?sel href).
+    expect(html).toMatch(
+      /<a[^>]+data-testid="element-card"[^>]+href="\/studio\/edit\/pkg1\?tab=subagents&amp;sel=helper"/,
+    );
+    expect(html).not.toContain('data-testid="element-card-fork"');
+    expect(html).not.toContain('data-testid="element-card-view"');
   });
 
   it("renders inline kinds as master-detail with ?sel links + select hint", () => {

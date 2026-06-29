@@ -641,6 +641,15 @@ export function LocalPackageEditor({
   );
   const mcpOptions = useMemo(() => buildMcpOptions(mcpCatalog), [mcpCatalog]);
 
+  // The deepest breadcrumb segment: the open flow's name (or skill id), or null
+  // on the bare composition landing. When set, the package crumb becomes a link
+  // back to the composition view and this leaf is appended (non-clickable).
+  const crumbLeaf = flowPath
+    ? (initialManifest?.name ?? flowPath.split("/")[1] ?? flowPath)
+    : skillId
+      ? skillId
+      : null;
+
   return (
     <div className="flex h-full min-h-0 flex-col gap-2">
       <nav
@@ -656,12 +665,31 @@ export function LocalPackageEditor({
             {labels.crumbLocal}
           </Link>
           <span aria-hidden>›</span>
-          <span
-            className="truncate text-ink"
-            data-testid="local-editor-crumb-name"
-          >
-            {initialTitle}
-          </span>
+          {crumbLeaf === null ? (
+            <span
+              className="truncate text-ink"
+              data-testid="local-editor-crumb-name"
+            >
+              {initialTitle}
+            </span>
+          ) : (
+            <>
+              <Link
+                className="truncate text-ink hover:text-amber"
+                data-testid="local-editor-crumb-name"
+                href={`/studio/edit/${packageId}`}
+              >
+                {initialTitle}
+              </Link>
+              <span aria-hidden>›</span>
+              <span
+                className="truncate text-ink-2"
+                data-testid="local-editor-crumb-leaf"
+              >
+                {crumbLeaf}
+              </span>
+            </>
+          )}
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {canManage ? (

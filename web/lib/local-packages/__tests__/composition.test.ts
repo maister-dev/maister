@@ -16,6 +16,7 @@ import {
   movePathInDraft,
   resolveCompositionTab,
   resolveInlineFilePath,
+  resolveSkillSubtreePrefix,
   scopeSkillFiles,
   skillScreenHref,
   skillSubtreePrefix,
@@ -317,6 +318,68 @@ describe("skill subtree scope/merge (ADR-116 §P4)", () => {
     // The dropped reference file is gone; sibling skill + rule untouched.
     expect(merged.some((f) => f.path === "skills/arch/references/x.md")).toBe(
       false,
+    );
+  });
+});
+
+describe("resolveSkillSubtreePrefix — capability-nested layout (ADR-116 404 fix)", () => {
+  const nested: AuthoredFlowPackageFile[] = [
+    { kind: "manifest", path: "maister-package.yaml", content: "x" },
+    { kind: "skill", path: "capability/core/skills/aif/SKILL.md", content: "a" },
+    {
+      kind: "asset",
+      path: "capability/core/skills/aif/references/x.md",
+      content: "r",
+    },
+    { kind: "skill", path: "skills/root-skill/SKILL.md", content: "o" },
+  ];
+
+  it("resolves a capability-nested skill to its real prefix", () => {
+    expect(resolveSkillSubtreePrefix(nested, "aif")).toBe(
+      "capability/core/skills/aif/",
+    );
+  });
+
+  it("resolves a root-layout skill", () => {
+    expect(resolveSkillSubtreePrefix(nested, "root-skill")).toBe(
+      "skills/root-skill/",
+    );
+  });
+
+  it("returns null for an unknown skill", () => {
+    expect(resolveSkillSubtreePrefix(nested, "ghost")).toBeNull();
+  });
+
+  it("anchors the match to a segment boundary (no shorter-id false match)", () => {
+    const files: AuthoredFlowPackageFile[] = [
+      { kind: "skill", path: "skills/architecture/SKILL.md", content: "a" },
+    ];
+
+    expect(resolveSkillSubtreePrefix(files, "arch")).toBeNull();
+  });
+
+  it("scope + merge operate over the nested prefix", () => {
+    expect(scopeSkillFiles(nested, "aif").map((f) => f.path)).toEqual([
+      "capability/core/skills/aif/SKILL.md",
+      "capability/core/skills/aif/references/x.md",
+    ]);
+
+    const merged = mergeSkillFiles(nested, "aif", [
+      {
+        kind: "skill",
+        path: "capability/core/skills/aif/SKILL.md",
+        content: "EDITED",
+      },
+    ]);
+
+    expect(merged.some((f) => f.path.includes("references/x.md"))).toBe(false);
+    expect(
+      merged.find((f) => f.path === "capability/core/skills/aif/SKILL.md")
+        ?.content,
+    ).toBe("EDITED");
+    // The sibling root skill is untouched.
+    expect(merged.some((f) => f.path === "skills/root-skill/SKILL.md")).toBe(
+      true,
     );
   });
 });

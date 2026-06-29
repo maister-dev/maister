@@ -22,6 +22,7 @@ import {
   packageFilesEditorLabels,
 } from "@/lib/flows/editor/editor-labels";
 import { getLocalPackageBom } from "@/lib/local-packages/bom";
+import { resolveSkillSubtreePrefix } from "@/lib/local-packages/composition";
 import { readLockState } from "@/lib/local-packages/lock";
 import {
   getLocalPackage,
@@ -97,7 +98,9 @@ export default async function StudioEditPage({
       ? (selectedPath.split("/")[1] ?? "")
       : "";
 
-  if (skillId && !files.some((f) => f.path.startsWith(`skills/${skillId}/`))) {
+  // Resolve the skill's REAL prefix (root OR capability-nested) the same way the
+  // BOM does, so a bundled skill the card surfaces is not falsely 404'd.
+  if (skillId && resolveSkillSubtreePrefix(files, skillId) === null) {
     notFound();
   }
 

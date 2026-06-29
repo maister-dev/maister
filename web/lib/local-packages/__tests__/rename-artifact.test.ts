@@ -87,6 +87,35 @@ describe("renameArtifact (ADR-116 P6, D8)", () => {
     expect(res.navigate).toBe("/studio/edit/pkg1/skills/new");
   });
 
+  it("renames a capability-nested skill at its real prefix", () => {
+    const draftFiles: AuthoredFlowPackageFile[] = [
+      { kind: "skill", path: "capability/core/skills/aif/SKILL.md", content: "s" },
+      {
+        kind: "asset",
+        path: "capability/core/skills/aif/references/a.md",
+        content: "r",
+      },
+      { kind: "rule", path: "rules/keep.md", content: "k" },
+    ];
+    const res = renameArtifact({
+      kind: "skills",
+      id: "aif",
+      path: "skills/aif",
+      newName: "aif2",
+      packageId: "pkg1",
+      draftFiles,
+    });
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(paths(res.files)).toEqual([
+      "capability/core/skills/aif2/SKILL.md",
+      "capability/core/skills/aif2/references/a.md",
+      "rules/keep.md",
+    ]);
+    expect(res.navigate).toBe("/studio/edit/pkg1/skills/aif2");
+  });
+
   it("flow rename moves the dir AND updates the manifest id+path", () => {
     const draftFiles: AuthoredFlowPackageFile[] = [
       {

@@ -281,6 +281,7 @@ function buildCompositionCards({
       return bom.skills.map((skill) => (
         <ElementCard
           key={skill.id}
+          clickableCard
           description={skill.description || null}
           href={skillScreenHref(packageId, skill.id)}
           labels={cardLabels}
@@ -289,6 +290,7 @@ function buildCompositionCards({
             subfolders: skill.subfolderCount,
           })}
           name={skill.id}
+          showFork={false}
         />
       ));
     default:
@@ -365,11 +367,13 @@ function InlineMasterDetail({
         {items.map((item) => (
           <ElementCard
             key={item.id}
+            clickableCard
             description={item.description}
             href={inlineSelectHref(packageId, kind, item.id)}
             labels={cardLabels}
             meta={item.meta}
             name={item.id}
+            showFork={false}
           />
         ))}
       </div>

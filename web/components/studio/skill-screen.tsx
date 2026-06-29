@@ -15,8 +15,8 @@ import { RenameControl } from "@/components/studio/package-composition";
 import {
   compositionTabHref,
   mergeSkillFiles,
+  resolveSkillSubtreePrefix,
   scopeSkillFiles,
-  skillSubtreePrefix,
 } from "@/lib/local-packages/composition";
 
 export type SkillScreenLabels = {
@@ -61,6 +61,7 @@ export function SkillScreen({
   // Identity rename of the skill folder → localized error message, or null.
   onRename: (newName: string) => string | null;
 }): ReactElement {
+  const subtreePrefix = resolveSkillSubtreePrefix(draftFiles, skillId);
   const scoped = scopeSkillFiles(draftFiles, skillId);
 
   const breadcrumb = (
@@ -127,7 +128,7 @@ export function SkillScreen({
         <PackageFilesEditor
           disabled={readOnly}
           files={scoped}
-          initialSelectedPath={`${skillSubtreePrefix(skillId)}SKILL.md`}
+          initialSelectedPath={`${subtreePrefix ?? `skills/${skillId}/`}SKILL.md`}
           kindLabels={fileKindLabels}
           labels={filesLabels}
           mcpCatalog={mcpCatalog}

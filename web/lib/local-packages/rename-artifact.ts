@@ -7,8 +7,8 @@ import { renamePackageFilePath } from "@/lib/flows/editor/package-files-draft";
 import {
   flowCanvasHref,
   inlineSelectHref,
+  resolveSkillSubtreePrefix,
   skillScreenHref,
-  skillSubtreePrefix,
 } from "@/lib/local-packages/composition";
 import {
   appendManifestFlow,
@@ -172,8 +172,12 @@ export function renameArtifact(opts: {
       );
     }
     case "skills": {
-      const oldPrefix = skillSubtreePrefix(id);
-      const newPrefix = skillSubtreePrefix(newName);
+      // Resolve the skill's REAL prefix (root `skills/<id>/` or capability-nested
+      // `capability/<cap>/skills/<id>/`), then rewrite only the trailing id segment.
+      const oldPrefix = resolveSkillSubtreePrefix(draftFiles, id);
+
+      if (!oldPrefix) return fail("PRECONDITION", `not found: skills/${id}/`);
+      const newPrefix = `${oldPrefix.slice(0, oldPrefix.length - `${id}/`.length)}${newName}/`;
       const rewritten = rewritePrefix(draftFiles, oldPrefix, newPrefix);
 
       if ("conflict" in rewritten) {

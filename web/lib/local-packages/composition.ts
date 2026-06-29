@@ -244,10 +244,33 @@ export function listCapabilities(
   return [...caps].sort();
 }
 
-// The working-dir prefix of a skill's nested subtree (skills have folders, so the
-// dedicated skill screen scopes the file navigator to this prefix — ADR-116 P4).
+// The canonical (root-layout) prefix of a skill's nested subtree.
 export function skillSubtreePrefix(skillId: string): string {
   return `skills/${skillId}/`;
+}
+
+// Resolve a skill's REAL on-disk subtree prefix from the draft file list. A
+// package authored from scratch puts skills at the root (`skills/<id>/`), but a
+// fork/import of an aif-style bundle nests them under a capability
+// (`capability/<cap>/skills/<id>/`). The `skills/<id>/` match is anchored to a
+// path-segment boundary so a shorter id never matches a longer sibling. `null` =
+// no file backs the skill. Mirrors `resolveBundledSkillPrefix` (server side) but
+// stays client-safe (no fs) for the editor's draft model.
+export function resolveSkillSubtreePrefix(
+  files: ReadonlyArray<{ path: string }>,
+  skillId: string,
+): string | null {
+  const segment = `skills/${skillId}/`;
+
+  for (const file of files) {
+    const idx = file.path.indexOf(segment);
+
+    if (idx === 0 || (idx > 0 && file.path[idx - 1] === "/")) {
+      return file.path.slice(0, idx + segment.length);
+    }
+  }
+
+  return null;
 }
 
 // The draft files under a skill's subtree (its dedicated screen edits only these).
@@ -255,7 +278,9 @@ export function scopeSkillFiles(
   files: ReadonlyArray<AuthoredFlowPackageFile>,
   skillId: string,
 ): AuthoredFlowPackageFile[] {
-  const prefix = skillSubtreePrefix(skillId);
+  const prefix = resolveSkillSubtreePrefix(files, skillId);
+
+  if (!prefix) return [];
 
   return files.filter((file) => file.path.startsWith(prefix));
 }
@@ -268,7 +293,9 @@ export function mergeSkillFiles(
   skillId: string,
   scopedNext: ReadonlyArray<AuthoredFlowPackageFile>,
 ): AuthoredFlowPackageFile[] {
-  const prefix = skillSubtreePrefix(skillId);
+  const prefix = resolveSkillSubtreePrefix(files, skillId);
+
+  if (!prefix) return [...files, ...scopedNext];
 
   return [
     ...files.filter((file) => !file.path.startsWith(prefix)),

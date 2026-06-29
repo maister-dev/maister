@@ -30,6 +30,14 @@ export interface ElementCardProps {
   // → the disabled "later" stub (e.g. mcps, which have no forkable file path).
   refName?: string;
   forkPath?: string | null;
+  // The fork affordance is meaningless inside an editable local package (it is
+  // already a working copy) — pass `false` there to drop it entirely (ADR-116).
+  showFork?: boolean;
+  // When true the WHOLE card is the open affordance (a single Link to `href`),
+  // with no inner View button or action row. Card text stays selectable, so a
+  // user can still copy a meta/description field. Used by the local composition
+  // view; the installed viewer keeps the explicit View button + fork control.
+  clickableCard?: boolean;
 }
 
 export function ElementCard({
@@ -40,25 +48,41 @@ export function ElementCard({
   labels,
   refName,
   forkPath,
+  showFork = true,
+  clickableCard = false,
 }: ElementCardProps): ReactElement {
+  const body = (
+    <div className="min-w-0">
+      <div className="truncate text-[14px] font-semibold text-ink">{name}</div>
+      {description ? (
+        <div className="mt-0.5 line-clamp-2 text-[12px] leading-[1.45] text-ink-2">
+          {description}
+        </div>
+      ) : null}
+      {meta ? (
+        <div className="mt-1 font-mono text-[11px] text-mute">{meta}</div>
+      ) : null}
+    </div>
+  );
+
+  if (clickableCard) {
+    return (
+      <Link
+        className="flex flex-col gap-2 rounded-[14px] border border-line bg-paper px-4 py-3.5 transition-colors hover:border-amber"
+        data-testid="element-card"
+        href={href}
+      >
+        {body}
+      </Link>
+    );
+  }
+
   return (
     <div
       className="flex flex-col gap-2 rounded-[14px] border border-line bg-paper px-4 py-3.5"
       data-testid="element-card"
     >
-      <div className="min-w-0">
-        <div className="truncate text-[14px] font-semibold text-ink">
-          {name}
-        </div>
-        {description ? (
-          <div className="mt-0.5 line-clamp-2 text-[12px] leading-[1.45] text-ink-2">
-            {description}
-          </div>
-        ) : null}
-        {meta ? (
-          <div className="mt-1 font-mono text-[11px] text-mute">{meta}</div>
-        ) : null}
-      </div>
+      {body}
       <div className="mt-auto flex items-center gap-2">
         <Link
           className="rounded-[9px] border border-line bg-ivory px-2.5 py-1 text-[12px] font-semibold text-ink transition-colors hover:border-amber"
@@ -67,23 +91,25 @@ export function ElementCard({
         >
           {labels.view}
         </Link>
-        {refName && forkPath ? (
-          <ElementForkButton
-            elementName={name}
-            elementPath={forkPath}
-            label={labels.fork}
-            refName={refName}
-          />
-        ) : (
-          <span
-            aria-disabled="true"
-            className="cursor-default rounded-[9px] border border-dashed border-line px-2.5 py-1 text-[12px] text-mute"
-            data-testid="element-card-fork"
-            title={labels.forkPhase2Hint}
-          >
-            {labels.fork}
-          </span>
-        )}
+        {showFork ? (
+          refName && forkPath ? (
+            <ElementForkButton
+              elementName={name}
+              elementPath={forkPath}
+              label={labels.fork}
+              refName={refName}
+            />
+          ) : (
+            <span
+              aria-disabled="true"
+              className="cursor-default rounded-[9px] border border-dashed border-line px-2.5 py-1 text-[12px] text-mute"
+              data-testid="element-card-fork"
+              title={labels.forkPhase2Hint}
+            >
+              {labels.fork}
+            </span>
+          )
+        ) : null}
       </div>
     </div>
   );
