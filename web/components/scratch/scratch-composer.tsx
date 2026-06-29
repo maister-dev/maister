@@ -10,7 +10,7 @@ import type {
 import type { QuickReply } from "@/lib/scratch-runs/transcript";
 import type { ReactElement } from "react";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
 
@@ -19,6 +19,12 @@ import { canCompose, canRecover, canSend } from "@/lib/scratch-runs/dialog";
 
 const inputBase =
   "min-w-0 max-w-full w-full rounded-lg border border-line bg-paper px-3.5 py-3 font-mono text-[13px] leading-[1.35] text-ink outline-none transition focus:border-amber focus:shadow-[0_0_0_3px_var(--amber-soft)] placeholder:text-mute";
+
+type ComposerDraft = {
+  content: string;
+  attachments: ComposerAttachment[];
+  files: File[];
+};
 
 export interface ScratchComposerProps {
   status: ScratchDialogStatus;
@@ -72,6 +78,11 @@ export function ScratchComposer({
   >([]);
   const [composerFiles, setComposerFiles] = useState<File[]>([]);
   const [interrupting, setInterrupting] = useState(false);
+  const draftRef = useRef<ComposerDraft>({
+    content: "",
+    attachments: [],
+    files: [],
+  });
   // Armed by a Stop click (or Cmd/Ctrl+Enter while busy) that had a non-empty
   // draft: the draft auto-sends once the cancelled turn returns to
   // WaitingForUser. See the effect below.
@@ -80,6 +91,41 @@ export function ScratchComposer({
     () => composerFiles.reduce((sum, file) => sum + file.size, 0),
     [composerFiles],
   );
+
+  draftRef.current = {
+    content,
+    attachments: composerAttachments,
+    files: composerFiles,
+  };
+
+  const clearDraft = useCallback((): ComposerDraft => {
+    const draft = draftRef.current;
+
+    draftRef.current = { content: "", attachments: [], files: [] };
+    setContent("");
+    setComposerAttachments([]);
+    setComposerFiles([]);
+
+    return draft;
+  }, []);
+
+  const restoreDraftIfUntouched = useCallback((draft: ComposerDraft): void => {
+    const current = draftRef.current;
+
+    if (
+      current.content.length > 0 ||
+      current.attachments.length > 0 ||
+      current.files.length > 0
+    ) {
+      return;
+    }
+
+    draftRef.current = draft;
+    setContent(draft.content);
+    setComposerAttachments(draft.attachments);
+    setComposerFiles(draft.files);
+  }, []);
+
   const agentBusy = status === "Running" || status === "Starting";
   const canUseComposer =
     canCompose(status) &&
@@ -128,26 +174,23 @@ export function ScratchComposer({
     }
     setAutoSendArmed(false);
     void (async () => {
+      const draft = clearDraft();
       const sent = await onSend({
         content: trimmed,
-        attachments: composerAttachments,
-        files: composerFiles,
+        attachments: draft.attachments,
+        files: draft.files,
       });
 
-      if (sent) {
-        setContent("");
-        setComposerAttachments([]);
-        setComposerFiles([]);
-      }
+      if (!sent) restoreDraftIfUntouched(draft);
     })();
   }, [
     autoSendArmed,
     status,
     pending,
     content,
-    composerAttachments,
-    composerFiles,
+    clearDraft,
     onSend,
+    restoreDraftIfUntouched,
   ]);
 
   function updateComposerAttachment(
@@ -172,24 +215,23 @@ export function ScratchComposer({
     if (!canUseComposer) return;
 
     if (canRecover(status)) {
-      if (await onRecover(trimmed)) setContent("");
+      const draft = clearDraft();
+
+      if (!(await onRecover(trimmed))) restoreDraftIfUntouched(draft);
 
       return;
     }
 
     // Attachment normalization (trim, label-coalesce, drop empties) lives once
     // in the conversation's sendMessage; the composer passes its raw draft.
+    const draft = clearDraft();
     const sent = await onSend({
       content: trimmed,
-      attachments: composerAttachments,
-      files: composerFiles,
+      attachments: draft.attachments,
+      files: draft.files,
     });
 
-    if (sent) {
-      setContent("");
-      setComposerAttachments([]);
-      setComposerFiles([]);
-    }
+    if (!sent) restoreDraftIfUntouched(draft);
   }
 
   const hasClusterContent =

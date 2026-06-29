@@ -10,6 +10,7 @@ import type {
   TemplateVariableUsageWarning,
 } from "@/lib/flows/editor/template-variable-catalog";
 
+import { ExclamationTriangleIcon } from "@heroicons/react/24/outline";
 import {
   Extension,
   Node,
@@ -24,7 +25,7 @@ import Text from "@tiptap/extension-text";
 import { PluginKey } from "@tiptap/pm/state";
 import { EditorContent, useEditor } from "@tiptap/react";
 import Suggestion from "@tiptap/suggestion";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 import {
   canonicalToSegments,
@@ -211,6 +212,8 @@ const EMPTY_VARIABLE_MENU: VariableMenuState = {
 
 const VARIABLE_MENU_WIDTH = 320;
 const VARIABLE_MENU_GUTTER = 8;
+const WARNING_MENU_WIDTH = 360;
+const WARNING_MENU_GUTTER = 8;
 
 export function shouldResetComposerDocument({
   currentCanonical,
@@ -622,6 +625,8 @@ export function CapabilityComposer({
     useState<VariableSuggestionState>(EMPTY_VARIABLE_SUGGESTION);
   const [variableMenu, setVariableMenu] =
     useState<VariableMenuState>(EMPTY_VARIABLE_MENU);
+  const [warningMenu, setWarningMenu] =
+    useState<VariableMenuState>(EMPTY_VARIABLE_MENU);
   const suggestionRef = useRef(suggestion);
   const variableSuggestionRef = useRef(variableSuggestion);
   const submitShortcutRef = useRef(onSubmitShortcut);
@@ -630,6 +635,7 @@ export function CapabilityComposer({
   const valueRef = useRef(value);
   const onChangeRef = useRef(onChange);
   const agentRef = useRef(agent);
+  const warningMenuId = useId();
 
   suggestionRef.current = suggestion;
   variableSuggestionRef.current = variableSuggestion;
@@ -802,6 +808,29 @@ export function CapabilityComposer({
       left,
     });
   };
+  const toggleWarningMenu = (button: HTMLButtonElement): void => {
+    editor?.commands.focus();
+
+    if (warningMenu.open) {
+      setWarningMenu(EMPTY_VARIABLE_MENU);
+
+      return;
+    }
+
+    const rect = button.getBoundingClientRect();
+    const availableLeft =
+      window.innerWidth - WARNING_MENU_WIDTH - WARNING_MENU_GUTTER;
+    const left = Math.max(
+      WARNING_MENU_GUTTER,
+      Math.min(rect.right - WARNING_MENU_WIDTH, availableLeft),
+    );
+
+    setWarningMenu({
+      open: true,
+      top: rect.bottom + 6,
+      left,
+    });
+  };
 
   return (
     <div
@@ -811,6 +840,7 @@ export function CapabilityComposer({
       onBlur={() => {
         commitPromotedValue();
         setVariableMenu(EMPTY_VARIABLE_MENU);
+        setWarningMenu(EMPTY_VARIABLE_MENU);
       }}
     >
       <EditorContent editor={editor} />
@@ -880,21 +910,59 @@ export function CapabilityComposer({
         </div>
       ) : null}
       {variableWarnings.length > 0 ? (
-        <ul
-          aria-label={labels.variableWarning ?? "Variable warnings"}
-          className="capability-composer__variable-warnings"
-          data-testid="capability-variable-warnings"
-        >
-          {variableWarnings.map((warning) => (
-            <li
-              key={`${warning.code}:${warning.path}`}
-              data-severity={warning.severity}
-              data-variable-path={warning.path}
-            >
-              {warning.message}
-            </li>
-          ))}
-        </ul>
+        <div className="capability-composer__warnings">
+          <button
+            aria-controls={warningMenuId}
+            aria-expanded={warningMenu.open}
+            aria-label={`${labels.variableWarning ?? "Variable warnings"}: ${variableWarnings.length}`}
+            className="capability-composer__warning-button"
+            data-testid="capability-variable-warning-button"
+            title={labels.variableWarning ?? "Variable warnings"}
+            type="button"
+            onClick={(event) => {
+              if (event.detail !== 0) return;
+              toggleWarningMenu(event.currentTarget);
+            }}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              toggleWarningMenu(event.currentTarget);
+            }}
+          >
+            <ExclamationTriangleIcon
+              aria-hidden="true"
+              className="capability-composer__warning-icon"
+            />
+            <span className="capability-composer__warning-count">
+              {variableWarnings.length}
+            </span>
+          </button>
+          <ul
+            aria-label={labels.variableWarning ?? "Variable warnings"}
+            className="capability-composer__variable-warnings"
+            data-testid="capability-variable-warnings"
+            hidden={!warningMenu.open}
+            id={warningMenuId}
+            style={{
+              top: warningMenu.top,
+              left: warningMenu.left,
+            }}
+          >
+            {variableWarnings.map((warning) => (
+              <li
+                key={`${warning.code}:${warning.path}`}
+                data-severity={warning.severity}
+                data-variable-path={warning.path}
+              >
+                <span className="capability-composer__warning-path">
+                  {warning.path}
+                </span>
+                <span className="capability-composer__warning-message">
+                  {warning.message}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
       ) : null}
       {suggestion.open ? (
         <ul

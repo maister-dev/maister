@@ -631,10 +631,12 @@ input:-webkit-autofill:active {
 .capability-composer > div:first-child {
   display: flex;
   flex: 1;
+  min-width: 0;
   min-height: 0;
 }
 .capability-composer__editor {
   flex: 1;
+  min-width: 0;
   min-height: inherit;
   outline: none;
   white-space: pre-wrap;
@@ -710,6 +712,73 @@ input:-webkit-autofill:active {
 }
 .capability-composer__variable-menu[hidden] {
   display: none;
+}
+.capability-composer__warnings {
+  position: relative;
+  flex: 0 0 auto;
+  align-self: flex-start;
+  margin-left: 0.35rem;
+}
+.capability-composer__warning-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  min-width: 2rem;
+  min-height: 2rem;
+  border-radius: 0.45rem;
+  color: var(--cv-rose, crimson);
+  font-family: var(--font-mono, monospace);
+  font-weight: 800;
+}
+.capability-composer__warning-button:hover,
+.capability-composer__warning-button[aria-expanded="true"] {
+  background: color-mix(in oklab, var(--cv-rose, crimson) 10%, transparent);
+}
+.capability-composer__warning-count {
+  font-size: 0.72rem;
+  line-height: 1;
+}
+.capability-composer__variable-warnings {
+  position: fixed;
+  z-index: 60;
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0.45rem;
+  list-style: none;
+  width: min(22.5rem, calc(100vw - 1rem));
+  max-height: min(18rem, calc(100vh - 1rem));
+  overflow-y: auto;
+  border: 1px solid color-mix(in oklab, var(--cv-rose, crimson) 40%, var(--line));
+  border-radius: 0.6rem;
+  background: var(--ivory);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+.capability-composer__variable-warnings[hidden] {
+  display: none;
+}
+.capability-composer__variable-warnings li {
+  display: grid;
+  gap: 0.15rem;
+  padding: 0.35rem 0.45rem;
+  border-radius: 0.45rem;
+  background: var(--paper);
+}
+.capability-composer__variable-warnings li[data-severity="error"] {
+  border-left: 2px solid var(--cv-rose, crimson);
+}
+.capability-composer__warning-path {
+  color: var(--ink);
+  font-family: var(--font-mono, monospace);
+  font-size: 0.78rem;
+  font-weight: 700;
+  word-break: break-word;
+}
+.capability-composer__warning-message {
+  color: var(--mute);
+  font-size: 0.8rem;
+  line-height: 1.3;
 }
 .capability-composer__popup {
   margin: 0;

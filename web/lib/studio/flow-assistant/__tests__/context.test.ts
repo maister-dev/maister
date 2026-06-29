@@ -52,7 +52,10 @@ vi.mock("../actions", () => ({
 }));
 
 import { buildFlowDslGrammar } from "@/lib/flows/flow-dsl-grammar";
-import { buildFlowAssistantContext } from "@/lib/studio/flow-assistant/context";
+import {
+  buildFlowAssistantContext,
+  buildFlowAssistantFollowUpContext,
+} from "@/lib/studio/flow-assistant/context";
 
 const localPackage = {
   id: "lp-1",
@@ -74,6 +77,55 @@ describe("buildFlowAssistantContext", () => {
     expect(ctx.prompt).toContain(buildFlowDslGrammar());
     expect(ctx.prompt).toContain("type: consensus");
     expect(ctx.prompt).toContain("authoritative Flow DSL grammar section");
+  });
+
+  it("injects fresh package inventory for follow-up turns", async () => {
+    readWorkingDirArtifactFilesMock.mockResolvedValue([
+      {
+        path: "flows/review/flow.yaml",
+        content: `schemaVersion: 1
+name: Review flow
+nodes:
+  - id: intake
+    type: form
+    settings:
+      form_schema: ./schemas/intake.json
+    transitions:
+      success: done
+`,
+      },
+      {
+        path: "schemas/intake.json",
+        content: JSON.stringify({
+          schemaVersion: 1,
+          fields: [{ name: "title", type: "string", required: true }],
+        }),
+      },
+    ]);
+
+    const ctx = await buildFlowAssistantFollowUpContext({
+      localPackage,
+      intent: "edit",
+      focus: {
+        path: "flows/review/flow.yaml",
+        selectedNodeId: "intake",
+      },
+    });
+
+    expect(ctx.prompt).toContain("# MAIster Flow Studio current state");
+    expect(ctx.prompt).toContain(
+      "Prior file hashes in the conversation may be stale",
+    );
+    expect(ctx.prompt).toContain("## File inventory");
+    expect(ctx.prompt).toContain(
+      "flows/review/flow.yaml | asset | sha256:test",
+    );
+    expect(ctx.prompt).toContain("schemas/intake.json | schema | sha256:test");
+    expect(ctx.prompt).toContain("## Active flow");
+    expect(ctx.prompt).toContain("Path: flows/review/flow.yaml");
+    expect(ctx.prompt).toContain(
+      "including flows, schemas, skills, agents, rules, and MCP files",
+    );
   });
 
   it("injects the selected node template variable catalog", async () => {

@@ -35,6 +35,29 @@ export type FlowAssistantContext = {
   rejectedFocus: string[];
 };
 
+type FlowAssistantContextSections = {
+  files: Awaited<ReturnType<typeof readWorkingDirArtifactFiles>>;
+  byPath: ReadonlyMap<string, string>;
+  inventory: Array<{
+    path: string;
+    hash: string;
+    kind: string;
+    bytes: number;
+  }>;
+  focus: {
+    focusPath: string | null;
+    selectedNodeId: string | null;
+    rejectedFocus: string[];
+  };
+  flowPath: string | null;
+  graph: ReturnType<typeof buildGraphSection> | null;
+  validationIssues: ReturnType<typeof validatePackageArtifacts>;
+  selectedNodeId: string | null;
+  variableCatalog: TemplateVariableCatalogResult | null;
+  rejectedFocus: string[];
+  grammar: string;
+};
+
 type CapabilityCounts = {
   flows: number;
   agents: number;
@@ -55,6 +78,123 @@ export async function buildFlowAssistantContext(args: {
   focus?: FlowAssistantFocus;
   runnerLabel?: string | null;
 }): Promise<FlowAssistantContext> {
+  const sections = await loadFlowAssistantContextSections(args);
+  const manifest = sections.byPath.get("maister-package.yaml") ?? null;
+  const capabilityCounts = countCapabilities(
+    sections.files.map((file) => file.path),
+  );
+
+  return {
+    prompt: [
+      "# MAIster Flow Studio context",
+      "",
+      `Package: ${args.localPackage.name}`,
+      `Package id: ${args.localPackage.id}`,
+      `Package slug: ${args.localPackage.slug}`,
+      `Intent: ${args.intent}`,
+      `Runner: ${args.runnerLabel ?? "platform default"}`,
+      "Project context: none for this project-less local-package assistant run.",
+      "",
+      editingContractSection(),
+      "",
+      actionJsonShapeSection(),
+      "",
+      sections.grammar,
+      "",
+      "## File inventory",
+      formatInventory(sections.inventory),
+      "",
+      "## Capability inventory",
+      formatCapabilityCounts(capabilityCounts),
+      "",
+      "## Capability sources",
+      "This package's authorable capabilities live as files under the package",
+      "root (see the File inventory above, tagged by `kind`):",
+      "- skills: `skills/<name>/SKILL.md`",
+      "- subagents: `agents/<name>.md` or `maister-agents/<name>.md`",
+      "- MCP servers: `mcps/...`",
+      "- rules: `rules/...`",
+      "- schemas: `schemas/...`",
+      "You MAY read any of these files read-only, on demand, to learn which",
+      "skills, subagents, MCPs, or schemas exist before referencing them in a",
+      "node's prompt or `settings`. Scope is package-local only — there is no",
+      "platform or project catalog in this project-less assistant session.",
+      "",
+      "## Package manifest",
+      manifest
+        ? truncate(manifest, MANIFEST_MAX)
+        : "No maister-package.yaml found.",
+      "",
+      activeFlowSection(sections),
+      "",
+      "## Graph summary",
+      sections.graph ? formatGraph(sections.graph) : "Graph unavailable.",
+      "",
+      "## Selected node template variables",
+      formatTemplateVariableCatalog({
+        selectedNodeId: sections.selectedNodeId,
+        catalog: sections.variableCatalog,
+      }),
+      "",
+      validationIssuesSection(sections.validationIssues),
+      "",
+      editorFocusSection(sections),
+    ].join("\n"),
+    focusPath: sections.focus.focusPath,
+    selectedNodeId: sections.selectedNodeId,
+    rejectedFocus: sections.rejectedFocus,
+  };
+}
+
+export async function buildFlowAssistantFollowUpContext(args: {
+  localPackage: LocalPackage;
+  intent: FlowAssistantIntent;
+  focus?: FlowAssistantFocus;
+}): Promise<FlowAssistantContext> {
+  const sections = await loadFlowAssistantContextSections(args);
+
+  return {
+    prompt: [
+      "# MAIster Flow Studio current state",
+      "",
+      `Intent: ${args.intent}`,
+      "This is the fresh package state for the current turn. Prior file hashes in the conversation may be stale; use the File inventory below for every `baseHash`.",
+      "",
+      editingContractSection(),
+      "",
+      actionJsonShapeSection(),
+      "",
+      sections.grammar,
+      "",
+      "## File inventory",
+      formatInventory(sections.inventory),
+      "",
+      activeFlowSection(sections),
+      "",
+      "## Graph summary",
+      sections.graph ? formatGraph(sections.graph) : "Graph unavailable.",
+      "",
+      "## Selected node template variables",
+      formatTemplateVariableCatalog({
+        selectedNodeId: sections.selectedNodeId,
+        catalog: sections.variableCatalog,
+      }),
+      "",
+      validationIssuesSection(sections.validationIssues),
+      "",
+      editorFocusSection(sections),
+    ].join("\n"),
+    focusPath: sections.focus.focusPath,
+    selectedNodeId: sections.selectedNodeId,
+    rejectedFocus: sections.rejectedFocus,
+  };
+}
+
+async function loadFlowAssistantContextSections(args: {
+  localPackage: LocalPackage;
+  intent: FlowAssistantIntent;
+  focus?: FlowAssistantFocus;
+}): Promise<FlowAssistantContextSections> {
   const files = await readWorkingDirArtifactFiles(args.localPackage);
   const byPath = new Map(files.map((file) => [file.path, file.content]));
   const inventory = files.map((file) => ({
@@ -74,12 +214,10 @@ export async function buildFlowAssistantContext(args: {
   const graph = flowPath
     ? buildGraphSection(flowPath, byPath.get(flowPath))
     : null;
-  const manifest = byPath.get("maister-package.yaml") ?? null;
   const validationIssues = validatePackageArtifacts({
     files,
     changedPaths: files.map((file) => file.path),
   });
-  const capabilityCounts = countCapabilities(files.map((file) => file.path));
   const selectedNodeId =
     focus.selectedNodeId && graph?.nodeIds.has(focus.selectedNodeId)
       ? focus.selectedNodeId
@@ -105,6 +243,7 @@ export async function buildFlowAssistantContext(args: {
   log.debug(
     {
       localPackageId: args.localPackage.id,
+      intent: args.intent,
       fileCount: files.length,
       grammarChars: grammar.length,
       flowPath,
@@ -121,102 +260,17 @@ export async function buildFlowAssistantContext(args: {
   );
 
   return {
-    prompt: [
-      "# MAIster Flow Studio context",
-      "",
-      `Package: ${args.localPackage.name}`,
-      `Package id: ${args.localPackage.id}`,
-      `Package slug: ${args.localPackage.slug}`,
-      `Intent: ${args.intent}`,
-      `Runner: ${args.runnerLabel ?? "platform default"}`,
-      "Project context: none for this project-less local-package assistant run.",
-      "",
-      "## Editing contract",
-      "- You are in a read-only ACP session. Do not edit files directly.",
-      "- For Q&A, answer from the context below and the authoritative Flow DSL grammar section below.",
-      "- For edits, return exactly one fenced `maister-flow-assistant-action` block after any short explanation.",
-      "- Use only `upsert_file` and `delete_file` full-file operations.",
-      "- Copy `baseHash` from the file inventory. Use `baseHash: null` for a new file.",
-      "- Never use absolute paths. Paths are relative to the package root.",
-      "",
-      "## Action JSON shape",
-      "```json",
-      JSON.stringify(
-        {
-          schemaVersion: "maister_flow_assistant_action.v1",
-          actionId: "short-optional-id",
-          summary: "What changes",
-          operations: [
-            {
-              op: "upsert_file",
-              path: "flows/example/flow.yaml",
-              baseHash: "sha256:...",
-              content: "complete new file content",
-            },
-          ],
-        },
-        null,
-        2,
-      ),
-      "```",
-      "",
-      grammar,
-      "",
-      "## File inventory",
-      formatInventory(inventory),
-      "",
-      "## Capability inventory",
-      formatCapabilityCounts(capabilityCounts),
-      "",
-      "## Capability sources",
-      "This package's authorable capabilities live as files under the package",
-      "root (see the File inventory above, tagged by `kind`):",
-      "- skills: `skills/<name>/SKILL.md`",
-      "- subagents: `agents/<name>.md` or `maister-agents/<name>.md`",
-      "- MCP servers: `mcps/...`",
-      "- rules: `rules/...`",
-      "- schemas: `schemas/...`",
-      "You MAY read any of these files read-only, on demand, to learn which",
-      "skills, subagents, MCPs, or schemas exist before referencing them in a",
-      "node's prompt or `settings`. Scope is package-local only — there is no",
-      "platform or project catalog in this project-less assistant session.",
-      "",
-      "## Package manifest",
-      manifest
-        ? truncate(manifest, MANIFEST_MAX)
-        : "No maister-package.yaml found.",
-      "",
-      "## Active flow",
-      flowPath ? `Path: ${flowPath}` : "No flow.yaml file found.",
-      flowPath ? truncate(byPath.get(flowPath) ?? "", ACTIVE_FLOW_MAX) : "",
-      "",
-      "## Graph summary",
-      graph ? formatGraph(graph) : "Graph unavailable.",
-      "",
-      "## Selected node template variables",
-      formatTemplateVariableCatalog({
-        selectedNodeId,
-        catalog: variableCatalog,
-      }),
-      "",
-      "## Validation issues",
-      validationIssues.length > 0
-        ? validationIssues
-            .slice(0, 30)
-            .map((issue) => `- ${issue.path}: ${issue.message}`)
-            .join("\n")
-        : "No current package validation issues.",
-      "",
-      "## Editor focus",
-      `Focus path: ${focus.focusPath ?? "none"}`,
-      `Selected node: ${selectedNodeId ?? "none"}`,
-      rejectedFocus.length > 0
-        ? `Rejected focus hints:\n${rejectedFocus.map((item) => `- ${item}`).join("\n")}`
-        : "Rejected focus hints: none",
-    ].join("\n"),
-    focusPath: focus.focusPath,
+    files,
+    byPath,
+    inventory,
+    focus,
+    flowPath,
+    graph,
+    validationIssues,
     selectedNodeId,
+    variableCatalog,
     rejectedFocus,
+    grammar,
   };
 }
 
@@ -242,6 +296,90 @@ function validateFocus(args: {
     selectedNodeId: args.requested?.selectedNodeId?.trim() || null,
     rejectedFocus,
   };
+}
+
+function editingContractSection(): string {
+  return [
+    "## Editing contract",
+    "- You are in a read-only ACP session. Do not edit files directly.",
+    "- For Q&A, answer from the context below and the authoritative Flow DSL grammar section below.",
+    "- For edits, return exactly one fenced `maister-flow-assistant-action` block after any short explanation.",
+    "- Use only `upsert_file` and `delete_file` full-file operations.",
+    [
+      "- Copy `baseHash` from the fresh file inventory for every edited file,",
+      "including flows, schemas, skills, agents, rules, and MCP files.",
+      "Use `baseHash: null` only for a new file.",
+    ].join(" "),
+    "- Never use absolute paths. Paths are relative to the package root.",
+  ].join("\n");
+}
+
+function actionJsonShapeSection(): string {
+  return [
+    "## Action JSON shape",
+    "```json",
+    JSON.stringify(
+      {
+        schemaVersion: "maister_flow_assistant_action.v1",
+        actionId: "short-optional-id",
+        summary: "What changes",
+        operations: [
+          {
+            op: "upsert_file",
+            path: "flows/example/flow.yaml",
+            baseHash: "sha256:...",
+            content: "complete new file content",
+          },
+        ],
+      },
+      null,
+      2,
+    ),
+    "```",
+  ].join("\n");
+}
+
+function activeFlowSection(sections: FlowAssistantContextSections): string {
+  return [
+    "## Active flow",
+    sections.flowPath
+      ? `Path: ${sections.flowPath}`
+      : "No flow.yaml file found.",
+    sections.flowPath
+      ? truncate(sections.byPath.get(sections.flowPath) ?? "", ACTIVE_FLOW_MAX)
+      : "",
+  ].join("\n");
+}
+
+function validationIssuesSection(
+  validationIssues: ReturnType<typeof validatePackageArtifacts>,
+): string {
+  return [
+    "## Validation issues",
+    validationIssues.length > 0
+      ? validationIssues
+          .slice(0, 30)
+          .map((issue) => `- ${issue.path}: ${issue.message}`)
+          .join("\n")
+      : "No current package validation issues.",
+  ].join("\n");
+}
+
+function editorFocusSection(sections: FlowAssistantContextSections): string {
+  const rejectedFocus =
+    sections.rejectedFocus.length > 0
+      ? [
+          "Rejected focus hints:",
+          ...sections.rejectedFocus.map((item) => `- ${item}`),
+        ].join("\n")
+      : "Rejected focus hints: none";
+
+  return [
+    "## Editor focus",
+    `Focus path: ${sections.focus.focusPath ?? "none"}`,
+    `Selected node: ${sections.selectedNodeId ?? "none"}`,
+    rejectedFocus,
+  ].join("\n");
 }
 
 function selectFlowPath(args: {

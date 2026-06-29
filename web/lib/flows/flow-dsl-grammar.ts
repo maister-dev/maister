@@ -96,6 +96,23 @@ Fields common to every node: \`id\`, \`type\`, \`transitions\`, \`input\`, \`out
 - \`enforcement\` per-class mode: strict | instruct | off
 - \`session_policy\`: resume | new_session
 
+## Consensus workspace shape
+
+Consensus \`workspace\` fields are objects, never bare strings. Both the
+node-level \`workspace\` and any participant-level \`workspace\` use this exact
+shape:
+
+\`\`\`yaml
+workspace: { mode: repo_read }
+participants:
+  - id: architect
+    runner: codex
+    workspace: { mode: repo_read }
+\`\`\`
+
+Do not write a scalar workspace value such as \`workspace: repo_read\`; package
+validation rejects it because the runtime expects \`{ mode: repo_read }\`.
+
 ## Sessions & the unified runner config (engine_min >= 2.0.0)
 
 A flow groups runner-bearing nodes into **sessions** — one ACP process + one

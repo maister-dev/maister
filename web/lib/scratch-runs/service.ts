@@ -58,8 +58,10 @@ import {
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
-import { buildFlowDslGrammar } from "@/lib/flows/flow-dsl-grammar";
-import { buildFlowAssistantContext } from "@/lib/studio/flow-assistant/context";
+import {
+  buildFlowAssistantContext,
+  buildFlowAssistantFollowUpContext,
+} from "@/lib/studio/flow-assistant/context";
 import { normalizeFlowAssistantIntent } from "@/lib/studio/flow-assistant/protocol";
 import { postProcessFlowAssistantTurn } from "@/lib/studio/flow-assistant/turn";
 import { runtimeRoot, worktreesRoot } from "@/lib/instance-config";
@@ -1889,30 +1891,18 @@ function groundedFlowAssistantPrompt(args: {
   return `${args.context}\n\n# User request\n${args.prompt}`;
 }
 
-// Follow-up turns reuse the SAME live ACP session, which already holds the
-// turn-1 editing contract + flow dump + file inventory in its history. Re-sending
-// that whole ~28k-token block on every message made the model re-anchor on
-// "describe/edit this flow" and re-emit its first answer, ignoring the actual
-// short message. So a follow-up sends a SLIM grounding: only the drift-guarded
-// Flow DSL grammar (small, and required on every turn so `consensus`/etc. author
-// correctly — flow-studio.md expectation) plus a one-line focus hint, then the
-// user's text. The heavy per-package dump stays launch-only. Duplicate replay of
-// prior turns is prevented separately by the stream resume offset (events.ts).
+// Follow-up turns reuse the SAME live ACP session, but file hashes from earlier
+// turns become stale after an action is applied. Send a compact fresh package
+// state on every follow-up: current inventory hashes, active flow, validation
+// issues, grammar, focus, and then the user's text. Duplicate replay of prior
+// turns is prevented separately by the stream resume offset (events.ts).
 function followUpFlowAssistantPrompt(args: {
+  context: string;
   prompt: string;
-  focus?: FlowAssistantFocus;
 }): string {
-  const focusBits: string[] = [];
-  const focusPath = args.focus?.path?.trim();
-  const selectedNodeId = args.focus?.selectedNodeId?.trim();
+  if (!args.context.trim()) return args.prompt;
 
-  if (focusPath) focusBits.push(`file ${focusPath}`);
-  if (selectedNodeId) focusBits.push(`node ${selectedNodeId}`);
-
-  const focusLine =
-    focusBits.length > 0 ? `(editor focus: ${focusBits.join(", ")})\n\n` : "";
-
-  return `${buildFlowDslGrammar()}\n\n${focusLine}# User request\n${args.prompt}`;
+  return `${args.context}\n\n# User request\n${args.prompt}`;
 }
 
 // ADR-097: the turn path needs the run's working dir (for attachment URI
@@ -2261,14 +2251,15 @@ export async function sendLocalPackageAssistantMessage(args: {
   });
 
   try {
-    // Follow-up turn: the live ACP session already holds the turn-1 grounding.
-    // Re-sending the full ~28k context here made the model repeat its first
-    // answer; `followUpFlowAssistantPrompt` sends a slim grounding instead (the
-    // drift-guarded Flow DSL grammar + a focus hint + the user's message).
+    const flowContext = await buildFlowAssistantFollowUpContext({
+      localPackage: pkg,
+      intent,
+      focus: args.body.focus,
+    });
     const messagePrompt = normalizeScratchPrompt(
       followUpFlowAssistantPrompt({
+        context: flowContext.prompt,
         prompt: args.body.content,
-        focus: args.body.focus,
       }),
       appended.capabilityAgent,
       { runId: args.runId },

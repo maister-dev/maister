@@ -46,6 +46,7 @@ import { classifyRunReconcile, runReconcileSweep } from "@/lib/reconcile";
 import { assertRunScratchMetadataInvariant } from "@/lib/runs/run-kind-invariants";
 import { parseScratchMessageContent } from "@/lib/scratch-runs/transcript";
 import { FLOW_ASSISTANT_ACTION_SCHEMA_VERSION } from "@/lib/studio/flow-assistant/protocol";
+import { packageFileHash } from "@/lib/studio/flow-assistant/actions";
 
 // markScratchCrashed lives in scratch-runs/service, which transitively imports
 // @/lib/authz → next-auth. Mock authz + the db client (same pattern as
@@ -666,6 +667,73 @@ describe("launchLocalPackageAssistant + a turn (ADR-097 T5.7)", () => {
 
     expect(diff.files.some((f) => f.path.endsWith("rules/more.md"))).toBe(true);
   });
+
+  it("refreshes file inventory hashes before a follow-up edit", async () => {
+    const pkg = await createLocalPackage({
+      name: `assistant-hash-refresh-${randomUUID().slice(0, 8)}`,
+      createdBy: userId,
+      db: db as never,
+    });
+    const sessionId = await lockLocalPackage(pkg.id, "assistant-hash-refresh");
+    const firstFlow = validFlowYaml("first");
+
+    streamAssistantText(
+      assistantActionMarkdown({
+        actionId: "act_hash_first",
+        summary: "Add review flow",
+        path: "flows/review/flow.yaml",
+        content: firstFlow,
+      }),
+    );
+
+    const launched = await launchLocalPackageAssistant({
+      body: { localPackageId: pkg.id, sessionId, prompt: "add review flow" },
+      userId,
+    });
+
+    expect(launched.actionResult?.status).toBe("applied");
+
+    const firstHash = packageFileHash(firstFlow);
+    const updatedFlow = validFlowYaml("second");
+
+    streamAssistantText(
+      assistantActionMarkdown({
+        actionId: "act_hash_second",
+        summary: "Update review flow",
+        path: "flows/review/flow.yaml",
+        baseHash: firstHash,
+        content: updatedFlow,
+      }),
+    );
+
+    const res = await sendLocalPackageAssistantMessage({
+      runId: launched.runId,
+      body: {
+        localPackageId: pkg.id,
+        sessionId,
+        content: "rename the review flow",
+        focus: { path: "flows/review/flow.yaml" },
+      },
+    });
+
+    const followUpPrompt = (
+      supervisorMock.sendPrompt.mock.calls.at(-1)?.[1] as
+        | { prompt?: string }
+        | undefined
+    )?.prompt;
+
+    expect(res.actionResult?.status).toBe("applied");
+    expect(followUpPrompt).toContain(
+      "Prior file hashes in the conversation may be stale",
+    );
+    expect(followUpPrompt).toContain(
+      `flows/review/flow.yaml | asset | ${firstHash}`,
+    );
+
+    await expect(
+      readFile(join(pkg.workingDir, "flows", "review", "flow.yaml"), "utf8"),
+    ).resolves.toBe(updatedFlow);
+  });
 });
 
 function streamAssistantText(text: string): void {
@@ -702,6 +770,7 @@ function assistantActionMarkdown(args: {
   actionId: string;
   summary: string;
   path: string;
+  baseHash?: string | null;
   content: string;
 }): string {
   return [
@@ -716,7 +785,7 @@ function assistantActionMarkdown(args: {
         {
           op: "upsert_file",
           path: args.path,
-          baseHash: null,
+          baseHash: args.baseHash ?? null,
           content: args.content,
         },
       ],

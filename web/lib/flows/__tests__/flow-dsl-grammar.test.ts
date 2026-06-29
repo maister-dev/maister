@@ -207,6 +207,16 @@ describe("buildFlowDslGrammar drift guard", () => {
     expect(grammar).toContain("current: true");
   });
 
+  it("documents consensus workspace as an object, not a scalar", () => {
+    // consensusWorkspaceSchema is strict `{ mode: "repo_read" }`; without an
+    // explicit example the Flow assistant tends to emit `workspace: repo_read`,
+    // which validates as a string and gets rejected before apply.
+    expect(grammar).toContain("Consensus `workspace` fields are objects");
+    expect(grammar).toContain("workspace: { mode: repo_read }");
+    expect(grammar).toContain("workspace: repo_read");
+    expect(grammar).toContain("runtime expects `{ mode: repo_read }`");
+  });
+
   it("documents assistant prompt-authoring conventions that live outside Zod", () => {
     // These conventions are render-time/storage contracts rather than schema
     // fields, so the Zod introspection guard above cannot detect drift.
