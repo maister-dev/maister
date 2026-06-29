@@ -265,7 +265,7 @@ describe("schema round-trip", () => {
 
     expect(await countWhere("runs", "id", runId)).toBe(1);
     expect(await countWhere("scratch_runs", "run_id", runId)).toBe(1);
-    expect(await countWhere("scratch_messages", "id", messageId)).toBe(1);
+    expect(await countWhere("run_messages", "id", messageId)).toBe(1);
     expect(await countWhere("scratch_attachments", "id", attachmentId)).toBe(1);
     expect(
       await countWhere("scratch_attachments", "id", uploadedAttachmentId),
@@ -277,7 +277,7 @@ describe("schema round-trip", () => {
     await db.delete(schema.runs).where(sql`${schema.runs.id} = ${runId}`);
 
     expect(await countWhere("scratch_runs", "run_id", runId)).toBe(0);
-    expect(await countWhere("scratch_messages", "id", messageId)).toBe(0);
+    expect(await countWhere("run_messages", "id", messageId)).toBe(0);
     expect(await countWhere("scratch_attachments", "id", attachmentId)).toBe(0);
     expect(
       await countWhere("scratch_attachments", "id", uploadedAttachmentId),

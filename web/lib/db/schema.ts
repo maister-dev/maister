@@ -1819,13 +1819,24 @@ export const scratchRuns = pgTable(
   }),
 );
 
-export const scratchMessages = pgTable(
-  "scratch_messages",
+// Run-detail transparency (T-B1b, migration 0083): generalized from
+// `scratch_messages`. Run-kind-agnostic transcript store shared by scratch AND
+// flow `ai_coding` node sessions. `run_id` references the general `runs` table
+// (scratch_runs.run_id == runs.id, so the rename preserved every existing row);
+// `node_attempt_id` is NULL for scratch / single-session runs and set per node
+// attempt for flow runs. The unique `(run_id, node_attempt_id, sequence)` uses
+// NULLS NOT DISTINCT so scratch (NULL attempt) keeps its `(run_id, sequence)`
+// invariant while flow rows are unique per node attempt.
+export const runMessages = pgTable(
+  "run_messages",
   {
     id: text("id").primaryKey(),
     runId: text("run_id")
       .notNull()
-      .references(() => scratchRuns.runId, { onDelete: "cascade" }),
+      .references(() => runs.id, { onDelete: "cascade" }),
+    nodeAttemptId: text("node_attempt_id").references(() => nodeAttempts.id, {
+      onDelete: "cascade",
+    }),
     sequence: integer("sequence").notNull(),
     role: text("role", {
       enum: ["user", "assistant", "tool", "system"],
@@ -1837,12 +1848,16 @@ export const scratchMessages = pgTable(
       .defaultNow(),
   },
   (t) => ({
-    uniqRunSequence: unique("scratch_messages_run_sequence_uq").on(
-      t.runId,
-      t.sequence,
-    ),
+    uniqRunNodeAttemptSequence: unique("run_messages_run_node_attempt_sequence_uq")
+      .on(t.runId, t.nodeAttemptId, t.sequence)
+      .nullsNotDistinct(),
   }),
 );
+
+// Back-compat alias (T-B1b). Scratch code reads/writes the same table under the
+// historical name (node_attempt_id stays NULL for scratch). The canonical name
+// is `runMessages`; the flow transcript projector uses it directly.
+export const scratchMessages = runMessages;
 
 export const scratchAttachments = pgTable(
   "scratch_attachments",
@@ -3043,7 +3058,10 @@ export type Run = typeof runs.$inferSelect;
 export type RunStatus = Run["status"];
 export type Workspace = typeof workspaces.$inferSelect;
 export type ScratchRun = typeof scratchRuns.$inferSelect;
-export type ScratchMessage = typeof scratchMessages.$inferSelect;
+export type RunMessage = typeof runMessages.$inferSelect;
+export type RunMessageInsert = typeof runMessages.$inferInsert;
+// Back-compat alias (T-B1b) — historical name kept for scratch importers.
+export type ScratchMessage = RunMessage;
 export type ScratchAttachment = typeof scratchAttachments.$inferSelect;
 export type ScratchCapabilityProfile =
   typeof scratchCapabilityProfiles.$inferSelect;

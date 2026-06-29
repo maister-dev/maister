@@ -84,6 +84,51 @@ describe("openEventsLog", () => {
     expect(JSON.parse(raw.trim())).not.toHaveProperty("sessionName");
   });
 
+  it("stamps nodeAttemptId on every event line when configured (T-B0)", async () => {
+    const path = join(dir, "step-node-attempt.events.jsonl");
+    const w = await openEventsLog(path, {
+      logger: silentLogger,
+      sessionName: "implement",
+      nodeAttemptId: "node-attempt-7",
+    });
+
+    w.append(lineEvent(1, "first"));
+    w.append(lineEvent(2, "second"));
+    await w.close();
+
+    const raw = await readFile(path, "utf8");
+    const lines = raw.split("\n").filter((l) => l.length > 0);
+    const parsed = lines.map(
+      (l) =>
+        JSON.parse(l) as {
+          sessionName?: string;
+          nodeAttemptId?: string;
+          line: string;
+        },
+    );
+
+    expect(parsed).toHaveLength(2);
+    for (const p of parsed) {
+      expect(p.sessionName).toBe("implement");
+      expect(p.nodeAttemptId).toBe("node-attempt-7");
+    }
+  });
+
+  it("omits nodeAttemptId cleanly when not configured (scratch/single-session)", async () => {
+    const path = join(dir, "step-no-node-attempt.events.jsonl");
+    const w = await openEventsLog(path, {
+      logger: silentLogger,
+      sessionName: "default",
+    });
+
+    w.append(lineEvent(1, "first"));
+    await w.close();
+
+    const raw = await readFile(path, "utf8");
+
+    expect(JSON.parse(raw.trim())).not.toHaveProperty("nodeAttemptId");
+  });
+
   it("preserves append order on rapid sequential calls", async () => {
     const path = join(dir, "step-order.events.jsonl");
     const w = await openEventsLog(path, { logger: silentLogger });

@@ -164,6 +164,7 @@ export async function spawnSession(
   const eventsLog = await openEventsLog(eventsLogPath, {
     logger,
     sessionName,
+    nodeAttemptId: request.nodeAttemptId,
   });
 
   const args: string[] = [
