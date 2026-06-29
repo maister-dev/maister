@@ -649,6 +649,26 @@ export function LocalPackageEditor({
       ? skillId
       : null;
 
+  // Shared by the package Files tab and the skill screen's scoped navigator.
+  const navigatorLabels = {
+    viewFinder: tStudio("composition.files.viewFinder"),
+    viewTree: tStudio("composition.files.viewTree"),
+    newFile: tStudio("composition.files.newFile"),
+    newFolder: tStudio("composition.files.newFolder"),
+    newFolderName: tStudio("composition.files.newFolderName"),
+    upload: tStudio("composition.files.upload"),
+    root: tStudio("composition.files.root"),
+    save: tStudio("composition.files.save"),
+    empty: tStudio("composition.files.empty"),
+    selectHint: tStudio("composition.files.selectHint"),
+    rename: tStudio("composition.files.rename"),
+    remove: tStudio("composition.files.remove"),
+    confirm: tStudio("composition.files.confirm"),
+    cancel: tStudio("composition.files.cancel"),
+    errorConflict: tStudio("composition.files.errorConflict"),
+    errorPrecondition: tStudio("composition.files.errorPrecondition"),
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-col gap-2">
       <nav
@@ -828,20 +848,21 @@ export function LocalPackageEditor({
             skillId !== null ? (
               <SkillScreen
                 draftFiles={draftFiles}
-                fileKindLabels={fileKindLabels}
                 filesLabels={filesLabels}
+                importLabels={buildImportDialogLabels(tStudio)}
                 labels={{
                   crumbStudio: labels.crumbStudio,
                   crumbLocal: labels.crumbLocal,
                   crumbSkills: tStudio("viewer.tabSkills"),
-                  save: labels.home.save,
                   notFound: tStudio("composition.notFound"),
                   rename: renameLabels(tStudio),
                 }}
                 mcpCatalog={mcpCatalog}
                 name={identity.project}
+                navigatorLabels={navigatorLabels}
                 packageId={packageId}
                 readOnly={readOnly}
+                sessionId={sessionIdRef.current}
                 skillId={skillId}
                 onDraftFilesChange={handleDraftFilesChange}
                 onRename={(newName) =>
@@ -870,26 +891,7 @@ export function LocalPackageEditor({
                     draftFiles={draftFiles}
                     filesLabels={filesLabels}
                     importLabels={buildImportDialogLabels(tStudio)}
-                    labels={{
-                      viewFinder: tStudio("composition.files.viewFinder"),
-                      viewTree: tStudio("composition.files.viewTree"),
-                      newFile: tStudio("composition.files.newFile"),
-                      newFolder: tStudio("composition.files.newFolder"),
-                      newFolderName: tStudio("composition.files.newFolderName"),
-                      upload: tStudio("composition.files.upload"),
-                      root: tStudio("composition.files.root"),
-                      save: tStudio("composition.files.save"),
-                      empty: tStudio("composition.files.empty"),
-                      selectHint: tStudio("composition.files.selectHint"),
-                      rename: tStudio("composition.files.rename"),
-                      remove: tStudio("composition.files.remove"),
-                      confirm: tStudio("composition.files.confirm"),
-                      cancel: tStudio("composition.files.cancel"),
-                      errorConflict: tStudio("composition.files.errorConflict"),
-                      errorPrecondition: tStudio(
-                        "composition.files.errorPrecondition",
-                      ),
-                    }}
+                    labels={navigatorLabels}
                     mcpCatalog={mcpCatalog}
                     packageId={packageId}
                     readOnly={readOnly}

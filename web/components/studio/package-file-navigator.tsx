@@ -89,6 +89,8 @@ export function PackageFileNavigator({
   filesLabels,
   importLabels,
   mcpCatalog,
+  pathPrefix = "",
+  initialSelectedPath = null,
   onDraftFilesChange,
   onSaveDraft,
 }: {
@@ -100,6 +102,11 @@ export function PackageFileNavigator({
   filesLabels: PackageFilesEditorLabels;
   importLabels: ImportDialogLabels;
   mcpCatalog: PlatformMcpCatalogEntry[];
+  // When the navigator edits a SUBTREE (e.g. one skill), `draftFiles` carry paths
+  // RELATIVE to this prefix; it is prepended to the upload target so files land in
+  // the subtree on disk. Empty = the package root.
+  pathPrefix?: string;
+  initialSelectedPath?: string | null;
   onDraftFilesChange: (next: AuthoredFlowPackageFile[]) => void;
   onSaveDraft: () => void;
 }): ReactElement {
@@ -110,7 +117,9 @@ export function PackageFileNavigator({
     searchParams.get("fileview") === "finder" ? "finder" : "tree";
 
   const [cwd, setCwd] = useState("");
-  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [selectedPath, setSelectedPath] = useState<string | null>(
+    initialSelectedPath,
+  );
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [virtualFolders, setVirtualFolders] = useState<string[]>([]);
   const [rename, setRename] = useState<RenameTarget | null>(null);
@@ -647,7 +656,7 @@ export function PackageFileNavigator({
           labels={importLabels}
           packageId={packageId}
           sessionId={sessionId}
-          targetFolder={cwd}
+          targetFolder={[pathPrefix, cwd].filter(Boolean).join("/")}
           onClose={() => setImportOpen(false)}
         />
       ) : null}

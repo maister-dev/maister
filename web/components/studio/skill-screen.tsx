@@ -1,16 +1,15 @@
 "use client";
 
-import type {
-  AuthoredFlowPackageFile,
-  AuthoredFlowPackageFileKind,
-} from "@/lib/catalog/authored-types";
+import type { AuthoredFlowPackageFile } from "@/lib/catalog/authored-types";
 import type { PackageFilesEditorLabels } from "@/components/flows/package-files-editor";
+import type { ImportDialogLabels } from "@/components/studio/import-dialog";
+import type { PackageFileNavigatorLabels } from "@/components/studio/package-file-navigator";
 import type { PlatformMcpCatalogEntry } from "@/lib/queries/platform-mcp-catalog";
 import type { ReactElement } from "react";
 
 import Link from "next/link";
 
-import { PackageFilesEditor } from "@/components/flows/package-files-editor";
+import { PackageFileNavigator } from "@/components/studio/package-file-navigator";
 import { RenameControl } from "@/components/studio/package-composition";
 import {
   compositionTabHref,
@@ -23,38 +22,43 @@ export type SkillScreenLabels = {
   crumbStudio: string;
   crumbLocal: string;
   crumbSkills: string;
-  save: string;
   notFound: string;
   rename: { open: string; confirm: string; cancel: string };
 };
 
-// The dedicated skill screen (ADR-116 P4): a PackageFilesEditor scoped to the
-// `skills/<id>/` subtree (skills have nested folders, which a side panel cannot
-// hold) + a breadcrumb back to the composition Skills tab. SKILL.md opens in the
-// FrontmatterArtifactEditor (the editor dispatches by path). Edits merge back into
-// the full draft and persist through the same working-dir save channel.
+// The dedicated skill screen (ADR-116 P4). Skills have nested folders, so its
+// own subtree opens in the SAME PackageFileNavigator as the package Files tab
+// (Finder/Tree switch, upload, create/rename/delete/move, content editor on the
+// right) — scoped to the skill via `pathPrefix`. The navigator edits paths
+// RELATIVE to the skill root; edits merge back into the full draft and persist
+// through the shared working-dir save channel.
+
 export function SkillScreen({
   packageId,
+  sessionId,
   name,
   skillId,
   draftFiles,
   readOnly,
   labels,
+  navigatorLabels,
   filesLabels,
-  fileKindLabels,
+  importLabels,
   mcpCatalog,
   onDraftFilesChange,
   onSave,
   onRename,
 }: {
   packageId: string;
+  sessionId?: string;
   name: string;
   skillId: string;
   draftFiles: AuthoredFlowPackageFile[];
   readOnly: boolean;
   labels: SkillScreenLabels;
+  navigatorLabels: PackageFileNavigatorLabels;
   filesLabels: PackageFilesEditorLabels;
-  fileKindLabels: Record<AuthoredFlowPackageFileKind, string>;
+  importLabels: ImportDialogLabels;
   mcpCatalog: PlatformMcpCatalogEntry[];
   onDraftFilesChange: (next: AuthoredFlowPackageFile[]) => void;
   onSave: () => void;
@@ -93,7 +97,7 @@ export function SkillScreen({
     </nav>
   );
 
-  if (scoped.length === 0) {
+  if (scoped.length === 0 || subtreePrefix === null) {
     return (
       <div
         className="flex h-full min-h-0 flex-col gap-3 rounded-xl border border-line bg-paper p-4"
@@ -110,6 +114,13 @@ export function SkillScreen({
     );
   }
 
+  // The navigator works rooted at the skill: strip the subtree prefix going in,
+  // re-add it on every change before merging back into the full draft.
+  const scopedRel = scoped.map((file) => ({
+    ...file,
+    path: file.path.slice(subtreePrefix.length),
+  }));
+
   return (
     <div
       className="flex h-full min-h-0 flex-col gap-3 rounded-xl border border-line bg-paper p-4"
@@ -124,28 +135,32 @@ export function SkillScreen({
           onSubmit={onRename}
         />
       )}
-      <div className="grid min-h-0 flex-1 gap-3">
-        <PackageFilesEditor
-          disabled={readOnly}
-          files={scoped}
-          initialSelectedPath={`${subtreePrefix ?? `skills/${skillId}/`}SKILL.md`}
-          kindLabels={fileKindLabels}
-          labels={filesLabels}
+      <div className="min-h-0 flex-1">
+        <PackageFileNavigator
+          draftFiles={scopedRel}
+          filesLabels={filesLabels}
+          importLabels={importLabels}
+          initialSelectedPath="SKILL.md"
+          labels={navigatorLabels}
           mcpCatalog={mcpCatalog}
-          onFilesChange={(next) =>
-            onDraftFilesChange(mergeSkillFiles(draftFiles, skillId, next))
+          packageId={packageId}
+          pathPrefix={subtreePrefix.replace(/\/$/, "")}
+          readOnly={readOnly}
+          sessionId={sessionId}
+          onDraftFilesChange={(nextRel) =>
+            onDraftFilesChange(
+              mergeSkillFiles(
+                draftFiles,
+                skillId,
+                nextRel.map((file) => ({
+                  ...file,
+                  path: `${subtreePrefix}${file.path}`,
+                })),
+              ),
+            )
           }
+          onSaveDraft={onSave}
         />
-        {readOnly ? null : (
-          <button
-            className="justify-self-start rounded-md border border-amber bg-amber px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-white hover:bg-amber-2"
-            data-testid="skill-screen-save"
-            type="button"
-            onClick={onSave}
-          >
-            {labels.save}
-          </button>
-        )}
       </div>
     </div>
   );

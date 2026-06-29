@@ -405,6 +405,10 @@ function InlineMasterDetail({
               />
             )}
             <InlineEditor
+              // Remount on file switch so the editor reloads content for the new
+              // selection — without this, switching cards keeps the prior file's
+              // text (the editors seed internal state from `content` on mount).
+              key={selectedPath}
               draftFiles={draftFiles}
               filePath={selectedPath}
               filesLabels={filesLabels}

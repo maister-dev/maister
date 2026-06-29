@@ -2,10 +2,22 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  packageFileKindLabels,
-  packageFilesEditorLabels,
-} from "@/lib/flows/editor/editor-labels";
+import { packageFilesEditorLabels } from "@/lib/flows/editor/editor-labels";
+
+// The navigator needs the app-router context; stub it to echo the props the
+// SkillScreen feeds it (scoped-relative paths + the subtree prefix).
+vi.mock("@/components/studio/package-file-navigator", () => ({
+  PackageFileNavigator: (props: {
+    draftFiles: { path: string }[];
+    pathPrefix?: string;
+  }) =>
+    createElement(
+      "div",
+      { "data-testid": "nav-stub", "data-prefix": props.pathPrefix ?? "" },
+      props.draftFiles.map((f) => f.path).join("|"),
+    ),
+}));
+
 import { SkillScreen } from "@/components/studio/skill-screen";
 
 const stubT = Object.assign((key: string) => key, {
@@ -16,13 +28,11 @@ const filesLabels = packageFilesEditorLabels(
   stubT as never,
   true,
 );
-const fileKindLabels = packageFileKindLabels(stubT as never);
 
 const labels = {
   crumbStudio: "Studio",
   crumbLocal: "Local",
   crumbSkills: "Skills",
-  save: "Save",
   notFound: "No such skill",
   rename: { open: "Rename", confirm: "Save name", cancel: "Cancel" },
 };
@@ -43,8 +53,9 @@ function render(skillId: string, readOnly = false): string {
       draftFiles,
       readOnly,
       labels,
+      navigatorLabels: {} as never,
       filesLabels,
-      fileKindLabels,
+      importLabels: {} as never,
       mcpCatalog: [],
       onDraftFilesChange: vi.fn(),
       onSave: vi.fn(),
@@ -54,28 +65,27 @@ function render(skillId: string, readOnly = false): string {
 }
 
 describe("SkillScreen (ADR-116 §P4)", () => {
-  it("scopes the navigator to the skill's nested files + breadcrumb back to Skills", () => {
+  it("feeds the navigator the skill's files RELATIVE to its subtree prefix", () => {
     const html = render("arch");
 
     expect(html).toContain('data-testid="skill-screen"');
     expect(html).toContain('data-testid="skill-screen-id"');
-    expect(html).toContain("arch");
-    // Breadcrumb links back to the composition Skills tab.
     expect(html).toContain('href="/studio/edit/pkg1?tab=skills"');
-    // The skill's own files are listed; the sibling rule + manifest are NOT.
-    expect(html).toContain("SKILL.md");
+    // The navigator gets paths stripped to the skill root + the prefix to re-add.
+    expect(html).toContain('data-prefix="skills/arch"');
+    expect(html).toContain('data-testid="nav-stub"');
+    expect(html).toMatch(/nav-stub[^>]*>[^<]*SKILL\.md\|references\/x\.md/);
+    // The sibling rule + manifest are NOT in the scoped set.
     expect(html).not.toContain("rules/r1.md");
     expect(html).not.toContain("maister-package.yaml");
-    expect(html).toContain('data-testid="skill-screen-save"');
     // The folder rename affordance is present (editable).
     expect(html).toContain('data-testid="skill-screen-rename-open"');
   });
 
-  it("hides Save + Rename when readOnly", () => {
+  it("hides Rename when readOnly", () => {
     const html = render("arch", true);
 
     expect(html).toContain('data-testid="skill-screen"');
-    expect(html).not.toContain('data-testid="skill-screen-save"');
     expect(html).not.toContain('data-testid="skill-screen-rename-open"');
   });
 
@@ -84,5 +94,6 @@ describe("SkillScreen (ADR-116 §P4)", () => {
 
     expect(html).toContain('data-testid="skill-screen-not-found"');
     expect(html).toContain("No such skill");
+    expect(html).not.toContain('data-testid="nav-stub"');
   });
 });
