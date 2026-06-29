@@ -8709,6 +8709,31 @@ Recovery never auto-replays action JSONL.
   boundaries. Studio assistant turns need their own route.
 - **Hunk patches:** deferred. Full-file operations reuse existing save and
   validation primitives and make stale-hash conflicts deterministic.
+
+**Amendment (2026-06-29) — staged-stream launch (surface `runId` before the
+first turn):** The assistant launch (`POST
+/studio/local-packages/{id}/assistant`) now streams its staged launch progress
+over `text/event-stream` instead of blocking until the whole first turn
+completes and returning `202` JSON. It reuses the scratch FR-F1/F2 staged-stream
+pattern: `launchLocalPackageAssistant` is refactored into an async generator
+(`launchLocalPackageAssistantStaged`) that yields `precondition → materializing
+→ spawning → session_ready` and returns the same terminal `ScratchRunResponse`;
+`launchLocalPackageAssistant` stays a thin drain wrapper for existing callers.
+The route drives the generator head (a throw before the first `precondition`
+yield stays a JSON `MaisterErrorBody` with its HTTP status), then streams the
+frames, mapping the terminal `ScratchRunResponse` down to the **unchanged**
+narrow `StudioAssistantLaunchResponse` (`{ runId, dialogStatus, actionResult }`)
+for the `scratch.launch_result` frame. `session_ready` carries `runId` **before**
+`sendScratchPromptAndProjectEvents`, so the editor attaches the live run SSE
+(incremental transcript + working badge) while turn 1 streams — fixing the
+first-turn "stuck on Запускается…, no output until the turn finishes" defect.
+Success contract is `200` event-stream; pre-stream gate failures stay JSON
+errors; a post-open failure is an in-stream `error` frame with the existing
+session-teardown compensation. **No migration** — the run/`scratch_runs` rows
+are still inserted before `createSession` and `session_ready` is emitted after
+the existing status-update transaction. The follow-up `messages` route is
+unchanged.
+
 ### ADR-111: Generic agent configuration framework — declared config params, per-instance values, resolved snapshot, prompt injection
 
 **Date:** 2026-06-25

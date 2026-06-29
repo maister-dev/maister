@@ -93,8 +93,12 @@ sequenceDiagram
     Web->>Web: requireActiveSession + assertHoldsLock(id, sessionId)
     Web->>Web: validate runnerId and editor focus hints from server state
     Web->>FS: read package files + hashes + flow graph context
+    Web-->>Editor: scratch.launch_progress (precondition → materializing → spawning)
     Web->>DB: insert runs + scratch_runs + initial user message
     Web->>Sup: createSession(readOnlySession=true, confineRoot=working_dir)
+    Web->>DB: persist run_sessions.acpSessionId + dialogStatus=Running
+    Web-->>Editor: session_ready { runId } (text/event-stream)
+    Editor->>Web: subscribe run SSE (live transcript + working badge)
     Web->>Sup: send grounded prompt with action protocol
     Sup-->>DB: assistant events persisted as scratch messages
     Web->>DB: parse latest assistant message and strip protocol block
@@ -106,7 +110,7 @@ sequenceDiagram
     else Q&A only
         Web->>DB: keep ordinary assistant markdown
     end
-    Web-->>Editor: dialogStatus + optional actionResult
+    Web-->>Editor: scratch.launch_result { runId, dialogStatus, actionResult }
 ```
 
 Follow-up sends use
@@ -127,6 +131,40 @@ Event projection resumes from the highest already-projected supervisor event id
 (`Last-Event-ID`), so a follow-up turn does not re-stream and re-persist the
 whole session history (which previously duplicated prior thoughts/answers in the
 transcript).
+
+### Streaming launch contract (ADR-110 staged-stream addendum, Implemented)
+
+The launch (`POST /studio/local-packages/{id}/assistant`) responds `200
+text/event-stream`, reusing the scratch FR-F1/F2 staged-stream pattern
+(`launchLocalPackageAssistantStaged` + `readLaunchStream`). It emits
+`scratch.launch_progress` frames in order `precondition → materializing →
+spawning → session_ready` (no `worktree_created` — the assistant has no managed
+worktree), then a terminal `scratch.launch_result` frame wrapping the narrow
+`{ runId, dialogStatus, actionResult }`. The route maps the service's
+`ScratchRunResponse` down to that shape before framing; the wire schema is
+unchanged, only the transport (was `202` JSON).
+
+`session_ready` carries the `runId` **before** the first turn runs — this is
+what unblocks the editor's live view: the client sets `runId` on the
+`session_ready` frame, so the conversation surface mounts and subscribes to the
+run SSE (incremental transcript + working badge) while turn 1 is still
+streaming, instead of only after the whole turn completes (the bug this
+addendum fixes — the first turn previously sat on "Запускается…" with no output
+until it finished).
+
+Pre-stream gate boundary: the cheap sync gates (`requireGlobalRole`, body parse,
+`getLocalPackage`, `assertHoldsLock`) and the generator-head service-level
+preconditions (runner resolution, supervisor health, capacity) run **before**
+the first `precondition` yield, so a gate failure stays a JSON `MaisterErrorBody`
+with its HTTP status (`401/403/404/409/422/503`) and never a stream. A failure
+**after** the stream opens is an in-stream `data: {"type":"error",…}` frame, and
+the existing launch-failure compensation (`deleteScratchSupervisorSessionIfLive`
++ `markScratchCrashed`) tears the session down. A client disconnect after
+`session_ready` is one such post-open failure: the request `AbortSignal` is
+checked at the turn boundary and forwarded into the supervisor prompt fetch, so
+a mid-turn disconnect aborts the in-flight turn and runs the same compensation —
+no orphaned session or leaked capacity slot. The follow-up `messages` route is
+unchanged.
 
 ## Structured action protocol
 

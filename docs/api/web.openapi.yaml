@@ -7672,7 +7672,7 @@ paths:
         schema: { type: string }
     post:
       tags: [flow-packages]
-      summary: (ADR-097 + ADR-110) Launch the Flow Studio AI authoring assistant
+      summary: (ADR-097 + ADR-110 staged-stream addendum) Launch the Flow Studio AI authoring assistant
       description: |
         Launch a **project-less scratch run** rooted at the local package's
         `working_dir` (`launchLocalPackageAssistant`). There is NO project and
@@ -7682,6 +7682,25 @@ paths:
         content-block file URIs to the `working_dir` (`confineRoot`) and is
         created with `readOnlySession: true`; mutations can only happen later
         through the ADR-110 structured action parser/validator/apply path.
+
+        ADR-110 staged-stream addendum (2026-06-29): once the cheap sync gates
+        and the generator-head preconditions pass, the launch streams staged
+        progress on its OWN `text/event-stream` response (same FR-F1/F2 pattern
+        as `POST /api/scratch-runs`) — `data:
+        {"type":"scratch.launch_progress","stage":…,"adapter"?}` frames in order
+        `precondition → materializing(<adapter>) → spawning → session_ready`
+        (no `worktree_created`; the assistant has no managed worktree), then a
+        terminal `data: {"type":"scratch.launch_result","result":<narrow
+        StudioAssistantLaunchResponse>}` frame. The route maps the service's
+        `ScratchRunResponse` down to the narrow `StudioAssistantLaunchResponse`
+        (`{ runId, dialogStatus, actionResult }`) before framing — only the
+        transport changed, not the success shape. `session_ready` carries the
+        `runId` BEFORE the first turn, so the editor attaches the live run SSE
+        (transcript + working badge) while turn 1 streams. A failure AFTER the
+        stream opens is a `data: {"type":"error","code":<MaisterError>,
+        "message"}` frame; the gate failures BELOW stay JSON errors with their
+        HTTP status because they precede the stream. Frames carry no `id:` line
+        (not durable).
 
         Identifier boundaries: `id` is the server-state local package lookup;
         `sessionId` is a body-controlled lock token compared with
@@ -7699,12 +7718,23 @@ paths:
             schema:
               $ref: "#/components/schemas/StudioAssistantLaunchBody"
       responses:
-        "202":
-          description: Assistant run accepted (project-less scratch run).
+        "200":
+          description: |
+            Staged launch-progress stream (`text/event-stream`). Emits
+            `scratch.launch_progress` frames in order `precondition →
+            materializing → spawning → session_ready`, then a terminal
+            `scratch.launch_result` frame wrapping the narrow
+            `StudioAssistantLaunchResponse`, or an `error` frame carrying a
+            `MaisterError` code on post-open failure.
           content:
-            application/json:
+            text/event-stream:
               schema:
-                { $ref: "#/components/schemas/StudioAssistantLaunchResponse" }
+                type: string
+                description: >-
+                  SSE frames, one per `data: <json>\n\n` line (no `id:` —
+                  not durable). See the operation description for the frame
+                  union; the `scratch.launch_result` frame's `result` is a
+                  `StudioAssistantLaunchResponse`.
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
