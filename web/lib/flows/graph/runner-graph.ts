@@ -135,6 +135,7 @@ import {
 import { promoteNextPending, releaseSlotOnIdle } from "@/lib/scheduler";
 import { checkpointSession, listSessions } from "@/lib/supervisor-client";
 import { deliverRunIfAutoReady } from "@/lib/runs/auto-delivery";
+import { appendRunStreamEvent } from "@/lib/runs/run-stream-event";
 import { SETTLED_RUN_STATUSES } from "@/lib/runs/run-status-sets";
 import {
   dirtyResolveFromSnapshot,
@@ -196,6 +197,32 @@ function runDir(
   runId: string,
 ): string {
   return path.join(runtimeRoot, ".maister", projectSlug, "runs", runId);
+}
+
+// A non-agent gate (human / form / review / infra_recovery) parks the run at
+// NeedsInput with no live supervisor session, so nothing appends to
+// `run.events.jsonl` and open run-detail tabs get no SSE tick to surface the
+// freshly-rendered review panel. Append one durable transition event so the SSE
+// tail fires after the commit. Best-effort: a failed append never blocks the
+// run (the next user reload still renders the gate from the DB).
+async function emitNeedsInputStreamEvent(
+  runtimeRoot: string,
+  projectSlug: string,
+  runId: string,
+  nodeId: string,
+  reason: string,
+): Promise<void> {
+  try {
+    await appendRunStreamEvent(
+      path.join(runDir(runtimeRoot, projectSlug, runId), "run.events.jsonl"),
+      { type: "run.needs_input", data: { nodeId, reason } },
+    );
+  } catch (err) {
+    log.warn(
+      { runId, nodeId, err: (err as Error).message },
+      "run.needs_input stream-event append failed",
+    );
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -492,6 +519,14 @@ async function escalateAutoRetryExhaustion(args: {
     await unlink(needsInputPath).catch(() => undefined);
     throw err;
   }
+
+  await emitNeedsInputStreamEvent(
+    runtimeRoot,
+    loaded.projectSlug,
+    runId,
+    node.id,
+    "infra_recovery",
+  );
 
   await emitRunEscalated({
     db,
@@ -2576,6 +2611,15 @@ export async function runGraph(
             });
           }
         });
+        if (!isCoordinatorNode) {
+          await emitNeedsInputStreamEvent(
+            runtimeRoot,
+            loaded.projectSlug,
+            runId,
+            node.id,
+            node.nodeType,
+          );
+        }
         // M37 (ADR-098) T5.1: an orchestrator park checkpoints its (usually
         // already-exited) supervisor session and releases its scheduler slot —
         // WaitingOnChildren is not cap-counted, so the parked coordinator must
@@ -3396,6 +3440,13 @@ export async function runGraph(
               });
             }
           });
+          await emitNeedsInputStreamEvent(
+            runtimeRoot,
+            loaded.projectSlug,
+            runId,
+            node.id,
+            "human",
+          );
           needsInput = true;
           log2.info(
             { nodeId: node.id },

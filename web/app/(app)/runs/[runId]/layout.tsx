@@ -37,6 +37,7 @@ import {
   type FlowRunCenterLabels,
 } from "@/components/runs/flow-run-center";
 import { LiveRunInspector } from "@/components/runs/live-run-inspector";
+import { RunLiveRefresh } from "@/components/runs/run-live-refresh";
 import {
   OrchestratorRunSubtree,
   type OrchestratorRunSubtreeLabels,
@@ -1123,462 +1124,470 @@ export default async function RunDetailLayout({
     : `${t("eyebrow")} / ${detail.projectSlug}`;
 
   return (
-    <RunShell
-      branch={detail.branch}
-      budgetStatus={detail.budgetStatus}
-      changeSummary={changeSummary}
-      inspector={
-        <LiveRunInspector
-          actions={inspectorActions}
-          changeScope={inspectorChangeScope}
-          changeSummary={changeSummary}
-          childRuns={inspectorChildRuns}
-          childRunsLabels={inspectorChildRunsLabels}
-          facts={inspectorFacts}
-          flowSummary={flowSummary}
-          labels={inspectorLabels}
-          liveCost={{ initial: costSummary, labels: costLabels }}
-          liveWallClock={{
-            startedAtMs: detail.startedAt.getTime(),
-            endedAtMs: detail.endedAt ? detail.endedAt.getTime() : null,
-            label: wallClockLabel,
-          }}
-          runId={detail.runId}
-          runStatus={detail.status}
-          search={changeSummary?.dirty ? "scope=uncommitted" : ""}
-        />
-      }
-      keyRef={detail.taskRef}
-      labels={shellLabels}
-      projectHref={`/projects/${detail.projectSlug}`}
-      projectLabel={t("backToBoard")}
-      status={detail.status}
-      subtitle={shellSubtitle}
-      targetBranch={detail.targetBranch}
-      taskHref={
-        detail.taskNumber != null
-          ? `/projects/${detail.projectSlug}/tasks/${detail.taskNumber}`
-          : null
-      }
-      taskPrompt={detail.taskPrompt}
-      title={shellTitle}
-    >
-      <div className="grid min-w-0 max-w-full gap-5">
-        <div className="flex min-w-0 flex-wrap items-center gap-3">
-          <ExecutionPolicyBadge
-            labels={{
-              supervised: t("execPolicySupervised"),
-              assisted: t("execPolicyAssisted"),
-              unattended: t("execPolicyUnattended"),
-              custom: t("execPolicyCustom"),
+    <>
+      <RunLiveRefresh
+        currentStepId={detail.currentStepId}
+        runId={detail.runId}
+        runStatus={detail.status}
+      />
+      <RunShell
+        branch={detail.branch}
+        budgetStatus={detail.budgetStatus}
+        changeSummary={changeSummary}
+        inspector={
+          <LiveRunInspector
+            actions={inspectorActions}
+            changeScope={inspectorChangeScope}
+            changeSummary={changeSummary}
+            childRuns={inspectorChildRuns}
+            childRunsLabels={inspectorChildRunsLabels}
+            facts={inspectorFacts}
+            flowSummary={flowSummary}
+            labels={inspectorLabels}
+            liveCost={{ initial: costSummary, labels: costLabels }}
+            liveWallClock={{
+              startedAtMs: detail.startedAt.getTime(),
+              endedAtMs: detail.endedAt ? detail.endedAt.getTime() : null,
+              label: wallClockLabel,
             }}
-            policy={detail.executionPolicy}
-          />
-        </div>
-
-        {detail.lifecycleActions.length > 0 ? (
-          <WorkbenchLifecycleActions
-            actions={detail.lifecycleActions}
             runId={detail.runId}
-            runKind={detail.runKind}
-            variant="detail"
+            runStatus={detail.status}
+            search={changeSummary?.dirty ? "scope=uncommitted" : ""}
           />
-        ) : null}
+        }
+        keyRef={detail.taskRef}
+        labels={shellLabels}
+        projectHref={`/projects/${detail.projectSlug}`}
+        projectLabel={t("backToBoard")}
+        status={detail.status}
+        subtitle={shellSubtitle}
+        targetBranch={detail.targetBranch}
+        taskHref={
+          detail.taskNumber != null
+            ? `/projects/${detail.projectSlug}/tasks/${detail.taskNumber}`
+            : null
+        }
+        taskPrompt={detail.taskPrompt}
+        title={shellTitle}
+      >
+        <div className="grid min-w-0 max-w-full gap-5">
+          <div className="flex min-w-0 flex-wrap items-center gap-3">
+            <ExecutionPolicyBadge
+              labels={{
+                supervised: t("execPolicySupervised"),
+                assisted: t("execPolicyAssisted"),
+                unattended: t("execPolicyUnattended"),
+                custom: t("execPolicyCustom"),
+              }}
+              policy={detail.executionPolicy}
+            />
+          </div>
 
-        {readiness ? (
-          <ReadinessSummary
-            labels={{
-              state: {
-                ready: tReadiness("ready"),
-                blocked: tReadiness("blocked"),
-                stale: tReadiness("stale"),
-                failed: tReadiness("failed"),
-                waiting: tReadiness("waiting"),
-                overridden: tReadiness("overridden"),
-              },
-              summary: tReadiness("summary"),
-              reasons: tReadiness("reasons"),
-            }}
-            reasons={readiness.reasons}
-            state={readiness.readiness}
-          />
-        ) : null}
+          {detail.lifecycleActions.length > 0 ? (
+            <WorkbenchLifecycleActions
+              actions={detail.lifecycleActions}
+              runId={detail.runId}
+              runKind={detail.runKind}
+              variant="detail"
+            />
+          ) : null}
 
-        {policy?.trigger === "auto_on_ready" && detail.status === "Review" ? (
-          <section
-            className="rounded-[10px] border border-amber-line bg-amber-soft p-4"
-            data-testid="run-delivery-policy-auto"
-          >
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <p className="m-0 font-mono text-[11px] text-amber">
-                {t("policyAutoBanner")}
-              </p>
-              <DeliveryPolicyCancelButton
-                labels={{
-                  cancel: t("policyCancelAuto"),
-                  cancelling: t("policyCancelling"),
-                  error: t("policyCancelError"),
-                }}
-                runId={detail.runId}
-              />
-            </div>
-          </section>
-        ) : null}
+          {readiness ? (
+            <ReadinessSummary
+              labels={{
+                state: {
+                  ready: tReadiness("ready"),
+                  blocked: tReadiness("blocked"),
+                  stale: tReadiness("stale"),
+                  failed: tReadiness("failed"),
+                  waiting: tReadiness("waiting"),
+                  overridden: tReadiness("overridden"),
+                },
+                summary: tReadiness("summary"),
+                reasons: tReadiness("reasons"),
+              }}
+              reasons={readiness.reasons}
+              state={readiness.readiness}
+            />
+          ) : null}
 
-        {flowGraphData || showAgentCenter ? (
-          <section
-            className="min-w-0 max-w-full"
-            data-testid="run-primary-result"
-          >
-            {flowGraphData ? (
-              <FlowRunCenter
-                graphView={
-                  <FlowGraphViewSection
-                    labels={flowGraphData.labels}
-                    layout={flowGraphData.layout}
-                    nodeTooltips={flowGraphData.nodeTooltips}
-                    runContext={{
-                      runId: detail.runId,
-                      initialStatuses: flowGraphData.statuses.nodes,
-                      currentStepId: flowGraphData.statuses.currentStepId,
-                      runStatus: detail.status,
-                    }}
-                    topology={flowGraphData.topology}
-                  />
-                }
-                labels={flowRunCenterLabels}
-                result={flowResultDto}
-              />
-            ) : (
-              <AgentRunCenter
-                labels={agentRunCenterLabels}
-                result={flowResultDto}
-              />
-            )}
-            {isOrchestratorRun ? (
-              <OrchestratorRunSubtree
-                childRuns={childRuns}
-                labels={orchestratorSubtreeLabels}
-              />
-            ) : null}
-          </section>
-        ) : null}
+          {policy?.trigger === "auto_on_ready" && detail.status === "Review" ? (
+            <section
+              className="rounded-[10px] border border-amber-line bg-amber-soft p-4"
+              data-testid="run-delivery-policy-auto"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="m-0 font-mono text-[11px] text-amber">
+                  {t("policyAutoBanner")}
+                </p>
+                <DeliveryPolicyCancelButton
+                  labels={{
+                    cancel: t("policyCancelAuto"),
+                    cancelling: t("policyCancelling"),
+                    error: t("policyCancelError"),
+                  }}
+                  runId={detail.runId}
+                />
+              </div>
+            </section>
+          ) : null}
 
-        {detail.status === "Crashed" ? (
-          <section
-            className="mb-6 rounded-[14px] border border-red-300 bg-red-50/60 p-5 dark:border-red-900/60 dark:bg-red-950/30"
-            data-testid="run-crashed-section"
-          >
-            <h2 className="mb-1 inline-flex items-center gap-2 font-sans text-[14px] font-bold tracking-[-0.01em] text-ink before:h-[7px] before:w-[7px] before:rounded-full before:bg-red-500 before:content-['']">
-              {t("crashTitle")}
-            </h2>
-            {detail.recoverable ? (
-              <p className="mb-4 text-[13px] leading-[1.4] text-body">
-                {t("crashRecoverableHint")}
-              </p>
-            ) : (
-              <p
-                className="mb-4 text-[13px] leading-[1.4] text-body"
-                data-testid="run-not-recoverable"
-              >
-                {t("notRecoverable")}
-              </p>
-            )}
-            {/* Discard is available for EVERY Crashed run (it is the only path
+          {flowGraphData || showAgentCenter ? (
+            <section
+              className="min-w-0 max-w-full"
+              data-testid="run-primary-result"
+            >
+              {flowGraphData ? (
+                <FlowRunCenter
+                  graphView={
+                    <FlowGraphViewSection
+                      labels={flowGraphData.labels}
+                      layout={flowGraphData.layout}
+                      nodeTooltips={flowGraphData.nodeTooltips}
+                      runContext={{
+                        runId: detail.runId,
+                        initialStatuses: flowGraphData.statuses.nodes,
+                        currentStepId: flowGraphData.statuses.currentStepId,
+                        runStatus: detail.status,
+                      }}
+                      topology={flowGraphData.topology}
+                    />
+                  }
+                  labels={flowRunCenterLabels}
+                  result={flowResultDto}
+                />
+              ) : (
+                <AgentRunCenter
+                  labels={agentRunCenterLabels}
+                  result={flowResultDto}
+                />
+              )}
+              {isOrchestratorRun ? (
+                <OrchestratorRunSubtree
+                  childRuns={childRuns}
+                  labels={orchestratorSubtreeLabels}
+                />
+              ) : null}
+            </section>
+          ) : null}
+
+          {detail.status === "Crashed" ? (
+            <section
+              className="mb-6 rounded-[14px] border border-red-300 bg-red-50/60 p-5 dark:border-red-900/60 dark:bg-red-950/30"
+              data-testid="run-crashed-section"
+            >
+              <h2 className="mb-1 inline-flex items-center gap-2 font-sans text-[14px] font-bold tracking-[-0.01em] text-ink before:h-[7px] before:w-[7px] before:rounded-full before:bg-red-500 before:content-['']">
+                {t("crashTitle")}
+              </h2>
+              {detail.recoverable ? (
+                <p className="mb-4 text-[13px] leading-[1.4] text-body">
+                  {t("crashRecoverableHint")}
+                </p>
+              ) : (
+                <p
+                  className="mb-4 text-[13px] leading-[1.4] text-body"
+                  data-testid="run-not-recoverable"
+                >
+                  {t("notRecoverable")}
+                </p>
+              )}
+              {/* Discard is available for EVERY Crashed run (it is the only path
               into the GC countdown); Recover is hidden when there is no
               resumable session. */}
-            <RunRecoverActions
-              canRecover={detail.recoverable}
-              runId={detail.runId}
-            />
-          </section>
-        ) : null}
+              <RunRecoverActions
+                canRecover={detail.recoverable}
+                runId={detail.runId}
+              />
+            </section>
+          ) : null}
 
-        {detail.pendingHitl ? (
-          (() => {
-            const staleText = staleSummaryText(
-              detail.pendingHitl.assignmentStaleEvidenceSummary,
-            );
+          {detail.pendingHitl ? (
+            (() => {
+              const staleText = staleSummaryText(
+                detail.pendingHitl.assignmentStaleEvidenceSummary,
+              );
 
-            return (
-              <section
-                className="rounded-[14px] border border-amber-line bg-[color-mix(in_oklab,var(--amber-soft)_45%,var(--paper))] p-5"
-                id="pending-input"
-              >
-                <h2 className="mb-1 inline-flex items-center gap-2 font-sans text-[14px] font-bold tracking-[-0.01em] text-ink before:h-[7px] before:w-[7px] before:rounded-full before:bg-amber before:content-['']">
-                  {t("pendingTitle")}
-                </h2>
-                <p className="mb-4 text-[14px] leading-[1.4] text-ink">
-                  {detail.pendingHitl.prompt}
-                </p>
-                <div className="mb-4 flex flex-wrap gap-2 font-mono text-[10.5px] tracking-[0.02em] text-mute">
-                  {detail.pendingHitl.assignmentActionKind ? (
+              return (
+                <section
+                  className="rounded-[14px] border border-amber-line bg-[color-mix(in_oklab,var(--amber-soft)_45%,var(--paper))] p-5"
+                  id="pending-input"
+                >
+                  <h2 className="mb-1 inline-flex items-center gap-2 font-sans text-[14px] font-bold tracking-[-0.01em] text-ink before:h-[7px] before:w-[7px] before:rounded-full before:bg-amber before:content-['']">
+                    {t("pendingTitle")}
+                  </h2>
+                  <p className="mb-4 text-[14px] leading-[1.4] text-ink">
+                    {detail.pendingHitl.prompt}
+                  </p>
+                  <div className="mb-4 flex flex-wrap gap-2 font-mono text-[10.5px] tracking-[0.02em] text-mute">
+                    {detail.pendingHitl.assignmentActionKind ? (
+                      <span className="rounded-md border border-amber-line bg-paper px-2 py-1 font-semibold text-ink-2">
+                        {t("assignmentAction", {
+                          action: detail.pendingHitl.assignmentActionKind,
+                        })}
+                      </span>
+                    ) : null}
+                    {detail.pendingHitl.assignmentRoleRefs.length > 0 ? (
+                      <span className="rounded-md border border-amber-line bg-paper px-2 py-1 font-semibold text-ink-2">
+                        {t("assignmentRoles", {
+                          roles:
+                            detail.pendingHitl.assignmentRoleRefs.join(", "),
+                        })}
+                      </span>
+                    ) : null}
+                    {staleText ? (
+                      <span className="rounded-md border border-amber-line bg-paper px-2 py-1 font-semibold text-amber">
+                        {t("assignmentStaleEvidence", {
+                          count: staleText,
+                        })}
+                      </span>
+                    ) : null}
                     <span className="rounded-md border border-amber-line bg-paper px-2 py-1 font-semibold text-ink-2">
-                      {t("assignmentAction", {
-                        action: detail.pendingHitl.assignmentActionKind,
-                      })}
+                      {detail.pendingHitl.assigneeLabel
+                        ? t("assignmentClaimedBy", {
+                            actor: detail.pendingHitl.assigneeLabel,
+                          })
+                        : t("assignmentUnclaimed")}
                     </span>
-                  ) : null}
-                  {detail.pendingHitl.assignmentRoleRefs.length > 0 ? (
-                    <span className="rounded-md border border-amber-line bg-paper px-2 py-1 font-semibold text-ink-2">
-                      {t("assignmentRoles", {
-                        roles: detail.pendingHitl.assignmentRoleRefs.join(", "),
-                      })}
-                    </span>
-                  ) : null}
-                  {staleText ? (
-                    <span className="rounded-md border border-amber-line bg-paper px-2 py-1 font-semibold text-amber">
-                      {t("assignmentStaleEvidence", {
-                        count: staleText,
-                      })}
-                    </span>
-                  ) : null}
-                  <span className="rounded-md border border-amber-line bg-paper px-2 py-1 font-semibold text-ink-2">
-                    {detail.pendingHitl.assigneeLabel
-                      ? t("assignmentClaimedBy", {
-                          actor: detail.pendingHitl.assigneeLabel,
-                        })
-                      : t("assignmentUnclaimed")}
-                  </span>
-                </div>
-                <div className="mb-4 flex flex-wrap gap-2">
-                  <AssignmentActions
-                    assigneeUserId={detail.pendingHitl.assigneeUserId}
-                    assignmentId={detail.pendingHitl.assignmentId}
-                    canAct={canAct}
-                    currentUserId={user.id}
-                    labels={{
-                      claim: t("assignmentClaim"),
-                      release: t("assignmentRelease"),
-                      takeOver: t("assignmentTakeOver"),
-                    }}
-                    status={detail.pendingHitl.assignmentStatus}
-                  />
-                </div>
-                {detail.pendingHitl &&
-                (detail.pendingHitl.kind === "human" ||
-                  detail.pendingHitl.kind === "form") ? (
-                  <div id="agent-chat">
-                    <GateChatPanel
+                  </div>
+                  <div className="mb-4 flex flex-wrap gap-2">
+                    <AssignmentActions
+                      assigneeUserId={detail.pendingHitl.assigneeUserId}
+                      assignmentId={detail.pendingHitl.assignmentId}
                       canAct={canAct}
+                      currentUserId={user.id}
+                      labels={{
+                        claim: t("assignmentClaim"),
+                        release: t("assignmentRelease"),
+                        takeOver: t("assignmentTakeOver"),
+                      }}
+                      status={detail.pendingHitl.assignmentStatus}
+                    />
+                  </div>
+                  {detail.pendingHitl &&
+                  (detail.pendingHitl.kind === "human" ||
+                    detail.pendingHitl.kind === "form") ? (
+                    <div id="agent-chat">
+                      <GateChatPanel
+                        canAct={canAct}
+                        hitlRequestId={detail.pendingHitl.hitlRequestId}
+                        labels={{
+                          title: t("chatTitle"),
+                          placeholder: t("chatPlaceholder"),
+                          send: t("chatSend"),
+                          sending: t("chatSending"),
+                          unavailable: t("chatUnavailable"),
+                          idleCostWarning: t("chatIdleCostWarning"),
+                          revertNotice: t("chatRevertNotice"),
+                          agentLabel: t("chatAgentLabel"),
+                          error: t("chatError"),
+                          transcript: {
+                            thinking: t("chatThinking"),
+                            rawEvent: t("chatRawEvent"),
+                            input: t("chatToolInput"),
+                            result: t("chatToolResult"),
+                            copy: t("chatCopy"),
+                            copied: t("chatCopied"),
+                            toolCount: "{name} ×{count}",
+                          },
+                        }}
+                        runId={detail.runId}
+                      />
+                    </div>
+                  ) : null}
+                  {detail.pendingHitl &&
+                  hasReviewGate &&
+                  (dirtySummary || detail.pendingHitl.dirtyResolution) ? (
+                    <DirtyResolutionBanner
+                      canAct={canAct}
+                      diffHref={dirtyDiffHref}
+                      dirty={
+                        dirtySummary ?? {
+                          files: [],
+                          staged: 0,
+                          unstaged: 0,
+                          untracked: 0,
+                          total: 0,
+                        }
+                      }
+                      dirtyResolution={detail.pendingHitl.dirtyResolution}
                       hitlRequestId={detail.pendingHitl.hitlRequestId}
                       labels={{
-                        title: t("chatTitle"),
-                        placeholder: t("chatPlaceholder"),
-                        send: t("chatSend"),
-                        sending: t("chatSending"),
-                        unavailable: t("chatUnavailable"),
-                        idleCostWarning: t("chatIdleCostWarning"),
-                        revertNotice: t("chatRevertNotice"),
-                        agentLabel: t("chatAgentLabel"),
-                        error: t("chatError"),
-                        transcript: {
-                          thinking: t("chatThinking"),
-                          rawEvent: t("chatRawEvent"),
-                          input: t("chatToolInput"),
-                          result: t("chatToolResult"),
-                          copy: t("chatCopy"),
-                          copied: t("chatCopied"),
-                          toolCount: "{name} ×{count}",
-                        },
+                        title: t("dirtyTitle"),
+                        summary: t("dirtySummary", {
+                          staged: dirtySummary?.staged ?? 0,
+                          unstaged: dirtySummary?.unstaged ?? 0,
+                          untracked: dirtySummary?.untracked ?? 0,
+                        }),
+                        viewDiff: t("dirtyViewDiff"),
+                        commit: t("dirtyCommit"),
+                        discard: t("dirtyDiscard"),
+                        discardConfirm: t("dirtyDiscardConfirm"),
+                        proceed: t("dirtyProceed"),
+                        recordedBadge: t("dirtyProceedBadge"),
+                        error: t("dirtyError"),
                       }}
                       runId={detail.runId}
                     />
-                  </div>
-                ) : null}
-                {detail.pendingHitl &&
-                hasReviewGate &&
-                (dirtySummary || detail.pendingHitl.dirtyResolution) ? (
-                  <DirtyResolutionBanner
+                  ) : null}
+                  <RunHitlResponse
                     canAct={canAct}
-                    diffHref={dirtyDiffHref}
-                    dirty={
-                      dirtySummary ?? {
-                        files: [],
-                        staged: 0,
-                        unstaged: 0,
-                        untracked: 0,
-                        total: 0,
-                      }
-                    }
-                    dirtyResolution={detail.pendingHitl.dirtyResolution}
+                    criticality={detail.pendingHitl.criticality}
                     hitlRequestId={detail.pendingHitl.hitlRequestId}
-                    labels={{
-                      title: t("dirtyTitle"),
-                      summary: t("dirtySummary", {
-                        staged: dirtySummary?.staged ?? 0,
-                        unstaged: dirtySummary?.unstaged ?? 0,
-                        untracked: dirtySummary?.untracked ?? 0,
-                      }),
-                      viewDiff: t("dirtyViewDiff"),
-                      commit: t("dirtyCommit"),
-                      discard: t("dirtyDiscard"),
-                      discardConfirm: t("dirtyDiscardConfirm"),
-                      proceed: t("dirtyProceed"),
-                      recordedBadge: t("dirtyProceedBadge"),
-                      error: t("dirtyError"),
-                    }}
+                    kind={detail.pendingHitl.kind}
+                    options={detail.pendingHitl.options}
+                    reviewCounts={reviewGateCounts}
                     runId={detail.runId}
+                    schema={detail.pendingHitl.schema}
                   />
-                ) : null}
-                <RunHitlResponse
-                  canAct={canAct}
-                  criticality={detail.pendingHitl.criticality}
-                  hitlRequestId={detail.pendingHitl.hitlRequestId}
-                  kind={detail.pendingHitl.kind}
-                  options={detail.pendingHitl.options}
-                  reviewCounts={reviewGateCounts}
-                  runId={detail.runId}
-                  schema={detail.pendingHitl.schema}
-                />
-                {canClaim ? (
-                  <div className="mt-4 border-t border-dashed border-amber-line pt-4">
-                    <RunTakeoverActions
-                      branch={detail.branch}
-                      canAct={canAct}
-                      displayWorktreePath={displayWorktreePath}
-                      isOwner={false}
-                      mode="claimable"
-                      runId={detail.runId}
-                      worktreePath={detail.worktreePath}
-                    />
-                  </div>
-                ) : null}
-              </section>
-            );
-          })()
-        ) : (
-          <p className="rounded-[14px] border border-dashed border-line p-6 text-center font-mono text-[12px] text-mute">
-            {t("noPending")}
-          </p>
-        )}
-
-        {isHumanWorking ? (
-          <section className="mt-6 rounded-[14px] border border-[color-mix(in_oklab,var(--accent-4)_30%,var(--line))] bg-accent-4-soft/30 p-5">
-            <h2 className="mb-3 inline-flex items-center gap-2 font-sans text-[14px] font-bold tracking-[-0.01em] text-ink before:h-[7px] before:w-[7px] before:rounded-full before:bg-accent-4 before:content-['']">
-              {t("handoff")}
-            </h2>
-            <RunTakeoverActions
-              branch={detail.branch}
-              canAct={canAct}
-              displayWorktreePath={displayWorktreePath}
-              isOwner={detail.takeoverOwnerUserId === user.id}
-              mode="working"
-              runId={detail.runId}
-              worktreePath={detail.worktreePath}
-            />
-          </section>
-        ) : null}
-
-        {flowGraphData || showAgentCenter ? (
-          <section className="min-w-0 max-w-full" data-testid="run-workbench">
-            <WorkbenchPanel
-              diff={
-                <RunDiff
-                  labels={flowGraphData?.diffLabels ?? workbenchDiffLabels}
-                  review={hasReviewGate ? gateDiffReview : undefined}
-                  runId={detail.runId}
-                  scopeSwitcher={workbenchDiffScopeLabels}
-                />
-              }
-              evidence={
-                <section>
-                  <h2 className="mb-3 font-sans text-[14px] font-bold tracking-[-0.01em] text-ink">
-                    {evidenceLabels.title}
-                  </h2>
-                  <EvidenceGraphSection
-                    graph={evidence}
-                    labels={evidenceLabels}
-                    runId={detail.runId}
-                  />
+                  {canClaim ? (
+                    <div className="mt-4 border-t border-dashed border-amber-line pt-4">
+                      <RunTakeoverActions
+                        branch={detail.branch}
+                        canAct={canAct}
+                        displayWorktreePath={displayWorktreePath}
+                        isOwner={false}
+                        mode="claimable"
+                        runId={detail.runId}
+                        worktreePath={detail.worktreePath}
+                      />
+                    </div>
+                  ) : null}
                 </section>
-              }
-              filesPane={children}
-              filesTree={
-                <FileTree
-                  filesApiBase={`/api/runs/${detail.runId}/files`}
-                  labels={flowGraphData?.filesLabels ?? workbenchFilesLabels}
+              );
+            })()
+          ) : (
+            <p className="rounded-[14px] border border-dashed border-line p-6 text-center font-mono text-[12px] text-mute">
+              {t("noPending")}
+            </p>
+          )}
+
+          {isHumanWorking ? (
+            <section className="mt-6 rounded-[14px] border border-[color-mix(in_oklab,var(--accent-4)_30%,var(--line))] bg-accent-4-soft/30 p-5">
+              <h2 className="mb-3 inline-flex items-center gap-2 font-sans text-[14px] font-bold tracking-[-0.01em] text-ink before:h-[7px] before:w-[7px] before:rounded-full before:bg-accent-4 before:content-['']">
+                {t("handoff")}
+              </h2>
+              <RunTakeoverActions
+                branch={detail.branch}
+                canAct={canAct}
+                displayWorktreePath={displayWorktreePath}
+                isOwner={detail.takeoverOwnerUserId === user.id}
+                mode="working"
+                runId={detail.runId}
+                worktreePath={detail.worktreePath}
+              />
+            </section>
+          ) : null}
+
+          {flowGraphData || showAgentCenter ? (
+            <section className="min-w-0 max-w-full" data-testid="run-workbench">
+              <WorkbenchPanel
+                diff={
+                  <RunDiff
+                    labels={flowGraphData?.diffLabels ?? workbenchDiffLabels}
+                    review={hasReviewGate ? gateDiffReview : undefined}
+                    runId={detail.runId}
+                    scopeSwitcher={workbenchDiffScopeLabels}
+                  />
+                }
+                evidence={
+                  <section>
+                    <h2 className="mb-3 font-sans text-[14px] font-bold tracking-[-0.01em] text-ink">
+                      {evidenceLabels.title}
+                    </h2>
+                    <EvidenceGraphSection
+                      graph={evidence}
+                      labels={evidenceLabels}
+                      runId={detail.runId}
+                    />
+                  </section>
+                }
+                filesPane={children}
+                filesTree={
+                  <FileTree
+                    filesApiBase={`/api/runs/${detail.runId}/files`}
+                    labels={flowGraphData?.filesLabels ?? workbenchFilesLabels}
+                  />
+                }
+                runId={detail.runId}
+                tabLabels={flowGraphData?.tabLabels ?? workbenchTabLabels}
+                timeline={
+                  <RunTimeline
+                    assignmentEvents={timeline.assignmentEvents}
+                    entries={timeline.entries as TimelineEntry[]}
+                    labels={timelineLabels}
+                  />
+                }
+              />
+            </section>
+          ) : null}
+
+          {settings ? (
+            <details className="rounded-[10px] border border-line bg-paper p-4">
+              <summary className="cursor-pointer font-sans text-[14px] font-bold text-ink">
+                {t("settingsTitle")}
+              </summary>
+              <div className="mt-3">
+                <FlowSettingsPanel
+                  labels={settingsLabels}
+                  nodes={settings.nodes}
+                  refusalReason={settings.refusalReason}
                 />
-              }
+              </div>
+            </details>
+          ) : null}
+
+          {capabilityProfiles ? (
+            <details className="rounded-[10px] border border-line bg-paper p-4">
+              <summary className="cursor-pointer font-sans text-[14px] font-bold text-ink">
+                {t("capabilityTitle")}
+              </summary>
+              <div className="mt-3">
+                <CapabilityProfilePanel
+                  labels={capabilityLabels}
+                  nodes={capabilityNodes}
+                />
+              </div>
+            </details>
+          ) : null}
+
+          {resolvedSet ? (
+            <details className="rounded-[10px] border border-line bg-paper p-4">
+              <summary className="cursor-pointer font-sans text-[14px] font-bold text-ink">
+                {t("resolvedSet.title")}
+              </summary>
+              <div className="mt-3">
+                <ResolvedCapabilitySetPanel
+                  labels={resolvedSetLabels}
+                  resolved={resolvedSet}
+                />
+              </div>
+            </details>
+          ) : null}
+
+          {showReview && reviewData ? (
+            <ReviewPanel
+              baseBranch={reviewData.baseBranch}
+              baseCommit={reviewData.baseCommit}
+              canPromote={canAct}
+              deliveryPolicy={reviewData.deliveryPolicy}
+              diff={reviewData.diff}
+              displayParentRepoPath={displayParentRepoPath}
+              driftDetected={reviewData.driftDetected}
+              labels={reviewLabels}
+              legacyNeedsRelaunch={reviewData.legacyNeedsRelaunch}
+              parentRepoPath={detail.parentRepoPath}
+              prNumber={detail.prNumber}
+              prUrl={detail.prUrl}
+              promotionMode={reviewData.promotionMode}
+              readiness={reviewReadiness}
+              reviewedTargetCommit={reviewData.reviewedTargetCommit}
+              runBranch={detail.branch}
               runId={detail.runId}
-              tabLabels={flowGraphData?.tabLabels ?? workbenchTabLabels}
-              timeline={
-                <RunTimeline
-                  assignmentEvents={timeline.assignmentEvents}
-                  entries={timeline.entries as TimelineEntry[]}
-                  labels={timelineLabels}
-                />
-              }
+              targetBranch={reviewData.targetBranch}
             />
-          </section>
-        ) : null}
-
-        {settings ? (
-          <details className="rounded-[10px] border border-line bg-paper p-4">
-            <summary className="cursor-pointer font-sans text-[14px] font-bold text-ink">
-              {t("settingsTitle")}
-            </summary>
-            <div className="mt-3">
-              <FlowSettingsPanel
-                labels={settingsLabels}
-                nodes={settings.nodes}
-                refusalReason={settings.refusalReason}
-              />
-            </div>
-          </details>
-        ) : null}
-
-        {capabilityProfiles ? (
-          <details className="rounded-[10px] border border-line bg-paper p-4">
-            <summary className="cursor-pointer font-sans text-[14px] font-bold text-ink">
-              {t("capabilityTitle")}
-            </summary>
-            <div className="mt-3">
-              <CapabilityProfilePanel
-                labels={capabilityLabels}
-                nodes={capabilityNodes}
-              />
-            </div>
-          </details>
-        ) : null}
-
-        {resolvedSet ? (
-          <details className="rounded-[10px] border border-line bg-paper p-4">
-            <summary className="cursor-pointer font-sans text-[14px] font-bold text-ink">
-              {t("resolvedSet.title")}
-            </summary>
-            <div className="mt-3">
-              <ResolvedCapabilitySetPanel
-                labels={resolvedSetLabels}
-                resolved={resolvedSet}
-              />
-            </div>
-          </details>
-        ) : null}
-
-        {showReview && reviewData ? (
-          <ReviewPanel
-            baseBranch={reviewData.baseBranch}
-            baseCommit={reviewData.baseCommit}
-            canPromote={canAct}
-            deliveryPolicy={reviewData.deliveryPolicy}
-            diff={reviewData.diff}
-            displayParentRepoPath={displayParentRepoPath}
-            driftDetected={reviewData.driftDetected}
-            labels={reviewLabels}
-            legacyNeedsRelaunch={reviewData.legacyNeedsRelaunch}
-            parentRepoPath={detail.parentRepoPath}
-            prNumber={detail.prNumber}
-            prUrl={detail.prUrl}
-            promotionMode={reviewData.promotionMode}
-            readiness={reviewReadiness}
-            reviewedTargetCommit={reviewData.reviewedTargetCommit}
-            runBranch={detail.branch}
-            runId={detail.runId}
-            targetBranch={reviewData.targetBranch}
-          />
-        ) : null}
-      </div>
-    </RunShell>
+          ) : null}
+        </div>
+      </RunShell>
+    </>
   );
 }
