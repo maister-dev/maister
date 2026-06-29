@@ -73,8 +73,11 @@ export function NodeTranscriptPanel({
   );
   const { eventCount } = useRunStream(live ? runId : null, { retain: false });
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reqIdRef = useRef(0);
 
   const load = useCallback(async (): Promise<void> => {
+    const reqId = (reqIdRef.current += 1);
+
     try {
       const res = await fetch(
         `/api/runs/${encodeURIComponent(runId)}/transcript?node=${encodeURIComponent(nodeId)}`,
@@ -83,6 +86,9 @@ export function NodeTranscriptPanel({
       if (!res.ok) return;
       const body = (await res.json()) as { messages: TranscriptMessage[] };
 
+      // Latest-wins: ignore a response superseded by a newer load() that was
+      // issued while this fetch was in flight (out-of-order arrival).
+      if (reqId !== reqIdRef.current) return;
       setMessages(body.messages);
     } catch {
       /* transient fetch error — keep the prior transcript, retry on next tick */

@@ -1,6 +1,12 @@
+import type { CostRecord } from "../cost";
+
 import { describe, expect, it } from "vitest";
 
-import { extractCost } from "../cost";
+import {
+  createTurnUsageRecorder,
+  extractCost,
+  extractCostWithSource,
+} from "../cost";
 
 describe("extractCost", () => {
   it("returns null for non-JSON line", () => {
@@ -164,5 +170,110 @@ describe("extractCost", () => {
 
     expect(json).not.toContain("sk-test-redact");
     expect(json).not.toContain("ANTHROPIC_AUTH_TOKEN");
+  });
+});
+
+describe("extractCostWithSource", () => {
+  it("classifies the JSON-RPC end-turn result.usage as 'result' (canonical)", () => {
+    const found = extractCostWithSource(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        result: {
+          stopReason: "end_turn",
+          usage: { inputTokens: 55, outputTokens: 29870 },
+        },
+      }),
+      "s1",
+    );
+
+    expect(found?.source).toBe("result");
+    expect(found?.record.output_tokens).toBe(29870);
+  });
+
+  it("classifies a usage nested in a session/update notification as 'stream'", () => {
+    // The real shape: a sub-agent's usage inside a Task tool response — already
+    // subsumed by the turn's result.usage, so it must not be counted on top.
+    const found = extractCostWithSource(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: {
+          update: {
+            _meta: {
+              claudeCode: {
+                toolResponse: {
+                  usage: { input_tokens: 1, output_tokens: 1648 },
+                },
+              },
+            },
+          },
+        },
+      }),
+      "s1",
+    );
+
+    expect(found?.source).toBe("stream");
+    expect(found?.record.output_tokens).toBe(1648);
+  });
+});
+
+describe("createTurnUsageRecorder", () => {
+  function collect(): { emit: (r: CostRecord) => void; records: CostRecord[] } {
+    const records: CostRecord[] = [];
+
+    return { emit: (r) => records.push(r), records };
+  }
+
+  function rec(output: number): CostRecord {
+    return { ts: "t", sessionId: "s1", output_tokens: output };
+  }
+
+  it("writes a result usage immediately and discards a same-turn stream usage", () => {
+    const { emit, records } = collect();
+    const recorder = createTurnUsageRecorder(emit);
+
+    // A turn: a nested sub-agent usage (stream) then the end-turn total (result).
+    recorder.offer(rec(1648), "stream");
+    recorder.offer(rec(29870), "result");
+    recorder.flush();
+
+    // ONE record (the result total) — the stream usage is subsumed, not summed.
+    expect(records.map((r) => r.output_tokens)).toEqual([29870]);
+  });
+
+  it("records exactly one result per turn across a multi-turn session (no double-count)", () => {
+    const { emit, records } = collect();
+    const recorder = createTurnUsageRecorder(emit);
+
+    // Mirrors the real `plan` node: a nested snake usage + two end-turn results.
+    recorder.offer(rec(1648), "stream");
+    recorder.offer(rec(29870), "result");
+    recorder.offer(rec(25630), "result");
+    recorder.flush();
+
+    expect(records.map((r) => r.output_tokens)).toEqual([29870, 25630]);
+  });
+
+  it("flushes a streaming-only turn at close so its spend is not lost", () => {
+    const { emit, records } = collect();
+    const recorder = createTurnUsageRecorder(emit);
+
+    recorder.offer(rec(500), "stream");
+    expect(records).toHaveLength(0); // buffered, not yet written
+    recorder.flush();
+
+    expect(records.map((r) => r.output_tokens)).toEqual([500]);
+  });
+
+  it("does not re-flush a stream usage already superseded by a result", () => {
+    const { emit, records } = collect();
+    const recorder = createTurnUsageRecorder(emit);
+
+    recorder.offer(rec(500), "stream");
+    recorder.offer(rec(900), "result");
+    recorder.flush();
+
+    expect(records.map((r) => r.output_tokens)).toEqual([900]);
   });
 });

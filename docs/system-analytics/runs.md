@@ -483,16 +483,26 @@ of node-status text and a single aggregate token count.
   per-node canvas glyph shown only when it declares restricted capability
   classes.
 - **Per-node cost attribution.** `cost.jsonl` is attributed per `nodeAttemptId`
-  (`attachCost` stamps it per session). `extractCost` accepts BOTH the
-  snake_case streaming usage and the ACP adapter's camelCase end-turn
-  `result.usage` (`inputTokens` / `outputTokens` / `cachedWriteTokens` =
-  cache-creation / `cachedReadTokens` = cache-read), normalizing to the canonical
-  snake_case record with a per-field snake-wins fallback so a usage object
-  carrying both shapes is never double-counted. Previously the camelCase
-  end-turn usage was dropped and every node session after the first recorded
-  zero tokens; the web reconcile (`reconcileRunCostRollups` →
-  `node_attempt_cost_rollups`) already attributed correctly given a correct
-  `cost.jsonl`.
+  (`attachCost` stamps it per session). `extractCostWithSource` accepts BOTH the
+  snake_case usage and the ACP adapter's camelCase shape (`inputTokens` /
+  `outputTokens` / `cachedWriteTokens` = cache-creation / `cachedReadTokens` =
+  cache-read), normalizing to the canonical snake_case record with a per-field
+  snake-wins fallback so a usage object carrying both shapes is never
+  double-counted. It also classifies each usage by **position**: the end-turn
+  JSON-RPC `result.usage` is the canonical per-turn total (`source: "result"`),
+  while a `usage` nested elsewhere in a `session/update` (e.g. a sub-agent's
+  Task-tool response) is a component already subsumed by that total
+  (`source: "stream"`). `createTurnUsageRecorder` then collapses the per-session
+  stream so each turn writes exactly one record: a `result` usage is written
+  immediately and discards any buffered same-turn `stream` usage (owner
+  decision — `result.usage` canonical per turn, never count both); a `stream`
+  usage is buffered and flushed at session close only if no `result` superseded
+  it (a streaming-only turn is still recorded, never lost). Previously the
+  camelCase end-turn usage was dropped (every node session after the first
+  recorded zero tokens) AND a same-turn nested usage would have been summed on
+  top of the turn total (double-count); the web reconcile
+  (`reconcileRunCostRollups` → `node_attempt_cost_rollups`) sums records per
+  `nodeAttemptId`, so it attributes correctly given a correct `cost.jsonl`.
 
 ## Process flows
 

@@ -199,6 +199,28 @@ describe("projectRunTranscript", () => {
     expect(planAfter?.messages).toHaveLength(1);
   });
 
+  it("stays 'unchanged' when only a run-level line (no nodeAttemptId) is appended", async () => {
+    const { runId, slug, planAttemptId } = await seed();
+
+    await writeEvents(slug, runId, [textLine(planAttemptId, 1, "plan output")]);
+    await projectRunTranscript(runId, { client: db, runtimeRoot });
+
+    // A run-level marker (e.g. `run.needs_input`) advances the file's max
+    // monotonicId but carries no nodeAttemptId, so it must not re-trigger
+    // projection — otherwise a run in NeedsInput re-derives on every read.
+    await writeEvents(slug, runId, [
+      textLine(planAttemptId, 1, "plan output"),
+      JSON.stringify({ type: "run.needs_input", monotonicId: 999 }),
+    ]);
+
+    const again = await projectRunTranscript(runId, {
+      client: db,
+      runtimeRoot,
+    });
+
+    expect(again.status).toBe("unchanged");
+  });
+
   it("returns the LATEST attempt's transcript for a reworked node", async () => {
     const { runId, slug } = await seed();
     const nodeId = "review";

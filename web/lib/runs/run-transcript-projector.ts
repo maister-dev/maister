@@ -131,9 +131,16 @@ export async function projectRunTranscript(
   }
 
   const lines = parseEventLines(raw);
+  // Only attributable lines (carrying a nodeAttemptId) ever become rows, so the
+  // resume cursor compares against the highest attributable monotonicId.
+  // Run-level lines (e.g. the `run.needs_input` marker) have no nodeAttemptId;
+  // counting them here would keep `logMax > dbMax` and defeat the `unchanged`
+  // short-circuit while a run sits in NeedsInput, re-deriving on every read.
   const logMax = lines.reduce(
     (m, l) =>
-      typeof l.monotonicId === "number" ? Math.max(m, l.monotonicId) : m,
+      l.nodeAttemptId && typeof l.monotonicId === "number"
+        ? Math.max(m, l.monotonicId)
+        : m,
     0,
   );
 
