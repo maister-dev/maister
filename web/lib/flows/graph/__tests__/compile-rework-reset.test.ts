@@ -81,6 +81,33 @@ describe("compile-time rework onExhaustion verification (ADR-118)", () => {
       ]),
     ).toBe("CONFIG");
   });
+
+  it("rejects onExhaustion whose target is a rework allowedTarget (loops back into the exhausted loop → CONFIG)", () => {
+    expect(
+      compileErr([
+        {
+          id: "work",
+          type: "cli",
+          action: { command: "true" },
+          transitions: { success: "verify" },
+        },
+        {
+          id: "verify",
+          type: "judge",
+          action: { prompt: "x" },
+          // onExhaustion "redo" routes to "work", which IS a rework allowedTarget
+          // → exhaustion would re-enter the loop it just exhausted. Rejected.
+          transitions: { success: "done", redo: "work" },
+          rework: {
+            allowedTargets: ["work"],
+            workspacePolicies: ["keep"],
+            maxLoops: 2,
+            onExhaustion: "redo",
+          },
+        },
+      ]),
+    ).toBe("CONFIG");
+  });
 });
 
 describe("compile-time rework resetTargets verification (ADR-118)", () => {

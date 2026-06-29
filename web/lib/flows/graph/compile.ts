@@ -279,12 +279,28 @@ function verifyReworkReset(
   const onExhaustion = rework.onExhaustion;
 
   if (onExhaustion !== undefined) {
-    const transitionKeys = Object.keys(node.transitions ?? {});
+    const transitions = node.transitions ?? {};
+    const transitionKeys = Object.keys(transitions);
 
     if (!transitionKeys.includes(onExhaustion)) {
       throw new MaisterError(
         "CONFIG",
         `node "${node.id}" rework.onExhaustion "${onExhaustion}" is not a declared transition outcome (transition keys: ${transitionKeys.join(", ") || "(none)"})`,
+      );
+    }
+
+    // onExhaustion must route OUT of the loop, not back into it. If its target is
+    // one of this node's own rework.allowedTargets, exhaustion re-enters the very
+    // loop it just exhausted (no reset in between) and dies at the loop-top
+    // backstop on re-entry — a runtime CONFIG where a compile refusal is clearer.
+    // The intended pattern routes onExhaustion to a node OUTSIDE the loop (e.g. a
+    // human node, which may itself re-baseline the loop via rework.resetTargets).
+    const onExhaustionTarget = transitions[onExhaustion];
+
+    if (rework.allowedTargets.includes(onExhaustionTarget)) {
+      throw new MaisterError(
+        "CONFIG",
+        `node "${node.id}" rework.onExhaustion "${onExhaustion}" routes to "${onExhaustionTarget}", which is one of this node's rework.allowedTargets [${rework.allowedTargets.join(", ")}] — exhaustion must route OUT of the loop, not back into it`,
       );
     }
   }
