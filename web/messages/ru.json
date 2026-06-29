@@ -1992,6 +1992,16 @@
       "Done": "Готово",
       "Abandoned": "Заброшено",
       "Failed": "Ошибка"
+    },
+    "nodeStatus": {
+      "Pending": "Ожидает",
+      "Running": "Выполняется",
+      "Succeeded": "Готово",
+      "Failed": "Ошибка",
+      "NeedsInput": "Нужен ввод",
+      "Reworked": "Доработано",
+      "Stale": "Устарело",
+      "Skipped": "Пропущено"
     }
   },
   "evidence": {

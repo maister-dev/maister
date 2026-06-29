@@ -50,6 +50,16 @@ const LABELS: FlowRunCenterLabels = {
   promptCopy: "Copy",
   noGraph: "No graph",
   noNode: "No node",
+  nodeStatus: {
+    Pending: "Pending",
+    Running: "Running",
+    Succeeded: "Succeeded",
+    Failed: "Failed",
+    NeedsInput: "Needs input",
+    Reworked: "Reworked",
+    Stale: "Stale",
+    Skipped: "Skipped",
+  },
 };
 
 const cost: RunCostSummary = {
@@ -236,6 +246,20 @@ describe("FlowRunCenter", () => {
     expect(selectFlowRunNode(result, null)?.id).toBe("implement");
     expect(render()).toContain("IMPLEMENT");
     expect(render()).toContain("Current");
+  });
+
+  it("renders node statuses as icons with a localized accessible name, not raw words", () => {
+    query = new URLSearchParams("node=implement");
+    const html = render();
+
+    // The list + selected field render the status icon (a11y name = localized
+    // label) rather than the dense raw status word.
+    expect(html).toContain('data-testid="node-status-icon"');
+    expect(html).toContain('aria-label="Running"');
+    // The selected node is "implement" (Running) — the icon carries its status.
+    expect(html).toContain('data-node-status="Running"');
+    // The Pending node ("review") surfaces its icon too.
+    expect(html).toContain('data-node-status="Pending"');
   });
 
   it("renders the per-attempt resolved prompt disclosure for the selected node", () => {

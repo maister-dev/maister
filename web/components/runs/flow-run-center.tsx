@@ -19,6 +19,7 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import clsx from "clsx";
 
+import { NodeStatusIcon } from "@/components/runs/node-status-icon";
 import { buildFlowNodeResult } from "@/lib/runs/flow-node-result";
 import { buildRunHref, parseRunQueryState } from "@/lib/runs/run-query-state";
 
@@ -47,6 +48,8 @@ export interface FlowRunCenterLabels {
   promptCopy: string;
   noGraph: string;
   noNode: string;
+  // Localized node-status labels keyed by node_attempts.status (run.nodeStatus.*).
+  nodeStatus: Record<string, string>;
 }
 
 export function selectFlowRunNode(
@@ -450,9 +453,13 @@ export function FlowRunCenter({
                   href={buildRunHref(pathname, query, { node: node.id })}
                 >
                   <span className="truncate">{node.displayLabel}</span>
-                  <span className="shrink-0 text-mute">
-                    {node.runtimeStatus}
-                  </span>
+                  <NodeStatusIcon
+                    label={
+                      labels.nodeStatus[node.runtimeStatus] ??
+                      node.runtimeStatus
+                    }
+                    status={node.runtimeStatus}
+                  />
                 </Link>
               </li>
             ))}
@@ -482,12 +489,32 @@ export function FlowRunCenter({
               </div>
 
               <dl className="grid gap-px overflow-hidden rounded-lg border border-line bg-line sm:grid-cols-4">
-                {[
-                  [labels.status, selected.runtimeStatus],
-                  [labels.attempt, String(selected.attempt)],
-                  [labels.gates, String(gateCount(selected))],
-                  [labels.tokens, String(tokenTotal(result, selected))],
-                ].map(([label, value]) => (
+                {(
+                  [
+                    [
+                      labels.status,
+                      <span
+                        key="status-value"
+                        className="inline-flex items-center gap-1.5"
+                      >
+                        <NodeStatusIcon
+                          label={
+                            labels.nodeStatus[selected.runtimeStatus] ??
+                            selected.runtimeStatus
+                          }
+                          status={selected.runtimeStatus}
+                        />
+                        <span>
+                          {labels.nodeStatus[selected.runtimeStatus] ??
+                            selected.runtimeStatus}
+                        </span>
+                      </span>,
+                    ],
+                    [labels.attempt, String(selected.attempt)],
+                    [labels.gates, String(gateCount(selected))],
+                    [labels.tokens, String(tokenTotal(result, selected))],
+                  ] as Array<[string, ReactNode]>
+                ).map(([label, value]) => (
                   <div key={label} className="bg-ivory px-3 py-2">
                     <dt className="font-mono text-[9.5px] font-bold uppercase tracking-[0.08em] text-mute">
                       {label}

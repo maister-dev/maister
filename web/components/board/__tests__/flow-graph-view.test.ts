@@ -348,6 +348,25 @@ describe("FlowNodeBody — translated status surfaced as a tooltip", () => {
 
     expect(html).toContain('title="Выполняется"');
   });
+
+  it("renders the status chip as an icon carrying the localized accessible name", () => {
+    const html = renderToStaticMarkup(
+      createElement(FlowNodeBody, {
+        label: "implement",
+        status: "Running",
+        statusLabel: "Выполняется",
+        isCurrent: false,
+        rollup: "none",
+        labels: baseLabels,
+      } as FlowNodeBodyProps & { statusLabel: string }),
+    );
+
+    // The dense uppercase status WORD inside the chip is replaced by an icon
+    // whose accessible name is the localized status (a11y, not color-only).
+    expect(html).toContain('data-testid="node-status-icon"');
+    expect(html).toContain('aria-label="Выполняется"');
+    expect(html).toContain('role="img"');
+  });
 });
 
 describe("FlowNodeBody — node tooltip preview", () => {

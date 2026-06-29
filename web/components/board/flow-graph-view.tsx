@@ -33,6 +33,7 @@ import {
   toFlowGraphView,
   type FlowLayoutOverride,
 } from "@/lib/board/flow-graph-view-layout";
+import { NodeStatusIcon } from "@/components/runs/node-status-icon";
 import { nodeVisual } from "@/lib/flows/node-visuals";
 import { buildFlowNodeTooltipsFromTopology } from "@/lib/flows/graph/node-tooltips";
 import { useRunStream } from "@/lib/use-run-stream";
@@ -455,9 +456,11 @@ export function FlowNodeBody({
                 size="sm"
                 variant="soft"
               >
-                <span className="font-mono text-[10px]" title={statusLabel}>
-                  {statusLabel ?? status}
-                </span>
+                <NodeStatusIcon
+                  className="text-current"
+                  label={statusLabel ?? status}
+                  status={status}
+                />
               </Chip>
             )}
           </div>

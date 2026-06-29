@@ -790,6 +790,16 @@ export default async function RunDetailLayout({
     promptCopy: t("flowCenterPromptCopy"),
     noGraph: t("flowCenterNoGraph"),
     noNode: t("flowCenterNoNode"),
+    nodeStatus: {
+      Pending: t("nodeStatus.Pending"),
+      Running: t("nodeStatus.Running"),
+      Succeeded: t("nodeStatus.Succeeded"),
+      Failed: t("nodeStatus.Failed"),
+      NeedsInput: t("nodeStatus.NeedsInput"),
+      Reworked: t("nodeStatus.Reworked"),
+      Stale: t("nodeStatus.Stale"),
+      Skipped: t("nodeStatus.Skipped"),
+    },
   };
   const activeDurationMs = timeline.entries.reduce<number>(
     (sum, entry) => sum + (entry.durationMs ?? 0),

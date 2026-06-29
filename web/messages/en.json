@@ -1992,6 +1992,16 @@
       "Done": "Done",
       "Abandoned": "Abandoned",
       "Failed": "Failed"
+    },
+    "nodeStatus": {
+      "Pending": "Pending",
+      "Running": "Running",
+      "Succeeded": "Succeeded",
+      "Failed": "Failed",
+      "NeedsInput": "Needs input",
+      "Reworked": "Reworked",
+      "Stale": "Stale",
+      "Skipped": "Skipped"
     }
   },
   "evidence": {
