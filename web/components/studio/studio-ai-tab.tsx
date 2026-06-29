@@ -20,6 +20,7 @@ import {
 } from "@/components/studio/flow-assistant-action-result";
 import { readApiError } from "@/lib/api-error";
 import { buildPackageCapabilityCatalog } from "@/lib/capabilities/package-catalog";
+import { type LaunchStage, readLaunchStream } from "@/lib/runs/launch-progress";
 import { useRunStream } from "@/lib/use-run-stream";
 
 export type StudioAiTabLabels = {
@@ -90,6 +91,7 @@ export function StudioAiTab({
   const [runId, setRunId] = useState<string | null>(null);
   const [prompt, setPrompt] = useState("");
   const [launching, setLaunching] = useState(false);
+  const [launchStage, setLaunchStage] = useState<LaunchStage | null>(null);
   const [dropping, setDropping] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [runners, setRunners] = useState<RunnerOption[]>([]);
@@ -249,6 +251,7 @@ export function StudioAiTab({
       return;
     }
     setLaunching(true);
+    setLaunchStage(null);
     setError(null);
 
     try {
@@ -270,20 +273,47 @@ export function StudioAiTab({
         },
       );
 
-      if (!res.ok) {
+      // A pre-stream gate failure short-circuits to a JSON error with its HTTP
+      // status; only the staged launch is `text/event-stream` (ADR-110 addendum).
+      if (
+        !(res.headers.get("content-type") ?? "").includes("text/event-stream")
+      ) {
         setError(await readApiError(res, t));
 
         return;
       }
 
-      const body = (await res.json()) as { runId: string };
+      // `session_ready` surfaces `runId` BEFORE the first turn streams — set it
+      // immediately so the conversation view (live SSE + working badge) mounts
+      // while turn 1 is still running, instead of after the whole turn.
+      const streamed = await readLaunchStream<{ runId: string }>(
+        res,
+        (stage, event) => {
+          setLaunchStage(stage);
+          if (stage !== "session_ready" || !event.runId) return;
+          setRunId(event.runId);
+          // The first turn is already running against the working dir at
+          // session_ready; mark the editor read-only NOW so user edits cannot
+          // race turn 1, instead of waiting for the first run-SSE refresh tick.
+          onBusyChange(true);
+          onActivity();
+        },
+      );
 
-      setRunId(body.runId);
-      onActivity();
+      if (streamed.error) {
+        setError(streamed.error.message ?? streamed.error.code ?? "error");
+
+        return;
+      }
+      if (streamed.result?.runId) {
+        setRunId(streamed.result.runId);
+        onActivity();
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLaunching(false);
+      setLaunchStage(null);
     }
   }, [
     prompt,
@@ -295,6 +325,7 @@ export function StudioAiTab({
     focus,
     t,
     onActivity,
+    onBusyChange,
     onBeforeSend,
     ensureLockHeld,
   ]);
@@ -457,7 +488,11 @@ export function StudioAiTab({
           type="button"
           onClick={() => void launch()}
         >
-          {launching ? labels.launching : labels.launch}
+          {launching
+            ? launchStage
+              ? tScratch(`launchStage.${launchStage}`)
+              : labels.launching
+            : labels.launch}
         </button>
       </div>
       {error ? (

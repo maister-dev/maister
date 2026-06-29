@@ -135,8 +135,10 @@ test("bottom AI assistant: start the assistant from the editor panel", async ({
     .fill("Add a review gate to the flow");
   await expect(launch).toBeEnabled({ timeout: 15_000 });
 
-  // Launching POSTs to the assistant route (asserts the lock) → the stub
-  // supervisor session drives the conversation surface into view.
+  // Launching POSTs to the assistant route (asserts the lock) → the staged
+  // stream (ADR-110 addendum) surfaces `runId` on `session_ready` BEFORE the
+  // first turn, so the conversation surface mounts immediately (not after the
+  // whole turn completes). The response is a `text/event-stream`, not 202-JSON.
   const launchResponse = page.waitForResponse(
     (response) =>
       /\/api\/studio\/local-packages\/[^/]+\/assistant$/.test(response.url()) &&
@@ -145,11 +147,13 @@ test("bottom AI assistant: start the assistant from the editor panel", async ({
 
   await launch.click();
   const launchResult = await launchResponse;
-  const launchBody = await launchResult.text();
 
-  expect(launchResult.status(), launchBody).toBe(202);
+  expect(launchResult.status()).toBe(200);
+  expect(launchResult.headers()["content-type"]).toContain("text/event-stream");
 
-  // The transcript surface (reused ScratchConversation) renders for the run.
+  // The transcript surface (reused ScratchConversation) renders for the run
+  // mid-launch — proving the first turn streams into an already-attached view
+  // (the working badge / status surface is part of this surface).
   await expect(page.getByTestId("scratch-conversation")).toBeVisible({
     timeout: 30_000,
   });
