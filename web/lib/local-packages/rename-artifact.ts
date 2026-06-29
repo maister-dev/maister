@@ -1,6 +1,8 @@
 import type { AuthoredFlowPackageFile } from "@/lib/catalog/authored-types";
 import type { CompositionKind } from "@/lib/local-packages/composition";
 
+import { parseDocument } from "yaml";
+
 import { renamePackageFilePath } from "@/lib/flows/editor/package-files-draft";
 import {
   flowCanvasHref,
@@ -50,6 +52,27 @@ function extOf(path: string): string {
   const dot = base.lastIndexOf(".");
 
   return dot > 0 ? base.slice(dot) : "";
+}
+
+// Set a flow.yaml's top-level `name` while preserving comments + key order
+// (parseDocument, not parse/stringify). Returns null when the YAML is unparseable
+// so the caller fails the rename rather than shipping a stale name. The installer
+// rejects a package whose flow.yaml `name` != its manifest flow `id`
+// (lib/packages/install.ts), so a flow identity rename MUST move the manifest id,
+// the dir, AND this name together — updating only the first two cuts an
+// uncuttable package.
+function setFlowYamlName(content: string, newName: string): string | null {
+  let doc;
+
+  try {
+    doc = parseDocument(content);
+  } catch {
+    return null;
+  }
+  if (doc.errors.length > 0) return null;
+  doc.set("name", newName);
+
+  return String(doc);
 }
 
 function renameSingleFile(
@@ -197,11 +220,29 @@ export function renameArtifact(opts: {
             id: newName,
             path: `flows/${newName}`,
           });
-      const files = rewritten.map((f) =>
-        f.path === PACKAGE_MANIFEST_FILENAME
-          ? { ...f, content: nextManifest }
-          : f,
-      );
+
+      // The manifest flow id now reads `newName`; the moved flow.yaml's `name`
+      // MUST match it (installer invariant). Rewrite it in the same draft op; an
+      // unparseable flow.yaml fails the rename rather than shipping a stale name.
+      const flowYamlPath = `${newPrefix}flow.yaml`;
+      const files: AuthoredFlowPackageFile[] = [];
+
+      for (const f of rewritten) {
+        if (f.path === PACKAGE_MANIFEST_FILENAME) {
+          files.push({ ...f, content: nextManifest });
+          continue;
+        }
+        if (f.path === flowYamlPath) {
+          const synced = setFlowYamlName(f.content, newName);
+
+          if (synced === null) {
+            return fail("CONFIG", `flow.yaml unparseable: ${flowYamlPath}`);
+          }
+          files.push({ ...f, content: synced });
+          continue;
+        }
+        files.push(f);
+      }
 
       return {
         ok: true,

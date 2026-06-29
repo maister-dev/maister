@@ -242,6 +242,8 @@
         "errorConflict": "That name already exists.",
         "errorInvalid": "Invalid name.",
         "errorConfig": "The manifest is invalid — fix it first.",
+        "errorCapabilityRequired": "Pick or name a capability for the subagent.",
+        "kindLabel": "Kind",
         "kind": {
           "flow": "Flow",
           "skill": "Skill",

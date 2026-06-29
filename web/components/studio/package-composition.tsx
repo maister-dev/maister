@@ -58,18 +58,16 @@ const TAB_LABEL_KEY: Record<CompositionTabId, string> = {
 // Local composition has small N — render every member (no pagination).
 const PACKAGE_TAB_PAGE_SIZE_LOCAL = 10_000;
 
-// The frontmatter-artifact kind each inline composition kind edits as (MCP is
-// dispatched separately to McpTemplateEditor, so its value here is unused).
-const FRONTMATTER_KIND_BY_COMPOSITION: Record<
-  CompositionKind,
-  FrontmatterArtifactKind
+// The frontmatter-artifact kind each FRONTMATTER inline kind edits as. Only the
+// kinds whose inline editor is the frontmatter editor are listed; `mcps` is
+// dispatched to McpTemplateEditor (its frontmatterKind is the ignored `?? "rule"`
+// fallback) and `flows`/`skills` never open inline, so listing them would be dead.
+const FRONTMATTER_KIND_BY_COMPOSITION: Partial<
+  Record<CompositionKind, FrontmatterArtifactKind>
 > = {
   subagents: "subagent",
   agents: "agent_definition",
   rules: "rule",
-  skills: "skill",
-  mcps: "rule",
-  flows: "rule",
 };
 
 type TFn = ReturnType<typeof useTranslations>;
@@ -406,7 +404,7 @@ function InlineMasterDetail({
               draftFiles={draftFiles}
               filePath={selectedPath}
               filesLabels={filesLabels}
-              frontmatterKind={FRONTMATTER_KIND_BY_COMPOSITION[kind]}
+              frontmatterKind={FRONTMATTER_KIND_BY_COMPOSITION[kind] ?? "rule"}
               mcpCatalog={mcpCatalog}
               readOnly={readOnly}
               saveLabel={saveLabel}
@@ -461,12 +459,15 @@ function InlineEditor({
       data-testid="composition-inline-editor"
     >
       <div className="truncate font-mono text-[11px] text-mute">{filePath}</div>
-      {isMcpDescriptorPath(filePath) && filesLabels.mcp ? (
+      {isMcpDescriptorPath(filePath) ? (
         <McpTemplateEditor
           catalog={mcpCatalog}
           content={content}
           fileName={filePath}
-          labels={filesLabels.mcp}
+          // Invariant: this surface always builds labels with includeMcp=true
+          // (studio/edit page). An MCP descriptor must never reach the
+          // frontmatter editor — it would mangle the YAML on save.
+          labels={filesLabels.mcp!}
           readOnly={readOnly}
           onChange={onChange}
         />
@@ -650,6 +651,12 @@ function CreateArtifactControl({
   const [error, setError] = useState<string | null>(null);
 
   const submit = (): void => {
+    if (kind === "subagent" && capability.trim() === "") {
+      setError(t("composition.create.errorCapabilityRequired"));
+
+      return;
+    }
+
     const result = scaffoldArtifact({
       kind,
       name,
@@ -695,7 +702,7 @@ function CreateArtifactControl({
       data-testid="composition-create-form"
     >
       <select
-        aria-label={t("composition.create.open")}
+        aria-label={t("composition.create.kindLabel")}
         className="min-h-[32px] rounded-md border border-line bg-paper px-2 font-mono text-[11px] text-ink"
         data-testid="composition-create-kind"
         value={kind}

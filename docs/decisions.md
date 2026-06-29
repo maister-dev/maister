@@ -9242,12 +9242,16 @@ batch import surfaced from the landing); and `classifyPackageFilePath` returns
 
 **Decision:**
 1. **Decouple the BOM from install.** Introduce a `PackageSource` abstraction
-   (`{ manifest, inventory, listFiles(), readFile() }`) and a pure
+   (`{ logLabel, spec: { flows, mcps }, inventory, listFiles(), readFile(),
+   loadFlow() }` — `spec` is a narrowed projection, NOT the full
+   `MaisterPackageManifest`, so a local source can synthesize `mcps` from files;
+   `loadFlow()` is the single confinement chokepoint for compiling a flow's
+   `flow.yaml`) and a pure
    `buildPackageBom(source)` (`web/lib/queries/package-bom.ts`). `getStudioPackageBom`
    is re-pointed at it through an **installed** source (today's behavior, kept
    byte-identical — a characterization snapshot is the regression guard). A new
    `getLocalPackageBom(pkg)` (`web/lib/local-packages/bom.ts`) builds a **local**
-   source over the `working_dir`: `manifest` parsed from `maister-package.yaml`,
+   source over the `working_dir`: `spec` (flows + MCP descriptors) projected from `maister-package.yaml`,
    `inventory` **computed** at BOM time by walking the working dir (the
    install-time `collectInventory` logic factored to run over a file list),
    `listFiles`/`readFile` confined to `working_dir`. Per-element parse failures
@@ -9307,8 +9311,11 @@ batch import surfaced from the landing); and `classifyPackageFilePath` returns
   the compiler into the browser and duplicates server logic; save-then-refresh is
   simpler and already the editor's pattern.
 - **A `move` HTTP route (the OpenAPI `POST .../files/{path}/move`, Designed):**
-  rejected for this plan — rename/move reduce to the existing save-diff (PUT new +
-  DELETE old), so the Designed route stays Designed and unimplemented.
+  rejected for this plan — this Designed route is a *cross-package* relocation
+  (move a file into another local package's working dir), orthogonal to the
+  in-package identity rename/move this ADR ships, which reduces to the existing
+  save-diff (PUT new + DELETE old). The Designed route stays Designed and
+  unimplemented.
 - **`.gitkeep` sentinels for empty folders:** rejected — local empty dirs are
   harmless; manufacturing sentinels litters the working tree for a push/cut-only
   concern.

@@ -8,14 +8,13 @@ import type { PackageInstallManifest } from "@/lib/packages/attach";
 import type { FlowLayout } from "@/lib/flows/graph/presentation-layout";
 import type { GraphTopology } from "@/lib/queries/flow-graph-view";
 
-import { join } from "node:path";
-
 import { and, eq, inArray } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { loadFlowManifest } from "@/lib/config";
 import { compileManifest } from "@/lib/flows/graph/compile";
+import { resolveConfinedFlowYaml } from "@/lib/flows/package-content";
 import { presentationLayout } from "@/lib/flows/graph/presentation-layout";
 import {
   classifyVersionTargets,
@@ -337,9 +336,14 @@ export async function getStudioPackageFlowGraphs(
 
   for (const flow of manifest?.spec.flows ?? []) {
     try {
-      const parsed = await loadFlowManifest(
-        join(install.installedPath, flow.path, "flow.yaml"),
+      const real = await resolveConfinedFlowYaml(
+        install.installedPath,
+        flow.path,
       );
+
+      if (!real) continue;
+
+      const parsed = await loadFlowManifest(real);
 
       graphs.push({
         flowId: flow.id,

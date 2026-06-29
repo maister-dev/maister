@@ -3,7 +3,7 @@
 import type { AuthoredFlowPackageFile } from "@/lib/catalog/authored-types";
 import type { ReactElement } from "react";
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 
 import {
   folderPathsOf,
@@ -41,7 +41,10 @@ export function FilesManager({
   const [source, setSource] = useState<string | null>(null);
   const [newFolder, setNewFolder] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const dragged = useRef<string | null>(null);
+  // Held in state, not a ref: a drag-only move (no prior click-select) must
+  // re-render so the drop targets leave their `disabled` state — a disabled
+  // button suppresses `onDrop`, which silently broke pure drag-and-drop.
+  const [dragged, setDragged] = useState<string | null>(null);
 
   const folders = useMemo(() => {
     const all = new Set<string>(["", ...folderPathsOf(draftFiles)]);
@@ -120,9 +123,8 @@ export function FilesManager({
                 data-testid="files-manager-source"
                 type="button"
                 onClick={() => setSource(file.path)}
-                onDragStart={() => {
-                  dragged.current = file.path;
-                }}
+                onDragEnd={() => setDragged(null)}
+                onDragStart={() => setDragged(file.path)}
               >
                 {file.path}
               </button>
@@ -136,20 +138,27 @@ export function FilesManager({
             {folders.map((folder) => (
               <button
                 key={folder || "(root)"}
+                // A non-root folder is both a drop target AND a drag source
+                // (folder move = prefix rewrite); root ("") can only receive.
                 className="rounded-md border border-dashed border-line bg-paper px-2 py-0.5 font-mono text-[10.5px] text-ink-2 hover:border-amber"
                 data-folder={folder}
                 data-testid="files-manager-target"
-                disabled={source === null && dragged.current === null}
+                disabled={source === null && dragged === null}
+                draggable={folder !== ""}
                 type="button"
                 onClick={() => {
                   if (source !== null) move(source, folder);
                 }}
+                onDragEnd={() => setDragged(null)}
                 onDragOver={(event) => event.preventDefault()}
+                onDragStart={() => {
+                  if (folder !== "") setDragged(folder);
+                }}
                 onDrop={(event) => {
                   event.preventDefault();
-                  if (dragged.current !== null) {
-                    move(dragged.current, folder);
-                    dragged.current = null;
+                  if (dragged !== null) {
+                    move(dragged, folder);
+                    setDragged(null);
                   }
                 }}
               >

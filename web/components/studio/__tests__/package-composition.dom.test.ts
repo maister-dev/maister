@@ -226,6 +226,119 @@ describe("PackageComposition create (ADR-115 §P5)", () => {
     expect(navigate).toBe("/studio/edit/pkg1?tab=rules&sel=renamed.md");
   });
 
+  it("requires a capability before scaffolding a subagent", () => {
+    nav.search = "tab=files";
+    const onCreateArtifact = vi.fn();
+    const container = document.createElement("div");
+
+    document.body.appendChild(container);
+    mount(
+      container,
+      createElement(
+        PackageComposition,
+        baseProps({ onCreateArtifact }) as never,
+      ),
+    );
+
+    act(() =>
+      container
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="composition-create-open"]',
+        )
+        ?.click(),
+    );
+    act(() =>
+      selectValue(
+        container.querySelector('[data-testid="composition-create-kind"]')!,
+        "subagent",
+      ),
+    );
+    act(() =>
+      setNativeValue(
+        container.querySelector('[data-testid="composition-create-name"]')!,
+        "helper",
+      ),
+    );
+    // Capability left blank.
+    act(() =>
+      container
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="composition-create-submit"]',
+        )
+        ?.click(),
+    );
+
+    expect(onCreateArtifact).not.toHaveBeenCalled();
+    expect(
+      container.querySelector('[data-testid="composition-create-error"]')
+        ?.textContent,
+    ).toBe("composition.create.errorCapabilityRequired");
+  });
+
+  it("keeps the rename form open and errors on a colliding rename", () => {
+    nav.search = "tab=rules&sel=r1.md";
+    const onCreateArtifact = vi.fn();
+    const container = document.createElement("div");
+
+    document.body.appendChild(container);
+    mount(
+      container,
+      createElement(
+        PackageComposition,
+        baseProps({
+          onCreateArtifact,
+          bom: {
+            ...bom,
+            rules: [
+              { id: "r1.md", path: "rules/r1.md" },
+              { id: "r2.md", path: "rules/r2.md" },
+            ],
+          },
+          draftFiles: [
+            { kind: "rule", path: "rules/r1.md", content: "x" },
+            { kind: "rule", path: "rules/r2.md", content: "y" },
+          ],
+        }) as never,
+      ),
+    );
+
+    act(() =>
+      container
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="composition-inline-rename-open"]',
+        )
+        ?.click(),
+    );
+    act(() =>
+      setNativeValue(
+        container.querySelector(
+          '[data-testid="composition-inline-rename-name"]',
+        )!,
+        "r2",
+      ),
+    );
+    act(() =>
+      container
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="composition-inline-rename-submit"]',
+        )
+        ?.click(),
+    );
+
+    expect(onCreateArtifact).not.toHaveBeenCalled();
+    // Form stays open (submit still present) with an error for correction.
+    expect(
+      container.querySelector(
+        '[data-testid="composition-inline-rename-submit"]',
+      ),
+    ).not.toBeNull();
+    expect(
+      container.querySelector(
+        '[data-testid="composition-inline-rename-error"]',
+      ),
+    ).not.toBeNull();
+  });
+
   it("shows a CONFLICT error and does not create on a colliding name", () => {
     nav.search = "tab=files";
     const onCreateArtifact = vi.fn();

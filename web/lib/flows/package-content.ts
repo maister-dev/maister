@@ -266,6 +266,25 @@ async function resolveConfinedFile(
   return { ok: true, real };
 }
 
+// Confine a manifest-declared flow directory path to the package root and return
+// the real absolute `flow.yaml` path, or null when the entry is missing, is not a
+// regular file, exceeds the size cap, or escapes the root. The flow dir path comes
+// from a package manifest — validated at install time for an installed package, but
+// UNTRUSTED for a local working dir (the editor parses `maister-package.yaml`
+// leniently), so every BOM / preview flow load resolves through this gate instead
+// of join()-ing the raw path straight into `loadFlowManifest` (ADR-115 confinement
+// fix). Reuses the single `resolveConfinedFile` gate, so a lexical/symlink escape
+// is logged once at warn here, then degrades the caller's flow to id-only.
+export async function resolveConfinedFlowYaml(
+  root: string,
+  flowDirPath: string,
+): Promise<string | null> {
+  const rel = path.join(flowDirPath, "flow.yaml");
+  const confined = await resolveConfinedFile(root, rel);
+
+  return confined.ok ? confined.real : null;
+}
+
 export async function readInstalledPackageFile(
   args: InstalledPackageRef,
   relPath: string,

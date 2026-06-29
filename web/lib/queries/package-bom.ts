@@ -5,11 +5,10 @@ import type { FlowLayout } from "@/lib/flows/graph/presentation-layout";
 import type { ListResult, ReadResult } from "@/lib/flows/package-content";
 import type { GraphTopology } from "@/lib/queries/flow-graph-view";
 
-import { join } from "node:path";
-
 import pino from "pino";
 
 import { loadFlowManifest } from "@/lib/config";
+import { MaisterError } from "@/lib/errors";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import { buildFlowNodeTooltipsFromManifest } from "@/lib/flows/graph/node-tooltips";
 import { presentationLayout } from "@/lib/flows/graph/presentation-layout";
@@ -18,6 +17,7 @@ import {
   readInstalledPackageFile,
   resolveBundledAgentPath,
   resolveBundledSkillPrefix,
+  resolveConfinedFlowYaml,
 } from "@/lib/flows/package-content";
 import { parseAgentDefinition } from "@/lib/agents/definition";
 import { splitFrontmatter } from "@/lib/flows/artifact-frontmatter";
@@ -183,8 +183,18 @@ export function installedPackageSource(install: {
     },
     listFiles: () => listInstalledPackageFiles({ installedPath }),
     readFile: (rel) => readInstalledPackageFile({ installedPath }, rel),
-    loadFlow: (flowPath) =>
-      loadFlowManifest(join(installedPath, flowPath, "flow.yaml")),
+    loadFlow: async (flowPath) => {
+      const real = await resolveConfinedFlowYaml(installedPath, flowPath);
+
+      if (!real) {
+        throw new MaisterError(
+          "PRECONDITION",
+          `flow path escapes the package root: ${flowPath}`,
+        );
+      }
+
+      return loadFlowManifest(real);
+    },
   };
 }
 

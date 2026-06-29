@@ -391,7 +391,7 @@ fallback. See [`../configuration.md`](../configuration.md).
 
 ## Composition view — tabbed local-package editor (ADR-115 — Implemented)
 
-The local editor's no-path landing becomes a **tabbed-by-kind composition view**,
+The local editor's no-path landing is a **tabbed-by-kind composition view**,
 reusing the installed viewer's `PackageTabs` / `ElementCard` / `FlowPreviewCard`
 pattern over a BOM **decoupled from install** into a shared source abstraction. It
 is **web-only** — no migration, no new HTTP route, no new `MaisterError` code; all
@@ -401,13 +401,16 @@ save-diff (`PUT`/`DELETE /api/studio/local-packages/{id}/files/{path}`) and impo
 
 ### Additional domain entities
 
-- **`PackageSource`** (server-only abstraction, NOT persisted): `{ manifest,
-  inventory, listFiles(), readFile(rel) }` — the input the BOM builder consumes.
-  An **installed** source reads `package_installs.manifest` + `installedPath`
-  (unchanged); a **local** source parses `maister-package.yaml` from `working_dir`,
-  **computes** `inventory` by walking the dir (the install-time `collectInventory`
-  logic factored over a file list), and confines `listFiles`/`readFile` to
-  `working_dir`.
+- **`PackageSource`** (server-only abstraction, NOT persisted): `{ logLabel,
+  spec: { flows, mcps }, inventory, listFiles(), readFile(rel), loadFlow(flowPath) }`
+  — the input the BOM builder consumes. `spec` is a narrowed projection (NOT the
+  full `MaisterPackageManifest`), so a local source can synthesize `mcps` from
+  files; `loadFlow()` is the single confinement chokepoint for compiling a flow's
+  `flow.yaml`. An **installed** source reads `package_installs.manifest` +
+  `installedPath` (unchanged); a **local** source projects `spec` from
+  `maister-package.yaml` in `working_dir`, **computes** `inventory` by walking the
+  dir (the install-time `collectInventory` logic factored over a file list), and
+  confines `listFiles`/`readFile`/`loadFlow` to `working_dir`.
 - **`PackageBom` (local)** — the same `PackageBom` shape the installed viewer uses
   (`flows`/`skills`/`subagents`/`platformAgents`/`mcps`/`rules`), produced by the
   shared `buildPackageBom(source)`. **Derived, never stored** — computed at RSC
@@ -465,7 +468,7 @@ flowchart TD
     B -->|no| D{kind?}
     D -->|single-file agent/subagent/rule/mcp| E[rename one path]
     D -->|skill folder| F["rewrite skills/old/ prefix on every child file"]
-    D -->|flow| G["rename flows/old.yaml→new.yaml AND update manifest.spec.flows[]"]
+    D -->|flow| G["rename flows/old/→flows/new/, update manifest.spec.flows[] id+path, AND sync flow.yaml name"]
     E --> H[save-diff: PUT new + DELETE old] --> I[router.refresh]
     F --> H
     G --> H
@@ -504,7 +507,9 @@ tab surfaces one shared **Import** button wired to the existing
   MUST append `manifest.spec.flows[]` (id + path); a name colliding with any
   existing draft path MUST be rejected with `MaisterError("CONFLICT")`.
 - Card `Rename <Kind>` MUST rewrite **identity** only (a skill-folder rename moves
-  every child; a flow rename updates `manifest.spec.flows[]` id+path); it MUST NOT
+  every child; a flow rename updates `manifest.spec.flows[]` id+path AND syncs the
+  moved `flow.yaml` `name` to the new id — the installer rejects
+  `flow.yaml name != manifest flow id`, so all three move together); it MUST NOT
   touch frontmatter and MUST reject a colliding target with `CONFLICT`.
 - The Files tab "new folder" MUST be virtual/client-only — it MUST NOT persist and
   MUST NOT write a `.gitkeep` sentinel; an empty folder never reaches disk.
@@ -515,6 +520,10 @@ tab surfaces one shared **Import** button wired to the existing
   composition mutation (create / rename / inline edit / files-tab move / import).
 - The local BOM MUST degrade any per-element parse failure to an id-only card and
   MUST NEVER throw.
+- A manifest-declared `flows[].path` MUST be path-confined to the package root
+  before the flow is loaded (`resolveConfinedFlowYaml`) — the local manifest is
+  parsed leniently, so a `..`/absolute/symlink path MUST be refused (read nothing
+  outside the root) and the flow MUST degrade to an id-only card.
 
 ### Composition-view edge cases (ADR-115 — Implemented)
 
@@ -522,8 +531,11 @@ tab surfaces one shared **Import** button wired to the existing
   surfaced inline, never a silent overwrite.
 - Rename/move path escape (`..`/abs/symlink/`.git`) → `MaisterError("PRECONDITION")`
   via `resolveWithinWorkingDir`, before any write (the existing confinement guard).
-- A flow rename that updates the file but not `manifest.spec.flows[]` is a defect
-  (the rename helper updates both atomically in the draft set).
+- A flow rename that updates the manifest id/path but leaves the moved `flow.yaml`
+  `name` stale is a defect — it cuts an uncuttable package (the installer enforces
+  `flow.yaml name === manifest flow id`). The rename helper moves the dir, the
+  manifest entry, and the `flow.yaml` `name` atomically in the draft set; an
+  unparseable moved `flow.yaml` fails the rename with `MaisterError("CONFIG")`.
 - Malformed `maister-package.yaml` in the local source → empty/degraded BOM
   (manifest parse → `CONFIG`/empty), never a thrown landing.
 

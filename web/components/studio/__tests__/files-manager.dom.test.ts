@@ -152,6 +152,52 @@ describe("FilesManager (ADR-115 §P7, D7)", () => {
     ).toBe("conflict");
   });
 
+  it("moves a file via drag-and-drop without a prior click-select", () => {
+    // Regression: targets used to read the dragged path from a ref (no
+    // re-render), so a drag with no prior click left them `disabled` and the
+    // browser suppressed `onDrop` — drag-only move silently did nothing.
+    const onDraftFilesChange = vi.fn();
+    const container = mount(false, onDraftFilesChange);
+
+    act(() =>
+      bySource(container, "rules/a.md").dispatchEvent(
+        new Event("dragstart", { bubbles: true }),
+      ),
+    );
+    expect(byTarget(container, "assets").disabled).toBe(false);
+    act(() =>
+      byTarget(container, "assets").dispatchEvent(
+        new Event("drop", { bubbles: true }),
+      ),
+    );
+
+    expect(onDraftFilesChange).toHaveBeenCalledTimes(1);
+    const next = onDraftFilesChange.mock.calls[0][0] as Array<{ path: string }>;
+
+    expect(next.some((f) => f.path === "assets/a.md")).toBe(true);
+  });
+
+  it("moves a folder via drag (folder is both a source and a target)", () => {
+    const onDraftFilesChange = vi.fn();
+    const container = mount(false, onDraftFilesChange);
+
+    act(() =>
+      byTarget(container, "rules").dispatchEvent(
+        new Event("dragstart", { bubbles: true }),
+      ),
+    );
+    act(() =>
+      byTarget(container, "assets").dispatchEvent(
+        new Event("drop", { bubbles: true }),
+      ),
+    );
+
+    expect(onDraftFilesChange).toHaveBeenCalledTimes(1);
+    const next = onDraftFilesChange.mock.calls[0][0] as Array<{ path: string }>;
+
+    expect(next.some((f) => f.path === "assets/rules/a.md")).toBe(true);
+  });
+
   it("hides move controls when readOnly", () => {
     const container = mount(true);
 

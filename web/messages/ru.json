@@ -242,6 +242,8 @@
         "errorConflict": "Такое имя уже существует.",
         "errorInvalid": "Недопустимое имя.",
         "errorConfig": "Манифест некорректен — сначала исправьте его.",
+        "errorCapabilityRequired": "Укажите capability для сабагента.",
+        "kindLabel": "Тип",
         "kind": {
           "flow": "Флоу",
           "skill": "Навык",

@@ -1,6 +1,6 @@
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -193,6 +193,52 @@ describe("getLocalPackageBom (ADR-115 §D4/D5)", () => {
     expect(bom.flows).toEqual([]);
     expect(bom.mcps).toEqual([]);
     expect(bom.rules).toEqual([{ id: "r1.md", path: "rules/r1.md" }]);
+  });
+
+  it("does not read a flow whose manifest path escapes the working dir (Codex critical)", async () => {
+    // A real, compilable flow placed OUTSIDE the package working dir. Without
+    // path confinement the lenient manifest `flows[].path` would `join` straight
+    // into `loadFlowManifest` and compile it, leaking graph/tooltip metadata.
+    const outside = await mkdtemp(join(tmpdir(), "localbom-outside-"));
+
+    try {
+      await mkdir(join(outside, "evil"), { recursive: true });
+      await writeFile(
+        join(outside, "evil", "flow.yaml"),
+        [
+          "schemaVersion: 1",
+          "name: evil",
+          "steps:",
+          "  - id: pwn",
+          "    type: agent",
+          "    mode: new-session",
+          "    prompt: leak",
+          "",
+        ].join("\n"),
+      );
+      const escape = `${relative(root, outside)}/evil`;
+
+      await seedManifest(
+        ["flows:", "  - id: evil", `    path: ${escape}`].join("\n"),
+      );
+
+      const bom = await getLocalPackageBom({
+        slug: "local-pkg",
+        workingDir: root,
+      });
+
+      // The entry still surfaces (manifest-declared) but degrades to an id-only
+      // card — the out-of-root flow.yaml is NEVER compiled, so no graph leaks.
+      expect(bom.flows).toHaveLength(1);
+      expect(bom.flows[0]).toMatchObject({
+        id: "evil",
+        nodeCount: 0,
+        gateCount: 0,
+      });
+      expect(bom.flows[0].graph).toBeNull();
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
   });
 
   it("returns an empty BOM for a missing working dir (no throw)", async () => {

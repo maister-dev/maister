@@ -204,9 +204,12 @@ code is reported, not deleted.
   `renamePackageFilePath`, persisted by the save-diff (PUT new + DELETE old).
 - skill (folder): rename `skills/<old>/` → `skills/<new>/` rewrites the path
   prefix of **every** file under it.
-- flow: rename `flows/<old>.yaml` → `flows/<new>.yaml` AND update the
+- flow: rename the dir `flows/<old>/` → `flows/<new>/` (incl. its `flow.yaml`),
+  sync the moved `flow.yaml`'s `name` to the new id, AND update the
   `manifest.spec.flows[]` entry (id + path) via `appendManifestFlow`/manifest
-  edit. A flow rename that updates the file but not the manifest is a defect.
+  edit. A flow rename that updates the file but not the manifest — or leaves the
+  moved `flow.yaml` `name` stale (the installer enforces `name === manifest id`)
+  — is a defect.
 - collision against any existing path → `CONFLICT` (surfaced inline, never a
   silent overwrite).
 
@@ -337,7 +340,7 @@ breadcrumb navigates back; non-existent skill → not-found.
 
 **P5.1 (RED→GREEN)** Pure scaffolders (`web/lib/local-packages/scaffold.ts`,
 new) producing the exact file shape per kind into the draft set:
-- flow → `flows/<name>.yaml` skeleton **+ `appendManifestFlow`** → navigate canvas
+- flow → `flows/<name>/flow.yaml` skeleton **+ `appendManifestFlow`** → navigate canvas
 - skill → `skills/<name>/SKILL.md` frontmatter stub → navigate skill screen
 - subagent → `capability/<cap>/agents/<name>.md` stub → inline. **The `<cap>`
   capability is chosen by the user** (a picker over existing capabilities); if

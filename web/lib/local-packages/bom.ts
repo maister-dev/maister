@@ -6,9 +6,11 @@ import { join } from "node:path";
 import pino from "pino";
 
 import { loadFlowManifest } from "@/lib/config";
+import { MaisterError } from "@/lib/errors";
 import {
   listInstalledPackageFiles,
   readInstalledPackageFile,
+  resolveConfinedFlowYaml,
 } from "@/lib/flows/package-content";
 import { isMcpDescriptorPath, mcpStem } from "@/lib/local-packages/composition";
 import {
@@ -151,8 +153,18 @@ export async function localPackageSource(opts: {
     listFiles: () => Promise.resolve(listed),
     readFile: (rel) =>
       readInstalledPackageFile({ installedPath: workingDir }, rel),
-    loadFlow: (flowPath) =>
-      loadFlowManifest(join(workingDir, flowPath, "flow.yaml")),
+    loadFlow: async (flowPath) => {
+      const real = await resolveConfinedFlowYaml(workingDir, flowPath);
+
+      if (!real) {
+        throw new MaisterError(
+          "PRECONDITION",
+          `flow path escapes the package working dir: ${flowPath}`,
+        );
+      }
+
+      return loadFlowManifest(real);
+    },
   };
 }
 

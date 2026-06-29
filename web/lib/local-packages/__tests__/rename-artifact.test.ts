@@ -124,6 +124,88 @@ describe("renameArtifact (ADR-115 P6, D8)", () => {
     expect(res.navigate).toBe("/studio/edit/pkg1/flows/new/flow.yaml");
   });
 
+  it("flow rename syncs flow.yaml name to the manifest id (installer invariant; Codex high)", () => {
+    const draftFiles: AuthoredFlowPackageFile[] = [
+      {
+        kind: "manifest",
+        path: "maister-package.yaml",
+        content: [
+          "schemaVersion: 1",
+          "name: pkg",
+          "flows:",
+          "  - id: old",
+          "    path: flows/old",
+          "",
+        ].join("\n"),
+      },
+      {
+        kind: "asset",
+        path: "flows/old/flow.yaml",
+        content: [
+          "schemaVersion: 1",
+          "name: old",
+          "steps:",
+          "  - id: s",
+          "    type: agent",
+          "    mode: new-session",
+          "    prompt: go",
+          "",
+        ].join("\n"),
+      },
+    ];
+    const res = renameArtifact({
+      kind: "flows",
+      id: "old",
+      path: "flows/old",
+      newName: "new",
+      packageId: "pkg1",
+      draftFiles,
+    });
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    const flowYaml =
+      res.files.find((f) => f.path === "flows/new/flow.yaml")?.content ?? "";
+    const manifest =
+      res.files.find((f) => f.path === "maister-package.yaml")?.content ?? "";
+
+    // The installer rejects flow.yaml name !== manifest flow id — both must move.
+    expect(flowYaml).toContain("name: new");
+    expect(flowYaml).not.toContain("name: old");
+    expect(manifest).toContain("id: new");
+    // The rest of the flow.yaml (steps) is preserved — only `name` changes.
+    expect(flowYaml).toContain("id: s");
+  });
+
+  it("flow rename fails CONFIG when the moved flow.yaml is unparseable", () => {
+    const draftFiles: AuthoredFlowPackageFile[] = [
+      {
+        kind: "manifest",
+        path: "maister-package.yaml",
+        content: [
+          "schemaVersion: 1",
+          "name: pkg",
+          "flows:",
+          "  - id: old",
+          "    path: flows/old",
+          "",
+        ].join("\n"),
+      },
+      { kind: "asset", path: "flows/old/flow.yaml", content: "name: [bad" },
+    ];
+    const res = renameArtifact({
+      kind: "flows",
+      id: "old",
+      path: "flows/old",
+      newName: "new",
+      packageId: "pkg1",
+      draftFiles,
+    });
+
+    expect(res.ok).toBe(false);
+    expect(!res.ok && res.code).toBe("CONFIG");
+  });
+
   it("rejects a collision with CONFLICT (single-file + folder)", () => {
     const single = renameArtifact({
       kind: "rules",
