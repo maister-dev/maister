@@ -7,8 +7,8 @@ import {
 } from "@/lib/flows/engine-version";
 
 describe("MAISTER_ENGINE_VERSION", () => {
-  it("is 2.0.0 (M42 unified runner & session model bump)", () => {
-    expect(MAISTER_ENGINE_VERSION).toBe("2.0.0");
+  it("is 2.1.0 (ADR-118 rework onExhaustion/resetTargets bump)", () => {
+    expect(MAISTER_ENGINE_VERSION).toBe("2.1.0");
   });
 });
 
@@ -19,7 +19,7 @@ describe("isEngineCompatible", () => {
   });
 
   it("is compatible when engine is within [min, max]", () => {
-    expect(isEngineCompatible("0.1.0", "2.0.0").compatible).toBe(true);
+    expect(isEngineCompatible("0.1.0", "2.1.0").compatible).toBe(true);
     expect(
       isEngineCompatible(MAISTER_ENGINE_VERSION, MAISTER_ENGINE_VERSION)
         .compatible,
@@ -27,8 +27,8 @@ describe("isEngineCompatible", () => {
   });
 
   it("is incompatible when engine is below engine_min", () => {
-    // Engine is 2.0.0 (M42 bump); a min above it must be rejected.
-    const r = isEngineCompatible("2.1.0");
+    // Engine is 2.1.0 (ADR-118 bump); a min above it must be rejected.
+    const r = isEngineCompatible("2.2.0");
 
     expect(r.compatible).toBe(false);
     expect(r.reason).toContain("engine_min");

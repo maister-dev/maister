@@ -606,6 +606,11 @@ const CONSENSUS_ENGINE_MIN = "1.9.0";
 // declare engine_min >= this value.
 export const SESSIONS_ENGINE_MIN = "2.0.0";
 
+// ADR-118 floor: manifests where any node's `rework` declares `onExhaustion`
+// (loop-node exhaustion routing) or `resetTargets` (human-node counter reset)
+// must declare engine_min >= this value.
+const REWORK_RESET_ENGINE_MIN = "2.1.0";
+
 // Returns true when any node is an orchestrator node. Used to gate the 1.6.0
 // floor.
 function declaresOrchestratorNode(nodes: NodeDef[]): boolean {
@@ -763,6 +768,24 @@ function declaresDecideOrOnMismatch(nodes: NodeDef[]): boolean {
   for (const n of nodes) {
     if ((n as { decide?: unknown }).decide !== undefined) return true;
     if (n.output?.result?.on_mismatch !== undefined) return true;
+  }
+
+  return false;
+}
+
+// Returns true when any node's `rework` block declares the ADR-118 fields
+// `onExhaustion` (loop-node exhaustion routing) or `resetTargets` (human-node
+// counter reset). Used to gate the 2.1.0 floor.
+function declaresReworkResetOrOnExhaustion(nodes: NodeDef[]): boolean {
+  for (const n of nodes) {
+    const rework = (
+      n as {
+        rework?: { onExhaustion?: unknown; resetTargets?: unknown };
+      }
+    ).rework;
+
+    if (rework?.onExhaustion !== undefined) return true;
+    if (rework?.resetTargets !== undefined) return true;
   }
 
   return false;
@@ -976,6 +999,28 @@ export function validateGraphManifest(
       "CONFIG",
       `graph flow ${flowYamlPath} is declaring sessions / a unified runner config (sessions:, node session:, settings.runner object, judge runner, or effort/env) but engine_min "${engineMin}" < ${SESSIONS_ENGINE_MIN} — bump compat.engine_min to ${SESSIONS_ENGINE_MIN} (host engine is ${MAISTER_ENGINE_VERSION})`,
     );
+  }
+
+  // ADR-118: rework `onExhaustion` / `resetTargets` require the 2.1.0 floor.
+  // Manifests declaring neither stay valid at any engine_min.
+  if (declaresReworkResetOrOnExhaustion(nodes)) {
+    const ok = semverGte(engineMin, REWORK_RESET_ENGINE_MIN);
+
+    log.debug(
+      {
+        flowYamlPath,
+        declared: engineMin || "(unset)",
+        required: REWORK_RESET_ENGINE_MIN,
+        ok,
+      },
+      "[engine-floor] rework-reset gate",
+    );
+    if (!ok) {
+      throw new MaisterError(
+        "CONFIG",
+        `graph flow ${flowYamlPath} is declaring rework onExhaustion/resetTargets but engine_min "${engineMin}" < ${REWORK_RESET_ENGINE_MIN} — bump compat.engine_min to ${REWORK_RESET_ENGINE_MIN} (host engine is ${MAISTER_ENGINE_VERSION})`,
+      );
+    }
   }
 
   const nodeIds = new Set<string>();

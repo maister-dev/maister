@@ -232,6 +232,98 @@ function verifyDecideAndOnMismatch(node: NodeDef): void {
   }
 }
 
+// ADR-118: forward-reachable node-id closure starting from `seeds`, following
+// each node's `transitions` targets (the terminal "done" target is not a node).
+// `seeds` are included (a rework re-entry target is itself reachable).
+function forwardReachableNodeIds(
+  seeds: readonly string[],
+  nodesById: Map<string, NodeDef>,
+): Set<string> {
+  const reachable = new Set<string>();
+  const queue = [...seeds];
+
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+
+    if (reachable.has(id)) continue;
+    reachable.add(id);
+
+    const node = nodesById.get(id);
+
+    if (node === undefined) continue;
+
+    for (const target of Object.values(node.transitions ?? {})) {
+      if (target !== TERMINAL_TRANSITION_TARGET && !reachable.has(target)) {
+        queue.push(target);
+      }
+    }
+  }
+
+  return reachable;
+}
+
+// ADR-118: compile/load-time verification of `rework.onExhaustion` (a loop
+// node's exhaustion-routing key) and `rework.resetTargets` (a human node's
+// loop-counter reset list). Throws MaisterError("CONFIG") on any violation.
+// Both fields live INSIDE `rework`, so "declared without a rework block" is
+// structurally impossible (the schema prevents it). The runtime allow-list guard
+// re-asserts onExhaustion ∈ transitions as defense in depth.
+function verifyReworkReset(
+  node: NodeDef,
+  nodesById: Map<string, NodeDef>,
+): void {
+  const rework = node.rework;
+
+  if (rework === undefined) return;
+
+  const onExhaustion = rework.onExhaustion;
+
+  if (onExhaustion !== undefined) {
+    const transitionKeys = Object.keys(node.transitions ?? {});
+
+    if (!transitionKeys.includes(onExhaustion)) {
+      throw new MaisterError(
+        "CONFIG",
+        `node "${node.id}" rework.onExhaustion "${onExhaustion}" is not a declared transition outcome (transition keys: ${transitionKeys.join(", ") || "(none)"})`,
+      );
+    }
+  }
+
+  const resetTargets = rework.resetTargets;
+
+  if (resetTargets !== undefined) {
+    const reachable = forwardReachableNodeIds(rework.allowedTargets, nodesById);
+
+    for (const targetId of resetTargets) {
+      const target = nodesById.get(targetId);
+
+      if (target === undefined) {
+        throw new MaisterError(
+          "CONFIG",
+          `node "${node.id}" rework.resetTargets references unknown node id "${targetId}"`,
+        );
+      }
+      if (target.rework === undefined) {
+        throw new MaisterError(
+          "CONFIG",
+          `node "${node.id}" rework.resetTargets target "${targetId}" is not a rework-loop node (it has no \`rework\` block, so it has no counter to reset)`,
+        );
+      }
+      if (!reachable.has(targetId)) {
+        throw new MaisterError(
+          "CONFIG",
+          `node "${node.id}" rework.resetTargets target "${targetId}" is not reachable from rework.allowedTargets [${rework.allowedTargets.join(", ")}] — a reset must target a loop the rework re-enters`,
+        );
+      }
+    }
+
+    log.debug(
+      { nodeId: node.id, resetTargets, allowedTargets: rework.allowedTargets },
+      "[rework.resetTargets] verified targets are reachable rework-loop nodes",
+    );
+  }
+}
+
 function compileGraph(
   graphNodes: NodeDef[],
   flowVerdictCalibration: FlowYamlV1["verdict_calibration"],
@@ -279,8 +371,12 @@ function compileGraph(
     return "default";
   };
 
+  // ADR-118: raw NodeDef lookup for rework.resetTargets graph-context checks.
+  const nodesById = new Map(graphNodes.map((n) => [n.id, n]));
+
   for (const node of graphNodes) {
     verifyDecideAndOnMismatch(node);
+    verifyReworkReset(node, nodesById);
 
     const rawGates = node.pre_finish?.gates ?? [];
     const gates: GateDef[] = rawGates.map((g) => {

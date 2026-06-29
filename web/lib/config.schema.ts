@@ -577,7 +577,7 @@ const finishHumanSchema = z
   })
   .passthrough();
 
-const reworkSchema = z
+export const reworkSchema = z
   .object({
     allowedTargets: z.array(z.string().min(1)).min(1),
     workspacePolicies: z.array(workspacePolicySchema).min(1),
@@ -585,6 +585,15 @@ const reworkSchema = z
     commentsVar: z.string().min(1).optional(),
     // M30 (ADR-081): transition-level session policy — highest precedence.
     session_policy: sessionPolicySchema.optional(),
+    // ADR-118: on effective-attempt exhaustion of THIS loop node, route via
+    // transitions[<onExhaustion>] (typically to a human node) INSTEAD of the
+    // execution-policy A1 reworkExhaustion action. A free transition key;
+    // compile validates it is ∈ this node's transitions. Engine floor 2.1.0.
+    onExhaustion: z.string().min(1).optional(),
+    // ADR-118: on a HUMAN node, a rework decision re-baselines each listed loop
+    // node's attempt counter → a fresh maxLoops budget. Compile validates each
+    // id is a reachable rework-loop node. Engine floor 2.1.0.
+    resetTargets: z.array(z.string().min(1)).min(1).optional(),
   })
   .passthrough();
 

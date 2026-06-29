@@ -34,7 +34,11 @@ const log = pino({
 // `env`, judge `runner:`) (M42, ADR-114) — the first stable clean-cutover
 // baseline. A manifest declaring any of those MUST `compat.engine_min >= 2.0.0`
 // (SESSIONS_ENGINE_MIN, see config.ts).
-export const MAISTER_ENGINE_VERSION = "2.0.0";
+// Bumped 2.0.0 -> 2.1.0 for rework loop `onExhaustion` routing + human-driven
+// counter reset (`resetTargets`) (ADR-118); a manifest where any node's `rework`
+// declares either field MUST `compat.engine_min >= 2.1.0` (REWORK_RESET_ENGINE_MIN,
+// see config.ts).
+export const MAISTER_ENGINE_VERSION = "2.1.0";
 
 // Minimum engine version a graph (`nodes[]`) manifest must declare in
 // `compat.engine_min` (ADR-026). Enforced in `loadFlowManifest`.
