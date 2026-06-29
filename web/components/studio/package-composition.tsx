@@ -253,35 +253,13 @@ function buildCompositionCards({
       );
     case "flows":
       return bom.flows.map((flow) => (
-        <div key={flow.id} className="flex flex-col gap-1.5">
-          <FlowPreviewCard
-            flow={flow}
-            graphLabels={graphLabels}
-            href={flowCanvasHref(packageId, flow.path)}
-            t={t}
-          />
-          {readOnly ? null : (
-            <RenameControl
-              currentName={flow.id}
-              labels={renameLabels(t)}
-              testidPrefix="composition-flow-rename"
-              onSubmit={(newName) =>
-                applyRename(
-                  {
-                    kind: "flows",
-                    id: flow.id,
-                    path: flow.path,
-                    newName,
-                    packageId,
-                    draftFiles,
-                  },
-                  t,
-                  onCreateArtifact,
-                )
-              }
-            />
-          )}
-        </div>
+        <FlowPreviewCard
+          key={flow.id}
+          flow={flow}
+          graphLabels={graphLabels}
+          href={flowCanvasHref(packageId, flow.path)}
+          t={t}
+        />
       ));
     case "skills":
       return bom.skills.map((skill) => (
