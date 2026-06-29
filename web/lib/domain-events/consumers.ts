@@ -6,6 +6,7 @@ import pino from "pino";
 
 import { agentTriggersConsumer } from "@/lib/agents/triggers";
 import { autoLaunchRunPlanConsumer } from "@/lib/domain-events/auto-launch";
+import { costRollupReconcileConsumer } from "@/lib/domain-events/cost-rollup-reconcile";
 import { orchestratorResumeConsumer } from "@/lib/domain-events/orchestrator-resume";
 import { ralphLoopConsumer } from "@/lib/runs/ralph-loop";
 
@@ -66,4 +67,8 @@ export const DOMAIN_EVENT_CONSUMERS: DomainEventConsumer[] = [
   // run.failed when the failed run's snapshotted policy is ralph_loop, bounded
   // by MAISTER_RALPH_MAX_ATTEMPTS. Idempotent via tasks.attempt_number.
   ralphLoopConsumer,
+  // ADR-117: low-latency fast-path that reconciles run_cost_rollups on a
+  // run-terminal event (run.done|failed|crashed|abandoned). Poison-safe; the
+  // system_sweep ended_at backstop is the completeness guarantee.
+  costRollupReconcileConsumer,
 ];

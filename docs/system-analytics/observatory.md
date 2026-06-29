@@ -67,17 +67,19 @@ aggregation layer over current rows. Active runs are included in metrics but
 MUST carry `volatile=true` because their attempts, waits, and ending timestamp
 can still change.
 
-## Cost dimension (Designed, ADR-085)
+## Cost dimension (ADR-087 cost accounting + ADR-101 budget + ADR-117 reconcile/runner)
 
 The cost dimension is read-only and groups derived token/cost rollups by
 project, Flow, and node. It does not read raw prompts, raw adapter lines, env
 values, or secret-bearing payloads. Its source inputs are:
 
 - `runs.started_at`, `runs.ended_at`, `runs.flow_id`, `runs.flow_revision_id`,
-  `run_sessions.runner_snapshot` (active session), and the run-level cost rollup;
+  `run_sessions.runner_snapshot` (per session), and the run-level cost rollup
+  (`run_cost_rollups`, incl. its `by_model` and `by_runner` jsonb breakdowns);
 - `node_attempts.started_at`, `node_attempts.ended_at`, and node-attempt cost
   rollups;
-- enriched `cost.jsonl` records as the reconciliation source of truth.
+- enriched `cost.jsonl` records as the reconciliation source of truth — read
+  **only** on the reconcile write paths below, never in the read path.
 
 Token kinds are `input`, `output`, `cache_read`, and `cache_creation`.
 Resume tax is the subtotal of records marked as resume/checkpoint overhead.
@@ -89,6 +91,91 @@ view-only: no write route, no background job, no recommendation mutation, and
 no Flow/package edits. Rollups may be persisted by the runs domain for
 efficient reads, but Observatory only consumes them through bulk read-model
 queries and reconciles labels/denominators with the rest of the page.
+
+### Model & runner breakdown (Implemented, ADR-117)
+
+The project/portfolio model + runner breakdown and the two reconcile triggers
+below are **Implemented**. The base token totals (ADR-087) and budget pressure
+(ADR-101) were already **Implemented**.
+
+`getProjectObservatory` / `getPortfolioObservatory` expose, alongside the flat
+token totals, two grouped breakdowns over the persisted rollup columns:
+
+- **`byModel`** — keyed by the cost record `model` string (`"unknown"` when
+  absent), summed across every in-scope `run_cost_rollups.by_model`.
+- **`byRunner`** — keyed by a snapshot-derived stable label `runnerKey =
+  "<adapter>/<model>"` (e.g. `claude/claude-sonnet-4-6`), summed across every
+  in-scope `run_cost_rollups.by_runner`. The key is derived from
+  `run_sessions.runner_snapshot` (not the catalog FK), so a deleted runner row
+  never erases historical attribution. Cost with no matching `run_sessions` row
+  buckets under `"unknown"`.
+
+**Conditional by-runner precision.** The multi-runner split is *exact* only when
+a flow declares multiple logical sessions (distinct `sessionName` per node →
+distinct `run_sessions` rows with distinct snapshots). A single-session flow,
+and every scratch/agent run, maps all cost to one runner via `sessionName =
+"default"` — correct, not a loss. There is no per-node runner split below session
+granularity.
+
+Both breakdowns are pure reads over the two jsonb columns — they add **no** new
+HTTP surface (the project/portfolio Observatory is RSC).
+
+### Reconcile triggers (ADR-117)
+
+`run_cost_rollups` rows are written only by `reconcileRunCostRollups`. Because
+Observatory is read-only, reconciliation runs on **write paths** only, via two
+triggers with split roles:
+
+- **`system_sweep` backstop — the completeness guarantee.** Keys on
+  `runs.ended_at` (set on *every* terminal transition, NULL for active runs),
+  **not** a terminal-status allow-list and **not** a domain event. This is
+  required because **scratch success emits no terminal domain event** (`run.done`
+  is emitted only by promotion; only `run.failed` / `run.crashed` /
+  TTL-`run.abandoned` are emitted) — an `ended_at`-keyed sweep is therefore the
+  only reliable way to include a finished scratch run that fired no event, plus
+  pre-existing history and late cost-flush races. Progress is tracked by the
+  durable `runs.cost_reconciled_at` marker (stamped on every attempt) so an
+  unreconcilable run settles after one attempt (no starvation of newer runs) and
+  a pre-`0083` rollup with empty `by_runner` is backfilled once. Predicate:
+  `ended_at IS NOT NULL AND ended_at > now − lookback AND (cost_reconciled_at IS
+  NULL OR cost_reconciled_at < ended_at + SETTLE_GRACE)`. `SETTLE_GRACE` (~2 min)
+  forces one extra re-reconcile so the supervisor's async final `cost.jsonl`
+  flush is captured; a settled run is skipped. Lookback =
+  `MAISTER_COST_RECONCILE_LOOKBACK_HOURS` (default 168h). See
+  [scheduler.md](scheduler.md).
+- **`cost-rollup-reconcile` domain-event consumer — the low-latency fast-path.**
+  Subscribes to the existing terminal kinds (`run.done | run.failed |
+  run.crashed | run.abandoned`; no new event kind), `startFrom: "now"`
+  (forward-only — the sweep owns backfill). It is **poison-safe**: it reconciles
+  each run inside a per-run try/catch that logs WARN and never throws, so a
+  single permanently-failing run cannot stall the dispatch cursor. It is a
+  fast-path for terminals that *do* emit, **never** the completeness guarantee.
+  See [domain-events.md](domain-events.md).
+
+Both rely on `reconcileRunCostRollups` idempotency (at-least-once dispatch +
+sweep re-reconcile); a re-reconcile after a runner/session change refreshes
+`by_runner` with no stale buckets.
+
+### TS contract
+
+```ts
+interface CostDimensionRow {
+  key: string;          // model string, or "<adapter>/<model>", or "unknown"
+  label: string;        // display label (same as key today)
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  totalTokens: number;  // sum of the four kinds
+}
+
+interface ObservatoryCostSummary {
+  // …existing flat totals (inputTokens, …, resumeTokens, totalTokens,
+  // projectCount, flowCount, nodeCount)…
+  byModel: CostDimensionRow[];   // sorted by totalTokens desc, then key
+  byRunner: CostDimensionRow[];  // sorted by totalTokens desc, then key
+}
+```
 
 The cost tab also surfaces **budget pressure** (ADR-101, Implemented): a
 read-only count of token-budget breaches in the window, sourced project-scoped
@@ -107,6 +194,31 @@ UI/test acceptance:
 | Portfolio Observatory cost tab/filter | Groups by project and Flow, shows token totals by kind, model breakdown, resume-tax subtotal, honest denominators, volatile marker for active runs, and useful empty state for no cost rows. All labels have EN/RU messages. | `web/e2e/multi-run-cost-policy.spec.ts`; `web/lib/queries/__tests__/observatory-cost*.test.ts` |
 | Project/node drill-down | Filters preserve URL-synchronized Observatory state, show node-attempt token totals/durations, and render "insufficient data" instead of fake zeroes when the denominator is too small. | `web/e2e/multi-run-cost-policy.spec.ts`; pure rollup tests |
 | Read-only failure mode | Missing or stale derived rollups show a bounded warning/empty row; the UI never triggers recomputation through a mutating HTTP route and never polls raw `cost.jsonl`. | `web/e2e/multi-run-cost-policy.spec.ts`; query integration tests |
+| Runner breakdown card | Portfolio + project cost tab render a "By runner" card with `<adapter>/<model>` rows, an `"unknown"` row for unattributed cost, an empty-state row, and EN/RU labels. | `web/components/observatory/__tests__/observatory-components.test.ts`; `web/e2e/observatory-cost-breakdown.spec.ts` |
+
+### Acceptance & edge-case register (ADR-117)
+
+Each criterion maps to exactly one owning test (minimum overlap — the sweep-only
+and poison cases live only in the Phase-2 integration specs, not duplicated at
+the unit layer).
+
+| Criterion / edge case | Owning test |
+| --- | --- |
+| Scratch run included without being opened (rollup written by a trigger) | `cost-rollup-reconcile.integration.test.ts` |
+| Scratch success with **no** terminal event → included via the `ended_at` sweep | `cost-reconcile-sweep.integration.test.ts` |
+| Multi-model split in `by_model` | `cost-rollups.test.ts` |
+| Multi-session flow → multi-runner split in `by_runner` | `cost-rollups.integration.test.ts` |
+| Single-session flow with N nodes → exactly one runner bucket (D2a) | `cost-rollups.integration.test.ts` |
+| `"unknown"` runner bucket (cost record with no `run_sessions` row) | `cost-rollups.integration.test.ts` |
+| Idempotent re-reconcile after session runner change → no stale `by_runner` key | `cost-rollups.integration.test.ts` |
+| Poison-message safety: always-failing run never stalls the consumer cursor | `cost-rollup-reconcile.integration.test.ts` |
+| Late cost-flush captured via `SETTLE_GRACE` re-reconcile | `cost-reconcile-sweep.integration.test.ts` |
+| Long-settled rollup skipped (no redundant disk read) | `cost-reconcile-sweep.integration.test.ts` |
+| Read-only boundary: `getCostSummary` performs no reconcile / no `cost.jsonl` read | `observatory-cost.integration.test.ts` |
+| Resume tax not double-counted into the session bucket | `cost-rollups.test.ts` |
+| Project-less local-package run handled gracefully | `cost-rollup-reconcile.integration.test.ts` |
+| Empty project → `byModel: []`, `byRunner: []` | `observatory-cost.integration.test.ts` |
+| Project/portfolio `byModel` + `byRunner` summed across runs, sorted deterministically | `observatory-cost.integration.test.ts` |
 
 ## Process flows
 
@@ -269,10 +381,12 @@ flowchart TD
 
 - Observatory MUST be read-only: no DB writes, filesystem writes, supervisor
   calls, background jobs, or state-changing routes are part of M23.
-- Cost dimensions added by ADR-085 MUST preserve the read-only boundary:
-  Observatory reads derived cost rollups and bulk run/node rows only; it never
-  triggers recomputation through a mutating route and never reads raw
-  `cost.jsonl` payloads in a request loop.
+- Cost dimensions (ADR-087 totals, ADR-117 model/runner breakdown) MUST preserve
+  the read-only boundary: Observatory reads derived cost rollups and bulk
+  run/node rows only; it never triggers recomputation through a mutating route,
+  never calls any `reconcile*` function, and never reads raw `cost.jsonl`
+  payloads in a request loop. Reconciliation lives only on the ADR-117 write
+  paths (the `cost-rollup-reconcile` consumer and the `system_sweep` backstop).
 - Formula helpers MUST accept an explicit `now` and MUST NOT call `Date.now()`
   internally.
 - `correction_rate` MUST use `node_attempts.status = 'Reworked'` for rework

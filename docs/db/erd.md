@@ -663,6 +663,7 @@ erDiagram
         jsonb delivery_policy_snapshot "ADR-085 Designed: resolved policy at launch"
         jsonb execution_policy "migration 0055: resolved execution policy {preset,overrides} at launch"
         jsonb agent_config "Implemented ADR-111 0071: immutable resolved agent-config snapshot at spawn, nullable"
+        timestamp cost_reconciled_at "Implemented ADR-117 0084: durable system_sweep cost-reconcile attempt marker, nullable"
         timestamp started_at
         timestamp ended_at
     }
@@ -695,6 +696,7 @@ erDiagram
         integer resume_cache_read_tokens
         integer resume_cache_creation_tokens
         jsonb by_model
+        jsonb by_runner
         integer source_event_count
         text source_cursor
         timestamp updated_at

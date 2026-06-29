@@ -1,0 +1,1 @@
+ALTER TABLE "runs" ADD COLUMN "cost_reconciled_at" timestamp with time zone;

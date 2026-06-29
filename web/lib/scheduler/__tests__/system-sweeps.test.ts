@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const runSweepTickMock = vi.hoisted(() => vi.fn());
 const runReconcileSweepMock = vi.hoisted(() => vi.fn());
+const reconcileTerminalCostRollupsMock = vi.hoisted(() => vi.fn());
 const runWorkspaceGcSweepMock = vi.hoisted(() => vi.fn());
 const runRevisionGcSweepMock = vi.hoisted(() => vi.fn());
 const runCapabilitiesCleanupSweepMock = vi.hoisted(() => vi.fn());
@@ -12,6 +13,9 @@ vi.mock("@/lib/runs/keepalive-sweeper", () => ({
 }));
 vi.mock("@/lib/reconcile", () => ({
   runReconcileSweep: runReconcileSweepMock,
+}));
+vi.mock("@/lib/runs/cost-reconcile-sweep", () => ({
+  reconcileTerminalCostRollups: reconcileTerminalCostRollupsMock,
 }));
 vi.mock("@/lib/gc/workspace-gc", () => ({
   runWorkspaceGcSweep: runWorkspaceGcSweepMock,
@@ -45,6 +49,9 @@ describe("scheduler system sweeps", () => {
     vi.resetModules();
     runSweepTickMock.mockReset().mockResolvedValue({ idled: 0 });
     runReconcileSweepMock.mockReset().mockResolvedValue({ reconciled: 0 });
+    reconcileTerminalCostRollupsMock
+      .mockReset()
+      .mockResolvedValue({ candidates: 0, reconciled: 0 });
     runWorkspaceGcSweepMock.mockReset().mockResolvedValue(workspaceSummary);
     runRevisionGcSweepMock.mockReset().mockResolvedValue(revisionSummary);
     runCapabilitiesCleanupSweepMock
@@ -92,9 +99,18 @@ describe("scheduler system sweeps", () => {
 
     expect(runSweepTickMock).toHaveBeenCalledTimes(1);
     expect(runReconcileSweepMock).toHaveBeenCalledTimes(1);
+    expect(reconcileTerminalCostRollupsMock).toHaveBeenCalledTimes(1);
     expect(runWorkspaceGcSweepMock).toHaveBeenCalledTimes(1);
     expect(runRevisionGcSweepMock).toHaveBeenCalledTimes(1);
     expect(runCapabilitiesCleanupSweepMock).toHaveBeenCalledTimes(1);
     expect(runEphemeralAgentGcSweepMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("runGcCompatibilitySweep does NOT run the cost-rollup reconcile", async () => {
+    const { runGcCompatibilitySweep } = await import("../system-sweeps");
+
+    await runGcCompatibilitySweep();
+
+    expect(reconcileTerminalCostRollupsMock).not.toHaveBeenCalled();
   });
 });

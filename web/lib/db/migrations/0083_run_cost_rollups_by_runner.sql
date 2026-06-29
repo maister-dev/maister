@@ -1,0 +1,2 @@
+ALTER TABLE "run_cost_rollups" ADD COLUMN "by_runner" jsonb DEFAULT '{}'::jsonb NOT NULL;--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "runs_ended_at_idx" ON "runs" USING btree ("ended_at") WHERE ended_at is not null;

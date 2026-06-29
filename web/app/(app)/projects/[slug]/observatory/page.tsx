@@ -5,6 +5,7 @@ import { notFound } from "next/navigation";
 
 import { ProjectTabs } from "@/components/board/project-tabs";
 import { ControlEffectivenessCard } from "@/components/observatory/control-effectiveness-card";
+import { CostBreakdownCard } from "@/components/observatory/cost-breakdown-card";
 import { CoverageMapCard } from "@/components/observatory/coverage-map-card";
 import { labelsFromTranslations } from "@/components/observatory/labels";
 import { NodeDrilldownTable } from "@/components/observatory/node-drilldown-table";
@@ -88,6 +89,32 @@ export default async function ProjectObservatoryPage({
         labels={labels}
         projectSlug={slug}
       />
+      <section className="mt-6" data-testid="observatory-cost">
+        <header className="mb-3">
+          <h2 className="m-0 text-lg font-semibold text-ink">
+            {t("cost.title")}
+          </h2>
+          <p className="mt-1 max-w-[72ch] text-sm text-mute">
+            {t("cost.subtitle")}
+          </p>
+        </header>
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+          <CostBreakdownCard
+            keyHeader={labels.costBreakdown.modelHeader}
+            labels={labels}
+            rows={observatory.cost.byModel}
+            testId="observatory-cost-by-model"
+            title={labels.costBreakdown.byModelTitle}
+          />
+          <CostBreakdownCard
+            keyHeader={labels.costBreakdown.runnerHeader}
+            labels={labels}
+            rows={observatory.cost.byRunner}
+            testId="observatory-cost-by-runner"
+            title={labels.costBreakdown.byRunnerTitle}
+          />
+        </div>
+      </section>
       <section className="mt-6">
         <header className="mb-3">
           <h2 className="m-0 text-lg font-semibold text-ink">

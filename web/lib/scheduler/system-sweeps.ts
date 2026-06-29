@@ -11,6 +11,7 @@ import { runEphemeralAgentGcSweep } from "@/lib/gc/ephemeral-agent-gc";
 import { runRevisionGcSweep } from "@/lib/gc/revision-gc";
 import { runWorkspaceGcSweep } from "@/lib/gc/workspace-gc";
 import { runReconcileSweep } from "@/lib/reconcile";
+import { reconcileTerminalCostRollups } from "@/lib/runs/cost-reconcile-sweep";
 import { runSweepTick } from "@/lib/runs/keepalive-sweeper";
 
 export type GcCompatibilitySummary = {
@@ -23,6 +24,7 @@ export type GcCompatibilitySummary = {
 export type SystemSweepSummary = GcCompatibilitySummary & {
   keepalive: Awaited<ReturnType<typeof runSweepTick>> | null;
   reconcile: Awaited<ReturnType<typeof runReconcileSweep>> | null;
+  cost: Awaited<ReturnType<typeof reconcileTerminalCostRollups>> | null;
   workspace: WorkspaceGcSummary | null;
   revision: RevisionGcSummary | null;
   capabilities: Awaited<ReturnType<typeof runCapabilitiesCleanupSweep>> | null;
@@ -99,6 +101,7 @@ export async function runSystemSweep(): Promise<SystemSweepSummary> {
   const errors: string[] = [];
   let keepalive: SystemSweepSummary["keepalive"] = null;
   let reconcile: SystemSweepSummary["reconcile"] = null;
+  let cost: SystemSweepSummary["cost"] = null;
 
   try {
     keepalive = await runSweepTick();
@@ -118,6 +121,15 @@ export async function runSystemSweep(): Promise<SystemSweepSummary> {
     log.error({ err: message }, "system_sweep reconcile threw");
   }
 
+  try {
+    cost = await reconcileTerminalCostRollups();
+  } catch (err) {
+    const message = errorMessage(err);
+
+    errors.push(`cost reconcile sweep failed: ${message}`);
+    log.error({ err: message }, "system_sweep cost reconcile threw");
+  }
+
   const gc = await runGcBundle();
 
   errors.push(...gc.errors);
@@ -125,6 +137,7 @@ export async function runSystemSweep(): Promise<SystemSweepSummary> {
   const summary = {
     keepalive,
     reconcile,
+    cost,
     workspace: gc.workspace,
     revision: gc.revision,
     capabilities: gc.capabilities,

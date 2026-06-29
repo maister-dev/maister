@@ -1398,6 +1398,18 @@ export const runs = pgTable(
     // prompt injection reads THIS column, never re-resolving from the mutable
     // definition/link. Nullable: only agent runs with declared config write it.
     agentConfig: jsonb("agent_config").$type<Record<string, unknown>>(),
+    // ADR-117 (migration 0084): durable marker for the system_sweep cost-rollup
+    // backstop — the last time it ATTEMPTED a cost reconcile for this run
+    // (stamped on EVERY outcome: reconciled / missing-cost / error). Decouples
+    // the sweep candidate set from rollup row state so (a) a run with no
+    // cost.jsonl is attempted once and settled instead of monopolizing the
+    // bounded oldest-first scan forever, and (b) a pre-0083 rollup with empty
+    // by_runner (NULL marker) is re-reconciled once to backfill it. NULL = never
+    // attempted by the sweep.
+    costReconciledAt: timestamp("cost_reconciled_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
   },
   (t) => ({
     idxProjectStatus: index("runs_project_status_idx").on(
@@ -1431,6 +1443,11 @@ export const runs = pgTable(
     uniqAutoTask: uniqueIndex("runs_auto_task_uq")
       .on(t.taskId)
       .where(sql`${t.launchMode} = 'auto'`),
+    // ADR-117 (migration 0083): supports the system_sweep cost-rollup backstop
+    // reconcile's bounded `order by ended_at limit n` scan over finished runs.
+    idxEndedAt: index("runs_ended_at_idx")
+      .on(t.endedAt)
+      .where(sql`ended_at is not null`),
   }),
 );
 
@@ -1521,6 +1538,13 @@ export const runCostRollups = pgTable(
       .notNull()
       .default(0),
     byModel: jsonb("by_model")
+      .$type<Record<string, Record<string, number>>>()
+      .notNull()
+      .default({}),
+    // ADR-117 (migration 0083): per-runner token breakdown, keyed by the
+    // snapshot-derived stable label "<adapter>/<model>" (or "unknown" for cost
+    // with no matching run_sessions row). Symmetric to by_model.
+    byRunner: jsonb("by_runner")
       .$type<Record<string, Record<string, number>>>()
       .notNull()
       .default({}),

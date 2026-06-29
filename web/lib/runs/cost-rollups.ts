@@ -1,11 +1,12 @@
 import "server-only";
 
+import type { RunnerSnapshot } from "@/lib/db/schema";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
-import { eq, inArray, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
@@ -19,6 +20,7 @@ const {
   nodeAttempts,
   projects,
   runCostRollups,
+  runSessions,
   runs,
 } = schema;
 
@@ -37,6 +39,7 @@ type TokenTotals = {
 
 type ParsedCostRecord = {
   model: string;
+  sessionName: string;
   nodeAttemptId: string | null;
   inputTokens: number;
   outputTokens: number;
@@ -61,6 +64,7 @@ export type CostRollupNodeTotal = TokenTotals & {
 export type CostRollupAggregation = {
   run: TokenTotals & {
     byModel: Record<string, Record<string, number>>;
+    bySession: Record<string, Record<string, number>>;
     sourceEventCount: number;
   };
   nodeAttempts: CostRollupNodeTotal[];
@@ -142,6 +146,11 @@ function parseCostRecord(line: string): ParsedCostRecord | null {
       typeof parsed.model === "string" && parsed.model.trim().length > 0
         ? parsed.model.trim()
         : "unknown",
+    sessionName:
+      typeof parsed.sessionName === "string" &&
+      parsed.sessionName.trim().length > 0
+        ? parsed.sessionName.trim()
+        : "default",
     nodeAttemptId:
       typeof parsed.nodeAttemptId === "string" &&
       parsed.nodeAttemptId.trim().length > 0
@@ -168,11 +177,16 @@ export function resolveRunCostSourceSlug(run: CostSourceRun): string {
   return slug;
 }
 
-function addByModel(
-  byModel: Record<string, Record<string, number>>,
+// Folds a record's four BASE token kinds into a string-keyed bucket map (used
+// for both the by-model and by-session breakdowns). Resume tax is NOT added
+// separately — the base tokens already include it, matching the run-level
+// byModel semantics.
+function addByKey(
+  bucket: Record<string, Record<string, number>>,
+  key: string,
   record: ParsedCostRecord,
 ): void {
-  const current = byModel[record.model] ?? {
+  const current = bucket[key] ?? {
     inputTokens: 0,
     outputTokens: 0,
     cacheReadTokens: 0,
@@ -183,7 +197,51 @@ function addByModel(
   current.outputTokens += record.outputTokens;
   current.cacheReadTokens += record.cacheReadTokens;
   current.cacheCreationTokens += record.cacheCreationTokens;
-  byModel[record.model] = current;
+  bucket[key] = current;
+}
+
+// ADR-117 D2: the stable per-runner group key is derived from the session's
+// runner_snapshot (NOT the catalog FK), so a deleted platform_acp_runners row
+// never erases historical attribution. Returns null when the snapshot is absent
+// or lacks an adapter/model — those sessions fall back to the "unknown" bucket.
+export function runnerKeyFromSnapshot(
+  snapshot: RunnerSnapshot | null | undefined,
+): string | null {
+  const adapter = snapshot?.adapter?.trim();
+  const model = snapshot?.model?.trim();
+
+  if (!adapter || !model) return null;
+
+  return `${adapter}/${model}`;
+}
+
+// Folds the per-session token buckets into per-runner buckets via the
+// sessionName → runnerKey map. Sessions with no mapped runner (no run_sessions
+// row, or an unusable snapshot) collapse into the "unknown" bucket. Multiple
+// sessions mapping to the same runnerKey are summed.
+export function foldSessionsByRunner(
+  bySession: Record<string, Record<string, number>>,
+  runnerKeyBySession: ReadonlyMap<string, string>,
+): Record<string, Record<string, number>> {
+  const byRunner: Record<string, Record<string, number>> = {};
+
+  for (const [sessionName, totals] of Object.entries(bySession)) {
+    const key = runnerKeyBySession.get(sessionName) ?? "unknown";
+    const current = byRunner[key] ?? {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+    };
+
+    current.inputTokens += totals.inputTokens ?? 0;
+    current.outputTokens += totals.outputTokens ?? 0;
+    current.cacheReadTokens += totals.cacheReadTokens ?? 0;
+    current.cacheCreationTokens += totals.cacheCreationTokens ?? 0;
+    byRunner[key] = current;
+  }
+
+  return byRunner;
 }
 
 export function aggregateCostJsonlLines(
@@ -192,6 +250,7 @@ export function aggregateCostJsonlLines(
 ): CostRollupAggregation {
   const runTotals = emptyTotals();
   const byModel: Record<string, Record<string, number>> = {};
+  const bySession: Record<string, Record<string, number>> = {};
   const nodeTotals = new Map<string, CostRollupNodeTotal>();
   let sourceEventCount = 0;
   let malformedLineCount = 0;
@@ -211,7 +270,8 @@ export function aggregateCostJsonlLines(
 
     sourceEventCount += 1;
     addRecord(runTotals, record);
-    addByModel(byModel, record);
+    addByKey(byModel, record.model, record);
+    addByKey(bySession, record.sessionName, record);
 
     if (!record.nodeAttemptId) {
       unattributedNodeEventCount += 1;
@@ -243,6 +303,7 @@ export function aggregateCostJsonlLines(
     run: {
       ...runTotals,
       byModel,
+      bySession,
       sourceEventCount,
     },
     nodeAttempts: [...nodeTotals.values()],
@@ -310,6 +371,24 @@ export async function reconcileRunCostRollups(
     raw.split("\n"),
     nodeIdByAttemptId,
   );
+  const sessionRows = await client
+    .select({
+      sessionName: runSessions.sessionName,
+      runnerSnapshot: runSessions.runnerSnapshot,
+    })
+    .from(runSessions)
+    .where(eq(runSessions.runId, run.id));
+  const runnerKeyBySession = new Map<string, string>();
+
+  for (const session of sessionRows) {
+    const key = runnerKeyFromSnapshot(session.runnerSnapshot);
+
+    if (key) runnerKeyBySession.set(session.sessionName, key);
+  }
+  const byRunner = foldSessionsByRunner(
+    aggregation.run.bySession,
+    runnerKeyBySession,
+  );
   const sourceCursor = `bytes:${Buffer.byteLength(raw, "utf8")}:events:${aggregation.run.sourceEventCount}`;
   const now = new Date();
 
@@ -334,6 +413,7 @@ export async function reconcileRunCostRollups(
       resumeCacheReadTokens: aggregation.run.resumeCacheReadTokens,
       resumeCacheCreationTokens: aggregation.run.resumeCacheCreationTokens,
       byModel: aggregation.run.byModel,
+      byRunner,
       sourceEventCount: aggregation.run.sourceEventCount,
       sourceCursor,
       updatedAt: now,
@@ -406,24 +486,6 @@ export async function reconcileManyRunCostRollups(
 
   await Promise.all(
     uniqueRunIds.map((runId) => reconcileRunCostRollups(runId, opts)),
-  );
-}
-
-export async function reconcileProjectScopeCostRollups(
-  projectIds: readonly string[],
-  opts: { client?: DbClient; runtimeRoot?: string } = {},
-): Promise<void> {
-  if (projectIds.length === 0) return;
-
-  const client = opts.client ?? db();
-  const rows = await client
-    .select({ id: runs.id })
-    .from(runs)
-    .where(inArray(runs.projectId, [...new Set(projectIds)]));
-
-  await reconcileManyRunCostRollups(
-    rows.map((run) => run.id),
-    { client, runtimeRoot: opts.runtimeRoot },
   );
 }
 

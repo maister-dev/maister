@@ -938,6 +938,17 @@
       "guardrailTrips": "Срабатывания гардрейла",
       "warnNotSurfaced": "Сигналы warn-полосы логируются, но здесь не считаются — domain-события создают только эскалации и остановки."
     },
+    "costBreakdown": {
+      "byModelTitle": "По модели",
+      "byRunnerTitle": "По раннеру",
+      "modelHeader": "Модель",
+      "runnerHeader": "Раннер",
+      "inputHeader": "Вход",
+      "outputHeader": "Выход",
+      "cacheHeader": "Кэш",
+      "totalHeader": "Итого",
+      "empty": "Нет затрат в этом окне"
+    },
     "harness": {
       "sectionTitle": "Контур контроля",
       "sectionSubtitle": "Срабатывание сенсоров, эффективность контролей и покрытие — корреляционные сигналы, а не рекомендации.",

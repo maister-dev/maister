@@ -142,6 +142,7 @@
 | [ADR-114](#adr-114-unified-flow-runner-config-first-class-sessions-per-project-connect-time-bindings-and-run_sessions-as-the-sole-run-runner-source-of-truth) | Unified Flow runner config, first-class sessions, per-project connect-time bindings, `run_sessions` sole source of truth, engine 2.0.0 (M42) | Accepted | 2026-06-26 |
 | [ADR-115](#adr-115-strict-template-default-operator-for-prompt-authoring) | Strict template default operator for prompt authoring | Accepted | 2026-06-28 |
 | [ADR-116](#adr-116-local-package-composition-view-shared-package-bom-source-abstraction-tabbed-editor-ia) | Local-package composition view: shared package BOM source abstraction, tabbed editor IA | Accepted | 2026-06-28 |
+| [ADR-117](#adr-117-reliable-cost-rollup-reconciliation-and-per-runner-cost-attribution) | Reliable cost-rollup reconciliation (sweep guarantee + fast-path consumer) + per-runner cost attribution | Accepted | 2026-06-29 |
 
 ---
 
@@ -9348,6 +9349,144 @@ batch import surfaced from the landing); and `classifyPackageFilePath` returns
 **Numbering note.** Originally reserved as ADR-115 at branch HEAD; renumbered to
 **ADR-116** on rebase onto main, which had landed ADR-115 (strict template default
 operator) first. No migration is taken (the next free `0083` stays unused).
+
+---
+
+### ADR-117: Reliable cost-rollup reconciliation and per-runner cost attribution
+
+**Date:** 2026-06-29
+**Status:** Accepted
+**Context:**
+
+Two defects in the Observatory cost dimension (see
+[observatory.md](system-analytics/observatory.md) "Cost dimension"):
+
+1. **Scratch runs are invisible until opened.** `getCostSummary`
+   (`web/lib/queries/observatory.ts`) sums `run_cost_rollups` with no
+   `run_kind` filter — a run is counted **iff a rollup row exists**. Rollup rows
+   are written only by `reconcileRunCostRollups`, triggered lazily: run-detail
+   open, task-detail open, and the budget watchdog (runs with a *set* budget
+   limit only). A scratch run has no task and usually no budget, so its **only**
+   trigger is a human opening the run. An un-opened scratch run never gets a
+   rollup row and is structurally absent from project/portfolio cost totals.
+   The asymmetry is sharp: **scratch success emits no terminal domain event**
+   (`run.done` is emitted only by `promote.ts`; only `run.failed` /
+   `run.crashed` / TTL-`run.abandoned` are emitted), so an event-driven trigger
+   alone cannot guarantee inclusion.
+
+2. **No per-runner cost breakdown, and the project breakdown ignores
+   `by_model`.** `run_cost_rollups.by_model` is written per run but
+   `getCostSummary` never reads it; there is no runner attribution anywhere.
+
+The read-only boundary (observatory.md "Read-only boundary",
+[ADR-059](#adr-059-read-only-observatory-formulas-and-harvest-priority)) forbids
+reconciliation in the read path — Observatory reads derived rollups only. So the
+fix cannot be "reconcile on read".
+
+**Decision:**
+
+1. **Two reconcile triggers with split roles, both on write paths.**
+   - The **`system_sweep` backstop is the completeness guarantee.** It keys on
+     `runs.ended_at` (set on *every* terminal transition, NULL for active runs)
+     — **not** on a terminal-status allow-list and **not** on a domain event.
+     `ended_at` catches every finished run regardless of which terminal status
+     it reached or whether any event fired, so it is what guarantees
+     scratch-success inclusion, pre-existing history, and late cost-flush races.
+     Progress is tracked by a **durable per-run marker** `runs.cost_reconciled_at`
+     (migration `0084`), stamped on *every* sweep attempt — reconciled,
+     missing-cost, OR error. Candidate predicate: `ended_at IS NOT NULL AND
+     ended_at > now − lookback AND (cost_reconciled_at IS NULL OR
+     cost_reconciled_at < ended_at + SETTLE_GRACE)`. Keying progress on the marker
+     (NOT `run_cost_rollups` row state) is what makes the backstop actually
+     complete + non-starving: a run with no `cost.jsonl` is attempted ONCE then
+     settled — instead of staying eligible every tick and monopolizing the
+     bounded oldest-first scan ahead of newer runs — and a pre-`0083` rollup with
+     an empty `by_runner` (NULL marker, since the migration default can't derive
+     per-runner splits) is re-reconciled once to backfill it. The `+ SETTLE_GRACE`
+     (~2 min) term forces one extra re-reconcile of a just-ended run so the
+     supervisor's async final `cost.jsonl` flush (`stream.end`) is captured; once
+     the marker advances past `ended_at + SETTLE_GRACE` the run is skipped (no
+     disk thrash). Lookback is env-tuned via
+     `MAISTER_COST_RECONCILE_LOOKBACK_HOURS` (default 168h = the 7-day GC
+     horizon); per-tick bound reuses the existing sweep limit.
+   - The **`cost-rollup-reconcile` domain-event consumer is a low-latency
+     fast-path**, not the completeness guarantee. It subscribes to the existing
+     terminal kinds (`run.done | run.failed | run.crashed | run.abandoned`) —
+     **no new event kind** — so the rollup appears seconds after a terminal that
+     *does* emit, instead of waiting for the next sweep tick. `startFrom: "now"`
+     (forward-only — the sweep owns historical backfill; a `"beginning"` replay
+     would be wasteful). It is **poison-safe**: `handle(events[])` filters to
+     terminal kinds, dedupes `runId`, and reconciles each **inside a per-run
+     try/catch that logs WARN and never throws** — because the dispatcher
+     `break`s without advancing the cursor when `handle` throws
+     (`dispatch.ts`), a single permanently-failing run would otherwise stall the
+     cursor and block all later events forever. A transient disk error is
+     retried by the next sweep; a permanent one (`CONFIG` no-slug) is skipped.
+
+2. **Per-runner attribution via a new `by_runner` jsonb column on
+   `run_cost_rollups`**, symmetric to `by_model`, populated at reconcile by
+   bucketing cost records by `sessionName` and joining `(run_id, session_name) →
+   run_sessions`. Each cost record carries `sessionName` (M42,
+   [ADR-114](#adr-114-unified-flow-runner-config-first-class-sessions-per-project-connect-time-bindings-and-run_sessions-as-the-sole-run-runner-source-of-truth));
+   `run_sessions` carries `runner_snapshot` keyed by `(run_id, session_name)`
+   for every run kind. The group key is a **snapshot-derived stable label**
+   `runnerKey = "<adapter>/<model>"` (e.g. `claude/claude-sonnet-4-6`) — derived
+   from `run_sessions.runner_snapshot`, **not** the catalog FK, so a deleted
+   `platform_acp_runners` row never erases historical attribution. A cost record
+   whose `sessionName` has no matching `run_sessions` row (legacy pre-M42 /
+   missing `sessionName`) buckets under `runnerKey = "unknown"`.
+
+3. **Conditional precision.** The multi-runner split is *exact* only when a flow
+   declares multiple logical sessions (distinct `sessionName` per node → distinct
+   `run_sessions` rows with distinct snapshots). A single-session flow, and every
+   scratch/agent run, maps all cost to one runner via `sessionName = "default"`
+   — which is correct, not a loss. There is **no per-node runner split below
+   session granularity**; "by runner" is scoped to session granularity by design.
+
+4. **Idempotency.** Dispatch is at-least-once and the sweep re-reconciles;
+   `reconcileRunCostRollups` is idempotent (delete-then-insert nodes,
+   `onConflictDoUpdate` run row, `sourceCursor`). A re-reconcile after a
+   runner/session change MUST refresh `by_runner` with no stale buckets.
+
+5. **Remove dead `reconcileProjectScopeCostRollups`.** It is a full-project disk
+   re-scan, never called, and read-path-unsafe; the event consumer + sweep
+   supersede it.
+
+**Consequences:**
+
+- Un-opened scratch runs (and all finished runs) appear in cost totals within
+  one sweep tick at worst, seconds at best for event-emitting terminals.
+- Project/portfolio Observatory gains `byModel` + `byRunner` breakdowns
+  (`CostDimensionRow[]`), pure reads over the two jsonb columns.
+- The read-only boundary is preserved: no reconcile or `cost.jsonl` read in any
+  read path; both triggers run on write paths (event consumer + sweep).
+- The poison-safe consumer contract is a hard invariant — a throwing `handle`
+  stalls the whole consumer cursor.
+- `run_cost_rollups` gains one column (`by_runner jsonb not null default '{}'`)
+  and `runs` gains one partial index (`runs_ended_at_idx on runs(ended_at) where
+  ended_at is not null`) to support the sweep's bounded `order by ended_at`
+  scan (migration `0083`). `runs` also gains the durable `cost_reconciled_at`
+  timestamp marker (migration `0084`). Both schema-only — no env/port change for
+  the columns.
+
+**Alternatives Considered:**
+
+- **Read-time reconcile** (reconcile inside `getCostSummary`): rejected — breaks
+  the Observatory read-only boundary (ADR-059) and re-reads `cost.jsonl` in a
+  request loop.
+- **Consumer-only (no sweep):** rejected — scratch success emits no terminal
+  event, so the consumer cannot guarantee inclusion. Correctness MUST NOT depend
+  on the consumer for completeness.
+- **Sweep-only (no consumer):** workable but adds up to one tick of latency for
+  every terminal; the consumer is a cheap fast-path over events that already
+  fire.
+- **Status-allow-list sweep predicate** (sweep on terminal `status`): rejected —
+  `ended_at` is the single field set on *every* terminal transition; a status
+  list would have to enumerate and track the full terminal set and would still
+  miss nothing `ended_at` does not.
+- **Catalog-FK runner key** (`runner_id`): rejected as the primary key — a
+  deleted runner row would erase historical attribution; `runner_id` is carried
+  only as a secondary display field.
 
 ---
 

@@ -1,4 +1,7 @@
-import type { ObservatoryPortfolio } from "@/lib/queries/observatory";
+import type {
+  CostDimensionRow,
+  ObservatoryPortfolio,
+} from "@/lib/queries/observatory";
 import type {
   CorrectionMetric,
   GateFiringStat,
@@ -14,6 +17,7 @@ import { labelsForTest } from "./labels.fixture";
 import ru from "@/messages/ru.json";
 import { AutonomyScoreCard } from "@/components/observatory/autonomy-score-card";
 import { BudgetSurfaceCard } from "@/components/observatory/budget-surface-card";
+import { CostBreakdownCard } from "@/components/observatory/cost-breakdown-card";
 import { ControlEffectivenessCard } from "@/components/observatory/control-effectiveness-card";
 import { CorrectionHeatmap } from "@/components/observatory/correction-heatmap";
 import { CoverageMapCard } from "@/components/observatory/coverage-map-card";
@@ -79,6 +83,8 @@ function portfolio(): ObservatoryPortfolio {
       projectCount: 0,
       flowCount: 0,
       nodeCount: 0,
+      byModel: [],
+      byRunner: [],
     },
     budget: {
       budgetEscalations: 0,
@@ -527,5 +533,68 @@ describe("Observatory components", () => {
     expect(html).toContain("Срабатывания гардрейла");
     expect(html).toContain("Эскалации");
     expect(html).toContain("Остановки");
+  });
+});
+
+describe("CostBreakdownCard", () => {
+  const row: CostDimensionRow = {
+    key: "claude/claude-sonnet-4-6",
+    label: "claude/claude-sonnet-4-6",
+    inputTokens: 1234,
+    outputTokens: 5,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+    totalTokens: 1239,
+  };
+
+  it("renders breakdown rows with formatted tokens, an accessible table, and the key header", () => {
+    const html = renderToStaticMarkup(
+      createElement(CostBreakdownCard, {
+        rows: [row],
+        title: "By runner",
+        keyHeader: "Runner",
+        labels,
+        testId: "observatory-cost-by-runner",
+      }),
+    );
+
+    expect(html).toContain("By runner");
+    expect(html).toContain("claude/claude-sonnet-4-6");
+    // Intl thousands separator proves token formatting.
+    expect(html).toContain("1,234");
+    expect(html).toContain('aria-label="By runner"');
+    expect(html).toContain('data-testid="observatory-cost-by-runner"');
+    expect(html).toContain("<table");
+    expect(html).toContain("Runner");
+  });
+
+  it("renders the empty-state row when there are no rows", () => {
+    const html = renderToStaticMarkup(
+      createElement(CostBreakdownCard, {
+        rows: [],
+        title: "By model",
+        keyHeader: "Model",
+        labels,
+        testId: "observatory-cost-by-model",
+      }),
+    );
+
+    expect(html).toContain(labels.costBreakdown.empty);
+  });
+
+  it("resolves RU labels for the breakdown card", () => {
+    const ruLabels = labelsForTest(ru.observatory as Record<string, unknown>);
+    const html = renderToStaticMarkup(
+      createElement(CostBreakdownCard, {
+        rows: [],
+        title: ruLabels.costBreakdown.byRunnerTitle,
+        keyHeader: ruLabels.costBreakdown.runnerHeader,
+        labels: ruLabels,
+        testId: "observatory-cost-by-runner",
+      }),
+    );
+
+    expect(html).toContain(ruLabels.costBreakdown.empty);
+    expect(html).toContain(ruLabels.costBreakdown.byRunnerTitle);
   });
 });

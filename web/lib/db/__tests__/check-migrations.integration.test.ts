@@ -56,6 +56,6 @@ describe("findPendingMigrations", () => {
 
     const pending = await findPendingMigrations(db);
 
-    expect(pending).toContain("0082_m42_drop_runs_runner_mirror");
+    expect(pending).toContain("0084_runs_cost_reconciled_at");
   });
 });

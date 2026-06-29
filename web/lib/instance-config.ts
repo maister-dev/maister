@@ -167,6 +167,13 @@ export function gcAgeDays(): number {
   return parsed;
 }
 
+// ADR-117: lookback window (hours) for the system_sweep cost-rollup backstop
+// reconcile — only runs whose ended_at is within this window are candidates.
+// Default 168h = 7d, matching the GC horizon (DEFAULT_GC_AGE_DAYS).
+export function costReconcileLookbackHours(): number {
+  return positiveIntFromEnv("MAISTER_COST_RECONCILE_LOOKBACK_HOURS", 168);
+}
+
 // M22 Phase 4a (T4.1): max blob size the workbench file viewer will read;
 // over-cap blobs surface as the `file-too-large` RSC page state (ADR-066)
 // instead of being read into memory. Env override, sane default, floor at 1.

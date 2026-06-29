@@ -141,13 +141,38 @@ flowchart TD
 flowchart TD
     Sweep[system_sweep handler] --> Keepalive[runSweepTick]
     Sweep --> Reconcile[runReconcileSweep]
+    Sweep --> CostReconcile[reconcileTerminalCostRollups]
     Sweep --> Gc[workspace + revision GC]
     Sweep --> CapCleanup[runCapabilitiesCleanupSweep]
     Keepalive --> Summary[aggregate result]
     Reconcile --> Summary
+    CostReconcile --> Summary
     Gc --> Summary
     CapCleanup --> Summary
 ```
+
+**Cost-rollup backstop reconcile (ADR-117 — Implemented).**
+`reconcileTerminalCostRollups` is the completeness
+guarantee for `run_cost_rollups`: it keys on `runs.ended_at` (set on every
+terminal transition), **not** a status allow-list and **not** a domain event,
+because scratch success emits no terminal event and would otherwise never get a
+rollup. Progress is tracked by the durable `runs.cost_reconciled_at` marker
+(migration `0084`), stamped on every attempt (reconciled / missing-cost / error)
+so an unreconcilable run is attempted once and settled instead of monopolizing
+the bounded scan, and a pre-`0083` rollup with empty `by_runner` is re-reconciled
+once to backfill it. Candidate predicate: `ended_at IS NOT NULL AND ended_at >
+now − lookback AND (cost_reconciled_at IS NULL OR cost_reconciled_at < ended_at +
+SETTLE_GRACE)`, ordered by `ended_at` and bounded by a per-tick limit (reuses the
+existing sweep limit; no new var). `SETTLE_GRACE` (~2 min, a module constant)
+forces one extra re-reconcile so the supervisor's async final `cost.jsonl` flush
+is captured; once the marker passes `ended_at + SETTLE_GRACE` the run is skipped
+(no disk thrash). Lookback comes from
+`MAISTER_COST_RECONCILE_LOOKBACK_HOURS` (default 168h = 7-day GC horizon; see
+[configuration.md](../configuration.md)). The supported `runs_ended_at_idx`
+partial index backs the bounded scan. The `cost-rollup-reconcile` domain-event
+consumer (see [domain-events.md](domain-events.md)) is a separate low-latency
+fast-path over event-emitting terminals; the sweep owns historical backfill and
+every no-event terminal.
 
 ### Admin cockpit and typed target editing
 

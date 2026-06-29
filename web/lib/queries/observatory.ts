@@ -109,6 +109,18 @@ export interface ObservatoryArtifactSummary {
   runCount: number;
 }
 
+// ADR-117: one row of a cost breakdown (by model or by runner). `key` is the
+// model string, the "<adapter>/<model>" runner label, or "unknown".
+export interface CostDimensionRow {
+  key: string;
+  label: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  totalTokens: number;
+}
+
 export interface ObservatoryCostSummary {
   inputTokens: number;
   outputTokens: number;
@@ -119,6 +131,10 @@ export interface ObservatoryCostSummary {
   projectCount: number;
   flowCount: number;
   nodeCount: number;
+  // ADR-117: per-model + per-runner breakdowns over the persisted rollup jsonb
+  // columns, each sorted by totalTokens desc then key.
+  byModel: CostDimensionRow[];
+  byRunner: CostDimensionRow[];
 }
 
 export interface ObservatoryBudgetSummary {
@@ -247,10 +263,63 @@ function emptyCostSummary(): ObservatoryCostSummary {
     projectCount: 0,
     flowCount: 0,
     nodeCount: 0,
+    byModel: [],
+    byRunner: [],
   };
 }
 
-async function getCostSummary(
+// ADR-117: fold the persisted per-key token buckets of every in-scope rollup
+// into sorted CostDimensionRow[] (by totalTokens desc, then key). Pure — the
+// jsonb columns are the derived source of truth; no reconcile, no disk read.
+function foldCostDimension(
+  buckets: ReadonlyArray<Record<string, Record<string, number>> | null>,
+): CostDimensionRow[] {
+  const acc = new Map<
+    string,
+    {
+      inputTokens: number;
+      outputTokens: number;
+      cacheReadTokens: number;
+      cacheCreationTokens: number;
+    }
+  >();
+
+  for (const byKey of buckets) {
+    if (!byKey) continue;
+
+    for (const [key, totals] of Object.entries(byKey)) {
+      const current = acc.get(key) ?? {
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+      };
+
+      current.inputTokens += totals.inputTokens ?? 0;
+      current.outputTokens += totals.outputTokens ?? 0;
+      current.cacheReadTokens += totals.cacheReadTokens ?? 0;
+      current.cacheCreationTokens += totals.cacheCreationTokens ?? 0;
+      acc.set(key, current);
+    }
+  }
+
+  return [...acc.entries()]
+    .map(([key, totals]) => ({
+      key,
+      label: key,
+      ...totals,
+      totalTokens:
+        totals.inputTokens +
+        totals.outputTokens +
+        totals.cacheReadTokens +
+        totals.cacheCreationTokens,
+    }))
+    .sort(
+      (a, b) => b.totalTokens - a.totalTokens || a.key.localeCompare(b.key),
+    );
+}
+
+export async function getCostSummary(
   client: NodePgDatabase<typeof schema>,
   projectScope: readonly ProjectScopeRow[],
   filters: ObservatoryFilters,
@@ -286,6 +355,8 @@ async function getCostSummary(
         resumeOutputTokens: runCostRollups.resumeOutputTokens,
         resumeCacheReadTokens: runCostRollups.resumeCacheReadTokens,
         resumeCacheCreationTokens: runCostRollups.resumeCacheCreationTokens,
+        byModel: runCostRollups.byModel,
+        byRunner: runCostRollups.byRunner,
       })
       .from(runCostRollups)
       .where(and(...runCostConditions)),
@@ -347,6 +418,8 @@ async function getCostSummary(
     projectCount: projectsWithCost.size,
     flowCount: flowsWithCost.size,
     nodeCount: nodesWithCost.size,
+    byModel: foldCostDimension(runRows.map((row) => row.byModel)),
+    byRunner: foldCostDimension(runRows.map((row) => row.byRunner)),
   };
 }
 

@@ -111,6 +111,75 @@ describe("aggregateCostJsonlLines", () => {
     expect(result.malformedLineCount).toBe(1);
     expect(result.unattributedNodeEventCount).toBe(2);
   });
+
+  it("buckets base tokens by sessionName, defaulting a missing name to 'default'", () => {
+    const result = aggregateCostJsonlLines(
+      [
+        JSON.stringify({
+          sessionName: "plan",
+          model: "claude-sonnet-4-6",
+          input_tokens: 10,
+          output_tokens: 5,
+          cache_read_input_tokens: 3,
+          cache_creation_input_tokens: 2,
+        }),
+        JSON.stringify({
+          sessionName: "plan",
+          model: "claude-sonnet-4-6",
+          input_tokens: 7,
+          output_tokens: 4,
+          resumed: true,
+        }),
+        JSON.stringify({
+          sessionName: "review",
+          model: "codex-gpt-5",
+          input_tokens: 11,
+          cache_creation_input_tokens: 6,
+          resumed: true,
+        }),
+        JSON.stringify({
+          input_tokens: 4,
+        }),
+      ],
+      new Map(),
+    );
+
+    // Resume records contribute their base tokens exactly once (no double count).
+    expect(result.run.bySession).toEqual({
+      plan: {
+        inputTokens: 17,
+        outputTokens: 9,
+        cacheReadTokens: 3,
+        cacheCreationTokens: 2,
+      },
+      review: {
+        inputTokens: 11,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 6,
+      },
+      default: {
+        inputTokens: 4,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+      },
+    });
+    // Run totals + by_model are unchanged by the new bucketing.
+    expect(result.run).toMatchObject({
+      inputTokens: 32,
+      outputTokens: 9,
+      cacheReadTokens: 3,
+      cacheCreationTokens: 8,
+      sourceEventCount: 4,
+    });
+  });
+
+  it("returns an empty session bucket for empty input", () => {
+    const result = aggregateCostJsonlLines([], new Map());
+
+    expect(result.run.bySession).toEqual({});
+  });
 });
 
 describe("resolveRunCostSourceSlug", () => {

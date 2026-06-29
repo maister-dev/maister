@@ -87,5 +87,16 @@ export function labelsFromTranslations(
       guardrailTrips: t("budget.guardrailTrips"),
       warnNotSurfaced: t("budget.warnNotSurfaced"),
     },
+    costBreakdown: {
+      byModelTitle: t("costBreakdown.byModelTitle"),
+      byRunnerTitle: t("costBreakdown.byRunnerTitle"),
+      modelHeader: t("costBreakdown.modelHeader"),
+      runnerHeader: t("costBreakdown.runnerHeader"),
+      inputHeader: t("costBreakdown.inputHeader"),
+      outputHeader: t("costBreakdown.outputHeader"),
+      cacheHeader: t("costBreakdown.cacheHeader"),
+      totalHeader: t("costBreakdown.totalHeader"),
+      empty: t("costBreakdown.empty"),
+    },
   };
 }

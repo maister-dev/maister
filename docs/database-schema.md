@@ -48,7 +48,7 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `scratch_capability_profiles` | Launch-time MCP/skill/rule/settings/restriction snapshot and materialized profile path.                                                                                                                                                                                                                                    | `scratch_runs.run_id`                                                      |
 | `step_runs`                   | Per-step execution records for the linear flow runner (legacy-read after M11a).                                                                                                                                                                                                                                            | `runs.id`                                                                  |
 | `node_attempts`               | **(M11a — Designed, migration `0010`)** Append-only per-node-attempt ledger for the graph runner. **(M11b, migration `0011`)** adds takeover columns (`owner_user_id`, `base_ref`, `returned_commits`, `returned_diff`). **(M11c, migration `0013`)** adds the nullable, append-only `enforcement_snapshot` verdict audit. **(migration `0053`)** adds the nullable per-attempt `resolved_prompt` capture. **(M41, migration `0070`)** adds node type `consensus`. | `runs.id`, `users.id` (takeover owner, M11b)                               |
-| `run_cost_rollups`            | **(ADR-085 — Designed, migration `0047`)** Derived token rollup per run, reconciled from `.maister/<project>/runs/<runId>/cost.jsonl`. Stores token totals by kind, resume-tax totals, model breakdown, and source cursor; no duration columns.                                                                                | `runs.id`, `projects.id`, optional `flows.id`, optional `tasks.id`         |
+| `run_cost_rollups`            | **(ADR-087 — Implemented, migration `0047`; `by_runner` ADR-117, migration `0083`)** Derived token rollup per run, reconciled from `.maister/<project>/runs/<runId>/cost.jsonl`. Stores token totals by kind, resume-tax totals, per-model breakdown (`by_model`), per-runner breakdown (`by_runner`, keyed `"<adapter>/<model>"`), and source cursor; no duration columns.                                                                                | `runs.id`, `projects.id`, optional `flows.id`, optional `tasks.id`         |
 | `node_attempt_cost_rollups`   | **(ADR-085 — Designed, migration `0047`)** Derived token rollup per graph node attempt/model, reconciled from enriched supervisor cost records stamped with `nodeAttemptId`.                                                                                                                                                | `runs.id`, `projects.id`, `node_attempts.id`                               |
 | `gate_results`                | **(M11a — Designed, migration `0010`)** Gate execution verdicts (`command_check`/`ai_judgment`/`human_review`/…).                                                                                                                                                                                                          | `runs.id`, `node_attempts.id`                                              |
 | `consensus_round_verdicts`    | **(M41 — Implemented, migration `0070`)** Per-round cross-verification verdict ledger for `consensus` nodes. Unique by node attempt, round, verifier, and target; malformed verifier output is persisted as failed-closed disagree evidence.                                                                                | `runs.id`, `node_attempts.id`                                              |
@@ -1096,6 +1096,12 @@ unread badge and inbox panel.
                                  //   ONCE at spawn (like execution_policy); the
                                  //   system-prompt injection reads this, never the
                                  //   mutable link/definition.
+  costReconciledAt?,             // (Implemented — ADR-117, migration 0084): timestamptz NULL.
+                                 //   Durable marker = last time the system_sweep
+                                 //   cost-rollup backstop ATTEMPTED a reconcile for
+                                 //   this run (stamped on every outcome). Decouples
+                                 //   the sweep candidate set from rollup row state
+                                 //   (no starvation; pre-0083 by_runner backfill).
   parentRunId?,                  // M37 (Implemented, ADR-098, migration 0060):
                                  //   FK -> runs.id ON DELETE SET NULL; the
                                  //   orchestrator run that delegated this child
@@ -1266,6 +1272,7 @@ run_cost_rollups {
   resumeCacheReadTokens,
   resumeCacheCreationTokens,
   byModel,                                    // jsonb { [model]: token totals }
+  byRunner,                                   // jsonb { ["<adapter>/<model>"]: token totals } (ADR-117, migration 0083)
   sourceEventCount,
   sourceCursor?,                              // bounded offset/event id
   updatedAt
@@ -2564,6 +2571,7 @@ Created via Drizzle:
 | `runs`                | `runs_root_run_id_idx`                  | `(rootRunId)`                     | **(M37, Implemented)** whole-tree queries from the run-tree root.  |
 | `runs`                | `runs_root_addressable_key_uq`          | `(rootRunId, addressableKey)` UNIQUE WHERE `persistent` | **(M37, Implemented, migration 0060)** one persistent child per `addressableKey` within a run-tree (star-routing). |
 | `runs`                | `runs_auto_task_uq`                     | `(taskId)` UNIQUE WHERE `launch_mode='auto'` | **(M37, Implemented, migration 0060, ADR-100)** one auto-DAG run per task — the DB backstop behind the auto-launcher's `hasAnyRun` belt (concurrent dedup via `onConflictDoNothing`). |
+| `runs`                | `runs_ended_at_idx`                     | `(endedAt)` PARTIAL WHERE `ended_at IS NOT NULL` | **(ADR-117, Implemented, migration 0083)** bounded `order by ended_at limit n` scan for the `system_sweep` cost-rollup backstop reconcile. |
 | `scratch_runs`        | `scratch_runs_project_status_idx`       | `(projectId, dialogStatus)`       | Project scratch workspace lists.                                   |
 | `scratch_attachments` | `scratch_attachments_run_idx`           | `(runId)`                         | Run-level attachment lookup.                                       |
 | `scratch_attachments` | `scratch_attachments_message_idx`       | `(messageId)`                     | Message attachment lookup.                                         |

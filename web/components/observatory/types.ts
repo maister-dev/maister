@@ -1,4 +1,5 @@
 import type {
+  CostDimensionRow,
   ObservatoryArtifactSummary,
   ObservatoryBudgetSummary,
   ObservatoryNodeDetail,
@@ -59,6 +60,18 @@ export interface ObservatoryBudgetLabels {
   warnNotSurfaced: string;
 }
 
+export interface ObservatoryCostBreakdownLabels {
+  byModelTitle: string;
+  byRunnerTitle: string;
+  modelHeader: string;
+  runnerHeader: string;
+  inputHeader: string;
+  outputHeader: string;
+  cacheHeader: string;
+  totalHeader: string;
+  empty: string;
+}
+
 export interface ObservatoryLabels {
   title: string;
   subtitle: string;
@@ -97,6 +110,7 @@ export interface ObservatoryLabels {
   kind: Record<SignalKind, string>;
   harness: ObservatoryHarnessLabels;
   budget: ObservatoryBudgetLabels;
+  costBreakdown: ObservatoryCostBreakdownLabels;
 }
 
 export type ObservatorySummaryData = ObservatoryPortfolio | ObservatoryProject;
@@ -154,4 +168,12 @@ export interface ControlEffectivenessCardProps {
 export interface BudgetSurfaceCardProps {
   budget: ObservatoryBudgetSummary;
   labels: ObservatoryLabels;
+}
+
+export interface CostBreakdownCardProps {
+  rows: readonly CostDimensionRow[];
+  title: string;
+  keyHeader: string;
+  labels: ObservatoryLabels;
+  testId?: string;
 }

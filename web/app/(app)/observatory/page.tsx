@@ -4,6 +4,7 @@ import { getTranslations } from "next-intl/server";
 
 import { BudgetSurfaceCard } from "@/components/observatory/budget-surface-card";
 import { ControlEffectivenessCard } from "@/components/observatory/control-effectiveness-card";
+import { CostBreakdownCard } from "@/components/observatory/cost-breakdown-card";
 import { CoverageMapCard } from "@/components/observatory/coverage-map-card";
 import { labelsFromTranslations } from "@/components/observatory/labels";
 import { ObservatoryFilters } from "@/components/observatory/observatory-filters";
@@ -115,6 +116,22 @@ export default async function ObservatoryPage({
           <span className="rounded-full border border-line bg-ivory px-2 py-[2px]">
             {t("cost.nodes", { count: data.cost.nodeCount })}
           </span>
+        </div>
+        <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
+          <CostBreakdownCard
+            keyHeader={labels.costBreakdown.modelHeader}
+            labels={labels}
+            rows={data.cost.byModel}
+            testId="observatory-cost-by-model"
+            title={labels.costBreakdown.byModelTitle}
+          />
+          <CostBreakdownCard
+            keyHeader={labels.costBreakdown.runnerHeader}
+            labels={labels}
+            rows={data.cost.byRunner}
+            testId="observatory-cost-by-runner"
+            title={labels.costBreakdown.byRunnerTitle}
+          />
         </div>
         <BudgetSurfaceCard budget={data.budget} labels={labels} />
       </section>

@@ -554,6 +554,20 @@
       "when": 1782777600006,
       "tag": "0082_m42_drop_runs_runner_mirror",
       "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "7",
+      "when": 1782777600007,
+      "tag": "0083_run_cost_rollups_by_runner",
+      "breakpoints": true
+    },
+    {
+      "idx": 84,
+      "version": "7",
+      "when": 1782777600008,
+      "tag": "0084_runs_cost_reconciled_at",
+      "breakpoints": true
     }
   ]
 }

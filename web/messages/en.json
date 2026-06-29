@@ -938,6 +938,17 @@
       "guardrailTrips": "Guardrail trips",
       "warnNotSurfaced": "Warn-band signals are logged, not counted here — only escalations and terminations emit domain events."
     },
+    "costBreakdown": {
+      "byModelTitle": "By model",
+      "byRunnerTitle": "By runner",
+      "modelHeader": "Model",
+      "runnerHeader": "Runner",
+      "inputHeader": "Input",
+      "outputHeader": "Output",
+      "cacheHeader": "Cache",
+      "totalHeader": "Total",
+      "empty": "No cost recorded in this window"
+    },
     "harness": {
       "sectionTitle": "Harness",
       "sectionSubtitle": "Sensor firing, control effectiveness, and coverage — correlational signals, not recommendations.",

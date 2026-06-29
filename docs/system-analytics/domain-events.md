@@ -105,6 +105,21 @@ borrows ([scheduler.md](scheduler.md)).
   driving any run into the flow resume driver (a child driven into the
   flow-only path would `Crash` context-less). See [agents.md](agents.md) and
   ADR-098/100.
+- **`cost-rollup-reconcile` consumer** (ADR-117 — Implemented) — a low-latency
+  fast-path that reconciles
+  `run_cost_rollups` seconds after a terminal that *does* emit. Subscribes to the
+  existing run-terminal kinds (`run.done | run.failed | run.crashed |
+  run.abandoned`; NO new event kind), `startFrom: "now"` (forward-only — the
+  `system_sweep` backstop owns historical backfill; see [scheduler.md](scheduler.md)
+  and [observatory.md](observatory.md)). `handle(events[])` filters to terminal
+  kinds, dedupes `runId`, and calls `reconcileRunCostRollups` for each **inside a
+  per-run try/catch that logs WARN and never throws** — the dispatcher `break`s
+  without advancing the cursor on a `handle` throw, so an always-failing run would
+  otherwise stall the cursor (poison message). Self-exclusion is N/A (it spawns no
+  run). It is a fast-path ONLY, never the completeness guarantee: scratch success
+  emits no terminal event, so the `ended_at`-keyed sweep is what guarantees
+  inclusion. Idempotent via `reconcileRunCostRollups` (delete-then-insert +
+  `onConflictDoUpdate`).
 
 ## State machine
 
