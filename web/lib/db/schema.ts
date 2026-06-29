@@ -1848,7 +1848,9 @@ export const runMessages = pgTable(
       .defaultNow(),
   },
   (t) => ({
-    uniqRunNodeAttemptSequence: unique("run_messages_run_node_attempt_sequence_uq")
+    uniqRunNodeAttemptSequence: unique(
+      "run_messages_run_node_attempt_sequence_uq",
+    )
       .on(t.runId, t.nodeAttemptId, t.sequence)
       .nullsNotDistinct(),
   }),

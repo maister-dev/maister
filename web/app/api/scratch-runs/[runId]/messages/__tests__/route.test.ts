@@ -88,7 +88,7 @@ const fakeDb: FakeDb = {
             },
           ];
         }
-        if (name === "scratch_messages") {
+        if (name === "run_messages") {
           return [{ sequence: 1 }, { sequence: 2 }];
         }
         if (name === "projects") {
