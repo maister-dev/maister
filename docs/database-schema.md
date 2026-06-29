@@ -12,7 +12,8 @@ ultra-light dev only — never as a production target.
 The implemented schema contains auth, platform runner, project, capability, run, workspace,
 graph-runner, scratch-run, HITL, and outbound-webhook tables. Scratch-run persistence landed as
 additive migrations: `runs.run_kind`, nullable scratch launch FKs,
-`scratch_runs`, `scratch_messages`, `scratch_attachments`, and
+`scratch_runs`, `run_messages` (generalized from `scratch_messages`,
+migration `0083`), `scratch_attachments`, and
 `scratch_capability_profiles`; the selectable capability catalog is
 `capability_records`. App-generated `text` IDs are UUID v4. All timestamps are
 stored as `timestamp with timezone` in UTC.
@@ -43,8 +44,8 @@ Migration `web/lib/db/migrations/0004_petite_gamora.sql` added `users`,
 | `runs`                        | Execution attempts. Flow runs are task attempts; scratch runs are manual coding-agent sessions with `run_kind = "scratch"`. Runner state (`runner_id`, `runner_resolution_tier`, `capability_agent`, `runner_snapshot`, `acp_session_id`) moved OFF this row (dropped in migration `0082`) to the per-session `run_sessions` table. **(M42 — Implemented, ADR-114, migrations `0080`–`0082`.)** **(ADR-085 — Designed, migration `0047`)** snapshots resolved delivery policy. | `tasks.id`, `projects.id`, `flows.id`, optional `platform_acp_runners.id` |
 | `workspaces`                  | `git worktree` instances tied to a run.                                                                                                                                                                                                                                                                                    | `runs.id`, `projects.id`                                                   |
 | `scratch_runs`                | Scratch-only metadata: dialog status, name, plan mode, links, branch base, target, and supervisor session. **(M36 `0059`, ADR-097)** `project_id` is NULLABLE; `local_package_id` is the project-less owner of a docked-assistant run (CHECK: exactly one of the two).                                                          | `runs.id`, optional `projects.id`, `local_packages.id`, `users.id`, optional `tasks.id` |
-| `scratch_messages`            | Append-only dialog message ledger with monotonic sequence per scratch run.                                                                                                                                                                                                                                                 | `scratch_runs.run_id`                                                      |
-| `scratch_attachments`         | Text note, file path, or issue URL attachments attached to a scratch run or message.                                                                                                                                                                                                                                       | `scratch_runs.run_id`, optional `scratch_messages.id`                      |
+| `run_messages`                | Run-kind-agnostic transcript ledger (generalized from `scratch_messages`, migration `0083`). Append/upsert message rows with monotonic `sequence`; nullable `node_attempt_id` attributes a flow node session's transcript (NULL for scratch / single-session). Unique `(run_id, node_attempt_id, sequence)` `NULLS NOT DISTINCT` keeps scratch's `(run_id, sequence)` invariant. | `runs.id`, optional `node_attempts.id`                                     |
+| `scratch_attachments`         | Text note, file path, or issue URL attachments attached to a scratch run or message.                                                                                                                                                                                                                                       | `scratch_runs.run_id`, optional `run_messages.id`                          |
 | `scratch_capability_profiles` | Launch-time MCP/skill/rule/settings/restriction snapshot and materialized profile path.                                                                                                                                                                                                                                    | `scratch_runs.run_id`                                                      |
 | `step_runs`                   | Per-step execution records for the linear flow runner (legacy-read after M11a).                                                                                                                                                                                                                                            | `runs.id`                                                                  |
 | `node_attempts`               | **(M11a — Designed, migration `0010`)** Append-only per-node-attempt ledger for the graph runner. **(M11b, migration `0011`)** adds takeover columns (`owner_user_id`, `base_ref`, `returned_commits`, `returned_diff`). **(M11c, migration `0013`)** adds the nullable, append-only `enforcement_snapshot` verdict audit. **(migration `0053`)** adds the nullable per-attempt `resolved_prompt` capture. **(M41, migration `0070`)** adds node type `consensus`. | `runs.id`, `users.id` (takeover owner, M11b)                               |
@@ -1451,7 +1452,7 @@ The `scratch_runs_project_status_idx` is partial (`WHERE projectId IS NOT
 NULL`); `scratch_runs_local_package_idx` is its partial twin. See
 [`system-analytics/studio-ai-assistant.md`](system-analytics/studio-ai-assistant.md).
 ADR-110 adds no proposal table or migration: redacted assistant action metadata
-is stored only as a run-scoped JSONL artifact, while `scratch_messages` stores
+is stored only as a run-scoped JSONL artifact, while `run_messages` stores
 sanitized `flow_action_result` system payloads for reload-stable UI cards.
 
 `workMode` and `reasoningEffort` are launch-policy metadata passed into the
@@ -1463,13 +1464,17 @@ Index: `scratch_runs_project_status_idx` on `(projectId, dialogStatus)` for
 active workspace lists. The primary key on `runId` covers detail joins from
 `runs`.
 
-## `scratch_messages`
+## `run_messages`
+
+Generalized from `scratch_messages` (migration `0083`) into a run-kind-agnostic
+transcript ledger shared by scratch AND flow `ai_coding` node sessions.
 
 ```ts
 {
   id,
-  runId,                         // FK -> scratch_runs.run_id
-  sequence,                      // monotonic per run
+  runId,                         // FK -> runs.id (scratch_runs.run_id == runs.id)
+  nodeAttemptId?,                // FK -> node_attempts.id; NULL for scratch / single-session
+  sequence,                      // monotonic per (run, node attempt)
   role: 'user' | 'assistant' | 'tool' | 'system',
   content,
   supervisorEventId?,
@@ -1477,9 +1482,14 @@ active workspace lists. The primary key on `runId` covers detail joins from
 }
 ```
 
-Messages are append-only. `scratch_messages_run_sequence_uq`
-(`UNIQUE (runId, sequence)`) prevents duplicate dialog positions and supports
-deterministic replay.
+Messages are append/upsert. `run_messages_run_node_attempt_sequence_uq`
+(`UNIQUE NULLS NOT DISTINCT (runId, nodeAttemptId, sequence)`) prevents duplicate
+positions, gives the flow transcript projector an idempotent upsert target, and —
+because NULLs are treated as equal — keeps scratch's historical
+`(runId, sequence)` invariant (scratch rows have `nodeAttemptId = NULL`). The data
+migration is a data-preserving rename: existing `scratch_messages` rows survive
+with NULL `node_attempt_id`, and `run_id` is repointed from `scratch_runs.run_id`
+to `runs.id` (the values are identical).
 
 Studio assistant action results (ADR-110) are stored as server-produced system
 messages with `kind = "flow_action_result"`. They contain relative touched
@@ -1493,7 +1503,7 @@ the server-only JSONL artifact redacts file contents to hashes and byte counts.
 {
   id,
   runId,                         // FK -> scratch_runs.run_id
-  messageId?,                    // optional FK -> scratch_messages.id
+  messageId?,                    // optional FK -> run_messages.id
   kind: 'issue_url' | 'file_path' | 'text_note' | 'uploaded_file',
   label?,
   value,                         // metadata value or rootless artifact ref
@@ -2520,9 +2530,9 @@ projects
   │           │     └── review_comments.parent_id (self-ref, cascade — root delete drops replies)
   │           ├── assignments     (FK runId,        cascade)             ← M13
   │           │     └── assignment_events (FK assignmentId, cascade)
+  │           ├── run_messages    (FK runId -> runs.id, cascade; optional node_attempt_id)
+  │           │     └── scratch_attachments   (optional message FK)
   │           └── scratch_runs    (FK runId,        cascade)
-  │                 ├── scratch_messages
-  │                 │     └── scratch_attachments   (optional message FK)
   │                 ├── scratch_attachments         (run FK)
   │                 └── scratch_capability_profiles
   ├── project_tokens     (nullable FK projectId, cascade; NULL personal tokens)  ← M16, 0063 Implemented
@@ -2652,7 +2662,7 @@ Unique constraints (`slug`, `repoPath`, `worktreePath`, `(project_id,
 executor_ref_id)`, `(project_id, flow_ref_id)`, `(project_id, source, kind,
 capability_ref_id)`, `project_flow_roles(project_id, role_ref)`,
 `actor_identities(project_id, user_id)`, `(id, attempt_number)`,
-`(run_id, step_id, attempt)`, `scratch_messages(run_id, sequence)`,
+`(run_id, step_id, attempt)`, `run_messages(run_id, node_attempt_id, sequence)` (NULLS NOT DISTINCT),
 `scratch_capability_profiles.run_id`,
 `artifact_projection_cursors(run_id, scope)`, and
 `assignments.hitl_request_id`) implicitly create their own indexes in Postgres.

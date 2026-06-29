@@ -94,7 +94,13 @@ still a later responsive pass.
    artifacts, gate verdicts, HITL prompt/response, the **resolved agent prompt**
    per attempt (collapsible; a manifest-template fallback is shown for runs
    captured before `node_attempts.resolved_prompt` shipped), and logs where
-   relevant.
+   relevant. The selected node also carries an expandable **agent transcript**
+   panel (assistant text, thinking, tool calls, usage) rendered from
+   `GET /api/runs/{runId}/transcript?node=`; the active node auto-expands and
+   appends live while the agent streams. Per-node status renders as a localized
+   icon + tooltip (not raw status text) in the node list, the canvas chip, and
+   the selected-node status field. → [`runs.md`](../../system-analytics/runs.md)
+   "Run transparency".
    For a `consensus` node, the selected result additionally shows participant
    draft rows, current round, verifier rotation, material-axis agreement chips,
    disagreement excerpts, child draft run links, and the required
@@ -112,7 +118,9 @@ still a later responsive pass.
    result as the landing view.
 5. **Run inspector** - a collapsible right sidebar documented in
    [`run-inspector.md`](run-inspector.md). It stays available across Flow,
-   Files, Diff, Evidence, and Timeline.
+   Files, Diff, Evidence, and Timeline. Its **Flow** tab now also hosts the
+   node-settings, capability-profile, and resolved-capability-set blocks
+   (relocated out of the center to keep the transcript the focus).
 
 The Flow result should not render as a card inside another card. It owns the
 page center; individual node summaries, artifact rows, and modal details may use

@@ -53,9 +53,12 @@ the same web, database, supervisor, and worktree contracts as Flow runs.
   `reasoning_effort`, optional links, base/target branch metadata,
   `dialog_status`, supervisor session id, legacy creator fallback, error fields,
   and last message timestamps.
-- **Scratch message** - Implemented. `scratch_messages` is an append-only dialog
+- **Run message** - Implemented. `run_messages` (generalized from
+  `scratch_messages`, migration `0083`; shared with flow node transcripts — see
+  [`runs.md`](runs.md) "Run transparency") is an append-only dialog
   ledger with monotonic `sequence`, `role`, `content`,
-  optional `supervisor_event_id`, and timestamps. System rows may contain typed
+  optional `supervisor_event_id`, and timestamps (scratch rows have NULL
+  `node_attempt_id`). System rows may contain typed
   JSON payloads such as `permission`, `hook_trip`, and the Studio assistant's
   sanitized `flow_action_result`; raw Flow assistant action JSON is not stored
   as assistant markdown.

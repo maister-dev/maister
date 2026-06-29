@@ -4029,6 +4029,48 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /api/runs/{runId}/transcript:
+    get:
+      tags: [runs]
+      summary: Implemented — per-node-attempt agent transcript for a flow run
+      description: |
+        Requires the `readRepoFiles` action (project `member` — strictly above
+        `readBoard`/viewer): a transcript exposes tool outputs / file contents a
+        viewer must not see (mirrors the workbench file-content gate). Reconciles
+        the durable `run.events.jsonl` into `run_messages` (reconcile-on-read,
+        idempotent), then returns the LATEST attempt of the `?node=` node as
+        ordered `TranscriptMessage` rows plus the node's latest usage. `?node=`
+        is server-state validated against the run's compiled flow graph — an
+        unknown node is a `409` PRECONDITION. No internal handles (e.g.
+        `acpSessionId`) are serialized.
+      operationId: getRunTranscript
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: node
+          in: query
+          required: true
+          description: Node id belonging to this run's compiled flow graph.
+          schema: { type: string }
+      responses:
+        "200":
+          description: Ordered transcript for the node's latest attempt.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RunTranscriptResponse" }
+        "400":
+          $ref: "#/components/responses/Config"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Precondition"
+
   /api/runs/{runId}/artifacts:
     get:
       tags: [runs]
@@ -12908,6 +12950,34 @@ components:
       properties:
         name: { type: string }
         type: { type: string, enum: [file, dir] }
+    TranscriptMessage:
+      type: object
+      required: [id, role, content, createdAt]
+      description: |
+        One coalesced transcript row (same encoding shared with scratch). `role`
+        carries the payload shape: `assistant`/`user` = markdown/plain text,
+        `tool` = JSON tool payload, `system` = JSON system payload
+        (thought | usage | …). The client parser decodes `content`.
+      properties:
+        id: { type: string }
+        role: { type: string, enum: [user, assistant, tool, system] }
+        content: { type: string }
+        createdAt: { type: string, format: date-time }
+    RunTranscriptResponse:
+      type: object
+      required: [messages, usage]
+      properties:
+        messages:
+          type: array
+          items: { $ref: "#/components/schemas/TranscriptMessage" }
+        usage:
+          nullable: true
+          description: Latest usage reported by the node's most recent attempt.
+          type: object
+          required: [used, size]
+          properties:
+            used: { type: integer }
+            size: { type: integer }
     NotFoundBody:
       type: object
       required: [message]

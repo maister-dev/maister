@@ -447,6 +447,53 @@ Logging requirements:
   failing command/path/status; ERROR only for unrecoverable side-effect failure
   with attempt id.
 
+## Run transparency (Implemented)
+
+The run-detail page surfaces *what the coding agent is doing*, per node, instead
+of node-status text and a single aggregate token count.
+
+- **Per-node agent transcript (jsonl-sourced, shared with scratch).** One
+  generalized, persisted transcript mechanism backs both scratch and flow. The
+  scratch `scratch_messages` table is generalized to `run_messages`
+  (run-kind-agnostic, nullable `node_attempt_id` FK → `node_attempts.id`, unique
+  `(run_id, node_attempt_id, sequence)` with `NULLS NOT DISTINCT` so scratch
+  keeps its `(run_id, sequence)` invariant). The same `interpretSessionUpdate`
+  classifier + payload encoders coalesce the stream for both surfaces (assistant
+  text chunks merge into one message; a `tool_call` + its `tool_call_update`s
+  merge by `toolCallId`; usage collapses to one row). Scratch keeps its live
+  supervisor-stream consumer; flow uses a **reconcile-on-read projector**
+  (`projectRunTranscript`) that tails the durable `run.events.jsonl` (ADR §2),
+  attributing each `session.update` to a node via the supervisor-stamped
+  `nodeAttemptId` (T-B0) and upserting `run_messages` per node attempt
+  (idempotent; same pattern as cost + artifact projection). The run-detail
+  center renders the active node's transcript expanded by default, refetching on
+  stream content ticks; terminal runs fetch once. Read model:
+  `GET /api/runs/{runId}/transcript?node={nodeId}` (`readRepoFiles`/member —
+  tool outputs are member-only). → [`scratch-runs.md`](scratch-runs.md) shares
+  the substrate.
+- **Node-status iconography.** Per-node status (`Pending | Running | Succeeded |
+  Failed | NeedsInput | Reworked | Stale | Skipped`) renders as a localized icon
+  + accessible tooltip across the three run-detail surfaces (the "Ноды" list,
+  the canvas chip, and the selected-node status field) instead of raw English
+  text. The mapping is the pure `nodeStatusVisual` SSOT.
+- **Declutter / Flow-tab layout.** The node-settings, capability-profile, and
+  resolved-capability-set blocks move out of the center into the inspector Flow
+  tab; the assignment journal collapses by default; the "no restricted
+  capabilities" filler is dropped — a node's restriction state reads from a
+  per-node canvas glyph shown only when it declares restricted capability
+  classes.
+- **Per-node cost attribution.** `cost.jsonl` is attributed per `nodeAttemptId`
+  (`attachCost` stamps it per session). `extractCost` accepts BOTH the
+  snake_case streaming usage and the ACP adapter's camelCase end-turn
+  `result.usage` (`inputTokens` / `outputTokens` / `cachedWriteTokens` =
+  cache-creation / `cachedReadTokens` = cache-read), normalizing to the canonical
+  snake_case record with a per-field snake-wins fallback so a usage object
+  carrying both shapes is never double-counted. Previously the camelCase
+  end-turn usage was dropped and every node session after the first recorded
+  zero tokens; the web reconcile (`reconcileRunCostRollups` →
+  `node_attempt_cost_rollups`) already attributed correctly given a correct
+  `cost.jsonl`.
+
 ## Process flows
 
 ### Happy path — launch to Review, promote after Review (Implemented)

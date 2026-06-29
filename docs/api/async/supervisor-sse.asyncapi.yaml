@@ -247,6 +247,20 @@ components:
           description: |
             Monotonically increasing per session. Used as the SSE event
             `id:` and as the `Last-Event-ID` reconnect cursor.
+        sessionName:
+          type: string
+          description: |
+            (M42 — ADR-114) Logical Flow session this event belongs to
+            (`default` for a single-session run). Stamped on every appended
+            line of a multi-session run.
+        nodeAttemptId:
+          type: string
+          description: |
+            (Run-detail transparency — T-B0) The node attempt this session
+            executes, stamped on every `run.events.jsonl` line of a flow node
+            session next to `sessionName`. The flow transcript projector reads it
+            to attribute each `session.update` to a node (`sessionName` is not
+            1:1 per node). Absent for scratch / single-session runs.
     SessionLineEvent:
       allOf:
         - $ref: "#/components/schemas/EventBase"

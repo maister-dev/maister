@@ -478,8 +478,11 @@ BY started_at DESC LIMIT 1`; designed run-attempt schema switches to
   ADR-097)** a scratch run is owned by exactly one of a project / a local
   package (never both, never neither). `runs.local_package_id` is the matching
   launch snapshot (FK `local_packages`, `ON DELETE CASCADE`).
-- `scratch_messages_run_sequence_uq` on `(run_id, sequence)` UNIQUE —
-  deterministic dialog replay.
+- `run_messages_run_node_attempt_sequence_uq` on `(run_id, node_attempt_id,
+  sequence)` UNIQUE `NULLS NOT DISTINCT` (migration `0083`, generalized from
+  `scratch_messages`) — deterministic dialog replay; scratch rows keep their
+  `(run_id, sequence)` invariant (NULL `node_attempt_id`), flow rows are unique
+  per node attempt.
 - Attachment indexes on `(run_id)` and `(message_id)` — run and
   message attachment lookups.
 - `scratch_capability_profiles.run_id` UNIQUE — run-scoped capability snapshot

@@ -104,6 +104,7 @@ channels:
           - $ref: "#/components/messages/SessionStreamTimeout"
           - $ref: "#/components/messages/SessionChatTurn"
           - $ref: "#/components/messages/SessionHookTrip"
+          - $ref: "#/components/messages/RunNeedsInput"
 components:
   messages:
     SessionLine:
@@ -168,6 +169,22 @@ components:
         behavior is in `system-analytics/guardrail-hooks.md`.
       contentType: application/json
       payload: { $ref: "#/components/schemas/EventBase" }
+    RunNeedsInput:
+      name: run.needs_input
+      title: Durable NeedsInput transition tick (run-detail transparency — Implemented)
+      summary: |
+        (Implemented) Appended to `run.events.jsonl` by the web tier at a
+        non-agent gate (human / form / review / infra_recovery), where the run
+        transitions to `NeedsInput` with NO supervisor session running — so no
+        `session.update` would otherwise tick the SSE tail and an open run-detail
+        tab would look hung. Carries the standard envelope (`monotonicId` =
+        file-max + 1). It is a refresh signal only: the run-detail tree
+        re-renders the freshly-committed review/HITL panel; it carries no agent
+        output. The per-node agent transcript is NOT a new event type — it reuses
+        the existing `session.update` stream, projected into `run_messages` and
+        read via `GET /api/runs/{runId}/transcript`.
+      contentType: application/json
+      payload: { $ref: "#/components/schemas/EventBase" }
   schemas:
     EventBase:
       type: object
@@ -183,12 +200,27 @@ components:
             - session.crashed
             - session.chat_turn
             - session.hook_trip
+            - run.needs_input
         sessionId:
           type: string
           format: uuid
         monotonicId:
           type: integer
           minimum: 1
+        sessionName:
+          type: string
+          description: |
+            (M42 — ADR-114) Logical Flow session this line belongs to
+            (`default` for a single-session run). Absent on web-synthesized
+            events that have no session.
+        nodeAttemptId:
+          type: string
+          description: |
+            (Run-detail transparency — T-B0) The node attempt this session
+            executes. Stamped on every line of a flow node session so the flow
+            transcript projector can attribute each `session.update` message to a
+            node (`sessionName` alone is not 1:1 per node). Absent for
+            scratch / single-session runs.
       description: |
         Common envelope. Each event variant carries additional fields
         documented in `supervisor-sse.asyncapi.yaml` — this AsyncAPI
