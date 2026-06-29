@@ -53,6 +53,8 @@ export interface FlowGraphViewLabels {
   // M42 (ADR-114): accessible prefix for the per-node session chip (e.g.
   // "Session"). Optional — absent → the chip shows the bare session name.
   sessionChip?: string;
+  // T-C2: accessible name for the per-node restriction glyph.
+  restricted?: string;
 }
 
 // Run coupling is optional: present → live status overlay (SSE + /graph-status,
@@ -62,6 +64,9 @@ export interface FlowGraphRunContext {
   initialStatuses: RunNodeStatuses["nodes"];
   currentStepId: string | null;
   runStatus: string;
+  // T-C2: node ids that declare restricted/enforced capability classes — drive
+  // the per-node restriction glyph. Serializable (array, not Set).
+  restrictedNodeIds?: string[];
 }
 
 export interface FlowGraphViewProps {
@@ -99,6 +104,12 @@ interface FlowNodeBodyProps {
   presentationOnly?: boolean;
   selected?: boolean;
   tooltip?: string;
+  // T-C2: this node declares restricted/enforced capability classes → show a
+  // small restriction glyph (the per-node settings panel no longer carries a
+  // "no restricted capabilities" filler row). `restrictedLabel` is the glyph's
+  // accessible name.
+  restricted?: boolean;
+  restrictedLabel?: string;
   declaredGateSummary?: {
     total: number;
     blocking: number;
@@ -351,6 +362,26 @@ function SessionGlyph(): ReactElement {
   );
 }
 
+// T-C2: small padlock signalling a node with restricted/enforced capability
+// classes. Inline SVG, `currentColor` so it inherits the wrapper's tone.
+function RestrictionGlyph(): ReactElement {
+  return (
+    <svg
+      aria-hidden="true"
+      className="h-3 w-3 shrink-0"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="1.4"
+      viewBox="0 0 16 16"
+    >
+      <rect height="7" rx="1.2" width="10" x="3" y="7" />
+      <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" />
+    </svg>
+  );
+}
+
 export function FlowNodeBody({
   label,
   nodeType,
@@ -370,6 +401,8 @@ export function FlowNodeBody({
   runtimeGateSummary,
   selected,
   tooltip,
+  restricted,
+  restrictedLabel,
   labels,
 }: FlowNodeBodyProps): ReactElement {
   const declaredCount = declaredGateSummary?.total ?? 0;
@@ -450,19 +483,32 @@ export function FlowNodeBody({
                 </span>
               ) : null}
             </span>
-            {presentationOnly ? null : (
-              <Chip
-                color={colorForNodeStatus(status, isCurrent)}
-                size="sm"
-                variant="soft"
-              >
-                <NodeStatusIcon
-                  className="text-current"
-                  label={statusLabel ?? status}
-                  status={status}
-                />
-              </Chip>
-            )}
+            <span className="flex flex-none items-center gap-1.5">
+              {restricted ? (
+                <span
+                  aria-label={restrictedLabel ?? "Restricted capabilities"}
+                  className="flex items-center text-amber"
+                  data-testid="node-restriction-glyph"
+                  role="img"
+                  title={restrictedLabel ?? "Restricted capabilities"}
+                >
+                  <RestrictionGlyph />
+                </span>
+              ) : null}
+              {presentationOnly ? null : (
+                <Chip
+                  color={colorForNodeStatus(status, isCurrent)}
+                  size="sm"
+                  variant="soft"
+                >
+                  <NodeStatusIcon
+                    className="text-current"
+                    label={statusLabel ?? status}
+                    status={status}
+                  />
+                </Chip>
+              )}
+            </span>
           </div>
           <p className="truncate text-[13.5px] font-semibold leading-tight text-ink">
             {displayLabel ?? label}
@@ -590,6 +636,7 @@ type FlowNodeRenderData = {
   presentationHeight?: number;
   selected?: boolean;
   tooltip?: string;
+  restricted?: boolean;
 };
 
 // A nodeType render fn closing over the translation labels: source/target
@@ -624,6 +671,8 @@ function makeFlowNodeView(
           presentationHeight={d.presentationHeight}
           presentationOnly={presentationOnly}
           presentationWidth={d.presentationWidth}
+          restricted={d.restricted}
+          restrictedLabel={labels.restricted}
           rollup={d.rollup ?? "none"}
           runtimeGateSummary={d.runtimeGateSummary}
           selected={d.selected ?? false}
@@ -702,6 +751,7 @@ function FlowGraphCanvas({
   currentStep,
   selectedNodeId,
   nodeTooltips,
+  restrictedNodeIds,
   heightClassName = "h-[420px]",
   onSelectNode,
 }: {
@@ -713,6 +763,7 @@ function FlowGraphCanvas({
   currentStep?: string | null;
   selectedNodeId?: string | null;
   nodeTooltips?: Record<string, string>;
+  restrictedNodeIds?: Set<string>;
   heightClassName?: string;
   onSelectNode?: (nodeId: string | null) => void;
 }): ReactElement {
@@ -749,6 +800,7 @@ function FlowGraphCanvas({
               }),
           selected: n.id === selectedNodeId,
           tooltip: nodeTooltips?.[n.id] ?? topologyTooltips[n.id],
+          restricted: restrictedNodeIds?.has(n.id) ?? false,
         },
       })),
     [
@@ -758,6 +810,7 @@ function FlowGraphCanvas({
       currentStep,
       selectedNodeId,
       nodeTooltips,
+      restrictedNodeIds,
       topologyTooltips,
     ],
   );
@@ -805,6 +858,10 @@ function RunStatusLayer({
   heightClassName?: string;
 }): ReactElement {
   const { runId, initialStatuses, currentStepId, runStatus } = runContext;
+  const restrictedNodeIds = useMemo(
+    () => new Set(runContext.restrictedNodeIds ?? []),
+    [runContext.restrictedNodeIds],
+  );
 
   const [statuses, setStatuses] = useState(initialStatuses);
   const [currentStep, setCurrentStep] = useState(currentStepId);
@@ -861,6 +918,7 @@ function RunStatusLayer({
       layout={layout}
       nodeTooltips={nodeTooltips}
       presentationOnly={false}
+      restrictedNodeIds={restrictedNodeIds}
       statusByNode={statuses}
       topology={topology}
     />

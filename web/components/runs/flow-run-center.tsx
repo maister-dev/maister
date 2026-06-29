@@ -23,10 +23,10 @@ import { NodeStatusIcon } from "@/components/runs/node-status-icon";
 import {
   NodeTranscriptPanel,
   type NodeTranscriptPanelLabels,
-  isLiveRunStatus,
   transcriptPanelDefaultOpen,
 } from "@/components/runs/node-transcript-panel";
 import { buildFlowNodeResult } from "@/lib/runs/flow-node-result";
+import { isLiveRunStatus } from "@/lib/runs/live-inspector";
 import { buildRunHref, parseRunQueryState } from "@/lib/runs/run-query-state";
 
 export interface FlowRunCenterLabels {

@@ -464,6 +464,7 @@ export default async function RunDetailLayout({
       Reworked: tWorkbench("graph.node.Reworked"),
       Stale: tWorkbench("graph.node.Stale"),
     },
+    restricted: tWorkbench("graph.restricted"),
     role: {
       agent: tWorkbench("graph.role.agent"),
       command: tWorkbench("graph.role.command"),
@@ -1144,6 +1145,55 @@ export default async function RunDetailLayout({
     ? `${detail.flowRef}${currentNodeLabel ? ` › ${currentNodeLabel}` : ""}${provenanceSuffix}`
     : `${t("eyebrow")} / ${detail.projectSlug}`;
 
+  // T-C1: the node-settings, capability-profile, and resolved-capability-set
+  // blocks moved out of the run-detail center into the inspector Flow tab to
+  // keep the center focused on the agent transcript. Panels are reused as-is.
+  const flowInspectorExtras =
+    settings || capabilityProfiles || resolvedSet ? (
+      <>
+        {settings ? (
+          <details className="rounded-[8px] border border-line bg-paper p-3">
+            <summary className="cursor-pointer text-[12px] font-semibold text-ink">
+              {t("settingsTitle")}
+            </summary>
+            <div className="mt-2">
+              <FlowSettingsPanel
+                labels={settingsLabels}
+                nodes={settings.nodes}
+                refusalReason={settings.refusalReason}
+              />
+            </div>
+          </details>
+        ) : null}
+        {capabilityProfiles ? (
+          <details className="rounded-[8px] border border-line bg-paper p-3">
+            <summary className="cursor-pointer text-[12px] font-semibold text-ink">
+              {t("capabilityTitle")}
+            </summary>
+            <div className="mt-2">
+              <CapabilityProfilePanel
+                labels={capabilityLabels}
+                nodes={capabilityNodes}
+              />
+            </div>
+          </details>
+        ) : null}
+        {resolvedSet ? (
+          <details className="rounded-[8px] border border-line bg-paper p-3">
+            <summary className="cursor-pointer text-[12px] font-semibold text-ink">
+              {t("resolvedSet.title")}
+            </summary>
+            <div className="mt-2">
+              <ResolvedCapabilitySetPanel
+                labels={resolvedSetLabels}
+                resolved={resolvedSet}
+              />
+            </div>
+          </details>
+        ) : null}
+      </>
+    ) : null;
+
   return (
     <>
       <RunLiveRefresh
@@ -1163,6 +1213,7 @@ export default async function RunDetailLayout({
             childRuns={inspectorChildRuns}
             childRunsLabels={inspectorChildRunsLabels}
             facts={inspectorFacts}
+            flowExtras={flowInspectorExtras}
             flowSummary={flowSummary}
             labels={inspectorLabels}
             liveCost={{ initial: costSummary, labels: costLabels }}
@@ -1270,6 +1321,11 @@ export default async function RunDetailLayout({
                         initialStatuses: flowGraphData.statuses.nodes,
                         currentStepId: flowGraphData.statuses.currentStepId,
                         runStatus: detail.status,
+                        restrictedNodeIds: settings
+                          ? settings.nodes
+                              .filter((n) => n.classes.length > 0)
+                              .map((n) => n.nodeId)
+                          : [],
                       }}
                       topology={flowGraphData.topology}
                     />
@@ -1540,49 +1596,6 @@ export default async function RunDetailLayout({
                 }
               />
             </section>
-          ) : null}
-
-          {settings ? (
-            <details className="rounded-[10px] border border-line bg-paper p-4">
-              <summary className="cursor-pointer font-sans text-[14px] font-bold text-ink">
-                {t("settingsTitle")}
-              </summary>
-              <div className="mt-3">
-                <FlowSettingsPanel
-                  labels={settingsLabels}
-                  nodes={settings.nodes}
-                  refusalReason={settings.refusalReason}
-                />
-              </div>
-            </details>
-          ) : null}
-
-          {capabilityProfiles ? (
-            <details className="rounded-[10px] border border-line bg-paper p-4">
-              <summary className="cursor-pointer font-sans text-[14px] font-bold text-ink">
-                {t("capabilityTitle")}
-              </summary>
-              <div className="mt-3">
-                <CapabilityProfilePanel
-                  labels={capabilityLabels}
-                  nodes={capabilityNodes}
-                />
-              </div>
-            </details>
-          ) : null}
-
-          {resolvedSet ? (
-            <details className="rounded-[10px] border border-line bg-paper p-4">
-              <summary className="cursor-pointer font-sans text-[14px] font-bold text-ink">
-                {t("resolvedSet.title")}
-              </summary>
-              <div className="mt-3">
-                <ResolvedCapabilitySetPanel
-                  labels={resolvedSetLabels}
-                  resolved={resolvedSet}
-                />
-              </div>
-            </details>
           ) : null}
 
           {showReview && reviewData ? (

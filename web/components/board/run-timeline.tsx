@@ -358,10 +358,10 @@ export function RunTimeline({
         </ol>
       ) : null}
       {hasAssignmentEvents ? (
-        <div className="mt-4">
-          <h3 className="mb-2 font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-mute">
+        <details className="mt-4" data-testid="assignment-ledger">
+          <summary className="mb-2 cursor-pointer font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-mute">
             {labels.assignmentLedger}
-          </h3>
+          </summary>
           <ol className="flex flex-col gap-1.5">
             {assignmentEvents.map((event) => (
               <AssignmentEventRow
@@ -371,7 +371,7 @@ export function RunTimeline({
               />
             ))}
           </ol>
-        </div>
+        </details>
       ) : null}
     </section>
   );

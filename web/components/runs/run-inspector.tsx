@@ -1,6 +1,6 @@
 "use client";
 
-import type { ComponentType, ReactElement } from "react";
+import type { ComponentType, ReactElement, ReactNode } from "react";
 
 import { useState } from "react";
 import {
@@ -137,6 +137,9 @@ export interface RunInspectorProps {
   facts: RunInspectorFact[];
   changeSummary: RunInspectorChangeSummary | null;
   flowSummary?: RunInspectorFlowSummary | null;
+  // Run-detail transparency (T-C1): capability/settings blocks relocated out of
+  // the run-detail center into the Flow tab. Server-rendered slot.
+  flowExtras?: ReactNode;
   actions: RunInspectorAction[];
   pathname?: string;
   search?: string;
@@ -236,6 +239,7 @@ export function RunInspector({
   facts,
   changeSummary,
   flowSummary,
+  flowExtras,
   actions,
   pathname = `/runs/${runId}`,
   search = "",
@@ -420,6 +424,11 @@ export function RunInspector({
             {labels.unavailable}
           </p>
         )}
+        {flowExtras ? (
+          <div className="mt-3 flex flex-col gap-3" data-testid="flow-extras">
+            {flowExtras}
+          </div>
+        ) : null}
       </div>
 
       <div hidden={activeTab !== "actions"} role="tabpanel">

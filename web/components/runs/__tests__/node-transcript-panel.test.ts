@@ -7,7 +7,6 @@ import { describe, expect, it } from "vitest";
 import {
   NodeTranscriptPanel,
   type NodeTranscriptPanelLabels,
-  isLiveRunStatus,
   transcriptPanelDefaultOpen,
 } from "@/components/runs/node-transcript-panel";
 
@@ -37,20 +36,6 @@ function render(over: {
     }),
   );
 }
-
-describe("isLiveRunStatus", () => {
-  it("treats terminal statuses as not live", () => {
-    for (const s of ["Done", "Abandoned", "Failed", "Crashed"]) {
-      expect(isLiveRunStatus(s)).toBe(false);
-    }
-  });
-
-  it("treats in-flight statuses as live", () => {
-    for (const s of ["Running", "NeedsInput", "Review", "HumanWorking"]) {
-      expect(isLiveRunStatus(s)).toBe(true);
-    }
-  });
-});
 
 describe("transcriptPanelDefaultOpen", () => {
   it("opens only for the current node of a live run", () => {

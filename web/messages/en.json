@@ -2056,6 +2056,7 @@
       "empty": "No flow graph for this run.",
       "currentNode": "Current node",
       "sessionChip": "Session",
+      "restricted": "Restricted capabilities",
       "saveError": "Could not save the node position.",
       "declaredGateSummary": "$count declared gates",
       "gateSummary": "$count gates",

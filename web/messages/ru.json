@@ -2056,6 +2056,7 @@
       "empty": "Для этого запуска нет графа потока.",
       "currentNode": "Текущий узел",
       "sessionChip": "Сессия",
+      "restricted": "Ограниченные возможности",
       "saveError": "Не удалось сохранить позицию узла.",
       "declaredGateSummary": "$count объявленных проверок",
       "gateSummary": "$count проверок",

@@ -73,46 +73,47 @@ export function FlowSettingsPanel({
       ) : null}
 
       <ul className="flex flex-col gap-2.5">
-        {nodes.map((node) => (
-          <li
-            key={node.nodeId}
-            className="rounded-[10px] border border-line bg-paper px-3.5 py-3"
-          >
-            <div className="flex flex-wrap items-center gap-2 font-mono text-[12.5px] font-bold tracking-[-0.005em] text-ink">
-              <span className="min-w-0 truncate">{node.nodeId}</span>
-              <span className="flex-none font-mono text-[10px] uppercase tracking-[0.08em] text-mute">
-                {node.nodeType}
-              </span>
-            </div>
+        {/* T-C2: only nodes that actually declare constraints are shown — the
+            "no restricted capabilities" filler is removed from this surface
+            (a node's restriction state reads from its canvas glyph instead). */}
+        {nodes
+          .filter((node) => node.classes.length > 0)
+          .map((node) => (
+            <li
+              key={node.nodeId}
+              className="rounded-[10px] border border-line bg-paper px-3.5 py-3"
+            >
+              <div className="flex flex-wrap items-center gap-2 font-mono text-[12.5px] font-bold tracking-[-0.005em] text-ink">
+                <span className="min-w-0 truncate">{node.nodeId}</span>
+                <span className="flex-none font-mono text-[10px] uppercase tracking-[0.08em] text-mute">
+                  {node.nodeType}
+                </span>
+              </div>
 
-            {node.classes.length === 0 ? (
-              <p className="mt-2 font-mono text-[11px] text-mute">
-                {labels.noConstraints}
-              </p>
-            ) : (
-              <ul className="mt-2 flex flex-wrap gap-1.5">
-                {node.classes.map((c) => (
-                  <li
-                    key={c.class}
-                    className="inline-flex items-center gap-1.5 font-mono text-[11px]"
-                  >
-                    <span className="text-ink-2">
-                      {labels.classLabel(c.class)}
-                    </span>
-                    <span
-                      className={clsx(
-                        "rounded-full border px-2 py-[2px] text-[9px] font-bold uppercase tracking-[0.06em]",
-                        verdictTone(c.verdict),
-                      )}
+              {
+                <ul className="mt-2 flex flex-wrap gap-1.5">
+                  {node.classes.map((c) => (
+                    <li
+                      key={c.class}
+                      className="inline-flex items-center gap-1.5 font-mono text-[11px]"
                     >
-                      {verdictLabel(c.verdict, labels)}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </li>
-        ))}
+                      <span className="text-ink-2">
+                        {labels.classLabel(c.class)}
+                      </span>
+                      <span
+                        className={clsx(
+                          "rounded-full border px-2 py-[2px] text-[9px] font-bold uppercase tracking-[0.06em]",
+                          verdictTone(c.verdict),
+                        )}
+                      >
+                        {verdictLabel(c.verdict, labels)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              }
+            </li>
+          ))}
       </ul>
     </section>
   );

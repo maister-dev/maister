@@ -191,5 +191,9 @@ describe("RunTimeline component", () => {
     expect(html).toContain("Review assignment");
     expect(html).toContain("system");
     expect(html).not.toContain("No attempts yet.");
+    // T-C2: the ledger is collapsed by default — a <details> with no `open`.
+    expect(html).toContain('data-testid="assignment-ledger"');
+    expect(html).toMatch(/<details[^>]*data-testid="assignment-ledger"/);
+    expect(html).not.toMatch(/<details[^>]*\bopen\b/);
   });
 });

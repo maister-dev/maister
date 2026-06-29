@@ -111,6 +111,28 @@ function renderDirtyInspector(): string {
 }
 
 describe("RunInspector", () => {
+  it("renders the relocated capability/settings blocks (flowExtras) in the Flow tab", () => {
+    const html = renderToStaticMarkup(
+      createElement(RunInspector, {
+        runId: "run-1",
+        labels: LABELS,
+        facts: [],
+        changeSummary: null,
+        flowSummary: null,
+        actions: [],
+        flowExtras: createElement(
+          "div",
+          { "data-testid": "moved-capability-block" },
+          "Node settings",
+        ),
+      }),
+    );
+
+    expect(html).toContain('data-testid="flow-extras"');
+    expect(html).toContain('data-testid="moved-capability-block"');
+    expect(html).toContain("Node settings");
+  });
+
   it("renders the four inspector tabs and overview facts", () => {
     const html = renderInspector();
 

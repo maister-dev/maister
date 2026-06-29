@@ -349,6 +349,33 @@ describe("FlowNodeBody — translated status surfaced as a tooltip", () => {
     expect(html).toContain('title="Выполняется"');
   });
 
+  it("renders the restriction glyph only when the node has restricted classes (T-C2)", () => {
+    const withGlyph = renderToStaticMarkup(
+      createElement(FlowNodeBody, {
+        label: "implement",
+        status: "Running",
+        isCurrent: false,
+        rollup: "none",
+        restricted: true,
+        restrictedLabel: "Restricted capabilities",
+        labels: baseLabels,
+      } as FlowNodeBodyProps & { restricted: boolean; restrictedLabel: string }),
+    );
+
+    expect(withGlyph).toContain('data-testid="node-restriction-glyph"');
+    expect(withGlyph).toContain('aria-label="Restricted capabilities"');
+
+    const withoutGlyph = render({
+      label: "implement",
+      status: "Running",
+      isCurrent: false,
+      rollup: "none",
+      labels: baseLabels,
+    });
+
+    expect(withoutGlyph).not.toContain('data-testid="node-restriction-glyph"');
+  });
+
   it("renders the status chip as an icon carrying the localized accessible name", () => {
     const html = renderToStaticMarkup(
       createElement(FlowNodeBody, {

@@ -89,10 +89,21 @@ describe("FlowSettingsPanel — three verdict states", () => {
     expect(html).toContain("verdict");
   });
 
-  it("renders the no-constraints label for a node with empty classes", () => {
+  it("omits a node with no declared constraints (no filler text) — T-C2 declutter", () => {
     const html = render([node("bare", "ai_coding", [])]);
 
-    expect(html).toContain("No constrained capabilities");
+    expect(html).not.toContain("No constrained capabilities");
+    expect(html).not.toContain("bare");
+  });
+
+  it("keeps constrained nodes while dropping empty ones in a mixed list", () => {
+    const html = render([
+      node("bare", "ai_coding", []),
+      node("guarded", "ai_coding", [{ class: "mcps", verdict: "enforced" }]),
+    ]);
+
+    expect(html).not.toContain("bare");
+    expect(html).toContain("guarded");
   });
 
   it("renders the refusal-reason line for a launch-refused run", () => {

@@ -9,20 +9,8 @@ import {
   type TranscriptLabels,
   type TranscriptMessage,
 } from "@/components/run-transcript/transcript-view";
+import { CHANGE_SUMMARY_REFRESH_DEBOUNCE_MS } from "@/lib/runs/live-inspector";
 import { useRunStream } from "@/lib/use-run-stream";
-
-// Run statuses where the agent may still be producing output — drives live
-// refetch on stream content ticks. Terminal runs fetch once.
-const TERMINAL_RUN_STATUSES = new Set([
-  "Done",
-  "Abandoned",
-  "Failed",
-  "Crashed",
-]);
-
-export function isLiveRunStatus(status: string): boolean {
-  return !TERMINAL_RUN_STATUSES.has(status);
-}
 
 // The active (current) node of a live run auto-expands so streamed output is
 // visible without a click; everything else starts collapsed.
@@ -110,7 +98,10 @@ export function NodeTranscriptPanel({
   useEffect(() => {
     if (!open || !live || eventCount === 0) return;
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => void load(), 400);
+    debounceRef.current = setTimeout(
+      () => void load(),
+      CHANGE_SUMMARY_REFRESH_DEBOUNCE_MS,
+    );
 
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
