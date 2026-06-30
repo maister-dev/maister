@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
+import type { TaskPriority } from "@/lib/tasks/criticality";
 
 import { randomUUID } from "node:crypto";
 
@@ -18,6 +19,7 @@ import {
   type TaskVerdictPatch,
 } from "@/lib/services/triage";
 import { subscribe } from "@/lib/social/subscriptions";
+import { applyQueueWriteFields } from "@/lib/tasks/queue-fields";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches app/api/projects/[slug]/tasks/route.ts).
 const { flows, projects, runs, tasks } = schemaModule as unknown as Record<
@@ -327,7 +329,32 @@ export type UpdateTaskInput = {
   targetBranch?: string | null;
   promotionMode?: PromotionMode | null;
   executionPolicy?: ExecutionPolicy | null;
+  // ADR-121: priority + advisory confidence are Backlog-gated (config) fields;
+  // queuePaused is the status-agnostic pause valve (allowed while InFlight too).
+  priority?: TaskPriority | null;
+  triageConfidence?: number | null;
+  queuePaused?: boolean;
 };
+
+// ADR-121: the Backlog-gated config fields. `queuePaused` is deliberately NOT
+// here — the pause valve must work while a task is InFlight (to stop an
+// auto-relaunch / dequeue a resume), so it bypasses the Backlog gate (INV-10).
+const BACKLOG_GATED_FIELDS = [
+  "title",
+  "prompt",
+  "flowId",
+  "runnerId",
+  "baseBranch",
+  "targetBranch",
+  "promotionMode",
+  "executionPolicy",
+  "priority",
+  "triageConfidence",
+] as const;
+
+function hasBacklogGatedField(input: UpdateTaskInput): boolean {
+  return BACKLOG_GATED_FIELDS.some((f) => input[f] !== undefined);
+}
 
 function updateColumns(input: UpdateTaskInput): Record<string, unknown> {
   const patch: Record<string, unknown> = { updatedAt: new Date() };
@@ -344,6 +371,9 @@ function updateColumns(input: UpdateTaskInput): Record<string, unknown> {
   if (input.executionPolicy !== undefined) {
     patch.executionPolicy = input.executionPolicy;
   }
+  if (input.queuePaused !== undefined) patch.queuePaused = input.queuePaused;
+
+  applyQueueWriteFields(input, patch);
 
   return patch;
 }
@@ -380,10 +410,24 @@ export async function updateTask(
 
   const task = rows[0];
 
-  if (task.status !== "Backlog") {
+  // ADR-121 (INV-10): the pause valve works while a task is InFlight (to dequeue
+  // a resume / stop an auto-relaunch); config fields stay Backlog-gated. Terminal
+  // tasks accept neither.
+  if (task.status !== "Backlog" && hasBacklogGatedField(input)) {
     throw new MaisterError(
       "PRECONDITION",
       `task is not in Backlog (got ${task.status})`,
+    );
+  }
+
+  if (
+    input.queuePaused !== undefined &&
+    task.status !== "Backlog" &&
+    task.status !== "InFlight"
+  ) {
+    throw new MaisterError(
+      "PRECONDITION",
+      `task is terminal (got ${task.status}); cannot change pause`,
     );
   }
 

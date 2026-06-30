@@ -10,6 +10,7 @@ import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
 import { storedDeliveryPolicySchema } from "@/lib/runs/delivery-policy";
+import { taskQueueSettingsSchema } from "@/lib/tasks/queue-settings";
 
 const { platformAcpRunners, projects } = schemaModule as unknown as Record<
   string,
@@ -25,6 +26,9 @@ const patchBodySchema = z
   .object({
     runnerId: z.string().min(1).nullable().optional(),
     deliveryPolicyDefault: storedDeliveryPolicySchema.nullable().optional(),
+    // ADR-121 §4.3: per-project queue settings. `null` clears the override (env
+    // defaults apply). `.strict()` + `maxInFlightAuto.min(1)` reject bad input → 422.
+    taskQueueSettings: taskQueueSettingsSchema.nullable().optional(),
   })
   .strict();
 
@@ -137,6 +141,9 @@ export async function PATCH(
     if (body.deliveryPolicyDefault !== undefined) {
       update.deliveryPolicyDefault = body.deliveryPolicyDefault;
     }
+    if (body.taskQueueSettings !== undefined) {
+      update.taskQueueSettings = body.taskQueueSettings;
+    }
 
     if (Object.keys(update).length === 0) {
       throw new MaisterError("CONFIG", "PATCH body contains no settings");
@@ -162,6 +169,10 @@ export async function PATCH(
         body.deliveryPolicyDefault === undefined
           ? project.deliveryPolicyDefault
           : body.deliveryPolicyDefault,
+      taskQueueSettings:
+        body.taskQueueSettings === undefined
+          ? project.taskQueueSettings
+          : body.taskQueueSettings,
     });
   } catch (err) {
     return errorResponse(err, slug);

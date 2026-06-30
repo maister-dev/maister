@@ -3,6 +3,8 @@ import type { NextRequest } from "next/server";
 import { getTableName } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { MaisterError } from "@/lib/errors";
+
 type Row = Record<string, unknown>;
 
 const mocks = vi.hoisted(() => ({
@@ -132,6 +134,52 @@ describe("PATCH /api/projects/[slug]/settings", () => {
       "project-1",
       "editSettings",
     );
+  });
+
+  it("persists taskQueueSettings { edgeDrain, maxInFlightAuto } and clears it (ADR-121)", async () => {
+    const settings = { edgeDrain: false, maxInFlightAuto: 3 };
+
+    const setRes = await patch("demo", { taskQueueSettings: settings });
+    const setBody = (await setRes.json()) as { taskQueueSettings: unknown };
+
+    expect(setRes.status).toBe(200);
+    expect(setBody.taskQueueSettings).toEqual(settings);
+
+    const clearRes = await patch("demo", { taskQueueSettings: null });
+
+    expect(clearRes.status).toBe(200);
+    expect(state.updates.map((entry) => entry.values)).toEqual([
+      { taskQueueSettings: settings },
+      { taskQueueSettings: null },
+    ]);
+    expect(mocks.requireProjectAction).toHaveBeenCalledWith(
+      "project-1",
+      "editSettings",
+    );
+  });
+
+  it("rejects maxInFlightAuto < 1 with 422 (schema range)", async () => {
+    const res = await patch("demo", {
+      taskQueueSettings: { maxInFlightAuto: 0 },
+    });
+    const body = (await res.json()) as { code: string };
+
+    expect(res.status).toBe(422);
+    expect(body.code).toBe("CONFIG");
+    expect(state.updates).toEqual([]);
+  });
+
+  it("returns 403 when the caller lacks editSettings", async () => {
+    mocks.requireProjectAction.mockRejectedValue(
+      new MaisterError("UNAUTHORIZED", "forbidden"),
+    );
+
+    const res = await patch("demo", {
+      taskQueueSettings: { edgeDrain: true },
+    });
+
+    expect(res.status).toBe(403);
+    expect(state.updates).toEqual([]);
   });
 
   it("rejects body project identifiers instead of trusting them", async () => {

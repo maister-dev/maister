@@ -31,6 +31,11 @@ const patchBodySchema = z
       .nullable()
       .optional(),
     executionPolicy: executionPolicySchema.nullable().optional(),
+    // ADR-121: priority CLEAR (null) → 'normal'; confidence is advisory (0..1),
+    // CLEAR (null) → NULL; queuePaused is the pause valve.
+    priority: z.enum(["low", "normal", "high", "urgent"]).nullable().optional(),
+    triageConfidence: z.number().min(0).max(1).nullable().optional(),
+    queuePaused: z.boolean().optional(),
   })
   .strict()
   .refine((body) => Object.keys(body).length > 0, {
@@ -49,6 +54,11 @@ const putBodySchema = z
     targetBranch: z.string().min(1).max(255).nullable(),
     promotionMode: z.enum(["local_merge", "pull_request"]).nullable(),
     executionPolicy: executionPolicySchema.nullable(),
+    // ADR-121: optional in the full save so pre-existing PUT clients stay valid;
+    // the card editor includes them when the user edits priority/pause.
+    priority: z.enum(["low", "normal", "high", "urgent"]).nullable().optional(),
+    triageConfidence: z.number().min(0).max(1).nullable().optional(),
+    queuePaused: z.boolean().optional(),
   })
   .strict();
 

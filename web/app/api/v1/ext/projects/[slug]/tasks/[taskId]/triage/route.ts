@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { QueueWriteFields } from "@/lib/tasks/queue-fields";
+
 import { and, eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
@@ -10,6 +12,7 @@ import { isMaisterError } from "@/lib/errors";
 import {
   applyTriageFlag,
   applyTriageVerdict,
+  setTaskQueueFields,
   validateVerdictRefs,
 } from "@/lib/services/triage";
 import {
@@ -48,6 +51,11 @@ const postBodySchema = z
     promotionMode: z.enum(["local_merge", "pull_request"]).optional(),
     flag: z.boolean().optional(),
     enqueue: z.boolean().optional(),
+    // ADR-121 (F6): priority + advisory confidence — INDEPENDENT of `flag` and the
+    // verdict fields (settable alongside either). `null` clears (priority → 'normal',
+    // confidence → NULL). Out-of-range confidence → 422 (wire validation + DB CHECK).
+    priority: z.enum(["low", "normal", "high", "urgent"]).nullable().optional(),
+    confidence: z.number().min(0).max(1).nullable().optional(),
   })
   .strict()
   .refine((body) => Object.keys(body).length > 0, {
@@ -140,6 +148,32 @@ export async function POST(
         );
       }
 
+      // ADR-121 (F6): priority/confidence ride alongside whichever triage action
+      // the agent performs (flag / verdict / pure update) — never gated by `flag`.
+      // `null` = explicit clear (priority → 'normal', confidence → NULL); absent =
+      // leave unchanged.
+      const queueFields: QueueWriteFields = {};
+
+      if (body.priority !== undefined) queueFields.priority = body.priority;
+      if (body.confidence !== undefined) {
+        queueFields.triageConfidence = body.confidence;
+      }
+
+      const auditOk = (tx: unknown) =>
+        recordRequiredTokenAudit(
+          {
+            tokenId: ctx.actor.tokenId,
+            projectId: ctx.projectId,
+            actorLabel: ctx.actor.actorLabel,
+            scopeUsed: "tasks:triage",
+            endpoint: ENDPOINT_TRIAGE,
+            method: "POST",
+            result: "ok",
+            statusCode: 200,
+          },
+          tx,
+        );
+
       try {
         const actor = socialActorForToken(ctx.actor);
 
@@ -149,21 +183,10 @@ export async function POST(
               taskId,
               projectId: ctx.projectId,
               actor,
+              queueFields,
             });
 
-            await recordRequiredTokenAudit(
-              {
-                tokenId: ctx.actor.tokenId,
-                projectId: ctx.projectId,
-                actorLabel: ctx.actor.actorLabel,
-                scopeUsed: "tasks:triage",
-                endpoint: ENDPOINT_TRIAGE,
-                method: "POST",
-                result: "ok",
-                statusCode: 200,
-              },
-              tx,
-            );
+            await auditOk(tx);
           });
 
           return NextResponse.json(
@@ -172,8 +195,28 @@ export async function POST(
           );
         }
 
+        // ADR-121: a body carrying ONLY priority/confidence (no flag, no verdict
+        // field, no enqueue) is a pure queue-field update — it must NOT stamp
+        // 'triaged' or change launch_mode.
+        const isPureQueueUpdate = verdictFieldsPresent.length === 0 && !enqueue;
+
+        if (isPureQueueUpdate) {
+          await (db as TransactionalDb).transaction(async (tx) => {
+            await setTaskQueueFields(tx, {
+              taskId,
+              projectId: ctx.projectId,
+              actor,
+              queueFields,
+            });
+
+            await auditOk(tx);
+          });
+
+          return NextResponse.json({ ok: true }, { status: 200 });
+        }
+
         // Narrow to verdict fields only — `enqueue` is not a verdict column
-        // (Phase 4) and must not leak into the verdict / activity payload.
+        // and must not leak into the verdict / activity payload.
         const verdict = {
           flowId: body.flowId,
           runnerId: body.runnerId,
@@ -191,21 +234,10 @@ export async function POST(
             verdict,
             actor,
             enqueue,
+            queueFields,
           });
 
-          await recordRequiredTokenAudit(
-            {
-              tokenId: ctx.actor.tokenId,
-              projectId: ctx.projectId,
-              actorLabel: ctx.actor.actorLabel,
-              scopeUsed: "tasks:triage",
-              endpoint: ENDPOINT_TRIAGE,
-              method: "POST",
-              result: "ok",
-              statusCode: 200,
-            },
-            tx,
-          );
+          await auditOk(tx);
         });
 
         return NextResponse.json(

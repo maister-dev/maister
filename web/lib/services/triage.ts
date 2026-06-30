@@ -8,6 +8,11 @@ import * as schemaModule from "@/lib/db/schema";
 import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { MaisterError } from "@/lib/errors";
 import { recordTaskActivity, type SocialActor } from "@/lib/social/activity";
+import {
+  applyQueueWriteFields,
+  hasQueueWriteFields,
+  type QueueWriteFields,
+} from "@/lib/tasks/queue-fields";
 
 // FIXME(any): dual drizzle-orm peer-dep variants (matches lib/services/tasks.ts).
 const { flows, platformAcpRunners, tasks } = schemaModule as unknown as Record<
@@ -170,9 +175,14 @@ export async function applyTriageVerdict(
     verdict: TaskVerdictPatch;
     actor: SocialActor;
     enqueue?: boolean;
+    // ADR-121 (F6): priority + advisory confidence are INDEPENDENT of the verdict
+    // (and of the `flag` set) — set alongside a verdict in the same transaction.
+    queueFields?: QueueWriteFields;
   },
 ): Promise<void> {
   const set = verdictColumns(input.verdict);
+
+  if (input.queueFields) applyQueueWriteFields(input.queueFields, set);
   const now = new Date();
 
   await tx
@@ -257,16 +267,22 @@ export async function applyTriageFlag(
     taskId: string;
     projectId: string;
     actor: SocialActor;
+    // ADR-121 (F6): priority + advisory confidence ARE settable alongside a flag.
+    queueFields?: QueueWriteFields;
   },
 ): Promise<void> {
+  const set: Record<string, unknown> = {
+    triageStatus: "flagged",
+    launchMode: null,
+    launchArmedAt: null,
+    updatedAt: new Date(),
+  };
+
+  if (input.queueFields) applyQueueWriteFields(input.queueFields, set);
+
   await tx
     .update(tasks)
-    .set({
-      triageStatus: "flagged",
-      launchMode: null,
-      launchArmedAt: null,
-      updatedAt: new Date(),
-    })
+    .set(set)
     .where(
       and(eq(tasks.id, input.taskId), eq(tasks.projectId, input.projectId)),
     );
@@ -282,6 +298,48 @@ export async function applyTriageFlag(
   log.info(
     { taskId: input.taskId, actorType: input.actor.type },
     "triage flagged",
+  );
+}
+
+// ADR-121 (F6): apply ONLY the advisory queue fields (priority / confidence) with
+// NO triage stamp and NO launch-mode change — used when an agent triage call carries
+// priority/confidence but neither a flag nor a verdict. Records a `triage_set`
+// activity carrying the fields (reuses the event kind — no new enum/CHECK).
+export async function setTaskQueueFields(
+  tx: any,
+  input: {
+    taskId: string;
+    projectId: string;
+    actor: SocialActor;
+    queueFields: QueueWriteFields;
+  },
+): Promise<void> {
+  if (!hasQueueWriteFields(input.queueFields)) {
+    throw new MaisterError("CONFIG", "at least one queue field is required");
+  }
+
+  const set: Record<string, unknown> = { updatedAt: new Date() };
+
+  applyQueueWriteFields(input.queueFields, set);
+
+  await tx
+    .update(tasks)
+    .set(set)
+    .where(
+      and(eq(tasks.id, input.taskId), eq(tasks.projectId, input.projectId)),
+    );
+
+  await recordTaskActivity(tx, {
+    taskId: input.taskId,
+    projectId: input.projectId,
+    actor: input.actor,
+    eventKind: "triage_set",
+    payload: { ...input.queueFields },
+  });
+
+  log.info(
+    { taskId: input.taskId, actorType: input.actor.type },
+    "task queue fields set",
   );
 }
 
