@@ -146,6 +146,7 @@
 | [ADR-118](#adr-118-rework-loop-onexhaustion-routing--human-driven-counter-reset-resettargets--engine-210) | Rework loop `onExhaustion` routing + human-driven counter reset (`resetTargets`) + engine 2.1.0 | Accepted | 2026-06-29 |
 | [ADR-119](#adr-119-manual-force-relaunch-additive-concurrent-runs-per-task--atomic-attempt-number-allocation) | Manual force-relaunch (additive concurrent runs per task) + atomic attempt-number allocation | Accepted | 2026-06-30 |
 | [ADR-120](#adr-120-artifact-body-injection-into-prompts) | Artifact body injection into prompts (`{{ artifacts.X.content }}` + `input.requires.inline`) + engine 2.2.0 | Accepted | 2026-06-30 |
+| [ADR-121](#adr-121-priority-ordered-dependency-draining-task-queue-unified-admission-gate) | Priority-ordered dependency-draining task queue: unified admission gate, cycle-safe relations, cap-safe resume, advisory confidence, operator pause | Accepted | 2026-06-30 |
 
 ---
 
@@ -9924,6 +9925,86 @@ Locked sub-decisions:
   only via the context var so mustache substitutes literally.
 - **Allow `inline: true` on any node:** rejected (D12) — auto-append corrupts a CLI
   command and is a silent no-op on `human`/`form`; explicit refusal is clearer.
+
+---
+
+### ADR-121: Priority-ordered dependency-draining task queue (unified admission gate)
+
+**Date:** 2026-06-30
+**Status:** Accepted
+**Context:** The operator-only-writes-tasks → triager-configures → dependency-ordered
+auto-drain loop already exists (ADR-111/112). This ADR adds the **activating layer** and
+**unifies scheduler admission**. Three code audits confirmed the operator→triager→auto-drain
+substrate is built end-to-end; this work does not rebuild it — it adds four Variant-B gaps
+(cycle-safe authoring, first-class priority, a single priority-ordered admission gate, advisory
+confidence) plus the scheduler-admission unification and an operator pause valve. This
+entry takes **ADR-121**: the next free number across all committed branches was 120, but
+ADR-120 is owned by a parallel plan-only branch that merges first, so this work is
+reassigned to 121 to avoid the clash.
+
+**Decision:**
+- **Cycle-safe relations:** a gating-kind (`blocks`/`depends_on`/`requires`) relation
+  create that would close a cycle is refused with `MaisterError("CONFLICT")` (HTTP 409),
+  evaluated **inside the insert transaction** over a project-scoped reachability walk that
+  normalizes `blocks` and its inverse `depends_on` to one directed edge (no TOCTOU).
+  `parent_of`/`duplicate_of` skip the check.
+- **Criticality dictionary** (`web/lib/tasks/criticality.ts`) is the single ordering source:
+  a closed map `{ low:100, normal:200, high:300, urgent:400 }` (higher = more critical). No
+  ad-hoc weights anywhere; both the gate and the promote tiebreak call it. A run with no task
+  defaults to `normal`.
+- **Single priority-ordered admission gate** (`admitOnFreeSlot`) replaces the blind
+  `started_at` FIFO body of `promoteNextPending`, selecting among three candidate classes
+  on every freed slot — **C1** Pending runs, **C2** eligible Backlog tasks (flow pool only),
+  **C3** answered-idle resumables — sorted by `(weight DESC, classRank, fifo ASC)`.
+- **Decision D-A — strict criticality:** the primary key is criticality weight DESC, so a
+  high-criticality fresh task preempts a freed slot ahead of a lower-criticality long-running
+  resume. `classRank` (`C3 < C1 < C2`, resume-first) is **only an equal-weight tiebreak** — at
+  the same criticality an answered-idle resume wins, then queued runs, then fresh tasks. Final
+  tiebreak `fifo` ASC. Accepted caveat: a *low*-criticality answered-idle resume can be starved
+  by higher-criticality fresh tasks (v1; priority aging is the future fix, out of scope here).
+- **Reverses decision D2** (resume cap-bypass, `resume.ts:58-59` and agent `hitl.ts`): every
+  answered-idle resume is routed through the admission gate so a pool never exceeds its cap.
+  Cap-safety is **unconditional** — NOT gated by `edgeDrain` (gating it would reintroduce the
+  over-cap bug). `edgeDrain` gates ONLY the C2 fresh-Backlog-task source.
+- **Per-pool** gate (flow cap `MAISTER_MAX_CONCURRENT_RUNS`=6 / agent cap
+  `MAISTER_MAX_CONCURRENT_AGENTS`=3 stay fully separate; per-project sub-cap is a Non-Goal).
+  The C2 Backlog-task source applies to the **flow pool only**; the agent pool's candidates are
+  C1+C3. Flow headroom is reserved for scratch/manual/resume via `MAISTER_TASK_QUEUE_AUTO_RESERVE`
+  (default 2); a per-project share is bounded by `maxInFlightAuto`.
+- **Two-phase task-level admission claim** (`tasks.queue_claimed_at`): because `launchRun` is
+  worktree-first (no `runs` row exists at claim time), the C2 claim cannot live on `runs`. Under
+  the scheduler advisory lock the gate CAS-sets `queue_claimed_at` (`NULL → now()`); the heavy
+  `launchRun` runs OUTSIDE the lock; the new run carries `runs.queue_admitted_at` (origin marker)
+  at insert; the claim clears once the run row exists or on launch failure; a stale claim is
+  reconcile-swept. This is what makes exactly-once admission executable across {edge, poll,
+  direct launch, resume}.
+- **Triage confidence is advisory** (`tasks.triage_confidence`, DB CHECK 0..1): stored,
+  Observatory-fed, **never** read by any admission/launch/routing path. A future routing gate
+  on confidence would be a new ADR.
+- **Operator pause/dequeue safety valve** (`tasks.queue_paused`): an operator can always remove a
+  task from auto-admission (C2) and auto-resume (C3) and the 60s poll backstop, reversibly and
+  config-preservingly.
+- Consciously promotes VISION "autonomous task pulling" out of the Not-MVP list.
+
+**Consequences:** migration 0087 adds **7 columns** — `tasks.priority` (text+CHECK, default
+`'normal'`), `tasks.triage_confidence` (`numeric(4,3)`, DB CHECK 0..1), `tasks.queue_paused`
+(boolean, default false), `tasks.queue_claimed_at` (timestamptz), `projects.task_queue_settings`
+(jsonb), `runs.resume_requested_at` (timestamptz), `runs.queue_admitted_at` (timestamptz). The
+60s `auto-launch-triaged` poll backstop and the slot-free gate share ONE selection funnel, so
+priority order, the reserve/`maxInFlightAuto` guards, and `queue_paused` apply identically on
+both paths. Resume UX changes (a just-answered run may wait for a slot when out-criticality'd)
+even with the queue feature "off". Requirements, acceptance criteria, invariants INV-1..10, and
+the test matrix live in the SDD plan `.ai-factory/plans/dependency-ordered-task-queue.md`.
+
+**Alternatives Considered:**
+- *Resume-first strict ordering* (classRank as primary key): rejected — a long-running
+  low-criticality resume would hold a slot ahead of a critical blocker bugfix. classRank is
+  demoted to an equal-weight tiebreak (D-A).
+- *Gating resume cap-safety behind `edgeDrain`*: rejected — reintroduces the D2 over-cap bug
+  whenever the queue feature is toggled off. Cap-safety is a correctness property, not a feature.
+- *Per-`run` priority snapshot*: rejected — re-prioritization must take effect for not-yet-admitted
+  work, so the gate reads `tasks.priority` LIVE at selection.
+- *Confidence-based auto/human routing*: rejected for v1 (owner: advisory only).
 
 ---
 

@@ -214,6 +214,7 @@ erDiagram
         text promotion_mode "M18 0021 project-default local_merge|pull_request; override-chain source (§3.4)"
         jsonb delivery_policy_default "ADR-085 Designed: strategy/push/trigger/targetBranch"
         jsonb execution_policy_default "migration 0055: default execution policy {preset,overrides}, nullable"
+        jsonb task_queue_settings "ADR-121 (0087): {edgeDrain?,maxInFlightAuto?}, nullable (NULL = env defaults)"
         text task_key UK "ADR-075 Implemented: platform-wide unique, immutable Stage 1"
         integer next_task_number "ADR-075 Implemented: allocation counter, DEFAULT 1"
         timestamp created_at
@@ -570,6 +571,10 @@ erDiagram
         text launch_mode "M37: auto|manual nullable — as-plan child task (ADR-098, 0060)"
         jsonb delegation_spec "M37: as-plan delegation spec for run_plan children (ADR-098, 0060)"
         jsonb execution_policy "migration 0055: per-task default execution policy, nullable"
+        text priority "ADR-121 (0087): low|normal|high|urgent, NOT NULL default normal, CHECK"
+        numeric triage_confidence "ADR-121 (0087): advisory 0..1, nullable, CHECK"
+        boolean queue_paused "ADR-121 (0087): operator pause valve, NOT NULL default false"
+        timestamp queue_claimed_at "ADR-121 (0087): C2 admission claim, nullable"
         timestamp created_at
         timestamp updated_at
     }
@@ -658,6 +663,8 @@ erDiagram
         timestamp checkpoint_at
         timestamp keepalive_until "30min sliding"
         timestamp resume_started_at "Recover in-flight marker + reconcile grace anchor (M19)"
+        timestamp resume_requested_at "ADR-121 (0087): idle HITL answered, awaiting a slot (C3 FIFO key)"
+        timestamp queue_admitted_at "ADR-121 (0087): auto-drain origin marker, NULL = manual/scratch/resume"
         text resume_target_step_id "node id retained at crash time for Recover (M19, 0016)"
         jsonb resolved_capability_set "M27 Designed: frozen capability snapshot at launch (flowRevisionId,capabilities,mcps)"
         jsonb delivery_policy_snapshot "ADR-085 Designed: resolved policy at launch"

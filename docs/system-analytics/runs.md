@@ -859,6 +859,13 @@ already-inserted run) — never an orphan worktree or live ACP session.
   abort the merge, leave the run in `Review`, and create/keep a manual
   resolution path. The legacy `merge` route name is superseded by
   `POST /api/runs/[id]/promote` in the product contract.
+- **(ADR-121)** `runs.queue_admitted_at` is the auto-drain ORIGIN marker, set at
+  the run-INSERT for funnel-minted (auto-drained) runs ONLY — a manual / scratch /
+  ADR-119 force-relaunch run carries NULL and never counts toward a project's
+  `maxInFlightAuto` (INV-9). `runs.resume_requested_at` is the C3 admission FIFO
+  key (set when an idle run's HITL is answered and it awaits a slot); the cap-safe
+  resume re-routing through the admission gate (reversing D2) is **Designed** —
+  see [`task-queue.md`](task-queue.md).
 
 ## Edge cases
 

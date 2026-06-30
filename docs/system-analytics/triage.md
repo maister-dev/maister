@@ -249,6 +249,12 @@ flowchart TD
 - A `clarify` loop MUST be bounded at 3 question rounds before falling back to
   `flagged`; the triager MUST reconstruct context statelessly per run from the
   task + its comment thread (`comment_list`).
+- (ADR-121, Implemented) The ext triage op accepts `priority` + `confidence`
+  INDEPENDENTLY of the `flag`/verdict fields — settable alongside either, or alone
+  (a body with only `priority`/`confidence` is a pure update that does NOT stamp
+  `triage_status`). `confidence` is ADVISORY only and MUST NEVER influence a
+  routing decision (INV-5); out-of-range → 422 `CONFIG`. See
+  [`task-queue.md`](task-queue.md).
 
 ## Edge cases
 

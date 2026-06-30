@@ -500,6 +500,15 @@ flowchart TD
 - Discarding a task with a live run MUST terminate the supervisor
   session (`DELETE /sessions/<id>`) before the task transition; failure
   to terminate does NOT block the transition (reconciliation cleans up).
+- (ADR-121, Implemented) `tasks.priority` (`low|normal|high|urgent`, NOT NULL
+  default `normal`, CHECK) backs the criticality dictionary and is the LIVE
+  admission input; `tasks.triage_confidence` (`numeric(4,3)`, CHECK 0..1) is
+  advisory only; `tasks.queue_paused` (default false) excludes a task from
+  auto-admission/auto-resume/poll and is settable while Backlog OR InFlight (other
+  config edits stay Backlog-gated); `tasks.queue_claimed_at` is the C2 admission
+  claim. Priority/confidence are dual-writable (human PATCH + agent ext triage,
+  via one shared mapper) and CLEAR-symmetric (priority→`normal`, confidence→NULL).
+  See [`task-queue.md`](task-queue.md).
 
 ## Edge cases
 

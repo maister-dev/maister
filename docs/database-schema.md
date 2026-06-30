@@ -227,6 +227,11 @@ as implicit `owner` of every project.
                                  //   source for the launch-time override chain (§3.4)
   deliveryPolicyDefault?,        // ADR-085 (jsonb, migration 0047) project-default
                                  //   DeliveryPolicy; null maps from promotionMode
+  taskQueueSettings?,            // ADR-121 (Implemented, migration 0087): jsonb NULL;
+                                 //   { edgeDrain?, maxInFlightAuto? } (zod
+                                 //   taskQueueSettingsSchema, .strict()). NULL ⇒ env
+                                 //   defaults (resolved LIVE at admission, never
+                                 //   snapshotted).
   taskKey,                       // ADR-083 (Implemented, 0043): platform-wide UNIQUE,
                                  //   ^[A-Z][A-Z0-9]{1,9}$, immutable in Stage 1
   nextTaskNumber,                // ADR-083 (Implemented, 0043): integer NOT NULL
@@ -868,6 +873,23 @@ draft updates increment `draft_version` and stale callers receive `CONFLICT`.
                                  //   NULL. The as-plan delegation spec (target +
                                  //   resolved settings) captured for a child task
                                  //   submitted via `run_plan`.
+  priority,                      // ADR-121 (Implemented, migration 0087): text
+                                 //   'low'|'normal'|'high'|'urgent', NOT NULL
+                                 //   DEFAULT 'normal', CHECK. The live input to the
+                                 //   criticality dictionary (read at admission,
+                                 //   never snapshotted onto a run).
+  triageConfidence?,             // ADR-121 (Implemented, 0087): numeric(4,3) NULL,
+                                 //   CHECK 0..1. ADVISORY only — never read by any
+                                 //   admission/launch/routing path (INV-5);
+                                 //   Observatory-fed.
+  queuePaused,                   // ADR-121 (Implemented, 0087): boolean NOT NULL
+                                 //   DEFAULT false. Operator pause valve — excludes
+                                 //   the task from auto-admission, auto-resume, and
+                                 //   the poll backstop; reversible, config-preserving.
+  queueClaimedAt?,               // ADR-121 (0087): timestamptz NULL. The task-level
+                                 //   C2 admission claim (launchRun is worktree-first
+                                 //   → no run row exists at claim time). Slot-free
+                                 //   CAS claim path is Designed.
   createdByUserId?,              // nullable FK -> users.id; user-token owner
   createdAt, updatedAt
 }
@@ -1064,6 +1086,15 @@ unread badge and inbox panel.
   resumeStartedAt?,              // M19 (timestamptz, migration 0015) durable
                                  //   Recover in-flight marker + reconcile grace
                                  //   anchor; see below
+  resumeRequestedAt?,            // ADR-121 (timestamptz, migration 0087) NULL; set
+                                 //   when an idle run's HITL is answered and it awaits
+                                 //   a slot — the C3 admission FIFO key. The resume
+                                 //   re-routing through the cap-safe gate is Designed.
+  queueAdmittedAt?,              // ADR-121 (timestamptz, migration 0087) NULL; the
+                                 //   auto-DRAIN origin marker, set at run-INSERT for
+                                 //   funnel-minted runs. The precise per-project
+                                 //   liveAuto counter (INV-9). NULL ⇒ manual / scratch
+                                 //   / resume (incl. ADR-119 force-relaunch).
   resumeTargetStepId?,           // M19 (text, migration 0016) node id retained
                                  //   at crash time for Recover; current_step_id
                                  //   is nulled on crash; see below

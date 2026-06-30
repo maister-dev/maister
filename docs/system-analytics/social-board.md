@@ -207,9 +207,16 @@ you (N)" badge is the single canonical `needsYou` count (see Expectations); see
   write a `token_audit_log` row in-tx; user-owned tokens act as
   `('user', ownerUserId)`, ownerless tokens as `('system', NULL)` with
   `{via: 'ext', tokenId}` in the activity payload. (Implemented)
+- (ADR-121, Implemented) A gating-kind (`blocks|depends_on|requires`) relation
+  whose insert would close a dependency cycle MUST be refused with
+  `MaisterError("CONFLICT")` (HTTP 409), evaluated INSIDE the insert transaction
+  under a per-project advisory lock (no TOCTOU); `parent_of`/`duplicate_of` are
+  non-gating and never cycle-checked. See [`task-queue.md`](task-queue.md).
 
 ## Edge cases
 
+- **Relation closes a gating cycle** — refused with `MaisterError("CONFLICT")`
+  (409) at both the web and ext relations routes (ADR-121).
 - **Dangling `actor_id` (user deleted)** — rows survive (no FK); UI renders
   a "former user" fallback label. Not an error.
 - **Mention of a since-deleted task** — write-time resolution fails, the

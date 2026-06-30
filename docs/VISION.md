@@ -153,7 +153,7 @@ controls: draft/publish, dedup, severity, cooldowns and human feedback.
 
 ## Not MVP
 
-- autonomous task pulling;
+- ~~autonomous task pulling~~ — **promoted to MVP** (ADR-121: priority-ordered dependency-draining task queue);
 - background project agents;
 - A/B experiments;
 - Telegram approvals;

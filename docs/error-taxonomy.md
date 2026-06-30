@@ -277,6 +277,20 @@ Seventeen codes (M8 added `STEP_CHECKPOINTED`; M9 added `UNAUTHENTICATED`,
 >
 > Thrown by `web/lib/local-packages/*` (the `resolveWithinWorkingDir` confinement helper + the lock service's `assertHoldsLock`) and the `/api/studio/local-packages/*` routes. The cut-version path reuses the installer's existing `FLOW_INSTALL` on clone/install failure.
 
+> **The ADR-121 task queue reuses existing codes and adds none**
+> ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror) closed union).
+> New call sites:
+> - **`CONFLICT` → HTTP 409** — a gating-kind (`blocks`/`depends_on`/`requires`)
+>   relation create that would close a dependency cycle, evaluated INSIDE the
+>   insert transaction under a per-project advisory lock (no TOCTOU). Thrown by
+>   `addTaskRelation` (`web/lib/social/relations.ts`); surfaces at BOTH the web
+>   relations route and the ext relations route (`relations:create`). UI action:
+>   surface "would create a dependency cycle" and leave the edge unsaved.
+> - **`CONFIG` → HTTP 422** — out-of-set `priority` or out-of-range
+>   `triage_confidence`/`confidence` on the human task PATCH or the ext triage op
+>   (the DB CHECK is the final backstop). `taskQueueSettings` with an unknown key
+>   or `maxInFlightAuto < 1` on the project settings PATCH.
+
 > **The M37 orchestrator engine (ADR-098) reuses existing codes and adds none**
 > ([ADR-008](decisions.md#adr-008-typed-error-taxonomy-maistererror) closed union).
 > The orchestrator / delegation paths (`run_delegate` / `run_plan` / `run_collect`

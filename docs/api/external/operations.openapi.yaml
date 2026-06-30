@@ -520,6 +520,14 @@ paths:
         "401": { $ref: "#/components/responses/TokenUnauthorized" }
         "403": { $ref: "#/components/responses/HitlForbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: |
+            (ADR-121) The gating-kind (`blocks`/`depends_on`) relation would
+            close a dependency cycle (`CONFLICT`), evaluated inside the insert
+            transaction under a per-project advisory lock.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtErrorBody" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
     delete:
       summary: (M34 — Implemented) Remove a typed relation from this task
@@ -1762,6 +1770,26 @@ components:
             triage (`tasks.launch_mode = 'auto'`); the `auto_launch_triaged`
             tick performs the launch once the task is launchable. Valid only
             with a verdict that yields a `flowId`; never with `flag`.
+        priority:
+          type: string
+          nullable: true
+          enum: [low, normal, high, urgent, null]
+          description: |
+            (ADR-121, Implemented) Task priority backing the criticality
+            dictionary. INDEPENDENT of `flag` and the verdict fields — settable
+            alongside either, or alone (a body with only `priority`/`confidence`
+            is a pure update that does NOT stamp `triage_status`). `null` clears
+            to `'normal'`.
+        confidence:
+          type: number
+          nullable: true
+          minimum: 0
+          maximum: 1
+          description: |
+            (ADR-121, Implemented) ADVISORY triage confidence (0..1) — stored,
+            Observatory-fed, NEVER read by any admission/launch/routing path
+            (INV-5). Out-of-range → 422 `CONFIG`. `null` clears. Independent of
+            `flag`.
 
     ExtFlowSummary:
       type: object

@@ -68,6 +68,10 @@ erDiagram
         timestamp launch_armed_at "ADR-112 (0073): enqueue-intent boundary, nullable — auto_launch_triaged retry cap counts only flow runs started at/after this"
         jsonb delegation_spec "M37: as-plan delegation spec for run_plan children (ADR-098, 0060)"
         jsonb execution_policy "migration 0055: per-task default execution policy, nullable"
+        text priority "ADR-121 (0087): low|normal|high|urgent, NOT NULL default normal, CHECK"
+        numeric triage_confidence "ADR-121 (0087): advisory 0..1, nullable, CHECK"
+        boolean queue_paused "ADR-121 (0087): operator pause valve, NOT NULL default false"
+        timestamp queue_claimed_at "ADR-121 (0087): C2 admission claim, nullable"
         timestamp created_at
         timestamp updated_at
     }
@@ -105,6 +109,8 @@ erDiagram
         timestamp checkpoint_at "when graceful checkpoint happened"
         timestamp keepalive_until "30min sliding window in NeedsInput"
         timestamp resume_started_at "Recover in-flight marker + reconcile grace anchor (M19)"
+        timestamp resume_requested_at "ADR-121 (0087): idle HITL answered, awaiting a slot (C3 FIFO key)"
+        timestamp queue_admitted_at "ADR-121 (0087): auto-drain origin marker, NULL = manual/scratch/resume"
         text resume_target_step_id "node id retained at crash time for Recover; current_step_id is nulled on crash (M19, 0016)"
         jsonb resolved_capability_set "M27 Designed: frozen capability snapshot at launch; runner reads this, never live catalog"
         jsonb delivery_policy_snapshot "ADR-085 Designed: resolved policy at launch"

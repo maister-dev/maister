@@ -2099,6 +2099,19 @@ paths:
                   type: string
                   nullable: true
                   enum: [local_merge, pull_request, null]
+                # ADR-121: priority CLEAR (null) → 'normal'; confidence is advisory
+                # (0..1, CLEAR → NULL); queuePaused is the pause valve (works while
+                # InFlight too).
+                priority:
+                  type: string
+                  nullable: true
+                  enum: [low, normal, high, urgent, null]
+                triageConfidence:
+                  type: number
+                  nullable: true
+                  minimum: 0
+                  maximum: 1
+                queuePaused: { type: boolean }
       responses:
         "200":
           description: Updated.
@@ -2117,7 +2130,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
         "422":
-          description: Unknown `flowId`/`runnerId`, bad ref name, or empty body (`CONFIG`).
+          description: Unknown `flowId`/`runnerId`, bad ref name, out-of-set `priority`, out-of-range `triageConfidence`, or empty body (`CONFIG`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
@@ -2332,6 +2345,14 @@ paths:
           description: |
             Project, task, or counterpart task (`toNumber`) not found in
             this project.
+        "409":
+          description: |
+            (ADR-121) The gating-kind (`blocks|depends_on|requires`) relation
+            would close a dependency cycle (`CONFLICT`), evaluated inside the
+            insert transaction under a per-project advisory lock.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
     delete:
       tags: [social-board]
       summary: (ADR-075, Implemented) Remove a typed relation from this task
@@ -11081,6 +11102,25 @@ components:
           description: |
             Project default delivery policy. Null clears to the legacy
             promotion-mode compatibility mapping.
+        taskQueueSettings:
+          $ref: "#/components/schemas/TaskQueueSettings"
+    TaskQueueSettings:
+      type: object
+      additionalProperties: false
+      nullable: true
+      description: |
+        (ADR-121) Per-project task-queue settings. `null` clears the override
+        (env defaults apply). `maxInFlightAuto` must be ≥ 1.
+      properties:
+        edgeDrain:
+          type: boolean
+          description: |
+            Toggles the C2 fresh-Backlog-task admission source for this project.
+            Absent ⇒ the `MAISTER_TASK_QUEUE_EDGE_DRAIN` env default.
+        maxInFlightAuto:
+          type: integer
+          minimum: 1
+          description: Per-project cap on concurrently auto-drained flow runs.
     ProjectSettingsResponse:
       type: object
       additionalProperties: false
@@ -11097,6 +11137,8 @@ components:
               type: object
               allOf: [{ $ref: "#/components/schemas/DeliveryPolicy" }]
               nullable: true
+            taskQueueSettings:
+              $ref: "#/components/schemas/TaskQueueSettings"
     PostRunBody:
       type: object
       required: [taskId]

@@ -27,6 +27,7 @@ erDiagram
         text promotion_mode "M18: project-default promotion mode (local_merge|pull_request); override-chain source (§3.4)"
         jsonb delivery_policy_default "ADR-085 Designed: strategy/push/trigger/targetBranch"
         jsonb execution_policy_default "migration 0055: default execution policy {preset,overrides}, nullable"
+        jsonb task_queue_settings "ADR-121 (0087): {edgeDrain?,maxInFlightAuto?}, nullable (NULL = env defaults)"
         timestamp created_at
         timestamp archived_at "soft archive"
     }
