@@ -84,6 +84,7 @@ let markScratchCrashed: typeof import("@/lib/scratch-runs/service").markScratchC
 let launchLocalPackageAssistant: typeof import("@/lib/scratch-runs/service").launchLocalPackageAssistant;
 let launchLocalPackageAssistantStaged: typeof import("@/lib/scratch-runs/service").launchLocalPackageAssistantStaged;
 let sendLocalPackageAssistantMessage: typeof import("@/lib/scratch-runs/service").sendLocalPackageAssistantMessage;
+let listLocalPackageAssistantRunners: typeof import("@/lib/scratch-runs/service").listLocalPackageAssistantRunners;
 let createLocalPackage: typeof import("@/lib/local-packages/service").createLocalPackage;
 let diffWorkingDir: typeof import("@/lib/local-packages/service").diffWorkingDir;
 let getLocalPackage: typeof import("@/lib/local-packages/service").getLocalPackage;
@@ -126,6 +127,7 @@ beforeAll(async () => {
     launchLocalPackageAssistant,
     launchLocalPackageAssistantStaged,
     sendLocalPackageAssistantMessage,
+    listLocalPackageAssistantRunners,
   } = await import("@/lib/scratch-runs/service"));
   ({ createLocalPackage, diffWorkingDir, getLocalPackage } = await import(
     "@/lib/local-packages/service"
@@ -254,6 +256,15 @@ async function seedLocalPackageRun(
 
   return runId;
 }
+
+describe("listLocalPackageAssistantRunners", () => {
+  it("labels ready runners by runner id and model", async () => {
+    const result = await listLocalPackageAssistantRunners(db);
+    const option = result.runners.find((runner) => runner.id === runnerId);
+
+    expect(option?.label).toBe(`${runnerId} · claude-sonnet-4-6`);
+  });
+});
 
 describe("scratch_runs owner XOR CHECK (ADR-097)", () => {
   it("accepts a project-less local-package row (local_package_id only)", async () => {

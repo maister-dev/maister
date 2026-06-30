@@ -91,7 +91,7 @@ const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       runners: [
         {
           id: "runner-1",
-          label: "claude",
+          label: "runner-1 · m",
           adapter: "claude",
           model: "m",
           isDefault: true,
@@ -174,6 +174,20 @@ async function mountAndPrime(
 
   return container;
 }
+
+describe("StudioAiTab runner selector", () => {
+  it("renders the runner labels returned by the assistant runners API", async () => {
+    const container = mount();
+
+    await flush();
+
+    const option = container.querySelector<HTMLOptionElement>(
+      '[data-testid="studio-ai-runner"] option',
+    );
+
+    expect(option?.textContent).toBe("runner-1 · m");
+  });
+});
 
 describe("StudioAiTab staged launch (ADR-110 addendum)", () => {
   it("shows the stage label while launching and switches to the conversation view on session_ready, before the terminal frame (AC7/AC11)", async () => {

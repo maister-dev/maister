@@ -1335,6 +1335,13 @@ type ReadyLocalPackageAssistantRunnerOption =
     ready: boolean;
   };
 
+function localPackageAssistantRunnerLabel(args: {
+  id: string;
+  model: string | null;
+}): string {
+  return args.model ? `${args.id} · ${args.model}` : args.id;
+}
+
 // Resolve the runner for a project-less assistant launch. There is no project
 // (so no project default tier); the chain is launch-override → platform default.
 async function resolveLocalPackageAssistantRunner(
@@ -1399,12 +1406,13 @@ export async function listLocalPackageAssistantRunners(
   const runners = runnerRows
     .map((row: Record<string, any>): ReadyLocalPackageAssistantRunnerOption => {
       const ready = row.enabled === true && row.readinessStatus === "Ready";
+      const model = typeof row.model === "string" ? row.model : null;
 
       return {
         id: row.id,
-        label: `${row.adapter} · ${row.model}`,
+        label: localPackageAssistantRunnerLabel({ id: row.id, model }),
         adapter: row.capabilityAgent as CapabilityAgent,
-        model: typeof row.model === "string" ? row.model : null,
+        model,
         ready,
         isDefault: row.id === platformRuntime?.defaultRunnerId,
       };
