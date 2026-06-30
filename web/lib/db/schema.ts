@@ -3,6 +3,7 @@ import type {
   StoredDeliveryPolicy,
 } from "@/lib/runs/delivery-policy";
 import type { BudgetState, ExecutionPolicy } from "@/lib/runs/execution-policy";
+import type { TaskQueueSettings } from "@/lib/tasks/queue-settings";
 
 import { sql } from "drizzle-orm";
 import {
@@ -14,6 +15,7 @@ import {
   index,
   integer,
   jsonb,
+  numeric,
   pgTable,
   primaryKey,
   real,
@@ -137,6 +139,9 @@ export const projects = pgTable("projects", {
   executionPolicyDefault: jsonb(
     "execution_policy_default",
   ).$type<ExecutionPolicy | null>(),
+  // ADR-121: per-project queue settings (`{ edgeDrain?, maxInFlightAuto? }`).
+  // NULL ⇒ env defaults apply (resolved live at admission, never snapshotted).
+  taskQueueSettings: jsonb("task_queue_settings").$type<TaskQueueSettings | null>(),
   taskKey: text("task_key").notNull().unique(),
   nextTaskNumber: integer("next_task_number").notNull().default(1),
   createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
@@ -1092,6 +1097,28 @@ export const tasks = pgTable(
     }),
     delegationSpec: jsonb("delegation_spec").$type<TaskDelegationSpec | null>(),
     executionPolicy: jsonb("execution_policy").$type<ExecutionPolicy | null>(),
+    // ADR-121: first-class priority backing the criticality dictionary. Read LIVE
+    // at admission (never snapshotted onto runs) so a re-prioritization takes effect
+    // for not-yet-admitted work. Closed set enforced by `tasks_priority_check`.
+    priority: text("priority", {
+      enum: ["low", "normal", "high", "urgent"],
+    })
+      .notNull()
+      .default("normal"),
+    // ADR-121: advisory triage confidence (0..1). NEVER read by any admission/
+    // launch/routing path (INV-5) — Observatory-fed only. The DB CHECK bounds the
+    // domain because numeric(4,3) precision alone permits 1.001/negatives (F4).
+    triageConfidence: numeric("triage_confidence", { precision: 4, scale: 3 }),
+    // ADR-121: operator pause valve — excludes the task from auto-admission (C2),
+    // auto-resume (C3), and the 60s poll backstop; reversible, config-preserving.
+    queuePaused: boolean("queue_paused").notNull().default(false),
+    // ADR-121 F1: the two-phase C2 admission CLAIM. CAS-set under the scheduler lock
+    // BEFORE `launchRun` (which is worktree-first, so no run row exists yet); cleared
+    // once the run row exists or on launch failure; stale claims are reconcile-swept.
+    queueClaimedAt: timestamp("queue_claimed_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
     // M39 (ADR-106): provenance + idempotency key for a task AUTO-created by an
     // agent trigger. The partial UNIQUE (agent_id, trigger_event_id) below makes
     // an at-least-once redelivery converge to ONE auto-task (mirrors the runs
@@ -1125,6 +1152,17 @@ export const tasks = pgTable(
     uniqAgentTriggerEvent: uniqueIndex("tasks_agent_trigger_event_uq")
       .on(t.agentId, t.triggerEventId)
       .where(sql`${t.triggerEventId} IS NOT NULL`),
+    // ADR-121: priority closed-set guard (mirrors the triageStatus text-enum
+    // convention; the column enum gives TS types, the CHECK gives DB integrity).
+    priorityCheck: check(
+      "tasks_priority_check",
+      sql`${t.priority} in ('low', 'normal', 'high', 'urgent')`,
+    ),
+    // ADR-121 F4: numeric(4,3) precision permits out-of-domain values; bound it.
+    triageConfidenceCheck: check(
+      "tasks_triage_confidence_check",
+      sql`${t.triageConfidence} is null or (${t.triageConfidence} >= 0 and ${t.triageConfidence} <= 1)`,
+    ),
   }),
 );
 
@@ -1344,6 +1382,21 @@ export const runs = pgTable(
       .defaultNow(),
     endedAt: timestamp("ended_at", { withTimezone: true, mode: "date" }),
     resumeStartedAt: timestamp("resume_started_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    // ADR-121 (G4): set when an idle run's HITL is answered and it awaits a slot;
+    // the C3 admission FIFO key. Cleared when the run is admitted (status flips to
+    // Running) so a re-idled run re-arms cleanly.
+    resumeRequestedAt: timestamp("resume_requested_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    // ADR-121 (INV-9): auto-drain ORIGIN marker — set at the run-INSERT inside
+    // `launchRun` for queue-admitted (C2) runs. The precise `liveAuto` counter;
+    // immutable launch-origin snapshot. NULL ⇒ manual/scratch/resume run (incl. an
+    // ADR-119 force-relaunch of an auto task), which must NOT count as auto-drained.
+    queueAdmittedAt: timestamp("queue_admitted_at", {
       withTimezone: true,
       mode: "date",
     }),

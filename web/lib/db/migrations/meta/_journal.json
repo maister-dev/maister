@@ -582,6 +582,13 @@
       "when": 1782777600010,
       "tag": "0086_yellow_pyro",
       "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "7",
+      "when": 1782846934269,
+      "tag": "0087_shocking_epoch",
+      "breakpoints": true
     }
   ]
 }
