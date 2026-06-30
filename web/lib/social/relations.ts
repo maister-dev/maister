@@ -2,7 +2,7 @@ import "server-only";
 
 import { randomUUID } from "node:crypto";
 
-import { and, eq, inArray, ne, or } from "drizzle-orm";
+import { and, eq, inArray, ne, or, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
@@ -32,6 +32,110 @@ export type TaskRelationKind =
   | "duplicate_of";
 
 export type KeyRef = { taskId: string; key: string; number: number };
+
+// ADR-121 §4.6: only these kinds gate execution, so only they can deadlock — a
+// cycle among them is refused at write time. `parent_of`/`duplicate_of` are
+// non-gating and never checked.
+export const GATING_RELATION_KINDS = [
+  "blocks",
+  "depends_on",
+  "requires",
+] as const;
+
+function isGatingKind(kind: TaskRelationKind): boolean {
+  return (GATING_RELATION_KINDS as readonly string[]).includes(kind);
+}
+
+// Normalize a gating relation to a single directed PRECEDENCE edge `pred → succ`
+// (pred must finish before succ). `blocks(from,to)` ⇒ from precedes to; both
+// `depends_on(from,to)` and `requires(from,to)` ⇒ to precedes from. This collapses
+// `blocks` and its inverse `depends_on` onto one directed graph (§4.6).
+function precedenceEdge(
+  kind: TaskRelationKind,
+  fromTaskId: string,
+  toTaskId: string,
+): { pred: string; succ: string } {
+  if (kind === "blocks") return { pred: fromTaskId, succ: toTaskId };
+
+  return { pred: toTaskId, succ: fromTaskId };
+}
+
+function dbIsPostgres(): boolean {
+  const url = process.env.DB_URL ?? "";
+
+  return url.startsWith("postgres://") || url.startsWith("postgresql://");
+}
+
+// Per-project advisory lock so two transactions racing to insert inverse gating
+// edges are serialized — the second waits, re-reads the now-committed first edge,
+// and its cycle check rejects (INV-6, no TOCTOU). Held until the top-level tx ends.
+// Skipped on sqlite (single-writer already serializes). The namespace constant
+// keeps this lock space disjoint from the scheduler's (`0x6d616973`).
+const RELATION_LOCK_NAMESPACE = 0x7461736b;
+
+async function takeProjectRelationLock(
+  tx: any,
+  projectId: string,
+): Promise<void> {
+  if (!dbIsPostgres()) return;
+
+  await tx.execute(
+    sql`SELECT pg_advisory_xact_lock(${RELATION_LOCK_NAMESPACE}, hashtext(${projectId}))`,
+  );
+}
+
+// Does adding the precedence edge `pred → succ` close a cycle? It does iff `succ`
+// can ALREADY reach `pred` over the existing project-scoped gating graph. Portable
+// BFS over the drizzle query builder (works on PG + sqlite); run INSIDE the insert
+// tx after the advisory lock so the read sees a serialized, committed graph.
+async function wouldCloseGatingCycle(
+  tx: any,
+  projectId: string,
+  pred: string,
+  succ: string,
+): Promise<boolean> {
+  const visited = new Set<string>();
+  let frontier: string[] = [succ];
+
+  while (frontier.length > 0) {
+    if (frontier.includes(pred)) return true;
+
+    const fresh = frontier.filter((n) => !visited.has(n));
+
+    for (const n of fresh) visited.add(n);
+    if (fresh.length === 0) break;
+
+    // Precedence successors: blocks(from→to) advances from→to; depends_on/requires
+    // (from→to) advance to→from.
+    const forward = (await tx
+      .select({ succ: taskRelations.toTaskId })
+      .from(taskRelations)
+      .where(
+        and(
+          eq(taskRelations.projectId, projectId),
+          eq(taskRelations.kind, "blocks"),
+          inArray(taskRelations.fromTaskId, fresh),
+        ),
+      )) as Array<{ succ: string }>;
+
+    const reverse = (await tx
+      .select({ succ: taskRelations.fromTaskId })
+      .from(taskRelations)
+      .where(
+        and(
+          eq(taskRelations.projectId, projectId),
+          inArray(taskRelations.kind, ["depends_on", "requires"]),
+          inArray(taskRelations.toTaskId, fresh),
+        ),
+      )) as Array<{ succ: string }>;
+
+    frontier = [...forward, ...reverse]
+      .map((r) => r.succ)
+      .filter((n) => !visited.has(n));
+  }
+
+  return false;
+}
 
 type RelationEnd = {
   id: string;
@@ -97,6 +201,34 @@ export async function addTaskRelation(
   }
 
   const created = await (_db as any).transaction(async (tx: any) => {
+    // ADR-121 §4.6: refuse a gating-kind edge that would close a cycle, evaluated
+    // INSIDE the tx under a per-project advisory lock (no TOCTOU, INV-6).
+    if (isGatingKind(input.kind)) {
+      await takeProjectRelationLock(tx, input.projectId);
+
+      const { pred, succ } = precedenceEdge(
+        input.kind,
+        input.fromTaskId,
+        input.toTaskId,
+      );
+
+      if (await wouldCloseGatingCycle(tx, input.projectId, pred, succ)) {
+        log.warn(
+          { from: input.fromTaskId, kind: input.kind, to: input.toTaskId },
+          "relation cycle refused",
+        );
+        throw new MaisterError(
+          "CONFLICT",
+          `relation would close a dependency cycle (${input.kind})`,
+        );
+      }
+
+      log.debug(
+        { from: input.fromTaskId, kind: input.kind, to: input.toTaskId },
+        "relation cycle-check passed",
+      );
+    }
+
     const inserted = await tx
       .insert(taskRelations)
       .values({
