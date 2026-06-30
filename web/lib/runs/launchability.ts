@@ -105,6 +105,18 @@ export function classifyTaskLaunchability(
   return base;
 }
 
+// Shared task-gate predicates (DRY) — the only refusals force mode honours and
+// the lowest-precedence arms of the manual/launch classifiers.
+function isFlaggedTask(task: {
+  triageStatus: "triaged" | "flagged" | null;
+}): boolean {
+  return task.triageStatus === "flagged";
+}
+
+function hasOpenBlockers(relationGate?: RelationGate): boolean {
+  return (relationGate?.openBlockers.length ?? 0) > 0;
+}
+
 export function classifyManualTaskLaunchability(
   task: { status: TaskStatus; triageStatus: "triaged" | "flagged" | null },
   latestRun: { status: RunStatus } | null,
@@ -122,16 +134,40 @@ export function classifyManualTaskLaunchability(
   // mirrors the launch path — busy/crashed/target_terminal still win (flagged
   // never masks an active/terminal run state), flagged outranks blocked.
   if (base === "launchable") {
-    if (task.triageStatus === "flagged") {
+    if (isFlaggedTask(task)) {
       return "flagged";
     }
 
-    if ((relationGate?.openBlockers.length ?? 0) > 0) {
+    if (hasOpenBlockers(relationGate)) {
       return "blocked";
     }
   }
 
   return base;
+}
+
+// ADR-119: the FORCE-relaunch classifier. Mirrors classifyManualTaskLaunchability's
+// signature (no flowId ⇒ no `unconfigured` arm) but NEVER returns the `busy`
+// run-status verdict — `latestRun` is deliberately ignored so an additive
+// concurrent run can start while a prior run is active. Only the TASK gates
+// refuse, at precedence `flagged > blocked > launchable`. The allow-list (only
+// these two refusals) is the documented contract: a future RunStatus must not
+// silently change force behaviour. `latestRun` is part of the signature for
+// symmetry with the manual classifier and is intentionally unused.
+export function classifyForceRelaunchLaunchability(
+  task: { status: TaskStatus; triageStatus: "triaged" | "flagged" | null },
+  _latestRun: { status: RunStatus } | null,
+  relationGate?: RelationGate,
+): TaskLaunchability {
+  if (isFlaggedTask(task)) {
+    return "flagged";
+  }
+
+  if (hasOpenBlockers(relationGate)) {
+    return "blocked";
+  }
+
+  return "launchable";
 }
 
 export async function getLatestFlowRun(

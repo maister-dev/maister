@@ -354,7 +354,7 @@ anticipated.)
 
 ### Phase 1 — Force-relaunch classifier (TDD)
 
-- [ ] **T1.1 (RED) — Tests for the force classifier.** Extend
+- [x] **T1.1 (RED) — Tests for the force classifier.** Extend
   `web/lib/runs/__tests__/launchability.test.ts` (vitest **unit**): force mode
   returns `launchable` for every run status (`Running`, `NeedsInput`,
   `HumanWorking`, `WaitingOnChildren`, `Pending`, `Crashed`, `Done` as
@@ -366,7 +366,7 @@ anticipated.)
   cases are **unchanged** (regression). *Files:*
   `web/lib/runs/__tests__/launchability.test.ts`.
 
-- [ ] **T1.2 (GREEN) — Implement `classifyForceRelaunchLaunchability`.** In
+- [x] **T1.2 (GREEN) — Implement `classifyForceRelaunchLaunchability`.** In
   `web/lib/runs/launchability.ts`, reusing the existing `flagged`/`blocked`
   predicate helpers (DRY), with the same signature as
   `classifyManualTaskLaunchability`; do **not** consult run status. *Logging:*

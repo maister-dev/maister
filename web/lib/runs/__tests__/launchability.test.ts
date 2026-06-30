@@ -4,6 +4,7 @@ import type { RelationGate } from "@/lib/runs/launchability";
 import { describe, expect, it } from "vitest";
 
 import {
+  classifyForceRelaunchLaunchability,
   classifyManualTaskLaunchability,
   classifyTaskLaunchability,
 } from "@/lib/runs/launchability";
@@ -359,6 +360,87 @@ describe("classifyManualTaskLaunchability — flagged is held on manual relaunch
   it("a non-flagged task stays manually launchable", () => {
     expect(
       classifyManualTaskLaunchability(task("Done", "flow-1", "triaged"), null),
+    ).toBe("launchable");
+  });
+});
+
+// ADR-119 — the FORCE-relaunch classifier widens ONLY the run-status gate: every
+// run status (incl. the busy ones the manual gate refuses) is launchable, while
+// the task gates `flagged > blocked` are preserved. Run status is deliberately
+// NOT consulted. Same signature as classifyManualTaskLaunchability (no flowId ⇒
+// no `unconfigured` arm).
+describe("classifyForceRelaunchLaunchability — every run status is launchable", () => {
+  it.each<RunStatus>([
+    "Pending",
+    "Running",
+    "NeedsInput",
+    "NeedsInputIdle",
+    "HumanWorking",
+    "WaitingOnChildren",
+    "Review",
+    "Crashed",
+    "Done",
+    "Abandoned",
+    "Failed",
+  ])("latest run %s is force-launchable", (runStatus) => {
+    expect(
+      classifyForceRelaunchLaunchability(task("InFlight"), run(runStatus)),
+    ).toBe("launchable");
+  });
+
+  it("no latest run → launchable", () => {
+    expect(classifyForceRelaunchLaunchability(task("Backlog"), null)).toBe(
+      "launchable",
+    );
+  });
+
+  it("an empty gate never blocks", () => {
+    expect(
+      classifyForceRelaunchLaunchability(task("InFlight"), run("Running"), {
+        openBlockers: [],
+      }),
+    ).toBe("launchable");
+  });
+});
+
+describe("classifyForceRelaunchLaunchability — task gates are preserved", () => {
+  const gate: RelationGate = { openBlockers: [{ key: "MAI", number: 7 }] };
+
+  it("flagged task → flagged even while a run is Running", () => {
+    expect(
+      classifyForceRelaunchLaunchability(
+        task("InFlight", "flow-1", "flagged"),
+        run("Running"),
+      ),
+    ).toBe("flagged");
+  });
+
+  it("open blocker → blocked even while a run is Running", () => {
+    expect(
+      classifyForceRelaunchLaunchability(
+        task("InFlight"),
+        run("Running"),
+        gate,
+      ),
+    ).toBe("blocked");
+  });
+
+  it("flagged outranks blocked (precedence flagged > blocked)", () => {
+    expect(
+      classifyForceRelaunchLaunchability(
+        task("InFlight", "flow-1", "flagged"),
+        run("Running"),
+        gate,
+      ),
+    ).toBe("flagged");
+  });
+
+  it("a non-flagged triaged task with an active run stays force-launchable", () => {
+    expect(
+      classifyForceRelaunchLaunchability(
+        task("InFlight", "flow-1", "triaged"),
+        run("NeedsInput"),
+      ),
     ).toBe("launchable");
   });
 });
