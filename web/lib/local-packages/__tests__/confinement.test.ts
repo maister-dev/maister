@@ -57,6 +57,12 @@ describe("resolveWithinWorkingDir", () => {
     ).rejects.toMatchObject({ code: "PRECONDITION" });
   });
 
+  it("rejects MAIster runtime metadata paths", async () => {
+    await expect(
+      resolveWithinWorkingDir(root, ".maister/capabilities/run/profile.json"),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+  });
+
   it("rejects leading-dash and NUL", async () => {
     await expect(resolveWithinWorkingDir(root, "-rf")).rejects.toMatchObject({
       code: "PRECONDITION",

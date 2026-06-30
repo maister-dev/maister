@@ -19,13 +19,20 @@ import path from "node:path";
 import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import pino from "pino";
 
-import { gitCommitWorkingDir, gitDiscardPaths, gitInitWithCommit } from "./git";
+import {
+  ensureLocalPackageGitExclude,
+  gitCommitWorkingDir,
+  gitDiscardPaths,
+  gitInitWithCommit,
+} from "./git";
 import {
   appendManifestFlow,
   parsePackageManifest,
   serializeScaffoldManifest,
 } from "./manifest";
 import {
+  isLocalPackageInternalEntryName,
+  isLocalPackageInternalPath,
   localPackageWorkingDir,
   resolveWithinWorkingDir,
   slugifyName,
@@ -129,6 +136,14 @@ function isUniqueViolation(err: unknown): boolean {
   );
 }
 
+function isEnoent(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    (err as NodeJS.ErrnoException).code === "ENOENT"
+  );
+}
+
 // Insert-first (ADR-105 D1): claim the unique `slug` in the DB BEFORE any
 // filesystem work, so a concurrent same-slug create loses HERE (23505 → CONFLICT)
 // having touched nothing on disk — the winner's dir can never be deleted by the
@@ -174,13 +189,13 @@ export async function rollbackLocalPackageRow(
   await rm(workingDir, { recursive: true, force: true }).catch(() => undefined);
 }
 
-// Recursively copy `src` into `dest` skipping every VCS `.git` entry, so a fork
-// or a cut-version export carries the package CONTENT but not the source repo
-// history (the dest is re-git-init'd fresh, or installed content-addressed).
-// `cp`'s filter receives absolute paths; we reject any whose basename is `.git`
-// AND any symlink — `cp` copies symlinks verbatim, so an escaping symlink in the
-// working dir would otherwise be carried into the fork/export and later followed
-// out of confinement.
+// Recursively copy `src` into `dest` skipping internal working-dir metadata, so
+// a fork or a cut-version export carries the package CONTENT but not source repo
+// history or MAIster runtime state (the dest is re-git-init'd fresh, or
+// installed content-addressed). `cp`'s filter receives absolute paths; we reject
+// any internal basename AND any symlink — `cp` copies symlinks verbatim, so an
+// escaping symlink in the working dir would otherwise be carried into the
+// fork/export and later followed out of confinement.
 export async function cleanCopyExcludingGit(
   src: string,
   dest: string,
@@ -191,7 +206,7 @@ export async function cleanCopyExcludingGit(
     errorOnExist: false,
     force: true,
     filter: async (source) =>
-      path.basename(source) !== ".git" &&
+      !isLocalPackageInternalEntryName(path.basename(source)) &&
       !(await lstat(source)).isSymbolicLink(),
   });
 }
@@ -499,33 +514,37 @@ export async function deleteLocalPackage(id: string, db?: Db): Promise<void> {
 export async function listFiles(
   pkg: LocalPackage,
 ): Promise<LocalPackageFileMeta[]> {
-  let names: string[];
+  const files: LocalPackageFileMeta[] = [];
+
+  async function walk(dir: string): Promise<void> {
+    const entries = await readdir(dir, { withFileTypes: true });
+
+    for (const entry of entries) {
+      if (isLocalPackageInternalEntryName(entry.name)) continue;
+
+      const abs = path.join(dir, entry.name);
+
+      if (entry.isDirectory()) {
+        await walk(abs);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+
+      const rel = path.relative(pkg.workingDir, abs).split(path.sep).join("/");
+
+      if (isLocalPackageInternalPath(rel)) continue;
+      files.push({ path: rel, kind: classifyPackageFilePath(rel) });
+    }
+  }
 
   try {
-    names = await readdir(pkg.workingDir, {
-      recursive: true,
-      encoding: "utf8",
-    });
-  } catch {
+    await walk(pkg.workingDir);
+  } catch (err) {
+    if (!isEnoent(err)) throw err;
     throw new MaisterError(
       "CONFIG",
       `local-package working dir is missing: ${pkg.workingDir}`,
     );
-  }
-
-  const files: LocalPackageFileMeta[] = [];
-
-  for (const name of names) {
-    const rel = name.split(path.sep).join("/");
-
-    if (rel.split("/")[0] === ".git") continue;
-    // lstat (NOT stat): a symlink leaf must not be listed — it is not a regular
-    // file under lstat, so the isFile() gate below skips it, and a read through
-    // it would be rejected by the confinement guard anyway.
-    const st = await lstat(path.join(pkg.workingDir, name)).catch(() => null);
-
-    if (!st || !st.isFile()) continue;
-    files.push({ path: rel, kind: classifyPackageFilePath(rel) });
   }
 
   files.sort((a, b) => a.path.localeCompare(b.path));
@@ -652,6 +671,7 @@ export type WorkingDirDiff = DiffPrepResult & { changedCount: number };
 export async function diffWorkingDir(
   pkg: LocalPackage,
 ): Promise<WorkingDirDiff> {
+  await ensureLocalPackageGitExclude(pkg.workingDir);
   const wt = await diffWorkingTree(pkg.workingDir);
   const changedCount = wt.nameStatus.length;
 
@@ -714,6 +734,7 @@ export async function readWorkingDirArtifactFiles(
 export async function assertPackageCommittable(
   pkg: LocalPackage,
 ): Promise<void> {
+  await ensureLocalPackageGitExclude(pkg.workingDir);
   const wt = await diffWorkingTree(pkg.workingDir);
   const changedPaths = wt.nameStatus.map((entry) => entry.path);
 
@@ -761,6 +782,7 @@ export async function commitWorkingDir(
 // commit gate (changed paths only), this validates EVERY artifact, catching an
 // invalid baseline that a scoped commit never re-checked.
 export async function assertPackageCuttable(pkg: LocalPackage): Promise<void> {
+  await ensureLocalPackageGitExclude(pkg.workingDir);
   const wt = await diffWorkingTree(pkg.workingDir);
 
   if (wt.nameStatus.length > 0) {

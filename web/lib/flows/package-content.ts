@@ -8,6 +8,10 @@ import pino from "pino";
 import { z } from "zod";
 
 import { classifyPackageFile } from "@/lib/flows/package-authoring";
+import {
+  isLocalPackageInternalEntryName,
+  isLocalPackageInternalPath,
+} from "@/lib/local-packages/paths";
 
 const log = pino({
   name: "package-content",
@@ -17,10 +21,11 @@ const log = pino({
 const MAX_FILE_BYTES = 1024 * 1024;
 const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
 
-// Mirrors worktree.ts repoRelPathSchema: the `?file=` rel-path is query-controlled
-// and UNTRUSTED. Reject traversal (`..`), absolute / leading-`/`, leading-`-`
-// (option injection), and NUL before any fs call — sink-invariant validation, not
-// just `z.string()` shape (skill-context: validate at the sink's invariant).
+// Mirrors worktree.ts repoRelPathSchema: the `?file=` rel-path is
+// query-controlled and UNTRUSTED. Reject traversal (`..`), absolute /
+// leading-`/`, leading-`-` (option injection), internal package metadata, and
+// NUL before any fs call — sink-invariant validation, not just `z.string()`
+// shape (skill-context: validate at the sink's invariant).
 const relPathSchema = z
   .string()
   .min(1)
@@ -28,7 +33,8 @@ const relPathSchema = z
   .refine((p) => !p.includes("\0"), "no NUL")
   .refine((p) => !p.startsWith("/"), "must be relative")
   .refine((p) => !p.startsWith("-"), "no leading dash")
-  .refine((p) => !p.split("/").includes(".."), "no .. segment");
+  .refine((p) => !p.split("/").includes(".."), "no .. segment")
+  .refine((p) => !isLocalPackageInternalPath(p), "no internal metadata");
 
 type InstalledPackageRef = { installedPath: string };
 
@@ -87,6 +93,7 @@ async function walkRegularFiles(root: string): Promise<string[]> {
     for (const entry of entries) {
       const abs = path.join(dir, entry.name);
 
+      if (isLocalPackageInternalEntryName(entry.name)) continue;
       if (entry.isDirectory()) {
         await walk(abs);
         continue;

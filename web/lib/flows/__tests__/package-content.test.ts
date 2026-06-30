@@ -128,6 +128,60 @@ describe("listInstalledPackageFiles", () => {
     }
   });
 
+  it("skips internal metadata directories during the walk", async () => {
+    await seedBundle(bundleRoot);
+    await mkdir(join(bundleRoot, ".git"), { recursive: true });
+    await writeFile(join(bundleRoot, ".git", "config"), "repo config");
+    await mkdir(join(bundleRoot, ".claude", "skills", "flow-authoring"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(bundleRoot, ".claude", "skills", "flow-authoring", "SKILL.md"),
+      "runtime skill",
+    );
+    await mkdir(
+      join(
+        bundleRoot,
+        ".maister",
+        "capabilities",
+        "run-1",
+        "codex-home",
+        ".tmp",
+        "plugins-clone-x",
+        ".git",
+      ),
+      { recursive: true },
+    );
+    await writeFile(
+      join(
+        bundleRoot,
+        ".maister",
+        "capabilities",
+        "run-1",
+        "codex-home",
+        ".tmp",
+        "plugins-clone-x",
+        ".git",
+        "config",
+      ),
+      "runtime config",
+    );
+
+    const result = await listInstalledPackageFiles({
+      installedPath: bundleRoot,
+    });
+
+    if (result.bundleMissing) throw new Error("unexpected bundleMissing");
+
+    expect(result.files.map((f) => f.path)).not.toContain(".git/config");
+    expect(result.files.some((f) => f.path.startsWith(".maister/"))).toBe(
+      false,
+    );
+    expect(result.files.some((f) => f.path.startsWith(".claude/"))).toBe(
+      false,
+    );
+  });
+
   it("returns { bundleMissing: true } for a non-existent dir", async () => {
     const result = await listInstalledPackageFiles({
       installedPath: join(bundleRoot, "does-not-exist"),
@@ -169,6 +223,9 @@ describe("readInstalledPackageFile", () => {
     ["absolute", "/etc/passwd"],
     ["NUL byte", "a\x00b"],
     ["leading dash", "-rf"],
+    ["git metadata", ".git/config"],
+    ["MAIster runtime metadata", ".maister/run.json"],
+    ["Claude runtime metadata", ".claude/skills/flow-authoring/SKILL.md"],
   ])(
     "rejects %s rel paths as not-found before any fs read",
     async (_label, relPath) => {

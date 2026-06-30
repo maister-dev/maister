@@ -6,6 +6,19 @@ import path from "node:path";
 import { MaisterError } from "@/lib/errors";
 import { localPackagesRoot } from "@/lib/instance-config";
 
+const INTERNAL_WORKING_DIR_SEGMENTS = new Set([".git", ".maister", ".claude"]);
+
+export function isLocalPackageInternalPath(relPath: string): boolean {
+  return relPath
+    .split(/[\\/]+/)
+    .filter((part) => part.length > 0)
+    .some((part) => INTERNAL_WORKING_DIR_SEGMENTS.has(part));
+}
+
+export function isLocalPackageInternalEntryName(name: string): boolean {
+  return INTERNAL_WORKING_DIR_SEGMENTS.has(name);
+}
+
 // (ADR-096) Absolute working-dir for a local package, derived from its slug —
 // symmetric with the flows/worktrees roots. NEVER projected to clients.
 export function localPackageWorkingDir(slug: string): string {
@@ -24,10 +37,11 @@ export function slugifyName(name: string): string {
 }
 
 // (ADR-096, D5) Confine an UNTRUSTED (url/body-controlled) artifact path to the
-// package working dir. Rejects absolute, leading-dash, NUL, `..`, and `.git/`
-// segments lexically, then re-checks against the realpath of the working dir and
-// of the resolved file's parent (symlink-escape guard). Throws PRECONDITION on
-// escape; CONFIG when the working dir itself is gone. Returns the resolved path.
+// package working dir. Rejects absolute, leading-dash, NUL, `..`, `.git/`, and
+// MAIster runtime metadata segments lexically, then re-checks against the
+// realpath of the working dir and of the resolved file's parent
+// (symlink-escape guard). Throws PRECONDITION on escape; CONFIG when the working
+// dir itself is gone. Returns the resolved path.
 export async function resolveWithinWorkingDir(
   workingDir: string,
   relPath: string,
@@ -46,7 +60,11 @@ export async function resolveWithinWorkingDir(
 
   const parts = relPath.split(/[\\/]+/).filter((p) => p.length > 0);
 
-  if (parts.some((p) => p === ".." || p === "." || p === ".git")) {
+  if (
+    parts.some(
+      (p) => p === ".." || p === "." || INTERNAL_WORKING_DIR_SEGMENTS.has(p),
+    )
+  ) {
     throw new MaisterError(
       "PRECONDITION",
       `artifact path escapes the working dir: ${relPath}`,

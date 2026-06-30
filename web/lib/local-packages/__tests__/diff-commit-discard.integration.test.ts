@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -82,6 +82,34 @@ describe("local-package git diff/commit/discard (integration)", () => {
     expect(diff.changedCount).toBe(0);
     expect(diff.files).toHaveLength(0);
     expect(diff.truncated).toBe(false);
+  });
+
+  it("keeps assistant runtime metadata out of diff and commit", async () => {
+    const pkg = (await getLocalPackage(pkgId, db))!;
+    const runtimeConfig = join(
+      pkg.workingDir,
+      ".maister/capabilities/run-1/codex-home/.tmp/plugins-clone-x/.git/config",
+    );
+    const runtimeSkill = join(
+      pkg.workingDir,
+      ".claude/skills/flow-authoring/SKILL.md",
+    );
+
+    await mkdir(join(runtimeConfig, ".."), { recursive: true });
+    await writeFile(runtimeConfig, "runtime git config");
+    await mkdir(join(runtimeSkill, ".."), { recursive: true });
+    await writeFile(runtimeSkill, "runtime skill");
+
+    const diff = await diffWorkingDir(pkg);
+
+    expect(diff.changedCount).toBe(0);
+    expect(JSON.stringify(diff)).not.toContain(".maister/capabilities");
+    expect(JSON.stringify(diff)).not.toContain(".claude/skills");
+
+    await commitWorkingDir(pkg, "ignore runtime metadata");
+    expect((await diffWorkingDir(pkg)).changedCount).toBe(0);
+    expect(await readFile(runtimeConfig, "utf8")).toBe("runtime git config");
+    expect(await readFile(runtimeSkill, "utf8")).toBe("runtime skill");
   });
 
   it("an edited working-dir file shows in the diff (changed-count > 0)", async () => {

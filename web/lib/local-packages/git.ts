@@ -1,6 +1,8 @@
 import "server-only";
 
 import { execFile } from "node:child_process";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { promisify } from "node:util";
 
 import pino from "pino";
@@ -14,6 +16,7 @@ const log = pino({
 
 const GIT_TIMEOUT_MS = 60_000;
 const EXEC_MAX_BUFFER = 4 * 1024 * 1024;
+const LOCAL_PACKAGE_RUNTIME_EXCLUDES = [".maister/", ".claude/"] as const;
 
 async function git(cwd: string, args: readonly string[]): Promise<void> {
   await execFileAsync("git", [...args], {
@@ -21,6 +24,41 @@ async function git(cwd: string, args: readonly string[]): Promise<void> {
     timeout: GIT_TIMEOUT_MS,
     maxBuffer: EXEC_MAX_BUFFER,
   });
+}
+
+export async function ensureLocalPackageGitExclude(dir: string): Promise<void> {
+  const { stdout } = await execFileAsync(
+    "git",
+    ["rev-parse", "--git-path", "info/exclude"],
+    {
+      cwd: dir,
+      timeout: GIT_TIMEOUT_MS,
+      maxBuffer: EXEC_MAX_BUFFER,
+    },
+  );
+  const rawExcludePath = stdout.trim();
+  const excludePath = path.isAbsolute(rawExcludePath)
+    ? rawExcludePath
+    : path.join(dir, rawExcludePath);
+  const current = await readFile(excludePath, "utf8").catch(() => "");
+  const excluded = new Set(
+    current
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0),
+  );
+  const missingExcludes = LOCAL_PACKAGE_RUNTIME_EXCLUDES.filter(
+    (entry) => !excluded.has(entry) && !excluded.has(entry.replace(/\/$/, "")),
+  );
+
+  if (missingExcludes.length === 0) return;
+
+  await mkdir(path.dirname(excludePath), { recursive: true });
+  await writeFile(
+    excludePath,
+    `${current}${current.endsWith("\n") || current.length === 0 ? "" : "\n"}${missingExcludes.join("\n")}\n`,
+    "utf8",
+  );
 }
 
 // (M39 Stream B, ADR-107) Resolve the working dir's current HEAD commit sha so a
@@ -103,6 +141,7 @@ export async function gitInitWithCommit(
 ): Promise<void> {
   log.debug({ dir, branch }, "git init local-package working dir");
   await git(dir, ["init", "-q", "-b", branch]);
+  await ensureLocalPackageGitExclude(dir);
   await git(dir, ["add", "-A"]);
   await git(dir, [
     "-c",
@@ -128,6 +167,7 @@ export async function gitCommitWorkingDir(
   message: string,
 ): Promise<void> {
   log.debug({ dir }, "git commit local-package working dir");
+  await ensureLocalPackageGitExclude(dir);
   await git(dir, ["add", "-A"]);
   await git(dir, [
     "-c",
@@ -158,6 +198,7 @@ export async function gitDiscardPaths(
   const targets = paths && paths.length > 0 ? [...paths] : ["."];
 
   log.debug({ dir, count: targets.length }, "git discard local-package edits");
+  await ensureLocalPackageGitExclude(dir);
   await git(dir, ["checkout", "HEAD", "--", ...targets]);
   await git(dir, ["clean", "-fdq", "--", ...targets]);
 }

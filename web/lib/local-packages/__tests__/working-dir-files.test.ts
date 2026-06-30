@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   deleteWorkingDirFile,
+  listFiles,
+  readFileContent,
   writeWorkingDirFile,
 } from "@/lib/local-packages/service";
 
@@ -46,6 +48,53 @@ describe("writeWorkingDirFile / deleteWorkingDirFile (M36 T2.3)", () => {
   it("rejects a .git path", async () => {
     await expect(
       writeWorkingDirFile(pkg(), ".git/config", "x"),
+    ).rejects.toThrow();
+  });
+
+  it("rejects local runtime metadata paths", async () => {
+    await expect(
+      writeWorkingDirFile(pkg(), ".maister/run.json", "x"),
+    ).rejects.toThrow();
+    await expect(
+      writeWorkingDirFile(pkg(), ".claude/skills/flow-authoring/SKILL.md", "x"),
+    ).rejects.toThrow();
+  });
+
+  it("does not list assistant runtime files as package artifacts", async () => {
+    await writeWorkingDirFile(pkg(), "maister-package.yaml", "name: x\n");
+    await mkdir(
+      join(
+        dir,
+        ".maister/capabilities/run-1/codex-home/.tmp/plugins-clone-x/.git",
+      ),
+      { recursive: true },
+    );
+    await writeFile(
+      join(
+        dir,
+        ".maister/capabilities/run-1/codex-home/.tmp/plugins-clone-x/.git/config",
+      ),
+      "runtime git config",
+    );
+    await mkdir(join(dir, ".claude/skills/flow-authoring"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(dir, ".claude/skills/flow-authoring/SKILL.md"),
+      "runtime skill",
+    );
+
+    const files = await listFiles(pkg());
+
+    expect(files.map((f) => f.path)).toEqual(["maister-package.yaml"]);
+    await expect(
+      readFileContent(
+        pkg(),
+        ".maister/capabilities/run-1/codex-home/.tmp/plugins-clone-x/.git/config",
+      ),
+    ).rejects.toThrow();
+    await expect(
+      readFileContent(pkg(), ".claude/skills/flow-authoring/SKILL.md"),
     ).rejects.toThrow();
   });
 
