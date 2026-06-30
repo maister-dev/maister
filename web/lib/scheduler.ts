@@ -18,10 +18,11 @@ import { getDb } from "@/lib/db/client";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
+import { priorityWeightSql } from "@/lib/tasks/admission-selector";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { runs } = schemaModule as unknown as Record<string, any>;
+const { runs, tasks } = schemaModule as unknown as Record<string, any>;
 
 const log = pino({
   name: "scheduler",
@@ -507,6 +508,11 @@ export async function promoteNextPending(
     // under the advisory lock, so the sibling-active read is consistent — no
     // concurrent promote can flip a sibling to Running between the check and the
     // claim. The window is bounded by `cap` candidates (small).
+    // ADR-121 (T12, C1 source): order the Pending queue by the criticality
+    // dictionary (weight DESC) then FIFO (started_at ASC) — a higher-criticality
+    // queued run promotes first. LEFT JOIN tasks for the LIVE priority (a run with
+    // no task → normal weight via the SQL default). FOR UPDATE OF runs SKIP LOCKED
+    // so the tasks join does not lock task rows.
     const candidates: Array<{
       id: string;
       runKind: string;
@@ -520,15 +526,19 @@ export async function promoteNextPending(
         rootRunId: runs.rootRunId,
       })
       .from(runs)
+      .leftJoin(tasks, eq(runs.taskId, tasks.id))
       .where(
         and(
           eq(runs.status, "Pending"),
           inArray(runs.runKind, POOL_RUN_KINDS[pool]),
         ),
       )
-      .orderBy(asc(runs.startedAt))
+      .orderBy(
+        sql`${priorityWeightSql(tasks.priority)} desc`,
+        asc(runs.startedAt),
+      )
       .limit(cap)
-      .for("update", { skipLocked: true } as never);
+      .for("update", { of: runs, skipLocked: true } as never);
 
     let target:
       | {

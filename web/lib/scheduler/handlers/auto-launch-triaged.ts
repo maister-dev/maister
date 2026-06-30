@@ -1,6 +1,16 @@
 import "server-only";
 
-import { and, eq, gte, inArray, notInArray, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  count,
+  eq,
+  gte,
+  inArray,
+  isNotNull,
+  notInArray,
+  sql,
+} from "drizzle-orm";
 import pino from "pino";
 
 import { getDb } from "@/lib/db/client";
@@ -11,13 +21,28 @@ import {
   getLatestFlowRun,
 } from "@/lib/runs/launchability";
 import { TERMINAL_RUN_STATUSES } from "@/lib/runs/run-status-sets";
+import { capForPool, countLiveRuns } from "@/lib/scheduler";
 import { launchRun } from "@/lib/services/runs";
 import { actorForUserId } from "@/lib/social/activity";
 import { addTaskComment } from "@/lib/social/comments";
 import { getOpenRelationBlockers } from "@/lib/social/relations";
+import {
+  priorityWeightSql,
+  projectShareAllowsC2,
+  reserveAllowsC2,
+} from "@/lib/tasks/admission-selector";
+import {
+  resolveAutoReserve,
+  resolveEdgeDrain,
+  resolveMaxInFlightAuto,
+  type TaskQueueSettings,
+} from "@/lib/tasks/queue-settings";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { runs, tasks } = schemaModule as unknown as Record<string, any>;
+const { projects, runs, tasks } = schemaModule as unknown as Record<
+  string,
+  any
+>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
 type Db = any;
@@ -110,6 +135,29 @@ async function countFailedFlowRuns(
   return rows.length;
 }
 
+// ADR-121 (INV-9): live auto-DRAINED flow runs for a project — runs minted by the
+// admission funnel (queue_admitted_at NOT NULL) that have not yet reached a
+// terminal status. A manual / scratch / ADR-119 force-relaunch run carries no
+// queue_admitted_at and is correctly excluded.
+async function countLiveAutoFlowRuns(
+  db: Db,
+  projectId: string,
+): Promise<number> {
+  const rows = await db
+    .select({ n: count() })
+    .from(runs)
+    .where(
+      and(
+        eq(runs.projectId, projectId),
+        eq(runs.runKind, "flow"),
+        isNotNull(runs.queueAdmittedAt),
+        notInArray(runs.status, [...TERMINAL_RUN_STATUSES]),
+      ),
+    );
+
+  return Number(rows[0]?.n ?? 0);
+}
+
 // The auto_launch_triaged tick (ADR-112): a triaged + launch_mode='auto' + flow
 // task whose relation blockers have cleared is launched as a board flow run by
 // reusing launchRun (which owns git/worktree + the run insert + supervisor
@@ -156,6 +204,9 @@ export async function runAutoLaunchTriagedJob(
       and(
         eq(tasks.triageStatus, "triaged"),
         eq(tasks.launchMode, "auto"),
+        // ADR-121 (INV-10): a paused task is never auto-launched by the poll
+        // backstop (the slot-free gate applies the same filter in C2).
+        eq(tasks.queuePaused, false),
         // flow_id present → this is a triaged-enqueue task, not an as-plan one.
         sql`${tasks.flowId} IS NOT NULL`,
         // DISJOINT from auto_launch_run_plan: an as-plan task carries a
@@ -168,6 +219,13 @@ export async function runAutoLaunchTriagedJob(
           WHERE tr.to_task_id = ${tasks.id} AND tr.kind = 'parent_of'
         )`,
       ),
+    )
+    // ADR-121 (F2): this poll backstop is the shared C2 funnel — order by the
+    // criticality dictionary (weight DESC) then FIFO (created_at ASC) so the most
+    // critical eligible Backlog task drains first.
+    .orderBy(
+      sql`${priorityWeightSql(tasks.priority)} desc`,
+      asc(tasks.createdAt),
     );
 
   const summary: AutoLaunchTriagedSummary = {
@@ -176,6 +234,40 @@ export async function runAutoLaunchTriagedJob(
     skipped: 0,
     gaveUp: 0,
   };
+
+  // ADR-121 capacity context (computed once, then tracked per launch this tick).
+  const flowCap = capForPool("flow");
+  const reserve = resolveAutoReserve();
+  let liveFlow = await countLiveRuns(db, "flow");
+
+  const projectIds = [...new Set(candidates.map((c) => c.projectId))];
+  const projectRows: Array<{
+    id: string;
+    taskQueueSettings: TaskQueueSettings | null;
+  }> = projectIds.length
+    ? await db
+        .select({
+          id: projects.id,
+          taskQueueSettings: projects.taskQueueSettings,
+        })
+        .from(projects)
+        .where(inArray(projects.id, projectIds))
+    : [];
+  const settingsByProject = new Map(
+    projectRows.map((r) => [r.id, { taskQueueSettings: r.taskQueueSettings }]),
+  );
+  const liveAutoByProject = new Map<string, number>();
+
+  async function liveAutoFor(projectId: string): Promise<number> {
+    if (!liveAutoByProject.has(projectId)) {
+      liveAutoByProject.set(
+        projectId,
+        await countLiveAutoFlowRuns(db, projectId),
+      );
+    }
+
+    return liveAutoByProject.get(projectId) ?? 0;
+  }
 
   for (const candidate of candidates) {
     try {
@@ -252,12 +344,57 @@ export async function runAutoLaunchTriagedJob(
         }
       }
 
+      // ADR-121 C2 gates (the shared funnel applies these identically on the
+      // slot-free path). edgeDrain is per-project; the reserve + share guards keep
+      // auto-drain inside its budget.
+      const projectSettings = settingsByProject.get(candidate.projectId) ?? {
+        taskQueueSettings: null,
+      };
+
+      if (!resolveEdgeDrain(projectSettings)) {
+        log.debug(
+          { taskId: candidate.taskId, projectId: candidate.projectId },
+          "auto-launch-triaged: edgeDrain off for project — skip (INV-7)",
+        );
+        summary.skipped += 1;
+        continue;
+      }
+
+      if (!reserveAllowsC2(liveFlow, flowCap, reserve)) {
+        log.debug(
+          { taskId: candidate.taskId, liveFlow, flowCap, reserve },
+          "auto-launch-triaged: flow-pool reserve held — skip (INV-8)",
+        );
+        summary.skipped += 1;
+        continue;
+      }
+
+      const liveAuto = await liveAutoFor(candidate.projectId);
+      const maxInFlightAuto = resolveMaxInFlightAuto(projectSettings);
+
+      if (!projectShareAllowsC2(liveAuto, maxInFlightAuto)) {
+        log.debug(
+          {
+            taskId: candidate.taskId,
+            projectId: candidate.projectId,
+            liveAuto,
+            maxInFlightAuto,
+          },
+          "auto-launch-triaged: per-project maxInFlightAuto reached — skip (INV-9)",
+        );
+        summary.skipped += 1;
+        continue;
+      }
+
       const result = await launch(
-        { taskId: candidate.taskId },
+        { taskId: candidate.taskId, queueAdmitted: true },
         { authorize: async () => {}, actorUserId: null },
         db,
       );
 
+      // Track the budget consumed THIS tick so later candidates honor the guards.
+      liveFlow += 1;
+      liveAutoByProject.set(candidate.projectId, liveAuto + 1);
       summary.launched += 1;
       log.info(
         {

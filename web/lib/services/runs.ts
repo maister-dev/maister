@@ -194,6 +194,12 @@ export type LaunchRunInput = {
   // (the busy gate). Never bypasses the task gates. Manual-only — scheduled /
   // auto-launch / run-schedule paths never set it.
   allowConcurrent?: boolean;
+  // ADR-121 (INV-9): mark this run as auto-DRAINED — stamps runs.queue_admitted_at
+  // at insert so it counts toward the per-project `maxInFlightAuto` share and is
+  // distinguishable from manual/scratch/resume runs. Set ONLY by the unified
+  // admission funnel (the auto-launch poll / slot-free gate), never by a manual or
+  // ADR-119 force-relaunch launch.
+  queueAdmitted?: boolean;
 };
 
 export type PromotionMode = "local_merge" | "rebase_merge" | "pull_request";
@@ -1071,6 +1077,9 @@ export async function* launchRunStaged(
             triggerEventId: input.triggerEventId ?? null,
             triggerPayload: input.triggerPayload ?? null,
             createdByUserId: ctx.actorUserId,
+            // ADR-121 (INV-9): auto-drain origin marker, set ONLY for runs minted
+            // by the unified admission funnel.
+            queueAdmittedAt: input.queueAdmitted ? new Date() : null,
             status: "Pending",
             // Snapshot the enabled revision (M10, ADR-021). flow_revision_id is
             // the authoritative pin the runner resolves the manifest + bundle

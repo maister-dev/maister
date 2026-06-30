@@ -603,3 +603,113 @@ describe("auto_launch_triaged tick", () => {
     expect(await launchModeOf(taskId)).toBeNull();
   });
 });
+
+// ADR-121 (T13): the poll backstop is the shared C2 funnel — it honors edgeDrain,
+// the flow-pool reserve (INV-8), and the per-project maxInFlightAuto share (INV-9),
+// and counts liveAuto precisely off queue_admitted_at (F1).
+describe("auto_launch_triaged ADR-121 capacity gates", () => {
+  async function setQueueSettings(s: object | null): Promise<void> {
+    await pool.query(
+      `UPDATE "projects" SET "task_queue_settings" = $1 WHERE "id" = $2`,
+      [s ? JSON.stringify(s) : null, projectId],
+    );
+  }
+
+  // A non-candidate background live flow run (bumps countLiveRuns / liveAuto).
+  async function seedBackgroundLiveRun(opts: { auto: boolean }): Promise<void> {
+    const taskId = randomUUID();
+    const runId = randomUUID();
+    const number = Math.trunc(Math.random() * 1e9) + 1;
+
+    await pool.query(
+      `INSERT INTO "tasks" ("id","project_id","number","title","prompt","status","stage","attempt_number")
+       VALUES ($1,$2,$3,'bg','b','InFlight','Backlog',1)`,
+      [taskId, projectId, number],
+    );
+    await pool.query(
+      `INSERT INTO "runs" ("id","run_kind","project_id","task_id","status","flow_version","flow_revision","queue_admitted_at")
+       VALUES ($1,'flow',$2,$3,'Running','v1.0.0','rev-1',$4)`,
+      [runId, projectId, taskId, opts.auto ? new Date() : null],
+    );
+  }
+
+  it("INV-8: holds the flow-pool reserve (cap 6, reserve 2 → stops at 4 live)", async () => {
+    process.env.MAISTER_MAX_CONCURRENT_RUNS = "6";
+    process.env.MAISTER_TASK_QUEUE_AUTO_RESERVE = "2";
+
+    try {
+      await seedTriagedAutoTask();
+      // 4 live flow runs → liveFlow = 4 = cap−reserve → C2 held.
+      await seedBackgroundLiveRun({ auto: false });
+      await seedBackgroundLiveRun({ auto: false });
+      await seedBackgroundLiveRun({ auto: false });
+      await seedBackgroundLiveRun({ auto: false });
+
+      const held = recordingLaunch();
+      const heldSummary = await runAutoLaunchTriagedJob({ launch: held.fn });
+
+      expect(held.calls).toEqual([]);
+      expect(heldSummary.launched).toBe(0);
+
+      // Free one slot (3 live) → C2 admitted.
+      await pool.query(
+        `DELETE FROM "runs" WHERE "id" = (SELECT "id" FROM "runs" WHERE "status"='Running' LIMIT 1)`,
+      );
+
+      const ok = recordingLaunch();
+      const okSummary = await runAutoLaunchTriagedJob({ launch: ok.fn });
+
+      expect(ok.calls).toHaveLength(1);
+      expect(okSummary.launched).toBe(1);
+    } finally {
+      delete process.env.MAISTER_MAX_CONCURRENT_RUNS;
+      delete process.env.MAISTER_TASK_QUEUE_AUTO_RESERVE;
+    }
+  });
+
+  it("INV-9: holds at per-project maxInFlightAuto, counting only queue_admitted runs (F1)", async () => {
+    await setQueueSettings({ maxInFlightAuto: 1 });
+    await seedTriagedAutoTask();
+
+    // One AUTO-drained live run already → liveAuto = 1 = max → held.
+    await seedBackgroundLiveRun({ auto: true });
+
+    const held = recordingLaunch();
+    const heldSummary = await runAutoLaunchTriagedJob({ launch: held.fn });
+
+    expect(held.calls).toEqual([]);
+    expect(heldSummary.launched).toBe(0);
+
+    // Replace it with a MANUAL live run (queue_admitted_at NULL) → liveAuto = 0 →
+    // admitted. A force-relaunched manual run never consumes the auto share.
+    await pool.query(
+      `DELETE FROM "runs" WHERE "queue_admitted_at" IS NOT NULL`,
+    );
+    await seedBackgroundLiveRun({ auto: false });
+
+    const ok = recordingLaunch();
+    const okSummary = await runAutoLaunchTriagedJob({ launch: ok.fn });
+
+    expect(ok.calls).toHaveLength(1);
+    expect(okSummary.launched).toBe(1);
+  });
+
+  it("INV-7: edgeDrain off for the project → fresh task NOT pulled", async () => {
+    await setQueueSettings({ edgeDrain: false });
+    await seedTriagedAutoTask();
+
+    const { fn, calls } = recordingLaunch();
+    const summary = await runAutoLaunchTriagedJob({ launch: fn });
+
+    expect(calls).toEqual([]);
+    expect(summary.launched).toBe(0);
+
+    // Re-enable → pulled.
+    await setQueueSettings({ edgeDrain: true });
+
+    const ok = recordingLaunch();
+
+    await runAutoLaunchTriagedJob({ launch: ok.fn });
+    expect(ok.calls).toHaveLength(1);
+  });
+});
