@@ -3253,7 +3253,7 @@
     "errorForbidden": "You need member access for that.",
     "errorGeneric": "Action failed. Try again.",
     "runAgain": "Run again",
-    "runAgainConcurrent": "Run again",
+    "runAgainConcurrent": "Run another",
     "launchFirst": "Launch",
     "runAgainUnavailable": "unavailable",
     "launchSupervisorUnavailable": "Supervisor unavailable. Start or recover the supervisor daemon, then retry.",

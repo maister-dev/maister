@@ -379,7 +379,12 @@ Wire-up:
 - `GET /api/runs/launch-options` returns an additive
   `relaunch: { launchable, reason }` (force verdict) next to the unchanged
   `launchability` (manual). One fetch serves both buttons; existing callers
-  ignore the new field.
+  ignore the new field. The `relaunch` verdict layers the SAME flow-setup issues
+  as `launchability` (a flow disabled/dropped after the task's first run →
+  `not_enabled`/`flow_missing`/…), so the runs-history button disables up-front on
+  a non-launchable flow rather than failing after submit; run status is still
+  never consulted, and `launchRunStaged`'s flow-enablement checks remain the
+  authoritative backstop.
 
 Extras beyond the global cap (`MAISTER_MAX_CONCURRENT_RUNS`) queue `Pending` with
 a `queuePosition` via the existing scheduler. The running attempt is never

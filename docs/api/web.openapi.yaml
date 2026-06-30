@@ -11760,15 +11760,32 @@ components:
             computed with `classifyForceRelaunchLaunchability` alongside the
             manual `launchability`. Additive and backward-compatible — existing
             callers ignore it. `launchable` is `true` even while the latest run is
-            active (run status is not consulted in force mode); it is `false` only
-            on the TASK gates `flagged`/`blocked`. The runs-history "Run again"
-            button reads this field; the page-header button keeps `launchability`.
+            active (run status is not consulted in force mode); it is `false` on
+            the TASK gates `flagged`/`blocked` OR on a flow-setup issue layered in
+            exactly like `launchability` (a flow disabled/dropped after the task's
+            first run), so the runs-history button disables up-front instead of
+            failing the launch after submit. The runs-history "Run again" button
+            reads this field; the page-header button keeps `launchability`.
           required: [launchable, reason]
           properties:
             launchable: { type: boolean }
             reason:
               type: string
-              enum: [launchable, flagged, blocked]
+              enum:
+                [
+                  launchable,
+                  flagged,
+                  blocked,
+                  unconfigured,
+                  flow_missing,
+                  no_revision,
+                  not_enabled,
+                  not_installed,
+                  setup_failed,
+                  setup_pending,
+                  unsupported_schema,
+                  incompatible,
+                ]
         flows:
           type: array
           items:

@@ -223,6 +223,31 @@ beforeAll(async () => {
   // A flagged task.
   await seedTask("task-flagged", "proj-gate", { triageStatus: "flagged" });
 
+  // ADR-119 (S1): a task whose flow became non-launchable (Disabled) after
+  // configuration. The force verdict must layer the flow-setup issue exactly
+  // like the manual launchability so the runs-history button disables up-front.
+  await db.insert(schema.flows).values({
+    id: "flow-disabled",
+    projectId: "proj-gate",
+    flowRefId: "bugfix-disabled",
+    source: "github.com/x/y",
+    version: "v1.0.0",
+    installedPath: "/cache/disabled",
+    manifest: instructManifest,
+    schemaVersion: 1,
+    enabledRevisionId: "rev-proj-gate",
+    enablementState: "Disabled",
+    trustStatus: "trusted_by_policy",
+  });
+  await db.insert(schema.tasks).values({
+    number: Math.trunc(Math.random() * 1e9) + 1,
+    id: "task-flowissue",
+    projectId: "proj-gate",
+    title: "flow issue task",
+    prompt: "do it",
+    flowId: "flow-disabled",
+  });
+
   ({ POST } = await import("@/app/api/runs/route"));
   ({ GET: LAUNCH_OPTIONS_GET } = await import(
     "@/app/api/runs/launch-options/route"
@@ -314,5 +339,22 @@ describe("GET /api/runs/launch-options — relaunch field (ADR-119, integration)
 
     expect(body.relaunch.launchable).toBe(false);
     expect(body.relaunch.reason).toBe("flagged");
+  });
+
+  // ADR-119 (S1): a non-launchable flow surfaces in the force verdict too — the
+  // runs-history button disables up-front instead of failing after submit.
+  it("a task with a disabled flow: relaunch layers the flow-setup issue", async () => {
+    const res = await LAUNCH_OPTIONS_GET(
+      launchOptionsRequest("task-flowissue"),
+    );
+    const body = (await res.json()) as {
+      launchability: { launchable: boolean; reason: string };
+      relaunch: { launchable: boolean; reason: string };
+    };
+
+    expect(body.relaunch.launchable).toBe(false);
+    expect(body.relaunch.reason).toBe("not_enabled");
+    // Mirrors the manual verdict — both surface the flow issue.
+    expect(body.launchability.reason).toBe("not_enabled");
   });
 });

@@ -436,6 +436,15 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       manualLaunchability === "launchable"
         ? (flowIssue ?? "launchable")
         : manualLaunchability;
+    // ADR-119: the force verdict layers the SAME flow-setup issues as the manual
+    // launchability (a flow disabled/dropped after the task's first run), so the
+    // runs-history button disables up-front with the flow reason instead of
+    // failing the launch after submit. Task gates (flagged/blocked) keep
+    // precedence; run status is still never consulted.
+    const relaunchReason =
+      relaunchLaunchability === "launchable"
+        ? (flowIssue ?? "launchable")
+        : relaunchLaunchability;
     const branches = await listBranches(project.repoPath, {
       includeRemotes: true,
     });
@@ -535,13 +544,14 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
           }),
         ),
       },
-      // ADR-119: additive force-relaunch verdict (reason ∈ launchable|flagged|
-      // blocked). The runs-history button reads this; the header button keeps
-      // `launchability`. Flow setup issues are NOT layered in — the force button
-      // only renders once a task has ≥1 run (already configured).
+      // ADR-119: additive force-relaunch verdict. Run status is never consulted
+      // (a busy run stays launchable); the TASK gates flagged/blocked AND the
+      // flow-setup issues (layered like `launchability`) are the only refusals.
+      // The runs-history button reads this; the header button keeps
+      // `launchability`.
       relaunch: {
-        launchable: relaunchLaunchability === "launchable",
-        reason: relaunchLaunchability,
+        launchable: relaunchReason === "launchable" && flowIssue === null,
+        reason: relaunchReason,
       },
       flows: flowRowsForProject.map((projectFlow: Record<string, any>) => {
         const disabledReason = projectFlowLaunchIssue({

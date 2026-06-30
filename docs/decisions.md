@@ -9708,7 +9708,13 @@ branch names do.) **ADR-008** (closed `MaisterError` union) and **ADR-009**
    backward-compatible (no param change, existing callers ignore the field). The
    second classifier runs over the same in-memory data — negligible cost. Chosen
    over a `mode` query param because the page renders both buttons; one response
-   avoids a second fetch and any chance of the wrong classifier.
+   avoids a second fetch and any chance of the wrong classifier. The `relaunch`
+   verdict layers the SAME flow-setup issues as the manual `launchability` (a flow
+   disabled/dropped after the task's first run → `not_enabled`/`flow_missing`/…):
+   run status is still never consulted, but a non-launchable flow disables the
+   runs-history button up-front instead of failing the launch after submit — the
+   server's flow-enablement checks in `launchRunStaged` remain the authoritative
+   backstop.
 
 4. **Atomic attempt-number allocation.**
    `UPDATE tasks SET attempt_number = attempt_number + 1 WHERE id = $taskId
@@ -9752,6 +9758,14 @@ branch names do.) **ADR-008** (closed `MaisterError` union) and **ADR-009**
 - Per-relaunch `run_launched` + inbox fan-out volume grows with long ralph-loops
   (pre-existing in kind, new in frequency) — flagged for throttling if it
   becomes noisy; no schema change.
+- **Manual relaunches share the ralph-loop attempt budget (intended).** Each
+  successful force-relaunch bumps `tasks.attempt_number`, which the ralph-loop
+  consumer (`MAISTER_RALPH_MAX_ATTEMPTS`) reads as the per-task max-attempt
+  high-water mark. So manual and auto relaunches draw from ONE bounded counter:
+  several manual relaunches advance the auto-relaunch ceiling. This is the desired
+  semantics (total attempts per task are bounded regardless of who fired them),
+  not a leak — but it means a long manual fan-out can reach the ralph cap and
+  quiesce auto-relaunch.
 - **Zero migration / zero new error code / zero deployment touchpoint**: only
   allocation timing and gate selection change.
 
