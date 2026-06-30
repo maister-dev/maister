@@ -11147,6 +11147,21 @@ components:
             through task -> project defaults -> `supervised`. A blind-ship combo
             is refused `PRECONDITION` (409); a non-supervised resolved policy
             requires the `launchUnattended` action (403).
+        allowConcurrent:
+          type: boolean
+          default: false
+          description: |
+            (ADR-119 — Implemented) Body-controlled behaviour flag selecting the
+            FORCE-relaunch launchability gate. Default `false` ⇒ the manual gate
+            (`classifyManualTaskLaunchability`) refuses a launch while any prior
+            run for the task is active (`busy`). `true` ⇒ the force gate
+            (`classifyForceRelaunchLaunchability`) treats every RUN status as
+            launchable, allowing an additive concurrent run alongside a still-
+            running one. It NEVER bypasses the TASK gates: a `flagged` (triage)
+            or `blocked` (open blocking relation) task is still refused
+            `PRECONDITION` (409). Gated behind the same
+            `requireProjectAction("launchRun")` — no new auth path. Not a
+            cross-resource locator (`projectId` is derived from `taskId`).
         packageVersions:
           type: object
           additionalProperties:
@@ -11737,6 +11752,23 @@ components:
                 properties:
                   kind: { type: string }
                   label: { type: string }
+        relaunch:
+          type: object
+          additionalProperties: false
+          description: |
+            (ADR-119 — Implemented) The FORCE-relaunch verdict for this task,
+            computed with `classifyForceRelaunchLaunchability` alongside the
+            manual `launchability`. Additive and backward-compatible — existing
+            callers ignore it. `launchable` is `true` even while the latest run is
+            active (run status is not consulted in force mode); it is `false` only
+            on the TASK gates `flagged`/`blocked`. The runs-history "Run again"
+            button reads this field; the page-header button keeps `launchability`.
+          required: [launchable, reason]
+          properties:
+            launchable: { type: boolean }
+            reason:
+              type: string
+              enum: [launchable, flagged, blocked]
         flows:
           type: array
           items:

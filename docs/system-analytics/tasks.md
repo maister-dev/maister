@@ -342,6 +342,59 @@ Board cards keep latest-run semantics, but also show a run-count badge when the
 task has more than one run so repeated attempts are recognizable without opening
 the task page.
 
+### Force-relaunch from the runs-history view (Implemented, ADR-119)
+
+The manual classifier above blocks a new launch while any prior run is active
+(`busy`). The runs-history header on `/projects/[slug]/tasks/[number]` adds a
+**second** launch button — to the right of the runs-count chip — that uses a
+**force-relaunch** classifier so an operator can start another run *alongside* a
+still-running one (additive concurrency, ralph-loop). The existing page-header
+launch button keeps the manual gate.
+
+`classifyForceRelaunchLaunchability(task, latestRun, relationGate)` mirrors
+`classifyManualTaskLaunchability`'s signature (no `flow_id` ⇒ no `unconfigured`
+arm) and reuses its `flagged`/`blocked` predicates, but **never** returns the
+`busy` run-status verdict — run status is deliberately not consulted. Force-mode
+precedence, highest refusal first:
+
+```
+flagged   (task.triage_status === "flagged")
+> blocked (any open blocking relation)
+> launchable
+```
+
+`unconfigured` is unreachable from this entry point (the button only renders once
+the task has ≥1 run, so it is already configured). The allow-list (only
+`flagged`/`blocked` refuse) is the documented contract — a future `RunStatus`
+must not silently change force behaviour.
+
+Wire-up:
+- `POST /api/runs` accepts `allowConcurrent` (boolean, default `false`). When
+  `true`, `launchRunStaged` selects `classifyForceRelaunchLaunchability`;
+  otherwise `classifyManualTaskLaunchability`. The throw-on-not-launchable
+  behaviour is unchanged — a `blocked`/`flagged` task with
+  `allowConcurrent:true` still gets `PRECONDITION`. The flag is gated behind the
+  same `requireProjectAction(projectId,"launchRun")`; it widens only the
+  run-status gate, never the task gates.
+- `GET /api/runs/launch-options` returns an additive
+  `relaunch: { launchable, reason }` (force verdict) next to the unchanged
+  `launchability` (manual). One fetch serves both buttons; existing callers
+  ignore the new field.
+
+Extras beyond the global cap (`MAISTER_MAX_CONCURRENT_RUNS`) queue `Pending` with
+a `queuePosition` via the existing scheduler. The running attempt is never
+cancelled or superseded. A force-relaunch reuses `launchRun`, so it records the
+same `run_launched` `task_activity` (ADR-078) and `inbox_items` fan-out — per
+launch, even while the task is already `InFlight`; no new activity/event kind and
+no `domain_events` outbox row. **Scheduled / auto-launch / run-schedule paths and
+the board flight-card keep the `busy` gate** (they never set `allowConcurrent`),
+so no automatic path fans out concurrent runs.
+
+The runs-history table renders **at most the 10 newest runs** (no per-task run
+cap; hundreds are allowed, full pagination is Phase 2). The count chip and the
+token-total aggregates are computed over **all** runs via SQL aggregates, so the
+display cap never makes the chip lie.
+
 ### Phase B UI and test ownership (Designed, ADR-085)
 
 | User story | UI surface(s) | Acceptance and states | Test owner |

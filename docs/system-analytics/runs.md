@@ -276,6 +276,40 @@ ADR changes branch identity. The launch dialog displays the branch name and
 base branch before POST. Every displayed override is marked as a deviation from
 the default.
 
+#### Atomic attempt-number allocation + concurrent runs per task (Implemented, ADR-119)
+
+The force-relaunch entry point (see `tasks.md`) allows **>1 non-terminal run per
+task** — a new run can start while a prior run is still `Running`. That makes a
+previously-unreachable branch-name race reachable: `nextAttempt` was derived from
+a **stale read** of `tasks.attempt_number`, with the increment committing later
+in the main launch transaction, so two concurrent launches both computed
+`attempt-N` and the second `git worktree add -b` collided (`CONFLICT`). Worktree
+*paths* are `runId`-keyed and never collide — only branch names did.
+
+The fix: `attempt_number` is bumped atomically **before** branch derivation —
+`UPDATE tasks SET attempt_number = attempt_number + 1 WHERE id = $taskId
+RETURNING attempt_number` — and that early allocation is the **sole** writer of
+`attempt_number` (the write is removed from the main launch transaction, which
+still sets `tasks.status = "InFlight"`). Each concurrent launch reserves a
+distinct `attempt_number` ⇒ distinct branch ⇒ no collision.
+
+Crash windows are clean retryable non-states:
+
+- Allocation succeeds, then any later precondition / `addWorktree` / tx failure
+  or process death **burns** the number (a monotonic-counter gap, no meaning) and
+  leaves no run row, no worktree, and `tasks.status` untouched → the task is
+  still force-launchable; the next launch takes the next value.
+- The existing post-`addWorktree` `removeWorktree` compensation is unchanged.
+- A `blocked`/`flagged` refusal happens **before** allocation, so a refused
+  launch never burns a number.
+
+Additive concurrency is latest-run-safe: the board column, manual launchability,
+reconcile, promotion, and the scheduler are latest-run / per-run / global-count
+based. The concurrency cap counts live runs globally, so two live runs of one
+task correctly count as 2; extras queue `Pending` with a `queuePosition`. **No
+DB migration** — `tasks.attempt_number` already exists, worktree paths are
+`runId`-keyed, and no unique constraint assumes one active run per task.
+
 Internal `POST /api/runs` and `GET /api/runs/launch-options` expose this
 contract. `POST /api/v1/ext/runs` remains v1-compatible in ADR-085: it accepts
 `taskId`, optional `runnerId`, `baseBranch`, and `targetBranch` only. It keeps

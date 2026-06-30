@@ -144,6 +144,7 @@
 | [ADR-116](#adr-116-local-package-composition-view-shared-package-bom-source-abstraction-tabbed-editor-ia) | Local-package composition view: shared package BOM source abstraction, tabbed editor IA | Accepted | 2026-06-28 |
 | [ADR-117](#adr-117-reliable-cost-rollup-reconciliation-and-per-runner-cost-attribution) | Reliable cost-rollup reconciliation (sweep guarantee + fast-path consumer) + per-runner cost attribution | Accepted | 2026-06-29 |
 | [ADR-118](#adr-118-rework-loop-onexhaustion-routing--human-driven-counter-reset-resettargets--engine-210) | Rework loop `onExhaustion` routing + human-driven counter reset (`resetTargets`) + engine 2.1.0 | Accepted | 2026-06-29 |
+| [ADR-119](#adr-119-manual-force-relaunch-additive-concurrent-runs-per-task--atomic-attempt-number-allocation) | Manual force-relaunch (additive concurrent runs per task) + atomic attempt-number allocation | Accepted | 2026-06-30 |
 
 ---
 
@@ -9645,6 +9646,128 @@ tech debt). This ADR adds the two missing primitives as additive, opt-in
   directly as the subtrahend at both exhaustion sites (`attemptNumber − baseline`)
   with no extra arithmetic, and carry-forward is a literal copy; an epoch counter
   would require a second per-attempt count to derive the effective number.
+
+---
+
+### ADR-119: Manual force-relaunch (additive concurrent runs per task) + atomic attempt-number allocation
+
+**Date:** 2026-06-30
+**Status:** Accepted
+**Context:** A task → runs relationship is 1:N (retry / ralph-loop), but every
+launch entry point gates on `classifyManualTaskLaunchability`, whose
+`MANUAL_RUN_STATUS_LAUNCHABILITY` map returns `busy` for every non-terminal run
+status (`Pending/Running/NeedsInput/NeedsInputIdle/HumanWorking/WaitingOnChildren`).
+So a new run cannot start while a prior run for the same task is still active.
+Operators running supervised loops want to fire **another** run from the task
+runs-history view *while one is still running* — without cancelling or
+superseding the active attempt. The board flight-card and all scheduled /
+auto-launch paths must keep the `busy` gate (the one-way latch + auto-launch
+tick must never fan out concurrent runs on their own).
+
+Relaxing the run-status gate exposes a latent race: the run branch is
+`${branchPrefix}task-${taskId}/attempt-${task.attemptNumber + 1}`, computed from
+a **stale read** of `tasks.attempt_number`; the increment commits later in the
+main launch transaction. Today the `busy` gate makes two concurrent launches of
+one task impossible, so the race is unreachable. Force-relaunch makes it
+reachable: two simultaneous launches both compute `attempt-2`, the first
+`git worktree add -b` creates the branch, the second collides and fails
+`CONFLICT`. (Worktree *paths* are `runId`-keyed, so they never collide — only
+branch names do.) **ADR-008** (closed `MaisterError` union) and **ADR-009**
+(global concurrency cap) are untouched; **no migration**, **no new error code**,
+**no deployment change**.
+
+**Decision:**
+
+1. **A force-relaunch classifier widens only the run-status gate.**
+   `classifyForceRelaunchLaunchability(task, latestRun, relationGate)` mirrors
+   `classifyManualTaskLaunchability`'s signature (no `flowId` ⇒ no
+   `unconfigured` case) and reuses the same `flagged`/`blocked` predicate
+   helpers (DRY). It NEVER produces the `busy` run-status verdict — run status is
+   deliberately not consulted. Precedence, highest refusal first:
+   `flagged (task.triageStatus==="flagged") > blocked (open blocking relation) >
+   launchable`. The allow-list (only `flagged`/`blocked` refuse) is documented so
+   a future `RunStatus` cannot silently change force behaviour.
+
+2. **`allowConcurrent` body flag selects the classifier.** `POST /api/runs`
+   gains an optional `allowConcurrent` boolean (default `false`). When `true`,
+   `launchRunStaged` gates on `classifyForceRelaunchLaunchability`; otherwise on
+   `classifyManualTaskLaunchability` (byte-identical to today). The
+   throw-on-not-launchable behaviour is unchanged — only the classifier swaps, so
+   a `blocked`/`flagged` task with `allowConcurrent:true` still gets
+   `PRECONDITION`. The flag is gated behind the existing
+   `requireProjectAction(projectId,"launchRun")` — no new auth path; it widens
+   only the run-status gate, never the task gates. It is a body-controlled
+   behaviour flag, not a cross-resource locator (`projectId` is still derived
+   from the task row).
+
+3. **`GET /api/runs/launch-options` carries an additive `relaunch` field.** The
+   response gains `relaunch: { launchable: boolean, reason: VerdictCode }`
+   computed with `classifyForceRelaunchLaunchability`, alongside the unchanged
+   `launchability` (manual). One fetch serves both the header (manual) and the
+   runs-history (force) buttons with the correct verdict each; fully
+   backward-compatible (no param change, existing callers ignore the field). The
+   second classifier runs over the same in-memory data — negligible cost. Chosen
+   over a `mode` query param because the page renders both buttons; one response
+   avoids a second fetch and any chance of the wrong classifier.
+
+4. **Atomic attempt-number allocation.** Before branch derivation,
+   `UPDATE tasks SET attempt_number = attempt_number + 1 WHERE id = $taskId
+   RETURNING attempt_number` reserves a distinct value per launch. This early
+   allocation becomes the **sole** writer of `attempt_number`: the
+   `attemptNumber` write is removed from the main launch transaction (the tx
+   still writes `tasks.status="InFlight"`). Leaving it would let a slower
+   concurrent launch clobber a higher value. Crash windows are clean retryable
+   non-states: an allocation followed by any later failure burns the number (a
+   monotonic-counter gap, no meaning) and leaves no run row / no worktree /
+   `tasks.status` untouched; the existing post-`addWorktree` `removeWorktree`
+   compensation is unchanged; a `blocked`/`flagged` refusal happens before
+   allocation so no number is burned.
+
+5. **Additive concurrency is latest-run-safe.** >1 non-terminal run per task is
+   allowed. Board column, manual launchability, reconcile, promotion, and
+   scheduler are all latest-run / per-run / global-count based, so they tolerate
+   multiple live runs unchanged. The concurrency cap counts live runs globally —
+   two live runs of one task correctly count as 2; extras queue `Pending` with a
+   `queuePosition`. The runs-history `totals`/`latest` keep reducing over **all**
+   runs even after display rows are capped to the 10 newest.
+
+6. **Same `run_launched` activity; no new kind.** A force-relaunch reuses
+   `launchRun`, so each launch records the same `run_launched` `task_activity`
+   (ADR-078) and the social-board `inbox_items` fan-out — per launch, even when
+   the task is already `InFlight` (a creation, not a restart). No new
+   activity/event kind, and **no** `domain_events` outbox row is involved.
+
+**Consequences:**
+- Operators can fan out additional runs from the task runs-history view while a
+  prior run is live, bounded by the global cap; the running attempt is never
+  cancelled or superseded.
+- The branch-name race that the relaxed gate would otherwise expose is closed by
+  the atomic counter bump — proven against real Postgres (mocked-unit tests are
+  blind to the row-level race).
+- Scheduled / auto-launch / run-schedule paths and the board flight-card keep
+  the `busy` gate (they never set `allowConcurrent`), so no path auto-fans
+  concurrent runs.
+- Per-relaunch `run_launched` + inbox fan-out volume grows with long ralph-loops
+  (pre-existing in kind, new in frequency) — flagged for throttling if it
+  becomes noisy; no schema change.
+- **Zero migration / zero new error code / zero deployment touchpoint**: only
+  allocation timing and gate selection change.
+
+**Alternatives Considered:**
+- **A `mode=manual|force` query param on launch-options** instead of an additive
+  `relaunch` field: rejected — the page renders both buttons, so a single
+  response carrying both verdicts avoids a second fetch and removes the risk of
+  the client sending the wrong mode.
+- **A separate force-relaunch route / new error code:** rejected — the launch
+  path, permission, and refusal codes are identical; only the classifier
+  differs. Reusing `POST /api/runs` + `PRECONDITION`/`CONFLICT` keeps ADR-008's
+  closed union intact.
+- **Cancel/supersede the running attempt (one-active-run invariant preserved):**
+  rejected — the product wants additive concurrency (ralph-loop), and the
+  scheduler + cap already bound resource spend.
+- **Keep the stale-read allocation and serialize launches with an advisory
+  lock:** rejected — an atomic `UPDATE … RETURNING` is simpler, needs no lock
+  bookkeeping, and makes each launch's attempt number self-evidently distinct.
 
 ---
 
