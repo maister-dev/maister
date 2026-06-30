@@ -6,7 +6,7 @@ import type { ProjectAction } from "@/lib/authz";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import pino from "pino";
 
 import {
@@ -53,6 +53,7 @@ import {
   type LaunchProgressEvent,
 } from "@/lib/runs/launch-progress";
 import {
+  classifyForceRelaunchLaunchability,
   classifyManualTaskLaunchability,
   getLatestFlowRun,
 } from "@/lib/runs/launchability";
@@ -186,6 +187,13 @@ export type LaunchRunInput = {
   // this launch. Absent/keep = launch on the pin; server-constrained to the
   // launch-detected available set (unknown/ineligible → CONFLICT).
   packageVersions?: Record<string, "keep" | "adopt" | "cut_and_adopt">;
+  // ADR-119: force-relaunch flag. When true, the launch gate uses
+  // classifyForceRelaunchLaunchability (every RUN status is launchable; only the
+  // TASK gates flagged/blocked refuse), allowing an additive concurrent run
+  // alongside a still-running one. Absent/false ⇒ classifyManualTaskLaunchability
+  // (the busy gate). Never bypasses the task gates. Manual-only — scheduled /
+  // auto-launch / run-schedule paths never set it.
+  allowConcurrent?: boolean;
 };
 
 export type PromotionMode = "local_merge" | "rebase_merge" | "pull_request";
@@ -356,9 +364,24 @@ export async function* launchRunStaged(
   const openBlockers =
     (await getOpenRelationBlockers([input.taskId], _db)).get(input.taskId) ??
     [];
-  const launchability = classifyManualTaskLaunchability(task, latestFlowRun, {
+  // ADR-119: the force flag widens ONLY the run-status gate (busy → launchable)
+  // for an additive concurrent run; the task gates flagged/blocked still refuse.
+  const classifyLaunchability = input.allowConcurrent
+    ? classifyForceRelaunchLaunchability
+    : classifyManualTaskLaunchability;
+  const launchability = classifyLaunchability(task, latestFlowRun, {
     openBlockers,
   });
+
+  log.debug(
+    {
+      taskId: input.taskId,
+      mode: input.allowConcurrent ? "force" : "manual",
+      allowConcurrent: Boolean(input.allowConcurrent),
+      verdict: launchability,
+    },
+    "[launchability.force] launch gate classifier selected",
+  );
 
   if (launchability !== "launchable") {
     if (launchability === "blocked") {
@@ -819,8 +842,26 @@ export async function* launchRunStaged(
       );
     }
 
-    const newAttempt = task.attemptNumber + 1;
+    // ADR-119: atomic attempt-number allocation. Bump the counter as its own
+    // statement BEFORE deriving the branch so concurrent force-launches reserve
+    // DISTINCT numbers (the row lock serializes the two UPDATEs) ⇒ distinct
+    // branches ⇒ no `git worktree add` collision. This is the SOLE writer of
+    // attempt_number — the main launch tx no longer writes it (a slower
+    // concurrent launch would otherwise clobber a higher value). A later failure
+    // burns the number (a meaningless monotonic gap); no run row / no worktree /
+    // tasks.status untouched ⇒ the task stays force-launchable.
+    const [allocated] = await _db
+      .update(tasks)
+      .set({ attemptNumber: sql`${tasks.attemptNumber} + 1` })
+      .where(eq(tasks.id, task.id))
+      .returning({ attemptNumber: tasks.attemptNumber });
+    const newAttempt = allocated.attemptNumber as number;
     const branch = `${project.branchPrefix}task-${task.id}/attempt-${newAttempt}`;
+
+    log.debug(
+      { runId, taskId: task.id, attempt: newAttempt, branch },
+      "[runs.launch] allocated attempt",
+    );
     const worktreeRoot = worktreesRoot();
     const worktreePath = path.join(worktreeRoot, project.slug, runId);
 
@@ -1092,11 +1133,15 @@ export async function* launchRunStaged(
           targetBranch: target,
           promotionMode,
         });
+        // ADR-119: attempt_number is allocated atomically up-front (sole writer);
+        // the main tx only flips the one-way status latch. For a concurrent
+        // relaunch the task is already InFlight, so this set is an idempotent
+        // no-op (no real status flip) while the run_launched activity below still
+        // fires per launch (each launch is a real creation event).
         await tx
           .update(tasks)
           .set({
             status: "InFlight",
-            attemptNumber: newAttempt,
             updatedAt: new Date(),
           })
           .where(eq(tasks.id, task.id));

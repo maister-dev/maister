@@ -376,7 +376,7 @@ anticipated.)
 
 ### Phase 2 — Atomic attempt-number allocation (TDD, real Postgres)
 
-- [ ] **T2.1 (RED) — Concurrency race test.** New integration test
+- [x] **T2.1 (RED) — Concurrency race test.** New integration test
   `web/app/api/runs/__tests__/relaunch-concurrency.integration.test.ts` (vitest
   **integration**, real PG): fire two `launchRunStaged` calls for the **same
   task** concurrently (both with `allowConcurrent:true`); assert both succeed,
@@ -385,7 +385,7 @@ anticipated.)
   CONFLICT. Confirm the file path matches the `integration` include glob via
   `vitest list`. *Files:* the new test file.
 
-- [ ] **T2.2 (GREEN) — Make allocation atomic.** In
+- [x] **T2.2 (GREEN) — Make allocation atomic.** In
   `web/lib/services/runs.ts`: replace the stale `newAttempt = task.attemptNumber
   + 1` (≈ line 822) with an atomic `UPDATE tasks SET attempt_number =
   attempt_number + 1 … RETURNING attempt_number` executed **before** branch

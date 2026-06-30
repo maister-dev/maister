@@ -129,7 +129,26 @@ const fakeDb: FakeDb = {
     },
   }),
   update: () => ({
-    set: () => ({ where: async () => undefined }),
+    // ADR-119: atomic attempt-number allocation uses `.returning()`; the status
+    // flip awaits `.where()`. Seeded attemptNumber 0 → allocated 1.
+    set: () => ({
+      where: () => {
+        const result = Promise.resolve(undefined) as Promise<undefined> & {
+          returning: () => Promise<Array<{ attemptNumber: number }>>;
+        };
+
+        result.returning = async () => [
+          {
+            attemptNumber:
+              ((state.selectResults[0]?.[0]?.attemptNumber as
+                | number
+                | undefined) ?? 0) + 1,
+          },
+        ];
+
+        return result;
+      },
+    }),
   }),
   transaction: async <T>(fn: (tx: FakeDb) => Promise<T>) => fn(fakeDb),
 };
