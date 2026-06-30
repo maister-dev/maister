@@ -1,6 +1,6 @@
 # Spec: Manual force-relaunch from the task runs-history view
 
-**Status:** Designed → being Implemented (per-requirement tags below)
+**Status:** Implemented (per-requirement tags below)
 **ADR:** [ADR-119](../../docs/decisions.md) — Manual force-relaunch (additive
 concurrent runs per task) + atomic attempt-number allocation
 **Plan:** `.ai-factory/plans/claude-suspicious-poitras-8ca625.md`

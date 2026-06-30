@@ -117,7 +117,9 @@ describe("POST /api/runs — branch-targeting body schema (M18)", () => {
 
 describe("POST /api/runs — ADR-119 allowConcurrent body flag", () => {
   it("parses allowConcurrent:true and forwards it to launchRun", async () => {
-    const res = await POST(request({ taskId: "task-1", allowConcurrent: true }));
+    const res = await POST(
+      request({ taskId: "task-1", allowConcurrent: true }),
+    );
 
     expect(res.status).toBe(202);
     expect(mocks.launchRun).toHaveBeenCalledTimes(1);

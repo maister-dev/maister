@@ -3253,6 +3253,7 @@
     "errorForbidden": "Нужны права участника проекта.",
     "errorGeneric": "Не получилось. Попробуйте ещё раз.",
     "runAgain": "Запустить снова",
+    "runAgainConcurrent": "Запустить ещё",
     "launchFirst": "Запустить",
     "runAgainUnavailable": "недоступно",
     "launchSupervisorUnavailable": "Супервизор недоступен. Запустите или восстановите daemon супервизора и повторите.",

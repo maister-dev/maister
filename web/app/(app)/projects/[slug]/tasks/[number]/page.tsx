@@ -581,11 +581,11 @@ export default async function TaskDetailPage({
               </span>
               {canAct ? (
                 <LaunchPopover
-                  disabledLabel={t("runAgainUnavailable")}
-                  disabledReason={forceLaunchDisabledReason}
                   forceRelaunch
                   hasRuns
-                  label={t("runAgain")}
+                  disabledLabel={t("runAgainUnavailable")}
+                  disabledReason={forceLaunchDisabledReason}
+                  label={t("runAgainConcurrent")}
                   taskId={detail.task.id}
                 />
               ) : null}

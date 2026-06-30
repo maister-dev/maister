@@ -469,7 +469,7 @@ anticipated.)
 
 ### Phase 5 — Fan-out audit + docs as-built + verify
 
-- [ ] **T5.1 — Concurrency fan-out audit.** Execute the §3.4 matrix: grep for
+- [x] **T5.1 — Concurrency fan-out audit.** Execute the §3.4 matrix: grep for
   per-task "single active run" assumptions (`getActive*`, non-terminal +
   `taskId` filters, `.limit(1)` that should aggregate, any `assert`/invariant on
   one active run). Confirm each consumer tolerates >1 live run, or fix it with a
@@ -482,13 +482,13 @@ anticipated.)
   pre-existing in kind, new in frequency — flag if it needs throttling). *Files:*
   as discovered (audit-driven).
 
-- [ ] **T5.2 — Docs as-built sync (`/aif-docs`).** Reconcile
+- [x] **T5.2 — Docs as-built sync (`/aif-docs`).** Reconcile
   `tasks.md`/`runs.md`/`web.openapi.yaml`/ADR-119 with the shipped code; update
   the `web/CLAUDE.md` slice only if a documented surface changed. Re-run the ADR
   anchor check (`scripts/validate-docs-adr-anchors.mjs`) since a green
   `pnpm validate:docs` does **not** resolve ADR anchors. *Files:* docs as needed.
 
-- [ ] **T5.3 — Full verification.** `pnpm --filter maister-web lint` (scoped /
+- [x] **T5.3 — Full verification.** `pnpm --filter maister-web lint` (scoped /
   check-only — do **not** run the repo-wide `--fix` that reformats ~60 files),
   full `test:unit` + `test:integration` green, and confirm acceptance criteria
   from T0.1 each map to a passing test. *Files:* none (gate).

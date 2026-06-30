@@ -160,7 +160,13 @@ describe("LaunchPopover — effectiveLaunchVerdict (force vs manual gate)", () =
   it("force mode falls back to launchability when relaunch is absent (back-compat)", () => {
     expect(
       effectiveLaunchVerdict(
-        { launchability: { launchable: true, reason: "launchable", blockers: [] } },
+        {
+          launchability: {
+            launchable: true,
+            reason: "launchable",
+            blockers: [],
+          },
+        },
         true,
       ),
     ).toEqual({ launchable: true, reason: "launchable", blockers: [] });

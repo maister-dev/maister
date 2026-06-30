@@ -8,7 +8,15 @@ import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { eq } from "drizzle-orm";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool } from "pg";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 import * as schemaModule from "@/lib/db/schema";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";

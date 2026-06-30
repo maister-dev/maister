@@ -161,10 +161,7 @@ export interface LaunchPopoverProps {
 export function effectiveLaunchVerdict<
   L extends LaunchVerdict,
   R extends LaunchVerdict,
->(
-  options: { launchability: L; relaunch?: R },
-  forceRelaunch: boolean,
-): L | R {
+>(options: { launchability: L; relaunch?: R }, forceRelaunch: boolean): L | R {
   if (forceRelaunch && options.relaunch) return options.relaunch;
 
   return options.launchability;
@@ -581,7 +578,10 @@ export function LaunchPopover({
 
   async function launch(): Promise<void> {
     if (!options) return;
-    if (!effectiveLaunchVerdict(options, forceRelaunch).launchable && !setUpReady)
+    if (
+      !effectiveLaunchVerdict(options, forceRelaunch).launchable &&
+      !setUpReady
+    )
       return;
 
     setBusy(true);

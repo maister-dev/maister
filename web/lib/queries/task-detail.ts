@@ -316,9 +316,7 @@ export async function getTaskDetail(
     })
     .from(runs)
     .leftJoin(runCostRollups, eq(runCostRollups.runId, runs.id))
-    .where(
-      and(eq(runs.taskId, taskId), eq(runs.runKind, "flow")),
-    )) as Array<{
+    .where(and(eq(runs.taskId, taskId), eq(runs.runKind, "flow")))) as Array<{
     runCount: string;
     inputTokens: string;
     outputTokens: string;
