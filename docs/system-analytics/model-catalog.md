@@ -73,7 +73,7 @@ curated, observed, or skipped.
 | --- | --- | --- | --- |
 | `gemini` | ACP probe when SDK smoke passes; Google provider API only for provider kinds with documented list APIs; passive `agent_observed` harvest | `unstable_setSessionModel` only if advertised, else advisory-only | `skipped` until auth and protocol smoke prove a source |
 | `opencode` | Native OpenCode ACP probe when binary/writable-state smoke passes; optional curated/native list only if OpenCode exposes stable output; passive `agent_observed` harvest | `unstable_setSessionModel` only if advertised, else advisory-only | `skipped` until stdio ACP smoke and model capability are proven |
-| `mimo` | Native MiMo ACP probe only after binary and stdio smoke pass; passive `agent_observed` harvest | `unstable_setSessionModel` only if advertised, else advisory-only | `skipped` until stdio ACP smoke and model capability are proven |
+| `mimo` | Native MiMo ACP probe only after binary and stdio smoke pass; passive `agent_observed` harvest | `set_session_model` — live ACP smoke proved `session/set_model` (Implemented); the adapter returns `models` + accepts `unstable_setSessionModel` | `skipped` until stdio ACP smoke and model capability are proven |
 
 Source statuses for the new adapters are part of the contract:
 

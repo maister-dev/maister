@@ -76,7 +76,7 @@ const ADAPTER_RUNTIMES = [
     defaultBinary: "mimo",
     defaultArgs: ["acp"],
     binaryOverrideEnv: "MAISTER_ADAPTER_BINARY_MIMO",
-    modelChannel: "advisory",
+    modelChannel: "set_session_model",
     resumeStrategy: "session_resume_pending_smoke",
   },
 ] as const satisfies readonly AdapterRuntime[];

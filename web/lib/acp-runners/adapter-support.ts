@@ -154,7 +154,7 @@ export const ADAPTER_SUPPORT = [
     permissionPolicies: ["default"],
     binaryId: "mimo",
     launchCommandHint: ["mimo", "acp"],
-    modelChannel: "advisory",
+    modelChannel: "set_session_model",
     resumeStrategy: "session_resume_pending_smoke",
     mcpTransports: ["stdio", "sse", "http"],
     fsPolicy: "none",

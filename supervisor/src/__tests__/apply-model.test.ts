@@ -254,7 +254,7 @@ describe("applyAndVerifyModel", () => {
     expect(events).toHaveLength(0);
   });
 
-  it("Gemini, OpenCode, and MiMo mismatches emit advisory without setSessionModel", async () => {
+  it("Gemini and OpenCode mismatches emit advisory without setSessionModel", async () => {
     const setModel = vi.fn();
     const emitter = new EventEmitter();
     const events = capture(emitter);
@@ -277,14 +277,9 @@ describe("applyAndVerifyModel", () => {
       runner: runnerFor("opencode", "opencode-default"),
       models: state("opencode-other"),
     });
-    await applyAndVerifyModel({
-      ...base,
-      runner: runnerFor("mimo", "mimo-native"),
-      models: state("mimo-other"),
-    });
 
     expect(setModel).not.toHaveBeenCalled();
-    expect(events).toHaveLength(3);
+    expect(events).toHaveLength(2);
     expect(
       events
         .filter((event) => event.type === "session.update")
@@ -292,7 +287,31 @@ describe("applyAndVerifyModel", () => {
     ).toEqual([
       expect.objectContaining({ channel: "advisory" }),
       expect.objectContaining({ channel: "advisory" }),
-      expect.objectContaining({ channel: "advisory" }),
     ]);
+  });
+
+  // MiMo's ACP adapter implements session/set_model (proven by live smoke), so
+  // it pins via setSessionModel exactly like codex — no advisory on mismatch.
+  it("MiMo mismatch → calls setSessionModel, emits NO advisory", async () => {
+    const setModel = vi.fn().mockResolvedValue({});
+    const emitter = new EventEmitter();
+    const events = capture(emitter);
+
+    await applyAndVerifyModel({
+      connection: fakeConnection(setModel),
+      runner: runnerFor("mimo", "xiaomi/mimo-v2.5-pro"),
+      models: state("xiaomi/mimo-v2.5-pro-ultraspeed"),
+      acpSessionId: "acp-1",
+      sessionId: "s",
+      record: makeRecord(),
+      emitter,
+      logger: silent,
+    });
+
+    expect(setModel).toHaveBeenCalledWith({
+      sessionId: "acp-1",
+      modelId: "xiaomi/mimo-v2.5-pro",
+    });
+    expect(events).toHaveLength(0);
   });
 });
