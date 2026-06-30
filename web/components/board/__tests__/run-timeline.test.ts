@@ -35,6 +35,8 @@ const zeroTokens = {
   total: 0,
 };
 
+const ruGroupedNumber = /1[\u00A0\u202F ]521[\u00A0\u202F ]449/;
+
 function staleEntry(): TimelineEntry {
   return {
     nodeAttemptId: "na-stale",
@@ -119,12 +121,13 @@ function handoffEntry(): TimelineEntry {
   };
 }
 
-function render(entries: TimelineEntry[]): string {
+function render(entries: TimelineEntry[], locale = "en-US"): string {
   return renderToStaticMarkup(
     createElement(RunTimeline, {
       assignmentEvents: [],
       entries,
       labels,
+      locale,
     }),
   );
 }
@@ -161,6 +164,27 @@ describe("RunTimeline component", () => {
     expect(html).toContain("No attempts yet.");
   });
 
+  it("formats token totals with the selected locale", () => {
+    const html = render(
+      [
+        {
+          ...freshEntry(),
+          tokens: {
+            input: 1_000_000,
+            output: 500_000,
+            cacheRead: 20_000,
+            cacheCreation: 1_449,
+            total: 1_521_449,
+          },
+        },
+      ],
+      "ru-RU",
+    );
+
+    expect(html).not.toContain(">1521449<");
+    expect(html).toMatch(ruGroupedNumber);
+  });
+
   it("renders assignment ledger history when no node attempt is present", () => {
     const html = renderToStaticMarkup(
       createElement(RunTimeline, {
@@ -182,6 +206,7 @@ describe("RunTimeline component", () => {
         ],
         entries: [],
         labels,
+        locale: "en-US",
       }),
     );
 

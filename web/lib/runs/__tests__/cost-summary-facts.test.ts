@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
-
 import type { RunCostSummary } from "@/lib/queries/run";
+
+import { describe, expect, it } from "vitest";
 
 import {
   buildCostSummaryFacts,
@@ -28,7 +28,7 @@ describe("buildCostSummaryFacts", () => {
       byModel: {},
     };
 
-    expect(buildCostSummaryFacts(summary, labels)).toEqual([
+    expect(buildCostSummaryFacts(summary, labels, "en-US")).toEqual([
       {
         label: "Token total",
         value: "19,380",
@@ -67,7 +67,7 @@ describe("buildCostSummaryFacts", () => {
       byModel: {},
     };
 
-    expect(buildCostSummaryFacts(summary, labels)).toEqual([
+    expect(buildCostSummaryFacts(summary, labels, "en-US")).toEqual([
       {
         label: "Token total",
         value: "0",
@@ -89,5 +89,21 @@ describe("buildCostSummaryFacts", () => {
         value: "0",
       },
     ]);
+  });
+
+  it("formats token values with the selected locale", () => {
+    const summary: RunCostSummary = {
+      inputTokens: 1_521_449,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      resumeTokens: 0,
+      totalTokens: 1_521_449,
+      byModel: {},
+    };
+    const facts = buildCostSummaryFacts(summary, labels, "ru-RU");
+
+    expect(facts[0]?.value).toMatch(/1[\u00A0\u202F ]521[\u00A0\u202F ]449/);
+    expect(facts[0]?.value).not.toBe("1521449");
   });
 });

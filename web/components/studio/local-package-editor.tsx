@@ -26,7 +26,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SparklesIcon } from "@heroicons/react/24/outline";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 
 import { FlowEditorTabs } from "@/components/flows/flow-editor-tabs";
 import { PackageFilesEditor } from "@/components/flows/package-files-editor";
@@ -140,6 +140,10 @@ function releaseEditorLock(packageId: string, sessionId: string): void {
   });
 }
 
+function formatUsageCount(locale: string, value: number): string {
+  return new Intl.NumberFormat(locale).format(value);
+}
+
 type SaveStatus =
   | { kind: "idle" }
   | { kind: "saving" }
@@ -216,6 +220,7 @@ export function LocalPackageEditor({
   fileKindLabels: Record<AuthoredFlowPackageFileKind, string>;
   mcpCatalog: PlatformMcpCatalogEntry[];
 }): ReactElement {
+  const locale = useLocale();
   const router = useRouter();
   const tApiErrors = useTranslations("apiErrors");
   const tStudio = useTranslations("studio");
@@ -1046,8 +1051,8 @@ export function LocalPackageEditor({
                         />
                       </span>
                       <span>
-                        {aiHeader.usage.used.toLocaleString()} /{" "}
-                        {aiHeader.usage.size.toLocaleString()}
+                        {formatUsageCount(locale, aiHeader.usage.used)} /{" "}
+                        {formatUsageCount(locale, aiHeader.usage.size)}
                       </span>
                     </span>
                   ) : null}

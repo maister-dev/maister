@@ -1,8 +1,8 @@
 import type { ReactElement } from "react";
 import type { CostBreakdownCardProps } from "@/components/observatory/types";
 
-function formatTokens(value: number): string {
-  return new Intl.NumberFormat("en-US").format(value);
+function formatTokens(locale: string, value: number): string {
+  return new Intl.NumberFormat(locale).format(value);
 }
 
 // ADR-117: a read-only cost breakdown table (by model or by runner). Rows are
@@ -12,6 +12,7 @@ export function CostBreakdownCard({
   title,
   keyHeader,
   labels,
+  locale,
   testId,
 }: CostBreakdownCardProps): ReactElement {
   const cost = labels.costBreakdown;
@@ -59,19 +60,20 @@ export function CostBreakdownCard({
                     {dimensionRow.label}
                   </td>
                   <td className="py-2 pr-3 text-right font-mono text-xs text-body">
-                    {formatTokens(dimensionRow.inputTokens)}
+                    {formatTokens(locale, dimensionRow.inputTokens)}
                   </td>
                   <td className="py-2 pr-3 text-right font-mono text-xs text-body">
-                    {formatTokens(dimensionRow.outputTokens)}
+                    {formatTokens(locale, dimensionRow.outputTokens)}
                   </td>
                   <td className="py-2 pr-3 text-right font-mono text-xs text-body">
                     {formatTokens(
+                      locale,
                       dimensionRow.cacheReadTokens +
                         dimensionRow.cacheCreationTokens,
                     )}
                   </td>
                   <td className="py-2 text-right font-mono text-xs font-semibold text-ink">
-                    {formatTokens(dimensionRow.totalTokens)}
+                    {formatTokens(locale, dimensionRow.totalTokens)}
                   </td>
                 </tr>
               ))

@@ -168,6 +168,7 @@ export interface ControlEffectivenessCardProps {
 export interface BudgetSurfaceCardProps {
   budget: ObservatoryBudgetSummary;
   labels: ObservatoryLabels;
+  locale: string;
 }
 
 export interface CostBreakdownCardProps {
@@ -175,5 +176,6 @@ export interface CostBreakdownCardProps {
   title: string;
   keyHeader: string;
   labels: ObservatoryLabels;
+  locale: string;
   testId?: string;
 }

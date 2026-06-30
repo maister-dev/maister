@@ -82,6 +82,7 @@ export interface RunTimelineProps {
   entries: TimelineEntry[];
   assignmentEvents: TimelineAssignmentEventView[];
   labels: TimelineLabels;
+  locale: string;
 }
 
 function ownerLabel(h: TimelineHandoffView): string {
@@ -100,8 +101,8 @@ function formatDuration(durationMs: number | null): string {
   return `${Math.round(minutes / 60)}h`;
 }
 
-function formatTokens(tokens: number): string {
-  return new Intl.NumberFormat("en-US").format(tokens);
+function formatTokens(locale: string, tokens: number): string {
+  return new Intl.NumberFormat(locale).format(tokens);
 }
 
 function GateRow({
@@ -202,9 +203,11 @@ function HandoffBlock({
 function EntryCard({
   entry,
   labels,
+  locale,
 }: {
   entry: TimelineEntry;
   labels: TimelineLabels;
+  locale: string;
 }): ReactElement {
   const isStale = entry.status === "Stale";
 
@@ -236,7 +239,7 @@ function EntryCard({
             {labels.duration}: {formatDuration(entry.durationMs)}
           </span>
           <span className="rounded-full border border-line bg-ivory px-2 py-[2px] font-semibold tracking-[0.04em] text-mute">
-            {labels.tokenTotal}: {formatTokens(entry.tokens.total)}
+            {labels.tokenTotal}: {formatTokens(locale, entry.tokens.total)}
           </span>
           {entry.decision ? (
             <span className="rounded-full border border-amber-line bg-amber-soft px-2 py-[2px] font-bold uppercase tracking-[0.06em] text-amber">
@@ -332,6 +335,7 @@ export function RunTimeline({
   assignmentEvents,
   entries,
   labels,
+  locale,
 }: RunTimelineProps): ReactElement {
   const hasEntries = entries.length > 0;
   const hasAssignmentEvents = assignmentEvents.length > 0;
@@ -353,6 +357,7 @@ export function RunTimeline({
               key={entry.nodeAttemptId}
               entry={entry}
               labels={labels}
+              locale={locale}
             />
           ))}
         </ol>

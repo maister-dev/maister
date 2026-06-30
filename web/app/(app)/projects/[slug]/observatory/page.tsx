@@ -1,6 +1,6 @@
 import type { ReactElement } from "react";
 
-import { getTranslations } from "next-intl/server";
+import { getLocale, getTranslations } from "next-intl/server";
 import { notFound } from "next/navigation";
 
 import { ProjectTabs } from "@/components/board/project-tabs";
@@ -52,7 +52,10 @@ export default async function ProjectObservatoryPage({
 
   if (role === null) notFound();
 
-  const t = await getTranslations("observatory");
+  const [t, locale] = await Promise.all([
+    getTranslations("observatory"),
+    getLocale(),
+  ]);
   const labels = labelsFromTranslations(t);
   const displayRepoPath = formatProjectRepoPath(project.repoPath, reposRoot());
   const { filters, current } = parseObservatorySearchParams(await searchParams);
@@ -102,6 +105,7 @@ export default async function ProjectObservatoryPage({
           <CostBreakdownCard
             keyHeader={labels.costBreakdown.modelHeader}
             labels={labels}
+            locale={locale}
             rows={observatory.cost.byModel}
             testId="observatory-cost-by-model"
             title={labels.costBreakdown.byModelTitle}
@@ -109,6 +113,7 @@ export default async function ProjectObservatoryPage({
           <CostBreakdownCard
             keyHeader={labels.costBreakdown.runnerHeader}
             labels={labels}
+            locale={locale}
             rows={observatory.cost.byRunner}
             testId="observatory-cost-by-runner"
             title={labels.costBreakdown.byRunnerTitle}

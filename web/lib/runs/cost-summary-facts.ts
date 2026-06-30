@@ -14,36 +14,35 @@ export interface CostSummaryFactLabels {
   resumeTax: string;
 }
 
-const tokenFormatter = new Intl.NumberFormat("en-US");
-
-export function formatTokenCount(value: number): string {
-  return tokenFormatter.format(value);
+export function formatTokenCount(locale: string, value: number): string {
+  return new Intl.NumberFormat(locale).format(value);
 }
 
 export function buildCostSummaryFacts(
   summary: RunCostSummary,
   labels: CostSummaryFactLabels,
+  locale: string,
 ): CostSummaryFact[] {
   const baseFacts: CostSummaryFact[] = [
     {
       label: labels.tokenTotal,
-      value: formatTokenCount(summary.totalTokens),
+      value: formatTokenCount(locale, summary.totalTokens),
     },
     {
       label: labels.inputTokens,
-      value: formatTokenCount(summary.inputTokens),
+      value: formatTokenCount(locale, summary.inputTokens),
     },
     {
       label: labels.outputTokens,
-      value: formatTokenCount(summary.outputTokens),
+      value: formatTokenCount(locale, summary.outputTokens),
     },
     {
       label: labels.cacheReadTokens,
-      value: formatTokenCount(summary.cacheReadTokens),
+      value: formatTokenCount(locale, summary.cacheReadTokens),
     },
     {
       label: labels.cacheCreationTokens,
-      value: formatTokenCount(summary.cacheCreationTokens),
+      value: formatTokenCount(locale, summary.cacheCreationTokens),
     },
   ];
 
@@ -53,7 +52,7 @@ export function buildCostSummaryFacts(
     ...baseFacts,
     {
       label: labels.resumeTax,
-      value: formatTokenCount(summary.resumeTokens),
+      value: formatTokenCount(locale, summary.resumeTokens),
     },
   ];
 }

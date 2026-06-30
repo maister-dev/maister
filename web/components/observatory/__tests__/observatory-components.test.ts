@@ -500,6 +500,7 @@ describe("Observatory components", () => {
           hookTripEscalations: 7,
         },
         labels,
+        locale: "en-US",
       }),
     );
 
@@ -526,6 +527,7 @@ describe("Observatory components", () => {
           hookTripEscalations: 4,
         },
         labels: ruLabels,
+        locale: "ru-RU",
       }),
     );
 
@@ -554,6 +556,7 @@ describe("CostBreakdownCard", () => {
         title: "By runner",
         keyHeader: "Runner",
         labels,
+        locale: "en-US",
         testId: "observatory-cost-by-runner",
       }),
     );
@@ -575,6 +578,7 @@ describe("CostBreakdownCard", () => {
         title: "By model",
         keyHeader: "Model",
         labels,
+        locale: "en-US",
         testId: "observatory-cost-by-model",
       }),
     );
@@ -590,6 +594,7 @@ describe("CostBreakdownCard", () => {
         title: ruLabels.costBreakdown.byRunnerTitle,
         keyHeader: ruLabels.costBreakdown.runnerHeader,
         labels: ruLabels,
+        locale: "ru-RU",
         testId: "observatory-cost-by-runner",
       }),
     );

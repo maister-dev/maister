@@ -115,19 +115,22 @@ export function NodeTranscriptPanel({
   }, [eventCount, open, live, load]);
 
   return (
-    <section className="mt-3" data-testid="node-transcript-panel">
+    <section
+      className="mt-3 min-w-0 max-w-full"
+      data-testid="node-transcript-panel"
+    >
       <button
         aria-expanded={open}
-        className="flex w-full items-center justify-between rounded-[7px] border border-line bg-ivory px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-mute hover:text-amber"
+        className="flex w-full min-w-0 items-center justify-between gap-2 rounded-[7px] border border-line bg-ivory px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-mute hover:text-amber"
         type="button"
         onClick={() => setOpen((o) => !o)}
       >
-        <span>{labels.title}</span>
+        <span className="min-w-0 truncate">{labels.title}</span>
         <span aria-hidden="true">{open ? "−" : "+"}</span>
       </button>
       {open ? (
         messages && messages.length > 0 ? (
-          <div className="mt-2">
+          <div className="mt-2 min-w-0 max-w-full overflow-hidden">
             <TranscriptView
               labels={buildTranscriptLabels(labels)}
               messages={messages}

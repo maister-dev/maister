@@ -1,6 +1,6 @@
 import type { ReactElement } from "react";
 
-import { getTranslations } from "next-intl/server";
+import { getLocale, getTranslations } from "next-intl/server";
 
 import { BudgetSurfaceCard } from "@/components/observatory/budget-surface-card";
 import { ControlEffectivenessCard } from "@/components/observatory/control-effectiveness-card";
@@ -24,15 +24,18 @@ interface PageProps {
   }>;
 }
 
-function formatTokens(value: number): string {
-  return new Intl.NumberFormat("en-US").format(value);
+function formatTokens(locale: string, value: number): string {
+  return new Intl.NumberFormat(locale).format(value);
 }
 
 export default async function ObservatoryPage({
   searchParams,
 }: PageProps): Promise<ReactElement> {
   const user = await requireSession();
-  const t = await getTranslations("observatory");
+  const [t, locale] = await Promise.all([
+    getTranslations("observatory"),
+    getLocale(),
+  ]);
   const { filters, current } = parseObservatorySearchParams(await searchParams);
   const data = await getPortfolioObservatory(user.id, user.role, filters);
   const labels = labelsFromTranslations(t);
@@ -86,15 +89,22 @@ export default async function ObservatoryPage({
         </div>
         <div className="grid gap-px overflow-hidden rounded-lg border border-line bg-line sm:grid-cols-4">
           {[
-            [t("cost.inputTokens"), formatTokens(data.cost.inputTokens)],
-            [t("cost.outputTokens"), formatTokens(data.cost.outputTokens)],
+            [
+              t("cost.inputTokens"),
+              formatTokens(locale, data.cost.inputTokens),
+            ],
+            [
+              t("cost.outputTokens"),
+              formatTokens(locale, data.cost.outputTokens),
+            ],
             [
               t("cost.cacheTokens"),
               formatTokens(
+                locale,
                 data.cost.cacheReadTokens + data.cost.cacheCreationTokens,
               ),
             ],
-            [t("cost.resumeTax"), formatTokens(data.cost.resumeTokens)],
+            [t("cost.resumeTax"), formatTokens(locale, data.cost.resumeTokens)],
           ].map(([label, value]) => (
             <div key={label} className="bg-ivory px-3 py-2">
               <div className="font-mono text-[9.5px] font-bold uppercase tracking-[0.08em] text-mute">
@@ -121,6 +131,7 @@ export default async function ObservatoryPage({
           <CostBreakdownCard
             keyHeader={labels.costBreakdown.modelHeader}
             labels={labels}
+            locale={locale}
             rows={data.cost.byModel}
             testId="observatory-cost-by-model"
             title={labels.costBreakdown.byModelTitle}
@@ -128,12 +139,17 @@ export default async function ObservatoryPage({
           <CostBreakdownCard
             keyHeader={labels.costBreakdown.runnerHeader}
             labels={labels}
+            locale={locale}
             rows={data.cost.byRunner}
             testId="observatory-cost-by-runner"
             title={labels.costBreakdown.byRunnerTitle}
           />
         </div>
-        <BudgetSurfaceCard budget={data.budget} labels={labels} />
+        <BudgetSurfaceCard
+          budget={data.budget}
+          labels={labels}
+          locale={locale}
+        />
       </section>
       <section className="mt-6">
         <header className="mb-3">

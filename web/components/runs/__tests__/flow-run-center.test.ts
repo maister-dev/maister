@@ -235,11 +235,17 @@ function input(
   };
 }
 
-function render(over: Partial<BuildFlowRunResultDtoInput> = {}): string {
+const ruGroupedNumber = /1[\u00A0\u202F ]521[\u00A0\u202F ]449/;
+
+function render(
+  over: Partial<BuildFlowRunResultDtoInput> = {},
+  locale = "en-US",
+): string {
   return renderToStaticMarkup(
     createElement(FlowRunCenter, {
       result: buildFlowRunResultDto(input(over)),
       labels: LABELS,
+      locale,
       graphView: createElement(
         "div",
         { "data-testid": "graph-child" },
@@ -281,6 +287,33 @@ describe("FlowRunCenter", () => {
     expect(html).toContain("Agent activity");
   });
 
+  it("formats selected-node token totals with the selected locale", () => {
+    query = new URLSearchParams("node=implement");
+    const html = render(
+      {
+        timeline: {
+          assignmentEvents: [],
+          entries: [
+            entry({
+              nodeId: "implement",
+              tokens: {
+                input: 1_000_000,
+                output: 500_000,
+                cacheRead: 20_000,
+                cacheCreation: 1_449,
+                total: 1_521_449,
+              },
+            }),
+          ],
+        },
+      },
+      "ru-RU",
+    );
+
+    expect(html).not.toContain(">1521449<");
+    expect(html).toMatch(ruGroupedNumber);
+  });
+
   it("renders the per-attempt resolved prompt disclosure for the selected node", () => {
     query = new URLSearchParams();
     const html = render({
@@ -299,6 +332,31 @@ describe("FlowRunCenter", () => {
     expect(html).toContain('data-testid="flow-run-attempt-prompt"');
     expect(html).toContain("Run the failing test, then fix it.");
     expect(html).toContain("Prompt");
+  });
+
+  it("keeps the selected-node column shrink-safe for long agent event payloads", () => {
+    query = new URLSearchParams("node=implement");
+    const longEvent = `Bash ${"git-diff-".repeat(80)}`;
+    const html = render({
+      timeline: {
+        entries: [
+          entry({
+            nodeId: "implement",
+            resolvedPrompt: longEvent,
+          }),
+        ],
+        assignmentEvents: [],
+      },
+    });
+
+    expect(html).toContain("lg:grid-cols-[minmax(180px,240px)_minmax(0,1fr)]");
+    expect(html).toContain(
+      'class="min-w-0 max-w-full overflow-hidden rounded-[10px] border border-line bg-paper p-4" data-testid="flow-run-selected-node"',
+    );
+    expect(html).toContain(
+      'class="mt-3 min-w-0 max-w-full" data-testid="node-transcript-panel"',
+    );
+    expect(html).toContain(longEvent);
   });
 
   it("omits the prompt disclosure when no resolved prompt was captured", () => {

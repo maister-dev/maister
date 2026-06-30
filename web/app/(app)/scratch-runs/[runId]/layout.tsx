@@ -1,6 +1,6 @@
 import type { ReactElement, ReactNode } from "react";
 
-import { getTranslations } from "next-intl/server";
+import { getLocale, getTranslations } from "next-intl/server";
 import { notFound, redirect } from "next/navigation";
 
 import { LiveRunInspector } from "@/components/runs/live-run-inspector";
@@ -86,8 +86,11 @@ export default async function ScratchRunDetailLayout({
   // Hide existence from non-members (mirrors the run detail page).
   if (!role) notFound();
 
-  const t = await getTranslations("run");
-  const tWorkbench = await getTranslations("workbench");
+  const [t, tWorkbench, locale] = await Promise.all([
+    getTranslations("run"),
+    getTranslations("workbench"),
+    getLocale(),
+  ]);
   const costSummary = await getRunCostSummary(detail.runId);
 
   let changeSummary: RunInspectorChangeSummary | null = null;
@@ -182,7 +185,7 @@ export default async function ScratchRunDetailLayout({
     cacheCreationTokens: t("cacheCreationTokens"),
     resumeTax: t("resumeTax"),
   };
-  const costFacts = buildCostSummaryFacts(costSummary, costLabels);
+  const costFacts = buildCostSummaryFacts(costSummary, costLabels, locale);
   const wallClockLabel = t("wallClock");
 
   // Scratch base/target are authoritative on scratch_runs; the workspace row's
@@ -233,7 +236,7 @@ export default async function ScratchRunDetailLayout({
             facts={inspectorFacts}
             flowSummary={sessionSummary}
             labels={inspectorLabels}
-            liveCost={{ initial: costSummary, labels: costLabels }}
+            liveCost={{ initial: costSummary, labels: costLabels, locale }}
             liveWallClock={{
               startedAtMs: detail.startedAt.getTime(),
               endedAtMs: detail.endedAt ? detail.endedAt.getTime() : null,

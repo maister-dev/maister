@@ -11,7 +11,7 @@ import type { RunningLiveCommand } from "@/lib/capabilities/running-catalog";
 import type { ReactElement } from "react";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import clsx from "clsx";
 
 import {
@@ -65,6 +65,10 @@ function statusClass(status: ScratchDialogStatus): string {
   }
 }
 
+function formatUsageCount(locale: string, value: number): string {
+  return new Intl.NumberFormat(locale).format(value);
+}
+
 // The live conversation center for a scratch run (M35 T3.2/T3.4): owns the
 // SSE-triggered detail refresh and the send / recover / HITL handlers, and
 // composes the transcript, permission panel, and composer. The former sidebar
@@ -101,6 +105,7 @@ export function ScratchConversation({
   onMessageSettled?: () => void;
   onHeaderInfo?: (info: ScratchHeaderInfo) => void;
 }): ReactElement {
+  const locale = useLocale();
   const t = useTranslations("scratch");
   const [detail, setDetail] = useState<ScratchDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -531,8 +536,8 @@ export function ScratchConversation({
                 />
               </span>
               <span>
-                {latestUsage.used.toLocaleString()} /{" "}
-                {latestUsage.size.toLocaleString()}
+                {formatUsageCount(locale, latestUsage.used)} /{" "}
+                {formatUsageCount(locale, latestUsage.size)}
               </span>
             </div>
           ) : null}

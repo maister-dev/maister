@@ -7,13 +7,14 @@ import {
   ShieldExclamationIcon,
 } from "@heroicons/react/24/outline";
 
-function formatCount(value: number): string {
-  return new Intl.NumberFormat("en-US").format(value);
+function formatCount(locale: string, value: number): string {
+  return new Intl.NumberFormat(locale).format(value);
 }
 
 export function BudgetSurfaceCard({
   budget,
   labels,
+  locale,
 }: BudgetSurfaceCardProps): ReactElement {
   const budgetLabels = labels.budget;
 
@@ -46,7 +47,7 @@ export function BudgetSurfaceCard({
               {budgetLabels.escalations}
             </div>
             <div className="mt-1 font-mono text-[20px] font-semibold leading-none text-ink">
-              {formatCount(budget.budgetEscalations)}
+              {formatCount(locale, budget.budgetEscalations)}
             </div>
           </div>
         </div>
@@ -60,7 +61,7 @@ export function BudgetSurfaceCard({
               {budgetLabels.terminations}
             </div>
             <div className="mt-1 font-mono text-[20px] font-semibold leading-none text-ink">
-              {formatCount(budget.budgetTerminations)}
+              {formatCount(locale, budget.budgetTerminations)}
             </div>
           </div>
         </div>
@@ -77,7 +78,7 @@ export function BudgetSurfaceCard({
               className="mt-1 font-mono text-[20px] font-semibold leading-none text-ink"
               data-testid="observatory-hook-trips"
             >
-              {formatCount(budget.hookTripEscalations)}
+              {formatCount(locale, budget.hookTripEscalations)}
             </div>
           </div>
         </div>

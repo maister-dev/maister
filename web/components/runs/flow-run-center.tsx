@@ -91,6 +91,10 @@ function tokenTotal(result: FlowRunResultDto, node: FlowRunNodeDto): number {
     .reduce((sum, entry) => sum + entry.tokens.total, 0);
 }
 
+function formatTokenCount(locale: string, value: number): string {
+  return new Intl.NumberFormat(locale).format(value);
+}
+
 function hasNodeResultDetails(result: FlowNodeResultDto): boolean {
   return (
     result.flags.failed ||
@@ -115,7 +119,7 @@ function ResultSection({
 }): ReactElement {
   return (
     <section
-      className="rounded-[9px] border border-line bg-ivory p-3"
+      className="min-w-0 max-w-full overflow-hidden rounded-[9px] border border-line bg-ivory p-3"
       data-testid={testId}
     >
       <h4 className="m-0 mb-2 font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-mute">
@@ -127,7 +131,7 @@ function ResultSection({
 }
 
 function CompactRows({ children }: { children: ReactNode }): ReactElement {
-  return <div className="grid gap-1.5">{children}</div>;
+  return <div className="grid min-w-0 max-w-full gap-1.5">{children}</div>;
 }
 
 function CompactRow({
@@ -142,14 +146,14 @@ function CompactRow({
   return (
     <div
       className={clsx(
-        "grid gap-1 rounded-[7px] border px-2.5 py-2 font-mono text-[11px] sm:grid-cols-[minmax(0,1fr)_auto]",
+        "grid min-w-0 max-w-full gap-1 rounded-[7px] border px-2.5 py-2 font-mono text-[11px] sm:grid-cols-[minmax(0,1fr)_minmax(0,14rem)]",
         tone === "danger"
           ? "border-red-200 bg-red-50 text-red-900"
           : "border-line bg-paper text-ink",
       )}
     >
       <span className="min-w-0 truncate font-semibold">{title}</span>
-      <span className="text-mute">{meta}</span>
+      <span className="min-w-0 truncate text-mute sm:text-right">{meta}</span>
     </div>
   );
 }
@@ -188,12 +192,12 @@ function AttemptPrompt({
 }): ReactElement {
   return (
     <details
-      className="group rounded-[7px] border border-line bg-paper"
+      className="group min-w-0 max-w-full overflow-hidden rounded-[7px] border border-line bg-paper"
       data-testid="flow-run-attempt-prompt"
     >
-      <summary className="flex cursor-pointer select-none items-center gap-1 px-2.5 py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-mute hover:text-ink">
+      <summary className="flex min-w-0 cursor-pointer select-none items-center gap-1 px-2.5 py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-mute hover:text-ink">
         <span className="transition-transform group-open:rotate-90">›</span>
-        {labels.prompt}
+        <span className="min-w-0 truncate">{labels.prompt}</span>
       </summary>
       <div className="border-t border-line">
         <div className="flex justify-end px-2 pt-1.5">
@@ -216,9 +220,11 @@ function AttemptPrompt({
 function AttemptRows({
   attempts,
   labels,
+  locale,
 }: {
   attempts: FlowNodeAttemptResult[];
   labels: FlowRunCenterLabels;
+  locale: string;
 }): ReactElement | null {
   if (attempts.length === 0) return null;
 
@@ -231,7 +237,7 @@ function AttemptRows({
             className="grid gap-1"
           >
             <CompactRow
-              meta={`${attempt.status} | ${attempt.tokenTotal} ${labels.tokens}`}
+              meta={`${attempt.status} | ${formatTokenCount(locale, attempt.tokenTotal)} ${labels.tokens}`}
               title={`${labels.attempt} ${attempt.attempt}`}
             />
             {attempt.resolvedPrompt ? (
@@ -356,16 +362,21 @@ function ReadinessPanel({
 function NodeResultDetails({
   result,
   labels,
+  locale,
 }: {
   result: FlowNodeResultDto;
   labels: FlowRunCenterLabels;
+  locale: string;
 }): ReactElement | null {
   if (!hasNodeResultDetails(result)) return null;
 
   return (
-    <div className="mt-3 grid gap-2" data-testid="flow-run-node-result">
+    <div
+      className="mt-3 grid min-w-0 max-w-full gap-2"
+      data-testid="flow-run-node-result"
+    >
       <FlagBadges labels={labels} result={result} />
-      <AttemptRows attempts={result.attempts} labels={labels} />
+      <AttemptRows attempts={result.attempts} labels={labels} locale={locale} />
       <GateRows gates={result.gates} labels={labels} />
       <ArtifactRows artifacts={result.artifacts} labels={labels} />
       <HitlPanel hitl={result.hitl} labels={labels} />
@@ -378,10 +389,12 @@ function NodeResultDetails({
 export function FlowRunCenter({
   result,
   labels,
+  locale,
   graphView,
 }: {
   result: FlowRunResultDto;
   labels: FlowRunCenterLabels;
+  locale: string;
   graphView?: ReactNode;
 }): ReactElement {
   const pathname = usePathname();
@@ -404,8 +417,11 @@ export function FlowRunCenter({
   }
 
   return (
-    <section className="grid gap-4" data-testid="flow-run-center">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+    <section
+      className="grid min-w-0 max-w-full gap-4"
+      data-testid="flow-run-center"
+    >
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
         <h2 className="m-0 font-sans text-[18px] font-bold tracking-[-0.01em] text-ink">
           {labels.title}
         </h2>
@@ -431,28 +447,28 @@ export function FlowRunCenter({
 
       {graphView ? (
         <div
-          className="overflow-hidden rounded-[10px] border border-line bg-ivory"
+          className="min-w-0 max-w-full overflow-hidden rounded-[10px] border border-line bg-ivory"
           data-testid="flow-run-graph-view"
         >
           {graphView}
         </div>
       ) : null}
 
-      <div className="grid gap-3 lg:grid-cols-[minmax(180px,240px)_1fr]">
+      <div className="grid min-w-0 max-w-full gap-3 lg:grid-cols-[minmax(180px,240px)_minmax(0,1fr)]">
         <nav
           aria-label={labels.nodes}
-          className="rounded-[10px] border border-line bg-paper p-2"
+          className="min-w-0 max-w-full overflow-hidden rounded-[10px] border border-line bg-paper p-2"
         >
           <div className="mb-2 px-1 font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-mute">
             {labels.nodes}
           </div>
-          <ul className="m-0 flex list-none flex-col gap-1 p-0">
+          <ul className="m-0 flex min-w-0 list-none flex-col gap-1 p-0">
             {result.graph.nodes.map((node) => (
               <li key={node.id}>
                 <Link
                   aria-current={selected?.id === node.id ? "step" : undefined}
                   className={clsx(
-                    "flex w-full items-center justify-between gap-2 rounded-[7px] px-2 py-1.5 font-mono text-[11px]",
+                    "flex w-full min-w-0 items-center justify-between gap-2 rounded-[7px] px-2 py-1.5 font-mono text-[11px]",
                     selected?.id === node.id
                       ? "bg-ivory text-ink"
                       : "text-ink-2 hover:bg-ivory",
@@ -475,17 +491,17 @@ export function FlowRunCenter({
         </nav>
 
         <div
-          className="rounded-[10px] border border-line bg-paper p-4"
+          className="min-w-0 max-w-full overflow-hidden rounded-[10px] border border-line bg-paper p-4"
           data-testid="flow-run-selected-node"
         >
           {selected ? (
             <>
               <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
-                <div>
+                <div className="min-w-0">
                   <div className="font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-mute">
                     {labels.selectedNode}
                   </div>
-                  <h3 className="m-0 mt-1 font-sans text-[16px] font-bold tracking-[-0.01em] text-ink">
+                  <h3 className="m-0 mt-1 break-words font-sans text-[16px] font-bold tracking-[-0.01em] text-ink [overflow-wrap:anywhere]">
                     {selected.displayLabel}
                   </h3>
                 </div>
@@ -496,7 +512,7 @@ export function FlowRunCenter({
                 ) : null}
               </div>
 
-              <dl className="grid gap-px overflow-hidden rounded-lg border border-line bg-line sm:grid-cols-4">
+              <dl className="grid min-w-0 max-w-full gap-px overflow-hidden rounded-lg border border-line bg-line sm:grid-cols-4">
                 {(
                   [
                     [
@@ -520,14 +536,17 @@ export function FlowRunCenter({
                     ],
                     [labels.attempt, String(selected.attempt)],
                     [labels.gates, String(gateCount(selected))],
-                    [labels.tokens, String(tokenTotal(result, selected))],
+                    [
+                      labels.tokens,
+                      formatTokenCount(locale, tokenTotal(result, selected)),
+                    ],
                   ] as Array<[string, ReactNode]>
                 ).map(([label, value]) => (
-                  <div key={label} className="bg-ivory px-3 py-2">
+                  <div key={label} className="min-w-0 bg-ivory px-3 py-2">
                     <dt className="font-mono text-[9.5px] font-bold uppercase tracking-[0.08em] text-mute">
                       {label}
                     </dt>
-                    <dd className="m-0 mt-1 break-words font-mono text-[12px] font-semibold text-ink">
+                    <dd className="m-0 mt-1 min-w-0 break-words font-mono text-[12px] font-semibold text-ink">
                       {value}
                     </dd>
                   </div>
@@ -546,7 +565,11 @@ export function FlowRunCenter({
               />
 
               {selectedResult ? (
-                <NodeResultDetails labels={labels} result={selectedResult} />
+                <NodeResultDetails
+                  labels={labels}
+                  locale={locale}
+                  result={selectedResult}
+                />
               ) : null}
             </>
           ) : (

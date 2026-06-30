@@ -27,6 +27,7 @@ import { useRunStream } from "@/lib/use-run-stream";
 export interface LiveCostConfig {
   initial: RunCostSummary;
   labels: CostSummaryFactLabels;
+  locale: string;
 }
 
 // Live wall-clock config: the `label` fact's value ticks client-side while the
@@ -144,7 +145,11 @@ export function LiveRunInspector({
     const overrides = new Map<string, string>();
 
     if (liveCost && cost) {
-      for (const fact of buildCostSummaryFacts(cost, liveCost.labels)) {
+      for (const fact of buildCostSummaryFacts(
+        cost,
+        liveCost.labels,
+        liveCost.locale,
+      )) {
         overrides.set(fact.label, fact.value);
       }
     }

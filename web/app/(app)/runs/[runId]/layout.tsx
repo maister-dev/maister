@@ -2,7 +2,7 @@ import type { EnforcementSnapshotEntry } from "@/lib/db/schema";
 import type { FlowResultDegradationCode } from "@/lib/runs/flow-result-dto";
 import type { ReactElement, ReactNode } from "react";
 
-import { getTranslations } from "next-intl/server";
+import { getLocale, getTranslations } from "next-intl/server";
 import { notFound, redirect } from "next/navigation";
 
 import { AssignmentActions } from "@/components/board/assignment-actions";
@@ -257,8 +257,8 @@ function staleSummaryText(
   return "!";
 }
 
-function formatTokens(value: number): string {
-  return new Intl.NumberFormat("en-US").format(value);
+function formatTokens(locale: string, value: number): string {
+  return new Intl.NumberFormat(locale).format(value);
 }
 
 function formatDuration(durationMs: number | null): string {
@@ -333,7 +333,7 @@ export default async function RunDetailLayout({
   if (!role) notFound();
 
   const canAct = role === "owner" || role === "admin" || role === "member";
-  const t = await getTranslations("run");
+  const [t, locale] = await Promise.all([getTranslations("run"), getLocale()]);
 
   const timeline = await getRunTimeline(runId);
   const costSummary = await getRunCostSummary(runId);
@@ -941,7 +941,7 @@ export default async function RunDetailLayout({
     cacheCreationTokens: t("cacheCreationTokens"),
     resumeTax: t("resumeTax"),
   };
-  const costFacts = buildCostSummaryFacts(costSummary, costLabels);
+  const costFacts = buildCostSummaryFacts(costSummary, costLabels, locale);
   const wallClockLabel = t("wallClock");
   const inspectorFacts = [
     { label: t("flowCenterStatus"), value: detail.status },
@@ -1021,7 +1021,7 @@ export default async function RunDetailLayout({
               durationLabel: entry ? formatDuration(entry.durationMs) : null,
               tokenLabel:
                 tokenTotal > 0
-                  ? `${formatTokens(tokenTotal)} ${t("flowCenterTokens")}`
+                  ? `${formatTokens(locale, tokenTotal)} ${t("flowCenterTokens")}`
                   : null,
             };
           }),
@@ -1038,7 +1038,7 @@ export default async function RunDetailLayout({
               durationLabel: formatDuration(entry.durationMs),
               tokenLabel:
                 entry.tokens.total > 0
-                  ? `${formatTokens(entry.tokens.total)} ${t("flowCenterTokens")}`
+                  ? `${formatTokens(locale, entry.tokens.total)} ${t("flowCenterTokens")}`
                   : null,
             })),
           }
@@ -1216,7 +1216,7 @@ export default async function RunDetailLayout({
             flowExtras={flowInspectorExtras}
             flowSummary={flowSummary}
             labels={inspectorLabels}
-            liveCost={{ initial: costSummary, labels: costLabels }}
+            liveCost={{ initial: costSummary, labels: costLabels, locale }}
             liveWallClock={{
               startedAtMs: detail.startedAt.getTime(),
               endedAtMs: detail.endedAt ? detail.endedAt.getTime() : null,
@@ -1331,6 +1331,7 @@ export default async function RunDetailLayout({
                     />
                   }
                   labels={flowRunCenterLabels}
+                  locale={locale}
                   result={flowResultDto}
                 />
               ) : (
@@ -1592,6 +1593,7 @@ export default async function RunDetailLayout({
                     assignmentEvents={timeline.assignmentEvents}
                     entries={timeline.entries as TimelineEntry[]}
                     labels={timelineLabels}
+                    locale={locale}
                   />
                 }
               />

@@ -9,7 +9,7 @@ import type {
 } from "@/lib/runs/execution-policy";
 
 import { QuestionMarkCircleIcon } from "@heroicons/react/24/outline";
-import { getTranslations } from "next-intl/server";
+import { getLocale, getTranslations } from "next-intl/server";
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 
@@ -43,6 +43,7 @@ import {
 } from "@/lib/runs/launchability";
 import { resolveTaskLaunchConfig } from "@/lib/runs/task-launch-config";
 import { getPlatformStatus } from "@/lib/supervisor-client";
+import { formatTokenCount } from "@/lib/runs/cost-summary-facts";
 
 const DELIVERY_STRATEGY_LABEL: Record<string, string> = {
   merge: "strategyMerge",
@@ -137,10 +138,6 @@ function formatDuration(durationMs: number | null): string {
   return `${hours}h`;
 }
 
-function formatTokens(value: number): string {
-  return new Intl.NumberFormat("en-US").format(value);
-}
-
 export default async function TaskDetailPage({
   params,
 }: PageProps): Promise<ReactElement> {
@@ -167,9 +164,10 @@ export default async function TaskDetailPage({
   if (!role) notFound();
 
   const canAct = role === "owner" || role === "admin" || role === "member";
-  const [t, tLaunch, platformStatus, launchConfig] = await Promise.all([
+  const [t, tLaunch, locale, platformStatus, launchConfig] = await Promise.all([
     getTranslations("taskDetail"),
     getTranslations("launch"),
+    getLocale(),
     getPlatformStatus(),
     resolveTaskLaunchConfig(detail.task.id),
   ]);
@@ -598,16 +596,26 @@ export default async function TaskDetailPage({
         >
           {[
             [t("aggregateRuns"), String(detail.totals.runCount)],
-            [t("aggregateInput"), formatTokens(detail.totals.inputTokens)],
-            [t("aggregateOutput"), formatTokens(detail.totals.outputTokens)],
+            [
+              t("aggregateInput"),
+              formatTokenCount(locale, detail.totals.inputTokens),
+            ],
+            [
+              t("aggregateOutput"),
+              formatTokenCount(locale, detail.totals.outputTokens),
+            ],
             [
               t("aggregateCache"),
-              formatTokens(
+              formatTokenCount(
+                locale,
                 detail.totals.cacheReadTokens +
                   detail.totals.cacheCreationTokens,
               ),
             ],
-            [t("aggregateTokenTotal"), formatTokens(detail.totals.tokenTotal)],
+            [
+              t("aggregateTokenTotal"),
+              formatTokenCount(locale, detail.totals.tokenTotal),
+            ],
           ].map(([label, value]) => (
             <div key={label} className="bg-paper px-3 py-2">
               <div className="font-mono text-[9.5px] font-bold uppercase tracking-[0.08em] text-mute">
@@ -670,7 +678,7 @@ export default async function TaskDetailPage({
                       {formatDuration(run.durationMs)}
                     </td>
                     <td className="px-3 py-2 font-mono">
-                      {formatTokens(run.tokenTotal)}
+                      {formatTokenCount(locale, run.tokenTotal)}
                     </td>
                     <td
                       suppressHydrationWarning
