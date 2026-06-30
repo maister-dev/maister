@@ -37,6 +37,10 @@ const postBodySchema = z
     packageVersions: z
       .record(z.string().min(1), z.enum(["keep", "adopt", "cut_and_adopt"]))
       .optional(),
+    // ADR-119: force-relaunch flag — selects the force launchability gate
+    // (every run status launchable; task gates flagged/blocked still refuse) for
+    // an additive concurrent run. Defaults false ⇒ the manual busy gate.
+    allowConcurrent: z.boolean().optional().default(false),
   })
   .strict();
 
@@ -126,6 +130,7 @@ export async function POST(req: NextRequest): Promise<Response> {
     deliveryPolicy: body.deliveryPolicy,
     executionPolicy: body.executionPolicy,
     packageVersions: body.packageVersions,
+    allowConcurrent: body.allowConcurrent,
   };
   const ctx = {
     actorUserId: user.id,

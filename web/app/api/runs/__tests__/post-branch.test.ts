@@ -115,6 +115,40 @@ describe("POST /api/runs — branch-targeting body schema (M18)", () => {
   });
 });
 
+describe("POST /api/runs — ADR-119 allowConcurrent body flag", () => {
+  it("parses allowConcurrent:true and forwards it to launchRun", async () => {
+    const res = await POST(request({ taskId: "task-1", allowConcurrent: true }));
+
+    expect(res.status).toBe(202);
+    expect(mocks.launchRun).toHaveBeenCalledTimes(1);
+
+    const input = mocks.launchRun.mock.calls[0]?.[0] as Record<string, unknown>;
+
+    expect(input.allowConcurrent).toBe(true);
+  });
+
+  it("defaults allowConcurrent to false when absent", async () => {
+    const res = await POST(request({ taskId: "task-1" }));
+
+    expect(res.status).toBe(202);
+
+    const input = mocks.launchRun.mock.calls[0]?.[0] as Record<string, unknown>;
+
+    expect(input.allowConcurrent).toBe(false);
+  });
+
+  it("rejects a non-boolean allowConcurrent with 400 CONFIG before launch", async () => {
+    const res = await POST(
+      request({ taskId: "task-1", allowConcurrent: "yes" }),
+    );
+    const body = (await res.json()) as { code?: string };
+
+    expect(res.status).toBe(400);
+    expect(body.code).toBe("CONFIG");
+    expect(mocks.launchRun).not.toHaveBeenCalled();
+  });
+});
+
 describe("POST /api/runs — ADR-085 flow and delivery-policy overrides", () => {
   it("accepts flowId and deliveryPolicy and forwards them to launchRun", async () => {
     const deliveryPolicy = {

@@ -401,7 +401,7 @@ anticipated.)
 
 ### Phase 3 — API: `allowConcurrent` + `relaunch` field (TDD)
 
-- [ ] **T3.1 (RED) — Route/launch tests.** Extend
+- [x] **T3.1 (RED) — Route/launch tests.** Extend
   `web/app/api/runs/__tests__/post-branch.test.ts` (**unit**) for the body
   schema: `allowConcurrent` parses, defaults false. Add integration coverage
   (extend `route.enforcement.integration.test.ts` or a focused new file): with a
@@ -413,7 +413,7 @@ anticipated.)
   flagged/blocked (the existing `launchability` field is unchanged). *Files:*
   the named test files.
 
-- [ ] **T3.2 (GREEN) — Implement.** Add `allowConcurrent` to the
+- [x] **T3.2 (GREEN) — Implement.** Add `allowConcurrent` to the
   `POST /api/runs` zod body (`web/app/api/runs/route.ts`); thread it into
   `launchRunStaged`/`launchRun` (`web/lib/services/runs.ts`) to select the force
   classifier when true. Add the `relaunch` field to

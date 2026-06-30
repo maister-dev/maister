@@ -24,6 +24,7 @@ import {
 } from "@/lib/flows/engine-version";
 import { compileManifest } from "@/lib/flows/graph/compile";
 import {
+  classifyForceRelaunchLaunchability,
   classifyManualTaskLaunchability,
   getLatestFlowRun,
 } from "@/lib/runs/launchability";
@@ -411,12 +412,20 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const latestFlowRun = await getLatestFlowRun(task.id, db);
     const openBlockers =
       (await getOpenRelationBlockers([task.id], db)).get(task.id) ?? [];
+    const launchabilityTask = {
+      status: task.status ?? "Backlog",
+      triageStatus: (task.triageStatus as "triaged" | "flagged" | null) ?? null,
+    };
     const manualLaunchability = classifyManualTaskLaunchability(
-      {
-        status: task.status ?? "Backlog",
-        triageStatus:
-          (task.triageStatus as "triaged" | "flagged" | null) ?? null,
-      },
+      launchabilityTask,
+      latestFlowRun,
+      { openBlockers },
+    );
+    // ADR-119: the FORCE-relaunch verdict over the same in-memory data — feeds
+    // the runs-history "Run again" button. Run status is not consulted; only the
+    // task gates flagged/blocked refuse. Additive — existing callers ignore it.
+    const relaunchLaunchability = classifyForceRelaunchLaunchability(
+      launchabilityTask,
       latestFlowRun,
       { openBlockers },
     );
@@ -525,6 +534,14 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
             label: `${blocker.key}-${blocker.number}`,
           }),
         ),
+      },
+      // ADR-119: additive force-relaunch verdict (reason ∈ launchable|flagged|
+      // blocked). The runs-history button reads this; the header button keeps
+      // `launchability`. Flow setup issues are NOT layered in — the force button
+      // only renders once a task has ≥1 run (already configured).
+      relaunch: {
+        launchable: relaunchLaunchability === "launchable",
+        reason: relaunchLaunchability,
       },
       flows: flowRowsForProject.map((projectFlow: Record<string, any>) => {
         const disabledReason = projectFlowLaunchIssue({
