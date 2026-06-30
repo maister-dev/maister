@@ -37,7 +37,10 @@ import { getRunNodeStatuses } from "@/lib/queries/run-node-status";
 import { getProjectAgentsView } from "@/lib/agents/project-links";
 import { getTaskDetail } from "@/lib/queries/task-detail";
 import { expandExecutionPolicy } from "@/lib/runs/execution-policy";
-import { classifyManualTaskLaunchability } from "@/lib/runs/launchability";
+import {
+  classifyForceRelaunchLaunchability,
+  classifyManualTaskLaunchability,
+} from "@/lib/runs/launchability";
 import { resolveTaskLaunchConfig } from "@/lib/runs/task-launch-config";
 import { getPlatformStatus } from "@/lib/supervisor-client";
 
@@ -190,6 +193,30 @@ export default async function TaskDetailPage({
               .map((b) => `${b.key}-${b.number}`)
               .join(", ")}`
           : t(`launchReason.${manualLaunchability}`);
+
+  // ADR-119: the runs-history "Run again" (force-relaunch) button stays enabled
+  // while a run is active — only the TASK gates flagged/blocked (and supervisor
+  // readiness) disable it.
+  const forceLaunchability = classifyForceRelaunchLaunchability(
+    {
+      status: detail.task.status as TaskStatus,
+      triageStatus: detail.task.triageStatus,
+    },
+    detail.latestFlowRun
+      ? { status: detail.latestFlowRun.status as RunStatus }
+      : null,
+    { openBlockers: detail.openBlockers },
+  );
+  const forceLaunchDisabledReason =
+    platformStatus.kind !== "ready"
+      ? t("launchSupervisorUnavailable")
+      : forceLaunchability === "launchable"
+        ? undefined
+        : forceLaunchability === "blocked"
+          ? `${t("launchBlocked")} ${detail.openBlockers
+              .map((b) => `${b.key}-${b.number}`)
+              .join(", ")}`
+          : t(`launchReason.${forceLaunchability}`);
 
   // M34: attached agents with the `manual` trigger — "Run agent" candidates.
   const manualAgents = canAct
@@ -548,9 +575,21 @@ export default async function TaskDetailPage({
             {t("runsTitle")}
           </h2>
           {detail.totals.runCount > 0 ? (
-            <span className="rounded-full border border-line bg-ivory px-2 py-[2px] font-mono text-[10px] font-bold tracking-[0.04em] text-ink-2">
-              {t("runsCount", { count: detail.totals.runCount })}
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="rounded-full border border-line bg-ivory px-2 py-[2px] font-mono text-[10px] font-bold tracking-[0.04em] text-ink-2">
+                {t("runsCount", { count: detail.totals.runCount })}
+              </span>
+              {canAct ? (
+                <LaunchPopover
+                  disabledLabel={t("runAgainUnavailable")}
+                  disabledReason={forceLaunchDisabledReason}
+                  forceRelaunch
+                  hasRuns
+                  label={t("runAgain")}
+                  taskId={detail.task.id}
+                />
+              ) : null}
+            </div>
           ) : null}
         </div>
         <div

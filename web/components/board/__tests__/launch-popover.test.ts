@@ -29,6 +29,8 @@ import {
   BudgetScopeFields,
   LaunchPopover,
   budgetTextHasInvalid,
+  buildLaunchBody,
+  effectiveLaunchVerdict,
   isBudgetFieldInvalid,
   launchUnavailableReasonMessage,
   pruneBudgetText,
@@ -113,6 +115,89 @@ const BUDGET_FIELD_LABELS = {
   consecutiveFailures: "Consecutive failures",
   wallClockMinutes: "Wall-clock minutes",
 };
+
+// ---------------------------------------------------------------------------
+// ADR-119 — force-relaunch gate selection + POST body flag.
+// effectiveLaunchVerdict picks the `relaunch` verdict in force mode and the
+// `launchability` verdict otherwise; buildLaunchBody stamps allowConcurrent =
+// forceRelaunch. (No jsdom in this project, so the interactive dialog flow is
+// covered by these pure helpers + the route integration tests.)
+// ---------------------------------------------------------------------------
+
+describe("LaunchPopover — effectiveLaunchVerdict (force vs manual gate)", () => {
+  const options = {
+    launchability: { launchable: false, reason: "busy", blockers: [] },
+    relaunch: { launchable: true, reason: "launchable" },
+  };
+
+  it("force mode reads the relaunch verdict (launchable while the manual gate is busy)", () => {
+    expect(effectiveLaunchVerdict(options, true)).toEqual({
+      launchable: true,
+      reason: "launchable",
+    });
+  });
+
+  it("manual mode reads the launchability verdict", () => {
+    expect(effectiveLaunchVerdict(options, false)).toEqual({
+      launchable: false,
+      reason: "busy",
+      blockers: [],
+    });
+  });
+
+  it("force mode surfaces a blocked relaunch verdict (task gate not bypassed)", () => {
+    expect(
+      effectiveLaunchVerdict(
+        {
+          launchability: { launchable: false, reason: "busy", blockers: [] },
+          relaunch: { launchable: false, reason: "blocked" },
+        },
+        true,
+      ),
+    ).toEqual({ launchable: false, reason: "blocked" });
+  });
+
+  it("force mode falls back to launchability when relaunch is absent (back-compat)", () => {
+    expect(
+      effectiveLaunchVerdict(
+        { launchability: { launchable: true, reason: "launchable", blockers: [] } },
+        true,
+      ),
+    ).toEqual({ launchable: true, reason: "launchable", blockers: [] });
+  });
+});
+
+describe("LaunchPopover — buildLaunchBody allowConcurrent flag", () => {
+  const base = {
+    taskId: "task-1",
+    flowId: "flow-1",
+    runnerId: "runner-1",
+    baseBranch: "main",
+    targetBranch: "main",
+    deliveryPolicy: {
+      strategy: "merge" as const,
+      push: "never" as const,
+      trigger: "manual" as const,
+      targetBranch: "main",
+    },
+    executionPolicy: { preset: "supervised" as const },
+    packageVersions: undefined,
+  };
+
+  it("stamps allowConcurrent:true in force-relaunch mode", () => {
+    expect(buildLaunchBody({ ...base, forceRelaunch: true })).toMatchObject({
+      taskId: "task-1",
+      flowId: "flow-1",
+      allowConcurrent: true,
+    });
+  });
+
+  it("stamps allowConcurrent:false in manual mode", () => {
+    expect(buildLaunchBody({ ...base, forceRelaunch: false })).toMatchObject({
+      allowConcurrent: false,
+    });
+  });
+});
 
 describe("LaunchPopover budget — field validation (AC-UI-2)", () => {
   it("accepts a positive integer", () => {

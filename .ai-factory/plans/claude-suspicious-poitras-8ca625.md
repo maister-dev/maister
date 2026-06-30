@@ -426,7 +426,7 @@ anticipated.)
 
 ### Phase 4 — UI: runs-history relaunch button (TDD where testable)
 
-- [ ] **T4.1 (RED) — Popover force-mode tests.** Extend
+- [x] **T4.1 (RED) — Popover force-mode tests.** Extend
   `web/components/board/__tests__/launch-popover.test.ts` (**unit**): in
   `forceRelaunch` mode the create button is **enabled** when the latest run is
   busy, and **disabled with the gate reason** when the force launchability
@@ -434,7 +434,7 @@ anticipated.)
   `allowConcurrent:true` and the popover gates on the `relaunch` verdict from
   launch-options. *Files:* `web/components/board/__tests__/launch-popover.test.ts`.
 
-- [ ] **T4.2 (GREEN) — Build the button + popover prop.** Add the
+- [x] **T4.2 (GREEN) — Build the button + popover prop.** Add the
   `forceRelaunch` prop to `web/components/board/launch-popover.tsx`: gate
   `createDisabled` on `options.relaunch.launchable` (instead of
   `options.launchability.launchable`) — the `busy`/`pending` submit-flags stay;
@@ -450,7 +450,7 @@ anticipated.)
   **Exit:** unit suite green; manual UI smoke (button right of chip; enabled
   while a run is `Running`; disabled with reason when the task is `blocked`).
 
-- [ ] **T4.3 — Cap runs-history rows to latest 10 WITHOUT corrupting totals.**
+- [x] **T4.3 — Cap runs-history rows to latest 10 WITHOUT corrupting totals.**
   In `web/lib/queries/task-detail.ts`, `totals` (runCount + token sums, line 352)
   and `latest` (line 351) are currently **reduced from the full `runRows`
   array** — so a naive `.limit(10)` on that query would make the chip count and

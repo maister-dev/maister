@@ -15,7 +15,10 @@ import type {
 } from "@/lib/runs/execution-policy";
 
 import { Button, ListBox, Select } from "@heroui/react";
-import { ExclamationTriangleIcon } from "@heroicons/react/24/outline";
+import {
+  ArrowPathIcon,
+  ExclamationTriangleIcon,
+} from "@heroicons/react/24/outline";
 import { useRouter } from "next/navigation";
 import {
   useEffect,
@@ -85,12 +88,17 @@ type LaunchRunnerOption = {
   pinnedModel: { model: string; source: string };
 };
 
+type LaunchVerdict = { launchable: boolean; reason: string };
+
 type LaunchOptions = {
   launchability: {
     launchable: boolean;
     reason: string;
     blockers: Array<{ kind: string; label: string }>;
   };
+  // ADR-119: additive force-relaunch verdict. Present on every response, but
+  // typed optional so an older/partial payload still gates via launchability.
+  relaunch?: LaunchVerdict;
   flows: LaunchFlowOption[];
   runners: LaunchRunnerOption[];
   selectedFlowId: string;
@@ -142,6 +150,50 @@ export interface LaunchPopoverProps {
   disabledLabel: string;
   disabledReason?: string;
   hasRuns?: boolean;
+  // ADR-119: the runs-history "Run again" button. When true, the create gate
+  // reads the `relaunch` (force) verdict and the POST carries allowConcurrent.
+  forceRelaunch?: boolean;
+}
+
+// ADR-119: the verdict the create button gates on — the force `relaunch` verdict
+// in force mode (falls back to `launchability` for an older payload), else the
+// manual `launchability` verdict.
+export function effectiveLaunchVerdict<
+  L extends LaunchVerdict,
+  R extends LaunchVerdict,
+>(
+  options: { launchability: L; relaunch?: R },
+  forceRelaunch: boolean,
+): L | R {
+  if (forceRelaunch && options.relaunch) return options.relaunch;
+
+  return options.launchability;
+}
+
+// ADR-119: the POST /api/runs body builder — stamps allowConcurrent = the
+// force-relaunch flag so the server selects the force launchability gate.
+export function buildLaunchBody(args: {
+  taskId: string;
+  flowId: string;
+  runnerId: string;
+  baseBranch: string;
+  targetBranch: string;
+  deliveryPolicy: DeliveryPolicy;
+  executionPolicy: ExecutionPolicy;
+  packageVersions?: Record<string, VersionChoice>;
+  forceRelaunch: boolean;
+}): Record<string, unknown> {
+  return {
+    taskId: args.taskId,
+    flowId: args.flowId,
+    runnerId: args.runnerId || undefined,
+    baseBranch: args.baseBranch || undefined,
+    targetBranch: args.targetBranch || undefined,
+    deliveryPolicy: args.deliveryPolicy,
+    executionPolicy: args.executionPolicy,
+    packageVersions: nonKeepPackageVersions(args.packageVersions ?? {}),
+    allowConcurrent: args.forceRelaunch,
+  };
 }
 
 function branchFallback(options: LaunchOptions): string {
@@ -355,6 +407,7 @@ export function LaunchPopover({
   disabledLabel,
   disabledReason,
   hasRuns = true,
+  forceRelaunch = false,
 }: LaunchPopoverProps): ReactElement {
   const t = useTranslations("launch");
   const tRun = useTranslations("run");
@@ -528,7 +581,8 @@ export function LaunchPopover({
 
   async function launch(): Promise<void> {
     if (!options) return;
-    if (!options.launchability.launchable && !setUpReady) return;
+    if (!effectiveLaunchVerdict(options, forceRelaunch).launchable && !setUpReady)
+      return;
 
     setBusy(true);
     setError(null);
@@ -566,16 +620,19 @@ export function LaunchPopover({
           "content-type": "application/json",
           accept: "text/event-stream",
         },
-        body: JSON.stringify({
-          taskId,
-          flowId,
-          runnerId: runnerId || undefined,
-          baseBranch: baseBranch || undefined,
-          targetBranch: targetBranch || undefined,
-          deliveryPolicy: currentPolicy,
-          executionPolicy: currentExecutionPolicy,
-          packageVersions: nonKeepPackageVersions(packageVersions),
-        }),
+        body: JSON.stringify(
+          buildLaunchBody({
+            taskId,
+            flowId,
+            runnerId,
+            baseBranch,
+            targetBranch,
+            deliveryPolicy: currentPolicy,
+            executionPolicy: currentExecutionPolicy,
+            packageVersions,
+            forceRelaunch,
+          }),
+        ),
       });
 
       // A pre-stream precondition failure stays a JSON error with its status.
@@ -710,12 +767,18 @@ export function LaunchPopover({
       targetBranch !==
         (options.defaultTargetBranch ?? branchFallback(options)) ||
       policyChanged(currentPolicy, defaultPolicy));
+  // ADR-119: in force-relaunch mode the create gate reads the `relaunch` verdict
+  // (busy → launchable) instead of `launchability`; the busy/pending terms below
+  // are the popover's own submit-in-flight flags, left untouched.
+  const launchVerdict = options
+    ? effectiveLaunchVerdict(options, forceRelaunch)
+    : null;
   const createDisabled =
     busy ||
     pending ||
     loadingOptions ||
     optionsError ||
-    !(options?.launchability.launchable || setUpReady) ||
+    !(launchVerdict?.launchable || setUpReady) ||
     !flowId ||
     !baseBranch ||
     budgetInvalid;
@@ -731,10 +794,8 @@ export function LaunchPopover({
     warnAtPct: "80",
   };
   const launchUnavailableReason =
-    options && !options.launchability.launchable
-      ? launchUnavailableReasonMessage(options.launchability.reason, (key) =>
-          t(key),
-        )
+    launchVerdict && !launchVerdict.launchable
+      ? launchUnavailableReasonMessage(launchVerdict.reason, (key) => t(key))
       : "";
 
   function onBudgetChange(
@@ -765,6 +826,9 @@ export function LaunchPopover({
           variant="outline"
           onClick={() => setOpen(true)}
         >
+          {forceRelaunch ? (
+            <ArrowPathIcon aria-hidden="true" className="h-3.5 w-3.5" />
+          ) : null}
           {error ?? (disabledReason ? disabledLabel : label)}
         </Button>
       </span>
@@ -834,7 +898,7 @@ export function LaunchPopover({
                   </p>
                 ) : options ? (
                   <div className="flex flex-col gap-4">
-                    {!options.launchability.launchable ? (
+                    {!launchVerdict?.launchable ? (
                       <p className="rounded-[8px] border border-amber-line bg-amber-soft px-3 py-2 font-mono text-[11px] text-amber">
                         {unconfigured
                           ? t("unconfiguredHint")

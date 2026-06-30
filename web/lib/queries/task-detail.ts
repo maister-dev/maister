@@ -3,7 +3,7 @@ import "server-only";
 import type { ActorDTO } from "@/lib/social/actors";
 import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
 
-import { and, desc, eq, ne } from "drizzle-orm";
+import { and, desc, eq, ne, sql } from "drizzle-orm";
 
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
@@ -301,6 +301,31 @@ export async function getTaskDetail(
 
   await reconcileManyRunCostRollups(taskRunIdRows.map((run) => run.id));
 
+  // ADR-119: there is NO per-task run cap (hundreds allowed). The display table
+  // is bounded to the 10 newest runs (full pagination is Phase 2), so the
+  // count-chip total and token aggregates MUST be computed over ALL runs via a
+  // SQL aggregate — a naive `.limit(10)` on the row query would make the chip
+  // and totals reflect only the 10 shown (a lying chip).
+  const [tokenAgg] = (await db
+    .select({
+      runCount: sql<string>`count(${runs.id})`,
+      inputTokens: sql<string>`coalesce(sum(${runCostRollups.inputTokens}), 0)`,
+      outputTokens: sql<string>`coalesce(sum(${runCostRollups.outputTokens}), 0)`,
+      cacheReadTokens: sql<string>`coalesce(sum(${runCostRollups.cacheReadTokens}), 0)`,
+      cacheCreationTokens: sql<string>`coalesce(sum(${runCostRollups.cacheCreationTokens}), 0)`,
+    })
+    .from(runs)
+    .leftJoin(runCostRollups, eq(runCostRollups.runId, runs.id))
+    .where(
+      and(eq(runs.taskId, taskId), eq(runs.runKind, "flow")),
+    )) as Array<{
+    runCount: string;
+    inputTokens: string;
+    outputTokens: string;
+    cacheReadTokens: string;
+    cacheCreationTokens: string;
+  }>;
+
   const runRows = (await db
     .select({
       id: runs.id,
@@ -327,7 +352,8 @@ export async function getTaskDetail(
     .leftJoin(workspaces, eq(workspaces.runId, runs.id))
     .leftJoin(runCostRollups, eq(runCostRollups.runId, runs.id))
     .where(and(eq(runs.taskId, taskId), eq(runs.runKind, "flow")))
-    .orderBy(desc(runs.startedAt))) as Array<{
+    .orderBy(desc(runs.startedAt))
+    .limit(10)) as Array<{
     id: string;
     status: string;
     flowRef: string | null;
@@ -349,36 +375,20 @@ export async function getTaskDetail(
   }>;
 
   const latest = runRows[0] ?? null;
-  const totals = runRows.reduce<TaskRunTotals>(
-    (acc, row) => {
-      const inputTokens = row.inputTokens ?? 0;
-      const outputTokens = row.outputTokens ?? 0;
-      const cacheReadTokens = row.cacheReadTokens ?? 0;
-      const cacheCreationTokens = row.cacheCreationTokens ?? 0;
-
-      return {
-        runCount: acc.runCount + 1,
-        inputTokens: acc.inputTokens + inputTokens,
-        outputTokens: acc.outputTokens + outputTokens,
-        cacheReadTokens: acc.cacheReadTokens + cacheReadTokens,
-        cacheCreationTokens: acc.cacheCreationTokens + cacheCreationTokens,
-        tokenTotal:
-          acc.tokenTotal +
-          inputTokens +
-          outputTokens +
-          cacheReadTokens +
-          cacheCreationTokens,
-      };
-    },
-    {
-      runCount: 0,
-      inputTokens: 0,
-      outputTokens: 0,
-      cacheReadTokens: 0,
-      cacheCreationTokens: 0,
-      tokenTotal: 0,
-    },
-  );
+  // Totals over ALL runs (SQL aggregate), not just the 10 display rows. pg
+  // returns count/sum as strings — coerce to JS numbers (safe to 2^53).
+  const aggInput = Number(tokenAgg?.inputTokens ?? 0);
+  const aggOutput = Number(tokenAgg?.outputTokens ?? 0);
+  const aggCacheRead = Number(tokenAgg?.cacheReadTokens ?? 0);
+  const aggCacheCreation = Number(tokenAgg?.cacheCreationTokens ?? 0);
+  const totals: TaskRunTotals = {
+    runCount: Number(tokenAgg?.runCount ?? 0),
+    inputTokens: aggInput,
+    outputTokens: aggOutput,
+    cacheReadTokens: aggCacheRead,
+    cacheCreationTokens: aggCacheCreation,
+    tokenTotal: aggInput + aggOutput + aggCacheRead + aggCacheCreation,
+  };
 
   return {
     project: {
