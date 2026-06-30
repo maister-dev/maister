@@ -227,7 +227,7 @@ describe("adapter compatibility fixtures", () => {
         type: "session.update",
         update: expect.objectContaining({
           sessionUpdate: "model_advisory",
-          channel: "advisory",
+          channel: "set_session_model",
           configuredModel: "configured-model",
         }),
       }),

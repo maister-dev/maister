@@ -190,6 +190,38 @@ describe("StudioAiTab runner selector", () => {
 });
 
 describe("StudioAiTab staged launch (ADR-110 addendum)", () => {
+  it("clears the launch prompt after the assistant stream is accepted", async () => {
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    const body = new ReadableStream<Uint8Array>({
+      start(c) {
+        controller = c;
+      },
+    });
+
+    assistantResponse = () =>
+      new Response(body, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+
+    const container = await mountAndPrime();
+    const launchBtn = container.querySelector<HTMLButtonElement>(
+      '[data-testid="studio-ai-launch"]',
+    );
+
+    act(() => launchBtn?.click());
+    await flush();
+
+    expect(
+      container.querySelector<HTMLTextAreaElement>(
+        '[data-testid="studio-ai-prompt"]',
+      )?.value,
+    ).toBe("");
+
+    act(() => controller.close());
+    await flush();
+  });
+
   it("shows the stage label while launching and switches to the conversation view on session_ready, before the terminal frame (AC7/AC11)", async () => {
     let controller!: ReadableStreamDefaultController<Uint8Array>;
     const body = new ReadableStream<Uint8Array>({

@@ -28,6 +28,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import pino from "pino";
 
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
+import { ensureLocalPackageGitExclude } from "@/lib/local-packages/git";
 import {
   assertHoldsLock,
   assertUserHoldsLock,
@@ -1536,6 +1537,9 @@ export async function* launchLocalPackageAssistantStaged(
   yield launchProgress("precondition");
 
   const workingDir = pkg.workingDir as string;
+
+  await ensureLocalPackageGitExclude(workingDir);
+
   // Base branch/commit are read from the EXISTING working dir — no new branch.
   const baseBranch =
     (await currentBranchName(workingDir)) ?? pkg.branchName ?? "main";
@@ -1759,18 +1763,11 @@ export async function* launchLocalPackageAssistantStaged(
       { runId },
     );
 
-    // A client disconnect after session_ready (the run is now a tracked row +
-    // live session) routes into this try's catch → session teardown + Crashed.
-    // The boundary check covers an abort already observed here; the forwarded
-    // signal aborts the in-flight prompt fetch if the disconnect lands mid-turn.
-    opts.signal?.throwIfAborted();
-
     const promptResult = await sendScratchPromptAndProjectEvents({
       runId,
       sessionId: session.sessionId,
       stepId: scratchStepId(),
       prompt: launchPrompt,
-      signal: opts.signal,
     });
     const dialogStatus = await completeScratchPromptTurn({ db, runId });
     const actionResult = await postProcessFlowAssistantTurn({

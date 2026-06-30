@@ -283,6 +283,8 @@ export function StudioAiTab({
         return;
       }
 
+      setPrompt("");
+
       // `session_ready` surfaces `runId` BEFORE the first turn streams — set it
       // immediately so the conversation view (live SSE + working badge) mounts
       // while turn 1 is still running, instead of after the whole turn.

@@ -923,6 +923,14 @@ describe("launchLocalPackageAssistantStaged (staged-stream, ADR-110 addendum)", 
     expect(sendPromptCallsAtReady).toBe(0);
     expect(supervisorMock.sendPrompt).toHaveBeenCalledTimes(1);
     expect(step.value.runId).toBe(readyRunId);
+
+    const exclude = await readFile(
+      join(pkg.workingDir, ".git", "info", "exclude"),
+      "utf8",
+    );
+
+    expect(exclude).toContain(".maister/");
+    expect(exclude).toContain(".claude/");
   });
 
   it("persists Running run + acpSessionId at session_ready, before the turn (AC2)", async () => {
@@ -1007,7 +1015,7 @@ describe("launchLocalPackageAssistantStaged (staged-stream, ADR-110 addendum)", 
     expect(supervisorMock.sendPrompt).not.toHaveBeenCalled();
   });
 
-  it("compensates (teardown + Crashed) on a client abort after session_ready", async () => {
+  it("keeps the durable first turn running on a client abort after session_ready", async () => {
     const pkg = await createLocalPackage({
       name: `staged-abort-${randomUUID().slice(0, 8)}`,
       createdBy: userId,
@@ -1039,20 +1047,25 @@ describe("launchLocalPackageAssistantStaged (staged-stream, ADR-110 addendum)", 
     expect(supervisorMock.createSession).toHaveBeenCalledTimes(1);
     expect(supervisorMock.sendPrompt).not.toHaveBeenCalled();
 
-    // Client disconnects after the run is visible → the next step throws into the
-    // post-commit catch, which tears the session down and marks the run Crashed.
+    // Client disconnects after the run is visible. The launch stream is gone,
+    // but the durable run keeps its first turn alive.
     controller.abort();
-    await expect(gen.next()).rejects.toThrow();
+    const done = await gen.next();
 
-    expect(supervisorMock.deleteSession).toHaveBeenCalledWith("sup-1");
-    expect(supervisorMock.sendPrompt).not.toHaveBeenCalled();
+    expect(done.done).toBe(true);
+    expect(supervisorMock.deleteSession).not.toHaveBeenCalled();
+    expect(supervisorMock.sendPrompt).toHaveBeenCalledTimes(1);
 
     const rows = await db
-      .select({ status: runs.status })
+      .select({ status: runs.status, dialogStatus: scratchRuns.dialogStatus })
       .from(runs)
+      .innerJoin(scratchRuns, eq(scratchRuns.runId, runs.id))
       .where(eq(runs.id, runId));
 
-    expect(rows[0].status).toBe("Crashed");
+    expect(rows[0]).toMatchObject({
+      status: "Running",
+      dialogStatus: "WaitingForUser",
+    });
   });
 
   it("drain wrapper returns the same terminal result as today (AC3)", async () => {
