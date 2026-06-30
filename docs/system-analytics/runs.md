@@ -286,22 +286,28 @@ in the main launch transaction, so two concurrent launches both computed
 `attempt-N` and the second `git worktree add -b` collided (`CONFLICT`). Worktree
 *paths* are `runId`-keyed and never collide — only branch names did.
 
-The fix: `attempt_number` is bumped atomically **before** branch derivation —
+The fix: `attempt_number` is bumped atomically with
 `UPDATE tasks SET attempt_number = attempt_number + 1 WHERE id = $taskId
-RETURNING attempt_number` — and that early allocation is the **sole** writer of
+RETURNING attempt_number`, and that allocation is the **sole** writer of
 `attempt_number` (the write is removed from the main launch transaction, which
-still sets `tasks.status = "InFlight"`). Each concurrent launch reserves a
-distinct `attempt_number` ⇒ distinct branch ⇒ no collision.
+still sets `tasks.status = "InFlight"`). It runs **after every cheap
+precondition** (the launchability gate, the branch allow-list validation, and
+base-commit resolution) and immediately before `addWorktree`, so a validation
+refusal never burns a number. Each concurrent launch reserves a distinct
+`attempt_number` ⇒ distinct branch ⇒ no collision. (`attempt_number` doubles as
+the ralph-loop retry high-water mark, so burning it must stay rare — hence the
+late allocation, after all input-driven refusals.)
 
 Crash windows are clean retryable non-states:
 
-- Allocation succeeds, then any later precondition / `addWorktree` / tx failure
-  or process death **burns** the number (a monotonic-counter gap, no meaning) and
-  leaves no run row, no worktree, and `tasks.status` untouched → the task is
-  still force-launchable; the next launch takes the next value.
+- Any cheap-precondition refusal — the `blocked`/`flagged` gate, an unknown
+  base/target branch, or base-commit resolution — happens **before** allocation,
+  so a refused launch **never** burns a number.
+- Only an `addWorktree` / launch-tx failure or process death **after** allocation
+  burns the number (a monotonic-counter gap, no meaning), leaving no run row, no
+  worktree, and `tasks.status` untouched → the task is still force-launchable;
+  the next launch takes the next value.
 - The existing post-`addWorktree` `removeWorktree` compensation is unchanged.
-- A `blocked`/`flagged` refusal happens **before** allocation, so a refused
-  launch never burns a number.
 
 Additive concurrency is latest-run-safe: the board column, manual launchability,
 reconcile, promotion, and the scheduler are latest-run / per-run / global-count

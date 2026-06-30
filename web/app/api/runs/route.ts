@@ -95,6 +95,20 @@ function frameErrorFor(err: unknown): { code: string; message: string } {
 // caller (programmatic, tests) gets the unchanged JSON 202. Preconditions throw
 // BEFORE the stream opens either way → JSON error with the right HTTP status.
 export async function POST(req: NextRequest): Promise<Response> {
+  // Auth-first: authenticate AND clear the forced-password-change gate BEFORE
+  // reading or validating the body, so an unauthenticated / password-gated
+  // caller gets the auth response — never a body-shape CONFIG error and never a
+  // resource probe. Project-role authz happens once projectId is derived from
+  // the task row inside launchRun (taskId is body-controlled — never trust a
+  // body projectId).
+  let user: Awaited<ReturnType<typeof requireActiveSession>>;
+
+  try {
+    user = await requireActiveSession();
+  } catch (err) {
+    return errorResponse(err);
+  }
+
   let body: z.infer<typeof postBodySchema>;
 
   try {
@@ -106,19 +120,6 @@ export async function POST(req: NextRequest): Promise<Response> {
         `invalid POST body: ${(err as Error).message}`,
       ),
     );
-  }
-
-  // Auth-first: authenticate AND clear the forced-password-change gate up
-  // front, so must-change callers cannot probe task/project existence before
-  // auth. Project-role authz happens once projectId is derived from the task
-  // row inside launchRun (taskId is body-controlled — never trust a body
-  // projectId).
-  let user: Awaited<ReturnType<typeof requireActiveSession>>;
-
-  try {
-    user = await requireActiveSession();
-  } catch (err) {
-    return errorResponse(err);
   }
 
   const input = {

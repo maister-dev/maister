@@ -9710,18 +9710,20 @@ branch names do.) **ADR-008** (closed `MaisterError` union) and **ADR-009**
    over a `mode` query param because the page renders both buttons; one response
    avoids a second fetch and any chance of the wrong classifier.
 
-4. **Atomic attempt-number allocation.** Before branch derivation,
+4. **Atomic attempt-number allocation.**
    `UPDATE tasks SET attempt_number = attempt_number + 1 WHERE id = $taskId
-   RETURNING attempt_number` reserves a distinct value per launch. This early
-   allocation becomes the **sole** writer of `attempt_number`: the
-   `attemptNumber` write is removed from the main launch transaction (the tx
-   still writes `tasks.status="InFlight"`). Leaving it would let a slower
-   concurrent launch clobber a higher value. Crash windows are clean retryable
-   non-states: an allocation followed by any later failure burns the number (a
-   monotonic-counter gap, no meaning) and leaves no run row / no worktree /
-   `tasks.status` untouched; the existing post-`addWorktree` `removeWorktree`
-   compensation is unchanged; a `blocked`/`flagged` refusal happens before
-   allocation so no number is burned.
+   RETURNING attempt_number` reserves a distinct value per launch. This becomes
+   the **sole** writer of `attempt_number`: the `attemptNumber` write is removed
+   from the main launch transaction (the tx still writes `tasks.status="InFlight"`).
+   Leaving it would let a slower concurrent launch clobber a higher value. The
+   allocation runs **after every cheap precondition** (the launchability gate, the
+   branch allow-list validation, base-commit resolution) and immediately before
+   `addWorktree`, so an input-driven refusal never burns a number — important
+   because `attempt_number` doubles as the ralph-loop retry high-water mark. Crash
+   windows are clean retryable non-states: only an `addWorktree`/tx failure after
+   allocation burns the number (a monotonic-counter gap, no meaning) and leaves no
+   run row / no worktree / `tasks.status` untouched; the existing
+   post-`addWorktree` `removeWorktree` compensation is unchanged.
 
 5. **Additive concurrency is latest-run-safe.** >1 non-terminal run per task is
    allowed. Board column, manual launchability, reconcile, promotion, and

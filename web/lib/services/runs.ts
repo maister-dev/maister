@@ -842,26 +842,6 @@ export async function* launchRunStaged(
       );
     }
 
-    // ADR-119: atomic attempt-number allocation. Bump the counter as its own
-    // statement BEFORE deriving the branch so concurrent force-launches reserve
-    // DISTINCT numbers (the row lock serializes the two UPDATEs) ⇒ distinct
-    // branches ⇒ no `git worktree add` collision. This is the SOLE writer of
-    // attempt_number — the main launch tx no longer writes it (a slower
-    // concurrent launch would otherwise clobber a higher value). A later failure
-    // burns the number (a meaningless monotonic gap); no run row / no worktree /
-    // tasks.status untouched ⇒ the task stays force-launchable.
-    const [allocated] = await _db
-      .update(tasks)
-      .set({ attemptNumber: sql`${tasks.attemptNumber} + 1` })
-      .where(eq(tasks.id, task.id))
-      .returning({ attemptNumber: tasks.attemptNumber });
-    const newAttempt = allocated.attemptNumber as number;
-    const branch = `${project.branchPrefix}task-${task.id}/attempt-${newAttempt}`;
-
-    log.debug(
-      { runId, taskId: task.id, attempt: newAttempt, branch },
-      "[runs.launch] allocated attempt",
-    );
     const worktreeRoot = worktreesRoot();
     const worktreePath = path.join(worktreeRoot, project.slug, runId);
 
@@ -939,6 +919,28 @@ export async function* launchRunStaged(
       deliveryPolicy.strategy === "ai_rebase_merge"
         ? "rebase_merge"
         : legacyPromotionModeFromStrategy(deliveryPolicy.strategy);
+
+    // ADR-119: atomic attempt-number allocation — the SOLE writer of
+    // attempt_number (the main launch tx no longer writes it; a slower concurrent
+    // launch would otherwise clobber a higher value). The row-level UPDATE
+    // serializes concurrent force-launches → DISTINCT attempt numbers ⇒ distinct
+    // branches ⇒ no `git worktree add -b` collision. Deferred to AFTER every
+    // cheap precondition (branch allow-list, base-commit resolution) so a
+    // validation refusal NEVER burns a number — the only remaining gap is the
+    // irreducible addWorktree/tx window below (a genuine git/db failure), where a
+    // burned number is an acceptable monotonic-counter gap.
+    const [allocated] = await _db
+      .update(tasks)
+      .set({ attemptNumber: sql`${tasks.attemptNumber} + 1` })
+      .where(eq(tasks.id, task.id))
+      .returning({ attemptNumber: tasks.attemptNumber });
+    const newAttempt = allocated.attemptNumber as number;
+    const branch = `${project.branchPrefix}task-${task.id}/attempt-${newAttempt}`;
+
+    log.debug(
+      { runId, taskId: task.id, attempt: newAttempt, branch },
+      "[runs.launch] allocated attempt",
+    );
 
     log.info(
       {

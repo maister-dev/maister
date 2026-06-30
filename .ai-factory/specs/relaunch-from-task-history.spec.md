@@ -87,18 +87,24 @@ WHERE id = $taskId
 RETURNING attempt_number;     -- $newAttempt
 ```
 
-The early allocation is the **sole** writer of `attempt_number`; the
-`attemptNumber` write is removed from the main launch transaction (the tx still
-writes `tasks.status = "InFlight"`). Each concurrent launch reserves a distinct
-`attempt_number` ⇒ distinct branch ⇒ no `git worktree add` collision.
+The allocation is the **sole** writer of `attempt_number`; the `attemptNumber`
+write is removed from the main launch transaction (the tx still writes
+`tasks.status = "InFlight"`). It runs **after every cheap precondition** (the
+launchability gate, branch allow-list validation, and base-commit resolution)
+and immediately before `addWorktree`, so a validation refusal never burns a
+number — only the irreducible `addWorktree`/tx window can. Each concurrent
+launch reserves a distinct `attempt_number` ⇒ distinct branch ⇒ no
+`git worktree add -b` collision. (`attempt_number` doubles as the ralph-loop
+retry high-water mark, so a burned number must stay rare — hence the late
+allocation.)
 
 ### Crash-window table
 
 | Window | State after | Retryable? |
 |--------|-------------|-----------|
-| Allocation succeeds, later precondition/`addWorktree`/tx fails or process dies | `attempt_number` **burned** (a monotonic-counter gap, no meaning); no run row, no worktree, `tasks.status` untouched | Yes — task still force-launchable; next launch takes the next value |
+| Any cheap-precondition refusal (`blocked`/`flagged` gate, unknown base/target branch, base-commit resolution) | happens **before** allocation → **no** number burned | Yes — never burns |
+| `addWorktree` or the launch tx fails / process dies **after** allocation | `attempt_number` **burned** (a monotonic-counter gap, no meaning); no run row, no worktree, `tasks.status` untouched | Yes — task still force-launchable; next launch takes the next value |
 | `addWorktree` succeeds, inner tx fails | existing `removeWorktree` compensation removes the orphan worktree | Yes |
-| `blocked`/`flagged` refusal | happens **before** allocation (classifier gate at the top) | No number burned |
 
 Idempotent status write: the main tx sets `tasks.status="InFlight"`
 unconditionally; for a concurrent relaunch the task is already `InFlight`, so

@@ -149,6 +149,26 @@ describe("POST /api/runs — ADR-119 allowConcurrent body flag", () => {
     expect(body.code).toBe("CONFIG");
     expect(mocks.launchRun).not.toHaveBeenCalled();
   });
+
+  // Codex adversarial-review [medium]: auth runs BEFORE body parsing — an
+  // unauthenticated caller with an invalid body gets the auth error, never a
+  // body-shape CONFIG error, and never reaches launch.
+  it("returns the auth error (not CONFIG) for an unauthenticated invalid body", async () => {
+    const { MaisterError } = await import("@/lib/errors");
+
+    mocks.requireActiveSession.mockRejectedValueOnce(
+      new MaisterError("UNAUTHENTICATED", "Sign in required"),
+    );
+
+    const res = await POST(
+      request({ taskId: "task-1", allowConcurrent: "yes" }),
+    );
+    const body = (await res.json()) as { code?: string };
+
+    expect(res.status).toBe(401);
+    expect(body.code).toBe("UNAUTHENTICATED");
+    expect(mocks.launchRun).not.toHaveBeenCalled();
+  });
 });
 
 describe("POST /api/runs — ADR-085 flow and delivery-policy overrides", () => {

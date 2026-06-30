@@ -249,4 +249,31 @@ describe("launchRun — atomic attempt-number allocation (ADR-119, integration)"
 
     expect(taskRow.attemptNumber).toBe(3);
   });
+
+  // Codex adversarial-review [high]: the allocator must run AFTER cheap
+  // preconditions so a validation refusal never burns a retry-budget number
+  // (ralph-loop reads tasks.attempt_number as the max-attempt high-water mark).
+  it("a launch refused by branch validation does NOT bump attempt_number (no burned number)", async () => {
+    await seedProject("proj-noburn", "proj-noburn");
+    await seedTask("task-noburn", "proj-noburn");
+
+    await expect(
+      launchRun({ taskId: "task-noburn", baseBranch: "ghost-branch" }, ctx, db),
+    ).rejects.toMatchObject({ code: "PRECONDITION" });
+
+    const [taskRow] = await db
+      .select({ attemptNumber: schema.tasks.attemptNumber })
+      .from(schema.tasks)
+      .where(eq(schema.tasks.id, "task-noburn"));
+
+    // Seeded attemptNumber is 1; a refused launch leaves it untouched.
+    expect(taskRow.attemptNumber).toBe(1);
+
+    const runRows = await db
+      .select({ id: schema.runs.id })
+      .from(schema.runs)
+      .where(eq(schema.runs.taskId, "task-noburn"));
+
+    expect(runRows.length).toBe(0);
+  });
 });
