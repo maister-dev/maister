@@ -2134,6 +2134,92 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+    put:
+      tags: [projects]
+      summary: (M34 — Implemented) Replace the editable task fields (full issue-style save)
+      description: |
+        Project membership `member`+. The full card editor saves every
+        first-level editable task field in ONE transaction (issue-style
+        replace); lifecycle fields stay owned by the run state. `title` and
+        `prompt` are required; the launch-default fields are required keys
+        whose value MAY be `null` to CLEAR. The ADR-121 queue fields
+        (`priority`, `triageConfidence`, `queuePaused`) are optional so
+        pre-existing PUT clients stay valid. Config fields are Backlog-gated
+        (editing one while the task is InFlight → `PRECONDITION`);
+        `queuePaused` works while InFlight.
+      operationId: putTask
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+        - name: number
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                [title, prompt, flowId, runnerId, baseBranch, targetBranch, promotionMode, executionPolicy]
+              properties:
+                title: { type: string, minLength: 1 }
+                prompt: { type: string, minLength: 1 }
+                flowId: { type: string, nullable: true }
+                runnerId: { type: string, nullable: true }
+                baseBranch: { type: string, nullable: true, maxLength: 255 }
+                targetBranch: { type: string, nullable: true, maxLength: 255 }
+                promotionMode:
+                  type: string
+                  nullable: true
+                  enum: [local_merge, pull_request, null]
+                executionPolicy:
+                  type: object
+                  nullable: true
+                  description: Execution-control policy snapshot (ADR-095/101); `null` clears.
+                # ADR-121 optional queue fields — priority CLEAR (null) → 'normal';
+                # confidence advisory (0..1, CLEAR → NULL); queuePaused pause valve.
+                priority:
+                  type: string
+                  nullable: true
+                  enum: [low, normal, high, urgent, null]
+                triageConfidence:
+                  type: number
+                  nullable: true
+                  minimum: 0
+                  maximum: 1
+                queuePaused: { type: boolean }
+      responses:
+        "200":
+          description: Saved.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: Unknown task number for this project.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "409":
+          description: A Backlog-gated config field was edited while the task is not in Backlog (`PRECONDITION`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+        "422":
+          description: Unknown `flowId`/`runnerId`, bad ref name, out-of-set `priority`, or out-of-range `triageConfidence` (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
   /api/projects/{slug}/tasks/{number}/send-to-triage:
     post:
       tags: [projects]

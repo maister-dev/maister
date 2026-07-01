@@ -886,10 +886,11 @@ draft updates increment `draft_version` and stale callers receive `CONFLICT`.
                                  //   DEFAULT false. Operator pause valve — excludes
                                  //   the task from auto-admission, auto-resume, and
                                  //   the poll backstop; reversible, config-preserving.
-  queueClaimedAt?,               // ADR-121 (0087): timestamptz NULL. The task-level
-                                 //   C2 admission claim (launchRun is worktree-first
-                                 //   → no run row exists at claim time). Slot-free
-                                 //   CAS claim path is Designed.
+  queueClaimedAt?,               // ADR-121 (Implemented, 0087): timestamptz NULL. The
+                                 //   task-level C2 admission claim (launchRun is
+                                 //   worktree-first → no run row exists at claim time):
+                                 //   CAS-set under the scheduler lock by the slot-free
+                                 //   gate, reconcile-swept if the claimer crashes.
   createdByUserId?,              // nullable FK -> users.id; user-token owner
   createdAt, updatedAt
 }

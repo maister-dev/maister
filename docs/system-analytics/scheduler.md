@@ -259,13 +259,17 @@ flowchart TD
 - Operator-visible execution failures on the screen MUST come from the last
   `scheduler_job_runs` status/error and existing structured scheduler logs;
   the UI should not invent a second error channel.
-- (ADR-121, Implemented) `promoteNextPending` selects the Pending (C1) queue by
-  the criticality dictionary (`weightOf` weight DESC) then `started_at` FIFO —
-  NOT a blind `started_at` FIFO; the cap invariant is unchanged. The unified
-  admission funnel (slot-free C2 mint + cap-safe C3 resume) is **Designed** — see
-  [`task-queue.md`](task-queue.md). The 60s `auto_launch_triaged` poll backstop is
-  the current C2 driver and applies the same criticality order plus the
-  `MAISTER_TASK_QUEUE_AUTO_RESERVE` / per-project `maxInFlightAuto` capacity guards.
+- (ADR-121, Implemented) `promoteNextPending` is the unified priority-ordered
+  admission gate. On a freed slot it admits the single most-critical eligible unit
+  across THREE sources — C1 Pending runs, C3 answered-idle resumables
+  (`NeedsInputIdle` + `resume_requested_at`), and C2 eligible fresh Backlog tasks
+  (flow pool only, via the `tasks.queue_claimed_at` two-phase claim) — strictly by
+  (`weightOf` weight DESC, classRank, FIFO), NOT a blind `started_at` FIFO. The cap
+  invariant is unchanged (one admission per call). The 60s `auto_launch_triaged`
+  poll is the C2 BACKSTOP (shares `lib/scheduler/c2-eligibility` with the gate), and
+  resume is cap-safe (the D2 bypass is removed) — see [`task-queue.md`](task-queue.md).
+  Both apply the `MAISTER_TASK_QUEUE_AUTO_RESERVE` / per-project `maxInFlightAuto`
+  capacity guards to C2.
 
 ## Edge cases
 

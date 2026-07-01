@@ -253,6 +253,11 @@ flowchart TD
   `acp_session_id` is persisted only after it returns.
 - A supervisor `listSessions` failure MUST skip the whole reconcile tick;
   the sweep NEVER crashes a run on transient supervisor unavailability.
+- (ADR-121, T15) The sweep MUST clear a STALE C2 admission claim — a
+  `tasks.queue_claimed_at` older than the grace window (a claimer that crashed
+  between the CAS and `launchRun`'s run-INSERT) — counted as `staleClaimsCleared`;
+  it runs every tick independent of the run-candidate set (even on a
+  zero-candidate tick) so a crashed claimer never strands the task.
 - Reconcile candidate sets MUST stay disjoint from `runResumeRecoverySweep`
   (`NeedsInput`) and `runTakeoverReturnRecoverySweep` (returned takeover);
   reconcile excludes the takeover-return predicate.

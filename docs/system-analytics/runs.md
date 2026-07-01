@@ -863,9 +863,10 @@ already-inserted run) — never an orphan worktree or live ACP session.
   the run-INSERT for funnel-minted (auto-drained) runs ONLY — a manual / scratch /
   ADR-119 force-relaunch run carries NULL and never counts toward a project's
   `maxInFlightAuto` (INV-9). `runs.resume_requested_at` is the C3 admission FIFO
-  key (set when an idle run's HITL is answered and it awaits a slot); the cap-safe
-  resume re-routing through the admission gate (reversing D2) is **Designed** —
-  see [`task-queue.md`](task-queue.md).
+  key (set when an answered idle run is deferred at cap); the cap-safe resume
+  re-routing through the admission gate (reversing D2) is **Implemented** —
+  `resumeRun` and the agent idle-resume defer to the gate's C3 source instead of
+  bypassing the cap. See [`task-queue.md`](task-queue.md).
 
 ## Edge cases
 
@@ -958,11 +959,14 @@ rows per tick and concurrency 4:
 | 1 | `NeedsInput WHERE keepalive_until < now()` | look up supervisor session by `acpSessionId`; if live → `checkpointSession()` then `markCheckpointed`; if not live → `markCheckpointed` directly; on supervisor 5xx → leave row, next tick retries; on success → `releaseSlotOnIdle` → `promoteNextPending` |
 | 2 | `NeedsInputIdle WHERE checkpoint_at + ttl < now()` | UPDATE to `Abandoned` with status-guard; close any open `hitl_requests.respondedAt`; TTL = `MAISTER_NEEDSINPUTIDLE_TTL_HOURS` |
 
-The scheduler cap is `count(status IN ('Running','NeedsInput'))` —
+The scheduler cap is `count(status IN ('Running','NeedsInput','HumanWorking'))` —
 `NeedsInputIdle` does NOT count, so a checkpointed run frees a slot
-immediately. Resumes (`NeedsInputIdle → NeedsInput` via
-`markResumed`) bypass the cap by design — operator-driven, not
-auto-scheduled.
+immediately. Resumes are **cap-safe** (ADR-121, T14): `resumeRun`
+cap-gates the `NeedsInputIdle → NeedsInput` claim under the scheduler
+lock — when the pool is at cap it stamps `resume_requested_at` and
+defers to the admission gate's C3 source instead of bypassing the cap
+(the former D2 bypass is removed; a burst of HITL answers can no longer
+push a pool over its cap).
 
 Every resume-driver terminal transition (`completeResumedStepAndHandoff`
 last-step `Review`, `failResumedRun`, `crashResumedRun`) MUST call
