@@ -18,11 +18,44 @@ import { getDb } from "@/lib/db/client";
 import { loadActiveRunSession } from "@/lib/runs/active-run-session";
 import * as schemaModule from "@/lib/db/schema";
 import { MaisterError } from "@/lib/errors";
-import { priorityWeightSql } from "@/lib/tasks/admission-selector";
+import { markResumed } from "@/lib/runs/state-transitions";
+import {
+  clearC2Claim,
+  countLiveAutoFlowRuns,
+  countOutstandingC2Claims,
+  evaluateC2Candidate,
+  giveUpC2Task,
+  isTerminalLaunchRefusal,
+  loadC2CandidateRows,
+  type C2CandidateRow,
+} from "@/lib/scheduler/c2-eligibility";
+import {
+  orderAdmissions,
+  priorityWeightSql,
+  projectShareAllowsC2,
+  reserveAllowsC2,
+  type AdmissionCandidate,
+} from "@/lib/tasks/admission-selector";
+import { type TaskPriority } from "@/lib/tasks/criticality";
+import {
+  resolveAutoReserve,
+  resolveEdgeDrain,
+  resolveMaxInFlightAuto,
+  type TaskQueueSettings,
+} from "@/lib/tasks/queue-settings";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { runs, tasks } = schemaModule as unknown as Record<string, any>;
+const { projects, runs, tasks } = schemaModule as unknown as Record<
+  string,
+  any
+>;
+
+// ADR-121 (T13): the gate evaluates at most this many highest-criticality fresh
+// Backlog tasks per slot-free call before falling back to the poll backstop —
+// bounds the per-candidate eligibility work done under the scheduler lock. A
+// deeper backlog drains via the 60s `auto-launch-triaged` tick.
+const GATE_C2_SCAN_LIMIT = 50;
 
 const log = pino({
   name: "scheduler",
@@ -399,6 +432,11 @@ export type PromoteNextPendingOptions = {
   // pre-existing caller frees a flow/scratch slot).
   pool?: SchedulerPool;
   startAgentRun?: (runId: string) => void;
+  // ADR-121 (T13, C2): the heavy fresh-Backlog-task launcher, dispatched OUTSIDE
+  // the scheduler lock (worktree-first). Injectable for tests; defaults to the
+  // real launchRun via dynamic import (services/runs imports this module — a
+  // static import would cycle).
+  launchRun?: (taskId: string) => Promise<{ runId: string; status: string }>;
 };
 
 // M8 D2: NeedsInputIdle does NOT count toward the cap. When the keep-alive
@@ -430,6 +468,21 @@ export async function releaseSlotOnIdle(
   return promoteNextPending({ db: opts.db, runFlow: opts.runFlow, pool });
 }
 
+// ADR-121 §4.4: the unified priority-ordered admission gate (a.k.a.
+// `admitOnFreeSlot`). On a freed slot it admits the single most-critical eligible
+// unit of work across THREE sources, strictly ordered by (criticality weight DESC,
+// classRank, FIFO):
+//   C1 — Pending runs in the pool (queued / queued-resume).
+//   C3 — answered-idle resumables (NeedsInputIdle + resume_requested_at, not paused)
+//        — closes the D2 over-cap bypass (G4): resume is now cap-safe.
+//   C2 — eligible fresh Backlog tasks (FLOW pool only), behind edgeDrain + the
+//        reserve (INV-8) and per-project maxInFlightAuto (INV-9) guards, via a
+//        two-phase task-level claim (F1). The 60s poll is the BACKSTOP, not the
+//        sole driver. Both share `@/lib/scheduler/c2-eligibility`.
+// One admission per call (every freed-slot caller invokes this once per slot), so
+// the cap is honored: the chosen unit consumes exactly one slot. `name` kept as
+// `promoteNextPending` because all 17 freed-slot call-sites already call it (G3
+// needs no new event wiring).
 export async function promoteNextPending(
   opts: PromoteNextPendingOptions = {},
 ): Promise<{ promotedRunId: string | null }> {
@@ -480,50 +533,57 @@ export async function promoteNextPending(
           );
         });
     });
+  // ADR-121 (T13, C2): the heavy fresh-Backlog-task launcher, dispatched OUTSIDE
+  // the lock. Default uses the real launchRun via dynamic import (services/runs
+  // imports this module — a static import would cycle).
+  const launchC2Fn =
+    opts.launchRun ??
+    (async (taskId: string) => {
+      const m = await import("@/lib/services/runs");
 
-  const promoted = await db.transaction(async (tx: Db) => {
+      return m.launchRun(
+        { taskId, queueAdmitted: true },
+        { authorize: async () => {}, actorUserId: null },
+        db,
+      );
+    });
+
+  const decision = await db.transaction(async (tx: Db) => {
     await takeSchedulerLock(tx);
 
-    // Recheck cap under the lock — a Running/NeedsInput/HumanWorking run
-    // could have started between this terminal transition and the
-    // promote call (e.g. another tryStartRun acquired the lock
-    // ahead of us), and we must respect the cap globally.
+    // Recheck cap under the lock — a Running/NeedsInput/HumanWorking run could
+    // have started between this terminal transition and the promote call, so the
+    // cap is respected globally. One admission per call keeps liveCount ≤ cap.
     const liveCount = await countLiveRuns(tx, pool);
 
     if (liveCount >= cap) {
       log.debug(
         { pool, liveCount, cap },
-        "promoteNextPending → cap reached, leaving Pending in place",
+        "promoteNextPending → cap reached, leaving work queued",
       );
 
       return null;
     }
 
-    // M19 Phase 1 (T1.B, Codex F2): fetch acp_session_id alongside the id so
-    // a checkpointed Pending row (queued after an idle-resume claim) is
-    // resumed via --resume rather than re-run from the start of the flow.
-    // M37 Phase 10 (ADR-099): also fetch workspace_mode + root_run_id so a
-    // shared-mode candidate can be SKIPPED while a writer sibling in its tree is
-    // active (one active writer per shared tree). The whole scan + flip runs
-    // under the advisory lock, so the sibling-active read is consistent — no
-    // concurrent promote can flip a sibling to Running between the check and the
-    // claim. The window is bounded by `cap` candidates (small).
-    // ADR-121 (T12, C1 source): order the Pending queue by the criticality
-    // dictionary (weight DESC) then FIFO (started_at ASC) — a higher-criticality
-    // queued run promotes first. LEFT JOIN tasks for the LIVE priority (a run with
-    // no task → normal weight via the SQL default). FOR UPDATE OF runs SKIP LOCKED
-    // so the tasks join does not lock task rows.
-    const candidates: Array<{
+    // C1 — Pending runs in the pool. LEFT JOIN tasks for the LIVE priority (a run
+    // with no task → normal weight). workspace_mode + root_run_id feed the
+    // one-writer-per-shared-tree skip (ADR-099). FOR UPDATE OF runs SKIP LOCKED so
+    // the tasks join does not lock task rows.
+    const c1rows: Array<{
       id: string;
       runKind: string;
       workspaceMode: string | null;
       rootRunId: string | null;
+      priority: string | null;
+      startedAt: Date | null;
     }> = await tx
       .select({
         id: runs.id,
         runKind: runs.runKind,
         workspaceMode: runs.workspaceMode,
         rootRunId: runs.rootRunId,
+        priority: tasks.priority,
+        startedAt: runs.startedAt,
       })
       .from(runs)
       .leftJoin(tasks, eq(runs.taskId, tasks.id))
@@ -540,108 +600,357 @@ export async function promoteNextPending(
       .limit(cap)
       .for("update", { of: runs, skipLocked: true } as never);
 
-    let target:
-      | {
-          id: string;
-          runKind: string;
-          workspaceMode: string | null;
-          rootRunId: string | null;
-        }
-      | undefined;
+    // C3 — answered-idle resumables: NeedsInputIdle + resume_requested_at set, the
+    // backing task NOT paused (INV-10). The FIFO key is resume_requested_at.
+    const c3rows: Array<{
+      id: string;
+      runKind: string;
+      workspaceMode: string | null;
+      rootRunId: string | null;
+      priority: string | null;
+      resumeRequestedAt: Date | null;
+    }> = await tx
+      .select({
+        id: runs.id,
+        runKind: runs.runKind,
+        workspaceMode: runs.workspaceMode,
+        rootRunId: runs.rootRunId,
+        priority: tasks.priority,
+        resumeRequestedAt: runs.resumeRequestedAt,
+      })
+      .from(runs)
+      .leftJoin(tasks, eq(runs.taskId, tasks.id))
+      .where(
+        and(
+          eq(runs.status, "NeedsInputIdle"),
+          isNotNull(runs.resumeRequestedAt),
+          inArray(runs.runKind, POOL_RUN_KINDS[pool]),
+          sql`(${tasks.id} IS NULL OR ${tasks.queuePaused} = false)`,
+        ),
+      )
+      .orderBy(
+        sql`${priorityWeightSql(tasks.priority)} desc`,
+        asc(runs.resumeRequestedAt),
+      )
+      .limit(cap)
+      .for("update", { of: runs, skipLocked: true } as never);
 
-    for (const candidate of candidates) {
-      if (
-        candidate.workspaceMode === "shared" &&
-        candidate.rootRunId &&
-        (await sharedWriterSiblingActive(tx, candidate.rootRunId, candidate.id))
-      ) {
-        // A writer sibling in this shared tree is active — leave this candidate
-        // Pending; it promotes when the active sibling parks or terminates.
-        log.debug(
-          { runId: candidate.id, rootRunId: candidate.rootRunId },
-          "promoteNextPending → shared-tree writer busy, skipping candidate",
-        );
-        continue;
-      }
+    // C2 — eligible fresh Backlog tasks, FLOW pool only. Cheap candidate rows are
+    // fetched up front (ordered by weight); per-candidate eligibility + capacity
+    // guards are resolved lazily during the claim loop (only for candidates that
+    // out-rank the best run candidate), bounded by GATE_C2_SCAN_LIMIT.
+    const c2rows: C2CandidateRow[] =
+      pool === "flow"
+        ? (await loadC2CandidateRows(tx)).slice(0, GATE_C2_SCAN_LIMIT)
+        : [];
 
-      target = candidate;
-      break;
+    if (c1rows.length === 0 && c3rows.length === 0 && c2rows.length === 0) {
+      return null;
     }
 
-    if (!target) return null;
+    const candidates: AdmissionCandidate[] = [
+      ...c1rows.map((r) => ({
+        cls: "C1" as const,
+        priority: r.priority as TaskPriority | null,
+        fifoMs: r.startedAt?.getTime() ?? 0,
+        ref: {
+          runId: r.id,
+          runKind: r.runKind,
+          workspaceMode: r.workspaceMode,
+          rootRunId: r.rootRunId,
+        },
+      })),
+      ...c3rows.map((r) => ({
+        cls: "C3" as const,
+        priority: r.priority as TaskPriority | null,
+        fifoMs: r.resumeRequestedAt?.getTime() ?? 0,
+        ref: {
+          runId: r.id,
+          runKind: r.runKind,
+          workspaceMode: r.workspaceMode,
+          rootRunId: r.rootRunId,
+        },
+      })),
+      ...c2rows.map((r) => ({
+        cls: "C2" as const,
+        priority: r.priority as TaskPriority | null,
+        fifoMs: r.createdAt?.getTime() ?? 0,
+        ref: { taskId: r.taskId, candidate: r },
+      })),
+    ];
 
-    const isAgent = target.runKind === "agent";
-    // M42 (ADR-114): the resume handle lives on the run's ACTIVE session.
-    const targetAcpSessionId = isAgent
-      ? null
-      : ((await loadActiveRunSession(tx, target.id))?.acpSessionId ?? null);
-    const isResume = !isAgent && targetAcpSessionId != null;
+    const ordered = orderAdmissions(candidates);
+
+    // C2 capacity-guard context (resolved live). The reserve guard (INV-8) counts
+    // live flow runs PLUS outstanding C2 claims (Codex-2): a claim reserves a slot
+    // before its run row exists, so concurrent lock-serialized gate calls each see
+    // the prior call's committed claim and cannot over-admit past flowCap − reserve.
+    const reserve = resolveAutoReserve();
+    const outstandingClaims = await countOutstandingC2Claims(tx);
+    const settingsByProject = new Map<string, TaskQueueSettings | null>();
+
+    async function settingsFor(
+      projectId: string,
+    ): Promise<{ taskQueueSettings: TaskQueueSettings | null }> {
+      if (!settingsByProject.has(projectId)) {
+        const rows: Array<{ taskQueueSettings: TaskQueueSettings | null }> =
+          await tx
+            .select({ taskQueueSettings: projects.taskQueueSettings })
+            .from(projects)
+            .where(eq(projects.id, projectId));
+
+        settingsByProject.set(projectId, rows[0]?.taskQueueSettings ?? null);
+      }
+
+      return { taskQueueSettings: settingsByProject.get(projectId) ?? null };
+    }
+
+    const nowMs = Date.now();
     const now = new Date();
 
-    const promotedRows: Array<{ projectId: string }> = await tx
-      .update(runs)
-      .set(
-        isResume
-          ? { status: "Running", startedAt: now, resumeStartedAt: now }
-          : { status: "Running", startedAt: now },
-      )
-      .where(and(eq(runs.id, target.id), eq(runs.status, "Pending")))
-      .returning({ projectId: runs.projectId });
+    for (const cand of ordered) {
+      const ref = cand.ref as Record<string, unknown>;
 
-    if (promotedRows.length === 0) return null;
+      if (cand.cls === "C1" || cand.cls === "C3") {
+        const runId = ref.runId as string;
+        const runKind = ref.runKind as string;
 
-    await emitWebhookEvent({
-      db: tx,
-      type: "run.started",
-      projectId: promotedRows[0].projectId,
-      runId: target.id,
-      data: { trigger: "queue_promote" },
-    });
+        // One writer per shared tree (ADR-099): skip a shared-mode candidate while
+        // a writer sibling is active — applies to both queued and resuming runs.
+        if (
+          ref.workspaceMode === "shared" &&
+          ref.rootRunId &&
+          (await sharedWriterSiblingActive(tx, ref.rootRunId as string, runId))
+        ) {
+          log.debug(
+            { runId, rootRunId: ref.rootRunId, cls: cand.cls },
+            "promoteNextPending → shared-tree writer busy, skipping candidate",
+          );
+          continue;
+        }
 
-    return { id: target.id, isResume, isAgent };
+        const isAgent = runKind === "agent";
+
+        if (cand.cls === "C1") {
+          // M19/M42: a checkpointed Pending run (acp session on its active session)
+          // resumes via session/resume rather than re-running from step 0.
+          const targetAcpSessionId = isAgent
+            ? null
+            : ((await loadActiveRunSession(tx, runId))?.acpSessionId ?? null);
+          const isResume = !isAgent && targetAcpSessionId != null;
+
+          const flipped: Array<{ projectId: string }> = await tx
+            .update(runs)
+            .set(
+              isResume
+                ? { status: "Running", startedAt: now, resumeStartedAt: now }
+                : { status: "Running", startedAt: now },
+            )
+            .where(and(eq(runs.id, runId), eq(runs.status, "Pending")))
+            .returning({ projectId: runs.projectId });
+
+          if (flipped.length === 0) continue;
+
+          await emitWebhookEvent({
+            db: tx,
+            type: "run.started",
+            projectId: flipped[0].projectId,
+            runId,
+            data: { trigger: "queue_promote" },
+          });
+
+          return { kind: "run" as const, id: runId, isResume, isAgent };
+        }
+
+        // C3 — answered-idle resume (cap-safe, the D2 reversal). The claim
+        // transition DIFFERS by run kind (Codex-1):
+        //   - agent → NeedsInputIdle → Running + startAgentSession (matches the
+        //     existing agent idle-resume; agent transitions handle Running).
+        //   - flow  → NeedsInputIdle → NeedsInput via markResumed (fresh keepalive,
+        //     checkpoint cleared) — NOT Running. The flow resume driver's completion
+        //     transitions (completeResumedStepAndHandoff, failResumedRun, rollback)
+        //     are status-guarded on NeedsInput; flipping to Running would make them
+        //     miss and strand the run Running forever. driveResume re-issues the
+        //     session + delivers the stored intent while the run stays NeedsInput,
+        //     exactly like the immediate (uncapped) HITL resume path.
+        let claimedProjectId: string | null = null;
+
+        if (isAgent) {
+          const flipped: Array<{ projectId: string }> = await tx
+            .update(runs)
+            .set({
+              status: "Running",
+              resumeRequestedAt: null,
+              keepaliveUntil: null,
+              checkpointAt: null,
+            })
+            .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInputIdle")))
+            .returning({ projectId: runs.projectId });
+
+          if (flipped.length === 0) continue;
+          claimedProjectId = flipped[0].projectId;
+        } else {
+          const resumed = await markResumed(runId, { db: tx });
+
+          if (!resumed.ok) continue;
+          const flipped: Array<{ projectId: string }> = await tx
+            .update(runs)
+            .set({ resumeRequestedAt: null })
+            .where(eq(runs.id, runId))
+            .returning({ projectId: runs.projectId });
+
+          claimedProjectId = flipped[0]?.projectId ?? null;
+        }
+
+        await emitWebhookEvent({
+          db: tx,
+          type: "run.started",
+          projectId: claimedProjectId as string,
+          runId,
+          data: { trigger: "queue_resume" },
+        });
+
+        return { kind: "run" as const, id: runId, isResume: true, isAgent };
+      }
+
+      // C2 — fresh Backlog task. Apply the capacity guards + per-candidate
+      // eligibility, then CAS-claim queue_claimed_at (the two-phase claim, F1).
+      const candidate = ref.candidate as C2CandidateRow;
+      const settings = await settingsFor(candidate.projectId);
+
+      if (!resolveEdgeDrain(settings)) continue; // INV-7
+      if (!reserveAllowsC2(liveCount + outstandingClaims, cap, reserve)) {
+        continue; // INV-8 (live runs + in-flight claims)
+      }
+
+      const liveAuto = await countLiveAutoFlowRuns(tx, candidate.projectId);
+
+      if (!projectShareAllowsC2(liveAuto, resolveMaxInFlightAuto(settings))) {
+        continue; // INV-9
+      }
+
+      const eligibility = await evaluateC2Candidate(tx, candidate, nowMs);
+
+      if (eligibility.kind !== "eligible") continue;
+
+      const claimed: Array<{ id: string }> = await tx
+        .update(tasks)
+        .set({ queueClaimedAt: now })
+        .where(
+          and(eq(tasks.id, candidate.taskId), isNull(tasks.queueClaimedAt)),
+        )
+        .returning({ id: tasks.id });
+
+      if (claimed.length === 0) continue; // concurrent admission claimed it first
+
+      log.info(
+        { taskId: candidate.taskId, projectId: candidate.projectId },
+        "promoteNextPending → C2 claimed fresh Backlog task",
+      );
+
+      return { kind: "c2" as const, candidate };
+    }
+
+    return null;
   });
 
-  if (promoted && promoted.isAgent) {
-    log.info({ runId: promoted.id }, "[scheduler] promoting queued agent run");
+  if (!decision) {
+    log.debug({ pool }, "promoteNextPending → nothing to promote");
+
+    return { promotedRunId: null };
+  }
+
+  if (decision.kind === "c2") {
+    const candidate = decision.candidate;
+    const doLaunch = async (): Promise<string | null> => {
+      try {
+        const res = await launchC2Fn(candidate.taskId);
+
+        await clearC2Claim(db, candidate.taskId);
+        log.info(
+          { taskId: candidate.taskId, runId: res.runId, status: res.status },
+          "promoteNextPending → C2 launched fresh Backlog run",
+        );
+
+        return res.runId;
+      } catch (err) {
+        await clearC2Claim(db, candidate.taskId);
+
+        if (isTerminalLaunchRefusal(err)) {
+          await giveUpC2Task(db, candidate, {
+            reason: "auto_launch_stale_flow",
+            detail: err instanceof Error ? err.message : String(err),
+          });
+        } else {
+          log.warn(
+            {
+              taskId: candidate.taskId,
+              err: err instanceof Error ? err.message : String(err),
+            },
+            "promoteNextPending → C2 launch refused (transient) — claim cleared, re-eligible next tick",
+          );
+        }
+
+        return null;
+      }
+    };
+
+    // Injected launcher (tests / controlled callers) → await for determinism;
+    // the default fire-and-forgets so a request-path freed-slot caller is not
+    // blocked on a git/worktree launch.
+    if (opts.launchRun) {
+      const runId = await doLaunch();
+
+      return { promotedRunId: runId };
+    }
+
+    queueMicrotask(() => {
+      void doLaunch();
+    });
+
+    return { promotedRunId: null };
+  }
+
+  // decision.kind === "run" (C1 or C3): dispatch outside the lock.
+  if (decision.isAgent) {
+    log.info({ runId: decision.id }, "[scheduler] promoting queued agent run");
     queueMicrotask(() => {
       try {
-        startAgentFn(promoted.id);
+        startAgentFn(decision.id);
       } catch (err) {
         log.error(
-          { err: (err as Error).message, promotedRunId: promoted.id },
+          { err: (err as Error).message, promotedRunId: decision.id },
           "promoteNextPending startAgentRun dispatch failed",
         );
       }
     });
-  } else if (promoted && promoted.isResume) {
-    log.info({ runId: promoted.id }, "[scheduler] promoting queued resume");
+  } else if (decision.isResume) {
+    log.info({ runId: decision.id }, "[scheduler] promoting queued resume");
     queueMicrotask(() => {
       try {
-        resumeFn(promoted.id);
+        resumeFn(decision.id);
       } catch (err) {
         log.error(
-          { err: (err as Error).message, promotedRunId: promoted.id },
+          { err: (err as Error).message, promotedRunId: decision.id },
           "promoteNextPending resumeRun dispatch failed",
         );
       }
     });
-  } else if (promoted) {
-    log.info({ promotedRunId: promoted.id }, "promoteNextPending → promoting");
+  } else {
+    log.info({ promotedRunId: decision.id }, "promoteNextPending → promoting");
     queueMicrotask(() => {
       try {
-        runFlowFn(promoted.id);
+        runFlowFn(decision.id);
       } catch (err) {
         log.error(
-          { err: (err as Error).message, promotedRunId: promoted.id },
+          { err: (err as Error).message, promotedRunId: decision.id },
           "promoteNextPending runFlow dispatch failed",
         );
       }
     });
-  } else {
-    log.debug({}, "promoteNextPending → nothing to promote");
   }
 
-  return { promotedRunId: promoted?.id ?? null };
+  return { promotedRunId: decision.id };
 }
 
 // Helper exported so tests can compute cap without env mocking.

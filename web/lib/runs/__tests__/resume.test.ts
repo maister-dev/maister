@@ -27,12 +27,25 @@ vi.mock("@/lib/runs/state-transitions", () => ({
     failResumedRunSpy(...(args as unknown[])),
 }));
 
+// ADR-121 (T14): the cap-gate. Default = a free slot (countLiveRuns 0) so every
+// pre-existing scenario proceeds to the markResumed claim exactly as before; the
+// deferred (cap-full) branch is covered by the real-PG cap-gate integration test.
+const countLiveRunsSpy = vi.fn(async () => 0);
+
+vi.mock("@/lib/scheduler", () => ({
+  takeSchedulerLock: async () => {},
+  countLiveRuns: () => countLiveRunsSpy(),
+  capForPool: () => 6,
+}));
+
 // Minimal db: select chains return seeded rows.
 const dbState: {
   runRow: Record<string, unknown> | null;
   workspace: Record<string, unknown> | null;
   project: Record<string, unknown> | null;
 } = { runRow: null, workspace: null, project: null };
+
+const updateSetSpy = vi.fn();
 
 const fakeDb = {
   select: () => ({
@@ -53,6 +66,16 @@ const fakeDb = {
         return [];
       },
     }),
+  }),
+  // ADR-121 (T14): the cap-gate runs the markResumed claim inside one locked tx.
+  // The fake threads the same handle through so the markResumed mock still fires.
+  transaction: async (fn: (tx: unknown) => unknown) => fn(fakeDb),
+  update: () => ({
+    set: (payload: unknown) => {
+      updateSetSpy(payload);
+
+      return { where: async () => undefined };
+    },
   }),
 };
 
@@ -116,6 +139,9 @@ beforeEach(async () => {
   markResumedSpy.mockReset();
   rollbackResumedRunSpy.mockReset();
   failResumedRunSpy.mockReset();
+  updateSetSpy.mockReset();
+  countLiveRunsSpy.mockReset();
+  countLiveRunsSpy.mockResolvedValue(0);
   vi.resetModules();
   ({ resumeRun } = await import("../resume"));
 });
@@ -230,6 +256,23 @@ describe("resumeRun — claim-before-spawn ordering", () => {
     expect(markResumedSpy).not.toHaveBeenCalled();
     expect(createSessionSpy).not.toHaveBeenCalled();
     expect(failResumedRunSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("ADR-121 T14: flow pool at cap → QUEUED (no claim, no spawn); resume_requested_at stamped", async () => {
+    // The cap-gate sees the pool at cap → defers the resume instead of bypassing
+    // the cap (the D2 fix). markResumed + createSession must NOT run; the row stays
+    // NeedsInputIdle with resume_requested_at stamped for the gate's C3 source.
+    countLiveRunsSpy.mockResolvedValue(6);
+
+    const r = await resumeRun("run-1");
+
+    expect(r.ok).toBe(false);
+    expect(r.code).toBe("QUEUED");
+    expect(markResumedSpy).not.toHaveBeenCalled();
+    expect(createSessionSpy).not.toHaveBeenCalled();
+    // resume_requested_at was stamped (the only update on this path).
+    expect(updateSetSpy).toHaveBeenCalledTimes(1);
+    expect(updateSetSpy.mock.calls[0][0]).toHaveProperty("resumeRequestedAt");
   });
 
   it("run already moved out of NeedsInputIdle → PRECONDITION; no claim, no spawn", async () => {

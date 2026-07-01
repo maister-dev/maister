@@ -89,6 +89,12 @@ vi.mock("@/lib/worktree", () => ({
 }));
 vi.mock("@/lib/scheduler", () => ({
   tryStartRun: vi.fn(async () => ({ started: false, queuePosition: 1 })),
+  // ADR-121 (T14): the idle-resume cap-gate (resumeRun + agent hitl path) reads
+  // these from the scheduler. Defaults model a free slot so the resume proceeds to
+  // the claim exactly as before the cap-gate landed.
+  takeSchedulerLock: vi.fn(async () => {}),
+  countLiveRuns: vi.fn(async () => 0),
+  capForPool: vi.fn(() => 6),
 }));
 vi.mock("@/lib/flows/runner", () => ({
   runFlow: vi.fn(async () => {}),

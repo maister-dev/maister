@@ -15,6 +15,7 @@ import {
   inArray,
   isNotNull,
   isNull,
+  lt,
   notInArray,
 } from "drizzle-orm";
 import pino from "pino";
@@ -39,7 +40,7 @@ import { listSessions } from "@/lib/supervisor-client";
 import { listWorktrees } from "@/lib/worktree";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { assignments, nodeAttempts, projects, runs, workspaces } =
+const { assignments, nodeAttempts, projects, runs, tasks, workspaces } =
   schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
@@ -309,6 +310,10 @@ export interface ReconcileSweepSummary {
   redispatched: number;
   reattached: number;
   skipped: number;
+  // ADR-121 (T15, F1): stale C2 admission claims (tasks.queue_claimed_at set, no
+  // run minted, past the grace window — a crash between claim and launchRun) cleared
+  // this tick so the task becomes re-eligible.
+  staleClaimsCleared: number;
 }
 
 const ZERO_SUMMARY: ReconcileSweepSummary = {
@@ -317,7 +322,15 @@ const ZERO_SUMMARY: ReconcileSweepSummary = {
   redispatched: 0,
   reattached: 0,
   skipped: 0,
+  staleClaimsCleared: 0,
 };
+
+// ADR-121 (T15): a C2 admission claim (tasks.queue_claimed_at) is held only across
+// the worktree-first launchRun window; the gate clears it on run-exists or failure.
+// A claim older than this grace window means the claimer crashed between the CAS and
+// launchRun — the sweep clears it so the task re-enters the funnel. Generous so it
+// never races a slow-but-live launch (git clone + capability materialize).
+const STALE_QUEUE_CLAIM_GRACE_MS = 10 * 60 * 1000;
 const TERMINAL_ASSIGNMENT_CLEANUP_STATUSES = [
   "Done",
   "Failed",
@@ -634,6 +647,33 @@ async function closeTerminalRunAssignments(db: Db): Promise<number> {
   return runIds.length;
 }
 
+// ADR-121 (T15, F1): clear STALE C2 admission claims. The gate CAS-sets
+// tasks.queue_claimed_at before the worktree-first launchRun and clears it on
+// run-exists or launch failure; a claim still set past STALE_QUEUE_CLAIM_GRACE_MS
+// means the claimer crashed between the CAS and run-insert. Clearing it returns the
+// task to the funnel (the per-task live-flow-run guard prevents a double-mint if a
+// run WAS actually created before the crash). Idempotent; runs every tick
+// independent of the run-candidate set.
+async function sweepStaleQueueClaims(db: Db, now: Date): Promise<number> {
+  const cutoff = new Date(now.getTime() - STALE_QUEUE_CLAIM_GRACE_MS);
+  const cleared: Array<{ id: string }> = await db
+    .update(tasks)
+    .set({ queueClaimedAt: null })
+    .where(
+      and(isNotNull(tasks.queueClaimedAt), lt(tasks.queueClaimedAt, cutoff)),
+    )
+    .returning({ id: tasks.id });
+
+  if (cleared.length > 0) {
+    log.warn(
+      { count: cleared.length },
+      "reconcile: cleared stale C2 admission claims (claimer crashed before launch)",
+    );
+  }
+
+  return cleared.length;
+}
+
 // F3 (ADR-102): recover ORPHAN shared trees. A crash between addWorktree (git,
 // outside the runs+workspaces tx) and the workspaces insert can leave a shared
 // tree (root_run_id with shared writable children) carrying NO workspaces row,
@@ -770,6 +810,10 @@ export async function runReconcileSweep(
 
   await closeTerminalRunAssignments(db);
 
+  // ADR-121 (T15): clear stale C2 admission claims first — independent of the run
+  // candidate set, so a no-candidates tick still recovers a crashed claimer.
+  const staleClaimsCleared = await sweepStaleQueueClaims(db, now());
+
   // F3 (ADR-102): recover any orphan shared tree (path on disk, no workspaces
   // row) BEFORE classifying — a recovered row makes the tree resolvable for the
   // rest of the sweep + later promote/diff/GC. Best-effort: a failure here must
@@ -807,7 +851,7 @@ export async function runReconcileSweep(
       "reconcile sweep: listSessions failed — skipping whole tick",
     );
 
-    return { ...ZERO_SUMMARY };
+    return { ...ZERO_SUMMARY, staleClaimsCleared };
   }
 
   const candidates = await loadCandidates(db);
@@ -815,7 +859,7 @@ export async function runReconcileSweep(
   log.info({ candidates: candidates.length }, "reconcile sweep start");
 
   if (candidates.length === 0) {
-    return { ...ZERO_SUMMARY };
+    return { ...ZERO_SUMMARY, staleClaimsCleared };
   }
 
   // One listWorktrees call per distinct repoPath → Set of worktree paths.
@@ -1083,6 +1127,7 @@ export async function runReconcileSweep(
     redispatched,
     reattached,
     skipped,
+    staleClaimsCleared,
   };
 
   log.info(summary, "reconcile sweep complete");

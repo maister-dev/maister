@@ -1,6 +1,6 @@
 import "server-only";
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import pino from "pino";
 
 import {
@@ -17,6 +17,7 @@ import {
   MaisterError,
   type MaisterErrorCode,
 } from "@/lib/errors";
+import { capForPool, countLiveRuns, takeSchedulerLock } from "@/lib/scheduler";
 import { createSession } from "@/lib/supervisor-client";
 import {
   mergeRunnerAdapterLaunch,
@@ -41,6 +42,11 @@ export type ResumeRunResult =
   // race so /respond can map it to 202 (concurrent resume in progress)
   // instead of treating it as a terminal 410.
   | { ok: false; code: "CLAIM_RACE"; retryable: false; message: string }
+  // ADR-121 (T14, G4): the flow pool is at cap — the resume is DEFERRED, not
+  // bypassed (closes the D2 over-cap bug). `resume_requested_at` is stamped so the
+  // unified admission gate (C3) admits this run cap-safely on the next freed slot.
+  // /respond maps it to 202 (resume-in-progress / queued).
+  | { ok: false; code: "QUEUED"; retryable: false; message: string }
   | { ok: false; code: MaisterErrorCode; retryable: boolean; message: string };
 
 export type ResumeRunOptions = {
@@ -55,8 +61,11 @@ export type ResumeRunOptions = {
 //
 // On the success path: markResumed (NeedsInputIdle → NeedsInput +
 // fresh keepalive_until + clear checkpoint_at) BEFORE returning.
-// Resumes bypass the scheduler cap (D2): operator-driven, not
-// auto-scheduled.
+// ADR-121 (T14, G4): resumes are CAP-SAFE — the markResumed claim is gated by the
+// scheduler cap (see the cap-gate below). When the flow pool is at cap the resume
+// is DEFERRED (resume_requested_at stamped, QUEUED returned) and the unified
+// admission gate's C3 source admits it on the next freed slot, instead of the old
+// D2 bypass that could push the pool over its cap.
 //
 // Failure classification (D7 table):
 //   supervisor 5xx / network → EXECUTOR_UNAVAILABLE, retryable, run stays NeedsInputIdle
@@ -185,18 +194,64 @@ export async function resumeRun(
     };
   }
 
-  // M8 review finding #3: atomic claim BEFORE spawning the
-  // supervisor session. Two concurrent /respond retries serialize on
-  // the markResumed CAS — exactly one wins. The loser sees the row in
-  // NeedsInput and returns CLAIM_RACE so /respond can render 202
-  // (concurrent resume in progress) instead of spawning a duplicate
-  // worker and surfacing a misleading 410.
-  const claim = await markResumed(runId, {
-    db,
-    ...(opts.recordSuccessAudit
-      ? { recordSuccessAudit: opts.recordSuccessAudit }
-      : {}),
-  });
+  // ADR-121 (T14, G4): cap-gate the resume claim atomically. Under the scheduler
+  // advisory lock, count the flow pool; if it is at cap, DEFER — stamp
+  // `resume_requested_at` (the C3 FIFO key) and return QUEUED instead of claiming
+  // a slot. This closes the D2 over-cap bypass: a burst of HITL answers can no
+  // longer push the pool past its cap. The cap-check and the NeedsInputIdle →
+  // NeedsInput claim run in the SAME locked transaction so two concurrent resumes
+  // cannot both observe a free slot and both claim (the residual burst race).
+  // NeedsInputIdle is not counted by countLiveRuns; the claim flips it to
+  // NeedsInput (counted), so live < cap before the flip ⇒ live + 1 ≤ cap after.
+  const cap = capForPool("flow");
+  const capGate = await db.transaction(
+    async (
+      tx: Db,
+    ): Promise<
+      | { kind: "queued" }
+      | { kind: "claim"; result: Awaited<ReturnType<typeof markResumed>> }
+    > => {
+      await takeSchedulerLock(tx);
+      const live = await countLiveRuns(tx, "flow");
+
+      if (live >= cap) {
+        await tx
+          .update(runs)
+          .set({ resumeRequestedAt: new Date() })
+          .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInputIdle")));
+
+        return { kind: "queued" };
+      }
+
+      // M8 review finding #3: the markResumed CAS serializes concurrent
+      // /respond retries — exactly one wins; the loser sees NeedsInput and gets
+      // CLAIM_RACE. Run it INSIDE this locked tx so the cap-check + claim are atomic.
+      const result = await markResumed(runId, {
+        db: tx,
+        ...(opts.recordSuccessAudit
+          ? { recordSuccessAudit: opts.recordSuccessAudit }
+          : {}),
+      });
+
+      return { kind: "claim", result };
+    },
+  );
+
+  if (capGate.kind === "queued") {
+    log.info(
+      { runId, cap },
+      "resumeRun: flow pool at cap — deferred (resume_requested_at stamped, gate will admit)",
+    );
+
+    return {
+      ok: false,
+      code: "QUEUED",
+      retryable: false,
+      message: "flow pool at cap; resume queued for the next free slot",
+    };
+  }
+
+  const claim = capGate.result;
 
   if (!claim.ok) {
     log.warn(

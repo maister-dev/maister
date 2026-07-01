@@ -255,4 +255,29 @@ describe("ext relations ops", () => {
 
     expect(res.status).toBe(422);
   });
+
+  it("ADR-121 §4.6: refuses a gating cycle with 409 (CONFLICT) on the agent-token surface", async () => {
+    // A blocks B (201), then B blocks A would close a cycle → CONFLICT → 409,
+    // proving the domain CONFLICT maps through the ext-token route (INV-6).
+    const forward = await POST(
+      request("POST", fx.fullToken, { kind: "blocks", toNumber: fx.toNumber }),
+      routeParams(SLUG, fx.fromTaskId),
+    );
+
+    expect(forward.status).toBe(201);
+
+    const fromNumberRow = await pool.query(
+      `SELECT number FROM tasks WHERE id = $1`,
+      [fx.fromTaskId],
+    );
+    const cycle = await POST(
+      request("POST", fx.fullToken, {
+        kind: "blocks",
+        toNumber: fromNumberRow.rows[0].number,
+      }),
+      routeParams(SLUG, fx.toTaskId),
+    );
+
+    expect(cycle.status).toBe(409);
+  });
 });

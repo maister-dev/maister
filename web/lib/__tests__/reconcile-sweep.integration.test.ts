@@ -891,6 +891,7 @@ describe("runReconcileSweep (integration)", () => {
       redispatched: 0,
       reattached: 0,
       skipped: 0,
+      staleClaimsCleared: 0,
     });
     expect((await readRun(orphan)).status).toBe("Running");
   }, 60_000);

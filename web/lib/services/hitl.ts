@@ -35,6 +35,7 @@ import { emitDomainEvent } from "@/lib/domain-events/outbox";
 import { runFlow } from "@/lib/flows/runner";
 import { runtimeRoot } from "@/lib/runtime-root";
 import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
+import { capForPool, countLiveRuns, takeSchedulerLock } from "@/lib/scheduler";
 import { cancelPermission, deliverPermission } from "@/lib/supervisor-client";
 import { emitWebhookEvent } from "@/lib/webhooks/outbox";
 
@@ -115,30 +116,95 @@ function scheduleResume(runId: string): void {
   );
 }
 
+// ADR-121 (INV-1): cap-safe agent idle-resume claim, shared by the hook_trip
+// (claimAndResumeAgentRun) and budget-raise (scheduleBudgetBreachResume) wakes —
+// the same D2 over-cap bypass T14 closed on the permission idle-resume path
+// (resumeRun / the NeedsInputIdle permission branch below). A run in NeedsInput
+// still HOLDS its agent slot, so it flips to Running directly (slot-neutral); a
+// checkpointed NeedsInputIdle run FREED its slot, so at cap it DEFERS — stamps
+// resume_requested_at (the C3 FIFO key) and leaves the run NeedsInputIdle for the
+// unified admission gate to admit cap-safely on the next freed agent slot. The
+// lock + count + flip share ONE transaction so two concurrent wakes cannot both
+// observe the same free slot and both claim (the residual burst race). The CAS is
+// still the serialization point: "noop" means the run already advanced (a prior
+// resume won or it moved terminal), so a same-payload retry never double-spawns.
+export async function claimAgentResumeSlot(
+  db: any,
+  runId: string,
+): Promise<"claimed" | "queued" | "noop"> {
+  return db.transaction(async (tx: any) => {
+    await takeSchedulerLock(tx);
+
+    const [cur]: Array<{ status: string }> = await tx
+      .select({ status: runs.status })
+      .from(runs)
+      .where(eq(runs.id, runId));
+
+    if (!cur) return "noop" as const;
+
+    // NeedsInput holds the slot — flip directly, no cap gate needed.
+    if (cur.status === "NeedsInput") {
+      const flipped = await tx
+        .update(runs)
+        .set({ status: "Running", keepaliveUntil: null, checkpointAt: null })
+        .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInput")))
+        .returning({ id: runs.id });
+
+      return flipped.length > 0 ? ("claimed" as const) : ("noop" as const);
+    }
+
+    // NeedsInputIdle freed the slot — cap-gate the reclaim (INV-1).
+    if (cur.status === "NeedsInputIdle") {
+      if ((await countLiveRuns(tx, "agent")) >= capForPool("agent")) {
+        await tx
+          .update(runs)
+          .set({ resumeRequestedAt: new Date() })
+          .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInputIdle")));
+
+        return "queued" as const;
+      }
+
+      const flipped = await tx
+        .update(runs)
+        .set({
+          status: "Running",
+          resumeRequestedAt: null,
+          keepaliveUntil: null,
+          checkpointAt: null,
+        })
+        .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInputIdle")))
+        .returning({ id: runs.id });
+
+      return flipped.length > 0 ? ("claimed" as const) : ("noop" as const);
+    }
+
+    return "noop" as const;
+  });
+}
+
 // ADR-108 (M40): idempotent agent hook_trip resume claim. The agent run is left
-// NeedsInput|NeedsInputIdle through the response tx; the NeedsInput→Running claim
-// happens HERE, off the response path (the runner — not the response tx — owns
-// the transition, mirroring runFlow for a flow run). The CAS is the single
-// serialization point: 0 rows means the run already advanced (a prior resume won
-// or it moved terminal), so a same-payload retry never double-spawns. Called from
-// BOTH the first-success path and the already-delivered retry so a process
-// restart between the respondedAt commit and the original claim cannot strand the
-// run. The post-claim crash window (Running, no live session yet) is recovered by
-// the crash-reconcile sweep, as for any agent run.
+// NeedsInput|NeedsInputIdle through the response tx; the claim happens HERE, off
+// the response path (the runner — not the response tx — owns the transition,
+// mirroring runFlow for a flow run). Cap-safe via claimAgentResumeSlot (ADR-121
+// INV-1): at cap a checkpointed run defers to the C3 admission gate instead of
+// bypassing the agent pool cap. Called from BOTH the first-success path and the
+// already-delivered retry so a process restart between the respondedAt commit and
+// the original claim cannot strand the run. The post-claim crash window (Running,
+// no live session yet) is recovered by the crash-reconcile sweep, as for any run.
 function claimAndResumeAgentRun(runId: string, db: any): void {
   void (async () => {
-    const claimed = await db
-      .update(runs)
-      .set({ status: "Running", keepaliveUntil: null, checkpointAt: null })
-      .where(
-        and(
-          eq(runs.id, runId),
-          inArray(runs.status, ["NeedsInput", "NeedsInputIdle"]),
-        ),
-      )
-      .returning({ id: runs.id });
+    const outcome = await claimAgentResumeSlot(db, runId);
 
-    if (claimed.length === 0) {
+    if (outcome === "queued") {
+      log.info(
+        { runId },
+        "agent hook_trip resume — agent pool at cap; deferred (resume_requested_at stamped, gate will admit)",
+      );
+
+      return;
+    }
+
+    if (outcome === "noop") {
       log.debug(
         { runId },
         "agent hook_trip resume — run already advanced, no re-claim",
@@ -175,22 +241,20 @@ async function scheduleBudgetBreachResume(args: {
   const { db, runId, runKind, stepId } = args;
 
   if (runKind === "agent") {
-    const claimed = await db.transaction(async (tx: any) => {
-      const rows = await tx
-        .update(runs)
-        .set({ status: "Running", keepaliveUntil: null, checkpointAt: null })
-        .where(
-          and(
-            eq(runs.id, runId),
-            inArray(runs.status, ["NeedsInput", "NeedsInputIdle"]),
-          ),
-        )
-        .returning({ id: runs.id });
+    // ADR-121 (INV-1): cap-safe reclaim — at cap a checkpointed run defers to the
+    // C3 admission gate instead of bypassing the agent pool cap.
+    const outcome = await claimAgentResumeSlot(db, runId);
 
-      return rows.length > 0;
-    });
+    if (outcome === "queued") {
+      log.info(
+        { runId },
+        "agent budget-raise resume — agent pool at cap; deferred (resume_requested_at stamped, gate will admit)",
+      );
 
-    if (!claimed) return;
+      return;
+    }
+
+    if (outcome === "noop") return;
     const { startAgentSession } = await import("@/lib/agents/launch");
 
     queueMicrotask(() => {
@@ -607,7 +671,26 @@ async function handlePermissionResponse(
   // requestId once the resumed session re-issues the permission.
   if (claim.runStatus === "NeedsInputIdle") {
     if (runRow.runKind === "agent") {
+      // ADR-121 (T14, G4): cap-gate the agent idle-resume claim atomically (closes
+      // the D2 over-cap bypass on the agent pool too). Under the scheduler lock,
+      // count the agent pool; if at cap, DEFER — stamp resume_requested_at (the C3
+      // FIFO key) and leave the run NeedsInputIdle for the gate to admit on a freed
+      // slot. NeedsInputIdle is not counted; the claim flips it to Running
+      // (counted), so live < cap before ⇒ live + 1 ≤ cap after.
       const claimed = await db.transaction(async (tx: any) => {
+        await takeSchedulerLock(tx);
+        const live = await countLiveRuns(tx, "agent");
+
+        if (live >= capForPool("agent")) {
+          await tx
+            .update(runs)
+            .set({ resumeRequestedAt: new Date() })
+            .where(and(eq(runs.id, runId), eq(runs.status, "NeedsInputIdle")));
+          await args.recordSuccessAudit?.(tx, 202);
+
+          return "queued" as const;
+        }
+
         const rows = await tx
           .update(runs)
           .set({
@@ -623,6 +706,28 @@ async function handlePermissionResponse(
 
         return true;
       });
+
+      if (claimed === "queued") {
+        log.info(
+          {
+            runId,
+            hitlRequestId,
+            branch: "agent-idle",
+            phase: "resume-queued",
+            latencyMs: Date.now() - startedAt,
+          },
+          "permission stored; agent pool at cap — resume queued for the next free slot",
+        );
+
+        return NextResponse.json(
+          {
+            ok: true,
+            runStatus: "NeedsInputIdle",
+            state: "resume-in-progress",
+          },
+          { status: 202 },
+        );
+      }
 
       if (!claimed) {
         log.info(
@@ -757,6 +862,34 @@ async function handlePermissionResponse(
         {
           ok: true,
           runStatus: "NeedsInput",
+          state: "resume-in-progress",
+        },
+        { status: 202 },
+      );
+    }
+
+    // ADR-121 (T14, G4): the flow pool is at cap — resumeRun deferred the resume
+    // (stamped resume_requested_at). The response is stored; the unified admission
+    // gate (C3) admits this run cap-safely on the next freed slot. Return 202 so
+    // the UI keeps "resume in progress" exactly as for the spawned path.
+    if (r.code === "QUEUED") {
+      log.info(
+        {
+          runId,
+          hitlRequestId,
+          branch: "idle",
+          phase: "resume-queued",
+          latencyMs: Date.now() - startedAt,
+        },
+        "permission stored; flow pool at cap — resume queued for the next free slot",
+      );
+
+      await recordSuccessAuditInTransaction(args, 202);
+
+      return NextResponse.json(
+        {
+          ok: true,
+          runStatus: "NeedsInputIdle",
           state: "resume-in-progress",
         },
         { status: 202 },
