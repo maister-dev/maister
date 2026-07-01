@@ -155,11 +155,31 @@ A \`blocking\` gate that fails halts the node; \`advisory\` only records a signa
 
 - \`output.produces: [{ id, kind, requiredFor?: [review|merge] }]\`
 - \`output.result: { schema, required?, on_mismatch? }\` — opt-in structured output
-- \`input.requires: [{ artifact: <id>, kind }]\`
+- \`input.requires: [{ artifact: <id>, kind, inline?: true }]\`
 
 Artifact \`kind\` is a platform artifact kind (e.g. \`diff\`, \`test_report\`,
 \`ai_judgment\`, \`generic_file\`). A required-but-absent artifact fails as
 PRECONDITION.
+
+### Artifact body injection (ADR-120; requires \`compat.engine_min >= 2.2.0\`)
+
+Forward a prior artifact's resolved **body** into a prompt (not just its metadata):
+
+- \`{{ artifacts.<id>.content }}\` — manual placement of the \`current\` artifact's
+  body (diff/log/plan/test-report text, or pretty-printed JSON for a
+  \`gate-verdict\`/\`hitl-response\` locator). Optional — use the guarded form
+  \`{{ artifacts.<id>.content ?? '' }}\` when it may be absent. Usable in
+  \`action.prompt\`, \`cli.command\`, and the field a gate renders (an
+  \`ai_judgment\` gate's \`prompt\`, a \`skill_check\`/\`command_check\` gate's
+  \`command\`).
+- \`input.requires: [{ artifact: <id>, kind, inline: true }]\` — auto-appends an
+  XML block \`<artifact id="<id>" kind="<kind>">…body…</artifact>\` to the node's
+  rendered \`action.prompt\` (dedup-guarded if the prompt already references the
+  body manually). Valid ONLY on prompt-bearing nodes (\`ai_coding\`/\`judge\`/
+  \`orchestrator\`); refused on \`cli\`/\`check\`/\`human\`/\`form\` (\`CONFIG\`).
+- A body-injectable artifact id MUST be a slug (\`^[A-Za-z0-9_-]+\$\`).
+- The body is capped at 256 KiB (\`MAISTER_ARTIFACT_INLINE_MAX_BYTES\`) at
+  injection; declaring either surface requires \`compat.engine_min >= 2.2.0\`.
 
 ## Prompt authoring: skills and template variables
 

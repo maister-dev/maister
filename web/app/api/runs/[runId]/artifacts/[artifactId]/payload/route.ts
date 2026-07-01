@@ -1,9 +1,6 @@
 import "server-only";
 
-import type { ArtifactInstance, ArtifactLocator } from "@/lib/db/schema";
-
-import { readFile, realpath } from "node:fs/promises";
-import path from "node:path";
+import type { ArtifactInstance } from "@/lib/db/schema";
 
 import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
@@ -13,13 +10,12 @@ import { requireActiveSession, requireProjectAction } from "@/lib/authz";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError } from "@/lib/errors";
+import { resolveArtifactContent } from "@/lib/flows/graph/artifact-content";
 import { runtimeRoot } from "@/lib/instance-config";
 import { getRunDetail } from "@/lib/queries/run";
-import { DIFF_TRUNCATED_MARKER, diffRange, logRange } from "@/lib/worktree";
 
 // FIXME(any): dual drizzle-orm peer-dep variants.
-const { artifactInstances, gateResults, hitlRequests } =
-  schemaModule as unknown as Record<string, any>;
+const { artifactInstances } = schemaModule as unknown as Record<string, any>;
 
 // FIXME(any): route tests use a minimal drizzle-like fake DB.
 type Db = { select: any };
@@ -90,53 +86,6 @@ function errorResponse(err: unknown, runId: string): NextResponse {
   );
 }
 
-async function serveFile(
-  locatorPath: string,
-  projectSlug: string,
-  runId: string,
-): Promise<NextResponse> {
-  const runDirRoot = path.join(
-    runtimeRoot(),
-    ".maister",
-    projectSlug,
-    "runs",
-    runId,
-  );
-  const lexical = path.resolve(runDirRoot, locatorPath);
-  const rootResolved = path.resolve(runDirRoot);
-
-  // Lexical confinement BEFORE any fs access: a `../` traversal is rejected
-  // without ever touching the outside path.
-  if (
-    lexical !== rootResolved &&
-    !lexical.startsWith(rootResolved + path.sep)
-  ) {
-    return notFound();
-  }
-
-  let real: string;
-
-  try {
-    real = await realpath(lexical);
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "ENOENT") {
-      return gone();
-    }
-    throw e;
-  }
-
-  // Symlink-escape confinement: the realpath must still be inside the run dir.
-  const rootReal = await realpath(rootResolved);
-
-  if (real !== rootReal && !real.startsWith(rootReal + path.sep)) {
-    return notFound();
-  }
-
-  const body = await readFile(real, "utf8");
-
-  return new NextResponse(body, { headers: TEXT_HEADERS });
-}
-
 export async function GET(
   _req: Request,
   { params }: RouteParams,
@@ -173,94 +122,27 @@ export async function GET(
       return notFound();
     }
 
-    const locator = artifact.locator as ArtifactLocator;
+    // ADR-120 (P2, D7): delegate to the SHARED resolver — the SAME locator
+    // resolution the runner uses for prompt injection, so the two never drift.
+    // The route returns the FULL body (NO cap, NO json→text conversion); the
+    // 256 KiB inline cap lives only at the runner's injection seam. This keeps the
+    // HTTP contract byte-identical (incl. >256 KiB payloads + structured JSON).
+    const resolved = await resolveArtifactContent(artifact, {
+      worktreePath: detail.worktreePath,
+      projectSlug: detail.projectSlug,
+      runId,
+      runtimeRoot: runtimeRoot(),
+      db,
+    });
 
-    switch (locator.kind) {
-      case "inline":
-        return new NextResponse(locator.text, { headers: TEXT_HEADERS });
-
-      case "gate-verdict": {
-        const rows = (await db
-          .select()
-          .from(gateResults)
-          .where(
-            and(
-              eq(gateResults.id, locator.gateResultId),
-              eq(gateResults.runId, runId),
-            ),
-          )) as Array<{
-          id: string;
-          runId: string;
-          verdict: unknown;
-        }>;
-        const row = rows.find(
-          (r) => r.id === locator.gateResultId && r.runId === runId,
-        );
-
-        if (!row) {
-          return notFound();
-        }
-
-        return NextResponse.json(row.verdict);
-      }
-
-      case "hitl-response": {
-        const rows = (await db
-          .select()
-          .from(hitlRequests)
-          .where(
-            and(
-              eq(hitlRequests.id, locator.hitlRequestId),
-              eq(hitlRequests.runId, runId),
-            ),
-          )) as Array<{
-          id: string;
-          runId: string;
-          response: unknown;
-        }>;
-        const row = rows.find(
-          (r) => r.id === locator.hitlRequestId && r.runId === runId,
-        );
-
-        if (!row) {
-          return notFound();
-        }
-
-        return NextResponse.json(row.response);
-      }
-
-      case "git-range": {
-        // F3: render against the STORED immutable headRef SHA, not the live
-        // branch, so an old artifact never picks up commits made after it was
-        // recorded. (A SHA satisfies diffRange's branch validation.)
-        const range = await diffRange({
-          worktreePath: detail.worktreePath,
-          baseRef: locator.baseCommit,
-          branch: locator.headRef,
-        });
-        // Re-append the in-band marker on truncation so the text/plain payload
-        // still flags the cut (no structured channel on a raw byte response).
-        const diff = range.truncated
-          ? range.text + DIFF_TRUNCATED_MARKER
-          : range.text;
-
-        return new NextResponse(diff, { headers: TEXT_HEADERS });
-      }
-
-      case "git-log": {
-        const out = await logRange({
-          worktreePath: detail.worktreePath,
-          baseRef: locator.baseRef,
-          branch: locator.headRef,
-        });
-
-        return new NextResponse(out, { headers: TEXT_HEADERS });
-      }
-
-      case "file":
-        return await serveFile(locator.path, detail.projectSlug, runId);
-
-      default:
+    switch (resolved.kind) {
+      case "text":
+        return new NextResponse(resolved.text, { headers: TEXT_HEADERS });
+      case "json":
+        return NextResponse.json(resolved.value);
+      case "gone":
+        return gone();
+      case "notfound":
         return notFound();
     }
   } catch (err) {

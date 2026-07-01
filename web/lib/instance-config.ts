@@ -289,6 +289,7 @@ export function reconcileGraceSeconds(): number {
 }
 
 const DEFAULT_NODE_OUTPUT_MAX_BYTES = 262_144;
+const DEFAULT_ARTIFACT_INLINE_MAX_BYTES = 262_144;
 const DEFAULT_HARNESS_NEVER_FIRED_MIN = 10;
 
 // M26 P1 (ADR-063): max raw bytes of a structured node-output payload
@@ -298,6 +299,17 @@ export function nodeOutputMaxBytes(): number {
   return positiveIntFromEnv(
     "MAISTER_NODE_OUTPUT_MAX_BYTES",
     DEFAULT_NODE_OUTPUT_MAX_BYTES,
+  );
+}
+
+// ADR-120 P2: max bytes of an artifact BODY injected into a graph node prompt
+// (via `{{ artifacts.<id>.content }}` or `input.requires[].inline: true`). Applied
+// ONLY at the injection seam (capForInline) — never on the artifact payload API
+// route. Host env only per ADR-023 — never wired into compose.
+export function artifactInlineMaxBytes(): number {
+  return positiveIntFromEnv(
+    "MAISTER_ARTIFACT_INLINE_MAX_BYTES",
+    DEFAULT_ARTIFACT_INLINE_MAX_BYTES,
   );
 }
 

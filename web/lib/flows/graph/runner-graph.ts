@@ -1,6 +1,7 @@
 import "server-only";
 
 import type {
+  ArtifactInstance,
   MaterializationPlan,
   Run as RunRow,
   ScratchAdapterLaunch,
@@ -69,6 +70,17 @@ import {
   deleteRunCheckpointRefs,
 } from "./workspace-checkpoint";
 import { resolveSessionPolicy } from "./session-policy";
+import {
+  artifactContentToTemplateText,
+  capForInline,
+  resolveArtifactContent,
+} from "./artifact-content";
+import {
+  augmentPromptWithInlineTags,
+  collectContentArtifactIds,
+  inlineRequires,
+} from "./artifact-inject";
+import { isPolicySkippedGate } from "./readiness-core";
 import {
   failArtifact,
   getCurrentArtifact,
@@ -140,6 +152,7 @@ import { deliverRunIfAutoReady } from "@/lib/runs/auto-delivery";
 import { appendRunStreamEvent } from "@/lib/runs/run-stream-event";
 import { SETTLED_RUN_STATUSES } from "@/lib/runs/run-status-sets";
 import {
+  checksFromSnapshot,
   dirtyResolveFromSnapshot,
   humanGateFromSnapshot,
   onStuckFromSnapshot,
@@ -148,9 +161,13 @@ import {
   resolveAutoRetryPolicy,
   resolveHumanGateDisposition,
   reworkExhaustionFromSnapshot,
+  type CheckStrictness,
 } from "@/lib/runs/execution-policy";
 import { autoResolveDirtyAtReview } from "@/lib/runs/dirty-resolution";
-import { autoRetryMaxAttempts } from "@/lib/instance-config";
+import {
+  artifactInlineMaxBytes,
+  autoRetryMaxAttempts,
+} from "@/lib/instance-config";
 import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
 import {
   isMaisterError,
@@ -1013,6 +1030,89 @@ export async function runFormCollect(
 
 // Execute a graph node's action. Reuses the per-step runners by adapting the
 // node into the shape they expect; human nodes go through the review HITL.
+// ADR-120 (P2): resolve the BODIES of every artifact a node references for
+// injection — the manual `{{ artifacts.X.content }}` scan ∪ the `inline:true`
+// requires (collectContentArtifactIds). Filters the ALREADY-FETCHED current rows
+// (current-wins; no N+1 getCurrentArtifact calls) and runs the D11 pipeline per
+// id: resolveArtifactContent (raw) → artifactContentToTemplateText (json pretty)
+// → capForInline (256 KiB). Throws MaisterError("CONFIG") on a gone/notfound
+// payload so the caller fails the node BEFORE spawn (consistent with the existing
+// input.requires PRECONDITION). Returns {} for compiled-linear nodes (graph-only,
+// D4) and when nothing is referenced.
+async function resolveNodeArtifactContents(
+  node: CompiledNode,
+  currentArtifacts: ArtifactInstance[],
+  checks: CheckStrictness,
+  ctx: {
+    worktreePath: string;
+    projectSlug: string;
+    runId: string;
+    runtimeRoot: string;
+    db: Db;
+  },
+): Promise<Record<string, { text: string; truncated: boolean }>> {
+  if (node.source.kind !== "node") return {};
+
+  // ADR-120 (Codex finding #1): EXCLUDE execution-policy-skipped gates from the
+  // resolution set — a `checks=skip` non-review gate never renders its refs, so
+  // resolving them (and hard-failing on a gone payload) would turn a skipped gate
+  // into a run-failing error. Action refs + inline requires + NON-skipped gate
+  // refs are all resolved strictly: a gone payload fails the node cleanly BEFORE
+  // spawn (markNodeFailed CONFIG), never as an uncontrolled mid-gate render throw.
+  const ids = collectContentArtifactIds(node.source.node, {
+    includeGate: (gate) => !isPolicySkippedGate(checks, gate.kind ?? ""),
+  });
+
+  if (ids.length === 0) return {};
+
+  const out: Record<string, { text: string; truncated: boolean }> = {};
+  // ADR-120 (Codex finding #2): read the inline cap ONCE so the bounded file/git
+  // read and the cap stay consistent in this operation. Bound the resolver's read
+  // to `cap + 1` bytes — enough for capForInline to detect over-cap and truncate,
+  // while never loading a multi-GB payload into the web process.
+  const cap = artifactInlineMaxBytes();
+
+  for (const id of ids) {
+    // current-wins among the already-fetched rows (deterministic latest-first,
+    // mirroring getCurrentArtifact's orderBy createdAt desc, id desc).
+    const row = currentArtifacts
+      .filter((a) => a.artifactDefId === id && a.validity === "current")
+      .sort((a, b) => {
+        const t = (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0);
+
+        if (t !== 0) return t;
+
+        return b.id > a.id ? 1 : b.id < a.id ? -1 : 0;
+      })[0];
+
+    // No current row → leave content unset. A manual {{content}} ref then hits
+    // the strict undefined-var CONFIG at render (D8); an inline:true with no
+    // current row was already failed by the input.requires PRECONDITION check.
+    if (!row) continue;
+
+    const resolved = await resolveArtifactContent(row, {
+      ...ctx,
+      maxBytes: cap + 1,
+    });
+
+    if (resolved.kind === "gone" || resolved.kind === "notfound") {
+      log.warn(
+        { runId: ctx.runId, artifactId: id, result: resolved.kind },
+        "artifact content gone/notfound — failing node before spawn",
+      );
+    }
+
+    // Throws CONFIG on gone/notfound (caller markNodeFailed + break). Skipped
+    // gates were already excluded above, so a gone payload here belongs to the
+    // action surface or a gate that WILL run — failing before spawn is correct.
+    const text = artifactContentToTemplateText(resolved, id);
+
+    out[id] = capForInline(text, cap);
+  }
+
+  return out;
+}
+
 async function executeNodeAction(
   node: CompiledNode,
   loaded: LoadedRun,
@@ -1103,18 +1203,42 @@ async function executeNodeAction(
         );
       }
 
+      // P7 (ADR-103): point the agent at the run-context blackboard. The pointer
+      // is literal (no `{{ }}`), so it passes through renderStrict unchanged.
+      const basePrompt = `${def.action.prompt}\n\n[Run context: ${runContextPath(
+        ctx.worktreePath,
+      )}]`;
+      // ADR-120 (P2): auto-append a `<artifact>` block (a {{ artifacts.X.content }}
+      // TEMPLATE TAG, resolved by the shared renderStrict downstream — never the
+      // resolved body) for each inline:true require not already manually
+      // referenced. Dedup-guarded: a manual ref wins, single injection. D12
+      // guarantees this seam only fires for prompt-bearing nodes (inline:true is
+      // refused at load on cli/check/human/form).
+      const inlineAugment = augmentPromptWithInlineTags(
+        basePrompt,
+        inlineRequires(def),
+      );
+
+      for (const skippedId of inlineAugment.skippedIds) {
+        log.warn(
+          { nodeId: node.id, artifactId: skippedId },
+          "inline artifact already referenced in prompt — skipping auto-inject (dedup)",
+        );
+      }
+      if (inlineAugment.injectedIds.length > 0) {
+        log.info(
+          { nodeId: node.id, artifactIds: inlineAugment.injectedIds },
+          "injected inline artifact tags",
+        );
+      }
+
       const dispatchAgent = (): Promise<NodeResult> =>
         runAgentStep(
           {
             id: node.id,
             type: "agent",
             mode: "new-session",
-            // P7 (ADR-103): point the agent at the run-context blackboard. The
-            // pointer is literal (no `{{ }}`), so it passes through renderStrict
-            // unchanged; the agent reads <worktree>/.maister/run.json on demand.
-            prompt: `${def.action.prompt}\n\n[Run context: ${runContextPath(
-              ctx.worktreePath,
-            )}]`,
+            prompt: inlineAugment.prompt,
           },
           {
             ...common,
@@ -2379,6 +2503,46 @@ export async function runGraph(
       // can reference {{ artifacts.<id>.kind/uri/validity/nodeId }}.
       const currentArtifacts = await getArtifactsForRun(runId, db);
 
+      // ADR-120 (P2): resolve referenced artifact BODIES for injection (manual
+      // {{ artifacts.X.content }} ∪ inline:true). A gone/notfound payload throws
+      // CONFIG → fail the node before spawn (parity with the input.requires
+      // PRECONDITION). This single map feeds BOTH the action prompt AND the gate
+      // prompts (they render through the same node context).
+      let artifactContents: Record<
+        string,
+        { text: string; truncated: boolean }
+      >;
+
+      try {
+        artifactContents = await resolveNodeArtifactContents(
+          node,
+          currentArtifacts,
+          checksFromSnapshot(loaded.run.executionPolicy ?? null),
+          {
+            worktreePath,
+            projectSlug: loaded.projectSlug,
+            runId,
+            runtimeRoot,
+            db,
+          },
+        );
+      } catch (err) {
+        const e = isMaisterError(err)
+          ? err
+          : new MaisterError("CRASH", asError(err).message, {
+              cause: asError(err),
+            });
+
+        log2.warn(
+          { nodeId: node.id, code: e.code },
+          "artifact content resolution failed — Failed (no agent spawned)",
+        );
+        await markNodeFailed(nodeAttemptId, { errorCode: e.code }, db);
+        failed = true;
+        runErrorCode = e.code;
+        break;
+      }
+
       const context = buildContext({
         task: loaded.task,
         run: loaded.run,
@@ -2389,6 +2553,7 @@ export async function runGraph(
         projectSlug: loaded.projectSlug,
         extraVars: { ...declaredCommentsVars, ...(pendingInjectedVars ?? {}) },
         artifacts: currentArtifacts,
+        artifactContents,
       });
 
       // The injected rework comments are consumed by this node only.

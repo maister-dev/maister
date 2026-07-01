@@ -42,6 +42,7 @@ import {
 import { extractBalancedJsonObjects } from "./json-extract";
 
 import * as schemaModule from "@/lib/db/schema";
+import { isMaisterError } from "@/lib/errors";
 import { logExecPolicyAction } from "@/lib/runs/exec-policy-audit";
 import {
   checksFromSnapshot,
@@ -338,6 +339,38 @@ export async function runNodeGates(
   };
 }
 
+// A gate's render/exec (renderStrict inside runCliStep/runAgentStep, or the step
+// itself) can throw a MaisterError — e.g. an unguarded `{{ artifacts.x.content }}`
+// referencing an artifact that has no `current` row or whose payload is gone
+// (ADR-120, Codex finding). The `gate_results` row is created `running` BEFORE the
+// render; without this guard the throw escapes `runOneGate`, leaves the row stuck
+// `running`, and fails the run through the top-level catch (misleading recovery /
+// readiness). Convert a known domain throw into a CONTROLLED failed gate (which
+// `runNodeGates` then routes by blocking/advisory mode); rethrow anything
+// unexpected. Returns `null` to signal the caller to `return "failed"`.
+async function runGateStepGuarded<T>(
+  gateResultId: string,
+  db: Db,
+  run: () => Promise<T>,
+): Promise<T | null> {
+  try {
+    return await run();
+  } catch (err) {
+    if (!isMaisterError(err)) throw err;
+
+    await markGateFailed(
+      gateResultId,
+      {
+        verdict: "fail",
+        reasons: [`gate render/exec failed: ${err.message}`],
+      },
+      db,
+    );
+
+    return null;
+  }
+}
+
 async function runOneGate(
   gate: GateDef,
   node: CompiledNode,
@@ -410,10 +443,14 @@ async function runOneGate(
         return "failed";
       }
 
-      const res = await runCliStep(
-        { id: gate.id, type: "cli", command: gate.command },
-        common,
+      // Capture the narrowed value — the closure below would otherwise widen
+      // `gate.command` back to `string | undefined`.
+      const command = gate.command;
+      const res = await runGateStepGuarded(id, ctx.db, () =>
+        runCliStep({ id: gate.id, type: "cli", command }, common),
       );
+
+      if (res === null) return "failed";
 
       if (res.ok) {
         await markGatePassed(
@@ -468,23 +505,27 @@ async function runOneGate(
         return "failed";
       }
 
-      const res = await runAgentStep(
-        { id: gate.id, type: "agent", mode: "new-session", prompt },
-        {
-          ...common,
-          executor: {
-            id: loaded.executor.id,
-            agent: loaded.executor.agent,
-            model: loaded.executor.model,
-            env: (loaded.executor.env ?? undefined) as
-              | Record<string, string>
-              | undefined,
-            router: loaded.executor.router ?? undefined,
+      const res = await runGateStepGuarded(id, ctx.db, () =>
+        runAgentStep(
+          { id: gate.id, type: "agent", mode: "new-session", prompt },
+          {
+            ...common,
+            executor: {
+              id: loaded.executor.id,
+              agent: loaded.executor.agent,
+              model: loaded.executor.model,
+              env: (loaded.executor.env ?? undefined) as
+                | Record<string, string>
+                | undefined,
+              router: loaded.executor.router ?? undefined,
+            },
+            sessionState: ctx.sessionState,
           },
-          sessionState: ctx.sessionState,
-        },
-        ctx.supervisorApi,
+          ctx.supervisorApi,
+        ),
       );
+
+      if (res === null) return "failed";
 
       const verdict = parseVerdict(res.stdout ?? "");
 

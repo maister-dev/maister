@@ -520,7 +520,17 @@ const nodeInputSchema = z
         z.union([
           z.string().min(1),
           z
-            .object({ artifact: z.string().min(1), kind: z.string().min(1) })
+            .object({
+              artifact: z.string().min(1),
+              kind: z.string().min(1),
+              // ADR-120 (P2): auto-append the artifact body to the node's
+              // rendered prompt as an XML-tag block. Typed boolean so a
+              // non-boolean is a zod error (NOT silently passed through). Valid
+              // only on prompt-bearing nodes (ai_coding/judge/orchestrator) —
+              // enforced in validateGraphManifest (D12). Declaring it requires
+              // compat.engine_min >= 2.2.0 (ARTIFACT_INLINE_ENGINE_MIN).
+              inline: z.boolean().optional(),
+            })
             .passthrough(),
         ]),
       )

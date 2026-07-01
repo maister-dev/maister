@@ -984,6 +984,29 @@ values are `env:NAME` references resolved supervisor-side — never literal secr
 — so M42 adds **no** deployment surface (no new host env var, sidecar, port, or
 config file). `SUPPORTED_FLOW_SCHEMA_VERSIONS` stays `[1]`.
 
+**ADR-118 engine bump (Implemented).** Bumps `MAISTER_ENGINE_VERSION` `2.0.0 →
+2.1.0` for rework loop `onExhaustion` routing + human-driven counter reset
+(`resetTargets`) ([ADR-118](decisions.md#adr-118-rework-loop-onexhaustion-routing--human-driven-counter-reset-resettargets--engine-210)).
+A manifest where any node's `rework` declares either field MUST declare
+`compat.engine_min >= 2.1.0`, refused otherwise through the same
+`engine_min..engine_max` check. Adds no deployment surface.
+
+**ADR-120 engine bump (Implemented — P2).** Bumps `MAISTER_ENGINE_VERSION`
+`2.1.0 → 2.2.0` for artifact body injection
+([ADR-120](decisions.md#adr-120-artifact-body-injection-into-prompts)). **Both**
+surfaces require `compat.engine_min >= 2.2.0`: (a) any `input.requires[].inline:
+true` entry, AND (b) any `{{ artifacts.<id>.content }}` reference in a node's
+`action.prompt`, `cli.command`, or the field a `pre_finish` gate renders (an
+`ai_judgment` gate's `prompt`, or a `skill_check`/`command_check` gate's
+`command` — the scan matches the gate executor exactly, so load-time and runtime
+detection never drift). A manifest using either surface below `2.2.0` is refused at load
+(`CONFIG`); a Flow using neither stays valid at any `engine_min`.
+`MAISTER_ENGINE_VERSION` is a code constant (no `.env`/compose wiring), but the
+injection body cap **is** a tunable env var — `MAISTER_ARTIFACT_INLINE_MAX_BYTES`
+(default `262144`, in the env-vars table below). That cap bounds the per-injection
+prompt body only; it does NOT affect the artifact **payload API** route, which
+returns the full untruncated body. `SUPPORTED_FLOW_SCHEMA_VERSIONS` stays `[1]`.
+
 ### Verdict calibration (M15)
 
 `ai_judgment` and `skill_check` gates may declare a confidence threshold so a passing
@@ -1124,6 +1147,7 @@ Read by Next.js (`web/`) and `supervisor/` at startup:
 | `MAISTER_RESUME_PROMPT_TIMEOUT_SECONDS` | no | `60` | M8 resume-prompt watchdog (seconds). After a `NeedsInputIdle` row is resumed (ACP `session/resume`), the runner-agent must receive `session.permission_request` within this window or `crashResumedRun` transitions the run to `Crashed`. (Helper exists; runner-agent enforcement is a follow-up patch.) |
 | `MAISTER_WORKBENCH_MAX_FILE_BYTES` | no | `524288` (512 KiB) | **(M22 — Implemented, ADR-053.)** Max size of a single git-tracked blob the workbench file viewer serves. A larger file renders the `file-too-large` page state on the `?file=` RSC path (ADR-066; not an HTTP `413`); bytes are never sent. Read by `web/lib/instance-config.ts:workbenchMaxFileBytes()`. Host/service-env only — `web` runs on the host ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)), so this is never a container/compose var. |
 | `MAISTER_NODE_OUTPUT_MAX_BYTES` | no | `262144` (256 KiB) | **(M26 — Implemented, [ADR-063](decisions.md#adr-063-structured-node-output-channel-p1--run-context-file-p7).)** Caps a graph node's structured-output payload (the agent ` ```json maister:output ` block or the cli `MAISTER_OUTPUT_FILE` contents) before parse/validate at the post-action seam; exceeding it fails the attempt with `MaisterError({ code: "CONFIG" })`. Read by `web/lib/instance-config.ts:nodeOutputMaxBytes()`. Host/service-env only — `web` runs on the host ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)), so this is wired into `.env.example` + this doc **only**, never `compose.yml` (mirrors the `MAISTER_WORKBENCH_MAX_FILE_BYTES` precedent). See [`system-analytics/flow-graph.md`](system-analytics/flow-graph.md) §M26 and [`flow-dsl.md`](flow-dsl.md) §M26. |
+| `MAISTER_ARTIFACT_INLINE_MAX_BYTES` | no | `262144` (256 KiB) | **(P2 — Implemented, [ADR-120](decisions.md#adr-120-artifact-body-injection-into-prompts).)** Per-injection cap for an artifact **body** injected into a graph node's prompt (via `{{ artifacts.<id>.content }}` or `input.requires[].inline: true`). Applied ONLY at the injection seam (`capForInline`, UTF-8-boundary-safe truncate + in-band marker, `{ truncated: true }`) — never inside `resolveArtifactContent` and never on the artifact payload API route, which returns the full untruncated body. For a `file` or `git-log` locator the injection path also bounds the **read** to this cap (reads at most `cap + 1` bytes; the log truncates instead of throwing) so a huge artifact never loads its full payload into the web process. Never fails the run on a large body (truncates). Read by `web/lib/instance-config.ts`; host/service-env only ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)) — wired into `.env.example` + this doc **only**, never `compose.yml` (mirrors the `MAISTER_NODE_OUTPUT_MAX_BYTES` precedent). See [`system-analytics/artifacts.md`](system-analytics/artifacts.md) and [`flow-dsl.md`](flow-dsl.md). |
 | `MAISTER_HARNESS_NEVER_FIRED_MIN` | no | `10` | **(M29 — Implemented, [ADR-073](decisions.md#adr-073-harness-adequacy--coherence-metrics-read-only-observatory-extension).)** Minimum terminal gate executions in the observatory lookback window before the never-fired heuristic may flag a declared gate ("never fired — verify gate quality or a blind spot"). Read by `web/lib/instance-config.ts:harnessNeverFiredMin()` at the query layer and passed into the pure rollup as a parameter; invalid/non-positive values fall back to the default with a one-time WARN. Host/service-env only ([ADR-023](decisions.md#adr-023-run-web--supervisor-on-the-host-containerize-only-postgres)) — never a compose var. See [`system-analytics/observatory.md`](system-analytics/observatory.md). |
 | `MAISTER_PROJECTS_DIR` | no | unset | Auto-discovery root; every `maister.yaml` under this dir is registered on startup |
 | `MAISTER_REPOS_ROOT` | no | `~/.maister/repos` | Root that `POST /api/projects` clones a `repoUrl` into (ADR-025). Resolved by `web/lib/instance-config.ts:reposRoot()`; surfaced read-only on `/settings`. |

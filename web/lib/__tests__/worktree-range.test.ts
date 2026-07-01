@@ -7,7 +7,12 @@ import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { MaisterError } from "@/lib/errors";
-import { diffRange, logRange, resolveBaseRef } from "@/lib/worktree";
+import {
+  diffRange,
+  logRange,
+  logRangeBounded,
+  resolveBaseRef,
+} from "@/lib/worktree";
 
 const execFileAsync = promisify(execFile);
 
@@ -159,6 +164,58 @@ describe("worktree range ops", () => {
           baseRef: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
           branch: "feature",
         }),
+      ).rejects.toMatchObject({ code: "CONFLICT" });
+    });
+  });
+
+  describe("logRangeBounded (ADR-120, Codex #2)", () => {
+    it("returns the full log with truncated:false when under the bound", async () => {
+      const out = await logRangeBounded(
+        { worktreePath: repo, baseRef: baseSha, branch: "feature" },
+        64 * 1024,
+      );
+
+      expect(out.truncated).toBe(false);
+      expect(out.text).toContain("add alpha");
+      expect(out.text).toContain("add bravo");
+    });
+
+    it("TRUNCATES an oversized log to the bound instead of throwing", async () => {
+      // Bound to 20 bytes — the two-commit oneline log exceeds it, so it must be
+      // cut (truncated:true), NOT throw like the uncapped logRange would on a
+      // 4 MiB overflow.
+      const out = await logRangeBounded(
+        { worktreePath: repo, baseRef: baseSha, branch: "feature" },
+        20,
+      );
+
+      expect(out.truncated).toBe(true);
+      expect(Buffer.byteLength(out.text, "utf8")).toBeLessThanOrEqual(20);
+    });
+
+    it("rejects a leading-dash baseRef at the schema refine (before shelling out)", async () => {
+      await expect(
+        logRangeBounded(
+          { worktreePath: repo, baseRef: "-foo", branch: "feature" },
+          1024,
+        ),
+      ).rejects.toMatchObject({ code: "PRECONDITION" });
+    });
+
+    it("rejects CONFLICT for a valid-shaped but nonexistent ref (never silently empty)", async () => {
+      // A git failure (unknown revision) writes stderr + exits non-zero WITHOUT
+      // us killing it. The streamer must wait for `close`, see the non-zero exit,
+      // and reject CONFLICT — not resolve `{ text: '', truncated: false }` and
+      // silently omit required commit evidence from an injected prompt (Codex).
+      await expect(
+        logRangeBounded(
+          {
+            worktreePath: repo,
+            baseRef: baseSha,
+            branch: "no-such-branch-zzz",
+          },
+          1024,
+        ),
       ).rejects.toMatchObject({ code: "CONFLICT" });
     });
   });

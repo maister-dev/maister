@@ -76,6 +76,23 @@ Locked decisions: [ADR-037](../decisions.md#adr-037-typed-artifact-model)
   [`workspaces.md`](workspaces.md) and [ADR-058](../decisions.md#adr-058-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve).
 - **Artifact definition** (`artifact_def_id`) — manifest `output.produces[].id`
   for declared artifacts; `NULL` for default/projector-derived rows.
+- **Content accessor (`artifacts.<id>.content`) (Implemented — P2,
+  [ADR-120](../decisions.md#adr-120-artifact-body-injection-into-prompts))** — a
+  render-time template var resolving the **`current`** artifact's body (the
+  resolved diff/log/plan/test-report text, or pretty-printed JSON for a
+  `gate-verdict`/`hitl-response` locator). Graph `nodes[]` only (D4). Distinct from
+  the metadata accessors (`.kind`/`.uri`/`.validity`/`.nodeId`, M12), which carry no
+  body. Capped at the **injection seam** only (256 KiB,
+  `MAISTER_ARTIFACT_INLINE_MAX_BYTES`) — never on the payload route. Both this
+  accessor AND the `inline` flag below require `compat.engine_min >= 2.2.0` (D5).
+- **`input.requires[].inline: true` (Implemented — P2,
+  [ADR-120](../decisions.md#adr-120-artifact-body-injection-into-prompts))** — an
+  auto-placement flag on an `{ artifact, kind, inline: true }` requires entry: the
+  runner appends a deterministic `<artifact id="X" kind="K">…</artifact>` block
+  (carrying a `{{ artifacts.X.content }}` template tag) to the rendered prompt,
+  dedup-guarded against a manual reference (D2). Valid ONLY on prompt-bearing nodes
+  `ai_coding`/`judge`/`orchestrator`; on `cli`/`check`/`human`/`form` it is refused
+  at manifest validation (`CONFIG`, D12).
 - **Evidence-readiness guard** (`assertEvidenceReady`) — per-def-current: a
   `required_for:[phase]` def is satisfied iff a `current` row of that def
   exists; stale/superseded history never blocks (`supersedePrior` retires ALL
@@ -250,6 +267,102 @@ artifact as the terminal promotion node.
 `visibility`/`retention` are **declared and recorded** in M12. Access
 enforcement and capability materialization are **M14 (Designed)**.
 
+### Artifact body injection into prompts (Implemented — P2)
+
+[ADR-120](../decisions.md#adr-120-artifact-body-injection-into-prompts). A graph
+node forwards a prior artifact's **body** into its prompt — manually via
+`{{ artifacts.<id>.content }}`, or automatically via
+`input.requires: [{ artifact, kind, inline: true }]`. The runner collects the
+referenced ids (a delimiter-aware template scan of `action.prompt` + `cli.command`
++ the field each `pre_finish` gate renders — `ai_judgment`→`prompt`,
+`skill_check`/`command_check`→`command`, matching the gate executor exactly —
+unioned with the `inline:true` requires), resolves each `current` row through the
+SHARED resolver, converts + caps it, threads the final text into the node
+`context`, and the shared `renderStrict` substitutes it into BOTH the action
+prompt and the gate prompts.
+
+```mermaid
+sequenceDiagram
+    participant R as Graph runner
+    participant AI as artifact-inject
+    participant AC as artifact-content
+    participant DB as Postgres / worktree
+    participant CTX as buildContext
+    participant RS as renderStrict (agent and gate)
+
+    R->>AI: collectContentArtifactIds(node, includeGate) action + inline + NON-skipped gate refs
+    R->>DB: filter already-fetched currentArtifacts for those ids
+    loop each referenced id (current-wins)
+        R->>AC: resolveArtifactContent(row, ctx) RAW, bounded read on injection
+        AC-->>R: text or json or gone or notfound
+        alt gone or notfound
+            R->>DB: node Failed(CONFIG) before spawn (controlled)
+        else resolved
+            R->>AC: artifactContentToTemplateText (json to pretty)
+            R->>AC: capForInline (256 KiB, UTF-8-safe)
+            AC-->>R: text and truncated flag
+        end
+    end
+    R->>CTX: buildContext(artifactContents) sets ctx.artifacts[id].content
+    R->>AI: augmentPromptWithInlineTags appends an artifact tag, skip and WARN on a manual ref
+    R->>RS: renderStrict(prompt, ctx) substitutes content literally, braces in the body are NOT re-rendered
+    Note over R,RS: same ctx feeds the action prompt AND every gate prompt
+```
+
+**Expectations (P2):**
+
+- `{{ artifacts.<id>.content }}` MUST resolve the body of the **`current`** row
+  only; no current row + no `?? default` → strict `CONFIG`.
+- The cap (256 KiB, `MAISTER_ARTIFACT_INLINE_MAX_BYTES`) MUST be applied ONLY at
+  the injection seam, NEVER inside `resolveArtifactContent` and NEVER on the payload
+  route; on the injection path a `file` OR `git-log` read MUST be bounded to the cap
+  (at most `cap + 1` bytes) so a huge payload never loads fully into the web process
+  and an oversized log truncates instead of throwing.
+- The content scan MUST cover the field each gate EXECUTOR renders
+  (`ai_judgment`→`prompt`, `skill_check`/`command_check`→`command`), so load-time
+  detection cannot drift from runtime rendering.
+- The runner MUST exclude execution-policy-skipped gates (`checks=skip`) from its
+  resolution set, and MUST resolve every included ref strictly — a gone/notfound
+  payload fails the node with a controlled `CONFIG` before spawn, never an
+  uncontrolled mid-gate render throw.
+- An `inline: true` artifact id MUST match `^[A-Za-z0-9_-]+$` (it is interpolated
+  into the XML attribute + a dotted Mustache path); a non-slug id → `CONFIG` at load.
+- A `file` locator MUST stay confined to `.maister/<slug>/runs/<runId>/` (lexical
+  prefix + symlink-realpath); a traversal/escape resolves to `notfound` with no read
+  of the outside path.
+- `gate-verdict`/`hitl-response` MUST inject as pretty-printed JSON via
+  `artifactContentToTemplateText`, never `[object Object]`/`undefined`.
+- BOTH `inline: true` AND any `{{ artifacts.<id>.content }}` reference MUST require
+  `compat.engine_min >= 2.2.0` (load-time scan); SET/CLEAR symmetric.
+- `inline: true` MUST be valid only on `ai_coding`/`judge`/`orchestrator`; on
+  `cli`/`check`/`human`/`form` → `CONFIG` at load (D12).
+- When a node's `action.prompt` (the auto-append target) already references
+  `artifacts.X.content`, the engine MUST NOT auto-append for `X` (single injection
+  into the action prompt) and MUST emit a `WARN`; a content ref in a separately-
+  rendered gate prompt does not suppress the append.
+- Content MUST be injected only via the context var — a body containing literal
+  `{{ … }}` renders verbatim (mustache re-render invariant), NEVER re-processed.
+- The resolver MUST NOT read `process.env`; it adds no secret surface.
+- The accessor is graph-only — a linear `steps[]` flow referencing
+  `{{ artifacts.X.content }}` gets a strict `CONFIG` (never populated).
+
+**Edge cases (P2):**
+
+- **Payload gone/notfound on any RESOLVED ref** (`action.prompt`/`cli.command`/
+  `inline`/a NON-skipped gate) → node `CONFIG`-fails before spawn, controlled (the
+  `inline:true` missing-current-row path stays the existing `PRECONDITION`).
+- **Payload gone/notfound on a POLICY-SKIPPED gate's ref** → the gate is excluded
+  from the resolution set (`checks=skip`), so the ref is never resolved and never
+  fails the node — the skipped gate does no content work.
+- **Body over 256 KiB (`file`) or oversized `git-log`** → truncated + in-band marker
+  AT INJECTION (git-log truncates instead of throwing); the same artifact over the
+  payload API route returns FULL, untruncated (contract preserved).
+- **Manual `{{…content}}` + `inline:true` for the same id** → single injection +
+  `WARN` (manual wins).
+- **Stale / non-`current` referenced id** → not satisfied → strict `CONFIG`.
+- **Artifact body containing literal `{{ … }}`** → rendered verbatim, not
+  re-resolved.
+
 ## Expectations
 
 - Every `artifact_instances` row MUST belong to exactly one `run_id`; node-attempt
@@ -324,6 +437,11 @@ never `console.log`; secrets never logged):
 | `INFO` | Projector batch applied + cursor advance | `{runId, from, to, count}` |
 | `WARN` | Projector skipped unparseable event | `{runId, monotonicId, reason}` |
 | `INFO` | Review refusal (evidence not ready) | `{runId, blockedBy[]}` |
+| `DEBUG` | Content resolved (P2) | `{runId, artifactId, locatorKind}` |
+| `WARN` | Content gone/notfound (P2) | `{runId, artifactId, result}` |
+| `DEBUG` | Content capped for inline (P2) | `{artifactId, truncated}` |
+| `WARN` | Inline dedup skip — manual ref present (P2) | `{nodeId, artifactId}` |
+| `INFO` | Inline tags injected (P2) | `{nodeId, artifactIds[]}` |
 
 All logs use the module-local pino logger per the existing pattern
 (`import pino from "pino"`, e.g. `web/lib/flows/graph/gates-exec.ts`).
@@ -338,7 +456,10 @@ All logs use the module-local pino logger per the existing pattern
   [ADR-027](../decisions.md#adr-027-append-only-node_attempts-run-ledger),
   [ADR-028](../decisions.md#adr-028-full-featured-gate-execution-in-m11a-m15-re-scoped),
   [ADR-058](../decisions.md#adr-058-branch-targeting-at-launch-shared-promotion-service-promote-time-readiness-re-gate-m18m15-carve)
-  (promotion artifact via `commit_set`/`diff`, Implemented M18).
+  (promotion artifact via `commit_set`/`diff`, Implemented M18),
+  [ADR-120](../decisions.md#adr-120-artifact-body-injection-into-prompts)
+  (artifact body injection: `{{ artifacts.X.content }}` + `inline:true`, engine
+  2.2.0, Implemented P2).
 - DB ERD: [`../db/artifacts-domain.md`](../db/artifacts-domain.md),
   [`../db/erd.md`](../db/erd.md).
 - DB narrative: [`../database-schema.md`](../database-schema.md)
@@ -363,3 +484,11 @@ All logs use the module-local pino logger per the existing pattern
   `web/app/api/runs/[runId]/artifacts/[artifactId]/payload/route.ts`,
   `web/components/board/evidence-graph.tsx`,
   `web/lib/queries/evidence-graph.ts`.
+- Source files (Implemented — P2, ADR-120):
+  `web/lib/flows/graph/artifact-content.ts` (shared `resolveArtifactContent` +
+  `artifactContentToTemplateText` + `capForInline`),
+  `web/lib/flows/graph/artifact-inject.ts` (`collectContentArtifactIds` +
+  `augmentPromptWithInlineTags` + shared scan regex), `web/lib/flows/context.ts`
+  (`artifactContents` → `ctx.artifacts[id].content`), `web/lib/flows/graph/runner-graph.ts`
+  (collect + inject wiring), `web/lib/config.ts` + `web/lib/config.schema.ts`
+  (engine 2.2.0 floor + `inline` grammar + D12 node-type restriction).

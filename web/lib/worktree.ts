@@ -1612,55 +1612,137 @@ export async function diffRange(args: DiffRangeArgs): Promise<DiffResult> {
 // the partial diff WITHOUT a marker (the caller's `truncated` flag carries that
 // signal). The diff readers' maxBuffer fallback, so an oversized diff degrades
 // to a bounded prefix instead of throwing.
+// Streams a git command's stdout, stopping (SIGKILL) once `maxBytes` is reached
+// so an oversized output never buffers unbounded. UTF-8-safe via a streaming
+// TextDecoder. Returns `{ text, truncated }`. Shared by the diff-overflow path
+// (bound = EXEC_MAX_BUFFER) and the bounded git-log injection read (bound = the
+// inline cap — ADR-120 Codex #2).
+async function streamGitTruncatedTo(
+  repo: string,
+  args: readonly string[],
+  maxBytes: number,
+  label: string,
+  env?: NodeJS.ProcessEnv,
+): Promise<{ text: string; truncated: boolean }> {
+  return await new Promise<{ text: string; truncated: boolean }>(
+    (resolve, reject) => {
+      const child = spawn("git", ["-C", repo, ...args], {
+        signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
+        env: env ?? process.env,
+      });
+
+      let bytes = 0;
+      let text = "";
+      let stderr = "";
+      const decoder = new TextDecoder();
+      // We hit the byte bound and SIGKILLed the child ON PURPOSE — the resulting
+      // non-zero/`SIGKILL` close is a truncation SUCCESS, not a git failure.
+      let truncated = false;
+      let settled = false;
+
+      child.stdout.on("data", (chunk: Buffer) => {
+        if (truncated) return;
+        const remaining = maxBytes - bytes;
+
+        if (chunk.length >= remaining) {
+          text += decoder.decode(chunk.subarray(0, remaining), {
+            stream: true,
+          });
+          text += decoder.decode();
+          truncated = true;
+          child.kill("SIGKILL");
+
+          return;
+        }
+        text += decoder.decode(chunk, { stream: true });
+        bytes += chunk.length;
+      });
+
+      child.stderr?.on("data", (chunk: Buffer) => {
+        // Bounded — enough to surface a git error message without unbounded growth.
+        if (stderr.length < 8192) stderr += chunk.toString();
+      });
+
+      child.on("error", (err) => {
+        if (settled) return;
+        settled = true;
+        reject(
+          new MaisterError("CONFLICT", `${label} failed: ${err.message}`, {
+            cause: asError(err),
+          }),
+        );
+      });
+
+      // Resolve/reject only after the process fully closes, and branch on the
+      // exit status — a genuine git failure (bad ref, corrupt repo) writes stderr
+      // and exits non-zero WITHOUT us killing it, and MUST surface as CONFLICT
+      // rather than a silent empty result (Codex finding).
+      child.on("close", (code, signal) => {
+        if (settled) return;
+        settled = true;
+
+        if (truncated) {
+          resolve({ text, truncated: true });
+
+          return;
+        }
+        if (code === 0) {
+          resolve({ text: text + decoder.decode(), truncated: false });
+
+          return;
+        }
+        reject(
+          new MaisterError(
+            "CONFLICT",
+            `${label} failed: ${(
+              stderr || `exited with ${code ?? signal ?? "unknown"}`
+            ).trim()}`,
+          ),
+        );
+      });
+    },
+  );
+}
+
 async function streamGitDiffTruncated(
   repo: string,
   diffArgs: readonly string[],
   env?: NodeJS.ProcessEnv,
 ): Promise<string> {
-  return await new Promise<string>((resolve, reject) => {
-    const child = spawn("git", ["-C", repo, ...diffArgs], {
-      signal: AbortSignal.timeout(GIT_TIMEOUT_MS),
-      env: env ?? process.env,
-    });
+  const { text } = await streamGitTruncatedTo(
+    repo,
+    diffArgs,
+    EXEC_MAX_BUFFER,
+    "git diff",
+    env,
+  );
 
-    let bytes = 0;
-    let text = "";
-    const decoder = new TextDecoder();
-    let done = false;
+  return text;
+}
 
-    child.stdout.on("data", (chunk: Buffer) => {
-      if (done) return;
-      const remaining = EXEC_MAX_BUFFER - bytes;
+// ADR-120 (Codex #2): a git-log read bounded to `maxBytes` for prompt injection —
+// streams `git log` and TRUNCATES at the bound instead of throwing on overflow
+// (unlike `logRange`, which caps the child buffer at EXEC_MAX_BUFFER and throws
+// `CONFLICT` when exceeded). The uncapped `logRange` stays for the payload route.
+export async function logRangeBounded(
+  args: LogRangeArgs,
+  maxBytes: number,
+): Promise<DiffResult> {
+  const wt = validate(absolutePathSchema, args.worktreePath, "worktreePath");
+  const base = validate(gitRefSchema, args.baseRef, "baseRef");
+  const br = validate(branchNameSchema, args.branch, "branch");
 
-      if (chunk.length >= remaining) {
-        text += decoder.decode(chunk.subarray(0, remaining), { stream: true });
-        text += decoder.decode();
-        done = true;
-        child.kill("SIGKILL");
-        resolve(text);
+  log.debug(
+    { worktreePath: wt, baseRef: base, branch: br, maxBytes },
+    "logRangeBounded",
+  );
 
-        return;
-      }
-      text += decoder.decode(chunk, { stream: true });
-      bytes += chunk.length;
-    });
-
-    child.stdout.on("end", () => {
-      if (done) return;
-      done = true;
-      resolve(text + decoder.decode());
-    });
-
-    child.on("error", (err) => {
-      if (done) return;
-      done = true;
-      reject(
-        new MaisterError("CONFLICT", `git diff failed: ${err.message}`, {
-          cause: asError(err),
-        }),
-      );
-    });
-  });
+  return streamGitTruncatedTo(
+    wt,
+    ["log", "--oneline", "--no-color", "--end-of-options", `${base}..${br}`],
+    maxBytes,
+    `git log ${base}..${br}`,
+  );
 }
 
 // M30 (ADR-082, `uncommitted` diff scope): HEAD vs working tree, with

@@ -217,6 +217,21 @@ describe("buildFlowDslGrammar drift guard", () => {
     expect(grammar).toContain("runtime expects `{ mode: repo_read }`");
   });
 
+  it("documents the ADR-120 artifact body injection surfaces", () => {
+    // The runtime schema accepts `input.requires[].inline` and the templating
+    // context exposes `artifacts.<id>.content`; the in-product authoring SSOT must
+    // teach both, plus the node-type restriction + 2.2.0 floor, or generated flows
+    // keep emitting the old contract.
+    expect(grammar).toContain("inline?: true");
+    expect(grammar).toContain("artifacts.<id>.content");
+    expect(grammar).toContain("inline: true");
+    // Node-type restriction + engine floor.
+    expect(grammar).toContain("2.2.0");
+    const lower = grammar.toLowerCase();
+
+    expect(lower).toContain("body injection");
+  });
+
   it("documents assistant prompt-authoring conventions that live outside Zod", () => {
     // These conventions are render-time/storage contracts rather than schema
     // fields, so the Zod introspection guard above cannot detect drift.

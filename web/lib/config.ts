@@ -23,6 +23,10 @@ import {
 } from "@/lib/config.schema";
 import { MaisterError } from "@/lib/errors";
 import {
+  collectContentArtifactIds,
+  isInjectableArtifactId,
+} from "@/lib/flows/graph/artifact-inject";
+import {
   GRAPH_MIN_ENGINE_VERSION,
   MAISTER_ENGINE_VERSION,
   declaresGraphCapableEngineMin,
@@ -611,6 +615,22 @@ export const SESSIONS_ENGINE_MIN = "2.0.0";
 // must declare engine_min >= this value.
 const REWORK_RESET_ENGINE_MIN = "2.1.0";
 
+// ADR-120 floor (P2): manifests using artifact body injection — `input.requires[]
+// .inline: true` OR any `{{ artifacts.<id>.content }}` template reference (in
+// action.prompt / cli.command / an ai_judgment·skill_check gate prompt) — must
+// declare engine_min >= this value. Detection reuses the SHARED
+// `collectContentArtifactIds` scan so load-time and runtime never drift.
+const ARTIFACT_INLINE_ENGINE_MIN = "2.2.0";
+
+// ADR-120 (D12): `input.requires[].inline: true` is valid ONLY on prompt-bearing
+// runner nodes — auto-appending an XML block makes no sense on a cli/check command
+// or a prompt-less human/form node.
+const INLINE_ALLOWED_NODE_TYPES: ReadonlySet<string> = new Set([
+  "ai_coding",
+  "judge",
+  "orchestrator",
+]);
+
 // Returns true when any node is an orchestrator node. Used to gate the 1.6.0
 // floor.
 function declaresOrchestratorNode(nodes: NodeDef[]): boolean {
@@ -789,6 +809,75 @@ function declaresReworkResetOrOnExhaustion(nodes: NodeDef[]): boolean {
   }
 
   return false;
+}
+
+// ADR-120 (P2): true when any node uses artifact body injection — an
+// `input.requires[].inline: true` entry OR a `{{ artifacts.<id>.content }}`
+// template reference. Reuses the SHARED `collectContentArtifactIds` scan (which
+// unions both surfaces) so the load-time floor gate and the runtime resolver can
+// never disagree about which manifests use the feature. Used to gate the 2.2.0
+// floor.
+function declaresArtifactContentInjection(nodes: NodeDef[]): boolean {
+  return nodes.some((n) => collectContentArtifactIds(n).length > 0);
+}
+
+// ADR-120 (D12): returns the first node that declares `input.requires[].inline:
+// true` on a node type that is NOT prompt-bearing (anything other than
+// ai_coding/judge/orchestrator), or null when none. The offending node refuses
+// the manifest at load (CONFIG).
+function firstInlineOnNonPromptNode(nodes: NodeDef[]): NodeDef | null {
+  for (const n of nodes) {
+    if (INLINE_ALLOWED_NODE_TYPES.has(n.type)) continue;
+
+    const requires = (n as { input?: { requires?: Array<unknown> } }).input
+      ?.requires;
+
+    for (const req of requires ?? []) {
+      if (
+        req &&
+        typeof req === "object" &&
+        (req as { inline?: unknown }).inline === true
+      ) {
+        return n;
+      }
+    }
+  }
+
+  return null;
+}
+
+// ADR-120 (Codex finding #3): returns the first `{ node, artifactId }` whose
+// `input.requires[].inline: true` names an artifact id that is NOT a valid
+// injectable slug (`^[A-Za-z0-9_-]+$`), or null when all are valid. A non-slug id
+// is interpolated into the auto-append XML attribute AND a dotted Mustache path,
+// so it would render malformed/unresolvable — refuse it at load (CONFIG) instead
+// of failing opaquely at run time.
+function firstInvalidInlineArtifactId(
+  nodes: NodeDef[],
+): { node: NodeDef; artifactId: string } | null {
+  for (const n of nodes) {
+    const requires = (n as { input?: { requires?: Array<unknown> } }).input
+      ?.requires;
+
+    for (const req of requires ?? []) {
+      if (
+        req &&
+        typeof req === "object" &&
+        (req as { inline?: unknown }).inline === true
+      ) {
+        const artifactId = (req as { artifact?: unknown }).artifact;
+
+        if (
+          typeof artifactId === "string" &&
+          !isInjectableArtifactId(artifactId)
+        ) {
+          return { node: n, artifactId };
+        }
+      }
+    }
+  }
+
+  return null;
 }
 
 // Returns true when any node declares the M40 guardrail hooks capability class
@@ -1021,6 +1110,56 @@ export function validateGraphManifest(
         `graph flow ${flowYamlPath} is declaring rework onExhaustion/resetTargets but engine_min "${engineMin}" < ${REWORK_RESET_ENGINE_MIN} — bump compat.engine_min to ${REWORK_RESET_ENGINE_MIN} (host engine is ${MAISTER_ENGINE_VERSION})`,
       );
     }
+  }
+
+  // ADR-120 (P2): artifact body injection — `input.requires[].inline: true` OR a
+  // `{{ artifacts.<id>.content }}` template reference — requires the 2.2.0 floor.
+  // Both surfaces detected via the shared `collectContentArtifactIds` scan so the
+  // load-time gate and runtime resolver never drift. Manifests using neither stay
+  // valid at any engine_min.
+  if (declaresArtifactContentInjection(nodes)) {
+    const ok = semverGte(engineMin, ARTIFACT_INLINE_ENGINE_MIN);
+
+    log.debug(
+      {
+        flowYamlPath,
+        declared: engineMin || "(unset)",
+        required: ARTIFACT_INLINE_ENGINE_MIN,
+        ok,
+      },
+      "[engine-floor] artifact body injection gate",
+    );
+    if (!ok) {
+      throw new MaisterError(
+        "CONFIG",
+        `graph flow ${flowYamlPath} is declaring artifact body injection ({{ artifacts.<id>.content }} or input.requires[].inline) but engine_min "${engineMin}" < ${ARTIFACT_INLINE_ENGINE_MIN} — bump compat.engine_min to ${ARTIFACT_INLINE_ENGINE_MIN} (host engine is ${MAISTER_ENGINE_VERSION})`,
+      );
+    }
+  }
+
+  // ADR-120 (D12): `input.requires[].inline: true` is valid only on prompt-bearing
+  // nodes (ai_coding/judge/orchestrator). On cli/check/human/form an auto-appended
+  // XML block would corrupt the command or land on a prompt-less node — refuse.
+  const inlineOffender = firstInlineOnNonPromptNode(nodes);
+
+  if (inlineOffender) {
+    throw new MaisterError(
+      "CONFIG",
+      `node "${inlineOffender.id}" (type ${inlineOffender.type}) declares input.requires[].inline: true, which is valid only on ai_coding/judge/orchestrator nodes in ${flowYamlPath}`,
+    );
+  }
+
+  // ADR-120 (Codex finding #3): a body-injectable artifact id is interpolated
+  // into the auto-append XML attribute + a dotted Mustache path, so it MUST be a
+  // slug. Refuse a non-slug inline id at load rather than rendering malformed XML
+  // / an unresolvable template at run time.
+  const badInlineId = firstInvalidInlineArtifactId(nodes);
+
+  if (badInlineId) {
+    throw new MaisterError(
+      "CONFIG",
+      `node "${badInlineId.node.id}" declares input.requires[].inline for artifact id "${badInlineId.artifactId}", which is not a valid injectable id (must match /^[A-Za-z0-9_-]+$/) in ${flowYamlPath}`,
+    );
   }
 
   const nodeIds = new Set<string>();

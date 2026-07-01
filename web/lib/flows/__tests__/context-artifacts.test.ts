@@ -327,3 +327,167 @@ describe("buildContext — artifacts namespace (T3.4)", () => {
     expect(ctx.artifacts).toEqual({});
   });
 });
+
+describe("buildContext — artifact body content (ADR-120, P2)", () => {
+  const planRow = makeArtifactInstance({
+    artifactDefId: "plan",
+    kind: "plan",
+    uri: "file:///runs/run-1/plan.md",
+    validity: "current",
+    nodeId: "plan-node",
+  });
+
+  it("attaches .content (+ .contentTruncated) when artifactContents has the id", () => {
+    const ctx = buildContext({
+      task,
+      run,
+      executor,
+      stepRuns: [],
+      projectSlug: "demo",
+      envSource: {},
+      artifacts: [planRow],
+      artifactContents: {
+        plan: { text: "# The Plan\nstep 1", truncated: false },
+      },
+    });
+
+    expect(ctx.artifacts.plan.content).toBe("# The Plan\nstep 1");
+    expect(ctx.artifacts.plan.contentTruncated).toBe(false);
+  });
+
+  it("marks contentTruncated true when the body was capped", () => {
+    const ctx = buildContext({
+      task,
+      run,
+      executor,
+      stepRuns: [],
+      projectSlug: "demo",
+      envSource: {},
+      artifacts: [planRow],
+      artifactContents: { plan: { text: "cut…", truncated: true } },
+    });
+
+    expect(ctx.artifacts.plan.contentTruncated).toBe(true);
+  });
+
+  it("leaves .content undefined when artifactContents lacks the id", () => {
+    const ctx = buildContext({
+      task,
+      run,
+      executor,
+      stepRuns: [],
+      projectSlug: "demo",
+      envSource: {},
+      artifacts: [planRow],
+      // no artifactContents
+    });
+
+    expect(ctx.artifacts.plan.content).toBeUndefined();
+  });
+
+  it("attaches content only to the current-wins row for the id", () => {
+    const ctx = buildContext({
+      task,
+      run,
+      executor,
+      stepRuns: [],
+      projectSlug: "demo",
+      envSource: {},
+      artifacts: [
+        makeArtifactInstance({
+          artifactDefId: "plan",
+          kind: "plan",
+          uri: "file:///old.md",
+          validity: "superseded",
+          nodeId: "old",
+        }),
+        makeArtifactInstance({
+          artifactDefId: "plan",
+          kind: "plan",
+          uri: "file:///new.md",
+          validity: "current",
+          nodeId: "new",
+        }),
+      ],
+      artifactContents: { plan: { text: "NEW BODY", truncated: false } },
+    });
+
+    expect(ctx.artifacts.plan.nodeId).toBe("new");
+    expect(ctx.artifacts.plan.content).toBe("NEW BODY");
+  });
+
+  it("renders {{ artifacts.<id>.content }} via renderStrict", () => {
+    const ctx = buildContext({
+      task,
+      run,
+      executor,
+      stepRuns: [],
+      projectSlug: "demo",
+      envSource: {},
+      artifacts: [planRow],
+      artifactContents: { plan: { text: "BODY-HERE", truncated: false } },
+    });
+
+    expect(renderStrict("Plan:\n{{ artifacts.plan.content }}", ctx)).toBe(
+      "Plan:\nBODY-HERE",
+    );
+  });
+
+  it("a bare {{ content }} for an unresolved id throws CONFIG (strict)", () => {
+    const ctx = buildContext({
+      task,
+      run,
+      executor,
+      stepRuns: [],
+      projectSlug: "demo",
+      envSource: {},
+      artifacts: [planRow],
+      // no artifactContents → .content undefined
+    });
+
+    try {
+      renderStrict("{{ artifacts.plan.content }}", ctx);
+      throw new Error("expected CONFIG throw on undefined content");
+    } catch (err) {
+      expect(isMaisterError(err)).toBe(true);
+      expect(err).toHaveProperty("code", "CONFIG");
+    }
+  });
+
+  it("renders a ?? default when content is absent (guarded form)", () => {
+    const ctx = buildContext({
+      task,
+      run,
+      executor,
+      stepRuns: [],
+      projectSlug: "demo",
+      envSource: {},
+      artifacts: [planRow],
+    });
+
+    expect(renderStrict("{{ artifacts.plan.content ?? 'none' }}", ctx)).toBe(
+      "none",
+    );
+  });
+
+  it("mustache re-render invariant: a body containing {{ }} renders VERBATIM", () => {
+    const ctx = buildContext({
+      task,
+      run,
+      executor,
+      stepRuns: [],
+      projectSlug: "demo",
+      envSource: {},
+      artifacts: [planRow],
+      artifactContents: {
+        plan: { text: "see {{ task.prompt }} for details", truncated: false },
+      },
+    });
+
+    // The injected value is substituted literally — the braces are NOT
+    // re-processed against the context (no recursion).
+    expect(renderStrict("{{ artifacts.plan.content }}", ctx)).toBe(
+      "see {{ task.prompt }} for details",
+    );
+  });
+});

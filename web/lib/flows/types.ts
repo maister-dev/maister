@@ -49,6 +49,14 @@ export type FlowContext = {
       uri?: string;
       validity: string;
       nodeId?: string;
+      // ADR-120 (P2): the resolved + capped artifact BODY, set only for ids the
+      // runner resolved for injection (via `{{ artifacts.<id>.content }}` or
+      // `inline:true`). Absent otherwise — a bare `{{ artifacts.X.content }}` for
+      // an unresolved id is a strict CONFIG (undefined template var). The value is
+      // the FINAL injected text (json already pretty-printed, body already capped),
+      // so renderStrict substitutes it literally — never re-rendered.
+      content?: string;
+      contentTruncated?: boolean;
     }
   >;
 };

@@ -168,6 +168,12 @@ export type BuildContextArgs = {
   // M12 (T3.4): artifact_instances rows for the run. Reduced to the artifacts
   // namespace keyed by artifactDefId, current-wins. Optional for backward compat.
   artifacts?: ArtifactInstanceRow[];
+  // ADR-120 (P2): resolved artifact BODIES keyed by artifactDefId, attached to
+  // the matching current-wins artifact entry as `.content`/`.contentTruncated`.
+  // Values are the FINAL output of the runner's D11 injection pipeline
+  // (resolveArtifactContent → artifactContentToTemplateText → capForInline);
+  // buildContext stays pure (no I/O, no cap logic) and only threads them in.
+  artifactContents?: Record<string, { text: string; truncated: boolean }>;
 };
 
 // M12 (T3.4): reduce artifact_instances rows to the artifacts namespace.
@@ -176,6 +182,7 @@ export type BuildContextArgs = {
 // latest row (by insertion order) wins — callers should pass only current rows.
 function reduceArtifacts(
   rows: ArtifactInstanceRow[],
+  artifactContents?: Record<string, { text: string; truncated: boolean }>,
 ): FlowContext["artifacts"] {
   const out: FlowContext["artifacts"] = {};
 
@@ -185,11 +192,20 @@ function reduceArtifacts(
     const existing = out[id];
 
     if (!existing || row.validity === "current") {
+      const body = artifactContents?.[id];
+
       out[id] = {
         kind: row.kind,
         uri: row.uri ?? undefined,
         validity: row.validity,
         nodeId: row.nodeId ?? undefined,
+        // ADR-120 (P2): attach the resolved body to the current-wins entry only.
+        // The map is keyed by artifactDefId, so the body rides the same id that
+        // metadata resolves to. Absent body → `.content` stays undefined → a bare
+        // `{{ artifacts.X.content }}` is a strict CONFIG.
+        ...(body
+          ? { content: body.text, contentTruncated: body.truncated }
+          : {}),
       };
     }
   }
@@ -209,6 +225,9 @@ export function buildContext(args: BuildContextArgs): FlowContext {
       runId: args.run.id,
       envKeys: Object.keys(env),
       stepCount: args.stepRuns.length,
+      contentIds: args.artifactContents
+        ? Object.keys(args.artifactContents)
+        : [],
     },
     "buildContext",
   );
@@ -235,6 +254,6 @@ export function buildContext(args: BuildContextArgs): FlowContext {
     },
     steps: reduceLedger(args.stepRuns, args.nodeAttempts ?? [], cap),
     env,
-    artifacts: reduceArtifacts(args.artifacts ?? []),
+    artifacts: reduceArtifacts(args.artifacts ?? [], args.artifactContents),
   };
 }

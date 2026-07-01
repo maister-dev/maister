@@ -462,4 +462,44 @@ describe("GET /api/runs/[runId]/artifacts/[artifactId]/payload", () => {
     expect(res.status).toBe(404);
     expect(body).not.toContain("leaked");
   });
+
+  // --- ADR-120 (P2, Codex #1): the payload API contract is preserved. The
+  // 256 KiB inline-injection cap MUST NOT reach the route — a large body comes
+  // back FULL and untruncated even with the inline cap env set tiny. -----------
+
+  it("inline > 256 KiB → 200 returns the FULL untruncated body (no injection cap on the route)", async () => {
+    const big = "Z".repeat(300 * 1024);
+
+    process.env.MAISTER_ARTIFACT_INLINE_MAX_BYTES = "1024";
+    seedArtifact({ id: "art-big", locator: { kind: "inline", text: big } });
+
+    const res = await invokeGet("art-big");
+    const body = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(body.length).toBe(300 * 1024);
+    expect(body).not.toContain("truncated");
+
+    delete process.env.MAISTER_ARTIFACT_INLINE_MAX_BYTES;
+  });
+
+  it("file > 256 KiB → 200 returns the FULL untruncated body (no injection cap on the route)", async () => {
+    const big = "F".repeat(300 * 1024);
+
+    process.env.MAISTER_ARTIFACT_INLINE_MAX_BYTES = "1024";
+    writeFileSync(join(runDir(), "big.log"), big, "utf8");
+    seedArtifact({
+      id: "art-bigfile",
+      kind: "log",
+      locator: { kind: "file", path: "big.log" },
+    });
+
+    const res = await invokeGet("art-bigfile");
+    const body = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(body.length).toBe(300 * 1024);
+
+    delete process.env.MAISTER_ARTIFACT_INLINE_MAX_BYTES;
+  });
 });

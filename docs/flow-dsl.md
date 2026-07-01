@@ -1209,6 +1209,53 @@ pins the expected `kind`. An unknown ref or `kind` mismatch is a manifest
 violation (`CONFIG`). A required input that is missing or `stale` at runtime
 fails the node BEFORE its action (`PRECONDITION`).
 
+**`input.requires[].inline: true` — auto body injection (P2,
+[ADR-120](decisions.md#adr-120-artifact-body-injection-into-prompts)).** The
+object form accepts an optional `inline: true` flag:
+
+```yaml
+input:
+  requires:
+    - { artifact: plan-summary, kind: plan, inline: true }
+```
+
+When set, the runner appends a deterministic, XML-tag-delimited block to the
+node's **rendered** prompt:
+
+```
+<artifact id="plan-summary" kind="plan">
+…resolved body verbatim…
+</artifact>
+```
+
+so the author needs zero prompt edits for forward-handoff. The injected block is a
+`{{ artifacts.plan-summary.content }}` **template tag** (resolved later by the
+shared `renderStrict`), never a string-concatenated body — an artifact body
+containing literal `{{ … }}` is therefore passed verbatim, not re-rendered. The XML
+tag is chosen over a markdown ` ``` ` fence because artifact bodies routinely
+contain fences (diffs, code, logs); an XML delimiter does not collide (D1).
+
+- **Dedup (D2):** if the node's `action.prompt` (the auto-append target) already
+  references `{{ artifacts.X.content }}`, the engine does NOT auto-append for `X`
+  and emits a `WARN` — manual placement wins, the body is injected exactly once
+  into the action prompt. (Gate `prompt`s are rendered in separate agent sessions,
+  so a `{{ artifacts.X.content }}` there is not a double-injection of the action
+  prompt and never suppresses the inline append; the gate-prompt + `cli.command`
+  scan feeds content *resolution* and the engine *floor*, not this dedup.)
+- **Node-type restriction (D12):** `inline: true` is valid ONLY on prompt-bearing
+  nodes — `ai_coding` / `judge` / `orchestrator`. On `cli` / `check` / `human` /
+  `form` it is refused at manifest validation (`CONFIG`) — auto-appending an XML
+  block to a shell `command` would corrupt it, and `human`/`form` have no prompt.
+  Manual `{{ artifacts.X.content }}` still renders in any template (incl.
+  `cli.command`).
+- **Engine floor (D5):** declaring `inline: true` requires
+  `compat.engine_min >= 2.2.0` (see the engine-floor note below).
+- **Injectable id grammar:** an `inline: true` artifact id is interpolated into
+  the auto-append XML attribute AND a dotted Mustache path, so it MUST be a slug
+  matching `^[A-Za-z0-9_-]+$`. A non-slug id (containing `.`, `:`, quotes, spaces)
+  is refused at manifest validation (`CONFIG`) rather than rendering malformed XML
+  / an unresolvable template at run time.
+
 **`artifact_required` gate.** This gate references artifact ids through its
 `inputArtifacts` field and **passes ONLY when every referenced artifact instance
 is `current`** (not missing, `stale`, `superseded`, `failed`, or `skipped`).
@@ -1224,8 +1271,25 @@ is `current`** (not missing, `stale`, `superseded`, `failed`, or `skipped`).
 rejected (`CONFIG`) for: a duplicate `output.produces[].id` within the manifest;
 an `input.requires` ref (bare id or `{ artifact, kind }`) to an unknown artifact
 id; an `input.requires` object whose declared `kind` mismatches the producing
-artifact's `kind`; an unsupported artifact `kind`; an invalid `path`/`ref`; or an
-`artifact_required` gate whose `inputArtifacts` reference unknown artifact ids.
+artifact's `kind`; an unsupported artifact `kind`; an invalid `path`/`ref`; an
+`artifact_required` gate whose `inputArtifacts` reference unknown artifact ids; or
+an `input.requires[].inline: true` on a non-prompt node
+(`cli`/`check`/`human`/`form` — D12).
+
+**Engine floor — artifact body injection (P2,
+[ADR-120](decisions.md#adr-120-artifact-body-injection-into-prompts)).** BOTH
+surfaces require `compat.engine_min >= 2.2.0`: (a) any `input.requires[].inline:
+true` entry, AND (b) any `{{ artifacts.<id>.content }}` reference in a node's
+`action.prompt`, `cli.command`, or **the field a `pre_finish` gate actually
+renders** — an `ai_judgment` gate's `prompt`, or a `skill_check`/`command_check`
+gate's `command` (the scan matches the gate executor exactly, so load-time and
+runtime detection never drift). Surface (b) is detected by a **delimiter-aware
+manifest-load template scan**
+(matches only inside `{{ … }}` tags, sharing the runtime `collectContentArtifactIds`
+regex — so load-time and runtime detection never drift); a bare-text
+`artifacts.x.content` mention outside `{{ }}` is NOT gated. A manifest using either
+surface below `2.2.0` is refused at load (`CONFIG`); `MAISTER_ENGINE_VERSION` bumps
+`2.1.0 → 2.2.0`. Flows using neither stay valid at any `engine_min`.
 
 The run detail UI includes an evidence graph explorer. It connects task inputs,
 node attempts, artifacts, gates, human decisions, returned commits, and merge
@@ -1507,6 +1571,7 @@ Context paths available inside templates:
 | `artifacts.<id>.uri`     | current artifact locator URI; optional, use `??` if it may be absent                            |
 | `artifacts.<id>.validity` | artifact validity (`current`, `stale`, etc.)                                                    |
 | `artifacts.<id>.nodeId`  | producing node id; optional, use `??` if it may be absent                                       |
+| `artifacts.<id>.content` | **(P2, ADR-120)** resolved body of the `current` artifact (diff/log/plan/test-report text, or pretty-printed JSON for a `gate-verdict`/`hitl-response` locator). Capped at the injection seam to `MAISTER_ARTIFACT_INLINE_MAX_BYTES` (256 KiB); for a `file` or `git-log` locator the read itself is bounded to the cap (a huge payload never loads fully into the web process; an oversized log truncates instead of throwing). Optional — use `??` if it may be absent. **Requires `compat.engine_min >= 2.2.0`.** Graph `nodes[]` only. |
 
 Highest-attempt-wins: when a node has been retried (or reworked, M11a),
 `steps.<id>` resolves to the highest-`attempt` `node_attempts` row, falling back

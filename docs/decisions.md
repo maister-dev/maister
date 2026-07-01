@@ -145,6 +145,7 @@
 | [ADR-117](#adr-117-reliable-cost-rollup-reconciliation-and-per-runner-cost-attribution) | Reliable cost-rollup reconciliation (sweep guarantee + fast-path consumer) + per-runner cost attribution | Accepted | 2026-06-29 |
 | [ADR-118](#adr-118-rework-loop-onexhaustion-routing--human-driven-counter-reset-resettargets--engine-210) | Rework loop `onExhaustion` routing + human-driven counter reset (`resetTargets`) + engine 2.1.0 | Accepted | 2026-06-29 |
 | [ADR-119](#adr-119-manual-force-relaunch-additive-concurrent-runs-per-task--atomic-attempt-number-allocation) | Manual force-relaunch (additive concurrent runs per task) + atomic attempt-number allocation | Accepted | 2026-06-30 |
+| [ADR-120](#adr-120-artifact-body-injection-into-prompts) | Artifact body injection into prompts (`{{ artifacts.X.content }}` + `input.requires.inline`) + engine 2.2.0 | Accepted | 2026-06-30 |
 
 ---
 
@@ -9784,6 +9785,145 @@ branch names do.) **ADR-008** (closed `MaisterError` union) and **ADR-009**
 - **Keep the stale-read allocation and serialize launches with an advisory
   lock:** rejected — an atomic `UPDATE … RETURNING` is simpler, needs no lock
   bookkeeping, and makes each launch's attempt number self-evidently distinct.
+
+---
+
+### ADR-120: Artifact body injection into prompts
+
+**Date:** 2026-06-30
+**Status:** Accepted
+**Context:** A graph flow node can already reference a prior artifact's
+**metadata** in its prompt — `{{ artifacts.<id>.kind / uri / validity / nodeId }}`
+(M12, ADR-037) — and the prior step's stdout via an 8 KiB-capped
+`{{ steps.<id>.output }}` slice. What it cannot reach is the artifact **body**:
+the resolved diff, plan, log, test report, or JSON verdict a previous node
+produced. The payload is reachable only over the browser-facing
+`GET /api/runs/{runId}/artifacts/{artifactId}/payload` route. Without a render-time
+accessor, a downstream node must re-derive context a prior node already produced
+(re-run the diff, re-read the plan) — wasted tokens and a correctness risk when the
+re-derivation drifts from the original. This is PV-gap **P2** (forward-handoff of
+one node's output into the next node's prompt).
+
+**Decision:** Add two render-time surfaces, both **graph-only** (the canonical
+`nodes[]` runtime), no DB migration, no new HTTP route/event, no new
+`MaisterError` code (reuse `CONFIG` / `PRECONDITION`):
+
+1. **Manual placement** — `{{ artifacts.<id>.content }}` resolves the `current`
+   artifact's body at render time. Author controls position. Absent content with
+   no `?? default` ⇒ strict `CONFIG` (`undefined template var`), consistent with
+   every other strict template var.
+
+2. **Auto placement** — `input.requires: [{ artifact: <id>, kind: <k>, inline: true }]`
+   appends a deterministic XML-tag-delimited block to the **rendered** prompt:
+   `\n<artifact id="X" kind="K">\n…body…\n</artifact>`. The block is injected as a
+   `{{ artifacts.X.content }}` **template tag** (resolved later by the shared
+   `renderStrict`), NOT a string-concatenated body — so an artifact body containing
+   literal `{{ … }}` is never re-processed (the **mustache re-render invariant**).
+
+Locked sub-decisions:
+
+- **D1 — XML-tag delimiter, not a markdown fence.** Artifact bodies routinely
+  contain ` ``` ` fences (diffs, code, logs, plans); a fence wrapper collides and
+  the boundary collapses. An XML tag has no fence collision (only a literal
+  `</artifact>` in the body breaks it — far rarer) and Anthropic models are trained
+  to respect XML document delimiters. The prompt stays markdown; only the delimiter
+  is XML.
+- **D5 — Engine floor `2.2.0` gates BOTH surfaces.** `inline: true` (grammar) AND
+  any `{{ artifacts.<id>.content }}` reference (detected by a delimiter-aware
+  manifest-load template scan sharing the runtime `collectContentArtifactIds`
+  regex; the scan covers `action.prompt` + `cli.command` + **the field each
+  `pre_finish` gate executor actually renders** — `ai_judgment`→`prompt`,
+  `skill_check`/`command_check`→`command` — so load-time and runtime can never
+  disagree) require `compat.engine_min >= 2.2.0`. Gating only `inline:true` left a
+  cross-host hole — a package declaring `engine_min: 1.2.0` + `.content`, shared to
+  an older host, would be accepted at load yet fail at runtime instead of being
+  refused. The feature debuts at `2.2.0`; `MAISTER_ENGINE_VERSION` bumps
+  `2.1.0 → 2.2.0`.
+- **D7 — Shared resolver returns RAW content, no cap.** Locator→content resolution
+  is extracted from `payload/route.ts`'s `switch(locator.kind)` into a server-only
+  `resolveArtifactContent()` returning the **uncapped** value
+  (`{kind:"text"} | {kind:"json"} | {kind:"gone"} | {kind:"notfound"}`), reused by
+  **both** the route (delegates → HTTP contract byte-identical, incl. >256 KiB
+  payloads) and the runner. Putting the inline cap inside the resolver would
+  silently truncate the payload API.
+- **D3/D11 — Cap at the injection seam only.** `capForInline()` truncates to
+  256 KiB (`MAISTER_ARTIFACT_INLINE_MAX_BYTES`, default `262144`), UTF-8-boundary-
+  safe, with an in-band marker, applied ONLY in the runner injection pipeline —
+  never inside `resolveArtifactContent` and never on the payload route. The ordered
+  named pipeline is `resolveArtifactContent` (raw) → `artifactContentToTemplateText`
+  (json pretty-print) → `capForInline` (256 KiB) → `{ text, truncated }`. On the
+  injection path the `file`-locator **read** is bounded to the cap (at most
+  `cap + 1` bytes via a positioned read) and the `git-log` read streams bounded via
+  `logRangeBounded` (truncating instead of throwing on overflow, unlike the
+  uncapped `logRange`), so a huge artifact never loads its full payload into the web
+  process before truncation; the payload route passes no bound (full read, contract
+  unchanged).
+- **Injectable id grammar.** An artifact id used via `inline: true` is
+  interpolated into the auto-append XML attribute AND a dotted Mustache path, so it
+  MUST be a slug (`^[A-Za-z0-9_-]+$`, the scan's character class). A non-slug id is
+  refused at load (`CONFIG`) — it would otherwise render malformed XML / an
+  unresolvable template at run time.
+- **Skipped gates are excluded from resolution; everything resolved is strict.**
+  Pre-action content resolution collects `action.prompt`/`cli.command`/`inline` ids
+  PLUS the refs of NON-skipped gates only — the runner passes a skip-aware
+  `includeGate` predicate (`!isPolicySkippedGate(checks, kind)`) so an
+  execution-policy-skipped gate (`checks=skip`) does no content work and its gone
+  payload can never fail the node. Every ref that IS resolved is strict: a
+  gone/notfound payload fails the node with a controlled `CONFIG` before spawn
+  (parity with the `input.requires` PRECONDITION) — never an uncontrolled mid-gate
+  `renderStrict` throw that would leave a half-created gate row. (Revised from the
+  round-2 tolerant-defer, which turned a non-skipped gate's gone ref into that
+  uncontrolled throw.)
+- **D9 — `gate-verdict`/`hitl-response` inject as pretty JSON** via the single
+  named converter `artifactContentToTemplateText(result)` (`kind:"json"` →
+  `JSON.stringify(value, null, 2)`; `kind:"text"` → `text`), so a JSON locator can
+  never silently become `[object Object]`. Inline is allowed for every locator kind.
+- **D8 — Validity = current-wins.** Content resolves from the `current` artifact
+  row. No current row → strict `CONFIG` (`{{…content}}`) or the existing
+  `input.requires` `PRECONDITION` (`inline:true`).
+- **D12 — `inline: true` valid ONLY on prompt-bearing runner nodes**
+  (`ai_coding` / `judge` / `orchestrator`); on `cli` / `check` / `human` / `form`
+  it is refused at manifest validation (`CONFIG`). Auto-append only makes sense for
+  a prompt — appending an XML block to a shell `command` would corrupt it, and
+  `human`/`form` have no prompt. Manual `{{ artifacts.X.content }}` still renders in
+  any template (incl. `cli.command`).
+- **D2 — Dedup guard.** If the node's `action.prompt` (the auto-append target)
+  already references `artifacts.X.content`, the engine does NOT auto-append for `X`
+  and emits a `WARN` — manual placement wins, single injection into the action
+  prompt. Gate `prompt`s render in separate agent sessions, so a content ref there
+  is not a double-injection of the action prompt and does not suppress the append;
+  the gate-field + `cli.command` scan in `collectContentArtifactIds` drives content
+  *resolution* and the engine *floor*, not this per-action-prompt dedup.
+- **D4 — Graph `nodes[]` only.** `.content` lives in the shared
+  `buildContext`/`reduceArtifacts` seam; the linear `runner.ts` path never populates
+  it (no shipped flow uses linear `steps[]`). A linear flow referencing
+  `{{ artifacts.X.content }}` gets a clean strict `CONFIG`.
+
+**Consequences:**
+- Forward-handoff needs zero prompt edits with `inline: true`; authors who want
+  precise placement use the manual tag. No re-derivation of prior output.
+- `compat.engine_min` stays honest across hosts — a `.content`-using package is
+  refused at load on a sub-2.2.0 host, never silently broken at runtime.
+- The payload API contract is preserved byte-for-byte: a >256 KiB `inline`/`file`
+  artifact returns its full untruncated body through the route (the cap lives only
+  at the prompt-injection seam). Existing payload-route tests pass unmodified.
+- One shared resolver removes the route-vs-runner locator-switch drift (SRP/DRY);
+  one named json→text converter removes the `[object Object]` failure mode.
+- **Zero migration / zero new error code / zero new HTTP route / zero new event.**
+
+**Alternatives Considered:**
+- **Markdown ` ``` ` fence delimiter:** rejected (D1) — collides with fenced
+  content in artifact bodies.
+- **`.content` rides the existing 1.2.0 artifact floor:** rejected (D5) — leaves a
+  cross-host portability hole; the whole feature debuts at 2.2.0 and gates both
+  surfaces.
+- **Cap inside `resolveArtifactContent` / on the payload route:** rejected (D7) —
+  silently truncates the payload API; the cap is an injection-only concern.
+- **String-concatenate the resolved body into the prompt then re-render:** rejected
+  (D11) — re-processes literal `{{ … }}` in the body (corruption/`CONFIG`); inject
+  only via the context var so mustache substitutes literally.
+- **Allow `inline: true` on any node:** rejected (D12) — auto-append corrupts a CLI
+  command and is a silent no-op on `human`/`form`; explicit refusal is clearer.
 
 ---
 

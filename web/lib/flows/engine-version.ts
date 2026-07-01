@@ -38,7 +38,12 @@ const log = pino({
 // counter reset (`resetTargets`) (ADR-118); a manifest where any node's `rework`
 // declares either field MUST `compat.engine_min >= 2.1.0` (REWORK_RESET_ENGINE_MIN,
 // see config.ts).
-export const MAISTER_ENGINE_VERSION = "2.1.0";
+// Bumped 2.1.0 -> 2.2.0 for artifact body injection into prompts (ADR-120):
+// `input.requires[].inline: true` AND any `{{ artifacts.<id>.content }}` template
+// reference both require `compat.engine_min >= 2.2.0` (ARTIFACT_INLINE_ENGINE_MIN,
+// see config.ts) — the latter detected by a load-time template scan sharing the
+// runtime `collectContentArtifactIds` regex.
+export const MAISTER_ENGINE_VERSION = "2.2.0";
 
 // Minimum engine version a graph (`nodes[]`) manifest must declare in
 // `compat.engine_min` (ADR-026). Enforced in `loadFlowManifest`.
