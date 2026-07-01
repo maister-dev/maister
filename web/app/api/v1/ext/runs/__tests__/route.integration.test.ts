@@ -428,9 +428,14 @@ describe("POST /api/v1/ext/runs", () => {
       .where(eq(schema.tasks.id, taskId))
       .execute();
 
+    // ADR-119: attempt_number is allocated atomically BEFORE the launch tx (the
+    // sole writer, `UPDATE … attempt_number + 1 RETURNING`) and is intentionally
+    // NOT rolled back on a post-allocation failure — a burned monotonic-counter
+    // gap with no meaning. The run rows roll back (asserted above) and the task
+    // stays Backlog; only the counter advances to 2.
     expect(taskRows[0]).toMatchObject({
       status: "Backlog",
-      attemptNumber: 1,
+      attemptNumber: 2,
     });
 
     const auditRows = await db
