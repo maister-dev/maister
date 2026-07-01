@@ -1,4 +1,4 @@
-import type { BacklogCard } from "@/lib/queries/board";
+import type { TaskEditableTarget } from "@/components/board/task-card-editing";
 
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -18,25 +18,20 @@ import {
   TaskInlineEditableField,
 } from "@/components/board/task-card-editing";
 
-const card: BacklogCard = {
+const card: TaskEditableTarget = {
   taskId: "task-1",
   number: 7,
   keyRef: "MAI-7",
   title: "Inline editable title",
   prompt: "Inline editable description",
-  flowRef: "aif",
-  priority: "high",
-  runCount: 0,
-  blockedBy: [],
   flowId: "flow-1",
-  triageStatus: null,
   runnerId: null,
   baseBranch: null,
   targetBranch: null,
   promotionMode: null,
   executionPolicy: null,
+  priority: "high",
   relations: [],
-  childTasks: [],
 };
 
 const relationCandidates = [

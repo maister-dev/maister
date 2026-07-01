@@ -11,8 +11,10 @@ import {
   type RemoteItem,
 } from "@/components/board/panels/project-git-settings-control";
 import { ProjectRunnerSettingsControl } from "@/components/board/panels/project-runner-settings-control";
+import { QueueSettingsControl } from "@/components/board/panels/queue-settings-control";
 import { getDb } from "@/lib/db/client";
 import { listProjectRemotes, reconcileOriginRepoUrl } from "@/lib/git-remotes";
+import { resolveEdgeDrain } from "@/lib/tasks/queue-settings";
 
 export interface SettingsPanelProps {
   data: ProjectPageData;
@@ -126,6 +128,13 @@ export async function SettingsPanel({
           projectSlug={project.slug}
           remaps={flowRunnerRemaps}
           runners={runners}
+        />
+      ) : null}
+      {isAdmin ? (
+        <QueueSettingsControl
+          envEdgeDrainDefault={resolveEdgeDrain({ taskQueueSettings: null })}
+          projectSlug={project.slug}
+          taskQueueSettings={project.taskQueueSettings ?? null}
         />
       ) : null}
       {isAdmin ? (

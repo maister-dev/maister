@@ -192,6 +192,28 @@ describe("PATCH /api/projects/[slug]/settings", () => {
     expect(res.status).toBe(422);
     expect(body.code).toBe("CONFIG");
     expect(state.updates).toEqual([]);
+    // Codex-4 (auth-first): the project is resolved from the URL slug and authorized
+    // BEFORE the body is parsed, so the body projectId is never trusted — and authz
+    // now runs ahead of the strict-schema rejection.
+    expect(mocks.requireProjectAction).toHaveBeenCalledWith(
+      "project-1",
+      "editSettings",
+    );
+  });
+
+  it("Codex-4: an unauthenticated malformed PATCH returns 401 (auth-first), not 422", async () => {
+    mocks.requireActiveSession.mockRejectedValue(
+      new MaisterError("UNAUTHENTICATED", "no session"),
+    );
+
+    // A body that WOULD fail schema validation (422) if parsed — auth must win.
+    const res = await patch("demo", {
+      taskQueueSettings: { maxInFlightAuto: 0 },
+    });
+
+    expect(res.status).toBe(401);
+    expect(state.updates).toEqual([]);
+    // The request body was never parsed/authorized against.
     expect(mocks.requireProjectAction).not.toHaveBeenCalled();
   });
 });

@@ -76,6 +76,8 @@ function baseCard(over: Partial<FlightCardData> = {}): FlightCardData {
     keyRef: "TST-1",
     title: "Fix the thing",
     flowRef: "bugfix",
+    taskPriority: "normal",
+    queuePaused: false,
     runCount: 1,
     runStatus: "Running",
     triageStatus: null,

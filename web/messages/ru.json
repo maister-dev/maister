@@ -1235,7 +1235,15 @@
     "editErrorConfig": "Некорректная конфигурация задачи.",
     "editErrorForbidden": "Нет прав на редактирование этой задачи.",
     "editErrorPrecondition": "Задачу можно редактировать только до старта работы.",
-    "editErrorGeneric": "Не удалось сохранить задачу."
+    "editErrorGeneric": "Не удалось сохранить задачу.",
+    "editPriorityLabel": "Приоритет",
+    "priorityLow": "низкий",
+    "priorityNormal": "обычный",
+    "priorityHigh": "высокий",
+    "priorityUrgent": "срочный",
+    "queuePause": "Приостановить в очереди",
+    "queueResume": "Возобновить в очереди",
+    "queuePaused": "на паузе"
   },
   "hitl": {
     "allowRun": "разрешить на этот запуск",
@@ -1531,7 +1539,19 @@
     "pkgColTrust": "Доверие",
     "pkgColFlows": "Флоу",
     "pkgTrust": "Доверять",
-    "pkgTrustFailed": "Не удалось отметить пакет доверенным."
+    "pkgTrustFailed": "Не удалось отметить пакет доверенным.",
+    "queueSettingsTitle": "Очередь задач",
+    "queueSettingsHint": "Управляет автозапуском задач из бэклога. Пустые значения берут платформенные умолчания.",
+    "queueEdgeDrain": "Автодренаж очереди",
+    "queueEdgeDrainInherit": "Наследовать умолчание платформы ({value})",
+    "queueEdgeDrainOn": "Вкл",
+    "queueEdgeDrainOff": "Выкл",
+    "queueEdgeDrainHelp": "Если включено, подходящие задачи из бэклога запускаются автоматически по мере освобождения слотов. «Наследовать» использует умолчание из env платформы.",
+    "queueMaxInFlightAuto": "Макс. автозапусков одновременно",
+    "queueMaxInFlightAutoHelp": "Лимит проекта на одновременные автозапуски. Пусто = без ограничения.",
+    "queueMaxInFlightUnbounded": "Без ограничения",
+    "queueMaxInFlightInvalid": "Введите целое число от 1, либо оставьте поле пустым.",
+    "queueSaved": "Сохранено"
   },
   "newtask": {
     "title": "Новая задача",
@@ -3310,6 +3330,7 @@
     "latestRunTitle": "Последний запуск",
     "triaged": "триаж пройден",
     "flagged": "На рассмотрении",
+    "confidence": "уверенность: {value}%",
     "runAgent": "Запустить агента",
     "sendToTriage": "Отправить на триаж",
     "agentActionBusy": "Выполняется…",

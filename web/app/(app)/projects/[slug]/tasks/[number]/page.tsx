@@ -18,6 +18,7 @@ import {
   TaskCardEditModal,
   TaskInlineEditableField,
 } from "@/components/board/task-card-editing";
+import { TaskQueueControls } from "@/components/board/task-queue-controls";
 import { type FlowGraphViewLabels } from "@/components/board/flow-graph-view";
 import { FlowGraphViewSection } from "@/components/board/flow-graph-view-section";
 import { CommentComposer } from "@/components/social/comment-composer";
@@ -164,13 +165,15 @@ export default async function TaskDetailPage({
   if (!role) notFound();
 
   const canAct = role === "owner" || role === "admin" || role === "member";
-  const [t, tLaunch, locale, platformStatus, launchConfig] = await Promise.all([
-    getTranslations("taskDetail"),
-    getTranslations("launch"),
-    getLocale(),
-    getPlatformStatus(),
-    resolveTaskLaunchConfig(detail.task.id),
-  ]);
+  const [t, tLaunch, tBoard, locale, platformStatus, launchConfig] =
+    await Promise.all([
+      getTranslations("taskDetail"),
+      getTranslations("launch"),
+      getTranslations("board"),
+      getLocale(),
+      getPlatformStatus(),
+      resolveTaskLaunchConfig(detail.task.id),
+    ]);
   const manualLaunchability = classifyManualTaskLaunchability(
     {
       status: detail.task.status as TaskStatus,
@@ -347,6 +350,7 @@ export default async function TaskDetailPage({
     targetBranch: detail.task.targetBranch,
     promotionMode: detail.task.promotionMode,
     executionPolicy: detail.task.executionPolicy,
+    priority: detail.task.priority,
     relations: detail.relations,
   };
   const launchExecutionPolicy = launchConfig
@@ -443,8 +447,32 @@ export default async function TaskDetailPage({
                 {t("flagged")}
               </span>
             ) : null}
+            {detail.task.triageConfidence != null ? (
+              <span className="rounded border border-line px-1.5 py-px uppercase tracking-[0.08em] text-mute">
+                {t("confidence", {
+                  value: Math.round(detail.task.triageConfidence * 100),
+                })}
+              </span>
+            ) : null}
           </div>
           <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+            <TaskQueueControls
+              canAct={canAct}
+              labels={{
+                priorityLow: tBoard("priorityLow"),
+                priorityNormal: tBoard("priorityNormal"),
+                priorityHigh: tBoard("priorityHigh"),
+                priorityUrgent: tBoard("priorityUrgent"),
+                pause: tBoard("queuePause"),
+                resume: tBoard("queueResume"),
+                paused: tBoard("queuePaused"),
+                error: tBoard("editErrorGeneric"),
+              }}
+              queuePaused={detail.task.queuePaused}
+              slug={slug}
+              taskNumber={detail.task.number}
+              taskPriority={detail.task.priority}
+            />
             {canAct ? (
               <TaskAgentActions
                 agents={manualAgents}

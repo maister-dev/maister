@@ -24,6 +24,7 @@ import type {
   RefObject,
 } from "react";
 import type { TaskRelationView } from "@/lib/social/relations";
+import type { TaskPriority } from "@/lib/tasks/criticality";
 
 import {
   CheckIcon,
@@ -128,6 +129,7 @@ export type TaskEditableTarget = {
   targetBranch: string | null;
   promotionMode: "local_merge" | "pull_request" | null;
   executionPolicy: ExecutionPolicy | null;
+  priority: TaskPriority;
   relations: TaskRelationView[];
 };
 
@@ -619,6 +621,7 @@ export function TaskCardEditModal({
   const [promotionMode, setPromotionMode] = useState<PromotionMode>(
     card.promotionMode ?? "",
   );
+  const [priority, setPriority] = useState<TaskPriority>(card.priority);
   const [execPreset, setExecPreset] = useState<ExecutionPresetChoice>(
     card.executionPolicy?.preset ?? "",
   );
@@ -645,6 +648,7 @@ export function TaskCardEditModal({
     setBaseBranch(card.baseBranch ?? "");
     setTargetBranch(card.targetBranch ?? "");
     setPromotionMode(card.promotionMode ?? "");
+    setPriority(card.priority);
     setOptions(null);
     setOptionsError(false);
     setError(null);
@@ -774,6 +778,7 @@ export function TaskCardEditModal({
           baseBranch: baseBranch.trim() || null,
           targetBranch: targetBranch.trim() || null,
           promotionMode: promotionMode || null,
+          priority,
           executionPolicy: buildExecutionPolicy({
             initialPolicy: card.executionPolicy,
             preset: execPreset,
@@ -1033,6 +1038,18 @@ export function TaskCardEditModal({
                     ]}
                     value={promotionMode}
                     onChange={setPromotionMode}
+                  />
+                  <SelectField<TaskPriority>
+                    disabled={disabled}
+                    label={tBoard("editPriorityLabel")}
+                    options={[
+                      { value: "low", label: tBoard("priorityLow") },
+                      { value: "normal", label: tBoard("priorityNormal") },
+                      { value: "high", label: tBoard("priorityHigh") },
+                      { value: "urgent", label: tBoard("priorityUrgent") },
+                    ]}
+                    value={priority}
+                    onChange={setPriority}
                   />
                 </div>
 

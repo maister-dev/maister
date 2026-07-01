@@ -2,6 +2,7 @@ import "server-only";
 
 import type { ActorDTO } from "@/lib/social/actors";
 import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
+import type { TaskPriority } from "@/lib/tasks/criticality";
 
 import { and, desc, eq, ne, sql } from "drizzle-orm";
 
@@ -128,6 +129,11 @@ export type TaskDetailData = {
     status: string;
     // M34: the triager's verdict mark (nullable 'triaged').
     triageStatus: "triaged" | "flagged" | null;
+    // ADR-121: first-class criticality priority + queue-pause + advisory triage
+    // confidence (0..1, null when unscored).
+    priority: TaskPriority;
+    queuePaused: boolean;
+    triageConfidence: number | null;
   };
   keyRef: string;
   relations: TaskRelationView[];
@@ -483,6 +489,9 @@ async function taskExtrasOf(
   promotionMode: "local_merge" | "pull_request" | null;
   executionPolicy: ExecutionPolicy | null;
   triageStatus: "triaged" | "flagged" | null;
+  priority: TaskPriority;
+  queuePaused: boolean;
+  triageConfidence: number | null;
 }> {
   const rows = (await db
     .select({
@@ -494,6 +503,9 @@ async function taskExtrasOf(
       promotionMode: schemaModule.tasks.promotionMode,
       executionPolicy: schemaModule.tasks.executionPolicy,
       triageStatus: schemaModule.tasks.triageStatus,
+      priority: schemaModule.tasks.priority,
+      queuePaused: schemaModule.tasks.queuePaused,
+      triageConfidence: schemaModule.tasks.triageConfidence,
     })
     .from(schemaModule.tasks)
     .where(eq(schemaModule.tasks.id, taskId))) as Array<{
@@ -505,7 +517,14 @@ async function taskExtrasOf(
     promotionMode: "local_merge" | "pull_request" | null;
     executionPolicy: ExecutionPolicy | null;
     triageStatus: "triaged" | "flagged" | null;
+    priority: TaskPriority | null;
+    queuePaused: boolean | null;
+    triageConfidence: string | null;
   }>;
+
+  const confidenceRaw = rows[0]?.triageConfidence ?? null;
+  const confidence =
+    confidenceRaw == null ? null : Number.parseFloat(confidenceRaw);
 
   return {
     prompt: rows[0]?.prompt ?? "",
@@ -516,5 +535,9 @@ async function taskExtrasOf(
     promotionMode: rows[0]?.promotionMode ?? null,
     executionPolicy: rows[0]?.executionPolicy ?? null,
     triageStatus: rows[0]?.triageStatus ?? null,
+    priority: rows[0]?.priority ?? "normal",
+    queuePaused: rows[0]?.queuePaused ?? false,
+    triageConfidence:
+      confidence != null && Number.isFinite(confidence) ? confidence : null,
   };
 }

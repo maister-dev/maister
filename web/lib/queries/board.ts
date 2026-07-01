@@ -6,6 +6,7 @@ import type { RunStatus, StepRun } from "@/lib/db/schema";
 import type { ReadinessState } from "@/lib/flows/graph/readiness-core";
 import type { ExecutionPolicy } from "@/lib/runs/execution-policy";
 import type { TaskRelationView } from "@/lib/social/relations";
+import type { TaskPriority } from "@/lib/tasks/criticality";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
@@ -94,6 +95,12 @@ export interface BacklogCard {
   // M34: null on a flowless simple-intent task (renders the unconfigured chip).
   flowRef: string | null;
   priority: CardPriority;
+  // ADR-121: the task's first-class criticality priority (distinct from the
+  // cosmetic positional `priority` stripe above). Drives the priority badge and
+  // the queue-pause control on the card.
+  taskPriority: TaskPriority;
+  queuePaused: boolean;
+  triageConfidence: number | null;
   runCount: number;
   // ADR-078 D5: open relation blockers — non-empty disables Launch and
   // renders the reason chip with the blocker KEY-Ns.
@@ -119,6 +126,9 @@ export interface FlightCard {
   title: string;
   // null on a flowless simple-intent task.
   flowRef: string | null;
+  // ADR-121: the task's first-class criticality priority + queue-pause flag.
+  taskPriority: TaskPriority;
+  queuePaused: boolean;
   runCount: number;
   runStatus: RunStatus;
   // ADR-112: held state — a `flagged` flight card (e.g. a Review/Crashed run on a
@@ -222,6 +232,15 @@ function runStatusToCard(status: RunStatus): CardStatus {
   return "running";
 }
 
+// ADR-121: `tasks.triage_confidence` is a `numeric` column → drizzle returns it
+// as a string. Coerce to a 0..1 number, null when absent or unparseable.
+function parseConfidence(raw: string | null): number | null {
+  if (raw == null) return null;
+  const value = Number.parseFloat(raw);
+
+  return Number.isFinite(value) ? value : null;
+}
+
 function priorityFor(index: number): CardPriority {
   if (index === 0) return "high";
   if (index <= 2) return "med";
@@ -252,6 +271,9 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
       flowManifest: flows.manifest,
       flowId: tasks.flowId,
       triageStatus: tasks.triageStatus,
+      priority: tasks.priority,
+      queuePaused: tasks.queuePaused,
+      triageConfidence: tasks.triageConfidence,
       runnerId: tasks.runnerId,
       baseBranch: tasks.baseBranch,
       targetBranch: tasks.targetBranch,
@@ -548,6 +570,9 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
         prompt: task.prompt,
         flowRef: task.flowRef ?? null,
         priority: priorityFor(backlogPos),
+        taskPriority: (task.priority ?? "normal") as TaskPriority,
+        queuePaused: task.queuePaused ?? false,
+        triageConfidence: parseConfidence(task.triageConfidence),
         runCount: runCountByTask.get(task.taskId) ?? 0,
         blockedBy: openBlockers.get(task.taskId) ?? [],
         flowId: task.flowId ?? null,
@@ -591,6 +616,8 @@ export async function getBoardData(projectId: string): Promise<BoardData> {
       keyRef: `${projectTaskKey}-${task.number}`,
       title: task.title,
       flowRef: task.flowRef ?? null,
+      taskPriority: (task.priority ?? "normal") as TaskPriority,
+      queuePaused: task.queuePaused ?? false,
       runCount: runCountByTask.get(task.taskId) ?? 0,
       runStatus: run.status,
       triageStatus: (task.triageStatus ?? null) as "triaged" | "flagged" | null,

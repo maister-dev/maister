@@ -76,21 +76,11 @@ export async function PATCH(
   { params }: RouteParams,
 ): Promise<NextResponse> {
   const { slug } = await params;
-  let body: z.infer<typeof patchBodySchema>;
 
   try {
-    body = patchBodySchema.parse(await req.json());
-  } catch (err) {
-    return errorResponse(
-      new MaisterError(
-        "CONFIG",
-        `invalid PATCH body: ${err instanceof Error ? err.message : String(err)}`,
-      ),
-      slug,
-    );
-  }
-
-  try {
+    // Auth-first (Codex-4): authenticate + resolve + authorize BEFORE touching the
+    // request body, so an unauthenticated caller gets 401/403 and can never probe
+    // the body schema or force body parsing via a validation error.
     await requireActiveSession();
 
     const db = getDb() as any;
@@ -105,6 +95,17 @@ export async function PATCH(
     }
 
     await requireProjectAction(project.id, "editSettings");
+
+    let body: z.infer<typeof patchBodySchema>;
+
+    try {
+      body = patchBodySchema.parse(await req.json());
+    } catch (err) {
+      throw new MaisterError(
+        "CONFIG",
+        `invalid PATCH body: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
 
     if (body.runnerId !== undefined && body.runnerId !== null) {
       const runnerRows = await db

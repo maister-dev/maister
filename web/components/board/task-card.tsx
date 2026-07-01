@@ -1,6 +1,7 @@
 import type { BacklogCard } from "@/lib/queries/board";
 import type { RelationCandidate } from "@/components/social/relations-editor";
 import type { TaskDecompositionLabels } from "@/components/board/task-decomposition";
+import type { TaskQueueControlsLabels } from "@/components/board/task-queue-controls";
 import type { ReactElement } from "react";
 
 import clsx from "clsx";
@@ -10,8 +11,10 @@ import { LaunchPopover } from "@/components/board/launch-popover";
 import {
   TaskCardEditModal,
   TaskInlineEditableField,
+  type TaskEditableTarget,
 } from "@/components/board/task-card-editing";
 import { TaskDecomposition } from "@/components/board/task-decomposition";
+import { TaskQueueControls } from "@/components/board/task-queue-controls";
 
 export interface TaskCardProps {
   card: BacklogCard;
@@ -26,6 +29,7 @@ export interface TaskCardProps {
   flaggedLabel: string;
   runsCountLabel: (count: number) => string;
   decompositionLabels: TaskDecompositionLabels;
+  queueControlsLabels: TaskQueueControlsLabels;
   relationCandidates: RelationCandidate[];
 }
 
@@ -58,6 +62,7 @@ export function TaskCard({
   flaggedLabel,
   runsCountLabel,
   decompositionLabels,
+  queueControlsLabels,
   relationCandidates,
 }: TaskCardProps): ReactElement {
   // M34: a flowless simple-intent task renders the `unconfigured` chip — the
@@ -65,6 +70,22 @@ export function TaskCard({
   const chip = card.flowRef
     ? (FLOW_CHIP[card.flowRef] ?? "text-mute bg-ivory border-line")
     : "text-danger bg-ivory border-line";
+
+  const editableTarget: TaskEditableTarget = {
+    taskId: card.taskId,
+    number: card.number,
+    keyRef: card.keyRef,
+    title: card.title,
+    prompt: card.prompt,
+    flowId: card.flowId,
+    runnerId: card.runnerId,
+    baseBranch: card.baseBranch,
+    targetBranch: card.targetBranch,
+    promotionMode: card.promotionMode,
+    executionPolicy: card.executionPolicy,
+    priority: card.taskPriority,
+    relations: card.relations,
+  };
 
   return (
     <article className="group/task relative flex cursor-grab flex-col gap-2 rounded-[10px] border border-line bg-paper px-3.5 pb-3 pt-3 transition-[transform,box-shadow,border-color] hover:-translate-y-px hover:border-mute hover:shadow-[0_6px_18px_-10px_rgba(22,20,15,0.14)] active:cursor-grabbing">
@@ -94,13 +115,23 @@ export function TaskCard({
             {card.flowRef ?? unconfiguredLabel}
           </span>
         </div>
-        <TaskCardEditModal
-          canEdit={canAct}
-          card={card}
-          relationCandidates={relationCandidates}
-          slug={slug}
-          triggerClassName="inline-flex h-6 w-6 flex-none items-center justify-center rounded-md border border-line bg-paper text-mute transition hover:border-amber hover:text-amber focus:border-amber focus:text-amber"
-        />
+        <div className="flex flex-none items-center gap-1.5">
+          <TaskQueueControls
+            canAct={canAct}
+            labels={queueControlsLabels}
+            queuePaused={card.queuePaused}
+            slug={slug}
+            taskNumber={card.number}
+            taskPriority={card.taskPriority}
+          />
+          <TaskCardEditModal
+            canEdit={canAct}
+            card={editableTarget}
+            relationCandidates={relationCandidates}
+            slug={slug}
+            triggerClassName="inline-flex h-6 w-6 flex-none items-center justify-center rounded-md border border-line bg-paper text-mute transition hover:border-amber hover:text-amber focus:border-amber focus:text-amber"
+          />
+        </div>
       </div>
       <TaskInlineEditableField
         canEdit={canAct}

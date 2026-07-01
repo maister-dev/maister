@@ -1,6 +1,7 @@
 import type { BoardColumn } from "@/lib/board";
 import type { BoardData } from "@/lib/queries/board";
 import type { TaskDecompositionLabels } from "@/components/board/task-decomposition";
+import type { TaskQueueControlsLabels } from "@/components/board/task-queue-controls";
 import type { RunStatusKey } from "@/lib/runs/run-status-tone";
 import type { PlatformStatus } from "@/types/platform-status";
 import type { ReactElement } from "react";
@@ -81,6 +82,16 @@ export async function Board({
     title: (count: number) => t("decompositionTitle", { count }),
     noRun: t("decompositionNoRun"),
     status: runStatusLabels,
+  };
+  const queueControlsLabels: TaskQueueControlsLabels = {
+    priorityLow: t("priorityLow"),
+    priorityNormal: t("priorityNormal"),
+    priorityHigh: t("priorityHigh"),
+    priorityUrgent: t("priorityUrgent"),
+    pause: t("queuePause"),
+    resume: t("queueResume"),
+    paused: t("queuePaused"),
+    error: t("editErrorGeneric"),
   };
   const flightLabels = {
     reworking: tRun("reworking"),
@@ -231,6 +242,7 @@ export async function Board({
                     launchLabel={
                       card.runCount > 0 ? t("runAgain") : t("launchFirst")
                     }
+                    queueControlsLabels={queueControlsLabels}
                     relationCandidates={data.relationCandidates}
                     runsCountLabel={(count) => t("runsCount", { count })}
                     slug={slug}

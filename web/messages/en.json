@@ -1235,7 +1235,15 @@
     "editErrorConfig": "Invalid task configuration.",
     "editErrorForbidden": "You do not have permission to edit this task.",
     "editErrorPrecondition": "This task can only be edited before work starts.",
-    "editErrorGeneric": "Could not save the task."
+    "editErrorGeneric": "Could not save the task.",
+    "editPriorityLabel": "Priority",
+    "priorityLow": "low",
+    "priorityNormal": "normal",
+    "priorityHigh": "high",
+    "priorityUrgent": "urgent",
+    "queuePause": "Pause in queue",
+    "queueResume": "Resume in queue",
+    "queuePaused": "paused"
   },
   "hitl": {
     "allowRun": "allow this run",
@@ -1531,7 +1539,19 @@
     "pkgColTrust": "Trust",
     "pkgColFlows": "Flows",
     "pkgTrust": "Trust",
-    "pkgTrustFailed": "Failed to trust package."
+    "pkgTrustFailed": "Failed to trust package.",
+    "queueSettingsTitle": "Task queue",
+    "queueSettingsHint": "Controls how Backlog tasks are auto-drained into runs. Blank values fall back to platform defaults.",
+    "queueEdgeDrain": "Auto-drain the queue",
+    "queueEdgeDrainInherit": "Inherit platform default ({value})",
+    "queueEdgeDrainOn": "On",
+    "queueEdgeDrainOff": "Off",
+    "queueEdgeDrainHelp": "When on, eligible Backlog tasks launch automatically as slots free up. Inherit follows the platform env default.",
+    "queueMaxInFlightAuto": "Max auto runs in flight",
+    "queueMaxInFlightAutoHelp": "Per-project cap on concurrently auto-drained runs. Empty = unbounded.",
+    "queueMaxInFlightUnbounded": "Unbounded",
+    "queueMaxInFlightInvalid": "Enter a whole number of 1 or more, or leave it blank.",
+    "queueSaved": "Saved"
   },
   "newtask": {
     "title": "New task",
@@ -3310,6 +3330,7 @@
     "latestRunTitle": "Latest run",
     "triaged": "triaged",
     "flagged": "Needs review",
+    "confidence": "confidence: {value}%",
     "runAgent": "Run agent",
     "sendToTriage": "Send to triage",
     "agentActionBusy": "Working…",
