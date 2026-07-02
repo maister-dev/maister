@@ -1138,7 +1138,7 @@ erDiagram
 
     BRAIN_ITEMS {
         text id PK "uuid"
-        text project_id FK "NOT NULL -> projects(id) CASCADE — auth boundary (Designed, ADR-122)"
+        text project_id FK "NOT NULL -> projects(id) CASCADE — auth boundary (Implemented, ADR-122)"
         text kind "lesson|observation|state_fact"
         text tier "owned"
         text content "NOT NULL"
@@ -1283,13 +1283,13 @@ external-operation events) is not drawn until its migrations exist. See
 | `webhook_deliveries` | `webhook_deliveries_sub_event_uq` | `(subscription_id, event_id)` UNIQUE | **(ADR-077 Implemented)** Fanout dedupe invariant. |
 | `webhook_delivery_attempts` | `webhook_delivery_attempts_delivery_idx` | `(delivery_id)` | **(ADR-077 Implemented)** Attempt history for a delivery. |
 | `webhook_delivery_attempts` | `webhook_delivery_attempts_delivery_attempt_uq` | `(delivery_id, attempt_no)` UNIQUE | **(ADR-077 Implemented)** One row per attempt number per delivery. |
-| `brain_items` | `brain_items_event_uq` | `(project_id, source_domain_event_id)` UNIQUE, PARTIAL `WHERE source_domain_event_id IS NOT NULL` | **(Designed, ADR-122)** Harvest at-least-once idempotency at the DB. |
-| `brain_items` | `brain_items_active_hash_uq` | `(project_id, content_hash)` UNIQUE, PARTIAL `WHERE status = 'active'` | **(Designed, ADR-122)** Exact-dup race guard → `CONFLICT`. |
-| `brain_items` | `brain_items_tsv_gin` | GIN `(tsv)` | **(Designed, ADR-122)** Lexical recall leg. |
-| `brain_items` | `brain_items_recall_idx` | `(project_id, status, expires_at)` | **(Designed, ADR-122)** Active-item scan + decay sweep. |
-| `brain_embeddings` | `brain_embeddings_item_idx` | `(item_id, embedding_model, embedding_dimensions)` | **(Designed, ADR-122)** Generation lookup + FK. |
-| `brain_embeddings` | `brain_embeddings_hnsw_<modelslug>_<N>` | `USING hnsw ((vector::vector(N)) vector_cosine_ops) WHERE embedding_model = M AND embedding_dimensions = N` | **(Designed, ADR-122)** Per-generation expression HNSW, created by `ensureEmbeddingIndex` at configure/reindex (NOT in the migration). |
-| `brain_snapshots` | `brain_snapshots_run_idx` | `(run_id)` | **(Designed, ADR-122)** Run-scoped snapshot reads. |
-| `brain_index_jobs` | `brain_index_jobs_claim_idx` | `(status, created_at)` | **(Designed, ADR-122)** Reindex-worker claim scan. |
+| `brain_items` | `brain_items_event_uq` | `(project_id, source_domain_event_id)` UNIQUE, PARTIAL `WHERE source_domain_event_id IS NOT NULL` | **(Implemented, ADR-122)** Harvest at-least-once idempotency at the DB. |
+| `brain_items` | `brain_items_active_hash_uq` | `(project_id, content_hash)` UNIQUE, PARTIAL `WHERE status = 'active'` | **(Implemented, ADR-122)** Exact-dup race guard → `CONFLICT`. |
+| `brain_items` | `brain_items_tsv_gin` | GIN `(tsv)` | **(Implemented, ADR-122)** Lexical recall leg. |
+| `brain_items` | `brain_items_recall_idx` | `(project_id, status, expires_at)` | **(Implemented, ADR-122)** Active-item scan + decay sweep. |
+| `brain_embeddings` | `brain_embeddings_item_idx` | `(item_id, embedding_model, embedding_dimensions)` | **(Implemented, ADR-122)** Generation lookup + FK. |
+| `brain_embeddings` | `brain_embeddings_hnsw_<modelslug>_<N>` | `USING hnsw ((vector::vector(N)) vector_cosine_ops) WHERE embedding_model = M AND embedding_dimensions = N` | **(Implemented, ADR-122)** Per-generation expression HNSW, created by `ensureEmbeddingIndex` at configure/reindex (NOT in the migration). |
+| `brain_snapshots` | `brain_snapshots_run_idx` | `(run_id)` | **(Implemented, ADR-122)** Run-scoped snapshot reads. |
+| `brain_index_jobs` | `brain_index_jobs_claim_idx` | `(status, created_at)` | **(Implemented, ADR-122)** Reindex-worker claim scan. |
 
 Source: `web/lib/db/schema.ts`.

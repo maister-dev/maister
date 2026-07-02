@@ -664,7 +664,7 @@ paths:
   /api/v1/ext/projects/{slug}/memory:
     get:
       tags: [memory]
-      summary: (ADR-122, Designed) Recall project-brain memories (hybrid, no LLM at read)
+      summary: (ADR-122, Implemented) Recall project-brain memories (hybrid, no LLM at read)
       description: |
         Scope `memory:read`. Hybrid recall (pgvector cosine over the active
         embedding generation + `tsvector` lexical + recency/confidence boost) over
@@ -750,7 +750,7 @@ paths:
           $ref: "#/components/responses/EmbeddingUnavailable"
     post:
       tags: [memory]
-      summary: (ADR-122, Designed) Retain a project-brain memory (dedup-or-reinforce)
+      summary: (ADR-122, Implemented) Retain a project-brain memory (dedup-or-reinforce)
       description: |
         Scope `memory:write`. Embeds the content and, within one transaction under a
         per-project advisory lock, either **reinforces** a semantically-near active
@@ -1858,7 +1858,7 @@ components:
 
     ExtMemoryItem:
       type: object
-      description: (ADR-122, Designed) A recalled owned-tier brain item.
+      description: (ADR-122, Implemented) A recalled owned-tier brain item.
       required: [id, kind, title, content, confidence, score, createdAt]
       properties:
         id: { type: string }
@@ -1894,7 +1894,7 @@ components:
     ExtMemoryRetainBody:
       type: object
       description: |
-        (ADR-122, Designed) Retain a memory. The body carries NO project id —
+        (ADR-122, Implemented) Retain a memory. The body carries NO project id —
         `projectId` is derived server-side from the token + slug.
       required: [content, kind]
       additionalProperties: false
@@ -1917,7 +1917,7 @@ components:
 
     ExtMemoryRetainResult:
       type: object
-      description: (ADR-122, Designed) Outcome of a retain call.
+      description: (ADR-122, Implemented) Outcome of a retain call.
       required: [item, reinforced]
       properties:
         reinforced:

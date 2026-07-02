@@ -5,7 +5,10 @@ name: ${COMPOSE_PROJECT_NAME:-maister}
 # repos / worktrees) — see ADR-023 and `CLAUDE.md` "How to run".
 services:
   postgres:
-    image: postgres:16-alpine
+    # ADR-122 (Project Brain): pgvector-enabled PG16 — the brain lineage does
+    # `CREATE EXTENSION vector` + HNSW. Data-compatible with `postgres:16-alpine`
+    # (same PG16 data dir), so the swap needs no dump/restore of postgres_data.
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-maister}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-maister}

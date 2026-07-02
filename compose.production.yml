@@ -15,7 +15,9 @@ x-security: &default-security
 # 127.0.0.1:5432 publish lets them reach Postgres over loopback.
 services:
   postgres:
-    image: postgres:16-alpine
+    # ADR-122 (Project Brain): pgvector-enabled PG16, data-compatible with
+    # `postgres:16-alpine` (same PG16 data dir). Matches the base compose image.
+    image: pgvector/pgvector:pg16
     read_only: true
     tmpfs:
       - /tmp:noexec,nosuid,size=50m

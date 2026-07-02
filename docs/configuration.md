@@ -137,7 +137,7 @@ is `trusted_by_policy` (logic-trust alone is insufficient — see
 only as env-var names; the supervisor resolves them from its existing `process.env`
 at spawn. The env table above is unchanged by M27.
 
-### Project Brain embedding config — `platform_runtime_settings` (Designed, ADR-122)
+### Project Brain embedding config — `platform_runtime_settings` (Implemented, ADR-122)
 
 **(Designed, Sub-project A.)** The Project Brain's embedding + distillation
 provider is platform-level config on the singleton `platform_runtime_settings`

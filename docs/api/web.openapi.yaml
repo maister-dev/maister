@@ -10175,7 +10175,7 @@ paths:
   /api/admin/brain-settings:
     get:
       tags: [admin]
-      summary: (ADR-122, Designed) Read the platform Project-Brain embedding config
+      summary: (ADR-122, Implemented) Read the platform Project-Brain embedding config
       description: |
         Admin-only. Reads the embedding-provider + distillation configuration on
         the singleton `platform_runtime_settings` row. The API key is returned as
@@ -10191,7 +10191,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
     patch:
       tags: [admin]
-      summary: (ADR-122, Designed) Update the platform Project-Brain embedding config
+      summary: (ADR-122, Implemented) Update the platform Project-Brain embedding config
       description: |
         Admin-only. Sets the embedding provider base URL, model, dimensions, API
         key reference (`env:NAME` only), and distillation model on the singleton

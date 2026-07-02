@@ -22,7 +22,7 @@ LSP edge connector are **Sub-project C**.
 
 ## Domain entities
 
-- **`brain_items`** (Designed) — one knowledge item: `{ id, project_id (FK,
+- **`brain_items`** (Implemented) — one knowledge item: `{ id, project_id (FK,
   ON DELETE CASCADE — the auth boundary), kind (lesson|observation|state_fact in A),
   tier (owned), title, content, status (active|expired|superseded), confidence,
   reinforcement_count, last_reinforced_at, expires_at, content_hash, tags
@@ -30,39 +30,39 @@ LSP edge connector are **Sub-project C**.
   (source_run_id?, source_node_attempt_id?, source_domain_event_id?,
   source_gate_kind?), created_at, updated_at, tsv (generated tsvector) }`. See
   [db/brain-domain.md](../db/brain-domain.md).
-- **`brain_embeddings`** (Designed) — **immutable** per (item, embedding
+- **`brain_embeddings`** (Implemented) — **immutable** per (item, embedding
   generation): `{ id, item_id (FK cascade), split_ordinal, vector (dimension-
   untyped), embedding_provider, embedding_model, embedding_dimensions,
   embedding_version, source_hash, content_hash, embedded_at }`. N rows per item
   across generations × splits. A model OR dimension switch writes a NEW generation,
   never mutates a row. One **active** generation is read at recall.
-- **`brain_snapshots`** (Designed) — a recall snapshot written at **consumption**
+- **`brain_snapshots`** (Implemented) — a recall snapshot written at **consumption**
   (ambient inject or explicit recall) for reproducibility/audit: `{ id, run_id?
   (FK), node_attempt_id?, actor_type, actor_id, trigger (ambient|explicit), query,
   query_hash, embedding_model, returned_items (jsonb: [{itemId, score}] — ids AND
   scores), ranker_version, created_at }`. The launch-time *decision* to include
   Brain context persists on `runs.brain_context`, not here.
-- **`brain_index_jobs`** (Designed) — reindex work: `{ id, project_id (FK), reason
+- **`brain_index_jobs`** (Implemented) — reindex work: `{ id, project_id (FK), reason
   (model_switch|manual in A), status, progress, resumable_cursor, created_at }`.
   Consumed by the reindex worker on the M24 tick.
-- **Shared-table columns (Designed, migration `0088`)** — `platform_runtime_settings`
+- **Shared-table columns (Implemented, migration `0088`)** — `platform_runtime_settings`
   gains `embedding_base_url`, `embedding_model`, `embedding_dimensions`,
   `embedding_api_key_ref`, `distill_model` (all nullable); `projects.brain_enabled`
   (bool, default false); `agent_project_links.can_read_brain` /
   `can_write_brain` (bool, default false); `runs.brain_context` (bool, nullable —
   null = inherit flow/agent config).
-- **Kinds (owned tier, A subset)** (Designed) — `lesson` (decay TTL, promoted by
+- **Kinds (owned tier, A subset)** (Implemented) — `lesson` (decay TTL, promoted by
   recurrence), `observation` (slower decay), `state_fact` (supersede-on-change, not
   decayed). `decision`/`direction` (indexed tier) are **(Phase 2 — Sub-project B)**.
-- **Policy constants** (Designed) — `web/lib/brain/policy.ts`: τ=0.85 (dedup cosine),
+- **Policy constants** (Implemented) — `web/lib/brain/policy.ts`: τ=0.85 (dedup cosine),
   confidence₀=0.3, TTL=30d, reinforce=+0.1 confidence / +30d `expires_at`, ambient
   K=5. Named constants, tune-on-real-runs; not env, not DB in A.
-- **`RecallRanker`** (Designed) — the DIP seam (`web/lib/brain/recall-ranker.ts`):
+- **`RecallRanker`** (Implemented) — the DIP seam (`web/lib/brain/recall-ranker.ts`):
   a swappable ranking interface with a default pgvector hybrid implementation.
 
 ## State machine
 
-### `brain_items` lifecycle (Designed)
+### `brain_items` lifecycle (Implemented)
 
 An item is inserted `active` at confidence₀; a semantically-near retain **reinforces**
 it in place (self-loop, no new row); the decay sweep expires it past `expires_at`; a
@@ -82,7 +82,7 @@ Embedding generations are immutable: an item's `active` status is orthogonal to 
 many `brain_embeddings` generations it carries. A reindex adds a new generation and
 moves the active-generation pointer (platform embedding settings); old rows persist.
 
-### `brain_index_jobs` lifecycle (Designed)
+### `brain_index_jobs` lifecycle (Implemented)
 
 ```mermaid
 stateDiagram-v2
@@ -98,7 +98,7 @@ stateDiagram-v2
 
 ## Process flows
 
-### (a) Harvest → distill → retain (Designed)
+### (a) Harvest → distill → retain (Implemented)
 
 The `memory_harvest` consumer rides the `domain_events` dispatcher
 ([domain-events.md](domain-events.md)). It matches an explicit per-kind predicate
@@ -125,7 +125,7 @@ sequenceDiagram
     H->>D: cursor advances (permanent success) — or throws (transient) so cursor holds
 ```
 
-### (b) `retain` — atomic dedup-or-reinforce (Designed)
+### (b) `retain` — atomic dedup-or-reinforce (Implemented)
 
 `retain` embeds OUTSIDE the transaction, then serializes per-project writes with an
 advisory lock and either reinforces a near active item or inserts a new one.
@@ -153,7 +153,7 @@ exact-dup race a `CONFLICT`-mapped constraint at the DB, not a duplicate row; th
 partial UNIQUE `(project_id, source_domain_event_id)` makes at-least-once harvest
 redelivery idempotent at the DB.
 
-### (c) Recall — hybrid, no LLM at read (Designed)
+### (c) Recall — hybrid, no LLM at read (Implemented)
 
 ```mermaid
 flowchart TD
@@ -170,7 +170,7 @@ flowchart TD
 The lexical leg also covers items not yet re-embedded mid-reindex. No completion/LLM
 call happens on this path.
 
-### (d) Ambient inject via P7 (flow runs only) (Designed)
+### (d) Ambient inject via P7 (flow runs only) (Implemented)
 
 Recall is computed in `runner-graph.ts` (which has DB + policy) and the ready brain
 projection is passed INTO `writeRunContext` as plain data — `buildRunContext` stays
@@ -192,7 +192,7 @@ sequenceDiagram
     WC-->>RG: .maister/run.json carries brain top-K (git-excluded)
 ```
 
-### (e) Reindex on model/dimension switch (Designed)
+### (e) Reindex on model/dimension switch (Implemented)
 
 ```mermaid
 flowchart TD
@@ -206,7 +206,7 @@ flowchart TD
     CUR --> DONE
 ```
 
-### (f) Decay sweep (throttled) (Designed)
+### (f) Decay sweep (throttled) (Implemented)
 
 `runBrainDecaySweep()` is folded into `runSystemSweep()`. The 60s system tick
 self-throttles the sweep to hourly via a last-run stamp; confidence aging is computed
@@ -217,42 +217,41 @@ the sweep summary, never thrown.
 ## Expectations
 
 *(E-n pin the spec §13 numbering, top-to-bottom. A-relevant subset below; E-5, E-9,
-E-13, E-14 and the source-indexing half of E-7 are **(Phase 2 — Sub-projects B/C)**.
-All A pieces tagged (Designed) flip to (Implemented) at T6.2.)*
+E-13, E-14 and the source-indexing half of E-7 are **(Phase 2 — Sub-projects B/C)**.)*
 
 - **E-1** — Every `brain_*` row MUST carry `project_id`; recall MUST NEVER return
-  items across a `project_id` boundary. (Designed)
+  items across a `project_id` boundary. (Implemented)
 - **E-2** — `brain_embeddings` rows MUST be immutable; a model or dimension change
-  MUST create a new embedding generation, NEVER mutate an existing row. (Designed)
+  MUST create a new embedding generation, NEVER mutate an existing row. (Implemented)
 - **E-3** — `retain` MUST be idempotent on identical `content_hash` and MUST
   reinforce (not duplicate) a semantically-near active item above threshold τ=0.85.
-  (Designed)
+  (Implemented)
 - **E-4** — Harvested `lesson`/`observation` items MUST start at confidence₀=0.3
   (below any auto-apply threshold) and MUST become `expired` at `expires_at` unless
-  reinforced. (Designed)
-- **E-6** — Recall MUST perform NO LLM call at read time. (Designed)
+  reinforced. (Implemented)
+- **E-6** — Recall MUST perform NO LLM call at read time. (Implemented)
 - **E-7** — Harvest MUST be event-driven off `domain_events`; decay and reindex MUST
   be scheduler-driven; the domain MUST NEVER use `fs.watch`/chokidar/polling.
-  (Designed; event-driven indexing of external *sources* is Phase 2 — Sub-project B.)
+  (Implemented; event-driven indexing of external *sources* is Phase 2 — Sub-project B.)
 - **E-8** — Reindex work MUST be resumable via `brain_index_jobs.resumable_cursor`
-  (source-hash-gated skip-unchanged is Phase 2 — Sub-project B). (Designed)
+  (source-hash-gated skip-unchanged is Phase 2 — Sub-project B). (Implemented)
 - **E-10** — Embedding-provider secrets MUST be stored as `env:NAME` refs and MUST
-  NEVER be logged, streamed, or embedded in any payload. (Designed)
+  NEVER be logged, streamed, or embedded in any payload. (Implemented)
 - **E-11** — In SQLite mode the Brain MUST be disabled: Brain routes/services MUST
   refuse with `PRECONDITION` and MCP memory tools MUST fail closed (the facade still
-  lists `TOOL_SPECS` statically). (Designed)
+  lists `TOOL_SPECS` statically). (Implemented)
 - **E-12** — Every run/node that consumes Brain context MUST record a
-  `brain_snapshots` row (ambient inject and explicit recall alike). (Designed)
+  `brain_snapshots` row (ambient inject and explicit recall alike). (Implemented)
 
 Additional A-specific invariants:
 
 - The harvest predicate MUST be `RUN_TERMINAL_EVENT_KINDS` + `gate.failed` only;
-  `run.review` MUST NOT be harvested. (Designed)
+  `run.review` MUST NOT be harvested. (Implemented)
 - A project MUST NOT be enabled (`brain_enabled=true`) unless platform embedding
   config AND `distill_model` are set — the PATCH MUST refuse `CONFIG` otherwise.
-  (Designed)
+  (Implemented)
 - Recall MUST be gated by `agent_project_links.can_read_brain`; retain MUST be gated
-  by `can_write_brain` (a separate axis — a read grant MUST NOT open retain). (Designed)
+  by `can_write_brain` (a separate axis — a read grant MUST NOT open retain). (Implemented)
 
 ## Edge cases
 
@@ -299,7 +298,7 @@ Additional A-specific invariants:
 - **Error taxonomy:** [`error-taxonomy.md`](../error-taxonomy.md) —
   `EMBEDDING_UNAVAILABLE` (503).
 - **Secret redaction pattern:** `web/lib/mcp/projection.ts` (`env:NAME` refs).
-- **Source (Designed → Implemented at T6.2):** `web/lib/brain/*`
+- **Source (Implemented):** `web/lib/brain/*`
   (`policy.ts`, `schema.ts`, `guard.ts`, `openai-compatible.ts`, `embedding-index.ts`,
   `retain.ts`, `recall.ts`, `recall-ranker.ts`, `distill.ts`, `decay.ts`,
   `reindex.ts`), `web/lib/domain-events/memory-harvest.ts`,

@@ -58,7 +58,7 @@ truth). The fix is to update docs in the same PR.
 | [`db/webhooks.md`](db/webhooks.md) | Webhook subscriptions + events outbox + deliveries + attempts ERD, plus the `webhooks_enabled` settings column (ADR-077). |
 | [`db/domain-events.md`](db/domain-events.md) | Domain-event outbox ERD: `domain_events` fact log + per-consumer cursor rows (ADR-086). |
 | [`db/agents-domain.md`](db/agents-domain.md) | Platform-agent ERD: `agents` catalog index, `agent_project_links`, `agent_schedules` trigger bindings, runs/tasks/tokens alters (ADR-089/090). |
-| [`db/brain-domain.md`](db/brain-domain.md) | Project Brain ERD (ADR-122, Designed): `brain_items`/`brain_embeddings`/`brain_snapshots`/`brain_index_jobs` + `platform_runtime_settings`/`projects`/`agent_project_links`/`runs` alters; per-generation HNSW expression indexes, partial UNIQUEs, project-CASCADE chain. |
+| [`db/brain-domain.md`](db/brain-domain.md) | Project Brain ERD (ADR-122, Implemented): `brain_items`/`brain_embeddings`/`brain_snapshots`/`brain_index_jobs` + `platform_runtime_settings`/`projects`/`agent_project_links`/`runs` alters; per-generation HNSW expression indexes, partial UNIQUEs, project-CASCADE chain. |
 | [`database-schema.md`](database-schema.md) | Narrative DB reference (columns, indexes, cascade chain). |
 
 ### System analysis (`system-analytics/`)
@@ -104,7 +104,7 @@ cases, process flows. One file per domain.
 | [`system-analytics/guardrail-hooks.md`](system-analytics/guardrail-hooks.md) | Guardrail/hook engine (ADR-108, Designed — M40): per-tool-call supervisor ACP-seam interceptor (`path_guard` / `repetition` / `no_progress`), `hook_trip` HITL escalation, two-tier unattended default, `NativeHookMaterializer` seam. |
 | [`system-analytics/consensus.md`](system-analytics/consensus.md) | Consensus node (ADR-109, Implemented — M41): first-class `consensus` graph node with governed read-only draft fan-out, rotational cross-verification, unanimous material-axis tally, human resolution, and synthesized `plan` artifact output. |
 | [`system-analytics/sessions.md`](system-analytics/sessions.md) | Flow runner & session model (ADR-114, Implemented — M42): unified `flowRunnerConfigSchema`, `default`/solo/named sessions, `run_sessions` as the sole run-runner source of truth, per-project connect-time slot bindings, checkpoint→`session/resume` session switch, supervisor `sessionName` attribution. |
-| [`system-analytics/project-brain.md`](system-analytics/project-brain.md) | Project Brain Sub-project A (ADR-122, Designed): owned-tier `brain_*` substrate on pgvector, `domain_events` harvest→distill→retain (dedup-or-reinforce), decay sweep, hybrid `RecallRanker` recall (no LLM at read), immutable per-generation embeddings + reindex, `memory_recall`/`memory_retain` MCP tools + P7 ambient, 4-layer enablement. |
+| [`system-analytics/project-brain.md`](system-analytics/project-brain.md) | Project Brain Sub-project A (ADR-122, Implemented): owned-tier `brain_*` substrate on pgvector, `domain_events` harvest→distill→retain (dedup-or-reinforce), decay sweep, hybrid `RecallRanker` recall (no LLM at read), immutable per-generation embeddings + reindex, `memory_recall`/`memory_retain` MCP tools + P7 ambient, 4-layer enablement. |
 
 ### Screen reference (`screens/`)
 

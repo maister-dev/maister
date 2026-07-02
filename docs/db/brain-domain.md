@@ -8,7 +8,7 @@ added to `platform_runtime_settings`, `projects`, `agent_project_links`, and
 for process flows and [`../database-schema.md`](../database-schema.md) for the
 column-level narrative.
 
-> **Status: Designed** (flips to Implemented at T6.2). Migrations: shared-table
+> **Status: Implemented**. Migrations: shared-table
 > ALTERs land in the **main** lineage `0088`; `brain_*` CREATEs + `CREATE EXTENSION
 > vector` land in the **separate brain lineage** `web/lib/db/brain-migrations/0001`
 > (own `_journal.json`, own ledger `__drizzle_brain_migrations`). The brain lineage
@@ -163,5 +163,5 @@ harvested lesson survives the deletion of the run/event it was distilled from.
 - Narrative: [`../database-schema.md`](../database-schema.md).
 - Decision record: [ADR-122](../decisions.md#adr-122-project-brain-per-project-memory-substrate).
 - Design spec: [`../plans/2026-07-01-project-brain-architecture.md`](../plans/2026-07-01-project-brain-architecture.md) §4.
-- Source (Designed): `web/lib/brain/schema.ts`, `web/lib/db/brain-migrations/0001_*.sql`,
+- Source (Implemented): `web/lib/brain/schema.ts`, `web/lib/db/brain-migrations/0001_*.sql`,
   `web/lib/db/migrations/0088_*.sql`, `web/lib/brain/embedding-index.ts`.

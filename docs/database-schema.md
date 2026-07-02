@@ -2470,7 +2470,7 @@ idempotent.
 }
 ```
 
-## Project Brain tables (Designed — ADR-122, brain lineage migration `0001`)
+## Project Brain tables (Implemented — ADR-122, brain lineage migration `0001`)
 
 **(Designed, Sub-project A.)** The Project Brain owned tier lives in `brain_*`
 tables provisioned by a **separate migration lineage** (`web/lib/db/brain-migrations`,
