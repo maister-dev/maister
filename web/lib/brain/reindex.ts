@@ -1,11 +1,12 @@
 import "server-only";
 
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 
 import { sql, type SQL } from "drizzle-orm";
 import pino from "pino";
 
 import { splitForEmbedding } from "./chunk";
+import { sha256, toVectorLiteral } from "./codec";
 import { ensureEmbeddingIndex } from "./embedding-index";
 import { isBrainProvisioned } from "./guard";
 import {
@@ -14,6 +15,7 @@ import {
 } from "./openai-compatible";
 
 import { getDb } from "@/lib/db/client";
+import { isMaisterError } from "@/lib/errors";
 
 // Project Brain (ADR-122, D4/E-2/E-8) reindex worker. A model OR dimension
 // switch enqueues one brain_index_jobs row per Brain-enabled project (T5.1). This
@@ -55,14 +57,6 @@ type ReindexTx = {
 type ReindexDb = ReindexTx & {
   transaction<T>(fn: (tx: ReindexTx) => Promise<T>): Promise<T>;
 };
-
-function sha256(s: string): string {
-  return createHash("sha256").update(s).digest("hex");
-}
-
-function toVectorLiteral(v: number[]): string {
-  return `[${v.join(",")}]`;
-}
 
 type JobRow = { id: string; project_id: string; status: string };
 
@@ -141,9 +135,12 @@ async function processJob(
 
     if (batch.rows.length === 0) {
       // Nothing left → this generation is fully materialized for the project.
+      // Status flip ONLY — `progress` is the cumulative per-item counter and a
+      // per-tick value here would clobber it (a 205-item job finishing on a
+      // 5-item tick must not report progress=5).
       await db.execute(sql`
         UPDATE brain_index_jobs
-        SET status = 'completed', progress = ${embedded}
+        SET status = 'completed'
         WHERE id = ${job.id}
       `);
 
@@ -153,7 +150,36 @@ async function processJob(
     for (const row of batch.rows) {
       const item = { id: String(row.id), content: String(row.content) };
 
-      await reindexItem(db, client, item);
+      try {
+        await reindexItem(db, client, item);
+      } catch (err) {
+        // A deterministic CONFIG rejection (provider 4xx / dimension mismatch)
+        // will fail this item on EVERY tick — the ORDER BY id worklist would
+        // re-hit it first forever, permanently stalling the project's reindex
+        // and burning one paid call per tick. Mark the job `failed` with the
+        // offending item recorded; recovery is the reconcile enqueue on the
+        // next settings save / project enable. Transient errors propagate —
+        // the job stays `running` and retries next tick.
+        if (isMaisterError(err) && err.code === "CONFIG") {
+          await db.execute(sql`
+            UPDATE brain_index_jobs
+            SET status = 'failed',
+                resumable_cursor = ${JSON.stringify({
+                  lastItemId: item.id,
+                  error: err.message,
+                })}::jsonb
+            WHERE id = ${job.id}
+          `);
+          log.error(
+            { jobId: job.id, itemId: item.id, err: err.message },
+            "brain reindex job failed on a non-retryable item",
+          );
+
+          return embedded;
+        }
+
+        throw err;
+      }
       embedded += 1;
       await db.execute(sql`
         UPDATE brain_index_jobs
@@ -193,10 +219,14 @@ export async function runBrainReindexSweep(
   const maxItems = opts.maxItemsPerJob ?? REINDEX_MAX_ITEMS_PER_JOB;
   const errors: string[] = [];
 
+  // Skip jobs of brain-DISABLED projects (the kill switch applies to the write
+  // side too — no paid re-embedding for a project whose Brain is off). The rows
+  // stay queued/running and resume when the project is re-enabled.
   const jobsResult = await db.execute(sql`
-    SELECT id, project_id, status FROM brain_index_jobs
-    WHERE status IN ('queued', 'running')
-    ORDER BY created_at ASC
+    SELECT j.id, j.project_id, j.status FROM brain_index_jobs j
+    JOIN projects p ON p.id = j.project_id AND p.brain_enabled = true
+    WHERE j.status IN ('queued', 'running')
+    ORDER BY j.created_at ASC
   `);
   const jobs = jobsResult.rows as unknown as JobRow[];
 

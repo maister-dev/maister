@@ -7,17 +7,20 @@ import {
   jsonb,
   numeric,
   pgTable,
+  primaryKey,
   text,
   timestamp,
 } from "drizzle-orm/pg-core";
 
 // Project Brain (ADR-122, Sub-project A) runtime types. The brain lineage is
 // HAND-AUTHORED SQL (`web/lib/db/brain-migrations/`), NOT generated from this
-// module — drizzle-kit never sees it. This file exists only so brain services
-// get typed column access via the core query builder (`db.select().from(...)`);
-// FKs, CHECKs, partial UNIQUEs, and indexes live in the SQL migration. Brain
-// tables are intentionally NOT registered in the getDb() schema (bounded
-// context, D2) — every reader uses core queries, never `db.query.brainItems`.
+// module — drizzle-kit never sees it. The pgTable definitions below are a
+// REFERENCE mirror of that SQL (row/kind types are derived from them; the
+// brain services themselves query via raw sql`` templates today) — the SQL
+// lineage is the source of truth; FKs, CHECKs, partial UNIQUEs, and indexes
+// live there. Update BOTH on any column change. Brain tables are intentionally
+// NOT registered in the getDb() schema (bounded context, D2) — every reader
+// uses core queries, never `db.query.brainItems`.
 
 // Untyped pgvector column (D4): the SQL type is bare `vector` (no dimension) so
 // a runtime model/dimension switch never needs a schema migration — HNSW rides
@@ -138,13 +141,22 @@ export const brainIndexJobs = pgTable("brain_index_jobs", {
 // written in retain's transaction regardless of the retain outcome so a
 // re-delivered reinforce/exact-dup event never re-processes. PK (project_id,
 // domain_event_id).
-export const brainHarvestedEvents = pgTable("brain_harvested_events", {
-  projectId: text("project_id").notNull(),
-  domainEventId: bigint("domain_event_id", { mode: "number" }).notNull(),
-  harvestedAt: timestamp("harvested_at", { withTimezone: true, mode: "date" })
-    .notNull()
-    .defaultNow(),
-});
+export const brainHarvestedEvents = pgTable(
+  "brain_harvested_events",
+  {
+    projectId: text("project_id").notNull(),
+    domainEventId: bigint("domain_event_id", { mode: "number" }).notNull(),
+    harvestedAt: timestamp("harvested_at", {
+      withTimezone: true,
+      mode: "date",
+    })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.projectId, t.domainEventId] }),
+  }),
+);
 
 export type BrainItemRow = typeof brainItems.$inferSelect;
 export type BrainItemInsert = typeof brainItems.$inferInsert;

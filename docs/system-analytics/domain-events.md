@@ -120,6 +120,17 @@ borrows ([scheduler.md](scheduler.md)).
   emits no terminal event, so the `ended_at`-keyed sweep is what guarantees
   inclusion. Idempotent via `reconcileRunCostRollups` (delete-then-insert +
   `onConflictDoUpdate`).
+- **`memory_harvest` consumer** (ADR-122 — Implemented) — the Project-Brain harvest
+  consumer (`startFrom: "now"`): matches `RUN_TERMINAL_EVENT_KINDS` + `gate.failed`
+  (`run.review` excluded), skips brain-disabled projects (advance — intentional
+  non-consumption), distills the event's run/gate context and calls `retain` with
+  provenance FKs. Failure semantics are split: transient errors
+  (`EMBEDDING_UNAVAILABLE`, network, deterministic provider-4xx `CONFIG`, distill
+  config cleared) THROW so the cursor holds and the window redelivers; permanent
+  failures (schema-invalid distill output after one in-process retry) log +
+  skip-advance. At-least-once redelivery is idempotent via the
+  `brain_harvested_events` ledger written in `retain`'s transaction (F4). See
+  [project-brain.md](project-brain.md).
 
 ## State machine
 

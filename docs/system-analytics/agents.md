@@ -73,11 +73,16 @@ not contain the package-root `maister-agents/`).
   disabled, never deleted. See [db/agents-domain.md](../db/agents-domain.md).
 - **`agent_project_links`** (Implemented) — attachment +
   per-project INSTANCE overrides: `{ agent_id, project_id, enabled,
-  runner_override_id?, branch_base? (NEW), execution_policy_override? jsonb (NEW)
+  runner_override_id?, branch_base? (NEW), execution_policy_override? jsonb (NEW),
+  can_read_brain, can_write_brain (ADR-122 — Implemented)
   }`, `UNIQUE(agent_id, project_id)`. Attach requires the providing package
   attached+trusted in the project; the attach panel pre-fills from the
   definition's `recommended` block. The instance row overrides EVERY policy field
-  (runner, branch base, autoApply, onBudgetBreach).
+  (runner, branch base, autoApply, onBudgetBreach). The two per-link Brain toggles
+  (`canReadBrain`/`canWriteBrain`, default false) are edited on the attach/edit
+  modal and surface as a `brain:rw` chip on the attached row; they gate the agent
+  token's `memory_recall`/`memory_retain` access
+  ([project-brain.md](project-brain.md)).
 - **`agent_schedules`** (Implemented) — trigger bindings per (agent, project):
   `trigger_type='cron'` rows carry `cron_expr + timezone + next_fire_at +
   last_fired_at`; `trigger_type='event'` rows carry `event_match.kinds` (subset of

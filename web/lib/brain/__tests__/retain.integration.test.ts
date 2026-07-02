@@ -245,3 +245,109 @@ async function seedRun(pid: string): Promise<string> {
 
   return runId;
 }
+
+describe("retain — review-fix hardening (kind scope, decay race, kill switch, TTL)", () => {
+  it("near-dup match is KIND-scoped: a state_fact never reinforces a near lesson", async () => {
+    const first = await retain(
+      projectId,
+      { kind: "lesson", content: "SIM: prefer pnpm scripts over raw npx" },
+      {},
+      { db: ctx.db, client },
+    );
+
+    const second = await retain(
+      projectId,
+      { kind: "state_fact", content: "SIM: this repo uses pnpm exclusively" },
+      {},
+      { db: ctx.db, client },
+    );
+
+    // Same near vector, different kind → a NEW item, not a reinforce.
+    expect(second.reinforced).toBe(false);
+    expect(second.itemId).not.toBe(first.itemId);
+
+    const kinds = await ctx.db.execute(
+      sql`SELECT kind, expires_at FROM brain_items WHERE id = ${second.itemId}`,
+    );
+
+    // The state_fact keeps its own decay semantics (never expires).
+    expect(kinds.rows[0]?.kind).toBe("state_fact");
+    expect(kinds.rows[0]?.expires_at).toBeNull();
+  });
+
+  it("a near match that is no longer active is NOT reinforced — a fresh item is inserted (decay-race guard)", async () => {
+    const first = await retain(
+      projectId,
+      { kind: "lesson", content: "SIM: keep worktrees out of /tmp" },
+      {},
+      { db: ctx.db, client },
+    );
+
+    // Simulate the decay sweep winning the race: the near match goes expired.
+    await ctx.db.execute(
+      sql`UPDATE brain_items SET status = 'expired' WHERE id = ${first.itemId}`,
+    );
+
+    const second = await retain(
+      projectId,
+      { kind: "lesson", content: "SIM: scratch worktrees never under /tmp" },
+      {},
+      { db: ctx.db, client },
+    );
+
+    // The lesson lands on a NEW active row — never counters on an invisible one.
+    expect(second.reinforced).toBe(false);
+    expect(second.itemId).not.toBe(first.itemId);
+    expect(
+      await count(`project_id = '${projectId}' AND status = 'active'`),
+    ).toBe(1);
+
+    const old = await ctx.db.execute(
+      sql`SELECT reinforcement_count FROM brain_items WHERE id = ${first.itemId}`,
+    );
+
+    expect(Number(old.rows[0]?.reinforcement_count)).toBe(0);
+  });
+
+  it("reinforce pushes expires_at out (the TTL half of the reinforce contract)", async () => {
+    const first = await retain(
+      projectId,
+      { kind: "lesson", content: "SIM: pin the container image tag" },
+      {},
+      { db: ctx.db, client },
+    );
+
+    // Pull the expiry near so the push is unambiguous.
+    await ctx.db.execute(
+      sql`UPDATE brain_items SET expires_at = now() + INTERVAL '1 day' WHERE id = ${first.itemId}`,
+    );
+
+    await retain(
+      projectId,
+      { kind: "lesson", content: "SIM: always pin container image tags" },
+      {},
+      { db: ctx.db, client },
+    );
+
+    const row = await ctx.db.execute(
+      sql`SELECT (expires_at > now() + INTERVAL '29 days') AS pushed FROM brain_items WHERE id = ${first.itemId}`,
+    );
+
+    expect(Boolean(row.rows[0]?.pushed)).toBe(true);
+  });
+
+  it("refuses CONFIG on a brain-disabled project (kill switch enforced INSIDE the service)", async () => {
+    const disabled = await seedBrainProject(ctx.db, { brainEnabled: false });
+
+    await expect(
+      retain(
+        disabled,
+        { kind: "lesson", content: "must not be stored" },
+        {},
+        { db: ctx.db, client },
+      ),
+    ).rejects.toMatchObject({ code: "CONFIG" });
+
+    expect(await count(`project_id = '${disabled}'`)).toBe(0);
+  });
+});

@@ -36,6 +36,14 @@ beforeEach(async () => {
   `);
 });
 
+// An active item with no embeddings at all — a coverage gap in EVERY generation.
+async function seedActiveItem(projectId: string): Promise<void> {
+  await ctx.db.execute(sql`
+    INSERT INTO brain_items (id, project_id, kind, title, content, status, confidence, content_hash)
+    VALUES (gen_random_uuid()::text, ${projectId}, 'lesson', 't', 'content to re-embed', 'active', 0.3, md5(random()::text))
+  `);
+}
+
 describe("updateBrainSettings (T5.1)", () => {
   it("SET / CLEAR / re-SET round-trips each field", async () => {
     await updateBrainSettings(
@@ -99,8 +107,13 @@ describe("updateBrainSettings (T5.1)", () => {
     ).rejects.toMatchObject({ code: "CONFIG" });
   });
 
-  it("on a model change: creates the new expression index and enqueues a reindex job per enabled project", async () => {
+  it("on a model change: creates the new expression index and enqueues a reindex job per enabled project with a coverage gap", async () => {
     const projectId = await seedBrainProject(ctx.db); // brain_enabled
+
+    // An active item with NO embeddings in the new generation = the coverage
+    // gap the reconcile enqueue keys on (a project with nothing to re-embed
+    // gets no job).
+    await seedActiveItem(projectId);
 
     // initial model
     await updateBrainSettings(
@@ -128,6 +141,66 @@ describe("updateBrainSettings (T5.1)", () => {
 
     expect(jobs.rows.length).toBeGreaterThanOrEqual(1);
     expect(jobs.rows[0]?.status).toBe("queued");
+  });
+
+  it("does NOT double-enqueue while a job is already queued/running", async () => {
+    const projectId = await seedBrainProject(ctx.db);
+
+    await seedActiveItem(projectId);
+    await updateBrainSettings(
+      {
+        embeddingBaseUrl: "https://api.test/v1",
+        embeddingModel: "model-q",
+        embeddingDimensions: 1536,
+        distillModel: "d",
+      },
+      ctx.db,
+    );
+
+    // Re-saving the same settings reconciles but finds a live job → no dup.
+    await updateBrainSettings({ distillModel: "d2" }, ctx.db);
+
+    const jobs = await ctx.db.execute(
+      sql`SELECT count(*)::int AS n FROM brain_index_jobs WHERE project_id = ${projectId}`,
+    );
+
+    expect(Number(jobs.rows[0]?.n)).toBe(1);
+  });
+
+  it("a FAILED job is recoverable: the next settings save re-enqueues the project", async () => {
+    const projectId = await seedBrainProject(ctx.db);
+
+    await seedActiveItem(projectId);
+    await updateBrainSettings(
+      {
+        embeddingBaseUrl: "https://api.test/v1",
+        embeddingModel: "model-f",
+        embeddingDimensions: 1536,
+        distillModel: "d",
+      },
+      ctx.db,
+    );
+
+    // The reindex worker gave up on a poison item.
+    await ctx.db.execute(
+      sql`UPDATE brain_index_jobs SET status = 'failed' WHERE project_id = ${projectId}`,
+    );
+
+    // Any settings save reconciles: failed ∉ {queued,running} + coverage gap →
+    // a fresh job.
+    await updateBrainSettings({ distillModel: "d3" }, ctx.db);
+
+    const queued = await ctx.db.execute(
+      sql`SELECT count(*)::int AS n FROM brain_index_jobs WHERE project_id = ${projectId} AND status = 'queued'`,
+    );
+
+    expect(Number(queued.rows[0]?.n)).toBe(1);
+  });
+
+  it("rejects dimensions above the pgvector HNSW cap (2000) with CONFIG", async () => {
+    await expect(
+      updateBrainSettings({ embeddingDimensions: 3072 }, ctx.db),
+    ).rejects.toMatchObject({ code: "CONFIG" });
   });
 
   it("a dimension change is also a reindex generation (no schema migration)", async () => {

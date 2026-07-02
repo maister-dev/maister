@@ -224,6 +224,89 @@ describe("ext memory routes (T4.2)", () => {
     expect(Number(count.rows[0]?.n)).toBe(1);
   });
 
+  it("422s on input past the caps: content, q, tags (paid-embedding abuse guard)", async () => {
+    const projectId = await seedBrainProject(dbRef);
+    const slug = String(
+      (
+        await dbRef.execute(
+          sql`SELECT slug FROM projects WHERE id = ${projectId}`,
+        )
+      ).rows[0]?.slug,
+    );
+    const writer = await issueToken(
+      { projectId, name: "capw", scopes: ["memory:write"] },
+      dbRef,
+    );
+    const reader = await issueToken(
+      { projectId, name: "capr", scopes: ["memory:read"] },
+      dbRef,
+    );
+
+    // content > 32000 chars
+    const bigContent = await POST(
+      postReq(
+        slug,
+        { content: "x".repeat(32_001), kind: "lesson" },
+        writer.secret,
+      ),
+      { params: Promise.resolve({ slug }) },
+    );
+
+    expect(bigContent.status).toBe(422);
+
+    // 11 tags (> 10)
+    const manyTags = await POST(
+      postReq(
+        slug,
+        {
+          content: "ok",
+          kind: "lesson",
+          tags: Array.from({ length: 11 }, (_, i) => `t${i}`),
+        },
+        writer.secret,
+      ),
+      { params: Promise.resolve({ slug }) },
+    );
+
+    expect(manyTags.status).toBe(422);
+
+    // q > 2000 chars
+    const bigQ = await GET(
+      getReq(slug, `q=${"y".repeat(2_001)}`, reader.secret),
+      { params: Promise.resolve({ slug }) },
+    );
+
+    expect(bigQ.status).toBe(422);
+
+    // Nothing was stored or embedded by any of the rejected calls.
+    const count = await dbRef.execute(
+      sql`SELECT count(*)::int AS n FROM brain_items WHERE project_id = ${projectId}`,
+    );
+
+    expect(Number(count.rows[0]?.n)).toBe(0);
+  });
+
+  it("422s on an unknown kinds value instead of silently widening the result set", async () => {
+    const projectId = await seedBrainProject(dbRef);
+    const slug = String(
+      (
+        await dbRef.execute(
+          sql`SELECT slug FROM projects WHERE id = ${projectId}`,
+        )
+      ).rows[0]?.slug,
+    );
+    const token = await issueToken(
+      { projectId, name: "kindr", scopes: ["memory:read"] },
+      dbRef,
+    );
+
+    const res = await GET(getReq(slug, "q=x&kinds=state_facts", token.secret), {
+      params: Promise.resolve({ slug }),
+    });
+
+    expect(res.status).toBe(422);
+  });
+
   it("cross-project token → 404 (body carries no project id)", async () => {
     const projectA = await seedBrainProject(dbRef);
     const projectB = await seedBrainProject(dbRef);

@@ -58,7 +58,9 @@ with a `min-w`. Forms (the modal) stay narrow (520–760px).
   `cron`, `event` counts; `manual`/`webhook`/`flow` are capability badges from the
   definition), **Runner** (override or the resolved default), **Auto-apply**
   (`off` / `permissions` "с чел" / `full` "без чел"), **On budget breach**
-  (`escalate` / `terminate` / `terminate_restorable`), **Branch base**. No inline
+  (`escalate` / `terminate` / `terminate_restorable`), **Branch base**, and a
+  **`brain:rw` chip** (ADR-122) when the link grants `canReadBrain` /
+  `canWriteBrain` (`r`, `w`, or `rw` per the granted axes). No inline
   editing — the row carries data only; an action cluster on the right reads
   left→right **Edit (⚙) · Launch (▶) · Disable/Enable (toggle) · Detach (trash,
   danger tone)**, all icon buttons with `aria-label`.
@@ -85,6 +87,9 @@ with a `min-w`. Forms (the modal) stay narrow (520–760px).
   - **On budget breach** — a 3-way control: **escalate** (live pause, holds a
     slot) · **terminate** (Failed) · **terminate_restorable** (checkpoint → freed
     slot → recoverable `NeedsInputIdle`, restore by raising the budget).
+  - **Brain access** (ADR-122) — two toggles: **canReadBrain** (gates
+    `memory_recall`) and **canWriteBrain** (gates `memory_retain`, a separate
+    write axis — read never grants write). Both default off.
   - Close affordance: top-right **✕** (+ Esc + backdrop), `createPortal` to body
     (shared popup convention).
 
@@ -108,13 +113,14 @@ stateDiagram-v2
 
 - **Read:** `GET /api/projects/{slug}/agents` → `{ attached: AttachedAgent[],
   available: AgentSummary[] }` (member+). `AttachedAgent` now carries
-  `branchBase` + `executionPolicyOverride` (ADR-106).
+  `branchBase` + `executionPolicyOverride` (ADR-106) and
+  `canReadBrain` + `canWriteBrain` (ADR-122).
 - **Attach:** `POST /api/projects/{slug}/agents` `{ agentId, enabled?,
   runnerOverrideId? }` (admin) — `409 PRECONDITION` when the package is not
   attached+trusted.
 - **Edit (one aggregating endpoint):** `PATCH /api/projects/{slug}/agents/{agentId}`
   — partial `{ enabled?, runnerOverrideId?, branchBase?, executionPolicyOverride?,
-  schedules? }` in one transaction.
+  schedules?, canReadBrain?, canWriteBrain? }` in one transaction.
 - **Detach:** `DELETE /api/projects/{slug}/agents/{agentId}` (revokes tokens).
 - **Launch:** `POST /api/projects/{slug}/agents/{agentId}/launch` `{ taskId?,
   runnerId? }` (launchRun).

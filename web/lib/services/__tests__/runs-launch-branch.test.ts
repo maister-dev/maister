@@ -597,3 +597,27 @@ describe("resolvePromotionMode — SET / CLEAR / re-set (M18 §3.4)", () => {
     ).toBe("pull_request");
   });
 });
+
+describe("launchRun — ADR-122 brain launch axis (flow-run path)", () => {
+  // The agent path is covered by brain-launch-axes.integration.test.ts; this
+  // pins the FLOW path's insert seam — deleting the `brainContext` passthrough
+  // in services/runs.ts compiles cleanly (nullable column), so only a test
+  // catches it.
+  it("persists runs.brain_context = true when the launch opts in", async () => {
+    await launchRun({ taskId: TASK_ID, brainContext: true }, ctx(), fakeDb);
+
+    const run = runInsert();
+
+    expect(run).toBeDefined();
+    expect(run).toMatchObject({ brainContext: true });
+  });
+
+  it("persists NULL (inherit/off) when the launch omits the option", async () => {
+    await launchRun({ taskId: TASK_ID }, ctx(), fakeDb);
+
+    const run = runInsert();
+
+    expect(run).toBeDefined();
+    expect(run?.brainContext).toBeNull();
+  });
+});

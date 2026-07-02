@@ -4,6 +4,7 @@ import { sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import {
+  fakeEmbeddingClient,
   seedBrainProject,
   startBrainTestDb,
   stopBrainTestDb,
@@ -11,6 +12,7 @@ import {
 } from "./helpers";
 
 import { resetBrainDecayThrottle, runBrainDecaySweep } from "@/lib/brain/decay";
+import { recall } from "@/lib/brain/recall";
 
 // T3.3 — the throttled decay sweep (real pgvector). Only touches brain_items;
 // no embeddings needed.
@@ -22,6 +24,7 @@ async function insertItem(over: {
   status?: string;
   expiresInDays?: number | null;
   confidence?: number;
+  content?: string;
 }): Promise<string> {
   const id = randomUUID();
   const expires =
@@ -31,7 +34,7 @@ async function insertItem(over: {
 
   await ctx.db.execute(sql`
     INSERT INTO brain_items (id, project_id, kind, title, content, status, confidence, content_hash, expires_at)
-    VALUES (${id}, ${projectId}, 'lesson', 't', 'c', ${over.status ?? "active"},
+    VALUES (${id}, ${projectId}, 'lesson', 't', ${over.content ?? "c"}, ${over.status ?? "active"},
             ${over.confidence ?? 0.3}, ${randomUUID()}, ${expires})
   `);
 
@@ -74,15 +77,35 @@ describe("runBrainDecaySweep (T3.3)", () => {
     expect(await statusOf(stateFact)).toBe("active");
   });
 
-  it("an expired item is excluded from an active-only query (absent from recall)", async () => {
-    await insertItem({ expiresInDays: -1 });
+  it("an expired item drops out of REAL recall (the ranker's own predicates, not a re-implemented count)", async () => {
+    const client = fakeEmbeddingClient();
+
+    await insertItem({
+      expiresInDays: -1,
+      content: "the decay lesson zzdecayzz appears here",
+    });
+
+    // Lexical match pre-sweep (the item has no embeddings — the lexical leg
+    // carries it), gone post-sweep via the ranker's status/expiry predicates.
+    const before = await recall(projectId, "zzdecayzz", {
+      db: ctx.db,
+      client,
+      limit: 10,
+    });
+
+    // Already invisible pre-sweep: the ranker excludes past-expiry rows even
+    // before the hourly sweep flips status.
+    expect(before).toHaveLength(0);
+
     await runBrainDecaySweep({ db: ctx.db, force: true });
 
-    const active = await ctx.db.execute(
-      sql`SELECT count(*)::int AS n FROM brain_items WHERE project_id = ${projectId} AND status = 'active'`,
-    );
+    const after = await recall(projectId, "zzdecayzz", {
+      db: ctx.db,
+      client,
+      limit: 10,
+    });
 
-    expect(Number(active.rows[0]?.n)).toBe(0);
+    expect(after).toHaveLength(0);
   });
 
   it("self-throttles: a second call within the hour is a no-op", async () => {
@@ -123,6 +146,32 @@ describe("runBrainDecaySweep (T3.3)", () => {
 
     expect(summary.ran).toBe(true);
     expect(summary.expired).toBe(0);
-    expect(summary.errors).toEqual(["boom"]);
+    // Both sub-sweeps (expiry + snapshot prune) report their own failure.
+    expect(summary.errors).toContain("boom");
+  });
+
+  it("prunes brain_snapshots older than snapshotTtlDays, keeps fresh ones", async () => {
+    const oldId = randomUUID();
+    const freshId = randomUUID();
+    const insertSnap = (id: string, ageDays: number) =>
+      ctx.db.execute(sql`
+      INSERT INTO brain_snapshots (id, project_id, actor_type, actor_id, trigger,
+        query, query_hash, embedding_model, returned_items, ranker_version, created_at)
+      VALUES (${id}, ${projectId}, 'system', 'test', 'explicit', 'q', 'h', 'm', '[]'::jsonb, 'v',
+              now() - ${sql.raw(String(ageDays))} * INTERVAL '1 day')
+    `);
+
+    await insertSnap(oldId, 40);
+    await insertSnap(freshId, 5);
+
+    const summary = await runBrainDecaySweep({ db: ctx.db, force: true });
+
+    expect(summary.prunedSnapshots).toBe(1);
+
+    const left = await ctx.db.execute(
+      sql`SELECT id FROM brain_snapshots WHERE project_id = ${projectId}`,
+    );
+
+    expect(left.rows.map((r) => String(r.id))).toEqual([freshId]);
   });
 });

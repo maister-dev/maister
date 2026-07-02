@@ -27,9 +27,4 @@ describe("RecallRanker seam (T2.3)", () => {
     expect(resolveRecallRanker(custom)).toBe(custom);
     expect(resolveRecallRanker(custom).version).toBe("custom");
   });
-
-  it("the default ranker satisfies the interface shape", () => {
-    expect(typeof pgVectorRecallRanker.version).toBe("string");
-    expect(typeof pgVectorRecallRanker.rank).toBe("function");
-  });
 });

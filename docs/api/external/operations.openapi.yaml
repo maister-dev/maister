@@ -667,7 +667,8 @@ paths:
       summary: (ADR-122, Implemented) Recall project-brain memories (hybrid, no LLM at read)
       description: |
         Scope `memory:read`. Hybrid recall (pgvector cosine over the active
-        embedding generation + `tsvector` lexical + recency/confidence boost) over
+        embedding generation + `tsvector` lexical + a confidence term;
+        `created_at DESC` is a tie-break, not a boost) over
         the project's **active** owned-tier items. NO LLM call at read time.
 
         `projectId` is derived server-side from the URL `slug` and compared against
@@ -696,6 +697,7 @@ paths:
           schema:
             type: string
             minLength: 1
+            maxLength: 2000
         - name: limit
           in: query
           required: false
@@ -708,7 +710,9 @@ paths:
         - name: kinds
           in: query
           required: false
-          description: Restrict to these owned-tier kinds.
+          description: |
+            Restrict to these owned-tier kinds. An unknown value → 422 `CONFIG`
+            (not silently ignored).
           style: form
           explode: true
           schema:
@@ -1836,10 +1840,12 @@ components:
           schema: { $ref: "#/components/schemas/ExtErrorBody" }
     EmbeddingUnavailable:
       description: |
-        (ADR-122) The embedding provider is unreachable after bounded retry
-        (timeout / 429 / 5xx). Code `EMBEDDING_UNAVAILABLE`. On the recall/retain
-        paths this is a retryable outage — the caller may retry or check the
-        platform embedding-provider configuration. Secrets are never included.
+        (ADR-122) Transient embedding-provider outage after bounded retry
+        (timeout / 429 / 5xx / network / malformed response). Code
+        `EMBEDDING_UNAVAILABLE` — retryable ONLY: the caller may retry or check
+        the platform embedding-provider configuration. A deterministic provider
+        4xx (400/401/403/404/422) maps to 422 `CONFIG` instead, never this
+        response. Secrets are never included.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ExtErrorBody" }
@@ -1873,7 +1879,7 @@ components:
           maximum: 1
         score:
           type: number
-          description: Hybrid rank score for this hit (vector + lexical + boost).
+          description: Hybrid rank score for this hit (vector + lexical + confidence terms).
         tags:
           type: array
           items: { type: string }
@@ -1902,6 +1908,7 @@ components:
         content:
           type: string
           minLength: 1
+          maxLength: 32000
           description: The knowledge to retain (embedded; oversize content is split).
         kind:
           type: string
@@ -1913,7 +1920,10 @@ components:
           description: Optional short title; derived from content when omitted.
         tags:
           type: array
-          items: { type: string }
+          maxItems: 10
+          items:
+            type: string
+            maxLength: 64
 
     ExtMemoryRetainResult:
       type: object
@@ -1934,10 +1944,6 @@ components:
             status:
               type: string
               enum: [active]
-            confidence:
-              type: number
-              minimum: 0
-              maximum: 1
 
     ExtTriageBody:
       type: object

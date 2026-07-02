@@ -11,7 +11,9 @@ column-level narrative.
 > **Status: Implemented**. Migrations: shared-table
 > ALTERs land in the **main** lineage `0088`; `brain_*` CREATEs + `CREATE EXTENSION
 > vector` land in the **separate brain lineage** `web/lib/db/brain-migrations/0001`
-> (own `_journal.json`, own ledger `__drizzle_brain_migrations`). The brain lineage
+> + `0002_brain_review_fixes` (adds `brain_harvested_events` +
+> `brain_embeddings_generation_uq`; own `_journal.json`, own ledger
+> `__drizzle_brain_migrations`). The brain lineage
 > is provisioned only on Postgres (SQLite → Brain disabled, D3).
 >
 > **Refinement over the design-spec §4 conceptual shape:** `brain_snapshots` carries
@@ -25,6 +27,7 @@ erDiagram
     PROJECTS ||--o{ BRAIN_ITEMS : "owns (CASCADE)"
     PROJECTS ||--o{ BRAIN_SNAPSHOTS : "owns (CASCADE)"
     PROJECTS ||--o{ BRAIN_INDEX_JOBS : "owns (CASCADE)"
+    PROJECTS ||--o{ BRAIN_HARVESTED_EVENTS : "harvest ledger (CASCADE)"
     BRAIN_ITEMS ||--o{ BRAIN_EMBEDDINGS : "generations x splits (CASCADE)"
     RUNS ||--o{ BRAIN_ITEMS : "provenance source_run_id (SET NULL)"
     DOMAIN_EVENTS ||--o{ BRAIN_ITEMS : "provenance source_domain_event_id (SET NULL)"
@@ -61,7 +64,7 @@ erDiagram
         text embedding_provider "NOT NULL — openai_compatible"
         text embedding_model "NOT NULL — e.g. text-embedding-3-small"
         integer embedding_dimensions "NOT NULL — e.g. 1536"
-        text embedding_version "NOT NULL — generation key"
+        text embedding_version "NOT NULL — recorded metadata only; generation identity = (embedding_model, embedding_dimensions)"
         text source_hash "NOT NULL"
         text content_hash "NOT NULL"
         timestamptz embedded_at "NOT NULL — IMMUTABLE row"
@@ -89,8 +92,14 @@ erDiagram
         text reason "model_switch|manual (A); event|chunker_upgrade = Phase 2"
         text status "queued|running|completed|failed"
         integer progress "NOT NULL DEFAULT 0"
-        jsonb resumable_cursor "NULL — resume point after interrupt"
+        jsonb resumable_cursor "NULL — progress/observability metadata; lastItemId + error on failure (resume = missing-generation worklist)"
         timestamptz created_at
+    }
+
+    BRAIN_HARVESTED_EVENTS {
+        text project_id PK "composite PK; FK -> projects(id) CASCADE (migration 0002)"
+        bigint domain_event_id PK "composite PK; NO FK — outlives domain_events GC"
+        timestamptz harvested_at "NOT NULL DEFAULT now()"
     }
 ```
 
@@ -101,7 +110,7 @@ erDiagram
 | `platform_runtime_settings` | += `embedding_base_url` (text, NULL), `embedding_model` (text, NULL), `embedding_dimensions` (integer, NULL), `embedding_api_key_ref` (text, NULL — `env:NAME` ref only), `distill_model` (text, NULL). Singleton row. |
 | `projects` | += `brain_enabled` (boolean, NOT NULL DEFAULT false). Enable-gate refuses `CONFIG` unless platform embedding + `distill_model` are set. |
 | `agent_project_links` | += `can_read_brain` (boolean, NOT NULL DEFAULT false — gates recall), `can_write_brain` (boolean, NOT NULL DEFAULT false — gates retain, separate write axis). `can_propose_brain` = Sub-project C. |
-| `runs` | += `brain_context` (boolean, NULL — null = inherit flow/agent config; the persisted launch-time decision. `runs.runner_snapshot` no longer exists post-M42, so a dedicated column is required). |
+| `runs` | += `brain_context` (boolean, NULL — null = off (default) in A, a flow/agent-level default is reserved; the persisted launch-time decision. `runs.runner_snapshot` no longer exists post-M42, so a dedicated column is required). |
 
 ## Keys and constraints
 
@@ -119,7 +128,7 @@ erDiagram
 | Table | Index | Columns / definition | Purpose |
 | ----- | ----- | -------------------- | ------- |
 | `brain_items` | `brain_items_tsv_gin` | GIN `(tsv)` | Lexical leg of hybrid recall. |
-| `brain_items` | `brain_items_recall_idx` | btree `(project_id, status, expires_at)` | Project-scoped active-item scan + decay sweep. |
+| `brain_items` | `brain_items_recall_idx` | btree `(project_id, status, expires_at)` | Recall-path project-scoped active-item scan (the decay sweep filters `status` + `expires_at` only and does not lead with `project_id`). |
 | `brain_embeddings` | `brain_embeddings_item_idx` | btree `(item_id, embedding_model, embedding_dimensions)` | Generation lookup + FK. |
 | `brain_embeddings` | `brain_embeddings_generation_uq` (migration `0002`) | UNIQUE btree `(item_id, split_ordinal, embedding_model, embedding_dimensions)` | Duplicate-embedding guard (F3) — makes a concurrent/double reindex insert a no-op. |
 | `brain_embeddings` | `brain_embeddings_hnsw_<modelslug>_<N>` | `USING hnsw ((vector::vector(N)) vector_cosine_ops) WHERE embedding_model = M AND embedding_dimensions = N` | **Per-generation expression HNSW** — created by `ensureEmbeddingIndex(model, N)` at configure/reindex time, NOT in the migration. A model/dimension switch adds a new one; old ones persist. |
@@ -152,13 +161,16 @@ harvested lesson survives the deletion of the run/event it was distilled from.
 ## Retention
 
 - **Embeddings are immutable and append-only per generation.** A model or dimension
-  switch writes a NEW `embedding_version` generation (a new set of rows + a new
-  expression index); old generation rows and their indexes stay intact. Index/row GC
+  switch writes a NEW generation keyed by `(embedding_model, embedding_dimensions)`
+  (a new set of rows + a new expression index; `embedding_version` is recorded
+  metadata only); old generation rows and their indexes stay intact. Index/row GC
   across dead generations is out of scope for Sub-project A.
 - **Items decay.** `lesson`/`observation` carry `expires_at`; the throttled decay
   sweep sets `status='expired'` past `expires_at` (excluded from recall). `state_fact`
-  is not decayed — it is superseded on change. Reinforcement pushes `expires_at` out.
-- **Snapshots are audit records** — never mutated; pruned only via project/run cascade.
+  is not decayed — supersede-on-change is (Designed — Sub-project B; the `superseded`
+  enum value has no writer in A). Reinforcement pushes `expires_at` out.
+- **Snapshots are audit records** — never mutated; pruned by the decay sweep after
+  30 days (`BRAIN_POLICY.snapshotTtlDays`) and via project/run cascade.
 
 ## Linked artifacts
 
@@ -167,5 +179,6 @@ harvested lesson survives the deletion of the run/event it was distilled from.
 - Narrative: [`../database-schema.md`](../database-schema.md).
 - Decision record: [ADR-122](../decisions.md#adr-122-project-brain-per-project-memory-substrate).
 - Design spec: [`../plans/2026-07-01-project-brain-architecture.md`](../plans/2026-07-01-project-brain-architecture.md) §4.
-- Source (Implemented): `web/lib/brain/schema.ts`, `web/lib/db/brain-migrations/0001_*.sql`,
-  `web/lib/db/migrations/0088_*.sql`, `web/lib/brain/embedding-index.ts`.
+- Source (Implemented): `web/lib/brain/schema.ts`, `web/lib/db/brain-migrations/0001_*.sql`
+  + `0002_brain_review_fixes.sql`, `web/lib/db/migrations/0088_*.sql`,
+  `web/lib/brain/embedding-index.ts`.

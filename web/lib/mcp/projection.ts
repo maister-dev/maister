@@ -21,7 +21,7 @@ type Db = {
   };
 };
 
-function stripEnvPrefix(ref: string): string {
+export function stripEnvPrefix(ref: string): string {
   return ref.startsWith("env:") ? ref.slice(4) : ref;
 }
 

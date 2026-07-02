@@ -1,5 +1,7 @@
 # Project Brain — Target Architecture & Requirements (design spec)
 
+> Design-time spec. As-built behavior diverges in places — `docs/system-analytics/project-brain.md` is authoritative.
+
 > Status: **Design spec** (pre-implementation). Not an ADR, changes no locked
 > decision. Feeds the planning feature (`/aif-plan` / writing-plans). When this
 > is pulled into delivery, the load-bearing choices below graduate to ADRs.

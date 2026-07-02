@@ -19,6 +19,14 @@ export const BRAIN_POLICY = {
   reinforceTtlDays: 30,
   // ambient recall top-K injected into the P7 run-context.
   ambientK: 5,
+  // Ambient injection floor: confidence₀ (0.3) + one reinforce step — an item
+  // must have recurred at least once before it is auto-injected into runs.
+  // Explicit recall (ext route / MCP) is NOT floored; callers pass their own.
+  ambientMinConfidence: 0.4,
+  // brain_snapshots older than this are pruned by the decay sweep (audit
+  // evidence, not source of truth — unbounded growth otherwise: ambient writes
+  // one row per run × generation).
+  snapshotTtlDays: 30,
 } as const;
 
 export type BrainPolicy = typeof BRAIN_POLICY;

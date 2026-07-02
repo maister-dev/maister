@@ -9,7 +9,7 @@ import pino from "pino";
 
 import { getBrainEmbeddingClient } from "@/lib/brain/openai-compatible";
 import { distill } from "@/lib/brain/distill";
-import { isBrainProvisioned } from "@/lib/brain/guard";
+import { isBrainProvisioned, isProjectBrainEnabled } from "@/lib/brain/guard";
 import { retain } from "@/lib/brain/retain";
 import { getDb } from "@/lib/db/client";
 import { isRunTerminalEventKind } from "@/lib/domain-events/taxonomy";
@@ -38,19 +38,12 @@ type HarvestDb = HarvestTx & {
 };
 
 export function isHarvestable(kind: string): boolean {
-  // NOTE: run.review is deliberately excluded (RUN_TERMINAL + gate.failed only).
+  // NOTE: run.review is deliberately excluded (an orchestrator child-settled
+  // signal whose payload duplicates the child's eventual terminal event).
+  // run.escalated is also excluded FOR NOW: the run has not concluded yet — its
+  // lesson arrives with the terminal event; harvesting both would double-distill
+  // one story. Revisit if escalations prove to carry distinct signal.
   return isRunTerminalEventKind(kind) || kind === "gate.failed";
-}
-
-async function isProjectBrainEnabled(
-  db: HarvestDb,
-  projectId: string,
-): Promise<boolean> {
-  const r = await db.execute(
-    sql`SELECT brain_enabled FROM projects WHERE id = ${projectId}`,
-  );
-
-  return Boolean(r.rows[0]?.brain_enabled);
 }
 
 async function alreadyHarvested(

@@ -259,3 +259,18 @@ Every AC-A-1..7 (§14) is covered: A-1 T3.2 · A-2 T2.2 · A-3 T3.3 · A-4 T4.1/
 5. **Memory scopes** added to `AGENT_TOKEN_SCOPES` now; access still gated by `brain_enabled` + `can_read_brain` (recall) / `can_write_brain` (retain) — separate write axis per review.
 
 No open questions remain. NEXT: `/aif-implement` (reads this plan by branch stem `claude-interesting-euclid-8c9ac0`).
+
+## As-built deviations
+
+1. **`@chonkiejs/core` NOT pulled.** The oversize splitter shipped as a minimal
+   in-repo recursive splitter (`web/lib/brain/chunk.ts`) behind the single
+   `splitForEmbedding` seam — T6.1's dependency bullet (and the scope-decision-2
+   `RecursiveChunker` clause) is superseded; chunking libraries are Sub-project B.
+2. **T6.1 "compose web service `environment:` block" was impossible** — compose
+   defines only postgres (web runs on the host), so the embedding key name was
+   delivered via `.env.example` (web-tier env) instead.
+3. **Run-bound snapshot `run_id` (T4.2)** — recording the token's `boundRunId` on
+   explicit ext recall was delivered in the review-fix round (`fix(brain)`
+   commits), not the original T4.2 commit.
+4. **`state_fact` supersede-on-change deferred to Sub-project B** — the
+   `superseded` status exists in the enum only, with no writer in A.

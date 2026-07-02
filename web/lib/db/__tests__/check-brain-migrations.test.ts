@@ -29,7 +29,8 @@ describe("findPendingBrainMigrations (ADR-122 boot guard)", () => {
   const original = process.env.DB_URL;
 
   afterEach(() => {
-    process.env.DB_URL = original;
+    if (original === undefined) delete process.env.DB_URL;
+    else process.env.DB_URL = original;
   });
 
   it("skips under SQLite (DB_URL=file:) and never queries the ledger", async () => {

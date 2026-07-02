@@ -1133,6 +1133,7 @@ erDiagram
     PROJECTS ||--o{ BRAIN_ITEMS : "Brain owns (CASCADE, ADR-122)"
     PROJECTS ||--o{ BRAIN_SNAPSHOTS : "recall snapshots (CASCADE)"
     PROJECTS ||--o{ BRAIN_INDEX_JOBS : "reindex jobs (CASCADE)"
+    PROJECTS ||--o{ BRAIN_HARVESTED_EVENTS : "harvest ledger (CASCADE)"
     BRAIN_ITEMS ||--o{ BRAIN_EMBEDDINGS : "generations x splits (CASCADE)"
     RUNS o|--o{ BRAIN_SNAPSHOTS : "run-bound recall (CASCADE)"
 
@@ -1161,7 +1162,7 @@ erDiagram
         vector vector "untyped pgvector — cast vector(N) at query"
         text embedding_model "NOT NULL"
         integer embedding_dimensions "NOT NULL"
-        text embedding_version "NOT NULL — generation key"
+        text embedding_version "NOT NULL — recorded metadata; generation = (model, dimensions)"
         timestamptz embedded_at "IMMUTABLE"
     }
 
@@ -1185,6 +1186,12 @@ erDiagram
         text status "queued|running|completed|failed"
         jsonb resumable_cursor "NULL"
         timestamptz created_at
+    }
+
+    BRAIN_HARVESTED_EVENTS {
+        text project_id PK "composite PK; FK -> projects(id) CASCADE (brain migration 0002)"
+        bigint domain_event_id PK "composite PK; NO FK — outlives domain_events GC"
+        timestamptz harvested_at "NOT NULL DEFAULT now()"
     }
 ```
 
@@ -1286,8 +1293,9 @@ external-operation events) is not drawn until its migrations exist. See
 | `brain_items` | `brain_items_event_uq` | `(project_id, source_domain_event_id)` UNIQUE, PARTIAL `WHERE source_domain_event_id IS NOT NULL` | **(Implemented, ADR-122)** Harvest at-least-once idempotency at the DB. |
 | `brain_items` | `brain_items_active_hash_uq` | `(project_id, content_hash)` UNIQUE, PARTIAL `WHERE status = 'active'` | **(Implemented, ADR-122)** Exact-dup race guard → `CONFLICT`. |
 | `brain_items` | `brain_items_tsv_gin` | GIN `(tsv)` | **(Implemented, ADR-122)** Lexical recall leg. |
-| `brain_items` | `brain_items_recall_idx` | `(project_id, status, expires_at)` | **(Implemented, ADR-122)** Active-item scan + decay sweep. |
+| `brain_items` | `brain_items_recall_idx` | `(project_id, status, expires_at)` | **(Implemented, ADR-122)** Recall-path project-scoped active-item scan. |
 | `brain_embeddings` | `brain_embeddings_item_idx` | `(item_id, embedding_model, embedding_dimensions)` | **(Implemented, ADR-122)** Generation lookup + FK. |
+| `brain_embeddings` | `brain_embeddings_generation_uq` | `(item_id, split_ordinal, embedding_model, embedding_dimensions)` UNIQUE | **(Implemented, ADR-122, brain migration `0002`)** Idempotent re-embed — a concurrent/double reindex insert is a no-op. |
 | `brain_embeddings` | `brain_embeddings_hnsw_<modelslug>_<N>` | `USING hnsw ((vector::vector(N)) vector_cosine_ops) WHERE embedding_model = M AND embedding_dimensions = N` | **(Implemented, ADR-122)** Per-generation expression HNSW, created by `ensureEmbeddingIndex` at configure/reindex (NOT in the migration). |
 | `brain_snapshots` | `brain_snapshots_run_idx` | `(run_id)` | **(Implemented, ADR-122)** Run-scoped snapshot reads. |
 | `brain_index_jobs` | `brain_index_jobs_claim_idx` | `(status, created_at)` | **(Implemented, ADR-122)** Reindex-worker claim scan. |

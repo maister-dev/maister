@@ -52,6 +52,9 @@ vi.mock("@/components/settings/adapter-support-panel", () => ({
 vi.mock("@/components/settings/mcp-servers-panel", () => ({
   McpServersPanel: mcpServersPanelMock,
 }));
+vi.mock("@/components/settings/brain-settings-panel", () => ({
+  BrainSettingsPanel: () => null,
+}));
 vi.mock("@/components/settings/router-sidecars-panel", () => ({
   RouterSidecarsPanel: () => null,
 }));
@@ -80,6 +83,9 @@ describe("SettingsPage authorization contract", () => {
           return Promise.resolve([]);
         },
       }),
+      // ADR-122: loadPlatformRuntimeView also reads the brain settings via a
+      // raw execute — empty rows = unconfigured Brain.
+      execute: async () => ({ rows: [] }),
     });
   });
 

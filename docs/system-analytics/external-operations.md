@@ -119,18 +119,23 @@ surface exists.
   `projectId` server-derived from the token + slug). See
   [project-brain.md](project-brain.md).
   - `memory_recall` (scope `memory:read`, `GET`): `inputSchema` =
-    `{ slug: string, query: string, limit?: integer(1..50, default 5),
-    kinds?: ("lesson"|"observation"|"state_fact")[], minConfidence?: number(0..1) }`.
+    `{ slug: string, query: string(1..2000), limit?: integer(1..50, default 5),
+    kinds?: ("lesson"|"observation"|"state_fact")[], minConfidence?: number(0..1) }`
+    — an unknown `kinds` value → 422 `CONFIG` (not silently ignored).
     Returns ranked **active** items (hybrid rank, **no LLM at read**) and writes a
-    `brain_snapshots` audit row.
+    `brain_snapshots` audit row (`run_id` = the token's `boundRunId` when the token
+    is run-bound, else NULL).
   - `memory_retain` (scope `memory:write`, `POST`): `inputSchema` =
-    `{ slug: string, content: string, kind: "lesson"|"observation"|"state_fact",
-    title?: string, tags?: string[] }` — body carries NO project id. Embeds and
-    **dedup-or-reinforces** (cosine > τ) or inserts at confidence₀.
+    `{ slug: string, content: string(≤ 32000 chars), kind:
+    "lesson"|"observation"|"state_fact", title?: string(1..512),
+    tags?: string[] (≤ 10 items, each ≤ 64 chars) }` — body carries NO project id.
+    Embeds and **dedup-or-reinforces** (same kind, cosine > τ) or inserts at
+    confidence₀.
   Both are gated by `brain_enabled` + the `can_read_brain`/`can_write_brain` link
   axis. In SQLite mode the tools stay **listed** (static `TOOL_SPECS`) but fail
-  closed with `PRECONDITION`; an embedding outage returns `EMBEDDING_UNAVAILABLE`
-  (503).
+  closed with `PRECONDITION`; a transient embedding outage returns
+  `EMBEDDING_UNAVAILABLE` (503, retryable) while a deterministic provider 4xx maps
+  to 422 `CONFIG`. Rate limiting is an accepted deferral (Sub-project B candidate).
 
 ## State machine — token lifecycle
 

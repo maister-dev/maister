@@ -6,7 +6,12 @@ import pino from "pino";
 import { z } from "zod";
 
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
-import { getBrainSettings, isBrainFullyConfigured } from "@/lib/brain/settings";
+import { assertBrainProvisioned } from "@/lib/brain/guard";
+import {
+  getBrainSettings,
+  isBrainFullyConfigured,
+  reconcileBrainIndexJobs,
+} from "@/lib/brain/settings";
 import { getDb } from "@/lib/db/client";
 import * as schemaModule from "@/lib/db/schema";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -141,6 +146,9 @@ export async function PATCH(
     // ADR-122 enable-gate: a project can never be enabled into an
     // unharvest-able state — platform embedding config + distill_model first.
     if (body.brainEnabled === true) {
+      // SQLite → 409 PRECONDITION (E-11) before the settings query.
+      assertBrainProvisioned();
+
       const brainSettings = await getBrainSettings(db);
 
       if (!isBrainFullyConfigured(brainSettings)) {
@@ -171,6 +179,27 @@ export async function PATCH(
     }
 
     await db.update(projects).set(update).where(eq(projects.id, project.id));
+
+    // ADR-122: a project re-enabled AFTER a generation switch has old-generation
+    // embeddings only — reconcile-enqueue a reindex job so its vector leg
+    // catches up (no-op when coverage is current or a job is already live).
+    // Best-effort: the settings-save reconcile + reindex sweep are the belt.
+    if (body.brainEnabled === true) {
+      try {
+        await reconcileBrainIndexJobs(db, {
+          projectId: project.id,
+          reason: "manual",
+        });
+      } catch (err) {
+        log.warn(
+          {
+            projectId: project.id,
+            err: err instanceof Error ? err.message : String(err),
+          },
+          "brain reindex reconcile on enable failed (sweep will catch up)",
+        );
+      }
+    }
 
     log.info(
       {

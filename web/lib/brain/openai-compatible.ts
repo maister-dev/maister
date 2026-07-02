@@ -5,24 +5,21 @@ import pino from "pino";
 import { getBrainSettings, isEmbeddingConfigured } from "./settings";
 
 import { MaisterError } from "@/lib/errors";
+import { stripEnvPrefix } from "@/lib/mcp/projection";
 
 // Project Brain (ADR-122) OpenAI-compatible client. Symmetric embed + complete
 // over one HTTP module. Config comes from `platform_runtime_settings`; the API
-// key is resolved from process.env via the `env:NAME` ref (mirrors
-// web/lib/mcp/projection.ts). Bounded retry on transient failures
-// (timeout/429/5xx) → then `EMBEDDING_UNAVAILABLE`. The key and request/response
-// bodies are NEVER logged or included in a thrown message (E-10).
+// key is resolved from process.env via the `env:NAME` ref. Failure taxonomy:
+// transient (timeout / 429 / 5xx / network / malformed 200 body) → bounded
+// retry → `EMBEDDING_UNAVAILABLE`; deterministic provider 4xx (bad key, unknown
+// model, wrong base URL, rejected input) → `CONFIG` — retrying cannot fix it.
+// The key and request/response bodies are NEVER logged or included in a thrown
+// message (E-10).
 
 const log = pino({
   name: "brain:openai-compatible",
   level: process.env.LOG_LEVEL ?? "info",
 });
-
-// Mirror of web/lib/mcp/projection.ts `stripEnvPrefix` (one-liner, kept local to
-// avoid importing a server-only MCP module into the brain module).
-function stripEnvPrefix(ref: string): string {
-  return ref.startsWith("env:") ? ref.slice(4) : ref;
-}
 
 // The generation key stamped onto brain_embeddings.embedding_version — changes
 // exactly when the model OR the dimensions change (D4).
@@ -52,7 +49,10 @@ export interface OpenAiCompatibleClient {
   readonly dimensions: number;
   readonly version: string;
   embed(texts: string[]): Promise<number[][]>;
-  complete(prompt: string, opts?: { json?: boolean }): Promise<string>;
+  complete(
+    prompt: string,
+    opts?: { json?: boolean; maxTokens?: number },
+  ): Promise<string>;
 }
 
 const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
@@ -71,6 +71,15 @@ export function makeEmbeddingClient(
   const timeoutMs = cfg.timeoutMs ?? 30_000;
   const doFetch = cfg.fetchImpl ?? globalThis.fetch;
   const base = cfg.baseUrl.replace(/\/+$/, "");
+  // Log the origin only — a base URL with embedded userinfo credentials must
+  // never reach the logs (E-10).
+  let logBase: string;
+
+  try {
+    logBase = new URL(base).origin;
+  } catch {
+    logBase = "<invalid base url>";
+  }
 
   function authHeaders(): Record<string, string> {
     const headers: Record<string, string> = {
@@ -86,8 +95,10 @@ export function makeEmbeddingClient(
   }
 
   // One request with bounded retry. `op` labels the call for logs (never the
-  // key/payload). Retries on network error / retryable status; other HTTP
-  // errors and exhausted retries throw EMBEDDING_UNAVAILABLE.
+  // key/payload). Transient failures (network / timeout / retryable status /
+  // malformed 200 body) retry then throw EMBEDDING_UNAVAILABLE; a deterministic
+  // non-retryable 4xx throws CONFIG immediately — a bad key / unknown model /
+  // wrong base URL / rejected input cannot be fixed by retrying.
   async function request(
     path: string,
     body: unknown,
@@ -120,7 +131,7 @@ export function makeEmbeddingClient(
             op,
             attempt,
             model: cfg.embeddingModel,
-            baseUrl: base,
+            baseUrl: logBase,
             kind: timedOut ? "timeout" : "network",
           },
           "embedding request failed, retrying",
@@ -132,7 +143,31 @@ export function makeEmbeddingClient(
         break;
       }
 
-      if (res.ok) return await res.json();
+      if (res.ok) {
+        try {
+          return await res.json();
+        } catch {
+          // A 200 with a non-JSON body (an HTML-returning proxy) is an infra
+          // fault, not a provider verdict — classify transient, never let a raw
+          // SyntaxError escape the taxonomy.
+          lastStatus = undefined;
+          log.warn(
+            {
+              op,
+              attempt,
+              model: cfg.embeddingModel,
+              baseUrl: logBase,
+              kind: "malformed-body",
+            },
+            "embedding request failed, retrying",
+          );
+          if (attempt < maxRetries) {
+            await sleep(retryDelayMs * 2 ** attempt);
+            continue;
+          }
+          break;
+        }
+      }
 
       lastStatus = res.status;
 
@@ -143,7 +178,7 @@ export function makeEmbeddingClient(
             attempt,
             status: res.status,
             model: cfg.embeddingModel,
-            baseUrl: base,
+            baseUrl: logBase,
           },
           "embedding request failed, retrying",
         );
@@ -151,7 +186,20 @@ export function makeEmbeddingClient(
         continue;
       }
 
-      // Non-retryable HTTP error, or retries exhausted on a retryable one.
+      // Deterministic non-retryable 4xx → CONFIG (422 at the ext boundary; the
+      // harvest consumer holds the cursor as a config problem, not an outage).
+      if (
+        res.status >= 400 &&
+        res.status < 500 &&
+        !RETRYABLE_STATUS.has(res.status)
+      ) {
+        throw new MaisterError(
+          "CONFIG",
+          `embedding provider rejected ${op} (status ${res.status}) — check the embedding provider configuration/input`,
+        );
+      }
+
+      // Retries exhausted on a retryable status.
       break;
     }
 
@@ -175,9 +223,15 @@ export function makeEmbeddingClient(
         "/embeddings",
         { model: cfg.embeddingModel, input: texts },
         "embed",
-      )) as { data?: Array<{ embedding?: number[] }> };
+      )) as { data?: Array<{ embedding?: number[]; index?: number }> };
 
-      const vectors = (json.data ?? []).map((d) => d.embedding ?? []);
+      // The OpenAI contract carries `data[].index`; a parallelizing gateway may
+      // return batches out of order — trusting array order would silently store
+      // the WRONG vector per text. Sort by index when present.
+      const data = [...(json.data ?? [])].sort(
+        (a, b) => (a.index ?? 0) - (b.index ?? 0),
+      );
+      const vectors = data.map((d) => d.embedding ?? []);
 
       if (vectors.length !== texts.length) {
         throw new MaisterError(
@@ -193,12 +247,23 @@ export function makeEmbeddingClient(
             `embedding dimension mismatch: provider returned ${v.length}, configured ${cfg.embeddingDimensions}`,
           );
         }
+        for (const x of v) {
+          if (typeof x !== "number" || !Number.isFinite(x)) {
+            throw new MaisterError(
+              "CONFIG",
+              "embedding provider returned a non-numeric vector component",
+            );
+          }
+        }
       }
 
       return vectors;
     },
 
-    async complete(prompt: string, opts?: { json?: boolean }): Promise<string> {
+    async complete(
+      prompt: string,
+      opts?: { json?: boolean; maxTokens?: number },
+    ): Promise<string> {
       if (!cfg.distillModel) {
         throw new MaisterError(
           "CONFIG",
@@ -212,6 +277,8 @@ export function makeEmbeddingClient(
           model: cfg.distillModel,
           messages: [{ role: "user", content: prompt }],
           ...(opts?.json ? { response_format: { type: "json_object" } } : {}),
+          // Cost bound — a runaway model must not emit unbounded output.
+          ...(opts?.maxTokens ? { max_tokens: opts.maxTokens } : {}),
         },
         "complete",
       )) as { choices?: Array<{ message?: { content?: string } }> };

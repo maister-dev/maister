@@ -10047,8 +10047,8 @@ incrementally. **Sub-project A (Foundation)** is the keystone delivered first.
   mutates old rows, and needs **no schema migration ever**.
 - **D5/D6 — `ChunkerRegistry` + AST code-chunking are Sub-project B; Serena/LSP is an
   optional agent capability, not a Brain dependency.** Sub-project A embeds short
-  owned-tier text directly; oversize content uses one minimal recursive splitter
-  (`@chonkiejs/core` `RecursiveChunker`).
+  owned-tier text directly; oversize content uses a minimal in-repo recursive splitter
+  (`web/lib/brain/chunk.ts`); chunking libraries are deferred to Sub-project B.
 - **D7 — Two-tier substrate; ownership resolved per-project.** Owned/volatile tier
   (`lesson`/`observation`/`state_fact`) ships in A; indexed/referenced tier
   (`decision`/`direction` → canonical pointers) ships in B.
@@ -10063,8 +10063,9 @@ incrementally. **Sub-project A (Foundation)** is the keystone delivered first.
   Drizzle lineage (`web/lib/db/migrations`, `0088` — `platform_runtime_settings` embedding
   columns; `projects.brain_enabled`; `agent_project_links.can_read_brain`/`can_write_brain`;
   `runs.brain_context`). `brain_*` CREATEs + `CREATE EXTENSION vector` land in a **separate
-  brain lineage** (`web/lib/db/brain-migrations`, `0001`) with its own `_journal.json` and
-  its own ledger table `__drizzle_brain_migrations` (the main migrator hardcodes
+  brain lineage** (`web/lib/db/brain-migrations`, `0001` + `0002_brain_review_fixes` — the
+  latter adds `brain_harvested_events` + `brain_embeddings_generation_uq`) with its own
+  `_journal.json` and its own ledger table `__drizzle_brain_migrations` (the main migrator hardcodes
   `drizzle.__drizzle_migrations`; sharing it would corrupt migration accounting). The brain
   lineage is **hand-authored SQL only** (no `db:generate:brain` — a second generate target
   re-opens the snapshot-drift hazard); migrate order is fixed **main → brain**
@@ -10078,7 +10079,8 @@ incrementally. **Sub-project A (Foundation)** is the keystone delivered first.
   transaction take `pg_advisory_xact_lock` per project, then **dedup-or-reinforce** (cosine
   > τ=0.85 → reinforce, else insert at confidence₀=0.3 + TTL 30d). A throttled decay sweep
   on the M24 tick expires items past `expires_at`. Recall is **hybrid** (pgvector cosine over
-  the active generation + `tsvector` lexical + recency/confidence boost) with **no LLM at
+  the active generation + `tsvector` lexical + a confidence term; `created_at DESC` is a
+  tie-break, not a boost) with **no LLM at
   read**; project-scoped by `project_id` FK. Every consumption (ambient inject or explicit
   recall) writes a `brain_snapshots` row; the launch-time *decision* persists on
   `runs.brain_context`.
@@ -10104,6 +10106,11 @@ incrementally. **Sub-project A (Foundation)** is the keystone delivered first.
   distill config cleared post-enable) **throw and hold the cursor** (no event lost); permanent
   failures (schema-invalid distill output after one in-process retry) **log and skip-advance**
   (no poison-pill loop).
+- A post-review hardening round (2026-07-02, brain migration `0002`) added the
+  `brain_harvested_events` idempotency ledger + the `brain_embeddings` generation UNIQUE,
+  kind-scoped dedup, the shared enable-guard (`web/lib/brain/guard.ts`), and the
+  deterministic-provider-4xx → `CONFIG` split (`EMBEDDING_UNAVAILABLE` stays
+  transient-only).
 - Sub-projects B (Consultant/indexed tier + `ChunkerRegistry`) and C (self-improvement
   proposal bridge + LSP edge connector) build on A; each gets its own spec → plan → build.
 - Full requirements, expectations (E-n), and per-phase acceptance criteria (AC-A-n) live in

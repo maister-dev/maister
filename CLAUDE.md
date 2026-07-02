@@ -145,7 +145,10 @@ session events to `run.events.jsonl`. Next.js Route Handler
 
 `MaisterError extends Error` with discriminated `code`:
 `PRECONDITION | SPAWN | NEEDS_INPUT | HITL_TIMEOUT | CRASH | CONFLICT |
-CONFIG | EXECUTOR_UNAVAILABLE | FLOW_INSTALL | ACP_PROTOCOL | CHECKPOINT`.
+CONFIG | EXECUTOR_UNAVAILABLE | FLOW_INSTALL | ACP_PROTOCOL | CHECKPOINT |
+BUDGET_EXCEEDED | EMBEDDING_UNAVAILABLE | STEP_CHECKPOINTED | UNAUTHENTICATED |
+UNAUTHORIZED | PASSWORD_CHANGE_REQUIRED | ACCOUNT_INACTIVE`
+(client-safe union in `web/lib/errors-core.ts`, re-exported by `lib/errors.ts`).
 UI branches on `code`, never on string matching. No string-matched errors.
 
 ### 4. Concurrency cap

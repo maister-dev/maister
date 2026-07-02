@@ -68,6 +68,8 @@ erDiagram
         text branch_base "NULL — instance override of branch base (ADR-106)"
         jsonb execution_policy_override "NULL — instance override of autoApply/onBudgetBreach (ADR-106)"
         jsonb config "NULL — per-instance config values; NULL ⇒ declared defaults (Implemented ADR-111, 0071)"
+        boolean can_read_brain "NOT NULL DEFAULT false — gates memory recall (ADR-122, 0088)"
+        boolean can_write_brain "NOT NULL DEFAULT false — gates memory retain, separate write axis (ADR-122, 0088)"
         timestamptz created_at
         timestamptz updated_at
     }

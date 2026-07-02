@@ -139,16 +139,16 @@ at spawn. The env table above is unchanged by M27.
 
 ### Project Brain embedding config — `platform_runtime_settings` (Implemented, ADR-122)
 
-**(Designed, Sub-project A.)** The Project Brain's embedding + distillation
+The Project Brain's embedding + distillation
 provider is platform-level config on the singleton `platform_runtime_settings`
 row, set via admin `/settings → Brain` (`GET/PATCH /api/admin/brain-settings`):
 
 | Column | Meaning | Default |
 | ------ | ------- | ------- |
-| `embedding_base_url` | OpenAI-compatible base URL (`/embeddings`, `/chat/completions`). | — |
-| `embedding_model` | Embedding model id. | `text-embedding-3-small` |
-| `embedding_dimensions` | Embedding dimensions. Changing enqueues a non-destructive reindex generation (never a schema migration). | `1536` |
-| `embedding_api_key_ref` | `env:NAME` reference to the API-key env var (regex `^env:[A-Za-z_][A-Za-z0-9_]*$`). **Names only** — never the secret. | `env:EMBEDDING_API_KEY` |
+| `embedding_base_url` | OpenAI-compatible base URL (`/embeddings`, `/chat/completions`). Must be a valid URL. | — |
+| `embedding_model` | Embedding model id. | placeholder (no default — `text-embedding-3-small` is the suggested UI placeholder) |
+| `embedding_dimensions` | Embedding dimensions, capped at 2000 (pgvector HNSW index limit). Changing enqueues a non-destructive reindex generation (never a schema migration). | placeholder (no default — `1536` is the suggested UI placeholder) |
+| `embedding_api_key_ref` | `env:NAME` reference to the API-key env var (regex `^env:[A-Za-z_][A-Za-z0-9_]*$`). **Names only** — never the secret. | placeholder (no default — `env:EMBEDDING_API_KEY` is the suggested UI placeholder) |
 | `distill_model` | Completion model for harvest distillation. Required to enable ANY project's Brain (enable-gate → 422 `CONFIG` otherwise). | — |
 
 Unlike MCP/runner secrets (resolved supervisor-side), the Brain embedding client
@@ -157,7 +157,10 @@ runs in the **web tier** (`web/lib/brain/openai-compatible.ts`), so the secret
 web-tier env var (default `EMBEDDING_API_KEY`, see `.env.example`). The value MUST
 NEVER be stored in any column, returned in any response, logged, or streamed — the
 same `env:NAME` policy as `platform_mcp_servers` / `platform_acp_runners`. A runtime
-model **or dimension** switch is a reindex generation, not a migration. In SQLite
+model **or dimension** switch is a reindex generation, not a migration. Behavior
+policy constants live in `web/lib/brain/policy.ts` (not env, not DB) — including
+`ambientMinConfidence` 0.4 (ambient-inject floor) and `snapshotTtlDays` 30 (the
+`brain_snapshots` GC horizon). In SQLite
 mode the Brain is disabled (D3). See
 [`system-analytics/project-brain.md`](system-analytics/project-brain.md).
 

@@ -4,6 +4,7 @@ import { sql, type SQL } from "drizzle-orm";
 import pino from "pino";
 
 import { isBrainProvisioned } from "./guard";
+import { BRAIN_POLICY } from "./policy";
 
 import { getDb } from "@/lib/db/client";
 
@@ -13,7 +14,9 @@ import { getDb } from "@/lib/db/client";
 // items past `expires_at` (unless reinforced, which pushes expires_at out) flip
 // to `status='expired'` and drop out of recall. There is NO per-tick confidence
 // decrement, so running the sweep twice close together never double-penalizes
-// (E-4). The sweep swallows its own errors into the summary — never throws.
+// (E-4). Also prunes brain_snapshots older than BRAIN_POLICY.snapshotTtlDays —
+// audit evidence, not source of truth, and otherwise unbounded. The sweep
+// swallows its own errors into the summary — never throws.
 
 const log = pino({
   name: "brain:decay",
@@ -32,6 +35,7 @@ export function resetBrainDecayThrottle(): void {
 export interface BrainDecaySummary {
   ran: boolean;
   expired: number;
+  prunedSnapshots: number;
   errors: string[];
 }
 
@@ -43,7 +47,9 @@ export async function runBrainDecaySweep(
   opts: { db?: DecayDb; nowMs?: number; force?: boolean } = {},
 ): Promise<BrainDecaySummary> {
   // SQLite → Brain disabled (D3): the brain tables do not exist; no-op.
-  if (!isBrainProvisioned()) return { ran: false, expired: 0, errors: [] };
+  if (!isBrainProvisioned()) {
+    return { ran: false, expired: 0, prunedSnapshots: 0, errors: [] };
+  }
 
   const nowMs = opts.nowMs ?? Date.now();
 
@@ -52,26 +58,51 @@ export async function runBrainDecaySweep(
     lastSweepAtMs !== null &&
     nowMs - lastSweepAtMs < BRAIN_DECAY_THROTTLE_MS
   ) {
-    return { ran: false, expired: 0, errors: [] };
+    return { ran: false, expired: 0, prunedSnapshots: 0, errors: [] };
   }
 
   lastSweepAtMs = nowMs;
   const db = opts.db ?? (getDb() as unknown as DecayDb);
+  const errors: string[] = [];
+  let expired = 0;
+  let prunedSnapshots = 0;
 
   try {
     const r = await db.execute(sql`
-      UPDATE brain_items
-      SET status = 'expired', updated_at = now()
-      WHERE status = 'active' AND expires_at IS NOT NULL AND expires_at < now()
-      RETURNING id
+      WITH u AS (
+        UPDATE brain_items
+        SET status = 'expired', updated_at = now()
+        WHERE status = 'active' AND expires_at IS NOT NULL AND expires_at < now()
+        RETURNING 1
+      )
+      SELECT count(*)::int AS n FROM u
     `);
 
-    return { ran: true, expired: r.rows.length, errors: [] };
+    expired = Number(r.rows[0]?.n ?? 0);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
 
     log.error({ err: message }, "brain decay sweep failed");
-
-    return { ran: true, expired: 0, errors: [message] };
+    errors.push(message);
   }
+
+  try {
+    const pruned = await db.execute(sql`
+      WITH d AS (
+        DELETE FROM brain_snapshots
+        WHERE created_at < now() - ${sql.raw(String(BRAIN_POLICY.snapshotTtlDays))} * INTERVAL '1 day'
+        RETURNING 1
+      )
+      SELECT count(*)::int AS n FROM d
+    `);
+
+    prunedSnapshots = Number(pruned.rows[0]?.n ?? 0);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+
+    log.error({ err: message }, "brain snapshot prune failed");
+    errors.push(message);
+  }
+
+  return { ran: true, expired, prunedSnapshots, errors };
 }

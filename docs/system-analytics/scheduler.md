@@ -144,11 +144,15 @@ flowchart TD
     Sweep --> CostReconcile[reconcileTerminalCostRollups]
     Sweep --> Gc[workspace + revision GC]
     Sweep --> CapCleanup[runCapabilitiesCleanupSweep]
+    Sweep --> BrainDecay[runBrainDecaySweep — ADR-122, hourly self-throttle]
+    Sweep --> BrainReindex[runBrainReindexSweep — ADR-122 reindex worker]
     Keepalive --> Summary[aggregate result]
     Reconcile --> Summary
     CostReconcile --> Summary
     Gc --> Summary
     CapCleanup --> Summary
+    BrainDecay --> Summary
+    BrainReindex --> Summary
 ```
 
 **Cost-rollup backstop reconcile (ADR-117 — Implemented).**

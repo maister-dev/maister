@@ -5,9 +5,11 @@ import pino from "pino";
 import { z } from "zod";
 
 import { requireGlobalRole } from "@/lib/authz";
+import { assertBrainProvisioned } from "@/lib/brain/guard";
 import {
   ENV_REF_RE,
   getBrainSettings,
+  MAX_EMBEDDING_DIMENSIONS,
   updateBrainSettings,
 } from "@/lib/brain/settings";
 import { isMaisterError, MaisterError } from "@/lib/errors";
@@ -69,9 +71,17 @@ async function parseJson(req: NextRequest): Promise<unknown> {
 
 const patchSchema = z
   .object({
-    embeddingBaseUrl: z.string().min(1).nullable().optional(),
+    // A URL with embedded credentials would also leak into logs — require a
+    // parseable URL shape up front.
+    embeddingBaseUrl: z.string().url().nullable().optional(),
     embeddingModel: z.string().min(1).nullable().optional(),
-    embeddingDimensions: z.number().int().positive().nullable().optional(),
+    embeddingDimensions: z
+      .number()
+      .int()
+      .positive()
+      .max(MAX_EMBEDDING_DIMENSIONS)
+      .nullable()
+      .optional(),
     embeddingApiKeyRef: z.string().regex(ENV_REF_RE).nullable().optional(),
     distillModel: z.string().min(1).nullable().optional(),
   })
@@ -80,6 +90,8 @@ const patchSchema = z
 export async function GET(): Promise<NextResponse> {
   try {
     await requireGlobalRole("admin");
+    // SQLite → 409 PRECONDITION (E-11) before touching the settings row.
+    assertBrainProvisioned();
 
     return NextResponse.json(await getBrainSettings(), { status: 200 });
   } catch (err) {
@@ -90,6 +102,7 @@ export async function GET(): Promise<NextResponse> {
 export async function PATCH(req: NextRequest): Promise<NextResponse> {
   try {
     await requireGlobalRole("admin");
+    assertBrainProvisioned();
 
     const body = await parseJson(req);
     const parsed = patchSchema.safeParse(body);

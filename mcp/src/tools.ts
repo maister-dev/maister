@@ -71,7 +71,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
       type: "object",
       properties: {
         slug: { type: "string" },
-        query: { type: "string" },
+        query: { type: "string", minLength: 1, maxLength: 2000 },
         limit: { type: "integer", minimum: 1, maximum: 50 },
         kinds: {
           type: "array",
@@ -92,13 +92,17 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
       type: "object",
       properties: {
         slug: { type: "string" },
-        content: { type: "string" },
+        content: { type: "string", minLength: 1, maxLength: 32000 },
         kind: {
           type: "string",
           enum: ["lesson", "observation", "state_fact"],
         },
-        title: { type: "string" },
-        tags: { type: "array", items: { type: "string" } },
+        title: { type: "string", minLength: 1, maxLength: 512 },
+        tags: {
+          type: "array",
+          maxItems: 10,
+          items: { type: "string", minLength: 1, maxLength: 64 },
+        },
       },
       required: ["slug", "content", "kind"],
     },

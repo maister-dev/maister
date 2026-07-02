@@ -65,6 +65,13 @@ beforeEach(async () => {
     {},
     { db: ctx.db, client },
   );
+  // Ambient injection is floored at BRAIN_POLICY.ambientMinConfidence (0.4) —
+  // an item must have been reinforced at least once. Simulate the recurrence
+  // promotion directly (a near-dup reinforce is not reachable with orthogonal
+  // one-hot test vectors).
+  await ctx.db.execute(
+    sql`UPDATE brain_items SET confidence = 0.5 WHERE project_id = ${projectId}`,
+  );
 });
 
 describe("getAmbientBrainProjection (T4.3)", () => {
@@ -124,22 +131,27 @@ describe("getAmbientBrainProjection (T4.3)", () => {
 
   it("honors the project kill switch: disabled project → no recall, no snapshot even with brain_context = true (F1)", async () => {
     // A run can be launched with brain_context=true, then the admin disables the
-    // project's Brain. Ambient MUST re-check brain_enabled and no-op.
-    const disabledProject = await seedBrainProject(ctx.db, {
-      brainEnabled: false,
-    });
-    const disabledRun = await seedRun(disabledProject);
+    // project's Brain. Ambient MUST re-check brain_enabled and no-op. (Retain
+    // happens WHILE enabled — retain itself refuses on a disabled project.)
+    const laterDisabled = await seedBrainProject(ctx.db);
+    const disabledRun = await seedRun(laterDisabled);
 
     await retain(
-      disabledProject,
+      laterDisabled,
       { kind: "lesson", content: "should never be recalled" },
       {},
       { db: ctx.db, client },
     );
+    await ctx.db.execute(
+      sql`UPDATE brain_items SET confidence = 0.5 WHERE project_id = ${laterDisabled}`,
+    );
+    await ctx.db.execute(
+      sql`UPDATE projects SET brain_enabled = false WHERE id = ${laterDisabled}`,
+    );
 
     const brain = await getAmbientBrainProjection({
       db: ctx.db,
-      projectId: disabledProject,
+      projectId: laterDisabled,
       brainContext: true,
       taskTitle: "Fix",
       taskPrompt: "should never be recalled",
@@ -150,10 +162,73 @@ describe("getAmbientBrainProjection (T4.3)", () => {
     expect(brain).toBeUndefined();
 
     const snaps = await ctx.db.execute(
-      sql`SELECT count(*)::int AS n FROM brain_snapshots WHERE project_id = ${disabledProject}`,
+      sql`SELECT count(*)::int AS n FROM brain_snapshots WHERE project_id = ${laterDisabled}`,
     );
 
     expect(Number(snaps.rows[0]?.n)).toBe(0);
+  });
+
+  it("floors ambient injection at ambientMinConfidence: a fresh (never-reinforced) item is NOT injected", async () => {
+    // A brand-new project with one fresh retain at confidence₀ = 0.3 — below
+    // the 0.4 auto-injection floor ("recurrence promotes").
+    const freshProject = await seedBrainProject(ctx.db);
+    const freshRun = await seedRun(freshProject);
+
+    await retain(
+      freshProject,
+      { kind: "lesson", content: "unvetted fresh lesson" },
+      {},
+      { db: ctx.db, client },
+    );
+
+    const brain = await getAmbientBrainProjection({
+      db: ctx.db,
+      projectId: freshProject,
+      brainContext: true,
+      taskTitle: "Fix",
+      taskPrompt: "unvetted fresh lesson",
+      runId: freshRun,
+      client,
+    });
+
+    expect(brain).toBeUndefined();
+  });
+
+  it("NEVER throws: a failing db (even on the enablement check) degrades to undefined and negative-caches", async () => {
+    const boom = {
+      execute: async () => {
+        throw new Error("pool exhausted");
+      },
+    };
+
+    const args = {
+      projectId,
+      brainContext: true as const,
+      taskTitle: "Fix",
+      taskPrompt: "resolve",
+      runId,
+      client,
+    };
+
+    // Enablement query fails → undefined, not a thrown CRASH into the runner.
+    await expect(
+      getAmbientBrainProjection({ ...args, db: boom, nowMs: 1_000_000 }),
+    ).resolves.toBeUndefined();
+
+    // Within the failure TTL even a HEALTHY db is skipped (no retry storm on
+    // every node transition).
+    await expect(
+      getAmbientBrainProjection({ ...args, db: ctx.db, nowMs: 1_030_000 }),
+    ).resolves.toBeUndefined();
+
+    // Past the TTL, ambient recovers.
+    const recovered = await getAmbientBrainProjection({
+      ...args,
+      db: ctx.db,
+      nowMs: 1_000_000 + 61_000,
+    });
+
+    expect(recovered?.length).toBeGreaterThanOrEqual(1);
   });
 
   it("memoizes the query embedding across repeated calls (no re-embed)", async () => {
@@ -181,6 +256,9 @@ describe("getAmbientBrainProjection (T4.3)", () => {
     await getAmbientBrainProjection(argsBase);
 
     expect(embedCalls).toBe(1); // second call reused the memoized embedding
+    // ... and the repeat inject wrote NO duplicate snapshot: one row per
+    // (run, query_hash, model).
+    expect(await ambientSnapshotCount()).toBe(1);
   });
 });
 

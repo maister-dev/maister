@@ -1713,6 +1713,12 @@ paths:
                   nullable: true
                   allOf: [{ $ref: "#/components/schemas/AgentRunnerPolicy" }]
                   description: "(ADR-106) Instance `{autoApply, onBudgetBreach}` override; explicit `null` clears → fall back to the agent `recommended`."
+                canReadBrain:
+                  type: boolean
+                  description: "(ADR-122) Per-link Brain read axis — gates the agent token's `memory_recall`."
+                canWriteBrain:
+                  type: boolean
+                  description: "(ADR-122) Per-link Brain write axis — gates `memory_retain`; separate from read (read never grants write)."
                 schedules:
                   type: array
                   items: { $ref: "#/components/schemas/AgentScheduleBody" }
@@ -10829,6 +10835,12 @@ components:
           nullable: true
           allOf: [{ $ref: "#/components/schemas/AgentRunnerPolicy" }]
           description: "(ADR-106) Instance override of `{autoApply, onBudgetBreach}`; `null` → fall back to the agent `recommended`."
+        canReadBrain:
+          type: boolean
+          description: "(ADR-122) Per-link Brain read axis (default false)."
+        canWriteBrain:
+          type: boolean
+          description: "(ADR-122) Per-link Brain write axis (default false; read never grants write)."
         schedules:
           type: array
           items: { $ref: "#/components/schemas/AgentScheduleBody" }
@@ -11360,6 +11372,12 @@ components:
             Server-constrained to the launch-detected available-version set — an
             unknown key or an option not offered for that package → `CONFLICT`
             (409). Flow runs keep `runs.local_package_id` NULL.
+        brainContext:
+          type: boolean
+          nullable: true
+          description: |
+            (ADR-122 — Implemented) Opt this run into ambient Project-Brain
+            context (persisted on `runs.brain_context`). `null`/absent = off.
     PostRunResponse:
       type: object
       required: [runId, status]
@@ -15167,17 +15185,22 @@ components:
       properties:
         embeddingBaseUrl:
           type: string
+          format: uri
           nullable: true
-          description: OpenAI-compatible base URL for `/embeddings` + `/chat/completions`.
+          description: OpenAI-compatible base URL for `/embeddings` + `/chat/completions`. Must be a valid URL.
         embeddingModel:
           type: string
           nullable: true
-          description: Embedding model id (default `text-embedding-3-small`).
+          description: Embedding model id (no default — `text-embedding-3-small` is a suggested UI placeholder).
         embeddingDimensions:
           type: integer
           nullable: true
           minimum: 1
-          description: Embedding dimensions (default 1536). Changing enqueues a reindex.
+          maximum: 2000
+          description: |
+            Embedding dimensions (no default — `1536` is a suggested UI
+            placeholder). Capped at 2000 (the pgvector HNSW index limit).
+            Changing enqueues a reindex.
         embeddingApiKeyRef:
           type: string
           nullable: true

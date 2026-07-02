@@ -104,10 +104,12 @@ describe("AgentsAttachPanel (M34 D11)", () => {
 
     expect(html).toContain("agentsAttach.colPolicy");
     // policySummary() folds branch base + the {autoApply, onBudgetBreach}
-    // override into one terse cell.
+    // override + the brain axes into one terse cell.
     expect(html).toContain("develop");
     expect(html).toContain("auto:full");
     expect(html).toContain("budget:terminate_restorable");
+    // ADR-122: canReadBrain=true / canWriteBrain=false → the read-only chip.
+    expect(html).toContain("brain:r");
   });
 
   it("shows a disabled attachment and an em-dash policy when nothing is overridden", () => {
@@ -118,13 +120,17 @@ describe("AgentsAttachPanel (M34 D11)", () => {
           enabled: false,
           branchBase: null,
           executionPolicyOverride: null,
+          canReadBrain: false,
+          canWriteBrain: false,
         },
       ],
     });
 
-    // Enabled cell renders the em-dash; policy summary collapses to "—" too.
+    // Enabled cell renders the em-dash; policy summary collapses to "—" too
+    // (brain axes off → no brain chip either).
     expect(html).toContain("—");
     expect(html).not.toContain("auto:full");
+    expect(html).not.toContain("brain:r");
   });
 
   it("renders the attach picker for managers and hides actions otherwise", () => {

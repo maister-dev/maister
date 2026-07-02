@@ -240,3 +240,72 @@ describe("recall — hybrid ranking (T4.1)", () => {
     expect(onlyLessons.map((h) => h.content)).not.toContain(MID);
   });
 });
+
+describe("recall — review-fix hardening (lexical fallback, KNN scoping, kill switch)", () => {
+  it("returns a lexical-only item that has NO active-generation embedding (mid-reindex fallback)", async () => {
+    // An item whose embeddings live ONLY in a stale generation: the vector leg
+    // cannot see it, but its content shares tokens with the query — the lexical
+    // leg must cover it (the documented mid-reindex contract).
+    const itemId = randomUUID();
+
+    await ctx.db.execute(sql`
+      INSERT INTO brain_items (id, project_id, kind, title, content, status, confidence, content_hash)
+      VALUES (${itemId}, ${projectId}, 'lesson', 'stale-gen', 'the recall query zzqzz appears here verbatim', 'active', 0.3, md5(random()::text))
+    `);
+
+    const items = await recall(projectId, QUERY, {
+      db: ctx.db,
+      client,
+      limit: 10,
+    });
+
+    expect(items.map((i) => i.id)).toContain(itemId);
+  });
+
+  it("KNN candidate pool is project-scoped: a flood of near vectors in ANOTHER project cannot starve this one", async () => {
+    await retain(
+      projectId,
+      { kind: "lesson", content: NEAR },
+      {},
+      { db: ctx.db, client },
+    );
+
+    // Flood a sibling project with 60 items whose vectors are IDENTICAL to the
+    // query direction — pre-fix these globally out-ranked every candidate slot
+    // (knnLimit = max(limit*4, 20)) and emptied this project's vector leg.
+    const flood = await seedBrainProject(ctx.db);
+
+    for (let i = 0; i < 60; i++) {
+      const id = randomUUID();
+
+      await ctx.db.execute(sql`
+        INSERT INTO brain_items (id, project_id, kind, title, content, status, confidence, content_hash)
+        VALUES (${id}, ${flood}, 'lesson', 'flood', ${"flood item " + i}, 'active', 0.9, md5(random()::text))
+      `);
+      await ctx.db.execute(sql`
+        INSERT INTO brain_embeddings (id, item_id, split_ordinal, vector, embedding_provider,
+          embedding_model, embedding_dimensions, embedding_version, source_hash, content_hash)
+        VALUES (${randomUUID()}, ${id}, 0, ${`[${VMAP.get(QUERY)!.join(",")}]`}::vector,
+          'openai_compatible', ${TEST_EMBEDDING_MODEL}, ${DIMS}, ${`${TEST_EMBEDDING_MODEL}@${DIMS}`}, md5(random()::text), md5(random()::text))
+      `);
+    }
+
+    const items = await recall(projectId, QUERY, {
+      db: ctx.db,
+      client,
+      limit: 5,
+    });
+
+    // The vector leg still finds THIS project's near item.
+    expect(items.length).toBeGreaterThanOrEqual(1);
+    expect(items[0]?.content).toBe(NEAR);
+  });
+
+  it("refuses CONFIG on a brain-disabled project (kill switch enforced INSIDE the service)", async () => {
+    const disabled = await seedBrainProject(ctx.db, { brainEnabled: false });
+
+    await expect(
+      recall(disabled, QUERY, { db: ctx.db, client }),
+    ).rejects.toMatchObject({ code: "CONFIG" });
+  });
+});

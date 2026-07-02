@@ -233,4 +233,75 @@ describe("openai-compatible client (T2.1)", () => {
     expect(embeddingVersion("m", 768)).not.toBe(embeddingVersion("m", 1536));
     expect(embeddingVersion("n", 1536)).not.toBe(embeddingVersion("m", 1536));
   });
+
+  it("maps a deterministic 4xx (bad key / unknown model) to CONFIG without retrying", async () => {
+    const { fetchImpl, calls } = mockFetch([
+      jsonResponse({ error: "invalid api key" }, 401),
+    ]);
+    const client = makeEmbeddingClient(cfg({ fetchImpl }));
+
+    await expect(client.embed(["x"])).rejects.toMatchObject({ code: "CONFIG" });
+    // A deterministic rejection is never retried — one attempt only.
+    expect(calls).toHaveLength(1);
+  });
+
+  it("treats a malformed 200 body (HTML proxy) as transient → retried → EMBEDDING_UNAVAILABLE", async () => {
+    const html = new Response("<html>gateway</html>", {
+      status: 200,
+      headers: { "content-type": "text/html" },
+    });
+    const { fetchImpl, calls } = mockFetch([
+      html.clone(),
+      html.clone(),
+      html.clone(),
+    ]);
+    const client = makeEmbeddingClient(cfg({ fetchImpl }));
+
+    await expect(client.embed(["x"])).rejects.toMatchObject({
+      code: "EMBEDDING_UNAVAILABLE",
+    });
+    expect(calls).toHaveLength(3);
+  });
+
+  it("orders vectors by data[].index — an out-of-order gateway must not swap vectors", async () => {
+    const { fetchImpl } = mockFetch([
+      jsonResponse({
+        data: [
+          { index: 1, embedding: [0, 0, 0, 2] },
+          { index: 0, embedding: [0, 0, 0, 1] },
+        ],
+      }),
+    ]);
+    const client = makeEmbeddingClient(cfg({ fetchImpl }));
+
+    const out = await client.embed(["first", "second"]);
+
+    expect(out).toEqual([
+      [0, 0, 0, 1],
+      [0, 0, 0, 2],
+    ]);
+  });
+
+  it("rejects a non-finite vector component as CONFIG (never stored/cached)", async () => {
+    const { fetchImpl } = mockFetch([
+      jsonResponse({ data: [{ embedding: [1, null, 3, 4] }] }),
+    ]);
+    const client = makeEmbeddingClient(cfg({ fetchImpl }));
+
+    await expect(client.embed(["x"])).rejects.toMatchObject({ code: "CONFIG" });
+  });
+
+  it("complete forwards max_tokens as the cost bound", async () => {
+    const { fetchImpl, calls } = mockFetch([
+      jsonResponse({ choices: [{ message: { content: "{}" } }] }),
+    ]);
+    const client = makeEmbeddingClient(cfg({ fetchImpl }));
+
+    await client.complete("p", { json: true, maxTokens: 700 });
+
+    expect(JSON.parse(String(calls[0]?.init.body))).toMatchObject({
+      max_tokens: 700,
+      response_format: { type: "json_object" },
+    });
+  });
 });

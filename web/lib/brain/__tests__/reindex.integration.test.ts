@@ -218,3 +218,121 @@ describe("reindex worker (T5.5)", () => {
     });
   });
 });
+
+describe("reindex — review-fix hardening (poison item, kill switch)", () => {
+  it("a deterministic CONFIG rejection marks the job FAILED with the item recorded — no permanent stall", async () => {
+    await seedOldGenItems(["poison content", "healthy content"]);
+    const jobId = await enqueueJob();
+
+    // A provider that deterministically rejects (bad model / oversize input →
+    // 4xx → CONFIG). Pre-fix the job stayed `running` and re-hit the same item
+    // on every tick forever, one paid call per tick.
+    const rejecting = fakeEmbeddingClient({
+      model: "model-b",
+      dimensions: 1536,
+    });
+    const origEmbed = rejecting.embed.bind(rejecting);
+
+    rejecting.embed = async () => {
+      const { MaisterError } = await import("@/lib/errors");
+
+      throw new MaisterError(
+        "CONFIG",
+        "embedding provider rejected embed (status 400)",
+      );
+    };
+    void origEmbed;
+
+    const summary = await runBrainReindexSweep({
+      db: ctx.db as never,
+      client: rejecting,
+    });
+
+    expect(summary.errors.length).toBe(0); // failed ≠ sweep error; it is a job verdict
+
+    const job = await ctx.db.execute(
+      sql`SELECT status, resumable_cursor FROM brain_index_jobs WHERE id = ${jobId}`,
+    );
+
+    expect(job.rows[0]?.status).toBe("failed");
+    const cursor = job.rows[0]?.resumable_cursor as {
+      lastItemId?: string;
+      error?: string;
+    };
+
+    expect(cursor?.error).toContain("status 400");
+    expect(cursor?.lastItemId).toBeTruthy();
+
+    // The next tick does NOT pick the failed job back up.
+    const again = await runBrainReindexSweep({
+      db: ctx.db as never,
+      client: rejecting,
+    });
+
+    expect(again.jobsProcessed).toBe(0);
+  });
+
+  it("a transient failure leaves the job RUNNING for retry (unchanged contract)", async () => {
+    await seedOldGenItems(["transient content"]);
+    const jobId = await enqueueJob();
+
+    const flaky = fakeEmbeddingClient({ model: "model-b", dimensions: 1536 });
+
+    flaky.embed = async () => {
+      const { MaisterError } = await import("@/lib/errors");
+
+      throw new MaisterError("EMBEDDING_UNAVAILABLE", "outage");
+    };
+
+    const summary = await runBrainReindexSweep({
+      db: ctx.db as never,
+      client: flaky,
+    });
+
+    expect(summary.errors.length).toBe(1);
+
+    const job = await ctx.db.execute(
+      sql`SELECT status FROM brain_index_jobs WHERE id = ${jobId}`,
+    );
+
+    expect(job.rows[0]?.status).toBe("running");
+  });
+
+  it("skips jobs of brain-DISABLED projects (kill switch on the write side)", async () => {
+    // Isolate from jobs deliberately left running/failed by the prior cases —
+    // this test asserts sweep-level counters.
+    await ctx.db.execute(sql`DELETE FROM brain_index_jobs`);
+
+    await seedOldGenItems(["disabled project content"]);
+    const jobId = await enqueueJob();
+
+    await ctx.db.execute(
+      sql`UPDATE projects SET brain_enabled = false WHERE id = ${projectId}`,
+    );
+
+    const summary = await runBrainReindexSweep({
+      db: ctx.db as never,
+      client: modelB,
+    });
+
+    expect(summary.jobsProcessed).toBe(0);
+
+    const job = await ctx.db.execute(
+      sql`SELECT status FROM brain_index_jobs WHERE id = ${jobId}`,
+    );
+
+    // The job survives (stays queued) and resumes when re-enabled.
+    expect(job.rows[0]?.status).toBe("queued");
+
+    await ctx.db.execute(
+      sql`UPDATE projects SET brain_enabled = true WHERE id = ${projectId}`,
+    );
+
+    const resumed = await runBrainReindexSweep({
+      db: ctx.db as never,
+      client: modelB,
+    });
+
+    expect(resumed.jobsCompleted).toBe(1);
+  });
+});

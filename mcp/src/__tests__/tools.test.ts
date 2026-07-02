@@ -147,6 +147,76 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
     expect(parsedBody(init)).toBeUndefined();
   });
 
+  it("memory_recall → GET /api/v1/ext/projects/{slug}/memory with q rename + repeated kinds + conditional params", async () => {
+    mockOnce({ items: [] }, 200);
+
+    await dispatchTool({
+      name: "memory_recall",
+      args: {
+        slug: "demo",
+        query: "auth lessons",
+        limit: 7,
+        kinds: ["lesson", "state_fact"],
+        minConfidence: 0.5,
+      },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    const { url, init } = lastRequest();
+
+    expect(init.method).toBe("GET");
+    // `query` renames to `q`; kinds repeat; limit/minConfidence only when set.
+    expect(url).toBe(
+      `${BASE_URL}/api/v1/ext/projects/demo/memory?q=auth+lessons&limit=7&minConfidence=0.5&kinds=lesson&kinds=state_fact`,
+    );
+    expect(headerAuth(init)).toBe(AUTH);
+    expect(parsedBody(init)).toBeUndefined();
+  });
+
+  it("memory_recall omits limit/minConfidence/kinds when not provided", async () => {
+    mockOnce({ items: [] }, 200);
+
+    await dispatchTool({
+      name: "memory_recall",
+      args: { slug: "demo", query: "x" },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    const { url } = lastRequest();
+
+    expect(url).toBe(`${BASE_URL}/api/v1/ext/projects/demo/memory?q=x`);
+  });
+
+  it("memory_retain → POST /api/v1/ext/projects/{slug}/memory with only-defined body keys", async () => {
+    mockOnce({ reinforced: false, item: { id: "i1" } }, 200);
+
+    await dispatchTool({
+      name: "memory_retain",
+      args: {
+        slug: "demo",
+        content: "use pnpm, never npm",
+        kind: "state_fact",
+        tags: ["tooling"],
+      },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    const { url, init } = lastRequest();
+
+    expect(init.method).toBe("POST");
+    expect(url).toBe(`${BASE_URL}/api/v1/ext/projects/demo/memory`);
+    expect(headerAuth(init)).toBe(AUTH);
+    // `title` absent → key absent (not null); slug rides the path, never the body.
+    expect(parsedBody(init)).toEqual({
+      content: "use pnpm, never npm",
+      kind: "state_fact",
+      tags: ["tooling"],
+    });
+  });
+
   it("task_get → GET /api/v1/ext/projects/{slug}/tasks/{taskId}", async () => {
     mockOnce({ id: "task-1" }, 200);
 

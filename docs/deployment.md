@@ -71,7 +71,10 @@ the host (`restart: unless-stopped` handles the container itself).
 > **Project Brain (ADR-122).** The Postgres image is **`pgvector/pgvector:pg16`**
 > (pgvector-enabled) — the Brain's `CREATE EXTENSION vector` + HNSW indexes require
 > it. The swap from `postgres:16-alpine` is **data-compatible** (same PG16 data
-> dir), so an existing dev volume upgrades in place. If the Brain is never enabled
+> dir), so an existing dev volume upgrades in place. Note the alpine (musl) →
+> Debian (glibc) switch can change collation behavior — check
+> `SELECT datcollate FROM pg_database` and `REINDEX DATABASE` if it is not
+> C/C.UTF-8. If the Brain is never enabled
 > the extension is simply never created; in SQLite mode the Brain is disabled (D3).
 
 ## 4. Configure the environment

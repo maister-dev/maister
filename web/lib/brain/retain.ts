@@ -2,12 +2,13 @@ import "server-only";
 
 import type { BrainItemKind } from "./schema";
 
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 
 import { sql, type SQL } from "drizzle-orm";
 
 import { splitForEmbedding } from "./chunk";
-import { assertBrainProvisioned } from "./guard";
+import { sha256, toVectorLiteral } from "./codec";
+import { assertBrainProvisioned, assertProjectBrainEnabled } from "./guard";
 import {
   getBrainEmbeddingClient,
   type OpenAiCompatibleClient,
@@ -39,7 +40,9 @@ export interface RetainProvenance {
 }
 
 export interface RetainResult {
-  itemId: string;
+  // null ONLY on the redelivered-ledger-hit path when the first delivery
+  // reinforced/deduped (no source_domain_event_id row to look up).
+  itemId: string | null;
   reinforced: boolean;
 }
 
@@ -49,14 +52,6 @@ type TxLike = {
 type RetainDb = TxLike & {
   transaction<T>(fn: (tx: TxLike) => Promise<T>): Promise<T>;
 };
-
-function sha256(s: string): string {
-  return createHash("sha256").update(s).digest("hex");
-}
-
-function toVectorLiteral(v: number[]): string {
-  return `[${v.join(",")}]`;
-}
 
 function deriveTitle(content: string): string {
   const firstLine =
@@ -77,6 +72,11 @@ export async function retain(
   assertBrainProvisioned();
 
   const db = opts.db ?? (getDb() as unknown as RetainDb);
+
+  // Enablement belt INSIDE the service (F1 recurrence-proof): every future
+  // caller inherits the kill switch, and it runs before the paid embed call.
+  await assertProjectBrainEnabled(db, projectId);
+
   const client =
     opts.client ??
     (await getBrainEmbeddingClient(
@@ -130,7 +130,7 @@ export async function retain(
           `);
 
           return {
-            itemId: prior.rows[0] ? String(prior.rows[0].id) : "",
+            itemId: prior.rows[0] ? String(prior.rows[0].id) : null,
             reinforced: false,
           };
         }
@@ -148,13 +148,17 @@ export async function retain(
         return { itemId: String(dup.rows[0].id), reinforced: false };
       }
 
-      // Near-dup over the ACTIVE generation of this project's active items.
+      // Near-dup over the ACTIVE generation of this project's active items,
+      // SAME kind only — a state_fact must never be absorbed into a decaying
+      // lesson (their TTL semantics differ), and the response kind must be
+      // truthful.
       const near = await tx.execute(sql`
         SELECT e.item_id AS item_id,
                MIN((e.vector::vector(${dimRaw})) <=> ${queryVec}::vector(${dimRaw})) AS dist
         FROM brain_embeddings e
         JOIN brain_items i ON i.id = e.item_id
         WHERE i.project_id = ${projectId} AND i.status = 'active'
+          AND i.kind = ${kind}
           AND e.embedding_model = ${client.model}
           AND e.embedding_dimensions = ${n}
         GROUP BY e.item_id
@@ -166,7 +170,13 @@ export async function retain(
         | undefined;
 
       if (best && 1 - Number(best.dist) > BRAIN_POLICY.dedupCosineThreshold) {
-        await tx.execute(sql`
+        // Re-check `status` in the UPDATE predicate: the decay sweep runs on
+        // its own connection WITHOUT the advisory lock, so the match seen
+        // active above may be `expired` by now (READ COMMITTED re-evaluates
+        // the WHERE against the new row version). Reinforcing an expired row
+        // would consume the event (ledger row committed in this tx) while the
+        // lesson stays invisible to recall — fall through and INSERT instead.
+        const reinforcedRow = await tx.execute(sql`
           UPDATE brain_items
           SET confidence = LEAST(confidence + ${BRAIN_POLICY.reinforceConfidenceStep}, 1),
               reinforcement_count = reinforcement_count + 1,
@@ -174,10 +184,13 @@ export async function retain(
               expires_at = CASE WHEN expires_at IS NULL THEN NULL
                                 ELSE now() + ${sql.raw(String(BRAIN_POLICY.reinforceTtlDays))} * INTERVAL '1 day' END,
               updated_at = now()
-          WHERE id = ${best.item_id}
+          WHERE id = ${best.item_id} AND status = 'active'
+          RETURNING id
         `);
 
-        return { itemId: String(best.item_id), reinforced: true };
+        if (reinforcedRow.rows.length > 0) {
+          return { itemId: String(best.item_id), reinforced: true };
+        }
       }
 
       // Insert a new item + one embedding row per segment (this generation).

@@ -8,6 +8,10 @@ import { sql } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import {
+  assertBrainProvisioned,
+  assertProjectBrainEnabled,
+} from "@/lib/brain/guard";
 import { recall, writeBrainSnapshot } from "@/lib/brain/recall";
 import { RANKER_VERSION } from "@/lib/brain/recall-ranker";
 import { retain } from "@/lib/brain/retain";
@@ -22,6 +26,14 @@ const ENDPOINT_POST = "POST /api/v1/ext/projects/[slug]/memory";
 type RouteParams = { params: Promise<{ slug: string }> };
 
 const KINDS = ["lesson", "observation", "state_fact"] as const;
+
+// Input caps — every byte of `content`/`q` is a paid embedding token and a
+// stored vector row (content is split into one embedding per 8k chars). Caps
+// are mirrored in mcp/src/tools.ts TOOL_SPECS + both OpenAPI files.
+const MAX_QUERY_CHARS = 2000;
+const MAX_CONTENT_CHARS = 32_000;
+const MAX_TAGS = 10;
+const MAX_TAG_CHARS = 64;
 
 // FIXME(any): dual drizzle-orm peer-dep — the ext db handle is untyped upstream.
 
@@ -42,21 +54,6 @@ function forbidden(message: string): NextResponse {
   return NextResponse.json({ code: "UNAUTHORIZED", message }, { status: 403 });
 }
 
-// Every brain_* row carries project_id; the enable-gate refuses recall/retain on
-// a project whose Brain is off.
-async function assertBrainEnabled(db: Db, projectId: string): Promise<void> {
-  const r = await db.execute(
-    sql`SELECT brain_enabled FROM projects WHERE id = ${projectId}`,
-  );
-
-  if (!r.rows[0]?.brain_enabled) {
-    throw new MaisterError(
-      "CONFIG",
-      "Project Brain is not enabled for this project",
-    );
-  }
-}
-
 // For an agent token, the per-link axis must allow the operation. Scope +
 // project-role alone never suffice (Q5 / memory-poisoning guard).
 async function agentAxisAllows(
@@ -65,7 +62,11 @@ async function agentAxisAllows(
   projectId: string,
   axis: "read" | "write",
 ): Promise<boolean> {
-  if (actor.tokenKind !== "agent" || !actor.agentId) return true;
+  if (actor.tokenKind !== "agent") return true;
+  // Fail CLOSED on a malformed agent token: the DB CHECK forces agent_id NOT
+  // NULL for agent-kind tokens today, but the poisoning axis must not silently
+  // open if that invariant is ever relaxed.
+  if (!actor.agentId) return false;
 
   const r = await db.execute(
     axis === "read"
@@ -108,7 +109,10 @@ export async function GET(
     },
     async (ctx: ExtCtx) => {
       try {
-        await assertBrainEnabled(db, ctx.projectId);
+        // SQLite → 409 PRECONDITION (E-11) BEFORE any brain-table/projects
+        // query on a handle that has no `.execute`.
+        assertBrainProvisioned();
+        await assertProjectBrainEnabled(db, ctx.projectId);
 
         if (!(await agentAxisAllows(db, ctx.actor, ctx.projectId, "read"))) {
           return forbidden("agent token lacks can_read_brain for this project");
@@ -119,6 +123,13 @@ export async function GET(
 
         if (!q || q.trim().length === 0) {
           throw new MaisterError("CONFIG", "query parameter `q` is required");
+        }
+
+        if (q.length > MAX_QUERY_CHARS) {
+          throw new MaisterError(
+            "CONFIG",
+            `\`q\` must be at most ${MAX_QUERY_CHARS} characters`,
+          );
         }
 
         const limitRaw = url.searchParams.get("limit");
@@ -134,11 +145,20 @@ export async function GET(
           );
         }
 
-        const kinds = url.searchParams
-          .getAll("kinds")
-          .filter((k): k is BrainItemKind =>
-            (KINDS as readonly string[]).includes(k),
+        const kindsRaw = url.searchParams.getAll("kinds");
+        const unknownKinds = kindsRaw.filter(
+          (k) => !(KINDS as readonly string[]).includes(k),
+        );
+
+        // A typo must 422, not silently widen the result set to every kind.
+        if (unknownKinds.length > 0) {
+          throw new MaisterError(
+            "CONFIG",
+            `unknown \`kinds\` value(s): ${unknownKinds.join(", ")} (expected ${KINDS.join(" | ")})`,
           );
+        }
+
+        const kinds = kindsRaw as BrainItemKind[];
         const minRaw = url.searchParams.get("minConfidence");
         const minConfidence = minRaw != null ? Number(minRaw) : undefined;
 
@@ -166,8 +186,10 @@ export async function GET(
         const { actorType, actorId } = snapshotActor(ctx.actor);
 
         await writeBrainSnapshot(db, {
+          // Run-bound tokens (agent launches) bind their run here — the
+          // documented provenance contract.
+          runId: ctx.actor.boundRunId ?? null,
           projectId: ctx.projectId,
-          runId: null,
           actorType,
           actorId,
           trigger: "explicit",
@@ -206,10 +228,13 @@ export async function GET(
 
 const retainBodySchema = z
   .object({
-    content: z.string().min(1),
+    content: z.string().min(1).max(MAX_CONTENT_CHARS),
     kind: z.enum(KINDS),
     title: z.string().min(1).max(512).optional(),
-    tags: z.array(z.string()).optional(),
+    tags: z
+      .array(z.string().min(1).max(MAX_TAG_CHARS))
+      .max(MAX_TAGS)
+      .optional(),
   })
   .strict();
 
@@ -231,7 +256,10 @@ export async function POST(
     },
     async (ctx: ExtCtx) => {
       try {
-        await assertBrainEnabled(db, ctx.projectId);
+        // SQLite → 409 PRECONDITION (E-11) BEFORE any brain-table/projects
+        // query on a handle that has no `.execute`.
+        assertBrainProvisioned();
+        await assertProjectBrainEnabled(db, ctx.projectId);
 
         if (!(await agentAxisAllows(db, ctx.actor, ctx.projectId, "write"))) {
           return forbidden(

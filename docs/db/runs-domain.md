@@ -118,6 +118,7 @@ erDiagram
         jsonb budget_state "ADR-101 0061: per-run mutable {ceilingOverride?,notified?} raise-and-resume override + per-scope warn rung, nullable"
         jsonb agent_config "Implemented ADR-111 0071: immutable resolved agent-config snapshot at spawn, nullable"
         timestamp cost_reconciled_at "Implemented ADR-117 0084: durable system_sweep cost-reconcile attempt marker, nullable"
+        boolean brain_context "Implemented ADR-122 0088: ambient Project-Brain launch axis, nullable — null = off"
         timestamp started_at
         timestamp ended_at
     }

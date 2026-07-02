@@ -2470,9 +2470,9 @@ idempotent.
 }
 ```
 
-## Project Brain tables (Implemented — ADR-122, brain lineage migration `0001`)
+## Project Brain tables (Implemented — ADR-122, brain lineage migrations `0001`–`0002`)
 
-**(Designed, Sub-project A.)** The Project Brain owned tier lives in `brain_*`
+The Project Brain owned tier lives in `brain_*`
 tables provisioned by a **separate migration lineage** (`web/lib/db/brain-migrations`,
 own `_journal.json` + own ledger `__drizzle_brain_migrations`), on a pgvector-enabled
 Postgres image only (SQLite → Brain disabled, D3). The shared-table columns that
@@ -2517,7 +2517,9 @@ writes a NEW `embedding_version` generation; old rows are never mutated. The
 `vector` column is **dimension-untyped**; HNSW rides per-generation expression
 indexes (`(vector::vector(N)) vector_cosine_ops WHERE embedding_model = M AND
 embedding_dimensions = N`) created by `ensureEmbeddingIndex(model, N)` — NOT in the
-migration.
+migration. The UNIQUE `brain_embeddings_generation_uq` `(item_id, split_ordinal,
+embedding_model, embedding_dimensions)` (brain migration `0002`) makes a
+concurrent/double re-embed insert a no-op (`ON CONFLICT DO NOTHING`).
 
 ```ts
 {
@@ -2555,7 +2557,9 @@ CASCADE for actor-only non-run-bound snapshots).
 
 ### `brain_index_jobs`
 
-Reindex work consumed by the sweep-driven worker; resumable via `resumable_cursor`.
+Reindex work consumed by the sweep-driven worker; resume derives from the
+missing-generation worklist (`resumable_cursor` records progress, plus
+`{lastItemId, error}` on failure).
 
 ```ts
 {
@@ -2564,8 +2568,24 @@ Reindex work consumed by the sweep-driven worker; resumable via `resumable_curso
   reason,                          // 'model_switch' | 'manual' (A)
   status,                          // 'queued' | 'running' | 'completed' | 'failed'
   progress,                        // integer NOT NULL DEFAULT 0
-  resumableCursor?,                // jsonb resume point
+  resumableCursor?,                // jsonb progress/observability metadata
   createdAt
+}
+```
+
+### `brain_harvested_events`
+
+Harvest idempotency ledger (brain migration `0002`): one row per consumed
+`domain_events` id regardless of the retain outcome (insert / reinforce /
+exact-dup), written in `retain`'s transaction — a redelivered event that
+reinforced a near-dup never double-counts confidence/TTL. No FK on
+`domain_event_id` (the marker outlives `domain_events` GC).
+
+```ts
+{
+  projectId,                       // composite PK; FK projects(id) ON DELETE CASCADE
+  domainEventId,                   // composite PK; bigint, NO FK
+  harvestedAt                      // timestamptz NOT NULL DEFAULT now()
 }
 ```
 
@@ -2578,8 +2598,8 @@ Reindex work consumed by the sweep-driven worker; resumable via `resumable_curso
   `CONFIG` unless platform embedding + `distill_model` are set.
 - `agent_project_links` += `can_read_brain`, `can_write_brain` (boolean NOT NULL
   DEFAULT false) — recall vs retain axes (separate; read never grants write).
-- `runs` += `brain_context` (boolean NULL — null = inherit flow/agent config; the
-  persisted launch-time decision).
+- `runs` += `brain_context` (boolean NULL — null = off (default) in A, a
+  flow/agent-level default is reserved; the persisted launch-time decision).
 
 ## Planned roadmap persistence
 

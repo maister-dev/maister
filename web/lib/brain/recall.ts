@@ -2,11 +2,12 @@ import "server-only";
 
 import type { BrainItemKind } from "./schema";
 
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 
 import { sql, type SQL } from "drizzle-orm";
 
-import { assertBrainProvisioned } from "./guard";
+import { sha256 } from "./codec";
+import { assertBrainProvisioned, assertProjectBrainEnabled } from "./guard";
 import {
   getBrainEmbeddingClient,
   type OpenAiCompatibleClient,
@@ -49,6 +50,11 @@ export async function recall(
   assertBrainProvisioned();
 
   const db = opts.db ?? (getDb() as unknown as RecallDb);
+
+  // Enablement belt INSIDE the service (F1 recurrence-proof): every future
+  // caller inherits the kill switch, and it runs before the paid embed call.
+  await assertProjectBrainEnabled(db, projectId);
+
   const client =
     opts.client ??
     (await getBrainEmbeddingClient(
@@ -72,7 +78,7 @@ export async function recall(
 }
 
 export function queryHash(query: string): string {
-  return createHash("sha256").update(query).digest("hex");
+  return sha256(query);
 }
 
 export interface SnapshotInput {

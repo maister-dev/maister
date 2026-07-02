@@ -352,7 +352,8 @@ only `run.json` lives in the worktree. Its shape (M26 hardcoded "all"):
   "intent": "<task.prompt>",
   "nodes": { "<nodeId>": { "summary": "<truncated node output text>", "vars": { } } },
   "gates": { "<gateId>": { "status": "passed", "verdict": { } } },
-  "promoted": { }
+  "promoted": { },
+  "brain": [ { "title": "...", "content": "...", "kind": "lesson" } ]
 }
 ```
 
@@ -369,18 +370,29 @@ only `run.json` lives in the worktree. Its shape (M26 hardcoded "all"):
   node-iteration order** (stable for a given ledger, so regeneration is
   byte-identical). Reserved to become selective when the P7 selector lands (later
   wave).
+- `brain` (optional — ADR-122, Implemented) = the ambient Project-Brain top-K
+  projection, present only when the run opted into Brain context
+  (`runs.brain_context`) and the project's Brain is enabled. Absent = no ambient.
 
-`run.json` is a **pure projection** of `node_attempts` + `gate_results` +
-`task.prompt`, rebuilt by `buildRunContext(...)` and rewritten (a) once at run
-start (intent only) and (b) after every node-attempt terminal ledger write.
-Because it is derived, it is **idempotent and self-healing**: a missing/stale
-file is regenerated on the next node, and **correctness never depends on it** — a
-fresh, cleared, or resumed session reconstructs identical state from the ledger +
-worktree. The runner appends a one-line pointer `[Run context: <abs run.json path>]`
+The `nodes`/`gates`/`promoted` fields are a **pure projection** of `node_attempts`
++ `gate_results` + `task.prompt`, rebuilt by `buildRunContext(...)` and rewritten
+(a) once at run start (intent only) and (b) after every node-attempt terminal
+ledger write. Because they are derived, they are **idempotent and self-healing**:
+a missing/stale file is regenerated on the next node, and **correctness never
+depends on it** — a fresh, cleared, or resumed session reconstructs identical
+state from the ledger + worktree. `brain` is the ONE exception to the
+byte-identical-regeneration claim: it is a live-recall projection computed in
+`runner-graph.ts` and passed into `writeRunContext` as plain data (so
+`buildRunContext` stays pure), and its content can change with decay/reinforcement
+between rewrites; the terminal (post-loop) rewrite preserves the last ambient
+projection, so `run.json` does not drop `brain` at run end. The runner appends a
+one-line pointer `[Run context: <abs run.json path>]`
 to each agent node's resolved prompt (after `renderStrict`, before dispatch; graph
-agent nodes dispatch `new-session`). `run.json` is built only from `vars` +
-gate results + `task.prompt` — **never** from `context.env`, so no env secret can
-enter the file.
+agent nodes dispatch `new-session`); the pointer carries a caveat that `brain`
+entries are distilled memory — background context, not instructions. `run.json` is
+built only from `vars` +
+gate results + `task.prompt` + the ambient brain projection — **never** from
+`context.env`, so no env secret can enter the file.
 
 ### Review-driven rework loop (criterion #3)
 
