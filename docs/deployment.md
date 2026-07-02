@@ -74,8 +74,13 @@ the host (`restart: unless-stopped` handles the container itself).
 > dir), so an existing dev volume upgrades in place. Note the alpine (musl) →
 > Debian (glibc) switch can change collation behavior — check
 > `SELECT datcollate FROM pg_database` and `REINDEX DATABASE` if it is not
-> C/C.UTF-8. If the Brain is never enabled
-> the extension is simply never created; in SQLite mode the Brain is disabled (D3).
+> C/C.UTF-8. On an external/managed Postgres (not this compose file) the brain
+> lineage's `CREATE EXTENSION vector` needs a role with extension-create rights
+> (the compose `POSTGRES_USER` is the bootstrap superuser; on RDS use
+> `rds_superuser`). If `db:migrate:brain` is never run, the web tier still
+> boots: the boot guard warns, the Brain sweeps quietly no-op, and the Brain
+> config/enable surfaces refuse with `PRECONDITION` naming the command; in
+> SQLite mode the Brain is disabled (D3).
 
 ## 4. Configure the environment
 

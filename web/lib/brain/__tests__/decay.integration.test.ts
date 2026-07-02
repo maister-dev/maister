@@ -12,6 +12,7 @@ import {
 } from "./helpers";
 
 import { resetBrainDecayThrottle, runBrainDecaySweep } from "@/lib/brain/decay";
+import { resetBrainSchemaProbe } from "@/lib/brain/guard";
 import { recall } from "@/lib/brain/recall";
 
 // T3.3 — the throttled decay sweep (real pgvector). Only touches brain_items;
@@ -130,6 +131,25 @@ describe("runBrainDecaySweep (T3.3)", () => {
     expect(first.expired).toBe(1);
     expect(again.expired).toBe(0); // already expired → excluded by WHERE status='active'
     expect(await statusOf(item)).toBe("expired");
+  });
+
+  it("is a QUIET no-op on Postgres without the brain lineage applied (upgrade forgot db:migrate:brain)", async () => {
+    resetBrainSchemaProbe();
+    // A db whose to_regclass probe reports the table missing — the sweep must
+    // return ran:false with NO error (never a recurring 42P01 per tick).
+    const unmigrated = {
+      execute: async () => ({ rows: [{ t: null }] }),
+    };
+
+    const summary = await runBrainDecaySweep({ db: unmigrated, force: true });
+
+    expect(summary).toEqual({
+      ran: false,
+      expired: 0,
+      prunedSnapshots: 0,
+      errors: [],
+    });
+    resetBrainSchemaProbe();
   });
 
   it("swallows a DB error into the summary (never throws)", async () => {

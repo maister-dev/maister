@@ -3,7 +3,11 @@ import "server-only";
 import { sql, type SQL } from "drizzle-orm";
 import pino from "pino";
 
-import { isBrainProvisioned } from "./guard";
+import {
+  brainSchemaMissingWarnOnce,
+  isBrainProvisioned,
+  isBrainSchemaApplied,
+} from "./guard";
 import { BRAIN_POLICY } from "./policy";
 
 import { getDb } from "@/lib/db/client";
@@ -66,6 +70,26 @@ export async function runBrainDecaySweep(
   const errors: string[] = [];
   let expired = 0;
   let prunedSnapshots = 0;
+
+  // Postgres WITHOUT the brain lineage applied (upgrade ran db:migrate only):
+  // quiet no-op with ONE warn — never a recurring 42P01 error per sweep.
+  try {
+    if (!(await isBrainSchemaApplied(db))) {
+      if (brainSchemaMissingWarnOnce()) {
+        log.warn(
+          "brain lineage not applied — decay/reindex sweeps are no-ops until `pnpm db:migrate:brain` runs",
+        );
+      }
+
+      return { ran: false, expired: 0, prunedSnapshots: 0, errors: [] };
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+
+    log.error({ err: message }, "brain decay sweep failed");
+
+    return { ran: true, expired: 0, prunedSnapshots: 0, errors: [message] };
+  }
 
   try {
     const r = await db.execute(sql`

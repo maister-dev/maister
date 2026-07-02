@@ -2,9 +2,13 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   assertBrainProvisioned,
+  assertBrainSchemaApplied,
   assertProjectBrainEnabled,
+  brainSchemaMissingWarnOnce,
   isBrainProvisioned,
+  isBrainSchemaApplied,
   isProjectBrainEnabled,
+  resetBrainSchemaProbe,
 } from "@/lib/brain/guard";
 import { isMaisterError } from "@/lib/errors";
 
@@ -75,5 +79,69 @@ describe("project brain kill-switch guard", () => {
     await expect(
       assertProjectBrainEnabled(stubDb(true), "p1"),
     ).resolves.toBeUndefined();
+  });
+});
+
+// Postgres-with-no-brain-tables (an upgrade that ran db:migrate but not
+// db:migrate:brain) must be a first-class, quiet state — not recurring 42P01s.
+describe("brain schema-applied probe", () => {
+  const original = process.env.DB_URL;
+
+  afterEach(() => {
+    resetBrainSchemaProbe();
+    if (original === undefined) delete process.env.DB_URL;
+    else process.env.DB_URL = original;
+  });
+
+  function probeDb(applied: boolean, counter?: { n: number }) {
+    return {
+      execute: async () => {
+        if (counter) counter.n++;
+
+        return { rows: [{ t: applied ? "brain_items" : null }] };
+      },
+    };
+  }
+
+  it("false when to_regclass finds no brain_items; true when it does", async () => {
+    resetBrainSchemaProbe();
+    expect(await isBrainSchemaApplied(probeDb(false))).toBe(false);
+    expect(await isBrainSchemaApplied(probeDb(true))).toBe(true);
+  });
+
+  it("memoizes a POSITIVE probe (no re-query) but re-probes after a negative", async () => {
+    resetBrainSchemaProbe();
+    const misses = { n: 0 };
+    const hits = { n: 0 };
+
+    await isBrainSchemaApplied(probeDb(false, misses));
+    await isBrainSchemaApplied(probeDb(false, misses));
+    expect(misses.n).toBe(2); // negative is re-probed (migrate can run mid-process)
+
+    await isBrainSchemaApplied(probeDb(true, hits));
+    await isBrainSchemaApplied(probeDb(true, hits));
+    expect(hits.n).toBe(1); // positive is memoized
+  });
+
+  it("assertBrainSchemaApplied names the exact command in PRECONDITION", async () => {
+    resetBrainSchemaProbe();
+    let thrown: unknown;
+
+    try {
+      await assertBrainSchemaApplied(probeDb(false));
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(isMaisterError(thrown) && thrown.code).toBe("PRECONDITION");
+    expect(isMaisterError(thrown) && thrown.message).toContain(
+      "db:migrate:brain",
+    );
+  });
+
+  it("brainSchemaMissingWarnOnce fires exactly once per process", () => {
+    resetBrainSchemaProbe();
+    expect(brainSchemaMissingWarnOnce()).toBe(true);
+    expect(brainSchemaMissingWarnOnce()).toBe(false);
   });
 });

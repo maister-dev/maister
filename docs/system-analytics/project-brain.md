@@ -324,6 +324,14 @@ E-13, E-14 and the source-indexing half of E-7 are **(Phase 2 — Sub-projects B
 
 ## Edge cases
 
+- **Postgres without the brain lineage applied** (an upgrade ran `db:migrate`
+  but not `db:migrate:brain`): the boot guard warns with the exact command;
+  the decay/reindex sweeps probe `to_regclass('public.brain_items')` and
+  quietly no-op (one warn per process — never a recurring 42P01 per tick,
+  including for installs that never enable the Brain); the admin Brain-settings
+  PATCH and the project enable-gate refuse `PRECONDITION` naming the command.
+  A positive probe is memoized per process; a negative one re-probes, so
+  running the migration takes effect without a web restart.
 - **Embedding provider outage** (timeout / 429 / 5xx / network / malformed 200 body,
   past bounded retry) → `MaisterError("EMBEDDING_UNAVAILABLE")` (HTTP 503,
   retryable). On the harvest path this is **transient**: the consumer throws, the

@@ -6,7 +6,10 @@ import pino from "pino";
 import { z } from "zod";
 
 import { requireActiveSession, requireProjectAction } from "@/lib/authz";
-import { assertBrainProvisioned } from "@/lib/brain/guard";
+import {
+  assertBrainProvisioned,
+  assertBrainSchemaApplied,
+} from "@/lib/brain/guard";
 import {
   getBrainSettings,
   isBrainFullyConfigured,
@@ -146,8 +149,11 @@ export async function PATCH(
     // ADR-122 enable-gate: a project can never be enabled into an
     // unharvest-able state — platform embedding config + distill_model first.
     if (body.brainEnabled === true) {
-      // SQLite → 409 PRECONDITION (E-11) before the settings query.
+      // SQLite → 409 PRECONDITION (E-11) before the settings query; a Postgres
+      // that never ran `db:migrate:brain` refuses with the exact command
+      // instead of letting harvest/recall hit raw 42P01s post-enable.
       assertBrainProvisioned();
+      await assertBrainSchemaApplied(db);
 
       const brainSettings = await getBrainSettings(db);
 

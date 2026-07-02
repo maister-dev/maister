@@ -58,3 +58,50 @@ export async function assertProjectBrainEnabled(
     );
   }
 }
+
+// The dialect guard says "this is Postgres"; this probe says "the brain
+// lineage has actually been APPLIED". An install that ran `db:migrate` but not
+// `db:migrate:brain` is Postgres-with-no-brain-tables: the sweeps must quietly
+// no-op there (not 42P01-error on every scheduler tick, even for installs that
+// never enable the Brain), and the config surfaces must refuse with the exact
+// command. A positive probe is memoized per process; a negative one re-probes
+// (one cheap SELECT per sweep tick) so running `db:migrate:brain` takes effect
+// without a web restart.
+let brainSchemaApplied = false;
+let brainSchemaWarned = false;
+
+// Test hook.
+export function resetBrainSchemaProbe(): void {
+  brainSchemaApplied = false;
+  brainSchemaWarned = false;
+}
+
+export async function isBrainSchemaApplied(db: GuardDb): Promise<boolean> {
+  if (brainSchemaApplied) return true;
+
+  const r = await db.execute(
+    sql`SELECT to_regclass('public.brain_items') AS t`,
+  );
+
+  if (r.rows[0]?.t != null) brainSchemaApplied = true;
+
+  return brainSchemaApplied;
+}
+
+// One warn per process for the missing-lineage state — callers use it to log
+// once instead of every tick.
+export function brainSchemaMissingWarnOnce(): boolean {
+  if (brainSchemaWarned) return false;
+  brainSchemaWarned = true;
+
+  return true;
+}
+
+export async function assertBrainSchemaApplied(db: GuardDb): Promise<void> {
+  if (!(await isBrainSchemaApplied(db))) {
+    throw new MaisterError(
+      "PRECONDITION",
+      "Project Brain migration lineage is not applied — run `pnpm --filter maister-web db:migrate:brain` (after `db:migrate`)",
+    );
+  }
+}

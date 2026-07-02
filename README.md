@@ -43,12 +43,14 @@ git clone <repo-url> mAIster
 cd mAIster
 pre-commit install                                # writes .git/hooks/pre-commit
 pnpm install --frozen-lockfile                    # monorepo root install
+cp .env.example .env                              # then fill in DB_URL etc.
 
-# Run web + supervisor + postgres via compose (recommended):
-docker compose up -d
-docker compose logs -f                            # http://localhost:3000
+docker compose up -d                              # Postgres only (pgvector/pgvector:pg16)
+pnpm --filter maister-web db:migrate              # main migration lineage
+pnpm --filter maister-web db:migrate:brain        # Project-Brain lineage (ADR-122); no-op on SQLite
+pnpm --filter maister-web db:seed                 # admin user + dev seed
 
-# Or run the pieces standalone (two terminals):
+# web + supervisor run on the HOST (ADR-023 — they spawn agent CLIs), two terminals:
 pnpm --filter maister-web dev                     # http://localhost:3000
 pnpm --filter @maister/supervisor dev             # http://localhost:7777
 ```

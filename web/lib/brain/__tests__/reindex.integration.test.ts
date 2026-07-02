@@ -14,6 +14,7 @@ import {
 import { embeddingIndexName } from "@/lib/brain/embedding-index";
 import { recall } from "@/lib/brain/recall";
 import { retain } from "@/lib/brain/retain";
+import { resetBrainSchemaProbe } from "@/lib/brain/guard";
 import { runBrainReindexSweep } from "@/lib/brain/reindex";
 
 // T5.5 — the reindex worker (real pgvector). A model OR dimension switch drains
@@ -220,6 +221,30 @@ describe("reindex worker (T5.5)", () => {
 });
 
 describe("reindex — review-fix hardening (poison item, kill switch)", () => {
+  it("is a QUIET no-op on Postgres without the brain lineage applied", async () => {
+    resetBrainSchemaProbe();
+    const unmigrated = {
+      execute: async () => ({ rows: [{ t: null }] }),
+      transaction: async () => {
+        throw new Error("must not reach a transaction");
+      },
+    };
+
+    const summary = await runBrainReindexSweep({
+      db: unmigrated as never,
+      client: modelB,
+    });
+
+    expect(summary).toEqual({
+      ran: false,
+      jobsProcessed: 0,
+      jobsCompleted: 0,
+      itemsEmbedded: 0,
+      errors: [],
+    });
+    resetBrainSchemaProbe();
+  });
+
   it("a deterministic CONFIG rejection marks the job FAILED with the item recorded — no permanent stall", async () => {
     await seedOldGenItems(["poison content", "healthy content"]);
     const jobId = await enqueueJob();

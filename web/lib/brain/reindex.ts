@@ -8,7 +8,11 @@ import pino from "pino";
 import { splitForEmbedding } from "./chunk";
 import { sha256, toVectorLiteral } from "./codec";
 import { ensureEmbeddingIndex } from "./embedding-index";
-import { isBrainProvisioned } from "./guard";
+import {
+  brainSchemaMissingWarnOnce,
+  isBrainProvisioned,
+  isBrainSchemaApplied,
+} from "./guard";
 import {
   getBrainEmbeddingClient,
   type OpenAiCompatibleClient,
@@ -218,6 +222,24 @@ export async function runBrainReindexSweep(
   const db = opts.db ?? (getDb() as unknown as ReindexDb);
   const maxItems = opts.maxItemsPerJob ?? REINDEX_MAX_ITEMS_PER_JOB;
   const errors: string[] = [];
+
+  // Postgres WITHOUT the brain lineage applied (upgrade ran db:migrate only):
+  // quiet no-op with ONE warn — never a recurring 42P01 error per tick.
+  if (!(await isBrainSchemaApplied(db))) {
+    if (brainSchemaMissingWarnOnce()) {
+      log.warn(
+        "brain lineage not applied — decay/reindex sweeps are no-ops until `pnpm db:migrate:brain` runs",
+      );
+    }
+
+    return {
+      ran: false,
+      jobsProcessed: 0,
+      jobsCompleted: 0,
+      itemsEmbedded: 0,
+      errors: [],
+    };
+  }
 
   // Skip jobs of brain-DISABLED projects (the kill switch applies to the write
   // side too — no paid re-embedding for a project whose Brain is off). The rows

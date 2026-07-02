@@ -4,7 +4,11 @@ import { sql, type SQL } from "drizzle-orm";
 import pino from "pino";
 
 import { ensureEmbeddingIndex } from "./embedding-index";
-import { isBrainProvisioned } from "./guard";
+import {
+  assertBrainSchemaApplied,
+  isBrainProvisioned,
+  isBrainSchemaApplied,
+} from "./guard";
 
 import { getDb } from "@/lib/db/client";
 import { MaisterError } from "@/lib/errors";
@@ -132,6 +136,7 @@ export async function reconcileBrainIndexJobs(
   opts: { projectId?: string; reason?: "model_switch" | "manual" } = {},
 ): Promise<number> {
   if (!isBrainProvisioned()) return 0;
+  if (!(await isBrainSchemaApplied(db))) return 0;
 
   const s = await getBrainSettings(db);
 
@@ -158,6 +163,12 @@ export async function updateBrainSettings(
   db?: SettingsDb,
 ): Promise<BrainSettings> {
   const handle = db ?? (getDb() as unknown as SettingsDb);
+
+  // The settings row itself lives in the MAIN lineage, but the write path
+  // reconciles brain_index_jobs and asserts the HNSW index — on a Postgres
+  // that never ran `db:migrate:brain` that would surface as a raw 42P01
+  // (500). Refuse with the exact command instead (PRECONDITION → 409).
+  if (isBrainProvisioned()) await assertBrainSchemaApplied(handle);
 
   const apply = async (tx: SettingsTx): Promise<BrainSettings> => {
     const locked = await tx.execute(

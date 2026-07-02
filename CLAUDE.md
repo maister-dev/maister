@@ -40,6 +40,9 @@ Backend split:
 
 ```bash
 pnpm install --frozen-lockfile
+docker compose up -d                        # Postgres (pgvector/pgvector:pg16)
+pnpm --filter maister-web db:migrate        # main migration lineage
+pnpm --filter maister-web db:migrate:brain  # brain lineage (ADR-122); no-op on SQLite
 pnpm --filter @maister/supervisor dev  # http://localhost:7777
 pnpm --filter maister-web dev          # http://localhost:3000
 pnpm --filter maister-web lint
