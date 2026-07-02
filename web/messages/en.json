@@ -3464,6 +3464,9 @@
     "budgetEscalate": "Escalate (pause, hold slot)",
     "budgetTerminate": "Terminate (fail)",
     "budgetTerminateRestorable": "Terminate, restorable (checkpoint, free slot)",
+    "brainSection": "Project Brain access",
+    "brainRead": "Can read memory (recall)",
+    "brainWrite": "Can write memory (retain)",
     "colConfig": "Config",
     "configuration": "Configuration"
   }

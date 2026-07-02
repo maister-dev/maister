@@ -581,6 +581,8 @@ async function AgentsAttachPanelLoader({
         branchBase: row.branchBase,
         executionPolicyOverride: row.executionPolicyOverride,
         config: row.config,
+        canReadBrain: row.canReadBrain,
+        canWriteBrain: row.canWriteBrain,
         schedules: row.schedules,
         agent: {
           id: row.agent.id as string,

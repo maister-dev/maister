@@ -54,6 +54,8 @@ const CONFIG_SCHEMA: AgentConfigParam[] = [
 function buildRow(over?: {
   configSchema?: AgentConfigParam[] | null;
   config?: Record<string, unknown> | null;
+  canReadBrain?: boolean;
+  canWriteBrain?: boolean;
 }): AttachedAgentRow {
   const recommended: AgentRecommendedView | null = null;
 
@@ -64,6 +66,8 @@ function buildRow(over?: {
     branchBase: null,
     executionPolicyOverride: null,
     config: over?.config ?? null,
+    canReadBrain: over?.canReadBrain ?? false,
+    canWriteBrain: over?.canWriteBrain ?? false,
     schedules: [],
     agent: {
       id: "core:triager",
@@ -214,6 +218,41 @@ describe("AttachEditModal configuration section (ADR-111)", () => {
     expect(
       document.body.querySelector('[data-testid="config-section"]'),
     ).toBeNull();
+  });
+
+  it("seeds the Brain-axis toggles and folds them into the SAME aggregating PATCH (ADR-122)", async () => {
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const fetchMock = vi.fn<FetchLike>(async (input, init) => {
+      calls.push({
+        url: String(input),
+        body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>,
+      });
+
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    // read granted, write not — the two axes are independent.
+    render(buildRow({ configSchema: null, canReadBrain: true }));
+
+    const read = findByTestId<HTMLInputElement>("brain-read");
+    const write = findByTestId<HTMLInputElement>("brain-write");
+
+    expect(read.checked).toBe(true);
+    expect(write.checked).toBe(false);
+
+    // Grant write too, leaving read on.
+    await toggleCheckbox(write);
+
+    await click(findButton("agentsAttach.save"));
+    await flush();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(calls[0].body.canReadBrain).toBe(true);
+    expect(calls[0].body.canWriteBrain).toBe(true);
   });
 
   it("folds edited values into ONE aggregating PATCH (configValues in the body)", async () => {

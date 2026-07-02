@@ -115,6 +115,10 @@ export function AttachEditModal({
   const [configValues, setConfigValues] = useState<Record<string, unknown>>(
     () => seedConfigValues(row.agent.configSchema, row.config),
   );
+  // (ADR-122) Project Brain grants for this link. Read gates memory_recall,
+  // write gates memory_retain (separate axis — a read grant never opens write).
+  const [canReadBrain, setCanReadBrain] = useState(row.canReadBrain);
+  const [canWriteBrain, setCanWriteBrain] = useState(row.canWriteBrain);
 
   function setConfigValue(key: string, value: unknown): void {
     setConfigValues((current) => ({ ...current, [key]: value }));
@@ -234,6 +238,9 @@ export function AttachEditModal({
         runnerOverrideId: runnerOverrideId === "" ? null : runnerOverrideId,
         branchBase: branchBase.trim() === "" ? null : branchBase.trim(),
         executionPolicyOverride: policyOverride,
+        // (ADR-122) Fold the Brain grants into the SAME aggregating PATCH.
+        canReadBrain,
+        canWriteBrain,
         // (ADR-111) Fold the per-instance config into the SAME aggregating
         // PATCH; omit the field entirely when nothing is declared.
         ...(configSchema.length > 0 ? { configValues } : {}),
@@ -373,6 +380,28 @@ export function AttachEditModal({
               </option>
             </select>
           </label>
+
+          <section className="flex flex-col gap-2" data-testid="brain-section">
+            <span className={fieldLabel}>{t("brainSection")}</span>
+            <label className="inline-flex items-center gap-2 font-mono text-[12px] text-ink">
+              <input
+                checked={canReadBrain}
+                data-testid="brain-read"
+                type="checkbox"
+                onChange={(event) => setCanReadBrain(event.target.checked)}
+              />
+              {t("brainRead")}
+            </label>
+            <label className="inline-flex items-center gap-2 font-mono text-[12px] text-ink">
+              <input
+                checked={canWriteBrain}
+                data-testid="brain-write"
+                type="checkbox"
+                onChange={(event) => setCanWriteBrain(event.target.checked)}
+              />
+              {t("brainWrite")}
+            </label>
+          </section>
 
           {configSchema.length > 0 ? (
             <section

@@ -33,6 +33,8 @@ const ATTACHED: AttachedAgentRow = {
     onBudgetBreach: "terminate_restorable",
   },
   config: null,
+  canReadBrain: true,
+  canWriteBrain: false,
   schedules: [
     {
       triggerType: "cron",

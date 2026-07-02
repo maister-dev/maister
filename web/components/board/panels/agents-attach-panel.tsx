@@ -54,6 +54,11 @@ export type AttachedAgentRow = {
   // (ADR-111) Per-instance config values keyed by declared param key; null →
   // every declared default. The modal seeds each control from instance ?? default.
   config: Record<string, unknown> | null;
+  // (ADR-122) Per-link Project Brain axes: read gates memory_recall, write gates
+  // memory_retain (separate axis — a read grant never opens write). Both default
+  // false.
+  canReadBrain: boolean;
+  canWriteBrain: boolean;
   schedules: AttachScheduleView[];
   agent: {
     id: string;
@@ -115,6 +120,12 @@ function policySummary(row: AttachedAgentRow): string {
   }
   if (row.executionPolicyOverride?.onBudgetBreach) {
     parts.push(`budget:${row.executionPolicyOverride.onBudgetBreach}`);
+  }
+  // (ADR-122) surface the brain grants compactly: r, w, or rw.
+  if (row.canReadBrain || row.canWriteBrain) {
+    parts.push(
+      `brain:${row.canReadBrain ? "r" : ""}${row.canWriteBrain ? "w" : ""}`,
+    );
   }
 
   return parts.length > 0 ? parts.join(" · ") : "—";
@@ -348,6 +359,8 @@ function rowFromAvailable(agent: AvailableAgentRow): AttachedAgentRow {
     branchBase: rec?.branchBase ?? null,
     executionPolicyOverride: rec?.executionPolicy ?? null,
     config: null,
+    canReadBrain: false,
+    canWriteBrain: false,
     schedules: [
       ...(rec?.cron
         ? [
