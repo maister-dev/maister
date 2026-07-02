@@ -137,6 +137,30 @@ is `trusted_by_policy` (logic-trust alone is insufficient — see
 only as env-var names; the supervisor resolves them from its existing `process.env`
 at spawn. The env table above is unchanged by M27.
 
+### Project Brain embedding config — `platform_runtime_settings` (Designed, ADR-122)
+
+**(Designed, Sub-project A.)** The Project Brain's embedding + distillation
+provider is platform-level config on the singleton `platform_runtime_settings`
+row, set via admin `/settings → Brain` (`GET/PATCH /api/admin/brain-settings`):
+
+| Column | Meaning | Default |
+| ------ | ------- | ------- |
+| `embedding_base_url` | OpenAI-compatible base URL (`/embeddings`, `/chat/completions`). | — |
+| `embedding_model` | Embedding model id. | `text-embedding-3-small` |
+| `embedding_dimensions` | Embedding dimensions. Changing enqueues a non-destructive reindex generation (never a schema migration). | `1536` |
+| `embedding_api_key_ref` | `env:NAME` reference to the API-key env var (regex `^env:[A-Za-z_][A-Za-z0-9_]*$`). **Names only** — never the secret. | `env:EMBEDDING_API_KEY` |
+| `distill_model` | Completion model for harvest distillation. Required to enable ANY project's Brain (enable-gate → 422 `CONFIG` otherwise). | — |
+
+Unlike MCP/runner secrets (resolved supervisor-side), the Brain embedding client
+runs in the **web tier** (`web/lib/brain/openai-compatible.ts`), so the secret
+`env:NAME` resolves from the **web** process environment. Provide the value as a
+web-tier env var (default `EMBEDDING_API_KEY`, see `.env.example`). The value MUST
+NEVER be stored in any column, returned in any response, logged, or streamed — the
+same `env:NAME` policy as `platform_mcp_servers` / `platform_acp_runners`. A runtime
+model **or dimension** switch is a reindex generation, not a migration. In SQLite
+mode the Brain is disabled (D3). See
+[`system-analytics/project-brain.md`](system-analytics/project-brain.md).
+
 ## `maister.yaml` v2
 
 > **`maister.yaml` is OPTIONAL at manual registration (Implemented, [ADR-093](decisions.md#adr-093-project-onboarding--optional-maisteryaml-host-ambient-git-auth-onboarding-modes-advisory-clone-reasons)).**

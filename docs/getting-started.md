@@ -118,7 +118,10 @@ test:unit          # unit only (fast)
 test:integration   # spins up Postgres via testcontainers (slower)
 test:e2e           # Playwright (authed M11a/M11b UI specs — see note below)
 db:generate        # generate a Drizzle migration from lib/db/schema.ts
-db:migrate         # apply migrations against $DB_URL
+db:migrate         # apply MAIN-lineage migrations against $DB_URL
+db:migrate:brain   # apply the Project-Brain lineage (brain_* + pgvector); AFTER
+                   # db:migrate; no-op under SQLite (ADR-122). Requires a
+                   # pgvector-enabled Postgres image (pgvector/pgvector:pg16).
 db:seed            # idempotent dev seed (admin + platform runners + sample project)
 db:studio          # drizzle-kit studio
 backfill-flow-revisions  # M10 one-time backfill — seed flow_revisions from
@@ -170,8 +173,15 @@ test:integration   # 9 lifecycle scenarios via the fake-acp.mjs fixture
 docker compose up postgres -d
 cd web
 DB_URL=postgres://maister:maister@localhost:5432/maister pnpm db:migrate
+DB_URL=postgres://maister:maister@localhost:5432/maister pnpm db:migrate:brain  # ADR-122; no-op under SQLite
 DB_URL=postgres://maister:maister@localhost:5432/maister pnpm db:seed
 ```
+
+> **Project Brain (ADR-122).** `compose.yml` uses the pgvector-enabled image
+> `pgvector/pgvector:pg16` (data-compatible with `postgres:16-alpine`). Run
+> `db:migrate:brain` AFTER `db:migrate` — it applies the separate `brain_*` +
+> `CREATE EXTENSION vector` lineage into its own ledger. In SQLite mode the Brain
+> is disabled and the step is a no-op.
 
 Full reference: [Database Schema](database-schema.md). For the full env-var
 list (incl. `MAISTER_DB_POOL_MAX`, `MAISTER_MAX_CONCURRENT_RUNS`,

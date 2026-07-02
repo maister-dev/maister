@@ -661,6 +661,142 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /api/v1/ext/projects/{slug}/memory:
+    get:
+      tags: [memory]
+      summary: (ADR-122, Designed) Recall project-brain memories (hybrid, no LLM at read)
+      description: |
+        Scope `memory:read`. Hybrid recall (pgvector cosine over the active
+        embedding generation + `tsvector` lexical + recency/confidence boost) over
+        the project's **active** owned-tier items. NO LLM call at read time.
+
+        `projectId` is derived server-side from the URL `slug` and compared against
+        the token's project — mismatch → 404 (the body carries no project id). For
+        an **agent** token, the agent's `agent_project_links.can_read_brain` must be
+        true (else 403). The project's `projects.brain_enabled` must be true (else
+        422 `CONFIG`). In SQLite mode the Brain is disabled → 409 `PRECONDITION`.
+
+        Writes a `brain_snapshots` row (`trigger='explicit'`, `run_id` set only when
+        the token is run-bound, actor always set) recording the query and the
+        returned `[{itemId, score}]` for audit.
+      operationId: extRecallProjectMemory
+      security:
+        - projectToken: [memory:read]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: q
+          in: query
+          required: true
+          description: Recall query text (embedded with the active model at read).
+          schema:
+            type: string
+            minLength: 1
+        - name: limit
+          in: query
+          required: false
+          description: Max items to return. Defaults to the policy K (5).
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 5
+        - name: kinds
+          in: query
+          required: false
+          description: Restrict to these owned-tier kinds.
+          style: form
+          explode: true
+          schema:
+            type: array
+            items:
+              type: string
+              enum: [lesson, observation, state_fact]
+        - name: minConfidence
+          in: query
+          required: false
+          description: Drop items below this confidence.
+          schema:
+            type: number
+            minimum: 0
+            maximum: 1
+      responses:
+        "200":
+          description: Ranked active memories for the project.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/ExtMemoryItem" }
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "503":
+          $ref: "#/components/responses/EmbeddingUnavailable"
+    post:
+      tags: [memory]
+      summary: (ADR-122, Designed) Retain a project-brain memory (dedup-or-reinforce)
+      description: |
+        Scope `memory:write`. Embeds the content and, within one transaction under a
+        per-project advisory lock, either **reinforces** a semantically-near active
+        item (cosine > τ=0.85 → confidence +0.1, push `expires_at`) or **inserts** a
+        new item at confidence₀=0.3 + TTL. Identical `content_hash` is an idempotent
+        no-op. Provenance actor is derived from the token — the body carries NO
+        project id.
+
+        For an **agent** token, `agent_project_links.can_write_brain` must be true
+        (else 403) — `can_read_brain`/`memory:read` alone NEVER grant write. The
+        project's `brain_enabled` must be true (else 422 `CONFIG`); SQLite → 409
+        `PRECONDITION`; embedding-provider outage → 503 `EMBEDDING_UNAVAILABLE`.
+      operationId: extRetainProjectMemory
+      security:
+        - projectToken: [memory:write]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExtMemoryRetainBody" }
+      responses:
+        "200":
+          description: The retained (inserted or reinforced) item.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExtMemoryRetainResult" }
+        "401":
+          $ref: "#/components/responses/TokenUnauthorized"
+        "403":
+          $ref: "#/components/responses/HitlForbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "503":
+          $ref: "#/components/responses/EmbeddingUnavailable"
+
   /api/v1/ext/runs:
     post:
       tags: [runs]
@@ -1698,6 +1834,15 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ExtErrorBody" }
+    EmbeddingUnavailable:
+      description: |
+        (ADR-122) The embedding provider is unreachable after bounded retry
+        (timeout / 429 / 5xx). Code `EMBEDDING_UNAVAILABLE`. On the recall/retain
+        paths this is a retryable outage — the caller may retry or check the
+        platform embedding-provider configuration. Secrets are never included.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ExtErrorBody" }
 
   schemas:
     ExtErrorBody:
@@ -1710,6 +1855,89 @@ components:
         message:
           type: string
           description: Human-readable error message.
+
+    ExtMemoryItem:
+      type: object
+      description: (ADR-122, Designed) A recalled owned-tier brain item.
+      required: [id, kind, title, content, confidence, score, createdAt]
+      properties:
+        id: { type: string }
+        kind:
+          type: string
+          enum: [lesson, observation, state_fact]
+        title: { type: string }
+        content: { type: string }
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        score:
+          type: number
+          description: Hybrid rank score for this hit (vector + lexical + boost).
+        tags:
+          type: array
+          items: { type: string }
+        createdAt: { type: string, format: date-time }
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: NULL for non-decayed state_fact.
+        provenance:
+          type: object
+          nullable: true
+          description: Provenance pointers (ids only, no secrets).
+          properties:
+            runId: { type: string, nullable: true }
+            gateKind: { type: string, nullable: true }
+
+    ExtMemoryRetainBody:
+      type: object
+      description: |
+        (ADR-122, Designed) Retain a memory. The body carries NO project id —
+        `projectId` is derived server-side from the token + slug.
+      required: [content, kind]
+      additionalProperties: false
+      properties:
+        content:
+          type: string
+          minLength: 1
+          description: The knowledge to retain (embedded; oversize content is split).
+        kind:
+          type: string
+          enum: [lesson, observation, state_fact]
+        title:
+          type: string
+          minLength: 1
+          maxLength: 512
+          description: Optional short title; derived from content when omitted.
+        tags:
+          type: array
+          items: { type: string }
+
+    ExtMemoryRetainResult:
+      type: object
+      description: (ADR-122, Designed) Outcome of a retain call.
+      required: [item, reinforced]
+      properties:
+        reinforced:
+          type: boolean
+          description: true = an existing near item was reinforced; false = a new item was inserted.
+        item:
+          type: object
+          required: [id, kind, status]
+          properties:
+            id: { type: string }
+            kind:
+              type: string
+              enum: [lesson, observation, state_fact]
+            status:
+              type: string
+              enum: [active]
+            confidence:
+              type: number
+              minimum: 0
+              maximum: 1
 
     ExtTriageBody:
       type: object

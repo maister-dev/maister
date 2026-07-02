@@ -70,6 +70,12 @@ surface exists.
   reads. `tasks:update` (pre-existing, maps to `editTask`) is also in the
   agent-token set so the triager's clarify mode can sharpen the task
   title/prompt before recording a verdict.
+- **New scopes** (ADR-122 — Designed) — `memory:read` (recall) and
+  `memory:write` (retain), added to the `AGENT_TOKEN_SCOPES` fixed set. Scope
+  alone never suffices: access is additionally gated by `projects.brain_enabled`
+  and, for agent tokens, the per-link `agent_project_links.can_read_brain` (recall)
+  / `can_write_brain` (retain) axes — a `memory:read`/`can_read_brain` grant NEVER
+  opens retain.
 - **Personal-token scopes** (Implemented) — `hitl:inbox:read` grants read-only
   cross-project pending HITL listing. `hitl:respond:human` is an exact critical
   scope for human, infra-recovery, and budget-breach HITL responses; `*` does
@@ -107,6 +113,24 @@ surface exists.
   `triage_status='flagged'`, mutually exclusive with verdict fields → `CONFIG`)
   and `enqueue` (sets `launch_mode='auto'`, requires a verdict yielding a
   `flowId` → else `CONFIG`). See [triage.md](triage.md). (Implemented)
+- **MCP memory tools** (ADR-122 — Designed) — `memory_recall` and `memory_retain`
+  join `TOOL_SPECS`/`resolveRouting` in `mcp/src/tools.ts`, following the
+  `hitl_*`/`comment_*` idiom (thin REST clients of `/api/v1/ext/projects/{slug}/memory`,
+  `projectId` server-derived from the token + slug). See
+  [project-brain.md](project-brain.md).
+  - `memory_recall` (scope `memory:read`, `GET`): `inputSchema` =
+    `{ slug: string, query: string, limit?: integer(1..50, default 5),
+    kinds?: ("lesson"|"observation"|"state_fact")[], minConfidence?: number(0..1) }`.
+    Returns ranked **active** items (hybrid rank, **no LLM at read**) and writes a
+    `brain_snapshots` audit row.
+  - `memory_retain` (scope `memory:write`, `POST`): `inputSchema` =
+    `{ slug: string, content: string, kind: "lesson"|"observation"|"state_fact",
+    title?: string, tags?: string[] }` — body carries NO project id. Embeds and
+    **dedup-or-reinforces** (cosine > τ) or inserts at confidence₀.
+  Both are gated by `brain_enabled` + the `can_read_brain`/`can_write_brain` link
+  axis. In SQLite mode the tools stay **listed** (static `TOOL_SPECS`) but fail
+  closed with `PRECONDITION`; an embedding outage returns `EMBEDDING_UNAVAILABLE`
+  (503).
 
 ## State machine — token lifecycle
 

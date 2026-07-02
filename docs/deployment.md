@@ -68,6 +68,12 @@ docker compose up -d postgres            # add: -f compose.yml -f compose.produc
 Enable Docker on boot (`sudo systemctl enable docker`) so Postgres restarts with
 the host (`restart: unless-stopped` handles the container itself).
 
+> **Project Brain (ADR-122).** The Postgres image is **`pgvector/pgvector:pg16`**
+> (pgvector-enabled) — the Brain's `CREATE EXTENSION vector` + HNSW indexes require
+> it. The swap from `postgres:16-alpine` is **data-compatible** (same PG16 data
+> dir), so an existing dev volume upgrades in place. If the Brain is never enabled
+> the extension is simply never created; in SQLite mode the Brain is disabled (D3).
+
 ## 4. Configure the environment
 
 ```bash
@@ -107,9 +113,16 @@ Apply migrations and seed the first admin:
 ```bash
 cd /opt/maister
 set -a; . /etc/maister/maister.env; set +a
-pnpm --filter maister-web db:migrate
+pnpm --filter maister-web db:migrate         # main lineage (all shared tables)
+pnpm --filter maister-web db:migrate:brain   # brain lineage (brain_* + pgvector); no-op under SQLite (ADR-122)
 pnpm --filter maister-web db:seed        # initial admin user — see getting-started.md for credentials
 ```
+
+> **(ADR-122)** `db:migrate:brain` runs the separate Project-Brain migration
+> lineage (own `_journal.json` + own ledger `__drizzle_brain_migrations`) AFTER
+> the main lineage (`brain_*` FKs → `projects`/`runs`). It no-ops under SQLite. A
+> runtime embedding model/dimension switch is a non-destructive reindex generation,
+> never a schema migration.
 
 ## 5. Connect project repositories
 

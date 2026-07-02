@@ -2470,6 +2470,116 @@ idempotent.
 }
 ```
 
+## Project Brain tables (Designed — ADR-122, brain lineage migration `0001`)
+
+**(Designed, Sub-project A.)** The Project Brain owned tier lives in `brain_*`
+tables provisioned by a **separate migration lineage** (`web/lib/db/brain-migrations`,
+own `_journal.json` + own ledger `__drizzle_brain_migrations`), on a pgvector-enabled
+Postgres image only (SQLite → Brain disabled, D3). The shared-table columns that
+enable it land in the **main** lineage `0088` (see the alters at the end of this
+section). Full ERD: [`db/brain-domain.md`](db/brain-domain.md).
+
+### `brain_items`
+
+One knowledge item; `project_id` is the auth boundary (recall never crosses it).
+
+```ts
+{
+  id,                              // text PK (uuid)
+  projectId,                       // FK projects(id) ON DELETE CASCADE
+  kind,                            // 'lesson' | 'observation' | 'state_fact' (A)
+  tier,                            // 'owned' (A); indexed = Phase 2
+  title, content,                  // NOT NULL
+  status,                          // 'active' | 'expired' | 'superseded'
+  confidence,                      // numeric, CHECK 0..1; confidence0 = 0.3 on insert
+  reinforcementCount,              // integer NOT NULL DEFAULT 0
+  lastReinforcedAt?, expiresAt?,   // expiresAt NULL for non-decayed state_fact
+  contentHash,                     // NOT NULL — exact-dup idempotency
+  sourceRunId?,                    // FK runs(id) SET NULL — provenance
+  sourceNodeAttemptId?,            // FK node_attempts(id) SET NULL
+  sourceDomainEventId?,            // FK domain_events(id) SET NULL — harvest idempotency
+  sourceGateKind?,                 // gate.failed provenance
+  tsv,                             // GENERATED tsvector(title, content) — lexical leg
+  createdAt, updatedAt
+}
+```
+
+Partial UNIQUEs: `(project_id, source_domain_event_id) WHERE source_domain_event_id
+IS NOT NULL` (harvest at-least-once idempotency) and `(project_id, content_hash)
+WHERE status='active'` (exact-dup race guard → `CONFLICT`). Indexes: GIN `(tsv)`,
+btree `(project_id, status, expires_at)`.
+
+### `brain_embeddings`
+
+**Immutable** rows, one per (item, generation, split). A model OR dimension switch
+writes a NEW `embedding_version` generation; old rows are never mutated. The
+`vector` column is **dimension-untyped**; HNSW rides per-generation expression
+indexes (`(vector::vector(N)) vector_cosine_ops WHERE embedding_model = M AND
+embedding_dimensions = N`) created by `ensureEmbeddingIndex(model, N)` — NOT in the
+migration.
+
+```ts
+{
+  id,                              // text PK (uuid)
+  itemId,                          // FK brain_items(id) ON DELETE CASCADE
+  splitOrdinal,                    // integer NOT NULL DEFAULT 0 — oversize-split order
+  vector,                          // untyped pgvector column
+  embeddingProvider,               // 'openai_compatible'
+  embeddingModel, embeddingDimensions, embeddingVersion,  // generation key
+  sourceHash, contentHash,
+  embeddedAt                       // IMMUTABLE
+}
+```
+
+### `brain_snapshots`
+
+Written at **consumption** (ambient inject or explicit recall) for audit. Carries a
+first-class `project_id` (refinement over the design-spec conceptual shape — E-1 +
+CASCADE for actor-only non-run-bound snapshots).
+
+```ts
+{
+  id,                              // text PK (uuid)
+  projectId,                       // FK projects(id) ON DELETE CASCADE
+  runId?,                          // FK runs(id) ON DELETE CASCADE — set when run-bound
+  nodeAttemptId?,                  // FK node_attempts(id) SET NULL
+  actorType, actorId,              // polymorphic actor (user|agent|system)
+  trigger,                         // 'ambient' | 'explicit'
+  query, queryHash, embeddingModel,
+  returnedItems,                   // jsonb [{itemId, score}] — ids AND scores
+  rankerVersion,
+  createdAt
+}
+```
+
+### `brain_index_jobs`
+
+Reindex work consumed by the sweep-driven worker; resumable via `resumable_cursor`.
+
+```ts
+{
+  id,                              // text PK (uuid)
+  projectId,                       // FK projects(id) ON DELETE CASCADE
+  reason,                          // 'model_switch' | 'manual' (A)
+  status,                          // 'queued' | 'running' | 'completed' | 'failed'
+  progress,                        // integer NOT NULL DEFAULT 0
+  resumableCursor?,                // jsonb resume point
+  createdAt
+}
+```
+
+### Shared-table alters (main lineage migration `0088`)
+
+- `platform_runtime_settings` += `embedding_base_url`, `embedding_model`,
+  `embedding_dimensions`, `embedding_api_key_ref` (`env:NAME` ref only), `distill_model`
+  (all nullable).
+- `projects` += `brain_enabled` (boolean NOT NULL DEFAULT false). Enable-gate refuses
+  `CONFIG` unless platform embedding + `distill_model` are set.
+- `agent_project_links` += `can_read_brain`, `can_write_brain` (boolean NOT NULL
+  DEFAULT false) — recall vs retain axes (separate; read never grants write).
+- `runs` += `brain_context` (boolean NULL — null = inherit flow/agent config; the
+  persisted launch-time decision).
+
 ## Planned roadmap persistence
 
 The roadmap introduces product objects that are not yet represented as first

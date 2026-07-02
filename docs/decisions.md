@@ -147,6 +147,7 @@
 | [ADR-119](#adr-119-manual-force-relaunch-additive-concurrent-runs-per-task--atomic-attempt-number-allocation) | Manual force-relaunch (additive concurrent runs per task) + atomic attempt-number allocation | Accepted | 2026-06-30 |
 | [ADR-120](#adr-120-artifact-body-injection-into-prompts) | Artifact body injection into prompts (`{{ artifacts.X.content }}` + `input.requires.inline`) + engine 2.2.0 | Accepted | 2026-06-30 |
 | [ADR-121](#adr-121-priority-ordered-dependency-draining-task-queue-unified-admission-gate) | Priority-ordered dependency-draining task queue: unified admission gate, cycle-safe relations, cap-safe resume, advisory confidence, operator pause | Accepted | 2026-06-30 |
+| [ADR-122](#adr-122-project-brain-per-project-memory-substrate) | Project Brain (per-project memory substrate): build-thin pgvector, two migration lineages, immutable per-generation embeddings, harvest/decay owned tier, RecallRanker seam, 4-layer enablement (Sub-project A) | Accepted | 2026-07-02 |
 
 ---
 
@@ -10005,6 +10006,126 @@ the test matrix live in the SDD plan `.ai-factory/plans/dependency-ordered-task-
 - *Per-`run` priority snapshot*: rejected — re-prioritization must take effect for not-yet-admitted
   work, so the gate reads `tasks.priority` LIVE at selection.
 - *Confidence-based auto/human routing*: rejected for v1 (owner: advisory only).
+
+---
+
+### ADR-122: Project Brain (per-project memory substrate)
+
+**Date:** 2026-07-02
+**Status:** Accepted
+**Context:** MAIster needs a per-project, self-improving knowledge substrate that
+platform agents use natively — run/gate/rework lessons, current project state,
+direction, a consultant surface over decisions/conventions, and the evidence base
+the self-improvement loop reads. The design dialogue (design spec
+`docs/plans/2026-07-01-project-brain-architecture.md`) weighed off-the-shelf memory
+stores (Hindsight/GBrain) against building on the existing Postgres 16 + pgvector
+stack. The target's defining needs — real multi-project auth isolation, native
+domain provenance (FKs to `runs`/`domain_events`/`tasks`), transactional coupling to
+the M25 authored catalog and readiness/HITL — are exactly where off-the-shelf stores
+fail, and the one buy-advantage (recall ranking) is isolable behind a seam. The epic
+is phased **A → B → C**; this ADR governs the whole context and is implemented
+incrementally. **Sub-project A (Foundation)** is the keystone delivered first.
+
+**Decision:**
+- **D1 — Build-thin on Postgres 16 + pgvector**, not Hindsight/GBrain. Borrow only
+  GBrain's two patterns (contract-first operations→MCP/API, `BrainEngine` interface)
+  behind our own `RecallRanker` seam (**D9**).
+- **D2 — One Postgres instance, bounded context via `brain_*` table prefixes** (not a
+  separate DB, not a separate PG schema). Keeps joins to `projects`/`runs`/`tasks` and
+  one transaction with `domain_events`; table prefixes avoid multiplying the Drizzle
+  journal hazards. Boundary enforced in code under `web/lib/brain/*`.
+- **D3 — SQLite mode → Brain disabled.** pgvector is Postgres-only; SQLite is
+  ultra-light dev only. Brain routes/services refuse `PRECONDITION`; MCP memory tools
+  fail closed. The MCP facade registers `TOOL_SPECS` statically — tools stay *listed*.
+- **D4 — Embedding-provider registry, `openai_compatible` default; immutable embedding
+  rows; reindex-on-model/dimension-switch.** Default `text-embedding-3-small` @ 1536.
+  `brain_embeddings.vector` is **dimension-untyped**; HNSW rides **per-generation
+  expression indexes** — `CREATE INDEX … USING hnsw ((vector::vector(N))
+  vector_cosine_ops) WHERE embedding_model = M AND embedding_dimensions = N` — created
+  by `ensureEmbeddingIndex(model, N)` at configure/reindex time. A runtime model **or
+  dimension** switch writes a new embedding generation + a new expression index, never
+  mutates old rows, and needs **no schema migration ever**.
+- **D5/D6 — `ChunkerRegistry` + AST code-chunking are Sub-project B; Serena/LSP is an
+  optional agent capability, not a Brain dependency.** Sub-project A embeds short
+  owned-tier text directly; oversize content uses one minimal recursive splitter
+  (`@chonkiejs/core` `RecursiveChunker`).
+- **D7 — Two-tier substrate; ownership resolved per-project.** Owned/volatile tier
+  (`lesson`/`observation`/`state_fact`) ships in A; indexed/referenced tier
+  (`decision`/`direction` → canonical pointers) ships in B.
+- **D8 — Calibrated autonomy.** Harvested lessons auto-write with decay (the valve);
+  canon changes (rule/skill/flow/adr/roadmap) go through `brain_proposals` → human
+  accept, graduating to auto by confidence × blast-radius (Sub-project C). The indexed
+  tier is **never** authoritative — the M25 authored catalog stays the source of truth.
+- **D9 — `RecallRanker`/`BrainEngine` seam** keeps recall ranking swappable without
+  moving the system-of-record off Postgres.
+- **D10 — Best-effort re-anchor** of edges/proposals across re-chunking (Sub-project C).
+- **Two migration lineages, two ledger tables.** Shared-table ALTERs land in the **main**
+  Drizzle lineage (`web/lib/db/migrations`, `0088` — `platform_runtime_settings` embedding
+  columns; `projects.brain_enabled`; `agent_project_links.can_read_brain`/`can_write_brain`;
+  `runs.brain_context`). `brain_*` CREATEs + `CREATE EXTENSION vector` land in a **separate
+  brain lineage** (`web/lib/db/brain-migrations`, `0001`) with its own `_journal.json` and
+  its own ledger table `__drizzle_brain_migrations` (the main migrator hardcodes
+  `drizzle.__drizzle_migrations`; sharing it would corrupt migration accounting). The brain
+  lineage is **hand-authored SQL only** (no `db:generate:brain` — a second generate target
+  re-opens the snapshot-drift hazard); migrate order is fixed **main → brain**
+  (`brain_*` FKs → `projects`/`runs`). `CREATE EXTENSION`/`vector` stay OUT of the main
+  lineage so every existing `postgres:16-alpine` integration test keeps passing unchanged;
+  only brain tests require `pgvector/pgvector:pg16`.
+- **Harvest / decay / recall (A).** A `memory_harvest` consumer on the `domain_events`
+  bus (ADR-086, at-least-once, per-consumer cursor) over an explicit predicate —
+  `RUN_TERMINAL_EVENT_KINDS` + `gate.failed` (NOT `run.review`) — distills to a
+  structured lesson and calls `retain(projectId, item, provenance)`: embed → within one
+  transaction take `pg_advisory_xact_lock` per project, then **dedup-or-reinforce** (cosine
+  > τ=0.85 → reinforce, else insert at confidence₀=0.3 + TTL 30d). A throttled decay sweep
+  on the M24 tick expires items past `expires_at`. Recall is **hybrid** (pgvector cosine over
+  the active generation + `tsvector` lexical + recency/confidence boost) with **no LLM at
+  read**; project-scoped by `project_id` FK. Every consumption (ambient inject or explicit
+  recall) writes a `brain_snapshots` row; the launch-time *decision* persists on
+  `runs.brain_context`.
+- **4-layer enablement.** Platform (embedding + `distill_model` config) · Project
+  (`brain_enabled`, with an **enable-gate** — PATCH refuses `CONFIG` unless platform
+  embedding + distill config are set, so harvest never runs unconfigured) · Agent/link
+  (`can_read_brain` gates recall, **`can_write_brain` gates retain** — a separate write axis;
+  scope alone must not open retain to every token) · Run launch (`brain_context`).
+  `memory:read`/`memory:write` join the M34 `AGENT_TOKEN_SCOPES` set.
+- **New error code `EMBEDDING_UNAVAILABLE`** (HTTP 503) for embedding-provider outage after
+  bounded retry; validation reuses `CONFIG`/`PRECONDITION`/`CONFLICT`.
+- **Secrets** (embedding-provider keys) stored as `env:NAME` refs only, mirroring
+  `web/lib/mcp/projection.ts` redaction — never logged, streamed, or embedded.
+
+**Consequences:**
+- Two migration lineages must both be migrated in production (`db:migrate` → `db:migrate:brain`)
+  and both are boot-guarded (`web/lib/db/check-migrations.ts` compares each journal vs its
+  ledger on Postgres). The dev Postgres image swaps `postgres:16-alpine` → `pgvector/pgvector:pg16`
+  (data-compatible — same PG16 data dir).
+- Model/dimension switches are non-destructive reindex generations, never migrations —
+  old embedding rows and their expression indexes stay intact (index GC is out of scope for A).
+- Harvest failure semantics are split: transient failures (`EMBEDDING_UNAVAILABLE`, network,
+  distill config cleared post-enable) **throw and hold the cursor** (no event lost); permanent
+  failures (schema-invalid distill output after one in-process retry) **log and skip-advance**
+  (no poison-pill loop).
+- Sub-projects B (Consultant/indexed tier + `ChunkerRegistry`) and C (self-improvement
+  proposal bridge + LSP edge connector) build on A; each gets its own spec → plan → build.
+- Full requirements, expectations (E-n), and per-phase acceptance criteria (AC-A-n) live in
+  the design spec `docs/plans/2026-07-01-project-brain-architecture.md`; the A-subset process
+  contract lives in `docs/system-analytics/project-brain.md`.
+
+**Alternatives Considered:**
+- *Hindsight/GBrain as the memory store*: rejected — they fail exactly on the target's
+  defining needs (multi-project auth isolation, native FK provenance, transactional catalog
+  coupling); GBrain is a Bun app, not an embeddable npm dep. Borrow patterns, not the runtime.
+- *Separate DB or PG schema for `brain_*`*: rejected — loses cross-domain joins and the
+  single `domain_events` transaction, and a PG schema multiplies the Drizzle journal/ordering
+  hazards already hit. Table prefixes + code boundary suffice (D2).
+- *Dimension-typed `vector(1536)` column*: rejected — a dimension change would force a schema
+  migration and a full table rewrite. Untyped column + per-generation expression indexes make
+  a dimension switch a plain reindex (D4).
+- *One shared Drizzle ledger for both lineages*: rejected — the main migrator hardcodes
+  `drizzle.__drizzle_migrations`; a shared ledger corrupts accounting. Separate ledger table.
+- *`CREATE EXTENSION vector` in the main lineage*: rejected — would force every existing
+  integration test onto a pgvector image. Kept in the brain lineage only.
+- *Prompt-prepend fallback for ambient context*: rejected — P7 run-context is live; ambient
+  rides `.maister/run.json` with no interim fallback (flow runs only; agent runs use MCP tools).
 
 ---
 

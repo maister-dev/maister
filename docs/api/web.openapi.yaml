@@ -10172,6 +10172,54 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/MaisterErrorBody" }
 
+  /api/admin/brain-settings:
+    get:
+      tags: [admin]
+      summary: (ADR-122, Designed) Read the platform Project-Brain embedding config
+      description: |
+        Admin-only. Reads the embedding-provider + distillation configuration on
+        the singleton `platform_runtime_settings` row. The API key is returned as
+        its `env:NAME` reference only — never the secret value.
+      operationId: getAdminBrainSettings
+      responses:
+        "200":
+          description: Current platform Brain settings.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BrainSettings" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    patch:
+      tags: [admin]
+      summary: (ADR-122, Designed) Update the platform Project-Brain embedding config
+      description: |
+        Admin-only. Sets the embedding provider base URL, model, dimensions, API
+        key reference (`env:NAME` only), and distillation model on the singleton
+        `platform_runtime_settings` row. Changing `embeddingModel` or
+        `embeddingDimensions` calls `ensureEmbeddingIndex(model, N)` and enqueues a
+        `brain_index_jobs` reindex row (a runtime model/dimension switch is a
+        non-destructive reindex generation — never a schema migration). The stored
+        key value MUST be the `env:NAME` reference, never the raw secret.
+      operationId: patchAdminBrainSettings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BrainSettings" }
+      responses:
+        "200":
+          description: Updated platform Brain settings.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BrainSettings" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: Invalid body — e.g. an API key that is not an `env:NAME` ref (`CONFIG`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MaisterErrorBody" }
+
   # ── ADR-077 Outbound webhooks — project-scoped subscriptions ────────────────
 
   /api/projects/{slug}/webhooks:
@@ -11190,6 +11238,13 @@ components:
             promotion-mode compatibility mapping.
         taskQueueSettings:
           $ref: "#/components/schemas/TaskQueueSettings"
+        brainEnabled:
+          type: boolean
+          description: |
+            (ADR-122) Toggle the Project Brain for this repo (`projects.brain_enabled`).
+            Enabling refuses `422 CONFIG` unless platform embedding config AND
+            `distill_model` are set (a project can never be enabled into an
+            unharvest-able state). Disabling makes harvest + recall no-op.
     TaskQueueSettings:
       type: object
       additionalProperties: false
@@ -15100,6 +15155,38 @@ components:
           type: string
           nullable: true
           description: Cursor for the next page, or `null` at the end.
+
+    BrainSettings:
+      type: object
+      description: |
+        (ADR-122) Platform Project-Brain embedding + distillation config on the
+        singleton `platform_runtime_settings` row. All fields nullable; the API key
+        is an `env:NAME` reference only (never the secret). GET returns the current
+        values; PATCH sets them (a `null` value clears that field).
+      additionalProperties: false
+      properties:
+        embeddingBaseUrl:
+          type: string
+          nullable: true
+          description: OpenAI-compatible base URL for `/embeddings` + `/chat/completions`.
+        embeddingModel:
+          type: string
+          nullable: true
+          description: Embedding model id (default `text-embedding-3-small`).
+        embeddingDimensions:
+          type: integer
+          nullable: true
+          minimum: 1
+          description: Embedding dimensions (default 1536). Changing enqueues a reindex.
+        embeddingApiKeyRef:
+          type: string
+          nullable: true
+          pattern: "^env:[A-Za-z_][A-Za-z0-9_]*$"
+          description: "`env:NAME` reference to the API key env var. Never the secret value."
+        distillModel:
+          type: string
+          nullable: true
+          description: Completion model for harvest distillation (required to enable any project).
 
     WebhookSettings:
       type: object

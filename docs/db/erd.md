@@ -1129,6 +1129,63 @@ erDiagram
         timestamptz created_at
         timestamptz updated_at
     }
+
+    PROJECTS ||--o{ BRAIN_ITEMS : "Brain owns (CASCADE, ADR-122)"
+    PROJECTS ||--o{ BRAIN_SNAPSHOTS : "recall snapshots (CASCADE)"
+    PROJECTS ||--o{ BRAIN_INDEX_JOBS : "reindex jobs (CASCADE)"
+    BRAIN_ITEMS ||--o{ BRAIN_EMBEDDINGS : "generations x splits (CASCADE)"
+    RUNS o|--o{ BRAIN_SNAPSHOTS : "run-bound recall (CASCADE)"
+
+    BRAIN_ITEMS {
+        text id PK "uuid"
+        text project_id FK "NOT NULL -> projects(id) CASCADE — auth boundary (Designed, ADR-122)"
+        text kind "lesson|observation|state_fact"
+        text tier "owned"
+        text content "NOT NULL"
+        text status "active|expired|superseded"
+        numeric confidence "NOT NULL; CHECK 0..1; confidence0 0.3"
+        integer reinforcement_count "NOT NULL DEFAULT 0"
+        timestamptz expires_at "NULL for state_fact"
+        text content_hash "NOT NULL — dedup"
+        text source_run_id FK "NULL -> runs(id) SET NULL"
+        bigint source_domain_event_id FK "NULL -> domain_events(id) SET NULL — harvest idempotency"
+        tsvector tsv "GENERATED — lexical leg"
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    BRAIN_EMBEDDINGS {
+        text id PK "uuid"
+        text item_id FK "NOT NULL -> brain_items(id) CASCADE"
+        integer split_ordinal "NOT NULL DEFAULT 0"
+        vector vector "untyped pgvector — cast vector(N) at query"
+        text embedding_model "NOT NULL"
+        integer embedding_dimensions "NOT NULL"
+        text embedding_version "NOT NULL — generation key"
+        timestamptz embedded_at "IMMUTABLE"
+    }
+
+    BRAIN_SNAPSHOTS {
+        text id PK "uuid"
+        text project_id FK "NOT NULL -> projects(id) CASCADE (E-1 refinement)"
+        text run_id FK "NULL -> runs(id) CASCADE"
+        text node_attempt_id FK "NULL -> node_attempts(id) SET NULL"
+        text actor_type "user|agent|system"
+        text actor_id "NOT NULL"
+        text trigger "ambient|explicit"
+        jsonb returned_items "NOT NULL — [{itemId, score}]"
+        text ranker_version "NOT NULL"
+        timestamptz created_at
+    }
+
+    BRAIN_INDEX_JOBS {
+        text id PK "uuid"
+        text project_id FK "NOT NULL -> projects(id) CASCADE"
+        text reason "model_switch|manual"
+        text status "queued|running|completed|failed"
+        jsonb resumable_cursor "NULL"
+        timestamptz created_at
+    }
 ```
 
 ## Planned roadmap extensions
@@ -1226,5 +1283,13 @@ external-operation events) is not drawn until its migrations exist. See
 | `webhook_deliveries` | `webhook_deliveries_sub_event_uq` | `(subscription_id, event_id)` UNIQUE | **(ADR-077 Implemented)** Fanout dedupe invariant. |
 | `webhook_delivery_attempts` | `webhook_delivery_attempts_delivery_idx` | `(delivery_id)` | **(ADR-077 Implemented)** Attempt history for a delivery. |
 | `webhook_delivery_attempts` | `webhook_delivery_attempts_delivery_attempt_uq` | `(delivery_id, attempt_no)` UNIQUE | **(ADR-077 Implemented)** One row per attempt number per delivery. |
+| `brain_items` | `brain_items_event_uq` | `(project_id, source_domain_event_id)` UNIQUE, PARTIAL `WHERE source_domain_event_id IS NOT NULL` | **(Designed, ADR-122)** Harvest at-least-once idempotency at the DB. |
+| `brain_items` | `brain_items_active_hash_uq` | `(project_id, content_hash)` UNIQUE, PARTIAL `WHERE status = 'active'` | **(Designed, ADR-122)** Exact-dup race guard → `CONFLICT`. |
+| `brain_items` | `brain_items_tsv_gin` | GIN `(tsv)` | **(Designed, ADR-122)** Lexical recall leg. |
+| `brain_items` | `brain_items_recall_idx` | `(project_id, status, expires_at)` | **(Designed, ADR-122)** Active-item scan + decay sweep. |
+| `brain_embeddings` | `brain_embeddings_item_idx` | `(item_id, embedding_model, embedding_dimensions)` | **(Designed, ADR-122)** Generation lookup + FK. |
+| `brain_embeddings` | `brain_embeddings_hnsw_<modelslug>_<N>` | `USING hnsw ((vector::vector(N)) vector_cosine_ops) WHERE embedding_model = M AND embedding_dimensions = N` | **(Designed, ADR-122)** Per-generation expression HNSW, created by `ensureEmbeddingIndex` at configure/reindex (NOT in the migration). |
+| `brain_snapshots` | `brain_snapshots_run_idx` | `(run_id)` | **(Designed, ADR-122)** Run-scoped snapshot reads. |
+| `brain_index_jobs` | `brain_index_jobs_claim_idx` | `(status, created_at)` | **(Designed, ADR-122)** Reindex-worker claim scan. |
 
 Source: `web/lib/db/schema.ts`.
