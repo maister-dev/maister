@@ -12502,6 +12502,7 @@ components:
               Abandoned,
             ]
         actionResult:
+          type: object
           nullable: true
           allOf:
             - $ref: "#/components/schemas/StudioAssistantActionResult"
@@ -12568,6 +12569,7 @@ components:
         - type: object
           properties:
             actionResult:
+              type: object
               nullable: true
               allOf:
                 - $ref: "#/components/schemas/StudioAssistantActionResult"
