@@ -94,6 +94,8 @@ async function reindexItem(
           (${randomUUID()}, ${item.id}, ${i}, ${toVectorLiteral(vectors[i])}::vector,
            ${client.provider}, ${client.model}, ${n}, ${client.version},
            ${sha256(segments[i])}, ${contentHash})
+        ON CONFLICT (item_id, split_ordinal, embedding_model, embedding_dimensions)
+        DO NOTHING
       `);
     }
   });

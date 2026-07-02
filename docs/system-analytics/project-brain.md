@@ -252,6 +252,17 @@ Additional A-specific invariants:
   (Implemented)
 - Recall MUST be gated by `agent_project_links.can_read_brain`; retain MUST be gated
   by `can_write_brain` (a separate axis — a read grant MUST NOT open retain). (Implemented)
+- **Ambient inject MUST re-check `projects.brain_enabled` at inject time** — a launch
+  persists `runs.brain_context` independently, and an admin can disable the Brain
+  after opt-in, so a disabled project MUST recall/inject/snapshot nothing (the
+  explicit ext route is already gated; ambient is the second consumer). (Implemented)
+- Harvest MUST be idempotent across ALL retain outcomes: a redelivered event that
+  reinforced a near-dup MUST NOT double-count confidence/`reinforcement_count`/TTL —
+  the `brain_harvested_events` ledger records every consumed event in `retain`'s
+  transaction, not just the insert path. (Implemented)
+- A re-embed MUST be idempotent: `(item_id, split_ordinal, embedding_model,
+  embedding_dimensions)` is UNIQUE, so an overlapping reindex sweep never writes a
+  duplicate generation row. (Implemented)
 
 ## Edge cases
 
@@ -259,6 +270,10 @@ Additional A-specific invariants:
   `MaisterError("EMBEDDING_UNAVAILABLE")` (HTTP 503). On the harvest path this is
   **transient**: the consumer throws, the cursor holds, and the window redelivers
   next tick — no event lost.
+- **Embedding provider stall** (accepts the connection then hangs) → each attempt
+  carries an `AbortSignal.timeout` deadline (`timeoutMs`, default 30 s); the abort is
+  classified transient → retried → `EMBEDDING_UNAVAILABLE`. Recall/retain routes and
+  the harvest/reindex sweeps can NEVER hang indefinitely on a stalled provider.
 - **`distill_model` cleared while projects are enabled** → harvest treats the missing
   config as **transient** `CONFIG`: throw, cursor holds, retry next tick (NEVER
   skip-and-advance, which would silently lose the event forever). Unreachable in

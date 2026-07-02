@@ -58,9 +58,13 @@ async function alreadyHarvested(
   projectId: string,
   eventId: number,
 ): Promise<boolean> {
+  // The harvested-events ledger (F4) records EVERY processed event regardless of
+  // the retain outcome, so it catches redelivery of a reinforce/exact-dup event
+  // (which leaves no brain_items.source_domain_event_id row). This is the cheap
+  // pre-distill short-circuit; retain's in-tx claim is the atomic backstop.
   const r = await db.execute(
-    sql`SELECT 1 FROM brain_items
-        WHERE project_id = ${projectId} AND source_domain_event_id = ${eventId}
+    sql`SELECT 1 FROM brain_harvested_events
+        WHERE project_id = ${projectId} AND domain_event_id = ${eventId}
         LIMIT 1`,
   );
 

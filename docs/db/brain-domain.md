@@ -111,6 +111,8 @@ erDiagram
 | `brain_items` | partial `UNIQUE` | `(project_id, content_hash) WHERE status = 'active'` | Exact-dup race guard — collapses a concurrent duplicate to `CONFLICT`. |
 | `brain_items` | `CHECK` | `confidence BETWEEN 0 AND 1` | Confidence stays a probability. |
 | `brain_embeddings` | (immutable) | — | No UPDATE/DELETE app path except cascade; a re-embed inserts a new generation row. |
+| `brain_embeddings` | `UNIQUE` (migration `0002`) | `(item_id, split_ordinal, embedding_model, embedding_dimensions)` | Idempotent re-embed — `retain`/`reindex` insert `ON CONFLICT DO NOTHING`, so an overlapping reindex sweep can never write a duplicate generation row. |
+| `brain_harvested_events` | `PRIMARY KEY` (migration `0002`) | `(project_id, domain_event_id)` | Harvest idempotency across ALL retain outcomes (insert / reinforce / exact-dup) — a redelivered event that reinforced a near-dup (which leaves no `source_domain_event_id` row) is a no-op, so confidence/TTL are never double-counted. Written in `retain`'s transaction; no FK on `domain_event_id` (outlives `domain_events` GC). |
 
 ## Indexes
 
@@ -119,6 +121,7 @@ erDiagram
 | `brain_items` | `brain_items_tsv_gin` | GIN `(tsv)` | Lexical leg of hybrid recall. |
 | `brain_items` | `brain_items_recall_idx` | btree `(project_id, status, expires_at)` | Project-scoped active-item scan + decay sweep. |
 | `brain_embeddings` | `brain_embeddings_item_idx` | btree `(item_id, embedding_model, embedding_dimensions)` | Generation lookup + FK. |
+| `brain_embeddings` | `brain_embeddings_generation_uq` (migration `0002`) | UNIQUE btree `(item_id, split_ordinal, embedding_model, embedding_dimensions)` | Duplicate-embedding guard (F3) — makes a concurrent/double reindex insert a no-op. |
 | `brain_embeddings` | `brain_embeddings_hnsw_<modelslug>_<N>` | `USING hnsw ((vector::vector(N)) vector_cosine_ops) WHERE embedding_model = M AND embedding_dimensions = N` | **Per-generation expression HNSW** — created by `ensureEmbeddingIndex(model, N)` at configure/reindex time, NOT in the migration. A model/dimension switch adds a new one; old ones persist. |
 | `brain_snapshots` | `brain_snapshots_run_idx` | btree `(run_id)` | Run-scoped snapshot reads. |
 | `brain_index_jobs` | `brain_index_jobs_claim_idx` | btree `(status, created_at)` | Reindex-worker claim scan. |
@@ -130,7 +133,8 @@ projects
   ├── brain_items          (FK project_id, ON DELETE CASCADE)
   │     └── brain_embeddings (FK item_id,   ON DELETE CASCADE)
   ├── brain_snapshots      (FK project_id, ON DELETE CASCADE)
-  └── brain_index_jobs     (FK project_id, ON DELETE CASCADE)
+  ├── brain_index_jobs     (FK project_id, ON DELETE CASCADE)
+  └── brain_harvested_events (FK project_id, ON DELETE CASCADE)  -- migration 0002
 
 runs
   ├── brain_items.source_run_id      (ON DELETE SET NULL — item survives run delete)

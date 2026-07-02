@@ -162,6 +162,61 @@ describe("memory_harvest consumer (T3.2)", () => {
     expect(await activeCount(projectId)).toBe(1);
   });
 
+  it("re-delivery of a REINFORCE event does not double-count confidence/TTL (F4)", async () => {
+    const runId = await seedRun(projectId);
+    // Distinct content per distill call (distinct content_hash → the near-dup
+    // REINFORCE path, not exact-dup) but every lesson embeds to the same vector
+    // (cosine 1 > τ), so the 2nd event reinforces the 1st item.
+    let n = 0;
+    const client = makeClient({
+      async complete(): Promise<string> {
+        return JSON.stringify({
+          content: `lesson ${n++}`,
+          kind: "lesson",
+          tags: [],
+        });
+      },
+    });
+    const opts = { db: ctx.db, resolveClient: resolve(client) };
+    const e1 = await insertEvent({
+      kind: "run.done",
+      projectId,
+      runId,
+      payload: { runId },
+    });
+    const e2 = await insertEvent({
+      kind: "run.done",
+      projectId,
+      runId,
+      payload: { runId },
+    });
+
+    await harvestEvents([e1], opts); // insert item A
+    await harvestEvents([e2], opts); // near-dup → reinforce A (count 1)
+
+    const read = async () =>
+      ctx.db.execute(
+        sql`SELECT confidence::float8 AS c, reinforcement_count AS rc
+            FROM brain_items WHERE project_id = ${projectId}`,
+      );
+    const afterReinforce = await read();
+
+    expect(afterReinforce.rows).toHaveLength(1);
+    expect(Number(afterReinforce.rows[0]?.rc)).toBe(1);
+    const confAfterReinforce = Number(afterReinforce.rows[0]?.c);
+
+    // Redeliver e2 (at-least-once). WITHOUT the ledger this would reinforce again
+    // (count 2, confidence bumped, TTL pushed) because reinforce leaves no
+    // source_domain_event_id row. The harvested-events ledger makes it a no-op.
+    await harvestEvents([e2], opts);
+
+    const afterRedeliver = await read();
+
+    expect(afterRedeliver.rows).toHaveLength(1);
+    expect(Number(afterRedeliver.rows[0]?.rc)).toBe(1); // still 1, not 2
+    expect(Number(afterRedeliver.rows[0]?.c)).toBe(confAfterReinforce); // unchanged
+  });
+
   it("does NOT harvest run.review (excluded from the predicate)", async () => {
     const runId = await seedRun(projectId);
     const event = await insertEvent({

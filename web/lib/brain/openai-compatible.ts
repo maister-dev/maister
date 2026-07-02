@@ -38,6 +38,11 @@ export interface EmbeddingClientConfig {
   distillModel: string | null;
   maxRetries?: number;
   retryDelayMs?: number;
+  // Per-attempt deadline. Without it a provider that accepts the connection then
+  // stalls would hang recall/retain routes and the harvest/reindex sweeps
+  // indefinitely — the "timeout" half of the bounded-retry contract. An abort is
+  // classified transient (retried, then EMBEDDING_UNAVAILABLE).
+  timeoutMs?: number;
   fetchImpl?: typeof fetch;
 }
 
@@ -63,6 +68,7 @@ export function makeEmbeddingClient(
 ): OpenAiCompatibleClient {
   const maxRetries = cfg.maxRetries ?? 2;
   const retryDelayMs = cfg.retryDelayMs ?? 250;
+  const timeoutMs = cfg.timeoutMs ?? 30_000;
   const doFetch = cfg.fetchImpl ?? globalThis.fetch;
   const base = cfg.baseUrl.replace(/\/+$/, "");
 
@@ -97,18 +103,25 @@ export function makeEmbeddingClient(
           method: "POST",
           headers: authHeaders(),
           body: JSON.stringify(body),
+          // Per-attempt deadline — a stalled provider aborts here instead of
+          // hanging the caller forever.
+          signal: AbortSignal.timeout(timeoutMs),
         });
-      } catch {
-        // Network / abort — transient. Never log the error body (may echo the
-        // request), only the shape.
+      } catch (err) {
+        // Network / timeout abort — transient. Never log the error body (may echo
+        // the request), only the shape.
         lastStatus = undefined;
+        const timedOut =
+          err instanceof Error &&
+          (err.name === "TimeoutError" || err.name === "AbortError");
+
         log.warn(
           {
             op,
             attempt,
             model: cfg.embeddingModel,
             baseUrl: base,
-            kind: "network",
+            kind: timedOut ? "timeout" : "network",
           },
           "embedding request failed, retrying",
         );

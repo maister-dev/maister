@@ -122,6 +122,40 @@ describe("getAmbientBrainProjection (T4.3)", () => {
     expect(await ambientSnapshotCount()).toBe(0);
   });
 
+  it("honors the project kill switch: disabled project → no recall, no snapshot even with brain_context = true (F1)", async () => {
+    // A run can be launched with brain_context=true, then the admin disables the
+    // project's Brain. Ambient MUST re-check brain_enabled and no-op.
+    const disabledProject = await seedBrainProject(ctx.db, {
+      brainEnabled: false,
+    });
+    const disabledRun = await seedRun(disabledProject);
+
+    await retain(
+      disabledProject,
+      { kind: "lesson", content: "should never be recalled" },
+      {},
+      { db: ctx.db, client },
+    );
+
+    const brain = await getAmbientBrainProjection({
+      db: ctx.db,
+      projectId: disabledProject,
+      brainContext: true,
+      taskTitle: "Fix",
+      taskPrompt: "should never be recalled",
+      runId: disabledRun,
+      client,
+    });
+
+    expect(brain).toBeUndefined();
+
+    const snaps = await ctx.db.execute(
+      sql`SELECT count(*)::int AS n FROM brain_snapshots WHERE project_id = ${disabledProject}`,
+    );
+
+    expect(Number(snaps.rows[0]?.n)).toBe(0);
+  });
+
   it("memoizes the query embedding across repeated calls (no re-embed)", async () => {
     let embedCalls = 0;
     const countingClient = fakeEmbeddingClient();

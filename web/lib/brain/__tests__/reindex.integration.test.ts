@@ -191,6 +191,23 @@ describe("reindex worker (T5.5)", () => {
     expect(await embCount("model-b", 1536)).toBe(3);
   });
 
+  it("concurrent double-fire does not create duplicate embeddings (F3)", async () => {
+    await seedOldGenItems(["one", "two", "three"]);
+    await enqueueJob();
+
+    // Two overlapping sweeps claim the same job (the claim allows 'running') and
+    // race the worklist; the (item_id, split_ordinal, embedding_model,
+    // embedding_dimensions) UNIQUE + ON CONFLICT DO NOTHING makes the double
+    // insert a no-op — never a second row for the same generation.
+    await Promise.all([
+      runBrainReindexSweep({ db: ctx.db, client: modelB }),
+      runBrainReindexSweep({ db: ctx.db, client: modelB }),
+    ]);
+
+    expect(await indexExists("brain_embeddings_generation_uq")).toBe(true);
+    expect(await embCount("model-b", 1536)).toBe(3); // exactly one per item
+  });
+
   it("no pending jobs → a no-op tick", async () => {
     const summary = await runBrainReindexSweep({ db: ctx.db, client: modelB });
 

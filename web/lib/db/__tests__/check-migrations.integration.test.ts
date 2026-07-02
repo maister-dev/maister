@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import {
   PostgreSqlContainer,
   type StartedPostgreSqlContainer,
@@ -56,6 +59,16 @@ describe("findPendingMigrations", () => {
 
     const pending = await findPendingMigrations(db);
 
-    expect(pending).toContain("0087_shocking_epoch");
+    // Derive the newest journal tag (highest idx) rather than hardcoding it, so
+    // adding a migration never silently staleness-breaks this guard test.
+    const journal = JSON.parse(
+      readFileSync(
+        join(process.cwd(), "lib/db/migrations/meta/_journal.json"),
+        "utf8",
+      ),
+    ) as { entries: Array<{ idx: number; tag: string }> };
+    const newest = journal.entries.reduce((a, b) => (b.idx > a.idx ? b : a));
+
+    expect(pending).toContain(newest.tag);
   });
 });

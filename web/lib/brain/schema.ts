@@ -134,6 +134,18 @@ export const brainIndexJobs = pgTable("brain_index_jobs", {
     .defaultNow(),
 });
 
+// ADR-122 (F4): harvest idempotency ledger — one row per harvested domain event,
+// written in retain's transaction regardless of the retain outcome so a
+// re-delivered reinforce/exact-dup event never re-processes. PK (project_id,
+// domain_event_id).
+export const brainHarvestedEvents = pgTable("brain_harvested_events", {
+  projectId: text("project_id").notNull(),
+  domainEventId: bigint("domain_event_id", { mode: "number" }).notNull(),
+  harvestedAt: timestamp("harvested_at", { withTimezone: true, mode: "date" })
+    .notNull()
+    .defaultNow(),
+});
+
 export type BrainItemRow = typeof brainItems.$inferSelect;
 export type BrainItemInsert = typeof brainItems.$inferInsert;
 export type BrainEmbeddingRow = typeof brainEmbeddings.$inferSelect;

@@ -60,7 +60,14 @@ describe("findPendingBrainMigrations (ADR-122 boot guard)", () => {
 
   it("returns [] when the brain ledger already records every migration", async () => {
     process.env.DB_URL = "postgres://u:p@localhost:5432/db";
-    const db = mockDb(() => [{ hash: brainHash("0001_brain_foundation") }]);
+    // The ledger must record EVERY hand-authored brain migration, derived from
+    // the journal so a new migration never leaves this fixture stale.
+    const journal = JSON.parse(
+      readFileSync(join(BRAIN_DIR, "meta", "_journal.json"), "utf8"),
+    ) as { entries: Array<{ tag: string }> };
+    const db = mockDb(() =>
+      journal.entries.map((e) => ({ hash: brainHash(e.tag) })),
+    );
 
     expect(await findPendingBrainMigrations(db)).toEqual([]);
   });

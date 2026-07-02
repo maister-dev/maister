@@ -4,7 +4,7 @@ import type { BrainAmbientEntry } from "@/lib/flows/graph/run-context";
 
 import { createHash } from "node:crypto";
 
-import { type SQL } from "drizzle-orm";
+import { sql, type SQL } from "drizzle-orm";
 import pino from "pino";
 
 import { isBrainProvisioned } from "./guard";
@@ -47,6 +47,17 @@ function cacheKey(query: string, model: string, dimensions: number): string {
     .digest("hex");
 }
 
+async function isProjectBrainEnabled(
+  db: AmbientDb,
+  projectId: string,
+): Promise<boolean> {
+  const r = await db.execute(
+    sql`SELECT brain_enabled FROM projects WHERE id = ${projectId}`,
+  );
+
+  return Boolean(r.rows[0]?.brain_enabled);
+}
+
 export interface AmbientArgs {
   db: AmbientDb;
   projectId: string;
@@ -66,6 +77,13 @@ export async function getAmbientBrainProjection(
   // Opt-in: null (inherit) defaults OFF in Sub-project A.
   if (args.brainContext !== true) return undefined;
   if (!isBrainProvisioned()) return undefined;
+
+  // The project kill switch (ADR-122). A launch persists runs.brain_context
+  // independently of projects.brain_enabled, and an admin can disable the Brain
+  // AFTER a run launched opted-in, so ambient MUST re-check enablement here — the
+  // documented contract is "disabled project → recall no-op" (the explicit ext
+  // route already enforces it; ambient is the second consumer).
+  if (!(await isProjectBrainEnabled(args.db, args.projectId))) return undefined;
 
   try {
     const client =

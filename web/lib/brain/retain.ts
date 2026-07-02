@@ -107,6 +107,35 @@ export async function retain(
         sql`SELECT pg_advisory_xact_lock(hashtextextended(${projectId}, 0))`,
       );
 
+      // Harvest idempotency (F4): claim the domain event id in the SAME tx as the
+      // effect. A redelivered event (at-least-once dispatcher) — including one
+      // whose first delivery REINFORCED a near-dup (which leaves no
+      // source_domain_event_id row) — conflicts here and no-ops, so confidence /
+      // reinforcement_count / TTL are never double-counted. MCP retain carries no
+      // event id and skips this.
+      if (provenance.sourceDomainEventId != null) {
+        const claimed = await tx.execute(sql`
+          INSERT INTO brain_harvested_events (project_id, domain_event_id)
+          VALUES (${projectId}, ${provenance.sourceDomainEventId})
+          ON CONFLICT DO NOTHING
+          RETURNING domain_event_id
+        `);
+
+        if (claimed.rows.length === 0) {
+          const prior = await tx.execute(sql`
+            SELECT id FROM brain_items
+            WHERE project_id = ${projectId}
+              AND source_domain_event_id = ${provenance.sourceDomainEventId}
+            LIMIT 1
+          `);
+
+          return {
+            itemId: prior.rows[0] ? String(prior.rows[0].id) : "",
+            reinforced: false,
+          };
+        }
+      }
+
       // Exact content_hash dup on an active row → idempotent no-op.
       const dup = await tx.execute(sql`
         SELECT id FROM brain_items
@@ -181,6 +210,8 @@ export async function retain(
             (${randomUUID()}, ${itemId}, ${i}, ${toVectorLiteral(vectors[i])}::vector,
              ${client.provider}, ${client.model}, ${n}, ${client.version},
              ${sha256(segments[i])}, ${contentHash})
+          ON CONFLICT (item_id, split_ordinal, embedding_model, embedding_dimensions)
+          DO NOTHING
         `);
       }
 

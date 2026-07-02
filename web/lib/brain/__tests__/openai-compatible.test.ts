@@ -131,6 +131,35 @@ describe("openai-compatible client (T2.1)", () => {
     expect(calls).toHaveLength(3);
   });
 
+  it("aborts a stalled request per attempt and maps the timeout to EMBEDDING_UNAVAILABLE (F2)", async () => {
+    const inits: RequestInit[] = [];
+    // A provider that accepts the connection then stalls: this fetch never
+    // resolves on its own — it only rejects when the per-attempt AbortSignal
+    // fires. Without the deadline the client would hang forever.
+    const fetchImpl = (async (_url: string, init: RequestInit) => {
+      inits.push(init);
+
+      return new Promise<Response>((_resolve, reject) => {
+        const signal = init.signal as AbortSignal | undefined;
+
+        signal?.addEventListener("abort", () =>
+          reject(new DOMException("timed out", "TimeoutError")),
+        );
+      });
+    }) as unknown as typeof fetch;
+
+    const client = makeEmbeddingClient(
+      cfg({ fetchImpl, timeoutMs: 10, retryDelayMs: 0 }),
+    );
+
+    await expect(client.embed(["x"])).rejects.toMatchObject({
+      code: "EMBEDDING_UNAVAILABLE",
+    });
+    // Every attempt supplied a signal and was aborted → 3 attempts, no hang.
+    expect(inits).toHaveLength(3);
+    expect(inits.every((i) => i.signal instanceof AbortSignal)).toBe(true);
+  });
+
   it("uses the env:NAME key in the Authorization header but NEVER leaks it in logs/errors", async () => {
     const { fetchImpl, calls } = mockFetch([
       jsonResponse({ error: "down" }, 500),
