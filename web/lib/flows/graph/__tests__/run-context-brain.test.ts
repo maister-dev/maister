@@ -7,7 +7,13 @@ import { buildRunContext } from "@/lib/flows/graph/run-context";
 describe("buildRunContext brain passthrough (T4.3)", () => {
   it("includes the brain projection when provided", () => {
     const brain = [
-      { kind: "lesson", title: "t", content: "c", confidence: 0.3, tags: ["a"] },
+      {
+        kind: "lesson",
+        title: "t",
+        content: "c",
+        confidence: 0.3,
+        tags: ["a"],
+      },
     ];
     const ctx = buildRunContext({
       taskPrompt: "the intent",
