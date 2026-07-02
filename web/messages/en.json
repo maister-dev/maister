@@ -2362,7 +2362,8 @@
       "flow_run": "flow_run",
       "run_schedule": "run_schedule",
       "webhook_delivery": "webhook_delivery",
-      "domain_event_dispatch": "domain_event_dispatch"
+      "domain_event_dispatch": "domain_event_dispatch",
+      "auto_launch_triaged": "auto_launch_triaged"
     },
     "state": {
       "active": "active",

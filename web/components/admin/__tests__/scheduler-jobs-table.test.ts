@@ -14,6 +14,7 @@ import {
   SchedulerJobsTable,
   type SchedulerJobRow,
 } from "@/components/admin/scheduler-jobs-table";
+import { ALL_SCHEDULER_JOB_KINDS } from "@/lib/scheduler/job-catalog";
 
 function job(over: Partial<SchedulerJobRow> = {}): SchedulerJobRow {
   return {
@@ -79,8 +80,9 @@ describe("SchedulerJobsTable", () => {
       }),
     );
 
-    expect(markup).toContain("kind.run_schedule");
-    expect(markup).toContain("kind.domain_event_dispatch");
+    for (const kind of ALL_SCHEDULER_JOB_KINDS) {
+      expect(markup).toContain(`kind.${kind}`);
+    }
   });
 
   it("renders typed target summaries and project links", () => {
