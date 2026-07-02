@@ -80,4 +80,18 @@ describe("core:triager definition (T5.1)", () => {
       "task.comment_added",
     ]);
   });
+
+  // The flagged-hold invariant lives in the PROMPT — the agent's reasoning is
+  // the enforcement point (the event trigger only self-excludes the agent's
+  // own comments, so a human/system comment re-launches the triager on a
+  // flagged task). Guard the guard: this text was once silently lost when the
+  // fixture was overwritten from a diverged maister-plugins deliverable.
+  it("prompt keeps the flagged-task early-stop guard (human-held hold)", () => {
+    const parsed = parseAgentDefinition("core:triager", TRIAGER_MD);
+
+    expect(parsed.prompt).toContain(
+      "If its `triage_status` is already `flagged`, stop",
+    );
+    expect(parsed.prompt).toContain("must be a no-op");
+  });
 });

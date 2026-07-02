@@ -50,7 +50,7 @@ surface exists.
 - **Agent tokens** (M34 — Implemented, ADR-089) — `token_kind='agent'` rows with
   an `agent_id` FK: per-LAUNCH ephemeral credentials for platform-agent runs.
   Issued at agent-run spawn with exactly the fixed scope set `tasks:read,
-  tasks:triage, comments:read, comments:create, relations:read,
+  tasks:update, tasks:triage, comments:read, comments:create, relations:read,
   relations:create, relations:delete, flows:read, runners:read`; injected
   server-side into the
   session's MCP-facade `mcpServers` entry; revoked at the run's terminal
@@ -67,7 +67,9 @@ surface exists.
   project's launchable flows a triage verdict may assign) and `runners:read`
   (the enabled platform ACP runners), both mapping to the `readBoard` project
   action and added to the agent-token scope set for the triager's discovery
-  reads.
+  reads. `tasks:update` (pre-existing, maps to `editTask`) is also in the
+  agent-token set so the triager's clarify mode can sharpen the task
+  title/prompt before recording a verdict.
 - **Personal-token scopes** (Implemented) — `hitl:inbox:read` grants read-only
   cross-project pending HITL listing. `hitl:respond:human` is an exact critical
   scope for human, infra-recovery, and budget-breach HITL responses; `*` does

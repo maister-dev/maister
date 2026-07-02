@@ -22,6 +22,7 @@ import {
 import { issueToken } from "@/lib/tokens/issue";
 import { testPlatformRunnerRow } from "@/lib/__tests__/runner-fixtures";
 import * as schemaModule from "@/lib/db/schema";
+import { AGENT_TOKEN_SCOPES } from "@/types/token-scopes";
 
 const schema = schemaModule as unknown as Record<string, any>;
 const auditMockState = vi.hoisted(() => ({
@@ -91,7 +92,8 @@ async function seedProject(slug: string) {
   const flowId = randomUUID();
   const executorId = randomUUID();
 
-  await db.insert(schema.projects).values({ taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
+  await db.insert(schema.projects).values({
+    taskKey: `T${crypto.randomUUID().slice(0, 8)}`.toUpperCase(),
     id: projectId,
     slug,
     name: `Project ${slug}`,
@@ -120,7 +122,8 @@ async function seedProject(slug: string) {
 async function seedTask(projectId: string, flowId: string, status = "Backlog") {
   const taskId = randomUUID();
 
-  await db.insert(schema.tasks as any).values({ number: Math.trunc(Math.random() * 1e9) + 1,
+  await db.insert(schema.tasks as any).values({
+    number: Math.trunc(Math.random() * 1e9) + 1,
     id: taskId,
     projectId,
     title: "Test Task",
@@ -323,6 +326,35 @@ describe("PATCH /api/v1/ext/projects/[slug]/tasks/[taskId]", () => {
       status_code: 200,
       scope_used: "tasks:update",
     });
+  });
+
+  it("a token holding exactly AGENT_TOKEN_SCOPES may PATCH title/prompt (the triager clarify-mode grant, ADR-112)", async () => {
+    const { slug, projectId, flowId } = {
+      ...(await seedProject(`ext-patch-agent-${randomUUID().slice(0, 8)}`)),
+    };
+    const taskId = await seedTask(projectId, flowId, "Backlog");
+
+    const token = await issueToken(
+      {
+        projectId,
+        name: "Agent-scoped Token",
+        scopes: [...AGENT_TOKEN_SCOPES],
+      },
+      db,
+    );
+
+    const req = makeRequest("PATCH", taskId, {
+      prompt: "Sharpened statement",
+    });
+
+    req.headers.set("authorization", `Bearer ${token.secret}`);
+
+    const res = await PATCH(req, {
+      params: Promise.resolve({ slug, taskId }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toHaveProperty("prompt", "Sharpened statement");
   });
 
   it("forced success-audit failure rolls back the task update", async () => {

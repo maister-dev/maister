@@ -81,9 +81,8 @@ paths:
         identified by `slug`. The `projectId` is derived server-side from the
         URL slug and compared against the token's project — mismatch → 404.
 
-        Validates that `flowId` belongs to the project and, when
-        `executorOverrideId` is supplied, that it also belongs to the same
-        project. Both checks return 422 on failure.
+        Validates that `flowId` belongs to the project; the check returns 422
+        on failure.
 
         Writes a `token_audit_log` row with scope `tasks:create` after success.
       operationId: extCreateTask
@@ -206,8 +205,8 @@ paths:
       tags: [tasks]
       summary: Update a task (Backlog-only fields)
       description: |
-        Scope `tasks:update`. Updates `title`, `prompt`, and/or
-        `executorOverrideId` on a task in `Backlog` status. Fields not present
+        Scope `tasks:update`. Updates `title` and/or `prompt` on a task in
+        `Backlog` status. Fields not present
         in the body are left unchanged. The `projectId` is derived server-side;
         `taskId` ownership is re-validated against the token's project.
 
@@ -1986,11 +1985,6 @@ components:
         flowId:
           type: string
           description: ID of the flow configured for this task.
-        executorOverrideId:
-          type: string
-          format: uuid
-          nullable: true
-          description: Optional executor override stored on the task.
         latestRunId:
           type: string
           format: uuid
@@ -2159,14 +2153,6 @@ components:
             a task created without `flowId` is a simple-intent task — it
             classifies as `unconfigured` (not launchable) until a triage
             verdict (`POST .../triage`) or a human fills the flow.
-        executorOverrideId:
-          type: string
-          minLength: 1
-          description: |
-            Optional. ID of an `executors` row belonging to this project.
-            Stored in `tasks.executor_override_id`. Any other executor ID
-            returns 422.
-
     ExtUpdateTaskBody:
       type: object
       description: |
@@ -2180,12 +2166,6 @@ components:
         prompt:
           type: string
           minLength: 1
-        executorOverrideId:
-          type: string
-          nullable: true
-          description: |
-            Set to a valid executor ID to override, or `null` to clear the
-            existing override.
 
     ExtLaunchRunBody:
       type: object

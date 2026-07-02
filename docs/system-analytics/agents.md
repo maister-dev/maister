@@ -101,8 +101,9 @@ not contain the package-root `maister-agents/`).
   `attempt_number`.
 - **Agent tokens** (Implemented) — `project_tokens` rows with `token_kind='agent'`
   + `agent_id`, issued per launch with the fixed scope set `tasks:read,
-  tasks:triage, comments:read, comments:create, relations:read, relations:create,
-  relations:delete`, revoked at terminal / link detach / link disable / GC. Token
+  tasks:update, tasks:triage, comments:read, comments:create, relations:read,
+  relations:create, relations:delete, flows:read, runners:read`, revoked at
+  terminal / link detach / link disable / GC. Token
   actor = `{ type: 'agent', id: agent_id }`.
 - **Triage verdict surface** (Implemented) — `tasks.flow_id` nullable +
   verdict columns; the `unconfigured` launchability value; the

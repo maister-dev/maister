@@ -91,9 +91,7 @@ describe("TOOL_SPECS registry", () => {
   });
 
   it("documents that hitl_respond can answer human gates only with exact personal-token scope", () => {
-    expect(TOOL_SPECS.hitl_respond.description).toContain(
-      "hitl:respond:human",
-    );
+    expect(TOOL_SPECS.hitl_respond.description).toContain("hitl:respond:human");
     expect(TOOL_SPECS.hitl_respond.description).toContain(
       "global personal token",
     );
@@ -101,7 +99,7 @@ describe("TOOL_SPECS registry", () => {
 });
 
 describe("dispatchTool — per-tool outbound request mapping", () => {
-  it("task_create → POST /api/v1/ext/projects/{slug}/tasks", async () => {
+  it("task_create → POST /api/v1/ext/projects/{slug}/tasks (strips executorOverrideId — the strict route refuses it)", async () => {
     mockOnce({ taskId: "t1" }, 201);
 
     await dispatchTool({
@@ -126,7 +124,6 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
       title: "Fix bug",
       prompt: "Do the thing",
       flowId: "bugfix",
-      executorOverrideId: "exec-1",
     });
   });
 
@@ -202,7 +199,7 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
     expect(parsedBody(init)).toBeUndefined();
   });
 
-  it("task_update → PATCH /api/v1/ext/projects/{slug}/tasks/{taskId}", async () => {
+  it("task_update → PATCH /api/v1/ext/projects/{slug}/tasks/{taskId} (strips executorOverrideId — the strict route refuses it)", async () => {
     mockOnce({ id: "task-1" }, 200);
 
     await dispatchTool({
@@ -226,7 +223,6 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
     expect(parsedBody(init)).toEqual({
       title: "New title",
       prompt: "New prompt",
-      executorOverrideId: null,
     });
   });
 
@@ -621,6 +617,56 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
       flowId: "bugfix",
       promotionMode: "pull_request",
     });
+  });
+
+  it("triage_set forwards the full verdict surface (baseBranch/enqueue + ADR-121 priority/confidence)", async () => {
+    mockOnce({ ok: true, triageStatus: "triaged" }, 200);
+
+    await dispatchTool({
+      name: "triage_set",
+      args: {
+        slug: "demo",
+        taskId: "task-1",
+        flowId: "bugfix",
+        runnerId: "runner-1",
+        baseBranch: "main",
+        targetBranch: "develop",
+        promotionMode: "local_merge",
+        enqueue: true,
+        priority: "high",
+        confidence: 0.9,
+      },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    const { init } = lastRequest();
+
+    expect(parsedBody(init)).toEqual({
+      flowId: "bugfix",
+      runnerId: "runner-1",
+      baseBranch: "main",
+      targetBranch: "develop",
+      promotionMode: "local_merge",
+      enqueue: true,
+      priority: "high",
+      confidence: 0.9,
+    });
+  });
+
+  it("triage_set forwards a flag-only hold (the dedup/unroutable path)", async () => {
+    mockOnce({ ok: true, triageStatus: "flagged" }, 200);
+
+    await dispatchTool({
+      name: "triage_set",
+      args: { slug: "demo", taskId: "task-1", flag: true, priority: "urgent" },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    const { init } = lastRequest();
+
+    expect(parsedBody(init)).toEqual({ flag: true, priority: "urgent" });
   });
 
   it("relation_list → GET /api/v1/ext/projects/{slug}/tasks/{taskId}/relations", async () => {

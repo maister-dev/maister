@@ -34,6 +34,9 @@ export const TOKEN_SCOPES = [
 // tokens — task/comment/triage/relations ops only.
 export const AGENT_TOKEN_SCOPES = [
   "tasks:read",
+  // M-triager (ADR-112 §6.2): clarify mode sharpens the task title/prompt via
+  // `task_update` before recording the verdict.
+  "tasks:update",
   "tasks:triage",
   "comments:read",
   "comments:create",

@@ -17,7 +17,6 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
         title: { type: "string" },
         prompt: { type: "string" },
         flowId: { type: "string" },
-        executorOverrideId: { type: "string" },
       },
       required: ["slug", "title", "prompt"],
     },
@@ -66,7 +65,8 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
     },
   },
   task_update: {
-    description: "Update fields on a task",
+    description:
+      "Update fields on a task (title/prompt — e.g. triage clarify-mode sharpening the statement)",
     inputSchema: {
       type: "object",
       properties: {
@@ -74,7 +74,6 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
         taskId: { type: "string" },
         title: { type: "string" },
         prompt: { type: "string" },
-        executorOverrideId: { type: ["string", "null"] },
       },
       required: ["slug", "taskId"],
     },
@@ -318,7 +317,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
   },
   triage_set: {
     description:
-      "Submit a triage verdict for a task (at least one of flowId/runnerId/targetBranch/promotionMode); always stamps triage_status='triaged'",
+      "Submit a triage verdict for a task: any of flowId/runnerId/baseBranch/targetBranch/promotionMode stamps triage_status='triaged'; `flag: true` instead holds the task for a human (mutually exclusive with verdict fields). `enqueue: true` sets the auto-launch intent (valid only with a verdict that yields a flow). `priority` (queue admission order) and `confidence` (0..1, advisory) are independent and may accompany either shape.",
     inputSchema: {
       type: "object",
       properties: {
@@ -326,11 +325,19 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
         taskId: { type: "string" },
         flowId: { type: "string" },
         runnerId: { type: "string" },
+        baseBranch: { type: "string" },
         targetBranch: { type: "string" },
         promotionMode: {
           type: "string",
           enum: ["local_merge", "pull_request"],
         },
+        flag: { type: "boolean" },
+        enqueue: { type: "boolean" },
+        priority: {
+          type: "string",
+          enum: ["low", "normal", "high", "urgent"],
+        },
+        confidence: { type: "number", minimum: 0, maximum: 1 },
       },
       required: ["slug", "taskId"],
     },
@@ -436,18 +443,15 @@ function resolveRouting(
 } {
   switch (name) {
     case "task_create": {
-      const { slug, title, prompt, flowId, executorOverrideId } = args as {
+      const { slug, title, prompt, flowId } = args as {
         slug: string;
         title: string;
         prompt: string;
         flowId?: string;
-        executorOverrideId?: string;
       };
       const body: Record<string, unknown> = { title, prompt };
 
       if (flowId !== undefined) body.flowId = flowId;
-      if (executorOverrideId !== undefined)
-        body.executorOverrideId = executorOverrideId;
 
       return {
         method: "POST",
@@ -479,19 +483,16 @@ function resolveRouting(
       return { method: "GET", path: `/api/v1/ext/projects/${slug}/runners` };
     }
     case "task_update": {
-      const { slug, taskId, title, prompt, executorOverrideId } = args as {
+      const { slug, taskId, title, prompt } = args as {
         slug: string;
         taskId: string;
         title?: string;
         prompt?: string;
-        executorOverrideId?: string | null;
       };
       const body: Record<string, unknown> = {};
 
       if (title !== undefined) body.title = title;
       if (prompt !== undefined) body.prompt = prompt;
-      if (executorOverrideId !== undefined)
-        body.executorOverrideId = executorOverrideId;
 
       return {
         method: "PATCH",
@@ -709,21 +710,42 @@ function resolveRouting(
       };
     }
     case "triage_set": {
-      const { slug, taskId, flowId, runnerId, targetBranch, promotionMode } =
-        args as {
-          slug: string;
-          taskId: string;
-          flowId?: string;
-          runnerId?: string;
-          targetBranch?: string;
-          promotionMode?: string;
-        };
+      const {
+        slug,
+        taskId,
+        flowId,
+        runnerId,
+        baseBranch,
+        targetBranch,
+        promotionMode,
+        flag,
+        enqueue,
+        priority,
+        confidence,
+      } = args as {
+        slug: string;
+        taskId: string;
+        flowId?: string;
+        runnerId?: string;
+        baseBranch?: string;
+        targetBranch?: string;
+        promotionMode?: string;
+        flag?: boolean;
+        enqueue?: boolean;
+        priority?: string;
+        confidence?: number;
+      };
       const body: Record<string, unknown> = {};
 
       if (flowId !== undefined) body.flowId = flowId;
       if (runnerId !== undefined) body.runnerId = runnerId;
+      if (baseBranch !== undefined) body.baseBranch = baseBranch;
       if (targetBranch !== undefined) body.targetBranch = targetBranch;
       if (promotionMode !== undefined) body.promotionMode = promotionMode;
+      if (flag !== undefined) body.flag = flag;
+      if (enqueue !== undefined) body.enqueue = enqueue;
+      if (priority !== undefined) body.priority = priority;
+      if (confidence !== undefined) body.confidence = confidence;
 
       return {
         method: "POST",
