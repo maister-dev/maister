@@ -147,14 +147,14 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
     expect(parsedBody(init)).toBeUndefined();
   });
 
-  it("memory_recall → GET /api/v1/ext/projects/{slug}/memory with q rename + repeated kinds + conditional params", async () => {
+  it("memory_recall → GET /api/v1/ext/projects/{slug}/memory with repeated kinds + conditional params", async () => {
     mockOnce({ items: [] }, 200);
 
     await dispatchTool({
       name: "memory_recall",
       args: {
         slug: "demo",
-        query: "auth lessons",
+        q: "auth lessons",
         limit: 7,
         kinds: ["lesson", "state_fact"],
         minConfidence: 0.5,
@@ -166,7 +166,7 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
     const { url, init } = lastRequest();
 
     expect(init.method).toBe("GET");
-    // `query` renames to `q`; kinds repeat; limit/minConfidence only when set.
+    // kinds repeat; limit/minConfidence appear only when set.
     expect(url).toBe(
       `${BASE_URL}/api/v1/ext/projects/demo/memory?q=auth+lessons&limit=7&minConfidence=0.5&kinds=lesson&kinds=state_fact`,
     );
@@ -179,7 +179,7 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
 
     await dispatchTool({
       name: "memory_recall",
-      args: { slug: "demo", query: "x" },
+      args: { slug: "demo", q: "x" },
       ctx: httpCtx,
       baseUrl: BASE_URL,
     });

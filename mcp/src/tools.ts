@@ -71,7 +71,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
       type: "object",
       properties: {
         slug: { type: "string" },
-        query: { type: "string", minLength: 1, maxLength: 2000 },
+        q: { type: "string", minLength: 1, maxLength: 2000 },
         limit: { type: "integer", minimum: 1, maximum: 50 },
         kinds: {
           type: "array",
@@ -82,7 +82,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
         },
         minConfidence: { type: "number", minimum: 0, maximum: 1 },
       },
-      required: ["slug", "query"],
+      required: ["slug", "q"],
     },
   },
   memory_retain: {
@@ -531,16 +531,16 @@ function resolveRouting(
       return { method: "GET", path: `/api/v1/ext/projects/${slug}/runners` };
     }
     case "memory_recall": {
-      const { slug, query, limit, kinds, minConfidence } = args as {
+      const { slug, q, limit, kinds, minConfidence } = args as {
         slug: string;
-        query: string;
+        q: string;
         limit?: number;
         kinds?: string[];
         minConfidence?: number;
       };
       const sp = new URLSearchParams();
 
-      sp.set("q", query);
+      sp.set("q", q);
       if (limit !== undefined) sp.set("limit", String(limit));
       if (minConfidence !== undefined)
         sp.set("minConfidence", String(minConfidence));

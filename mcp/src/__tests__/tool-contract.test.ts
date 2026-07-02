@@ -46,7 +46,12 @@ type OpenApiDoc = {
     Record<
       string,
       {
-        parameters?: Array<{ $ref?: string; name?: string; in?: string }>;
+        parameters?: Array<{
+          $ref?: string;
+          name?: string;
+          in?: string;
+          required?: boolean;
+        }>;
         requestBody?: {
           content?: Record<string, { schema?: JsonSchema }>;
         };
@@ -108,6 +113,14 @@ const TOOL_OP: Record<string, { method: string; path: string }> = {
     method: "post",
     path: "/api/v1/ext/runs/{runId}/gates/{gateId}/report",
   },
+  memory_recall: {
+    method: "get",
+    path: "/api/v1/ext/projects/{slug}/memory",
+  },
+  memory_retain: {
+    method: "post",
+    path: "/api/v1/ext/projects/{slug}/memory",
+  },
   hitl_list: { method: "get", path: "/api/v1/ext/runs/{runId}/hitl" },
   hitl_inbox: { method: "get", path: "/api/v1/ext/hitl" },
   hitl_respond: {
@@ -149,7 +162,20 @@ type OpParameter = {
   name?: string;
   in?: string;
   schema?: JsonSchema;
+  required?: boolean;
 };
+
+function requiredQueryParams(op: { parameters?: OpParameter[] }): string[] {
+  const out: string[] = [];
+
+  for (const raw of op.parameters ?? []) {
+    const p = deref(raw);
+
+    if (p.in === "query" && p.required === true && p.name) out.push(p.name);
+  }
+
+  return out;
+}
 
 function queryParamSchemas(op: {
   parameters?: OpParameter[];
@@ -242,10 +268,15 @@ describe("TOOL_SPECS ↔ external OpenAPI contract", () => {
       expect(new Set(Object.keys(toolProps))).toEqual(expected);
     });
 
-    it("marks exactly the path params + required body fields as required", () => {
-      // Path params are always required (they are URL segments the agent
-      // MUST supply); query params (limit/offset) are optional with defaults.
-      const expected = new Set([...params, ...bodyRequired]);
+    it("marks exactly the path params + required body/query fields as required", () => {
+      // Path params are always required (they are URL segments the agent MUST
+      // supply); query params are optional with defaults (limit/offset) UNLESS
+      // the spec marks the parameter `required: true` (memory_recall `q`).
+      const expected = new Set([
+        ...params,
+        ...bodyRequired,
+        ...requiredQueryParams(op),
+      ]);
 
       expect(new Set(toolRequired)).toEqual(expected);
     });
