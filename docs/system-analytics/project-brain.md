@@ -25,7 +25,8 @@ LSP edge connector are **Sub-project C**.
 - **`brain_items`** (Designed) — one knowledge item: `{ id, project_id (FK,
   ON DELETE CASCADE — the auth boundary), kind (lesson|observation|state_fact in A),
   tier (owned), title, content, status (active|expired|superseded), confidence,
-  reinforcement_count, last_reinforced_at, expires_at, content_hash, provenance
+  reinforcement_count, last_reinforced_at, expires_at, content_hash, tags
+  (jsonb string[] — owned metadata), provenance
   (source_run_id?, source_node_attempt_id?, source_domain_event_id?,
   source_gate_kind?), created_at, updated_at, tsv (generated tsvector) }`. See
   [db/brain-domain.md](../db/brain-domain.md).

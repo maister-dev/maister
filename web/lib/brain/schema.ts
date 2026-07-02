@@ -63,6 +63,7 @@ export const brainItems = pgTable("brain_items", {
   }),
   expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }),
   contentHash: text("content_hash").notNull(),
+  tags: jsonb("tags").$type<string[]>().notNull().default([]),
   sourceRunId: text("source_run_id"),
   sourceNodeAttemptId: text("source_node_attempt_id"),
   sourceDomainEventId: bigint("source_domain_event_id", { mode: "number" }),

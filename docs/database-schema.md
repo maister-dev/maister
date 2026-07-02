@@ -2495,6 +2495,7 @@ One knowledge item; `project_id` is the auth boundary (recall never crosses it).
   reinforcementCount,              // integer NOT NULL DEFAULT 0
   lastReinforcedAt?, expiresAt?,   // expiresAt NULL for non-decayed state_fact
   contentHash,                     // NOT NULL — exact-dup idempotency
+  tags,                            // jsonb NOT NULL DEFAULT '[]' — owned metadata (string[])
   sourceRunId?,                    // FK runs(id) SET NULL — provenance
   sourceNodeAttemptId?,            // FK node_attempts(id) SET NULL
   sourceDomainEventId?,            // FK domain_events(id) SET NULL — harvest idempotency

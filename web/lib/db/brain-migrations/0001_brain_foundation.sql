@@ -16,6 +16,7 @@ CREATE TABLE "brain_items" (
 	"last_reinforced_at" timestamp with time zone,
 	"expires_at" timestamp with time zone,
 	"content_hash" text NOT NULL,
+	"tags" jsonb DEFAULT '[]'::jsonb NOT NULL,
 	"source_run_id" text,
 	"source_node_attempt_id" text,
 	"source_domain_event_id" bigint,

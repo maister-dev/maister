@@ -43,6 +43,7 @@ erDiagram
         timestamptz last_reinforced_at "NULL"
         timestamptz expires_at "NULL for non-decayed state_fact; set for lesson/observation"
         text content_hash "NOT NULL — exact-dup idempotency"
+        jsonb tags "NOT NULL DEFAULT '[]' — owned metadata (string[])"
         text source_run_id FK "NULL -> runs(id) SET NULL — provenance"
         text source_node_attempt_id FK "NULL -> node_attempts(id) SET NULL"
         bigint source_domain_event_id FK "NULL -> domain_events(id) SET NULL — harvest idempotency"
