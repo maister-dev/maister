@@ -1,0 +1,151 @@
+import type { OpenAiCompatibleClient } from "@/lib/brain/openai-compatible";
+
+import { describe, expect, it } from "vitest";
+
+import { distill, type DistillInput } from "@/lib/brain/distill";
+
+// T3.1 — distillation. Mocked db (rows dispensed in query order) + a fake
+// completion client. No network, no container.
+
+type Rows = Array<Record<string, unknown>>;
+
+function mockDb(rowsByCall: Rows[]) {
+  let i = 0;
+
+  return {
+    execute: async () => ({ rows: rowsByCall[i++] ?? [] }),
+  };
+}
+
+function fakeClient(
+  completeFn: (prompt: string) => string,
+): OpenAiCompatibleClient {
+  return {
+    provider: "openai_compatible",
+    model: "m",
+    dimensions: 4,
+    version: "m@4",
+    async embed(texts: string[]): Promise<number[][]> {
+      return texts.map(() => [0, 0, 0, 0]);
+    },
+    async complete(prompt: string): Promise<string> {
+      return completeFn(prompt);
+    },
+  };
+}
+
+const terminalEvent: DistillInput = {
+  kind: "run.failed",
+  projectId: "p1",
+  runId: "r1",
+  taskId: "t1",
+  payload: { reason: "gate_failed", runKind: "flow" },
+};
+
+describe("distill (T3.1)", () => {
+  it("returns a validated lesson for well-formed JSON", async () => {
+    const db = mockDb([
+      [{ title: "Fix login", prompt: "the button is broken" }],
+      [],
+      [],
+    ]);
+    const client = fakeClient(() =>
+      JSON.stringify({
+        content: "always add a test for the failing gate",
+        kind: "lesson",
+        tags: ["gate", "tests"],
+      }),
+    );
+
+    const out = await distill(terminalEvent, {
+      db: db as never,
+      client,
+    });
+
+    expect(out).toEqual({
+      content: "always add a test for the failing gate",
+      kind: "lesson",
+      tags: ["gate", "tests"],
+    });
+  });
+
+  it("rejects malformed output (returns null) after the in-process retry", async () => {
+    let calls = 0;
+    const db = mockDb([[], [], []]);
+    const client = fakeClient(() => {
+      calls++;
+
+      return "not json at all";
+    });
+
+    const out = await distill(terminalEvent, { db: db as never, client });
+
+    expect(out).toBeNull();
+    expect(calls).toBe(2); // one retry
+  });
+
+  it("rejects schema-invalid JSON (missing required content) → null", async () => {
+    const db = mockDb([[], [], []]);
+    const client = fakeClient(() =>
+      JSON.stringify({ kind: "lesson", tags: [] }),
+    );
+
+    expect(
+      await distill(terminalEvent, { db: db as never, client }),
+    ).toBeNull();
+  });
+
+  it("recovers on the second attempt when the first is invalid", async () => {
+    let calls = 0;
+    const db = mockDb([[], [], []]);
+    const client = fakeClient(() => {
+      calls++;
+
+      return calls === 1
+        ? "garbage"
+        : JSON.stringify({ content: "ok now", kind: "observation" });
+    });
+
+    const out = await distill(terminalEvent, { db: db as never, client });
+
+    expect(out?.content).toBe("ok now");
+    expect(out?.kind).toBe("observation");
+    expect(out?.tags).toEqual([]); // missing tags → []
+  });
+
+  it("assembles the prompt from review comments + rework chain + task", async () => {
+    let captured = "";
+    const db = mockDb([
+      [{ title: "Refactor auth", prompt: "split the module" }],
+      [{ body: "this rename breaks the import" }],
+      [{ node_id: "review", attempt: 2, rework_from_node: "plan" }],
+    ]);
+    const client = fakeClient((prompt) => {
+      captured = prompt;
+
+      return JSON.stringify({ content: "c", kind: "lesson" });
+    });
+
+    await distill(terminalEvent, { db: db as never, client });
+
+    expect(captured).toContain("Refactor auth");
+    expect(captured).toContain("this rename breaks the import");
+    expect(captured).toContain("reworked from plan");
+    expect(captured).toContain("## Event: run.failed");
+  });
+
+  it("filters non-string tags and clamps to 5", async () => {
+    const db = mockDb([[], [], []]);
+    const client = fakeClient(() =>
+      JSON.stringify({
+        content: "c",
+        kind: "state_fact",
+        tags: ["a", 1, "b", true, "c", "d", "e", "f"],
+      }),
+    );
+
+    const out = await distill(terminalEvent, { db: db as never, client });
+
+    expect(out?.tags).toEqual(["a", "b", "c", "d", "e"]);
+  });
+});

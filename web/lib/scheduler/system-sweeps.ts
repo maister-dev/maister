@@ -6,6 +6,7 @@ import type { WorkspaceGcSummary } from "@/lib/gc/workspace-gc";
 
 import pino from "pino";
 
+import { runBrainDecaySweep } from "@/lib/brain/decay";
 import { runCapabilitiesCleanupSweep } from "@/lib/capabilities/cleanup";
 import { runEphemeralAgentGcSweep } from "@/lib/gc/ephemeral-agent-gc";
 import { runRevisionGcSweep } from "@/lib/gc/revision-gc";
@@ -29,6 +30,9 @@ export type SystemSweepSummary = GcCompatibilitySummary & {
   revision: RevisionGcSummary | null;
   capabilities: Awaited<ReturnType<typeof runCapabilitiesCleanupSweep>> | null;
   ephemeralAgent: EphemeralAgentGcSummary | null;
+  // ADR-122: the Project Brain decay sweep (self-throttled hourly; expires items
+  // past expires_at). null when it never ran this process.
+  brain: Awaited<ReturnType<typeof runBrainDecaySweep>> | null;
 };
 
 const log = pino({
@@ -130,6 +134,18 @@ export async function runSystemSweep(): Promise<SystemSweepSummary> {
     log.error({ err: message }, "system_sweep cost reconcile threw");
   }
 
+  let brain: SystemSweepSummary["brain"] = null;
+
+  try {
+    brain = await runBrainDecaySweep();
+    errors.push(...brain.errors);
+  } catch (err) {
+    const message = errorMessage(err);
+
+    errors.push(`brain decay sweep failed: ${message}`);
+    log.error({ err: message }, "system_sweep brain decay threw");
+  }
+
   const gc = await runGcBundle();
 
   errors.push(...gc.errors);
@@ -138,6 +154,7 @@ export async function runSystemSweep(): Promise<SystemSweepSummary> {
     keepalive,
     reconcile,
     cost,
+    brain,
     workspace: gc.workspace,
     revision: gc.revision,
     capabilities: gc.capabilities,

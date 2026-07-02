@@ -7,6 +7,7 @@ import pino from "pino";
 import { agentTriggersConsumer } from "@/lib/agents/triggers";
 import { autoLaunchRunPlanConsumer } from "@/lib/domain-events/auto-launch";
 import { costRollupReconcileConsumer } from "@/lib/domain-events/cost-rollup-reconcile";
+import { memoryHarvestConsumer } from "@/lib/domain-events/memory-harvest";
 import { orchestratorResumeConsumer } from "@/lib/domain-events/orchestrator-resume";
 import { ralphLoopConsumer } from "@/lib/runs/ralph-loop";
 
@@ -71,4 +72,8 @@ export const DOMAIN_EVENT_CONSUMERS: DomainEventConsumer[] = [
   // run-terminal event (run.done|failed|crashed|abandoned). Poison-safe; the
   // system_sweep ended_at backstop is the completeness guarantee.
   costRollupReconcileConsumer,
+  // ADR-122: the Project Brain harvest consumer — distills run-terminal +
+  // gate.failed events into lessons (guarded by projects.brain_enabled),
+  // transient failures hold the cursor, schema-invalid distill skips+advances.
+  memoryHarvestConsumer,
 ];
