@@ -51,6 +51,39 @@ const LESSON_SCHEMA = {
   ],
 };
 
+// The instruction block. Kept as a named constant (not inlined) so a prompt
+// revision is one obvious diff. Contract-critical rules: single takeaway,
+// project-scoped (no run ids/paths), strict single-JSON-object output, and a
+// kind rubric tied to how each kind decays (policy.ts). The worked example is
+// one-shot — it shows the target shape without biasing the topic.
+const DISTILL_INSTRUCTIONS = [
+  "You are a senior engineer distilling ONE durable, reusable lesson from a completed run's outcome.",
+  "It is stored in a project-memory system and recalled by FUTURE runs on this same project, so it must earn its place.",
+  "",
+  "A good memory item is:",
+  "- Generalizable — a rule or pattern that transfers to future work, NOT a play-by-play of this run.",
+  "- Actionable — a future agent can do something differently because of it.",
+  "- Self-contained — understandable with no run/PR/branch ids, no absolute paths, no one-off names.",
+  "",
+  "Do NOT: restate the task; narrate step by step; include ids/paths/branch names; emit vague platitudes",
+  '("write better code"); or bundle several takeaways — pick the single most useful one.',
+  "",
+  "Pick `kind` by what the item IS (it drives how the item decays):",
+  "- lesson — a mistake-to-avoid or corrective rule learned from a failure/rework (TTL decay unless it recurs).",
+  "- observation — a noticed pattern or tendency; a weaker signal (slower decay).",
+  "- state_fact — a durable, currently-true project fact (a convention, constraint, or decision); does not decay until it changes.",
+  "When the signal is weak or you are unsure, prefer `observation` over inventing a `lesson`.",
+  "",
+  "Identify the single most useful takeaway, then return ONLY one JSON object — no prose, no code fence:",
+  '{"content": string, "kind": "lesson"|"observation"|"state_fact", "tags": string[]}',
+  "- content: <= 400 chars, one takeaway, imperative or declarative.",
+  '- tags: 0-5 short lowercase keywords (area/topic), e.g. "migrations", "auth", "tests".',
+  "",
+  "Example (shape only — do not copy the topic):",
+  "Input — a review gate failed twice on a rename that broke downstream imports.",
+  'Output — {"content":"When renaming an exported symbol, update every import in the same change; code that compiles locally can still break consumers.","kind":"lesson","tags":["refactor","imports"]}',
+].join("\n");
+
 function truncate(s: string, max: number): string {
   return s.length > max ? `${s.slice(0, max)}…` : s;
 }
@@ -128,12 +161,9 @@ export function buildDistillPrompt(
 ): string {
   const isGate = input.kind === "gate.failed";
   const lines: string[] = [
-    "You distill a durable, reusable project LESSON from a run outcome, for a project-memory system.",
-    'Return ONLY a JSON object: {"content": string, "kind": "lesson"|"observation"|"state_fact", "tags": string[]}.',
-    "content: one concise, generalizable takeaway (<= 400 chars) a future run should know.",
-    "kind: 'lesson' for a mistake-to-avoid, 'observation' for a noticed pattern, 'state_fact' for a durable project fact.",
-    "tags: 0-5 short lowercase tags.",
+    DISTILL_INSTRUCTIONS,
     "",
+    "--- Run to distill ---",
     `## Event: ${input.kind}`,
   ];
 

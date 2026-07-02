@@ -2,7 +2,11 @@ import type { OpenAiCompatibleClient } from "@/lib/brain/openai-compatible";
 
 import { describe, expect, it } from "vitest";
 
-import { distill, type DistillInput } from "@/lib/brain/distill";
+import {
+  buildDistillPrompt,
+  distill,
+  type DistillInput,
+} from "@/lib/brain/distill";
 
 // T3.1 — distillation. Mocked db (rows dispensed in query order) + a fake
 // completion client. No network, no container.
@@ -132,6 +136,25 @@ describe("distill (T3.1)", () => {
     expect(captured).toContain("this rename breaks the import");
     expect(captured).toContain("reworked from plan");
     expect(captured).toContain("## Event: run.failed");
+  });
+
+  it("the prompt carries the quality contract: kind rubric, single-JSON output, project-scoping", () => {
+    const prompt = buildDistillPrompt(terminalEvent, {
+      task: null,
+      reviewComments: [],
+      reworkChain: [],
+    });
+
+    // Kind rubric — all three kinds explained + the weak-signal tie-breaker
+    // (prevents fabricated "lessons" from clean successes).
+    expect(prompt).toContain("state_fact — a durable");
+    expect(prompt).toContain("prefer `observation` over inventing a `lesson`");
+    // Output contract: exactly one JSON object, no code fence.
+    expect(prompt).toContain("return ONLY one JSON object");
+    // Anti-noise: the memory item must be project-scoped, not run-specific.
+    expect(prompt).toContain("no run/PR/branch ids");
+    // One-shot example anchors the target shape.
+    expect(prompt).toContain("Example (shape only");
   });
 
   it("filters non-string tags and clamps to 5", async () => {
