@@ -30,6 +30,19 @@ const BATCH_SIZE = 100;
 const MAX_BATCHES_PER_PASS = 10;
 const LEASE_MS = 5 * 60_000;
 const LAST_ERROR_MAX = 1024;
+// Base = one scheduler tick, so the first retry always skips at least one
+// tick; a permanently failing head batch (e.g. a paid LLM call behind a
+// revoked key) settles at one retry per hour instead of one per minute.
+const FAILURE_BACKOFF_BASE_MS = 60_000;
+const FAILURE_BACKOFF_CAP_MS = 60 * 60_000;
+
+// 2^cf overflows to Infinity for absurd counters; Math.min caps it either way.
+function failureBackoffMs(consecutiveFailures: number): number {
+  return Math.min(
+    FAILURE_BACKOFF_BASE_MS * 2 ** consecutiveFailures,
+    FAILURE_BACKOFF_CAP_MS,
+  );
+}
 
 // A type alias (not an interface) so the summary satisfies the scheduler's
 // Record<string, unknown> attempt-summary column via TS's implicit index
@@ -39,6 +52,7 @@ export type DispatchSummary = {
   totalDispatched: number;
   failures: number;
   skipped: number;
+  deferred: number;
 };
 
 // Idempotent registration: "beginning" seeds cursor 0; "now" seeds the current
@@ -65,19 +79,28 @@ export async function ensureConsumerRows(
 }
 
 // One dispatch pass over the registered consumers (ADR-086 DD3):
-//   1. claim the cursor row by CAS on lease_expires_at (zero rows ⇒ another
-//      dispatcher is live ⇒ skip — no double-claim under concurrent ticks);
-//   2. read `id > cursor AND tx_id < pg_snapshot_xmin(pg_current_snapshot())
+//   1. defer the consumer while it is inside its failure-backoff window —
+//      min(base · 2^consecutive_failures, cap) since the failure write. The
+//      anchor is updated_at: a deferral happens BEFORE any write, so while a
+//      consumer backs off, updated_at keeps carrying the failure timestamp
+//      (the failed head event stays visible — the horizon is monotonic — so
+//      the empty-batch release can't touch the row either);
+//   2. claim the cursor row by CAS on lease_expires_at AND on the pre-read
+//      consecutive_failures (zero rows ⇒ another dispatcher is live, or it
+//      recorded a new failure after our backoff check ⇒ skip — no
+//      double-claim and no retry inside a freshly opened backoff window);
+//   3. read `id > cursor AND tx_id < pg_snapshot_xmin(pg_current_snapshot())
 //      ORDER BY id LIMIT batch` — the xid8 horizon holds back everything past
 //      the oldest active transaction so a late-committing lower id is never
 //      skipped;
-//   3. invoke consumer.handle(events);
-//   4. advance by a CAS fenced on the cursor value this pass last observed —
+//   4. invoke consumer.handle(events);
+//   5. advance by a CAS fenced on the cursor value this pass last observed —
 //      a zombie returning after lease reap + reclaim no-ops (and must NOT
 //      touch the reclaimer's lease);
-//   5. loop up to MAX_BATCHES_PER_PASS; the lease is held across batches and
+//   6. loop up to MAX_BATCHES_PER_PASS; the lease is held across batches and
 //      released by the final advance (or the fenced failure update).
-// Delivery is at-least-once; consumers are idempotent by contract.
+// Delivery is at-least-once; consumers are idempotent by contract — backoff
+// only delays redelivery of the same window, never skips past it.
 export async function dispatchDomainEvents(
   opts: {
     db?: Db;
@@ -101,10 +124,40 @@ export async function dispatchDomainEvents(
     totalDispatched: 0,
     failures: 0,
     skipped: 0,
+    deferred: 0,
   };
 
   for (const consumer of consumers) {
     const now = opts.now ?? new Date();
+
+    const preRead = await db
+      .select({
+        consecutiveFailures: domainEventConsumers.consecutiveFailures,
+        updatedAt: domainEventConsumers.updatedAt,
+      })
+      .from(domainEventConsumers)
+      .where(eq(domainEventConsumers.consumerId, consumer.id));
+    const cursor = preRead.at(0);
+
+    if (cursor && cursor.consecutiveFailures > 0) {
+      const retryAt = new Date(
+        (cursor.updatedAt as Date).getTime() +
+          failureBackoffMs(cursor.consecutiveFailures as number),
+      );
+
+      if (now < retryAt) {
+        summary.deferred += 1;
+        log.info(
+          {
+            consumer: consumer.id,
+            consecutiveFailures: cursor.consecutiveFailures,
+            retryAt,
+          },
+          "[domain-events.dispatch] deferred — failure backoff",
+        );
+        continue;
+      }
+    }
 
     const claimed = await db
       .update(domainEventConsumers)
@@ -118,6 +171,10 @@ export async function dispatchDomainEvents(
           or(
             isNull(domainEventConsumers.leaseExpiresAt),
             lt(domainEventConsumers.leaseExpiresAt, now),
+          ),
+          eq(
+            domainEventConsumers.consecutiveFailures,
+            cursor?.consecutiveFailures ?? 0,
           ),
         ),
       )

@@ -129,13 +129,13 @@ Implemented.
 ```mermaid
 stateDiagram-v2
     [*] --> Registered: ensureConsumerRows ON CONFLICT DO NOTHING<br/>cursor = 0 (beginning) or MAX(id) (now)
-    Registered --> Claimed: CAS lease_expires_at = now + 5min<br/>WHERE lease NULL or expired
+    Registered --> Claimed: CAS lease_expires_at = now + 5min<br/>WHERE lease NULL or expired<br/>AND consecutive_failures unchanged since pre-read
     Claimed --> Advanced: handle ok — cursor CAS to last id<br/>lease NULL, consecutive_failures = 0
     Claimed --> FailedPass: handle throws — cursor unchanged<br/>lease NULL, consecutive_failures + 1, last_error set
     Claimed --> LeaseExpired: process died mid-handle<br/>lease lapses after TTL
     LeaseExpired --> Claimed: next tick reclaims — redelivery
     Advanced --> Claimed: next tick, more events
-    FailedPass --> Claimed: next tick retries same window
+    FailedPass --> Claimed: retries same window after backoff<br/>min(60s · 2^failures, 1h) since the failure write
     Advanced --> Registered: idle — no events past cursor
 ```
 
@@ -179,8 +179,10 @@ sequenceDiagram
     participant E as domain_events
     participant X as consumer.handle
     H->>C: ensureConsumerRows (ON CONFLICT DO NOTHING)
-    H->>C: CAS claim — lease_expires_at = now + 5min WHERE lease NULL or expired
-    C-->>H: cursor_event_id (zero rows = another claimer — skip)
+    H->>C: read consecutive_failures + updated_at
+    Note over H,C: inside the failure-backoff window<br/>min(60s · 2^failures, 1h) → defer, no writes
+    H->>C: CAS claim — lease_expires_at = now + 5min WHERE lease NULL or expired AND failures unchanged
+    C-->>H: cursor_event_id (zero rows = another claimer or a fresh failure — skip)
     loop up to 10 batches
         H->>E: SELECT WHERE id > cursor AND tx_id < pg_snapshot_xmin(pg_current_snapshot()) ORDER BY id LIMIT 100
         E-->>H: events (empty = done)
@@ -244,7 +246,13 @@ flowchart TD
   + `session/resume`).
 - A handler failure MUST increment `consecutive_failures`, set `last_error`,
   release the lease, and leave the cursor unchanged; a subsequent success MUST
-  reset `consecutive_failures` to 0. There is NO auto-disable in this stage.
+  reset `consecutive_failures` to 0. Redelivery of the failed window MUST wait
+  out an exponential backoff — `min(60s · 2^consecutive_failures, 1h)` anchored
+  on the failure write's `updated_at` (a deferral performs no writes, so the
+  anchor survives the window; the claim additionally CASes on
+  `consecutive_failures` so a concurrently recorded failure is never retried
+  inside its own window). Backoff delays the same window, never skips past it.
+  There is NO auto-disable in this stage.
 - Consumer registration MUST seed the cursor row idempotently (`ON CONFLICT DO
   NOTHING`) honoring `startFrom`: `"beginning"` = 0, `"now"` = current
   `MAX(id)`.
@@ -276,10 +284,12 @@ flowchart TD
   (no claim, no advance); cleanup is deferred until pruning lands. No error.
 - **Empty registry** → the dispatch handler no-ops with an INFO summary. No
   error.
-- **Persistently failing consumer** → retries forever on the tick cadence;
-  `consecutive_failures` + `last_error` are the observability surface (WARN log
-  per failing pass). Poison-pill policy is a first-real-consumer concern
-  (Phase 2).
+- **Persistently failing consumer** → retries forever with exponential backoff
+  (settling at one retry per hour at the cap, not one per tick — a stuck head
+  batch with a paid side effect burns money hourly, not minutely);
+  `consecutive_failures` + `last_error` + the pass summary's `deferred` count
+  are the observability surface (WARN log per failing pass, INFO per deferral).
+  Poison-pill policy is a first-real-consumer concern (Phase 2).
 - **Project/task/run hard delete** → FK cascade removes the events; the
   durable audit trail is `task_activity` / run ledgers, not this log.
 

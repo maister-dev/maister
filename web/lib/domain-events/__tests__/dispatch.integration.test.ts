@@ -29,6 +29,8 @@ import * as fullSchema from "@/lib/db/schema";
 //   T-D5  xid8 horizon: an open earlier tx holds back later committed events
 //   T-D6  zombie advance after lease expiry + reclaim no-ops (cursor CAS)
 //   T-D7  startFrom "now" seeds the cursor at MAX(id)
+//   T-D8  failure backoff: a failing consumer is deferred (not re-invoked) on
+//         the next tick; retried only after min(60s · 2^failures, 1h)
 // =============================================================================
 
 const schema = fullSchema as unknown as Record<string, any>;
@@ -203,7 +205,12 @@ describe("T-D4 — at-least-once with failure accounting", () => {
     expect(row.consecutiveFailures).toBe(1);
     expect(String(row.lastError)).toContain("injected consumer failure");
 
-    await dispatchDomainEvents({ db, consumers: [f] });
+    // Past the failure-backoff window (cf=1 → 2 min) so the retry is eligible.
+    await dispatchDomainEvents({
+      db,
+      consumers: [f],
+      now: new Date(Date.now() + 125_000),
+    });
 
     row = await cursorRow("flaky");
 
@@ -301,5 +308,82 @@ describe("T-D7 — startFrom 'now' seeds at MAX(id)", () => {
     await dispatchDomainEvents({ db, consumers: [n] });
 
     expect(n.received).toHaveLength(2);
+  });
+});
+
+describe("T-D8 — exponential failure backoff", () => {
+  it("does not re-invoke a failed consumer on the immediately following tick", async () => {
+    await insertEvents(2);
+
+    const f = recorder("backoff", { failTimes: 1 });
+
+    await dispatchDomainEvents({ db, consumers: [f] });
+
+    expect(f.calls).toBe(1);
+
+    const failedRow = await cursorRow("backoff");
+
+    // Next tick, 60s later — inside the 2-min window for cf=1: deferred
+    // without claiming, so the row (and the backoff anchor updated_at) is
+    // untouched.
+    const deferredPass = await dispatchDomainEvents({
+      db,
+      consumers: [f],
+      now: new Date(Date.now() + 60_000),
+    });
+
+    expect(f.calls).toBe(1);
+    expect(deferredPass.deferred).toBe(1);
+    expect(deferredPass.skipped).toBe(0);
+
+    const deferredRow = await cursorRow("backoff");
+
+    expect(deferredRow.cursorEventId).toBe(0);
+    expect(deferredRow.consecutiveFailures).toBe(1);
+    expect(deferredRow.updatedAt).toEqual(failedRow.updatedAt);
+
+    // Past the window: the same batch is redelivered (at-least-once) and the
+    // counter resets.
+    await dispatchDomainEvents({
+      db,
+      consumers: [f],
+      now: new Date(Date.now() + 125_000),
+    });
+
+    expect(f.calls).toBe(2);
+    expect(f.received).toHaveLength(2);
+    expect((await cursorRow("backoff")).consecutiveFailures).toBe(0);
+  });
+
+  it("caps the backoff delay at one hour", async () => {
+    const anchoredAt = new Date();
+
+    await db.insert(schema.domainEventConsumers).values({
+      consumerId: "backoff-cap",
+      cursorEventId: 0,
+      consecutiveFailures: 20, // uncapped 60s · 2^20 ≈ 2 years
+      updatedAt: anchoredAt,
+    });
+    await insertEvents(1);
+
+    const c = recorder("backoff-cap");
+
+    const inside = await dispatchDomainEvents({
+      db,
+      consumers: [c],
+      now: new Date(anchoredAt.getTime() + 59 * 60_000),
+    });
+
+    expect(c.calls).toBe(0);
+    expect(inside.deferred).toBe(1);
+
+    await dispatchDomainEvents({
+      db,
+      consumers: [c],
+      now: new Date(anchoredAt.getTime() + 61 * 60_000),
+    });
+
+    expect(c.calls).toBe(1);
+    expect(c.received).toHaveLength(1);
   });
 });

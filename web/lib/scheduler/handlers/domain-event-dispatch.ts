@@ -26,6 +26,7 @@ export async function runDomainEventDispatchJob(): Promise<DispatchSummary> {
       totalDispatched: summary.totalDispatched,
       failures: summary.failures,
       skipped: summary.skipped,
+      deferred: summary.deferred,
     },
     "[domain-event-dispatch] finish",
   );

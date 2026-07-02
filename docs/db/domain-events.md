@@ -62,10 +62,16 @@ kind-filtered scan.
 
 ## Cursor and claim model
 
+- **Failure backoff** — a consumer with `consecutive_failures > 0` is deferred
+  (no writes) until `updated_at + min(60s · 2^consecutive_failures, 1h)`;
+  `updated_at` carries the failure timestamp for the whole window because the
+  deferral never touches the row.
 - **Claim** — `UPDATE domain_event_consumers SET lease_expires_at = now() +
   5min WHERE consumer_id = $1 AND (lease_expires_at IS NULL OR
-  lease_expires_at < now()) RETURNING cursor_event_id`. Zero rows ⇒ another
-  dispatcher holds the lease ⇒ skip (no double-claim under concurrent ticks).
+  lease_expires_at < now()) AND consecutive_failures = $preRead RETURNING
+  cursor_event_id`. Zero rows ⇒ another dispatcher holds the lease, or it
+  recorded a fresh failure after the backoff check ⇒ skip (no double-claim
+  under concurrent ticks, no retry inside a freshly opened backoff window).
 - **Read window** — `id > cursor_event_id AND tx_id <
   pg_snapshot_xmin(pg_current_snapshot()) ORDER BY id LIMIT 100`. The xid8
   horizon holds back events past the oldest active transaction so a
