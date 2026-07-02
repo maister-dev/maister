@@ -312,6 +312,48 @@ describe("GET /api/v1/ext/hitl", () => {
     });
   });
 
+  it("projects each item to exactly the documented ExtHitlInboxItem shape", async () => {
+    const ownerUserId = await seedUser("hitl-inbox-shape");
+    const project = await seedProject(
+      `ext-hitl-inbox-shape-${randomUUID().slice(0, 8)}`,
+    );
+
+    await seedProjectMember(project.projectId, ownerUserId);
+
+    const hitl = await seedPendingHitl({
+      ...project,
+      title: "Shape probe task",
+    });
+    const token = await issueGlobalUserToken(ownerUserId, ["hitl:inbox:read"]);
+
+    const res = await GET(makeRequest(token.secret));
+
+    expect(res.status).toBe(200);
+
+    const body = await res.json();
+
+    // toEqual on a plain object is an EXACT-shape assertion: an extra key on
+    // either side fails — the guard against web-internal inbox fields
+    // (assignment/actor/agent/schema) leaking back into the ext payload.
+    expect(body.items).toEqual([
+      {
+        projectId: project.projectId,
+        projectSlug: project.slug,
+        runId: hitl.runId,
+        hitlRequestId: hitl.hitlRequestId,
+        kind: "human",
+        title: "Review deployment plan",
+        createdAt: expect.any(String),
+      },
+    ]);
+    // `count` mirrors items.length (documented invariant) and createdAt is
+    // a round-trippable ISO 8601 instant.
+    expect(body.count).toBe(1);
+    expect(new Date(body.items[0].createdAt).toISOString()).toBe(
+      body.items[0].createdAt,
+    );
+  });
+
   it("rejects project-bound tokens because the inbox is user-wide", async () => {
     const project = await seedProject(
       `ext-hitl-inbox-project-token-${randomUUID().slice(0, 8)}`,

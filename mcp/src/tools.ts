@@ -14,9 +14,9 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
       type: "object",
       properties: {
         slug: { type: "string" },
-        title: { type: "string" },
-        prompt: { type: "string" },
-        flowId: { type: "string" },
+        title: { type: "string", minLength: 1 },
+        prompt: { type: "string", minLength: 1 },
+        flowId: { type: "string", minLength: 1 },
       },
       required: ["slug", "title", "prompt"],
     },
@@ -72,19 +72,23 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
       properties: {
         slug: { type: "string" },
         taskId: { type: "string" },
-        title: { type: "string" },
-        prompt: { type: "string" },
+        title: { type: "string", minLength: 1 },
+        prompt: { type: "string", minLength: 1 },
       },
       required: ["slug", "taskId"],
     },
   },
   run_launch: {
-    description: "Launch a run for a task",
+    description:
+      "Launch a run for a task. `runnerId` is an optional per-launch platform ACP runner override (highest priority in runner resolution). `baseBranch`/`targetBranch` (M18) optionally set the worktree base and the promotion target — both server-validated against the project's branch allow-list. `executorOverrideId` is the DEPRECATED alias for `runnerId`; send `runnerId` instead — the route refuses both when they conflict.",
     inputSchema: {
       type: "object",
       properties: {
         taskId: { type: "string" },
-        executorOverrideId: { type: "string" },
+        runnerId: { type: "string", minLength: 1 },
+        executorOverrideId: { type: "string", minLength: 1 },
+        baseBranch: { type: "string", minLength: 1 },
+        targetBranch: { type: "string", minLength: 1 },
       },
       required: ["taskId"],
     },
@@ -113,8 +117,8 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
           },
         },
         mode: { type: "string", enum: ["task", "run"] },
-        prompt: { type: "string" },
-        title: { type: "string" },
+        prompt: { type: "string", minLength: 1 },
+        title: { type: "string", minLength: 1 },
         workspace: {
           type: "string",
           enum: ["none", "repo_read", "worktree"],
@@ -130,10 +134,11 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
         },
         addressableKey: {
           type: "string",
+          minLength: 1,
           description:
             "Stable key, unique within this orchestrator tree, used to address a persistent child via run_message. Required when persistent is true.",
         },
-        runnerOverride: { type: "string" },
+        runnerOverride: { type: "string", minLength: 1 },
       },
       required: ["target", "mode", "prompt"],
     },
@@ -149,19 +154,19 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
           items: {
             type: "object",
             properties: {
-              key: { type: "string" },
+              key: { type: "string", minLength: 1 },
               target: {
                 type: "object",
                 properties: { agentId: { type: "string" } },
                 required: ["agentId"],
               },
-              prompt: { type: "string" },
-              title: { type: "string" },
+              prompt: { type: "string", minLength: 1 },
+              title: { type: "string", minLength: 1 },
               workspace: {
                 type: "string",
                 enum: ["none", "repo_read", "worktree"],
               },
-              runnerOverride: { type: "string" },
+              runnerOverride: { type: "string", minLength: 1 },
               dependsOn: { type: "array", items: { type: "string" } },
             },
             required: ["key", "target", "prompt", "dependsOn"],
@@ -199,9 +204,9 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
     inputSchema: {
       type: "object",
       properties: {
-        addressableKey: { type: "string" },
+        addressableKey: { type: "string", minLength: 1 },
         childRunId: { type: "string" },
-        prompt: { type: "string" },
+        prompt: { type: "string", minLength: 1 },
       },
       required: ["prompt"],
     },
@@ -224,7 +229,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
       type: "object",
       properties: {
         childRunId: { type: "string" },
-        prompt: { type: "string" },
+        prompt: { type: "string", minLength: 1 },
       },
       required: ["childRunId", "prompt"],
     },
@@ -246,7 +251,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
       properties: {
         runId: { type: "string" },
         gateId: { type: "string" },
-        status: { type: "string" },
+        status: { type: "string", enum: ["passed", "failed"] },
         externalRunUrl: { type: "string" },
         commitSha: { type: "string" },
         summary: { type: "string" },
@@ -281,9 +286,9 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
       properties: {
         runId: { type: "string" },
         hitlRequestId: { type: "string" },
-        optionId: { type: "string" },
+        optionId: { type: "string", minLength: 1 },
         response: { type: "object" },
-        confidence: { type: "number" },
+        confidence: { type: "number", minimum: 0, maximum: 1 },
       },
       required: ["runId", "hitlRequestId"],
     },
@@ -296,8 +301,8 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
       properties: {
         slug: { type: "string" },
         taskId: { type: "string" },
-        limit: { type: "number" },
-        offset: { type: "number" },
+        limit: { type: "integer", minimum: 1, maximum: 200 },
+        offset: { type: "integer", minimum: 0 },
       },
       required: ["slug", "taskId"],
     },
@@ -310,23 +315,23 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
       properties: {
         slug: { type: "string" },
         taskId: { type: "string" },
-        body: { type: "string" },
+        body: { type: "string", minLength: 1 },
       },
       required: ["slug", "taskId", "body"],
     },
   },
   triage_set: {
     description:
-      "Submit a triage verdict for a task: any of flowId/runnerId/baseBranch/targetBranch/promotionMode stamps triage_status='triaged'; `flag: true` instead holds the task for a human (mutually exclusive with verdict fields). `enqueue: true` sets the auto-launch intent (valid only with a verdict that yields a flow). `priority` (queue admission order) and `confidence` (0..1, advisory) are independent and may accompany either shape.",
+      "Submit a triage verdict for a task: any of flowId/runnerId/baseBranch/targetBranch/promotionMode stamps triage_status='triaged'; `flag: true` instead holds the task for a human (mutually exclusive with verdict fields). `enqueue: true` sets the auto-launch intent (valid only with a verdict that yields a flow). `priority` (queue admission order) and `confidence` (0..1, advisory) are independent and may accompany either shape — send `null` to clear (priority → 'normal', confidence → none).",
     inputSchema: {
       type: "object",
       properties: {
         slug: { type: "string" },
         taskId: { type: "string" },
-        flowId: { type: "string" },
-        runnerId: { type: "string" },
-        baseBranch: { type: "string" },
-        targetBranch: { type: "string" },
+        flowId: { type: "string", minLength: 1 },
+        runnerId: { type: "string", minLength: 1 },
+        baseBranch: { type: "string", minLength: 1 },
+        targetBranch: { type: "string", minLength: 1 },
         promotionMode: {
           type: "string",
           enum: ["local_merge", "pull_request"],
@@ -334,10 +339,10 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
         flag: { type: "boolean" },
         enqueue: { type: "boolean" },
         priority: {
-          type: "string",
-          enum: ["low", "normal", "high", "urgent"],
+          type: ["string", "null"],
+          enum: ["low", "normal", "high", "urgent", null],
         },
-        confidence: { type: "number", minimum: 0, maximum: 1 },
+        confidence: { type: ["number", "null"], minimum: 0, maximum: 1 },
       },
       required: ["slug", "taskId"],
     },
@@ -365,7 +370,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
           type: "string",
           enum: ["blocks", "depends_on", "parent_of", "duplicate_of"],
         },
-        toNumber: { type: "number" },
+        toNumber: { type: "integer", minimum: 1 },
       },
       required: ["slug", "taskId", "kind", "toNumber"],
     },
@@ -382,7 +387,7 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
           type: "string",
           enum: ["blocks", "depends_on", "parent_of", "duplicate_of"],
         },
-        toNumber: { type: "number" },
+        toNumber: { type: "integer", minimum: 1 },
       },
       required: ["slug", "taskId", "kind", "toNumber"],
     },
@@ -501,14 +506,21 @@ function resolveRouting(
       };
     }
     case "run_launch": {
-      const { taskId, executorOverrideId } = args as {
-        taskId: string;
-        executorOverrideId?: string;
-      };
+      const { taskId, runnerId, executorOverrideId, baseBranch, targetBranch } =
+        args as {
+          taskId: string;
+          runnerId?: string;
+          executorOverrideId?: string;
+          baseBranch?: string;
+          targetBranch?: string;
+        };
       const body: Record<string, unknown> = { taskId };
 
+      if (runnerId !== undefined) body.runnerId = runnerId;
       if (executorOverrideId !== undefined)
         body.executorOverrideId = executorOverrideId;
+      if (baseBranch !== undefined) body.baseBranch = baseBranch;
+      if (targetBranch !== undefined) body.targetBranch = targetBranch;
 
       return { method: "POST", path: `/api/v1/ext/runs`, body };
     }
@@ -732,8 +744,9 @@ function resolveRouting(
         promotionMode?: string;
         flag?: boolean;
         enqueue?: boolean;
-        priority?: string;
-        confidence?: number;
+        // null is a legitimate wire value: explicit clear (≠ undefined/omit).
+        priority?: string | null;
+        confidence?: number | null;
       };
       const body: Record<string, unknown> = {};
 

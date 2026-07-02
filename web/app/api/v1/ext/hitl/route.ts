@@ -47,10 +47,21 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       const owner = await requireActiveUserById(ctx.actor.ownerUserId);
       const inbox = await getCrossProjectHitlInbox(owner.id, owner.role);
 
-      return NextResponse.json(
-        { items: inbox.items, count: inbox.count },
-        { status: 200 },
-      );
+      // Project to exactly the documented ExtHitlInboxItem shape — the
+      // web-internal inbox item carries assignment/actor/agent/schema fields
+      // that are NOT part of the external contract and must not cross this
+      // boundary (docs/api/external/operations.openapi.yaml).
+      const items = inbox.items.map((item) => ({
+        projectId: item.projectId,
+        projectSlug: item.projectSlug,
+        runId: item.runId,
+        hitlRequestId: item.hitlRequestId,
+        kind: item.kind,
+        title: item.prompt,
+        createdAt: item.createdAt,
+      }));
+
+      return NextResponse.json({ items, count: inbox.count }, { status: 200 });
     },
   );
 }

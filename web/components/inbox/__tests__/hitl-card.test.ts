@@ -43,6 +43,7 @@ const BASE: HitlItem = {
     { optionId: "deny", label: "Deny" },
   ],
   time: "2h",
+  createdAt: "2026-07-02T10:00:00.000Z",
   schema: null,
   criticality: "critical",
 };

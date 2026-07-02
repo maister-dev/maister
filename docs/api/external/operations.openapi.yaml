@@ -2,6 +2,9 @@ openapi: 3.0.3
 info:
   title: MAIster External Operations API
   version: "1.0.0"
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
   description: |
     Token-authenticated external surface for MAIster (M16). All routes are
     under `/api/v1/ext/` and require a bearer token issued via the
@@ -36,8 +39,14 @@ info:
     **Milestone status: M16 (Implemented), as of 2026-06-02.**
 
 servers:
-  - url: http://localhost:3000
-    description: Local Next.js dev server (default).
+  - url: "{origin}"
+    description: |
+      Origin (scheme + host, no trailing path) of the MAIster deployment; for
+      local development this is `http://localhost:3000`.
+    variables:
+      origin:
+        default: http://localhost:3000
+        description: Scheme and host of the MAIster deployment.
 
 security:
   - projectToken: []
@@ -1380,8 +1389,6 @@ paths:
         | --- | --- | --- |
         | token owner | auth-context | verified bearer token row |
         | visible projects | server-state | owner membership/global-admin query |
-        | limit | query-controlled | bounded numeric |
-        | offset | query-controlled | bounded numeric |
 
         `*` may satisfy this read scope. The route writes a
         `token_audit_log` row with `scope_used='hitl:inbox:read'`,
@@ -1391,22 +1398,6 @@ paths:
       operationId: extListHitlInbox
       security:
         - projectToken: []
-      parameters:
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 100
-            default: 50
-        - name: offset
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 0
-            default: 0
       responses:
         "200":
           description: Cross-project HITL inbox for the token owner.
@@ -1414,19 +1405,24 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [items]
+                required: [items, count]
                 properties:
                   items:
                     type: array
                     items: { $ref: "#/components/schemas/ExtHitlInboxItem" }
+                  count:
+                    type: integer
+                    minimum: 0
+                    description: Number of pending inbox items (equals `items.length`).
               examples:
                 default:
                   value:
+                    count: 1
                     items:
-                      - projectId: "project_123"
+                      - projectId: "3f2504e0-4f89-41d3-9a0c-0305e82c3301"
                         projectSlug: "demo"
-                        runId: "run_123"
-                        hitlRequestId: "hitl_123"
+                        runId: "6ba7b810-9dad-41d1-80b4-00c04fd430c8"
+                        hitlRequestId: "7c9e6679-7425-40de-944b-e07fc1f90ae7"
                         kind: "human"
                         title: "Review deployment plan"
                         createdAt: "2026-06-23T12:00:00.000Z"
@@ -1866,7 +1862,11 @@ components:
       properties:
         kind:
           type: string
-          enum: [blocks, depends_on, parent_of]
+          enum: [blocks, depends_on, parent_of, duplicate_of]
+          description: |
+            (ADR-112) `duplicate_of` marks the URL task a duplicate of the
+            target — a non-blocking dedup annotation used by triage. `requires`
+            is NOT settable here (it is created system-side by `run_plan`).
         toNumber:
           type: integer
           minimum: 1
@@ -1883,7 +1883,11 @@ components:
       properties:
         kind:
           type: string
-          enum: [blocks, depends_on, parent_of]
+          enum: [blocks, depends_on, parent_of, requires, duplicate_of]
+          description: |
+            Any relation kind touching the task is returned unfiltered —
+            including the system-created `requires` (from `run_plan`) and the
+            `duplicate_of` dedup annotation.
         role:
           type: string
           enum: [from, to]
@@ -2265,7 +2269,9 @@ components:
       type: object
       description: |
         (0063 Implemented) Cross-project pending HITL item visible to a global
-        personal-token owner. NEVER includes `acp_session_id`, absolute
+        personal-token owner. The route projects each item to EXACTLY these
+        fields — web-internal inbox data (assignment/actor/agent/schema) never
+        crosses this boundary. NEVER includes `acp_session_id`, absolute
         worktree paths, token material, or supervisor-internal handles.
       required: [projectId, projectSlug, runId, hitlRequestId, kind, title, createdAt]
       properties:
@@ -2282,8 +2288,11 @@ components:
           format: uuid
         kind:
           type: string
-          enum: [human, infra_recovery, budget_breach]
-          description: Human-owned HITL kind eligible for the personal inbox.
+          enum: [permission, form, human, infra_recovery, budget_breach, hook_trip]
+          description: |
+            Any pending HITL kind is surfaced, mirroring the web inbox —
+            `permission`/`form` items are answerable via the run-scoped
+            `hitl_list`/`hitl_respond` routes.
         title:
           type: string
           description: Human-readable prompt/title for inbox display.
@@ -2512,6 +2521,12 @@ components:
         prompt:
           type: string
           minLength: 1
+        title:
+          type: string
+          minLength: 1
+          description: |
+            Optional title for the created task; defaults to the prompt's first
+            line when omitted.
         workspace:
           type: string
           enum: [none, repo_read, worktree]
@@ -2638,24 +2653,3 @@ components:
         childRunId:
           type: string
           format: uuid
-    TokenScope:
-      type: string
-      enum:
-        - "*"
-        - tasks:create
-        - tasks:read
-        - tasks:update
-        - flows:read
-        - runners:read
-        - runs:launch
-        - runs:read
-        - readiness:read
-        - gates:report
-        - hitl:read
-        - hitl:inbox:read
-        - hitl:respond
-        - hitl:respond:human
-      description: |
-        Route authorization label for `/api/v1/ext`. `*` grants the project
-        external API except exact-only human-HITL approval:
-        `hitl:respond:human` must be present explicitly.

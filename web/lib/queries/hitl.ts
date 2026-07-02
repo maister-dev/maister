@@ -100,6 +100,9 @@ export interface HitlItem {
   prompt: string;
   options: HitlOption[];
   time: string;
+  // Absolute ISO 8601 counterpart of the relative `time` — the external
+  // inbox contract (ExtHitlInboxItem.createdAt) needs the raw timestamp.
+  createdAt: string;
   schema: unknown;
   criticality: "low" | "medium" | "high" | "critical" | null;
 }
@@ -240,6 +243,7 @@ export function mapRowsToHitlItems(
       prompt: row.prompt,
       options: extractOptions(row.kind, row.rawSchema),
       time: relativeTime(row.createdAt, now),
+      createdAt: row.createdAt.toISOString(),
       // Permission schemas carry supervisor-internal handles (requestId,
       // supervisorSessionId, toolCall) written by runner-agent — NEVER serialize
       // them to the browser. Mirrors the ext-API DTO guard; the actionable

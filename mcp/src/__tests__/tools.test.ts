@@ -226,12 +226,17 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
     });
   });
 
-  it("run_launch → POST /api/v1/ext/runs", async () => {
+  it("run_launch → POST /api/v1/ext/runs forwards the full canonical launch surface (runnerId/baseBranch/targetBranch)", async () => {
     mockOnce({ runId: "run-1", status: "Running" }, 202);
 
     await dispatchTool({
       name: "run_launch",
-      args: { taskId: "task-1", executorOverrideId: "exec-2" },
+      args: {
+        taskId: "task-1",
+        runnerId: "claude-code",
+        baseBranch: "main",
+        targetBranch: "develop",
+      },
       ctx: httpCtx,
       baseUrl: BASE_URL,
     });
@@ -242,6 +247,25 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
     expect(url).toBe(`${BASE_URL}/api/v1/ext/runs`);
     expect(headerAuth(init)).toBe(AUTH);
     expect(parsedBody(init)).toEqual({
+      taskId: "task-1",
+      runnerId: "claude-code",
+      baseBranch: "main",
+      targetBranch: "develop",
+    });
+  });
+
+  it("run_launch still forwards the deprecated executorOverrideId alias (back-compat)", async () => {
+    mockOnce({ runId: "run-1", status: "Running" }, 202);
+
+    await dispatchTool({
+      name: "run_launch",
+      args: { taskId: "task-1", executorOverrideId: "exec-2" },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    // Only defined keys ride — runnerId/baseBranch/targetBranch omitted.
+    expect(parsedBody(lastRequest().init)).toEqual({
       taskId: "task-1",
       executorOverrideId: "exec-2",
     });
@@ -667,6 +691,29 @@ describe("dispatchTool — per-tool outbound request mapping", () => {
     const { init } = lastRequest();
 
     expect(parsedBody(init)).toEqual({ flag: true, priority: "urgent" });
+  });
+
+  it("triage_set forwards null priority/confidence (the explicit clear path — null is not dropped)", async () => {
+    mockOnce({ ok: true }, 200);
+
+    await dispatchTool({
+      name: "triage_set",
+      args: {
+        slug: "demo",
+        taskId: "task-1",
+        priority: null,
+        confidence: null,
+      },
+      ctx: httpCtx,
+      baseUrl: BASE_URL,
+    });
+
+    // null ≠ undefined, so the clear intent reaches the route (priority →
+    // 'normal', confidence → NULL) instead of being silently dropped.
+    expect(parsedBody(lastRequest().init)).toEqual({
+      priority: null,
+      confidence: null,
+    });
   });
 
   it("relation_list → GET /api/v1/ext/projects/{slug}/tasks/{taskId}/relations", async () => {
