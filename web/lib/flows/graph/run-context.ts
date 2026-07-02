@@ -29,11 +29,23 @@ const execFileAsync = promisify(execFile);
 // resumed session reconstructs identical state from it. Hardcoded "all" shape per
 // the M26 spec (intent + every node's summary/vars + every gate's status/verdict
 // + a flat promoted union).
+// ADR-122 ambient P7: a lean top-K brain projection injected for the agent.
+// Computed in runner-graph.ts (which has db + policy) and passed IN as plain
+// data so buildRunContext stays pure.
+export type BrainAmbientEntry = {
+  kind: string;
+  title: string;
+  content: string;
+  confidence: number;
+  tags: string[];
+};
+
 export type RunContextFile = {
   intent: string;
   nodes: Record<string, { summary: string; vars: Record<string, unknown> }>;
   gates: Record<string, { status: string; verdict?: unknown }>;
   promoted: Record<string, unknown>;
+  brain?: BrainAmbientEntry[];
 };
 
 export type BuildRunContextArgs = {
@@ -42,6 +54,8 @@ export type BuildRunContextArgs = {
   gateResults: GateResult[];
   stepRuns?: StepRun[];
   outputTruncationBytes?: number;
+  // ADR-122: ambient brain projection (already recalled). Absent = no ambient.
+  brain?: BrainAmbientEntry[];
 };
 
 // Build the run-context projection. PURE — no I/O, never reads `context.env`, so
@@ -74,7 +88,13 @@ export function buildRunContext(args: BuildRunContextArgs): RunContextFile {
         : { status: g.status };
   }
 
-  return { intent: args.taskPrompt, nodes, gates, promoted };
+  return {
+    intent: args.taskPrompt,
+    nodes,
+    gates,
+    promoted,
+    ...(args.brain ? { brain: args.brain } : {}),
+  };
 }
 
 export function runContextPath(worktreePath: string): string {
@@ -90,15 +110,18 @@ export async function writeRunContext(args: {
   worktreePath: string;
   taskPrompt: string;
   db: Db;
+  // ADR-122: the already-recalled ambient brain projection (or undefined).
+  // buildRunContext receives it as plain data — it never recalls/embeds.
+  brain?: BrainAmbientEntry[];
 }): Promise<void> {
-  const { runId, worktreePath, taskPrompt, db } = args;
+  const { runId, worktreePath, taskPrompt, db, brain } = args;
 
   const [nodeAttempts, gateResults] = await Promise.all([
     getNodeAttemptsForRun(runId, db),
     getGateResultsForRun(runId, db),
   ]);
 
-  const ctx = buildRunContext({ taskPrompt, nodeAttempts, gateResults });
+  const ctx = buildRunContext({ taskPrompt, nodeAttempts, gateResults, brain });
   const path = runContextPath(worktreePath);
 
   await atomicWriteJson(path, ctx);

@@ -28,6 +28,11 @@ export const TOKEN_SCOPES = [
   "runs:cancel",
   // M37 (ADR-100): the orchestrator's promote-a-reviewed-child privilege.
   "runs:promote",
+  // ADR-122 (Project Brain): recall / retain over the project-memory substrate.
+  // Access is additionally gated by projects.brain_enabled and, for agent
+  // tokens, the can_read_brain / can_write_brain link axes.
+  "memory:read",
+  "memory:write",
 ] as const;
 
 // M34 (ADR-089): the fixed scope set issued to per-launch ephemeral agent
@@ -47,6 +52,10 @@ export const AGENT_TOKEN_SCOPES = [
   // flow + enabled-runner catalogs before stamping a verdict.
   "flows:read",
   "runners:read",
+  // ADR-122: memory scopes are in the fixed agent-token set; actual access is
+  // still gated by can_read_brain / can_write_brain on the agent-project link.
+  "memory:read",
+  "memory:write",
 ] as const satisfies readonly (typeof TOKEN_SCOPES)[number][];
 
 export const TOKEN_SCOPE_VALUES = [TOKEN_SCOPE_ALL, ...TOKEN_SCOPES] as const;

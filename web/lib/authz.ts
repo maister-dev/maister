@@ -57,6 +57,10 @@ export const PROJECT_ACTION_MIN = {
   commentTask: "member",
   manageTaskRelations: "member",
   answerHitl: "member",
+  // ADR-122 (Project Brain): recall / retain over the project-memory substrate.
+  // brain_enabled + the can_read_brain/can_write_brain link axes gate further.
+  readBrain: "member",
+  writeBrain: "member",
   manageSchedules: "member",
   manageLocalPackages: "member",
   editSettings: "admin",
@@ -299,7 +303,11 @@ export function requireProjectActionForUser(
   projectId: string,
   action: ProjectAction,
 ): Promise<ProjectAccess> {
-  return requireProjectRoleForUser(userId, projectId, PROJECT_ACTION_MIN[action]);
+  return requireProjectRoleForUser(
+    userId,
+    projectId,
+    PROJECT_ACTION_MIN[action],
+  );
 }
 
 export function httpStatusForAuthz(code: string): number | null {

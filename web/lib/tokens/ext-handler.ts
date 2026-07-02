@@ -100,6 +100,8 @@ const PROJECT_ACTION_BY_SCOPE: Partial<Record<string, ProjectAction>> = {
   "hitl:read": "readBoard",
   "hitl:respond": "answerHitl",
   "hitl:respond:human": "answerHitl",
+  "memory:read": "readBrain",
+  "memory:write": "writeBrain",
 };
 
 function projectActionForScope(scope: string): ProjectAction {
@@ -118,6 +120,8 @@ export function httpStatusForExtCode(code: string): number {
     case "CONFIG":
       return 422;
     case "EXECUTOR_UNAVAILABLE":
+    // ADR-122: embedding-provider outage on the memory recall/retain routes.
+    case "EMBEDDING_UNAVAILABLE":
       return 503;
     // Supervisor rejected the delivery at the protocol level — terminal upstream
     // failure, distinct from a generic 500.

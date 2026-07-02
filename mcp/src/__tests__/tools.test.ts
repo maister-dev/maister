@@ -51,7 +51,7 @@ afterEach(() => {
 });
 
 describe("TOOL_SPECS registry", () => {
-  it("registers all 26 external tools (incl. personal HITL inbox + discovery)", () => {
+  it("registers all 28 external tools (incl. personal HITL inbox + discovery + memory)", () => {
     expect(Object.keys(TOOL_SPECS).sort()).toEqual(
       [
         "comment_create",
@@ -61,6 +61,8 @@ describe("TOOL_SPECS registry", () => {
         "hitl_inbox",
         "hitl_list",
         "hitl_respond",
+        "memory_recall",
+        "memory_retain",
         "readiness_get",
         "relation_add",
         "relation_list",

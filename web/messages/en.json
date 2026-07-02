@@ -2688,6 +2688,8 @@
     "scopeRunsCollect": "Collect child runs",
     "scopeRunsCancel": "Cancel child runs",
     "scopeRunsPromote": "Promote child runs",
+    "scopeMemoryRead": "Read project memory",
+    "scopeMemoryWrite": "Write project memory",
     "audit": {
       "title": "Token activity",
       "description": "Actions performed through API tokens — calls to the external API, not from the web UI.",

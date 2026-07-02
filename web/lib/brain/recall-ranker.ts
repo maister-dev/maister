@@ -2,17 +2,20 @@ import "server-only";
 
 import type { BrainItemKind } from "./schema";
 
-import { type SQL } from "drizzle-orm";
-
-import { MaisterError } from "@/lib/errors";
+import { sql, type SQL } from "drizzle-orm";
 
 // Project Brain (ADR-122, D9) — the RecallRanker seam. Keeps the one thing "buy"
 // does better (recall ranking) swappable behind an interface without moving the
 // system-of-record off Postgres. The default pgvector hybrid implementation
-// (`rank`) lands in T4.1 (recall.ts wires it + writes the snapshot); this file
-// owns the contract + injection so the rest of the code depends on the seam.
+// (`rank`) is below; this file owns the contract + injection so the rest of the
+// code depends on the seam.
 
 export const RANKER_VERSION = "hybrid-v1";
+
+// Hybrid score weights (tune-on-real-runs). vector similarity dominates; the
+// lexical leg breaks ties and covers items not yet re-embedded mid-reindex; a
+// small confidence term rewards reinforced memories.
+const RANK_WEIGHTS = { vector: 1.0, lexical: 0.25, confidence: 0.1 } as const;
 
 export type RecallRankerDb = {
   execute(query: SQL): Promise<{ rows: Array<Record<string, unknown>> }>;
@@ -38,6 +41,7 @@ export interface RankedBrainItem {
   content: string;
   confidence: number;
   score: number;
+  tags: string[];
   createdAt: Date;
   expiresAt: Date | null;
   provenance: { runId: string | null; gateKind: string | null };
@@ -48,16 +52,85 @@ export interface RecallRanker {
   rank(db: RecallRankerDb, q: RecallQuery): Promise<RankedBrainItem[]>;
 }
 
-// The default pgvector hybrid ranker. `rank` is implemented in T4.1 (Phase 4);
-// no caller invokes it before recall.ts is wired.
+// The default pgvector hybrid ranker: a vector leg (cosine KNN over the ACTIVE
+// generation, cast `vector::vector(N)` to match the per-generation expression
+// HNSW index) + a lexical `tsvector` leg (also covers items not yet re-embedded
+// mid-reindex) + a confidence term. NO LLM at read (E-6). Project-scoped;
+// excludes expired/superseded and other-project rows; de-dupes a multi-split
+// item to its best-scoring segment. `model`/`dimensions` are LITERALS in the
+// vector leg so the planner matches the partial HNSW index at plan time; the
+// query vector is a bound param (a runtime value).
 export const pgVectorRecallRanker: RecallRanker = {
   version: RANKER_VERSION,
 
-  async rank(): Promise<RankedBrainItem[]> {
-    throw new MaisterError(
-      "PRECONDITION",
-      "pgVectorRecallRanker.rank is implemented in T4.1 (hybrid recall)",
-    );
+  async rank(db: RecallRankerDb, q: RecallQuery): Promise<RankedBrainItem[]> {
+    const nRaw = sql.raw(String(q.dimensions));
+    const modelLit = sql.raw(`'${q.model.replace(/'/g, "''")}'`);
+    const queryVec = `[${q.queryEmbedding.join(",")}]`;
+    const knnLimit = sql.raw(String(Math.max(q.limit * 4, 20)));
+    const vecW = sql.raw(String(RANK_WEIGHTS.vector));
+    const lexW = sql.raw(String(RANK_WEIGHTS.lexical));
+    const confW = sql.raw(String(RANK_WEIGHTS.confidence));
+    const limit = Math.max(1, Math.min(q.limit, 50));
+
+    const kindClause =
+      q.kinds && q.kinds.length > 0
+        ? sql` AND i.kind IN (${sql.join(
+            q.kinds.map((k) => sql`${k}`),
+            sql`, `,
+          )})`
+        : sql``;
+    const confClause =
+      q.minConfidence != null
+        ? sql` AND i.confidence >= ${q.minConfidence}`
+        : sql``;
+
+    const res = await db.execute(sql`
+      WITH knn AS (
+        SELECT item_id,
+               (vector::vector(${nRaw})) <=> ${queryVec}::vector(${nRaw}) AS dist
+        FROM brain_embeddings
+        WHERE embedding_model = ${modelLit} AND embedding_dimensions = ${nRaw}
+        ORDER BY (vector::vector(${nRaw})) <=> ${queryVec}::vector(${nRaw})
+        LIMIT ${knnLimit}
+      ),
+      vec AS (
+        SELECT item_id, MIN(dist) AS dist FROM knn GROUP BY item_id
+      )
+      SELECT i.id, i.kind, i.title, i.content, i.tags,
+             i.confidence::float8 AS confidence,
+             i.created_at, i.expires_at, i.source_run_id, i.source_gate_kind,
+             ( (1 - COALESCE(v.dist, 1)) * ${vecW}
+               + LEAST(COALESCE(ts_rank(i.tsv, plainto_tsquery('english', ${q.queryText})), 0), 1) * ${lexW}
+               + i.confidence::float8 * ${confW} )::float8 AS score
+      FROM brain_items i
+      LEFT JOIN vec v ON v.item_id = i.id
+      WHERE i.project_id = ${q.projectId}
+        AND i.status = 'active'
+        AND (i.expires_at IS NULL OR i.expires_at > now())
+        AND (v.item_id IS NOT NULL
+             OR i.tsv @@ plainto_tsquery('english', ${q.queryText}))
+        ${kindClause}
+        ${confClause}
+      ORDER BY score DESC, i.created_at DESC
+      LIMIT ${limit}
+    `);
+
+    return res.rows.map((r) => ({
+      id: String(r.id),
+      kind: r.kind as BrainItemKind,
+      title: String(r.title),
+      content: String(r.content),
+      confidence: Number(r.confidence),
+      score: Number(r.score),
+      tags: (r.tags as string[] | null) ?? [],
+      createdAt: r.created_at as Date,
+      expiresAt: (r.expires_at as Date | null) ?? null,
+      provenance: {
+        runId: (r.source_run_id as string | null) ?? null,
+        gateKind: (r.source_gate_kind as string | null) ?? null,
+      },
+    }));
   },
 };
 

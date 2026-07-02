@@ -297,6 +297,10 @@ function scopeText(labels: TokenLabels, scope: TokenScope): string {
       return labels.scopeRunsCancel;
     case "runs:promote":
       return labels.scopeRunsPromote;
+    case "memory:read":
+      return labels.scopeMemoryRead;
+    case "memory:write":
+      return labels.scopeMemoryWrite;
   }
 }
 

@@ -104,6 +104,8 @@ const labels: TokenLabels = {
   scopeRunsCollect: "Collect child runs",
   scopeRunsCancel: "Cancel child runs",
   scopeRunsPromote: "Promote child runs",
+  scopeMemoryRead: "Read project memory",
+  scopeMemoryWrite: "Write project memory",
   errorGeneric: "Something went wrong",
 };
 
@@ -181,7 +183,10 @@ describe("tokenDisplayStatus — derivation helper (M16)", () => {
   it("treats a future expiry as 'active'", () => {
     const future: TokenListItem = {
       ...activeToken,
-      expiresAt: new Date(NOW + 30 * DAY),
+      // tokenDisplayStatus compares against the real clock, so the "future"
+      // expiry must be relative to Date.now() — not the fixed fixture NOW (which
+      // real time has since caught up to). (Pre-existing time-bomb fix.)
+      expiresAt: new Date(Date.now() + 30 * DAY),
     };
 
     expect(tokenDisplayStatus(future)).toBe("active");

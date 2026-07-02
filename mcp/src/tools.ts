@@ -64,6 +64,45 @@ export const TOOL_SPECS: Record<string, ToolSpec> = {
       required: ["slug"],
     },
   },
+  memory_recall: {
+    description:
+      "Recall relevant project-memory items (ADR-122) via hybrid vector + lexical ranking. No LLM at read. Requires the project's Brain to be enabled and (for agent tokens) can_read_brain.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        slug: { type: "string" },
+        query: { type: "string" },
+        limit: { type: "integer", minimum: 1, maximum: 50 },
+        kinds: {
+          type: "array",
+          items: {
+            type: "string",
+            enum: ["lesson", "observation", "state_fact"],
+          },
+        },
+        minConfidence: { type: "number", minimum: 0, maximum: 1 },
+      },
+      required: ["slug", "query"],
+    },
+  },
+  memory_retain: {
+    description:
+      "Retain a project-memory item (ADR-122). Embeds and dedup-or-reinforces. Requires the project's Brain to be enabled and (for agent tokens) can_write_brain. The body carries no project id.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        slug: { type: "string" },
+        content: { type: "string" },
+        kind: {
+          type: "string",
+          enum: ["lesson", "observation", "state_fact"],
+        },
+        title: { type: "string" },
+        tags: { type: "array", items: { type: "string" } },
+      },
+      required: ["slug", "content", "kind"],
+    },
+  },
   task_update: {
     description:
       "Update fields on a task (title/prompt — e.g. triage clarify-mode sharpening the statement)",
@@ -486,6 +525,46 @@ function resolveRouting(
       const { slug } = args as { slug: string };
 
       return { method: "GET", path: `/api/v1/ext/projects/${slug}/runners` };
+    }
+    case "memory_recall": {
+      const { slug, query, limit, kinds, minConfidence } = args as {
+        slug: string;
+        query: string;
+        limit?: number;
+        kinds?: string[];
+        minConfidence?: number;
+      };
+      const sp = new URLSearchParams();
+
+      sp.set("q", query);
+      if (limit !== undefined) sp.set("limit", String(limit));
+      if (minConfidence !== undefined)
+        sp.set("minConfidence", String(minConfidence));
+      for (const k of kinds ?? []) sp.append("kinds", k);
+
+      return {
+        method: "GET",
+        path: `/api/v1/ext/projects/${slug}/memory?${sp.toString()}`,
+      };
+    }
+    case "memory_retain": {
+      const { slug, content, kind, title, tags } = args as {
+        slug: string;
+        content: string;
+        kind: string;
+        title?: string;
+        tags?: string[];
+      };
+      const body: Record<string, unknown> = { content, kind };
+
+      if (title !== undefined) body.title = title;
+      if (tags !== undefined) body.tags = tags;
+
+      return {
+        method: "POST",
+        path: `/api/v1/ext/projects/${slug}/memory`,
+        body,
+      };
     }
     case "task_update": {
       const { slug, taskId, title, prompt } = args as {

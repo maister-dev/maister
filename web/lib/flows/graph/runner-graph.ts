@@ -97,6 +97,7 @@ import {
   type RestrictionPathSet,
 } from "./mutation-check";
 
+import { getAmbientBrainProjection } from "@/lib/brain/ambient";
 import { gateStdioMcpsByExecTrust } from "@/lib/capabilities/agent-map";
 import { materializeProjectBundlesIntoWorktree } from "@/lib/capabilities/materialize-bundle";
 import {
@@ -2209,11 +2210,25 @@ export async function runGraph(
       // transition). Best-effort — run correctness never depends on it; skipped
       // entirely when the worktree cannot be confirmed git-leak-safe.
       if (runContextWriteSafe) {
+        // ADR-122 ambient P7: recall the run-level brain projection HERE (this
+        // scope has db + policy) and pass it INTO writeRunContext as plain data
+        // so buildRunContext stays pure. Best-effort — never fails the run.
+        const brain = await getAmbientBrainProjection({
+          db,
+          projectId: loaded.run.projectId,
+          brainContext: loaded.run.brainContext ?? null,
+          taskTitle: loaded.task.title,
+          taskPrompt: loaded.task.prompt,
+          runId,
+          nodeAttemptId: null,
+        });
+
         await writeRunContext({
           runId,
           worktreePath,
           taskPrompt: loaded.task.prompt,
           db,
+          brain,
         }).catch((err) =>
           log2.debug(
             { err: asError(err).message },
